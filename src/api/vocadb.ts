@@ -199,7 +199,7 @@ export async function findArtistByName(query: string): Promise<Artist | null> {
     normA === normQ ||
     normA.startsWith(normQ) ||
     normQ.startsWith(normA) ||
-    artist.additionalNames.split(',').map(n => normalize(n.trim())).some(n => n === normQ);
+    (artist.additionalNames ?? '').split(',').map(n => normalize(n.trim())).filter(Boolean).some(n => n === normQ);
 
   return isClose ? artist : null;
 }

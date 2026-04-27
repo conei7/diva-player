@@ -112,7 +112,7 @@ export interface Artist {
   id: number;
   name: string;
   artistType: ArtistType;
-  additionalNames: string;
+  additionalNames?: string;
 }
 
 export type ArtistSearchResult = PartialFindResult<Artist>;
