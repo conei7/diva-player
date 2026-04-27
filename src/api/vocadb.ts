@@ -101,7 +101,7 @@ export async function searchSongs(params: SongSearchParams): Promise<SongSearchR
     lang: params.lang || DEFAULT_LANG,
     nameMatchMode: params.nameMatchMode || 'Auto',
     onlyWithPVs: params.onlyWithPVs ?? true,
-    artistId: params.artistId,
+    'artistId[]': params.artistId !== undefined ? [params.artistId] : undefined,
     artistParticipationStatus: params.artistParticipationStatus,
     minBpm: params.minBpm,
     maxBpm: params.maxBpm,
