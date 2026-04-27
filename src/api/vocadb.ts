@@ -174,7 +174,6 @@ export async function findArtistByName(query: string): Promise<Artist | null> {
     query,
     maxResults: 1,
     nameMatchMode: 'Auto',
-    fields: '',
     lang: DEFAULT_LANG,
   });
 
