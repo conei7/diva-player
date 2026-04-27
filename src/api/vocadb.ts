@@ -173,17 +173,17 @@ export async function findArtistByName(query: string): Promise<Artist | null> {
   const trimmed = query.trim();
   if (trimmed.length < 2) return null;
 
-  // nameMatchMode=Partial: 名前にクエリが含まれるアーティストを検索。
-  // VocaDB の内部で日本語↔ローマ字の対応（ハチ⇔hachi）も処理されるため
-  // Exact よりも幅広く一致させることができる。
+  // nameMatchMode=Exact + artistTypes=Producer,Circle で完全一致のプロデューサーを優先検索
+  // UTAUや絵師など非プロデューサーが先にヒットする問題を防ぐ
   const queryParams = buildSearchParams({
     query: trimmed,
-    maxResults: 1,
-    nameMatchMode: 'Partial',
+    maxResults: 5,
+    nameMatchMode: 'Exact',
     lang: DEFAULT_LANG,
   });
 
-  const url = `${BASE_URL}/artists?${queryParams}`;
+  // artistTypes で Producer / Circle / Band に絞り込む（UTAU・Illustrator などを除外）
+  const url = `${BASE_URL}/artists?${queryParams}&artistTypes=Producer%2CCircle%2CBand`;
   const cacheKey = `artist:${url}`;
 
   const cached = getCached<ArtistSearchResult>(cacheKey);
@@ -194,5 +194,9 @@ export async function findArtistByName(query: string): Promise<Artist | null> {
     return result;
   })();
 
-  return data.items.length > 0 ? data.items[0] : null;
+  // プライマリ名が完全一致するものを優先、なければ先頭を返す
+  const exactPrimary = data.items.find(
+    a => a.name.toLowerCase() === trimmed.toLowerCase()
+  );
+  return exactPrimary ?? (data.items.length > 0 ? data.items[0] : null);
 }
