@@ -53,27 +53,51 @@ export const useSearchStore = create<SearchState>((set, get) => ({
     set({ isLoading: true, error: null, currentPage: 0, hasSearched: true, resolvedArtistId: null });
 
     try {
-      // まずアーティスト名として解決を試みる
-      // 一致するアーティストが見つかればそのIDで曲を検索（曲名検索よりも正確）
-      const artist = query.trim() ? await findArtistByName(query) : null;
-      const artistId = artist?.id ?? null;
+      // アーティスト検索と曲タイトル検索を並行実行して結果をマージ
+      const [artist, titleResult] = await Promise.all([
+        findArtistByName(query),
+        searchSongs({
+          query,
+          sort,
+          maxResults: PAGE_SIZE,
+          start: 0,
+          getTotalCount: true,
+          onlyWithPVs: true,
+        }),
+      ]);
 
-      const result = await searchSongs({
-        query: artistId ? undefined : query,  // アーティストIDがあれば曲名クエリは不要
-        artistId: artistId ?? undefined,
-        sort,
-        maxResults: PAGE_SIZE,
-        start: 0,
-        getTotalCount: true,
-        onlyWithPVs: true,
-      });
+      if (artist) {
+        // アーティストが見つかった場合: そのアーティストの曲を優先して表示
+        const artistResult = await searchSongs({
+          artistId: artist.id,
+          sort,
+          maxResults: PAGE_SIZE,
+          start: 0,
+          getTotalCount: true,
+          onlyWithPVs: true,
+        });
 
-      set({
-        results: result.items,
-        totalCount: result.totalCount,
-        resolvedArtistId: artistId,
-        isLoading: false,
-      });
+        // アーティストの曲を先頭に、タイトル検索の重複していない曲を末尾に追加
+        const artistSongIds = new Set(artistResult.items.map(s => s.id));
+        const merged = [
+          ...artistResult.items,
+          ...titleResult.items.filter(s => !artistSongIds.has(s.id)),
+        ];
+
+        set({
+          results: merged,
+          totalCount: artistResult.totalCount,
+          resolvedArtistId: artist.id,
+          isLoading: false,
+        });
+      } else {
+        set({
+          results: titleResult.items,
+          totalCount: titleResult.totalCount,
+          resolvedArtistId: null,
+          isLoading: false,
+        });
+      }
     } catch (error) {
       set({
         error: error instanceof Error ? error.message : '検索中にエラーが発生しました',
