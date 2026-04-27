@@ -170,10 +170,16 @@ export async function getTopSongs(
  * 曲名検索ではなくアーティスト検索にフォールバックするために使用。
  */
 export async function findArtistByName(query: string): Promise<Artist | null> {
+  const trimmed = query.trim();
+  if (trimmed.length < 2) return null;
+
+  // nameMatchMode=Exact で完全一致するアーティストを検索。
+  // VocaDB が言語をまたいだ名前解決（ハチ↔hachi など）を担保してくれるため、
+  // ヒットした場合はその結果を信頼する。
   const queryParams = buildSearchParams({
-    query,
+    query: trimmed,
     maxResults: 1,
-    nameMatchMode: 'Auto',
+    nameMatchMode: 'Exact',
     lang: DEFAULT_LANG,
   });
 
@@ -188,18 +194,5 @@ export async function findArtistByName(query: string): Promise<Artist | null> {
     return result;
   })();
 
-  if (data.items.length === 0) return null;
-
-  const artist = data.items[0];
-  // クエリとアーティスト名が近似一致するか確認（大文字小文字無視）
-  const normalize = (s: string) => s.toLowerCase().trim();
-  const normA = normalize(artist.name);
-  const normQ = normalize(query);
-  const isClose =
-    normA === normQ ||
-    normA.startsWith(normQ) ||
-    normQ.startsWith(normA) ||
-    (artist.additionalNames ?? '').split(',').map(n => normalize(n.trim())).filter(Boolean).some(n => n === normQ);
-
-  return isClose ? artist : null;
+  return data.items.length > 0 ? data.items[0] : null;
 }
