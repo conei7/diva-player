@@ -173,12 +173,13 @@ export async function findArtistByName(query: string): Promise<Artist | null> {
   const trimmed = query.trim();
   if (trimmed.length < 2) return null;
 
-  // nameMatchMode=Exact で完全一致するアーティストを検索。
-  // VocaDB が言語をまたいだ名前解決（ハチ↔hachi など）を担保。
+  // nameMatchMode=Partial: 名前にクエリが含まれるアーティストを検索。
+  // VocaDB の内部で日本語↔ローマ字の対応（ハチ⇔hachi）も処理されるため
+  // Exact よりも幅広く一致させることができる。
   const queryParams = buildSearchParams({
     query: trimmed,
     maxResults: 1,
-    nameMatchMode: 'Exact',
+    nameMatchMode: 'Partial',
     lang: DEFAULT_LANG,
   });
 

@@ -13,7 +13,7 @@ import type { Song } from '../types/vocadb';
  * 初期状態では人気曲を表示。検索するとVocaDB APIの結果を表示。
  */
 export default function SearchPage() {
-  const { results, isLoading, error, hasSearched, loadMore, totalCount } = useSearchStore();
+  const { results, isLoading, error, hasSearched, loadMore, totalCount, resolvedArtistId, query } = useSearchStore();
   const { addToQueue } = usePlayerStore();
   const [topSongs, setTopSongs] = useState<Song[]>([]);
   const [topLoading, setTopLoading] = useState(true);
@@ -66,6 +66,17 @@ export default function SearchPage() {
 
       {/* 検索バー */}
       <SearchBar />
+
+      {/* アーティスト検索モードバナー */}
+      {hasSearched && resolvedArtistId && (
+        <div className="rounded-xl px-4 py-2 flex items-center gap-2 text-sm animate-fade-in"
+             style={{ background: 'rgba(6, 214, 160, 0.08)', border: '1px solid rgba(6, 214, 160, 0.2)' }}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style={{ color: 'var(--color-accent-cyan)', flexShrink: 0 }}>
+            <path d="M12 12c2.7 0 4.8-2.1 4.8-4.8S14.7 2.4 12 2.4 7.2 4.5 7.2 7.2 9.3 12 12 12zm0 2.4c-3.2 0-9.6 1.6-9.6 4.8v2.4h19.2v-2.4c0-3.2-6.4-4.8-9.6-4.8z"/>
+          </svg>
+          <span style={{ color: 'var(--color-accent-cyan)' }}>アーティスト「{query}」の曲を表示中</span>
+        </div>
+      )}
 
       {/* フィルター */}
       {hasSearched && <SearchFilters />}
