@@ -1,3 +1,4 @@
+/// <reference types="@types/youtube" />
 import { useEffect, useRef, useCallback } from 'react';
 import { usePlayerStore } from '../../stores/playerStore';
 
@@ -12,7 +13,10 @@ import { usePlayerStore } from '../../stores/playerStore';
 // YouTube IFrame API の型
 declare global {
   interface Window {
-    YT: typeof YT;
+    YT: {
+      Player: new (elementId: string, options: YT.PlayerOptions) => YT.Player;
+      PlayerState: { UNSTARTED: number; ENDED: number; PLAYING: number; PAUSED: number; BUFFERING: number; CUED: number };
+    };
     onYouTubeIframeAPIReady: () => void;
   }
 }

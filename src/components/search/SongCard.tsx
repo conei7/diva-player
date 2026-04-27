@@ -9,11 +9,10 @@ interface SongCardProps {
 
 /**
  * SongCard - 検索結果の曲カード
- * 
  * サムネイル、曲名、アーティスト、PVサービスバッジ、再生ボタンを表示。
  */
 export default function SongCard({ song, index, onAddToQueue }: SongCardProps) {
-  const { currentSong, isPlaying, playSong, setQueue } = usePlayerStore();
+  const { currentSong, isPlaying, setQueue } = usePlayerStore();
   const isCurrentSong = currentSong?.id === song.id;
   const playablePV = getPlayablePV(song);
   const hasPlayablePV = !!playablePV;
@@ -112,7 +111,7 @@ export default function SongCard({ song, index, onAddToQueue }: SongCardProps) {
           {song.artistString}
         </p>
 
-        {/* 下部バッジ行 */}
+        {/* 下部バッジ列 */}
         <div className="flex items-center gap-2 mt-2">
           {/* PVサービスバッジ */}
           {pvServices.has('Youtube') && (

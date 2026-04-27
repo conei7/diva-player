@@ -7,7 +7,7 @@
  * - リトライロジック（指数バックオフ）
  */
 
-import type { Song, SongSearchParams, SongSearchResult } from '../types/vocadb';
+import type { Artist, ArtistSearchResult, Song, SongSearchParams, SongSearchResult } from '../types/vocadb';
 
 const BASE_URL = 'https://vocadb.net/api';
 const DEFAULT_LANG = 'Japanese';
@@ -101,6 +101,8 @@ export async function searchSongs(params: SongSearchParams): Promise<SongSearchR
     lang: params.lang || DEFAULT_LANG,
     nameMatchMode: params.nameMatchMode || 'Auto',
     onlyWithPVs: params.onlyWithPVs ?? true,
+    artistId: params.artistId,
+    artistParticipationStatus: params.artistParticipationStatus,
     minBpm: params.minBpm,
     maxBpm: params.maxBpm,
   });
@@ -161,4 +163,44 @@ export async function getTopSongs(
   
   setCache(cacheKey, data);
   return data;
+}
+
+/**
+ * アーティスト名でアーティストを検索し、クエリに近いアーティストを返す。
+ * 曲名検索ではなくアーティスト検索にフォールバックするために使用。
+ */
+export async function findArtistByName(query: string): Promise<Artist | null> {
+  const queryParams = buildSearchParams({
+    query,
+    maxResults: 1,
+    nameMatchMode: 'Auto',
+    fields: '',
+    lang: DEFAULT_LANG,
+  });
+
+  const url = `${BASE_URL}/artists?${queryParams}`;
+  const cacheKey = `artist:${url}`;
+
+  const cached = getCached<ArtistSearchResult>(cacheKey);
+  const data = cached ?? await (async () => {
+    const response = await fetchWithRetry(url);
+    const result: ArtistSearchResult = await response.json();
+    setCache(cacheKey, result);
+    return result;
+  })();
+
+  if (data.items.length === 0) return null;
+
+  const artist = data.items[0];
+  // クエリとアーティスト名が近似一致するか確認（大文字小文字無視）
+  const normalize = (s: string) => s.toLowerCase().trim();
+  const normA = normalize(artist.name);
+  const normQ = normalize(query);
+  const isClose =
+    normA === normQ ||
+    normA.startsWith(normQ) ||
+    normQ.startsWith(normA) ||
+    artist.additionalNames.split(',').map(n => normalize(n.trim())).some(n => n === normQ);
+
+  return isClose ? artist : null;
 }

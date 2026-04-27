@@ -89,6 +89,8 @@ export type ContentLanguagePreference = 'Default' | 'Japanese' | 'Romaji' | 'Eng
 
 export interface SongSearchParams {
   query?: string;
+  artistId?: number;
+  artistParticipationStatus?: 'Everything' | 'OnlyMainAlbums' | 'OnlyCollaborations';
   tagName?: string[];
   tagId?: number[];
   sort?: SongSortRule;
@@ -104,6 +106,16 @@ export interface SongSearchParams {
   maxBpm?: number;
   onlyWithPVs?: boolean;
 }
+
+// ─── アーティスト検索 ───
+export interface Artist {
+  id: number;
+  name: string;
+  artistType: ArtistType;
+  additionalNames: string;
+}
+
+export type ArtistSearchResult = PartialFindResult<Artist>;
 
 // ─── プレイリスト ───
 export interface Playlist {
