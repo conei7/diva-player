@@ -101,7 +101,13 @@ export async function searchSongs(params: SongSearchParams): Promise<SongSearchR
     lang: params.lang || DEFAULT_LANG,
     nameMatchMode: params.nameMatchMode || 'Auto',
     onlyWithPVs: params.onlyWithPVs ?? true,
-    'artistId[]': params.artistId !== undefined ? [params.artistId] : undefined,
+    'artistId[]': (() => {
+      const ids = [
+        ...(params.artistId !== undefined ? [params.artistId] : []),
+        ...(params.artistIds ?? []),
+      ];
+      return ids.length > 0 ? ids : undefined;
+    })(),
     artistParticipationStatus: params.artistParticipationStatus,
     minBpm: params.minBpm,
     maxBpm: params.maxBpm,
@@ -199,4 +205,34 @@ export async function findArtistByName(query: string): Promise<Artist | null> {
     a => a.name.toLowerCase() === trimmed.toLowerCase()
   );
   return exactPrimary ?? (data.items.length > 0 ? data.items[0] : null);
+}
+
+/**
+ * ボーカリスト（Vocaloid / UTAU / CeVIO など）を名前で検索してサジェスト用リストを返す。
+ */
+const VOCALIST_ARTIST_TYPES = 'Vocaloid%2CUTAU%2CCeVIO%2CSynthesizerV%2CNEUTRINO%2CVoiSona%2CVoiceroid%2COtherVoiceSynthesizer%2COtherVocalist';
+
+export async function searchVocalistsByName(query: string): Promise<Artist[]> {
+  const trimmed = query.trim();
+  if (trimmed.length < 1) return [];
+
+  const queryParams = buildSearchParams({
+    query: trimmed,
+    maxResults: 8,
+    nameMatchMode: 'StartsWith',
+    lang: DEFAULT_LANG,
+  });
+
+  const url = `${BASE_URL}/artists?${queryParams}&artistTypes=${VOCALIST_ARTIST_TYPES}`;
+  const cacheKey = `vocalist:${url}`;
+
+  const cached = getCached<ArtistSearchResult>(cacheKey);
+  const data = cached ?? await (async () => {
+    const response = await fetchWithRetry(url);
+    const result: ArtistSearchResult = await response.json();
+    setCache(cacheKey, result);
+    return result;
+  })();
+
+  return data.items;
 }

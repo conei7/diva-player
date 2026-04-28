@@ -86,10 +86,12 @@ export type SongSearchResult = PartialFindResult<Song>;
 export type SongSortRule = 'None' | 'Name' | 'AdditionDate' | 'PublishDate' | 'FavoritedTimes' | 'RatingScore' | 'TagUsageCount' | 'SongType';
 export type NameMatchMode = 'Auto' | 'Partial' | 'Exact' | 'StartsWith' | 'Words';
 export type ContentLanguagePreference = 'Default' | 'Japanese' | 'Romaji' | 'English';
+export type VocalistMatchMode = 'Any' | 'All' | 'Exact';
 
 export interface SongSearchParams {
   query?: string;
   artistId?: number;
+  artistIds?: number[];
   artistParticipationStatus?: 'Everything' | 'OnlyMainAlbums' | 'OnlyCollaborations';
   tagName?: string[];
   tagId?: number[];
