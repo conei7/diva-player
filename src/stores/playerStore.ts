@@ -8,6 +8,7 @@
 
 import { create } from 'zustand';
 import type { Song, PV } from '../types/vocadb';
+import { storage } from '../utils/storage';
 
 // 再生可能なPVを抽出するヘルパー
 export function getPlayablePV(song: Song): PV | null {
@@ -67,6 +68,10 @@ interface PlayerState {
   // 詳細パネルのプレイヤー表示先DOM
   detailPanelEl: HTMLElement | null;
   setDetailPanelEl: (el: HTMLElement | null) => void;
+
+  // 隠しモード（サムネイル・動画を非表示）
+  hiddenMode: boolean;
+  toggleHiddenMode: () => void;
   
   // キュー操作
   setQueue: (songs: Song[], startIndex?: number) => void;
@@ -84,6 +89,12 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   duration: 0,
   detailPanelEl: null,
   setDetailPanelEl: (el) => set({ detailPanelEl: el }),
+  hiddenMode: storage.get<boolean>('hiddenMode') ?? false,
+  toggleHiddenMode: () => set((state) => {
+    const next = !state.hiddenMode;
+    storage.set('hiddenMode', next);
+    return { hiddenMode: next };
+  }),
   queue: [],
   queueIndex: -1,
   error: null,

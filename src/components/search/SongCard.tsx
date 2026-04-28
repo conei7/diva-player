@@ -1,6 +1,5 @@
 import type { Song } from '../../types/vocadb';
 import { usePlayerStore, getPlayablePV } from '../../stores/playerStore';
-
 interface SongCardProps {
   song: Song;
   index: number;
@@ -13,7 +12,7 @@ interface SongCardProps {
  * サムネイル、曲名、アーティスト、PVサービスバッジ、再生ボタンを表示。
  */
 export default function SongCard({ song, index, onAddToQueue, onSelect }: SongCardProps) {
-  const { currentSong, isPlaying, setQueue } = usePlayerStore();
+  const { currentSong, isPlaying, setQueue, hiddenMode } = usePlayerStore();
   const isCurrentSong = currentSong?.id === song.id;
   const playablePV = getPlayablePV(song);
   const hasPlayablePV = !!playablePV;
@@ -60,7 +59,7 @@ export default function SongCard({ song, index, onAddToQueue, onSelect }: SongCa
     >
       {/* サムネイル */}
       <div className="relative aspect-video overflow-hidden" style={{ background: 'var(--color-surface)' }}>
-        {song.thumbUrl ? (
+        {!hiddenMode && song.thumbUrl ? (
           <img
             src={song.thumbUrl}
             alt={song.name}
@@ -68,10 +67,12 @@ export default function SongCard({ song, index, onAddToQueue, onSelect }: SongCa
             loading="lazy"
           />
         ) : (
-          <div className="w-full h-full flex items-center justify-center">
-            <svg className="w-12 h-12" style={{ color: 'var(--color-text-muted)' }} viewBox="0 0 24 24" fill="currentColor">
-              <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/>
-            </svg>
+          <div className="w-full h-full flex items-center justify-center" style={hiddenMode ? { background: 'var(--color-bg-secondary)' } : {}}>
+            {!hiddenMode && (
+              <svg className="w-12 h-12" style={{ color: 'var(--color-text-muted)' }} viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/>
+              </svg>
+            )}
           </div>
         )}
 
