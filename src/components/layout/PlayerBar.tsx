@@ -60,7 +60,7 @@ export default function PlayerBar() {
               </svg>
             </div>
           )}
-          {currentPV?.pvType === 'Other' && (
+          {currentPV && currentPV.pvType !== 'Original' && (
             <div className="absolute bottom-0 right-0 text-[9px] font-bold px-1 py-0.5 leading-none"
                  style={{ background: 'rgba(234,179,8,0.85)', color: '#000', borderTopLeftRadius: '4px' }}>
               非公式

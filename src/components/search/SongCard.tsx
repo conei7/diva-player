@@ -26,9 +26,9 @@ export default function SongCard({ song, index, onAddToQueue, onSelect }: SongCa
     return acc;
   }, new Set<string>()) ?? new Set();
 
-  // YouTubeが全てpvType:'Other'か（非公式のみ）
+  // YouTubeにOriginalがない（非公式のみ: ReprntまたはOtherのみ）
   const ytPVs = song.pvs?.filter(pv => !pv.disabled && pv.service === 'Youtube') ?? [];
-  const isYTUnofficialOnly = ytPVs.length > 0 && ytPVs.every(pv => pv.pvType === 'Other');
+  const isYTUnofficialOnly = ytPVs.length > 0 && ytPVs.every(pv => pv.pvType !== 'Original');
 
   // 再生時間フォーマット
   const formatDuration = (seconds: number): string => {
