@@ -48,22 +48,20 @@ export default function PlayerBar() {
       </div>
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-full flex items-center gap-4">
-        {/* サムネイル + 非表示PlayerEmbed（音声再生のため残す） */}
+        {/* サムネイル表示 + PlayerEmbed（詳細パネルがある場合はportalで移動） */}
         <div className="relative w-16 h-16 rounded-lg overflow-hidden flex-shrink-0"
              style={{ background: 'var(--color-surface)' }}>
-          {/* PlayerEmbedは非表示で音声再生のみ */}
-          <div style={{ position: 'absolute', width: 0, height: 0, overflow: 'hidden', pointerEvents: 'none' }}>
-            <PlayerEmbed />
-          </div>
-          {/* サムネイル表示 */}
-          {currentSong?.thumbUrl ? (
-            <img src={currentSong.thumbUrl} alt={currentSong.name} className="w-full h-full object-cover" />
-          ) : (
-            <div className="w-full h-full flex items-center justify-center">
-              <svg className="w-6 h-6" style={{ color: 'var(--color-text-muted)' }} viewBox="0 0 24 24" fill="currentColor">
-                <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/>
-              </svg>
-            </div>
+          {/* PlayerEmbed: detail-panel-playerが存在すればportalでそちらへ、なければここに表示 */}
+          <PlayerEmbed />
+          {/* PlayerEmbedがportal先に移動した場合はサムネイルを表示 */}
+          {currentSong?.thumbUrl && (
+            <img
+              src={currentSong.thumbUrl}
+              alt={currentSong.name}
+              className="w-full h-full object-cover"
+              style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}
+              id="playerbar-thumb"
+            />
           )}
         </div>
 

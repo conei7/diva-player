@@ -3,7 +3,6 @@ import { createPortal } from 'react-dom';
 import type { Song, PV } from '../../types/vocadb';
 import { useSearchStore } from '../../stores/searchStore';
 import { usePlayerStore } from '../../stores/playerStore';
-import PlayerEmbed from '../player/PlayerEmbed';
 
 interface SongDetailsPanelProps {
   song: Song | null;
@@ -84,7 +83,7 @@ export default function SongDetailsPanel({ song, onClose, inline }: SongDetailsP
       {/* サムネイル / 動画プレイヤー */}
       <div className="w-full rounded-lg overflow-hidden" style={{ aspectRatio: '16/9', background: 'var(--color-surface)' }}>
         {isCurrentlyPlaying ? (
-          <PlayerEmbed />
+          <div id="detail-panel-player" className="w-full h-full" />
         ) : song.thumbUrl ? (
           <img
             src={song.thumbUrl}
