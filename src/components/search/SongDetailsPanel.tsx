@@ -2,6 +2,8 @@ import { useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import type { Song, PV } from '../../types/vocadb';
 import { useSearchStore } from '../../stores/searchStore';
+import { usePlayerStore } from '../../stores/playerStore';
+import PlayerEmbed from '../player/PlayerEmbed';
 
 interface SongDetailsPanelProps {
   song: Song | null;
@@ -49,6 +51,8 @@ function PVBadge({ pv }: { pv: PV }) {
  */
 export default function SongDetailsPanel({ song, onClose, inline }: SongDetailsPanelProps) {
   const { searchByArtistId } = useSearchStore();
+  const { currentSong, currentPV } = usePlayerStore();
+  const isCurrentlyPlaying = currentSong?.id === song?.id && !!currentPV;
   // Esc キーで閉じる (overlay mode only)
   useEffect(() => {
     if (inline) return;
@@ -77,15 +81,24 @@ export default function SongDetailsPanel({ song, onClose, inline }: SongDetailsP
 
   const content = (
     <div className="p-4 flex flex-col gap-4">
-      {/* サムネイル */}
-      {song.thumbUrl && (
-        <img
-          src={song.thumbUrl}
-          alt={song.name}
-          className="w-full rounded-lg object-cover"
-          style={{ aspectRatio: '16/9' }}
-        />
-      )}
+      {/* サムネイル / 動画プレイヤー */}
+      <div className="w-full rounded-lg overflow-hidden" style={{ aspectRatio: '16/9', background: 'var(--color-surface)' }}>
+        {isCurrentlyPlaying ? (
+          <PlayerEmbed />
+        ) : song.thumbUrl ? (
+          <img
+            src={song.thumbUrl}
+            alt={song.name}
+            className="w-full h-full object-cover"
+          />
+        ) : (
+          <div className="w-full h-full flex items-center justify-center">
+            <svg className="w-12 h-12" style={{ color: 'var(--color-text-muted)' }} viewBox="0 0 24 24" fill="currentColor">
+              <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/>
+            </svg>
+          </div>
+        )}
+      </div>
 
       {/* タイトル / アーティスト */}
       <div>
