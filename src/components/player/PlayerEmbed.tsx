@@ -1,5 +1,6 @@
 /// <reference types="@types/youtube" />
 import { useEffect, useRef, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { usePlayerStore } from '../../stores/playerStore';
 
 /**
@@ -7,7 +8,7 @@ import { usePlayerStore } from '../../stores/playerStore';
  *
  * 選択されたPVのサービスに応じて適切なiframeを表示。
  * YouTube: IFrame Player API を使用して再生制御。
- * ニコニコ: postMessage API を使用。
+ * ニコニコ: iframe埋め込み制限のため「ニコニコで開く」UIを表示。
  */
 
 // YouTube IFrame API の型
@@ -20,6 +21,105 @@ declare global {
     onYouTubeIframeAPIReady: () => void;
   }
 }
+
+/**
+ * NicoEmbed - ニコニコ動画専用コンポーネント
+ *
+ * NicoNico の iframe 埋め込みは現在制限されているため、
+ * createPortal でプレイヤーバー上部に「NicoNicoで開く」UIを表示する。
+ * 一定時間後に自動で次の曲へスキップする。
+ */
+function NicoEmbed({ pvId, name }: { pvId: string; name?: string }) {
+  const { next } = usePlayerStore();
+
+  // 10秒後に自動スキップ
+  useEffect(() => {
+    const timer = setTimeout(() => next(), 10000);
+    return () => clearTimeout(timer);
+  }, [pvId, next]);
+
+  const nicoUrl = `https://www.nicovideo.jp/watch/${pvId}`;
+
+  const miniPlayer = createPortal(
+    <div
+      style={{
+        position: 'fixed',
+        bottom: 'calc(var(--player-bar-height) + 8px)',
+        left: '16px',
+        width: '320px',
+        zIndex: 49,
+        borderRadius: '8px',
+        overflow: 'hidden',
+        boxShadow: '0 4px 16px rgba(0,0,0,0.7)',
+        background: '#1a1a1a',
+        padding: '20px',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        gap: '12px',
+        color: 'white',
+      }}
+    >
+      {/* NicoNico ロゴ色のアイコン */}
+      <svg width="40" height="40" viewBox="0 0 24 24" fill="#e6002d">
+        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 14.5v-9l6 4.5-6 4.5z"/>
+      </svg>
+      <p style={{ margin: 0, fontSize: '13px', textAlign: 'center', opacity: 0.9 }}>
+        {name || pvId}
+      </p>
+      <p style={{ margin: 0, fontSize: '11px', opacity: 0.6, textAlign: 'center' }}>
+        ニコニコ動画はiframe埋め込みに対応していません。
+        <br />10秒後に自動スキップします。
+      </p>
+      <div style={{ display: 'flex', gap: '8px' }}>
+        <a
+          href={nicoUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{
+            padding: '8px 16px',
+            background: '#e6002d',
+            color: 'white',
+            borderRadius: '4px',
+            textDecoration: 'none',
+            fontSize: '13px',
+            fontWeight: 600,
+          }}
+        >
+          ニコニコで開く
+        </a>
+        <button
+          onClick={() => next()}
+          style={{
+            padding: '8px 16px',
+            background: '#333',
+            color: 'white',
+            borderRadius: '4px',
+            border: 'none',
+            cursor: 'pointer',
+            fontSize: '13px',
+          }}
+        >
+          スキップ
+        </button>
+      </div>
+    </div>,
+    document.body,
+  );
+
+  return (
+    <>
+      {miniPlayer}
+      {/* 64x64 サムネイルスロット */}
+      <div className="w-full h-full flex items-center justify-center" style={{ background: '#1a0005' }}>
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="#e6002d">
+          <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 14.5v-9l6 4.5-6 4.5z"/>
+        </svg>
+      </div>
+    </>
+  );
+}
+
 
 let ytApiLoaded = false;
 let ytApiLoading = false;
@@ -221,19 +321,7 @@ export default function PlayerEmbed() {
 
   // ニコニコ動画の埋め込み
   if (currentPV?.service === 'NicoNicoDouga') {
-    const nicoUrl = `https://embed.nicovideo.jp/watch/${currentPV.pvId}?autoplay=1&mute=0`;
-    return (
-      <div className="w-full h-full">
-        <iframe
-          src={nicoUrl}
-          className="w-full h-full border-0"
-          allow="autoplay; fullscreen"
-          allowFullScreen
-          title={currentPV.name || 'ニコニコ動画プレイヤー'}
-          style={{ pointerEvents: 'none' }}
-        />
-      </div>
-    );
+    return <NicoEmbed pvId={currentPV.pvId} name={currentPV.name} />;
   }
 
   // YouTube プレイヤーコンテナ

@@ -15,11 +15,12 @@ export function getPlayablePV(song: Song): PV | null {
 
   const enabledPVs = song.pvs.filter(pv => !pv.disabled);
 
-  // 優先順位: YouTube Original > NicoNico Original > YouTube Reprint > NicoNico Reprint > その他
+  // 優先順位: YouTube (Official/非公式問わず) > NicoNico
+  // NicoNico は iframe 埋め込み制限があるため YouTube を最優先
   const priorities: Array<{ service: string; pvType: string }> = [
     { service: 'Youtube', pvType: 'Original' },
-    { service: 'NicoNicoDouga', pvType: 'Original' },
     { service: 'Youtube', pvType: 'Reprint' },
+    { service: 'NicoNicoDouga', pvType: 'Original' },
     { service: 'NicoNicoDouga', pvType: 'Reprint' },
   ];
 

@@ -125,6 +125,7 @@ export default function SearchFilters() {
     sort, setSort, search, totalCount, hasSearched,
     vocalistFilters, vocalistMatchMode,
     addVocalistFilter, removeVocalistFilter, setVocalistMatchMode,
+    songTypeFilter, setSongTypeFilter,
   } = useSearchStore();
 
   const [vocalistQuery, setVocalistQuery] = useState('');
@@ -327,6 +328,25 @@ export default function SearchFilters() {
           </p>
         )}
         <div className="flex items-center gap-2 ml-auto">
+          {/* オリジナル曲のみフィルター */}
+          <button
+            className="text-xs px-3 py-1.5 rounded-lg transition-colors"
+            style={{
+              background: songTypeFilter === 'Original' ? 'rgba(139, 92, 246, 0.2)' : 'var(--color-surface)',
+              color: songTypeFilter === 'Original' ? 'var(--color-accent-purple)' : 'var(--color-text-muted)',
+              border: songTypeFilter === 'Original'
+                ? '1px solid rgba(139, 92, 246, 0.4)'
+                : '1px solid var(--color-border)',
+            }}
+            onClick={() => {
+              const next = songTypeFilter === 'Original' ? 'All' : 'Original';
+              setSongTypeFilter(next);
+              search();
+            }}
+            title="カバー・リミックスを除外し、オリジナル曲のみ表示"
+          >
+            {songTypeFilter === 'Original' ? '✦ オリジナルのみ' : 'オリジナルのみ'}
+          </button>
           <label htmlFor="sort-select" className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
             並び替え:
           </label>

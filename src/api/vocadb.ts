@@ -189,7 +189,8 @@ export async function findArtistByName(query: string): Promise<Artist | null> {
   });
 
   // artistTypes で Producer / Circle / Band に絞り込む（UTAU・Illustrator などを除外）
-  const url = `${BASE_URL}/artists?${queryParams}&artistTypes=Producer%2CCircle%2CBand`;
+  // sort=SongCount: 同名アーティストが複数いる場合、最も曲が多い（本命の）アーティストを優先
+  const url = `${BASE_URL}/artists?${queryParams}&artistTypes=Producer%2CCircle%2CBand&sort=SongCount`;
   const cacheKey = `artist:${url}`;
 
   const cached = getCached<ArtistSearchResult>(cacheKey);
