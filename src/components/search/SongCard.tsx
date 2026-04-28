@@ -5,13 +5,14 @@ interface SongCardProps {
   song: Song;
   index: number;
   onAddToQueue?: (song: Song) => void;
+  onSelect?: (song: Song) => void;
 }
 
 /**
  * SongCard - 検索結果の曲カード
  * サムネイル、曲名、アーティスト、PVサービスバッジ、再生ボタンを表示。
  */
-export default function SongCard({ song, index, onAddToQueue }: SongCardProps) {
+export default function SongCard({ song, index, onAddToQueue, onSelect }: SongCardProps) {
   const { currentSong, isPlaying, setQueue } = usePlayerStore();
   const isCurrentSong = currentSong?.id === song.id;
   const playablePV = getPlayablePV(song);
@@ -35,8 +36,8 @@ export default function SongCard({ song, index, onAddToQueue }: SongCardProps) {
 
   const handlePlay = () => {
     if (!hasPlayablePV) return;
-    // 単一曲を再生（キューに1曲セット）
     setQueue([song], 0);
+    onSelect?.(song);
   };
 
   return (
@@ -47,7 +48,7 @@ export default function SongCard({ song, index, onAddToQueue }: SongCardProps) {
         border: isCurrentSong ? '1px solid rgba(6, 214, 160, 0.3)' : '1px solid transparent',
         animationDelay: `${index * 50}ms`,
       }}
-      onClick={handlePlay}
+      onClick={() => onSelect?.(song)}
     >
       {/* サムネイル */}
       <div className="relative aspect-video overflow-hidden" style={{ background: 'var(--color-surface)' }}>
@@ -67,7 +68,10 @@ export default function SongCard({ song, index, onAddToQueue }: SongCardProps) {
         )}
 
         {/* 再生オーバーレイ */}
-        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex items-center justify-center">
+        <div
+          className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex items-center justify-center"
+          onClick={(e) => { e.stopPropagation(); handlePlay(); }}
+        >
           {hasPlayablePV && (
             <div
               className="w-12 h-12 rounded-full flex items-center justify-center transition-transform duration-200 group-hover:scale-110"
@@ -163,6 +167,8 @@ export default function SongCard({ song, index, onAddToQueue }: SongCardProps) {
               {song.favoritedTimes.toLocaleString()}
             </span>
           )}
+
+          {/* 詳細ボタン (削除 - カード全体クリックで選択) */}
         </div>
       </div>
     </div>

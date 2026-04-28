@@ -66,9 +66,16 @@ export default function PlayerBar() {
         <div className="flex-shrink-0 w-48 min-w-0">
           {currentSong ? (
             <div className="animate-fade-in">
-              <p className="text-sm font-semibold truncate" style={{ color: 'var(--color-text-primary)' }}>
-                {currentSong.name}
-              </p>
+              <div className="flex items-center gap-1.5">
+                <p className="text-sm font-semibold truncate" style={{ color: 'var(--color-text-primary)' }}>
+                  {currentSong.name}
+                </p>
+                {currentPV?.pvType === 'Other' && (
+                  <span className="flex-shrink-0 text-[10px] px-1.5 py-0.5 rounded font-medium" style={{ background: 'rgba(234,179,8,0.2)', color: 'rgb(234,179,8)' }}>
+                    非公式
+                  </span>
+                )}
+              </div>
               <p className="text-xs truncate mt-0.5" style={{ color: 'var(--color-text-secondary)' }}>
                 {currentSong.artistString}
               </p>

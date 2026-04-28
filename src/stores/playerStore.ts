@@ -20,8 +20,10 @@ export function getPlayablePV(song: Song): PV | null {
   const priorities: Array<{ service: string; pvType: string }> = [
     { service: 'Youtube', pvType: 'Original' },
     { service: 'Youtube', pvType: 'Reprint' },
+    { service: 'Youtube', pvType: 'Other' },
     { service: 'NicoNicoDouga', pvType: 'Original' },
     { service: 'NicoNicoDouga', pvType: 'Reprint' },
+    { service: 'NicoNicoDouga', pvType: 'Other' },
   ];
 
   for (const { service, pvType } of priorities) {
@@ -60,6 +62,7 @@ interface PlayerState {
   setDuration: (duration: number) => void;
   setIsPlaying: (isPlaying: boolean) => void;
   setError: (error: string | null) => void;
+  tryNextPV: () => void;
   
   // キュー操作
   setQueue: (songs: Song[], startIndex?: number) => void;
@@ -134,6 +137,21 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   setDuration: (duration: number) => set({ duration }),
   setIsPlaying: (isPlaying: boolean) => set({ isPlaying }),
   setError: (error: string | null) => set({ error }),
+
+  tryNextPV: () => {
+    const { currentSong, currentPV } = get();
+    if (!currentSong || !currentSong.pvs) { get().next(); return; }
+
+    const enabledPVs = currentSong.pvs.filter(pv => !pv.disabled && (pv.service === 'Youtube' || pv.service === 'NicoNicoDouga'));
+    const currentIndex = enabledPVs.findIndex(pv => pv.id === currentPV?.id);
+    const nextPV = enabledPVs[currentIndex + 1];
+
+    if (nextPV) {
+      set({ currentPV: nextPV, error: null });
+    } else {
+      get().next();
+    }
+  },
 
   setQueue: (songs: Song[], startIndex = 0) => {
     set({ queue: songs, queueIndex: startIndex });

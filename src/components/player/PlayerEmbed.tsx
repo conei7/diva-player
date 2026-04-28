@@ -153,7 +153,7 @@ function loadYouTubeAPI(): Promise<void> {
 }
 
 export default function PlayerEmbed() {
-  const { currentPV, isPlaying, volume, progress, setProgress, setDuration, setIsPlaying, setError, next } = usePlayerStore();
+  const { currentPV, isPlaying, volume, progress, setProgress, setDuration, setIsPlaying, setError, next, tryNextPV } = usePlayerStore();
   const ytPlayerRef = useRef<YT.Player | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const progressTimerRef = useRef<number | null>(null);
@@ -261,8 +261,8 @@ export default function PlayerEmbed() {
           onError: () => {
             setError('YouTube動画の再生中にエラーが発生しました');
             stopProgressTimer();
-            // 自動スキップ
-            setTimeout(() => next(), 1000);
+            // YouTube再生失敗時: 同じ曲の次のPV（NicoNico等）を試みる
+            setTimeout(() => tryNextPV(), 1000);
           },
         },
       });
@@ -273,7 +273,7 @@ export default function PlayerEmbed() {
     return () => {
       stopProgressTimer();
     };
-  }, [currentPV, volume, setDuration, setIsPlaying, setError, next, startProgressTimer, stopProgressTimer]);
+  }, [currentPV, volume, setDuration, setIsPlaying, setError, next, tryNextPV, startProgressTimer, stopProgressTimer]);
 
   // 再生/一時停止の同期
   useEffect(() => {

@@ -43,11 +43,13 @@ interface SearchState {
   // アクション
   setQuery: (query: string) => void;
   setSort: (sort: SongSortRule) => void;
+  setResolvedArtistId: (id: number | null) => void;
   addVocalistFilter: (vocalist: VocalistFilter) => void;
   removeVocalistFilter: (id: number) => void;
   setVocalistMatchMode: (mode: VocalistMatchMode) => void;
   setSongTypeFilter: (filter: 'All' | 'Original') => void;
   search: () => Promise<void>;
+  searchByArtistId: (artistId: number, artistName: string) => Promise<void>;
   loadMore: () => Promise<void>;
   reset: () => void;
 }
@@ -202,6 +204,7 @@ export const useSearchStore = create<SearchState>((set, get) => ({
 
   setQuery: (query: string) => set({ query }),
   setSort: (sort: SongSortRule) => set({ sort }),
+  setResolvedArtistId: (id: number | null) => set({ resolvedArtistId: id }),
 
   addVocalistFilter: (vocalist: VocalistFilter) => {
     const { vocalistFilters } = get();
@@ -218,11 +221,30 @@ export const useSearchStore = create<SearchState>((set, get) => ({
 
   setSongTypeFilter: (filter: 'All' | 'Original') => set({ songTypeFilter: filter }),
 
+  searchByArtistId: async (artistId: number, artistName: string) => {
+    const { sort, songTypeFilter } = get();
+    set({ isLoading: true, error: null, currentPage: 0, hasSearched: true, resolvedArtistId: artistId, query: artistName });
+    const songTypes = songTypeFilter === 'Original' ? ['Original' as const] : undefined;
+    try {
+      const result = await searchSongs({
+        artistIds: [artistId],
+        sort,
+        maxResults: PAGE_SIZE,
+        start: 0,
+        getTotalCount: true,
+        onlyWithPVs: true,
+        songTypes,
+      });
+      set({ results: result.items, totalCount: result.totalCount, isLoading: false });
+    } catch (error) {
+      set({ error: error instanceof Error ? error.message : '検索中にエラーが発生しました', isLoading: false, results: [] });
+    }
+  },
+
   search: async () => {
     const { query, sort, vocalistFilters, vocalistMatchMode, songTypeFilter } = get();
     set({ isLoading: true, error: null, currentPage: 0, hasSearched: true, resolvedArtistId: null });
     const songTypes = songTypeFilter === 'Original' ? ['Original' as const] : undefined;
-
     try {
       const [artist, titleResult] = await Promise.all([
         findArtistByName(query),
