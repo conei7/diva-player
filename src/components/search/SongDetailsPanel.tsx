@@ -1,8 +1,9 @@
-import { useEffect, useRef } from 'react';
+import { useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import type { Song, PV } from '../../types/vocadb';
 import { useSearchStore } from '../../stores/searchStore';
 import { usePlayerStore } from '../../stores/playerStore';
+import PlayerEmbed from '../player/PlayerEmbed';
 
 interface SongDetailsPanelProps {
   song: Song | null;
@@ -50,19 +51,8 @@ function PVBadge({ pv }: { pv: PV }) {
  */
 export default function SongDetailsPanel({ song, onClose, inline }: SongDetailsPanelProps) {
   const { searchByArtistId } = useSearchStore();
-  const { currentSong, currentPV, setDetailPanelEl } = usePlayerStore();
-  const isCurrentlyPlaying = currentSong?.id === song?.id && !!currentPV &&
-    (currentPV.service === 'Youtube' || currentPV.service === 'NicoNicoDouga');
-  const playerContainerRef = useRef<HTMLDivElement>(null);
-
-  // プレイヤーコンテナをstoreに登録（isCurrentlyPlayingの場合のみ）
-  useEffect(() => {
-    if (isCurrentlyPlaying && playerContainerRef.current) {
-      setDetailPanelEl(playerContainerRef.current);
-    } else if (!isCurrentlyPlaying) {
-      setDetailPanelEl(null);
-    }
-  });  // 毎レンダー後に実行（refのDOM更新を確実に捕捉）
+  const { currentSong, currentPV } = usePlayerStore();
+  const isCurrentlyPlaying = currentSong?.id === song?.id && !!currentPV;
   // Esc キーで閉じる (overlay mode only)
   useEffect(() => {
     if (inline) return;
@@ -94,7 +84,7 @@ export default function SongDetailsPanel({ song, onClose, inline }: SongDetailsP
       {/* サムネイル / 動画プレイヤー */}
       <div className="w-full rounded-lg overflow-hidden" style={{ aspectRatio: '16/9', background: 'var(--color-surface)' }}>
         {isCurrentlyPlaying ? (
-          <div ref={playerContainerRef} className="w-full h-full" />
+          <PlayerEmbed />
         ) : song?.thumbUrl ? (
           <img
             src={song.thumbUrl}
