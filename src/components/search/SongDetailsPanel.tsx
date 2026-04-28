@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import type { Song, PV } from '../../types/vocadb';
 import { useSearchStore } from '../../stores/searchStore';
@@ -50,9 +50,20 @@ function PVBadge({ pv }: { pv: PV }) {
  */
 export default function SongDetailsPanel({ song, onClose, inline }: SongDetailsPanelProps) {
   const { searchByArtistId } = useSearchStore();
-  const { currentSong, currentPV } = usePlayerStore();
+  const { currentSong, currentPV, setDetailPanelEl } = usePlayerStore();
   const isCurrentlyPlaying = currentSong?.id === song?.id && !!currentPV &&
     (currentPV.service === 'Youtube' || currentPV.service === 'NicoNicoDouga');
+  const playerContainerRef = useRef<HTMLDivElement>(null);
+
+  // プレイヤーコンテナをstoreに登録
+  useEffect(() => {
+    if (isCurrentlyPlaying && playerContainerRef.current) {
+      setDetailPanelEl(playerContainerRef.current);
+    }
+    return () => {
+      setDetailPanelEl(null);
+    };
+  }, [isCurrentlyPlaying, setDetailPanelEl]);
   // Esc キーで閉じる (overlay mode only)
   useEffect(() => {
     if (inline) return;
@@ -83,27 +94,8 @@ export default function SongDetailsPanel({ song, onClose, inline }: SongDetailsP
     <div className="p-4 flex flex-col gap-4">
       {/* サムネイル / 動画プレイヤー */}
       <div className="w-full rounded-lg overflow-hidden" style={{ aspectRatio: '16/9', background: 'var(--color-surface)' }}>
-        {isCurrentlyPlaying && currentPV ? (
-          currentPV.service === 'NicoNicoDouga' ? (
-            /* ニコニコ embed.nicovideo.jp iframe */
-            <iframe
-              src={`https://embed.nicovideo.jp/watch/${currentPV.pvId}?autoplay=1`}
-              className="w-full h-full"
-              allow="autoplay; fullscreen"
-              allowFullScreen
-              title={song?.name}
-              style={{ border: 'none' }}
-            />
-          ) : (
-            /* YouTube 表示用iframe（muted・音声はPlayerBarのPlayerEmbedから） */
-            <iframe
-              src={`https://www.youtube.com/embed/${currentPV.pvId}?autoplay=0&mute=1&controls=1&modestbranding=1&rel=0`}
-              className="w-full h-full"
-              allow="autoplay; encrypted-media"
-              allowFullScreen
-              title={song?.name}
-            />
-          )
+        {isCurrentlyPlaying ? (
+          <div ref={playerContainerRef} className="w-full h-full" />
         ) : song?.thumbUrl ? (
           <img
             src={song.thumbUrl}

@@ -63,6 +63,10 @@ interface PlayerState {
   setIsPlaying: (isPlaying: boolean) => void;
   setError: (error: string | null) => void;
   tryNextPV: () => void;
+
+  // 詳細パネルのプレイヤー表示先DOM
+  detailPanelEl: HTMLElement | null;
+  setDetailPanelEl: (el: HTMLElement | null) => void;
   
   // キュー操作
   setQueue: (songs: Song[], startIndex?: number) => void;
@@ -78,6 +82,8 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   volume: 80,
   progress: 0,
   duration: 0,
+  detailPanelEl: null,
+  setDetailPanelEl: (el) => set({ detailPanelEl: el }),
   queue: [],
   queueIndex: -1,
   error: null,

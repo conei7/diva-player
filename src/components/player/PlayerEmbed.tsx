@@ -1,5 +1,6 @@
 /// <reference types="@types/youtube" />
 import { useEffect, useRef, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { usePlayerStore } from '../../stores/playerStore';
 
 /**
@@ -80,7 +81,7 @@ function loadYouTubeAPI(): Promise<void> {
 }
 
 export default function PlayerEmbed() {
-  const { currentPV, isPlaying, volume, progress, setProgress, setDuration, setIsPlaying, setError, next, tryNextPV } = usePlayerStore();
+  const { currentPV, isPlaying, volume, progress, setProgress, setDuration, setIsPlaying, setError, next, tryNextPV, detailPanelEl } = usePlayerStore();
   const ytPlayerRef = useRef<YT.Player | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const progressTimerRef = useRef<number | null>(null);
@@ -248,13 +249,18 @@ export default function PlayerEmbed() {
 
   // ニコニコ動画の埋め込み
   if (currentPV?.service === 'NicoNicoDouga') {
-    return <NicoEmbed pvId={currentPV.pvId} name={currentPV.name} />;
+    const nicoContent = <NicoEmbed pvId={currentPV.pvId} name={currentPV.name} />;
+    if (detailPanelEl) return createPortal(nicoContent, detailPanelEl);
+    return nicoContent;
   }
 
-  // YouTube プレイヤーコンテナ（常にここに描画）
-  return (
+  // YouTube プレイヤーコンテナ
+  const ytContent = (
     <div ref={containerRef} className="w-full h-full">
       <div id="yt-player-embed" />
     </div>
   );
+
+  if (detailPanelEl) return createPortal(ytContent, detailPanelEl);
+  return ytContent;
 }
