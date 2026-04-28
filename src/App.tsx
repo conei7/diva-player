@@ -12,7 +12,7 @@ import PlaylistPage from './pages/PlaylistPage';
  */
 export default function App() {
   return (
-    <BrowserRouter>
+    <BrowserRouter basename="/diva-player">
       <Routes>
         <Route element={<Layout />}>
           <Route path="/" element={<SearchPage />} />
