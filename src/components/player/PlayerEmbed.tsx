@@ -119,6 +119,9 @@ export default function PlayerEmbed() {
         height: '100%',
         playerVars: {
           autoplay: 1,
+          // mute: 1 でミュート自動再生を許可し、onReady でアンミュートする。
+          // これにより Chrome の Autoplay Policy (クロスオリジン iframe 制限) を回避できる。
+          mute: 1,
           controls: 0,
           disablekb: 1,
           modestbranding: 1,
@@ -128,16 +131,23 @@ export default function PlayerEmbed() {
         },
         events: {
           onReady: (event: YT.PlayerEvent) => {
+            // ミュート解除して指定ボリュームを設定してから再生開始
+            event.target.unMute();
             event.target.setVolume(volume);
-            setDuration(event.target.getDuration());
+            event.target.playVideo();
+            const dur = event.target.getDuration();
+            if (dur > 0) setDuration(dur);
             startProgressTimer();
           },
           onStateChange: (event: YT.OnStateChangeEvent) => {
             switch (event.data) {
-              case window.YT.PlayerState.PLAYING:
+              case window.YT.PlayerState.PLAYING: {
                 setIsPlaying(true);
+                const dur = event.target.getDuration();
+                if (dur > 0) setDuration(dur);
                 startProgressTimer();
                 break;
+              }
               case window.YT.PlayerState.PAUSED:
                 setIsPlaying(false);
                 stopProgressTimer();
