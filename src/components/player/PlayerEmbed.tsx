@@ -324,18 +324,10 @@ export default function PlayerEmbed() {
     return <NicoEmbed pvId={currentPV.pvId} name={currentPV.name} />;
   }
 
-  // YouTube プレイヤーコンテナ
-  // detail-panel-player が存在する場合はそちらにPortalで描画（詳細パネル内再生）
-  const portalTarget = document.getElementById('detail-panel-player');
-  const playerContent = (
+  // YouTube プレイヤーコンテナ（常にここに描画）
+  return (
     <div ref={containerRef} className="w-full h-full">
       <div id="yt-player-embed" />
     </div>
   );
-
-  if (portalTarget) {
-    return createPortal(playerContent, portalTarget);
-  }
-
-  return playerContent;
 }
