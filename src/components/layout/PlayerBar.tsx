@@ -60,6 +60,12 @@ export default function PlayerBar() {
               </svg>
             </div>
           )}
+          {currentPV?.pvType === 'Other' && (
+            <div className="absolute bottom-0 right-0 text-[9px] font-bold px-1 py-0.5 leading-none"
+                 style={{ background: 'rgba(234,179,8,0.85)', color: '#000', borderTopLeftRadius: '4px' }}>
+              非公式
+            </div>
+          )}
         </div>
 
         {/* 曲情報 */}
@@ -70,11 +76,6 @@ export default function PlayerBar() {
                 <p className="text-sm font-semibold truncate" style={{ color: 'var(--color-text-primary)' }}>
                   {currentSong.name}
                 </p>
-                {currentPV?.pvType === 'Other' && (
-                  <span className="flex-shrink-0 text-[10px] px-1.5 py-0.5 rounded font-medium" style={{ background: 'rgba(234,179,8,0.2)', color: 'rgb(234,179,8)' }}>
-                    非公式
-                  </span>
-                )}
               </div>
               <p className="text-xs truncate mt-0.5" style={{ color: 'var(--color-text-secondary)' }}>
                 {currentSong.artistString}

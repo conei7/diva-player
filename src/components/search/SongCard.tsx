@@ -26,6 +26,10 @@ export default function SongCard({ song, index, onAddToQueue, onSelect }: SongCa
     return acc;
   }, new Set<string>()) ?? new Set();
 
+  // YouTubeが全てpvType:'Other'か（非公式のみ）
+  const ytPVs = song.pvs?.filter(pv => !pv.disabled && pv.service === 'Youtube') ?? [];
+  const isYTUnofficialOnly = ytPVs.length > 0 && ytPVs.every(pv => pv.pvType === 'Other');
+
   // 再生時間フォーマット
   const formatDuration = (seconds: number): string => {
     if (!seconds) return '--:--';
@@ -121,7 +125,7 @@ export default function SongCard({ song, index, onAddToQueue, onSelect }: SongCa
           {pvServices.has('Youtube') && (
             <span className="text-[10px] font-bold px-1.5 py-0.5 rounded"
                   style={{ background: 'rgba(239, 68, 68, 0.12)', color: '#ef4444' }}>
-              YT
+              {isYTUnofficialOnly ? '非公式YT' : 'YT'}
             </span>
           )}
           {pvServices.has('NicoNicoDouga') && (
