@@ -51,7 +51,8 @@ function PVBadge({ pv }: { pv: PV }) {
 export default function SongDetailsPanel({ song, onClose, inline }: SongDetailsPanelProps) {
   const { searchByArtistId } = useSearchStore();
   const { currentSong, currentPV } = usePlayerStore();
-  const isCurrentlyPlaying = currentSong?.id === song?.id && !!currentPV && currentPV.service === 'Youtube';
+  const isCurrentlyPlaying = currentSong?.id === song?.id && !!currentPV &&
+    (currentPV.service === 'Youtube' || currentPV.service === 'NicoNicoDouga');
   // Esc キーで閉じる (overlay mode only)
   useEffect(() => {
     if (inline) return;
@@ -83,14 +84,26 @@ export default function SongDetailsPanel({ song, onClose, inline }: SongDetailsP
       {/* サムネイル / 動画プレイヤー */}
       <div className="w-full rounded-lg overflow-hidden" style={{ aspectRatio: '16/9', background: 'var(--color-surface)' }}>
         {isCurrentlyPlaying && currentPV ? (
-          /* 表示用iframe（muted・音声なし）- 音声はPlayerBarのPlayerEmbedから */
-          <iframe
-            src={`https://www.youtube.com/embed/${currentPV.pvId}?autoplay=0&mute=1&controls=1&modestbranding=1&rel=0`}
-            className="w-full h-full"
-            allow="autoplay; encrypted-media"
-            allowFullScreen
-            title={song?.name}
-          />
+          currentPV.service === 'NicoNicoDouga' ? (
+            /* ニコニコ embed.nicovideo.jp iframe */
+            <iframe
+              src={`https://embed.nicovideo.jp/watch/${currentPV.pvId}?autoplay=1`}
+              className="w-full h-full"
+              allow="autoplay; fullscreen"
+              allowFullScreen
+              title={song?.name}
+              style={{ border: 'none' }}
+            />
+          ) : (
+            /* YouTube 表示用iframe（muted・音声はPlayerBarのPlayerEmbedから） */
+            <iframe
+              src={`https://www.youtube.com/embed/${currentPV.pvId}?autoplay=0&mute=1&controls=1&modestbranding=1&rel=0`}
+              className="w-full h-full"
+              allow="autoplay; encrypted-media"
+              allowFullScreen
+              title={song?.name}
+            />
+          )
         ) : song?.thumbUrl ? (
           <img
             src={song.thumbUrl}
