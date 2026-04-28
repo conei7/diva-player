@@ -19,9 +19,9 @@ export function getPlayablePV(song: Song): PV | null {
   // NicoNico は iframe 埋め込み制限があるため YouTube を最優先
   const priorities: Array<{ service: string; pvType: string }> = [
     { service: 'Youtube', pvType: 'Original' },      // 1. 公式YT
-    { service: 'NicoNicoDouga', pvType: 'Original' }, // 2. 公式ニコ
-    { service: 'Youtube', pvType: 'Reprint' },        // 3. 非公式YT
-    { service: 'Youtube', pvType: 'Other' },          // 3. 非公式YT
+    { service: 'Youtube', pvType: 'Reprint' },        // 2. 非公式YT
+    { service: 'Youtube', pvType: 'Other' },          // 2. 非公式YT
+    { service: 'NicoNicoDouga', pvType: 'Original' }, // 3. 公式ニコ
     { service: 'NicoNicoDouga', pvType: 'Reprint' },  // 4. 非公式ニコ
     { service: 'NicoNicoDouga', pvType: 'Other' },    // 4. 非公式ニコ
   ];
