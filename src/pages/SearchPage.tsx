@@ -17,6 +17,7 @@ export default function SearchPage() {
   const { addToQueue } = usePlayerStore();
   const [topSongs, setTopSongs] = useState<Song[]>([]);
   const [topLoading, setTopLoading] = useState(true);
+  const [isAdvancedOpen, setIsAdvancedOpen] = useState(false);
   const fetchedRef = useRef(false);
 
   // 初回: 人気曲ロード（通常検索APIをFavoritedTimesソートで代用）
@@ -64,8 +65,30 @@ export default function SearchPage() {
         </p>
       </div>
 
-      {/* 検索バー */}
-      <SearchBar />
+      {/* 検索バー + 詳細検索ボタン */}
+      <div className="space-y-2">
+        <SearchBar />
+        <div className="flex justify-end">
+          <button
+            onClick={() => setIsAdvancedOpen(o => !o)}
+            className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg transition-colors"
+            style={{
+              background: isAdvancedOpen ? 'rgba(139, 92, 246, 0.15)' : 'var(--color-surface)',
+              color: isAdvancedOpen ? 'var(--color-accent-purple)' : 'var(--color-text-secondary)',
+              border: isAdvancedOpen ? '1px solid rgba(139, 92, 246, 0.35)' : '1px solid var(--color-border)',
+            }}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M10 18h4v-2h-4v2zM3 6v2h18V6H3zm3 7h12v-2H6v2z"/>
+            </svg>
+            詳細検索
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"
+                 style={{ transform: isAdvancedOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }}>
+              <path d="M7 10l5 5 5-5z"/>
+            </svg>
+          </button>
+        </div>
+      </div>
 
       {/* アーティスト検索モードバナー */}
       {hasSearched && resolvedArtistId && (
@@ -78,8 +101,12 @@ export default function SearchPage() {
         </div>
       )}
 
-      {/* フィルター */}
-      {hasSearched && <SearchFilters />}
+      {/* フィルター（詳細検索パネル） */}
+      {isAdvancedOpen && (
+        <div className="animate-fade-in">
+          <SearchFilters />
+        </div>
+      )}
 
       {/* エラー表示 */}
       {error && (
