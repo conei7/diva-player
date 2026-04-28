@@ -55,15 +55,14 @@ export default function SongDetailsPanel({ song, onClose, inline }: SongDetailsP
     (currentPV.service === 'Youtube' || currentPV.service === 'NicoNicoDouga');
   const playerContainerRef = useRef<HTMLDivElement>(null);
 
-  // プレイヤーコンテナをstoreに登録
+  // プレイヤーコンテナをstoreに登録（isCurrentlyPlayingの場合のみ）
   useEffect(() => {
     if (isCurrentlyPlaying && playerContainerRef.current) {
       setDetailPanelEl(playerContainerRef.current);
-    }
-    return () => {
+    } else if (!isCurrentlyPlaying) {
       setDetailPanelEl(null);
-    };
-  }, [isCurrentlyPlaying, setDetailPanelEl]);
+    }
+  });  // 毎レンダー後に実行（refのDOM更新を確実に捕捉）
   // Esc キーで閉じる (overlay mode only)
   useEffect(() => {
     if (inline) return;
