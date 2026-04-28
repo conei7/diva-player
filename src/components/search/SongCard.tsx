@@ -30,6 +30,10 @@ export default function SongCard({ song, index, onAddToQueue, onSelect }: SongCa
   const ytPVs = song.pvs?.filter(pv => !pv.disabled && pv.service === 'Youtube') ?? [];
   const isYTUnofficialOnly = ytPVs.length > 0 && ytPVs.every(pv => pv.pvType !== 'Original');
 
+  // ニコニコにOriginalがない（非公式のみ）
+  const nicoPVs = song.pvs?.filter(pv => !pv.disabled && pv.service === 'NicoNicoDouga') ?? [];
+  const isNicoUnofficialOnly = nicoPVs.length > 0 && nicoPVs.every(pv => pv.pvType !== 'Original');
+
   // 再生時間フォーマット
   const formatDuration = (seconds: number): string => {
     if (!seconds) return '--:--';
@@ -131,7 +135,7 @@ export default function SongCard({ song, index, onAddToQueue, onSelect }: SongCa
           {pvServices.has('NicoNicoDouga') && (
             <span className="text-[10px] font-bold px-1.5 py-0.5 rounded"
                   style={{ background: 'rgba(59, 130, 246, 0.12)', color: '#3b82f6' }}>
-              ニコ
+              {isNicoUnofficialOnly ? '非公式ニコ' : 'ニコ'}
             </span>
           )}
 

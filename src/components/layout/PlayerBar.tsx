@@ -195,7 +195,7 @@ export default function PlayerBar() {
             >
               {currentPV.service === 'Youtube'
                 ? (currentPV.pvType !== 'Original' ? '非公式YouTube' : 'YouTube')
-                : 'ニコニコ'}
+                : (currentPV.pvType !== 'Original' ? '非公式ニコニコ' : 'ニコニコ')}
             </span>
           </div>
         )}
