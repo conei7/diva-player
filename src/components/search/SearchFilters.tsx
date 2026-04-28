@@ -6,40 +6,77 @@ import type { Artist } from '../../types/vocadb';
 
 const SORT_OPTIONS: { value: SongSortRule; label: string }[] = [
   { value: 'FavoritedTimes', label: '人気順' },
-  { value: 'RatingScore', label: '評価順' },
-  { value: 'PublishDate', label: '公開日順' },
-  { value: 'AdditionDate', label: '登録日順' },
-  { value: 'Name', label: '名前順' },
+  { value: 'RatingScore',    label: '評価順' },
+  { value: 'PublishDate',    label: '公開日順' },
+  { value: 'AdditionDate',   label: '登録日順' },
+  { value: 'Name',           label: '名前順' },
 ];
 
 const MATCH_MODES: { value: VocalistMatchMode; label: string }[] = [
-  { value: 'All', label: 'すべて含む' },
-  { value: 'Any', label: 'いずれかを含む' },
+  { value: 'All',   label: 'すべて含む' },
+  { value: 'Any',   label: 'いずれかを含む' },
   { value: 'Exact', label: '完全一致' },
 ];
 
-// 有名ボーカリストのプリセット
-const PRESET_VOCALISTS: { id: number; name: string }[] = [
-  { id: 1,     name: '初音ミク' },
-  { id: 2,     name: '巡音ルカ' },
-  { id: 14,    name: '鏡音リン' },
-  { id: 15,    name: '鏡音レン' },
-  { id: 71,    name: 'KAITO' },
-  { id: 176,   name: 'MEIKO' },
-  { id: 3,     name: 'GUMI' },
-  { id: 504,   name: 'IA' },
-  { id: 21165, name: 'flower' },
-  { id: 116,   name: '重音テト' },
-  { id: 623,   name: '結月ゆかり' },
-  { id: 16933, name: '東北ずん子' },
-  { id: 36207, name: '東北きりたん' },
-  { id: 83928, name: '可不' },
-  { id: 40866, name: 'Fukase' },
+interface PresetVocalist { id: number; name: string; }
+
+const VOCALIST_CATEGORIES: { label: string; vocalists: PresetVocalist[] }[] = [
+  {
+    label: 'ボカロ',
+    vocalists: [
+      { id: 1,     name: '初音ミク' },
+      { id: 2,     name: '巡音ルカ' },
+      { id: 14,    name: '鏡音リン' },
+      { id: 15,    name: '鏡音レン' },
+      { id: 71,    name: 'KAITO' },
+      { id: 176,   name: 'MEIKO' },
+      { id: 3,     name: 'GUMI' },
+      { id: 504,   name: 'IA' },
+      { id: 21165, name: 'flower' },
+      { id: 40866, name: 'Fukase' },
+      { id: 139,   name: 'Lily' },
+      { id: 1766,  name: 'MAYU' },
+      { id: 381,   name: 'CUL' },
+      { id: 117,   name: 'VY1' },
+      { id: 118,   name: 'VY2' },
+      { id: 146,   name: 'SF-A2 miki' },
+      { id: 191,   name: '歌愛ユキ' },
+      { id: 156,   name: '蒼姫ラピス' },
+      { id: 383,   name: 'Oliver' },
+      { id: 16545, name: 'kokone' },
+      { id: 623,   name: '結月ゆかり' },
+    ],
+  },
+  {
+    label: 'UTAU',
+    vocalists: [
+      { id: 116,   name: '重音テト' },
+      { id: 1746,  name: '波音リツ' },
+      { id: 58538, name: 'ずんだもん' },
+    ],
+  },
+  {
+    label: 'CeVIO / SynthV',
+    vocalists: [
+      { id: 83928, name: '可不' },
+      { id: 31062, name: 'OИE' },
+      { id: 36207, name: '東北きりたん' },
+      { id: 81912, name: '琴葉茜・葵' },
+    ],
+  },
+  {
+    label: 'ボイロ',
+    vocalists: [
+      { id: 16933, name: '東北ずん子' },
+      { id: 40988, name: '琴葉茜' },
+      { id: 2053,  name: '弦巻マキ' },
+      { id: 87780, name: '音街ウナ' },
+    ],
+  },
 ];
 
-/**
- * SearchFilters - ソート順・シンガーフィルターなどの検索フィルター
- */
+const ALL_PRESETS: PresetVocalist[] = VOCALIST_CATEGORIES.flatMap(c => c.vocalists);
+
 export default function SearchFilters() {
   const {
     sort, setSort, search, totalCount, hasSearched,
@@ -52,7 +89,6 @@ export default function SearchFilters() {
   const [showSuggestions, setShowSuggestions] = useState(false);
   const suggestRef = useRef<HTMLDivElement>(null);
 
-  // ボーカリスト名でサジェスト検索（300ms デバウンス）
   useEffect(() => {
     if (vocalistQuery.trim().length < 1) { setSuggestions([]); return; }
     const timer = setTimeout(async () => {
@@ -63,7 +99,6 @@ export default function SearchFilters() {
     return () => clearTimeout(timer);
   }, [vocalistQuery]);
 
-  // サジェスト外クリックで閉じる
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       if (suggestRef.current && !suggestRef.current.contains(e.target as Node)) {
@@ -74,12 +109,13 @@ export default function SearchFilters() {
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
-  const handleSelectVocalist = (id: number, name: string) => {
-    const isSelected = vocalistFilters.some(v => v.id === id);
-    if (isSelected) {
-      removeVocalistFilter(id);
+  const selectedIds = new Set(vocalistFilters.map(v => v.id));
+
+  const handleTogglePreset = (v: PresetVocalist) => {
+    if (selectedIds.has(v.id)) {
+      removeVocalistFilter(v.id);
     } else {
-      addVocalistFilter({ id, name });
+      addVocalistFilter(v);
     }
     search();
   };
@@ -92,7 +128,7 @@ export default function SearchFilters() {
     search();
   };
 
-  const selectedIds = new Set(vocalistFilters.map(v => v.id));
+  const nonPresetSelected = vocalistFilters.filter(v => !ALL_PRESETS.some(p => p.id === v.id));
 
   return (
     <div className="flex flex-col gap-4 rounded-xl p-4"
@@ -100,7 +136,9 @@ export default function SearchFilters() {
 
       {/* ===== シンガーで絞り込み ===== */}
       <div className="flex flex-col gap-3">
-        <div className="flex items-center justify-between">
+
+        {/* ヘッダー：タイトル + 一致条件 */}
+        <div className="flex items-center justify-between flex-wrap gap-2">
           <div className="flex items-center gap-2">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"
                  style={{ color: 'var(--color-accent-purple)', flexShrink: 0 }}>
@@ -111,7 +149,6 @@ export default function SearchFilters() {
             </span>
           </div>
 
-          {/* 一致条件セレクター */}
           <div className="flex items-center gap-1">
             {MATCH_MODES.map(m => (
               <button
@@ -132,35 +169,45 @@ export default function SearchFilters() {
           </div>
         </div>
 
-        {/* プリセットボタン */}
-        <div className="flex flex-wrap gap-1.5">
-          {PRESET_VOCALISTS.map(v => {
-            const isOn = selectedIds.has(v.id);
-            return (
-              <button
-                key={v.id}
-                onClick={() => handleSelectVocalist(v.id, v.name)}
-                className="text-xs px-2.5 py-1 rounded-full transition-all duration-150"
-                style={{
-                  background: isOn ? 'rgba(139, 92, 246, 0.2)' : 'var(--color-surface-elevated)',
-                  color: isOn ? 'var(--color-accent-purple)' : 'var(--color-text-secondary)',
-                  border: isOn
-                    ? '1px solid rgba(139, 92, 246, 0.5)'
-                    : '1px solid var(--color-border)',
-                  fontWeight: isOn ? 600 : 400,
-                }}
-              >
-                {isOn && <span className="mr-0.5 text-[10px]">✓</span>}
-                {v.name}
-              </button>
-            );
-          })}
-        </div>
+        {/* カテゴリ別プリセットボタン */}
+        {VOCALIST_CATEGORIES.map(cat => (
+          <div key={cat.label} className="flex flex-col gap-1.5">
+            <span className="text-[10px] font-bold tracking-wider uppercase"
+                  style={{ color: 'var(--color-text-muted)', opacity: 0.7 }}>
+              {cat.label}
+            </span>
+            <div className="flex flex-wrap gap-1.5">
+              {cat.vocalists.map(v => {
+                const isOn = selectedIds.has(v.id);
+                return (
+                  <button
+                    key={v.id}
+                    onClick={() => handleTogglePreset(v)}
+                    className="text-xs px-2.5 py-1 rounded-full transition-all duration-150"
+                    style={{
+                      background: isOn ? 'rgba(139, 92, 246, 0.2)' : 'var(--color-surface-elevated)',
+                      color: isOn ? 'var(--color-accent-purple)' : 'var(--color-text-secondary)',
+                      border: isOn
+                        ? '1px solid rgba(139, 92, 246, 0.5)'
+                        : '1px solid var(--color-border)',
+                      fontWeight: isOn ? 600 : 400,
+                    }}
+                  >
+                    {isOn && <span className="mr-0.5 text-[10px]">✓</span>}
+                    {v.name}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ))}
 
         {/* その他: テキスト入力 + サジェスト */}
         <div className="relative" ref={suggestRef}>
           <div className="flex items-center gap-2 text-xs mb-1" style={{ color: 'var(--color-text-muted)' }}>
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M15.5 14h-.79l-.28-.27A6.47 6.47 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M15.5 14h-.79l-.28-.27A6.47 6.47 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/>
+            </svg>
             その他のシンガーを検索
           </div>
           <input
@@ -196,32 +243,30 @@ export default function SearchFilters() {
           )}
         </div>
 
-        {/* 選択中のシンガー（プリセット外のものだけ表示） */}
-        {vocalistFilters.filter(v => !PRESET_VOCALISTS.some(p => p.id === v.id)).length > 0 && (
+        {/* プリセット外の選択チップ */}
+        {nonPresetSelected.length > 0 && (
           <div className="flex flex-wrap gap-1.5">
-            {vocalistFilters
-              .filter(v => !PRESET_VOCALISTS.some(p => p.id === v.id))
-              .map(v => (
-                <span
-                  key={v.id}
-                  className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full"
-                  style={{
-                    background: 'rgba(139, 92, 246, 0.15)',
-                    color: 'var(--color-accent-purple)',
-                    border: '1px solid rgba(139, 92, 246, 0.35)',
-                  }}
+            {nonPresetSelected.map(v => (
+              <span
+                key={v.id}
+                className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full"
+                style={{
+                  background: 'rgba(139, 92, 246, 0.15)',
+                  color: 'var(--color-accent-purple)',
+                  border: '1px solid rgba(139, 92, 246, 0.35)',
+                }}
+              >
+                {v.name}
+                <button
+                  onClick={() => { removeVocalistFilter(v.id); search(); }}
+                  className="opacity-70 hover:opacity-100 transition-opacity ml-0.5"
                 >
-                  {v.name}
-                  <button
-                    onClick={() => { removeVocalistFilter(v.id); search(); }}
-                    className="opacity-70 hover:opacity-100 transition-opacity ml-0.5"
-                  >
-                    <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
-                      <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
-                    </svg>
-                  </button>
-                </span>
-              ))}
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
+                  </svg>
+                </button>
+              </span>
+            ))}
           </div>
         )}
       </div>
