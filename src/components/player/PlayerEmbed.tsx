@@ -28,29 +28,25 @@ declare global {
  * 失敗した場合はタイマーベースのフォールバックで経過時間を推定する。
  */
 function NicoEmbed({ pvId, name, duration: songDuration }: { pvId: string; name?: string; duration?: number }) {
-  const { isPlaying, volume, setProgress, setDuration, setIsPlaying, next } = usePlayerStore();
+  const { volume, setProgress, setDuration, setIsPlaying, next } = usePlayerStore();
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const embedUrl = `https://embed.nicovideo.jp/watch/${pvId}?autoplay=1&allowProgrammaticFullscreen=1`;
   const NICO_ORIGIN = 'https://embed.nicovideo.jp';
 
-  // タイマーベースフォールバック用
   const timerRef = useRef<number | null>(null);
   const playStartRef = useRef<number | null>(null);
   const baseProgressRef = useRef<number>(0);
-  const postMessageWorkedRef = useRef(false);
+  const isActuallyPlayingRef = useRef(false);
 
   const stopTimer = useCallback(() => {
-    if (timerRef.current) {
-      clearInterval(timerRef.current);
-      timerRef.current = null;
-    }
+    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+    playStartRef.current = null;
   }, []);
 
   const startTimer = useCallback(() => {
     stopTimer();
     playStartRef.current = Date.now();
     timerRef.current = window.setInterval(() => {
-      if (postMessageWorkedRef.current) { stopTimer(); return; }
       if (playStartRef.current !== null) {
         const elapsed = (Date.now() - playStartRef.current) / 1000;
         setProgress(baseProgressRef.current + elapsed);
@@ -58,30 +54,46 @@ function NicoEmbed({ pvId, name, duration: songDuration }: { pvId: string; name?
     }, 500);
   }, [setProgress, stopTimer]);
 
-  // iframeロード時: durationのみセット
+  // マウント時: ニコニコはautoplayしないので一時停止状態にリセット
+  useEffect(() => {
+    setIsPlaying(false);
+    setProgress(0);
+    baseProgressRef.current = 0;
+    if (songDuration && songDuration > 0) setDuration(songDuration);
+    return () => stopTimer();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pvId]);
+
+  // iframeロード後にニコニコへ再生コマンドを送信
   const handleIframeLoad = useCallback(() => {
     if (songDuration && songDuration > 0) setDuration(songDuration);
+    setTimeout(() => {
+      iframeRef.current?.contentWindow?.postMessage(
+        JSON.stringify({ eventName: 'player:play' }),
+        NICO_ORIGIN,
+      );
+    }, 500);
   }, [setDuration, songDuration]);
 
-  // ニコニコからのpostMessageを受信（動作した場合はタイマーを停止）
+  // ニコニコからのpostMessageを受信
   useEffect(() => {
     const handler = (e: MessageEvent) => {
-      if (e.origin !== NICO_ORIGIN) return;
-      let msg: { eventName: string; data?: Record<string, unknown> };
+      // embed.nicovideo.jp か www.nicovideo.jp からのメッセージのみ処理
+      if (!e.origin.includes('nicovideo.jp')) return;
+      let msg: { eventName?: string; data?: Record<string, unknown> };
       try {
         msg = typeof e.data === 'string' ? JSON.parse(e.data) : e.data;
       } catch {
         return;
       }
+      if (!msg.eventName) return;
       switch (msg.eventName) {
         case 'player:loadComplete': {
-          postMessageWorkedRef.current = true;
           const len = (msg.data?.videoInfo as { lengthInSeconds?: number } | undefined)?.lengthInSeconds;
           if (typeof len === 'number' && len > 0) setDuration(len);
           break;
         }
         case 'player:currentTime': {
-          postMessageWorkedRef.current = true;
           const t = (msg.data as { currentTime?: number } | undefined)?.currentTime;
           if (typeof t === 'number') {
             baseProgressRef.current = t;
@@ -91,16 +103,20 @@ function NicoEmbed({ pvId, name, duration: songDuration }: { pvId: string; name?
           break;
         }
         case 'player:play':
-          postMessageWorkedRef.current = true;
+          isActuallyPlayingRef.current = true;
           setIsPlaying(true);
           startTimer();
           break;
         case 'player:pause':
-          postMessageWorkedRef.current = true;
+          isActuallyPlayingRef.current = false;
           setIsPlaying(false);
+          if (playStartRef.current !== null) {
+            baseProgressRef.current += (Date.now() - playStartRef.current) / 1000;
+          }
           stopTimer();
           break;
         case 'player:ended':
+          isActuallyPlayingRef.current = false;
           stopTimer();
           next();
           break;
@@ -108,20 +124,7 @@ function NicoEmbed({ pvId, name, duration: songDuration }: { pvId: string; name?
     };
     window.addEventListener('message', handler);
     return () => window.removeEventListener('message', handler);
-  }, [setProgress, setDuration, setIsPlaying, next, stopTimer]);
-
-  // isPlayingの変化でタイマー開始・停止
-  useEffect(() => {
-    if (isPlaying) {
-      startTimer();
-    } else {
-      if (playStartRef.current !== null && !postMessageWorkedRef.current) {
-        const elapsed = (Date.now() - playStartRef.current) / 1000;
-        baseProgressRef.current += elapsed;
-      }
-      stopTimer();
-    }
-  }, [isPlaying, startTimer, stopTimer]);
+  }, [setProgress, setDuration, setIsPlaying, next, startTimer, stopTimer]);
 
   // ボリューム同期
   useEffect(() => {
@@ -130,10 +133,6 @@ function NicoEmbed({ pvId, name, duration: songDuration }: { pvId: string; name?
       NICO_ORIGIN,
     );
   }, [volume]);
-
-  useEffect(() => {
-    return () => stopTimer();
-  }, [stopTimer]);
 
   return (
     <iframe
