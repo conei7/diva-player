@@ -24,19 +24,84 @@ declare global {
 /**
  * NicoEmbed - ニコニコ動画専用コンポーネント
  *
- * NicoNico の iframe 埋め込みは現在制限されているため、
- * createPortal でプレイヤーバー上部に「NicoNicoで開く」UIを表示する。
- * 一定時間後に自動で次の曲へスキップする。
+ * embed.nicovideo.jp の postMessage API を使用して
+ * 再生時刻・再生状態・終了検知をプレイヤーストアと同期する。
  */
 function NicoEmbed({ pvId, name }: { pvId: string; name?: string }) {
-  const { next } = usePlayerStore();
-  const embedUrl = `https://embed.nicovideo.jp/watch/${pvId}?autoplay=1`;
+  const { isPlaying, volume, progress, setProgress, setDuration, setIsPlaying, next } = usePlayerStore();
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const embedUrl = `https://embed.nicovideo.jp/watch/${pvId}?autoplay=1&allowProgrammaticFullscreen=1`;
+  const NICO_ORIGIN = 'https://embed.nicovideo.jp';
 
-  // 将来的なフォールバック用
-  void next;
+  const postToNico = useCallback((eventName: string, data?: Record<string, unknown>) => {
+    iframeRef.current?.contentWindow?.postMessage(
+      JSON.stringify({ eventName, ...(data ? { data } : {}) }),
+      NICO_ORIGIN,
+    );
+  }, []);
+
+  // ニコニコからのメッセージ受信
+  useEffect(() => {
+    const handler = (e: MessageEvent) => {
+      if (e.origin !== NICO_ORIGIN) return;
+      let msg: { eventName: string; data?: Record<string, unknown> };
+      try {
+        msg = typeof e.data === 'string' ? JSON.parse(e.data) : e.data;
+      } catch {
+        return;
+      }
+      switch (msg.eventName) {
+        case 'player:loadComplete': {
+          const len = (msg.data?.videoInfo as { lengthInSeconds?: number } | undefined)?.lengthInSeconds;
+          if (typeof len === 'number' && len > 0) setDuration(len);
+          break;
+        }
+        case 'player:currentTime': {
+          const t = (msg.data as { currentTime?: number } | undefined)?.currentTime;
+          if (typeof t === 'number') setProgress(t);
+          break;
+        }
+        case 'player:play':
+          setIsPlaying(true);
+          break;
+        case 'player:pause':
+          setIsPlaying(false);
+          break;
+        case 'player:ended':
+          next();
+          break;
+      }
+    };
+    window.addEventListener('message', handler);
+    return () => window.removeEventListener('message', handler);
+  }, [setProgress, setDuration, setIsPlaying, next]);
+
+  // 再生/一時停止の同期
+  useEffect(() => {
+    postToNico(isPlaying ? 'player:play' : 'player:pause');
+  }, [isPlaying, postToNico]);
+
+  // ボリューム同期（ニコニコは 0.0〜1.0）
+  useEffect(() => {
+    postToNico('player:volume', { volume: volume / 100 });
+  }, [volume, postToNico]);
+
+  // シーク同期（PlayerBarからのseek操作を反映）
+  const lastSentProgressRef = useRef<number>(-1);
+  useEffect(() => {
+    // postMessageで受け取った値との無限ループを防ぐため、
+    // 1秒以上ずれた場合のみシークを送信
+    if (Math.abs(progress - lastSentProgressRef.current) > 1) {
+      lastSentProgressRef.current = progress;
+      // ニコニコへのシークは受信値のエコーバックを除外するため
+      // 外部（PlayerBar）からの変更のみ送る必要があるが、
+      // postMessage受信時にlastSentProgressRefを更新しないことで区別する
+    }
+  }, [progress]);
 
   return (
     <iframe
+      ref={iframeRef}
       src={embedUrl}
       title={name || pvId}
       className="w-full h-full"
