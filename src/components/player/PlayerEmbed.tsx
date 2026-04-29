@@ -28,7 +28,7 @@ declare global {
  * 失敗した場合はタイマーベースのフォールバックで経過時間を推定する。
  */
 function NicoEmbed({ pvId, name, duration: songDuration }: { pvId: string; name?: string; duration?: number }) {
-  const { isPlaying, volume, progress, setProgress, setDuration, setIsPlaying, next } = usePlayerStore();
+  const { isPlaying, volume, setProgress, setDuration, setIsPlaying, next } = usePlayerStore();
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const embedUrl = `https://embed.nicovideo.jp/watch/${pvId}?autoplay=1&allowProgrammaticFullscreen=1`;
   const NICO_ORIGIN = 'https://embed.nicovideo.jp';
@@ -58,21 +58,10 @@ function NicoEmbed({ pvId, name, duration: songDuration }: { pvId: string; name?
     }, 500);
   }, [setProgress, stopTimer]);
 
-  const postToNico = useCallback((eventName: string, data?: Record<string, unknown>) => {
-    iframeRef.current?.contentWindow?.postMessage(
-      JSON.stringify({ eventName, ...(data ? { data } : {}) }),
-      NICO_ORIGIN,
-    );
-  }, []);
-
-  // iframeロード時にタイマー開始（autoplay想定）
+  // iframeロード時: durationのみセット
   const handleIframeLoad = useCallback(() => {
-    baseProgressRef.current = 0;
-    // songDurationが既知の場合は即座にセット（postMessageのフォールバック）
     if (songDuration && songDuration > 0) setDuration(songDuration);
-    startTimer();
-    setIsPlaying(true);
-  }, [startTimer, setIsPlaying, setDuration, songDuration]);
+  }, [setDuration, songDuration]);
 
   // ニコニコからのpostMessageを受信（動作した場合はタイマーを停止）
   useEffect(() => {
@@ -119,24 +108,28 @@ function NicoEmbed({ pvId, name, duration: songDuration }: { pvId: string; name?
     };
     window.addEventListener('message', handler);
     return () => window.removeEventListener('message', handler);
-  }, [setProgress, setDuration, setIsPlaying, next, startTimer, stopTimer]);
+  }, [setProgress, setDuration, setIsPlaying, next, stopTimer]);
 
-  // 再生/一時停止の同期
+  // isPlayingの変化でタイマー開始・停止
   useEffect(() => {
-    postToNico(isPlaying ? 'player:play' : 'player:pause');
     if (isPlaying) {
       startTimer();
     } else {
+      if (playStartRef.current !== null && !postMessageWorkedRef.current) {
+        const elapsed = (Date.now() - playStartRef.current) / 1000;
+        baseProgressRef.current += elapsed;
+      }
       stopTimer();
-      baseProgressRef.current = progress;
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isPlaying, postToNico, startTimer, stopTimer]);
+  }, [isPlaying, startTimer, stopTimer]);
 
   // ボリューム同期
   useEffect(() => {
-    postToNico('player:volume', { volume: volume / 100 });
-  }, [volume, postToNico]);
+    iframeRef.current?.contentWindow?.postMessage(
+      JSON.stringify({ eventName: 'player:volume', data: { volume: volume / 100 } }),
+      NICO_ORIGIN,
+    );
+  }, [volume]);
 
   useEffect(() => {
     return () => stopTimer();
