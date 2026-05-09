@@ -64,7 +64,7 @@ function NicoEmbed({ pvId, name, duration: songDuration }: { pvId: string; name?
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pvId]);
 
-  // iframeロード後にニコニコへ再生コマンドを送信
+  // iframeロード後にニコニコへ再生コマンドを送信し、タイマーも開始
   const handleIframeLoad = useCallback(() => {
     if (songDuration && songDuration > 0) setDuration(songDuration);
     setTimeout(() => {
@@ -72,8 +72,14 @@ function NicoEmbed({ pvId, name, duration: songDuration }: { pvId: string; name?
         JSON.stringify({ eventName: 'player:play' }),
         NICO_ORIGIN,
       );
-    }, 500);
-  }, [setDuration, songDuration]);
+      // player:play イベントが返ってこない場合のフォールバック:
+      // autoplay で既に再生開始している可能性があるのでタイマーを直接開始
+      if (!isActuallyPlayingRef.current) {
+        setIsPlaying(true);
+        startTimer();
+      }
+    }, 1000);
+  }, [setDuration, songDuration, startTimer, setIsPlaying]);
 
   // ニコニコからのpostMessageを受信
   useEffect(() => {
@@ -88,12 +94,16 @@ function NicoEmbed({ pvId, name, duration: songDuration }: { pvId: string; name?
       }
       if (!msg.eventName) return;
       switch (msg.eventName) {
-        case 'player:loadComplete': {
+        // === 新API (player: prefix) ===
+        case 'player:loadComplete':
+        // === 旧API ===
+        case 'loadComplete': {
           const len = (msg.data?.videoInfo as { lengthInSeconds?: number } | undefined)?.lengthInSeconds;
           if (typeof len === 'number' && len > 0) setDuration(len);
           break;
         }
         case 'player:currentTime': {
+          // 新API: currentTime は秒単位
           const t = (msg.data as { currentTime?: number } | undefined)?.currentTime;
           if (typeof t === 'number') {
             baseProgressRef.current = t;
@@ -102,11 +112,43 @@ function NicoEmbed({ pvId, name, duration: songDuration }: { pvId: string; name?
           }
           break;
         }
+        case 'seekStatusChange': {
+          // 旧API: currentTime はミリ秒単位
+          const ms = (msg.data as { currentTime?: number } | undefined)?.currentTime;
+          if (typeof ms === 'number') {
+            const secs = ms / 1000;
+            baseProgressRef.current = secs;
+            playStartRef.current = Date.now();
+            setProgress(secs);
+          }
+          break;
+        }
         case 'player:play':
           isActuallyPlayingRef.current = true;
           setIsPlaying(true);
           startTimer();
           break;
+        case 'playerStatusChange': {
+          // 旧API: playerStatus 3=playing, 4=paused, 5=ended
+          const status = (msg.data as { playerStatus?: number } | undefined)?.playerStatus;
+          if (status === 3) {
+            isActuallyPlayingRef.current = true;
+            setIsPlaying(true);
+            startTimer();
+          } else if (status === 4) {
+            isActuallyPlayingRef.current = false;
+            setIsPlaying(false);
+            if (playStartRef.current !== null) {
+              baseProgressRef.current += (Date.now() - playStartRef.current) / 1000;
+            }
+            stopTimer();
+          } else if (status === 5) {
+            isActuallyPlayingRef.current = false;
+            stopTimer();
+            next();
+          }
+          break;
+        }
         case 'player:pause':
           isActuallyPlayingRef.current = false;
           setIsPlaying(false);
