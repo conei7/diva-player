@@ -72,6 +72,10 @@ interface PlayerState {
   // 隠しモード（サムネイル・動画を非表示）
   hiddenMode: boolean;
   toggleHiddenMode: () => void;
+
+  // 自動キュー（曲終了時に関連曲を自動追加）
+  autoQueue: boolean;
+  toggleAutoQueue: () => void;
   
   // キュー操作
   setQueue: (songs: Song[], startIndex?: number) => void;
@@ -94,6 +98,12 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     const next = !state.hiddenMode;
     storage.set('hiddenMode', next);
     return { hiddenMode: next };
+  }),
+  autoQueue: storage.get<boolean>('autoQueue') ?? false,
+  toggleAutoQueue: () => set((state) => {
+    const next = !state.autoQueue;
+    storage.set('autoQueue', next);
+    return { autoQueue: next };
   }),
   queue: [],
   queueIndex: -1,

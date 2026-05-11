@@ -217,18 +217,17 @@ function loadYouTubeAPI(): Promise<void> {
 }
 
 export default function PlayerEmbed() {
-  const { currentSong, currentPV, isPlaying, volume, progress, setProgress, setDuration, setIsPlaying, setError, next, tryNextPV } = usePlayerStore();
+  const { currentSong, currentPV, isPlaying, volume, setProgress, setDuration, setIsPlaying, setError, next, tryNextPV } = usePlayerStore();
   const ytPlayerRef = useRef<YT.Player | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const progressTimerRef = useRef<number | null>(null);
   const lastPVIdRef = useRef<string | null>(null);
-  const seekingRef = useRef(false);
 
   // プログレス更新の定期実行
   const startProgressTimer = useCallback(() => {
     if (progressTimerRef.current) return;
     progressTimerRef.current = window.setInterval(() => {
-      if (ytPlayerRef.current && !seekingRef.current) {
+      if (ytPlayerRef.current) {
         const currentTime = ytPlayerRef.current.getCurrentTime?.();
         if (typeof currentTime === 'number') {
           setProgress(currentTime);
@@ -359,25 +358,6 @@ export default function PlayerEmbed() {
       // ignore
     }
   }, [volume, currentPV]);
-
-  // シーク同期（ユーザーがプログレスバーをクリックした場合）
-  useEffect(() => {
-    if (!ytPlayerRef.current || !currentPV || currentPV.service !== 'Youtube') return;
-    // プログレスの外部変更を検知（大きなジャンプ = ユーザーシーク）
-    const handleSeek = () => {
-      try {
-        const currentTime = ytPlayerRef.current?.getCurrentTime?.() ?? 0;
-        if (Math.abs(progress - currentTime) > 2) {
-          seekingRef.current = true;
-          ytPlayerRef.current?.seekTo?.(progress, true);
-          setTimeout(() => { seekingRef.current = false; }, 500);
-        }
-      } catch {
-        // ignore
-      }
-    };
-    handleSeek();
-  }, [progress, currentPV]);
 
   // ニコニコ動画の埋め込み
   if (currentPV?.service === 'NicoNicoDouga') {

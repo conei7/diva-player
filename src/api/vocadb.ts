@@ -237,3 +237,37 @@ export async function searchVocalistsByName(query: string): Promise<Artist[]> {
 
   return data.items;
 }
+
+/**
+ * 関連曲を取得（サジェスト・連続再生用）
+ * /api/songs/{id}/related: likeMatches / artistMatches / tagMatches を結合して返す
+ */
+interface RelatedSongsResponse {
+  likeMatches: Song[];
+  artistMatches: Song[];
+  tagMatches: Song[];
+}
+
+export async function getRelatedSongs(id: number): Promise<Song[]> {
+  const url = `${BASE_URL}/songs/${id}/related?fields=${DEFAULT_FIELDS}&lang=${DEFAULT_LANG}`;
+  const cacheKey = `related:${url}`;
+
+  const cached = getCached<RelatedSongsResponse>(cacheKey);
+  const data = cached ?? await (async () => {
+    const response = await fetchWithRetry(url);
+    const result: RelatedSongsResponse = await response.json();
+    setCache(cacheKey, result);
+    return result;
+  })();
+
+  // likeMatches → artistMatches → tagMatches の優先順位で重複排除
+  const seen = new Set<number>();
+  const result: Song[] = [];
+  for (const song of [...data.likeMatches, ...data.artistMatches, ...data.tagMatches]) {
+    if (!seen.has(song.id)) {
+      seen.add(song.id);
+      result.push(song);
+    }
+  }
+  return result;
+}
