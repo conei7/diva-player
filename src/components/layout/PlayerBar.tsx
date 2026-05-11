@@ -1,4 +1,3 @@
-import { useRef, useCallback } from 'react';
 import { usePlayerStore } from '../../stores/playerStore';
 
 /**
@@ -9,43 +8,16 @@ import { usePlayerStore } from '../../stores/playerStore';
  */
 export default function PlayerBar() {
   const {
-    currentSong, currentPV, isPlaying, volume, progress, duration,
-    pause, resume, next, previous, setVolume, setProgress, hiddenMode, toggleHiddenMode,
+    currentSong, currentPV, isPlaying, volume,
+    next, previous, setVolume, hiddenMode, toggleHiddenMode,
   } = usePlayerStore();
 
-  const progressRef = useRef<HTMLDivElement>(null);
-
-  // プログレスバーのクリック/ドラッグでシーク
-  const handleProgressClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
-    if (!progressRef.current || !duration) return;
-    const rect = progressRef.current.getBoundingClientRect();
-    const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-    setProgress(ratio * duration);
-  }, [duration, setProgress]);
-
-  // 時間フォーマット
-  const formatTime = (seconds: number): string => {
-    const m = Math.floor(seconds / 60);
-    const s = Math.floor(seconds % 60);
-    return `${m}:${s.toString().padStart(2, '0')}`;
-  };
-
-  const progressPercent = duration > 0 ? (progress / duration) * 100 : 0;
 
   return (
     <div
       className="fixed bottom-0 left-0 right-0 z-50 glass-strong"
       style={{ height: 'var(--player-bar-height)' }}
     >
-      {/* プログレスバー（バー上部） */}
-      <div
-        ref={progressRef}
-        className="progress-track absolute top-0 left-0 right-0 -translate-y-1/2"
-        onClick={handleProgressClick}
-      >
-        <div className="progress-fill" style={{ width: `${progressPercent}%` }} />
-      </div>
-
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-full flex items-center gap-4">
         {/* サムネイル表示 */}
         <div className="relative w-16 h-16 rounded-lg overflow-hidden flex-shrink-0"
@@ -85,8 +57,8 @@ export default function PlayerBar() {
           )}
         </div>
 
-        {/* 再生コントロール */}
-        <div className="flex items-center gap-3 flex-shrink-0">
+        {/* 再生コントロール: 前へ / 次へ */}
+        <div className="flex items-center gap-2 flex-shrink-0">
           <button
             className="btn-ghost p-2 rounded-full"
             onClick={previous}
@@ -99,31 +71,6 @@ export default function PlayerBar() {
           </button>
 
           <button
-            className="w-10 h-10 rounded-full flex items-center justify-center transition-all duration-200"
-            style={{
-              background: currentSong ? 'var(--gradient-primary)' : 'var(--color-surface)',
-              cursor: currentSong ? 'pointer' : 'default',
-              opacity: currentSong ? 1 : 0.5,
-            }}
-            onClick={() => {
-              if (!currentSong) return;
-              isPlaying ? pause() : resume();
-            }}
-            disabled={!currentSong}
-            title={isPlaying ? '一時停止' : '再生'}
-          >
-            {isPlaying ? (
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="white">
-                <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>
-              </svg>
-            ) : (
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="white">
-                <path d="M8 5v14l11-7z"/>
-              </svg>
-            )}
-          </button>
-
-          <button
             className="btn-ghost p-2 rounded-full"
             onClick={next}
             disabled={!currentSong}
@@ -133,13 +80,6 @@ export default function PlayerBar() {
               <path d="m6 18 8.5-6L6 6v12zM16 6v12h2V6h-2z"/>
             </svg>
           </button>
-        </div>
-
-        {/* タイムスタンプ */}
-        <div className="flex items-center gap-2 text-xs flex-shrink-0" style={{ color: 'var(--color-text-muted)' }}>
-          <span className="w-10 text-right tabular-nums">{formatTime(progress)}</span>
-          <span>/</span>
-          <span className="w-10 tabular-nums">{formatTime(duration)}</span>
         </div>
 
         {/* スペーサー */}

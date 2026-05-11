@@ -72,14 +72,8 @@ function NicoEmbed({ pvId, name, duration: songDuration }: { pvId: string; name?
         JSON.stringify({ eventName: 'player:play' }),
         NICO_ORIGIN,
       );
-      // player:play イベントが返ってこない場合のフォールバック:
-      // autoplay で既に再生開始している可能性があるのでタイマーを直接開始
-      if (!isActuallyPlayingRef.current) {
-        setIsPlaying(true);
-        startTimer();
-      }
     }, 1000);
-  }, [setDuration, songDuration, startTimer, setIsPlaying]);
+  }, [setDuration, songDuration]);
 
   // ニコニコからのpostMessageを受信
   useEffect(() => {
@@ -292,11 +286,7 @@ export default function PlayerEmbed() {
           // mute: 1 でミュート自動再生を許可し、onReady でアンミュートする。
           // これにより Chrome の Autoplay Policy (クロスオリジン iframe 制限) を回避できる。
           mute: 1,
-          controls: 0,
-          disablekb: 1,
-          modestbranding: 1,
-          rel: 0,
-          showinfo: 0,
+          controls: 1,
           origin: window.location.origin,
         },
         events: {
