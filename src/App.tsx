@@ -4,7 +4,7 @@ import Layout from './components/layout/Layout';
 import SearchPage from './pages/SearchPage';
 import PlaylistPage from './pages/PlaylistPage';
 import { usePlayerStore } from './stores/playerStore';
-import { getRelatedSongs } from './api/vocadb';
+import { getRecommendedSongs } from './api/vocadb';
 
 /**
  * App - ルートコンポーネント
@@ -29,7 +29,7 @@ export default function App() {
     fetchingForRef.current = songId;
     const existingIds = new Set(queue.map(s => s.id));
 
-    getRelatedSongs(songId)
+    getRecommendedSongs(songId)
       .then(related => {
         const newSongs = related
           .filter(s => !existingIds.has(s.id))

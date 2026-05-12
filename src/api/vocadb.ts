@@ -271,3 +271,74 @@ export async function getRelatedSongs(id: number): Promise<Song[]> {
   }
   return result;
 }
+
+/**
+ * ローカル推薦バックエンド API (オプション)
+ * backend/ の C# API が localhost:5000 で動作している場合に使用。
+ * 利用できない場合は VocaDB の /related にフォールバックする。
+ */
+const RECOMMENDER_API = 'http://localhost:5000';
+
+interface RecommendItem {
+  songId:  number;
+  name:    string;
+  artist:  string;
+  score:   number;
+  reason:  string;
+}
+
+interface RecommendResponse {
+  items: RecommendItem[];
+  error: string | null;
+}
+
+let _recommenderAvailable: boolean | null = null;
+
+async function isRecommenderAvailable(): Promise<boolean> {
+  if (_recommenderAvailable !== null) return _recommenderAvailable;
+  try {
+    const res = await fetch(`${RECOMMENDER_API}/api/health`, { signal: AbortSignal.timeout(1000) });
+    _recommenderAvailable = res.ok;
+  } catch {
+    _recommenderAvailable = false;
+  }
+  return _recommenderAvailable;
+}
+
+/**
+ * 推薦曲を取得 (バックエンドAPIまたはVocaDBにフォールバック)
+ */
+export async function getRecommendedSongs(
+  seedSongId: number,
+  count = 10,
+  sessionId?: string,
+  sessionProgress = 0.0,
+): Promise<Song[]> {
+  // ローカルバックエンドを優先
+  if (await isRecommenderAvailable()) {
+    try {
+      const params = new URLSearchParams({
+        songId: String(seedSongId),
+        count:  String(count),
+        sessionProgress: String(sessionProgress),
+      });
+      if (sessionId) params.set('sessionId', sessionId);
+
+      const res = await fetch(`${RECOMMENDER_API}/api/recommend?${params}`);
+      if (res.ok) {
+        const data: RecommendResponse = await res.json();
+        if (!data.error && data.items.length > 0) {
+          // バックエンドは曲情報の概要のみ返すので VocaDB から詳細を補完
+          const ids = data.items.map(i => i.songId);
+          const songs = await Promise.all(ids.map(id => getSongById(id).catch(() => null)));
+          return songs.filter((s): s is Song => s !== null);
+        }
+      }
+    } catch {
+      _recommenderAvailable = false; // 次回からフォールバック
+    }
+  }
+
+  // フォールバック: VocaDB /related
+  return getRelatedSongs(seedSongId);
+}

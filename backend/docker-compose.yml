@@ -1,0 +1,56 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: vocadb_postgres
+    environment:
+      POSTGRES_USER: vocadb
+      POSTGRES_PASSWORD: vocadb_secret
+      POSTGRES_DB: vocadb_recommender
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vocadb -d vocadb_recommender"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  qdrant:
+    image: qdrant/qdrant:v1.9.4
+    container_name: vocadb_qdrant
+    ports:
+      - "6333:6333"   # HTTP REST API
+      - "6334:6334"   # gRPC
+    volumes:
+      - qdrant_data:/qdrant/storage
+    environment:
+      QDRANT__SERVICE__GRPC_PORT: 6334
+    restart: unless-stopped
+
+  api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    container_name: vocadb_api
+    environment:
+      ConnectionStrings__Postgres: "Host=postgres;Port=5432;Database=vocadb_recommender;Username=vocadb;Password=vocadb_secret"
+      Qdrant__Endpoint: "http://qdrant:6333"
+      ASPNETCORE_URLS: "http://+:5000"
+      ASPNETCORE_ENVIRONMENT: "Development"
+    ports:
+      - "5000:5000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  qdrant_data:
