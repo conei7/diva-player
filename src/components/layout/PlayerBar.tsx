@@ -11,6 +11,7 @@ export default function PlayerBar() {
     currentSong, currentPV, isPlaying, volume,
     next, previous, setVolume, hiddenMode, toggleHiddenMode,
     autoQueue, toggleAutoQueue,
+    queue, queueDrawerOpen, toggleQueueDrawer,
   } = usePlayerStore();
 
 
@@ -170,6 +171,26 @@ export default function PlayerBar() {
             <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
               <path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/>
             </svg>
+          )}
+        </button>
+
+        {/* キュードロワートグルボタン */}
+        <button
+          className="btn-ghost p-1.5 rounded-lg flex-shrink-0 relative"
+          onClick={toggleQueueDrawer}
+          title="再生キューを表示"
+          style={{ color: queueDrawerOpen ? 'var(--color-accent-purple)' : 'var(--color-text-muted)' }}
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M3 18h13v-2H3v2zm0-5h10v-2H3v2zm0-7v2h13V6H3zm18 9.59L17.42 12 21 8.41 19.59 7l-5 5 5 5L21 15.59z"/>
+          </svg>
+          {queue.length > 0 && (
+            <span
+              className="absolute -top-0.5 -right-0.5 text-[9px] font-bold w-4 h-4 rounded-full flex items-center justify-center leading-none"
+              style={{ background: 'var(--color-accent-purple)', color: '#fff' }}
+            >
+              {queue.length > 99 ? '99+' : queue.length}
+            </span>
           )}
         </button>
       </div>

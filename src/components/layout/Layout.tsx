@@ -1,6 +1,7 @@
 import { Outlet } from 'react-router-dom';
 import Header from './Header';
 import PlayerBar from './PlayerBar';
+import QueueDrawer from '../player/QueueDrawer';
 
 /**
  * メインレイアウト
@@ -26,6 +27,7 @@ export default function Layout() {
       </main>
 
       <PlayerBar />
+      <QueueDrawer />
     </div>
   );
 }

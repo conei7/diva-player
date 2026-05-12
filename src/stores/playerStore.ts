@@ -82,6 +82,11 @@ interface PlayerState {
   addToQueue: (song: Song) => void;
   removeFromQueue: (index: number) => void;
   clearQueue: () => void;
+  jumpToIndex: (index: number) => void;
+
+  // キュードロワー
+  queueDrawerOpen: boolean;
+  toggleQueueDrawer: () => void;
 }
 
 export const usePlayerStore = create<PlayerState>((set, get) => ({
@@ -219,4 +224,14 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     progress: 0,
     duration: 0,
   }),
+
+  jumpToIndex: (index: number) => {
+    const { queue } = get();
+    if (index < 0 || index >= queue.length) return;
+    set({ queueIndex: index });
+    get().playSong(queue[index]);
+  },
+
+  queueDrawerOpen: false,
+  toggleQueueDrawer: () => set((state) => ({ queueDrawerOpen: !state.queueDrawerOpen })),
 }));
