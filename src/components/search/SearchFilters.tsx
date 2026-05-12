@@ -1,8 +1,26 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { useSearchStore } from '../../stores/searchStore';
 import type { SongSortRule, VocalistMatchMode } from '../../types/vocadb';
 import { searchVocalistsByName } from '../../api/vocadb';
 import type { Artist } from '../../types/vocadb';
+
+// hall_of_fame_singers.json の型定義
+interface HallOfFameSinger { id: number; name: string; artist_type: string; }
+interface HallOfFameData {
+  exported_at: string;
+  by_type: Record<string, HallOfFameSinger[]>;
+  all: HallOfFameSinger[];
+}
+
+// artist_type → 表示ラベルのマッピング（表示順も兼ねる）
+const TYPE_DISPLAY_ORDER = ['Vocaloid', 'UTAU', 'CeVIO', 'SynthesizerV', 'OtherVoiceSynthesizer'] as const;
+const TYPE_LABELS: Record<string, string> = {
+  Vocaloid:              'ボカロ',
+  UTAU:                  'UTAU',
+  CeVIO:                 'CeVIO',
+  SynthesizerV:          'SynthV',
+  OtherVoiceSynthesizer: 'その他の合成音声',
+};
 
 const SORT_OPTIONS: { value: SongSortRule; label: string }[] = [
   { value: 'FavoritedTimes', label: '人気順' },
@@ -118,8 +136,6 @@ const VOCALIST_CATEGORIES: { label: string; vocalists: PresetVocalist[] }[] = [
   },
 ];
 
-const ALL_PRESETS: PresetVocalist[] = VOCALIST_CATEGORIES.flatMap(c => c.vocalists);
-
 export default function SearchFilters() {
   const {
     sort, setSort, search, totalCount, hasSearched,
@@ -132,6 +148,40 @@ export default function SearchFilters() {
   const [suggestions, setSuggestions] = useState<Artist[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const suggestRef = useRef<HTMLDivElement>(null);
+
+  // hall_of_fame_singers.json を非同期で取得 (失敗時はハードコードにフォールバック)
+  const [dynamicCategories, setDynamicCategories] = useState<{ label: string; vocalists: PresetVocalist[] }[] | null>(null);
+  const [categoriesLoading, setCategoriesLoading] = useState(true);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch('/data/hall_of_fame_singers.json', { signal: controller.signal })
+      .then(res => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json() as Promise<HallOfFameData>;
+      })
+      .then(data => {
+        const cats = TYPE_DISPLAY_ORDER
+          .filter(type => (data.by_type[type]?.length ?? 0) > 0)
+          .map(type => ({
+            label:     TYPE_LABELS[type],
+            vocalists: data.by_type[type].map(s => ({ id: s.id, name: s.name })),
+          }));
+        setDynamicCategories(cats.length > 0 ? cats : null);
+      })
+      .catch(() => {
+        // ファイル未生成 or ネットワークエラー → ハードコードを使用
+        setDynamicCategories(null);
+      })
+      .finally(() => setCategoriesLoading(false));
+    return () => controller.abort();
+  }, []);
+
+  const activeCategories = dynamicCategories ?? VOCALIST_CATEGORIES;
+  const allPresets = useMemo(
+    () => activeCategories.flatMap(c => c.vocalists),
+    [activeCategories],
+  );
 
   useEffect(() => {
     if (vocalistQuery.trim().length < 1) { setSuggestions([]); return; }
@@ -172,7 +222,7 @@ export default function SearchFilters() {
     search();
   };
 
-  const nonPresetSelected = vocalistFilters.filter(v => !ALL_PRESETS.some(p => p.id === v.id));
+  const nonPresetSelected = vocalistFilters.filter(v => !allPresets.some(p => p.id === v.id));
 
   return (
     <div className="flex flex-col gap-4 rounded-xl p-4"
@@ -214,7 +264,17 @@ export default function SearchFilters() {
         </div>
 
         {/* カテゴリ別プリセットボタン */}
-        {VOCALIST_CATEGORIES.map(cat => (
+        {categoriesLoading ? (
+          <div className="flex items-center gap-2 py-2" style={{ color: 'var(--color-text-muted)' }}>
+            <svg className="animate-spin" width="14" height="14" viewBox="0 0 24 24" fill="none"
+                 stroke="currentColor" strokeWidth="2">
+              <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4
+                       M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
+            </svg>
+            <span className="text-xs">シンガー一覧を読み込み中...</span>
+          </div>
+        ) : (
+          activeCategories.map(cat => (
           <div key={cat.label} className="flex flex-col gap-1.5">
             <span className="text-[10px] font-bold tracking-wider uppercase"
                   style={{ color: 'var(--color-text-muted)', opacity: 0.7 }}>
@@ -244,7 +304,8 @@ export default function SearchFilters() {
               })}
             </div>
           </div>
-        ))}
+          ))
+        )}
 
         {/* その他: テキスト入力 + サジェスト */}
         <div className="relative" ref={suggestRef}>
