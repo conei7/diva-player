@@ -1,5 +1,6 @@
 import type { Song } from '../../types/vocadb';
 import { usePlayerStore, getPlayablePV } from '../../stores/playerStore';
+import { useUiStore } from '../../stores/uiStore';
 interface SongCardProps {
   song: Song;
   index: number;
@@ -13,6 +14,7 @@ interface SongCardProps {
  */
 export default function SongCard({ song, index, onAddToQueue, onSelect }: SongCardProps) {
   const { currentSong, isPlaying, setQueue, hiddenMode } = usePlayerStore();
+  const { openSongDetail } = useUiStore();
   const isCurrentSong = currentSong?.id === song.id;
   const playablePV = getPlayablePV(song);
   const hasPlayablePV = !!playablePV;
@@ -47,18 +49,26 @@ export default function SongCard({ song, index, onAddToQueue, onSelect }: SongCa
     onSelect?.(song);
   };
 
+  const handleOpenDetail = () => {
+    openSongDetail(song);
+  };
+
   return (
     <div
-      className="song-card rounded-xl overflow-hidden cursor-pointer group"
+      className="song-card rounded-xl overflow-hidden group"
       style={{
         background: isCurrentSong ? 'var(--color-bg-card-hover)' : 'var(--color-bg-card)',
         border: isCurrentSong ? '1px solid rgba(6, 214, 160, 0.3)' : '1px solid transparent',
         animationDelay: `${index * 50}ms`,
       }}
-      onClick={() => onSelect?.(song)}
     >
-      {/* サムネイル */}
-      <div className="relative aspect-video overflow-hidden" style={{ background: 'var(--color-surface)' }}>
+      {/* サムネイル — クリックで再生 */}
+      <div
+        className="relative aspect-video overflow-hidden cursor-pointer"
+        style={{ background: 'var(--color-surface)' }}
+        onClick={handlePlay}
+        title={hasPlayablePV ? 'クリックして再生' : '再生可能なPVがありません'}
+      >
         {!hiddenMode && song.thumbUrl ? (
           <img
             src={song.thumbUrl}
@@ -115,8 +125,12 @@ export default function SongCard({ song, index, onAddToQueue, onSelect }: SongCa
         </div>
       </div>
 
-      {/* 曲情報 */}
-      <div className="p-3">
+      {/* 曲情報 — クリックで詳細モーダルを開く */}
+      <div
+        className="p-3 cursor-pointer hover:bg-white/5 transition-colors"
+        onClick={handleOpenDetail}
+        title="詳細を表示"
+      >
         <h3 className="text-sm font-semibold truncate" style={{ color: 'var(--color-text-primary)' }}>
           {song.name}
         </h3>

@@ -3,6 +3,7 @@ import Header from './Header';
 import PlayerBar from './PlayerBar';
 import QueueDrawer from '../player/QueueDrawer';
 import HistoryDrawer from '../player/HistoryDrawer';
+import SongDetailsModal from '../player/SongDetailsModal';
 
 /**
  * メインレイアウト
@@ -30,6 +31,7 @@ export default function Layout() {
       <PlayerBar />
       <QueueDrawer />
       <HistoryDrawer />
+      <SongDetailsModal />
     </div>
   );
 }
