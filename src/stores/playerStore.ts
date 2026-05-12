@@ -87,6 +87,10 @@ interface PlayerState {
   // キュードロワー
   queueDrawerOpen: boolean;
   toggleQueueDrawer: () => void;
+
+  // 履歴ドロワー
+  historyDrawerOpen: boolean;
+  toggleHistoryDrawer: () => void;
 }
 
 export const usePlayerStore = create<PlayerState>((set, get) => ({
@@ -233,5 +237,16 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   },
 
   queueDrawerOpen: false,
-  toggleQueueDrawer: () => set((state) => ({ queueDrawerOpen: !state.queueDrawerOpen })),
+  // キュードロワーを開くときに履歴ドロワーを閉じる（排他制御）
+  toggleQueueDrawer: () => set((state) => ({
+    queueDrawerOpen: !state.queueDrawerOpen,
+    historyDrawerOpen: false,
+  })),
+
+  historyDrawerOpen: false,
+  // 履歴ドロワーを開くときにキュードロワーを閉じる（排他制御）
+  toggleHistoryDrawer: () => set((state) => ({
+    historyDrawerOpen: !state.historyDrawerOpen,
+    queueDrawerOpen: false,
+  })),
 }));

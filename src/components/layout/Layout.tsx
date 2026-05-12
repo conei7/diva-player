@@ -2,6 +2,7 @@ import { Outlet } from 'react-router-dom';
 import Header from './Header';
 import PlayerBar from './PlayerBar';
 import QueueDrawer from '../player/QueueDrawer';
+import HistoryDrawer from '../player/HistoryDrawer';
 
 /**
  * メインレイアウト
@@ -28,6 +29,7 @@ export default function Layout() {
 
       <PlayerBar />
       <QueueDrawer />
+      <HistoryDrawer />
     </div>
   );
 }

@@ -4,6 +4,7 @@ import Layout from './components/layout/Layout';
 import SearchPage from './pages/SearchPage';
 import PlaylistPage from './pages/PlaylistPage';
 import { usePlayerStore } from './stores/playerStore';
+import { useHistoryStore } from './stores/historyStore';
 import { getRecommendedSongs } from './api/vocadb';
 
 /**
@@ -15,7 +16,14 @@ import { getRecommendedSongs } from './api/vocadb';
  */
 export default function App() {
   const { currentSong, queue, queueIndex, autoQueue, addToQueue } = usePlayerStore();
+  const { addToHistory } = useHistoryStore();
   const fetchingForRef = useRef<number | null>(null);
+
+  // 視聴履歴: currentSong が切り替わったら自動記録
+  useEffect(() => {
+    if (currentSong) addToHistory(currentSong);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentSong?.id]);
 
   // 自動キュー: キューの残りが少なくなったら関連曲を自動追加
   useEffect(() => {

@@ -12,6 +12,7 @@ export default function PlayerBar() {
     next, previous, setVolume, hiddenMode, toggleHiddenMode,
     autoQueue, toggleAutoQueue,
     queue, queueDrawerOpen, toggleQueueDrawer,
+    historyDrawerOpen, toggleHistoryDrawer,
   } = usePlayerStore();
 
 
@@ -172,6 +173,18 @@ export default function PlayerBar() {
               <path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/>
             </svg>
           )}
+        </button>
+
+        {/* 履歴ドロワートグルボタン */}
+        <button
+          className="btn-ghost p-1.5 rounded-lg flex-shrink-0"
+          onClick={toggleHistoryDrawer}
+          title="視聴履歴"
+          style={{ color: historyDrawerOpen ? 'var(--color-accent-cyan)' : 'var(--color-text-muted)' }}
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M13 3a9 9 0 1 0 9 9h-2a7 7 0 1 1-7-7V3zm7 1-4 4 4-4zM11 8v5l4.28 2.54.72-1.21-3.5-2.08V8H11z"/>
+          </svg>
         </button>
 
         {/* キュードロワートグルボタン */}
