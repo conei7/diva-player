@@ -1,4 +1,6 @@
 import { usePlayerStore } from '../../stores/playerStore';
+import { useRatingStore } from '../../stores/ratingStore';
+import StarRating from './StarRating';
 import type { Song } from '../../types/vocadb';
 
 /** YoutubePVからサムネイルURLを生成 */
@@ -22,6 +24,7 @@ export default function QueueDrawer() {
     queueDrawerOpen, toggleQueueDrawer,
     jumpToIndex,
   } = usePlayerStore();
+  const { getRating, setRating } = useRatingStore();
 
   return (
     <>
@@ -174,6 +177,15 @@ export default function QueueDrawer() {
                             {producer}
                           </p>
                         )}
+                      </div>
+
+                      {/* ミニ星評価 */}
+                      <div className="flex-shrink-0">
+                        <StarRating
+                          rating={getRating(song.id)}
+                          onRate={(r) => setRating(song.id, r)}
+                          size="sm"
+                        />
                       </div>
                     </button>
                   </li>

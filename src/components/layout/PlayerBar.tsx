@@ -1,4 +1,6 @@
 import { usePlayerStore } from '../../stores/playerStore';
+import { useRatingStore } from '../../stores/ratingStore';
+import StarRating from '../player/StarRating';
 
 /**
  * PlayerBar - 画面下部固定のプレイヤーコントロール
@@ -14,6 +16,7 @@ export default function PlayerBar() {
     queue, queueDrawerOpen, toggleQueueDrawer,
     historyDrawerOpen, toggleHistoryDrawer,
   } = usePlayerStore();
+  const { getRating, setRating } = useRatingStore();
 
 
   return (
@@ -52,6 +55,13 @@ export default function PlayerBar() {
               <p className="text-xs truncate mt-0.5" style={{ color: 'var(--color-text-secondary)' }}>
                 {currentSong.artistString}
               </p>
+              <div className="mt-1">
+                <StarRating
+                  rating={getRating(currentSong.id)}
+                  onRate={(r) => setRating(currentSong.id, r)}
+                  size="md"
+                />
+              </div>
             </div>
           ) : (
             <p className="text-sm" style={{ color: 'var(--color-text-muted)' }}>

@@ -1,5 +1,7 @@
 import { useHistoryStore } from '../../stores/historyStore';
 import { usePlayerStore } from '../../stores/playerStore';
+import { useRatingStore } from '../../stores/ratingStore';
+import StarRating from './StarRating';
 import type { Song } from '../../types/vocadb';
 
 /** Unix timestamp から相対時刻文字列を生成 */
@@ -38,6 +40,7 @@ export default function HistoryDrawer() {
     historyDrawerOpen, toggleHistoryDrawer,
     playSong,
   } = usePlayerStore();
+  const { getRating, setRating } = useRatingStore();
 
   return (
     <>
@@ -180,6 +183,17 @@ export default function HistoryDrawer() {
                             {producer}
                           </p>
                         )}
+                      </div>
+
+                      {/* ミニ星評価 */}
+                      <div className="flex-shrink-0">
+                        <StarRating
+                          rating={getRating(song.id)}
+                          onRate={(r) => {
+                            setRating(song.id, r);
+                          }}
+                          size="sm"
+                        />
                       </div>
 
                       {/* 相対時刻 */}
