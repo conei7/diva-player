@@ -195,6 +195,18 @@ def main():
     finally:
         conn.close()
 
+    # 静的マスターデータをエクスポート（DBアクセス完了後に1回だけ実行）
+    try:
+        from export_static_data import export_hall_of_fame_singers
+        import os
+        default_out = os.path.join(
+            os.path.dirname(__file__),
+            '../../public/data/hall_of_fame_singers.json',
+        )
+        export_hall_of_fame_singers(default_out)
+    except Exception as e:
+        print(f'[warn] 静的データエクスポートをスキップ: {e}')
+
 
 if __name__ == '__main__':
     main()
