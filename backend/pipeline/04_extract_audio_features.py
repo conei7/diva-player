@@ -97,7 +97,7 @@ def download_audio(youtube_id: str, out_dir: str) -> str | None:
         '--quiet',
         '--no-warnings',
         '--socket-timeout', '30',
-        '--cookies-from-browser', 'edge',  # BAN対策: ブラウザのCookieを使用
+        '--js-runtimes', 'node',           # yt-dlp 2025+ で必須のJSランタイム
         f'https://www.youtube.com/watch?v={youtube_id}',
     ]
     result = subprocess.run(cmd, capture_output=True, timeout=180)
