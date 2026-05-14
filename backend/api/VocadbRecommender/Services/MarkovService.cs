@@ -58,7 +58,7 @@ public class MarkovService
                 var prob = transitions.GetValueOrDefault(toState, 0.01);
                 var inAllowed = allowedStates.Contains(toState);
                 var multiplier = inAllowed ? (1.0 + prob * 0.5) : 0.6;
-                return (c.SongId, c.Score * multiplier);
+                return (SongId: c.SongId, Score: c.Score * multiplier);
             })
             .OrderByDescending(c => c.Score)
             .ToList();

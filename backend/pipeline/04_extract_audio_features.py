@@ -25,7 +25,7 @@ from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams, PointStruct, OptimizersConfigDiff
 from utils.db import get_conn, QDRANT_URL, QDRANT_COLLECTION_AUDIO
 
-AUDIO_DIM   = 512          # YAMNet embeddings 次元数
+AUDIO_DIM   = 1024         # YAMNet embeddings 次元数 (実際は1024次元)
 SAMPLE_RATE = 16000        # YAMNet は 16kHz モノラル
 MAX_DURATION_SEC = 300     # 最大5分の音声を使用
 BATCH_SIZE_DEFAULT = 500
@@ -64,7 +64,7 @@ def extract_embedding(wav_path: str) -> np.ndarray | None:
             data = data[:max_samples]
 
         waveform = tf.constant(data, dtype=tf.float32)
-        _, embeddings, _ = get_yamnet()(waveform)  # embeddings: (frames, 512)
+        _, embeddings, _ = get_yamnet()(waveform)  # embeddings: (frames, 1024)
 
         mean_emb = embeddings.numpy().mean(axis=0)   # (512,)
         norm = np.linalg.norm(mean_emb)
@@ -107,6 +107,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--batch-size', type=int, default=BATCH_SIZE_DEFAULT)
     parser.add_argument('--resume',     action='store_true', help='チェックポイントから再開')
+    parser.add_argument('--limit',      type=int, default=5000, help='処理する曲数の上限 (デフォルト: 5000, 0=無制限)')
     args = parser.parse_args()
 
     conn   = get_conn()
@@ -132,7 +133,7 @@ def main():
 
     with conn.cursor() as cur:
         cur.execute("""
-            SELECT DISTINCT s.id AS song_id, p.pv_id AS youtube_id
+            SELECT DISTINCT ON (s.id) s.id AS song_id, p.pv_id AS youtube_id, s.rating_score
             FROM songs s
             JOIN pvs p ON p.song_id = s.id
                 AND p.service = 'Youtube'
@@ -141,9 +142,12 @@ def main():
             LEFT JOIN song_features sf ON sf.song_id = s.id
             WHERE (sf.audio_computed IS NULL OR sf.audio_computed = FALSE)
               AND s.id > %s
-            ORDER BY s.id
+            ORDER BY s.id, p.pv_id
         """, (last_id,))
-        targets = cur.fetchall()
+        all_targets = cur.fetchall()
+        # rating_score降順でTOP N曲のみ処理
+        all_targets.sort(key=lambda r: r.get('rating_score') or 0, reverse=True)
+        targets = all_targets[:args.limit] if args.limit > 0 else all_targets
 
     print(f'Songs to process: {len(targets)}')
 

@@ -29,11 +29,13 @@ public class QdrantService
         excludeSet.Add(seedSongId);
 
         // シード曲のベクトルを取得
-        var getResult = await _client.GetAsync(
-            _opts.CollectionHybrid,
-            (ulong)seedSongId,
+        var retrieveResult = await _client.RetrieveAsync(
+            collectionName: _opts.CollectionHybrid,
+            ids: new[] { new PointId { Num = (ulong)seedSongId } },
+            withPayload: false,
             withVectors: true);
 
+        var getResult = retrieveResult.FirstOrDefault();
         if (getResult is null || getResult.Vectors is null)
             return [];
 
@@ -43,9 +45,7 @@ public class QdrantService
         var searchResult = await _client.SearchAsync(
             collectionName: _opts.CollectionHybrid,
             vector: seedVector,
-            limit: (ulong)(topK + excludeSet.Count + 10),  // 除外分を多めに
-            withPayload: false,
-            withVectors: false);
+            limit: (ulong)(topK + excludeSet.Count + 10));  // 除外分を多めに
 
         return searchResult
             .Where(r => !excludeSet.Contains((int)r.Id.Num))
@@ -65,11 +65,13 @@ public class QdrantService
         var excludeSet = excludeIds?.ToHashSet() ?? [];
         excludeSet.Add(seedSongId);
 
-        var getResult = await _client.GetAsync(
-            _opts.CollectionMetadata,
-            (ulong)seedSongId,
+        var retrieveResult = await _client.RetrieveAsync(
+            collectionName: _opts.CollectionMetadata,
+            ids: new[] { new PointId { Num = (ulong)seedSongId } },
+            withPayload: false,
             withVectors: true);
 
+        var getResult = retrieveResult.FirstOrDefault();
         if (getResult is null || getResult.Vectors is null)
             return [];
 
@@ -78,9 +80,7 @@ public class QdrantService
         var searchResult = await _client.SearchAsync(
             collectionName: _opts.CollectionMetadata,
             vector: seedVector,
-            limit: (ulong)(topK + excludeSet.Count + 10),
-            withPayload: false,
-            withVectors: false);
+            limit: (ulong)(topK + excludeSet.Count + 10));
 
         return searchResult
             .Where(r => !excludeSet.Contains((int)r.Id.Num))

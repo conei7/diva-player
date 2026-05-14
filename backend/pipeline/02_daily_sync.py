@@ -126,40 +126,72 @@ def upsert_song(cur, obj: dict):
 
 def sync_tags(conn):
     print('Syncing tags ...')
+    all_tags = []
     start = 0
     while True:
         page = get_tags_page(start, 200)
         items = page.get('items', [])
         if not items:
             break
-        with conn.cursor() as cur:
-            for tag in items:
-                parent_id = None
-                if tag.get('parent'):
-                    parent_id = tag['parent'].get('id')
-                cur.execute(
-                    """
-                    INSERT INTO tags (id, name, category, parent_id)
-                    VALUES (%s,%s,%s,%s)
-                    ON CONFLICT (id) DO UPDATE SET
-                        name=EXCLUDED.name, category=EXCLUDED.category, parent_id=EXCLUDED.parent_id
-                    """,
-                    (tag['id'], tag.get('name',''), tag.get('categoryName'), parent_id)
-                )
-        conn.commit()
+        all_tags.extend(items)
         start += len(items)
         if start >= page.get('totalCount', 0):
             break
-    print(f'  Tags synced. total={start}')
+    # Pass 1: insert all tags without parent_id to avoid FK violations
+    with conn.cursor() as cur:
+        for tag in all_tags:
+            cur.execute(
+                """
+                INSERT INTO tags (id, name, category, parent_id)
+                VALUES (%s,%s,%s,NULL)
+                ON CONFLICT (id) DO UPDATE SET
+                    name=EXCLUDED.name, category=EXCLUDED.category
+                """,
+                (tag['id'], tag.get('name',''), tag.get('categoryName'))
+            )
+    conn.commit()
+    # Pass 2: update parent_ids now that all tags exist
+    # Temporarily bypass FK check by using session_replication_role
+    with conn.cursor() as cur:
+        cur.execute("SET session_replication_role = replica")
+        for tag in all_tags:
+            parent_id = None
+            if tag.get('parent'):
+                parent_id = tag['parent'].get('id')
+            if parent_id is not None:
+                cur.execute(
+                    "UPDATE tags SET parent_id=%s WHERE id=%s",
+                    (parent_id, tag['id'])
+                )
+        cur.execute("SET session_replication_role = DEFAULT")
+    conn.commit()
+    print(f'  Tags synced. total={len(all_tags)}')
 
 
 def sync_songs(conn, since_date: str | None, full: bool):
-    start = 0
-    total_synced = 0
-    pbar = tqdm(desc='Syncing songs', unit='song')
+    # Resume from saved offset if available
+    resume_key = 'full_sync_offset' if full else 'daily_sync_offset'
+    saved_offset = get_sync_state(resume_key)
+    start = int(saved_offset) if (full and saved_offset) else 0
+    total_synced = start
+    total_count = None
+    skipped_pages = 0
+    pbar = tqdm(desc='Syncing songs', unit='song', initial=start)
     while True:
-        page = get_songs_page(start, PAGE_SIZE, since_date if not full else None)
+        try:
+            page = get_songs_page(start, PAGE_SIZE, since_date if not full else None)
+        except Exception as e:
+            print(f'\n  [warn] Failed to fetch offset {start}: {e}. Skipping page.')
+            skipped_pages += 1
+            start += PAGE_SIZE
+            if full:
+                set_sync_state(resume_key, str(start))
+            if total_count and start >= total_count:
+                break
+            continue
         items = page.get('items', [])
+        if total_count is None:
+            total_count = page.get('totalCount', 0)
         if not items:
             break
         with conn.cursor() as cur:
@@ -169,9 +201,17 @@ def sync_songs(conn, since_date: str | None, full: bool):
         total_synced += len(items)
         pbar.update(len(items))
         start += len(items)
+        # Save offset every 1000 songs for resume
+        if full and start % 1000 == 0:
+            set_sync_state(resume_key, str(start))
         if start >= page.get('totalCount', 0):
             break
     pbar.close()
+    # Clear resume offset on completion
+    if full:
+        set_sync_state(resume_key, '0')
+    if skipped_pages:
+        print(f'  [warn] {skipped_pages} page(s) were skipped due to errors.')
     print(f'  Songs synced: {total_synced}')
     return total_synced
 
@@ -183,7 +223,12 @@ def main():
 
     conn = get_conn()
     try:
-        sync_tags(conn)
+        # タグ同期: --full で途中再開の場合はスキップ
+        resume_offset = int(get_sync_state('full_sync_offset') or '0')
+        if not args.full or resume_offset == 0:
+            sync_tags(conn)
+        else:
+            print(f'Resuming full sync from offset {resume_offset}, skipping tag sync.')
 
         last_sync = get_sync_state('last_daily_sync') if not args.full else None
         print(f'Last sync: {last_sync or "none (full sync)"}')

@@ -16,19 +16,28 @@ def _get(path: str, params: dict[str, Any] | None = None) -> Any:
     defaults = {'lang': DEFAULT_LANG}
     if params:
         defaults.update(params)
-    for attempt in range(3):
+    for attempt in range(5):
         try:
-            resp = requests.get(url, params=defaults, timeout=30)
+            resp = requests.get(url, params=defaults, timeout=60)
             if resp.status_code == 429:
-                time.sleep(10)
+                wait = 30 * (attempt + 1)
+                time.sleep(wait)
                 continue
+            if resp.status_code >= 500:
+                # Server error: retry with longer backoff
+                if attempt < 4:
+                    wait = 60 * (attempt + 1)  # 60, 120, 180, 240 sec
+                    time.sleep(wait)
+                    continue
+                resp.raise_for_status()
             resp.raise_for_status()
             time.sleep(RATE_LIMIT_DELAY)
             return resp.json()
         except requests.RequestException as e:
-            if attempt == 2:
+            if attempt == 4:
                 raise
-            time.sleep(2 ** attempt)
+            wait = 5 * (2 ** attempt)  # 5, 10, 20, 40 sec
+            time.sleep(wait)
 
 
 def get_songs_page(start: int, max_results: int = 100, since_date: str | None = None) -> dict:

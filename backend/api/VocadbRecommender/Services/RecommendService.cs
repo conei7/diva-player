@@ -83,18 +83,24 @@ public class RecommendService
             .Select(kv => (kv.Key, kv.Value))
             .ToList();
 
-        // --- 3. マルコフ連鎖フィルタリング ---
+        // --- 3. 候補多様性フィルタ: 同一プロデューサーを上位 N 件に制限 ---
         var candidateInfos = await _db.GetSongInfoBatchAsync(
             mergedCandidates.Select(c => c.Key));
+        // count の 1/3 を同一プロデューサー上限とし、残りを他プロデューサーで埋める
+        int maxSameProd = Math.Max(2, count / 3);
+        mergedCandidates = ApplyProducerDiversityCap(
+            mergedCandidates, candidateInfos, seedSong.ProducerIds, maxSameProd);
+
+        // --- 4. マルコフ連鎖フィルタリング ---
         var filtered = await _markov.FilterAsync(
             seedSong, mergedCandidates, candidateInfos);
 
-        // --- 4. MMR 再ランキング (多様性 × 関連度) ---
+        // --- 5. MMR 再ランキング (多様性 × 関連度) ---
         // セッション進行度が上がるほど多様性を下げる (より関連性重視)
         double lambda = Math.Max(0.2, _opts.BaseDiversity - sessionProgress * 0.3);
         var reranked  = MmrRerank(filtered, candidateInfos, count, lambda);
 
-        // --- 5. VocaDB の曲情報を付けてレスポンスを生成 ---
+        // --- 6. VocaDB の曲情報を付けてレスポンスを生成 ---
         var resultInfos = await _db.GetSongInfoBatchAsync(reranked.Select(r => r.SongId));
         var infoMap     = resultInfos.ToDictionary(i => i.Id);
 
@@ -109,6 +115,43 @@ public class RecommendService
             .ToList();
 
         return new RecommendResponse(items, null);
+    }
+
+    // ---- 同一プロデューサー上限フィルタ --------------------------
+
+    /// <summary>
+    /// 候補リストから同一プロデューサー曲を上位 maxSameProducer 件に制限する。
+    /// 非同一プロデューサー曲は全て残す。
+    /// </summary>
+    private static List<(int SongId, double Score)> ApplyProducerDiversityCap(
+        List<(int SongId, double Score)> candidates,
+        SongInfo[] infos,
+        IEnumerable<int> seedProducerIds,
+        int maxSameProducer)
+    {
+        var seedProducers = seedProducerIds.ToHashSet();
+        var infoMap       = infos.ToDictionary(i => i.Id);
+        var result        = new List<(int SongId, double Score)>();
+        int sameCount     = 0;
+
+        foreach (var c in candidates)
+        {
+            bool sameProducer = infoMap.TryGetValue(c.SongId, out var info)
+                && info.ProducerIds.Any(p => seedProducers.Contains(p));
+
+            if (!sameProducer)
+            {
+                result.Add(c); // 他プロデューサーは全て保持
+            }
+            else if (sameCount < maxSameProducer)
+            {
+                result.Add(c);
+                sameCount++;
+            }
+            // else: 同一プロデューサー上限超過 → スキップ
+        }
+
+        return result;
     }
 
     // ---- 知識グラフ バイアス付きランダムウォーク ----------------

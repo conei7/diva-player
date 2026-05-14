@@ -151,6 +151,12 @@ def main():
     audio_vecs = fetch_all_vectors(qdrant, QDRANT_COLLECTION_AUDIO, 0)
     print(f'  Audio vectors: {len(audio_vecs)}')
 
+    # 音声カバレッジが5%未満の場合はメタデータのみで処理（メモリ節約・次元削減）
+    audio_coverage = len(audio_vecs) / max(len(meta_vecs), 1)
+    if audio_coverage < 0.05:
+        print(f'  Audio coverage {audio_coverage:.1%} < 5% → skipping audio (metadata-only mode)')
+        audio_vecs = {}
+
     print('Building hybrid vectors ...')
     hybrid_vecs = build_hybrid_vectors(meta_vecs, audio_vecs, ALPHA, BETA)
     print(f'  Hybrid vectors: {len(hybrid_vecs)}')

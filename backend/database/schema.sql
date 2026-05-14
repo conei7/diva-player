@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS songs (
     bpm             REAL,
     raw_json        JSONB,
     synced_at       TIMESTAMPTZ DEFAULT now(),
-    CONSTRAINT songs_song_type_check CHECK (song_type IN ('Original','Cover','Remix','Remaster','Mashup','MusicPV','DramaPV','Other','Unspecified'))
+    CONSTRAINT songs_song_type_check CHECK (song_type IN ('Original','Cover','Remix','Remaster','Mashup','MusicPV','DramaPV','Instrumental','Other','Unspecified'))
 );
 
 CREATE INDEX IF NOT EXISTS songs_publish_date_idx ON songs (publish_date);

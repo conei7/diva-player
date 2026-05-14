@@ -2,7 +2,7 @@ version: "3.9"
 
 services:
   postgres:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16
     container_name: vocadb_postgres
     environment:
       POSTGRES_USER: vocadb
@@ -39,7 +39,7 @@ services:
     container_name: vocadb_api
     environment:
       ConnectionStrings__Postgres: "Host=postgres;Port=5432;Database=vocadb_recommender;Username=vocadb;Password=vocadb_secret"
-      Qdrant__Endpoint: "http://qdrant:6333"
+      Recommender__QdrantEndpoint: "http://qdrant:6334"
       ASPNETCORE_URLS: "http://+:5000"
       ASPNETCORE_ENVIRONMENT: "Development"
     ports:
