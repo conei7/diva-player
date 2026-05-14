@@ -113,7 +113,10 @@ CREATE TABLE IF NOT EXISTS song_features (
     energy              REAL,               -- 0.0 - 1.0
     danceability        REAL,               -- 0.0 - 1.0
     valence             REAL,               -- 0.0 - 1.0 (明るさ)
-    computed_at         TIMESTAMPTZ
+    computed_at         TIMESTAMPTZ,
+    -- 暗黙的フィードバック (再生完了率EMA)
+    implicit_score      REAL    DEFAULT 0,  -- -1 (即スキップ) 〜 +1 (完走/ループ)
+    implicit_count      INTEGER DEFAULT 0   -- EMAサンプル数
 );
 
 -- ============================================================

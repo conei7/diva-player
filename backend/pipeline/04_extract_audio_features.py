@@ -16,6 +16,8 @@ import sys
 import argparse
 import tempfile
 import subprocess
+import random
+import time
 import numpy as np
 import soundfile as sf
 import tensorflow as tf
@@ -95,9 +97,10 @@ def download_audio(youtube_id: str, out_dir: str) -> str | None:
         '--quiet',
         '--no-warnings',
         '--socket-timeout', '30',
+        '--cookies-from-browser', 'edge',  # BAN対策: ブラウザのCookieを使用
         f'https://www.youtube.com/watch?v={youtube_id}',
     ]
-    result = subprocess.run(cmd, capture_output=True, timeout=120)
+    result = subprocess.run(cmd, capture_output=True, timeout=180)
     if result.returncode != 0 or not os.path.exists(wav_path):
         return None
     return wav_path
@@ -131,6 +134,9 @@ def main():
         last_id = int(val) if val else 0
         print(f'Resuming from song_id > {last_id}')
 
+    # 伝説入り相当: rating_score >= 300 (上位794曲) をターゲットにする
+    # DB内にニコニコ再生数が存在しないため、VocaDB rating_score を代替指標として使用
+    LEGENDARY_THRESHOLD = 300
     with conn.cursor() as cur:
         cur.execute("""
             SELECT DISTINCT ON (s.id) s.id AS song_id, p.pv_id AS youtube_id, s.rating_score
@@ -142,14 +148,18 @@ def main():
             LEFT JOIN song_features sf ON sf.song_id = s.id
             WHERE (sf.audio_computed IS NULL OR sf.audio_computed = FALSE)
               AND s.id > %s
+              AND s.rating_score >= %s
             ORDER BY s.id, p.pv_id
-        """, (last_id,))
+        """, (last_id, LEGENDARY_THRESHOLD))
         all_targets = cur.fetchall()
         # rating_score降順でTOP N曲のみ処理
         all_targets.sort(key=lambda r: r.get('rating_score') or 0, reverse=True)
         targets = all_targets[:args.limit] if args.limit > 0 else all_targets
 
-    print(f'Songs to process: {len(targets)}')
+    print(f'[伝説入り相当 rating_score>={LEGENDARY_THRESHOLD}] ターゲット: {len(targets)}曲')
+
+    # トランザクションを即時コミットしてロックを解放
+    conn.commit()
 
     # GPU設定
     gpus = tf.config.list_physical_devices('GPU')
@@ -172,7 +182,14 @@ def main():
 
             wav_path = download_audio(youtube_id, tmp_dir)
             if not wav_path:
+                # ダウンロード失敗時も短い待機を挟む (短め: 5-15秒)
+                time.sleep(random.uniform(5, 15))
                 continue
+
+            # BAN対策: ダウンロード成功後にランダム待機 30-90秒
+            sleep_sec = random.uniform(30, 90)
+            tqdm.write(f'  [sleep {sleep_sec:.0f}s] song_id={song_id}')
+            time.sleep(sleep_sec)
 
             emb = extract_embedding(wav_path)
 

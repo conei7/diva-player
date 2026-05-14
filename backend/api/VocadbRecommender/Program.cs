@@ -1,4 +1,5 @@
 using VocadbRecommender.Services;
+using Npgsql;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -29,6 +30,29 @@ builder.Services.AddCors(options =>
 
 var app = builder.Build();
 app.UseCors("AllowFrontend");
+
+// --- DB マイグレーション: 暗黙的フィードバック用カラムを追加 ---
+try
+{
+    var cfg = app.Services.GetRequiredService<IConfiguration>();
+    var connStr = cfg.GetConnectionString("Postgres");
+    if (connStr is not null)
+    {
+        await using var conn = new NpgsqlConnection(connStr);
+        await conn.OpenAsync();
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandTimeout = 30;
+        cmd.CommandText = @"
+            ALTER TABLE song_features ADD COLUMN IF NOT EXISTS implicit_score  REAL    DEFAULT 0;
+            ALTER TABLE song_features ADD COLUMN IF NOT EXISTS implicit_count  INTEGER DEFAULT 0;";
+        await cmd.ExecuteNonQueryAsync();
+        app.Logger.LogInformation("DB migration: implicit feedback columns ready.");
+    }
+}
+catch (Exception ex)
+{
+    app.Logger.LogWarning("DB migration skipped: {Msg}", ex.Message);
+}
 
 // --- エンドポイント ---
 
@@ -85,4 +109,19 @@ app.MapPost("/api/session/{sessionId}/play", async (
     return Results.Ok();
 });
 
+// POST /api/feedback  → 暗黙的フィードバック (再生完了率)
+// Body: { songId: int, completionRate: double }
+app.MapPost("/api/feedback", async (FeedbackRequest req, DbService db) =>
+{
+    if (req.CompletionRate is < 0.0 or > 1.0)
+        return Results.BadRequest("completionRate must be 0.0-1.0");
+    if (req.SongId <= 0)
+        return Results.BadRequest("invalid songId");
+
+    await db.UpdateImplicitScoreAsync(req.SongId, req.CompletionRate);
+    return Results.Ok();
+});
+
 app.Run();
+
+record FeedbackRequest(int SongId, double CompletionRate);

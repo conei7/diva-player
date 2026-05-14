@@ -92,7 +92,7 @@ public class RecommendService
         mergedCandidates = ApplyProducerDiversityCap(
             mergedCandidates, candidateInfos, seedSong.ProducerIds, maxSameProd);
 
-        // --- 3.5. 好みプロファイルスコアリング (評価データがある場合) ---
+        // --- 3.5. 好みプロファイルスコアリング (明示的フィードバック) ---
         if (ratedSongs is { Count: > 0 })
         {
             var ratedInfos = await _db.GetSongInfoBatchAsync(ratedSongs.Keys);
@@ -101,6 +101,20 @@ public class RecommendService
                 .ToList();
             mergedCandidates = ApplyPreferenceScoring(
                 mergedCandidates, candidateInfos, ratedWithRatings);
+        }
+
+        // --- 3.6. 暗黙的フィードバックスコアリング (再生完了率) ---
+        var implicitScores = await _db.GetImplicitScoreMapAsync(
+            mergedCandidates.Select(c => c.Key));
+        if (implicitScores.Count > 0)
+        {
+            const double implicitBeta = 0.2;
+            mergedCandidates = mergedCandidates
+                .Select(c => implicitScores.TryGetValue(c.Key, out var iScore)
+                    ? (Key: c.Key, Value: c.Value + iScore * implicitBeta)
+                    : c)
+                .OrderByDescending(c => c.Value)
+                .ToList();
         }
 
         // --- 4. マルコフ連鎖フィルタリング ---

@@ -6,7 +6,7 @@ import PlaylistPage from './pages/PlaylistPage';
 import { usePlayerStore } from './stores/playerStore';
 import { useHistoryStore } from './stores/historyStore';
 import { useRatingStore } from './stores/ratingStore';
-import { getRecommendedSongs } from './api/vocadb';
+import { getRecommendedSongs, sendPlayFeedback } from './api/vocadb';
 
 /**
  * App - ルートコンポーネント
@@ -16,18 +16,49 @@ import { getRecommendedSongs } from './api/vocadb';
  * 音楽再生が途切れない。
  */
 export default function App() {
-  const { currentSong, queue, queueIndex, autoQueue, addToQueue } = usePlayerStore();
+  const { currentSong, queue, queueIndex, autoQueue, addToQueue, progress, duration } = usePlayerStore();
   const { addToHistory } = useHistoryStore();
   const { ratings } = useRatingStore();
   const fetchingForRef = useRef<number | null>(null);
   const ratingsRef = useRef(ratings);
   ratingsRef.current = ratings; // 再レンダーを発生させず常に最新値を保持
 
-  // 視聴履歴: currentSong が切り替わったら自動記録
+  // 再生完了率トラッキング: 曲が切り替わる直前の progress/duration を記録
+  const prevSongRef  = useRef<{ id: number; progress: number; duration: number } | null>(null);
+  const progressRef  = useRef(progress);
+  const durationRef  = useRef(duration);
+  progressRef.current = progress;
+  durationRef.current = duration;
+
+  // 視聴履歴 + 暗黙的フィードバック: currentSong が切り替わったら処理
   useEffect(() => {
-    if (currentSong) addToHistory(currentSong);
+    if (!currentSong) return;
+
+    // 前の曲の再生完了率を送信
+    if (prevSongRef.current && prevSongRef.current.id !== currentSong.id) {
+      const { id, progress: p, duration: d } = prevSongRef.current;
+      const completionRate = d > 0 ? Math.min(1, p / d) : 0;
+      sendPlayFeedback(id, completionRate);
+    }
+
+    // 現在の曲を記録して次回の切り替え時に使えるようにする
+    prevSongRef.current = {
+      id: currentSong.id,
+      progress: progressRef.current,
+      duration: durationRef.current,
+    };
+
+    addToHistory(currentSong);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentSong?.id]);
+
+  // progress/duration が更新されたら prevSongRef にも反映 (曲変更直前の値を正確に取得するため)
+  useEffect(() => {
+    if (prevSongRef.current && currentSong && prevSongRef.current.id === currentSong.id) {
+      prevSongRef.current = { id: currentSong.id, progress, duration };
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [progress, duration]);
 
   // 自動キュー: キューの残りが少なくなったら関連曲を自動追加
   useEffect(() => {
@@ -54,7 +85,7 @@ export default function App() {
           fetchingForRef.current = null;
         }
       });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+  // eslint-disable-next-line react-deps
   }, [currentSong?.id, queueIndex, autoQueue, queue.length]);
 
   return (
