@@ -32,20 +32,40 @@ app.UseCors("AllowFrontend");
 
 // --- エンドポイント ---
 
-// GET /api/recommend?songId={id}&count={n}&sessionId={uuid}&sessionProgress={0.0-1.0}
+// GET /api/recommend?songId={id}&count={n}&sessionId={uuid}&sessionProgress={0.0-1.0}&ratedSongs={id1:r1,...}
 app.MapGet("/api/recommend", async (
     int songId,
     int count,
     string? sessionId,
     double sessionProgress,
+    string? ratedSongs,
     RecommendService svc) =>
 {
     if (count is < 1 or > 50)
         return Results.BadRequest("count must be between 1 and 50");
 
-    var result = await svc.RecommendAsync(songId, count, sessionId, sessionProgress);
+    var ratings = ParseRatedSongs(ratedSongs);
+    var result = await svc.RecommendAsync(songId, count, sessionId, sessionProgress, ratings);
     return Results.Ok(result);
 });
+
+static Dictionary<int, int> ParseRatedSongs(string? ratedSongs)
+{
+    if (string.IsNullOrEmpty(ratedSongs)) return [];
+    var result = new Dictionary<int, int>();
+    foreach (var part in ratedSongs.Split(','))
+    {
+        var idx = part.IndexOf(':');
+        if (idx < 0) continue;
+        if (int.TryParse(part[..idx], out var id) &&
+            int.TryParse(part[(idx + 1)..], out var rating) &&
+            rating is >= 1 and <= 5)
+        {
+            result[id] = rating;
+        }
+    }
+    return result;
+}
 
 // GET /api/health
 app.MapGet("/api/health", () => Results.Ok(new { status = "ok" }));

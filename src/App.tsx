@@ -5,6 +5,7 @@ import SearchPage from './pages/SearchPage';
 import PlaylistPage from './pages/PlaylistPage';
 import { usePlayerStore } from './stores/playerStore';
 import { useHistoryStore } from './stores/historyStore';
+import { useRatingStore } from './stores/ratingStore';
 import { getRecommendedSongs } from './api/vocadb';
 
 /**
@@ -17,7 +18,10 @@ import { getRecommendedSongs } from './api/vocadb';
 export default function App() {
   const { currentSong, queue, queueIndex, autoQueue, addToQueue } = usePlayerStore();
   const { addToHistory } = useHistoryStore();
+  const { ratings } = useRatingStore();
   const fetchingForRef = useRef<number | null>(null);
+  const ratingsRef = useRef(ratings);
+  ratingsRef.current = ratings; // 再レンダーを発生させず常に最新値を保持
 
   // 視聴履歴: currentSong が切り替わったら自動記録
   useEffect(() => {
@@ -37,7 +41,7 @@ export default function App() {
     fetchingForRef.current = songId;
     const existingIds = new Set(queue.map(s => s.id));
 
-    getRecommendedSongs(songId)
+    getRecommendedSongs(songId, 10, undefined, 0.0, ratingsRef.current)
       .then(related => {
         const newSongs = related
           .filter(s => !existingIds.has(s.id))

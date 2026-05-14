@@ -313,6 +313,7 @@ export async function getRecommendedSongs(
   count = 10,
   sessionId?: string,
   sessionProgress = 0.0,
+  ratings?: Record<string, number>,
 ): Promise<Song[]> {
   // ローカルバックエンドを優先
   if (await isRecommenderAvailable()) {
@@ -323,6 +324,15 @@ export async function getRecommendedSongs(
         sessionProgress: String(sessionProgress),
       });
       if (sessionId) params.set('sessionId', sessionId);
+
+      // 評価データをAPIに渡す (id:rating のカンマ区切り、最大30件)
+      if (ratings) {
+        const pairs = Object.entries(ratings)
+          .filter(([, r]) => r >= 1 && r <= 5)
+          .slice(0, 30)
+          .map(([id, r]) => `${id}:${r}`);
+        if (pairs.length > 0) params.set('ratedSongs', pairs.join(','));
+      }
 
       const res = await fetch(`${RECOMMENDER_API}/api/recommend?${params}`);
       if (res.ok) {

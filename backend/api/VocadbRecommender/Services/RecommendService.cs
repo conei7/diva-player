@@ -32,7 +32,8 @@ public class RecommendService
         int    seedSongId,
         int    count,
         string? sessionId,
-        double sessionProgress)   // 0.0 (開始) 〜 1.0 (セッション後半)
+        double sessionProgress,
+        Dictionary<int, int>? ratedSongs = null)   // songId → 1-5 の評価値
     {
         // --- シード曲情報取得 ---
         var seedSong = await _db.GetSongInfoAsync(seedSongId);
@@ -91,6 +92,17 @@ public class RecommendService
         mergedCandidates = ApplyProducerDiversityCap(
             mergedCandidates, candidateInfos, seedSong.ProducerIds, maxSameProd);
 
+        // --- 3.5. 好みプロファイルスコアリング (評価データがある場合) ---
+        if (ratedSongs is { Count: > 0 })
+        {
+            var ratedInfos = await _db.GetSongInfoBatchAsync(ratedSongs.Keys);
+            var ratedWithRatings = ratedInfos
+                .Select(i => (Info: i, Rating: ratedSongs.GetValueOrDefault(i.Id, 3)))
+                .ToList();
+            mergedCandidates = ApplyPreferenceScoring(
+                mergedCandidates, candidateInfos, ratedWithRatings);
+        }
+
         // --- 4. マルコフ連鎖フィルタリング ---
         var filtered = await _markov.FilterAsync(
             seedSong, mergedCandidates, candidateInfos);
@@ -115,6 +127,51 @@ public class RecommendService
             .ToList();
 
         return new RecommendResponse(items, null);
+    }
+
+    // ---- 好みプロファイルスコアリング (明示的フィードバック) ------
+
+    /// <summary>
+    /// 評価済み曲のプロデューサー/ボーカリストに基づいて候補スコアを加減算する。
+    /// 評価5★ → +alpha ボーナス、評価1★ → -alpha ペナルティ。
+    /// 滑らかな重み付けで、ハードコードの足切りを使わない。
+    /// </summary>
+    private static List<(int SongId, double Score)> ApplyPreferenceScoring(
+        List<(int SongId, double Score)> candidates,
+        SongInfo[] candidateInfos,
+        IReadOnlyList<(SongInfo Info, int Rating)> ratedSongs,
+        double alpha = 0.3)
+    {
+        var infoMap = candidateInfos.ToDictionary(i => i.Id);
+
+        return candidates
+            .Select(c =>
+            {
+                if (!infoMap.TryGetValue(c.SongId, out var info)) return c;
+
+                double bonus     = 0;
+                int    matchCount = 0;
+
+                foreach (var (ratedInfo, rating) in ratedSongs)
+                {
+                    // -1 (最低評価) 〜 +1 (最高評価) の重み
+                    double weight = (rating - 3.0) / 2.0;
+
+                    var sharedProducers = info.ProducerIds.Intersect(ratedInfo.ProducerIds).Count();
+                    var sharedVocalists = info.VocalistIds.Intersect(ratedInfo.VocalistIds).Count();
+
+                    if (sharedProducers > 0 || sharedVocalists > 0)
+                    {
+                        bonus += weight * (sharedProducers * 0.6 + sharedVocalists * 0.3);
+                        matchCount++;
+                    }
+                }
+
+                double adjustment = matchCount > 0 ? bonus / matchCount * alpha : 0;
+                return (SongId: c.SongId, Score: c.Score + adjustment);
+            })
+            .OrderByDescending(c => c.Score)
+            .ToList();
     }
 
     // ---- 同一プロデューサー上限フィルタ --------------------------
