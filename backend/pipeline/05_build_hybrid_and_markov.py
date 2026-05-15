@@ -151,11 +151,9 @@ def main():
     audio_vecs = fetch_all_vectors(qdrant, QDRANT_COLLECTION_AUDIO, 0)
     print(f'  Audio vectors: {len(audio_vecs)}')
 
-    # 音声カバレッジが5%未満の場合はメタデータのみで処理（メモリ節約・次元削減）
+    # 音声カバレッジを表示（閾値によるスキップは行わず、常にハイブリッドモードで処理）
     audio_coverage = len(audio_vecs) / max(len(meta_vecs), 1)
-    if audio_coverage < 0.05:
-        print(f'  Audio coverage {audio_coverage:.1%} < 5% → skipping audio (metadata-only mode)')
-        audio_vecs = {}
+    print(f'  Audio coverage {audio_coverage:.1%} → hybrid mode (audio data will be embedded)')
 
     print('Building hybrid vectors ...')
     hybrid_vecs = build_hybrid_vectors(meta_vecs, audio_vecs, ALPHA, BETA)
@@ -168,8 +166,15 @@ def main():
     sample_dim = next(iter(hybrid_vecs.values())).shape[0]
     print(f'  Hybrid vector dimension: {sample_dim}')
 
-    # Qdrant ハイブリッドコレクション
+    # Qdrant ハイブリッドコレクション（次元が変わる場合は再作成）
     existing = [c.name for c in qdrant.get_collections().collections]
+    if QDRANT_COLLECTION_HYBRID in existing:
+        existing_info = qdrant.get_collection(QDRANT_COLLECTION_HYBRID)
+        existing_dim = existing_info.config.params.vectors.size
+        if existing_dim != sample_dim:
+            print(f'  Dimension changed ({existing_dim} → {sample_dim}). Recreating collection ...')
+            qdrant.delete_collection(QDRANT_COLLECTION_HYBRID)
+            existing = []  # force create below
     if QDRANT_COLLECTION_HYBRID not in existing:
         qdrant.create_collection(
             collection_name=QDRANT_COLLECTION_HYBRID,
