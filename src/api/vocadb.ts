@@ -459,7 +459,8 @@ export async function getSimilarSongs(
       _recommenderAvailable = false;
     }
   }
-  // フォールバック: VocaDB /related (offset 0 のみ)
+  // フォールバック: VocaDB /related は全件一括（offset/pagination なし）
+  // offset=0 のページだけ全件返す
   if (offset === 0) return getRelatedSongs(seedSongId);
   return [];
 }

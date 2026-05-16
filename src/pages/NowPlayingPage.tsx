@@ -8,6 +8,7 @@ import {
   getRecommendedSongs,
   getSongsByProducer,
   getSimilarSongs,
+  getSongById,
 } from '../api/vocadb';
 import type { Song } from '../types/vocadb';
 
@@ -68,7 +69,12 @@ export default function NowPlayingPage() {
   const seenIdsRef    = useRef<Set<number>>(new Set());
 
   const fetchProducer = useCallback(async (song: Song, page: number) => {
-    const producerIds = (song.artists ?? [])
+    // song.artists が未取得の場合は getSongById で補完
+    let fullSong = song;
+    if (!song.artists || song.artists.length === 0) {
+      try { fullSong = await getSongById(song.id); } catch { /* fallback */ }
+    }
+    const producerIds = (fullSong.artists ?? [])
       .filter(a => a.categories === 'Producer')
       .map(a => a.artist?.id)
       .filter((id): id is number => id !== undefined);
@@ -111,12 +117,14 @@ export default function NowPlayingPage() {
     );
     const fresh = songs.filter(s => !seenIdsRef.current.has(s.id));
     fresh.forEach(s => seenIdsRef.current.add(s.id));
+    // フォールバック時（/related）は最初の1ページのみ
+    const hasMore = songs.length >= PAGE_SIZE;
     setTabs(prev => ({
       ...prev,
       personal: {
         items:   page === 0 ? fresh : [...prev.personal.items, ...fresh],
         loading: false,
-        hasMore: songs.length >= PAGE_SIZE,
+        hasMore,
         page:    page + 1,
       },
     }));
