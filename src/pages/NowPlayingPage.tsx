@@ -7,8 +7,7 @@ import StarRating from '../components/player/StarRating';
 import {
   getRecommendedSongs,
   getSongsByProducer,
-  getSongsByTags,
-  getSongById,
+  getSimilarSongs,
 } from '../api/vocadb';
 import type { Song } from '../types/vocadb';
 
@@ -92,20 +91,17 @@ export default function NowPlayingPage() {
   }, []);
 
   const fetchRelated = useCallback(async (song: Song, page: number) => {
-    if (page > 0) {
-      setTabs(prev => ({ ...prev, related: { ...prev.related, loading: false, hasMore: false } }));
-      return;
-    }
-    let fullSong = song;
-    try { fullSong = await getSongById(song.id); } catch { /* fallback */ }
-    const tagIds = ((fullSong as Song & { tags?: { tag: { id: number } }[] }).tags ?? [])
-      .map(t => t.tag.id);
-    const { items } = await getSongsByTags(tagIds, song.id, PAGE_SIZE, 0);
-    const fresh = items.filter(s => !seenIdsRef.current.has(s.id));
+    const songs = await getSimilarSongs(song.id, PAGE_SIZE, page * PAGE_SIZE);
+    const fresh = songs.filter(s => !seenIdsRef.current.has(s.id));
     fresh.forEach(s => seenIdsRef.current.add(s.id));
     setTabs(prev => ({
       ...prev,
-      related: { items: fresh, loading: false, hasMore: false, page: 1 },
+      related: {
+        items:   page === 0 ? fresh : [...prev.related.items, ...fresh],
+        loading: false,
+        hasMore: songs.length >= PAGE_SIZE,
+        page:    page + 1,
+      },
     }));
   }, []);
 

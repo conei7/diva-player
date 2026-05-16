@@ -23,7 +23,8 @@ public class QdrantService
     public async Task<List<(int SongId, double Score)>> SearchSimilarAsync(
         int seedSongId,
         int topK,
-        IEnumerable<int>? excludeIds = null)
+        IEnumerable<int>? excludeIds = null,
+        int offset = 0)
     {
         var excludeSet = excludeIds?.ToHashSet() ?? [];
         excludeSet.Add(seedSongId);
@@ -41,14 +42,15 @@ public class QdrantService
 
         var seedVector = getResult.Vectors.Vector.Data.ToArray();
 
-        // ANN 探索
+        // ANN 探索 (offset + topK + 除外分を多めに取得してからスライス)
         var searchResult = await _client.SearchAsync(
             collectionName: _opts.CollectionHybrid,
             vector: seedVector,
-            limit: (ulong)(topK + excludeSet.Count + 10));  // 除外分を多めに
+            limit: (ulong)(offset + topK + excludeSet.Count + 10));
 
         return searchResult
             .Where(r => !excludeSet.Contains((int)r.Id.Num))
+            .Skip(offset)
             .Take(topK)
             .Select(r => ((int)r.Id.Num, (double)r.Score))
             .ToList();
@@ -60,7 +62,8 @@ public class QdrantService
     public async Task<List<(int SongId, double Score)>> SearchMetadataSimilarAsync(
         int seedSongId,
         int topK,
-        IEnumerable<int>? excludeIds = null)
+        IEnumerable<int>? excludeIds = null,
+        int offset = 0)
     {
         var excludeSet = excludeIds?.ToHashSet() ?? [];
         excludeSet.Add(seedSongId);
@@ -80,10 +83,11 @@ public class QdrantService
         var searchResult = await _client.SearchAsync(
             collectionName: _opts.CollectionMetadata,
             vector: seedVector,
-            limit: (ulong)(topK + excludeSet.Count + 10));
+            limit: (ulong)(offset + topK + excludeSet.Count + 10));
 
         return searchResult
             .Where(r => !excludeSet.Contains((int)r.Id.Num))
+            .Skip(offset)
             .Take(topK)
             .Select(r => ((int)r.Id.Num, (double)r.Score))
             .ToList();

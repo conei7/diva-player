@@ -99,6 +99,45 @@ static Dictionary<int, int> ParseRatedSongs(string? ratedSongs)
     return result;
 }
 
+// GET /api/recommend/similar?songId={id}&count={n}&offset={0}
+// Qdrant ハイブリッドベクトルによる純粋な音響類似検索
+app.MapGet("/api/recommend/similar", async (
+    int songId,
+    int count,
+    int? offset,
+    QdrantService qdrant,
+    DbService db) =>
+{
+    if (count is < 1 or > 100)
+        return Results.BadRequest("count must be between 1 and 100");
+
+    int skip = offset ?? 0;
+
+    // ハイブリッドコレクション優先、なければメタデータコレクション
+    var results = await qdrant.SearchSimilarAsync(songId, count, null, skip);
+    if (results.Count == 0)
+        results = await qdrant.SearchMetadataSimilarAsync(songId, count, null, skip);
+
+    if (results.Count == 0)
+        return Results.Ok(new { items = Array.Empty<object>() });
+
+    var infos = await db.GetSongInfoBatchAsync(results.Select(r => r.SongId));
+    var infoMap = infos.ToDictionary(i => i.Id);
+
+    var items = results
+        .Where(r => infoMap.ContainsKey(r.SongId))
+        .Select(r => new
+        {
+            songId = r.SongId,
+            name   = infoMap[r.SongId].Name,
+            artist = infoMap[r.SongId].ArtistString,
+            score  = r.Score,
+        })
+        .ToList();
+
+    return Results.Ok(new { items });
+});
+
 // GET /api/health
 app.MapGet("/api/health", () => Results.Ok(new { status = "ok" }));
 

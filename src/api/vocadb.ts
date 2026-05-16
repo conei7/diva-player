@@ -429,6 +429,42 @@ export async function getSongsByTags(
 }
 
 /**
+ * Qdrant ハイブリッドベクトルによる音響類似曲取得
+ * バックエンドが利用不可の場合は VocaDB /related にフォールバック
+ */
+interface SimilarItem { songId: number; name: string; artist: string; score: number; }
+interface SimilarResponse { items: SimilarItem[]; }
+
+export async function getSimilarSongs(
+  seedSongId: number,
+  count = 20,
+  offset = 0,
+): Promise<Song[]> {
+  if (await isRecommenderAvailable()) {
+    try {
+      const params = new URLSearchParams({
+        songId: String(seedSongId),
+        count:  String(count),
+        offset: String(offset),
+      });
+      const res = await fetch(`${RECOMMENDER_API}/api/recommend/similar?${params}`);
+      if (res.ok) {
+        const data: SimilarResponse = await res.json();
+        if (data.items.length > 0) {
+          const songs = await Promise.all(data.items.map(i => getSongById(i.songId).catch(() => null)));
+          return songs.filter((s): s is Song => s !== null);
+        }
+      }
+    } catch {
+      _recommenderAvailable = false;
+    }
+  }
+  // フォールバック: VocaDB /related (offset 0 のみ)
+  if (offset === 0) return getRelatedSongs(seedSongId);
+  return [];
+}
+
+/**
  * 暗黙的フィードバック送信 (再生完了率)
  * completionRate: 0.0 (即スキップ) 〜 1.0 (最後まで再生)
  * fire-and-forget: エラーは無視
