@@ -129,9 +129,6 @@ export default function NowPlayingPage() {
         <h2 className="text-base font-semibold" style={{ color: 'var(--color-text-primary)' }}>
           おすすめ
         </h2>
-        <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
-          キューとは独立した関連曲
-        </span>
       </div>
 
       {/* ローディングスケルトン */}
