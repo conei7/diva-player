@@ -376,7 +376,6 @@ export async function getSongsByProducer(
   // 最初のプロデューサーIDで検索（複数の場合は最も重要なもの優先）
   const params = buildSearchParams({
     'artistId[]': producerIds[0],
-    artistParticipationStatus: 'OnlyMainAlbums',
     sort: 'FavoritedTimes',
     maxResults,
     start,
