@@ -56,21 +56,29 @@ catch (Exception ex)
 
 // --- エンドポイント ---
 
-// GET /api/recommend?songId={id}&count={n}&sessionId={uuid}&sessionProgress={0.0-1.0}&ratedSongs={id1:r1,...}
+// GET /api/recommend?songId={id}&count={n}&offset={0}&sessionId={uuid}&sessionProgress={0.0-1.0}&ratedSongs={id1:r1,...}
 app.MapGet("/api/recommend", async (
     int songId,
     int count,
+    int? offset,
     string? sessionId,
     double sessionProgress,
     string? ratedSongs,
     RecommendService svc) =>
 {
-    if (count is < 1 or > 50)
-        return Results.BadRequest("count must be between 1 and 50");
+    if (count is < 1 or > 100)
+        return Results.BadRequest("count must be between 1 and 100");
 
     var ratings = ParseRatedSongs(ratedSongs);
-    var result = await svc.RecommendAsync(songId, count, sessionId, sessionProgress, ratings);
-    return Results.Ok(result);
+    // offset をサポート: 十分な候補を取得して offset 分スキップ
+    int take   = count;
+    int skip   = offset ?? 0;
+    int total  = take + skip;
+    var result = await svc.RecommendAsync(songId, Math.Min(total, 100), sessionId, sessionProgress, ratings);
+
+    // offset 適用
+    var pagedItems = result.Items.Skip(skip).Take(take).ToList();
+    return Results.Ok(new RecommendResponse(pagedItems, result.Error));
 });
 
 static Dictionary<int, int> ParseRatedSongs(string? ratedSongs)

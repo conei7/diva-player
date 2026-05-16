@@ -314,6 +314,7 @@ export async function getRecommendedSongs(
   sessionId?: string,
   sessionProgress = 0.0,
   ratings?: Record<string, number>,
+  offset = 0,
 ): Promise<Song[]> {
   // ローカルバックエンドを優先
   if (await isRecommenderAvailable()) {
@@ -321,6 +322,7 @@ export async function getRecommendedSongs(
       const params = new URLSearchParams({
         songId: String(seedSongId),
         count:  String(count),
+        offset: String(offset),
         sessionProgress: String(sessionProgress),
       });
       if (sessionId) params.set('sessionId', sessionId);
@@ -351,6 +353,79 @@ export async function getRecommendedSongs(
 
   // フォールバック: VocaDB /related
   return getRelatedSongs(seedSongId);
+}
+
+/**
+ * 同一プロデューサーの他の曲を取得
+ * producerIds: Song.artists から category=Producer の artist.id を抽出して渡す
+ */
+export async function getSongsByProducer(
+  producerIds: number[],
+  excludeId: number,
+  maxResults = 20,
+  start = 0,
+): Promise<{ items: Song[]; totalCount: number }> {
+  if (producerIds.length === 0) return { items: [], totalCount: 0 };
+  // 最初のプロデューサーIDで検索（複数の場合は最も重要なもの優先）
+  const params = buildSearchParams({
+    'artistId[]': producerIds[0],
+    artistParticipationStatus: 'OnlyMainAlbums',
+    sort: 'FavoritedTimes',
+    maxResults,
+    start,
+    getTotalCount: true,
+    fields: DEFAULT_FIELDS,
+    lang: DEFAULT_LANG,
+    onlyWithPVs: true,
+  });
+  const url = `${BASE_URL}/songs?${params}`;
+  const cacheKey = `producer:${url}`;
+
+  const cached = getCached<SongSearchResult>(cacheKey);
+  const data = cached ?? await (async () => {
+    const response = await fetchWithRetry(url);
+    const result: SongSearchResult = await response.json();
+    setCache(cacheKey, result);
+    return result;
+  })();
+
+  const items = data.items.filter(s => s.id !== excludeId);
+  return { items, totalCount: data.totalCount };
+}
+
+/**
+ * タグベースの類似曲を取得（VocaDB タグ ID で絞り込み）
+ */
+export async function getSongsByTags(
+  tagIds: number[],
+  excludeId: number,
+  maxResults = 20,
+  start = 0,
+): Promise<{ items: Song[]; totalCount: number }> {
+  if (tagIds.length === 0) return { items: [], totalCount: 0 };
+  const params = buildSearchParams({
+    'tagId[]': tagIds.slice(0, 3), // 上位3タグに絞る
+    sort: 'FavoritedTimes',
+    maxResults,
+    start,
+    getTotalCount: true,
+    fields: DEFAULT_FIELDS,
+    lang: DEFAULT_LANG,
+    onlyWithPVs: true,
+  });
+  const url = `${BASE_URL}/songs?${params}`;
+  const cacheKey = `tags:${url}`;
+
+  const cached = getCached<SongSearchResult>(cacheKey);
+  const data = cached ?? await (async () => {
+    const response = await fetchWithRetry(url);
+    const result: SongSearchResult = await response.json();
+    setCache(cacheKey, result);
+    return result;
+  })();
+
+  const items = data.items.filter(s => s.id !== excludeId);
+  return { items, totalCount: data.totalCount };
 }
 
 /**
