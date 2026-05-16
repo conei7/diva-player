@@ -6,7 +6,8 @@ import SongCard from '../components/search/SongCard';
 import StarRating from '../components/player/StarRating';
 import {
   getRecommendedSongs,
-  getSongsByProducer,
+  
+  getSongsByProducerFromBackend,
   getSimilarSongs,
   getSongById,
 } from '../api/vocadb';
@@ -81,11 +82,15 @@ export default function NowPlayingPage() {
       .filter(a => a.categories === 'Producer')
       .map(a => a.artist?.id)
       .filter((id): id is number => id !== undefined);
-    if (producerIds.length === 0) {
+
+    // バックエンド優先（DB のプロデューサー情報を使う）、フォールバックは VocaDB API
+    const items = await getSongsByProducerFromBackend(
+      song.id, producerIds, PAGE_SIZE, page * PAGE_SIZE
+    );
+    if (items.length === 0 && page === 0) {
       setTabs(prev => ({ ...prev, producer: { ...prev.producer, loading: false, hasMore: false } }));
       return;
     }
-    const { items } = await getSongsByProducer(producerIds, song.id, PAGE_SIZE, page * PAGE_SIZE);
     const fresh = items.filter(s => !seenProducerRef.current.has(s.id));
     fresh.forEach(s => seenProducerRef.current.add(s.id));
     setTabs(prev => ({
@@ -214,7 +219,7 @@ export default function NowPlayingPage() {
               className="text-[10px] font-bold px-2 py-0.5 rounded-full"
               style={{ background: 'rgba(29,185,84,0.2)', color: '#1DB954' }}
             >
-              ▶ 再生中
+              ? 再生中
             </span>
           </div>
           <h1 className="text-lg font-bold truncate leading-tight mb-1"

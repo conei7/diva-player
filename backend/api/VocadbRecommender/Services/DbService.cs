@@ -171,6 +171,35 @@ public class DbService
     // ---- 暗黙的フィードバック (再生完了率) -----------------------
 
     /// <summary>
+    /// 同一プロデューサーの楽曲を人気順で取得する。
+    /// </summary>
+    public async Task<List<(int SongId, string Name, string ArtistString)>> GetSongsByProducerAsync(
+        int seedSongId, int limit)
+    {
+        using var conn = Open();
+        await using var cmd = new NpgsqlCommand(@"
+            SELECT DISTINCT s.id, s.name, s.artist_string
+            FROM songs s
+            JOIN song_artists sa ON sa.song_id = s.id AND sa.is_producer = TRUE
+            WHERE sa.artist_id IN (
+                SELECT artist_id FROM song_artists
+                WHERE song_id = $1 AND is_producer = TRUE
+            )
+            AND s.id <> $1
+            AND s.pv_services IS NOT NULL
+            ORDER BY s.favorited_times DESC NULLS LAST
+            LIMIT $2", conn);
+        cmd.Parameters.AddWithValue(seedSongId);
+        cmd.Parameters.AddWithValue(limit);
+
+        var result = new List<(int, string, string)>();
+        await using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+            result.Add((reader.GetInt32(0), reader.GetString(1), reader.GetString(2)));
+        return result;
+    }
+
+    /// <summary>
     /// 再生完了率 (0.0-1.0) をEMAで song_features.implicit_score に蓄積する。
     /// signal = (completionRate - 0.5) * 2 → -1 (即スキップ) 〜 +1 (最後まで再生)
     /// EMA: score = (old_score * n + signal) / (n + 1)

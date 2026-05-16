@@ -363,6 +363,44 @@ export async function getRecommendedSongs(
 }
 
 /**
+ * ローカルバックエンド経由で同一プロデューサーの曲を取得
+ * バックエンド不可時は VocaDB artistId 検索にフォールバック
+ */
+interface ProducerSongItem { songId: number; name: string; artistString: string; }
+interface ProducerSongResponse { items: ProducerSongItem[]; }
+
+export async function getSongsByProducerFromBackend(
+  seedSongId: number,
+  producerIds: number[],
+  count = 20,
+  offset = 0,
+): Promise<Song[]> {
+  if (await isRecommenderAvailable()) {
+    try {
+      const params = new URLSearchParams({
+        songId: String(seedSongId),
+        count:  String(count),
+        offset: String(offset),
+      });
+      const res = await fetch(`${RECOMMENDER_API}/api/recommend/producer?${params}`);
+      if (res.ok) {
+        const data: ProducerSongResponse = await res.json();
+        if (data.items.length > 0) {
+          const songs = await Promise.all(data.items.map(i => getSongById(i.songId).catch(() => null)));
+          return songs.filter((s): s is Song => s !== null);
+        }
+      }
+    } catch {
+      _recommenderAvailable = false;
+    }
+  }
+  // フォールバック: VocaDB artistId 検索
+  if (producerIds.length === 0 || offset > 0) return [];
+  const { items } = await getSongsByProducer(producerIds, seedSongId, count, 0);
+  return items;
+}
+
+/**
  * 同一プロデューサーの他の曲を取得
  * producerIds: Song.artists から category=Producer の artist.id を抽出して渡す
  */

@@ -99,6 +99,25 @@ static Dictionary<int, int> ParseRatedSongs(string? ratedSongs)
     return result;
 }
 
+// GET /api/recommend/producer?songId={id}&count={n}&offset={0}
+// 同一プロデューサーの楽曲をDBから取得
+app.MapGet("/api/recommend/producer", async (
+    int songId,
+    int count,
+    int? offset,
+    DbService db) =>
+{
+    if (count is < 1 or > 100)
+        return Results.BadRequest("count must be between 1 and 100");
+
+    int skip = offset ?? 0;
+
+    var songs = await db.GetSongsByProducerAsync(songId, count + skip);
+    var paged  = songs.Skip(skip).Take(count).ToList();
+
+    return Results.Ok(new { items = paged });
+});
+
 // GET /api/recommend/similar?songId={id}&count={n}&offset={0}
 // Qdrant ハイブリッドベクトルによる純粋な音響類似検索
 app.MapGet("/api/recommend/similar", async (
