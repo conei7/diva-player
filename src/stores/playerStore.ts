@@ -73,9 +73,14 @@ interface PlayerState {
   hiddenMode: boolean;
   toggleHiddenMode: () => void;
 
-  // 自動キュー（曲終了時に関連曲を自動追加）
+  // 自動キュー（常時ON）
   autoQueue: boolean;
   toggleAutoQueue: () => void;
+
+  // シーク（プログレスバーから再生位置を変更）
+  seekTarget: number | null;
+  seekTo: (t: number) => void;
+  clearSeekTarget: () => void;
   
   // キュー操作
   setQueue: (songs: Song[], startIndex?: number) => void;
@@ -108,12 +113,12 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     storage.set('hiddenMode', next);
     return { hiddenMode: next };
   }),
-  autoQueue: storage.get<boolean>('autoQueue') ?? false,
-  toggleAutoQueue: () => set((state) => {
-    const next = !state.autoQueue;
-    storage.set('autoQueue', next);
-    return { autoQueue: next };
-  }),
+  autoQueue: true, // 常にON
+  toggleAutoQueue: () => {}, // 廃止 (常時ON)
+
+  seekTarget: null,
+  seekTo: (t) => set({ seekTarget: t }),
+  clearSeekTarget: () => set({ seekTarget: null }),
   queue: [],
   queueIndex: -1,
   error: null,

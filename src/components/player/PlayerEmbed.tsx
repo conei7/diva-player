@@ -217,7 +217,7 @@ function loadYouTubeAPI(): Promise<void> {
 }
 
 export default function PlayerEmbed() {
-  const { currentSong, currentPV, isPlaying, volume, setProgress, setDuration, setIsPlaying, setError, next, tryNextPV } = usePlayerStore();
+  const { currentSong, currentPV, isPlaying, volume, seekTarget, clearSeekTarget, setProgress, setDuration, setIsPlaying, setError, next, tryNextPV } = usePlayerStore();
   const ytPlayerRef = useRef<YT.Player | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const progressTimerRef = useRef<number | null>(null);
@@ -358,6 +358,18 @@ export default function PlayerEmbed() {
       // ignore
     }
   }, [volume, currentPV]);
+
+  // シーク: seekTarget が設定されたらシーク実行してクリア
+  useEffect(() => {
+    if (seekTarget === null || !ytPlayerRef.current || !currentPV || currentPV.service !== 'Youtube') return;
+    try {
+      ytPlayerRef.current.seekTo?.(seekTarget, true);
+      setProgress(seekTarget);
+    } catch {
+      // ignore
+    }
+    clearSeekTarget();
+  }, [seekTarget, clearSeekTarget, currentPV, setProgress]);
 
   // ニコニコ動画の埋め込み
   if (currentPV?.service === 'NicoNicoDouga') {

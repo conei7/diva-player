@@ -4,6 +4,7 @@ import { useUiStore } from '../../stores/uiStore';
 interface SongCardProps {
   song: Song;
   index: number;
+  onPlay?: (song: Song) => void;
   onAddToQueue?: (song: Song) => void;
   onSelect?: (song: Song) => void;
 }
@@ -12,7 +13,7 @@ interface SongCardProps {
  * SongCard - 検索結果の曲カード
  * サムネイル、曲名、アーティスト、PVサービスバッジ、再生ボタンを表示。
  */
-export default function SongCard({ song, index, onAddToQueue, onSelect }: SongCardProps) {
+export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect }: SongCardProps) {
   const { currentSong, isPlaying, setQueue, hiddenMode } = usePlayerStore();
   const { openSongDetail } = useUiStore();
   const isCurrentSong = currentSong?.id === song.id;
@@ -45,7 +46,11 @@ export default function SongCard({ song, index, onAddToQueue, onSelect }: SongCa
 
   const handlePlay = () => {
     if (!hasPlayablePV) return;
-    setQueue([song], 0);
+    if (onPlay) {
+      onPlay(song); // 動的ミックスリスト生成 (SearchPage から渡される)
+    } else {
+      setQueue([song], 0); // フォールバック
+    }
     onSelect?.(song);
   };
 

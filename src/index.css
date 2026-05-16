@@ -212,6 +212,47 @@ body {
   box-shadow: 0 0 6px rgba(6, 214, 160, 0.4);
 }
 
+/* ─── シーク（プログレス）スライダー ─── */
+.progress-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--color-surface);
+  outline: none;
+  cursor: pointer;
+  transition: height 0.12s ease;
+}
+
+.progress-slider:hover {
+  height: 5px;
+}
+
+.progress-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--color-accent-cyan);
+  cursor: pointer;
+  box-shadow: 0 0 6px rgba(6, 214, 160, 0.4);
+  transition: transform 0.12s ease;
+}
+
+.progress-slider:hover::-webkit-slider-thumb {
+  transform: scale(1.25);
+}
+
+.progress-slider:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.progress-slider:disabled::-webkit-slider-thumb {
+  cursor: default;
+}
+
 /* ─── イコライザーアニメーション (再生中表示) ─── */
 .equalizer-bar {
   display: inline-block;

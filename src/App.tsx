@@ -16,7 +16,7 @@ import { getRecommendedSongs, sendPlayFeedback } from './api/vocadb';
  * 音楽再生が途切れない。
  */
 export default function App() {
-  const { currentSong, queue, queueIndex, autoQueue, addToQueue, progress, duration } = usePlayerStore();
+  const { currentSong, queue, queueIndex, addToQueue, progress, duration } = usePlayerStore();
   const { addToHistory } = useHistoryStore();
   const { ratings } = useRatingStore();
   const fetchingForRef = useRef<number | null>(null);
@@ -60,9 +60,9 @@ export default function App() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [progress, duration]);
 
-  // 自動キュー: キューの残りが少なくなったら関連曲を自動追加
+  // 自動キュー: キューの残りが少なくなったら関連曲を自動追加 (常時ON)
   useEffect(() => {
-    if (!autoQueue || !currentSong) return;
+    if (!currentSong) return;
     if (fetchingForRef.current === currentSong.id) return; // 同じ曲では1回のみ
 
     const remaining = queue.length - 1 - queueIndex;
@@ -72,11 +72,11 @@ export default function App() {
     fetchingForRef.current = songId;
     const existingIds = new Set(queue.map(s => s.id));
 
-    getRecommendedSongs(songId, 10, undefined, 0.0, ratingsRef.current)
+    getRecommendedSongs(songId, 40, undefined, 0.0, ratingsRef.current)
       .then(related => {
         const newSongs = related
           .filter(s => !existingIds.has(s.id))
-          .slice(0, 10);
+          .slice(0, 40);
         newSongs.forEach(s => addToQueue(s));
       })
       .catch(() => {
@@ -86,7 +86,7 @@ export default function App() {
         }
       });
   // eslint-disable-next-line react-deps
-  }, [currentSong?.id, queueIndex, autoQueue, queue.length]);
+  }, [currentSong?.id, queueIndex, queue.length]);
 
   return (
     <BrowserRouter basename="/diva-player">
