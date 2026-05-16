@@ -472,15 +472,20 @@ export async function getSimilarSongs(
 }
 
 /**
- * 暗黙的フィードバック送信 (再生完了率)
+ * 暗黙的フィードバック送信 (再生完了率 / キュー削除)
  * completionRate: 0.0 (即スキップ) 〜 1.0 (最後まで再生)
+ * action: 'queue_remove' でキュー削除ペナルティを送信
  * fire-and-forget: エラーは無視
  */
-export function sendPlayFeedback(songId: number, completionRate: number): void {
+export function sendPlayFeedback(songId: number, completionRate: number, action?: string): void {
   if (!_recommenderAvailable) return; // バックエンドが利用不可なら何もしない
   fetch(`${RECOMMENDER_API}/api/feedback`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ songId, completionRate: Math.max(0, Math.min(1, completionRate)) }),
+    body: JSON.stringify({
+      songId,
+      completionRate: action ? completionRate : Math.max(0, Math.min(1, completionRate)),
+      ...(action ? { action } : {}),
+    }),
   }).catch(() => {/* fire-and-forget */});
 }

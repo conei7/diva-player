@@ -2,6 +2,7 @@ import { useRef, useEffect } from 'react';
 import { usePlayerStore } from '../../stores/playerStore';
 import { useRatingStore } from '../../stores/ratingStore';
 import StarRating from './StarRating';
+import { sendPlayFeedback } from '../../api/vocadb';
 import type { Song } from '../../types/vocadb';
 
 function getThumbUrl(song: Song): string | null {
@@ -18,7 +19,7 @@ function getProducerString(song: Song): string {
 }
 
 export default function QueueSidebar() {
-  const { queue, queueIndex, jumpToIndex } = usePlayerStore();
+  const { queue, queueIndex, jumpToIndex, removeFromQueue } = usePlayerStore();
   const { getRating, setRating } = useRatingStore();
   const currentRef = useRef<HTMLLIElement>(null);
 
@@ -70,9 +71,9 @@ export default function QueueSidebar() {
             const producer = getProducerString(song);
 
             return (
-              <li key={`${song.id}-${i}`} ref={isCurrent ? currentRef : null}>
+              <li key={`${song.id}-${i}`} ref={isCurrent ? currentRef : null} className="group relative">
                 <button
-                  className="w-full flex items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-white/5"
+                  className="w-full flex items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-white/5 pr-8"
                   style={{
                     background: isCurrent ? 'rgba(139,92,246,0.12)' : 'transparent',
                     borderLeft: isCurrent ? '3px solid var(--color-accent-purple)' : '3px solid transparent',
@@ -133,6 +134,23 @@ export default function QueueSidebar() {
                       size="sm"
                     />
                   </div>
+                </button>
+
+                {/* 削除ボタン（ホバー時に表示） */}
+                <button
+                  className="absolute right-1 top-1/2 -translate-y-1/2 w-6 h-6 rounded flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                  style={{ background: 'rgba(239,68,68,0.15)', color: '#ef4444' }}
+                  title="キューから削除"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    // キューからの削除 = 強いネガティブフィードバック (0.0 = 聴きたくない)
+                    sendPlayFeedback(song.id, 0.0, 'queue_remove');
+                    removeFromQueue(i);
+                  }}
+                >
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
+                  </svg>
                 </button>
               </li>
             );
