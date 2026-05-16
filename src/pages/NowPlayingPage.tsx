@@ -64,9 +64,12 @@ export default function NowPlayingPage() {
     personal: { items: [], loading: false, hasMore: true, page: 0 },
   });
 
-  const fetchedForRef = useRef<number | null>(null);
-  const sentinelRef   = useRef<HTMLDivElement | null>(null);
-  const seenIdsRef    = useRef<Set<number>>(new Set());
+  const fetchedForRef    = useRef<number | null>(null);
+  const sentinelRef      = useRef<HTMLDivElement | null>(null);
+  // タブごとに独立した重複排除セット（タブ間で同じ曲が出ても OK）
+  const seenProducerRef  = useRef<Set<number>>(new Set());
+  const seenRelatedRef   = useRef<Set<number>>(new Set());
+  const seenPersonalRef  = useRef<Set<number>>(new Set());
 
   const fetchProducer = useCallback(async (song: Song, page: number) => {
     // song.artists が未取得の場合は getSongById で補完
@@ -83,8 +86,8 @@ export default function NowPlayingPage() {
       return;
     }
     const { items } = await getSongsByProducer(producerIds, song.id, PAGE_SIZE, page * PAGE_SIZE);
-    const fresh = items.filter(s => !seenIdsRef.current.has(s.id));
-    fresh.forEach(s => seenIdsRef.current.add(s.id));
+    const fresh = items.filter(s => !seenProducerRef.current.has(s.id));
+    fresh.forEach(s => seenProducerRef.current.add(s.id));
     setTabs(prev => ({
       ...prev,
       producer: {
@@ -98,8 +101,8 @@ export default function NowPlayingPage() {
 
   const fetchRelated = useCallback(async (song: Song, page: number) => {
     const songs = await getSimilarSongs(song.id, PAGE_SIZE, page * PAGE_SIZE);
-    const fresh = songs.filter(s => !seenIdsRef.current.has(s.id));
-    fresh.forEach(s => seenIdsRef.current.add(s.id));
+    const fresh = songs.filter(s => !seenRelatedRef.current.has(s.id));
+    fresh.forEach(s => seenRelatedRef.current.add(s.id));
     setTabs(prev => ({
       ...prev,
       related: {
@@ -115,8 +118,8 @@ export default function NowPlayingPage() {
     const songs = await getRecommendedSongs(
       song.id, PAGE_SIZE, undefined, 0.0, undefined, page * PAGE_SIZE
     );
-    const fresh = songs.filter(s => !seenIdsRef.current.has(s.id));
-    fresh.forEach(s => seenIdsRef.current.add(s.id));
+    const fresh = songs.filter(s => !seenPersonalRef.current.has(s.id));
+    fresh.forEach(s => seenPersonalRef.current.add(s.id));
     // フォールバック時（/related）は最初の1ページのみ
     const hasMore = songs.length >= PAGE_SIZE;
     setTabs(prev => ({
@@ -134,7 +137,9 @@ export default function NowPlayingPage() {
     if (!currentSong) return;
     if (fetchedForRef.current === currentSong.id) return;
     fetchedForRef.current = currentSong.id;
-    seenIdsRef.current = new Set([currentSong.id]);
+    seenProducerRef.current  = new Set([currentSong.id]);
+    seenRelatedRef.current   = new Set([currentSong.id]);
+    seenPersonalRef.current  = new Set([currentSong.id]);
 
     setTabs({
       producer: { items: [], loading: true, hasMore: true, page: 0 },

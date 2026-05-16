@@ -293,16 +293,23 @@ interface RecommendResponse {
 }
 
 let _recommenderAvailable: boolean | null = null;
+let _recommenderCheckPromise: Promise<boolean> | null = null;
 
 async function isRecommenderAvailable(): Promise<boolean> {
   if (_recommenderAvailable !== null) return _recommenderAvailable;
-  try {
-    const res = await fetch(`${RECOMMENDER_API}/api/health`, { signal: AbortSignal.timeout(1000) });
-    _recommenderAvailable = res.ok;
-  } catch {
-    _recommenderAvailable = false;
+  // 並行呼び出しでも1回だけヘルスチェックを実行
+  if (!_recommenderCheckPromise) {
+    _recommenderCheckPromise = (async () => {
+      try {
+        const res = await fetch(`${RECOMMENDER_API}/api/health`, { signal: AbortSignal.timeout(1500) });
+        _recommenderAvailable = res.ok;
+      } catch {
+        _recommenderAvailable = false;
+      }
+      return _recommenderAvailable!;
+    })();
   }
-  return _recommenderAvailable;
+  return _recommenderCheckPromise;
 }
 
 /**
