@@ -17,10 +17,11 @@ public class QdrantService
     }
 
     /// <summary>
-    /// ハイブリッドコレクションで ANN 探索を行い、
-    /// 類似度スコア付きの候補 (songId, score) リストを返す。
+    /// Named Vectors コレクション (songs_v2) で ANN 探索を行う。
+    /// audio と meta の両方のベクトルを使った加重平均スコアで結果をランキング。
+    /// どちらかのベクトルが存在しない場合は利用可能な方のみで探索する。
     /// </summary>
-    public async Task<List<(int SongId, double Score)>> SearchSimilarAsync(
+    public async Task<List<(int SongId, double Score)>> SearchNamedVectorsAsync(
         int seedSongId,
         int topK,
         IEnumerable<int>? excludeIds = null,
@@ -29,7 +30,99 @@ public class QdrantService
         var excludeSet = excludeIds?.ToHashSet() ?? [];
         excludeSet.Add(seedSongId);
 
-        // シード曲のベクトルを取得
+        // シード曲の Named Vectors を取得
+        var retrieveResult = await _client.RetrieveAsync(
+            collectionName: _opts.CollectionNamed,
+            ids: new[] { new PointId { Num = (ulong)seedSongId } },
+            withPayload: false,
+            withVectors: true);
+
+        var seedPoint = retrieveResult.FirstOrDefault();
+        if (seedPoint is null || seedPoint.Vectors is null)
+            return [];
+
+        float[]? audioVec = null;
+        float[]? metaVec  = null;
+
+        if (seedPoint.Vectors.VectorsMap?.Vectors.TryGetValue("audio", out var av) == true)
+            audioVec = av.Data.ToArray();
+        if (seedPoint.Vectors.VectorsMap?.Vectors.TryGetValue("meta", out var mv) == true)
+            metaVec = mv.Data.ToArray();
+
+        var fetch = (int)(offset + topK + excludeSet.Count + 10);
+
+        // audio と meta の両方を検索してスコアをマージ
+        var audioResults = new Dictionary<ulong, double>();
+        var metaResults  = new Dictionary<ulong, double>();
+
+        if (audioVec is not null && audioVec.Any(x => x != 0f))
+        {
+            var res = await _client.SearchAsync(
+                collectionName: _opts.CollectionNamed,
+                vector: audioVec,
+                vectorName: "audio",
+                limit: (ulong)fetch);
+            foreach (var r in res)
+                audioResults[r.Id.Num] = r.Score;
+        }
+
+        if (metaVec is not null && metaVec.Any(x => x != 0f))
+        {
+            var res = await _client.SearchAsync(
+                collectionName: _opts.CollectionNamed,
+                vector: metaVec,
+                vectorName: "meta",
+                limit: (ulong)fetch);
+            foreach (var r in res)
+                metaResults[r.Id.Num] = r.Score;
+        }
+
+        // スコアをマージ (audio × AudioWeight + meta × MetaWeight)
+        var allIds = audioResults.Keys.Union(metaResults.Keys);
+        var merged = allIds
+            .Where(id => !excludeSet.Contains((int)id))
+            .Select(id =>
+            {
+                double score = 0;
+                double w = 0;
+                if (audioResults.TryGetValue(id, out var aScore))
+                { score += aScore * _opts.AudioWeight; w += _opts.AudioWeight; }
+                if (metaResults.TryGetValue(id, out var mScore))
+                { score += mScore * _opts.MetaWeight; w += _opts.MetaWeight; }
+                return ((int)id, w > 0 ? score / w : 0.0);
+            })
+            .OrderByDescending(x => x.Item2)
+            .Skip(offset)
+            .Take(topK)
+            .ToList();
+
+        return merged;
+    }
+
+    /// <summary>
+    /// ハイブリッドコレクションで ANN 探索を行い、
+    /// 類似度スコア付きの候補 (songId, score) リストを返す。
+    /// songs_v2 が利用可能な場合は Named Vectors を優先使用する。
+    /// </summary>
+    public async Task<List<(int SongId, double Score)>> SearchSimilarAsync(
+        int seedSongId,
+        int topK,
+        IEnumerable<int>? excludeIds = null,
+        int offset = 0)
+    {
+        // Named Vectors コレクションが利用可能な場合はそちらを優先
+        try
+        {
+            var namedResult = await SearchNamedVectorsAsync(seedSongId, topK, excludeIds, offset);
+            if (namedResult.Count > 0)
+                return namedResult;
+        }
+        catch { /* フォールバック */ }
+
+        var excludeSet = excludeIds?.ToHashSet() ?? [];
+        excludeSet.Add(seedSongId);
+
+        // フォールバック: ハイブリッドコレクション
         var retrieveResult = await _client.RetrieveAsync(
             collectionName: _opts.CollectionHybrid,
             ids: new[] { new PointId { Num = (ulong)seedSongId } },
@@ -42,7 +135,6 @@ public class QdrantService
 
         var seedVector = getResult.Vectors.Vector.Data.ToArray();
 
-        // ANN 探索 (offset + topK + 除外分を多めに取得してからスライス)
         var searchResult = await _client.SearchAsync(
             collectionName: _opts.CollectionHybrid,
             vector: seedVector,

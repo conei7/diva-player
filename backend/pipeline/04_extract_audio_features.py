@@ -37,10 +37,11 @@ import tensorflow_hub as hub
 from tqdm import tqdm
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams, PointStruct, OptimizersConfigDiff
-from utils.db import get_conn, QDRANT_URL, QDRANT_COLLECTION_AUDIO
+from utils.db import get_conn, QDRANT_URL, QDRANT_COLLECTION_AUDIO, QDRANT_COLLECTION_NAMED
 
 # ========== 定数 ==========
 AUDIO_DIM        = 1024    # YAMNet embeddings 次元数
+META_DIM         = 924     # メタデータベクトル次元数（songs_v2 Named Vectors用）
 SAMPLE_RATE      = 16000   # YAMNet は 16kHz モノラル
 MAX_DURATION_SEC = 300     # 最大5分
 BATCH_SIZE_DEFAULT = 500   # Qdrant upsert バッチサイズ
@@ -52,15 +53,8 @@ DL_SLEEP_MAX     = 80      # ダウンロード成功後スリープ最大 (秒/
 DL_FAIL_SLEEP    = 8       # ダウンロード失敗後スリープ (秒)
 STAGGER_DELAY    = 15      # スレッド起動間隔 (秒, BAN回避)
 
-# 伝説入り相当の閾値
-RATING_THRESHOLD_MAIN  = 150   # Vocaloid等主要エンジン
-RATING_THRESHOLD_MINOR = 80    # UTAU/CeVIO/SynthesizerV等
-
-# UTAU/CeVIO等の非Vocaloidエンジン
-NON_VOCALOID_TYPES = (
-    'UTAU', 'CeVIO', 'SynthesizerV', 'NEUTRINO', 'VoiSona',
-    'VOICEVOX', 'ACEVirtualSinger', 'NewType', 'AIVOICE', 'OtherVoiceSynthesizer',
-)
+# 対象楽曲の閾値: favorited_times >= 20 (約3,153曲)
+FAVORITED_THRESHOLD = 20
 
 # ========== YAMNet ==========
 _yamnet_model = None
@@ -115,7 +109,7 @@ def download_audio(youtube_id: str, out_dir: str) -> str | None:
         return wav_path
 
     cmd = [
-        'yt-dlp',
+        sys.executable, '-m', 'yt_dlp',
         '-x',
         '--audio-format', 'wav',
         '--audio-quality', '5',              # 中品質 (YAMNet推論には十分)
@@ -125,7 +119,8 @@ def download_audio(youtube_id: str, out_dir: str) -> str | None:
         '--quiet',
         '--no-warnings',
         '--socket-timeout', '30',
-        '--js-runtimes', 'node',
+        # SABR ストリーミング回避
+        '--extractor-args', 'youtube:player_client=default',
         f'https://www.youtube.com/watch?v={youtube_id}',
     ]
     try:
@@ -133,6 +128,8 @@ def download_audio(youtube_id: str, out_dir: str) -> str | None:
     except subprocess.TimeoutExpired:
         return None
     if result.returncode != 0 or not os.path.exists(wav_path):
+        if result.stderr:
+            tqdm.write(f'  [yt-dlp stderr] {result.stderr.decode("utf-8", errors="replace")[:300]}', file=sys.stderr)
         return None
     return wav_path
 
@@ -146,30 +143,41 @@ def downloader_worker(
     tmp_dir: str,
     fail_ids: list,
 ) -> None:
-    """yt-dlp でダウンロードし、結果キューに積む。"""
+    """yt-dlp でダウンロードし、結果キューに積む。複数PVを順番に試みる。"""
     while True:
         row = task_q.get()
         if row is None:
             task_q.task_done()
             break
 
-        song_id    = row['song_id']
-        youtube_id = row['youtube_id']
+        song_id     = row['song_id']
+        youtube_ids = row['youtube_ids']  # 複数PVのリスト
 
-        wav_path = download_audio(youtube_id, tmp_dir)
+        wav_path = None
+        used_yt_id = None
+        for youtube_id in youtube_ids:
+            wav_path = download_audio(youtube_id, tmp_dir)
+            if wav_path:
+                used_yt_id = youtube_id
+                break
+
         task_q.task_done()
 
         if not wav_path:
             fail_ids.append(song_id)
-            tqdm.write(f'  [DL-{worker_id}] FAIL song_id={song_id}')
+            tqdm.write(f'  [DL-{worker_id}] FAIL song_id={song_id} (tried {len(youtube_ids)} PVs)')
             time.sleep(random.uniform(DL_FAIL_SLEEP, DL_FAIL_SLEEP * 3))
             continue
+
+        # row に実際に使用した youtube_id をセット
+        row = dict(row)
+        row['youtube_id'] = used_yt_id
 
         # 結果キューに積む (満杯なら自然にブロック = バックプレッシャー)
         result_q.put((row, wav_path))
 
         sleep_sec = random.uniform(DL_SLEEP_MIN, DL_SLEEP_MAX)
-        tqdm.write(f'  [DL-{worker_id}] OK song_id={song_id} → sleep {sleep_sec:.0f}s')
+        tqdm.write(f'  [DL-{worker_id}] OK song_id={song_id} ({used_yt_id}) → sleep {sleep_sec:.0f}s')
         time.sleep(sleep_sec)
 
 
@@ -183,7 +191,8 @@ def consumer_worker(
 ) -> None:
     """YAMNet 推論 → Qdrant upsert → DB フラグ更新 (シングルスレッド)。"""
     conn = get_conn()
-    batch_points: list[PointStruct] = []
+    batch_points_audio:  list[PointStruct] = []
+    batch_points_named:  list[PointStruct] = []
 
     while True:
         item = result_q.get()
@@ -208,9 +217,17 @@ def consumer_worker(
             pbar.update(1)
             continue
 
-        batch_points.append(PointStruct(
+        # audio コレクション (後方互換)
+        batch_points_audio.append(PointStruct(
             id=song_id,
             vector=emb.tolist(),
+            payload={'song_id': song_id, 'youtube_id': youtube_id},
+        ))
+
+        # songs_v2 Named Vectors: audio のみ更新（meta は 05 スクリプトで格納）
+        batch_points_named.append(PointStruct(
+            id=song_id,
+            vector={'audio': emb.tolist()},
             payload={'song_id': song_id, 'youtube_id': youtube_id},
         ))
 
@@ -225,15 +242,20 @@ def consumer_worker(
             """, (song_id, AUDIO_DIM))
         conn.commit()
 
-        if len(batch_points) >= batch_size:
-            qdrant.upsert(QDRANT_COLLECTION_AUDIO, batch_points)
-            batch_points.clear()
+        if len(batch_points_audio) >= batch_size:
+            qdrant.upsert(QDRANT_COLLECTION_AUDIO, batch_points_audio)
+            batch_points_audio.clear()
+        if len(batch_points_named) >= batch_size:
+            qdrant.upsert(QDRANT_COLLECTION_NAMED, batch_points_named)
+            batch_points_named.clear()
 
         pbar.update(1)
 
     # 残余フラッシュ
-    if batch_points:
-        qdrant.upsert(QDRANT_COLLECTION_AUDIO, batch_points)
+    if batch_points_audio:
+        qdrant.upsert(QDRANT_COLLECTION_AUDIO, batch_points_audio)
+    if batch_points_named:
+        qdrant.upsert(QDRANT_COLLECTION_NAMED, batch_points_named)
 
     conn.close()
 
@@ -263,18 +285,34 @@ def main():
         )
         print(f'Created Qdrant collection: {QDRANT_COLLECTION_AUDIO}')
 
-    # ターゲット取得
-    # - Vocaloid等: rating_score >= RATING_THRESHOLD_MAIN
-    # - UTAU/CeVIO/SynthV等: rating_score >= RATING_THRESHOLD_MINOR
-    # - pv_type: Original 優先、Reprint も含む
-    # - 未処理のみ (audio_computed IS NULL OR FALSE)
-    non_vocaloid_placeholder = ','.join(['%s'] * len(NON_VOCALOID_TYPES))
+    # songs_v2 Named Vectors コレクション（audio: 1024次元, meta: 924次元）
+    if QDRANT_COLLECTION_NAMED not in existing:
+        qdrant.create_collection(
+            collection_name=QDRANT_COLLECTION_NAMED,
+            vectors_config={
+                'audio': VectorParams(size=AUDIO_DIM, distance=Distance.COSINE),
+                'meta':  VectorParams(size=META_DIM,  distance=Distance.COSINE),
+            },
+            optimizers_config=OptimizersConfigDiff(indexing_threshold=10000),
+        )
+        print(f'Created Named Vectors collection: {QDRANT_COLLECTION_NAMED}')
+
+    # ターゲット取得: favorited_times >= 20（約3,153曲）、未処理のみ
+    # 各楽曲の全 YouTube PV を取得し、ダウンロード時に順番に試みる
+    # (Original 優先、数字始まりのMusic Premium専用IDを後回し)
     with conn.cursor() as cur:
-        cur.execute(f"""
-            SELECT DISTINCT ON (s.id)
+        cur.execute("""
+            SELECT
                 s.id AS song_id,
-                p.pv_id AS youtube_id,
-                s.rating_score
+                s.favorited_times,
+                ARRAY_AGG(
+                    p.pv_id
+                    ORDER BY
+                        CASE p.pv_type WHEN 'Original' THEN 0 ELSE 1 END,
+                        -- 数字始まり（YouTube Music Premium専用）を後回しに
+                        CASE WHEN p.pv_id ~ '^[A-Za-z]' THEN 0 ELSE 1 END,
+                        p.pv_id
+                ) AS youtube_ids
             FROM songs s
             JOIN pvs p ON p.song_id = s.id
                 AND p.service = 'Youtube'
@@ -282,33 +320,17 @@ def main():
                 AND p.pv_type IN ('Original', 'Reprint')
             LEFT JOIN song_features sf ON sf.song_id = s.id
             WHERE (sf.audio_computed IS NULL OR sf.audio_computed = FALSE)
-              AND (
-                  s.rating_score >= {RATING_THRESHOLD_MAIN}
-                  OR (
-                      s.rating_score >= {RATING_THRESHOLD_MINOR}
-                      AND EXISTS (
-                          SELECT 1 FROM song_artists sa2
-                          JOIN artists a2 ON a2.id = sa2.artist_id
-                              AND sa2.is_vocalist = TRUE
-                              AND a2.artist_type IN ({non_vocaloid_placeholder})
-                          WHERE sa2.song_id = s.id
-                      )
-                  )
-              )
-            ORDER BY s.id,
-                     CASE p.pv_type WHEN 'Original' THEN 0 ELSE 1 END,
-                     p.pv_id
-        """, NON_VOCALOID_TYPES)
+              AND s.favorited_times >= %s
+            GROUP BY s.id, s.favorited_times
+        """, (FAVORITED_THRESHOLD,))
         all_targets = cur.fetchall()
 
-    all_targets.sort(key=lambda r: r.get('rating_score') or 0, reverse=True)
+    all_targets.sort(key=lambda r: r.get('favorited_times') or 0, reverse=True)
     targets = all_targets[:args.limit] if args.limit > 0 else all_targets
     conn.commit()
     conn.close()
 
-    print(f'ターゲット: {len(targets)}曲 '
-          f'(Vocaloid rating>={RATING_THRESHOLD_MAIN} + '
-          f'UTAU/CeVIO等 rating>={RATING_THRESHOLD_MINOR})')
+    print(f'ターゲット: {len(targets)}曲 (favorited_times >= {FAVORITED_THRESHOLD})')
     print(f'並列ダウンローダー数: {n_workers}, スタガー: {STAGGER_DELAY}s')
 
     # GPU

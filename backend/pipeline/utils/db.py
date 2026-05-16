@@ -17,9 +17,12 @@ DB_CONFIG = {
 }
 
 QDRANT_URL    = os.getenv('QDRANT_URL',    'http://localhost:6333')
-QDRANT_COLLECTION_META  = 'song_metadata'
-QDRANT_COLLECTION_AUDIO = 'song_audio'
+QDRANT_GRPC_PORT = int(os.getenv('QDRANT_GRPC_PORT', '6334'))
+QDRANT_COLLECTION_META   = 'song_metadata'
+QDRANT_COLLECTION_AUDIO  = 'song_audio'
 QDRANT_COLLECTION_HYBRID = 'song_hybrid'
+# Named Vectors コレクション（audio + meta を1つのコレクションに格納）
+QDRANT_COLLECTION_NAMED  = 'songs_v2'
 
 
 def get_conn():
