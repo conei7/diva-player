@@ -1,8 +1,9 @@
 import { useEffect, useRef } from 'react';
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, useNavigate } from 'react-router-dom';
 import Layout from './components/layout/Layout';
 import SearchPage from './pages/SearchPage';
 import PlaylistPage from './pages/PlaylistPage';
+import NowPlayingPage from './pages/NowPlayingPage';
 import { usePlayerStore } from './stores/playerStore';
 import { useHistoryStore } from './stores/historyStore';
 import { useRatingStore } from './stores/ratingStore';
@@ -15,22 +16,34 @@ import { getRecommendedSongs, sendPlayFeedback } from './api/vocadb';
  * ページ遷移してもLayout内のPlayerBarは維持され、
  * 音楽再生が途切れない。
  */
-export default function App() {
+
+/** フィッシャー–イェーツシャッフル */
+function shuffleArray<T>(arr: T[]): T[] {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+function AppContent() {
+  const navigate = useNavigate();
   const { currentSong, queue, queueIndex, addToQueue, progress, duration } = usePlayerStore();
   const { addToHistory } = useHistoryStore();
   const { ratings } = useRatingStore();
   const fetchingForRef = useRef<number | null>(null);
   const ratingsRef = useRef(ratings);
-  ratingsRef.current = ratings; // 再レンダーを発生させず常に最新値を保持
+  ratingsRef.current = ratings;
 
-  // 再生完了率トラッキング: 曲が切り替わる直前の progress/duration を記録
+  // 再生完了率トラッキング
   const prevSongRef  = useRef<{ id: number; progress: number; duration: number } | null>(null);
   const progressRef  = useRef(progress);
   const durationRef  = useRef(duration);
   progressRef.current = progress;
   durationRef.current = duration;
 
-  // 視聴履歴 + 暗黙的フィードバック: currentSong が切り替わったら処理
+  // 視聴履歴 + 暗黙的フィードバック + 自動ナビゲート
   useEffect(() => {
     if (!currentSong) return;
 
@@ -41,7 +54,6 @@ export default function App() {
       sendPlayFeedback(id, completionRate);
     }
 
-    // 現在の曲を記録して次回の切り替え時に使えるようにする
     prevSongRef.current = {
       id: currentSong.id,
       progress: progressRef.current,
@@ -49,10 +61,13 @@ export default function App() {
     };
 
     addToHistory(currentSong);
+
+    // 曲が始まったら Now Playing ページへ自動ナビゲート
+    navigate('/playing');
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentSong?.id]);
 
-  // progress/duration が更新されたら prevSongRef にも反映 (曲変更直前の値を正確に取得するため)
+  // progress/duration を prevSongRef に反映
   useEffect(() => {
     if (prevSongRef.current && currentSong && prevSongRef.current.id === currentSong.id) {
       prevSongRef.current = { id: currentSong.id, progress, duration };
@@ -60,13 +75,13 @@ export default function App() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [progress, duration]);
 
-  // 自動キュー: キューの残りが少なくなったら関連曲を自動追加 (常時ON)
+  // 自動キュー: キューの残りが少なくなったら推薦曲をシャッフルして自動追加 (常時ON)
   useEffect(() => {
     if (!currentSong) return;
-    if (fetchingForRef.current === currentSong.id) return; // 同じ曲では1回のみ
+    if (fetchingForRef.current === currentSong.id) return;
 
     const remaining = queue.length - 1 - queueIndex;
-    if (remaining > 2) return; // まだ余裕あり
+    if (remaining > 2) return;
 
     const songId = currentSong.id;
     fetchingForRef.current = songId;
@@ -74,13 +89,12 @@ export default function App() {
 
     getRecommendedSongs(songId, 40, undefined, 0.0, ratingsRef.current)
       .then(related => {
-        const newSongs = related
-          .filter(s => !existingIds.has(s.id))
-          .slice(0, 40);
+        const newSongs = shuffleArray(
+          related.filter(s => !existingIds.has(s.id))
+        ).slice(0, 40);
         newSongs.forEach(s => addToQueue(s));
       })
       .catch(() => {
-        // エラー時はリセットしてリトライ可能に
         if (fetchingForRef.current === songId) {
           fetchingForRef.current = null;
         }
@@ -89,13 +103,20 @@ export default function App() {
   }, [currentSong?.id, queueIndex, queue.length]);
 
   return (
+    <Routes>
+      <Route element={<Layout />}>
+        <Route path="/" element={<SearchPage />} />
+        <Route path="/playing" element={<NowPlayingPage />} />
+        <Route path="/playlists" element={<PlaylistPage />} />
+      </Route>
+    </Routes>
+  );
+}
+
+export default function App() {
+  return (
     <BrowserRouter basename="/diva-player">
-      <Routes>
-        <Route element={<Layout />}>
-          <Route path="/" element={<SearchPage />} />
-          <Route path="/playlists" element={<PlaylistPage />} />
-        </Route>
-      </Routes>
+      <AppContent />
     </BrowserRouter>
   );
 }
