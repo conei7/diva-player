@@ -187,7 +187,7 @@ def main():
     batch: list[PointStruct] = []
     for sid, vec in tqdm(hybrid_vecs.items(), unit='song'):
         batch.append(PointStruct(id=sid, vector=vec.tolist(), payload={'song_id': sid}))
-        if len(batch) >= 2000:
+        if len(batch) >= 500:
             qdrant.upsert(QDRANT_COLLECTION_HYBRID, batch)
             batch.clear()
     if batch:
