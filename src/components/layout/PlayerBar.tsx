@@ -137,15 +137,7 @@ export default function PlayerBar() {
               </svg>
             </button>
 
-            {/* イコライザーアニメーション */}
-            {isPlaying && (
-              <div className="flex items-end gap-0.5 h-4 ml-1">
-                <span className="equalizer-bar" />
-                <span className="equalizer-bar" />
-                <span className="equalizer-bar" />
-                <span className="equalizer-bar" />
-              </div>
-            )}
+
           </div>
 
           {/* シークバー行 */}
@@ -253,9 +245,9 @@ export default function PlayerBar() {
             </svg>
           </button>
 
-          {/* キュードロワー */}
+          {/* キュードロワー (モバイルのみ表示。デスクトップは右サイドバーで常時表示) */}
           <button
-            className="btn-ghost p-1.5 rounded-lg relative"
+            className="lg:hidden btn-ghost p-1.5 rounded-lg relative"
             onClick={toggleQueueDrawer}
             title="再生キュー"
             style={{ color: queueDrawerOpen ? 'var(--color-accent-purple)' : 'var(--color-text-muted)' }}

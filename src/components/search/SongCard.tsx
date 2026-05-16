@@ -116,10 +116,9 @@ export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect }
 
         {/* 再生中インジケーター */}
         {isCurrentSong && isPlaying && (
-          <div className="absolute bottom-2 left-2 flex items-end gap-0.5 h-4">
-            <span className="equalizer-bar" />
-            <span className="equalizer-bar" />
-            <span className="equalizer-bar" />
+          <div className="absolute bottom-2 left-2 px-1.5 py-0.5 rounded text-[10px] font-bold"
+               style={{ background: 'rgba(29,185,84,0.85)', color: '#fff' }}>
+            ▶ 再生中
           </div>
         )}
 

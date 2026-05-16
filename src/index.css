@@ -253,6 +253,17 @@ body {
   cursor: default;
 }
 
+/* ─── 右サイドバー: モバイルでは常に非表示 ─── */
+/* display:none は YouTube iframe を停止させるため visibility で制御する。 */
+/* モバイル (< 1024px) ではサイドバー全体を invisible にする。           */
+@media (max-width: 1023px) {
+  .sidebar-mobile-hidden {
+    visibility: hidden !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
+  }
+}
+
 /* ─── イコライザーアニメーション (再生中表示) ─── */
 .equalizer-bar {
   display: inline-block;
