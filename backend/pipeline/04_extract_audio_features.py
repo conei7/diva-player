@@ -37,7 +37,7 @@ import tensorflow_hub as hub
 from tqdm import tqdm
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams, PointStruct, OptimizersConfigDiff
-from utils.db import get_conn, QDRANT_URL, QDRANT_COLLECTION_AUDIO, QDRANT_COLLECTION_NAMED
+from utils.db import get_conn, QDRANT_URL, QDRANT_GRPC_PORT, QDRANT_COLLECTION_AUDIO, QDRANT_COLLECTION_NAMED
 
 # ========== 定数 ==========
 AUDIO_DIM        = 1024    # YAMNet embeddings 次元数
@@ -54,7 +54,7 @@ DL_FAIL_SLEEP    = 8       # ダウンロード失敗後スリープ (秒)
 STAGGER_DELAY    = 15      # スレッド起動間隔 (秒, BAN回避)
 
 # 対象楽曲の閾値: favorited_times >= 20 (約3,153曲)
-FAVORITED_THRESHOLD = 20
+FAVORITED_THRESHOLD = 15
 
 # ========== YAMNet ==========
 _yamnet_model = None
@@ -273,7 +273,7 @@ def main():
     n_workers = max(1, args.workers)
 
     conn   = get_conn()
-    qdrant = QdrantClient(url=QDRANT_URL)
+    qdrant = QdrantClient(host='localhost', grpc_port=QDRANT_GRPC_PORT, prefer_grpc=True, timeout=120)
 
     # Qdrant コレクション
     existing = [c.name for c in qdrant.get_collections().collections]
