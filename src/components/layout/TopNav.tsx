@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { Link, useNavigate, useLocation } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useUiStore } from '../../stores/uiStore';
 import { usePlayerStore } from '../../stores/playerStore';
 
@@ -12,7 +12,6 @@ import { usePlayerStore } from '../../stores/playerStore';
  */
 export default function TopNav() {
   const navigate = useNavigate();
-  const location = useLocation();
   const { toggleSidebar, toggleMobileDrawer } = useUiStore();
   const { hiddenMode, toggleHiddenMode } = usePlayerStore();
   const [searchQuery, setSearchQuery] = useState('');

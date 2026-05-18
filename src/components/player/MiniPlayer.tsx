@@ -14,19 +14,11 @@ import PlayerEmbed from '../player/PlayerEmbed';
 export default function MiniPlayer() {
   const navigate = useNavigate();
   const {
-    currentSong, currentPV, isPlaying,
+    currentSong, isPlaying,
     pause, resume, next, previous,
-    hiddenMode,
   } = usePlayerStore();
 
   if (!currentSong) return null;
-
-  const thumbUrl = (() => {
-    if (currentSong.thumbUrl) return currentSong.thumbUrl;
-    const yt = currentSong.pvs?.find(pv => pv.service === 'Youtube');
-    if (yt) return `https://img.youtube.com/vi/${yt.pvId}/hqdefault.jpg`;
-    return null;
-  })();
 
   const producerName = (() => {
     const producer = currentSong.artists?.find(a => a.categories === 'Producer');

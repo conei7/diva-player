@@ -16,7 +16,6 @@ export default function Description({ song }: DescriptionProps) {
   // PV情報を概要として使用
   const originalPV = song.pvs?.find(pv => pv.pvType === 'Original' && !pv.disabled);
   const description = originalPV?.description || '';
-  const pvUrl = originalPV?.url || '';
 
   // 投稿日
   const publishDate = song.publishDate

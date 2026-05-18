@@ -52,7 +52,7 @@ function SkeletonItem() {
   );
 }
 
-export default function RecommendationList({ songs, loading, hasMore }: RecommendationListProps) {
+export default function RecommendationList({ songs, loading }: RecommendationListProps) {
   const navigate = useNavigate();
   const { currentSong, isPlaying, hiddenMode } = usePlayerStore();
 
