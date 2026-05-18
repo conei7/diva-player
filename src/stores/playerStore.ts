@@ -69,6 +69,10 @@ interface PlayerState {
   detailPanelEl: HTMLElement | null;
   setDetailPanelEl: (el: HTMLElement | null) => void;
 
+  // Global Player Rect (WatchPageでのプレイヤーの位置とサイズ)
+  playerRect: DOMRect | null;
+  setPlayerRect: (rect: DOMRect | null) => void;
+
   // 隠しモード（サムネイル・動画を非表示）
   hiddenMode: boolean;
   toggleHiddenMode: () => void;
@@ -84,6 +88,7 @@ interface PlayerState {
   
   // キュー操作
   setQueue: (songs: Song[], startIndex?: number) => void;
+  replaceQueueList: (songs: Song[]) => void;
   addToQueue: (song: Song) => void;
   removeFromQueue: (index: number) => void;
   clearQueue: () => void;
@@ -107,6 +112,8 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   duration: 0,
   detailPanelEl: null,
   setDetailPanelEl: (el) => set({ detailPanelEl: el }),
+  playerRect: null,
+  setPlayerRect: (rect) => set({ playerRect: rect }),
   hiddenMode: storage.get<boolean>('hiddenMode') ?? false,
   toggleHiddenMode: () => set((state) => {
     const next = !state.hiddenMode;
@@ -199,6 +206,10 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     if (songs.length > 0) {
       get().playSong(songs[startIndex]);
     }
+  },
+
+  replaceQueueList: (songs: Song[]) => {
+    set({ queue: songs });
   },
 
   addToQueue: (song: Song) => {

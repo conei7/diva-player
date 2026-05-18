@@ -395,8 +395,8 @@ export async function getSongsByProducerFromBackend(
     }
   }
   // フォールバック: VocaDB artistId 検索
-  if (producerIds.length === 0 || offset > 0) return [];
-  const { items } = await getSongsByProducer(producerIds, seedSongId, count, 0);
+  if (producerIds.length === 0) return [];
+  const { items } = await getSongsByProducer(producerIds, seedSongId, count, offset);
   return items;
 }
 

@@ -53,8 +53,8 @@ DL_SLEEP_MAX     = 80      # ダウンロード成功後スリープ最大 (秒/
 DL_FAIL_SLEEP    = 8       # ダウンロード失敗後スリープ (秒)
 STAGGER_DELAY    = 15      # スレッド起動間隔 (秒, BAN回避)
 
-# 対象楽曲の閾値: favorited_times >= 20 (約3,153曲)
-FAVORITED_THRESHOLD = 15
+# 対象楽曲の閾値: favorited_times >= 12
+FAVORITED_THRESHOLD = 12
 
 # ========== YAMNet ==========
 _yamnet_model = None
@@ -297,7 +297,7 @@ def main():
         )
         print(f'Created Named Vectors collection: {QDRANT_COLLECTION_NAMED}')
 
-    # ターゲット取得: favorited_times >= 20（約3,153曲）、未処理のみ
+    # ターゲット取得: favorited_times >= FAVORITED_THRESHOLD、未処理のみ
     # 各楽曲の全 YouTube PV を取得し、ダウンロード時に順番に試みる
     # (Original 優先、数字始まりのMusic Premium専用IDを後回し)
     with conn.cursor() as cur:

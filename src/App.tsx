@@ -1,9 +1,12 @@
 import { useEffect, useRef } from 'react';
-import { BrowserRouter, Routes, Route, useNavigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import Layout from './components/layout/Layout';
+import HomePage from './pages/HomePage';
+import WatchPage from './pages/WatchPage';
 import SearchPage from './pages/SearchPage';
 import PlaylistPage from './pages/PlaylistPage';
-import NowPlayingPage from './pages/NowPlayingPage';
+import HistoryPage from './pages/HistoryPage';
+import FavoritesPage from './pages/FavoritesPage';
 import { usePlayerStore } from './stores/playerStore';
 import { useHistoryStore } from './stores/historyStore';
 import { useRatingStore } from './stores/ratingStore';
@@ -28,7 +31,6 @@ function shuffleArray<T>(arr: T[]): T[] {
 }
 
 function AppContent() {
-  const navigate = useNavigate();
   const { currentSong, queue, queueIndex, addToQueue, progress, duration } = usePlayerStore();
   const { addToHistory } = useHistoryStore();
   const { ratings } = useRatingStore();
@@ -43,7 +45,7 @@ function AppContent() {
   progressRef.current = progress;
   durationRef.current = duration;
 
-  // 視聴履歴 + 暗黙的フィードバック + 自動ナビゲート
+  // 視聴履歴 + 暗黙的フィードバック
   useEffect(() => {
     if (!currentSong) return;
 
@@ -61,9 +63,6 @@ function AppContent() {
     };
 
     addToHistory(currentSong);
-
-    // 曲が始まったら Now Playing ページへ自動ナビゲート
-    navigate('/playing');
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentSong?.id]);
 
@@ -105,9 +104,14 @@ function AppContent() {
   return (
     <Routes>
       <Route element={<Layout />}>
-        <Route path="/" element={<SearchPage />} />
-        <Route path="/playing" element={<NowPlayingPage />} />
+        <Route path="/" element={<HomePage />} />
+        <Route path="/watch" element={<WatchPage />} />
+        <Route path="/explore" element={<SearchPage />} />
+        <Route path="/history" element={<HistoryPage />} />
+        <Route path="/favorites" element={<FavoritesPage />} />
         <Route path="/playlists" element={<PlaylistPage />} />
+        {/* 旧ルートの互換性 */}
+        <Route path="/playing" element={<WatchPage />} />
       </Route>
     </Routes>
   );

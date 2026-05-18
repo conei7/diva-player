@@ -1,7 +1,7 @@
 /**
  * uiStore.ts - UI状態のグローバル管理
  *
- * 楽曲詳細モーダルの開閉状態と表示対象の楽曲を管理する。
+ * サイドバーの開閉状態、楽曲詳細モーダル、レイアウト状態を管理する。
  */
 import { create } from 'zustand';
 import type { Song } from '../types/vocadb';
@@ -15,10 +15,28 @@ interface UiState {
 
   /** 詳細モーダルを閉じる */
   closeSongDetail: () => void;
+
+  /** サイドバー展開状態 (デスクトップ) */
+  sidebarExpanded: boolean;
+  toggleSidebar: () => void;
+  setSidebarExpanded: (v: boolean) => void;
+
+  /** モバイルサイドバードロワー */
+  mobileDrawerOpen: boolean;
+  toggleMobileDrawer: () => void;
+  closeMobileDrawer: () => void;
 }
 
 export const useUiStore = create<UiState>()((set) => ({
   detailSong: null,
   openSongDetail: (song) => set({ detailSong: song }),
   closeSongDetail: () => set({ detailSong: null }),
+
+  sidebarExpanded: true,
+  toggleSidebar: () => set((s) => ({ sidebarExpanded: !s.sidebarExpanded })),
+  setSidebarExpanded: (v) => set({ sidebarExpanded: v }),
+
+  mobileDrawerOpen: false,
+  toggleMobileDrawer: () => set((s) => ({ mobileDrawerOpen: !s.mobileDrawerOpen })),
+  closeMobileDrawer: () => set({ mobileDrawerOpen: false }),
 }));
