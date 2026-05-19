@@ -1,5 +1,4 @@
 import { useEffect, useCallback, useState, useRef } from 'react';
-import SearchBar from '../components/search/SearchBar';
 import SearchFilters from '../components/search/SearchFilters';
 import SongCard from '../components/search/SongCard';
 import { useSearchStore } from '../stores/searchStore';
@@ -14,19 +13,12 @@ import type { Song } from '../types/vocadb';
  * 曲クリック → そのキューを破棄して動的ミックスリストを生成 (YouTube方式)。
  */
 export default function SearchPage() {
-  const { results, isLoading, error, hasSearched, loadMore, totalCount, resolvedArtistId, query, search } = useSearchStore();
+  const { results, isLoading, error, hasSearched, loadMore, totalCount, resolvedArtistId, query } = useSearchStore();
   const { setQueue } = usePlayerStore();
   const [topSongs, setTopSongs] = useState<Song[]>([]);
   const [topLoading, setTopLoading] = useState(true);
   const [isAdvancedOpen, setIsAdvancedOpen] = useState(false);
   const fetchedRef = useRef(false);
-
-  // ヘッダー検索から遷移した際、queryが設定されていれば自動検索
-  useEffect(() => {
-    if (query && !hasSearched && !isLoading) {
-      search();
-    }
-  }, [query, hasSearched, isLoading, search]);
 
   // 初回: 人気曲ロード（通常検索APIをFavoritedTimesソートで代用）
   useEffect(() => {
@@ -64,23 +56,10 @@ export default function SearchPage() {
 
   return (
     <div>
-      {/* ヒーローセクション */}
-      <div className="text-center py-8">
-        <h1 className="text-3xl sm:text-4xl font-bold mb-3">
-          <span className="glow-text" style={{ color: 'var(--color-accent-cyan)' }}>ボカロ</span>
-          <span>ミュージックを探す</span>
-        </h1>
-        <p className="text-sm max-w-md mx-auto" style={{ color: 'var(--color-text-secondary)' }}>
-          VocaDB のデータベースからボカロ曲を検索・再生
-        </p>
-      </div>
-
-      {/* 検索バー + 詳細検索ボタン */}
-      <div className="space-y-2 mb-6">
-        <SearchBar />
-        <div className="flex justify-end">
-          <button
-            onClick={() => setIsAdvancedOpen(o => !o)}
+      {/* 詳細検索ボタン */}
+      <div className="flex justify-end mb-2">
+        <button
+          onClick={() => setIsAdvancedOpen(o => !o)}
             className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg transition-colors"
             style={{
               background: isAdvancedOpen ? 'rgba(139, 92, 246, 0.15)' : 'var(--color-surface)',
@@ -97,7 +76,6 @@ export default function SearchPage() {
               <path d="M7 10l5 5 5-5z"/>
             </svg>
           </button>
-        </div>
       </div>
 
       {/* アーティスト検索モードバナー */}

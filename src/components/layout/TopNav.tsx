@@ -15,7 +15,7 @@ export default function TopNav() {
   const navigate = useNavigate();
   const { toggleSidebar, toggleMobileDrawer } = useUiStore();
   const { hiddenMode, toggleHiddenMode } = usePlayerStore();
-  const { setQuery: setSearchStoreQuery } = useSearchStore();
+  const { setQuery: setSearchStoreQuery, search: runSearch } = useSearchStore();
   const [searchQuery, setSearchQuery] = useState('');
   const [searchFocused, setSearchFocused] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -39,6 +39,7 @@ export default function TopNav() {
     e.preventDefault();
     if (searchQuery.trim()) {
       setSearchStoreQuery(searchQuery.trim());
+      runSearch();
       navigate('/explore');
     }
   };
