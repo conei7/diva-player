@@ -9,7 +9,7 @@ interface VideoInfoProps {
 
 export default function VideoInfo({ song }: VideoInfoProps) {
   // P名を抽出
-  const producer = song.artists?.find(a => a.categories === 'Producer');
+  const producer = song.artists?.find(a => a.categories?.includes('Producer'));
   const producerName = producer?.name || producer?.artist?.name || '';
 
   // ボーカリスト名を抽出

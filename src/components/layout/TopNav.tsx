@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useUiStore } from '../../stores/uiStore';
 import { usePlayerStore } from '../../stores/playerStore';
+import { useSearchStore } from '../../stores/searchStore';
 
 /**
  * TopNav - YouTube風のトップナビゲーションバー
@@ -14,6 +15,7 @@ export default function TopNav() {
   const navigate = useNavigate();
   const { toggleSidebar, toggleMobileDrawer } = useUiStore();
   const { hiddenMode, toggleHiddenMode } = usePlayerStore();
+  const { setQuery: setSearchStoreQuery } = useSearchStore();
   const [searchQuery, setSearchQuery] = useState('');
   const [searchFocused, setSearchFocused] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -36,7 +38,8 @@ export default function TopNav() {
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
     if (searchQuery.trim()) {
-      navigate(`/?q=${encodeURIComponent(searchQuery.trim())}`);
+      setSearchStoreQuery(searchQuery.trim());
+      navigate('/explore');
     }
   };
 
@@ -126,16 +129,6 @@ export default function TopNav() {
                   color: 'var(--color-text-primary)',
                 }}
               />
-              {searchFocused && (
-                <div
-                  className="absolute left-3 top-1/2 -translate-y-1/2"
-                  style={{ color: 'var(--color-text-muted)' }}
-                >
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z" />
-                  </svg>
-                </div>
-              )}
             </div>
             <button
               type="submit"

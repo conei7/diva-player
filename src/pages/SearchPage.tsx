@@ -14,12 +14,19 @@ import type { Song } from '../types/vocadb';
  * 曲クリック → そのキューを破棄して動的ミックスリストを生成 (YouTube方式)。
  */
 export default function SearchPage() {
-  const { results, isLoading, error, hasSearched, loadMore, totalCount, resolvedArtistId, query } = useSearchStore();
+  const { results, isLoading, error, hasSearched, loadMore, totalCount, resolvedArtistId, query, search } = useSearchStore();
   const { setQueue } = usePlayerStore();
   const [topSongs, setTopSongs] = useState<Song[]>([]);
   const [topLoading, setTopLoading] = useState(true);
   const [isAdvancedOpen, setIsAdvancedOpen] = useState(false);
   const fetchedRef = useRef(false);
+
+  // ヘッダー検索から遷移した際、queryが設定されていれば自動検索
+  useEffect(() => {
+    if (query && !hasSearched && !isLoading) {
+      search();
+    }
+  }, [query, hasSearched, isLoading, search]);
 
   // 初回: 人気曲ロード（通常検索APIをFavoritedTimesソートで代用）
   useEffect(() => {

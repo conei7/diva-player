@@ -28,7 +28,7 @@ export default function Description({ song }: DescriptionProps) {
   const pvList = song.pvs?.filter(pv => !pv.disabled) || [];
 
   // アーティスト情報
-  const producers = song.artists?.filter(a => a.categories === 'Producer') || [];
+  const producers = song.artists?.filter(a => a.categories?.includes('Producer')) || [];
   const vocalists = song.artists?.filter(a => a.categories === 'Vocalist') || [];
   const others = song.artists?.filter(a => !['Producer', 'Vocalist'].includes(a.categories)) || [];
 

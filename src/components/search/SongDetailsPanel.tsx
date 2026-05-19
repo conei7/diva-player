@@ -69,7 +69,7 @@ export default function SongDetailsPanel({ song, onClose, inline }: SongDetailsP
     pv => !pv.disabled && (pv.service === 'Youtube' || pv.service === 'NicoNicoDouga'),
   ) ?? [];
 
-  const producers = song.artists?.filter(a => a.categories === 'Producer') ?? [];
+  const producers = song.artists?.filter(a => a.categories?.includes('Producer')) ?? [];
   const vocalists = song.artists?.filter(a => a.categories === 'Vocalist') ?? [];
 
   const vocadbUrl = `https://vocadb.net/S/${song.id}`;

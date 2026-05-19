@@ -130,7 +130,7 @@ export default function HomePage() {
             // 最近聴いたPの曲
             const recentSong = entries[0]?.song;
             if (recentSong) {
-              const producers = recentSong.artists?.filter(a => a.categories === 'Producer').map(a => a.artist?.id).filter(Boolean) as number[];
+              const producers = recentSong.artists?.filter(a => a.categories?.includes('Producer')).map(a => a.artist?.id).filter(Boolean) as number[];
               if (producers.length > 0) {
                 const searchResult = await searchSongs({
                   artistIds: producers,

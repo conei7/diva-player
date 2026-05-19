@@ -32,7 +32,7 @@ function formatDuration(seconds: number): string {
 
 /** P名を抽出 */
 function getProducerName(song: Song): string {
-  const producer = song.artists?.find(a => a.categories === 'Producer');
+  const producer = song.artists?.find(a => a.categories?.includes('Producer'));
   if (producer) return producer.name || producer.artist?.name || '';
   const str = song.artistString;
   if (str.includes(' feat.')) return str.split(' feat.')[0];

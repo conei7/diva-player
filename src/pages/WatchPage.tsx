@@ -129,7 +129,7 @@ export default function WatchPage() {
   const fetchProducer = useCallback(async (s: Song, page: number) => {
     try {
       const producerIds = (s.artists ?? [])
-        .filter(a => a.categories === 'Producer')
+        .filter(a => a.categories?.includes('Producer'))
         .map(a => a.artist?.id)
         .filter((id): id is number => id !== undefined);
 

@@ -79,7 +79,7 @@ export default function NowPlayingPage() {
       try { fullSong = await getSongById(song.id); } catch { /* fallback */ }
     }
     const producerIds = (fullSong.artists ?? [])
-      .filter(a => a.categories === 'Producer')
+      .filter(a => a.categories?.includes('Producer'))
       .map(a => a.artist?.id)
       .filter((id): id is number => id !== undefined);
 

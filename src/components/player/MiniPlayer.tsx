@@ -21,7 +21,7 @@ export default function MiniPlayer() {
   if (!currentSong) return null;
 
   const producerName = (() => {
-    const producer = currentSong.artists?.find(a => a.categories === 'Producer');
+    const producer = currentSong.artists?.find(a => a.categories?.includes('Producer'));
     if (producer) return producer.name || producer.artist?.name || '';
     const str = currentSong.artistString;
     if (str.includes(' feat.')) return str.split(' feat.')[0];
