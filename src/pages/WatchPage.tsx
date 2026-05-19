@@ -61,6 +61,8 @@ export default function WatchPage() {
   });
 
   const fetchedForRef = useRef<number | null>(null);
+  // URLからのロード中はナビゲーションエフェクトをブロックするフラグ
+  const loadingFromUrlRef = useRef(false);
   const seenSets = useRef<Record<RecTabKey, Set<number>>>({
     producer: new Set(),
     related: new Set(),
@@ -75,6 +77,7 @@ export default function WatchPage() {
     if (!songId) return;
     if (fetchedForRef.current === songId) return;
     fetchedForRef.current = songId;
+    loadingFromUrlRef.current = true;
 
     setLoadingSong(true);
     setError(null);
@@ -96,6 +99,7 @@ export default function WatchPage() {
 
     getSongById(songId)
       .then((loadedSong) => {
+        loadingFromUrlRef.current = false;
         setSong(loadedSong);
         setLoadingSong(false);
 
@@ -113,6 +117,7 @@ export default function WatchPage() {
         fetchDeep(loadedSong, 0);
       })
       .catch((err) => {
+        loadingFromUrlRef.current = false;
         setError(err.message || '楽曲の読み込みに失敗しました');
         setLoadingSong(false);
       });
@@ -244,7 +249,9 @@ export default function WatchPage() {
   }, [song, currentTab.items, replaceQueueList]);
 
   // 動画が自動再生で次に進んだ場合などにURLを同期する
+  // loadingFromUrlRef が true の間 (URL変更後のフェッチ中) はナビゲートしない
   useEffect(() => {
+    if (loadingFromUrlRef.current) return;
     if (currentSong && songId && currentSong.id !== songId) {
       navigate(`/watch?v=${currentSong.id}`);
     }

@@ -35,7 +35,7 @@ export default function Layout() {
           marginLeft: showSidebar
             ? `max(0px, ${sidebarExpanded ? 'var(--sidebar-width)' : 'var(--sidebar-collapsed-width)'})`
             : '0px',
-          overflowX: 'hidden',
+          overflowX: 'clip',
         }}
       >
         {/* lg以上でサイドバーがある場合のマージン適用 */}
