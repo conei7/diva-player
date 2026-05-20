@@ -53,19 +53,16 @@ async function fetchPlaylistVideos(listId: string, onProgress?: (loaded: number)
       break;
     }
     const data: InvidiousPlaylist = await res.json();
-    const newIds = (data.videos ?? []).map(v => v.videoId).filter(Boolean);
-    if (newIds.length === 0) break; // 空ページ = 終端
+    const videos = data.videos ?? [];
+    if (videos.length === 0) break; // 空ページ = 終端
 
-    let addedCount = 0;
-    for (const id of newIds) {
-      if (!seen.has(id)) {
-        seen.add(id);
-        ids.push(id);
-        addedCount++;
+    for (const v of videos) {
+      if (v.videoId && !seen.has(v.videoId)) {
+        seen.add(v.videoId);
+        ids.push(v.videoId);
       }
     }
     onProgress?.(ids.length);
-    if (addedCount === 0) break; // 全て重複 = ループ検出、終了
   }
   return ids;
 }
