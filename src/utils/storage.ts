@@ -10,7 +10,7 @@ const STORAGE_PREFIX = 'diva_';
 
 export interface StorageAdapter {
   get<T>(key: string): T | null;
-  set<T>(key: string, value: T): void;
+  set<T>(key: string, value: T): boolean;
   remove(key: string): void;
   keys(): string[];
 }
@@ -27,11 +27,13 @@ export const storage: StorageAdapter = {
     }
   },
 
-  set<T>(key: string, value: T): void {
+  set<T>(key: string, value: T): boolean {
     try {
       localStorage.setItem(STORAGE_PREFIX + key, JSON.stringify(value));
+      return true;
     } catch (error) {
       console.error(`[Storage] Failed to save key: ${key}`, error);
+      return false;
     }
   },
 

@@ -149,6 +149,50 @@ public class QdrantService
     }
 
     /// <summary>
+    /// Named Vectors コレクションの audio ベクトルのみで探索 (deep dig)
+    /// </summary>
+    public async Task<List<(int SongId, double Score)>> SearchAudioOnlyAsync(
+        int seedSongId,
+        int topK,
+        IEnumerable<int>? excludeIds = null,
+        int offset = 0)
+    {
+        var excludeSet = excludeIds?.ToHashSet() ?? [];
+        excludeSet.Add(seedSongId);
+
+        var retrieveResult = await _client.RetrieveAsync(
+            collectionName: _opts.CollectionNamed,
+            ids: new[] { new PointId { Num = (ulong)seedSongId } },
+            withPayload: false,
+            withVectors: true);
+
+        var seedPoint = retrieveResult.FirstOrDefault();
+        if (seedPoint is null || seedPoint.Vectors is null)
+            return [];
+
+        if (!seedPoint.Vectors.VectorsMap?.Vectors.TryGetValue("audio", out var av) == true)
+            return [];
+
+        var audioVec = av!.Data.ToArray();
+        if (!audioVec.Any(x => x != 0f))
+            return []; // 音響特徴なし
+
+        var fetch = (int)(offset + topK + excludeSet.Count + 10);
+        var res = await _client.SearchAsync(
+            collectionName: _opts.CollectionNamed,
+            vector: audioVec,
+            vectorName: "audio",
+            limit: (ulong)fetch);
+
+        return res
+            .Where(r => !excludeSet.Contains((int)r.Id.Num))
+            .Skip(offset)
+            .Take(topK)
+            .Select(r => ((int)r.Id.Num, (double)r.Score))
+            .ToList();
+    }
+
+    /// <summary>
     /// メタデータコレクションを使った探索 (音響未処理曲のフォールバック)
     /// </summary>
     public async Task<List<(int SongId, double Score)>> SearchMetadataSimilarAsync(

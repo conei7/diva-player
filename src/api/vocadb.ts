@@ -510,6 +510,69 @@ export async function getSimilarSongs(
 }
 
 /**
+ * メタデータベクトルのみによる類似検索 (関連曲タブ)
+ * バックエンドが利用不可の場合は VocaDB /related にフォールバック
+ */
+export async function getMetadataSimilarSongs(
+  seedSongId: number,
+  count = 20,
+  offset = 0,
+): Promise<Song[]> {
+  if (await isRecommenderAvailable()) {
+    try {
+      const params = new URLSearchParams({
+        songId: String(seedSongId),
+        count:  String(count),
+        offset: String(offset),
+      });
+      const res = await fetch(`${RECOMMENDER_API}/api/recommend/metadata?${params}`);
+      if (res.ok) {
+        const data: SimilarResponse = await res.json();
+        if (data.items.length > 0) {
+          const songs = await Promise.all(data.items.map(i => getSongById(i.songId).catch(() => null)));
+          return songs.filter((s): s is Song => s !== null);
+        }
+      }
+    } catch {
+      _recommenderAvailable = false;
+    }
+  }
+  if (offset === 0) return getRelatedSongs(seedSongId);
+  return [];
+}
+
+/**
+ * 音響ベクトルのみによる類似検索 (deep dig タブ)
+ * バックエンドが利用不可またはデータなしの場合は空配列を返す
+ */
+export async function getAudioSimilarSongs(
+  seedSongId: number,
+  count = 20,
+  offset = 0,
+): Promise<Song[]> {
+  if (await isRecommenderAvailable()) {
+    try {
+      const params = new URLSearchParams({
+        songId: String(seedSongId),
+        count:  String(count),
+        offset: String(offset),
+      });
+      const res = await fetch(`${RECOMMENDER_API}/api/recommend/audio?${params}`);
+      if (res.ok) {
+        const data: SimilarResponse = await res.json();
+        if (data.items.length > 0) {
+          const songs = await Promise.all(data.items.map(i => getSongById(i.songId).catch(() => null)));
+          return songs.filter((s): s is Song => s !== null);
+        }
+      }
+    } catch {
+      _recommenderAvailable = false;
+    }
+  }
+  return []; // 音響データなし / バックエンド不可の場合は空
+}
+
+/**
  * 暗黙的フィードバック送信 (再生完了率 / キュー削除)
  * completionRate: 0.0 (即スキップ) 〜 1.0 (最後まで再生)
  * action: 'queue_remove' でキュー削除ペナルティを送信

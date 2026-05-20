@@ -64,10 +64,44 @@ interface PlaylistState {
   getOrCreateWatchLater: () => Playlist;
 }
 
+// ─── 保存用スリム化 ─────────────────────────────────────────────────────────
+// artists 配列は詳細表示用で再取得可能。localStorageの容量節約のため保存時に除去。
+// pvs は再生に必須なので保持するが、description・author 等の重いフィールドを削除。
+function slimSongForStorage(song: Song): Song {
+  return {
+    ...song,
+    artists: undefined,
+    pvs: song.pvs?.map(pv => ({
+      id: pv.id,
+      pvId: pv.pvId,
+      service: pv.service,
+      pvType: pv.pvType,
+      url: pv.url,
+      disabled: pv.disabled,
+      length: pv.length,
+      name: pv.name,
+    } as typeof pv)),
+  };
+}
+
 // ─── 永続化ヘルパー ─────────────────────────────────────────────────────────
 function save(playlists: Playlist[], folders: PlaylistFolder[]): void {
-  storage.set(PLAYLISTS_KEY, playlists);
-  storage.set(FOLDERS_KEY,   folders);
+  const slimmedPlaylists = playlists.map(pl => ({
+    ...pl,
+    songs: pl.songs.map(slimSongForStorage),
+  }));
+  const ok = storage.set(PLAYLISTS_KEY, slimmedPlaylists);
+  if (!ok) {
+    // ユーザーへの通知（非同期で表示）
+    setTimeout(() => {
+      alert(
+        '⚠ プレイリストの保存に失敗しました。\n' +
+        'ブラウザのストレージ容量が不足している可能性があります。\n' +
+        'ページを再読み込みするとデータが失われることがあります。'
+      );
+    }, 0);
+  }
+  storage.set(FOLDERS_KEY, folders);
 }
 
 // ─── ソート実装 ─────────────────────────────────────────────────────────────

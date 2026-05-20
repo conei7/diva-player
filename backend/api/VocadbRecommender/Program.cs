@@ -157,6 +157,76 @@ app.MapGet("/api/recommend/similar", async (
     return Results.Ok(new { items });
 });
 
+// GET /api/recommend/metadata?songId={id}&count={n}&offset={0}
+// メタデータベクトルのみによる類似検索 (関連曲タブ)
+app.MapGet("/api/recommend/metadata", async (
+    int songId,
+    int count,
+    int? offset,
+    QdrantService qdrant,
+    DbService db) =>
+{
+    if (count is < 1 or > 100)
+        return Results.BadRequest("count must be between 1 and 100");
+
+    int skip = offset ?? 0;
+    var results = await qdrant.SearchMetadataSimilarAsync(songId, count, null, skip);
+
+    if (results.Count == 0)
+        return Results.Ok(new { items = Array.Empty<object>() });
+
+    var infos = await db.GetSongInfoBatchAsync(results.Select(r => r.SongId));
+    var infoMap = infos.ToDictionary(i => i.Id);
+
+    var items = results
+        .Where(r => infoMap.ContainsKey(r.SongId))
+        .Select(r => new
+        {
+            songId = r.SongId,
+            name   = infoMap[r.SongId].Name,
+            artist = infoMap[r.SongId].ArtistString,
+            score  = r.Score,
+        })
+        .ToList();
+
+    return Results.Ok(new { items });
+});
+
+// GET /api/recommend/audio?songId={id}&count={n}&offset={0}
+// 音響ベクトルのみによる類似検索 (deep dig タブ)
+app.MapGet("/api/recommend/audio", async (
+    int songId,
+    int count,
+    int? offset,
+    QdrantService qdrant,
+    DbService db) =>
+{
+    if (count is < 1 or > 100)
+        return Results.BadRequest("count must be between 1 and 100");
+
+    int skip = offset ?? 0;
+    var results = await qdrant.SearchAudioOnlyAsync(songId, count, null, skip);
+
+    if (results.Count == 0)
+        return Results.Ok(new { items = Array.Empty<object>() });
+
+    var infos = await db.GetSongInfoBatchAsync(results.Select(r => r.SongId));
+    var infoMap = infos.ToDictionary(i => i.Id);
+
+    var items = results
+        .Where(r => infoMap.ContainsKey(r.SongId))
+        .Select(r => new
+        {
+            songId = r.SongId,
+            name   = infoMap[r.SongId].Name,
+            artist = infoMap[r.SongId].ArtistString,
+            score  = r.Score,
+        })
+        .ToList();
+
+    return Results.Ok(new { items });
+});
+
 // GET /api/health
 app.MapGet("/api/health", () => Results.Ok(new { status = "ok" }));
 
