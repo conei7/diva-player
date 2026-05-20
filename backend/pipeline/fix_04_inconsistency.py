@@ -10,7 +10,7 @@ from qdrant_client import QdrantClient
 from utils.db import get_conn, QDRANT_URL, QDRANT_COLLECTION_AUDIO
 
 def main():
-    qdrant = QdrantClient(url=QDRANT_URL)
+    qdrant = QdrantClient(url=QDRANT_URL, timeout=120)  # 大規模コレクション対応のため長めに設定
 
     # Qdrant の全ポイント ID を収集
     print("Qdrant からポイント ID を取得中...")
