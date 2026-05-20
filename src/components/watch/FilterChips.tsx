@@ -17,10 +17,10 @@ interface FilterChipsProps {
 }
 
 const TABS: { key: RecTabKey; label: string; description: string }[] = [
-  { key: 'producer', label: '同じPの曲', description: 'RDB検索' },
-  { key: 'related', label: '関連曲', description: 'ハイブリッド検索' },
-  { key: 'recommended', label: 'おすすめ', description: 'AI推薦' },
-  { key: 'deep', label: 'Deep Dig', description: '音響類似' },
+  { key: 'recommended', label: 'おすすめ',  description: 'AI推薦 (メタ+音響+履歴)' },
+  { key: 'related',    label: '関連曲',    description: 'メタデータ類似' },
+  { key: 'producer',   label: '同じPの曲', description: 'RDB検索' },
+  { key: 'deep',       label: 'Deep Dig',  description: '音響類似' },
 ];
 
 export default function FilterChips({ activeTab, onTabChange, counts }: FilterChipsProps) {

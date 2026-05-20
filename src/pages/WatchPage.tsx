@@ -13,8 +13,8 @@ import {
   getSongById,
   getRecommendedSongs,
   getSongsByProducerFromBackend,
-  getSimilarSongs,
-  getRelatedSongs,
+  getAudioSimilarSongs,
+  getMetadataSimilarSongs,
 } from '../api/vocadb';
 import type { Song } from '../types/vocadb';
 
@@ -52,7 +52,7 @@ export default function WatchPage() {
   const [loadingSong, setLoadingSong] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const [activeTab, setActiveTab] = useState<RecTabKey>('producer');
+  const [activeTab, setActiveTab] = useState<RecTabKey>('recommended');
   const [tabs, setTabs] = useState<Record<RecTabKey, TabState>>({
     producer: { items: [], loading: false, hasMore: true, page: 0 },
     related: { items: [], loading: false, hasMore: true, page: 0 },
@@ -153,7 +153,7 @@ export default function WatchPage() {
 
   const fetchRelated = useCallback(async (s: Song, page: number) => {
     try {
-      const items = await getRelatedSongs(s.id);
+      const items = await getMetadataSimilarSongs(s.id, PAGE_SIZE, page * PAGE_SIZE);
       const fresh = items.filter(item => !seenSets.current.related.has(item.id));
       fresh.forEach(item => seenSets.current.related.add(item.id));
 
@@ -162,7 +162,7 @@ export default function WatchPage() {
         related: {
           items: page === 0 ? fresh : [...prev.related.items, ...fresh],
           loading: false,
-          hasMore: false, // VocaDB /related はページネーションなし
+          hasMore: items.length >= PAGE_SIZE,
           page: page + 1,
         },
       }));
@@ -193,7 +193,7 @@ export default function WatchPage() {
 
   const fetchDeep = useCallback(async (s: Song, page: number) => {
     try {
-      const items = await getSimilarSongs(s.id, PAGE_SIZE, page * PAGE_SIZE);
+      const items = await getAudioSimilarSongs(s.id, PAGE_SIZE, page * PAGE_SIZE);
       const fresh = items.filter(item => !seenSets.current.deep.has(item.id));
       fresh.forEach(item => seenSets.current.deep.add(item.id));
 

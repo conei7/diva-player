@@ -44,9 +44,9 @@ public class QdrantService
         float[]? audioVec = null;
         float[]? metaVec  = null;
 
-        if (seedPoint.Vectors.VectorsMap?.Vectors.TryGetValue("audio", out var av) == true)
+        if (seedPoint.Vectors.Vectors_?.Vectors.TryGetValue("audio", out var av) == true)
             audioVec = av.Data.ToArray();
-        if (seedPoint.Vectors.VectorsMap?.Vectors.TryGetValue("meta", out var mv) == true)
+        if (seedPoint.Vectors.Vectors_?.Vectors.TryGetValue("meta", out var mv) == true)
             metaVec = mv.Data.ToArray();
 
         var fetch = (int)(offset + topK + excludeSet.Count + 10);
@@ -170,10 +170,11 @@ public class QdrantService
         if (seedPoint is null || seedPoint.Vectors is null)
             return [];
 
-        if (!seedPoint.Vectors.VectorsMap?.Vectors.TryGetValue("audio", out var av) == true)
+        var namedVecs = seedPoint.Vectors.Vectors_?.Vectors;
+        if (namedVecs is null || !namedVecs.TryGetValue("audio", out var av))
             return [];
 
-        var audioVec = av!.Data.ToArray();
+        var audioVec = av.Data.ToArray();
         if (!audioVec.Any(x => x != 0f))
             return []; // 音響特徴なし
 
