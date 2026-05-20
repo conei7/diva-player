@@ -86,6 +86,8 @@ export default function YouTubeImportModal({ onClose, onImport }: Props) {
   const [phase, setPhase] = useState<'idle' | 'fetching' | 'matching' | 'done' | 'error'>('idle');
   const [log, setLog] = useState<string[]>([]);
   const [songs, setSongs] = useState<Song[]>([]);
+  const [unmatched, setUnmatched] = useState<string[]>([]);
+  const [showUnmatched, setShowUnmatched] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
 
   const appendLog = (msg: string) => setLog(prev => [...prev, msg]);
@@ -100,6 +102,8 @@ export default function YouTubeImportModal({ onClose, onImport }: Props) {
     setPhase('fetching');
     setLog([]);
     setSongs([]);
+    setUnmatched([]);
+    setShowUnmatched(false);
     setErrorMsg('');
 
     try {
@@ -111,20 +115,23 @@ export default function YouTubeImportModal({ onClose, onImport }: Props) {
 
       setPhase('matching');
       const matched: Song[] = [];
+      const unmatchedIds: string[] = [];
       const batchSize = 5;
 
       for (let i = 0; i < videoIds.length; i += batchSize) {
         const batch = videoIds.slice(i, i + batchSize);
         const results = await Promise.all(batch.map(id => fetchVocadbByYouTubeId(id)));
-        for (const song of results) {
+        results.forEach((song, idx) => {
           if (song) matched.push(song);
-        }
+          else unmatchedIds.push(batch[idx]);
+        });
         appendLog(`${Math.min(i + batchSize, videoIds.length)} / ${videoIds.length} 照合済み → ${matched.length} 件マッチ`);
       }
 
       setSongs(matched);
+      setUnmatched(unmatchedIds);
       setPhase('done');
-      appendLog(`完了: ${matched.length} 件の曲が見つかりました`);
+      appendLog(`完了: ${matched.length} 件の曲が見つかりました（未マッチ: ${unmatchedIds.length} 件）`);
     } catch (e) {
       setPhase('error');
       setErrorMsg(e instanceof Error ? e.message : '不明なエラー');
@@ -189,8 +196,41 @@ export default function YouTubeImportModal({ onClose, onImport }: Props) {
         {/* 結果サマリー */}
         {phase === 'done' && (
           <p className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
-            {songs.length} 件の Original 曲が VocaDB でマッチしました
+            {songs.length} 件の曲が VocaDB でマッチしました
           </p>
+        )}
+
+        {/* 未マッチ一覧 */}
+        {phase === 'done' && unmatched.length > 0 && (
+          <div>
+            <button
+              className="text-sm flex items-center gap-1"
+              style={{ color: 'var(--color-text-muted)' }}
+              onClick={() => setShowUnmatched(v => !v)}
+            >
+              <svg className="w-3 h-3" style={{ transform: showUnmatched ? 'rotate(90deg)' : '', transition: 'transform 0.15s' }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M9 18l6-6-6-6"/></svg>
+              未マッチ: {unmatched.length} 件（VocaDB未登録・非公開かも）
+            </button>
+            {showUnmatched && (
+              <div
+                className="rounded-xl p-2 mt-1 text-xs font-mono overflow-y-auto max-h-32 space-y-0.5"
+                style={{ background: 'var(--color-bg)', color: 'var(--color-text-muted)' }}
+              >
+                {unmatched.map(id => (
+                  <div key={id}>
+                    <a
+                      href={`https://www.youtube.com/watch?v=${id}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{ color: 'var(--color-accent)' }}
+                    >
+                      https://www.youtube.com/watch?v={id}
+                    </a>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         )}
 
         {/* ボタン */}
