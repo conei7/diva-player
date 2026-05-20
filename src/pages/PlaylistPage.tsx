@@ -9,6 +9,7 @@
  * - isPinned プレイリストの編集・削除を禁止
  */
 import { useEffect, useState, useRef, useCallback } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import {
   DndContext,
   closestCenter,
@@ -107,7 +108,7 @@ function SortableSongRow({
         onClick={selectionMode ? onToggleSelect : onPlay}
       >
         {song.thumbUrl ? (
-          <img src={song.thumbUrl} alt="" className="w-full h-full object-cover" />
+          <img src={song.thumbUrl} alt="" className="w-full h-full object-cover" loading="lazy" />
         ) : (
           <div className="w-full h-full flex items-center justify-center text-neutral-600">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
@@ -174,6 +175,193 @@ function SortableSongRow({
             </button>
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+// ─── PlainSongRow (DnDなし、仮想リスト用) ────────────────────────────────────
+const VIRTUAL_THRESHOLD = 200; // これを超えると仮想スクロールに切り替え
+
+interface PlainSongRowProps {
+  index: number;
+  song: Song;
+  selectionMode: boolean;
+  selected: boolean;
+  onToggleSelect: () => void;
+  onPlay: () => void;
+  onRemove: () => void;
+  onMoveTop: () => void;
+  onMoveBottom: () => void;
+  onSetCover: () => void;
+}
+
+function PlainSongRow({
+  index, song, selectionMode, selected,
+  onToggleSelect, onPlay, onRemove, onMoveTop, onMoveBottom, onSetCover,
+}: PlainSongRowProps) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [menuOpen]);
+
+  return (
+    <div
+      className="flex items-center gap-2 px-3 py-2 rounded-lg group hover:bg-white/5 transition-colors"
+      style={{ background: selected ? 'rgba(6,182,212,0.08)' : undefined }}
+    >
+      {selectionMode ? (
+        <input type="checkbox" checked={selected} onChange={onToggleSelect} className="accent-cyan-400 w-4 h-4 cursor-pointer flex-shrink-0" />
+      ) : (
+        <span className="w-4 flex-shrink-0" />
+      )}
+      <span className="text-xs w-5 text-center text-neutral-500 flex-shrink-0">{index + 1}</span>
+      <div
+        className="w-9 h-9 rounded flex-shrink-0 overflow-hidden cursor-pointer"
+        style={{ background: 'var(--color-bg)' }}
+        onClick={selectionMode ? onToggleSelect : onPlay}
+      >
+        {song.thumbUrl ? (
+          <img src={song.thumbUrl} alt="" className="w-full h-full object-cover" loading="lazy" />
+        ) : (
+          <div className="w-full h-full flex items-center justify-center text-neutral-600">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/>
+            </svg>
+          </div>
+        )}
+      </div>
+      <div className="flex-1 min-w-0 cursor-pointer" onClick={selectionMode ? onToggleSelect : onPlay}>
+        <p className="text-sm font-medium truncate">{song.name}</p>
+        <p className="text-xs truncate text-neutral-400">{song.artistString}</p>
+      </div>
+      <div ref={menuRef} className="relative flex-shrink-0">
+        <button
+          onClick={() => setMenuOpen(v => !v)}
+          className="opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-lg hover:bg-white/10 text-neutral-400 hover:text-white"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+            <circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/>
+          </svg>
+        </button>
+        {menuOpen && (
+          <div className="absolute right-0 bottom-full mb-1 z-50 rounded-xl overflow-hidden shadow-xl w-44"
+            style={{ background: 'var(--color-bg-card)', border: '1px solid var(--color-border)' }}>
+            <button className="context-menu-item" onClick={() => { onPlay(); setMenuOpen(false); }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+              ここから再生
+            </button>
+            <button className="context-menu-item" onClick={() => { onMoveTop(); setMenuOpen(false); }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <polyline points="17 11 12 6 7 11"/><polyline points="17 18 12 13 7 18"/>
+              </svg>
+              一番上に移動
+            </button>
+            <button className="context-menu-item" onClick={() => { onMoveBottom(); setMenuOpen(false); }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <polyline points="7 13 12 18 17 13"/><polyline points="7 6 12 11 17 6"/>
+              </svg>
+              一番下に移動
+            </button>
+            <button className="context-menu-item" onClick={() => { onSetCover(); setMenuOpen(false); }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/>
+                <polyline points="21 15 16 10 5 21"/>
+              </svg>
+              カバーに設定
+            </button>
+            <div className="border-t" style={{ borderColor: 'var(--color-border)' }} />
+            <button className="context-menu-item" style={{ color: 'var(--color-error)' }}
+              onClick={() => { onRemove(); setMenuOpen(false); }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/>
+                <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/>
+              </svg>
+              削除
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── VirtualSongList (200件超用) ─────────────────────────────────────────────
+interface VirtualSongListProps {
+  songs: Song[];
+  playlistId: string;
+  selectionMode: boolean;
+  selectedIds: Set<number>;
+  onToggleSelect: (id: number) => void;
+  onSetCover: (song: Song) => void;
+  onRemoveSong: (globalIndex: number) => void;
+  onMoveTop: (globalIndex: number) => void;
+  onMoveBottom: (globalIndex: number) => void;
+  allSongs: Song[]; // for globalIndex lookup
+}
+
+function VirtualSongList({
+  songs, selectionMode, selectedIds,
+  onToggleSelect, onSetCover, onRemoveSong, onMoveTop, onMoveBottom, allSongs,
+}: VirtualSongListProps) {
+  const { setQueue } = usePlayerStore();
+  const parentRef = useRef<HTMLDivElement>(null);
+  const ROW_HEIGHT = 52;
+
+  const rowVirtualizer = useVirtualizer({
+    count: songs.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => ROW_HEIGHT,
+    overscan: 10,
+  });
+
+  return (
+    <div
+      ref={parentRef}
+      className="rounded-xl overflow-y-auto overflow-x-hidden"
+      style={{
+        border: '1px solid var(--color-border)',
+        background: 'var(--color-bg-card)',
+        height: 'min(calc(100vh - 400px), 600px)',
+        maxHeight: '600px',
+      }}
+    >
+      <div style={{ height: rowVirtualizer.getTotalSize(), position: 'relative' }}>
+        {rowVirtualizer.getVirtualItems().map(virtualItem => {
+          const song = songs[virtualItem.index];
+          const globalIndex = allSongs.findIndex(s => s.id === song.id);
+          return (
+            <div
+              key={song.id}
+              style={{
+                position: 'absolute',
+                top: virtualItem.start,
+                width: '100%',
+                height: ROW_HEIGHT,
+              }}
+            >
+              <PlainSongRow
+                index={virtualItem.index}
+                song={song}
+                selectionMode={selectionMode}
+                selected={selectedIds.has(song.id)}
+                onToggleSelect={() => onToggleSelect(song.id)}
+                onPlay={() => setQueue(songs, virtualItem.index)}
+                onRemove={() => onRemoveSong(globalIndex)}
+                onMoveTop={() => onMoveTop(globalIndex)}
+                onMoveBottom={() => onMoveBottom(globalIndex)}
+                onSetCover={() => onSetCover(song)}
+              />
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -637,6 +825,25 @@ export default function PlaylistPage() {
                 )}
               </div>
             ) : (
+              filteredSongs.length > VIRTUAL_THRESHOLD ? (
+                <>
+                  <p className="text-xs text-neutral-500 mb-1">
+                    {filteredSongs.length} 件（大きいプレイリストは仮想スクロール表示・並べ替え不可）
+                  </p>
+                  <VirtualSongList
+                    songs={filteredSongs}
+                    playlistId={selectedPlaylist.id}
+                    selectionMode={selectionMode}
+                    selectedIds={selectedIds}
+                    onToggleSelect={toggleSelect}
+                    onSetCover={handleSetCover}
+                    onRemoveSong={idx => removeSong(selectedPlaylist.id, idx)}
+                    onMoveTop={moveToTop}
+                    onMoveBottom={moveToBottom}
+                    allSongs={selectedPlaylist.songs}
+                  />
+                </>
+              ) : (
               <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
                 <SortableContext items={filteredSongs.map(s => String(s.id))} strategy={verticalListSortingStrategy}>
                   <div className="rounded-xl overflow-hidden" style={{ border: '1px solid var(--color-border)', background: 'var(--color-bg-card)' }}>
@@ -662,6 +869,7 @@ export default function PlaylistPage() {
                   </div>
                 </SortableContext>
               </DndContext>
+              )
             )}
           </>
         )}
