@@ -43,14 +43,31 @@ function extractPlaylistId(url: string): string | null {
   }
 }
 
-async function fetchPlaylistVideos(listId: string): Promise<string[]> {
-  // Invidious APIは全動画を一度に返す（ページネーション不要）
-  const res = await fetch(`${INVIDIOUS_PROXY}/api/v1/playlists/${encodeURIComponent(listId)}`);
-  if (!res.ok) {
-    throw new Error(`YouTubeプレイリストの取得に失敗しました (HTTP ${res.status})`);
+async function fetchPlaylistVideos(listId: string, onProgress?: (loaded: number, total: number) => void): Promise<string[]> {
+  // ページ1を取得してvideoCountから必要ページ数を算出
+  const res1 = await fetch(`${INVIDIOUS_PROXY}/api/v1/playlists/${encodeURIComponent(listId)}?page=1`);
+  if (!res1.ok) {
+    throw new Error(`YouTubeプレイリストの取得に失敗しました (HTTP ${res1.status})`);
   }
-  const data: InvidiousPlaylist = await res.json();
-  return (data.videos ?? []).map(v => v.videoId).filter(Boolean);
+  const page1: InvidiousPlaylist = await res1.json();
+  const totalCount = page1.videoCount ?? 0;
+  const ids: string[] = (page1.videos ?? []).map(v => v.videoId).filter(Boolean);
+  onProgress?.(ids.length, totalCount);
+
+  // 2ページ目以降（100件/ページ、最大2000件まで）
+  const ITEMS_PER_PAGE = 100;
+  const MAX_PAGES = 20;
+  const totalPages = Math.min(Math.ceil(totalCount / ITEMS_PER_PAGE), MAX_PAGES);
+  for (let page = 2; page <= totalPages; page++) {
+    const res = await fetch(`${INVIDIOUS_PROXY}/api/v1/playlists/${encodeURIComponent(listId)}?page=${page}`);
+    if (!res.ok) break;
+    const data: InvidiousPlaylist = await res.json();
+    const newIds = (data.videos ?? []).map(v => v.videoId).filter(Boolean);
+    ids.push(...newIds);
+    onProgress?.(ids.length, totalCount);
+    if (newIds.length === 0) break; // 空ページに達したら停止
+  }
+  return ids;
 }
 
 async function fetchVocadbByYouTubeId(videoId: string): Promise<Song | null> {
@@ -61,7 +78,9 @@ async function fetchVocadbByYouTubeId(videoId: string): Promise<Song | null> {
   if (!res.ok) return null;
   const data = await res.json();
   if (!data || !data.id) return null;
-  if (data.songType !== 'Original') return null;
+  // Original・リミックス・グッズ以外は無視（DramaPV, MusicPV, Otherも除外）
+  const excludedTypes = ['DramaPV', 'MusicPV', 'Other'];
+  if (excludedTypes.includes(data.songType)) return null;
   return data as Song;
 }
 
@@ -88,7 +107,9 @@ export default function YouTubeImportModal({ onClose, onImport }: Props) {
 
     try {
       appendLog('YouTube プレイリストを取得中...');
-      const videoIds = await fetchPlaylistVideos(listId);
+      const videoIds = await fetchPlaylistVideos(listId, (loaded, total) => {
+        if (total > 100) appendLog(`ページ取得中: ${loaded} / ${total} 件`);
+      });
       appendLog(`${videoIds.length} 件の動画を取得しました`);
 
       setPhase('matching');
@@ -106,7 +127,7 @@ export default function YouTubeImportModal({ onClose, onImport }: Props) {
 
       setSongs(matched);
       setPhase('done');
-      appendLog(`完了: ${matched.length} 件の Original 曲が見つかりました`);
+      appendLog(`完了: ${matched.length} 件の曲が見つかりました`);
     } catch (e) {
       setPhase('error');
       setErrorMsg(e instanceof Error ? e.message : '不明なエラー');
