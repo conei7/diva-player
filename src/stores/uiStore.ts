@@ -16,6 +16,11 @@ interface UiState {
   /** 詳細モーダルを閉じる */
   closeSongDetail: () => void;
 
+  /** 「プレイリストに保存」モーダルの対象曲。null = 閉じている */
+  saveToPlaylistSong: Song | null;
+  openSaveToPlaylist: (song: Song) => void;
+  closeSaveToPlaylist: () => void;
+
   /** サイドバー展開状態 (デスクトップ) */
   sidebarExpanded: boolean;
   toggleSidebar: () => void;
@@ -31,6 +36,10 @@ export const useUiStore = create<UiState>()((set) => ({
   detailSong: null,
   openSongDetail: (song) => set({ detailSong: song }),
   closeSongDetail: () => set({ detailSong: null }),
+
+  saveToPlaylistSong: null,
+  openSaveToPlaylist: (song) => set({ saveToPlaylistSong: song }),
+  closeSaveToPlaylist: () => set({ saveToPlaylistSong: null }),
 
   sidebarExpanded: true,
   toggleSidebar: () => set((s) => ({ sidebarExpanded: !s.sidebarExpanded })),

@@ -4,6 +4,7 @@ import Sidebar from './Sidebar';
 import GlobalPlayer from '../player/GlobalPlayer';
 import HistoryDrawer from '../player/HistoryDrawer';
 import SongDetailsModal from '../player/SongDetailsModal';
+import { SaveToPlaylistModal } from '../playlist/SaveToPlaylistModal';
 import { useUiStore } from '../../stores/uiStore';
 
 /**
@@ -25,7 +26,7 @@ export default function Layout() {
   return (
     <div className="min-h-screen flex flex-col" style={{ background: 'var(--color-bg-primary)' }}>
       <TopNav />
-      {showSidebar && <Sidebar />}
+      <Sidebar />
 
       {/* メインコンテンツ */}
       <main
@@ -52,6 +53,7 @@ export default function Layout() {
 
       <HistoryDrawer />
       <SongDetailsModal />
+      <SaveToPlaylistModal />
     </div>
   );
 }

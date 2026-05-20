@@ -335,6 +335,23 @@ body {
   transform: translateY(-1px);
 }
 
+.btn-secondary {
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  font-weight: 500;
+  border-radius: 9999px;
+  padding: 0.5rem 1.25rem;
+  transition: all 0.2s ease;
+  border: 1px solid var(--color-border);
+  cursor: pointer;
+}
+
+.btn-secondary:hover {
+  background: var(--color-surface-hover);
+  color: var(--color-text-primary);
+  border-color: var(--color-accent-purple);
+}
+
 .btn-ghost {
   background: transparent;
   color: var(--color-text-secondary);
@@ -348,6 +365,26 @@ body {
 
 .btn-ghost:hover {
   color: var(--color-text-primary);
+}
+
+/* ─── コンテキストメニュー行 ─── */
+.context-menu-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.75rem;
+  background: transparent;
+  color: var(--color-text-primary);
+  border: none;
+  cursor: pointer;
+  transition: background 0.15s ease;
+  text-align: left;
+}
+
+.context-menu-item:hover {
+  background: rgba(255, 255, 255, 0.06);
 }
 
 /* ─── 検索入力 ─── */

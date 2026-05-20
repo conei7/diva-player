@@ -9,4 +9,13 @@ export default defineConfig({
     tailwindcss(),
   ],
   base: '/diva-player/',
+  server: {
+    proxy: {
+      '/invidious-api': {
+        target: 'https://inv.nadeko.net',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/invidious-api/, ''),
+      },
+    },
+  },
 })

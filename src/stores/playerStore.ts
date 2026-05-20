@@ -101,6 +101,15 @@ interface PlayerState {
   // 履歴ドロワー
   historyDrawerOpen: boolean;
   toggleHistoryDrawer: () => void;
+
+  // シャッフル
+  shuffleEnabled: boolean;
+  originalQueue: Song[];   // シャッフル前の順序を保持
+  toggleShuffle: () => void;
+
+  // ループモード
+  loopMode: 'none' | 'all' | 'one';
+  toggleLoopMode: () => void;
 }
 
 export const usePlayerStore = create<PlayerState>((set, get) => ({
@@ -155,11 +164,21 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   resume: () => set({ isPlaying: true }),
 
   next: () => {
-    const { queue, queueIndex } = get();
+    const { queue, queueIndex, loopMode } = get();
+    if (loopMode === 'one') {
+      // 1曲ループ: 同じ曲を再度再生
+      set({ progress: 0, seekTarget: 0 });
+      get().playSong(queue[queueIndex]);
+      return;
+    }
     if (queueIndex < queue.length - 1) {
       const nextIndex = queueIndex + 1;
       set({ queueIndex: nextIndex });
       get().playSong(queue[nextIndex]);
+    } else if (loopMode === 'all' && queue.length > 0) {
+      // 全体ループ: 先頭に戻る
+      set({ queueIndex: 0 });
+      get().playSong(queue[0]);
     } else {
       // キュー終端: 停止
       set({ isPlaying: false });
@@ -202,9 +221,20 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   },
 
   setQueue: (songs: Song[], startIndex = 0) => {
-    set({ queue: songs, queueIndex: startIndex });
-    if (songs.length > 0) {
-      get().playSong(songs[startIndex]);
+    const { shuffleEnabled } = get();
+    if (shuffleEnabled && songs.length > 0) {
+      const current = songs[startIndex];
+      const rest = songs.filter((_, i) => i !== startIndex);
+      for (let i = rest.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [rest[i], rest[j]] = [rest[j], rest[i]];
+      }
+      const shuffled = current ? [current, ...rest] : rest;
+      set({ queue: shuffled, queueIndex: 0, originalQueue: songs });
+      get().playSong(shuffled[0]);
+    } else {
+      set({ queue: songs, queueIndex: startIndex, originalQueue: [] });
+      if (songs.length > 0) get().playSong(songs[startIndex]);
     }
   },
 
@@ -265,4 +295,50 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     historyDrawerOpen: !state.historyDrawerOpen,
     queueDrawerOpen: false,
   })),
+
+  // ─── シャッフル ──────────────────────────────────────────────────────────────
+  shuffleEnabled: false,
+  originalQueue: [],
+
+  // ─── ループモード ──────────────────────────────────────────────────────────
+  loopMode: 'none',
+  toggleLoopMode: () => {
+    const { loopMode } = get();
+    const next: 'none' | 'all' | 'one' =
+      loopMode === 'none' ? 'all' : loopMode === 'all' ? 'one' : 'none';
+    set({ loopMode: next });
+  },
+
+  toggleShuffle: () => {
+    const { shuffleEnabled, queue, queueIndex, currentSong, originalQueue } = get();
+
+    if (shuffleEnabled) {
+      // シャッフル解除: 元の順序に戻す
+      const newIndex = currentSong
+        ? originalQueue.findIndex(s => s.id === currentSong.id)
+        : queueIndex;
+      set({
+        shuffleEnabled: false,
+        queue: originalQueue,
+        originalQueue: [],
+        queueIndex: newIndex < 0 ? 0 : newIndex,
+      });
+    } else {
+      // シャッフル有効化: 現在曲を先頭に置き残りをランダム化
+      if (queue.length === 0) { set({ shuffleEnabled: true }); return; }
+      const current = queue[queueIndex];
+      const rest = queue.filter((_, i) => i !== queueIndex);
+      for (let i = rest.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [rest[i], rest[j]] = [rest[j], rest[i]];
+      }
+      const shuffled = current ? [current, ...rest] : rest;
+      set({
+        shuffleEnabled: true,
+        originalQueue: queue,
+        queue: shuffled,
+        queueIndex: 0,
+      });
+    }
+  },
 }));

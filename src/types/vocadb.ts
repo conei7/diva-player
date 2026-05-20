@@ -122,7 +122,21 @@ export type ArtistSearchResult = PartialFindResult<Artist>;
 export interface Playlist {
   id: string;
   name: string;
+  description?: string;
+  coverArtUrl?: string;
+  folderId?: string;       // null / undefined = ルート直下
   songs: Song[];
+  createdAt: number;
+  updatedAt: number;
+  /** true = 削除・移動不可のシステムプレイリスト（後で聴く等） */
+  isPinned?: boolean;
+}
+
+/** プレイリストをまとめるフォルダ（ツリー構造対応） */
+export interface PlaylistFolder {
+  id: string;
+  name: string;
+  parentId?: string;       // null / undefined = ルート直下
   createdAt: number;
   updatedAt: number;
 }

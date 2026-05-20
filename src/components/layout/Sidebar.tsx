@@ -64,6 +64,7 @@ const menuItems: MenuItem[] = [
 
 export default function Sidebar() {
   const location = useLocation();
+  const isWatchPage = location.pathname === '/watch';
   const { sidebarExpanded, mobileDrawerOpen, closeMobileDrawer } = useUiStore();
 
   const content = (
@@ -118,7 +119,8 @@ export default function Sidebar() {
 
   return (
     <>
-      {/* デスクトップサイドバー */}
+      {/* デスクトップサイドバー (WatchPageでは非表示) */}
+      {!isWatchPage && (
       <aside
         className="hidden lg:flex flex-col fixed top-0 left-0 z-40 transition-all duration-300"
         style={{
@@ -132,17 +134,18 @@ export default function Sidebar() {
       >
         {content}
       </aside>
+      )}
 
-      {/* モバイルオーバーレイ */}
+      {/* モバイルオーバーレイ (WatchPageではデスクトップでも表示) */}
       <div
-        className={`sidebar-overlay lg:hidden ${mobileDrawerOpen ? 'active' : ''}`}
+        className={`sidebar-overlay ${isWatchPage ? '' : 'lg:hidden'} ${mobileDrawerOpen ? 'active' : ''}`}
         onClick={closeMobileDrawer}
         style={{ zIndex: 49 }}
       />
 
-      {/* モバイルドロワー */}
+      {/* モバイルドロワー (WatchPageではデスクトップでも表示) */}
       <aside
-        className="lg:hidden fixed top-0 left-0 z-50 flex flex-col transition-transform duration-300"
+        className={`${isWatchPage ? '' : 'lg:hidden'} fixed top-0 left-0 z-50 flex flex-col transition-transform duration-300`}
         style={{
           width: 'var(--sidebar-width)',
           height: '100vh',

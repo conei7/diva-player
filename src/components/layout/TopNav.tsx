@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useUiStore } from '../../stores/uiStore';
 import { usePlayerStore } from '../../stores/playerStore';
 import { useSearchStore } from '../../stores/searchStore';
@@ -13,6 +13,8 @@ import { useSearchStore } from '../../stores/searchStore';
  */
 export default function TopNav() {
   const navigate = useNavigate();
+  const location = useLocation();
+  const isWatchPage = location.pathname === '/watch';
   const { toggleSidebar, toggleMobileDrawer } = useUiStore();
   const { hiddenMode, toggleHiddenMode } = usePlayerStore();
   const { setQuery: setSearchStoreQuery, search: runSearch } = useSearchStore();
@@ -69,8 +71,8 @@ export default function TopNav() {
           <button
             className="btn-ghost p-2 rounded-full"
             onClick={() => {
-              // モバイルではドロワー、デスクトップではトグル
-              if (window.innerWidth < 1024) {
+              // WatchPageまたはモバイルではドロワー、それ以外のデスクトップではサイドバートグル
+              if (isWatchPage || window.innerWidth < 1024) {
                 toggleMobileDrawer();
               } else {
                 toggleSidebar();

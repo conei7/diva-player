@@ -1,100 +1,253 @@
 /**
  * Playlist Store - プレイリストの永続管理
- * 
- * LocalStorage と同期し、プレイリストのCRUD操作を提供。
- * storage アダプターを経由して保存先を抽象化。
+ *
+ * LocalStorage と同期し、プレイリスト／フォルダのCRUD操作を提供。
  */
 
 import { create } from 'zustand';
-import type { Playlist, Song } from '../types/vocadb';
+import type { Playlist, PlaylistFolder, Song } from '../types/vocadb';
 import { storage } from '../utils/storage';
 
 const PLAYLISTS_KEY = 'playlists';
+const FOLDERS_KEY   = 'playlistFolders';
+
+/** 後で聴くプレイリストの固定 ID */
+export const WATCH_LATER_ID = 'watch-later';
+
+// ─── 追加結果 ───────────────────────────────────────────────────────────────
+export interface AddSongResult {
+  success: boolean;
+  isDuplicate: boolean;
+}
+
+export interface AddSongsResult {
+  added: number;
+  duplicates: number;
+}
+
+// ─── 並べ替えキー ────────────────────────────────────────────────────────────
+export type SortKey = 'name' | 'artist' | 'publishDate' | 'addedOrder';
 
 interface PlaylistState {
   playlists: Playlist[];
+  folders: PlaylistFolder[];
 
-  // アクション
+  // ロード
   loadPlaylists: () => void;
-  createPlaylist: (name: string) => Playlist;
+
+  // プレイリスト CRUD
+  createPlaylist: (name: string, folderId?: string) => Playlist;
   deletePlaylist: (id: string) => void;
-  renamePlaylist: (id: string, name: string) => void;
-  addSong: (playlistId: string, song: Song) => void;
+  updatePlaylist: (id: string, patch: Partial<Pick<Playlist, 'name' | 'description' | 'coverArtUrl' | 'folderId'>>) => void;
+
+  // フォルダ CRUD
+  createFolder: (name: string, parentId?: string) => PlaylistFolder;
+  deleteFolder: (id: string) => void;
+  renameFolder: (id: string, name: string) => void;
+
+  // 曲操作
+  /** 追加。戸り値で重複を通知。 */
+  addSong: (playlistId: string, song: Song) => AddSongResult;
+  /** 複数曲を一括追加。 */
+  addSongs: (playlistId: string, songs: Song[]) => AddSongsResult;
   removeSong: (playlistId: string, songIndex: number) => void;
+  removeSongById: (playlistId: string, songId: number) => void;
   reorderSongs: (playlistId: string, fromIndex: number, toIndex: number) => void;
+  sortSongs: (playlistId: string, by: SortKey) => void;
+
+  /** ソングが存在しなければ追加、存在すれば削除。true = 追加, false = 削除 */
+  toggleSongInPlaylist: (playlistId: string, song: Song) => boolean;
+  /** ソングがプレイリストに存在するかチェック */
+  isSongInPlaylist: (playlistId: string, songId: number) => boolean;
+
+  /** 「後で聴く」プレイリストを取得（なければ作成） */
+  getOrCreateWatchLater: () => Playlist;
 }
 
-function savePlaylists(playlists: Playlist[]): void {
+// ─── 永続化ヘルパー ─────────────────────────────────────────────────────────
+function save(playlists: Playlist[], folders: PlaylistFolder[]): void {
   storage.set(PLAYLISTS_KEY, playlists);
+  storage.set(FOLDERS_KEY,   folders);
+}
+
+// ─── ソート実装 ─────────────────────────────────────────────────────────────
+function sortSongsBy(songs: Song[], by: SortKey): Song[] {
+  const copy = [...songs];
+  switch (by) {
+    case 'name':
+      return copy.sort((a, b) => a.name.localeCompare(b.name, 'ja'));
+    case 'artist':
+      return copy.sort((a, b) => (a.artistString ?? '').localeCompare(b.artistString ?? '', 'ja'));
+    case 'publishDate':
+      return copy.sort((a, b) => (a.publishDate ?? '').localeCompare(b.publishDate ?? ''));
+    case 'addedOrder':
+    default:
+      return copy; // 追加順はそのまま
+  }
 }
 
 export const usePlaylistStore = create<PlaylistState>((set, get) => ({
   playlists: [],
+  folders:   [],
 
+  // ─── ロード ────────────────────────────────────────────────────────────────
   loadPlaylists: () => {
-    const saved = storage.get<Playlist[]>(PLAYLISTS_KEY);
-    if (saved) {
-      set({ playlists: saved });
+    const stored = storage.get<Playlist[]>(PLAYLISTS_KEY) ?? [];
+    const folders = storage.get<PlaylistFolder[]>(FOLDERS_KEY) ?? [];
+    // 「後で聴く」がなければ作成
+    const hasWL = stored.some(p => p.id === WATCH_LATER_ID);
+    const playlists = hasWL ? stored : [
+      { id: WATCH_LATER_ID, name: '後で聴く', songs: [], isPinned: true, createdAt: Date.now(), updatedAt: Date.now() },
+      ...stored,
+    ];
+    if (!hasWL) {
+      save(playlists, folders);
     }
+    set({ playlists, folders });
   },
 
-  createPlaylist: (name: string) => {
-    const newPlaylist: Playlist = {
+  // ─── プレイリスト CRUD ──────────────────────────────────────────────────────
+  createPlaylist: (name, folderId) => {
+    const p: Playlist = {
       id: crypto.randomUUID(),
       name,
       songs: [],
+      folderId,
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
-    const updated = [...get().playlists, newPlaylist];
+    const updated = [...get().playlists, p];
+    const { folders } = get();
     set({ playlists: updated });
-    savePlaylists(updated);
-    return newPlaylist;
+    save(updated, folders);
+    return p;
   },
 
-  deletePlaylist: (id: string) => {
+  deletePlaylist: (id) => {
+    // isPinned のプレイリストは削除不可
+    const target = get().playlists.find(p => p.id === id);
+    if (target?.isPinned) return;
     const updated = get().playlists.filter(p => p.id !== id);
     set({ playlists: updated });
-    savePlaylists(updated);
+    save(updated, get().folders);
   },
 
-  renamePlaylist: (id: string, name: string) => {
+  updatePlaylist: (id, patch) => {
     const updated = get().playlists.map(p =>
-      p.id === id ? { ...p, name, updatedAt: Date.now() } : p
+      p.id === id ? { ...p, ...patch, updatedAt: Date.now() } : p
     );
     set({ playlists: updated });
-    savePlaylists(updated);
+    save(updated, get().folders);
   },
 
-  addSong: (playlistId: string, song: Song) => {
+  // ─── フォルダ CRUD ───────────────────────────────────────────────────────────
+  createFolder: (name, parentId) => {
+    const f: PlaylistFolder = {
+      id: crypto.randomUUID(),
+      name,
+      parentId,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+    const updated = [...get().folders, f];
+    set({ folders: updated });
+    save(get().playlists, updated);
+    return f;
+  },
+
+  deleteFolder: (id) => {
+    // フォルダ削除 → 所属プレイリストをルートへ移動、子フォルダも削除
+    const allFolders = get().folders;
+
+    // 削除対象フォルダと子孫を収集
+    const toDelete = new Set<string>([id]);
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const f of allFolders) {
+        if (f.parentId && toDelete.has(f.parentId) && !toDelete.has(f.id)) {
+          toDelete.add(f.id);
+          changed = true;
+        }
+      }
+    }
+
+    const updatedFolders = allFolders.filter(f => !toDelete.has(f.id));
+    const updatedPlaylists = get().playlists.map(p =>
+      p.folderId && toDelete.has(p.folderId) ? { ...p, folderId: undefined } : p
+    );
+    set({ folders: updatedFolders, playlists: updatedPlaylists });
+    save(updatedPlaylists, updatedFolders);
+  },
+
+  renameFolder: (id, name) => {
+    const updated = get().folders.map(f =>
+      f.id === id ? { ...f, name, updatedAt: Date.now() } : f
+    );
+    set({ folders: updated });
+    save(get().playlists, updated);
+  },
+
+  // ─── 曲操作 ─────────────────────────────────────────────────────────────────
+  addSong: (playlistId, song) => {
+    let isDuplicate = false;
     const updated = get().playlists.map(p => {
       if (p.id !== playlistId) return p;
-      // 重複チェック
-      if (p.songs.some(s => s.id === song.id)) return p;
-      return {
-        ...p,
-        songs: [...p.songs, song],
-        updatedAt: Date.now(),
-      };
+      if (p.songs.some(s => s.id === song.id)) {
+        isDuplicate = true;
+        return p;
+      }
+      // カバーアート自動設定（未設定かつ初曲のとき）
+      const newCover = (!p.coverArtUrl && p.songs.length === 0) ? song.thumbUrl : p.coverArtUrl;
+      return { ...p, songs: [...p.songs, song], coverArtUrl: newCover, updatedAt: Date.now() };
     });
-    set({ playlists: updated });
-    savePlaylists(updated);
+    if (!isDuplicate) {
+      set({ playlists: updated });
+      save(updated, get().folders);
+    }
+    return { success: !isDuplicate, isDuplicate };
   },
 
-  removeSong: (playlistId: string, songIndex: number) => {
+  addSongs: (playlistId, songs) => {
+    let added = 0;
+    let duplicates = 0;
     const updated = get().playlists.map(p => {
       if (p.id !== playlistId) return p;
-      return {
-        ...p,
-        songs: p.songs.filter((_, i) => i !== songIndex),
-        updatedAt: Date.now(),
-      };
+      const existingIds = new Set(p.songs.map(s => s.id));
+      const newSongs = songs.filter(s => {
+        if (existingIds.has(s.id)) { duplicates++; return false; }
+        added++;
+        return true;
+      });
+      return { ...p, songs: [...p.songs, ...newSongs], updatedAt: Date.now() };
     });
     set({ playlists: updated });
-    savePlaylists(updated);
+    save(updated, get().folders);
+    return { added, duplicates };
   },
 
-  reorderSongs: (playlistId: string, fromIndex: number, toIndex: number) => {
+  removeSong: (playlistId, songIndex) => {
+    const updated = get().playlists.map(p => {
+      if (p.id !== playlistId) return p;
+      const songs = p.songs.filter((_, i) => i !== songIndex);
+      // 先頭曲削除時にカバーを更新
+      const newCover = songs[0]?.thumbUrl ?? undefined;
+      return { ...p, songs, coverArtUrl: p.coverArtUrl === p.songs[songIndex]?.thumbUrl ? newCover : p.coverArtUrl, updatedAt: Date.now() };
+    });
+    set({ playlists: updated });
+    save(updated, get().folders);
+  },
+
+  removeSongById: (playlistId, songId) => {
+    const updated = get().playlists.map(p => {
+      if (p.id !== playlistId) return p;
+      return { ...p, songs: p.songs.filter(s => s.id !== songId), updatedAt: Date.now() };
+    });
+    set({ playlists: updated });
+    save(updated, get().folders);
+  },
+
+  reorderSongs: (playlistId, fromIndex, toIndex) => {
     const updated = get().playlists.map(p => {
       if (p.id !== playlistId) return p;
       const songs = [...p.songs];
@@ -103,6 +256,50 @@ export const usePlaylistStore = create<PlaylistState>((set, get) => ({
       return { ...p, songs, updatedAt: Date.now() };
     });
     set({ playlists: updated });
-    savePlaylists(updated);
+    save(updated, get().folders);
+  },
+
+  sortSongs: (playlistId, by) => {
+    const updated = get().playlists.map(p => {
+      if (p.id !== playlistId) return p;
+      return { ...p, songs: sortSongsBy(p.songs, by), updatedAt: Date.now() };
+    });
+    set({ playlists: updated });
+    save(updated, get().folders);
+  },
+
+  toggleSongInPlaylist: (playlistId, song) => {
+    const p = get().playlists.find(pl => pl.id === playlistId);
+    if (!p) return false;
+    const exists = p.songs.some(s => s.id === song.id);
+    if (exists) {
+      get().removeSongById(playlistId, song.id);
+      return false;
+    } else {
+      get().addSong(playlistId, song);
+      return true;
+    }
+  },
+
+  isSongInPlaylist: (playlistId, songId) => {
+    const p = get().playlists.find(pl => pl.id === playlistId);
+    return p?.songs.some(s => s.id === songId) ?? false;
+  },
+
+  getOrCreateWatchLater: () => {
+    const existing = get().playlists.find(p => p.id === WATCH_LATER_ID);
+    if (existing) return existing;
+    const wl: Playlist = {
+      id: WATCH_LATER_ID,
+      name: '後で聴く',
+      songs: [],
+      isPinned: true,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+    const updated = [wl, ...get().playlists];
+    set({ playlists: updated });
+    save(updated, get().folders);
+    return wl;
   },
 }));

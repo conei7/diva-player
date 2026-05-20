@@ -18,6 +18,8 @@ export default function GlobalPlayer() {
   const {
     currentSong, playerRect, isPlaying,
     pause, resume, next, previous,
+    shuffleEnabled, toggleShuffle,
+    loopMode, toggleLoopMode,
   } = usePlayerStore();
 
   const isWatchPage = location.pathname === '/watch';
@@ -158,6 +160,33 @@ export default function GlobalPlayer() {
             <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
               <path d="m6 18 8.5-6L6 6v12zM16 6v12h2V6h-2z" />
             </svg>
+          </button>
+
+          <button
+            className="btn-ghost p-1.5 rounded-full"
+            onClick={toggleShuffle}
+            title={shuffleEnabled ? 'シャッフルOFF' : 'シャッフルON'}
+            style={{ color: shuffleEnabled ? 'var(--color-accent-cyan)' : undefined }}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M10.59 9.17 5.41 4 4 5.41l5.17 5.17 1.42-1.41zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4h-5.5zm.33 9.41-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04-3.13-3.13z"/>
+            </svg>
+          </button>
+
+          {/* ループモードボタン */}
+          <button
+            className="btn-ghost p-1.5 rounded-full relative"
+            onClick={toggleLoopMode}
+            title={loopMode === 'none' ? 'ループOFF' : loopMode === 'all' ? '全体ループ' : '1曲ループ'}
+            style={{ color: loopMode !== 'none' ? 'var(--color-accent-cyan)' : undefined }}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z"/>
+            </svg>
+            {loopMode === 'one' && (
+              <span className="absolute -top-0.5 -right-0.5 text-[8px] font-bold leading-none w-3.5 h-3.5 rounded-full flex items-center justify-center"
+                    style={{ background: 'var(--color-accent-cyan)', color: '#000' }}>1</span>
+            )}
           </button>
 
           <button

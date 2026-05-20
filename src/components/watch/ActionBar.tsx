@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import StarRating from '../player/StarRating';
 import { useRatingStore } from '../../stores/ratingStore';
-import { usePlayerStore } from '../../stores/playerStore';
+import { useUiStore } from '../../stores/uiStore';
 import type { Song } from '../../types/vocadb';
 
 /**
@@ -17,10 +17,9 @@ interface ActionBarProps {
 
 export default function ActionBar({ song }: ActionBarProps) {
   const { getRating, setRating } = useRatingStore();
-  const { addToQueue } = usePlayerStore();
+  const { openSaveToPlaylist } = useUiStore();
   const rating = getRating(song.id);
   const [shareToast, setShareToast] = useState(false);
-  const [savedToast, setSavedToast] = useState(false);
 
   const handleShare = async () => {
     const url = window.location.href;
@@ -42,9 +41,7 @@ export default function ActionBar({ song }: ActionBarProps) {
   };
 
   const handleSave = () => {
-    addToQueue(song);
-    setSavedToast(true);
-    setTimeout(() => setSavedToast(false), 2000);
+    openSaveToPlaylist(song);
   };
 
   const ratingLabels = ['', '★1 悪い', '★2 微妙', '★3 普通', '★4 良い', '★5 最高！'];
@@ -86,7 +83,7 @@ export default function ActionBar({ song }: ActionBarProps) {
         )}
       </div>
 
-      {/* ─── 保存（キューに追加）ボタン ─── */}
+      {/* ─── 保存（プレイリストに保存）ボタン ─── */}
       <div className="relative">
         <button className="yt-action-btn" onClick={handleSave}>
           <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
@@ -94,14 +91,6 @@ export default function ActionBar({ song }: ActionBarProps) {
           </svg>
           <span className="hidden sm:inline">保存</span>
         </button>
-        {savedToast && (
-          <div
-            className="absolute -bottom-10 left-1/2 -translate-x-1/2 px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap animate-fade-in"
-            style={{ background: 'var(--color-accent-purple)', color: '#fff' }}
-          >
-            キューに追加しました
-          </div>
-        )}
       </div>
 
       {/* ─── VocaDB リンク ─── */}
