@@ -22,9 +22,7 @@ interface InvidiousVideo {
 
 interface InvidiousPlaylist {
   title: string;
-  videoCount: number;
   videos: InvidiousVideo[];
-  // Invidiousはページネーションがなく全動画を一度に返す
 }
 
 // 開発時は Vite プロキシ (/invidious-api) を経由してCORSを回避。
@@ -43,29 +41,21 @@ function extractPlaylistId(url: string): string | null {
   }
 }
 
-async function fetchPlaylistVideos(listId: string, onProgress?: (loaded: number, total: number) => void): Promise<string[]> {
-  // ページ1を取得してvideoCountから必要ページ数を算出
-  const res1 = await fetch(`${INVIDIOUS_PROXY}/api/v1/playlists/${encodeURIComponent(listId)}?page=1`);
-  if (!res1.ok) {
-    throw new Error(`YouTubeプレイリストの取得に失敗しました (HTTP ${res1.status})`);
-  }
-  const page1: InvidiousPlaylist = await res1.json();
-  const totalCount = page1.videoCount ?? 0;
-  const ids: string[] = (page1.videos ?? []).map(v => v.videoId).filter(Boolean);
-  onProgress?.(ids.length, totalCount);
+async function fetchPlaylistVideos(listId: string, onProgress?: (loaded: number) => void): Promise<string[]> {
+  const ids: string[] = [];
+  const MAX_PAGES = 50; // 安全上限（1ページ最大約100件 × 50 = 約5000件）
 
-  // 2ページ目以降（100件/ページ、最大2000件まで）
-  const ITEMS_PER_PAGE = 100;
-  const MAX_PAGES = 20;
-  const totalPages = Math.min(Math.ceil(totalCount / ITEMS_PER_PAGE), MAX_PAGES);
-  for (let page = 2; page <= totalPages; page++) {
+  for (let page = 1; page <= MAX_PAGES; page++) {
     const res = await fetch(`${INVIDIOUS_PROXY}/api/v1/playlists/${encodeURIComponent(listId)}?page=${page}`);
-    if (!res.ok) break;
+    if (!res.ok) {
+      if (page === 1) throw new Error(`YouTubeプレイリストの取得に失敗しました (HTTP ${res.status})`);
+      break; // 2ページ目以降のエラーは打ち切り
+    }
     const data: InvidiousPlaylist = await res.json();
     const newIds = (data.videos ?? []).map(v => v.videoId).filter(Boolean);
+    if (newIds.length === 0) break; // 空ページ = 終端
     ids.push(...newIds);
-    onProgress?.(ids.length, totalCount);
-    if (newIds.length === 0) break; // 空ページに達したら停止
+    onProgress?.(ids.length);
   }
   return ids;
 }
@@ -107,8 +97,8 @@ export default function YouTubeImportModal({ onClose, onImport }: Props) {
 
     try {
       appendLog('YouTube プレイリストを取得中...');
-      const videoIds = await fetchPlaylistVideos(listId, (loaded, total) => {
-        if (total > 100) appendLog(`ページ取得中: ${loaded} / ${total} 件`);
+      const videoIds = await fetchPlaylistVideos(listId, (loaded) => {
+        appendLog(`ページ取得中: ${loaded} 件取得済み`);
       });
       appendLog(`${videoIds.length} 件の動画を取得しました`);
 
