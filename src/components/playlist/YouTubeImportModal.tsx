@@ -42,20 +42,30 @@ function extractPlaylistId(url: string): string | null {
 }
 
 async function fetchPlaylistVideos(listId: string, onProgress?: (loaded: number) => void): Promise<string[]> {
+  const seen = new Set<string>();
   const ids: string[] = [];
-  const MAX_PAGES = 50; // 安全上限（1ページ最大約100件 × 50 = 約5000件）
+  const MAX_PAGES = 50; // 安全上限
 
   for (let page = 1; page <= MAX_PAGES; page++) {
     const res = await fetch(`${INVIDIOUS_PROXY}/api/v1/playlists/${encodeURIComponent(listId)}?page=${page}`);
     if (!res.ok) {
       if (page === 1) throw new Error(`YouTubeプレイリストの取得に失敗しました (HTTP ${res.status})`);
-      break; // 2ページ目以降のエラーは打ち切り
+      break;
     }
     const data: InvidiousPlaylist = await res.json();
     const newIds = (data.videos ?? []).map(v => v.videoId).filter(Boolean);
     if (newIds.length === 0) break; // 空ページ = 終端
-    ids.push(...newIds);
+
+    let addedCount = 0;
+    for (const id of newIds) {
+      if (!seen.has(id)) {
+        seen.add(id);
+        ids.push(id);
+        addedCount++;
+      }
+    }
     onProgress?.(ids.length);
+    if (addedCount === 0) break; // 全て重複 = ループ検出、終了
   }
   return ids;
 }
