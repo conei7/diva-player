@@ -27,6 +27,25 @@ npm install
 npm run dev
 ```
 
+### 開発環境（フロント + backend 一括起動）
+
+backend（Postgres, Qdrant, C# recommender API）を Docker Compose で起動し、同時に Vite 開発サーバーを起動する簡易スクリプトを用意しています。
+
+- Windows (PowerShell):
+
+```powershell
+npm run dev:all:ps1
+```
+
+- POSIX (Linux/macOS / WSL):
+
+```bash
+npm run dev:all:sh
+```
+
+これらは `backend/docker-compose.yml` を使ってバックエンドを `docker compose up -d --build` で起動し、その後 `npm run dev` で Vite を起動します。
+
+
 ## ビルド
 
 ```bash
