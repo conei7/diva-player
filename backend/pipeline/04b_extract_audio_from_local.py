@@ -192,16 +192,22 @@ def consumer_worker(
             payload={'song_id': song_id},
         ))
 
-        with conn.cursor() as cur:
-            cur.execute("""
-                INSERT INTO song_features (song_id, audio_dim, audio_computed, computed_at)
-                VALUES (%s, %s, TRUE, now())
-                ON CONFLICT (song_id) DO UPDATE SET
-                    audio_dim      = EXCLUDED.audio_dim,
-                    audio_computed = TRUE,
-                    computed_at    = now()
-            """, (song_id, AUDIO_DIM))
-        conn.commit()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO song_features (song_id, audio_dim, audio_computed, computed_at)
+                    VALUES (%s, %s, TRUE, now())
+                    ON CONFLICT (song_id) DO UPDATE SET
+                        audio_dim      = EXCLUDED.audio_dim,
+                        audio_computed = TRUE,
+                        computed_at    = now()
+                """, (song_id, AUDIO_DIM))
+            conn.commit()
+        except Exception as db_err:
+            conn.rollback()
+            pbar.write(f"[SKIP] song_id={song_id}: {db_err}")
+            pbar.update(1)
+            continue
 
         if len(batch_points_audio) >= batch_size:
             qdrant.upsert(QDRANT_COLLECTION_AUDIO, batch_points_audio)

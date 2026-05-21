@@ -186,7 +186,7 @@ public class DbService
                 WHERE song_id = $1 AND is_producer = TRUE
             )
             AND s.id <> $1
-            AND s.pv_services IS NOT NULL
+            AND EXISTS (SELECT 1 FROM pvs WHERE pvs.song_id = s.id AND pvs.disabled = FALSE)
             ORDER BY s.favorited_times DESC NULLS LAST
             LIMIT $2", conn);
         cmd.Parameters.AddWithValue(seedSongId);
