@@ -6,7 +6,10 @@ import { searchSongs, getTopSongs, getRecommendedSongs } from '../api/vocadb';
 import { useHistoryStore } from '../stores/historyStore';
 import { usePlayerStore } from '../stores/playerStore';
 import { useRatingStore } from '../stores/ratingStore';
+import { useSearchStore } from '../stores/searchStore';
+import { useSelectionStore } from '../stores/selectionStore';
 import type { Song } from '../types/vocadb';
+import SearchFilters from '../components/search/SearchFilters';
 
 /**
  * HomePage - YouTube風ホーム画面
@@ -16,8 +19,8 @@ import type { Song } from '../types/vocadb';
  */
 
 const CATEGORIES: CategoryChip[] = [
-  { id: 'all', label: 'すべて' },
-  { id: 'recommended', label: 'AI あなたへのおすすめ' },
+  { id: 'recommended', label: 'あなたへのおすすめ' },
+  { id: 'popular', label: '人気の曲' },
   { id: 'trending', label: '人気急上昇' },
   { id: 'recent', label: '最近の投稿' },
   { id: 'deep', label: 'マイナー発掘 (Deep Dig)' },
@@ -32,7 +35,7 @@ export default function HomePage() {
   const artistIdParam = searchParams.get('artistId');
   const artistNameParam = searchParams.get('artistName') || '';
 
-  const [activeCategory, setActiveCategory] = useState('all');
+  const [activeCategory, setActiveCategory] = useState('recommended');
   const [songs, setSongs] = useState<Song[]>([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(0);
@@ -42,6 +45,10 @@ export default function HomePage() {
   const { entries } = useHistoryStore();
   const { currentSong } = usePlayerStore();
   const { ratings } = useRatingStore();
+  const { results: searchResults, isLoading: searchLoading, hasSearched, totalCount, loadMore: searchLoadMore } = useSearchStore();
+  const setVisibleSongs = useSelectionStore(s => s.setVisibleSongs);
+
+  const [isAdvancedOpen, setIsAdvancedOpen] = useState(false);
 
   // 検索 or アーティストフィルターモード
   const isSearchMode = searchQuery.length > 0;
@@ -78,7 +85,7 @@ export default function HomePage() {
         result = searchResult.items;
       } else {
         switch (category) {
-          case 'all': {
+          case 'popular': {
             const searchResult = await searchSongs({
               sort: 'FavoritedTimes',
               maxResults: PAGE_SIZE,
@@ -181,12 +188,19 @@ export default function HomePage() {
 
   // 無限スクロール
   const loadMore = useCallback(() => {
+    if (hasSearched) {
+      if (!searchLoading && searchResults.length < totalCount) {
+        searchLoadMore();
+      }
+      return;
+    }
+
     if (loading || !hasMore || fetchingRef.current) return;
     const nextPage = page + 1;
     setPage(nextPage);
     setLoading(true);
     fetchSongs(activeCategory, nextPage, searchQuery);
-  }, [loading, hasMore, page, activeCategory, searchQuery, fetchSongs]);
+  }, [loading, hasMore, page, activeCategory, searchQuery, fetchSongs, hasSearched, searchLoading, searchResults.length, totalCount, searchLoadMore]);
 
   useEffect(() => {
     const el = sentinelRef.current;
@@ -199,36 +213,72 @@ export default function HomePage() {
     return () => observer.disconnect();
   }, [loadMore]);
 
+  // 表示中の曲リストをselectionStoreに登録（FABの全選択用）
+  const displaySongs = hasSearched ? searchResults : songs;
+  useEffect(() => {
+    setVisibleSongs(displaySongs);
+  }, [displaySongs, setVisibleSongs]);
+
   return (
     <div className="w-full px-4 sm:px-6 lg:px-8 py-4">
-      {/* 検索モードヘッダー */}
-      {isSearchMode && (
+      {/* 詳細検索 (検索済み、またはボタンで開いた時) */}
+      {(hasSearched || isAdvancedOpen) && (
         <div className="mb-6">
-          <h1 className="text-xl font-bold mb-1" style={{ color: 'var(--color-text-primary)' }}>
-            「{searchQuery}」の検索結果
-          </h1>
-          <p className="text-sm" style={{ color: 'var(--color-text-muted)' }}>
-            {songs.length} 件の楽曲
-          </p>
+          <SearchFilters />
+        </div>
+      )}
+
+      {/* 検索モード/アーティストモードヘッダー */}
+      {isSearchMode && !hasSearched && (
+        <div className="mb-6 flex items-center justify-between">
+          <div>
+            <h1 className="text-xl font-bold mb-1" style={{ color: 'var(--color-text-primary)' }}>
+              「{searchQuery}」の検索結果
+            </h1>
+            <p className="text-sm" style={{ color: 'var(--color-text-muted)' }}>
+              {songs.length} 件の楽曲
+            </p>
+          </div>
+          <button
+            className="text-sm px-4 py-2 rounded-lg border transition-colors flex items-center gap-2"
+            style={{ borderColor: 'var(--color-border)', color: 'var(--color-text-secondary)' }}
+            onClick={() => setIsAdvancedOpen(!isAdvancedOpen)}
+          >
+            詳細検索 {isAdvancedOpen ? '▲' : '▼'}
+          </button>
         </div>
       )}
 
       {/* アーティストモードヘッダー */}
-      {isArtistMode && !isSearchMode && (
-        <div className="mb-6">
-          <h1 className="text-xl font-bold mb-1" style={{ color: 'var(--color-text-primary)' }}>
-            {decodeURIComponent(artistNameParam)} の楽曲
-          </h1>
-          <p className="text-sm" style={{ color: 'var(--color-text-muted)' }}>
-            {songs.length} 件
-          </p>
+      {isArtistMode && !isSearchMode && !hasSearched && (
+        <div className="mb-6 flex items-center justify-between">
+          <div>
+            <h1 className="text-xl font-bold mb-1" style={{ color: 'var(--color-text-primary)' }}>
+              {decodeURIComponent(artistNameParam)} の楽曲
+            </h1>
+            <p className="text-sm" style={{ color: 'var(--color-text-muted)' }}>
+              {songs.length} 件
+            </p>
+          </div>
         </div>
       )}
 
-      {/* カテゴリーチップ（検索モードでは非表示） */}
-      {!isSearchMode && !isArtistMode && (
+      {/* 詳細検索トグル（検索・フィルター中は非表示） */}
+      {!isSearchMode && !isArtistMode && !hasSearched && (
+        <div className="mb-4 flex items-center justify-end">
+          <button
+            className="text-sm px-4 py-2 rounded-lg border transition-colors flex items-center gap-2"
+            style={{ borderColor: 'var(--color-border)', color: 'var(--color-text-secondary)' }}
+            onClick={() => setIsAdvancedOpen(!isAdvancedOpen)}
+          >
+            詳細検索 {isAdvancedOpen ? '▲' : '▼'}
+          </button>
+        </div>
+      )}
+      
+      {!isSearchMode && !isArtistMode && !hasSearched && (
         <div 
-          className="sticky z-20 pb-2 pt-3 -mx-4 sm:-mx-6 lg:-mx-8 px-4 sm:px-6 lg:px-8" 
+          className="sticky z-20 pb-2 pt-3 -mx-4 sm:-mx-6 lg:-mx-8 px-4 sm:px-6 lg:px-8 mb-4" 
           style={{ top: 'var(--header-height)', background: 'var(--color-bg-primary)' }}
         >
           <CategoryChips
@@ -241,13 +291,13 @@ export default function HomePage() {
 
       {/* 動画グリッド */}
       <VideoGrid
-        songs={songs}
-        loading={loading}
+        songs={hasSearched ? searchResults : songs}
+        loading={hasSearched ? searchLoading : loading}
       />
 
       {/* 無限スクロールセンチネル */}
       <div ref={sentinelRef} className="h-8 mt-6 flex items-center justify-center">
-        {loading && songs.length > 0 && (
+        {(hasSearched ? searchLoading : loading) && (hasSearched ? searchResults.length > 0 : songs.length > 0) && (
           <div
             className="w-6 h-6 rounded-full border-2 animate-spin"
             style={{ borderColor: 'var(--color-accent-cyan)', borderTopColor: 'transparent' }}

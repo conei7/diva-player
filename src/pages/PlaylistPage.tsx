@@ -1,4 +1,4 @@
-﻿/**
+/**
  * PlaylistPage – YouTube 風プレイリスト管理ページ
  *
  * 追加機能:
@@ -26,9 +26,8 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { usePlaylistStore, type SortKey, WATCH_LATER_ID } from '../stores/playlistStore';
+import { usePlaylistStore, type SortKey } from '../stores/playlistStore';
 import { usePlayerStore } from '../stores/playerStore';
-import { useUiStore } from '../stores/uiStore';
 import type { Playlist, PlaylistFolder, Song } from '../types/vocadb';
 import YouTubeImportModal from '../components/playlist/YouTubeImportModal';
 
@@ -415,7 +414,6 @@ export default function PlaylistPage() {
     addSongs, removeSong, reorderSongs, sortSongs,
   } = usePlaylistStore();
   const { setQueue, addToQueue } = usePlayerStore();
-  const { openSaveToPlaylist } = useUiStore();
 
   const [selectedPlaylistId, setSelectedPlaylistId] = useState<string | null>(null);
   const [selectedFolderId, setSelectedFolderId]     = useState<string | null>(null);

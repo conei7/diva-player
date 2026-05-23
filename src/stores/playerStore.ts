@@ -9,6 +9,7 @@
 import { create } from 'zustand';
 import type { Song, PV } from '../types/vocadb';
 import { storage } from '../utils/storage';
+import { useProgressStore } from './progressStore';
 
 // 再生可能なPVを抽出するヘルパー
 export function getPlayablePV(song: Song): PV | null {
@@ -42,8 +43,6 @@ interface PlayerState {
   currentPV: PV | null;
   isPlaying: boolean;
   volume: number;
-  progress: number;
-  duration: number;
 
   // 再生キュー
   queue: Song[];
@@ -59,8 +58,6 @@ interface PlayerState {
   next: () => void;
   previous: () => void;
   setVolume: (volume: number) => void;
-  setProgress: (progress: number) => void;
-  setDuration: (duration: number) => void;
   setIsPlaying: (isPlaying: boolean) => void;
   setError: (error: string | null) => void;
   tryNextPV: () => void;
@@ -90,6 +87,7 @@ interface PlayerState {
   setQueue: (songs: Song[], startIndex?: number) => void;
   replaceQueueList: (songs: Song[]) => void;
   addToQueue: (song: Song) => void;
+  addManyToQueue: (songs: Song[]) => void;
   removeFromQueue: (index: number) => void;
   clearQueue: () => void;
   jumpToIndex: (index: number) => void;
@@ -116,9 +114,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   currentSong: null,
   currentPV: null,
   isPlaying: false,
-  volume: 80,
-  progress: 0,
-  duration: 0,
+  volume: 50,
   detailPanelEl: null,
   setDetailPanelEl: (el) => set({ detailPanelEl: el }),
   playerRect: null,
@@ -150,12 +146,13 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       }
       return;
     }
+    useProgressStore.getState().setDuration(song.lengthSeconds || pv.length || 0);
+    useProgressStore.getState().setProgress(0);
+    
     set({
       currentSong: song,
       currentPV: pv,
       isPlaying: true,
-      progress: 0,
-      duration: song.lengthSeconds || pv.length || 0,
       error: null,
     });
   },
@@ -167,7 +164,8 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     const { queue, queueIndex, loopMode } = get();
     if (loopMode === 'one') {
       // 1曲ループ: 同じ曲を再度再生
-      set({ progress: 0, seekTarget: 0 });
+      useProgressStore.getState().setProgress(0);
+      set({ seekTarget: 0 });
       get().playSong(queue[queueIndex]);
       return;
     }
@@ -186,10 +184,11 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   },
 
   previous: () => {
-    const { queue, queueIndex, progress } = get();
+    const { queue, queueIndex } = get();
+    const progress = useProgressStore.getState().progress;
     // 再生3秒以上なら曲頭に戻る
     if (progress > 3) {
-      set({ progress: 0 });
+      useProgressStore.getState().setProgress(0);
       return;
     }
     if (queueIndex > 0) {
@@ -200,8 +199,6 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   },
 
   setVolume: (volume: number) => set({ volume: Math.max(0, Math.min(100, volume)) }),
-  setProgress: (progress: number) => set({ progress }),
-  setDuration: (duration: number) => set({ duration }),
   setIsPlaying: (isPlaying: boolean) => set({ isPlaying }),
   setError: (error: string | null) => set({ error }),
 
@@ -209,9 +206,29 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     const { currentSong, currentPV } = get();
     if (!currentSong || !currentSong.pvs) { get().next(); return; }
 
-    const enabledPVs = currentSong.pvs.filter(pv => !pv.disabled && (pv.service === 'Youtube' || pv.service === 'NicoNicoDouga'));
-    const currentIndex = enabledPVs.findIndex(pv => pv.id === currentPV?.id);
-    const nextPV = enabledPVs[currentIndex + 1];
+    const enabledPVs = currentSong.pvs.filter(pv => !pv.disabled && pv.id !== currentPV?.id);
+    
+    // getPlayablePV と同じ優先順位で次のPVを探す（現在失敗したものを除く）
+    const priorities = [
+      { service: 'Youtube', pvType: 'Original' },
+      { service: 'Youtube', pvType: 'Reprint' },
+      { service: 'Youtube', pvType: 'Other' },
+      { service: 'NicoNicoDouga', pvType: 'Original' },
+      { service: 'NicoNicoDouga', pvType: 'Reprint' },
+      { service: 'NicoNicoDouga', pvType: 'Other' },
+    ];
+
+    let nextPV = null;
+    for (const { service, pvType } of priorities) {
+      const match = enabledPVs.find(pv => pv.service === service && pv.pvType === pvType);
+      if (match) {
+        nextPV = match;
+        break;
+      }
+    }
+    if (!nextPV) {
+      nextPV = enabledPVs.find(pv => pv.service === 'Youtube' || pv.service === 'NicoNicoDouga') || null;
+    }
 
     if (nextPV) {
       set({ currentPV: nextPV, error: null });
@@ -247,6 +264,11 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     set({ queue: [...queue, song] });
   },
 
+  addManyToQueue: (songs: Song[]) => {
+    const { queue } = get();
+    set({ queue: [...queue, ...songs] });
+  },
+
   removeFromQueue: (index: number) => {
     const { queue, queueIndex } = get();
     const newQueue = queue.filter((_, i) => i !== index);
@@ -265,15 +287,16 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     set({ queue: newQueue, queueIndex: newIndex });
   },
 
-  clearQueue: () => set({
-    queue: [],
-    queueIndex: -1,
-    currentSong: null,
-    currentPV: null,
-    isPlaying: false,
-    progress: 0,
-    duration: 0,
-  }),
+  clearQueue: () => {
+    useProgressStore.getState().resetProgress();
+    set({
+      queue: [],
+      queueIndex: -1,
+      currentSong: null,
+      currentPV: null,
+      isPlaying: false,
+    });
+  },
 
   jumpToIndex: (index: number) => {
     const { queue } = get();

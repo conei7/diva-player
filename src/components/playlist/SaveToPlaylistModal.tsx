@@ -10,11 +10,12 @@ import { useUiStore } from '../../stores/uiStore';
 import { usePlaylistStore, WATCH_LATER_ID } from '../../stores/playlistStore';
 
 export function SaveToPlaylistModal() {
-  const song = useUiStore(s => s.saveToPlaylistSong);
+  const songs = useUiStore(s => s.saveToPlaylistSongs);
   const close = useUiStore(s => s.closeSaveToPlaylist);
   const playlists = usePlaylistStore(s => s.playlists);
   const createPlaylist = usePlaylistStore(s => s.createPlaylist);
-  const toggleSong = usePlaylistStore(s => s.toggleSongInPlaylist);
+  const addSongs = usePlaylistStore(s => s.addSongs);
+  const removeSongById = usePlaylistStore(s => s.removeSongById);
   const isSongIn = usePlaylistStore(s => s.isSongInPlaylist);
   const loadPlaylists = usePlaylistStore(s => s.loadPlaylists);
 
@@ -25,12 +26,12 @@ export function SaveToPlaylistModal() {
 
   // モーダルを開いたときにプレイリストをロード
   useEffect(() => {
-    if (song) {
+    if (songs && songs.length > 0) {
       loadPlaylists();
       setNewName('');
       setShowCreate(false);
     }
-  }, [song, loadPlaylists]);
+  }, [songs, loadPlaylists]);
 
   // 新規プレイリスト作成フォームが開いたらフォーカス
   useEffect(() => {
@@ -44,14 +45,14 @@ export function SaveToPlaylistModal() {
 
   const handleCreate = useCallback(() => {
     const name = newName.trim();
-    if (!name || !song) return;
+    if (!name || !songs || songs.length === 0) return;
     const pl = createPlaylist(name);
-    toggleSong(pl.id, song);
+    addSongs(pl.id, songs);
     setNewName('');
     setShowCreate(false);
-  }, [newName, song, createPlaylist, toggleSong]);
+  }, [newName, songs, createPlaylist, addSongs]);
 
-  if (!song) return null;
+  if (!songs || songs.length === 0) return null;
 
   // ソート: 後で聴く → その他
   const sorted = [...playlists].sort((a, b) => {
@@ -80,16 +81,31 @@ export function SaveToPlaylistModal() {
 
         {/* 保存先の曲情報 */}
         <div className="flex items-center gap-2 px-4 py-2 bg-neutral-800">
-          {song.thumbUrl && (
-            <img src={song.thumbUrl} alt="" className="w-8 h-8 rounded object-cover flex-shrink-0" />
+          {songs.length === 1 ? (
+            <>
+              {songs[0].thumbUrl && (
+                <img src={songs[0].thumbUrl} alt="" className="w-8 h-8 rounded object-cover flex-shrink-0" />
+              )}
+              <span className="text-xs text-neutral-300 truncate">{songs[0].name}</span>
+            </>
+          ) : (
+            <span className="text-xs text-neutral-300 truncate">{songs.length} 曲を選択中</span>
           )}
-          <span className="text-xs text-neutral-300 truncate">{song.name}</span>
         </div>
 
         {/* プレイリスト一覧 */}
         <div className="overflow-y-auto flex-1 py-1">
           {sorted.map(pl => {
-            const checked = isSongIn(pl.id, song.id);
+            const checked = songs.every(s => isSongIn(pl.id, s.id));
+            
+            const handleToggle = () => {
+              if (checked) {
+                songs.forEach(s => removeSongById(pl.id, s.id));
+              } else {
+                addSongs(pl.id, songs);
+              }
+            };
+
             return (
               <label
                 key={pl.id}
@@ -98,7 +114,7 @@ export function SaveToPlaylistModal() {
                 <input
                   type="checkbox"
                   checked={checked}
-                  onChange={() => toggleSong(pl.id, song)}
+                  onChange={handleToggle}
                   className="accent-cyan-400 w-4 h-4 cursor-pointer flex-shrink-0"
                 />
                 {pl.id === WATCH_LATER_ID ? (

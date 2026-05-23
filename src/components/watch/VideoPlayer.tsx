@@ -21,11 +21,25 @@ export default function VideoPlayer() {
     const updateRect = () => {
       if (ref.current) {
         const rect = ref.current.getBoundingClientRect();
+        // スクロールしても位置が変わらないよう、ドキュメント全体の絶対座標を計算する
+        const absoluteTop = rect.top + window.scrollY;
+        const absoluteLeft = rect.left + window.scrollX;
+        
         // パフォーマンス最適化のため、変更がある場合のみ更新
-        const rectString = `${rect.top},${rect.left},${rect.width},${rect.height}`;
+        const rectString = `${absoluteTop},${absoluteLeft},${rect.width},${rect.height}`;
         if (rectString !== lastRectString) {
           lastRectString = rectString;
-          setPlayerRect(rect);
+          setPlayerRect({
+            top: absoluteTop,
+            left: absoluteLeft,
+            width: rect.width,
+            height: rect.height,
+            bottom: absoluteTop + rect.height,
+            right: absoluteLeft + rect.width,
+            x: absoluteLeft,
+            y: absoluteTop,
+            toJSON: () => {}
+          } as DOMRect);
         }
       }
     };
@@ -39,18 +53,16 @@ export default function VideoPlayer() {
     });
     observer.observe(ref.current);
     
-    // スクロール時に位置を更新
-    const handleScroll = () => {
+    // ウィンドウリサイズ時
+    const handleResize = () => {
       animationFrameId = requestAnimationFrame(updateRect);
     };
     
-    window.addEventListener('scroll', handleScroll, true);
-    window.addEventListener('resize', handleScroll);
+    window.addEventListener('resize', handleResize);
 
     return () => {
       observer.disconnect();
-      window.removeEventListener('scroll', handleScroll, true);
-      window.removeEventListener('resize', handleScroll);
+      window.removeEventListener('resize', handleResize);
       if (animationFrameId) cancelAnimationFrame(animationFrameId);
       setPlayerRect(null);
     };

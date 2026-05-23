@@ -1,6 +1,7 @@
 /// <reference types="@types/youtube" />
 import { useEffect, useRef, useCallback } from 'react';
 import { usePlayerStore } from '../../stores/playerStore';
+import { useProgressStore } from '../../stores/progressStore';
 
 /**
  * PlayerEmbed - YouTube / ニコニコ動画の埋め込みプレイヤー
@@ -28,7 +29,9 @@ declare global {
  * 失敗した場合はタイマーベースのフォールバックで経過時間を推定する。
  */
 function NicoEmbed({ pvId, name, duration: songDuration }: { pvId: string; name?: string; duration?: number }) {
-  const { volume, setProgress, setDuration, setIsPlaying, next } = usePlayerStore();
+  const { volume, setIsPlaying, next } = usePlayerStore();
+  const setProgress = useProgressStore(s => s.setProgress);
+  const setDuration = useProgressStore(s => s.setDuration);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const embedUrl = `https://embed.nicovideo.jp/watch/${pvId}?autoplay=1&allowProgrammaticFullscreen=1`;
   const NICO_ORIGIN = 'https://embed.nicovideo.jp';
@@ -217,7 +220,9 @@ function loadYouTubeAPI(): Promise<void> {
 }
 
 export default function PlayerEmbed() {
-  const { currentSong, currentPV, isPlaying, volume, seekTarget, clearSeekTarget, setProgress, setDuration, setIsPlaying, setError, next, tryNextPV } = usePlayerStore();
+  const { currentSong, currentPV, isPlaying, volume, seekTarget, clearSeekTarget, setIsPlaying, setError, next, tryNextPV } = usePlayerStore();
+  const setProgress = useProgressStore(s => s.setProgress);
+  const setDuration = useProgressStore(s => s.setDuration);
   const ytPlayerRef = useRef<YT.Player | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const progressTimerRef = useRef<number | null>(null);

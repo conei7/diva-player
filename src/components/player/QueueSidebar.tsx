@@ -18,7 +18,11 @@ function getProducerString(song: Song): string {
   return featIdx !== -1 ? str.slice(0, featIdx) : str;
 }
 
-export default function QueueSidebar() {
+interface QueueSidebarProps {
+  hideHeader?: boolean;
+}
+
+export default function QueueSidebar({ hideHeader }: QueueSidebarProps = {}) {
   const { queue, queueIndex, jumpToIndex, removeFromQueue } = usePlayerStore();
   const { getRating, setRating } = useRatingStore();
   const currentRef = useRef<HTMLLIElement>(null);
@@ -31,26 +35,28 @@ export default function QueueSidebar() {
   return (
     <div className="flex flex-col h-full overflow-hidden">
       {/* ヘッダー */}
-      <div
-        className="flex items-center gap-2 px-4 py-3 flex-shrink-0"
-        style={{ borderBottom: '1px solid var(--color-border)' }}
-      >
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"
-             style={{ color: 'var(--color-accent-purple)', flexShrink: 0 }}>
-          <path d="M3 18h13v-2H3v2zm0-5h10v-2H3v2zm0-7v2h13V6H3zm18 9.59L17.42 12 21 8.41 19.59 7l-5 5 5 5L21 15.59z"/>
-        </svg>
-        <span className="text-xs font-semibold" style={{ color: 'var(--color-text-primary)' }}>
-          次の曲
-        </span>
-        {queue.length > 0 && (
-          <span
-            className="text-[10px] px-1.5 py-0.5 rounded-full"
-            style={{ background: 'rgba(139,92,246,0.15)', color: 'var(--color-accent-purple)' }}
-          >
-            {queue.length}曲
+      {!hideHeader && (
+        <div
+          className="flex items-center gap-2 px-4 py-3 flex-shrink-0"
+          style={{ borderBottom: '1px solid var(--color-border)' }}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"
+               style={{ color: 'var(--color-accent-purple)', flexShrink: 0 }}>
+            <path d="M3 18h13v-2H3v2zm0-5h10v-2H3v2zm0-7v2h13V6H3zm18 9.59L17.42 12 21 8.41 19.59 7l-5 5 5 5L21 15.59z"/>
+          </svg>
+          <span className="text-xs font-semibold" style={{ color: 'var(--color-text-primary)' }}>
+            次の曲
           </span>
-        )}
-      </div>
+          {queue.length > 0 && (
+            <span
+              className="text-[10px] px-1.5 py-0.5 rounded-full"
+              style={{ background: 'rgba(139,92,246,0.15)', color: 'var(--color-accent-purple)' }}
+            >
+              {queue.length}曲
+            </span>
+          )}
+        </div>
+      )}
 
       {/* キューリスト */}
       <ul className="flex-1 overflow-y-auto">

@@ -1,4 +1,4 @@
-﻿import { useEffect, useState, useRef, useCallback } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { Navigate } from 'react-router-dom';
 import { usePlayerStore } from '../stores/playerStore';
 import { useRatingStore } from '../stores/ratingStore';
@@ -10,6 +10,7 @@ import {
   getAudioSimilarSongs,
 } from '../api/vocadb';
 import type { Song } from '../types/vocadb';
+import { useSelectionStore } from '../stores/selectionStore';
 
 /** サムネイルURLを解決 */
 function getThumbUrl(song: Song): string | null {
@@ -71,6 +72,8 @@ export default function NowPlayingPage() {
   const seenRecommendRef = useRef<Set<number>>(new Set());
   const seenRelatedRef   = useRef<Set<number>>(new Set());
   const seenDeepdigRef   = useRef<Set<number>>(new Set());
+
+  const setVisibleSongs = useSelectionStore(s => s.setVisibleSongs);
 
   // おすすめ: メタデータ + 音声データ + プレイヤーデータ (/api/recommend)
   const fetchRecommend = useCallback(async (song: Song, page: number) => {
@@ -168,6 +171,12 @@ export default function NowPlayingPage() {
     observer.observe(el);
     return () => observer.disconnect();
   }, [loadMore]);
+
+  // 現在のタブの表示曲をselectionStoreに登録（FABの全選択・フィルター用）
+  const activeTabItems = tabs[activeTab].items;
+  useEffect(() => {
+    setVisibleSongs(activeTabItems);
+  }, [activeTabItems, setVisibleSongs]);
 
   if (!currentSong) return <Navigate to="/" replace />;
 

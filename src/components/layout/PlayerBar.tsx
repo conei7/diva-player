@@ -1,4 +1,5 @@
 import { usePlayerStore } from '../../stores/playerStore';
+import { useProgressStore } from '../../stores/progressStore';
 import { useRatingStore } from '../../stores/ratingStore';
 import StarRating from '../player/StarRating';
 
@@ -11,13 +12,15 @@ import StarRating from '../player/StarRating';
  */
 export default function PlayerBar() {
   const {
-    currentSong, currentPV, isPlaying, volume, progress, duration,
+    currentSong, currentPV, isPlaying, volume,
     next, previous, pause, resume, setVolume, seekTo,
     hiddenMode, toggleHiddenMode,
     queue, queueDrawerOpen, toggleQueueDrawer,
     historyDrawerOpen, toggleHistoryDrawer,
     shuffleEnabled, toggleShuffle,
   } = usePlayerStore();
+  const progress = useProgressStore((s) => s.progress);
+  const duration = useProgressStore((s) => s.duration);
   const { getRating, setRating } = useRatingStore();
 
   const progressPct = duration > 0 ? Math.min(100, (progress / duration) * 100) : 0;

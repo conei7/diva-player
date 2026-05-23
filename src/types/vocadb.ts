@@ -69,6 +69,7 @@ export interface Song {
   ratingScore: number;
   songType: SongType;
   status: string;
+  tags?: any[];
   thumbUrl?: string;
   version: number;
 }

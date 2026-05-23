@@ -3,6 +3,7 @@ import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useUiStore } from '../../stores/uiStore';
 import { usePlayerStore } from '../../stores/playerStore';
 import { useSearchStore } from '../../stores/searchStore';
+import { useSelectionStore } from '../../stores/selectionStore';
 
 /**
  * TopNav - YouTube風のトップナビゲーションバー
@@ -18,6 +19,10 @@ export default function TopNav() {
   const { toggleSidebar, toggleMobileDrawer } = useUiStore();
   const { hiddenMode, toggleHiddenMode } = usePlayerStore();
   const { setQuery: setSearchStoreQuery, search: runSearch } = useSearchStore();
+  const isSelectionMode = useSelectionStore(s => s.isSelectionMode);
+  const enterSelectionMode = useSelectionStore(s => s.enterSelectionMode);
+  const exitSelectionMode  = useSelectionStore(s => s.exitSelectionMode);
+  const selectedCount = useSelectionStore(s => s.selectedSongIds.size);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchFocused, setSearchFocused] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -160,6 +165,47 @@ export default function TopNav() {
               隠しモード
             </span>
           )}
+          {/* 複数選択モードトグルボタン */}
+          <button
+            onClick={() => isSelectionMode ? exitSelectionMode() : enterSelectionMode()}
+            className="w-8 h-8 rounded-full flex items-center justify-center transition-all relative"
+            style={{
+              background: isSelectionMode
+                ? 'var(--gradient-primary)'
+                : 'rgba(255,255,255,0.07)',
+              border: isSelectionMode
+                ? 'none'
+                : '1px solid var(--color-border)',
+              color: isSelectionMode ? '#fff' : 'var(--color-text-secondary)',
+            }}
+            title={isSelectionMode ? `選択モード終了 (${selectedCount}曲選択中)` : '複数選択モード'}
+            aria-label="複数選択モード"
+            aria-pressed={isSelectionMode}
+          >
+            {isSelectionMode ? (
+              /* チェック済みアイコン（アクティブ時） */
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <rect x="3" y="3" width="18" height="18" rx="3"/>
+                <path d="M9 12l2 2 4-4"/>
+              </svg>
+            ) : (
+              /* チェックボックスアイコン（非アクティブ時） */
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <rect x="3" y="3" width="18" height="18" rx="3"/>
+                <path d="M9 12l2 2 4-4" strokeOpacity="0.4"/>
+              </svg>
+            )}
+            {/* 選択数バッジ */}
+            {isSelectionMode && selectedCount > 0 && (
+              <span
+                className="absolute -top-1 -right-1 min-w-[16px] h-4 rounded-full text-[9px] font-bold flex items-center justify-center px-1"
+                style={{ background: 'var(--color-accent-cyan)', color: '#000' }}
+              >
+                {selectedCount > 99 ? '99+' : selectedCount}
+              </span>
+            )}
+          </button>
+
           <button
             className="w-8 h-8 rounded-full flex items-center justify-center overflow-hidden"
             style={{ background: 'var(--gradient-primary)' }}

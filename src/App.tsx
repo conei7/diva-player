@@ -3,13 +3,13 @@ import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import Layout from './components/layout/Layout';
 import HomePage from './pages/HomePage';
 import WatchPage from './pages/WatchPage';
-import SearchPage from './pages/SearchPage';
 import PlaylistPage from './pages/PlaylistPage';
 import HistoryPage from './pages/HistoryPage';
 import FavoritesPage from './pages/FavoritesPage';
 import { usePlayerStore } from './stores/playerStore';
 import { useHistoryStore } from './stores/historyStore';
 import { useRatingStore } from './stores/ratingStore';
+import { useProgressStore } from './stores/progressStore';
 import { getRecommendedSongs, sendPlayFeedback } from './api/vocadb';
 
 /**
@@ -30,8 +30,14 @@ function shuffleArray<T>(arr: T[]): T[] {
   return a;
 }
 
-function AppContent() {
-  const { currentSong, queue, queueIndex, addToQueue, progress, duration } = usePlayerStore();
+function PlayerTracker() {
+  const currentSong = usePlayerStore(s => s.currentSong);
+  const queue = usePlayerStore(s => s.queue);
+  const queueIndex = usePlayerStore(s => s.queueIndex);
+  const addManyToQueue = usePlayerStore(s => s.addManyToQueue);
+  const progress = useProgressStore(s => s.progress);
+  const duration = useProgressStore(s => s.duration);
+  
   const { addToHistory } = useHistoryStore();
   const { ratings } = useRatingStore();
   const fetchingForRef = useRef<number | null>(null);
@@ -91,7 +97,7 @@ function AppContent() {
         const newSongs = shuffleArray(
           related.filter(s => !existingIds.has(s.id))
         ).slice(0, 40);
-        newSongs.forEach(s => addToQueue(s));
+        addManyToQueue(newSongs);
       })
       .catch(() => {
         if (fetchingForRef.current === songId) {
@@ -101,19 +107,25 @@ function AppContent() {
   // eslint-disable-next-line react-deps
   }, [currentSong?.id, queueIndex, queue.length]);
 
+  return null;
+}
+
+function AppContent() {
   return (
-    <Routes>
-      <Route element={<Layout />}>
-        <Route path="/" element={<HomePage />} />
-        <Route path="/watch" element={<WatchPage />} />
-        <Route path="/explore" element={<SearchPage />} />
-        <Route path="/history" element={<HistoryPage />} />
-        <Route path="/favorites" element={<FavoritesPage />} />
-        <Route path="/playlists" element={<PlaylistPage />} />
-        {/* 旧ルートの互換性 */}
-        <Route path="/playing" element={<WatchPage />} />
-      </Route>
-    </Routes>
+    <>
+      <PlayerTracker />
+      <Routes>
+        <Route element={<Layout />}>
+          <Route path="/" element={<HomePage />} />
+          <Route path="/watch" element={<WatchPage />} />
+          <Route path="/history" element={<HistoryPage />} />
+          <Route path="/favorites" element={<FavoritesPage />} />
+          <Route path="/playlists" element={<PlaylistPage />} />
+          {/* 旧ルートの互換性 */}
+          <Route path="/playing" element={<WatchPage />} />
+        </Route>
+      </Routes>
+    </>
   );
 }
 

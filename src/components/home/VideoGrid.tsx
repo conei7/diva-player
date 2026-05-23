@@ -1,6 +1,8 @@
+import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { Song } from '../../types/vocadb';
 import SongCard from '../search/SongCard';
+import { useSelectionStore } from '../../stores/selectionStore';
 
 /**
  * VideoGrid - YouTube風のレスポンシブ動画グリッド
@@ -27,6 +29,12 @@ function SkeletonCard() {
 
 export default function VideoGrid({ songs, loading, showScore: _showScore }: VideoGridProps) {
   const navigate = useNavigate();
+  const setVisibleSongs = useSelectionStore(s => s.setVisibleSongs);
+
+  // 表示中の曲リストをselectionStoreに登録（FABの全選択・フィルター用）
+  useEffect(() => {
+    setVisibleSongs(songs);
+  }, [songs, setVisibleSongs]);
 
   const handlePlay = (song: Song) => {
     navigate(`/watch?v=${song.id}`);

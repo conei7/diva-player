@@ -277,7 +277,7 @@ export async function getRelatedSongs(id: number): Promise<Song[]> {
  * backend/ の C# API が localhost:5000 で動作している場合に使用。
  * 利用できない場合は VocaDB の /related にフォールバックする。
  */
-const RECOMMENDER_API = 'http://localhost:5000';
+const RECOMMENDER_API = '/backend-api';
 
 interface RecommendItem {
   songId:  number;
@@ -543,7 +543,7 @@ export async function getMetadataSimilarSongs(
 
 /**
  * 音響ベクトルのみによる類似検索 (deep dig タブ)
- * バックエンドが利用不可またはデータなしの場合は空配列を返す
+ * バックエンドが利用不可またはデータなしの場合は VocaDB /related にフォールバック
  */
 export async function getAudioSimilarSongs(
   seedSongId: number,
@@ -569,7 +569,9 @@ export async function getAudioSimilarSongs(
       _recommenderAvailable = false;
     }
   }
-  return []; // 音響データなし / バックエンド不可の場合は空
+  // フォールバック: VocaDB /related (offset=0のみ全件返す)
+  if (offset === 0) return getRelatedSongs(seedSongId);
+  return [];
 }
 
 /**

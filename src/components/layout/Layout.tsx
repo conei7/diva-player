@@ -6,6 +6,8 @@ import HistoryDrawer from '../player/HistoryDrawer';
 import SongDetailsModal from '../player/SongDetailsModal';
 import { SaveToPlaylistModal } from '../playlist/SaveToPlaylistModal';
 import { useUiStore } from '../../stores/uiStore';
+import SelectionFAB from '../search/SelectionFAB';
+import { useSelectionStore } from '../../stores/selectionStore';
 
 /**
  * メインレイアウト (YouTube風)
@@ -18,6 +20,7 @@ import { useUiStore } from '../../stores/uiStore';
 export default function Layout() {
   const location = useLocation();
   const { sidebarExpanded } = useUiStore();
+  const visibleSongs = useSelectionStore(s => s.visibleSongs);
 
   const isWatchPage = location.pathname === '/watch';
   // /watch ではサイドバーを非表示
@@ -54,6 +57,7 @@ export default function Layout() {
       <HistoryDrawer />
       <SongDetailsModal />
       <SaveToPlaylistModal />
+      <SelectionFAB visibleSongs={visibleSongs} />
     </div>
   );
 }

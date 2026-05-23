@@ -17,6 +17,45 @@ import {
   getMetadataSimilarSongs,
 } from '../api/vocadb';
 import type { Song } from '../types/vocadb';
+import { useSelectionStore } from '../stores/selectionStore';
+import QueueSidebar from '../components/player/QueueSidebar';
+
+function WatchQueue() {
+  const queue = usePlayerStore(s => s.queue);
+  const queueIndex = usePlayerStore(s => s.queueIndex);
+  const [expanded, setExpanded] = useState(true);
+
+  if (queue.length <= 1) return null;
+  const nextSong = queue[queueIndex + 1];
+
+  return (
+    <div className="mb-4 rounded-xl overflow-hidden" style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)' }}>
+      <button 
+        className="w-full flex items-center justify-between px-4 py-3 transition-colors hover:bg-white/5"
+        onClick={() => setExpanded(!expanded)}
+      >
+        <div className="text-left">
+          <h3 className="text-sm font-semibold truncate max-w-[200px] sm:max-w-[300px]" style={{ color: 'var(--color-text-primary)' }}>
+            次: {nextSong?.name || '終了'}
+          </h3>
+          <p className="text-xs mt-0.5" style={{ color: 'var(--color-text-muted)' }}>ミックスリスト - {queueIndex + 1}/{queue.length}曲</p>
+        </div>
+        <svg 
+          width="24" height="24" viewBox="0 0 24 24" fill="currentColor" 
+          className={`transition-transform duration-200 ${expanded ? 'rotate-180' : ''}`}
+        >
+          <path d="M7 10l5 5 5-5z" />
+        </svg>
+      </button>
+      
+      {expanded && (
+        <div className="h-[400px] border-t" style={{ borderColor: 'var(--color-border)' }}>
+          <QueueSidebar hideHeader={true} />
+        </div>
+      )}
+    </div>
+  );
+}
 
 /**
  * WatchPage - YouTube風の再生画面 (/watch?v=楽曲ID)
@@ -44,13 +83,14 @@ export default function WatchPage() {
   const songIdStr = searchParams.get('v');
   const songId = songIdStr ? Number(songIdStr) : null;
 
-  const { currentSong, setQueue, replaceQueueList } = usePlayerStore();
+  const { currentSong, setQueue } = usePlayerStore();
   const { addToHistory } = useHistoryStore();
   const { ratings } = useRatingStore();
 
   const [song, setSong] = useState<Song | null>(null);
   const [loadingSong, setLoadingSong] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const setVisibleSongs = useSelectionStore(s => s.setVisibleSongs);
 
   const [activeTab, setActiveTab] = useState<RecTabKey>('recommended');
   const [tabs, setTabs] = useState<Record<RecTabKey, TabState>>({
@@ -241,12 +281,12 @@ export default function WatchPage() {
 
   const currentTab = tabs[activeTab];
 
-  // タブのデータが変わるか、songが変わったらキューを更新 (YouTubeのMixリスト風)
+
+
+  // 現在のタブの表示曲をselectionStoreに登録（FABの全選択・フィルター用）
   useEffect(() => {
-    if (song && currentTab.items.length > 0) {
-      replaceQueueList([song, ...currentTab.items]);
-    }
-  }, [song, currentTab.items, replaceQueueList]);
+    setVisibleSongs(currentTab.items);
+  }, [currentTab.items, setVisibleSongs]);
 
   // 動画が自動再生で次に進んだ場合などにURLを同期する
   // loadingFromUrlRef が true の間 (URL変更後のフェッチ中) はナビゲートしない
@@ -324,6 +364,10 @@ export default function WatchPage() {
 
           {/* ─── 右: 推薦リスト ─── */}
           <div className="lg:w-96 xl:w-[420px] flex-shrink-0">
+            
+            {/* キュー (ミックスリスト) */}
+            <WatchQueue />
+
             {/* フィルターチップス */}
             <div className="sticky z-30 pb-2 pt-2 -mx-2 px-2 bg-[#0f0f0f]" style={{ top: 'var(--header-height)' }}>
               <FilterChips

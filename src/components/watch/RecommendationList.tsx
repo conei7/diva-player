@@ -5,6 +5,7 @@ import type { Song } from '../../types/vocadb';
 import { usePlayerStore } from '../../stores/playerStore';
 import { useUiStore } from '../../stores/uiStore';
 import { usePlaylistStore, WATCH_LATER_ID } from '../../stores/playlistStore';
+import { useSelectionStore } from '../../stores/selectionStore';
 
 /**
  * RecommendationList - 推薦動画リスト
@@ -34,14 +35,7 @@ function formatDuration(seconds: number): string {
   return `${m}:${s.toString().padStart(2, '0')}`;
 }
 
-/** P名を抽出 */
-function getProducerName(song: Song): string {
-  const producer = song.artists?.find(a => a.categories?.includes('Producer'));
-  if (producer) return producer.name || producer.artist?.name || '';
-  const str = song.artistString;
-  if (str.includes(' feat.')) return str.split(' feat.')[0];
-  return str;
-}
+
 
 /** \u500b\u5225\u66f2\u30a2\u30a4\u30c6\u30e0\uff08\u22ee\u30e1\u30cb\u30e5\u30fc\u4ed8\u304d\uff09 */
 function RecItemRow({
@@ -57,9 +51,14 @@ function RecItemRow({
 }) {
   const navigate = useNavigate();
   const { openSaveToPlaylist } = useUiStore();
-  const toggleSong = usePlaylistStore(s => s.toggleSongInPlaylist);
+  const toggleSongInPlaylist = usePlaylistStore(s => s.toggleSongInPlaylist);
   const isSongIn   = usePlaylistStore(s => s.isSongInPlaylist);
   const isWatchLater = isSongIn(WATCH_LATER_ID, song.id);
+
+  const isSelectionMode = useSelectionStore(s => s.isSelectionMode);
+  const selectedSongIds = useSelectionStore(s => s.selectedSongIds);
+  const toggleSelection = useSelectionStore(s => s.toggleSong);
+  const isSelected = selectedSongIds.has(song.id);
 
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuPos, setMenuPos] = useState<{ top: number; right: number } | null>(null);
@@ -96,8 +95,8 @@ function RecItemRow({
   const handleWatchLater = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
     setMenuOpen(false); setMenuPos(null);
-    toggleSong(WATCH_LATER_ID, song);
-  }, [toggleSong, song]);
+    toggleSongInPlaylist(WATCH_LATER_ID, song);
+  }, [toggleSongInPlaylist, song]);
 
   const handleSave = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
@@ -113,14 +112,30 @@ function RecItemRow({
 
   const thumbUrl = getThumbUrl(song);
   const duration = formatDuration(song.lengthSeconds);
-  const producerName = getProducerName(song);
+
+  const handleCardClick = useCallback((e: React.MouseEvent) => {
+    if (isSelectionMode) {
+      e.stopPropagation();
+      e.preventDefault();
+      toggleSelection(song.id);
+    } else {
+      navigate(`/watch?v=${song.id}`);
+    }
+  }, [isSelectionMode, toggleSelection, song.id, navigate]);
 
   return (
     <>
     <div
-      className="rec-item animate-fade-in group"
-      style={{ background: isActive ? 'var(--color-surface)' : 'transparent' }}
-      onClick={() => navigate(`/watch?v=${song.id}`)}
+      className="rec-item animate-fade-in group relative"
+      style={{
+        background: isSelected
+          ? 'color-mix(in srgb, #1a73e8 15%, var(--color-bg-card))'
+          : isActive ? 'var(--color-surface)' : 'transparent',
+        outline: isSelected ? '2px solid #1a73e8' : 'none',
+        outlineOffset: '-2px',
+        userSelect: isSelectionMode ? 'none' : undefined,
+      }}
+      onClick={handleCardClick}
     >
       {/* \u30b5\u30e0\u30cd\u30a4\u30eb */}
       <div
@@ -151,6 +166,30 @@ function RecItemRow({
             {duration}
           </span>
         )}
+        {/* 選択モード: チェックボックスオーバーレイ */}
+        {isSelectionMode && (
+          <div
+            className="absolute inset-0 flex items-end justify-end p-1.5 pointer-events-none z-10"
+            style={{
+              background: isSelected ? 'rgba(0,0,0,0.1)' : 'rgba(0,0,0,0.3)',
+              transition: 'background 0.15s',
+            }}
+          >
+            <div
+              className="w-5 h-5 rounded flex items-center justify-center transition-all shadow-md"
+              style={{
+                background: isSelected ? '#1a73e8' : 'rgba(255,255,255,0.7)',
+                border: isSelected ? 'none' : '2px solid rgba(255,255,255,0.9)',
+              }}
+            >
+              {isSelected && (
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="white">
+                  <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
+                </svg>
+              )}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* \u30c6\u30ad\u30b9\u30c8 + \u22ee\u30dc\u30bf\u30f3 */}
@@ -162,16 +201,17 @@ function RecItemRow({
             {song.name}
           </h4>
           <p className="text-xs mt-1 truncate" style={{ color: 'var(--color-text-muted)' }}>
-            {producerName}
+            {song.artistString}
           </p>
           {song.favoritedTimes > 0 && (
             <p className="text-xs mt-0.5" style={{ color: 'var(--color-text-muted)' }}>
-              \u2665 {song.favoritedTimes.toLocaleString()}
+              ♥ {song.favoritedTimes.toLocaleString()}
             </p>
           )}
         </div>
 
-        {/* ⋮ ボタン */}
+        {/* ⋮ ボタン (選択モード中は非表示) */}
+        {!isSelectionMode && (
         <div className="relative flex-shrink-0">
           <button
             ref={btnRef}
@@ -185,6 +225,7 @@ function RecItemRow({
             </svg>
           </button>
         </div>
+        )}
       </div>
     </div>
 
@@ -241,8 +282,10 @@ function SkeletonItem() {  return (
   );
 }
 
-export default function RecommendationList({ songs, loading }: RecommendationListProps) {
-  const navigate = useNavigate();
+export default function RecommendationList({
+  songs,
+  loading,
+}: RecommendationListProps) {
   const { currentSong, isPlaying, hiddenMode } = usePlayerStore();
 
   if (loading && songs.length === 0) {

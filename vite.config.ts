@@ -10,11 +10,17 @@ export default defineConfig({
   ],
   base: '/diva-player/',
   server: {
+    allowedHosts: true,
     proxy: {
       '/invidious-api': {
         target: 'https://inv.nadeko.net',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/invidious-api/, ''),
+      },
+      '/backend-api': {
+        target: 'http://localhost:5000',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/backend-api/, ''),
       },
     },
   },

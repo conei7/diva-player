@@ -43,8 +43,9 @@ export default function GlobalPlayer() {
   
   if (isWatchPage && playerRect) {
     // WatchPage の VideoPlayer の位置にピタリと合わせる
+    // absolute にすることで、スクロール時に自動追従し、JSによる遅延を防ぐ
     containerStyle = {
-      position: 'fixed',
+      position: 'absolute',
       top: playerRect.top,
       left: playerRect.left,
       width: playerRect.width,

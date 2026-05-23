@@ -3,6 +3,7 @@ import type { Song } from '../../types/vocadb';
 import { usePlayerStore, getPlayablePV } from '../../stores/playerStore';
 import { useUiStore } from '../../stores/uiStore';
 import { usePlaylistStore, WATCH_LATER_ID } from '../../stores/playlistStore';
+import { useSelectionStore } from '../../stores/selectionStore';
 
 interface SongCardProps {
   song: Song;
@@ -18,7 +19,7 @@ interface SongCardProps {
  */
 export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect }: SongCardProps) {
   const { currentSong, isPlaying, setQueue, hiddenMode } = usePlayerStore();
-  const { openSongDetail, openSaveToPlaylist } = useUiStore();
+  const { openSaveToPlaylist } = useUiStore();
   const toggleSong = usePlaylistStore(s => s.toggleSongInPlaylist);
   const isSongIn  = usePlaylistStore(s => s.isSongInPlaylist);
   const isCurrentSong = currentSong?.id === song.id;
@@ -29,6 +30,13 @@ export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect }
   const [menuPos, setMenuPos] = useState<{ top: number; right: number } | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const btnRef = useRef<HTMLButtonElement>(null);
+
+  // 複数選択ストア
+  const isSelectionMode = useSelectionStore(s => s.isSelectionMode);
+  const selectedSongIds = useSelectionStore(s => s.selectedSongIds);
+  const isSelected      = selectedSongIds.has(song.id);
+  const toggleSelection = useSelectionStore(s => s.toggleSong);
+  const enterSelectionMode = useSelectionStore(s => s.enterSelectionMode);
 
   // メニュー外クリックで閉じる
   useEffect(() => {
@@ -67,19 +75,48 @@ export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect }
     return `${m}:${s.toString().padStart(2, '0')}`;
   };
 
-  const handlePlay = () => {
-    if (!hasPlayablePV) return;
+  const handlePlay = useCallback((e?: React.MouseEvent) => {
+    if (e) {
+      e.stopPropagation();
+      e.preventDefault();
+    }
+    // 選択モード中は再生をブロック
+    if (isSelectionMode) return;
+    
     if (onPlay) {
-      onPlay(song); // 動的ミックスリスト生成 (SearchPage から渡される)
+      onPlay(song);
     } else {
-      setQueue([song], 0); // フォールバック
+      setQueue([song], 0);
     }
     onSelect?.(song);
-  };
+  }, [isSelectionMode, onPlay, song, setQueue, onSelect]);
 
-  const handleOpenDetail = () => {
-    openSongDetail(song);
-  };
+  // カード全体でのクリックハンドラ
+  const handleCardClick = useCallback((e: React.MouseEvent) => {
+    if (isSelectionMode) {
+      e.stopPropagation();
+      e.preventDefault();
+      toggleSelection(song.id);
+    } else {
+      handlePlay(e);
+    }
+  }, [isSelectionMode, toggleSelection, song.id, handlePlay]);
+
+  // 長押しで選択モード突入
+  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const handlePointerDown = useCallback(() => {
+    if (isSelectionMode) return;
+    longPressTimer.current = setTimeout(() => {
+      enterSelectionMode();
+      toggleSelection(song.id);
+    }, 500);
+  }, [isSelectionMode, enterSelectionMode, toggleSelection, song.id]);
+  const handlePointerUp = useCallback(() => {
+    if (longPressTimer.current) clearTimeout(longPressTimer.current);
+  }, []);
+  const handlePointerLeave = useCallback(() => {
+    if (longPressTimer.current) clearTimeout(longPressTimer.current);
+  }, []);
 
   const handleWatchLater = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
@@ -130,17 +167,26 @@ export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect }
     <div
       className="song-card rounded-xl overflow-hidden group relative"
       style={{
-        background: isCurrentSong ? 'var(--color-bg-card-hover)' : 'var(--color-bg-card)',
-        border: isCurrentSong ? '1px solid rgba(6, 214, 160, 0.3)' : '1px solid transparent',
+        background: isSelected
+          ? 'color-mix(in srgb, #1a73e8 15%, var(--color-bg-card))'
+          : isCurrentSong ? 'var(--color-bg-card-hover)' : 'var(--color-bg-card)',
+        border: isSelected
+          ? '2px solid #1a73e8'
+          : isCurrentSong ? '1px solid rgba(6, 214, 160, 0.3)' : '1px solid transparent',
         animationDelay: `${index * 50}ms`,
+        cursor: isSelectionMode ? 'pointer' : undefined,
+        userSelect: isSelectionMode ? 'none' : undefined,
       }}
+      onClick={handleCardClick}
     >
-      {/* サムネイル — クリックで再生 */}
+      {/* サムネイル — クリックで再生（選択モード時は選択トグル） */}
       <div
         className="relative aspect-video overflow-hidden cursor-pointer"
         style={{ background: 'var(--color-surface)' }}
-        onClick={handlePlay}
-        title={hasPlayablePV ? 'クリックして再生' : '再生可能なPVがありません'}
+        onPointerDown={handlePointerDown}
+        onPointerUp={handlePointerUp}
+        onPointerLeave={handlePointerLeave}
+        title={isSelectionMode ? (isSelected ? '選択解除' : '選択') : hasPlayablePV ? 'クリックして再生' : '再生可能なPVがありません'}
       >
         {!hiddenMode && song.thumbUrl ? (
           <img
@@ -159,7 +205,33 @@ export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect }
           </div>
         )}
 
-        {/* 再生オーバーレイ */}
+        {/* 選択モード: チェックボックスオーバーレイ */}
+        {isSelectionMode && (
+          <div
+            className="absolute inset-0 flex items-end justify-end p-2 pointer-events-none z-10"
+            style={{
+              background: isSelected ? 'rgba(0,0,0,0.1)' : 'rgba(0,0,0,0.3)',
+              transition: 'background 0.15s',
+            }}
+          >
+            <div
+              className="w-6 h-6 rounded flex items-center justify-center transition-all shadow-md"
+              style={{
+                background: isSelected ? '#1a73e8' : 'rgba(255,255,255,0.7)',
+                border: isSelected ? 'none' : '2px solid rgba(255,255,255,0.9)',
+              }}
+            >
+              {isSelected && (
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="white">
+                  <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
+                </svg>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* 再生オーバーレイ (選択モード中は非表示) */}
+        {!isSelectionMode && (
         <div
           className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex items-center justify-center"
           onClick={(e) => { e.stopPropagation(); handlePlay(); }}
@@ -181,6 +253,7 @@ export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect }
             </div>
           )}
         </div>
+        )}
 
         {/* 再生中インジケーター */}
         {isCurrentSong && isPlaying && (
@@ -201,10 +274,7 @@ export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect }
       <div className="p-3">
         {/* タイトル行 + ⋮メニュー */}
         <div className="flex items-start gap-1">
-          <div
-            className="flex-1 min-w-0 cursor-pointer"
-            onClick={handleOpenDetail}
-          >
+          <div className="flex-1 min-w-0">
             <h3 className="text-sm font-semibold truncate" style={{ color: 'var(--color-text-primary)' }}>
               {song.name}
             </h3>
@@ -213,7 +283,8 @@ export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect }
             </p>
           </div>
 
-          {/* ⋮ メニューボタン */}
+          {/* ⋮ メニューボタン (選択モード中は非表示) */}
+          {!isSelectionMode && (
           <div className="relative flex-shrink-0" ref={menuRef}>
             <button
               ref={btnRef}
@@ -290,6 +361,7 @@ export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect }
               </div>
             )}
           </div>
+          )}
         </div>
 
         {/* 下部バッジ列 */}
