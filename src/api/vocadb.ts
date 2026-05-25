@@ -576,7 +576,7 @@ export async function getMetadataSimilarSongs(
 
 /**
  * 音響ベクトルのみによる類似検索 (deep dig タブ)
- * バックエンドが利用不可またはデータなしの場合は VocaDB /related にフォールバック
+ * バックエンドで音響特徴が見つからない場合は空配列を返し、フロントエンドで未対応表示を行う
  */
 export async function getAudioSimilarSongs(
   seedSongId: number,
@@ -602,8 +602,6 @@ export async function getAudioSimilarSongs(
       _recommenderAvailable = false;
     }
   }
-  // フォールバック: VocaDB /related (offset=0のみ全件返す)
-  if (offset === 0) return getRelatedSongs(seedSongId);
   return [];
 }
 
