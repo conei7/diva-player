@@ -138,7 +138,7 @@ const VOCALIST_CATEGORIES: { label: string; vocalists: PresetVocalist[] }[] = [
 
 export default function SearchFilters() {
   const {
-    sort, setSort, search, totalCount, hasSearched,
+    sort, setSort, search,
     vocalistFilters, vocalistMatchMode,
     addVocalistFilter, removeVocalistFilter, setVocalistMatchMode,
     songTypeFilter, setSongTypeFilter,
@@ -147,6 +147,7 @@ export default function SearchFilters() {
   const [vocalistQuery, setVocalistQuery] = useState('');
   const [suggestions, setSuggestions] = useState<Artist[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const [isExpanded, setIsExpanded] = useState(false);
   const suggestRef = useRef<HTMLDivElement>(null);
 
   // hall_of_fame_singers.json を非同期で取得 (失敗時はハードコードにフォールバック)
@@ -232,18 +233,26 @@ export default function SearchFilters() {
       <div className="flex flex-col gap-3">
 
         {/* ヘッダー：タイトル + 一致条件 */}
-        <div className="flex items-center justify-between flex-wrap gap-2">
+        <div 
+          className="flex items-center justify-between flex-wrap gap-2 cursor-pointer select-none"
+          onClick={() => setIsExpanded(!isExpanded)}
+        >
           <div className="flex items-center gap-2">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"
-                 style={{ color: 'var(--color-accent-purple)', flexShrink: 0 }}>
-              <path d="M12 3a4 4 0 0 1 4 4 4 4 0 0 1-4 4 4 4 0 0 1-4-4 4 4 0 0 1 4-4m0 10c4.42 0 8 1.79 8 4v2H4v-2c0-2.21 3.58-4 8-4z"/>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+                 style={{ transform: isExpanded ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s', color: 'var(--color-text-muted)' }}>
+              <path d="M6 9l6 6 6-6"/>
             </svg>
-            <span className="text-xs font-semibold" style={{ color: 'var(--color-text-secondary)' }}>
+            <span className="text-sm font-semibold" style={{ color: 'var(--color-text-primary)' }}>
               シンガーで絞り込み
             </span>
+            {vocalistFilters.length > 0 && (
+              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full" style={{ background: 'var(--color-accent-purple)', color: '#fff' }}>
+                {vocalistFilters.length}
+              </span>
+            )}
           </div>
 
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
             {MATCH_MODES.map(m => (
               <button
                 key={m.value}
@@ -262,6 +271,10 @@ export default function SearchFilters() {
             ))}
           </div>
         </div>
+
+        {/* 展開時のみ表示されるエリア */}
+        {isExpanded && (
+          <div className="flex flex-col gap-3 mt-2 animate-fade-in">
 
         {/* カテゴリ別プリセットボタン */}
         {categoriesLoading ? (
@@ -349,9 +362,38 @@ export default function SearchFilters() {
         </div>
 
         {/* プリセット外の選択チップ */}
-        {nonPresetSelected.length > 0 && (
+        {isExpanded && nonPresetSelected.length > 0 && (
           <div className="flex flex-wrap gap-1.5">
             {nonPresetSelected.map(v => (
+              <span
+                key={v.id}
+                className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full"
+                style={{
+                  background: 'rgba(139, 92, 246, 0.15)',
+                  color: 'var(--color-accent-purple)',
+                  border: '1px solid rgba(139, 92, 246, 0.35)',
+                }}
+              >
+                {v.name}
+                <button
+                  onClick={() => { removeVocalistFilter(v.id); search(); }}
+                  className="opacity-70 hover:opacity-100 transition-opacity ml-0.5"
+                >
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
+                  </svg>
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+
+          </div>
+        )}
+        {/* Active filters display even when collapsed if any */}
+        {!isExpanded && vocalistFilters.length > 0 && (
+          <div className="flex flex-wrap gap-1.5 mt-1">
+            {vocalistFilters.map(v => (
               <span
                 key={v.id}
                 className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full"
@@ -379,16 +421,8 @@ export default function SearchFilters() {
       <div style={{ borderTop: '1px solid var(--color-border)' }} />
 
       {/* ===== ソート ===== */}
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        {hasSearched && (
-          <p className="text-sm" style={{ color: 'var(--color-text-muted)' }}>
-            <span style={{ color: 'var(--color-accent-cyan)' }} className="font-semibold">
-              {totalCount.toLocaleString()}
-            </span>
-            {' '}件の結果
-          </p>
-        )}
-        <div className="flex items-center gap-2 ml-auto">
+      <div className="flex items-center justify-end flex-wrap gap-3">
+        <div className="flex items-center gap-2">
           {/* オリジナル曲のみフィルター */}
           <button
             className="text-xs px-3 py-1.5 rounded-lg transition-colors"

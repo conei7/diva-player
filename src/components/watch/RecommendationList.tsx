@@ -35,9 +35,18 @@ function formatDuration(seconds: number): string {
   return `${m}:${s.toString().padStart(2, '0')}`;
 }
 
+const formatJapaneseViews = (views?: number): string | null => {
+  if (views === undefined || views <= 0) return null;
+  if (views >= 100000000) {
+    return (views / 100000000).toFixed(1).replace('.0', '') + '億';
+  } else if (views >= 10000) {
+    return (views / 10000).toFixed(1).replace('.0', '') + '万';
+  } else {
+    return views.toLocaleString();
+  }
+};
 
-
-/** \u500b\u5225\u66f2\u30a2\u30a4\u30c6\u30e0\uff08\u22ee\u30e1\u30cb\u30e5\u30fc\u4ed8\u304d\uff09 */
+/** 個別曲アイテム（⋮メニュー付き） */
 function RecItemRow({
   song,
   isActive,
@@ -160,12 +169,16 @@ function RecItemRow({
             </div>
           </div>
         )}
-        {duration && (
-          <span className="absolute bottom-1 right-1 px-1 py-0.5 rounded text-[10px] font-medium"
-                style={{ background: 'rgba(0,0,0,0.8)', color: '#fff' }}>
-            {duration}
-          </span>
-        )}
+        <div className="absolute bottom-1 right-1 flex items-center gap-1 z-10">
+          {duration && (
+            <span
+              className="px-1 py-0.5 rounded text-[10px] font-medium leading-none"
+              style={{ background: 'rgba(0,0,0,0.8)', color: '#fff' }}
+            >
+              {duration}
+            </span>
+          )}
+        </div>
         {/* 選択モード: チェックボックスオーバーレイ */}
         {isSelectionMode && (
           <div
@@ -203,10 +216,36 @@ function RecItemRow({
           <p className="text-xs mt-1 truncate" style={{ color: 'var(--color-text-muted)' }}>
             {song.artistString}
           </p>
-          {song.favoritedTimes > 0 && (
-            <p className="text-xs mt-0.5" style={{ color: 'var(--color-text-muted)' }}>
-              ♥ {song.favoritedTimes.toLocaleString()}
-            </p>
+          <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+            {song.youtubeViews && song.youtubeViews > 0 && (
+              <span className="text-[10px] flex items-center gap-0.5 font-medium" style={{ color: '#ef4444' }}>
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M21.582 6.186a2.665 2.665 0 0 0-1.876-1.884C17.95 3.84 12 3.84 12 3.84s-5.95 0-7.706.462A2.665 2.665 0 0 0 2.418 6.186C2 7.952 2 12 2 12s0 4.048.418 5.814a2.665 2.665 0 0 0 1.876 1.884C6.05 20.16 12 20.16 12 20.16s5.95 0 7.706-.462a2.665 2.665 0 0 0 1.876-1.884C22 16.048 22 12 22 12s0-4.048-.418-5.814zM9.75 15.02v-6.04L15.05 12l-5.3 3.02z"/>
+                </svg>
+                {formatJapaneseViews(song.youtubeViews)}
+              </span>
+            )}
+            {song.nicoViews && song.nicoViews > 0 && (
+              <span className="text-[10px] flex items-center gap-0.5 font-medium" style={{ color: '#3b82f6' }}>
+                📺 {formatJapaneseViews(song.nicoViews)}
+              </span>
+            )}
+            {song.favoritedTimes > 0 && (
+              <span className="text-[10px] flex items-center gap-0.5 font-medium" style={{ color: 'var(--color-text-muted)' }}>
+                ♥ {song.favoritedTimes.toLocaleString()}
+              </span>
+            )}
+          </div>
+          
+          {song.songType !== 'Original' && song.songType !== 'Unspecified' && (
+            <div className="mt-1">
+              <span
+                className="inline-block px-1.5 py-0.5 rounded text-[10px] font-medium leading-none"
+                style={{ background: 'var(--color-accent-purple)', color: '#fff' }}
+              >
+                {song.songType}
+              </span>
+            </div>
           )}
         </div>
 

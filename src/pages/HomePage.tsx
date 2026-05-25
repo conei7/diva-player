@@ -221,22 +221,22 @@ export default function HomePage() {
 
   return (
     <div className="w-full px-4 sm:px-6 lg:px-8 py-4">
-      {/* 詳細検索 (検索済み、またはボタンで開いた時) */}
-      {(hasSearched || isAdvancedOpen) && (
+      {/* 詳細検索 (開いた時のみ表示) */}
+      {isAdvancedOpen && (
         <div className="mb-6">
           <SearchFilters />
         </div>
       )}
 
       {/* 検索モード/アーティストモードヘッダー */}
-      {isSearchMode && !hasSearched && (
+      {(isSearchMode || hasSearched) && !isArtistMode && (
         <div className="mb-6 flex items-center justify-between">
           <div>
             <h1 className="text-xl font-bold mb-1" style={{ color: 'var(--color-text-primary)' }}>
-              「{searchQuery}」の検索結果
+              {searchQuery ? `「${searchQuery}」の検索結果` : '検索結果'}
             </h1>
             <p className="text-sm" style={{ color: 'var(--color-text-muted)' }}>
-              {songs.length} 件の楽曲
+              {hasSearched ? `${totalCount.toLocaleString()} 件` : `${songs.length} 件`}
             </p>
           </div>
           <button

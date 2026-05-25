@@ -19,11 +19,7 @@ builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowFrontend", policy =>
         policy
-            .WithOrigins(
-                "https://conei7.github.io",
-                "http://localhost:5173",
-                "http://localhost:5174",
-                "http://localhost:4173")
+            .AllowAnyOrigin()
             .AllowAnyMethod()
             .AllowAnyHeader());
 });
@@ -229,6 +225,29 @@ app.MapGet("/api/recommend/audio", async (
 
 // GET /api/health
 app.MapGet("/api/health", () => Results.Ok(new { status = "ok" }));
+
+// GET /api/songs/views?ids=1,2,3
+app.MapGet("/api/songs/views", async (string ids, DbService db) =>
+{
+    if (string.IsNullOrWhiteSpace(ids)) return Results.Ok(new Dictionary<int, object>());
+
+    var idList = ids.Split(',')
+        .Where(x => int.TryParse(x, out _))
+        .Select(int.Parse)
+        .Distinct()
+        .ToList();
+
+    if (idList.Count == 0) return Results.Ok(new Dictionary<int, object>());
+
+    var infos = await db.GetSongInfoBatchAsync(idList);
+    var result = infos.ToDictionary(i => i.Id, i => new
+    {
+        youtubeViews = i.YoutubeViews,
+        nicoViews = i.NicoViews
+    });
+
+    return Results.Ok(result);
+});
 
 // POST /api/session  → セッションIDを発行
 app.MapPost("/api/session", async (DbService db) =>

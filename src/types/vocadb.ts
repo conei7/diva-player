@@ -72,6 +72,8 @@ export interface Song {
   tags?: any[];
   thumbUrl?: string;
   version: number;
+  youtubeViews?: number;
+  nicoViews?: number;
 }
 
 // ─── 検索結果 ───

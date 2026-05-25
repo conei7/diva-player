@@ -44,7 +44,6 @@ export default function ActionBar({ song }: ActionBarProps) {
     openSaveToPlaylist(song);
   };
 
-  const ratingLabels = ['', '★1 悪い', '★2 微妙', '★3 普通', '★4 良い', '★5 最高！'];
 
   return (
     <div className="flex flex-wrap items-center gap-2 mt-3 pb-3 border-b" style={{ borderColor: 'var(--color-border)' }}>
@@ -58,11 +57,6 @@ export default function ActionBar({ song }: ActionBarProps) {
           onRate={(r) => setRating(song.id, r)}
           size="md"
         />
-        {rating > 0 && (
-          <span className="text-xs font-medium ml-1" style={{ color: '#facc15' }}>
-            {ratingLabels[rating]}
-          </span>
-        )}
       </div>
 
       {/* ─── 共有ボタン ─── */}

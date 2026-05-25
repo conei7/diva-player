@@ -13,6 +13,17 @@ interface SongCardProps {
   onSelect?: (song: Song) => void;
 }
 
+const formatJapaneseViews = (views?: number): string | null => {
+  if (views === undefined || views <= 0) return null;
+  if (views >= 100000000) {
+    return (views / 100000000).toFixed(1).replace('.0', '') + '億';
+  } else if (views >= 10000) {
+    return (views / 10000).toFixed(1).replace('.0', '') + '万';
+  } else {
+    return views.toLocaleString();
+  }
+};
+
 /**
  * SongCard - 検索結果の曲カード
  * サムネイル、曲名、アーティスト、PVサービスバッジ、再生ボタンを表示。
@@ -366,17 +377,23 @@ export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect }
 
         {/* 下部バッジ列 */}
         <div className="flex items-center gap-2 mt-2">
-          {/* PVサービスバッジ */}
-          {pvServices.has('Youtube') && (
-            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded"
-                  style={{ background: 'rgba(239, 68, 68, 0.12)', color: '#ef4444' }}>
-              {isYTUnofficialOnly ? '非公式YT' : 'YT'}
+          {/* PVサービスバッジ / 再生数 */}
+          {(pvServices.has('Youtube') || (song.youtubeViews && song.youtubeViews > 0)) && (
+            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded flex items-center gap-1"
+                  style={{ background: 'rgba(239, 68, 68, 0.12)', color: '#ef4444' }}
+                  title="YouTube 再生回数">
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M21.582 6.186a2.665 2.665 0 0 0-1.876-1.884C17.95 3.84 12 3.84 12 3.84s-5.95 0-7.706.462A2.665 2.665 0 0 0 2.418 6.186C2 7.952 2 12 2 12s0 4.048.418 5.814a2.665 2.665 0 0 0 1.876 1.884C6.05 20.16 12 20.16 12 20.16s5.95 0 7.706-.462a2.665 2.665 0 0 0 1.876-1.884C22 16.048 22 12 22 12s0-4.048-.418-5.814zM9.75 15.02v-6.04L15.05 12l-5.3 3.02z"/>
+              </svg>
+              {formatJapaneseViews(song.youtubeViews) || (isYTUnofficialOnly ? '非公式YT' : 'YT')}
             </span>
           )}
-          {pvServices.has('NicoNicoDouga') && (
-            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded"
-                  style={{ background: 'rgba(59, 130, 246, 0.12)', color: '#3b82f6' }}>
-              {isNicoUnofficialOnly ? '非公式ニコ' : 'ニコ'}
+          {(pvServices.has('NicoNicoDouga') || (song.nicoViews && song.nicoViews > 0)) && (
+            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded flex items-center gap-1"
+                  style={{ background: 'rgba(59, 130, 246, 0.12)', color: '#3b82f6' }}
+                  title="ニコニコ動画 再生回数">
+              📺
+              {formatJapaneseViews(song.nicoViews) || (isNicoUnofficialOnly ? '非公式ニコ' : 'ニコ')}
             </span>
           )}
 

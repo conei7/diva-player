@@ -10,6 +10,7 @@
 import type { Artist, ArtistSearchResult, Song, SongSearchParams, SongSearchResult } from '../types/vocadb';
 
 const BASE_URL = 'https://vocadb.net/api';
+const RECOMMENDER_API = import.meta.env.VITE_RECOMMENDER_API || '/backend-api';
 const DEFAULT_LANG = 'Japanese';
 const DEFAULT_FIELDS = 'PVs,Artists,ThumbUrl';
 const CACHE_TTL = 5 * 60 * 1000; // 5分
@@ -85,6 +86,30 @@ function buildSearchParams(params: Record<string, string | number | boolean | st
 }
 
 /**
+ * 外部の再生回数（YouTube, NicoNico）をバックエンドから取得してマージする
+ */
+export async function attachExternalViews(songs: Song[]): Promise<Song[]> {
+  if (!songs || songs.length === 0) return songs;
+  try {
+    const ids = songs.map(s => s.id).join(',');
+    const res = await fetch(`${RECOMMENDER_API}/api/songs/views?ids=${ids}`);
+    if (res.ok) {
+      const viewsMap: Record<number, { youtubeViews: number; nicoViews: number }> = await res.json();
+      return songs.map(song => {
+        const views = viewsMap[song.id];
+        if (views) {
+          return { ...song, youtubeViews: views.youtubeViews, nicoViews: views.nicoViews };
+        }
+        return song;
+      });
+    }
+  } catch (e) {
+    console.error('Failed to fetch external views', e);
+  }
+  return songs;
+}
+
+/**
  * 曲を検索
  */
 export async function searchSongs(params: SongSearchParams): Promise<SongSearchResult> {
@@ -122,6 +147,8 @@ export async function searchSongs(params: SongSearchParams): Promise<SongSearchR
   const response = await fetchWithRetry(url);
   const data: SongSearchResult = await response.json();
   
+  data.items = await attachExternalViews(data.items);
+  
   setCache(cacheKey, data);
   return data;
 }
@@ -137,7 +164,10 @@ export async function getSongById(id: number): Promise<Song> {
   if (cached) return cached;
 
   const response = await fetchWithRetry(url);
-  const data: Song = await response.json();
+  let data: Song = await response.json();
+  
+  const enriched = await attachExternalViews([data]);
+  data = enriched[0];
   
   setCache(cacheKey, data);
   return data;
@@ -165,7 +195,9 @@ export async function getTopSongs(
   if (cached) return cached;
 
   const response = await fetchWithRetry(url);
-  const data: Song[] = await response.json();
+  let data: Song[] = await response.json();
+  
+  data = await attachExternalViews(data);
   
   setCache(cacheKey, data);
   return data;
@@ -262,13 +294,15 @@ export async function getRelatedSongs(id: number): Promise<Song[]> {
 
   // likeMatches → artistMatches → tagMatches の優先順位で重複排除
   const seen = new Set<number>();
-  const result: Song[] = [];
+  let result: Song[] = [];
   for (const song of [...data.likeMatches, ...data.artistMatches, ...data.tagMatches]) {
     if (!seen.has(song.id)) {
       seen.add(song.id);
       result.push(song);
     }
   }
+  
+  result = await attachExternalViews(result);
   return result;
 }
 
@@ -277,7 +311,6 @@ export async function getRelatedSongs(id: number): Promise<Song[]> {
  * backend/ の C# API が localhost:5000 で動作している場合に使用。
  * 利用できない場合は VocaDB の /related にフォールバックする。
  */
-const RECOMMENDER_API = '/backend-api';
 
 interface RecommendItem {
   songId:  number;

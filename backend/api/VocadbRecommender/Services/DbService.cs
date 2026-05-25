@@ -43,7 +43,8 @@ public class DbService
                    ARRAY(
                        SELECT artist_id FROM song_artists
                        WHERE song_id = s.id AND is_vocalist = TRUE
-                   ) AS vocalist_ids
+                   ) AS vocalist_ids,
+                   s.youtube_views, s.nico_views
             FROM songs s
             LEFT JOIN song_features sf ON sf.song_id = s.id
             WHERE s.id = $1", conn);
@@ -61,7 +62,9 @@ public class DbService
             FavoritedTimes: reader.IsDBNull(5) ? 0 : reader.GetInt32(5),
             StateCluster: reader.IsDBNull(6) ? -1 : reader.GetInt32(6),
             ProducerIds:  reader.IsDBNull(7) ? [] : (int[])reader.GetValue(7),
-            VocalistIds:  reader.IsDBNull(8) ? [] : (int[])reader.GetValue(8)
+            VocalistIds:  reader.IsDBNull(8) ? [] : (int[])reader.GetValue(8),
+            YoutubeViews: reader.IsDBNull(9) ? 0 : reader.GetInt64(9),
+            NicoViews:    reader.IsDBNull(10) ? 0 : reader.GetInt64(10)
         );
 
         _cache.Set(key, info, TimeSpan.FromMinutes(30));
@@ -263,5 +266,7 @@ public record SongInfo(
     int     FavoritedTimes,
     int     StateCluster,
     int[]   ProducerIds,
-    int[]   VocalistIds
+    int[]   VocalistIds,
+    long    YoutubeViews,
+    long    NicoViews
 );

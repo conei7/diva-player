@@ -47,7 +47,7 @@ export default function TopNav() {
     if (searchQuery.trim()) {
       setSearchStoreQuery(searchQuery.trim());
       runSearch();
-      navigate('/explore');
+      navigate('/');
     }
   };
 

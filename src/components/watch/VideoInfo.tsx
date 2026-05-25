@@ -18,11 +18,6 @@ export default function VideoInfo({ song }: VideoInfoProps) {
     .map(a => a.name || a.artist?.name || '')
     .filter(Boolean) || [];
 
-  // 投稿日
-  const publishDate = song.publishDate
-    ? new Date(song.publishDate).toLocaleDateString('ja-JP', { year: 'numeric', month: 'long', day: 'numeric' })
-    : null;
-
   return (
     <div className="mt-3">
       {/* 曲名 */}
@@ -53,25 +48,8 @@ export default function VideoInfo({ song }: VideoInfoProps) {
         )}
 
         {/* 区切り */}
-        {(song.favoritedTimes > 0 || publishDate) && (
+        {song.songType !== 'Original' && (
           <span style={{ color: 'var(--color-text-muted)' }}>•</span>
-        )}
-
-        {/* お気に入り数 */}
-        {song.favoritedTimes > 0 && (
-          <span className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
-            ♥ {song.favoritedTimes.toLocaleString()} お気に入り
-          </span>
-        )}
-
-        {/* 投稿日 */}
-        {publishDate && (
-          <>
-            <span style={{ color: 'var(--color-text-muted)' }}>•</span>
-            <span className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
-              {publishDate}
-            </span>
-          </>
         )}
 
         {/* 曲タイプバッジ */}
