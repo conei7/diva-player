@@ -122,6 +122,14 @@ function RecItemRow({
   const thumbUrl = getThumbUrl(song);
   const duration = formatDuration(song.lengthSeconds);
 
+  // YouTubeにOriginalがない（非公式のみ: ReprntまたはOtherのみ）
+  const ytPVs = song.pvs?.filter(pv => !pv.disabled && pv.service === 'Youtube') ?? [];
+  const isYTUnofficialOnly = ytPVs.length > 0 && ytPVs.every(pv => pv.pvType !== 'Original');
+
+  // ニコニコにOriginalがない（非公式のみ）
+  const nicoPVs = song.pvs?.filter(pv => !pv.disabled && pv.service === 'NicoNicoDouga') ?? [];
+  const isNicoUnofficialOnly = nicoPVs.length > 0 && nicoPVs.every(pv => pv.pvType !== 'Original');
+
   // アーティスト名の抽出
   const producers = song.artists?.filter(a => a.categories?.includes('Producer')) || [];
   const producerName = producers.map(a => a.name || a.artist?.name).filter(Boolean).join(', ');
@@ -234,7 +242,12 @@ function RecItemRow({
 
           <div className="flex items-center gap-2 mt-1 flex-wrap">
             {(song.youtubeViews || 0) > 0 && (
-              <span className="text-[10px] flex items-center gap-0.5 font-medium" style={{ color: '#ef4444' }}>
+              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded flex items-center gap-0.5"
+                    style={{
+                      background: isYTUnofficialOnly ? 'rgba(100, 30, 30, 0.3)' : 'rgba(239, 68, 68, 0.12)',
+                      color: isYTUnofficialOnly ? '#b91c1c' : '#ef4444',
+                      opacity: isYTUnofficialOnly ? 0.8 : 1
+                    }}>
                 <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
                   <path d="M21.582 6.186a2.665 2.665 0 0 0-1.876-1.884C17.95 3.84 12 3.84 12 3.84s-5.95 0-7.706.462A2.665 2.665 0 0 0 2.418 6.186C2 7.952 2 12 2 12s0 4.048.418 5.814a2.665 2.665 0 0 0 1.876 1.884C6.05 20.16 12 20.16 12 20.16s5.95 0 7.706-.462a2.665 2.665 0 0 0 1.876-1.884C22 16.048 22 12 22 12s0-4.048-.418-5.814zM9.75 15.02v-6.04L15.05 12l-5.3 3.02z"/>
                 </svg>
@@ -242,7 +255,12 @@ function RecItemRow({
               </span>
             )}
             {(song.nicoViews || 0) > 0 && (
-              <span className="text-[10px] flex items-center gap-0.5 font-medium" style={{ color: '#3b82f6' }}>
+              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded flex items-center gap-0.5"
+                    style={{
+                      background: isNicoUnofficialOnly ? 'rgba(30, 30, 100, 0.3)' : 'rgba(59, 130, 246, 0.12)',
+                      color: isNicoUnofficialOnly ? '#1e40af' : '#3b82f6',
+                      opacity: isNicoUnofficialOnly ? 0.8 : 1
+                    }}>
                 📺 {formatJapaneseViews(song.nicoViews)}
               </span>
             )}
