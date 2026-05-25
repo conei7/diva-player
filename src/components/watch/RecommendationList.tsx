@@ -226,6 +226,14 @@ function RecItemRow({
               style={{ color: isActive ? 'var(--color-accent-cyan)' : 'var(--color-text-primary)' }}
               title={song.name}>
             {song.name}
+            {song.songType !== 'Original' && song.songType !== 'Unspecified' && (
+              <span
+                className="ml-2 inline-block px-1.5 py-0.5 rounded text-[10px] font-medium leading-none align-middle"
+                style={{ background: 'var(--color-accent-purple)', color: '#fff' }}
+              >
+                {song.songType}
+              </span>
+            )}
           </h4>
           
           {vocalistName ? (
@@ -270,17 +278,7 @@ function RecItemRow({
               </span>
             )}
           </div>
-          
-          {song.songType !== 'Original' && song.songType !== 'Unspecified' && (
-            <div className="mt-1">
-              <span
-                className="inline-block px-1.5 py-0.5 rounded text-[10px] font-medium leading-none"
-                style={{ background: 'var(--color-accent-purple)', color: '#fff' }}
-              >
-                {song.songType}
-              </span>
-            </div>
-          )}
+
         </div>
 
         {/* ⋮ ボタン (選択モード中は非表示) */}

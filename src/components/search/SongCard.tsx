@@ -294,6 +294,12 @@ export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect }
           <div className="flex-1 min-w-0">
             <h3 className="text-sm font-semibold truncate" style={{ color: 'var(--color-text-primary)' }}>
               {song.name}
+              {song.songType !== 'Original' && song.songType !== 'Unspecified' && (
+                <span className="ml-2 inline-block text-[10px] px-1.5 py-0.5 rounded align-middle leading-none"
+                      style={{ background: 'rgba(139, 92, 246, 0.12)', color: 'var(--color-accent-purple)' }}>
+                  {song.songType}
+                </span>
+              )}
             </h3>
             
             {vocalistName ? (
@@ -420,13 +426,7 @@ export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect }
             </span>
           )}
 
-          {/* 曲タイプバッジ */}
-          {song.songType !== 'Original' && (
-            <span className="text-[10px] px-1.5 py-0.5 rounded"
-                  style={{ background: 'rgba(139, 92, 246, 0.12)', color: 'var(--color-accent-purple)' }}>
-              {song.songType}
-            </span>
-          )}
+
 
           <div className="flex-1" />
 
