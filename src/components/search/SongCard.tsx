@@ -78,6 +78,12 @@ export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect }
   const nicoPVs = song.pvs?.filter(pv => !pv.disabled && pv.service === 'NicoNicoDouga') ?? [];
   const isNicoUnofficialOnly = nicoPVs.length > 0 && nicoPVs.every(pv => pv.pvType !== 'Original');
 
+  // アーティスト名の抽出
+  const producers = song.artists?.filter(a => a.categories?.includes('Producer')) || [];
+  const producerName = producers.map(a => a.name || a.artist?.name).filter(Boolean).join(', ');
+  const vocalists = song.artists?.filter(a => a.categories === 'Vocalist') || [];
+  const vocalistName = vocalists.map(a => a.name || a.artist?.name).filter(Boolean).join(', ');
+
   // 再生時間フォーマット
   const formatDuration = (seconds: number): string => {
     if (!seconds) return '--:--';
@@ -289,8 +295,17 @@ export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect }
             <h3 className="text-sm font-semibold truncate" style={{ color: 'var(--color-text-primary)' }}>
               {song.name}
             </h3>
-            <p className="text-xs mt-1 truncate" style={{ color: 'var(--color-text-secondary)' }}>
-              {song.artistString}
+            
+            {vocalistName ? (
+              <p className="text-xs mt-0.5 truncate" style={{ color: 'var(--color-text-secondary)' }}>
+                feat. {vocalistName}
+              </p>
+            ) : (
+              <div className="h-0" />
+            )}
+
+            <p className="text-xs mt-0.5 truncate" style={{ color: 'var(--color-text-muted)' }}>
+              {producerName || song.artistString}
             </p>
           </div>
 

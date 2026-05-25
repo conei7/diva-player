@@ -71,6 +71,8 @@ export default function SongDetailsPanel({ song, onClose, inline }: SongDetailsP
 
   const producers = song.artists?.filter(a => a.categories?.includes('Producer')) ?? [];
   const vocalists = song.artists?.filter(a => a.categories === 'Vocalist') ?? [];
+  const producerName = producers.map(a => a.name || a.artist?.name).filter(Boolean).join(', ');
+  const vocalistName = vocalists.map(a => a.name || a.artist?.name).filter(Boolean).join(', ');
 
   const vocadbUrl = `https://vocadb.net/S/${song.id}`;
 
@@ -111,9 +113,16 @@ export default function SongDetailsPanel({ song, onClose, inline }: SongDetailsP
         <h2 className="text-base font-bold leading-tight" style={{ color: 'var(--color-text-primary)' }}>
           {song.name}
         </h2>
-        <p className="text-sm mt-1" style={{ color: 'var(--color-text-secondary)' }}>
-          {song.artistString}
-        </p>
+        <div className="mt-1 flex flex-col gap-0.5">
+          {vocalistName && (
+            <p className="text-xs" style={{ color: 'var(--color-text-secondary)' }}>
+              feat. {vocalistName}
+            </p>
+          )}
+          <p className="text-sm" style={{ color: 'var(--color-text-muted)' }}>
+            {producerName || song.artistString}
+          </p>
+        </div>
       </div>
 
       {/* 基本情報 */}

@@ -28,18 +28,7 @@ export default function VideoInfo({ song }: VideoInfoProps) {
         {song.name}
       </h1>
 
-      {/* メタ情報行 */}
-      <div className="flex flex-wrap items-center gap-2 mt-2">
-        {/* P名 */}
-        {producerName && (
-          <span
-            className="text-sm font-medium cursor-pointer hover:underline"
-            style={{ color: 'var(--color-text-primary)' }}
-          >
-            {producerName}
-          </span>
-        )}
-
+      <div className="mt-2 flex flex-col gap-1">
         {/* ボーカリスト */}
         {vocalists.length > 0 && (
           <span className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
@@ -47,20 +36,25 @@ export default function VideoInfo({ song }: VideoInfoProps) {
           </span>
         )}
 
-        {/* 区切り */}
-        {song.songType !== 'Original' && (
-          <span style={{ color: 'var(--color-text-muted)' }}>•</span>
-        )}
-
-        {/* 曲タイプバッジ */}
-        {song.songType !== 'Original' && (
+        {/* 作者 */}
+        <div className="flex flex-wrap items-center gap-2">
           <span
-            className="text-xs font-medium px-2 py-0.5 rounded-full"
-            style={{ background: 'rgba(139, 92, 246, 0.15)', color: 'var(--color-accent-purple)' }}
+            className="text-sm font-medium cursor-pointer hover:underline"
+            style={{ color: 'var(--color-text-primary)' }}
           >
-            {song.songType}
+            {producerName || song.artistString}
           </span>
-        )}
+
+          {/* 曲タイプバッジ */}
+          {song.songType !== 'Original' && song.songType !== 'Unspecified' && (
+            <span
+              className="text-[10px] font-medium px-2 py-0.5 rounded-full"
+              style={{ background: 'rgba(139, 92, 246, 0.15)', color: 'var(--color-accent-purple)' }}
+            >
+              {song.songType}
+            </span>
+          )}
+        </div>
       </div>
     </div>
   );
