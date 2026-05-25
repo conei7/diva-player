@@ -395,7 +395,11 @@ export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect }
           {/* PVサービスバッジ / 再生数 */}
           {(pvServices.has('Youtube') || (song.youtubeViews && song.youtubeViews > 0)) && (
             <span className="text-[10px] font-bold px-1.5 py-0.5 rounded flex items-center gap-1"
-                  style={{ background: 'rgba(239, 68, 68, 0.12)', color: '#ef4444' }}
+                  style={{ 
+                    background: isYTUnofficialOnly ? 'rgba(100, 30, 30, 0.3)' : 'rgba(239, 68, 68, 0.12)', 
+                    color: isYTUnofficialOnly ? '#b91c1c' : '#ef4444',
+                    opacity: isYTUnofficialOnly ? 0.8 : 1
+                  }}
                   title="YouTube 再生回数">
               <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
                 <path d="M21.582 6.186a2.665 2.665 0 0 0-1.876-1.884C17.95 3.84 12 3.84 12 3.84s-5.95 0-7.706.462A2.665 2.665 0 0 0 2.418 6.186C2 7.952 2 12 2 12s0 4.048.418 5.814a2.665 2.665 0 0 0 1.876 1.884C6.05 20.16 12 20.16 12 20.16s5.95 0 7.706-.462a2.665 2.665 0 0 0 1.876-1.884C22 16.048 22 12 22 12s0-4.048-.418-5.814zM9.75 15.02v-6.04L15.05 12l-5.3 3.02z"/>
@@ -405,7 +409,11 @@ export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect }
           )}
           {(pvServices.has('NicoNicoDouga') || (song.nicoViews && song.nicoViews > 0)) && (
             <span className="text-[10px] font-bold px-1.5 py-0.5 rounded flex items-center gap-1"
-                  style={{ background: 'rgba(59, 130, 246, 0.12)', color: '#3b82f6' }}
+                  style={{ 
+                    background: isNicoUnofficialOnly ? 'rgba(30, 30, 100, 0.3)' : 'rgba(59, 130, 246, 0.12)', 
+                    color: isNicoUnofficialOnly ? '#1e40af' : '#3b82f6',
+                    opacity: isNicoUnofficialOnly ? 0.8 : 1
+                  }}
                   title="ニコニコ動画 再生回数">
               📺
               {formatJapaneseViews(song.nicoViews) || (isNicoUnofficialOnly ? '非公式ニコ' : 'ニコ')}

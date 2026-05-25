@@ -170,10 +170,20 @@ export default function Description({ song }: DescriptionProps) {
                     >
                       <span
                         className="text-[10px] font-bold px-1.5 py-0.5 rounded"
-                        style={{
-                          background: pv.service === 'Youtube' ? 'rgba(239,68,68,0.15)' : 'rgba(59,130,246,0.15)',
-                          color: pv.service === 'Youtube' ? '#ef4444' : '#3b82f6',
-                        }}
+                        style={(() => {
+                          const isOriginal = pv.pvType === 'Original';
+                          if (pv.service === 'Youtube') {
+                            return {
+                              background: isOriginal ? 'rgba(239,68,68,0.15)' : 'rgba(100,30,30,0.3)',
+                              color: isOriginal ? '#ef4444' : '#b91c1c'
+                            };
+                          } else {
+                            return {
+                              background: isOriginal ? 'rgba(59,130,246,0.15)' : 'rgba(30,30,100,0.3)',
+                              color: isOriginal ? '#3b82f6' : '#1e40af'
+                            };
+                          }
+                        })()}
                       >
                         {pv.service === 'Youtube' ? 'YT' : 'ニコ'}
                       </span>

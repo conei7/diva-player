@@ -14,8 +14,11 @@ interface SongDetailsPanelProps {
 function PVBadge({ pv }: { pv: PV }) {
   const isNico = pv.service === 'NicoNicoDouga';
   const label = isNico ? 'ニコ' : 'YT';
-  const color = isNico ? '#3b82f6' : '#ef4444';
-  const bg = isNico ? 'rgba(59,130,246,0.15)' : 'rgba(239,68,68,0.15)';
+  const isOriginal = pv.pvType === 'Original';
+  const color = isNico ? (isOriginal ? '#3b82f6' : '#1e40af') : (isOriginal ? '#ef4444' : '#b91c1c');
+  const bg = isNico 
+    ? (isOriginal ? 'rgba(59,130,246,0.15)' : 'rgba(30,30,100,0.3)') 
+    : (isOriginal ? 'rgba(239,68,68,0.15)' : 'rgba(100,30,30,0.3)');
   const typeLabel = pv.pvType === 'Original' ? '公式' : pv.pvType === 'Reprint' ? '転載' : 'その他';
   const watchUrl = isNico
     ? `https://www.nicovideo.jp/watch/${pv.pvId}`
