@@ -393,7 +393,7 @@ export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect }
         {/* 下部バッジ列 */}
         <div className="flex items-center gap-2 mt-2">
           {/* PVサービスバッジ / 再生数 */}
-          {(pvServices.has('Youtube') || (song.youtubeViews && song.youtubeViews > 0)) && (
+          {(pvServices.has('Youtube') || (song.youtubeViews || 0) > 0) && (
             <span className="text-[10px] font-bold px-1.5 py-0.5 rounded flex items-center gap-1"
                   style={{ 
                     background: isYTUnofficialOnly ? 'rgba(100, 30, 30, 0.3)' : 'rgba(239, 68, 68, 0.12)', 
@@ -407,7 +407,7 @@ export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect }
               {formatJapaneseViews(song.youtubeViews) || (isYTUnofficialOnly ? '非公式YT' : 'YT')}
             </span>
           )}
-          {(pvServices.has('NicoNicoDouga') || (song.nicoViews && song.nicoViews > 0)) && (
+          {(pvServices.has('NicoNicoDouga') || (song.nicoViews || 0) > 0) && (
             <span className="text-[10px] font-bold px-1.5 py-0.5 rounded flex items-center gap-1"
                   style={{ 
                     background: isNicoUnofficialOnly ? 'rgba(30, 30, 100, 0.3)' : 'rgba(59, 130, 246, 0.12)', 
