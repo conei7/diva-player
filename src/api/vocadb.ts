@@ -462,6 +462,7 @@ export async function getSongsByProducer(
   const data = cached ?? await (async () => {
     const response = await fetchWithRetry(url);
     const result: SongSearchResult = await response.json();
+    result.items = await attachExternalViews(result.items);
     setCache(cacheKey, result);
     return result;
   })();
@@ -497,6 +498,7 @@ export async function getSongsByTags(
   const data = cached ?? await (async () => {
     const response = await fetchWithRetry(url);
     const result: SongSearchResult = await response.json();
+    result.items = await attachExternalViews(result.items);
     setCache(cacheKey, result);
     return result;
   })();

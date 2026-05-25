@@ -391,7 +391,7 @@ export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect }
         </div>
 
         {/* 下部バッジ列 */}
-        <div className="flex items-center gap-2 mt-2">
+        <div className="flex items-center flex-wrap gap-2 mt-2">
           {/* PVサービスバッジ / 再生数 */}
           {(pvServices.has('Youtube') || (song.youtubeViews || 0) > 0) && (
             <span className="text-[10px] font-bold px-1.5 py-0.5 rounded flex items-center gap-1"
