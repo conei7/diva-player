@@ -178,12 +178,20 @@ export default function PlayerBar() {
           {currentPV && (
             <span
               className="hidden lg:inline text-[10px] font-bold px-2 py-0.5 rounded-full mr-1"
-              style={{
-                background: currentPV.service === 'Youtube'
-                  ? 'rgba(239, 68, 68, 0.15)'
-                  : 'rgba(59, 130, 246, 0.15)',
-                color: currentPV.service === 'Youtube' ? '#ef4444' : '#3b82f6',
-              }}
+              style={(() => {
+                const isOriginal = currentPV.pvType === 'Original';
+                if (currentPV.service === 'Youtube') {
+                  return {
+                    background: isOriginal ? 'rgba(239, 68, 68, 0.15)' : 'rgba(100, 30, 30, 0.3)',
+                    color: isOriginal ? '#ef4444' : '#b91c1c'
+                  };
+                } else {
+                  return {
+                    background: isOriginal ? 'rgba(59, 130, 246, 0.15)' : 'rgba(30, 30, 100, 0.3)',
+                    color: isOriginal ? '#3b82f6' : '#1e40af'
+                  };
+                }
+              })()}
             >
               {currentPV.service === 'Youtube'
                 ? (currentPV.pvType !== 'Original' ? '非公式YT' : 'YouTube')

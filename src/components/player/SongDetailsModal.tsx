@@ -217,15 +217,22 @@ export default function SongDetailsModal() {
                     target="_blank"
                     rel="noopener noreferrer"
                     className="text-xs px-3 py-1.5 rounded-lg transition-colors"
-                    style={{
-                      background: pv.service === 'Youtube'
-                        ? 'rgba(239, 68, 68, 0.15)'
-                        : 'rgba(59, 130, 246, 0.15)',
-                      color: pv.service === 'Youtube' ? '#ef4444' : '#3b82f6',
-                      border: pv.service === 'Youtube'
-                        ? '1px solid rgba(239, 68, 68, 0.3)'
-                        : '1px solid rgba(59, 130, 246, 0.3)',
-                    }}
+                    style={(() => {
+                      const isOriginal = pv.pvType === 'Original';
+                      if (pv.service === 'Youtube') {
+                        return {
+                          background: isOriginal ? 'rgba(239, 68, 68, 0.15)' : 'rgba(100, 30, 30, 0.3)',
+                          color: isOriginal ? '#ef4444' : '#b91c1c',
+                          border: isOriginal ? '1px solid rgba(239, 68, 68, 0.3)' : '1px solid rgba(100, 30, 30, 0.4)'
+                        };
+                      } else {
+                        return {
+                          background: isOriginal ? 'rgba(59, 130, 246, 0.15)' : 'rgba(30, 30, 100, 0.3)',
+                          color: isOriginal ? '#3b82f6' : '#1e40af',
+                          border: isOriginal ? '1px solid rgba(59, 130, 246, 0.3)' : '1px solid rgba(30, 30, 100, 0.4)'
+                        };
+                      }
+                    })()}
                     onClick={(e) => e.stopPropagation()}
                   >
                     {pv.service === 'Youtube' ? '▶ YouTube' : '▶ ニコニコ'}
