@@ -122,6 +122,12 @@ function RecItemRow({
   const thumbUrl = getThumbUrl(song);
   const duration = formatDuration(song.lengthSeconds);
 
+  // アーティスト名の抽出
+  const producers = song.artists?.filter(a => a.categories?.includes('Producer')) || [];
+  const producerName = producers.map(a => a.name || a.artist?.name).filter(Boolean).join(', ');
+  const vocalists = song.artists?.filter(a => a.categories === 'Vocalist') || [];
+  const vocalistName = vocalists.map(a => a.name || a.artist?.name).filter(Boolean).join(', ');
+
   const handleCardClick = useCallback((e: React.MouseEvent) => {
     if (isSelectionMode) {
       e.stopPropagation();
@@ -213,10 +219,20 @@ function RecItemRow({
               title={song.name}>
             {song.name}
           </h4>
-          <p className="text-xs mt-1 truncate" style={{ color: 'var(--color-text-muted)' }}>
-            {song.artistString}
+          
+          {vocalistName ? (
+            <p className="text-xs mt-0.5 truncate" style={{ color: 'var(--color-text-secondary)' }}>
+              feat. {vocalistName}
+            </p>
+          ) : (
+            <div className="h-0" />
+          )}
+
+          <p className="text-xs mt-0.5 truncate" style={{ color: 'var(--color-text-muted)' }}>
+            {producerName || song.artistString}
           </p>
-          <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+
+          <div className="flex items-center gap-2 mt-1 flex-wrap">
             {song.youtubeViews && song.youtubeViews > 0 && (
               <span className="text-[10px] flex items-center gap-0.5 font-medium" style={{ color: '#ef4444' }}>
                 <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
