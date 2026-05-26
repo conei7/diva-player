@@ -22,6 +22,17 @@ function getThumbUrl(song: Song): string | null {
   return null;
 }
 
+const formatJapaneseViews = (views?: number): string | null => {
+  if (views === undefined || views <= 0) return null;
+  if (views >= 100000000) {
+    return (views / 100000000).toFixed(1).replace('.0', '') + '億';
+  } else if (views >= 10000) {
+    return (views / 10000).toFixed(1).replace('.0', '') + '万';
+  } else {
+    return views.toLocaleString();
+  }
+};
+
 /** 再生時間フォーマット */
 function formatDuration(seconds: number): string {
   if (!seconds) return '';
@@ -127,8 +138,8 @@ export default function VideoCard({ song, showScore }: VideoCardProps) {
           {song.name}
         </h3>
 
-        {/* P名 (クリッカブル) + ハート数 */}
-        <div className="flex items-center gap-2 mt-0.5">
+        {/* P名 (クリッカブル) + ハート数 / 再生数 */}
+        <div className="flex items-center flex-wrap gap-2 mt-0.5">
           <p
             className="text-xs truncate transition-colors cursor-pointer hover:underline"
             style={{ color: 'var(--color-text-secondary)' }}
@@ -139,11 +150,26 @@ export default function VideoCard({ song, showScore }: VideoCardProps) {
           >
             {producer.name}
           </p>
-          {song.favoritedTimes > 0 && (
-            <span className="text-[11px]" style={{ color: 'var(--color-text-muted)' }}>
-              ♥ {song.favoritedTimes.toLocaleString()}
-            </span>
-          )}
+          <div className="flex items-center gap-1.5 flex-wrap">
+            {song.favoritedTimes > 0 && (
+              <span className="text-[11px]" style={{ color: 'var(--color-text-muted)' }} title="VocaDBお気に入り">
+                ♥ {formatJapaneseViews(song.favoritedTimes)}
+              </span>
+            )}
+            {song.youtubeViews !== undefined && song.youtubeViews > 0 && (
+              <span className="text-[11px] flex items-center gap-0.5" style={{ color: '#ef4444' }} title="YouTube再生回数">
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M21.582 6.186a2.665 2.665 0 0 0-1.876-1.884C17.95 3.84 12 3.84 12 3.84s-5.95 0-7.706.462A2.665 2.665 0 0 0 2.418 6.186C2 7.952 2 12 2 12s0 4.048.418 5.814a2.665 2.665 0 0 0 1.876 1.884C6.05 20.16 12 20.16 12 20.16s5.95 0 7.706-.462a2.665 2.665 0 0 0 1.876-1.884C22 16.048 22 12 22 12s0-4.048-.418-5.814zM9.75 15.02v-6.04L15.05 12l-5.3 3.02z"/>
+                </svg>
+                {formatJapaneseViews(song.youtubeViews)}
+              </span>
+            )}
+            {song.nicoViews !== undefined && song.nicoViews > 0 && (
+              <span className="text-[11px] flex items-center gap-0.5" style={{ color: '#3b82f6' }} title="ニコニコ再生回数">
+                📺 {formatJapaneseViews(song.nicoViews)}
+              </span>
+            )}
+          </div>
         </div>
 
         {/* スコア表示 (オプション) */}
