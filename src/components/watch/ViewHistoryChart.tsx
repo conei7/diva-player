@@ -91,8 +91,8 @@ export default function ViewHistoryChart({ songId }: ViewHistoryChartProps) {
               contentStyle={{ background: 'var(--color-bg-elevated)', border: 'none', borderRadius: '8px', fontSize: '12px' }}
               itemStyle={{ fontSize: '12px', fontWeight: 'bold' }}
               labelStyle={{ color: 'var(--color-text-muted)', marginBottom: '4px' }}
-              formatter={(value: number, name: string) => [
-                formatJapaneseViews(value), 
+              formatter={(value: any, name: any) => [
+                typeof value === 'number' ? formatJapaneseViews(value) : value, 
                 name === 'youtube' ? 'YouTube' : 'ニコニコ動画'
               ]}
             />
