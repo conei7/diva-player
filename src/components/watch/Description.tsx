@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { Song } from '../../types/vocadb';
+import ViewHistoryChart from './ViewHistoryChart';
 
 /**
  * Description - 折りたたみ可能な概要欄
@@ -199,6 +200,13 @@ export default function Description({ song }: DescriptionProps) {
           </div>
         )}
       </div>
+
+      {/* 展開時の詳細情報（履歴チャート） */}
+      {expanded && (
+        <div className="mt-4 pt-4 border-t border-[rgba(255,255,255,0.05)]">
+          <ViewHistoryChart songId={song.id} />
+        </div>
+      )}
 
       {/* 展開/折りたたみトグル */}
       <button
