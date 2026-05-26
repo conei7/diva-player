@@ -1,4 +1,5 @@
 import type { Song } from '../../types/vocadb';
+import ViewHistoryChart from './ViewHistoryChart';
 
 const formatJapaneseViews = (views?: number): string | null => {
   if (views === undefined || views <= 0) return null;
@@ -89,6 +90,9 @@ export default function VideoInfo({ song }: VideoInfoProps) {
           )}
         </div>
       </div>
+      
+      {/* 履歴チャート */}
+      <ViewHistoryChart songId={song.id} />
     </div>
   );
 }

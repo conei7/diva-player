@@ -79,6 +79,30 @@ public class DbService
         return results.OfType<SongInfo>().ToArray();
     }
 
+    public async Task<List<object>> GetViewHistoryAsync(int songId)
+    {
+        using var conn = Open();
+        await using var cmd = new NpgsqlCommand(@"
+            SELECT recorded_at, youtube_views, nico_views
+            FROM view_history
+            WHERE song_id = $1
+            ORDER BY recorded_at ASC", conn);
+        cmd.Parameters.AddWithValue(songId);
+
+        var result = new List<object>();
+        await using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            result.Add(new
+            {
+                date = reader.GetDateTime(0).ToString("yyyy-MM-dd"),
+                youtube = reader.GetInt64(1),
+                nico = reader.GetInt64(2)
+            });
+        }
+        return result;
+    }
+
     // ---- マルコフ遷移確率 -----------------------------------------
 
     public async Task<Dictionary<int, Dictionary<int, double>>> LoadMarkovMatrixAsync()

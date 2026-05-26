@@ -249,6 +249,13 @@ app.MapGet("/api/songs/views", async (string ids, DbService db) =>
     return Results.Ok(result);
 });
 
+// GET /api/songs/{id}/history
+app.MapGet("/api/songs/{id}/history", async (int id, DbService db) =>
+{
+    var history = await db.GetViewHistoryAsync(id);
+    return Results.Ok(history);
+});
+
 // POST /api/session  → セッションIDを発行
 app.MapPost("/api/session", async (DbService db) =>
 {
