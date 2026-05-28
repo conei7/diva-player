@@ -13,8 +13,8 @@ interface SongCardProps {
   onSelect?: (song: Song) => void;
 }
 
-const formatJapaneseViews = (views?: number): string | null => {
-  if (views === undefined || views <= 0) return null;
+const formatJapaneseViews = (views?: number): string => {
+  if (views === undefined || views <= 0) return '-';
   if (views >= 100000000) {
     return (views / 100000000).toFixed(1).replace('.0', '') + '億';
   } else if (views >= 10000) {
@@ -294,12 +294,6 @@ export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect }
           <div className="flex-1 min-w-0">
             <h3 className="text-sm font-semibold truncate" style={{ color: 'var(--color-text-primary)' }}>
               {song.name}
-              {song.songType !== 'Original' && song.songType !== 'Unspecified' && (
-                <span className="ml-2 inline-block text-[10px] px-1.5 py-0.5 rounded align-middle leading-none"
-                      style={{ background: 'rgba(139, 92, 246, 0.12)', color: 'var(--color-accent-purple)' }}>
-                  {song.songType}
-                </span>
-              )}
             </h3>
             
             {vocalistName ? (
@@ -428,8 +422,6 @@ export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect }
 
 
 
-          <div className="flex-1" />
-
           {/* VocaDB お気に入り数 */}
           {song.favoritedTimes > 0 && (
             <span className="text-[10px] flex items-center gap-0.5" style={{ color: 'var(--color-text-muted)' }}
@@ -438,6 +430,16 @@ export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect }
                 <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/>
               </svg>
               {song.favoritedTimes.toLocaleString()}
+            </span>
+          )}
+
+          <div className="flex-1" />
+
+          {/* 曲タイプ (Remixなど) */}
+          {song.songType !== 'Original' && song.songType !== 'Unspecified' && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded font-medium leading-none"
+                  style={{ background: 'rgba(139, 92, 246, 0.12)', color: 'var(--color-accent-purple)' }}>
+              {song.songType}
             </span>
           )}
 

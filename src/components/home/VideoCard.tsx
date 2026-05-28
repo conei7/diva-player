@@ -22,8 +22,8 @@ function getThumbUrl(song: Song): string | null {
   return null;
 }
 
-const formatJapaneseViews = (views?: number): string | null => {
-  if (views === undefined || views <= 0) return null;
+const formatJapaneseViews = (views?: number): string => {
+  if (views === undefined || views <= 0) return '-';
   if (views >= 100000000) {
     return (views / 100000000).toFixed(1).replace('.0', '') + '億';
   } else if (views >= 10000) {
@@ -58,6 +58,8 @@ export default function VideoCard({ song, showScore }: VideoCardProps) {
   const duration = formatDuration(song.lengthSeconds);
   const producer = getProducerInfo(song);
   const hasPlayablePV = !!getPlayablePV(song);
+  const hasYT = song.pvs?.some(pv => !pv.disabled && pv.service === 'Youtube');
+  const hasNico = song.pvs?.some(pv => !pv.disabled && pv.service === 'NicoNicoDouga');
 
   const handleClick = () => {
     if (!hasPlayablePV) return;
@@ -150,13 +152,8 @@ export default function VideoCard({ song, showScore }: VideoCardProps) {
           >
             {producer.name}
           </p>
-          <div className="flex items-center gap-1.5 flex-wrap">
-            {song.favoritedTimes > 0 && (
-              <span className="text-[11px]" style={{ color: 'var(--color-text-muted)' }} title="VocaDBお気に入り">
-                ♥ {formatJapaneseViews(song.favoritedTimes)}
-              </span>
-            )}
-            {song.youtubeViews !== undefined && song.youtubeViews > 0 && (
+          <div className="flex items-center gap-1.5 flex-wrap flex-1">
+            {(hasYT || (song.youtubeViews || 0) > 0) && (
               <span className="text-[11px] flex items-center gap-0.5" style={{ color: '#ef4444' }} title="YouTube再生回数">
                 <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
                   <path d="M21.582 6.186a2.665 2.665 0 0 0-1.876-1.884C17.95 3.84 12 3.84 12 3.84s-5.95 0-7.706.462A2.665 2.665 0 0 0 2.418 6.186C2 7.952 2 12 2 12s0 4.048.418 5.814a2.665 2.665 0 0 0 1.876 1.884C6.05 20.16 12 20.16 12 20.16s5.95 0 7.706-.462a2.665 2.665 0 0 0 1.876-1.884C22 16.048 22 12 22 12s0-4.048-.418-5.814zM9.75 15.02v-6.04L15.05 12l-5.3 3.02z"/>
@@ -164,9 +161,23 @@ export default function VideoCard({ song, showScore }: VideoCardProps) {
                 {formatJapaneseViews(song.youtubeViews)}
               </span>
             )}
-            {song.nicoViews !== undefined && song.nicoViews > 0 && (
+            {(hasNico || (song.nicoViews || 0) > 0) && (
               <span className="text-[11px] flex items-center gap-0.5" style={{ color: '#3b82f6' }} title="ニコニコ再生回数">
                 📺 {formatJapaneseViews(song.nicoViews)}
+              </span>
+            )}
+            {song.favoritedTimes > 0 && (
+              <span className="text-[11px]" style={{ color: 'var(--color-text-muted)' }} title="VocaDBお気に入り">
+                ♥ {formatJapaneseViews(song.favoritedTimes)}
+              </span>
+            )}
+            
+            <div className="flex-1" />
+            
+            {song.songType !== 'Original' && song.songType !== 'Unspecified' && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded font-medium leading-none"
+                    style={{ background: 'rgba(139, 92, 246, 0.12)', color: 'var(--color-accent-purple)' }}>
+                {song.songType}
               </span>
             )}
           </div>

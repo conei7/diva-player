@@ -5,6 +5,30 @@
 import { create } from 'zustand';
 import type { Song, SongSortRule, SongType, VocalistMatchMode } from '../types/vocadb';
 import { findArtistByName, searchSongs } from '../api/vocadb';
+const RECOMMENDER_API = import.meta.env.VITE_RECOMMENDER_API || '/backend-api';
+
+// VocaDB APIに存在しないローカルソート種別
+export type LocalSortRule = 'YoutubeViews' | 'NicoViews' | 'TotalViews';
+export type ExtendedSortRule = SongSortRule | LocalSortRule;
+
+export const LOCAL_SORT_RULES = new Set<ExtendedSortRule>(['YoutubeViews', 'NicoViews', 'TotalViews']);
+export type SortOrder = 'desc' | 'asc';
+
+/** ローカルソートを適用する */
+export function applyLocalSort(songs: Song[], sort: ExtendedSortRule, order: SortOrder = 'desc'): Song[] {
+  const dir = order === 'asc' ? 1 : -1;
+  if (LOCAL_SORT_RULES.has(sort)) {
+    return [...songs].sort((a, b) => {
+      if (sort === 'YoutubeViews') return dir * ((a.youtubeViews ?? 0) - (b.youtubeViews ?? 0));
+      if (sort === 'NicoViews')   return dir * ((a.nicoViews ?? 0) - (b.nicoViews ?? 0));
+      if (sort === 'TotalViews')  return dir * (((a.youtubeViews ?? 0) + (a.nicoViews ?? 0)) - ((b.youtubeViews ?? 0) + (b.nicoViews ?? 0)));
+      return 0;
+    });
+  }
+  // VocaDB APIソート: APIは常に降順なので昇順の場合は配列を反転
+  if (order === 'asc') return [...songs].reverse();
+  return songs;
+}
 
 export interface VocalistFilter {
   id: number;
@@ -14,7 +38,8 @@ export interface VocalistFilter {
 interface SearchState {
   // 検索パラメータ
   query: string;
-  sort: SongSortRule;
+  sort: ExtendedSortRule;
+  sortOrder: SortOrder;
 
   // アーティスト検索モード時に使うアーティストID（null = 曲名検索）
   resolvedArtistId: number | null;
@@ -42,7 +67,8 @@ interface SearchState {
 
   // アクション
   setQuery: (query: string) => void;
-  setSort: (sort: SongSortRule) => void;
+  setSort: (sort: ExtendedSortRule) => void;
+  setSortOrder: (order: SortOrder) => void;
   setResolvedArtistId: (id: number | null) => void;
   addVocalistFilter: (vocalist: VocalistFilter) => void;
   removeVocalistFilter: (id: number) => void;
@@ -56,31 +82,69 @@ interface SearchState {
 
 const PAGE_SIZE = 24;
 
+/** ローカルソートをVocaDB APIソートに変換 */
+function toApiSort(sort: ExtendedSortRule): SongSortRule {
+  if (LOCAL_SORT_RULES.has(sort)) return 'FavoritedTimes';
+  return sort as SongSortRule;
+}
+
+/** バックエンドのカスタム検索APIを呼び出す */
+async function searchSongsBackend(params: {
+  query?: string;
+  artistIds?: number[];
+  songTypes?: SongType[];
+  sort: ExtendedSortRule;
+  sortOrder: SortOrder;
+  start: number;
+  maxResults: number;
+}): Promise<{ items: Song[]; totalCount: number }> {
+  const qs = new URLSearchParams();
+  if (params.query) qs.set('query', params.query);
+  if (params.artistIds && params.artistIds.length > 0) qs.set('artistIds', params.artistIds.join(','));
+  if (params.songTypes && params.songTypes.length > 0) qs.set('songTypes', params.songTypes.join(','));
+  qs.set('sort', params.sort);
+  qs.set('order', params.sortOrder);
+  qs.set('start', params.start.toString());
+  qs.set('maxResults', params.maxResults.toString());
+
+  const res = await fetch(`${RECOMMENDER_API}/api/songs/search?${qs.toString()}`);
+  if (!res.ok) throw new Error('Search failed');
+  return res.json();
+}
+
 /** ボーカリストIDを使った曲検索の共通ヘルパー */
 async function fetchByArtistIds(
   producerArtistId: number | undefined,
   vocalistFilters: VocalistFilter[],
   vocalistMatchMode: VocalistMatchMode,
-  sort: SongSortRule,
+  sort: ExtendedSortRule,
+  sortOrder: SortOrder,
   start: number,
   existingIds?: Set<number>,
   songTypes?: SongType[],
 ): Promise<{ items: Song[]; totalCount: number; nextApiStart?: number }> {
+  const apiSort = toApiSort(sort);
   const producerIds = producerArtistId ? [producerArtistId] : [];
 
   if (vocalistMatchMode === 'Any' && vocalistFilters.length > 1) {
     // OR: vocalist ごとに並行リクエストしてマージ
+    const isLocal = LOCAL_SORT_RULES.has(sort);
     const results = await Promise.all(
       vocalistFilters.map(v =>
-        searchSongs({
-          artistIds: [...producerIds, v.id],
-          sort,
-          maxResults: PAGE_SIZE,
-          start,
-          getTotalCount: true,
-          onlyWithPVs: true,
-          songTypes,
-        }),
+        isLocal
+          ? searchSongsBackend({
+              artistIds: [...producerIds, v.id],
+              sort, sortOrder, start, maxResults: PAGE_SIZE, songTypes
+            })
+          : searchSongs({
+              artistIds: [...producerIds, v.id],
+              sort: apiSort,
+              maxResults: PAGE_SIZE,
+              start,
+              getTotalCount: true,
+              onlyWithPVs: true,
+              songTypes,
+            }),
       ),
     );
     const seen = new Set<number>(existingIds);
@@ -99,9 +163,15 @@ async function fetchByArtistIds(
   // AND (All / 1vocalist)
   if (vocalistMatchMode !== 'Exact') {
     const allIds = [...producerIds, ...vocalistFilters.map(v => v.id)];
+    if (LOCAL_SORT_RULES.has(sort)) {
+      return searchSongsBackend({
+        artistIds: allIds.length > 0 ? allIds : undefined,
+        sort, sortOrder, start, maxResults: PAGE_SIZE, songTypes
+      });
+    }
     const result = await searchSongs({
       artistIds: allIds.length > 0 ? allIds : undefined,
-      sort,
+      sort: apiSort,
       maxResults: PAGE_SIZE,
       start,
       getTotalCount: true,
@@ -134,15 +204,20 @@ async function fetchByArtistIds(
 
   // PAGE_SIZE 件見つかるまで、または API 結果が尽きるまでループ
   outer: while (matched.length < PAGE_SIZE) {
-    const batch = await searchSongs({
-      artistIds: allIds.length > 0 ? allIds : undefined,
-      sort,
-      maxResults: BATCH,
-      start: apiOffset,
-      getTotalCount: false,
-      onlyWithPVs: true,
-      songTypes,
-    });
+    const batch = LOCAL_SORT_RULES.has(sort)
+      ? await searchSongsBackend({
+          artistIds: allIds.length > 0 ? allIds : undefined,
+          sort, sortOrder, start: apiOffset, maxResults: BATCH, songTypes
+        })
+      : await searchSongs({
+          artistIds: allIds.length > 0 ? allIds : undefined,
+          sort: apiSort,
+          maxResults: BATCH,
+          start: apiOffset,
+          getTotalCount: false,
+          onlyWithPVs: true,
+          songTypes,
+        });
 
     if (batch.items.length === 0) break;
 
@@ -189,7 +264,8 @@ async function fetchByArtistIds(
 
 export const useSearchStore = create<SearchState>((set, get) => ({
   query: '',
-  sort: 'FavoritedTimes',
+  sort: 'FavoritedTimes' as ExtendedSortRule,
+  sortOrder: 'desc' as SortOrder,
   resolvedArtistId: null,
   vocalistFilters: [],
   vocalistMatchMode: 'All',
@@ -203,7 +279,10 @@ export const useSearchStore = create<SearchState>((set, get) => ({
   hasSearched: false,
 
   setQuery: (query: string) => set({ query }),
-  setSort: (sort: SongSortRule) => set({ sort }),
+
+  setSort: (sort: ExtendedSortRule) => set({ sort }),
+  setSortOrder: (order: SortOrder) => set({ sortOrder: order }),
+
   setResolvedArtistId: (id: number | null) => set({ resolvedArtistId: id }),
 
   addVocalistFilter: (vocalist: VocalistFilter) => {
@@ -222,41 +301,54 @@ export const useSearchStore = create<SearchState>((set, get) => ({
   setSongTypeFilter: (filter: 'All' | 'Original') => set({ songTypeFilter: filter }),
 
   searchByArtistId: async (artistId: number, artistName: string) => {
-    const { sort, songTypeFilter } = get();
+    const { sort, sortOrder, songTypeFilter } = get();
     set({ isLoading: true, error: null, currentPage: 0, hasSearched: true, resolvedArtistId: artistId, query: artistName });
     const songTypes = songTypeFilter === 'Original' ? ['Original' as const] : undefined;
     try {
+      if (LOCAL_SORT_RULES.has(sort)) {
+        const result = await searchSongsBackend({
+          artistIds: [artistId],
+          sort, sortOrder, start: 0, maxResults: PAGE_SIZE, songTypes
+        });
+        set({ results: result.items, totalCount: result.totalCount, isLoading: false });
+        return;
+      }
+      
       const result = await searchSongs({
         artistIds: [artistId],
-        sort,
+        sort: toApiSort(sort),
         maxResults: PAGE_SIZE,
         start: 0,
         getTotalCount: true,
         onlyWithPVs: true,
         songTypes,
       });
-      set({ results: result.items, totalCount: result.totalCount, isLoading: false });
+      set({ results: applyLocalSort(result.items, sort, sortOrder), totalCount: result.totalCount, isLoading: false });
     } catch (error) {
       set({ error: error instanceof Error ? error.message : '検索中にエラーが発生しました', isLoading: false, results: [] });
     }
   },
 
   search: async () => {
-    const { query, sort, vocalistFilters, vocalistMatchMode, songTypeFilter } = get();
+    const { query, sort, sortOrder, vocalistFilters, vocalistMatchMode, songTypeFilter } = get();
     set({ isLoading: true, error: null, currentPage: 0, hasSearched: true, resolvedArtistId: null });
     const songTypes = songTypeFilter === 'Original' ? ['Original' as const] : undefined;
+    const apiSort = toApiSort(sort);
     try {
+      const isLocal = LOCAL_SORT_RULES.has(sort);
       const [artist, titleResult] = await Promise.all([
         findArtistByName(query),
-        searchSongs({
-          query,
-          sort,
-          maxResults: PAGE_SIZE,
-          start: 0,
-          getTotalCount: true,
-          onlyWithPVs: true,
-          songTypes,
-        }),
+        isLocal
+          ? searchSongsBackend({ query, sort, sortOrder, start: 0, maxResults: PAGE_SIZE, songTypes })
+          : searchSongs({
+              query,
+              sort: apiSort,
+              maxResults: PAGE_SIZE,
+              start: 0,
+              getTotalCount: true,
+              onlyWithPVs: true,
+              songTypes,
+            }),
       ]);
 
       const producerArtistId = artist?.id;
@@ -267,25 +359,28 @@ export const useSearchStore = create<SearchState>((set, get) => ({
           vocalistFilters,
           vocalistMatchMode,
           sort,
+          sortOrder,
           0,
           undefined,
           songTypes,
         );
         set({
-          results: items,
+          results: isLocal ? items : applyLocalSort(items, sort, sortOrder),
           totalCount,
           resolvedArtistId: producerArtistId ?? null,
           exactApiOffset: nextApiStart ?? 0,
           isLoading: false,
         });
       } else if (producerArtistId) {
-        const artistResult = await searchSongs({
-          artistIds: [producerArtistId],
-          sort,
-          maxResults: PAGE_SIZE,
-          start: 0,
-          getTotalCount: true,
-          onlyWithPVs: true,
+        const artistResult = isLocal
+          ? await searchSongsBackend({ artistIds: [producerArtistId], sort, sortOrder, start: 0, maxResults: PAGE_SIZE, songTypes })
+          : await searchSongs({
+              artistIds: [producerArtistId],
+              sort: apiSort,
+              maxResults: PAGE_SIZE,
+              start: 0,
+              getTotalCount: true,
+              onlyWithPVs: true,
           songTypes,
         });
         const artistSongIds = new Set(artistResult.items.map(s => s.id));
@@ -294,14 +389,14 @@ export const useSearchStore = create<SearchState>((set, get) => ({
           ...titleResult.items.filter(s => !artistSongIds.has(s.id)),
         ];
         set({
-          results: merged,
+          results: isLocal ? merged : applyLocalSort(merged, sort, sortOrder),
           totalCount: artistResult.totalCount,
           resolvedArtistId: producerArtistId,
           isLoading: false,
         });
       } else {
         set({
-          results: titleResult.items,
+          results: isLocal ? titleResult.items : applyLocalSort(titleResult.items, sort, sortOrder),
           totalCount: titleResult.totalCount,
           resolvedArtistId: null,
           isLoading: false,
@@ -318,7 +413,7 @@ export const useSearchStore = create<SearchState>((set, get) => ({
 
   loadMore: async () => {
     const {
-      query, sort, results, currentPage, isLoading, totalCount,
+      query, sort, sortOrder, results, currentPage, isLoading, totalCount,
       resolvedArtistId, vocalistFilters, vocalistMatchMode, exactApiOffset, songTypeFilter,
     } = get();
     if (isLoading || results.length >= totalCount) return;
@@ -330,7 +425,6 @@ export const useSearchStore = create<SearchState>((set, get) => ({
     try {
       if (vocalistFilters.length > 0) {
         const existingIds = new Set(results.map(s => s.id));
-        // 完全一致モードは正しいAPI offset から継続する
         const apiStart = vocalistMatchMode === 'Exact'
           ? exactApiOffset
           : nextPage * PAGE_SIZE;
@@ -339,28 +433,40 @@ export const useSearchStore = create<SearchState>((set, get) => ({
           vocalistFilters,
           vocalistMatchMode,
           sort,
+          sortOrder,
           apiStart,
           existingIds,
           songTypes,
         );
         set({
-          results: [...results, ...items],
+          results: LOCAL_SORT_RULES.has(sort) ? [...results, ...items] : applyLocalSort([...results, ...items], sort, sortOrder),
           currentPage: nextPage,
           exactApiOffset: nextApiStart ?? exactApiOffset,
           isLoading: false,
         });
       } else {
-        const result = await searchSongs({
-          query: resolvedArtistId ? undefined : query,
-          artistIds: resolvedArtistId ? [resolvedArtistId] : undefined,
-          sort,
-          maxResults: PAGE_SIZE,
-          start: nextPage * PAGE_SIZE,
-          getTotalCount: false,
-          onlyWithPVs: true,
-          songTypes,
+        const isLocal = LOCAL_SORT_RULES.has(sort);
+        const result = isLocal
+          ? await searchSongsBackend({
+              query: resolvedArtistId ? undefined : query,
+              artistIds: resolvedArtistId ? [resolvedArtistId] : undefined,
+              sort, sortOrder, start: nextPage * PAGE_SIZE, maxResults: PAGE_SIZE, songTypes
+            })
+          : await searchSongs({
+              query: resolvedArtistId ? undefined : query,
+              artistIds: resolvedArtistId ? [resolvedArtistId] : undefined,
+              sort: toApiSort(sort),
+              maxResults: PAGE_SIZE,
+              start: nextPage * PAGE_SIZE,
+              getTotalCount: false,
+              onlyWithPVs: true,
+              songTypes,
+            });
+        set({
+          results: isLocal ? [...results, ...result.items] : applyLocalSort([...results, ...result.items], sort, sortOrder),
+          currentPage: nextPage,
+          isLoading: false
         });
-        set({ results: [...results, ...result.items], currentPage: nextPage, isLoading: false });
       }
     } catch (error) {
       set({

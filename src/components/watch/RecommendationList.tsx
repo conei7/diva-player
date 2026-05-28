@@ -35,8 +35,8 @@ function formatDuration(seconds: number): string {
   return `${m}:${s.toString().padStart(2, '0')}`;
 }
 
-const formatJapaneseViews = (views?: number): string | null => {
-  if (views === undefined || views <= 0) return null;
+const formatJapaneseViews = (views?: number): string => {
+  if (views === undefined || views <= 0) return '-';
   if (views >= 100000000) {
     return (views / 100000000).toFixed(1).replace('.0', '') + '億';
   } else if (views >= 10000) {
@@ -226,14 +226,6 @@ function RecItemRow({
               style={{ color: isActive ? 'var(--color-accent-cyan)' : 'var(--color-text-primary)' }}
               title={song.name}>
             {song.name}
-            {song.songType !== 'Original' && song.songType !== 'Unspecified' && (
-              <span
-                className="ml-2 inline-block px-1.5 py-0.5 rounded text-[10px] font-medium leading-none align-middle"
-                style={{ background: 'var(--color-accent-purple)', color: '#fff' }}
-              >
-                {song.songType}
-              </span>
-            )}
           </h4>
           
           {vocalistName ? (
@@ -249,7 +241,7 @@ function RecItemRow({
           </p>
 
           <div className="flex items-center gap-2 mt-1 flex-wrap">
-            {(song.youtubeViews || 0) > 0 && (
+            {(ytPVs.length > 0 || (song.youtubeViews || 0) > 0) && (
               <span className="text-[10px] font-bold px-1.5 py-0.5 rounded flex items-center gap-0.5"
                     style={{
                       background: isYTUnofficialOnly ? 'rgba(100, 30, 30, 0.3)' : 'rgba(239, 68, 68, 0.12)',
@@ -262,7 +254,7 @@ function RecItemRow({
                 {formatJapaneseViews(song.youtubeViews)}
               </span>
             )}
-            {(song.nicoViews || 0) > 0 && (
+            {(nicoPVs.length > 0 || (song.nicoViews || 0) > 0) && (
               <span className="text-[10px] font-bold px-1.5 py-0.5 rounded flex items-center gap-0.5"
                     style={{
                       background: isNicoUnofficialOnly ? 'rgba(30, 30, 100, 0.3)' : 'rgba(59, 130, 246, 0.12)',
@@ -275,6 +267,17 @@ function RecItemRow({
             {song.favoritedTimes > 0 && (
               <span className="text-[10px] flex items-center gap-0.5 font-medium" style={{ color: 'var(--color-text-muted)' }}>
                 ♥ {song.favoritedTimes.toLocaleString()}
+              </span>
+            )}
+            
+            <div className="flex-1" />
+            
+            {song.songType !== 'Original' && song.songType !== 'Unspecified' && (
+              <span
+                className="px-1.5 py-0.5 rounded text-[10px] font-medium leading-none"
+                style={{ background: 'var(--color-accent-purple)', color: '#fff' }}
+              >
+                {song.songType}
               </span>
             )}
           </div>

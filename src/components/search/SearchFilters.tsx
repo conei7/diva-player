@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { useSearchStore } from '../../stores/searchStore';
-import type { SongSortRule, VocalistMatchMode } from '../../types/vocadb';
+import type { ExtendedSortRule } from '../../stores/searchStore';
+import type { VocalistMatchMode } from '../../types/vocadb';
 import { searchVocalistsByName } from '../../api/vocadb';
 import type { Artist } from '../../types/vocadb';
 
@@ -22,9 +23,12 @@ const TYPE_LABELS: Record<string, string> = {
   OtherVoiceSynthesizer: 'その他の合成音声',
 };
 
-const SORT_OPTIONS: { value: SongSortRule; label: string }[] = [
+const SORT_OPTIONS: { value: ExtendedSortRule; label: string }[] = [
   { value: 'FavoritedTimes', label: '人気順' },
   { value: 'RatingScore',    label: '評価順' },
+  { value: 'TotalViews',     label: '合計再生回数順' },
+  { value: 'YoutubeViews',   label: 'YouTube再生順' },
+  { value: 'NicoViews',     label: 'ニコニコ再生順' },
   { value: 'PublishDate',    label: '公開日順' },
   { value: 'AdditionDate',   label: '登録日順' },
   { value: 'Name',           label: '名前順' },
@@ -139,6 +143,7 @@ const VOCALIST_CATEGORIES: { label: string; vocalists: PresetVocalist[] }[] = [
 export default function SearchFilters() {
   const {
     sort, setSort, search,
+    sortOrder, setSortOrder,
     vocalistFilters, vocalistMatchMode,
     addVocalistFilter, removeVocalistFilter, setVocalistMatchMode,
     songTypeFilter, setSongTypeFilter,
@@ -448,7 +453,7 @@ export default function SearchFilters() {
           <select
             id="sort-select"
             value={sort}
-            onChange={(e) => { setSort(e.target.value as SongSortRule); search(); }}
+            onChange={(e) => { setSort(e.target.value as ExtendedSortRule); search(); }}
             className="text-sm rounded-lg px-3 py-1.5 outline-none cursor-pointer transition-colors"
             style={{
               background: 'var(--color-surface)',
@@ -460,6 +465,26 @@ export default function SearchFilters() {
               <option key={opt.value} value={opt.value}>{opt.label}</option>
             ))}
           </select>
+
+          {/* 昇順 / 降順トグル */}
+          <button
+            id="sort-order-toggle"
+            onClick={() => { setSortOrder(sortOrder === 'desc' ? 'asc' : 'desc'); search(); }}
+            title={sortOrder === 'desc' ? '降順 (クリックで昇順に)' : '昇順 (クリックで降順に)'}
+            className="flex items-center justify-center rounded-lg transition-colors"
+            style={{
+              width: '32px', height: '32px',
+              background: 'var(--color-surface)',
+              color: 'var(--color-text-secondary)',
+              border: '1px solid var(--color-border)',
+              flexShrink: 0,
+            }}
+          >
+            {sortOrder === 'desc'
+              ? <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M7 14l5-5 5 5z" transform="rotate(180 12 12)"/><path d="M7 10l5 5 5-5z"/></svg>
+              : <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M7 14l5-5 5 5z"/><path d="M7 10l5 5 5-5z" transform="rotate(180 12 12)"/></svg>
+            }
+          </button>
         </div>
       </div>
     </div>

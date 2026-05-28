@@ -23,6 +23,115 @@ public class DbService
         return conn;
     }
 
+    public async Task<(string ItemsJson, int TotalCount)> SearchSongsAsync(
+        string? query,
+        List<int>? artistIds,
+        List<string>? songTypes,
+        string sort,
+        string order,
+        int start,
+        int maxResults)
+    {
+        using var conn = Open();
+        
+        // --- 1. WHERE 句の構築 ---
+        var conditions = new List<string>();
+        var paramValues = new List<object>();
+        int paramIndex = 1;
+
+        if (!string.IsNullOrWhiteSpace(query))
+        {
+            conditions.Add($"(name ILIKE ${paramIndex} OR name_en ILIKE ${paramIndex} OR artist_string ILIKE ${paramIndex})");
+            paramValues.Add($"%{query}%");
+            paramIndex++;
+        }
+
+        if (songTypes != null && songTypes.Count > 0)
+        {
+            var typeParams = new List<string>();
+            foreach (var st in songTypes)
+            {
+                typeParams.Add($"${paramIndex}");
+                paramValues.Add(st);
+                paramIndex++;
+            }
+            conditions.Add($"song_type IN ({string.Join(", ", typeParams)})");
+        }
+
+        if (artistIds != null && artistIds.Count > 0)
+        {
+            foreach (var aId in artistIds)
+            {
+                conditions.Add($"EXISTS (SELECT 1 FROM song_artists sa WHERE sa.song_id = songs.id AND sa.artist_id = ${paramIndex})");
+                paramValues.Add(aId);
+                paramIndex++;
+            }
+        }
+
+        string whereClause = conditions.Count > 0 ? "WHERE " + string.Join(" AND ", conditions) : "";
+        bool hasFilter = conditions.Count > 0;
+
+        // --- 2. ORDER BY 句の構築 ---
+        string orderBy = sort switch
+        {
+            "YoutubeViews" => "youtube_views",
+            "NicoViews" => "nico_views",
+            "TotalViews" => "(COALESCE(youtube_views, 0) + COALESCE(nico_views, 0))",
+            "FavoritedTimes" => "favorited_times",
+            "RatingScore" => "rating_score",
+            "PublishDate" => "publish_date",
+            "AdditionDate" => "id",
+            "Name" => "name",
+            _ => "favorited_times"
+        };
+        string orderDir = (order.ToLower() == "asc") ? "ASC" : "DESC";
+
+        // --- 3. Total Count (フィルターなしは推定値で高速化) ---
+        int totalCount;
+        if (!hasFilter)
+        {
+            await using var estCmd = new NpgsqlCommand(
+                "SELECT COALESCE(reltuples, 0)::int FROM pg_class WHERE relname = 'songs'", conn);
+            totalCount = Convert.ToInt32(await estCmd.ExecuteScalarAsync() ?? 0);
+            if (totalCount == 0) totalCount = 1; // 推定値0の場合は1にして処理続行
+        }
+        else
+        {
+            string countSql = $"SELECT COUNT(*) FROM songs {whereClause}";
+            await using var countCmd = new NpgsqlCommand(countSql, conn);
+            foreach (var v in paramValues) countCmd.Parameters.AddWithValue(v);
+            totalCount = Convert.ToInt32(await countCmd.ExecuteScalarAsync() ?? 0);
+            if (totalCount == 0) return ("[]", 0);
+        }
+
+        // --- 4. データ取得 (行単位で読み取り、C#側でJSON配列構築) ---
+        string dataSql = $@"
+            SELECT raw_json || jsonb_strip_nulls(jsonb_build_object(
+                'youtubeViews', youtube_views,
+                'nicoViews', nico_views,
+                'thumbUrl', COALESCE(raw_json->>'thumbUrl', raw_json->'pvs'->0->>'thumbUrl')
+            ))
+            FROM songs
+            {whereClause}
+            ORDER BY {orderBy} {orderDir} NULLS LAST
+            OFFSET ${paramIndex} LIMIT ${paramIndex + 1}";
+
+        await using var dataCmd = new NpgsqlCommand(dataSql, conn);
+        foreach (var v in paramValues) dataCmd.Parameters.AddWithValue(v);
+        dataCmd.Parameters.AddWithValue(start);
+        dataCmd.Parameters.AddWithValue(maxResults);
+
+        var items = new List<string>();
+        await using var reader = await dataCmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            items.Add(reader.GetString(0));
+        }
+
+        var itemsJson = items.Count > 0 ? "[" + string.Join(",", items) + "]" : "[]";
+        return (itemsJson, totalCount);
+    }
+
     // ---- 楽曲情報 -------------------------------------------------
 
     public async Task<SongInfo?> GetSongInfoAsync(int songId)

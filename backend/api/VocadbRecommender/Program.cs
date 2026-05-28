@@ -249,6 +249,41 @@ app.MapGet("/api/songs/views", async (string ids, DbService db) =>
     return Results.Ok(result);
 });
 
+// GET /api/songs/search?query=...&artistIds=1,2&songTypes=Original&sort=YoutubeViews&order=desc&start=0&maxResults=24
+app.MapGet("/api/songs/search", async (
+    string? query,
+    string? artistIds,
+    string? songTypes,
+    string sort,
+    string order,
+    int? start,
+    int? maxResults,
+    DbService db) =>
+{
+    var aIds = !string.IsNullOrWhiteSpace(artistIds) 
+        ? artistIds.Split(',').Select(int.Parse).ToList() 
+        : new List<int>();
+        
+    var sTypes = !string.IsNullOrWhiteSpace(songTypes)
+        ? songTypes.Split(',').ToList()
+        : new List<string>();
+
+    var (itemsJson, totalCount) = await db.SearchSongsAsync(
+        query, aIds, sTypes, sort, order ?? "desc", start ?? 0, maxResults ?? 24
+    );
+
+    // itemsJsonは文字列としてのJSON配列 "[{...}, {...}]" なので、
+    // Content() を使ってそのまま application/json で返す
+    var json = $$"""
+    {
+      "items": {{itemsJson}},
+      "totalCount": {{totalCount}}
+    }
+    """;
+
+    return Results.Content(json, "application/json");
+});
+
 // GET /api/songs/{id}/history
 app.MapGet("/api/songs/{id}/history", async (int id, DbService db) =>
 {
