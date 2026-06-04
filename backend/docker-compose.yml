@@ -51,6 +51,17 @@ services:
         condition: service_started
     restart: unless-stopped
 
+  web:
+    build:
+      context: ../
+      dockerfile: Dockerfile.web
+    container_name: vocadb_web
+    ports:
+      - "80:80"
+    depends_on:
+      - api
+    restart: unless-stopped
+
 volumes:
   postgres_data:
   qdrant_data:
