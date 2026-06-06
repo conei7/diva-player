@@ -19,8 +19,8 @@ echo "[3/3] Docker コンテナを最新の状態で再起動します..."
 cd ~/diva-player/backend || exit
 
 # ダウンタイムを最小にするために、まずbuildして、それから up -d する
-docker-compose build
-docker-compose up -d
+docker compose build
+docker compose up -d
 
 echo "=============================================="
 echo "🎉 すべての更新が完了しました！"
