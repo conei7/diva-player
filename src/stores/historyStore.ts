@@ -1,14 +1,34 @@
 /**
  * historyStore.ts - 視聴履歴のグローバル管理
  *
- * Zustand persist ミドルウェアで LocalStorage (キー: "diva-history") に保存。
- * 最大200件を保持し、超過した場合は古いものから破棄する。
+ * Zustand persist ミドルウェアと IndexedDB (idb-keyval) を使用して保存。
+ * LocalStorageの5MB制限を回避し、履歴を無限に保持する。
  */
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
+import { persist, createJSONStorage } from 'zustand/middleware';
+import type { StateStorage } from 'zustand/middleware';
+import { get, set, del } from 'idb-keyval';
 import type { Song } from '../types/vocadb';
 
-const MAX_HISTORY = 200;
+// IndexedDBを使ったカスタムストレージ
+const storage: StateStorage = {
+  getItem: async (name: string): Promise<string | null> => {
+    // 古いLocalStorageのデータをマイグレーションする
+    const localData = localStorage.getItem(name);
+    if (localData) {
+      await set(name, localData);
+      localStorage.removeItem(name);
+      return localData;
+    }
+    return (await get(name)) || null;
+  },
+  setItem: async (name: string, value: string): Promise<void> => {
+    await set(name, value);
+  },
+  removeItem: async (name: string): Promise<void> => {
+    await del(name);
+  },
+};
 
 export interface HistoryEntry {
   song: Song;
@@ -21,6 +41,7 @@ interface HistoryState {
   /**
    * 曲を履歴に追加する。
    * 先頭と同じ曲の場合はタイムスタンプのみ更新（重複連続追加防止）。
+   * 最大件数の制限なし（無限保存）。
    */
   addToHistory: (song: Song) => void;
 
@@ -42,14 +63,17 @@ export const useHistoryStore = create<HistoryState>()(
           // 先頭と同じ曲 → タイムスタンプのみ更新
           updated = [newEntry, ...entries.slice(1)];
         } else {
-          // 新しい曲を先頭に追加し、最大件数を超えた分を切り捨て
-          updated = [newEntry, ...entries].slice(0, MAX_HISTORY);
+          // 新しい曲を先頭に追加（無制限）
+          updated = [newEntry, ...entries];
         }
         set({ entries: updated });
       },
 
       clearHistory: () => set({ entries: [] }),
     }),
-    { name: 'diva-history' },
+    { 
+      name: 'diva-history',
+      storage: createJSONStorage(() => storage),
+    },
   ),
 );

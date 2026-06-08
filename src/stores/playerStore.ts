@@ -37,6 +37,8 @@ export function getPlayablePV(song: Song): PV | null {
   return enabledPVs.find(pv => pv.service === 'Youtube' || pv.service === 'NicoNicoDouga') || null;
 }
 
+export type MixMode = 'balanced' | 'deep' | 'producer';
+
 interface PlayerState {
   // 現在の再生状態
   currentSong: Song | null;
@@ -52,7 +54,7 @@ interface PlayerState {
   error: string | null;
 
   // アクション
-  playSong: (song: Song) => void;
+  playSong: (song: Song, isUserAction?: boolean) => void;
   pause: () => void;
   resume: () => void;
   next: () => void;
@@ -108,6 +110,14 @@ interface PlayerState {
   // ループモード
   loopMode: 'none' | 'all' | 'one';
   toggleLoopMode: () => void;
+
+  // ルートシード（Mix起点の曲）
+  rootSeed: Song | null;
+  setRootSeed: (song: Song | null) => void;
+
+  // Mixモード
+  mixMode: MixMode;
+  setMixMode: (mode: MixMode) => void;
 }
 
 export const usePlayerStore = create<PlayerState>((set, get) => ({
@@ -135,7 +145,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   queueIndex: -1,
   error: null,
 
-  playSong: (song: Song) => {
+  playSong: (song: Song, isUserAction?: boolean) => {
     const pv = getPlayablePV(song);
     if (!pv) {
       set({ error: `再生可能な動画が見つかりません: ${song.name}` });
@@ -154,6 +164,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       currentPV: pv,
       isPlaying: true,
       error: null,
+      ...(isUserAction ? { rootSeed: song } : {}),
     });
   },
 
@@ -331,6 +342,14 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       loopMode === 'none' ? 'all' : loopMode === 'all' ? 'one' : 'none';
     set({ loopMode: next });
   },
+
+  // ─── ルートシード ──────────────────────────────────────────────────────────
+  rootSeed: null,
+  setRootSeed: (song) => set({ rootSeed: song }),
+
+  // ─── Mixモード ─────────────────────────────────────────────────────────────
+  mixMode: 'balanced',
+  setMixMode: (mode) => set({ mixMode: mode }),
 
   toggleShuffle: () => {
     const { shuffleEnabled, queue, queueIndex, currentSong, originalQueue } = get();

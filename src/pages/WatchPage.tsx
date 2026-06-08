@@ -83,7 +83,7 @@ export default function WatchPage() {
   const songIdStr = searchParams.get('v');
   const songId = songIdStr ? Number(songIdStr) : null;
 
-  const { currentSong, setQueue } = usePlayerStore();
+  const { currentSong, setQueue, setRootSeed, mixMode, setMixMode } = usePlayerStore();
   const { addToHistory } = useHistoryStore();
   const { ratings } = useRatingStore();
 
@@ -101,6 +101,7 @@ export default function WatchPage() {
   });
 
   const fetchedForRef = useRef<number | null>(null);
+  const randomOffsetRef = useRef(Math.floor(Math.random() * 20));
   // URLからのロード中はナビゲーションエフェクトをブロックするフラグ
   const loadingFromUrlRef = useRef(false);
   const seenSets = useRef<Record<RecTabKey, Set<number>>>({
@@ -117,6 +118,7 @@ export default function WatchPage() {
     if (!songId) return;
     if (fetchedForRef.current === songId) return;
     fetchedForRef.current = songId;
+    randomOffsetRef.current = Math.floor(Math.random() * 20);
     loadingFromUrlRef.current = true;
 
     setLoadingSong(true);
@@ -145,6 +147,7 @@ export default function WatchPage() {
 
         // 再生開始（現在の曲と違う場合のみ）
         if (currentSong?.id !== loadedSong.id) {
+          setRootSeed(loadedSong); // ユーザーが能動的に選んだ曲をRoot Seedに
           setQueue([loadedSong], 0);
         }
 
@@ -173,7 +176,7 @@ export default function WatchPage() {
         .map(a => a.artist?.id)
         .filter((id): id is number => id !== undefined);
 
-      const items = await getSongsByProducerFromBackend(s.id, producerIds, PAGE_SIZE, page * PAGE_SIZE);
+      const items = await getSongsByProducerFromBackend(s.id, producerIds, PAGE_SIZE, page * PAGE_SIZE + (page === 0 ? randomOffsetRef.current : 0));
       const fresh = items.filter(item => !seenSets.current.producer.has(item.id));
       fresh.forEach(item => seenSets.current.producer.add(item.id));
 
@@ -193,7 +196,7 @@ export default function WatchPage() {
 
   const fetchRelated = useCallback(async (s: Song, page: number) => {
     try {
-      const items = await getMetadataSimilarSongs(s.id, PAGE_SIZE, page * PAGE_SIZE);
+      const items = await getMetadataSimilarSongs(s.id, PAGE_SIZE, page * PAGE_SIZE + (page === 0 ? randomOffsetRef.current : 0));
       const fresh = items.filter(item => !seenSets.current.related.has(item.id));
       fresh.forEach(item => seenSets.current.related.add(item.id));
 
@@ -213,7 +216,7 @@ export default function WatchPage() {
 
   const fetchRecommended = useCallback(async (s: Song, page: number) => {
     try {
-      const items = await getRecommendedSongs(s.id, PAGE_SIZE, undefined, 0.0, ratings, page * PAGE_SIZE);
+      const items = await getRecommendedSongs(s.id, PAGE_SIZE, undefined, 0.0, ratings, page * PAGE_SIZE + (page === 0 ? randomOffsetRef.current : 0));
       const fresh = items.filter(item => !seenSets.current.recommended.has(item.id));
       fresh.forEach(item => seenSets.current.recommended.add(item.id));
 
@@ -367,6 +370,29 @@ export default function WatchPage() {
             
             {/* キュー (ミックスリスト) */}
             <WatchQueue />
+
+            {/* ミックスモード切替 */}
+            <div className="flex items-center gap-1.5 mb-2">
+              <span className="text-[11px] mr-1" style={{ color: 'var(--color-text-muted)' }}>自動再生:</span>
+              {(['balanced', 'deep', 'producer'] as const).map(mode => {
+                const labels = { balanced: 'バランス', deep: 'Deep Dig', producer: '同じP' };
+                const isActive = mixMode === mode;
+                return (
+                  <button
+                    key={mode}
+                    onClick={() => setMixMode(mode)}
+                    className="rounded-full transition-all text-[11px] px-2.5 py-1"
+                    style={{
+                      background: isActive ? 'var(--color-accent-cyan)' : 'rgba(255,255,255,0.08)',
+                      color: isActive ? '#0f0f0f' : 'var(--color-text-muted)',
+                      fontWeight: isActive ? 600 : 400,
+                    }}
+                  >
+                    {labels[mode]}
+                  </button>
+                );
+              })}
+            </div>
 
             {/* フィルターチップス */}
             <div className="sticky z-30 pb-2 pt-2 -mx-2 px-2 bg-[#0f0f0f]" style={{ top: 'var(--header-height)' }}>
