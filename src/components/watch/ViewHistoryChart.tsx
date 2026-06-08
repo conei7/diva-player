@@ -108,6 +108,15 @@ const formatDateLabel = (date: string): string => {
 };
 
 export default function ViewHistoryChart({ songId }: { songId: number }) {
+  const [hoveredPoint, setHoveredPoint] = useState<{
+    x: number;
+    y: number;
+    value: number;
+    date: string;
+    label: string;
+    color: string;
+  } | null>(null);
+
   const [chartState, setChartState] = useState<ChartState>(() => ({
     songId,
     data: [],
@@ -353,14 +362,16 @@ export default function ViewHistoryChart({ songId }: { songId: number }) {
           chart.youtubePoints.map((point) => (
             <div
               key={`youtube-${point.date}`}
-              className="absolute w-2.5 h-2.5 rounded-full -translate-x-1/2 -translate-y-1/2 border-2 pointer-events-none"
+              className="absolute w-3 h-3 rounded-full -translate-x-1/2 -translate-y-1/2 border-2 cursor-pointer transition-transform hover:scale-150"
               style={{
                 left: `${point.x}%`,
                 top: `${point.y}%`,
                 background: SERIES.youtube.color,
                 borderColor: "var(--color-bg-secondary)",
+                zIndex: hoveredPoint?.date === point.date && hoveredPoint?.label === SERIES.youtube.label ? 10 : 1,
               }}
-              title={`${SERIES.youtube.label}: ${formatJapaneseViews(point.value)}`}
+              onMouseEnter={() => setHoveredPoint({ ...point, label: SERIES.youtube.label, color: SERIES.youtube.color })}
+              onMouseLeave={() => setHoveredPoint(null)}
             ></div>
           ))}
 
@@ -368,16 +379,41 @@ export default function ViewHistoryChart({ songId }: { songId: number }) {
           chart.nicoPoints.map((point) => (
             <div
               key={`nico-${point.date}`}
-              className="absolute w-2.5 h-2.5 rounded-full -translate-x-1/2 -translate-y-1/2 border-2 pointer-events-none"
+              className="absolute w-3 h-3 rounded-full -translate-x-1/2 -translate-y-1/2 border-2 cursor-pointer transition-transform hover:scale-150"
               style={{
                 left: `${point.x}%`,
                 top: `${point.y}%`,
                 background: SERIES.nico.color,
                 borderColor: "var(--color-bg-secondary)",
+                zIndex: hoveredPoint?.date === point.date && hoveredPoint?.label === SERIES.nico.label ? 10 : 1,
               }}
-              title={`${SERIES.nico.label}: ${formatJapaneseViews(point.value)}`}
+              onMouseEnter={() => setHoveredPoint({ ...point, label: SERIES.nico.label, color: SERIES.nico.color })}
+              onMouseLeave={() => setHoveredPoint(null)}
             ></div>
           ))}
+
+        {hoveredPoint && (
+          <div
+            className="absolute z-50 pointer-events-none transform -translate-x-1/2 -translate-y-full pb-3"
+            style={{ left: `${hoveredPoint.x}%`, top: `${hoveredPoint.y}%` }}
+          >
+            <div
+              className="px-3 py-2 rounded-lg shadow-xl text-xs font-medium flex flex-col gap-1 whitespace-nowrap border"
+              style={{ 
+                background: "var(--color-bg-card)", 
+                borderColor: "var(--color-border)",
+                color: "var(--color-text-primary)" 
+              }}
+            >
+              <div style={{ color: "var(--color-text-muted)" }}>{hoveredPoint.date}</div>
+              <div className="flex items-center gap-1.5 mt-0.5">
+                <span className="w-2 h-2 rounded-full" style={{ background: hoveredPoint.color }}></span>
+                <span>{hoveredPoint.label}:</span>
+                <span className="font-bold text-sm ml-1">{hoveredPoint.value.toLocaleString()}</span>
+              </div>
+            </div>
+          </div>
+        )}
 
         {chart.xLabels.map((label) => (
           <div

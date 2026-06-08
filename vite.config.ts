@@ -15,7 +15,7 @@ export default defineConfig({
         rewrite: (path) => path.replace(/^\/invidious-api/, ""),
       },
       "/backend-api": {
-        target: "http://100.75.253.56:5000",
+        target: "http://100.116.154.122:5000",
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/backend-api/, ""),
       },

@@ -23,7 +23,7 @@ import QueueSidebar from '../components/player/QueueSidebar';
 function WatchQueue() {
   const queue = usePlayerStore(s => s.queue);
   const queueIndex = usePlayerStore(s => s.queueIndex);
-  const [expanded, setExpanded] = useState(true);
+  const [expanded, setExpanded] = useState(false);
 
   if (queue.length <= 1) return null;
   const nextSong = queue[queueIndex + 1];
