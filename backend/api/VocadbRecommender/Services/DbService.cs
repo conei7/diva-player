@@ -30,7 +30,13 @@ public class DbService
         string sort,
         string order,
         int start,
-        int maxResults)
+        int maxResults,
+        int? publishYearFrom = null,
+        int? publishYearTo = null,
+        int? lengthMinSeconds = null,
+        int? lengthMaxSeconds = null,
+        string? pvService = null,
+        string? audioComputed = null)
     {
         using var conn = Open();
         
@@ -65,6 +71,63 @@ public class DbService
                 conditions.Add($"EXISTS (SELECT 1 FROM song_artists sa WHERE sa.song_id = songs.id AND sa.artist_id = ${paramIndex})");
                 paramValues.Add(aId);
                 paramIndex++;
+            }
+        }
+
+        if (publishYearFrom.HasValue)
+        {
+            conditions.Add($"publish_date >= make_date(${paramIndex}, 1, 1)");
+            paramValues.Add(publishYearFrom.Value);
+            paramIndex++;
+        }
+
+        if (publishYearTo.HasValue)
+        {
+            conditions.Add($"publish_date < make_date(${paramIndex} + 1, 1, 1)");
+            paramValues.Add(publishYearTo.Value);
+            paramIndex++;
+        }
+
+        if (lengthMinSeconds.HasValue)
+        {
+            conditions.Add($"length_seconds >= ${paramIndex}");
+            paramValues.Add(lengthMinSeconds.Value);
+            paramIndex++;
+        }
+
+        if (lengthMaxSeconds.HasValue)
+        {
+            conditions.Add($"length_seconds <= ${paramIndex}");
+            paramValues.Add(lengthMaxSeconds.Value);
+            paramIndex++;
+        }
+
+        if (!string.IsNullOrWhiteSpace(pvService) && pvService != "any")
+        {
+            if (pvService == "youtube")
+            {
+                conditions.Add("EXISTS (SELECT 1 FROM pvs p WHERE p.song_id = songs.id AND p.disabled = FALSE AND p.service = 'Youtube')");
+            }
+            else if (pvService == "niconico")
+            {
+                conditions.Add("EXISTS (SELECT 1 FROM pvs p WHERE p.song_id = songs.id AND p.disabled = FALSE AND p.service = 'NicoNicoDouga')");
+            }
+            else if (pvService == "both")
+            {
+                conditions.Add("EXISTS (SELECT 1 FROM pvs p WHERE p.song_id = songs.id AND p.disabled = FALSE AND p.service = 'Youtube')");
+                conditions.Add("EXISTS (SELECT 1 FROM pvs p WHERE p.song_id = songs.id AND p.disabled = FALSE AND p.service = 'NicoNicoDouga')");
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(audioComputed) && audioComputed != "any")
+        {
+            if (audioComputed == "yes")
+            {
+                conditions.Add("EXISTS (SELECT 1 FROM song_features sf WHERE sf.song_id = songs.id AND sf.audio_computed IS TRUE)");
+            }
+            else if (audioComputed == "no")
+            {
+                conditions.Add("NOT EXISTS (SELECT 1 FROM song_features sf WHERE sf.song_id = songs.id AND sf.audio_computed IS TRUE)");
             }
         }
 

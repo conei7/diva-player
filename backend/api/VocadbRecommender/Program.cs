@@ -258,6 +258,12 @@ app.MapGet("/api/songs/search", async (
     string order,
     int? start,
     int? maxResults,
+    int? publishYearFrom,
+    int? publishYearTo,
+    int? lengthMinSeconds,
+    int? lengthMaxSeconds,
+    string? pvService,
+    string? audioComputed,
     DbService db) =>
 {
     var aIds = !string.IsNullOrWhiteSpace(artistIds) 
@@ -269,7 +275,19 @@ app.MapGet("/api/songs/search", async (
         : new List<string>();
 
     var (itemsJson, totalCount) = await db.SearchSongsAsync(
-        query, aIds, sTypes, sort, order ?? "desc", start ?? 0, maxResults ?? 24
+        query,
+        aIds,
+        sTypes,
+        sort,
+        order ?? "desc",
+        start ?? 0,
+        maxResults ?? 24,
+        publishYearFrom,
+        publishYearTo,
+        lengthMinSeconds,
+        lengthMaxSeconds,
+        pvService,
+        audioComputed
     );
 
     // itemsJsonは文字列としてのJSON配列 "[{...}, {...}]" なので、

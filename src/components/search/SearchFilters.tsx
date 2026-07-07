@@ -147,6 +147,7 @@ export default function SearchFilters() {
     vocalistFilters, vocalistMatchMode,
     addVocalistFilter, removeVocalistFilter, setVocalistMatchMode,
     songTypeFilter, setSongTypeFilter,
+    advancedFilters, setAdvancedFilters, resetAdvancedFilters,
   } = useSearchStore();
 
   const [vocalistQuery, setVocalistQuery] = useState('');
@@ -421,6 +422,111 @@ export default function SearchFilters() {
             ))}
           </div>
         )}
+      </div>
+
+      <div style={{ borderTop: '1px solid var(--color-border)' }} />
+
+      {/* ===== 詳細条件 ===== */}
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+        <div className="flex flex-col gap-1">
+          <label className="text-[11px]" style={{ color: 'var(--color-text-muted)' }}>投稿年</label>
+          <div className="flex items-center gap-1.5">
+            <input
+              type="number"
+              inputMode="numeric"
+              value={advancedFilters.publishYearFrom}
+              onChange={e => setAdvancedFilters({ publishYearFrom: e.target.value })}
+              placeholder="2007"
+              className="w-full text-sm rounded-lg px-2 py-1.5 outline-none"
+              style={{ background: 'var(--color-surface)', color: 'var(--color-text-primary)', border: '1px solid var(--color-border)' }}
+            />
+            <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>〜</span>
+            <input
+              type="number"
+              inputMode="numeric"
+              value={advancedFilters.publishYearTo}
+              onChange={e => setAdvancedFilters({ publishYearTo: e.target.value })}
+              placeholder="2026"
+              className="w-full text-sm rounded-lg px-2 py-1.5 outline-none"
+              style={{ background: 'var(--color-surface)', color: 'var(--color-text-primary)', border: '1px solid var(--color-border)' }}
+            />
+          </div>
+        </div>
+
+        <div className="flex flex-col gap-1">
+          <label className="text-[11px]" style={{ color: 'var(--color-text-muted)' }}>曲の長さ（秒）</label>
+          <div className="flex items-center gap-1.5">
+            <input
+              type="number"
+              inputMode="numeric"
+              value={advancedFilters.lengthMinSeconds}
+              onChange={e => setAdvancedFilters({ lengthMinSeconds: e.target.value })}
+              placeholder="60"
+              className="w-full text-sm rounded-lg px-2 py-1.5 outline-none"
+              style={{ background: 'var(--color-surface)', color: 'var(--color-text-primary)', border: '1px solid var(--color-border)' }}
+            />
+            <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>〜</span>
+            <input
+              type="number"
+              inputMode="numeric"
+              value={advancedFilters.lengthMaxSeconds}
+              onChange={e => setAdvancedFilters({ lengthMaxSeconds: e.target.value })}
+              placeholder="360"
+              className="w-full text-sm rounded-lg px-2 py-1.5 outline-none"
+              style={{ background: 'var(--color-surface)', color: 'var(--color-text-primary)', border: '1px solid var(--color-border)' }}
+            />
+          </div>
+        </div>
+
+        <div className="flex flex-col gap-1">
+          <label htmlFor="pv-service-filter" className="text-[11px]" style={{ color: 'var(--color-text-muted)' }}>PV</label>
+          <select
+            id="pv-service-filter"
+            value={advancedFilters.pvService}
+            onChange={e => setAdvancedFilters({ pvService: e.target.value as typeof advancedFilters.pvService })}
+            className="text-sm rounded-lg px-2 py-1.5 outline-none"
+            style={{ background: 'var(--color-surface)', color: 'var(--color-text-primary)', border: '1px solid var(--color-border)' }}
+          >
+            <option value="any">指定なし</option>
+            <option value="youtube">YouTubeあり</option>
+            <option value="niconico">ニコニコあり</option>
+            <option value="both">両方あり</option>
+          </select>
+        </div>
+
+        <div className="flex flex-col gap-1">
+          <label htmlFor="audio-computed-filter" className="text-[11px]" style={{ color: 'var(--color-text-muted)' }}>音声特徴量</label>
+          <select
+            id="audio-computed-filter"
+            value={advancedFilters.audioComputed}
+            onChange={e => setAdvancedFilters({ audioComputed: e.target.value as typeof advancedFilters.audioComputed })}
+            className="text-sm rounded-lg px-2 py-1.5 outline-none"
+            style={{ background: 'var(--color-surface)', color: 'var(--color-text-primary)', border: '1px solid var(--color-border)' }}
+          >
+            <option value="any">指定なし</option>
+            <option value="yes">あり</option>
+            <option value="no">なし</option>
+          </select>
+        </div>
+
+        <div className="md:col-span-2 xl:col-span-4 flex items-center justify-end gap-2">
+          <button
+            type="button"
+            className="text-xs px-3 py-1.5 rounded-lg transition-colors"
+            style={{ background: 'var(--color-surface)', color: 'var(--color-text-muted)', border: '1px solid var(--color-border)' }}
+            onClick={() => { resetAdvancedFilters(); search(); }}
+          >
+            条件をクリア
+          </button>
+          <button
+            type="button"
+            className="text-xs px-3 py-1.5 rounded-lg transition-colors"
+            style={{ background: 'var(--color-accent-purple)', color: '#fff', border: '1px solid rgba(139, 92, 246, 0.4)' }}
+            onClick={() => search()}
+          >
+            条件を適用
+          </button>
+        </div>
       </div>
 
       <div style={{ borderTop: '1px solid var(--color-border)' }} />
