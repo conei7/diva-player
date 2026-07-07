@@ -14,6 +14,11 @@ import { useProgressStore } from './progressStore';
 type FailedPVMap = Record<string, string[]>;
 
 const FAILED_PVS_KEY = 'failedPVs';
+const VOLUME_KEY = 'volume';
+const LOOP_MODE_KEY = 'loopMode';
+const DEFAULT_VOLUME = 50;
+
+type LoopMode = 'none' | 'all' | 'one';
 
 const pvPriorities: Array<{ service: PVService; pvType: PVType }> = [
   { service: 'Youtube', pvType: 'Original' },
@@ -60,6 +65,15 @@ function choosePVByPriority(pvs: PV[]): PV | null {
 
 function getEnabledPlayablePVs(song: Song): PV[] {
   return (song.pvs ?? []).filter(pv => !pv.disabled);
+}
+
+function clampVolume(volume: number): number {
+  return Math.max(0, Math.min(100, volume));
+}
+
+function getStoredLoopMode(): LoopMode {
+  const stored = storage.get<LoopMode>(LOOP_MODE_KEY);
+  return stored === 'all' || stored === 'one' ? stored : 'none';
 }
 
 // 再生可能なPVを抽出するヘルパー
@@ -144,7 +158,7 @@ interface PlayerState {
   toggleShuffle: () => void;
 
   // ループモード
-  loopMode: 'none' | 'all' | 'one';
+  loopMode: LoopMode;
   toggleLoopMode: () => void;
 
   // ルートシード（Mix起点の曲）
@@ -160,7 +174,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   currentSong: null,
   currentPV: null,
   isPlaying: false,
-  volume: 50,
+  volume: clampVolume(storage.get<number>(VOLUME_KEY) ?? DEFAULT_VOLUME),
   detailPanelEl: null,
   setDetailPanelEl: (el) => set({ detailPanelEl: el }),
   playerRect: null,
@@ -245,7 +259,11 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     }
   },
 
-  setVolume: (volume: number) => set({ volume: Math.max(0, Math.min(100, volume)) }),
+  setVolume: (volume: number) => {
+    const next = clampVolume(volume);
+    storage.set(VOLUME_KEY, next);
+    set({ volume: next });
+  },
   setIsPlaying: (isPlaying: boolean) => set({ isPlaying }),
   setError: (error: string | null) => set({ error }),
 
@@ -356,11 +374,12 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   originalQueue: [],
 
   // ─── ループモード ──────────────────────────────────────────────────────────
-  loopMode: 'none',
+  loopMode: getStoredLoopMode(),
   toggleLoopMode: () => {
     const { loopMode } = get();
-    const next: 'none' | 'all' | 'one' =
+    const next: LoopMode =
       loopMode === 'none' ? 'all' : loopMode === 'all' ? 'one' : 'none';
+    storage.set(LOOP_MODE_KEY, next);
     set({ loopMode: next });
   },
 
