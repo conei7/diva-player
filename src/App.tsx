@@ -7,6 +7,7 @@ import PlaylistPage from './pages/PlaylistPage';
 import HistoryPage from './pages/HistoryPage';
 import FavoritesPage from './pages/FavoritesPage';
 import MediaSession from './components/player/MediaSession';
+import KeyboardShortcuts from './components/player/KeyboardShortcuts';
 import { usePlayerStore } from './stores/playerStore';
 import { useHistoryStore } from './stores/historyStore';
 import { useRatingStore } from './stores/ratingStore';
@@ -243,6 +244,7 @@ function AppContent() {
     <>
       <PlayerTracker />
       <MediaSession />
+      <KeyboardShortcuts />
       <Routes>
         <Route element={<Layout />}>
           <Route path="/" element={<HomePage />} />
