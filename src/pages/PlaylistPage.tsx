@@ -31,6 +31,22 @@ import { usePlayerStore } from '../stores/playerStore';
 import type { Playlist, PlaylistFolder, Song } from '../types/vocadb';
 import YouTubeImportModal from '../components/playlist/YouTubeImportModal';
 
+function toSafeFileName(name: string): string {
+  return name.trim().replace(/[\\/:*?"<>|]+/g, '_').replace(/\s+/g, '_') || 'playlist';
+}
+
+function downloadJson(fileName: string, data: unknown): void {
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
 // ─── SortableSongRow ────────────────────────────────────────────────────────
 interface SortableSongRowProps {
   id: string;
@@ -573,6 +589,33 @@ export default function PlaylistPage() {
     setEditingPlaylist(null);
   }, [editingPlaylist, editName, editDesc, editCover, editFolderId, updatePlaylist]);
 
+  const exportPlaylist = useCallback((playlist: Playlist) => {
+    const exportedAt = new Date().toISOString();
+    downloadJson(`${toSafeFileName(playlist.name)}.diva-playlist.json`, {
+      version: 1,
+      exportedAt,
+      playlist: {
+        id: playlist.id,
+        name: playlist.name,
+        description: playlist.description,
+        coverArtUrl: playlist.coverArtUrl,
+        isPinned: playlist.isPinned,
+        createdAt: playlist.createdAt,
+        updatedAt: playlist.updatedAt,
+        songs: playlist.songs.map((song, index) => ({
+          index,
+          id: song.id,
+          name: song.name,
+          artistString: song.artistString,
+          songType: song.songType,
+          publishDate: song.publishDate,
+          thumbUrl: song.thumbUrl,
+          pvs: song.pvs,
+        })),
+      },
+    });
+  }, []);
+
   const handleDelete = useCallback((p: Playlist) => {
     if (p.isPinned) return;
     if (!window.confirm(`"${p.name}" を削除してもよいですか?`)) return;
@@ -776,6 +819,13 @@ export default function PlaylistPage() {
                         <path d="M23.5 6.19a3.02 3.02 0 0 0-2.12-2.14C19.51 3.5 12 3.5 12 3.5s-7.51 0-9.38.55A3.02 3.02 0 0 0 .5 6.19C0 8.07 0 12 0 12s0 3.93.5 5.81a3.02 3.02 0 0 0 2.12 2.14C4.49 20.5 12 20.5 12 20.5s7.51 0 9.38-.55a3.02 3.02 0 0 0 2.12-2.14C24 15.93 24 12 24 12s0-3.93-.5-5.81zM9.75 15.52V8.48L15.5 12l-5.75 3.52z"/>
                       </svg>
                       YT
+                    </button>
+                    <button onClick={() => exportPlaylist(selectedPlaylist)} className="btn-ghost p-2 rounded-xl" title="JSONエクスポート">
+                      <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                        <path d="M7 10l5 5 5-5"/>
+                        <path d="M12 15V3"/>
+                      </svg>
                     </button>
                     {!selectedPlaylist.isPinned && (
                       <>
