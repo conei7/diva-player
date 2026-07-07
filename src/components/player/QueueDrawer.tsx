@@ -1,5 +1,6 @@
 import { usePlayerStore } from '../../stores/playerStore';
 import { useRatingStore } from '../../stores/ratingStore';
+import { useUiStore } from '../../stores/uiStore';
 import StarRating from './StarRating';
 import type { Song } from '../../types/vocadb';
 
@@ -25,6 +26,7 @@ export default function QueueDrawer() {
     jumpToIndex,
   } = usePlayerStore();
   const { getRating, setRating } = useRatingStore();
+  const openSaveToPlaylist = useUiStore(s => s.openSaveToPlaylist);
 
   return (
     <>
@@ -79,16 +81,29 @@ export default function QueueDrawer() {
               </span>
             )}
           </div>
-          <button
-            className="btn-ghost p-1.5 rounded-lg"
-            onClick={toggleQueueDrawer}
-            aria-label="閉じる"
-          >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"
-                 style={{ color: 'var(--color-text-muted)' }}>
-              <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
-            </svg>
-          </button>
+          <div className="flex items-center gap-1">
+            <button
+              className="btn-ghost p-1.5 rounded-lg"
+              onClick={() => openSaveToPlaylist(queue)}
+              disabled={queue.length === 0}
+              title="Save queue to playlist"
+              style={{ color: queue.length > 0 ? 'var(--color-accent-cyan)' : 'var(--color-text-muted)' }}
+            >
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M17 3H5a2 2 0 0 0-2 2v14l7-3 7 3V5a2 2 0 0 0-2-2zm-1 13.97-6-2.57-6 2.57V5h12v11.97zM19 7v14l-7-3-3.35 1.44 1.63-1.92L12 16.78l5 2.14V7h2z"/>
+              </svg>
+            </button>
+            <button
+              className="btn-ghost p-1.5 rounded-lg"
+              onClick={toggleQueueDrawer}
+              aria-label="閉じる"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"
+                   style={{ color: 'var(--color-text-muted)' }}>
+                <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
+              </svg>
+            </button>
+          </div>
         </div>
 
         {/* キューリスト */}
