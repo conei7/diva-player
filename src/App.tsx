@@ -6,6 +6,7 @@ import WatchPage from './pages/WatchPage';
 import PlaylistPage from './pages/PlaylistPage';
 import HistoryPage from './pages/HistoryPage';
 import FavoritesPage from './pages/FavoritesPage';
+import MediaSession from './components/player/MediaSession';
 import { usePlayerStore } from './stores/playerStore';
 import { useHistoryStore } from './stores/historyStore';
 import { useRatingStore } from './stores/ratingStore';
@@ -241,6 +242,7 @@ function AppContent() {
   return (
     <>
       <PlayerTracker />
+      <MediaSession />
       <Routes>
         <Route element={<Layout />}>
           <Route path="/" element={<HomePage />} />
