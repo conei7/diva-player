@@ -7,34 +7,70 @@
  */
 
 import { create } from 'zustand';
-import type { Song, PV } from '../types/vocadb';
+import type { Song, PV, PVService, PVType } from '../types/vocadb';
 import { storage } from '../utils/storage';
 import { useProgressStore } from './progressStore';
+
+type FailedPVMap = Record<string, string[]>;
+
+const FAILED_PVS_KEY = 'failedPVs';
+
+const pvPriorities: Array<{ service: PVService; pvType: PVType }> = [
+  { service: 'Youtube', pvType: 'Original' },
+  { service: 'Youtube', pvType: 'Reprint' },
+  { service: 'Youtube', pvType: 'Other' },
+  { service: 'NicoNicoDouga', pvType: 'Original' },
+  { service: 'NicoNicoDouga', pvType: 'Reprint' },
+  { service: 'NicoNicoDouga', pvType: 'Other' },
+];
+
+function getPVFailureKey(pv: PV): string {
+  return `${pv.service}:${pv.pvId || pv.id}`;
+}
+
+function getFailedPVMap(): FailedPVMap {
+  return storage.get<FailedPVMap>(FAILED_PVS_KEY) ?? {};
+}
+
+function getFailedPVKeys(songId: number): Set<string> {
+  return new Set(getFailedPVMap()[String(songId)] ?? []);
+}
+
+function markPVFailed(songId: number, pv: PV): void {
+  const songKey = String(songId);
+  const failureKey = getPVFailureKey(pv);
+  const failedMap = getFailedPVMap();
+  const currentFailures = new Set(failedMap[songKey] ?? []);
+
+  currentFailures.add(failureKey);
+  storage.set(FAILED_PVS_KEY, {
+    ...failedMap,
+    [songKey]: Array.from(currentFailures),
+  });
+}
+
+function choosePVByPriority(pvs: PV[]): PV | null {
+  for (const { service, pvType } of pvPriorities) {
+    const match = pvs.find(pv => pv.service === service && pv.pvType === pvType);
+    if (match) return match;
+  }
+
+  return pvs.find(pv => pv.service === 'Youtube' || pv.service === 'NicoNicoDouga') || null;
+}
+
+function getEnabledPlayablePVs(song: Song): PV[] {
+  return (song.pvs ?? []).filter(pv => !pv.disabled);
+}
 
 // 再生可能なPVを抽出するヘルパー
 export function getPlayablePV(song: Song): PV | null {
   if (!song.pvs || song.pvs.length === 0) return null;
 
-  const enabledPVs = song.pvs.filter(pv => !pv.disabled);
+  const enabledPVs = getEnabledPlayablePVs(song);
+  const failedPVKeys = getFailedPVKeys(song.id);
+  const unfailedPVs = enabledPVs.filter(pv => !failedPVKeys.has(getPVFailureKey(pv)));
 
-  // 優先順位: YouTube (Official/非公式問わず) > NicoNico
-  // NicoNico は iframe 埋め込み制限があるため YouTube を最優先
-  const priorities: Array<{ service: string; pvType: string }> = [
-    { service: 'Youtube', pvType: 'Original' },      // 1. 公式YT
-    { service: 'Youtube', pvType: 'Reprint' },        // 2. 非公式YT
-    { service: 'Youtube', pvType: 'Other' },          // 2. 非公式YT
-    { service: 'NicoNicoDouga', pvType: 'Original' }, // 3. 公式ニコ
-    { service: 'NicoNicoDouga', pvType: 'Reprint' },  // 4. 非公式ニコ
-    { service: 'NicoNicoDouga', pvType: 'Other' },    // 4. 非公式ニコ
-  ];
-
-  for (const { service, pvType } of priorities) {
-    const match = enabledPVs.find(pv => pv.service === service && pv.pvType === pvType);
-    if (match) return match;
-  }
-
-  // フォールバック: YouTube or NicoNico の任意のPV
-  return enabledPVs.find(pv => pv.service === 'Youtube' || pv.service === 'NicoNicoDouga') || null;
+  return choosePVByPriority(unfailedPVs) || choosePVByPriority(enabledPVs);
 }
 
 export type MixMode = 'balanced' | 'deep' | 'producer';
@@ -217,29 +253,14 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     const { currentSong, currentPV } = get();
     if (!currentSong || !currentSong.pvs) { get().next(); return; }
 
-    const enabledPVs = currentSong.pvs.filter(pv => !pv.disabled && pv.id !== currentPV?.id);
-    
-    // getPlayablePV と同じ優先順位で次のPVを探す（現在失敗したものを除く）
-    const priorities = [
-      { service: 'Youtube', pvType: 'Original' },
-      { service: 'Youtube', pvType: 'Reprint' },
-      { service: 'Youtube', pvType: 'Other' },
-      { service: 'NicoNicoDouga', pvType: 'Original' },
-      { service: 'NicoNicoDouga', pvType: 'Reprint' },
-      { service: 'NicoNicoDouga', pvType: 'Other' },
-    ];
+    if (currentPV) {
+      markPVFailed(currentSong.id, currentPV);
+    }
 
-    let nextPV = null;
-    for (const { service, pvType } of priorities) {
-      const match = enabledPVs.find(pv => pv.service === service && pv.pvType === pvType);
-      if (match) {
-        nextPV = match;
-        break;
-      }
-    }
-    if (!nextPV) {
-      nextPV = enabledPVs.find(pv => pv.service === 'Youtube' || pv.service === 'NicoNicoDouga') || null;
-    }
+    const failedPVKeys = getFailedPVKeys(currentSong.id);
+    const enabledPVs = getEnabledPlayablePVs(currentSong).filter(pv => pv.id !== currentPV?.id);
+    const unfailedPVs = enabledPVs.filter(pv => !failedPVKeys.has(getPVFailureKey(pv)));
+    const nextPV = choosePVByPriority(unfailedPVs) || choosePVByPriority(enabledPVs);
 
     if (nextPV) {
       set({ currentPV: nextPV, error: null });
