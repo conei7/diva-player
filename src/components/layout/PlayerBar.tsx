@@ -2,6 +2,7 @@ import { usePlayerStore } from '../../stores/playerStore';
 import { useProgressStore } from '../../stores/progressStore';
 import { useRatingStore } from '../../stores/ratingStore';
 import StarRating from '../player/StarRating';
+import SleepTimer from '../player/SleepTimer';
 
 /**
  * PlayerBar - 画面下部固定のプレイヤーコントロール (YouTube Music スタイル)
@@ -240,6 +241,8 @@ export default function PlayerBar() {
           </button>
 
           {/* 隠しモードトグル */}
+          <SleepTimer />
+
           <button
             className="btn-ghost p-1.5 rounded-lg"
             onClick={toggleHiddenMode}
