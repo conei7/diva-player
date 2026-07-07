@@ -1,3 +1,4 @@
+import { useMemo, useState } from 'react';
 import { useHistoryStore } from '../stores/historyStore';
 import VideoGrid from '../components/home/VideoGrid';
 import type { Song } from '../types/vocadb';
@@ -7,8 +8,18 @@ import type { Song } from '../types/vocadb';
  */
 export default function HistoryPage() {
   const { entries, clearHistory } = useHistoryStore();
+  const [filterText, setFilterText] = useState('');
 
-  const songs: Song[] = entries.map(e => e.song);
+  const songs: Song[] = useMemo(() => {
+    const normalizedFilter = filterText.trim().toLowerCase();
+    const historySongs = entries.map(e => e.song);
+    if (!normalizedFilter) return historySongs;
+
+    return historySongs.filter(song =>
+      song.name.toLowerCase().includes(normalizedFilter) ||
+      (song.artistString ?? '').toLowerCase().includes(normalizedFilter)
+    );
+  }, [entries, filterText]);
 
   return (
     <div className="w-full px-4 sm:px-6 lg:px-8 py-4">
@@ -33,6 +44,28 @@ export default function HistoryPage() {
           </button>
         )}
       </div>
+
+      {entries.length > 0 && (
+        <div className="mb-4 max-w-md">
+          <input
+            type="search"
+            value={filterText}
+            onChange={(event) => setFilterText(event.target.value)}
+            placeholder="履歴を検索"
+            className="w-full rounded-lg border px-3 py-2 text-sm outline-none"
+            style={{
+              background: 'var(--color-surface)',
+              borderColor: 'var(--color-border)',
+              color: 'var(--color-text-primary)',
+            }}
+          />
+          {filterText.trim() && (
+            <p className="text-xs mt-1" style={{ color: 'var(--color-text-muted)' }}>
+              {songs.length} / {entries.length} 件
+            </p>
+          )}
+        </div>
+      )}
 
       <VideoGrid songs={songs} loading={false} />
     </div>

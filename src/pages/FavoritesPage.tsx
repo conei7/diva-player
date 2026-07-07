@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useHistoryStore } from '../stores/historyStore';
 import { useRatingStore } from '../stores/ratingStore';
 import VideoGrid from '../components/home/VideoGrid';
@@ -10,6 +10,7 @@ import type { Song } from '../types/vocadb';
 export default function FavoritesPage() {
   const { ratings } = useRatingStore();
   const { entries } = useHistoryStore();
+  const [filterText, setFilterText] = useState('');
 
   // 星4・5の曲を履歴から取得（重複排除）
   const favoriteSongs: Song[] = useMemo(() => {
@@ -29,6 +30,16 @@ export default function FavoritesPage() {
     }
     return result;
   }, [ratings, entries]);
+
+  const visibleSongs = useMemo(() => {
+    const normalizedFilter = filterText.trim().toLowerCase();
+    if (!normalizedFilter) return favoriteSongs;
+
+    return favoriteSongs.filter(song =>
+      song.name.toLowerCase().includes(normalizedFilter) ||
+      (song.artistString ?? '').toLowerCase().includes(normalizedFilter)
+    );
+  }, [favoriteSongs, filterText]);
 
   return (
     <div className="w-full px-4 sm:px-6 lg:px-8 py-4">
@@ -54,7 +65,28 @@ export default function FavoritesPage() {
           </p>
         </div>
       ) : (
-        <VideoGrid songs={favoriteSongs} loading={false} />
+        <>
+          <div className="mb-4 max-w-md">
+            <input
+              type="search"
+              value={filterText}
+              onChange={(event) => setFilterText(event.target.value)}
+              placeholder="お気に入りを検索"
+              className="w-full rounded-lg border px-3 py-2 text-sm outline-none"
+              style={{
+                background: 'var(--color-surface)',
+                borderColor: 'var(--color-border)',
+                color: 'var(--color-text-primary)',
+              }}
+            />
+            {filterText.trim() && (
+              <p className="text-xs mt-1" style={{ color: 'var(--color-text-muted)' }}>
+                {visibleSongs.length} / {favoriteSongs.length} 件
+              </p>
+            )}
+          </div>
+          <VideoGrid songs={visibleSongs} loading={false} />
+        </>
       )}
     </div>
   );
