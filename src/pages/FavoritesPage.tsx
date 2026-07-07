@@ -4,6 +4,8 @@ import { useRatingStore } from '../stores/ratingStore';
 import VideoGrid from '../components/home/VideoGrid';
 import type { Song } from '../types/vocadb';
 
+type FavoriteSortMode = 'recent' | 'rating' | 'name' | 'artist';
+
 /**
  * FavoritesPage - 高評価した曲 (星4・5) ページ
  */
@@ -11,6 +13,7 @@ export default function FavoritesPage() {
   const { ratings } = useRatingStore();
   const { entries } = useHistoryStore();
   const [filterText, setFilterText] = useState('');
+  const [sortMode, setSortMode] = useState<FavoriteSortMode>('recent');
 
   // 星4・5の曲を履歴から取得（重複排除）
   const favoriteSongs: Song[] = useMemo(() => {
@@ -33,13 +36,24 @@ export default function FavoritesPage() {
 
   const visibleSongs = useMemo(() => {
     const normalizedFilter = filterText.trim().toLowerCase();
-    if (!normalizedFilter) return favoriteSongs;
+    const filtered = normalizedFilter
+      ? favoriteSongs.filter(song =>
+          song.name.toLowerCase().includes(normalizedFilter) ||
+          (song.artistString ?? '').toLowerCase().includes(normalizedFilter)
+        )
+      : favoriteSongs;
 
-    return favoriteSongs.filter(song =>
-      song.name.toLowerCase().includes(normalizedFilter) ||
-      (song.artistString ?? '').toLowerCase().includes(normalizedFilter)
-    );
-  }, [favoriteSongs, filterText]);
+    if (sortMode === 'rating') {
+      return [...filtered].sort((a, b) => (ratings[String(b.id)] ?? 0) - (ratings[String(a.id)] ?? 0));
+    }
+    if (sortMode === 'name') {
+      return [...filtered].sort((a, b) => a.name.localeCompare(b.name, 'ja'));
+    }
+    if (sortMode === 'artist') {
+      return [...filtered].sort((a, b) => (a.artistString ?? '').localeCompare(b.artistString ?? '', 'ja'));
+    }
+    return filtered;
+  }, [favoriteSongs, filterText, ratings, sortMode]);
 
   return (
     <div className="w-full px-4 sm:px-6 lg:px-8 py-4">
@@ -66,19 +80,36 @@ export default function FavoritesPage() {
         </div>
       ) : (
         <>
-          <div className="mb-4 max-w-md">
-            <input
-              type="search"
-              value={filterText}
-              onChange={(event) => setFilterText(event.target.value)}
-              placeholder="お気に入りを検索"
-              className="w-full rounded-lg border px-3 py-2 text-sm outline-none"
-              style={{
-                background: 'var(--color-surface)',
-                borderColor: 'var(--color-border)',
-                color: 'var(--color-text-primary)',
-              }}
-            />
+          <div className="mb-4 max-w-2xl">
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <input
+                type="search"
+                value={filterText}
+                onChange={(event) => setFilterText(event.target.value)}
+                placeholder="お気に入りを検索"
+                className="w-full rounded-lg border px-3 py-2 text-sm outline-none"
+                style={{
+                  background: 'var(--color-surface)',
+                  borderColor: 'var(--color-border)',
+                  color: 'var(--color-text-primary)',
+                }}
+              />
+              <select
+                value={sortMode}
+                onChange={(event) => setSortMode(event.target.value as FavoriteSortMode)}
+                className="rounded-lg border px-3 py-2 text-sm outline-none sm:w-40"
+                style={{
+                  background: 'var(--color-surface)',
+                  borderColor: 'var(--color-border)',
+                  color: 'var(--color-text-primary)',
+                }}
+              >
+                <option value="recent">履歴順</option>
+                <option value="rating">評価順</option>
+                <option value="name">曲名</option>
+                <option value="artist">アーティスト</option>
+              </select>
+            </div>
             {filterText.trim() && (
               <p className="text-xs mt-1" style={{ color: 'var(--color-text-muted)' }}>
                 {visibleSongs.length} / {favoriteSongs.length} 件

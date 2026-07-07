@@ -3,23 +3,34 @@ import { useHistoryStore } from '../stores/historyStore';
 import VideoGrid from '../components/home/VideoGrid';
 import type { Song } from '../types/vocadb';
 
+type HistorySortMode = 'recent' | 'name' | 'artist';
+
 /**
  * HistoryPage - 視聴履歴ページ
  */
 export default function HistoryPage() {
   const { entries, clearHistory } = useHistoryStore();
   const [filterText, setFilterText] = useState('');
+  const [sortMode, setSortMode] = useState<HistorySortMode>('recent');
 
   const songs: Song[] = useMemo(() => {
     const normalizedFilter = filterText.trim().toLowerCase();
     const historySongs = entries.map(e => e.song);
-    if (!normalizedFilter) return historySongs;
+    const filtered = normalizedFilter
+      ? historySongs.filter(song =>
+          song.name.toLowerCase().includes(normalizedFilter) ||
+          (song.artistString ?? '').toLowerCase().includes(normalizedFilter)
+        )
+      : historySongs;
 
-    return historySongs.filter(song =>
-      song.name.toLowerCase().includes(normalizedFilter) ||
-      (song.artistString ?? '').toLowerCase().includes(normalizedFilter)
-    );
-  }, [entries, filterText]);
+    if (sortMode === 'name') {
+      return [...filtered].sort((a, b) => a.name.localeCompare(b.name, 'ja'));
+    }
+    if (sortMode === 'artist') {
+      return [...filtered].sort((a, b) => (a.artistString ?? '').localeCompare(b.artistString ?? '', 'ja'));
+    }
+    return filtered;
+  }, [entries, filterText, sortMode]);
 
   return (
     <div className="w-full px-4 sm:px-6 lg:px-8 py-4">
@@ -46,19 +57,35 @@ export default function HistoryPage() {
       </div>
 
       {entries.length > 0 && (
-        <div className="mb-4 max-w-md">
-          <input
-            type="search"
-            value={filterText}
-            onChange={(event) => setFilterText(event.target.value)}
-            placeholder="履歴を検索"
-            className="w-full rounded-lg border px-3 py-2 text-sm outline-none"
-            style={{
-              background: 'var(--color-surface)',
-              borderColor: 'var(--color-border)',
-              color: 'var(--color-text-primary)',
-            }}
-          />
+        <div className="mb-4 max-w-2xl">
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <input
+              type="search"
+              value={filterText}
+              onChange={(event) => setFilterText(event.target.value)}
+              placeholder="履歴を検索"
+              className="w-full rounded-lg border px-3 py-2 text-sm outline-none"
+              style={{
+                background: 'var(--color-surface)',
+                borderColor: 'var(--color-border)',
+                color: 'var(--color-text-primary)',
+              }}
+            />
+            <select
+              value={sortMode}
+              onChange={(event) => setSortMode(event.target.value as HistorySortMode)}
+              className="rounded-lg border px-3 py-2 text-sm outline-none sm:w-40"
+              style={{
+                background: 'var(--color-surface)',
+                borderColor: 'var(--color-border)',
+                color: 'var(--color-text-primary)',
+              }}
+            >
+              <option value="recent">最近</option>
+              <option value="name">曲名</option>
+              <option value="artist">アーティスト</option>
+            </select>
+          </div>
           {filterText.trim() && (
             <p className="text-xs mt-1" style={{ color: 'var(--color-text-muted)' }}>
               {songs.length} / {entries.length} 件
