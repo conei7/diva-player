@@ -47,6 +47,53 @@ function downloadJson(fileName: string, data: unknown): void {
   URL.revokeObjectURL(url);
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function parseImportedSong(value: unknown): Song | null {
+  if (!isRecord(value) || typeof value.id !== 'number' || typeof value.name !== 'string') return null;
+
+  const pvs = Array.isArray(value.pvs) ? value.pvs : undefined;
+  const songType = typeof value.songType === 'string' ? value.songType as Song['songType'] : 'Original';
+  const artistString = typeof value.artistString === 'string' ? value.artistString : '';
+
+  return {
+    artistString,
+    createDate: '',
+    defaultName: value.name,
+    defaultNameLanguage: 'Unspecified',
+    favoritedTimes: 0,
+    id: value.id,
+    lengthSeconds: 0,
+    name: value.name,
+    publishDate: typeof value.publishDate === 'string' ? value.publishDate : undefined,
+    pvs: pvs as Song['pvs'],
+    pvServices: '',
+    ratingScore: 0,
+    songType,
+    status: 'Finished',
+    thumbUrl: typeof value.thumbUrl === 'string' ? value.thumbUrl : undefined,
+    version: 0,
+  };
+}
+
+function parsePlaylistImport(data: unknown): { name: string; description?: string; coverArtUrl?: string; songs: Song[] } | null {
+  if (!isRecord(data)) return null;
+  const playlist = isRecord(data.playlist) ? data.playlist : data;
+  if (!isRecord(playlist) || typeof playlist.name !== 'string' || !Array.isArray(playlist.songs)) return null;
+
+  const songs = playlist.songs.map(parseImportedSong).filter((song): song is Song => song !== null);
+  if (songs.length === 0) return null;
+
+  return {
+    name: playlist.name,
+    description: typeof playlist.description === 'string' ? playlist.description : undefined,
+    coverArtUrl: typeof playlist.coverArtUrl === 'string' ? playlist.coverArtUrl : undefined,
+    songs,
+  };
+}
+
 // ─── SortableSongRow ────────────────────────────────────────────────────────
 interface SortableSongRowProps {
   id: string;
@@ -433,6 +480,7 @@ export default function PlaylistPage() {
 
   const [selectedPlaylistId, setSelectedPlaylistId] = useState<string | null>(null);
   const [selectedFolderId, setSelectedFolderId]     = useState<string | null>(null);
+  const importInputRef = useRef<HTMLInputElement>(null);
   const [newName, setNewName]                       = useState('');
   const [newFolderName, setNewFolderName]           = useState('');
   const [showFolderInput, setShowFolderInput]       = useState(false);
@@ -450,6 +498,7 @@ export default function PlaylistPage() {
 
   const [dupWarning, setDupWarning] = useState<{ count: number } | null>(null);
   const [dedupeNotice, setDedupeNotice] = useState<{ count: number } | null>(null);
+  const [importNotice, setImportNotice] = useState<{ name: string; count: number } | null>(null);
   const [showYTImport, setShowYTImport] = useState(false);
 
   useEffect(() => { loadPlaylists(); }, [loadPlaylists]);
@@ -616,6 +665,27 @@ export default function PlaylistPage() {
     });
   }, []);
 
+  const importPlaylistJson = useCallback(async (file: File) => {
+    try {
+      const parsed = parsePlaylistImport(JSON.parse(await file.text()));
+      if (!parsed) throw new Error('Invalid playlist JSON');
+
+      const playlist = createPlaylist(`${parsed.name} (import)`, selectedFolderId ?? undefined);
+      updatePlaylist(playlist.id, {
+        description: parsed.description,
+        coverArtUrl: parsed.coverArtUrl,
+      });
+      const result = addSongs(playlist.id, parsed.songs);
+      setSelectedPlaylistId(playlist.id);
+      setImportNotice({ name: playlist.name, count: result.added });
+      setTimeout(() => setImportNotice(null), 4000);
+    } catch {
+      window.alert('プレイリストJSONを読み込めませんでした。DIVA PlayerからエクスポートしたJSONを選択してください。');
+    } finally {
+      if (importInputRef.current) importInputRef.current.value = '';
+    }
+  }, [addSongs, createPlaylist, selectedFolderId, updatePlaylist]);
+
   const handleDelete = useCallback((p: Playlist) => {
     if (p.isPinned) return;
     if (!window.confirm(`"${p.name}" を削除してもよいですか?`)) return;
@@ -759,6 +829,29 @@ export default function PlaylistPage() {
           />
           <button className="btn-primary text-xs px-2" onClick={handleCreate}>+</button>
         </div>
+        <input
+          ref={importInputRef}
+          type="file"
+          accept="application/json,.json"
+          className="hidden"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (file) void importPlaylistJson(file);
+          }}
+        />
+        <button
+          type="button"
+          onClick={() => importInputRef.current?.click()}
+          className="btn-secondary text-xs px-2 py-1.5 flex items-center justify-center gap-1.5"
+          title="DIVA PlayerのプレイリストJSONをインポート"
+        >
+          <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <path d="M7 10l5-5 5 5"/>
+            <path d="M12 5v12"/>
+          </svg>
+          JSONインポート
+        </button>
       </div>
 
       {/* ─── 右パネル ────────────────────────────────────────────────── */}
@@ -911,6 +1004,11 @@ export default function PlaylistPage() {
             {dedupeNotice && (
               <div className="text-sm px-4 py-2 rounded-xl" style={{ background: 'rgba(34,197,94,0.14)', color: '#86efac', border: '1px solid rgba(34,197,94,0.3)' }}>
                 {dedupeNotice.count} 曲の重複を削除しました
+              </div>
+            )}
+            {importNotice && (
+              <div className="text-sm px-4 py-2 rounded-xl" style={{ background: 'rgba(34,211,238,0.12)', color: 'var(--color-accent-cyan)', border: '1px solid rgba(34,211,238,0.28)' }}>
+                「{importNotice.name}」をインポートしました ({importNotice.count} 曲)
               </div>
             )}
 
