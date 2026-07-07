@@ -411,7 +411,7 @@ export default function PlaylistPage() {
     loadPlaylists,
     createPlaylist, deletePlaylist, updatePlaylist,
     createFolder, deleteFolder,
-    addSongs, removeSong, reorderSongs, sortSongs,
+    addSongs, removeSong, reorderSongs, sortSongs, removeDuplicateSongs,
   } = usePlaylistStore();
   const { setQueue, addToQueue } = usePlayerStore();
 
@@ -433,6 +433,7 @@ export default function PlaylistPage() {
   const [editFolderId, setEditFolderId] = useState<string>('');
 
   const [dupWarning, setDupWarning] = useState<{ count: number } | null>(null);
+  const [dedupeNotice, setDedupeNotice] = useState<{ count: number } | null>(null);
   const [showYTImport, setShowYTImport] = useState(false);
 
   useEffect(() => { loadPlaylists(); }, [loadPlaylists]);
@@ -444,6 +445,9 @@ export default function PlaylistPage() {
   }, [selectedPlaylistId]);
 
   const selectedPlaylist = playlists.find(p => p.id === selectedPlaylistId) ?? null;
+  const selectedPlaylistDuplicateCount = selectedPlaylist
+    ? selectedPlaylist.songs.length - new Set(selectedPlaylist.songs.map(s => s.id)).size
+    : 0;
   const pinnedPlaylists = playlists.filter(p => p.isPinned);
   const filteredSidebarPlaylists = (selectedFolderId
     ? playlists.filter(p => !p.isPinned && p.folderId === selectedFolderId)
@@ -509,6 +513,17 @@ export default function PlaylistPage() {
     setSelectedIds(new Set());
     setSelectionMode(false);
   }, [selectedPlaylist, selectedIds, removeSong]);
+
+  const removeDuplicatesFromSelectedPlaylist = useCallback(() => {
+    if (!selectedPlaylist) return;
+    const count = removeDuplicateSongs(selectedPlaylist.id);
+    if (count > 0) {
+      setSelectedIds(new Set());
+      setSelectionMode(false);
+      setDedupeNotice({ count });
+      setTimeout(() => setDedupeNotice(null), 4000);
+    }
+  }, [selectedPlaylist, removeDuplicateSongs]);
 
   const addSelectedToQueue = useCallback(() => {
     if (!selectedPlaylist) return;
@@ -809,6 +824,16 @@ export default function PlaylistPage() {
                     {{ addedOrder: '追加順', name: '曲名', artist: 'アーティスト', publishDate: '公開日' }[key]}
                   </button>
                 ))}
+                {selectedPlaylistDuplicateCount > 0 && (
+                  <button
+                    onClick={removeDuplicatesFromSelectedPlaylist}
+                    className="text-xs px-2 py-1 rounded-lg border transition-colors hover:bg-white/5"
+                    style={{ borderColor: 'rgba(251,191,36,0.45)', color: '#fbbf24' }}
+                    title="同じ曲IDの2件目以降を削除"
+                  >
+                    重複削除 ({selectedPlaylistDuplicateCount})
+                  </button>
+                )}
                 <div className="flex-1" />
                 <button
                   onClick={() => { setSelectionMode(v => !v); clearSelection(); }}
@@ -831,6 +856,11 @@ export default function PlaylistPage() {
             {dupWarning && (
               <div className="text-sm px-4 py-2 rounded-xl" style={{ background: 'rgba(251,191,36,0.15)', color: '#fbbf24', border: '1px solid rgba(251,191,36,0.3)' }}>
                 {dupWarning.count} 曲は既にプレイリストにあるためスキップしました
+              </div>
+            )}
+            {dedupeNotice && (
+              <div className="text-sm px-4 py-2 rounded-xl" style={{ background: 'rgba(34,197,94,0.14)', color: '#86efac', border: '1px solid rgba(34,197,94,0.3)' }}>
+                {dedupeNotice.count} 曲の重複を削除しました
               </div>
             )}
 

@@ -54,6 +54,7 @@ interface PlaylistState {
   removeSongById: (playlistId: string, songId: number) => void;
   reorderSongs: (playlistId: string, fromIndex: number, toIndex: number) => void;
   sortSongs: (playlistId: string, by: SortKey) => void;
+  removeDuplicateSongs: (playlistId: string) => number;
 
   /** ソングが存在しなければ追加、存在すれば削除。true = 追加, false = 削除 */
   toggleSongInPlaylist: (playlistId: string, song: Song) => boolean;
@@ -300,6 +301,31 @@ export const usePlaylistStore = create<PlaylistState>((set, get) => ({
     });
     set({ playlists: updated });
     save(updated, get().folders);
+  },
+
+  removeDuplicateSongs: (playlistId) => {
+    let removed = 0;
+    const updated = get().playlists.map(p => {
+      if (p.id !== playlistId) return p;
+
+      const seen = new Set<number>();
+      const songs = p.songs.filter(song => {
+        if (seen.has(song.id)) {
+          removed++;
+          return false;
+        }
+        seen.add(song.id);
+        return true;
+      });
+
+      return removed > 0 ? { ...p, songs, updatedAt: Date.now() } : p;
+    });
+
+    if (removed > 0) {
+      set({ playlists: updated });
+      save(updated, get().folders);
+    }
+    return removed;
   },
 
   toggleSongInPlaylist: (playlistId, song) => {
