@@ -2,6 +2,7 @@ import { usePlayerStore } from '../../stores/playerStore';
 import { useProgressStore } from '../../stores/progressStore';
 import { useRatingStore } from '../../stores/ratingStore';
 import StarRating from '../player/StarRating';
+import ShareCurrentSong from '../player/ShareCurrentSong';
 import SleepTimer from '../player/SleepTimer';
 
 /**
@@ -241,6 +242,8 @@ export default function PlayerBar() {
           </button>
 
           {/* 隠しモードトグル */}
+          <ShareCurrentSong />
+
           <SleepTimer />
 
           <button
