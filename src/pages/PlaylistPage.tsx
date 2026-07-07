@@ -420,6 +420,7 @@ export default function PlaylistPage() {
   const [newName, setNewName]                       = useState('');
   const [newFolderName, setNewFolderName]           = useState('');
   const [showFolderInput, setShowFolderInput]       = useState(false);
+  const [playlistFilterText, setPlaylistFilterText] = useState('');
 
   const [filterText, setFilterText]     = useState('');
   const [selectionMode, setSelectionMode] = useState(false);
@@ -444,9 +445,14 @@ export default function PlaylistPage() {
 
   const selectedPlaylist = playlists.find(p => p.id === selectedPlaylistId) ?? null;
   const pinnedPlaylists = playlists.filter(p => p.isPinned);
-  const filteredSidebarPlaylists = selectedFolderId
+  const filteredSidebarPlaylists = (selectedFolderId
     ? playlists.filter(p => !p.isPinned && p.folderId === selectedFolderId)
-    : playlists.filter(p => !p.isPinned && !p.folderId);
+    : playlists.filter(p => !p.isPinned && !p.folderId)
+  ).filter(p => {
+    const q = playlistFilterText.trim().toLowerCase();
+    if (!q) return true;
+    return p.name.toLowerCase().includes(q);
+  });
 
   const filteredSongs = (selectedPlaylist?.songs ?? []).filter(s => {
     if (!filterText.trim()) return true;
@@ -628,6 +634,32 @@ export default function PlaylistPage() {
         {/* ピン留め（後で聴く等） */}
         {pinnedPlaylists.map(p => <SidebarItem key={p.id} p={p} />)}
         {pinnedPlaylists.length > 0 && <div className="border-t" style={{ borderColor: 'var(--color-border)' }} />}
+
+        {playlists.some(p => !p.isPinned) && (
+          <div className="relative">
+            <input
+              type="search"
+              value={playlistFilterText}
+              onChange={e => setPlaylistFilterText(e.target.value)}
+              placeholder="プレイリストを検索"
+              className="search-input text-xs w-full pr-8"
+              style={{ paddingLeft: '0.5rem' }}
+            />
+            {playlistFilterText && (
+              <button
+                type="button"
+                onClick={() => setPlaylistFilterText('')}
+                className="absolute right-1 top-1/2 -translate-y-1/2 p-1 rounded text-neutral-500 hover:text-white transition-colors"
+                title="クリア"
+              >
+                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              </button>
+            )}
+          </div>
+        )}
 
         {/* フォルダフィルター */}
         <button
