@@ -16,9 +16,15 @@ type FailedPVMap = Record<string, string[]>;
 const FAILED_PVS_KEY = 'failedPVs';
 const VOLUME_KEY = 'volume';
 const LOOP_MODE_KEY = 'loopMode';
+const PLAYER_QUEUE_KEY = 'playerQueue';
 const DEFAULT_VOLUME = 50;
 
 type LoopMode = 'none' | 'all' | 'one';
+interface StoredPlayerQueue {
+  queue: Song[];
+  queueIndex: number;
+  currentSong: Song | null;
+}
 
 const pvPriorities: Array<{ service: PVService; pvType: PVType }> = [
   { service: 'Youtube', pvType: 'Original' },
@@ -74,6 +80,25 @@ function clampVolume(volume: number): number {
 function getStoredLoopMode(): LoopMode {
   const stored = storage.get<LoopMode>(LOOP_MODE_KEY);
   return stored === 'all' || stored === 'one' ? stored : 'none';
+}
+
+function getStoredPlayerQueue(): StoredPlayerQueue | null {
+  const stored = storage.get<StoredPlayerQueue>(PLAYER_QUEUE_KEY);
+  if (!stored || !Array.isArray(stored.queue)) return null;
+  const queueIndex = Number.isInteger(stored.queueIndex) ? stored.queueIndex : -1;
+  return {
+    queue: stored.queue,
+    queueIndex: queueIndex >= 0 && queueIndex < stored.queue.length ? queueIndex : -1,
+    currentSong: stored.currentSong ?? stored.queue[queueIndex] ?? null,
+  };
+}
+
+function savePlayerQueue(queue: Song[], queueIndex: number, currentSong: Song | null): void {
+  storage.set(PLAYER_QUEUE_KEY, { queue, queueIndex, currentSong });
+}
+
+function clearStoredPlayerQueue(): void {
+  storage.remove(PLAYER_QUEUE_KEY);
 }
 
 // 再生可能なPVを抽出するヘルパー
@@ -170,9 +195,12 @@ interface PlayerState {
   setMixMode: (mode: MixMode) => void;
 }
 
+const storedPlayerQueue = getStoredPlayerQueue();
+const initialCurrentSong = storedPlayerQueue?.currentSong ?? null;
+
 export const usePlayerStore = create<PlayerState>((set, get) => ({
-  currentSong: null,
-  currentPV: null,
+  currentSong: initialCurrentSong,
+  currentPV: initialCurrentSong ? getPlayablePV(initialCurrentSong) : null,
   isPlaying: false,
   volume: clampVolume(storage.get<number>(VOLUME_KEY) ?? DEFAULT_VOLUME),
   detailPanelEl: null,
@@ -191,8 +219,8 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   seekTarget: null,
   seekTo: (t) => set({ seekTarget: t }),
   clearSeekTarget: () => set({ seekTarget: null }),
-  queue: [],
-  queueIndex: -1,
+  queue: storedPlayerQueue?.queue ?? [],
+  queueIndex: storedPlayerQueue?.queueIndex ?? -1,
   error: null,
 
   playSong: (song: Song, isUserAction?: boolean) => {
@@ -208,6 +236,8 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     }
     useProgressStore.getState().setDuration(song.lengthSeconds || pv.length || 0);
     useProgressStore.getState().setProgress(0);
+    const { queue, queueIndex } = get();
+    savePlayerQueue(queue, queueIndex, song);
     
     set({
       currentSong: song,
@@ -298,25 +328,34 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       }
       const shuffled = current ? [current, ...rest] : rest;
       set({ queue: shuffled, queueIndex: 0, originalQueue: songs });
+      savePlayerQueue(shuffled, 0, shuffled[0] ?? null);
       get().playSong(shuffled[0]);
     } else {
       set({ queue: songs, queueIndex: startIndex, originalQueue: [] });
+      savePlayerQueue(songs, startIndex, songs[startIndex] ?? null);
       if (songs.length > 0) get().playSong(songs[startIndex]);
     }
   },
 
   replaceQueueList: (songs: Song[]) => {
-    set({ queue: songs });
+    const queueIndex = Math.min(get().queueIndex, songs.length - 1);
+    const currentSong = queueIndex >= 0 ? songs[queueIndex] : null;
+    set({ queue: songs, queueIndex });
+    savePlayerQueue(songs, queueIndex, currentSong);
   },
 
   addToQueue: (song: Song) => {
-    const { queue } = get();
-    set({ queue: [...queue, song] });
+    const { queue, queueIndex, currentSong } = get();
+    const nextQueue = [...queue, song];
+    set({ queue: nextQueue });
+    savePlayerQueue(nextQueue, queueIndex, currentSong);
   },
 
   addManyToQueue: (songs: Song[]) => {
-    const { queue } = get();
-    set({ queue: [...queue, ...songs] });
+    const { queue, queueIndex, currentSong } = get();
+    const nextQueue = [...queue, ...songs];
+    set({ queue: nextQueue });
+    savePlayerQueue(nextQueue, queueIndex, currentSong);
   },
 
   removeFromQueue: (index: number) => {
@@ -328,13 +367,17 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       // 現在再生中の曲を削除
       set({ queue: newQueue, queueIndex: Math.min(newIndex, newQueue.length - 1) });
       if (newQueue.length > 0 && newIndex < newQueue.length) {
+        const nextIndex = Math.min(newIndex, newQueue.length - 1);
+        savePlayerQueue(newQueue, nextIndex, newQueue[nextIndex] ?? null);
         get().playSong(newQueue[newIndex]);
       } else {
         set({ currentSong: null, currentPV: null, isPlaying: false });
+        clearStoredPlayerQueue();
       }
       return;
     }
     set({ queue: newQueue, queueIndex: newIndex });
+    savePlayerQueue(newQueue, newIndex, get().currentSong);
   },
 
   clearQueue: () => {
@@ -346,12 +389,14 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       currentPV: null,
       isPlaying: false,
     });
+    clearStoredPlayerQueue();
   },
 
   jumpToIndex: (index: number) => {
     const { queue } = get();
     if (index < 0 || index >= queue.length) return;
     set({ queueIndex: index });
+    savePlayerQueue(queue, index, queue[index]);
     get().playSong(queue[index]);
   },
 
@@ -405,6 +450,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
         originalQueue: [],
         queueIndex: newIndex < 0 ? 0 : newIndex,
       });
+      savePlayerQueue(originalQueue, newIndex < 0 ? 0 : newIndex, currentSong);
     } else {
       // シャッフル有効化: 現在曲を先頭に置き残りをランダム化
       if (queue.length === 0) { set({ shuffleEnabled: true }); return; }
@@ -421,6 +467,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
         queue: shuffled,
         queueIndex: 0,
       });
+      savePlayerQueue(shuffled, 0, currentSong);
     }
   },
 }));
