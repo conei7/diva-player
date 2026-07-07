@@ -4,6 +4,7 @@ import { useUiStore } from '../../stores/uiStore';
 import { usePlayerStore } from '../../stores/playerStore';
 import { useSearchStore } from '../../stores/searchStore';
 import { useSelectionStore } from '../../stores/selectionStore';
+import { getSearchSuggestions, type SearchSuggestion } from '../../api/vocadb';
 
 /**
  * TopNav - YouTube風のトップナビゲーションバー
@@ -18,14 +19,23 @@ export default function TopNav() {
   const isWatchPage = location.pathname === '/watch';
   const { toggleSidebar, toggleMobileDrawer } = useUiStore();
   const { hiddenMode, toggleHiddenMode } = usePlayerStore();
-  const { setQuery: setSearchStoreQuery, search: runSearch } = useSearchStore();
+  const {
+    setQuery: setSearchStoreQuery,
+    search: runSearch,
+    searchByArtistId,
+    addVocalistFilter,
+  } = useSearchStore();
   const isSelectionMode = useSelectionStore(s => s.isSelectionMode);
   const enterSelectionMode = useSelectionStore(s => s.enterSelectionMode);
   const exitSelectionMode  = useSelectionStore(s => s.exitSelectionMode);
   const selectedCount = useSelectionStore(s => s.selectedSongIds.size);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchFocused, setSearchFocused] = useState(false);
+  const [suggestions, setSuggestions] = useState<SearchSuggestion[]>([]);
+  const [isSuggestLoading, setIsSuggestLoading] = useState(false);
+  const [showSuggestions, setShowSuggestions] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const searchFormRef = useRef<HTMLFormElement>(null);
 
   // ロゴ5回クリックで隠しモードトグル
   const clickCountRef = useRef(0);
@@ -45,10 +55,79 @@ export default function TopNav() {
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
     if (searchQuery.trim()) {
+      setShowSuggestions(false);
       setSearchStoreQuery(searchQuery.trim());
       runSearch();
       navigate('/');
     }
+  };
+
+  useEffect(() => {
+    const trimmed = searchQuery.trim();
+    if (trimmed.length < 2) {
+      setSuggestions([]);
+      setIsSuggestLoading(false);
+      return;
+    }
+
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      setIsSuggestLoading(true);
+      try {
+        const results = await getSearchSuggestions(trimmed);
+        if (!controller.signal.aborted) {
+          setSuggestions(results);
+          setShowSuggestions(document.activeElement === searchInputRef.current);
+        }
+      } catch {
+        if (!controller.signal.aborted) setSuggestions([]);
+      } finally {
+        if (!controller.signal.aborted) setIsSuggestLoading(false);
+      }
+    }, 220);
+
+    return () => {
+      controller.abort();
+      window.clearTimeout(timer);
+    };
+  }, [searchQuery]);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (!searchFormRef.current?.contains(e.target as Node)) {
+        setShowSuggestions(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  const handleSuggestionSelect = (suggestion: SearchSuggestion) => {
+    setShowSuggestions(false);
+    if (suggestion.kind === 'song') {
+      setSearchQuery(suggestion.label);
+      navigate(`/watch?v=${suggestion.id}`);
+      return;
+    }
+
+    if (suggestion.kind === 'producer') {
+      setSearchQuery(suggestion.label);
+      searchByArtistId(suggestion.id, suggestion.label);
+      navigate('/');
+      return;
+    }
+
+    setSearchQuery('');
+    setSearchStoreQuery('');
+    addVocalistFilter({ id: suggestion.id, name: suggestion.label });
+    runSearch();
+    navigate('/');
+  };
+
+  const kindLabel = (kind: SearchSuggestion['kind']) => {
+    if (kind === 'song') return '曲';
+    if (kind === 'producer') return 'P';
+    return '歌';
   };
 
   // キーボードショートカット: / で検索にフォーカス
@@ -119,7 +198,7 @@ export default function TopNav() {
 
         {/* ─── 中央: 検索バー ─── */}
         <div className="flex-1 flex justify-center max-w-2xl mx-auto">
-          <form onSubmit={handleSearch} className="flex w-full">
+          <form ref={searchFormRef} onSubmit={handleSearch} className="relative flex w-full">
             <div className="relative flex-1">
               <input
                 ref={searchInputRef}
@@ -127,7 +206,10 @@ export default function TopNav() {
                 placeholder="ボカロP名や曲名で検索"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                onFocus={() => setSearchFocused(true)}
+                onFocus={() => {
+                  setSearchFocused(true);
+                  if (searchQuery.trim().length >= 2) setShowSuggestions(true);
+                }}
                 onBlur={() => setSearchFocused(false)}
                 className="w-full h-10 pl-4 pr-4 rounded-l-full text-sm outline-none transition-all"
                 style={{
@@ -151,6 +233,63 @@ export default function TopNav() {
                 <path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z" />
               </svg>
             </button>
+
+            {showSuggestions && (suggestions.length > 0 || isSuggestLoading) && (
+              <div
+                className="absolute left-0 right-0 top-full z-50 mt-2 overflow-hidden rounded-lg shadow-2xl"
+                style={{
+                  background: 'var(--color-surface-elevated)',
+                  border: '1px solid var(--color-border)',
+                }}
+              >
+                {isSuggestLoading && suggestions.length === 0 ? (
+                  <div className="px-4 py-3 text-sm" style={{ color: 'var(--color-text-muted)' }}>
+                    候補を検索中...
+                  </div>
+                ) : (
+                  <ul className="max-h-96 overflow-y-auto py-1">
+                    {suggestions.map((suggestion) => (
+                      <li key={`${suggestion.kind}-${suggestion.id}`}>
+                        <button
+                          type="button"
+                          className="w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors hover:bg-white/5"
+                          onMouseDown={(e) => {
+                            e.preventDefault();
+                            handleSuggestionSelect(suggestion);
+                          }}
+                        >
+                          <span
+                            className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full text-[11px] font-bold"
+                            style={{
+                              background: suggestion.kind === 'song'
+                                ? 'rgba(34, 211, 238, 0.15)'
+                                : suggestion.kind === 'producer'
+                                  ? 'rgba(139, 92, 246, 0.18)'
+                                  : 'rgba(59, 130, 246, 0.16)',
+                              color: suggestion.kind === 'song'
+                                ? 'var(--color-accent-cyan)'
+                                : suggestion.kind === 'producer'
+                                  ? 'var(--color-accent-purple)'
+                                  : '#60a5fa',
+                            }}
+                          >
+                            {kindLabel(suggestion.kind)}
+                          </span>
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate text-sm font-medium" style={{ color: 'var(--color-text-primary)' }}>
+                              {suggestion.label}
+                            </span>
+                            <span className="block truncate text-xs" style={{ color: 'var(--color-text-muted)' }}>
+                              {suggestion.sublabel}
+                            </span>
+                          </span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
           </form>
         </div>
 

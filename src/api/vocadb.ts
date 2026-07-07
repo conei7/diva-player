@@ -270,6 +270,110 @@ export async function searchVocalistsByName(query: string): Promise<Artist[]> {
   return data.items;
 }
 
+export type SearchSuggestion =
+  | { kind: 'song'; id: number; label: string; sublabel: string; song: Song }
+  | { kind: 'producer'; id: number; label: string; sublabel: string; artist: Artist }
+  | { kind: 'vocalist'; id: number; label: string; sublabel: string; artist: Artist };
+
+const PRODUCER_ARTIST_TYPES = 'Producer%2CCircle%2CBand';
+
+async function searchArtistsByName(
+  query: string,
+  artistTypes: string,
+  maxResults: number,
+  cachePrefix: string,
+): Promise<Artist[]> {
+  const trimmed = query.trim();
+  if (trimmed.length < 1) return [];
+
+  const queryParams = buildSearchParams({
+    query: trimmed,
+    maxResults,
+    nameMatchMode: 'StartsWith',
+    lang: DEFAULT_LANG,
+  });
+
+  const url = `${BASE_URL}/artists?${queryParams}&artistTypes=${artistTypes}&sort=SongCount`;
+  const cacheKey = `${cachePrefix}:${url}`;
+
+  const cached = getCached<ArtistSearchResult>(cacheKey);
+  const data = cached ?? await (async () => {
+    const response = await fetchWithRetry(url);
+    const result: ArtistSearchResult = await response.json();
+    setCache(cacheKey, result);
+    return result;
+  })();
+
+  return data.items;
+}
+
+/**
+ * 検索バー用サジェスト候補を取得する。
+ * 曲名、P/サークル/バンド、シンガーを並行取得し、UI側でそのまま選べる形にする。
+ */
+export async function getSearchSuggestions(query: string): Promise<SearchSuggestion[]> {
+  const trimmed = query.trim();
+  if (trimmed.length < 2) return [];
+
+  const [songResult, producers, vocalists] = await Promise.all([
+    searchSongs({
+      query: trimmed,
+      sort: 'FavoritedTimes',
+      maxResults: 5,
+      start: 0,
+      getTotalCount: false,
+      onlyWithPVs: true,
+      nameMatchMode: 'Auto',
+    }),
+    searchArtistsByName(trimmed, PRODUCER_ARTIST_TYPES, 4, 'suggest-producer'),
+    searchArtistsByName(trimmed, VOCALIST_ARTIST_TYPES, 4, 'suggest-vocalist'),
+  ]);
+
+  const suggestions: SearchSuggestion[] = [];
+  const seen = new Set<string>();
+
+  for (const song of songResult.items) {
+    const key = `song:${song.id}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    suggestions.push({
+      kind: 'song',
+      id: song.id,
+      label: song.name,
+      sublabel: song.artistString || '曲',
+      song,
+    });
+  }
+
+  for (const artist of producers) {
+    const key = `producer:${artist.id}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    suggestions.push({
+      kind: 'producer',
+      id: artist.id,
+      label: artist.name,
+      sublabel: `${artist.artistType} の曲を検索`,
+      artist,
+    });
+  }
+
+  for (const artist of vocalists) {
+    const key = `vocalist:${artist.id}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    suggestions.push({
+      kind: 'vocalist',
+      id: artist.id,
+      label: artist.name,
+      sublabel: `${artist.artistType} で絞り込み`,
+      artist,
+    });
+  }
+
+  return suggestions.slice(0, 10);
+}
+
 /**
  * 関連曲を取得（サジェスト・連続再生用）
  * /api/songs/{id}/related: likeMatches / artistMatches / tagMatches を結合して返す
