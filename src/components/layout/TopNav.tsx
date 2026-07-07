@@ -11,6 +11,29 @@ import {
   type SearchSuggestion,
 } from '../../api/vocadb';
 
+const SEARCH_HISTORY_KEY = 'divaSearchHistory';
+const MAX_SEARCH_HISTORY = 10;
+
+function readSearchHistory(): string[] {
+  try {
+    const raw = window.localStorage.getItem(SEARCH_HISTORY_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((item): item is string => typeof item === 'string').slice(0, MAX_SEARCH_HISTORY);
+  } catch {
+    return [];
+  }
+}
+
+function writeSearchHistory(history: string[]) {
+  try {
+    window.localStorage.setItem(SEARCH_HISTORY_KEY, JSON.stringify(history));
+  } catch {
+    // Ignore storage failures; search itself should keep working.
+  }
+}
+
 /**
  * TopNav - YouTube風のトップナビゲーションバー
  *
@@ -43,8 +66,30 @@ export default function TopNav() {
   const [suggestions, setSuggestions] = useState<SearchSuggestion[]>([]);
   const [isSuggestLoading, setIsSuggestLoading] = useState(false);
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const [recentSearches, setRecentSearches] = useState<string[]>(() => readSearchHistory());
   const searchInputRef = useRef<HTMLInputElement>(null);
   const searchFormRef = useRef<HTMLFormElement>(null);
+  const showRecentSearches = showSuggestions && searchQuery.trim().length === 0 && recentSearches.length > 0;
+
+  const rememberSearch = (term: string) => {
+    const normalized = term.trim();
+    if (!normalized) return;
+
+    setRecentSearches(current => {
+      const next = [
+        normalized,
+        ...current.filter(item => item.toLowerCase() !== normalized.toLowerCase()),
+      ].slice(0, MAX_SEARCH_HISTORY);
+      writeSearchHistory(next);
+      return next;
+    });
+  };
+
+  const clearSearchHistory = () => {
+    setRecentSearches([]);
+    writeSearchHistory([]);
+    setShowSuggestions(false);
+  };
 
   // ロゴ5回クリックで隠しモードトグル
   const clickCountRef = useRef(0);
@@ -66,6 +111,7 @@ export default function TopNav() {
     const trimmed = searchQuery.trim();
     if (!trimmed) return;
 
+    rememberSearch(trimmed);
     setShowSuggestions(false);
     navigate('/');
 
@@ -143,6 +189,7 @@ export default function TopNav() {
   }, []);
 
   const handleSuggestionSelect = (suggestion: SearchSuggestion) => {
+    rememberSearch(suggestion.label);
     setShowSuggestions(false);
     if (suggestion.kind === 'song') {
       setSearchQuery(suggestion.label);
@@ -162,6 +209,15 @@ export default function TopNav() {
     addVocalistFilter({ id: suggestion.id, name: suggestion.label });
     runSearch();
     navigate('/');
+  };
+
+  const handleRecentSearchSelect = async (term: string) => {
+    setSearchQuery(term);
+    setShowSuggestions(false);
+    rememberSearch(term);
+    setSearchStoreQuery(term);
+    navigate('/');
+    await runSearch();
   };
 
   const kindLabel = (kind: SearchSuggestion['kind']) => {
@@ -279,10 +335,15 @@ export default function TopNav() {
                 type="text"
                 placeholder="ボカロP名や曲名で検索"
                 value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
+                onChange={(e) => {
+                  setSearchQuery(e.target.value);
+                  if (e.target.value.trim().length === 0 && recentSearches.length > 0) {
+                    setShowSuggestions(true);
+                  }
+                }}
                 onFocus={() => {
                   setSearchFocused(true);
-                  if (searchQuery.trim().length >= 2) setShowSuggestions(true);
+                  if (searchQuery.trim().length >= 2 || recentSearches.length > 0) setShowSuggestions(true);
                 }}
                 onBlur={() => setSearchFocused(false)}
                 className="w-full h-10 pl-4 pr-4 rounded-l-full sm:rounded-l-none text-sm outline-none transition-all"
@@ -308,7 +369,7 @@ export default function TopNav() {
               </svg>
             </button>
 
-            {showSuggestions && (suggestions.length > 0 || isSuggestLoading) && (
+            {showSuggestions && (showRecentSearches || suggestions.length > 0 || isSuggestLoading) && (
               <div
                 className="absolute left-0 right-0 top-full z-50 mt-2 overflow-hidden rounded-lg shadow-2xl"
                 style={{
@@ -316,7 +377,50 @@ export default function TopNav() {
                   border: '1px solid var(--color-border)',
                 }}
               >
-                {isSuggestLoading && suggestions.length === 0 ? (
+                {showRecentSearches ? (
+                  <div>
+                    <div className="flex items-center justify-between px-4 py-2 text-xs" style={{ color: 'var(--color-text-muted)' }}>
+                      <span>最近の検索</span>
+                      <button
+                        type="button"
+                        className="transition-colors hover:text-white"
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          clearSearchHistory();
+                        }}
+                      >
+                        クリア
+                      </button>
+                    </div>
+                    <ul className="max-h-96 overflow-y-auto py-1">
+                      {recentSearches.map(term => (
+                        <li key={term}>
+                          <button
+                            type="button"
+                            className="w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors hover:bg-white/5"
+                            onMouseDown={(e) => {
+                              e.preventDefault();
+                              void handleRecentSearchSelect(term);
+                            }}
+                          >
+                            <span
+                              className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full"
+                              style={{ background: 'rgba(255,255,255,0.08)', color: 'var(--color-text-muted)' }}
+                            >
+                              <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <circle cx="12" cy="12" r="9" />
+                                <path d="M12 7v5l3 2" />
+                              </svg>
+                            </span>
+                            <span className="min-w-0 flex-1 truncate text-sm font-medium" style={{ color: 'var(--color-text-primary)' }}>
+                              {term}
+                            </span>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : isSuggestLoading && suggestions.length === 0 ? (
                   <div className="px-4 py-3 text-sm" style={{ color: 'var(--color-text-muted)' }}>
                     候補を検索中...
                   </div>
