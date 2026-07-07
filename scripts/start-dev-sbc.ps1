@@ -1,14 +1,41 @@
 param(
     [string]$SshHost = "diva-sbc",
-    [int]$LocalApiPort = 15000,
-    [int]$RemoteApiPort = 5000,
+    [int]$RemoteWebPort = 8080,
     [switch]$CheckOnly
 )
 
 $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Definition)
 $sshConfig = Join-Path $env:USERPROFILE ".ssh\config"
-$apiTarget = "http://127.0.0.1:$LocalApiPort"
+
+function Invoke-Sbc {
+    param([string]$Command)
+    ssh.exe -F $sshConfig $SshHost $Command
+}
+
+function Get-CloudflareUrl {
+    $url = Invoke-Sbc "grep -hEo 'https://[-a-zA-Z0-9.]+\.trycloudflare\.com' ~/cloudflared-8080.log 2>/dev/null | tail -1"
+    $latestUrl = $url | Select-Object -Last 1
+    if (!$latestUrl) {
+        return ""
+    }
+    return $latestUrl.Trim()
+}
+
+function Test-CloudflareHealth {
+    param([string]$CloudflareUrl)
+
+    if (!$CloudflareUrl) {
+        return $false
+    }
+
+    try {
+        $health = Invoke-WebRequest -Uri "$CloudflareUrl/backend-api/api/health" -UseBasicParsing -TimeoutSec 8
+        return $health.StatusCode -eq 200
+    } catch {
+        return $false
+    }
+}
 
 Push-Location $repoRoot
 try {
@@ -17,29 +44,33 @@ try {
         throw "SSH config not found: $sshConfig"
     }
 
-    Write-Host "[start-dev-sbc] Checking SBC API tunnel on $apiTarget..."
-    $tunnelOk = $false
-    try {
-        $health = Invoke-WebRequest -Uri "$apiTarget/api/health" -UseBasicParsing -TimeoutSec 2
-        $tunnelOk = $health.StatusCode -eq 200
-    } catch {
-        $tunnelOk = $false
-    }
+    Write-Host "[start-dev-sbc] Checking SBC web/API on localhost:$RemoteWebPort..."
+    Invoke-Sbc "curl -fsS --max-time 5 http://localhost:$RemoteWebPort/backend-api/api/health >/dev/null"
 
-    if (!$tunnelOk) {
-        Write-Host "[start-dev-sbc] Starting SSH tunnel: localhost:$LocalApiPort -> ${SshHost}:localhost:$RemoteApiPort"
-        Start-Process -FilePath "ssh.exe" `
-            -ArgumentList @("-F", $sshConfig, "-N", "-L", "${LocalApiPort}:localhost:${RemoteApiPort}", $SshHost) `
-            -WindowStyle Hidden
+    $cloudflareUrl = Get-CloudflareUrl
+    $cloudflareOk = Test-CloudflareHealth $cloudflareUrl
 
-        Start-Sleep -Seconds 2
-        $health = Invoke-WebRequest -Uri "$apiTarget/api/health" -UseBasicParsing -TimeoutSec 8
-        if ($health.StatusCode -ne 200) {
-            throw "SBC API tunnel did not return HTTP 200."
+    if (!$cloudflareOk) {
+        Write-Host "[start-dev-sbc] Starting Cloudflare Tunnel: $SshHost localhost:$RemoteWebPort"
+        Invoke-Sbc "nohup cloudflared tunnel --url http://localhost:$RemoteWebPort > ~/cloudflared-8080.log 2>&1 &"
+
+        for ($attempt = 1; $attempt -le 8; $attempt++) {
+            Start-Sleep -Seconds 3
+            $cloudflareUrl = Get-CloudflareUrl
+            if (Test-CloudflareHealth $cloudflareUrl) {
+                $cloudflareOk = $true
+                break
+            }
+        }
+
+        if (!$cloudflareOk) {
+            throw "Cloudflare Tunnel did not return HTTP 200 from /backend-api/api/health. See ~/cloudflared-8080.log on $SshHost."
         }
     }
 
-    Write-Host "[start-dev-sbc] SBC API tunnel is ready: $apiTarget"
+    $apiTarget = "$cloudflareUrl/backend-api"
+    Write-Host "[start-dev-sbc] Cloudflare URL is ready: $cloudflareUrl"
+    Write-Host "[start-dev-sbc] Backend API target: $apiTarget"
     if ($CheckOnly) {
         return
     }
