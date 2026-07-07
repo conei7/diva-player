@@ -307,6 +307,10 @@ async function searchArtistsByName(
   return data.items;
 }
 
+export async function searchProducersByName(query: string, maxResults = 8): Promise<Artist[]> {
+  return searchArtistsByName(query, PRODUCER_ARTIST_TYPES, maxResults, 'producer');
+}
+
 /**
  * 検索バー用サジェスト候補を取得する。
  * 曲名、P/サークル/バンド、シンガーを並行取得し、UI側でそのまま選べる形にする。

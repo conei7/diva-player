@@ -4,7 +4,12 @@ import { useUiStore } from '../../stores/uiStore';
 import { usePlayerStore } from '../../stores/playerStore';
 import { useSearchStore } from '../../stores/searchStore';
 import { useSelectionStore } from '../../stores/selectionStore';
-import { getSearchSuggestions, type SearchSuggestion } from '../../api/vocadb';
+import {
+  getSearchSuggestions,
+  searchProducersByName,
+  searchVocalistsByName,
+  type SearchSuggestion,
+} from '../../api/vocadb';
 
 /**
  * TopNav - YouTube風のトップナビゲーションバー
@@ -22,14 +27,18 @@ export default function TopNav() {
   const {
     setQuery: setSearchStoreQuery,
     search: runSearch,
+    searchTitleOnly,
     searchByArtistId,
     addVocalistFilter,
+    setVocalistFilters,
+    setVocalistMatchMode,
   } = useSearchStore();
   const isSelectionMode = useSelectionStore(s => s.isSelectionMode);
   const enterSelectionMode = useSelectionStore(s => s.enterSelectionMode);
   const exitSelectionMode  = useSelectionStore(s => s.exitSelectionMode);
   const selectedCount = useSelectionStore(s => s.selectedSongIds.size);
   const [searchQuery, setSearchQuery] = useState('');
+  const [searchMode, setSearchMode] = useState<'auto' | 'song' | 'producer' | 'vocalist'>('auto');
   const [searchFocused, setSearchFocused] = useState(false);
   const [suggestions, setSuggestions] = useState<SearchSuggestion[]>([]);
   const [isSuggestLoading, setIsSuggestLoading] = useState(false);
@@ -52,14 +61,45 @@ export default function TopNav() {
     }
   };
 
-  const handleSearch = (e: React.FormEvent) => {
+  const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (searchQuery.trim()) {
-      setShowSuggestions(false);
-      setSearchStoreQuery(searchQuery.trim());
-      runSearch();
-      navigate('/');
+    const trimmed = searchQuery.trim();
+    if (!trimmed) return;
+
+    setShowSuggestions(false);
+    navigate('/');
+
+    if (searchMode === 'song') {
+      await searchTitleOnly(trimmed);
+      return;
     }
+
+    if (searchMode === 'producer') {
+      const producers = await searchProducersByName(trimmed, 1);
+      if (producers[0]) {
+        await searchByArtistId(producers[0].id, producers[0].name);
+      } else {
+        await searchTitleOnly(trimmed);
+      }
+      return;
+    }
+
+    if (searchMode === 'vocalist') {
+      const vocalists = await searchVocalistsByName(trimmed);
+      const vocalist = vocalists[0];
+      if (vocalist) {
+        setSearchStoreQuery('');
+        setVocalistFilters([{ id: vocalist.id, name: vocalist.name }]);
+        setVocalistMatchMode('All');
+        await runSearch();
+      } else {
+        await searchTitleOnly(trimmed);
+      }
+      return;
+    }
+
+    setSearchStoreQuery(trimmed);
+    await runSearch();
   };
 
   useEffect(() => {
@@ -130,6 +170,13 @@ export default function TopNav() {
     return '歌';
   };
 
+  const searchModes: Array<{ key: typeof searchMode; label: string; title: string }> = [
+    { key: 'auto', label: '自動', title: '曲名とP名を自動判定' },
+    { key: 'song', label: '曲', title: '曲名として検索' },
+    { key: 'producer', label: 'P', title: 'P名として検索' },
+    { key: 'vocalist', label: '歌', title: 'シンガー名として検索' },
+  ];
+
   // キーボードショートカット: / で検索にフォーカス
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -199,6 +246,33 @@ export default function TopNav() {
         {/* ─── 中央: 検索バー ─── */}
         <div className="flex-1 flex justify-center max-w-2xl mx-auto">
           <form ref={searchFormRef} onSubmit={handleSearch} className="relative flex w-full">
+            <div
+              className="hidden sm:flex h-10 items-center rounded-l-full border border-r-0 px-1"
+              style={{
+                background: searchFocused ? '#121212' : 'var(--color-bg-primary)',
+                borderColor: searchFocused ? 'var(--color-accent-purple)' : 'var(--color-border)',
+              }}
+            >
+              {searchModes.map(mode => {
+                const isActive = searchMode === mode.key;
+                return (
+                  <button
+                    key={mode.key}
+                    type="button"
+                    title={mode.title}
+                    className="h-7 min-w-8 rounded-full px-2 text-[11px] font-medium transition-colors"
+                    style={{
+                      background: isActive ? 'var(--color-accent-purple)' : 'transparent',
+                      color: isActive ? '#fff' : 'var(--color-text-muted)',
+                    }}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => setSearchMode(mode.key)}
+                  >
+                    {mode.label}
+                  </button>
+                );
+              })}
+            </div>
             <div className="relative flex-1">
               <input
                 ref={searchInputRef}
@@ -211,7 +285,7 @@ export default function TopNav() {
                   if (searchQuery.trim().length >= 2) setShowSuggestions(true);
                 }}
                 onBlur={() => setSearchFocused(false)}
-                className="w-full h-10 pl-4 pr-4 rounded-l-full text-sm outline-none transition-all"
+                className="w-full h-10 pl-4 pr-4 rounded-l-full sm:rounded-l-none text-sm outline-none transition-all"
                 style={{
                   background: searchFocused ? '#121212' : 'var(--color-bg-primary)',
                   border: `1px solid ${searchFocused ? 'var(--color-accent-purple)' : 'var(--color-border)'}`,
