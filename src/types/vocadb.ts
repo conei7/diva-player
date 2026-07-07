@@ -74,6 +74,7 @@ export interface Song {
   version: number;
   youtubeViews?: number;
   nicoViews?: number;
+  audioComputed?: boolean;
 }
 
 // ─── 検索結果 ───

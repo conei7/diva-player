@@ -72,10 +72,12 @@ export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect }
 
   // YouTubeにOriginalがない（非公式のみ: ReprntまたはOtherのみ）
   const ytPVs = song.pvs?.filter(pv => !pv.disabled && pv.service === 'Youtube') ?? [];
+  const hasYTOriginal = ytPVs.some(pv => pv.pvType === 'Original');
   const isYTUnofficialOnly = ytPVs.length > 0 && ytPVs.every(pv => pv.pvType !== 'Original');
 
   // ニコニコにOriginalがない（非公式のみ）
   const nicoPVs = song.pvs?.filter(pv => !pv.disabled && pv.service === 'NicoNicoDouga') ?? [];
+  const hasNicoOriginal = nicoPVs.some(pv => pv.pvType === 'Original');
   const isNicoUnofficialOnly = nicoPVs.length > 0 && nicoPVs.every(pv => pv.pvType !== 'Original');
 
   // アーティスト名の抽出
@@ -392,6 +394,40 @@ export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect }
 
         {/* 下部バッジ列 */}
         <div className="flex items-center flex-wrap gap-2 mt-2">
+          {ytPVs.length > 0 && (
+            <span
+              className="text-[10px] font-bold px-1.5 py-0.5 rounded leading-none"
+              style={{
+                background: hasYTOriginal ? 'rgba(239, 68, 68, 0.12)' : 'rgba(100, 30, 30, 0.3)',
+                color: hasYTOriginal ? '#ef4444' : '#b91c1c',
+              }}
+              title={hasYTOriginal ? '公式YouTube PVあり' : 'YouTube PVは非公式のみ'}
+            >
+              {hasYTOriginal ? '公式YT' : '非公式YT'}
+            </span>
+          )}
+          {nicoPVs.length > 0 && (
+            <span
+              className="text-[10px] font-bold px-1.5 py-0.5 rounded leading-none"
+              style={{
+                background: hasNicoOriginal ? 'rgba(59, 130, 246, 0.12)' : 'rgba(30, 30, 100, 0.3)',
+                color: hasNicoOriginal ? '#3b82f6' : '#1e40af',
+              }}
+              title={hasNicoOriginal ? '公式ニコニコPVあり' : 'ニコニコPVは非公式のみ'}
+            >
+              {hasNicoOriginal ? '公式ニコ' : '非公式ニコ'}
+            </span>
+          )}
+          {song.audioComputed && (
+            <span
+              className="text-[10px] font-bold px-1.5 py-0.5 rounded leading-none"
+              style={{ background: 'rgba(6, 214, 160, 0.14)', color: 'var(--color-accent-cyan)' }}
+              title="音声特徴量あり"
+            >
+              音声特徴量
+            </span>
+          )}
+
           {/* PVサービスバッジ / 再生数 */}
           {(pvServices.has('Youtube') || (song.youtubeViews || 0) > 0) && (
             <span className="text-[10px] font-bold px-1.5 py-0.5 rounded flex items-center gap-1"

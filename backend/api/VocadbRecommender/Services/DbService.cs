@@ -172,6 +172,10 @@ public class DbService
             SELECT raw_json || jsonb_strip_nulls(jsonb_build_object(
                 'youtubeViews', youtube_views,
                 'nicoViews', nico_views,
+                'audioComputed', EXISTS (
+                    SELECT 1 FROM song_features sf
+                    WHERE sf.song_id = songs.id AND sf.audio_computed IS TRUE
+                ),
                 'thumbUrl', COALESCE(raw_json->>'thumbUrl', raw_json->'pvs'->0->>'thumbUrl')
             ))
             FROM songs
