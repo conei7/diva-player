@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import CategoryChips, { type CategoryChip } from '../components/home/CategoryChips';
 import VideoGrid from '../components/home/VideoGrid';
-import { searchSongs, getTopSongs, getRecommendedSongs } from '../api/vocadb';
+import { searchSongs, getTopSongs, getRecommendedSongs, getSimilarSongs } from '../api/vocadb';
 import { useHistoryStore } from '../stores/historyStore';
 import { usePlayerStore } from '../stores/playerStore';
 import { useRatingStore } from '../stores/ratingStore';
@@ -83,8 +83,8 @@ export default function HomePage() {
     if (currentSong?.id) excludeIds.add(currentSong.id);
 
     const playlistSongs = getPlaylistSongs(playlists);
-    const knownSongs = rankKnownSongs(entries, playlistSongs, ratings, excludeIds, implicitFeedback)
-      .map(item => item.song);
+    const rankedKnown = rankKnownSongs(entries, playlistSongs, ratings, excludeIds, implicitFeedback);
+    const knownSongs = rankedKnown.map(item => item.song);
 
     const seedIds = uniqueSongsById([
       ...entries.slice(0, 5).map(entry => entry.song),
@@ -94,7 +94,18 @@ export default function HomePage() {
       .slice(0, 2)
       .map(song => song.id);
 
-    const [popularResult, seedResults] = await Promise.all([
+    const preferenceSeedIds = rankedKnown
+      .filter(item => {
+        const rating = ratings[String(item.song.id)] ?? 0;
+        const feedback = implicitFeedback[String(item.song.id)];
+        const manualCompletes = feedback?.manualCompleteCount ?? 0;
+        const inPlaylist = playlistSongs.some(song => song.id === item.song.id);
+        return rating >= 3 || manualCompletes >= 2 || inPlaylist;
+      })
+      .slice(0, 3)
+      .map(item => item.song.id);
+
+    const [popularResult, seedResults, preferenceResults] = await Promise.all([
       searchSongs({
         sort: 'FavoritedTimes',
         maxResults: 12,
@@ -106,11 +117,16 @@ export default function HomePage() {
         getRecommendedSongs(seedId, 8, undefined, 0.0, ratings, pageNum * 8)
           .catch(() => [] as Song[])
       )),
+      Promise.all(preferenceSeedIds.map(seedId =>
+        getSimilarSongs(seedId, 8, pageNum * 8)
+          .catch(() => [] as Song[])
+      )),
     ]);
 
     const knownStart = pageNum * 10;
     const mixed = uniqueSongsById([
       ...knownSongs.slice(knownStart, knownStart + 10),
+      ...preferenceResults.flat(),
       ...popularResult.items,
       ...seedResults.flat(),
       ...knownSongs.slice(knownStart + 10, knownStart + 14),

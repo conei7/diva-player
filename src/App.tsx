@@ -109,6 +109,7 @@ function PlayerTracker() {
   const queue = usePlayerStore(s => s.queue);
   const queueIndex = usePlayerStore(s => s.queueIndex);
   const addManyToQueue = usePlayerStore(s => s.addManyToQueue);
+  const currentPlaybackSource = usePlayerStore(s => s.currentPlaybackSource);
   const progress = useProgressStore(s => s.progress);
   const duration = useProgressStore(s => s.duration);
   
@@ -123,7 +124,7 @@ function PlayerTracker() {
   implicitFeedbackRef.current = implicitFeedback;
 
   // 再生完了率トラッキング
-  const prevSongRef  = useRef<{ id: number; progress: number; duration: number } | null>(null);
+  const prevSongRef  = useRef<{ id: number; progress: number; duration: number; source: 'manual' | 'auto' } | null>(null);
   const progressRef  = useRef(progress);
   const durationRef  = useRef(duration);
   progressRef.current = progress;
@@ -136,13 +137,14 @@ function PlayerTracker() {
     // 前の曲の再生完了率を送信
     if (prevSongRef.current && prevSongRef.current.id !== currentSong.id) {
       const { id, progress: p, duration: d } = prevSongRef.current;
-      useImplicitFeedbackStore.getState().recordPlayback(id, p, d);
+      useImplicitFeedbackStore.getState().recordPlayback(id, p, d, prevSongRef.current.source);
     }
 
     prevSongRef.current = {
       id: currentSong.id,
       progress: progressRef.current,
       duration: durationRef.current,
+      source: currentPlaybackSource,
     };
 
     addToHistory(currentSong);
@@ -152,7 +154,7 @@ function PlayerTracker() {
   // progress/duration を prevSongRef に反映
   useEffect(() => {
     if (prevSongRef.current && currentSong && prevSongRef.current.id === currentSong.id) {
-      prevSongRef.current = { id: currentSong.id, progress, duration };
+      prevSongRef.current = { id: currentSong.id, progress, duration, source: currentPlaybackSource };
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [progress, duration]);
@@ -244,7 +246,7 @@ function PlayerTracker() {
         const newSongs = weightedShuffleByScore(topScored, item => item.score)
           .map(item => item.song)
           .slice(0, 40);
-        addManyToQueue(newSongs);
+        addManyToQueue(newSongs, 'auto');
         if (fetchingForRef.current === songId) {
           fetchingForRef.current = null;
         }

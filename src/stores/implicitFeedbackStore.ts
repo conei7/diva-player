@@ -4,6 +4,8 @@ import { persist } from 'zustand/middleware';
 export interface ImplicitSongFeedback {
   skipCount: number;
   completeCount: number;
+  manualCompleteCount?: number;
+  autoCompleteCount?: number;
   removeCount: number;
   lastSkippedAt?: number;
   lastCompletedAt?: number;
@@ -12,7 +14,7 @@ export interface ImplicitSongFeedback {
 
 interface ImplicitFeedbackState {
   feedback: Record<string, ImplicitSongFeedback>;
-  recordPlayback: (songId: string | number, progress: number, duration: number) => void;
+  recordPlayback: (songId: string | number, progress: number, duration: number, source?: 'manual' | 'auto') => void;
   recordQueueRemove: (songId: string | number) => void;
   getFeedback: (songId: string | number) => ImplicitSongFeedback | undefined;
   clearFeedback: () => void;
@@ -50,7 +52,7 @@ export const useImplicitFeedbackStore = create<ImplicitFeedbackState>()(
     (set, get) => ({
       feedback: {},
 
-      recordPlayback: (songId, progress, duration) => {
+      recordPlayback: (songId, progress, duration, source = 'manual') => {
         if (duration <= 0) return;
         if (progress < MIN_MEANINGFUL_SECONDS) return;
 
@@ -73,6 +75,12 @@ export const useImplicitFeedbackStore = create<ImplicitFeedbackState>()(
             : {
                 ...current,
                 completeCount: current.completeCount + 1,
+                manualCompleteCount: source === 'manual'
+                  ? (current.manualCompleteCount ?? 0) + 1
+                  : (current.manualCompleteCount ?? 0),
+                autoCompleteCount: source === 'auto'
+                  ? (current.autoCompleteCount ?? 0) + 1
+                  : (current.autoCompleteCount ?? 0),
                 lastCompletedAt: now,
               };
 

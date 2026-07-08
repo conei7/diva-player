@@ -13,6 +13,8 @@ export interface ScoredSong {
 export interface ImplicitSongFeedbackLike {
   skipCount: number;
   completeCount: number;
+  manualCompleteCount?: number;
+  autoCompleteCount?: number;
   removeCount: number;
   lastSkippedAt?: number;
   lastCompletedAt?: number;
@@ -203,12 +205,17 @@ function applyImplicitFeedbackMultiplier(
   if (!feedback) return score;
 
   const negative = feedback.skipCount + feedback.removeCount * 2;
-  const positive = feedback.completeCount;
+  const manualPositive = feedback.manualCompleteCount ?? 0;
+  const autoPositive = feedback.autoCompleteCount ?? 0;
+  const legacyPositive = Math.max(0, feedback.completeCount - manualPositive - autoPositive);
+  const positive = manualPositive + autoPositive + legacyPositive;
   if (negative === 0 && positive === 0) return score;
 
   let multiplier = 1.0;
   multiplier *= Math.pow(0.72, Math.min(negative, 5));
-  multiplier *= Math.pow(1.04, Math.min(positive, 5));
+  multiplier *= Math.pow(1.08, Math.min(manualPositive, 5));
+  multiplier *= Math.pow(1.015, Math.min(autoPositive, 5));
+  multiplier *= Math.pow(1.03, Math.min(legacyPositive, 5));
 
   const lastNegativeAt = Math.max(feedback.lastSkippedAt ?? 0, feedback.lastRemovedAt ?? 0);
   if (lastNegativeAt > 0) {
