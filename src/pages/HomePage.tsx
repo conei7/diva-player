@@ -9,6 +9,7 @@ import { useRatingStore } from '../stores/ratingStore';
 import { useSearchStore } from '../stores/searchStore';
 import { useSelectionStore } from '../stores/selectionStore';
 import { usePlaylistStore } from '../stores/playlistStore';
+import { useImplicitFeedbackStore } from '../stores/implicitFeedbackStore';
 import type { Song } from '../types/vocadb';
 import SearchFilters from '../components/search/SearchFilters';
 import {
@@ -64,6 +65,7 @@ export default function HomePage() {
   const { currentSong } = usePlayerStore();
   const { ratings } = useRatingStore();
   const { playlists } = usePlaylistStore();
+  const implicitFeedback = useImplicitFeedbackStore(state => state.feedback);
   const {
     results: searchResults,
     isLoading: searchLoading,
@@ -81,7 +83,7 @@ export default function HomePage() {
     if (currentSong?.id) excludeIds.add(currentSong.id);
 
     const playlistSongs = getPlaylistSongs(playlists);
-    const knownSongs = rankKnownSongs(entries, playlistSongs, ratings, excludeIds)
+    const knownSongs = rankKnownSongs(entries, playlistSongs, ratings, excludeIds, implicitFeedback)
       .map(item => item.song);
 
     const seedIds = uniqueSongsById([
@@ -116,7 +118,7 @@ export default function HomePage() {
 
     const result = diversifyByArtist(mixed, 2).slice(0, PAGE_SIZE);
     return result.length > 0 ? result : getTopSongs(720, PAGE_SIZE);
-  }, [currentSong, entries, playlists, ratings]);
+  }, [currentSong, entries, playlists, ratings, implicitFeedback]);
 
   const fetchSongs = useCallback(async (
     category: HomeCategoryId,

@@ -13,6 +13,7 @@ import { useHistoryStore } from './stores/historyStore';
 import { useRatingStore } from './stores/ratingStore';
 import { useProgressStore } from './stores/progressStore';
 import { usePlaylistStore } from './stores/playlistStore';
+import { useImplicitFeedbackStore } from './stores/implicitFeedbackStore';
 import {
   getRecommendedSongs,
   getAudioSimilarSongs,
@@ -115,9 +116,12 @@ function PlayerTracker() {
   const { addToHistory, entries: historyEntries } = useHistoryStore();
   const { ratings } = useRatingStore();
   const { playlists } = usePlaylistStore();
+  const implicitFeedback = useImplicitFeedbackStore(s => s.feedback);
   const fetchingForRef = useRef<number | null>(null);
   const ratingsRef = useRef(ratings);
   ratingsRef.current = ratings;
+  const implicitFeedbackRef = useRef(implicitFeedback);
+  implicitFeedbackRef.current = implicitFeedback;
 
   // 再生完了率トラッキング
   const prevSongRef  = useRef<{ id: number; progress: number; duration: number } | null>(null);
@@ -134,6 +138,7 @@ function PlayerTracker() {
     if (prevSongRef.current && prevSongRef.current.id !== currentSong.id) {
       const { id, progress: p, duration: d } = prevSongRef.current;
       const completionRate = d > 0 ? Math.min(1, p / d) : 0;
+      useImplicitFeedbackStore.getState().recordPlayback(id, p, d);
       sendPlayFeedback(id, completionRate);
     }
 
@@ -221,6 +226,7 @@ function PlayerTracker() {
           playlistSongs,
           ratingsRef.current,
           existingIds,
+          implicitFeedbackRef.current,
         ).map(item => item.song);
         const sessionProgress = queue.length > 0 ? Math.min(1, queueIndex / queue.length) : 0;
         const knownLimit = Math.round(18 - sessionProgress * 10);
@@ -234,6 +240,7 @@ function PlayerTracker() {
           playlistSongIds,
           ratingsRef.current,
           existingIds,
+          implicitFeedbackRef.current,
         );
         const topScored = scored.slice(0, 80);
         // シャッフルして上位40件をキューに追加

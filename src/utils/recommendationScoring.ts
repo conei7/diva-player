@@ -10,6 +10,15 @@ export interface ScoredSong {
   score: number;
 }
 
+export interface ImplicitSongFeedbackLike {
+  skipCount: number;
+  completeCount: number;
+  removeCount: number;
+  lastSkippedAt?: number;
+  lastCompletedAt?: number;
+  lastRemovedAt?: number;
+}
+
 const ONE_HOUR = 60 * 60 * 1000;
 const ONE_DAY = 24 * ONE_HOUR;
 
@@ -99,6 +108,7 @@ export function rankKnownSongs(
   playlistSongs: Song[],
   ratings: Record<string, number>,
   excludeIds = new Set<number>(),
+  implicitFeedback: Record<string, ImplicitSongFeedbackLike> = {},
 ): ScoredSong[] {
   const now = Date.now();
   const scored = new Map<number, ScoredSong>();
@@ -128,6 +138,7 @@ export function rankKnownSongs(
     const rating = ratings[String(item.song.id)] ?? 0;
     if (rating >= 4) item.score *= 1 + (rating - 3) * 0.35;
     if (rating > 0 && rating <= 2) item.score *= 0.2;
+    item.score = applyImplicitFeedbackMultiplier(item.song, item.score, rating, implicitFeedback);
     item.score *= 1 + Math.log10(Math.max(1, item.song.favoritedTimes ?? 1)) * 0.08;
   }
 
@@ -140,6 +151,7 @@ export function scoreQueueCandidates(
   playlistSongIds: Set<number>,
   ratings: Record<string, number>,
   existingIds: Set<number>,
+  implicitFeedback: Record<string, ImplicitSongFeedbackLike> = {},
 ): ScoredSong[] {
   const now = Date.now();
   const lastPlayedMap = new Map<number, number>();
@@ -173,6 +185,7 @@ export function scoreQueueCandidates(
       const rating = ratings[String(song.id)] ?? 0;
       if (rating >= 4) score *= 1 + (rating - 3) * 0.4;
       if (rating > 0 && rating <= 2) score *= 0.15;
+      score = applyImplicitFeedbackMultiplier(song, score, rating, implicitFeedback);
 
       score *= 1 + Math.log10(Math.max(1, song.favoritedTimes ?? 1)) * 0.05;
 
@@ -180,4 +193,38 @@ export function scoreQueueCandidates(
     })
     .filter(item => item.score > 0)
     .sort((a, b) => b.score - a.score);
+}
+
+function applyImplicitFeedbackMultiplier(
+  song: Song,
+  score: number,
+  rating: number,
+  feedbackMap: Record<string, ImplicitSongFeedbackLike>,
+): number {
+  const feedback = feedbackMap[String(song.id)];
+  if (!feedback) return score;
+
+  const negative = feedback.skipCount + feedback.removeCount * 2;
+  const positive = feedback.completeCount;
+  if (negative === 0 && positive === 0) return score;
+
+  let multiplier = 1.0;
+  multiplier *= Math.pow(0.72, Math.min(negative, 5));
+  multiplier *= Math.pow(1.14, Math.min(positive, 6));
+
+  const lastNegativeAt = Math.max(feedback.lastSkippedAt ?? 0, feedback.lastRemovedAt ?? 0);
+  if (lastNegativeAt > 0) {
+    const hoursAgo = (Date.now() - lastNegativeAt) / ONE_HOUR;
+    if (hoursAgo < 6) multiplier *= 0.45;
+    else if (hoursAgo < 24) multiplier *= 0.7;
+    else if (hoursAgo < 72) multiplier *= 0.85;
+  }
+
+  if (rating >= 4) {
+    multiplier = Math.max(multiplier, 0.75);
+  } else if (rating > 0 && rating <= 2) {
+    multiplier *= 0.5;
+  }
+
+  return score * Math.max(0.05, Math.min(2.0, multiplier));
 }

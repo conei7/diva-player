@@ -4,6 +4,7 @@ import { useRatingStore } from '../../stores/ratingStore';
 import StarRating from './StarRating';
 import { sendPlayFeedback } from '../../api/vocadb';
 import type { Song } from '../../types/vocadb';
+import { useImplicitFeedbackStore } from '../../stores/implicitFeedbackStore';
 
 function getThumbUrl(song: Song): string | null {
   if (song.thumbUrl) return song.thumbUrl;
@@ -25,6 +26,7 @@ interface QueueSidebarProps {
 export default function QueueSidebar({ hideHeader }: QueueSidebarProps = {}) {
   const { queue, queueIndex, jumpToIndex, removeFromQueue } = usePlayerStore();
   const { getRating, setRating } = useRatingStore();
+  const recordQueueRemove = useImplicitFeedbackStore(s => s.recordQueueRemove);
   const currentRef = useRef<HTMLLIElement>(null);
 
   // 現在の曲が変わったら自動スクロール
@@ -150,6 +152,7 @@ export default function QueueSidebar({ hideHeader }: QueueSidebarProps = {}) {
                   onClick={(e) => {
                     e.stopPropagation();
                     // キューからの削除 = 強いネガティブフィードバック (0.0 = 聴きたくない)
+                    recordQueueRemove(song.id);
                     sendPlayFeedback(song.id, 0.0, 'queue_remove');
                     removeFromQueue(i);
                   }}
