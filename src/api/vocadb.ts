@@ -478,7 +478,7 @@ export async function getRecommendedSongs(
       // 評価データをAPIに渡す (id:rating のカンマ区切り、最大30件)
       if (ratings) {
         const pairs = Object.entries(ratings)
-          .filter(([, r]) => r >= 1 && r <= 5)
+          .filter(([, r]) => r >= 3 && r <= 5)
           .slice(0, 30)
           .map(([id, r]) => `${id}:${r}`);
         if (pairs.length > 0) params.set('ratedSongs', pairs.join(','));

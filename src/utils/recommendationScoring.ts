@@ -136,8 +136,7 @@ export function rankKnownSongs(
 
   for (const item of scored.values()) {
     const rating = ratings[String(item.song.id)] ?? 0;
-    if (rating >= 4) item.score *= 1 + (rating - 3) * 0.35;
-    if (rating > 0 && rating <= 2) item.score *= 0.2;
+    if (rating >= 3) item.score *= 1 + (rating - 2) * 0.25;
     item.score = applyImplicitFeedbackMultiplier(item.song, item.score, rating, implicitFeedback);
     item.score *= 1 + Math.log10(Math.max(1, item.song.favoritedTimes ?? 1)) * 0.08;
   }
@@ -183,8 +182,7 @@ export function scoreQueueCandidates(
       }
 
       const rating = ratings[String(song.id)] ?? 0;
-      if (rating >= 4) score *= 1 + (rating - 3) * 0.4;
-      if (rating > 0 && rating <= 2) score *= 0.15;
+      if (rating >= 3) score *= 1 + (rating - 2) * 0.3;
       score = applyImplicitFeedbackMultiplier(song, score, rating, implicitFeedback);
 
       score *= 1 + Math.log10(Math.max(1, song.favoritedTimes ?? 1)) * 0.05;
@@ -220,10 +218,8 @@ function applyImplicitFeedbackMultiplier(
     else if (hoursAgo < 72) multiplier *= 0.85;
   }
 
-  if (rating >= 4) {
+  if (rating >= 3) {
     multiplier = Math.max(multiplier, 0.75);
-  } else if (rating > 0 && rating <= 2) {
-    multiplier *= 0.5;
   }
 
   return score * Math.max(0.05, Math.min(2.0, multiplier));
