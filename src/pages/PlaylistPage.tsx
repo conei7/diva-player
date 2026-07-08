@@ -28,6 +28,7 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import { usePlaylistStore, type SortKey } from '../stores/playlistStore';
 import { usePlayerStore } from '../stores/playerStore';
+import { useUiStore } from '../stores/uiStore';
 import type { Playlist, PlaylistFolder, Song } from '../types/vocadb';
 import YouTubeImportModal from '../components/playlist/YouTubeImportModal';
 
@@ -529,6 +530,7 @@ export default function PlaylistPage() {
     addSongs, removeSong, reorderSongs, sortSongs, removeDuplicateSongs,
   } = usePlaylistStore();
   const { setQueue, addToQueue } = usePlayerStore();
+  const openSaveToPlaylist = useUiStore(s => s.openSaveToPlaylist);
 
   const [selectedPlaylistId, setSelectedPlaylistId] = useState<string | null>(null);
   const [selectedFolderId, setSelectedFolderId]     = useState<string | null>(null);
@@ -651,6 +653,15 @@ export default function PlaylistPage() {
     setSelectedIds(new Set());
     setSelectionMode(false);
   }, [selectedPlaylist, selectedIds, addToQueue]);
+
+  const copySelectedToPlaylist = useCallback(() => {
+    if (!selectedPlaylist) return;
+    const songs = selectedPlaylist.songs.filter(s => selectedIds.has(s.id));
+    if (songs.length === 0) return;
+    openSaveToPlaylist(songs);
+    setSelectedIds(new Set());
+    setSelectionMode(false);
+  }, [selectedPlaylist, selectedIds, openSaveToPlaylist]);
 
   const handleYTImport = useCallback((songs: Song[]) => {
     if (!selectedPlaylist) return;
@@ -1232,6 +1243,13 @@ export default function PlaylistPage() {
           <button onClick={addSelectedToQueue} className="btn-secondary text-xs px-3 py-1.5 flex items-center gap-1.5">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 5v14M5 12h14" /></svg>
             キューに追加
+          </button>
+          <button onClick={copySelectedToPlaylist} className="btn-secondary text-xs px-3 py-1.5 flex items-center gap-1.5">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M8 7h10a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2z"/>
+              <path d="M4 15H3a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+            </svg>
+            コピー
           </button>
           <button onClick={deleteSelected}
             className="text-xs px-3 py-1.5 rounded-xl flex items-center gap-1.5 transition-colors hover:bg-red-900/30"
