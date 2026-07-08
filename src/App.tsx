@@ -20,6 +20,14 @@ import {
   sendPlayFeedback,
 } from './api/vocadb';
 import type { Song } from './types/vocadb';
+import {
+  buildPlaylistSongSet,
+  getPlaylistSongs,
+  rankKnownSongs,
+  scoreQueueCandidates,
+  uniqueSongsById,
+  weightedShuffleByScore,
+} from './utils/recommendationScoring';
 
 /**
  * App - ルートコンポーネント
@@ -30,15 +38,6 @@ import type { Song } from './types/vocadb';
  */
 
 /** フィッシャー–イェーツシャッフル */
-function shuffleArray<T>(arr: T[]): T[] {
-  const a = [...arr];
-  for (let i = a.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [a[i], a[j]] = [a[j], a[i]];
-  }
-  return a;
-}
-
 /**
  * フロントエンドMMR: 時間減衰ペナルティ + プレイリスト曲ブースト
  * 
@@ -210,19 +209,37 @@ function PlayerTracker() {
     };
 
     // プレイリストに含まれる全曲IDのセットを構築
-    const playlistSongIds = new Set<number>();
-    for (const pl of playlists) {
-      for (const s of pl.songs) {
-        playlistSongIds.add(s.id);
-      }
-    }
+    const playlistSongIds = buildPlaylistSongSet(playlists);
+    const playlistSongs = getPlaylistSongs(playlists);
 
     fetchCandidates()
       .then(candidates => {
         // フロントエンドMMRを適用: 時間減衰ペナルティ + プレイリスト曲ブースト
-        const filtered = applyFrontendMMR(candidates, historyEntries, playlistSongIds, existingIds);
+        const filteredCandidates = applyFrontendMMR(candidates, historyEntries, playlistSongIds, existingIds);
+        const knownCandidates = rankKnownSongs(
+          historyEntries,
+          playlistSongs,
+          ratingsRef.current,
+          existingIds,
+        ).map(item => item.song);
+        const sessionProgress = queue.length > 0 ? Math.min(1, queueIndex / queue.length) : 0;
+        const knownLimit = Math.round(18 - sessionProgress * 10);
+        const mixedCandidates = uniqueSongsById([
+          ...knownCandidates.slice(0, Math.max(6, knownLimit)),
+          ...filteredCandidates,
+        ]);
+        const scored = scoreQueueCandidates(
+          mixedCandidates,
+          historyEntries,
+          playlistSongIds,
+          ratingsRef.current,
+          existingIds,
+        );
+        const topScored = scored.slice(0, 80);
         // シャッフルして上位40件をキューに追加
-        const newSongs = shuffleArray(filtered).slice(0, 40);
+        const newSongs = weightedShuffleByScore(topScored, item => item.score)
+          .map(item => item.song)
+          .slice(0, 40);
         addManyToQueue(newSongs);
         if (fetchingForRef.current === songId) {
           fetchingForRef.current = null;

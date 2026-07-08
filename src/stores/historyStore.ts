@@ -37,6 +37,7 @@ export interface HistoryEntry {
 
 interface HistoryState {
   entries: HistoryEntry[];
+  hasHydrated: boolean;
 
   /**
    * 曲を履歴に追加する。
@@ -47,12 +48,14 @@ interface HistoryState {
 
   /** 履歴を全件削除する */
   clearHistory: () => void;
+  setHasHydrated: (hasHydrated: boolean) => void;
 }
 
 export const useHistoryStore = create<HistoryState>()(
   persist(
     (set, get) => ({
       entries: [],
+      hasHydrated: false,
 
       addToHistory: (song) => {
         const { entries } = get();
@@ -70,10 +73,14 @@ export const useHistoryStore = create<HistoryState>()(
       },
 
       clearHistory: () => set({ entries: [] }),
+      setHasHydrated: (hasHydrated) => set({ hasHydrated }),
     }),
     { 
       name: 'diva-history',
       storage: createJSONStorage(() => storage),
+      onRehydrateStorage: () => (state) => {
+        state?.setHasHydrated(true);
+      },
     },
   ),
 );
