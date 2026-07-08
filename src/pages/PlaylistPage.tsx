@@ -105,6 +105,47 @@ function parsePlaylistImport(data: unknown): { name: string; description?: strin
   };
 }
 
+type PlaylistBackupFolder = {
+  id: string;
+  name: string;
+  parentId?: string;
+};
+
+type PlaylistBackupItem = {
+  name: string;
+  description?: string;
+  coverArtUrl?: string;
+  folderId?: string;
+  songs: Song[];
+};
+
+function parsePlaylistBackup(data: unknown): { folders: PlaylistBackupFolder[]; playlists: PlaylistBackupItem[] } | null {
+  if (!isRecord(data) || !Array.isArray(data.folders) || !Array.isArray(data.playlists)) return null;
+
+  const folders = data.folders
+    .filter(isRecord)
+    .filter(folder => typeof folder.id === 'string' && typeof folder.name === 'string')
+    .map(folder => ({
+      id: folder.id as string,
+      name: folder.name as string,
+      parentId: typeof folder.parentId === 'string' ? folder.parentId : undefined,
+    }));
+
+  const playlists = data.playlists
+    .filter(isRecord)
+    .filter(playlist => typeof playlist.name === 'string' && Array.isArray(playlist.songs))
+    .map(playlist => ({
+      name: playlist.name as string,
+      description: typeof playlist.description === 'string' ? playlist.description : undefined,
+      coverArtUrl: typeof playlist.coverArtUrl === 'string' ? playlist.coverArtUrl : undefined,
+      folderId: typeof playlist.folderId === 'string' ? playlist.folderId : undefined,
+      songs: (playlist.songs as unknown[]).map(parseImportedSong).filter((song): song is Song => song !== null),
+    }));
+
+  if (folders.length === 0 && playlists.length === 0) return null;
+  return { folders, playlists };
+}
+
 // ─── SortableSongRow ────────────────────────────────────────────────────────
 interface SortableSongRowProps {
   id: string;
@@ -679,9 +720,76 @@ export default function PlaylistPage() {
     });
   }, []);
 
+  const exportAllPlaylists = useCallback(() => {
+    downloadJson(`diva-playlists-backup-${new Date().toISOString().slice(0, 10)}.json`, {
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      folders: folders.map(folder => ({
+        id: folder.id,
+        name: folder.name,
+        parentId: folder.parentId,
+        createdAt: folder.createdAt,
+        updatedAt: folder.updatedAt,
+      })),
+      playlists: playlists.map(playlist => ({
+        id: playlist.id,
+        name: playlist.name,
+        description: playlist.description,
+        coverArtUrl: playlist.coverArtUrl,
+        folderId: playlist.folderId,
+        isPinned: playlist.isPinned,
+        createdAt: playlist.createdAt,
+        updatedAt: playlist.updatedAt,
+        songs: playlist.songs.map((song, index) => ({
+          index,
+          id: song.id,
+          name: song.name,
+          artistString: song.artistString,
+          songType: song.songType,
+          publishDate: song.publishDate,
+          thumbUrl: song.thumbUrl,
+          pvs: song.pvs,
+        })),
+      })),
+    });
+  }, [folders, playlists]);
+
   const importPlaylistJson = useCallback(async (file: File) => {
     try {
-      const parsed = parsePlaylistImport(JSON.parse(await file.text()));
+      const data = JSON.parse(await file.text());
+      const backup = parsePlaylistBackup(data);
+      if (backup) {
+        const folderIdMap = new Map<string, string>();
+        const pendingFolders = [...backup.folders];
+
+        while (pendingFolders.length > 0) {
+          const folder = pendingFolders.shift();
+          if (!folder) break;
+          const parentReady = !folder.parentId || folderIdMap.has(folder.parentId);
+          if (!parentReady && pendingFolders.length > 0) {
+            pendingFolders.push(folder);
+            continue;
+          }
+          const created = createFolder(folder.name, folder.parentId ? folderIdMap.get(folder.parentId) : undefined);
+          folderIdMap.set(folder.id, created.id);
+        }
+
+        let addedSongs = 0;
+        backup.playlists.forEach(item => {
+          const playlist = createPlaylist(`${item.name} (import)`, item.folderId ? folderIdMap.get(item.folderId) : selectedFolderId ?? undefined);
+          updatePlaylist(playlist.id, {
+            description: item.description,
+            coverArtUrl: item.coverArtUrl,
+          });
+          addedSongs += addSongs(playlist.id, item.songs).added;
+        });
+
+        setImportNotice({ name: 'プレイリストバックアップ', count: addedSongs });
+        setTimeout(() => setImportNotice(null), 4000);
+        return;
+      }
+
+      const parsed = parsePlaylistImport(data);
       if (!parsed) throw new Error('Invalid playlist JSON');
 
       const playlist = createPlaylist(`${parsed.name} (import)`, selectedFolderId ?? undefined);
@@ -698,7 +806,7 @@ export default function PlaylistPage() {
     } finally {
       if (importInputRef.current) importInputRef.current.value = '';
     }
-  }, [addSongs, createPlaylist, selectedFolderId, updatePlaylist]);
+  }, [addSongs, createFolder, createPlaylist, selectedFolderId, updatePlaylist]);
 
   const handleDelete = useCallback((p: Playlist) => {
     if (p.isPinned) return;
@@ -865,6 +973,20 @@ export default function PlaylistPage() {
             <path d="M12 5v12"/>
           </svg>
           JSONインポート
+        </button>
+        <button
+          type="button"
+          onClick={exportAllPlaylists}
+          className="btn-secondary text-xs px-2 py-1.5 flex items-center justify-center gap-1.5"
+          disabled={playlists.length === 0}
+          title="すべてのプレイリストとフォルダをJSONでバックアップ"
+        >
+          <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <path d="M7 10l5 5 5-5"/>
+            <path d="M12 15V3"/>
+          </svg>
+          全バックアップ
         </button>
       </div>
 
