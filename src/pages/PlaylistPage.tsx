@@ -30,122 +30,16 @@ import { usePlaylistStore, type SortKey } from '../stores/playlistStore';
 import { usePlayerStore } from '../stores/playerStore';
 import { useUiStore } from '../stores/uiStore';
 import type { Playlist, PlaylistFolder, Song } from '../types/vocadb';
+import {
+  createAllPlaylistsBackupPayload,
+  createPlaylistExportPayload,
+  downloadJson,
+  formatTotalDuration,
+  parsePlaylistBackup,
+  parsePlaylistImport,
+  toSafeFileName,
+} from '../utils/playlistBackup';
 import YouTubeImportModal from '../components/playlist/YouTubeImportModal';
-
-function toSafeFileName(name: string): string {
-  return name.trim().replace(/[\\/:*?"<>|]+/g, '_').replace(/\s+/g, '_') || 'playlist';
-}
-
-function formatTotalDuration(totalSeconds: number): string {
-  const seconds = Math.max(0, Math.floor(totalSeconds));
-  const hours = Math.floor(seconds / 3600);
-  const minutes = Math.floor((seconds % 3600) / 60);
-  const restSeconds = seconds % 60;
-
-  if (hours > 0) return `${hours}時間${String(minutes).padStart(2, '0')}分`;
-  if (minutes > 0) return `${minutes}分${String(restSeconds).padStart(2, '0')}秒`;
-  return `${restSeconds}秒`;
-}
-
-function downloadJson(fileName: string, data: unknown): void {
-  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = fileName;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(url);
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
-}
-
-function parseImportedSong(value: unknown): Song | null {
-  if (!isRecord(value) || typeof value.id !== 'number' || typeof value.name !== 'string') return null;
-
-  const pvs = Array.isArray(value.pvs) ? value.pvs : undefined;
-  const songType = typeof value.songType === 'string' ? value.songType as Song['songType'] : 'Original';
-  const artistString = typeof value.artistString === 'string' ? value.artistString : '';
-
-  return {
-    artistString,
-    createDate: '',
-    defaultName: value.name,
-    defaultNameLanguage: 'Unspecified',
-    favoritedTimes: 0,
-    id: value.id,
-    lengthSeconds: 0,
-    name: value.name,
-    publishDate: typeof value.publishDate === 'string' ? value.publishDate : undefined,
-    pvs: pvs as Song['pvs'],
-    pvServices: '',
-    ratingScore: 0,
-    songType,
-    status: 'Finished',
-    thumbUrl: typeof value.thumbUrl === 'string' ? value.thumbUrl : undefined,
-    version: 0,
-  };
-}
-
-function parsePlaylistImport(data: unknown): { name: string; description?: string; coverArtUrl?: string; songs: Song[] } | null {
-  if (!isRecord(data)) return null;
-  const playlist = isRecord(data.playlist) ? data.playlist : data;
-  if (!isRecord(playlist) || typeof playlist.name !== 'string' || !Array.isArray(playlist.songs)) return null;
-
-  const songs = playlist.songs.map(parseImportedSong).filter((song): song is Song => song !== null);
-  if (songs.length === 0) return null;
-
-  return {
-    name: playlist.name,
-    description: typeof playlist.description === 'string' ? playlist.description : undefined,
-    coverArtUrl: typeof playlist.coverArtUrl === 'string' ? playlist.coverArtUrl : undefined,
-    songs,
-  };
-}
-
-type PlaylistBackupFolder = {
-  id: string;
-  name: string;
-  parentId?: string;
-};
-
-type PlaylistBackupItem = {
-  name: string;
-  description?: string;
-  coverArtUrl?: string;
-  folderId?: string;
-  songs: Song[];
-};
-
-function parsePlaylistBackup(data: unknown): { folders: PlaylistBackupFolder[]; playlists: PlaylistBackupItem[] } | null {
-  if (!isRecord(data) || !Array.isArray(data.folders) || !Array.isArray(data.playlists)) return null;
-
-  const folders = data.folders
-    .filter(isRecord)
-    .filter(folder => typeof folder.id === 'string' && typeof folder.name === 'string')
-    .map(folder => ({
-      id: folder.id as string,
-      name: folder.name as string,
-      parentId: typeof folder.parentId === 'string' ? folder.parentId : undefined,
-    }));
-
-  const playlists = data.playlists
-    .filter(isRecord)
-    .filter(playlist => typeof playlist.name === 'string' && Array.isArray(playlist.songs))
-    .map(playlist => ({
-      name: playlist.name as string,
-      description: typeof playlist.description === 'string' ? playlist.description : undefined,
-      coverArtUrl: typeof playlist.coverArtUrl === 'string' ? playlist.coverArtUrl : undefined,
-      folderId: typeof playlist.folderId === 'string' ? playlist.folderId : undefined,
-      songs: (playlist.songs as unknown[]).map(parseImportedSong).filter((song): song is Song => song !== null),
-    }));
-
-  if (folders.length === 0 && playlists.length === 0) return null;
-  return { folders, playlists };
-}
 
 // ─── SortableSongRow ────────────────────────────────────────────────────────
 interface SortableSongRowProps {
@@ -618,7 +512,11 @@ export default function PlaylistPage() {
   const toggleSelect = useCallback((songId: number) => {
     setSelectedIds(prev => {
       const next = new Set(prev);
-      next.has(songId) ? next.delete(songId) : next.add(songId);
+      if (next.has(songId)) {
+        next.delete(songId);
+      } else {
+        next.add(songId);
+      }
       return next;
     });
   }, []);
@@ -706,63 +604,12 @@ export default function PlaylistPage() {
 
   const exportPlaylist = useCallback((playlist: Playlist) => {
     const exportedAt = new Date().toISOString();
-    downloadJson(`${toSafeFileName(playlist.name)}.diva-playlist.json`, {
-      version: 1,
-      exportedAt,
-      playlist: {
-        id: playlist.id,
-        name: playlist.name,
-        description: playlist.description,
-        coverArtUrl: playlist.coverArtUrl,
-        isPinned: playlist.isPinned,
-        createdAt: playlist.createdAt,
-        updatedAt: playlist.updatedAt,
-        songs: playlist.songs.map((song, index) => ({
-          index,
-          id: song.id,
-          name: song.name,
-          artistString: song.artistString,
-          songType: song.songType,
-          publishDate: song.publishDate,
-          thumbUrl: song.thumbUrl,
-          pvs: song.pvs,
-        })),
-      },
-    });
+    downloadJson(`${toSafeFileName(playlist.name)}.diva-playlist.json`, createPlaylistExportPayload(playlist, exportedAt));
   }, []);
 
   const exportAllPlaylists = useCallback(() => {
-    downloadJson(`diva-playlists-backup-${new Date().toISOString().slice(0, 10)}.json`, {
-      version: 1,
-      exportedAt: new Date().toISOString(),
-      folders: folders.map(folder => ({
-        id: folder.id,
-        name: folder.name,
-        parentId: folder.parentId,
-        createdAt: folder.createdAt,
-        updatedAt: folder.updatedAt,
-      })),
-      playlists: playlists.map(playlist => ({
-        id: playlist.id,
-        name: playlist.name,
-        description: playlist.description,
-        coverArtUrl: playlist.coverArtUrl,
-        folderId: playlist.folderId,
-        isPinned: playlist.isPinned,
-        createdAt: playlist.createdAt,
-        updatedAt: playlist.updatedAt,
-        songs: playlist.songs.map((song, index) => ({
-          index,
-          id: song.id,
-          name: song.name,
-          artistString: song.artistString,
-          songType: song.songType,
-          publishDate: song.publishDate,
-          thumbUrl: song.thumbUrl,
-          pvs: song.pvs,
-        })),
-      })),
-    });
+    const exportedAt = new Date().toISOString();
+    downloadJson(`diva-playlists-backup-${exportedAt.slice(0, 10)}.json`, createAllPlaylistsBackupPayload(folders, playlists, exportedAt));
   }, [folders, playlists]);
 
   const importPlaylistJson = useCallback(async (file: File) => {

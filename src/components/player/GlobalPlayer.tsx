@@ -38,13 +38,11 @@ export default function GlobalPlayer() {
     return str;
   })();
 
-  // 状態に応じたスタイル計算
-  let containerStyle: React.CSSProperties = {};
-  
-  if (isWatchPage && playerRect) {
-    // WatchPage の VideoPlayer の位置にピタリと合わせる
-    // absolute にすることで、スクロール時に自動追従し、JSによる遅延を防ぐ
-    containerStyle = {
+  const containerStyle: React.CSSProperties = (() => {
+    if (isWatchPage && playerRect) {
+      // WatchPage の VideoPlayer の位置にピタリと合わせる
+      // absolute にすることで、スクロール時に自動追従し、JSによる遅延を防ぐ
+      return {
       position: 'absolute',
       top: playerRect.top,
       left: playerRect.left,
@@ -54,10 +52,12 @@ export default function GlobalPlayer() {
       zIndex: 10,
       background: '#000',
       transition: 'none', // スクロールに追従させるためtransitionは切る（あるいは高速化）
-    };
-  } else if (showMiniPlayer) {
-    // MiniPlayer (PiP) モード
-    containerStyle = {
+      };
+    }
+
+    if (showMiniPlayer) {
+      // MiniPlayer (PiP) モード
+      return {
       position: 'fixed',
       bottom: '16px',
       right: '16px',
@@ -70,10 +70,11 @@ export default function GlobalPlayer() {
       background: 'var(--color-bg-secondary)',
       border: '1px solid var(--color-border)',
       transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
-    };
-  } else {
+      };
+    }
+
     // 非表示モード (アンマウントはしない)
-    containerStyle = {
+    return {
       position: 'fixed',
       top: '-9999px',
       left: '-9999px',
@@ -83,7 +84,7 @@ export default function GlobalPlayer() {
       pointerEvents: 'none',
       zIndex: -1,
     };
-  }
+  })();
 
   return (
     <div className="overflow-hidden" style={containerStyle}>

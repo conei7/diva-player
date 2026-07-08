@@ -49,7 +49,7 @@ function FilterModal({ songs, onClose }: FilterModalProps) {
       if (target === 'title') haystack = song.name;
       else if (target === 'artist') haystack = song.artistString ?? '';
       else if (target === 'tag') {
-        haystack = (song.tags ?? []).map((t: { tag: { name: string } }) => t.tag.name).join(' ');
+        haystack = (song.tags ?? []).map(t => t.tag.name).join(' ');
       }
       if (!caseSensitive) haystack = haystack.toLowerCase();
       return haystack.includes(q);
@@ -167,12 +167,14 @@ function FilterModal({ songs, onClose }: FilterModalProps) {
           適用 ({songs.filter(song => {
             const q = caseSensitive ? query : query.toLowerCase();
             if (!q.trim()) return true;
-            let h = '';
-            if (target === 'title') h = song.name;
-            else if (target === 'artist') h = song.artistString ?? '';
-            else h = (song.tags ?? []).map((t: { tag: { name: string } }) => t.tag.name).join(' ');
-            if (!caseSensitive) h = h.toLowerCase();
-            return h.includes(q);
+            const haystack =
+              target === 'title'
+                ? song.name
+                : target === 'artist'
+                  ? song.artistString ?? ''
+                  : (song.tags ?? []).map(t => t.tag.name).join(' ');
+            const normalizedHaystack = caseSensitive ? haystack : haystack.toLowerCase();
+            return normalizedHaystack.includes(q);
           }).length} 件を選択)
         </button>
       </div>

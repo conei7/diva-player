@@ -27,7 +27,7 @@ function SkeletonCard() {
   );
 }
 
-export default function VideoGrid({ songs, loading, showScore: _showScore }: VideoGridProps) {
+export default function VideoGrid({ songs, loading }: VideoGridProps) {
   const navigate = useNavigate();
   const setVisibleSongs = useSelectionStore(s => s.setVisibleSongs);
 

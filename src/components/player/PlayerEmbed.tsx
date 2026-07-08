@@ -91,9 +91,7 @@ function NicoEmbed({ pvId, name, duration: songDuration }: { pvId: string; name?
       }
       if (!msg.eventName) return;
       switch (msg.eventName) {
-        // === 新API (player: prefix) ===
         case 'player:loadComplete':
-        // === 旧API ===
         case 'loadComplete': {
           const len = (msg.data?.videoInfo as { lengthInSeconds?: number } | undefined)?.lengthInSeconds;
           if (typeof len === 'number' && len > 0) setDuration(len);

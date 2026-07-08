@@ -84,6 +84,7 @@ export default function WatchPage() {
   const songId = songIdStr ? Number(songIdStr) : null;
 
   const { currentSong, setQueue, setRootSeed, mixMode, setMixMode } = usePlayerStore();
+  const currentSongId = currentSong?.id;
   const { addToHistory } = useHistoryStore();
   const { ratings } = useRatingStore();
 
@@ -295,10 +296,10 @@ export default function WatchPage() {
   // loadingFromUrlRef が true の間 (URL変更後のフェッチ中) はナビゲートしない
   useEffect(() => {
     if (loadingFromUrlRef.current) return;
-    if (currentSong && songId && currentSong.id !== songId) {
-      navigate(`/watch?v=${currentSong.id}`);
+    if (currentSongId && songId && currentSongId !== songId) {
+      navigate(`/watch?v=${currentSongId}`);
     }
-  }, [currentSong?.id, songId, navigate]);
+  }, [currentSongId, songId, navigate]);
 
   // songId がない場合はホームへ
   if (!songId) return <Navigate to="/" replace />;

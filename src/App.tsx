@@ -233,7 +233,7 @@ function PlayerTracker() {
           fetchingForRef.current = null;
         }
       });
-  // eslint-disable-next-line react-deps
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentSong?.id, queueIndex, queue.length]);
 
   return null;

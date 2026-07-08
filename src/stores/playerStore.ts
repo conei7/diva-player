@@ -8,6 +8,7 @@
 
 import { create } from 'zustand';
 import type { Song, PV, PVService, PVType } from '../types/vocadb';
+import { dedupeQueueBySongId } from '../utils/queueUtils';
 import { storage } from '../utils/storage';
 import { useProgressStore } from './progressStore';
 
@@ -383,27 +384,9 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
 
   removeDuplicateQueueSongs: () => {
     const { queue, queueIndex, currentSong } = get();
-    if (queue.length <= 1) return 0;
-
-    const indexesBySongId = new Map<number, number[]>();
-    queue.forEach((song, index) => {
-      const indexes = indexesBySongId.get(song.id) ?? [];
-      indexes.push(index);
-      indexesBySongId.set(song.id, indexes);
-    });
-
-    const keepIndexes = new Set<number>();
-    indexesBySongId.forEach(indexes => {
-      keepIndexes.add(indexes.includes(queueIndex) ? queueIndex : indexes[0]);
-    });
-
-    const newQueue = queue.filter((_, index) => keepIndexes.has(index));
-    const removed = queue.length - newQueue.length;
+    const { queue: newQueue, queueIndex: nextIndex, currentSong: nextCurrentSong, removed } =
+      dedupeQueueBySongId(queue, queueIndex, currentSong);
     if (removed === 0) return 0;
-
-    const newIndex = newQueue.findIndex(song => song.id === currentSong?.id);
-    const nextIndex = newIndex >= 0 ? newIndex : Math.min(queueIndex, newQueue.length - 1);
-    const nextCurrentSong = newQueue[nextIndex] ?? null;
 
     set({
       queue: newQueue,

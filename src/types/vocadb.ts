@@ -52,6 +52,12 @@ export interface ArtistForSong {
 // ─── 曲 ───
 export type SongType = 'Original' | 'Remaster' | 'Remix' | 'Cover' | 'Arrangement' | 'Instrumental' | 'Mashup' | 'MusicPV' | 'DramaPV' | 'Other' | 'Unspecified';
 
+export interface SongTagRef {
+  tag: {
+    name: string;
+  };
+}
+
 export interface Song {
   artists?: ArtistForSong[];
   artistString: string;
@@ -69,7 +75,7 @@ export interface Song {
   ratingScore: number;
   songType: SongType;
   status: string;
-  tags?: any[];
+  tags?: SongTagRef[];
   thumbUrl?: string;
   version: number;
   youtubeViews?: number;
