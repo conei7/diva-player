@@ -35,6 +35,17 @@ function toSafeFileName(name: string): string {
   return name.trim().replace(/[\\/:*?"<>|]+/g, '_').replace(/\s+/g, '_') || 'playlist';
 }
 
+function formatTotalDuration(totalSeconds: number): string {
+  const seconds = Math.max(0, Math.floor(totalSeconds));
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const restSeconds = seconds % 60;
+
+  if (hours > 0) return `${hours}時間${String(minutes).padStart(2, '0')}分`;
+  if (minutes > 0) return `${minutes}分${String(restSeconds).padStart(2, '0')}秒`;
+  return `${restSeconds}秒`;
+}
+
 function downloadJson(fileName: string, data: unknown): void {
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json;charset=utf-8' });
   const url = URL.createObjectURL(blob);
@@ -513,6 +524,9 @@ export default function PlaylistPage() {
   const selectedPlaylistDuplicateCount = selectedPlaylist
     ? selectedPlaylist.songs.length - new Set(selectedPlaylist.songs.map(s => s.id)).size
     : 0;
+  const selectedPlaylistDurationText = selectedPlaylist
+    ? formatTotalDuration(selectedPlaylist.songs.reduce((sum, song) => sum + (song.lengthSeconds || 0), 0))
+    : '';
   const pinnedPlaylists = playlists.filter(p => p.isPinned);
   const filteredSidebarPlaylists = (selectedFolderId
     ? playlists.filter(p => !p.isPinned && p.folderId === selectedFolderId)
@@ -895,6 +909,9 @@ export default function PlaylistPage() {
                     )}
                     <p className="text-sm mt-1 text-neutral-500">
                       {selectedPlaylist.songs.length} 曲
+                      {selectedPlaylist.songs.length > 0 && (
+                        <span className="ml-2">・{selectedPlaylistDurationText}</span>
+                      )}
                       {filterText && filteredSongs.length !== selectedPlaylist.songs.length && (
                         <span className="ml-2 text-cyan-400">（フィルター中: {filteredSongs.length} 曲）</span>
                       )}
