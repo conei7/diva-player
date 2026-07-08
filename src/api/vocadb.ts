@@ -464,6 +464,7 @@ export async function getRecommendedSongs(
   ratings?: Record<string, number>,
   offset = 0,
 ): Promise<Song[]> {
+  void ratings;
   // ローカルバックエンドを優先
   if (await isRecommenderAvailable()) {
     try {
@@ -476,14 +477,6 @@ export async function getRecommendedSongs(
       if (sessionId) params.set('sessionId', sessionId);
 
       // 評価データをAPIに渡す (id:rating のカンマ区切り、最大30件)
-      if (ratings) {
-        const pairs = Object.entries(ratings)
-          .filter(([, r]) => r >= 3 && r <= 5)
-          .slice(0, 30)
-          .map(([id, r]) => `${id}:${r}`);
-        if (pairs.length > 0) params.set('ratedSongs', pairs.join(','));
-      }
-
       const res = await fetch(`${RECOMMENDER_API}/api/recommend?${params}`);
       if (res.ok) {
         const data: RecommendResponse = await res.json();
@@ -721,15 +714,3 @@ export async function getAudioSimilarSongs(
  * action: 'queue_remove' でキュー削除ペナルティを送信
  * fire-and-forget: エラーは無視
  */
-export function sendPlayFeedback(songId: number, completionRate: number, action?: string): void {
-  if (!_recommenderAvailable) return; // バックエンドが利用不可なら何もしない
-  fetch(`${RECOMMENDER_API}/api/feedback`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      songId,
-      completionRate: action ? completionRate : Math.max(0, Math.min(1, completionRate)),
-      ...(action ? { action } : {}),
-    }),
-  }).catch(() => {/* fire-and-forget */});
-}

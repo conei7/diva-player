@@ -18,7 +18,6 @@ import {
   getRecommendedSongs,
   getAudioSimilarSongs,
   getSongsByProducerFromBackend,
-  sendPlayFeedback,
 } from './api/vocadb';
 import type { Song } from './types/vocadb';
 import {
@@ -137,9 +136,7 @@ function PlayerTracker() {
     // 前の曲の再生完了率を送信
     if (prevSongRef.current && prevSongRef.current.id !== currentSong.id) {
       const { id, progress: p, duration: d } = prevSongRef.current;
-      const completionRate = d > 0 ? Math.min(1, p / d) : 0;
       useImplicitFeedbackStore.getState().recordPlayback(id, p, d);
-      sendPlayFeedback(id, completionRate);
     }
 
     prevSongRef.current = {

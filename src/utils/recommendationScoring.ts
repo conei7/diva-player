@@ -208,7 +208,7 @@ function applyImplicitFeedbackMultiplier(
 
   let multiplier = 1.0;
   multiplier *= Math.pow(0.72, Math.min(negative, 5));
-  multiplier *= Math.pow(1.14, Math.min(positive, 6));
+  multiplier *= Math.pow(1.04, Math.min(positive, 5));
 
   const lastNegativeAt = Math.max(feedback.lastSkippedAt ?? 0, feedback.lastRemovedAt ?? 0);
   if (lastNegativeAt > 0) {

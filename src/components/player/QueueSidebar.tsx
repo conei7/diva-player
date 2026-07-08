@@ -2,7 +2,6 @@ import { useRef, useEffect } from 'react';
 import { usePlayerStore } from '../../stores/playerStore';
 import { useRatingStore } from '../../stores/ratingStore';
 import StarRating from './StarRating';
-import { sendPlayFeedback } from '../../api/vocadb';
 import type { Song } from '../../types/vocadb';
 import { useImplicitFeedbackStore } from '../../stores/implicitFeedbackStore';
 
@@ -153,7 +152,6 @@ export default function QueueSidebar({ hideHeader }: QueueSidebarProps = {}) {
                     e.stopPropagation();
                     // キューからの削除 = 強いネガティブフィードバック (0.0 = 聴きたくない)
                     recordQueueRemove(song.id);
-                    sendPlayFeedback(song.id, 0.0, 'queue_remove');
                     removeFromQueue(i);
                   }}
                 >
