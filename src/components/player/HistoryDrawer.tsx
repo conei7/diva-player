@@ -35,7 +35,7 @@ function getProducerString(song: Song): string {
 }
 
 export default function HistoryDrawer() {
-  const { entries, clearHistory } = useHistoryStore();
+  const { entries, totalPlays, clearHistory } = useHistoryStore();
   const {
     historyDrawerOpen, toggleHistoryDrawer,
     playSong,
@@ -83,7 +83,7 @@ export default function HistoryDrawer() {
             <span className="text-sm font-semibold" style={{ color: 'var(--color-text-primary)' }}>
               視聴履歴
             </span>
-            {entries.length > 0 && (
+            {totalPlays > 0 && (
               <span
                 className="text-[11px] px-1.5 py-0.5 rounded-full"
                 style={{
@@ -91,13 +91,13 @@ export default function HistoryDrawer() {
                   color: 'var(--color-accent-cyan)',
                 }}
               >
-                {entries.length}件
+                {totalPlays}件
               </span>
             )}
           </div>
 
           <div className="flex items-center gap-1">
-            {entries.length > 0 && (
+            {totalPlays > 0 && (
               <button
                 className="btn-ghost px-2 py-1 rounded-lg text-[11px]"
                 style={{ color: 'var(--color-text-muted)' }}

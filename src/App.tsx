@@ -147,7 +147,7 @@ function PlayerTracker() {
       source: currentPlaybackSource,
     };
 
-    addToHistory(currentSong);
+    addToHistory(currentSong, currentPlaybackSource);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentSong?.id]);
 

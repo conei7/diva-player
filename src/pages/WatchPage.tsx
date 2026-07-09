@@ -152,7 +152,7 @@ export default function WatchPage() {
           setQueue([loadedSong], 0);
         }
 
-        addToHistory(loadedSong);
+        addToHistory(loadedSong, 'manual');
 
         // 推薦データの取得
         fetchProducer(loadedSong, 0);

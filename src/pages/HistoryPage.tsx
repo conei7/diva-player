@@ -9,7 +9,7 @@ type HistorySortMode = 'recent' | 'name' | 'artist';
  * HistoryPage - 視聴履歴ページ
  */
 export default function HistoryPage() {
-  const { entries, clearHistory } = useHistoryStore();
+  const { entries, totalPlays, clearHistory } = useHistoryStore();
   const [filterText, setFilterText] = useState('');
   const [sortMode, setSortMode] = useState<HistorySortMode>('recent');
 
@@ -40,7 +40,7 @@ export default function HistoryPage() {
             視聴履歴
           </h1>
           <p className="text-sm mt-1" style={{ color: 'var(--color-text-muted)' }}>
-            {entries.length} 件
+            {totalPlays} 件
           </p>
         </div>
         {entries.length > 0 && (
@@ -88,7 +88,7 @@ export default function HistoryPage() {
           </div>
           {filterText.trim() && (
             <p className="text-xs mt-1" style={{ color: 'var(--color-text-muted)' }}>
-              {songs.length} / {entries.length} 件
+              {songs.length} / {entries.length} 件を表示中
             </p>
           )}
         </div>
