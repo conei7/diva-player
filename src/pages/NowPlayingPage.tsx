@@ -78,7 +78,7 @@ export default function NowPlayingPage() {
   // おすすめ: メタデータ + 音声データ + プレイヤーデータ (/api/recommend)
   const fetchRecommend = useCallback(async (song: Song, page: number) => {
     const songs = await getRecommendedSongs(
-      song.id, PAGE_SIZE, undefined, 0.0, undefined, page * PAGE_SIZE
+      song.id, PAGE_SIZE, 0.0, undefined, page * PAGE_SIZE
     );
     const fresh = songs.filter(s => !seenRecommendRef.current.has(s.id));
     fresh.forEach(s => seenRecommendRef.current.add(s.id));

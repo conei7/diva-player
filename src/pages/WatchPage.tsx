@@ -217,7 +217,7 @@ export default function WatchPage() {
 
   const fetchRecommended = useCallback(async (s: Song, page: number) => {
     try {
-      const items = await getRecommendedSongs(s.id, PAGE_SIZE, undefined, 0.0, ratings, page * PAGE_SIZE + (page === 0 ? randomOffsetRef.current : 0));
+      const items = await getRecommendedSongs(s.id, PAGE_SIZE, 0.0, ratings, page * PAGE_SIZE + (page === 0 ? randomOffsetRef.current : 0));
       const fresh = items.filter(item => !seenSets.current.recommended.has(item.id));
       fresh.forEach(item => seenSets.current.recommended.add(item.id));
 

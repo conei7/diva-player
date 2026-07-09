@@ -193,8 +193,8 @@ function PlayerTracker() {
           // Root Seedと現在の曲が異なる場合、両方から候補を取得してマージ
           if (seedId !== songId) {
             const [fromSeed, fromCurrent] = await Promise.all([
-              getRecommendedSongs(seedId, 30, undefined, 0.0, ratingsRef.current, randomOffset),
-              getRecommendedSongs(songId, 30, undefined, 0.0, ratingsRef.current, randomOffset),
+              getRecommendedSongs(seedId, 30, 0.0, ratingsRef.current, randomOffset),
+              getRecommendedSongs(songId, 30, 0.0, ratingsRef.current, randomOffset),
             ]);
             // マージ: Root Seed由来を優先しつつ重複除去
             const seen = new Set<number>();
@@ -207,7 +207,7 @@ function PlayerTracker() {
             }
             return merged;
           }
-          return getRecommendedSongs(songId, 60, undefined, 0.0, ratingsRef.current, randomOffset);
+          return getRecommendedSongs(songId, 60, 0.0, ratingsRef.current, randomOffset);
         }
       }
     };

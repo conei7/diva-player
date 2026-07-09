@@ -114,7 +114,7 @@ export default function HomePage() {
         onlyWithPVs: true,
       }),
       Promise.all(seedIds.map(seedId =>
-        getRecommendedSongs(seedId, 8, undefined, 0.0, ratings, pageNum * 8)
+        getRecommendedSongs(seedId, 8, 0.0, ratings, pageNum * 8)
           .catch(() => [] as Song[])
       )),
       Promise.all(preferenceSeedIds.map(seedId =>

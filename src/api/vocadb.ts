@@ -459,7 +459,6 @@ async function isRecommenderAvailable(): Promise<boolean> {
 export async function getRecommendedSongs(
   seedSongId: number,
   count = 10,
-  sessionId?: string,
   sessionProgress = 0.0,
   ratings?: Record<string, number>,
   offset = 0,
@@ -474,8 +473,6 @@ export async function getRecommendedSongs(
         offset: String(offset),
         sessionProgress: String(sessionProgress),
       });
-      if (sessionId) params.set('sessionId', sessionId);
-
       // 評価データをAPIに渡す (id:rating のカンマ区切り、最大30件)
       const res = await fetch(`${RECOMMENDER_API}/api/recommend?${params}`);
       if (res.ok) {

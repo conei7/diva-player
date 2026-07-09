@@ -31,21 +31,15 @@ public class RecommendService
     public async Task<RecommendResponse> RecommendAsync(
         int    seedSongId,
         int    count,
-        string? sessionId,
-        double sessionProgress,
-        Dictionary<int, int>? ratedSongs = null)   // songId → 1-5 の評価値
+        double sessionProgress)
     {
         // --- シード曲情報取得 ---
         var seedSong = await _db.GetSongInfoAsync(seedSongId);
         if (seedSong is null)
             return new RecommendResponse([], "seed song not found");
 
-        // --- セッション履歴取得 (除外リスト用) ---
-        int[] sessionHistory = sessionId is not null
-            ? await _db.GetSessionHistoryAsync(sessionId)
-            : [];
-        var playedSet = sessionHistory.ToHashSet();
-        playedSet.Add(seedSongId);
+        // Exclude the seed song from candidates. User playback history stays client-local.
+        var playedSet = new HashSet<int> { seedSongId };
 
         // --- 1. ANN 近似最近傍探索 ---
         var annCandidates = await _qdrant.SearchSimilarAsync(
@@ -91,42 +85,12 @@ public class RecommendService
         int maxSameProd = Math.Max(2, count / 3);
         mergedCandidates = ApplyProducerDiversityCap(
             mergedCandidates, candidateInfos, seedSong.ProducerIds, maxSameProd);
-
-        // --- 3.5. 好みプロファイルスコアリング (明示的フィードバック) ---
-        if (ratedSongs is { Count: > 0 })
-        {
-            var ratedInfos = await _db.GetSongInfoBatchAsync(ratedSongs.Keys);
-            var ratedWithRatings = ratedInfos
-                .Select(i => (Info: i, Rating: ratedSongs.GetValueOrDefault(i.Id, 3)))
-                .ToList();
-            mergedCandidates = ApplyPreferenceScoring(
-                mergedCandidates, candidateInfos, ratedWithRatings);
-        }
-
-        // --- 3.6. 暗黙的フィードバックスコアリング (再生完了率) ---
-        var implicitScores = await _db.GetImplicitScoreMapAsync(
-            mergedCandidates.Select(c => c.Key));
-        if (implicitScores.Count > 0)
-        {
-            const double implicitBeta = 0.2;
-            mergedCandidates = mergedCandidates
-                .Select(c => implicitScores.TryGetValue(c.Key, out var iScore)
-                    ? (Key: c.Key, Value: c.Value + iScore * implicitBeta)
-                    : c)
-                .OrderByDescending(c => c.Value)
-                .ToList();
-        }
-
-        // --- 4. マルコフ連鎖フィルタリング ---
         var filtered = await _markov.FilterAsync(
             seedSong, mergedCandidates, candidateInfos);
 
-        // --- 5. MMR 再ランキング (多様性 × 関連度) ---
-        // セッション進行度が上がるほど多様性を下げる (より関連性重視)
         double lambda = Math.Max(0.2, _opts.BaseDiversity - sessionProgress * 0.3);
         var reranked  = MmrRerank(filtered, candidateInfos, count, lambda);
 
-        // --- 6. VocaDB の曲情報を付けてレスポンスを生成 ---
         var resultInfos = await _db.GetSongInfoBatchAsync(reranked.Select(r => r.SongId));
         var infoMap     = resultInfos.ToDictionary(i => i.Id);
 
@@ -141,51 +105,6 @@ public class RecommendService
             .ToList();
 
         return new RecommendResponse(items, null);
-    }
-
-    // ---- 好みプロファイルスコアリング (明示的フィードバック) ------
-
-    /// <summary>
-    /// 評価済み曲のプロデューサー/ボーカリストに基づいて候補スコアを加減算する。
-    /// 評価5★ → +alpha ボーナス、評価1★ → -alpha ペナルティ。
-    /// 滑らかな重み付けで、ハードコードの足切りを使わない。
-    /// </summary>
-    private static List<(int SongId, double Score)> ApplyPreferenceScoring(
-        List<(int SongId, double Score)> candidates,
-        SongInfo[] candidateInfos,
-        IReadOnlyList<(SongInfo Info, int Rating)> ratedSongs,
-        double alpha = 0.3)
-    {
-        var infoMap = candidateInfos.ToDictionary(i => i.Id);
-
-        return candidates
-            .Select(c =>
-            {
-                if (!infoMap.TryGetValue(c.SongId, out var info)) return c;
-
-                double bonus     = 0;
-                int    matchCount = 0;
-
-                foreach (var (ratedInfo, rating) in ratedSongs)
-                {
-                    // -1 (最低評価) 〜 +1 (最高評価) の重み
-                    double weight = (rating - 3.0) / 2.0;
-
-                    var sharedProducers = info.ProducerIds.Intersect(ratedInfo.ProducerIds).Count();
-                    var sharedVocalists = info.VocalistIds.Intersect(ratedInfo.VocalistIds).Count();
-
-                    if (sharedProducers > 0 || sharedVocalists > 0)
-                    {
-                        bonus += weight * (sharedProducers * 0.6 + sharedVocalists * 0.3);
-                        matchCount++;
-                    }
-                }
-
-                double adjustment = matchCount > 0 ? bonus / matchCount * alpha : 0;
-                return (SongId: c.SongId, Score: c.Score + adjustment);
-            })
-            .OrderByDescending(c => c.Score)
-            .ToList();
     }
 
     // ---- 同一プロデューサー上限フィルタ --------------------------

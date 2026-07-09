@@ -21,10 +21,14 @@ const PLAYER_QUEUE_KEY = 'playerQueue';
 const DEFAULT_VOLUME = 50;
 
 type LoopMode = 'none' | 'all' | 'one';
+export type PlaybackSource = 'manual' | 'auto';
+
 interface StoredPlayerQueue {
   queue: Song[];
   queueIndex: number;
   currentSong: Song | null;
+  queueSources?: PlaybackSource[];
+  currentPlaybackSource?: PlaybackSource;
 }
 
 const pvPriorities: Array<{ service: PVService; pvType: PVType }> = [
@@ -87,15 +91,52 @@ function getStoredPlayerQueue(): StoredPlayerQueue | null {
   const stored = storage.get<StoredPlayerQueue>(PLAYER_QUEUE_KEY);
   if (!stored || !Array.isArray(stored.queue)) return null;
   const queueIndex = Number.isInteger(stored.queueIndex) ? stored.queueIndex : -1;
+  const queueSources = normalizeQueueSources(stored.queue, stored.queueSources);
+  const currentPlaybackSource = stored.currentPlaybackSource === 'auto'
+    ? 'auto'
+    : queueSources[queueIndex] ?? 'manual';
   return {
     queue: stored.queue,
     queueIndex: queueIndex >= 0 && queueIndex < stored.queue.length ? queueIndex : -1,
     currentSong: stored.currentSong ?? stored.queue[queueIndex] ?? null,
+    queueSources,
+    currentPlaybackSource,
   };
 }
 
-function savePlayerQueue(queue: Song[], queueIndex: number, currentSong: Song | null): void {
-  storage.set(PLAYER_QUEUE_KEY, { queue, queueIndex, currentSong });
+function normalizeQueueSources(queue: Song[], queueSources?: PlaybackSource[]): PlaybackSource[] {
+  return queue.map((_, index) => queueSources?.[index] === 'auto' ? 'auto' : 'manual');
+}
+
+function savePlayerQueue(
+  queue: Song[],
+  queueIndex: number,
+  currentSong: Song | null,
+  queueSources?: PlaybackSource[],
+  currentPlaybackSource?: PlaybackSource,
+): void {
+  const normalizedSources = normalizeQueueSources(queue, queueSources);
+  storage.set(PLAYER_QUEUE_KEY, {
+    queue,
+    queueIndex,
+    currentSong,
+    queueSources: normalizedSources,
+    currentPlaybackSource: currentPlaybackSource ?? normalizedSources[queueIndex] ?? 'manual',
+  });
+}
+
+function mapSourcesBySongId(
+  nextQueue: Song[],
+  previousQueue: Song[],
+  previousSources: PlaybackSource[],
+): PlaybackSource[] {
+  const sourceBySongId = new Map<number, PlaybackSource>();
+  previousQueue.forEach((song, index) => {
+    if (!sourceBySongId.has(song.id)) {
+      sourceBySongId.set(song.id, previousSources[index] === 'auto' ? 'auto' : 'manual');
+    }
+  });
+  return nextQueue.map(song => sourceBySongId.get(song.id) ?? 'manual');
 }
 
 function clearStoredPlayerQueue(): void {
@@ -114,9 +155,6 @@ export function getPlayablePV(song: Song): PV | null {
 }
 
 export type MixMode = 'balanced' | 'deep' | 'producer';
-export type PlaybackSource = 'manual' | 'auto';
-
-const autoQueuedSongIds = new Set<number>();
 
 interface PlayerState {
   // 現在の再生状態
@@ -129,6 +167,7 @@ interface PlayerState {
   // 再生キュー
   queue: Song[];
   queueIndex: number;
+  queueSources: PlaybackSource[];
 
   // エラー状態
   error: string | null;
@@ -207,7 +246,7 @@ const initialCurrentSong = storedPlayerQueue?.currentSong ?? null;
 export const usePlayerStore = create<PlayerState>((set, get) => ({
   currentSong: initialCurrentSong,
   currentPV: initialCurrentSong ? getPlayablePV(initialCurrentSong) : null,
-  currentPlaybackSource: 'manual',
+  currentPlaybackSource: storedPlayerQueue?.currentPlaybackSource ?? 'manual',
   isPlaying: false,
   volume: clampVolume(storage.get<number>(VOLUME_KEY) ?? DEFAULT_VOLUME),
   detailPanelEl: null,
@@ -228,6 +267,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   clearSeekTarget: () => set({ seekTarget: null }),
   queue: storedPlayerQueue?.queue ?? [],
   queueIndex: storedPlayerQueue?.queueIndex ?? -1,
+  queueSources: storedPlayerQueue?.queueSources ?? [],
   error: null,
 
   playSong: (song: Song, isUserAction?: boolean) => {
@@ -243,18 +283,20 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     }
     useProgressStore.getState().setDuration(song.lengthSeconds || pv.length || 0);
     useProgressStore.getState().setProgress(0);
-    const { queue, queueIndex } = get();
-    savePlayerQueue(queue, queueIndex, song);
+    const { queue, queueIndex, queueSources } = get();
     const playbackSource: PlaybackSource = isUserAction
       ? 'manual'
-      : autoQueuedSongIds.has(song.id)
-        ? 'auto'
-        : 'manual';
+      : queueSources[queueIndex] ?? 'manual';
+    const nextQueueSources = isUserAction && queue[queueIndex]?.id === song.id
+      ? queueSources.map((source, index) => index === queueIndex ? 'manual' : source)
+      : queueSources;
+    savePlayerQueue(queue, queueIndex, song, nextQueueSources, playbackSource);
     
     set({
       currentSong: song,
       currentPV: pv,
       currentPlaybackSource: playbackSource,
+      queueSources: nextQueueSources,
       isPlaying: true,
       error: null,
       ...(isUserAction ? { rootSeed: song } : {}),
@@ -298,7 +340,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     if (queueIndex > 0) {
       const prevIndex = queueIndex - 1;
       set({ queueIndex: prevIndex });
-      get().playSong(queue[prevIndex]);
+      get().playSong(queue[prevIndex], true);
     }
   },
 
@@ -332,7 +374,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
 
   setQueue: (songs: Song[], startIndex = 0) => {
     const { shuffleEnabled } = get();
-    autoQueuedSongIds.clear();
+    const manualSources = songs.map(() => 'manual' as PlaybackSource);
     if (shuffleEnabled && songs.length > 0) {
       const current = songs[startIndex];
       const rest = songs.filter((_, i) => i !== startIndex);
@@ -341,79 +383,81 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
         [rest[i], rest[j]] = [rest[j], rest[i]];
       }
       const shuffled = current ? [current, ...rest] : rest;
-      set({ queue: shuffled, queueIndex: 0, originalQueue: songs });
-      savePlayerQueue(shuffled, 0, shuffled[0] ?? null);
+      const shuffledSources = shuffled.map(() => 'manual' as PlaybackSource);
+      set({ queue: shuffled, queueIndex: 0, queueSources: shuffledSources, originalQueue: songs });
+      savePlayerQueue(shuffled, 0, shuffled[0] ?? null, shuffledSources, 'manual');
       get().playSong(shuffled[0], true);
     } else {
-      set({ queue: songs, queueIndex: startIndex, originalQueue: [] });
-      savePlayerQueue(songs, startIndex, songs[startIndex] ?? null);
+      set({ queue: songs, queueIndex: startIndex, queueSources: manualSources, originalQueue: [] });
+      savePlayerQueue(songs, startIndex, songs[startIndex] ?? null, manualSources, 'manual');
       if (songs.length > 0) get().playSong(songs[startIndex], true);
     }
   },
 
   replaceQueueList: (songs: Song[]) => {
+    const { queue, queueSources } = get();
+    const nextSources = mapSourcesBySongId(songs, queue, queueSources);
     const queueIndex = Math.min(get().queueIndex, songs.length - 1);
     const currentSong = queueIndex >= 0 ? songs[queueIndex] : null;
-    set({ queue: songs, queueIndex });
-    savePlayerQueue(songs, queueIndex, currentSong);
+    set({ queue: songs, queueIndex, queueSources: nextSources });
+    savePlayerQueue(songs, queueIndex, currentSong, nextSources);
   },
 
   addToQueue: (song: Song, source: PlaybackSource = 'manual') => {
-    const { queue, queueIndex, currentSong } = get();
+    const { queue, queueIndex, queueSources, currentSong, currentPlaybackSource } = get();
     const nextQueue = [...queue, song];
-    if (source === 'auto') autoQueuedSongIds.add(song.id);
-    else autoQueuedSongIds.delete(song.id);
-    set({ queue: nextQueue });
-    savePlayerQueue(nextQueue, queueIndex, currentSong);
+    const nextSources = [...queueSources, source];
+    set({ queue: nextQueue, queueSources: nextSources });
+    savePlayerQueue(nextQueue, queueIndex, currentSong, nextSources, currentPlaybackSource);
   },
 
   addManyToQueue: (songs: Song[], source: PlaybackSource = 'manual') => {
-    const { queue, queueIndex, currentSong } = get();
+    const { queue, queueIndex, queueSources, currentSong, currentPlaybackSource } = get();
     const nextQueue = [...queue, ...songs];
-    for (const song of songs) {
-      if (source === 'auto') autoQueuedSongIds.add(song.id);
-      else autoQueuedSongIds.delete(song.id);
-    }
-    set({ queue: nextQueue });
-    savePlayerQueue(nextQueue, queueIndex, currentSong);
+    const nextSources = [...queueSources, ...songs.map(() => source)];
+    set({ queue: nextQueue, queueSources: nextSources });
+    savePlayerQueue(nextQueue, queueIndex, currentSong, nextSources, currentPlaybackSource);
   },
 
   removeFromQueue: (index: number) => {
-    const { queue, queueIndex } = get();
+    const { queue, queueIndex, queueSources } = get();
     const newQueue = queue.filter((_, i) => i !== index);
+    const newSources = queueSources.filter((_, i) => i !== index);
     let newIndex = queueIndex;
     if (index < queueIndex) newIndex--;
     if (index === queueIndex) {
       // 現在再生中の曲を削除
-      set({ queue: newQueue, queueIndex: Math.min(newIndex, newQueue.length - 1) });
+      set({ queue: newQueue, queueIndex: Math.min(newIndex, newQueue.length - 1), queueSources: newSources });
       if (newQueue.length > 0 && newIndex < newQueue.length) {
         const nextIndex = Math.min(newIndex, newQueue.length - 1);
-        savePlayerQueue(newQueue, nextIndex, newQueue[nextIndex] ?? null);
+        savePlayerQueue(newQueue, nextIndex, newQueue[nextIndex] ?? null, newSources);
         get().playSong(newQueue[newIndex]);
       } else {
-        set({ currentSong: null, currentPV: null, isPlaying: false });
+        set({ currentSong: null, currentPV: null, currentPlaybackSource: 'manual', isPlaying: false });
         clearStoredPlayerQueue();
       }
       return;
     }
-    set({ queue: newQueue, queueIndex: newIndex });
-    savePlayerQueue(newQueue, newIndex, get().currentSong);
+    set({ queue: newQueue, queueIndex: newIndex, queueSources: newSources });
+    savePlayerQueue(newQueue, newIndex, get().currentSong, newSources, get().currentPlaybackSource);
   },
 
   removeDuplicateQueueSongs: () => {
-    const { queue, queueIndex, currentSong } = get();
+    const { queue, queueIndex, queueSources, currentSong, currentPlaybackSource } = get();
     const { queue: newQueue, queueIndex: nextIndex, currentSong: nextCurrentSong, removed } =
       dedupeQueueBySongId(queue, queueIndex, currentSong);
     if (removed === 0) return 0;
+    const nextSources = mapSourcesBySongId(newQueue, queue, queueSources);
 
     set({
       queue: newQueue,
       queueIndex: nextIndex,
+      queueSources: nextSources,
       currentSong: nextCurrentSong,
       currentPV: nextCurrentSong ? getPlayablePV(nextCurrentSong) : null,
       isPlaying: nextCurrentSong ? get().isPlaying : false,
     });
-    savePlayerQueue(newQueue, nextIndex, nextCurrentSong);
+    savePlayerQueue(newQueue, nextIndex, nextCurrentSong, nextSources, currentPlaybackSource);
     return removed;
   },
 
@@ -422,18 +466,21 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     set({
       queue: [],
       queueIndex: -1,
+      queueSources: [],
       currentSong: null,
       currentPV: null,
+      currentPlaybackSource: 'manual',
       isPlaying: false,
     });
     clearStoredPlayerQueue();
   },
 
   jumpToIndex: (index: number) => {
-    const { queue } = get();
+    const { queue, queueSources } = get();
     if (index < 0 || index >= queue.length) return;
-    set({ queueIndex: index });
-    savePlayerQueue(queue, index, queue[index]);
+    const nextSources = queueSources.map((source, i) => i === index ? 'manual' : source);
+    set({ queueIndex: index, queueSources: nextSources });
+    savePlayerQueue(queue, index, queue[index], nextSources, 'manual');
     get().playSong(queue[index], true);
   },
 
@@ -474,20 +521,22 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   setMixMode: (mode) => set({ mixMode: mode }),
 
   toggleShuffle: () => {
-    const { shuffleEnabled, queue, queueIndex, currentSong, originalQueue } = get();
+    const { shuffleEnabled, queue, queueIndex, queueSources, currentSong, currentPlaybackSource, originalQueue } = get();
 
     if (shuffleEnabled) {
       // シャッフル解除: 元の順序に戻す
       const newIndex = currentSong
         ? originalQueue.findIndex(s => s.id === currentSong.id)
         : queueIndex;
+      const restoredSources = mapSourcesBySongId(originalQueue, queue, queueSources);
       set({
         shuffleEnabled: false,
         queue: originalQueue,
+        queueSources: restoredSources,
         originalQueue: [],
         queueIndex: newIndex < 0 ? 0 : newIndex,
       });
-      savePlayerQueue(originalQueue, newIndex < 0 ? 0 : newIndex, currentSong);
+      savePlayerQueue(originalQueue, newIndex < 0 ? 0 : newIndex, currentSong, restoredSources, currentPlaybackSource);
     } else {
       // シャッフル有効化: 現在曲を先頭に置き残りをランダム化
       if (queue.length === 0) { set({ shuffleEnabled: true }); return; }
@@ -498,13 +547,15 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
         [rest[i], rest[j]] = [rest[j], rest[i]];
       }
       const shuffled = current ? [current, ...rest] : rest;
+      const shuffledSources = mapSourcesBySongId(shuffled, queue, queueSources);
       set({
         shuffleEnabled: true,
         originalQueue: queue,
         queue: shuffled,
+        queueSources: shuffledSources,
         queueIndex: 0,
       });
-      savePlayerQueue(shuffled, 0, currentSong);
+      savePlayerQueue(shuffled, 0, currentSong, shuffledSources, currentPlaybackSource);
     }
   },
 }));
