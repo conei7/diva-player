@@ -80,6 +80,8 @@ export interface Song {
   version: number;
   youtubeViews?: number;
   nicoViews?: number;
+  viewGrowth?: number;
+  growthRate?: number;
   audioComputed?: boolean;
 }
 

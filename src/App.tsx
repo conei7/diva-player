@@ -113,7 +113,7 @@ function PlayerTracker() {
   const progress = useProgressStore(s => s.progress);
   const duration = useProgressStore(s => s.duration);
   
-  const { addToHistory, entries: historyEntries } = useHistoryStore();
+  const { addToHistory, finalizeHistoryEntry, entries: historyEntries } = useHistoryStore();
   const { ratings } = useRatingStore();
   const { playlists } = usePlaylistStore();
   const implicitFeedback = useImplicitFeedbackStore(s => s.feedback);
@@ -137,6 +137,7 @@ function PlayerTracker() {
     // 前の曲の再生完了率を送信
     if (prevSongRef.current && prevSongRef.current.id !== currentSong.id) {
       const { id, progress: p, duration: d } = prevSongRef.current;
+      finalizeHistoryEntry(id, p, d);
       useImplicitFeedbackStore.getState().recordPlayback(id, p, d, prevSongRef.current.source);
     }
 

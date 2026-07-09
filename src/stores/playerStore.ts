@@ -8,6 +8,7 @@
 
 import { create } from 'zustand';
 import type { Song, PV, PVService, PVType } from '../types/vocadb';
+import { getSongById } from '../api/vocadb';
 import { dedupeQueueBySongId } from '../utils/queueUtils';
 import { storage } from '../utils/storage';
 import { useProgressStore } from './progressStore';
@@ -24,9 +25,11 @@ type LoopMode = 'none' | 'all' | 'one';
 export type PlaybackSource = 'manual' | 'auto';
 
 interface StoredPlayerQueue {
-  queue: Song[];
+  songIds?: number[];
+  queue?: Song[];
   queueIndex: number;
-  currentSong: Song | null;
+  currentSongId?: number | null;
+  currentSong?: Song | null;
   queueSources?: PlaybackSource[];
   currentPlaybackSource?: PlaybackSource;
 }
@@ -89,23 +92,40 @@ function getStoredLoopMode(): LoopMode {
 
 function getStoredPlayerQueue(): StoredPlayerQueue | null {
   const stored = storage.get<StoredPlayerQueue>(PLAYER_QUEUE_KEY);
-  if (!stored || !Array.isArray(stored.queue)) return null;
+  if (!stored) return null;
+
+  const legacyQueue = Array.isArray(stored.queue)
+    ? stored.queue.filter((song): song is Song => !!song?.id)
+    : undefined;
+  const songIds = Array.isArray(stored.songIds)
+    ? stored.songIds.filter((id): id is number => Number.isInteger(id))
+    : legacyQueue?.map(song => song.id);
+  if (!songIds || songIds.length === 0) return null;
+
+  const queueLength = legacyQueue?.length ?? songIds.length;
   const queueIndex = Number.isInteger(stored.queueIndex) ? stored.queueIndex : -1;
-  const queueSources = normalizeQueueSources(stored.queue, stored.queueSources);
+  const normalizedIndex = queueIndex >= 0 && queueIndex < queueLength ? queueIndex : -1;
+  const queueSources = normalizeQueueSources(queueLength, stored.queueSources);
+  const currentSong = stored.currentSong ?? legacyQueue?.[normalizedIndex] ?? null;
   const currentPlaybackSource = stored.currentPlaybackSource === 'auto'
     ? 'auto'
-    : queueSources[queueIndex] ?? 'manual';
+    : queueSources[normalizedIndex] ?? 'manual';
   return {
-    queue: stored.queue,
-    queueIndex: queueIndex >= 0 && queueIndex < stored.queue.length ? queueIndex : -1,
-    currentSong: stored.currentSong ?? stored.queue[queueIndex] ?? null,
+    songIds,
+    queue: legacyQueue,
+    queueIndex: normalizedIndex,
+    currentSongId: stored.currentSongId ?? currentSong?.id ?? songIds[normalizedIndex] ?? null,
+    currentSong,
     queueSources,
     currentPlaybackSource,
   };
 }
 
-function normalizeQueueSources(queue: Song[], queueSources?: PlaybackSource[]): PlaybackSource[] {
-  return queue.map((_, index) => queueSources?.[index] === 'auto' ? 'auto' : 'manual');
+function normalizeQueueSources(queueLength: number, queueSources?: PlaybackSource[]): PlaybackSource[] {
+  return Array.from(
+    { length: queueLength },
+    (_, index) => queueSources?.[index] === 'auto' ? 'auto' : 'manual',
+  );
 }
 
 function savePlayerQueue(
@@ -115,11 +135,11 @@ function savePlayerQueue(
   queueSources?: PlaybackSource[],
   currentPlaybackSource?: PlaybackSource,
 ): void {
-  const normalizedSources = normalizeQueueSources(queue, queueSources);
+  const normalizedSources = normalizeQueueSources(queue.length, queueSources);
   storage.set(PLAYER_QUEUE_KEY, {
-    queue,
+    songIds: queue.map(song => song.id),
     queueIndex,
-    currentSong,
+    currentSongId: currentSong?.id ?? null,
     queueSources: normalizedSources,
     currentPlaybackSource: currentPlaybackSource ?? normalizedSources[queueIndex] ?? 'manual',
   });
@@ -242,6 +262,67 @@ interface PlayerState {
 
 const storedPlayerQueue = getStoredPlayerQueue();
 const initialCurrentSong = storedPlayerQueue?.currentSong ?? null;
+
+async function restoreStoredPlayerQueue(): Promise<void> {
+  const stored = getStoredPlayerQueue();
+  if (!stored) return;
+
+  if (stored.queue && stored.queue.length > 0) {
+    savePlayerQueue(
+      stored.queue,
+      stored.queueIndex,
+      stored.currentSong ?? stored.queue[stored.queueIndex] ?? null,
+      stored.queueSources,
+      stored.currentPlaybackSource,
+    );
+    return;
+  }
+
+  const songIds = stored.songIds ?? [];
+  if (songIds.length === 0) return;
+
+  const restored = await Promise.all(songIds.map(async (id, index) => {
+    try {
+      return {
+        song: await getSongById(id),
+        source: stored.queueSources?.[index] === 'auto' ? 'auto' as const : 'manual' as const,
+      };
+    } catch {
+      return null;
+    }
+  }));
+
+  const queueItems = restored.filter((item): item is { song: Song; source: PlaybackSource } => item !== null);
+  if (queueItems.length === 0) {
+    clearStoredPlayerQueue();
+    return;
+  }
+
+  const state = usePlayerStore.getState();
+  if (state.queue.length > 0 || state.currentSong) return;
+
+  const queue = queueItems.map(item => item.song);
+  const queueSources = queueItems.map(item => item.source);
+  const currentIndexById = stored.currentSongId
+    ? queue.findIndex(song => song.id === stored.currentSongId)
+    : -1;
+  const queueIndex = currentIndexById >= 0
+    ? currentIndexById
+    : Math.max(0, Math.min(stored.queueIndex, queue.length - 1));
+  const currentSong = queue[queueIndex] ?? null;
+  const currentPlaybackSource = stored.currentPlaybackSource ?? queueSources[queueIndex] ?? 'manual';
+
+  usePlayerStore.setState({
+    queue,
+    queueIndex,
+    queueSources,
+    currentSong,
+    currentPV: currentSong ? getPlayablePV(currentSong) : null,
+    currentPlaybackSource,
+    isPlaying: false,
+  });
+  savePlayerQueue(queue, queueIndex, currentSong, queueSources, currentPlaybackSource);
+}
 
 export const usePlayerStore = create<PlayerState>((set, get) => ({
   currentSong: initialCurrentSong,
@@ -559,3 +640,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     }
   },
 }));
+
+void restoreStoredPlayerQueue().catch(error => {
+  console.error('[PlayerStore] Failed to restore stored queue', error);
+});

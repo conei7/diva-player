@@ -41,14 +41,19 @@ interface HistoryState {
   entries: HistoryEntry[];
   totalPlays: number;
   hasHydrated: boolean;
+  activePlayEventId?: number;
+  activeSongId?: number;
+  activePlayedAt?: number;
   initializeHistory: () => Promise<void>;
   addToHistory: (song: Song, source?: 'manual' | 'auto') => void;
+  finalizeHistoryEntry: (songId: number, progressSeconds: number, durationSeconds: number) => void;
   clearHistory: () => Promise<void>;
   setHasHydrated: (hasHydrated: boolean) => void;
 }
 
 let dbPromise: Promise<IDBDatabase> | null = null;
 let initializePromise: Promise<void> | null = null;
+const pendingFinalizations = new Map<number, { progressSeconds: number; durationSeconds: number }>();
 
 function openHistoryDb(): Promise<IDBDatabase> {
   if (dbPromise) return dbPromise;
@@ -79,11 +84,53 @@ function requestToPromise<T>(request: IDBRequest<T>): Promise<T> {
   });
 }
 
-async function appendPlayEvent(event: ListeningPlayEvent): Promise<void> {
+async function appendPlayEvent(event: ListeningPlayEvent): Promise<number | undefined> {
+  const db = await openHistoryDb();
+  return new Promise<number | undefined>((resolve, reject) => {
+    const tx = db.transaction(PLAY_STORE, 'readwrite');
+    const request = tx.objectStore(PLAY_STORE).add(event);
+    let generatedId: number | undefined;
+    request.onsuccess = () => {
+      generatedId = typeof request.result === 'number' ? request.result : Number(request.result);
+    };
+    tx.oncomplete = () => resolve(generatedId);
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error);
+  });
+}
+
+function buildPlayEventDetails(progressSeconds: number, durationSeconds: number): Pick<ListeningPlayEvent, 'p' | 'd' | 'c'> {
+  const duration = Math.max(0, Math.round(Number.isFinite(durationSeconds) ? durationSeconds : 0));
+  const rawProgress = Math.max(0, Math.round(Number.isFinite(progressSeconds) ? progressSeconds : 0));
+  const progress = duration > 0 ? Math.min(rawProgress, duration) : rawProgress;
+
+  return {
+    p: progress,
+    d: duration,
+    c: duration > 0 && progress / duration >= 0.7 ? 1 : 0,
+  };
+}
+
+async function updatePlayEventDetails(
+  eventId: number,
+  progressSeconds: number,
+  durationSeconds: number,
+): Promise<void> {
   const db = await openHistoryDb();
   await new Promise<void>((resolve, reject) => {
     const tx = db.transaction(PLAY_STORE, 'readwrite');
-    tx.objectStore(PLAY_STORE).add(event);
+    const store = tx.objectStore(PLAY_STORE);
+    const request = store.get(eventId);
+
+    request.onsuccess = () => {
+      const event = request.result as ListeningPlayEvent | undefined;
+      if (!event) return;
+      store.put({
+        ...event,
+        ...buildPlayEventDetails(progressSeconds, durationSeconds),
+      });
+    };
+
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
     tx.onabort = () => reject(tx.error);
@@ -199,6 +246,9 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
   entries: [],
   totalPlays: 0,
   hasHydrated: false,
+  activePlayEventId: undefined,
+  activeSongId: undefined,
+  activePlayedAt: undefined,
 
   initializeHistory: async () => {
     if (initializePromise) return initializePromise;
@@ -236,9 +286,25 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
       o: source === 'auto' ? 1 : 0,
     };
 
-    void appendPlayEvent(event).catch(error => {
-      console.error('[History] Failed to append play event', error);
-    });
+    void appendPlayEvent(event)
+      .then(eventId => {
+        if (!eventId) return;
+        const state = get();
+        if (state.activeSongId === song.id && state.activePlayedAt === playedAt) {
+          set({ activePlayEventId: eventId });
+        }
+
+        const pending = pendingFinalizations.get(playedAt);
+        if (pending) {
+          pendingFinalizations.delete(playedAt);
+          void updatePlayEventDetails(eventId, pending.progressSeconds, pending.durationSeconds).catch(error => {
+            console.error('[History] Failed to finalize delayed play event', error);
+          });
+        }
+      })
+      .catch(error => {
+        console.error('[History] Failed to append play event', error);
+      });
 
     const updated = entries[0]?.song.id === song.id
       ? [newEntry, ...entries.slice(1)]
@@ -247,12 +313,36 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
     set({
       entries: updated.slice(0, RECENT_ENTRY_LIMIT),
       totalPlays: totalPlays + 1,
+      activePlayEventId: undefined,
+      activeSongId: song.id,
+      activePlayedAt: playedAt,
+    });
+  },
+
+  finalizeHistoryEntry: (songId, progressSeconds, durationSeconds) => {
+    const { activePlayEventId, activeSongId, activePlayedAt } = get();
+    if (activeSongId !== songId || !activePlayedAt) return;
+
+    if (!activePlayEventId) {
+      pendingFinalizations.set(activePlayedAt, { progressSeconds, durationSeconds });
+      return;
+    }
+
+    void updatePlayEventDetails(activePlayEventId, progressSeconds, durationSeconds).catch(error => {
+      console.error('[History] Failed to finalize play event', error);
     });
   },
 
   clearHistory: async () => {
     await clearPlayEvents();
-    set({ entries: [], totalPlays: 0 });
+    pendingFinalizations.clear();
+    set({
+      entries: [],
+      totalPlays: 0,
+      activePlayEventId: undefined,
+      activeSongId: undefined,
+      activePlayedAt: undefined,
+    });
   },
 
   setHasHydrated: (hasHydrated) => set({ hasHydrated }),

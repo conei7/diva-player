@@ -279,6 +279,74 @@ public class DbService
         return result;
     }
 
+    public async Task<string> GetTrendingSongsJsonAsync(int days, int start, int maxResults)
+    {
+        using var conn = Open();
+        await using var cmd = new NpgsqlCommand(@"
+            WITH latest AS (
+                SELECT DISTINCT ON (song_id)
+                       song_id,
+                       recorded_at,
+                       COALESCE(youtube_views, 0) + COALESCE(nico_views, 0) AS total_views
+                FROM view_history
+                ORDER BY song_id, recorded_at DESC
+            ),
+            baseline AS (
+                SELECT DISTINCT ON (song_id)
+                       song_id,
+                       recorded_at,
+                       COALESCE(youtube_views, 0) + COALESCE(nico_views, 0) AS total_views
+                FROM view_history
+                WHERE recorded_at >= now() - ($1::int * interval '1 day')
+                ORDER BY song_id, recorded_at ASC
+            ),
+            growth AS (
+                SELECT
+                    l.song_id,
+                    GREATEST(0, l.total_views - b.total_views) AS view_growth,
+                    CASE
+                        WHEN b.total_views > 0
+                            THEN ((l.total_views - b.total_views)::double precision / b.total_views)
+                        ELSE 0
+                    END AS growth_rate
+                FROM latest l
+                JOIN baseline b ON b.song_id = l.song_id
+                WHERE l.recorded_at > b.recorded_at
+            )
+            SELECT (s.raw_json || jsonb_strip_nulls(jsonb_build_object(
+                'youtubeViews', s.youtube_views,
+                'nicoViews', s.nico_views,
+                'viewGrowth', g.view_growth,
+                'growthRate', g.growth_rate,
+                'audioComputed', EXISTS (
+                    SELECT 1 FROM song_features sf
+                    WHERE sf.song_id = s.id AND sf.audio_computed IS TRUE
+                ),
+                'thumbUrl', COALESCE(s.raw_json->>'thumbUrl', s.raw_json->'pvs'->0->>'thumbUrl')
+            )))::text
+            FROM growth g
+            JOIN songs s ON s.id = g.song_id
+            WHERE g.view_growth > 0
+              AND EXISTS (
+                  SELECT 1 FROM pvs p
+                  WHERE p.song_id = s.id AND p.disabled = FALSE
+              )
+            ORDER BY g.view_growth DESC, g.growth_rate DESC, s.favorited_times DESC NULLS LAST
+            OFFSET $2 LIMIT $3", conn);
+        cmd.Parameters.AddWithValue(Math.Clamp(days, 1, 365));
+        cmd.Parameters.AddWithValue(Math.Max(0, start));
+        cmd.Parameters.AddWithValue(Math.Clamp(maxResults, 1, 100));
+
+        var items = new List<string>();
+        await using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            items.Add(reader.GetString(0));
+        }
+
+        return items.Count > 0 ? "[" + string.Join(",", items) + "]" : "[]";
+    }
+
     // ---- マルコフ遷移確率 -----------------------------------------
 
     public async Task<Dictionary<int, Dictionary<int, double>>> LoadMarkovMatrixAsync()

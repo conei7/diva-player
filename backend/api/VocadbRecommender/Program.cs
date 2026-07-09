@@ -202,6 +202,24 @@ app.MapGet("/api/songs/views", async (string ids, DbService db) =>
     return Results.Ok(result);
 });
 
+// GET /api/songs/trending?days=30&start=0&maxResults=24
+app.MapGet("/api/songs/trending", async (
+    int? days,
+    int? start,
+    int? maxResults,
+    DbService db) =>
+{
+    var itemsJson = await db.GetTrendingSongsJsonAsync(days ?? 30, start ?? 0, maxResults ?? 24);
+    var json = $$"""
+    {
+      "items": {{itemsJson}},
+      "totalCount": 0
+    }
+    """;
+
+    return Results.Content(json, "application/json");
+});
+
 // GET /api/songs/search?query=...&artistIds=1,2&songTypes=Original&sort=YoutubeViews&order=desc&start=0&maxResults=24
 app.MapGet("/api/songs/search", async (
     string? query,

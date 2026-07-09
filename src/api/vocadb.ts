@@ -203,6 +203,38 @@ export async function getTopSongs(
   return data;
 }
 
+export async function getTrendingSongs(
+  days = 30,
+  maxResults = 24,
+  start = 0,
+): Promise<Song[]> {
+  const params = new URLSearchParams({
+    days: String(days),
+    start: String(start),
+    maxResults: String(maxResults),
+  });
+  const url = `${RECOMMENDER_API}/api/songs/trending?${params}`;
+  const cacheKey = `trending:${url}`;
+
+  const cached = getCached<Song[]>(cacheKey);
+  if (cached) return cached;
+
+  if (await isRecommenderAvailable()) {
+    try {
+      const res = await fetch(url);
+      if (res.ok) {
+        const data: SongSearchResult = await res.json();
+        setCache(cacheKey, data.items);
+        return data.items;
+      }
+    } catch {
+      _recommenderAvailable = false;
+    }
+  }
+
+  return getTopSongs(168, maxResults);
+}
+
 /**
  * アーティスト名でアーティストを検索し、クエリに近いアーティストを返す。
  * 曲名検索ではなくアーティスト検索にフォールバックするために使用。

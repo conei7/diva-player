@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import CategoryChips, { type CategoryChip } from '../components/home/CategoryChips';
 import VideoGrid from '../components/home/VideoGrid';
-import { searchSongs, getTopSongs, getRecommendedSongs, getSimilarSongs } from '../api/vocadb';
+import { searchSongs, getTopSongs, getRecommendedSongs, getSimilarSongs, getTrendingSongs } from '../api/vocadb';
 import { useHistoryStore } from '../stores/historyStore';
 import { usePlayerStore } from '../stores/playerStore';
 import { useRatingStore } from '../stores/ratingStore';
@@ -185,7 +185,7 @@ export default function HomePage() {
             result = await fetchRecommendedHomeSongs(pageNum);
             break;
           case 'trending':
-            result = await getTopSongs(168, PAGE_SIZE);
+            result = await getTrendingSongs(30, PAGE_SIZE, pageNum * PAGE_SIZE);
             break;
           case 'recent': {
             const searchResult = await searchSongs({
