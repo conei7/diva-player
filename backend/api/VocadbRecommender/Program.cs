@@ -60,7 +60,6 @@ app.MapGet("/api/recommend/producer", async (
         return Results.BadRequest("count must be between 1 and 100");
 
     int skip = offset ?? 0;
-
     var songs = await db.GetSongsByProducerAsync(songId, count + skip);
     var paged  = songs.Skip(skip).Take(count).ToList();
 
@@ -82,14 +81,27 @@ app.MapGet("/api/recommend/similar", async (
     int skip = offset ?? 0;
 
     // ハイブリッドコレクション優先、なければメタデータコレクション
-    var results = await qdrant.SearchSimilarAsync(songId, count, null, skip);
+    const int fetchCount = 200;
+    var results = await qdrant.SearchSimilarAsync(songId, fetchCount, null, 0);
     if (results.Count == 0)
-        results = await qdrant.SearchMetadataSimilarAsync(songId, count, null, skip);
+        results = await qdrant.SearchMetadataSimilarAsync(songId, fetchCount, null, 0);
 
     if (results.Count == 0)
         return Results.Ok(new { items = Array.Empty<object>() });
 
+    var seed = await db.GetSongInfoAsync(songId);
     var infos = await db.GetSongInfoBatchAsync(results.Select(r => r.SongId));
+    if (seed is not null)
+    {
+        results = RecommendationDiversity.ApplySeedArtistCaps(
+            results,
+            seed,
+            infos,
+            Math.Max(2, count / 3),
+            Math.Max(4, count / 4));
+    }
+
+    results = results.Skip(skip).Take(count).ToList();
     var infoMap = infos.ToDictionary(i => i.Id);
 
     var items = results
@@ -119,12 +131,25 @@ app.MapGet("/api/recommend/metadata", async (
         return Results.BadRequest("count must be between 1 and 100");
 
     int skip = offset ?? 0;
-    var results = await qdrant.SearchMetadataSimilarAsync(songId, count, null, skip);
+    const int fetchCount = 200;
+    var results = await qdrant.SearchMetadataSimilarAsync(songId, fetchCount, null, 0);
 
     if (results.Count == 0)
         return Results.Ok(new { items = Array.Empty<object>() });
 
+    var seed = await db.GetSongInfoAsync(songId);
     var infos = await db.GetSongInfoBatchAsync(results.Select(r => r.SongId));
+    if (seed is not null)
+    {
+        results = RecommendationDiversity.ApplySeedArtistCaps(
+            results,
+            seed,
+            infos,
+            Math.Max(2, count / 3),
+            Math.Max(4, count / 4));
+    }
+
+    results = results.Skip(skip).Take(count).ToList();
     var infoMap = infos.ToDictionary(i => i.Id);
 
     var items = results

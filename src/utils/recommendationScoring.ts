@@ -105,6 +105,37 @@ export function diversifyByArtist(songs: Song[], maxPerBucket: number): Song[] {
   return result;
 }
 
+function getVocalistIds(song: Song): number[] {
+  return (song.artists ?? [])
+    .filter(artist => artist.categories?.includes('Vocalist'))
+    .map(artist => artist.artist?.id)
+    .filter((id): id is number => id !== undefined);
+}
+
+export function diversifyAwayFromSeedVocalist(
+  seedSong: Song,
+  songs: Song[],
+  maxSameSeedVocalist: number,
+): Song[] {
+  const seedVocalists = new Set(getVocalistIds(seedSong));
+  if (seedVocalists.size === 0) return songs;
+
+  const sameSeedVocalist: Song[] = [];
+  const others: Song[] = [];
+
+  for (const song of uniqueSongsById(songs)) {
+    const hasSeedVocalist = getVocalistIds(song).some(id => seedVocalists.has(id));
+    if (hasSeedVocalist) sameSeedVocalist.push(song);
+    else others.push(song);
+  }
+
+  return uniqueSongsById([
+    ...sameSeedVocalist.slice(0, maxSameSeedVocalist),
+    ...others,
+    ...sameSeedVocalist.slice(maxSameSeedVocalist),
+  ]);
+}
+
 export function rankKnownSongs(
   historyEntries: HistoryLikeEntry[],
   playlistSongs: Song[],

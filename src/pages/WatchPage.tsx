@@ -19,6 +19,7 @@ import {
 import type { Song } from '../types/vocadb';
 import { useSelectionStore } from '../stores/selectionStore';
 import QueueSidebar from '../components/player/QueueSidebar';
+import { diversifyAwayFromSeedVocalist } from '../utils/recommendationScoring';
 
 function WatchQueue() {
   const queue = usePlayerStore(s => s.queue);
@@ -197,7 +198,11 @@ export default function WatchPage() {
 
   const fetchRelated = useCallback(async (s: Song, page: number) => {
     try {
-      const items = await getMetadataSimilarSongs(s.id, PAGE_SIZE, page * PAGE_SIZE + (page === 0 ? randomOffsetRef.current : 0));
+      const items = diversifyAwayFromSeedVocalist(
+        s,
+        await getMetadataSimilarSongs(s.id, PAGE_SIZE * 2, randomOffsetRef.current + page * PAGE_SIZE * 2),
+        Math.max(6, Math.floor(PAGE_SIZE / 4)),
+      ).slice(0, PAGE_SIZE);
       const fresh = items.filter(item => !seenSets.current.related.has(item.id));
       fresh.forEach(item => seenSets.current.related.add(item.id));
 
@@ -217,7 +222,11 @@ export default function WatchPage() {
 
   const fetchRecommended = useCallback(async (s: Song, page: number) => {
     try {
-      const items = await getRecommendedSongs(s.id, PAGE_SIZE, 0.0, ratings, page * PAGE_SIZE + (page === 0 ? randomOffsetRef.current : 0));
+      const items = diversifyAwayFromSeedVocalist(
+        s,
+        await getRecommendedSongs(s.id, PAGE_SIZE * 2, 0.0, ratings, randomOffsetRef.current + page * PAGE_SIZE * 2),
+        Math.max(6, Math.floor(PAGE_SIZE / 4)),
+      ).slice(0, PAGE_SIZE);
       const fresh = items.filter(item => !seenSets.current.recommended.has(item.id));
       fresh.forEach(item => seenSets.current.recommended.add(item.id));
 

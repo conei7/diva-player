@@ -82,9 +82,11 @@ public class RecommendService
         var candidateInfos = await _db.GetSongInfoBatchAsync(
             mergedCandidates.Select(c => c.Key));
         // count の 1/3 を同一プロデューサー上限とし、残りを他プロデューサーで埋める
-        int maxSameProd = Math.Max(2, count / 3);
-        mergedCandidates = ApplyProducerDiversityCap(
-            mergedCandidates, candidateInfos, seedSong.ProducerIds, maxSameProd);
+        // Fixed caps keep the ranked prefix stable when the endpoint applies pagination.
+        const int maxSameProd = 16;
+        const int maxSameVocalist = 12;
+        mergedCandidates = RecommendationDiversity.ApplySeedArtistCaps(
+            mergedCandidates, seedSong, candidateInfos, maxSameProd, maxSameVocalist);
         var filtered = await _markov.FilterAsync(
             seedSong, mergedCandidates, candidateInfos);
 
