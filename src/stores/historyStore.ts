@@ -2,10 +2,9 @@ import { create } from 'zustand';
 import { get as idbGet, del as idbDel } from 'idb-keyval';
 import { getSongById } from '../api/vocadb';
 import type { Song } from '../types/vocadb';
+import { HISTORY_STORES, openHistoryDb } from '../services/historyDatabase';
 
-const DB_NAME = 'diva-listening-history';
-const DB_VERSION = 1;
-const PLAY_STORE = 'plays';
+const PLAY_STORE = HISTORY_STORES.plays;
 const LEGACY_HISTORY_KEY = 'diva-history';
 const LEGACY_MIGRATED_KEY = 'diva-history-log-migrated-v1';
 const RECENT_ENTRY_LIMIT = 300;
@@ -24,6 +23,7 @@ export interface ListeningPlayEvent {
   p?: number; // listened seconds
   d?: number; // duration seconds
   c?: 0 | 1; // completed-ish
+  f?: 0 | 1; // finalized and eligible for statistics
 }
 
 interface LegacyHistoryEntry {
@@ -52,31 +52,8 @@ interface HistoryState {
   setHasHydrated: (hasHydrated: boolean) => void;
 }
 
-let dbPromise: Promise<IDBDatabase> | null = null;
 let initializePromise: Promise<void> | null = null;
 const pendingFinalizations = new Map<number, { progressSeconds: number; durationSeconds: number }>();
-
-function openHistoryDb(): Promise<IDBDatabase> {
-  if (dbPromise) return dbPromise;
-
-  dbPromise = new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, DB_VERSION);
-
-    request.onupgradeneeded = () => {
-      const db = request.result;
-      if (!db.objectStoreNames.contains(PLAY_STORE)) {
-        const store = db.createObjectStore(PLAY_STORE, { keyPath: 'id', autoIncrement: true });
-        store.createIndex('songId', 's', { unique: false });
-        store.createIndex('playedAt', 't', { unique: false });
-      }
-    };
-
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
-  });
-
-  return dbPromise;
-}
 
 function requestToPromise<T>(request: IDBRequest<T>): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -88,7 +65,7 @@ function requestToPromise<T>(request: IDBRequest<T>): Promise<T> {
 async function appendPlayEvent(event: ListeningPlayEvent): Promise<number | undefined> {
   const db = await openHistoryDb();
   return new Promise<number | undefined>((resolve, reject) => {
-    const tx = db.transaction(PLAY_STORE, 'readwrite');
+    const tx = db.transaction([PLAY_STORE, HISTORY_STORES.pending], 'readwrite');
     const request = tx.objectStore(PLAY_STORE).add(event);
     let generatedId: number | undefined;
     request.onsuccess = () => {
@@ -119,7 +96,7 @@ async function updatePlayEventDetails(
 ): Promise<void> {
   const db = await openHistoryDb();
   await new Promise<void>((resolve, reject) => {
-    const tx = db.transaction(PLAY_STORE, 'readwrite');
+    const tx = db.transaction([PLAY_STORE, HISTORY_STORES.pending], 'readwrite');
     const store = tx.objectStore(PLAY_STORE);
     const request = store.get(eventId);
 
@@ -129,7 +106,9 @@ async function updatePlayEventDetails(
       store.put({
         ...event,
         ...buildPlayEventDetails(progressSeconds, durationSeconds),
+        f: 1,
       });
+      tx.objectStore(HISTORY_STORES.pending).put({ eventId });
     };
 
     tx.oncomplete = () => resolve();
@@ -186,7 +165,9 @@ async function clearPlayEvents(): Promise<void> {
   const db = await openHistoryDb();
   await new Promise<void>((resolve, reject) => {
     const tx = db.transaction(PLAY_STORE, 'readwrite');
-    tx.objectStore(PLAY_STORE).clear();
+    for (const storeName of Object.values(HISTORY_STORES)) {
+      tx.objectStore(storeName).clear();
+    }
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
     tx.onabort = () => reject(tx.error);
@@ -235,6 +216,7 @@ async function migrateLegacyHistory(): Promise<void> {
       s: entry.song!.id,
       t: entry.playedAt!,
       o: 0 as const,
+      f: 1 as const,
     }));
 
   await appendPlayEvents(events);
@@ -288,6 +270,7 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
       s: song.id,
       t: playedAt,
       o: source === 'auto' ? 1 : 0,
+      f: 0,
     };
 
     void appendPlayEvent(event)

@@ -1,17 +1,38 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useHistoryStore } from '../stores/historyStore';
 import VideoGrid from '../components/home/VideoGrid';
 import type { Song } from '../types/vocadb';
+import { getHistoryOverview, type HistoryOverview } from '../services/historyStats';
 
 type HistorySortMode = 'recent' | 'name' | 'artist';
+
+function formatDuration(seconds: number): string {
+  const totalMinutes = Math.floor(seconds / 60);
+  if (totalMinutes < 60) return `${totalMinutes}分`;
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return minutes > 0 ? `${hours}時間${minutes}分` : `${hours}時間`;
+}
 
 /**
  * HistoryPage - 視聴履歴ページ
  */
 export default function HistoryPage() {
-  const { entries, totalPlays, clearHistory } = useHistoryStore();
+  const { entries, totalPlays, hasHydrated, clearHistory } = useHistoryStore();
   const [filterText, setFilterText] = useState('');
   const [sortMode, setSortMode] = useState<HistorySortMode>('recent');
+  const [overview, setOverview] = useState<HistoryOverview | null>(null);
+
+  useEffect(() => {
+    if (!hasHydrated) return;
+    let cancelled = false;
+    void getHistoryOverview().then(result => {
+      if (!cancelled) setOverview(result);
+    }).catch(error => {
+      console.error('[History] Failed to load statistics', error);
+    });
+    return () => { cancelled = true; };
+  }, [hasHydrated, totalPlays]);
 
   const songs: Song[] = useMemo(() => {
     const normalizedFilter = filterText.trim().toLowerCase();
@@ -55,6 +76,30 @@ export default function HistoryPage() {
           </button>
         )}
       </div>
+
+      {overview && (
+        <section
+          aria-label="視聴統計"
+          className="mb-6 grid grid-cols-2 gap-2 sm:grid-cols-4"
+        >
+          <div className="rounded-lg border p-3" style={{ borderColor: 'var(--color-border)', background: 'var(--color-surface)' }}>
+            <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>有効再生</p>
+            <p className="mt-1 text-lg font-semibold" style={{ color: 'var(--color-text-primary)' }}>{overview.totalQualifiedPlays}</p>
+          </div>
+          <div className="rounded-lg border p-3" style={{ borderColor: 'var(--color-border)', background: 'var(--color-surface)' }}>
+            <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>完走</p>
+            <p className="mt-1 text-lg font-semibold" style={{ color: 'var(--color-text-primary)' }}>{overview.totalCompletes}</p>
+          </div>
+          <div className="rounded-lg border p-3" style={{ borderColor: 'var(--color-border)', background: 'var(--color-surface)' }}>
+            <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>総再生時間</p>
+            <p className="mt-1 text-lg font-semibold" style={{ color: 'var(--color-text-primary)' }}>{formatDuration(overview.totalListenedSeconds)}</p>
+          </div>
+          <div className="rounded-lg border p-3" style={{ borderColor: 'var(--color-border)', background: 'var(--color-surface)' }}>
+            <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>開始回数</p>
+            <p className="mt-1 text-lg font-semibold" style={{ color: 'var(--color-text-primary)' }}>{overview.totalStarts}</p>
+          </div>
+        </section>
+      )}
 
       {entries.length > 0 && (
         <div className="mb-4 max-w-2xl">
