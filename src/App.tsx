@@ -1,11 +1,6 @@
-import { useEffect, useRef } from 'react';
+import { lazy, Suspense, useEffect, useRef } from 'react';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import Layout from './components/layout/Layout';
-import HomePage from './pages/HomePage';
-import WatchPage from './pages/WatchPage';
-import PlaylistPage from './pages/PlaylistPage';
-import HistoryPage from './pages/HistoryPage';
-import FavoritesPage from './pages/FavoritesPage';
 import MediaSession from './components/player/MediaSession';
 import KeyboardShortcuts from './components/player/KeyboardShortcuts';
 import { usePlayerStore } from './stores/playerStore';
@@ -28,6 +23,12 @@ import {
   uniqueSongsById,
   weightedShuffleByScore,
 } from './utils/recommendationScoring';
+
+const HomePage = lazy(() => import('./pages/HomePage'));
+const WatchPage = lazy(() => import('./pages/WatchPage'));
+const PlaylistPage = lazy(() => import('./pages/PlaylistPage'));
+const HistoryPage = lazy(() => import('./pages/HistoryPage'));
+const FavoritesPage = lazy(() => import('./pages/FavoritesPage'));
 
 /**
  * App - ルートコンポーネント
@@ -312,17 +313,19 @@ function AppContent() {
       <PlayerTracker />
       <MediaSession />
       <KeyboardShortcuts />
-      <Routes>
-        <Route element={<Layout />}>
-          <Route path="/" element={<HomePage />} />
-          <Route path="/watch" element={<WatchPage />} />
-          <Route path="/history" element={<HistoryPage />} />
-          <Route path="/favorites" element={<FavoritesPage />} />
-          <Route path="/playlists" element={<PlaylistPage />} />
-          {/* 旧ルートの互換性 */}
-          <Route path="/playing" element={<WatchPage />} />
-        </Route>
-      </Routes>
+      <Suspense fallback={<div className="min-h-screen bg-zinc-950" aria-busy="true" />}>
+        <Routes>
+          <Route element={<Layout />}>
+            <Route path="/" element={<HomePage />} />
+            <Route path="/watch" element={<WatchPage />} />
+            <Route path="/history" element={<HistoryPage />} />
+            <Route path="/favorites" element={<FavoritesPage />} />
+            <Route path="/playlists" element={<PlaylistPage />} />
+            {/* 旧ルートの互換性 */}
+            <Route path="/playing" element={<WatchPage />} />
+          </Route>
+        </Routes>
+      </Suspense>
     </>
   );
 }

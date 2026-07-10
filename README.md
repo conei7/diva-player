@@ -1,5 +1,7 @@
 # DIVA Player
 
+SBCへの接続・デプロイは [docs/SBC_OPERATIONS.md](docs/SBC_OPERATIONS.md) を参照してください。
+
 **Dynamic Index for Virtual Artists**
 
 VocaDB API を活用したボカロ特化ミュージックプレイヤー SPA。YouTube・ニコニコ動画のボカロ楽曲をシームレスに検索・再生できます。
