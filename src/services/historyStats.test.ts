@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   applyHistoryEventToStats,
+  compareHistoryStats,
   emptyHistorySongStats,
+  isFinalizedPlayEvent,
   isQualifiedPlay,
 } from './historyStats';
 import type { ListeningPlayEvent } from '../stores/historyStore';
@@ -43,5 +45,24 @@ describe('history statistics', () => {
     expect(stats.manualPlayCount).toBe(1);
     expect(stats.autoPlayCount).toBe(1);
     expect(stats.listenedSeconds).toBe(110);
+  });
+
+  it('treats legacy events as finalized and tracks their date range', () => {
+    const stats = emptyHistorySongStats(42);
+    applyHistoryEventToStats(stats, event({ t: 2_000, f: undefined }), 'Asia/Tokyo');
+    applyHistoryEventToStats(stats, event({ t: 1_000, p: 40 }), 'Asia/Tokyo');
+
+    expect(isFinalizedPlayEvent(event({ f: undefined }))).toBe(true);
+    expect(stats.firstPlayedAt).toBe(1_000);
+    expect(stats.lastPlayedAt).toBe(2_000);
+  });
+
+  it('orders equally played songs by listened time and then recency', () => {
+    const base = emptyHistorySongStats(1);
+    const longer = { ...emptyHistorySongStats(2), listenedSeconds: 10 };
+    const newer = { ...emptyHistorySongStats(3), listenedSeconds: 10, lastPlayedAt: 2_000 };
+
+    expect(compareHistoryStats(longer, base)).toBeLessThan(0);
+    expect(compareHistoryStats(newer, longer)).toBeLessThan(0);
   });
 });

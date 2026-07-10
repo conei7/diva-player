@@ -1,8 +1,10 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import { useHistoryStore } from '../stores/historyStore';
 import VideoGrid from '../components/home/VideoGrid';
 import type { Song } from '../types/vocadb';
 import { getHistoryOverview, type HistoryOverview } from '../services/historyStats';
+import { createHistoryBackup, importHistoryBackup } from '../services/historyBackup';
+import { downloadJson } from '../utils/playlistBackup';
 
 type HistorySortMode = 'recent' | 'name' | 'artist';
 
@@ -18,10 +20,13 @@ function formatDuration(seconds: number): string {
  * HistoryPage - 視聴履歴ページ
  */
 export default function HistoryPage() {
-  const { entries, totalPlays, hasHydrated, clearHistory } = useHistoryStore();
+  const { entries, totalPlays, hasHydrated, clearHistory, reloadHistory } = useHistoryStore();
   const [filterText, setFilterText] = useState('');
   const [sortMode, setSortMode] = useState<HistorySortMode>('recent');
   const [overview, setOverview] = useState<HistoryOverview | null>(null);
+  const [backupMessage, setBackupMessage] = useState<string | null>(null);
+  const [isImporting, setIsImporting] = useState(false);
+  const importInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!hasHydrated) return;
@@ -53,6 +58,39 @@ export default function HistoryPage() {
     return filtered;
   }, [entries, filterText, sortMode]);
 
+  const handleExport = async () => {
+    try {
+      const { payload, summary } = await createHistoryBackup();
+      const date = payload.exportedAt.slice(0, 10);
+      downloadJson(`diva-listening-history-${date}.json`, payload);
+      setBackupMessage(`${summary.eventCount.toLocaleString()} 件の再生履歴を保存しました。`);
+    } catch (error) {
+      console.error('[History] Failed to export history', error);
+      setBackupMessage('履歴のエクスポートに失敗しました。ブラウザの保存領域を確認してください。');
+    }
+  };
+
+  const handleImport = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+
+    setIsImporting(true);
+    try {
+      const data: unknown = JSON.parse(await file.text());
+      const result = await importHistoryBackup(data);
+      await reloadHistory();
+      setBackupMessage(
+        `${result.imported.toLocaleString()} 件を追加しました。重複 ${result.duplicates.toLocaleString()} 件は除外しました。`,
+      );
+    } catch (error) {
+      console.error('[History] Failed to import history', error);
+      setBackupMessage('履歴を読み込めませんでした。DIVA Playerの履歴バックアップJSONを選択してください。');
+    } finally {
+      setIsImporting(false);
+    }
+  };
+
   return (
     <div className="w-full px-4 sm:px-6 lg:px-8 py-4">
       <div className="flex items-center justify-between mb-6">
@@ -64,18 +102,45 @@ export default function HistoryPage() {
             {totalPlays} 件
           </p>
         </div>
-        {entries.length > 0 && (
+        <div className="flex items-center gap-2">
+          <input
+            ref={importInputRef}
+            type="file"
+            accept="application/json,.json"
+            className="hidden"
+            onChange={handleImport}
+          />
+          <button className="yt-action-btn" onClick={handleExport} title="履歴をJSONで保存">
+            <span>エクスポート</span>
+          </button>
           <button
             className="yt-action-btn"
-            onClick={clearHistory}
+            onClick={() => importInputRef.current?.click()}
+            disabled={isImporting}
+            title="履歴バックアップを追加"
           >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" />
-            </svg>
-            <span className="hidden sm:inline">履歴を削除</span>
+            <span>{isImporting ? '読み込み中' : 'インポート'}</span>
           </button>
-        )}
+          {entries.length > 0 && (
+            <button
+              className="yt-action-btn"
+              onClick={clearHistory}
+              title="履歴を削除"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" />
+              </svg>
+              <span className="hidden sm:inline">履歴を削除</span>
+            </button>
+          )}
+        </div>
       </div>
+
+      {backupMessage && (
+        <p className="mb-4 text-sm" role="status" style={{ color: 'var(--color-text-secondary)' }}>
+          {backupMessage}
+        </p>
+      )}
 
       {overview && (
         <section

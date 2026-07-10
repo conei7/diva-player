@@ -48,6 +48,7 @@ interface HistoryState {
   initializeHistory: () => Promise<void>;
   addToHistory: (song: Song, source?: 'manual' | 'auto', playbackSequence?: number) => void;
   finalizeHistoryEntry: (songId: number, progressSeconds: number, durationSeconds: number, playbackSequence?: number) => void;
+  reloadHistory: () => Promise<void>;
   clearHistory: () => Promise<void>;
   setHasHydrated: (hasHydrated: boolean) => void;
 }
@@ -121,7 +122,7 @@ async function appendPlayEvents(events: ListeningPlayEvent[]): Promise<void> {
   if (events.length === 0) return;
   const db = await openHistoryDb();
   await new Promise<void>((resolve, reject) => {
-    const tx = db.transaction(PLAY_STORE, 'readwrite');
+    const tx = db.transaction(Object.values(HISTORY_STORES), 'readwrite');
     const store = tx.objectStore(PLAY_STORE);
     for (const event of events) store.add(event);
     tx.oncomplete = () => resolve();
@@ -134,6 +135,13 @@ async function countPlayEvents(): Promise<number> {
   const db = await openHistoryDb();
   const tx = db.transaction(PLAY_STORE, 'readonly');
   return requestToPromise(tx.objectStore(PLAY_STORE).count());
+}
+
+async function loadHistorySnapshot(): Promise<Pick<HistoryState, 'entries' | 'totalPlays'>> {
+  const events = await readRecentPlayEvents(RECENT_ENTRY_LIMIT);
+  const entries = await loadEntriesFromEvents(events);
+  const totalPlays = await countPlayEvents();
+  return { entries, totalPlays };
 }
 
 async function readRecentPlayEvents(limit: number): Promise<ListeningPlayEvent[]> {
@@ -239,16 +247,19 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
 
     initializePromise = (async () => {
       await migrateLegacyHistory();
-      const events = await readRecentPlayEvents(RECENT_ENTRY_LIMIT);
-      const entries = await loadEntriesFromEvents(events);
-      const totalPlays = await countPlayEvents();
-      set({ entries, totalPlays, hasHydrated: true });
+      const snapshot = await loadHistorySnapshot();
+      set({ ...snapshot, hasHydrated: true });
     })().catch(error => {
       console.error('[History] Failed to initialize listening history', error);
       set({ hasHydrated: true });
     });
 
     return initializePromise;
+  },
+
+  reloadHistory: async () => {
+    const snapshot = await loadHistorySnapshot();
+    set({ ...snapshot, hasHydrated: true });
   },
 
   addToHistory: (song, source = 'manual', playbackSequence) => {
