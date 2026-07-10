@@ -66,10 +66,21 @@ app.MapGet("/api/recommend/producer", async (
 {
     if (count is < 1 or > 100)
         return Results.BadRequest("count must be between 1 and 100");
+    if (offset is < 0)
+        return Results.BadRequest("offset must be non-negative");
 
     int skip = offset ?? 0;
     var songs = await db.GetSongsByProducerAsync(songId, count + skip);
-    var paged  = songs.Skip(skip).Take(count).ToList();
+    var paged = songs
+        .Skip(skip)
+        .Take(count)
+        .Select(song => new
+        {
+            songId = song.SongId,
+            name = song.Name,
+            artistString = song.ArtistString,
+        })
+        .ToList();
 
     return Results.Ok(new { items = paged });
 });
