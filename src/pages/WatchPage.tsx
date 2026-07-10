@@ -7,7 +7,6 @@ import Description from '../components/watch/Description';
 import FilterChips, { type RecTabKey } from '../components/watch/FilterChips';
 import RecommendationList from '../components/watch/RecommendationList';
 import { usePlayerStore } from '../stores/playerStore';
-import { useHistoryStore } from '../stores/historyStore';
 import { useRatingStore } from '../stores/ratingStore';
 import {
   getSongById,
@@ -86,7 +85,6 @@ export default function WatchPage() {
 
   const { currentSong, setQueue, setRootSeed, mixMode, setMixMode } = usePlayerStore();
   const currentSongId = currentSong?.id;
-  const { addToHistory } = useHistoryStore();
   const { ratings } = useRatingStore();
 
   const [song, setSong] = useState<Song | null>(null);
@@ -152,8 +150,6 @@ export default function WatchPage() {
           setRootSeed(loadedSong); // ユーザーが能動的に選んだ曲をRoot Seedに
           setQueue([loadedSong], 0);
         }
-
-        addToHistory(loadedSong, 'manual');
 
         // 推薦データの取得
         fetchProducer(loadedSong, 0);

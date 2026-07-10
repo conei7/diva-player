@@ -1,8 +1,9 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useHistoryStore } from '../stores/historyStore';
 import { useRatingStore } from '../stores/ratingStore';
 import VideoGrid from '../components/home/VideoGrid';
 import type { Song } from '../types/vocadb';
+import { getSongById } from '../api/vocadb';
 
 type FavoriteSortMode = 'recent' | 'rating' | 'name' | 'artist';
 
@@ -14,25 +15,58 @@ export default function FavoritesPage() {
   const { entries } = useHistoryStore();
   const [filterText, setFilterText] = useState('');
   const [sortMode, setSortMode] = useState<FavoriteSortMode>('recent');
+  const [loadedSongs, setLoadedSongs] = useState<Record<string, Song>>({});
 
-  // 星4・5の曲を履歴から取得（重複排除）
+  const highRatedIds = useMemo(() => Object.entries(ratings)
+    .filter(([, rating]) => rating >= 4)
+    .map(([id]) => Number(id))
+    .filter(Number.isInteger), [ratings]);
+
+  const songsById = useMemo(() => {
+    const map = new Map<number, Song>(Object.values(loadedSongs).map(song => [song.id, song]));
+    for (const entry of entries) map.set(entry.song.id, entry.song);
+    return map;
+  }, [entries, loadedSongs]);
+
+  const missingIds = useMemo(
+    () => highRatedIds.filter(id => !songsById.has(id)),
+    [highRatedIds, songsById],
+  );
+
+  useEffect(() => {
+    if (missingIds.length === 0) return;
+    let cancelled = false;
+
+    void Promise.all(missingIds.map(async id => {
+      try {
+        return await getSongById(id);
+      } catch {
+        return null;
+      }
+    })).then(songs => {
+      if (cancelled) return;
+      setLoadedSongs(previous => ({
+        ...previous,
+        ...Object.fromEntries(songs.filter((song): song is Song => song !== null).map(song => [String(song.id), song])),
+      }));
+    });
+
+    return () => { cancelled = true; };
+  }, [missingIds]);
+
+  // 星4・5の曲を履歴または補完済み曲情報から取得（重複排除）
   const favoriteSongs: Song[] = useMemo(() => {
-    const highRatedIds = new Set(
-      Object.entries(ratings)
-        .filter(([, rating]) => rating >= 4)
-        .map(([id]) => Number(id))
-    );
-
     const seen = new Set<number>();
     const result: Song[] = [];
-    for (const entry of entries) {
-      if (highRatedIds.has(entry.song.id) && !seen.has(entry.song.id)) {
-        seen.add(entry.song.id);
-        result.push(entry.song);
+    for (const id of highRatedIds) {
+      const song = songsById.get(id);
+      if (song && !seen.has(song.id)) {
+        seen.add(song.id);
+        result.push(song);
       }
     }
     return result;
-  }, [ratings, entries]);
+  }, [highRatedIds, songsById]);
 
   const visibleSongs = useMemo(() => {
     const normalizedFilter = filterText.trim().toLowerCase();

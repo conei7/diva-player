@@ -229,6 +229,7 @@ export async function getTrendingSongs(
       }
     } catch {
       _recommenderAvailable = false;
+      _recommenderCheckedAt = Date.now();
     }
   }
 
@@ -467,20 +468,33 @@ interface RecommendResponse {
 
 let _recommenderAvailable: boolean | null = null;
 let _recommenderCheckPromise: Promise<boolean> | null = null;
+let _recommenderCheckedAt = 0;
+const RECOMMENDER_CHECK_TTL = 30_000;
 
 async function isRecommenderAvailable(): Promise<boolean> {
-  if (_recommenderAvailable !== null) return _recommenderAvailable;
+  if (
+    _recommenderAvailable !== null
+    && Date.now() - _recommenderCheckedAt < RECOMMENDER_CHECK_TTL
+  ) {
+    return _recommenderAvailable;
+  }
+
   // 並行呼び出しでも1回だけヘルスチェックを実行
   if (!_recommenderCheckPromise) {
     _recommenderCheckPromise = (async () => {
+      let available: boolean;
       try {
         const res = await fetch(`${RECOMMENDER_API}/api/health`, { signal: AbortSignal.timeout(1500) });
-        _recommenderAvailable = res.ok;
+        available = res.ok;
       } catch {
-        _recommenderAvailable = false;
+        available = false;
       }
-      return _recommenderAvailable!;
-    })();
+      _recommenderAvailable = available;
+      _recommenderCheckedAt = Date.now();
+      return available;
+    })().finally(() => {
+      _recommenderCheckPromise = null;
+    });
   }
   return _recommenderCheckPromise;
 }
@@ -518,6 +532,7 @@ export async function getRecommendedSongs(
       }
     } catch {
       _recommenderAvailable = false; // 次回からフォールバック
+      _recommenderCheckedAt = Date.now();
     }
   }
 
@@ -555,6 +570,7 @@ export async function getSongsByProducerFromBackend(
       }
     } catch {
       _recommenderAvailable = false;
+      _recommenderCheckedAt = Date.now();
     }
   }
   // フォールバック: VocaDB artistId 検索
@@ -666,6 +682,7 @@ export async function getSimilarSongs(
       }
     } catch {
       _recommenderAvailable = false;
+      _recommenderCheckedAt = Date.now();
     }
   }
   // フォールバック: VocaDB /related は全件一括（offset/pagination なし）
@@ -700,6 +717,7 @@ export async function getMetadataSimilarSongs(
       }
     } catch {
       _recommenderAvailable = false;
+      _recommenderCheckedAt = Date.now();
     }
   }
   if (offset === 0) return getRelatedSongs(seedSongId);
@@ -732,6 +750,7 @@ export async function getAudioSimilarSongs(
       }
     } catch {
       _recommenderAvailable = false;
+      _recommenderCheckedAt = Date.now();
     }
   }
   return [];

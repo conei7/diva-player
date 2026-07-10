@@ -181,6 +181,7 @@ interface PlayerState {
   currentSong: Song | null;
   currentPV: PV | null;
   currentPlaybackSource: PlaybackSource;
+  playbackSequence: number;
   isPlaying: boolean;
   volume: number;
 
@@ -328,6 +329,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   currentSong: initialCurrentSong,
   currentPV: initialCurrentSong ? getPlayablePV(initialCurrentSong) : null,
   currentPlaybackSource: storedPlayerQueue?.currentPlaybackSource ?? 'manual',
+  playbackSequence: 0,
   isPlaying: false,
   volume: clampVolume(storage.get<number>(VOLUME_KEY) ?? DEFAULT_VOLUME),
   detailPanelEl: null,
@@ -371,12 +373,14 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     const nextQueueSources = isUserAction && queue[queueIndex]?.id === song.id
       ? queueSources.map((source, index) => index === queueIndex ? 'manual' : source)
       : queueSources;
+    const playbackSequence = get().playbackSequence + 1;
     savePlayerQueue(queue, queueIndex, song, nextQueueSources, playbackSource);
     
     set({
       currentSong: song,
       currentPV: pv,
       currentPlaybackSource: playbackSource,
+      playbackSequence,
       queueSources: nextQueueSources,
       isPlaying: true,
       error: null,

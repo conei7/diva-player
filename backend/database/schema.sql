@@ -5,6 +5,7 @@
 -- 拡張機能
 CREATE EXTENSION IF NOT EXISTS pg_trgm;    -- 文字列類似検索
 CREATE EXTENSION IF NOT EXISTS vector;     -- pgvector (オプション: Qdrant側で管理する場合は不要)
+CREATE EXTENSION IF NOT EXISTS pgcrypto;  -- gen_random_uuid()
 
 -- ============================================================
 -- 楽曲テーブル
@@ -29,6 +30,22 @@ CREATE TABLE IF NOT EXISTS songs (
 CREATE INDEX IF NOT EXISTS songs_publish_date_idx ON songs (publish_date);
 CREATE INDEX IF NOT EXISTS songs_favorited_idx    ON songs (favorited_times DESC);
 CREATE INDEX IF NOT EXISTS songs_type_idx         ON songs (song_type);
+
+-- External view counts are maintained by diva-data-pipeline.
+ALTER TABLE songs
+    ADD COLUMN IF NOT EXISTS youtube_views BIGINT NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS nico_views BIGINT NOT NULL DEFAULT 0;
+
+CREATE TABLE IF NOT EXISTS view_history (
+    id              BIGSERIAL PRIMARY KEY,
+    song_id         INTEGER NOT NULL REFERENCES songs(id) ON DELETE CASCADE,
+    recorded_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    youtube_views   BIGINT NOT NULL DEFAULT 0,
+    nico_views      BIGINT NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS view_history_song_date_idx
+    ON view_history (song_id, recorded_at ASC);
 
 -- ============================================================
 -- アーティストテーブル

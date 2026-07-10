@@ -44,9 +44,10 @@ interface HistoryState {
   activePlayEventId?: number;
   activeSongId?: number;
   activePlayedAt?: number;
+  activePlaybackSequence?: number;
   initializeHistory: () => Promise<void>;
-  addToHistory: (song: Song, source?: 'manual' | 'auto') => void;
-  finalizeHistoryEntry: (songId: number, progressSeconds: number, durationSeconds: number) => void;
+  addToHistory: (song: Song, source?: 'manual' | 'auto', playbackSequence?: number) => void;
+  finalizeHistoryEntry: (songId: number, progressSeconds: number, durationSeconds: number, playbackSequence?: number) => void;
   clearHistory: () => Promise<void>;
   setHasHydrated: (hasHydrated: boolean) => void;
 }
@@ -249,6 +250,7 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
   activePlayEventId: undefined,
   activeSongId: undefined,
   activePlayedAt: undefined,
+  activePlaybackSequence: undefined,
 
   initializeHistory: async () => {
     if (initializePromise) return initializePromise;
@@ -267,11 +269,13 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
     return initializePromise;
   },
 
-  addToHistory: (song, source = 'manual') => {
+  addToHistory: (song, source = 'manual', playbackSequence) => {
     const playedAt = Date.now();
-    const { entries, totalPlays } = get();
+    const { entries, totalPlays, activePlaybackSequence } = get();
+    if (playbackSequence !== undefined && activePlaybackSequence === playbackSequence) return;
     const recentEntry = entries[0];
-    const isDuplicate = recentEntry?.song.id === song.id
+    const isDuplicate = playbackSequence === undefined
+      && recentEntry?.song.id === song.id
       && playedAt - recentEntry.playedAt < DUPLICATE_PLAY_WINDOW_MS;
     const newEntry: HistoryEntry = { song, playedAt };
 
@@ -306,22 +310,20 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
         console.error('[History] Failed to append play event', error);
       });
 
-    const updated = entries[0]?.song.id === song.id
-      ? [newEntry, ...entries.slice(1)]
-      : [newEntry, ...entries];
-
     set({
-      entries: updated.slice(0, RECENT_ENTRY_LIMIT),
+      entries: [newEntry, ...entries].slice(0, RECENT_ENTRY_LIMIT),
       totalPlays: totalPlays + 1,
       activePlayEventId: undefined,
       activeSongId: song.id,
       activePlayedAt: playedAt,
+      activePlaybackSequence: playbackSequence,
     });
   },
 
-  finalizeHistoryEntry: (songId, progressSeconds, durationSeconds) => {
-    const { activePlayEventId, activeSongId, activePlayedAt } = get();
+  finalizeHistoryEntry: (songId, progressSeconds, durationSeconds, playbackSequence) => {
+    const { activePlayEventId, activeSongId, activePlayedAt, activePlaybackSequence } = get();
     if (activeSongId !== songId || !activePlayedAt) return;
+    if (playbackSequence !== undefined && activePlaybackSequence !== playbackSequence) return;
 
     if (!activePlayEventId) {
       pendingFinalizations.set(activePlayedAt, { progressSeconds, durationSeconds });
@@ -342,6 +344,7 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
       activePlayEventId: undefined,
       activeSongId: undefined,
       activePlayedAt: undefined,
+      activePlaybackSequence: undefined,
     });
   },
 

@@ -23,6 +23,13 @@ public class DbService
         return conn;
     }
 
+    private async Task<NpgsqlConnection> OpenAsync()
+    {
+        var conn = new NpgsqlConnection(_connStr);
+        await conn.OpenAsync();
+        return conn;
+    }
+
     public async Task<(string ItemsJson, int TotalCount)> SearchSongsAsync(
         string? query,
         List<int>? artistIds,
@@ -203,11 +210,29 @@ public class DbService
 
     public async Task<SongInfo?> GetSongInfoAsync(int songId)
     {
-        var key = $"song:{songId}";
-        if (_cache.TryGetValue(key, out SongInfo? cached))
-            return cached;
+        var infos = await GetSongInfoBatchAsync([songId]);
+        return infos.FirstOrDefault();
+    }
 
-        using var conn = Open();
+    public async Task<SongInfo[]> GetSongInfoBatchAsync(IEnumerable<int> songIds)
+    {
+        var ids = songIds.Distinct().ToArray();
+        if (ids.Length == 0) return [];
+
+        var result = new List<SongInfo>(ids.Length);
+        var missingIds = new List<int>(ids.Length);
+        foreach (var id in ids)
+        {
+            if (_cache.TryGetValue($"song:{id}", out SongInfo? cached) && cached is not null)
+                result.Add(cached);
+            else
+                missingIds.Add(id);
+        }
+
+        if (missingIds.Count == 0)
+            return [.. result];
+
+        await using var conn = await OpenAsync();
         await using var cmd = new NpgsqlCommand(@"
             SELECT s.id, s.name, s.artist_string, s.length_seconds,
                    s.song_type, s.favorited_times,
@@ -223,36 +248,31 @@ public class DbService
                    s.youtube_views, s.nico_views
             FROM songs s
             LEFT JOIN song_features sf ON sf.song_id = s.id
-            WHERE s.id = $1", conn);
-        cmd.Parameters.AddWithValue(songId);
+            WHERE s.id = ANY($1)", conn);
+        cmd.Parameters.AddWithValue(missingIds.ToArray());
 
         await using var reader = await cmd.ExecuteReaderAsync();
-        if (!await reader.ReadAsync()) return null;
+        while (await reader.ReadAsync())
+        {
+            var info = new SongInfo(
+                Id:             reader.GetInt32(0),
+                Name:           reader.GetString(1),
+                ArtistString:   reader.IsDBNull(2) ? "" : reader.GetString(2),
+                LengthSeconds:  reader.IsDBNull(3) ? 0 : reader.GetInt32(3),
+                SongType:       reader.IsDBNull(4) ? "" : reader.GetString(4),
+                FavoritedTimes: reader.IsDBNull(5) ? 0 : reader.GetInt32(5),
+                StateCluster:   reader.IsDBNull(6) ? -1 : reader.GetInt32(6),
+                ProducerIds:    reader.IsDBNull(7) ? [] : (int[])reader.GetValue(7),
+                VocalistIds:    reader.IsDBNull(8) ? [] : (int[])reader.GetValue(8),
+                YoutubeViews:   reader.IsDBNull(9) ? 0 : reader.GetInt64(9),
+                NicoViews:      reader.IsDBNull(10) ? 0 : reader.GetInt64(10)
+            );
 
-        var info = new SongInfo(
-            Id:           reader.GetInt32(0),
-            Name:         reader.GetString(1),
-            ArtistString: reader.IsDBNull(2) ? "" : reader.GetString(2),
-            LengthSeconds: reader.IsDBNull(3) ? 0 : reader.GetInt32(3),
-            SongType:     reader.IsDBNull(4) ? "" : reader.GetString(4),
-            FavoritedTimes: reader.IsDBNull(5) ? 0 : reader.GetInt32(5),
-            StateCluster: reader.IsDBNull(6) ? -1 : reader.GetInt32(6),
-            ProducerIds:  reader.IsDBNull(7) ? [] : (int[])reader.GetValue(7),
-            VocalistIds:  reader.IsDBNull(8) ? [] : (int[])reader.GetValue(8),
-            YoutubeViews: reader.IsDBNull(9) ? 0 : reader.GetInt64(9),
-            NicoViews:    reader.IsDBNull(10) ? 0 : reader.GetInt64(10)
-        );
+            _cache.Set($"song:{info.Id}", info, TimeSpan.FromMinutes(30));
+            result.Add(info);
+        }
 
-        _cache.Set(key, info, TimeSpan.FromMinutes(30));
-        return info;
-    }
-
-    public async Task<SongInfo[]> GetSongInfoBatchAsync(IEnumerable<int> songIds)
-    {
-        var ids = songIds.ToArray();
-        var tasks = ids.Select(id => GetSongInfoAsync(id));
-        var results = await Task.WhenAll(tasks);
-        return results.OfType<SongInfo>().ToArray();
+        return [.. result];
     }
 
     public async Task<List<object>> GetViewHistoryAsync(int songId)

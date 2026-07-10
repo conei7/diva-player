@@ -110,6 +110,7 @@ function PlayerTracker() {
   const queueIndex = usePlayerStore(s => s.queueIndex);
   const addManyToQueue = usePlayerStore(s => s.addManyToQueue);
   const currentPlaybackSource = usePlayerStore(s => s.currentPlaybackSource);
+  const currentPlaybackSequence = usePlayerStore(s => s.playbackSequence);
   const progress = useProgressStore(s => s.progress);
   const duration = useProgressStore(s => s.duration);
   
@@ -124,21 +125,47 @@ function PlayerTracker() {
   implicitFeedbackRef.current = implicitFeedback;
 
   // 再生完了率トラッキング
-  const prevSongRef  = useRef<{ id: number; progress: number; duration: number; source: 'manual' | 'auto' } | null>(null);
+  const prevSongRef = useRef<{
+    id: number;
+    progress: number;
+    duration: number;
+    source: 'manual' | 'auto';
+    playbackSequence: number;
+  } | null>(null);
+  const finalizedPlaybackSequenceRef = useRef<number | null>(null);
   const progressRef  = useRef(progress);
   const durationRef  = useRef(duration);
   progressRef.current = progress;
   durationRef.current = duration;
 
+  const finalizePreviousPlayback = (previous: NonNullable<typeof prevSongRef.current>) => {
+    if (finalizedPlaybackSequenceRef.current === previous.playbackSequence) return;
+    finalizedPlaybackSequenceRef.current = previous.playbackSequence;
+    finalizeHistoryEntry(previous.id, previous.progress, previous.duration, previous.playbackSequence);
+    useImplicitFeedbackStore.getState().recordPlayback(
+      previous.id,
+      previous.progress,
+      previous.duration,
+      previous.source,
+    );
+  };
+
   // 視聴履歴 + 暗黙的フィードバック
   useEffect(() => {
-    if (!currentSong) return;
+    if (!currentSong) {
+      if (prevSongRef.current) finalizePreviousPlayback(prevSongRef.current);
+      return;
+    }
 
     // 前の曲の再生完了率を送信
-    if (prevSongRef.current && prevSongRef.current.id !== currentSong.id) {
-      const { id, progress: p, duration: d } = prevSongRef.current;
-      finalizeHistoryEntry(id, p, d);
-      useImplicitFeedbackStore.getState().recordPlayback(id, p, d, prevSongRef.current.source);
+    if (
+      prevSongRef.current
+      && (
+        prevSongRef.current.id !== currentSong.id
+        || prevSongRef.current.playbackSequence !== currentPlaybackSequence
+      )
+    ) {
+      finalizePreviousPlayback(prevSongRef.current);
     }
 
     prevSongRef.current = {
@@ -146,19 +173,35 @@ function PlayerTracker() {
       progress: progressRef.current,
       duration: durationRef.current,
       source: currentPlaybackSource,
+      playbackSequence: currentPlaybackSequence,
     };
 
-    addToHistory(currentSong, currentPlaybackSource);
+    addToHistory(currentSong, currentPlaybackSource, currentPlaybackSequence);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentSong?.id]);
+  }, [currentSong?.id, currentPlaybackSequence]);
 
   // progress/duration を prevSongRef に反映
   useEffect(() => {
     if (prevSongRef.current && currentSong && prevSongRef.current.id === currentSong.id) {
-      prevSongRef.current = { id: currentSong.id, progress, duration, source: currentPlaybackSource };
+      prevSongRef.current = {
+        id: currentSong.id,
+        progress,
+        duration,
+        source: currentPlaybackSource,
+        playbackSequence: prevSongRef.current.playbackSequence,
+      };
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [progress, duration]);
+
+  useEffect(() => {
+    const finalizeOnPageHide = () => {
+      if (prevSongRef.current) finalizePreviousPlayback(prevSongRef.current);
+    };
+    window.addEventListener('pagehide', finalizeOnPageHide);
+    return () => window.removeEventListener('pagehide', finalizeOnPageHide);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // 自動キュー: キューの残りが少なくなったら推薦曲を自動追加
   // Root Seed + ミックスモード + フロントエンドMMR を適用

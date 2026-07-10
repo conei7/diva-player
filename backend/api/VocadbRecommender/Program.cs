@@ -37,10 +37,18 @@ app.MapGet("/api/recommend", async (
         return Results.BadRequest("count must be between 1 and 100");
 
     // offset をサポート: 十分な候補を取得して offset 分スキップ
-    int take   = count;
-    int skip   = offset ?? 0;
-    int total  = take + skip;
-    var result = await svc.RecommendAsync(songId, Math.Min(total, 100), sessionProgress);
+    if (offset is < 0)
+        return Results.BadRequest("offset must be non-negative");
+
+    int take = count;
+    int skip = offset ?? 0;
+    const int maxRecommendationWindow = 500;
+    var requestedTotal = (long)take + skip;
+    if (skip >= maxRecommendationWindow)
+        return Results.Ok(new RecommendResponse([], null));
+
+    int total = (int)Math.Min(requestedTotal, maxRecommendationWindow);
+    var result = await svc.RecommendAsync(songId, total, sessionProgress);
 
     // offset 適用
     var pagedItems = result.Items.Skip(skip).Take(take).ToList();

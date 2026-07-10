@@ -154,7 +154,8 @@ public class RecommendService
         int steps)
     {
         var scores = new Dictionary<int, double>();
-        var rand   = new Random();
+        // Use a stable walk so offset-based requests share the same ranking.
+        var rand   = new Random(seed.Id);
         var currentProducers = seed.ProducerIds.ToList();
 
         for (int i = 0; i < steps; i++)
