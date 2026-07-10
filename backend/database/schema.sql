@@ -47,6 +47,10 @@ CREATE TABLE IF NOT EXISTS view_history (
 CREATE INDEX IF NOT EXISTS view_history_song_date_idx
     ON view_history (song_id, recorded_at ASC);
 
+-- Supports the time-window baseline used by the trending ranking.
+CREATE INDEX IF NOT EXISTS view_history_recorded_song_idx
+    ON view_history (recorded_at ASC, song_id);
+
 -- ============================================================
 -- アーティストテーブル
 -- ============================================================

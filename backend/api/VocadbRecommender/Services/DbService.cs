@@ -301,6 +301,13 @@ public class DbService
 
     public async Task<string> GetTrendingSongsJsonAsync(int days, int start, int maxResults)
     {
+        var clampedDays = Math.Clamp(days, 1, 365);
+        var normalizedStart = Math.Max(0, start);
+        var clampedMaxResults = Math.Clamp(maxResults, 1, 100);
+        var cacheKey = $"trending:{clampedDays}:{normalizedStart}:{clampedMaxResults}";
+        if (_cache.TryGetValue(cacheKey, out string? cached))
+            return cached!;
+
         using var conn = Open();
         await using var cmd = new NpgsqlCommand(@"
             WITH latest AS (
@@ -353,9 +360,9 @@ public class DbService
               )
             ORDER BY g.view_growth DESC, g.growth_rate DESC, s.favorited_times DESC NULLS LAST
             OFFSET $2 LIMIT $3", conn);
-        cmd.Parameters.AddWithValue(Math.Clamp(days, 1, 365));
-        cmd.Parameters.AddWithValue(Math.Max(0, start));
-        cmd.Parameters.AddWithValue(Math.Clamp(maxResults, 1, 100));
+        cmd.Parameters.AddWithValue(clampedDays);
+        cmd.Parameters.AddWithValue(normalizedStart);
+        cmd.Parameters.AddWithValue(clampedMaxResults);
 
         var items = new List<string>();
         await using var reader = await cmd.ExecuteReaderAsync();
@@ -364,7 +371,9 @@ public class DbService
             items.Add(reader.GetString(0));
         }
 
-        return items.Count > 0 ? "[" + string.Join(",", items) + "]" : "[]";
+        var json = items.Count > 0 ? "[" + string.Join(",", items) + "]" : "[]";
+        _cache.Set(cacheKey, json, TimeSpan.FromMinutes(5));
+        return json;
     }
 
     // ---- マルコフ遷移確率 -----------------------------------------

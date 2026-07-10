@@ -62,6 +62,13 @@ function hasAdvancedFilters(filters: AdvancedSearchFilters): boolean {
     || filters.audioComputed !== 'any';
 }
 
+function getSearchErrorMessage(error: unknown, requiresBackend: boolean): string {
+  if (requiresBackend) {
+    return 'SBCのデータサービスに接続できないため、詳細検索と外部再生数順は現在利用できません。';
+  }
+  return error instanceof Error ? error.message : '検索中にエラーが発生しました';
+}
+
 interface SearchState {
   // 検索パラメータ
   query: string;
@@ -365,8 +372,8 @@ export const useSearchStore = create<SearchState>((set, get) => ({
     });
     const songTypes = songTypeFilter === 'Original' ? ['Original' as const] : undefined;
     const apiSort = toApiSort(sort);
+    const useBackend = LOCAL_SORT_RULES.has(sort) || hasAdvancedFilters(advancedFilters);
     try {
-      const useBackend = LOCAL_SORT_RULES.has(sort) || hasAdvancedFilters(advancedFilters);
       const result = useBackend
         ? await searchSongsBackend({ query: trimmed, sort, sortOrder, start: 0, maxResults: PAGE_SIZE, songTypes, filters: advancedFilters })
         : await searchSongs({
@@ -386,7 +393,7 @@ export const useSearchStore = create<SearchState>((set, get) => ({
       });
     } catch (error) {
       set({
-        error: error instanceof Error ? error.message : '検索中にエラーが発生しました',
+        error: getSearchErrorMessage(error, useBackend),
         isLoading: false,
         results: [],
       });
@@ -397,8 +404,9 @@ export const useSearchStore = create<SearchState>((set, get) => ({
     const { sort, sortOrder, songTypeFilter, advancedFilters } = get();
     set({ isLoading: true, error: null, currentPage: 0, hasSearched: true, resolvedArtistId: artistId, query: artistName });
     const songTypes = songTypeFilter === 'Original' ? ['Original' as const] : undefined;
+    const useBackend = LOCAL_SORT_RULES.has(sort) || hasAdvancedFilters(advancedFilters);
     try {
-      if (LOCAL_SORT_RULES.has(sort) || hasAdvancedFilters(advancedFilters)) {
+      if (useBackend) {
         const result = await searchSongsBackend({
           artistIds: [artistId],
           sort, sortOrder, start: 0, maxResults: PAGE_SIZE, songTypes, filters: advancedFilters
@@ -418,7 +426,7 @@ export const useSearchStore = create<SearchState>((set, get) => ({
       });
       set({ results: applyLocalSort(result.items, sort, sortOrder), totalCount: result.totalCount, isLoading: false });
     } catch (error) {
-      set({ error: error instanceof Error ? error.message : '検索中にエラーが発生しました', isLoading: false, results: [] });
+      set({ error: getSearchErrorMessage(error, useBackend), isLoading: false, results: [] });
     }
   },
 
@@ -427,8 +435,9 @@ export const useSearchStore = create<SearchState>((set, get) => ({
     set({ isLoading: true, error: null, currentPage: 0, hasSearched: true, resolvedArtistId: null });
     const songTypes = songTypeFilter === 'Original' ? ['Original' as const] : undefined;
     const apiSort = toApiSort(sort);
+    const requiresBackend = LOCAL_SORT_RULES.has(sort) || hasAdvancedFilters(advancedFilters);
     try {
-      const isLocal = LOCAL_SORT_RULES.has(sort) || hasAdvancedFilters(advancedFilters);
+      const isLocal = requiresBackend;
       const [artist, titleResult] = await Promise.all([
         findArtistByName(query),
         isLocal
@@ -498,7 +507,7 @@ export const useSearchStore = create<SearchState>((set, get) => ({
       }
     } catch (error) {
       set({
-        error: error instanceof Error ? error.message : '検索中にエラーが発生しました',
+        error: getSearchErrorMessage(error, requiresBackend),
         isLoading: false,
         results: [],
       });
@@ -566,7 +575,7 @@ export const useSearchStore = create<SearchState>((set, get) => ({
       }
     } catch (error) {
       set({
-        error: error instanceof Error ? error.message : '追加読み込み中にエラーが発生しました',
+        error: getSearchErrorMessage(error, LOCAL_SORT_RULES.has(sort) || hasAdvancedFilters(advancedFilters)),
         isLoading: false,
       });
     }

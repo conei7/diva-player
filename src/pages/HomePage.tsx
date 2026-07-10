@@ -71,6 +71,7 @@ export default function HomePage() {
     isLoading: searchLoading,
     hasSearched,
     totalCount,
+    error: searchError,
     loadMore: searchLoadMore,
   } = useSearchStore();
   const setVisibleSongs = useSelectionStore(state => state.setVisibleSongs);
@@ -385,6 +386,12 @@ export default function HomePage() {
             onSelect={(id) => setActiveCategory(asHomeCategoryId(id))}
           />
         </div>
+      )}
+
+      {hasSearched && searchError && (
+        <p className="mb-4 text-sm" role="alert" style={{ color: 'var(--color-error)' }}>
+          {searchError}
+        </p>
       )}
 
       <VideoGrid

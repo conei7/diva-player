@@ -8,6 +8,7 @@ import { SaveToPlaylistModal } from '../playlist/SaveToPlaylistModal';
 import { useUiStore } from '../../stores/uiStore';
 import SelectionFAB from '../search/SelectionFAB';
 import { useSelectionStore } from '../../stores/selectionStore';
+import BackendStatusNotice from './BackendStatusNotice';
 
 /**
  * メインレイアウト (YouTube風)
@@ -29,6 +30,7 @@ export default function Layout() {
   return (
     <div className="min-h-screen flex flex-col" style={{ background: 'var(--color-bg-primary)' }}>
       <TopNav />
+      <BackendStatusNotice />
       <Sidebar />
 
       {/* メインコンテンツ */}
