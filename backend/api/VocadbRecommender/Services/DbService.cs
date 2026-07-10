@@ -428,12 +428,19 @@ public class DbService
     {
         using var conn = Open();
         await using var cmd = new NpgsqlCommand(@"
-            SELECT DISTINCT s.id, s.name, s.artist_string
+            SELECT s.id, s.name, s.artist_string
             FROM songs s
-            JOIN song_artists sa ON sa.song_id = s.id AND sa.is_producer = TRUE
-            WHERE sa.artist_id IN (
-                SELECT artist_id FROM song_artists
-                WHERE song_id = $1 AND is_producer = TRUE
+            WHERE EXISTS (
+                SELECT 1
+                FROM song_artists candidate_artist
+                WHERE candidate_artist.song_id = s.id
+                  AND candidate_artist.is_producer = TRUE
+                  AND candidate_artist.artist_id IN (
+                      SELECT seed_artist.artist_id
+                      FROM song_artists seed_artist
+                      WHERE seed_artist.song_id = $1
+                        AND seed_artist.is_producer = TRUE
+                  )
             )
             AND s.id <> $1
             AND EXISTS (SELECT 1 FROM pvs WHERE pvs.song_id = s.id AND pvs.disabled = FALSE)
