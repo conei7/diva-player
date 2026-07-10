@@ -7,12 +7,14 @@ public static class RecommendationDiversity
         SongInfo seedSong,
         SongInfo[] candidateInfos,
         int maxSameProducer,
-        int maxSameVocalist)
+        int maxSameVocalist,
+        int minimumResults)
     {
         var infoMap = candidateInfos.ToDictionary(i => i.Id);
         var seedProducers = seedSong.ProducerIds.ToHashSet();
         var seedVocalists = seedSong.VocalistIds.ToHashSet();
         var result = new List<(int SongId, double Score)>();
+        var deferred = new List<(int SongId, double Score)>();
         var sameProducerCount = 0;
         var sameVocalistCount = 0;
 
@@ -26,15 +28,22 @@ public static class RecommendationDiversity
             var sameVocalist = seedVocalists.Count > 0
                 && info.VocalistIds.Any(seedVocalists.Contains);
 
-            if (sameProducer && sameProducerCount >= maxSameProducer)
+            if ((sameProducer && sameProducerCount >= maxSameProducer)
+                || (sameVocalist && sameVocalistCount >= maxSameVocalist))
+            {
+                deferred.Add(candidate);
                 continue;
-            if (sameVocalist && sameVocalistCount >= maxSameVocalist)
-                continue;
+            }
 
             result.Add(candidate);
             if (sameProducer) sameProducerCount++;
             if (sameVocalist) sameVocalistCount++;
         }
+
+        // Prefer diverse candidates, but do not return a short page when the
+        // available candidate pool is dominated by the seed's artists.
+        if (result.Count < minimumResults)
+            result.AddRange(deferred.Take(minimumResults - result.Count));
 
         return result;
     }

@@ -105,8 +105,9 @@ app.MapGet("/api/recommend/similar", async (
             results,
             seed,
             infos,
-            Math.Max(2, count / 3),
-            Math.Max(4, count / 4));
+            maxSameProducer: 2,
+            maxSameVocalist: 4,
+            minimumResults: count + skip);
     }
 
     results = results.Skip(skip).Take(count).ToList();
@@ -153,8 +154,9 @@ app.MapGet("/api/recommend/metadata", async (
             results,
             seed,
             infos,
-            Math.Max(2, count / 3),
-            Math.Max(4, count / 4));
+            maxSameProducer: 2,
+            maxSameVocalist: 4,
+            minimumResults: count + skip);
     }
 
     results = results.Skip(skip).Take(count).ToList();

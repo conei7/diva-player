@@ -86,7 +86,12 @@ public class RecommendService
         const int maxSameProd = 16;
         const int maxSameVocalist = 12;
         mergedCandidates = RecommendationDiversity.ApplySeedArtistCaps(
-            mergedCandidates, seedSong, candidateInfos, maxSameProd, maxSameVocalist);
+            mergedCandidates,
+            seedSong,
+            candidateInfos,
+            maxSameProd,
+            maxSameVocalist,
+            minimumResults: count);
         var filtered = await _markov.FilterAsync(
             seedSong, mergedCandidates, candidateInfos);
 
