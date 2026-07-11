@@ -105,7 +105,7 @@ export function diversifyByArtist(songs: Song[], maxPerBucket: number): Song[] {
   return result;
 }
 
-function getVocalistIds(song: Song): number[] {
+export function getVocalistIds(song: Song): number[] {
   return (song.artists ?? [])
     .filter(artist => artist.categories?.includes('Vocalist'))
     .map(artist => artist.artist?.id)

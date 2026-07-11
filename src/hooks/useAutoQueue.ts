@@ -11,11 +11,9 @@ import {
   buildPlaylistSongSet,
   getPlaylistSongs,
   rankKnownSongs,
-  rerankForQueueDiversity,
-  scoreQueueCandidates,
-  uniqueSongsById,
 } from '../utils/recommendationScoring';
-import { createAutoQueuePlan, selectKnownUnknownMix, type AutoQueueAdaptation } from '../utils/autoQueuePolicy';
+import { createAutoQueuePlan, type AutoQueueAdaptation } from '../utils/autoQueuePolicy';
+import { rerankRecommendationCandidates } from '../utils/recommendationReranking';
 import { buildUserTasteProfile, type TasteSeed } from '../services/userTasteProfile';
 import { useAutoPlaySessionStore } from '../stores/autoPlaySessionStore';
 import { useAutoQueueDecisionStore } from '../stores/autoQueueDecisionStore';
@@ -42,8 +40,8 @@ interface UseAutoQueueArgs {
   addManyToQueue: (songs: Song[], source: 'auto') => void;
 }
 
-/** Candidate generation only enforces hard exclusions. All soft scoring happens
- * once in scoreQueueCandidates so history/playlist weights are not duplicated. */
+/** Candidate generation only enforces hard exclusions. Personalisation and
+ * diversity are applied once by the shared recommendation reranker. */
 function filterCandidatePool(
   candidates: Song[],
   historyEntries: HistoryEntry[],
@@ -250,29 +248,28 @@ export function useAutoQueue({
           existingIds,
           implicitFeedback,
         ).map(item => item.song);
-        const scored = scoreQueueCandidates(
-          uniqueSongsById([...knownCandidates, ...filteredCandidates]),
-          historyEntries,
-          playlistSongIds,
-          ratings,
-          existingIds,
-          implicitFeedback,
-        ).slice(0, 80);
         const knownIds = new Set<number>([
           ...historyEntries.map(entry => entry.song.id),
           ...playlistSongs.map(song => song.id),
           ...Object.keys(ratings).map(Number),
           ...Object.keys(implicitFeedback).map(Number),
         ]);
-        const mixedSongs = selectKnownUnknownMix(
-          scored.filter(item => knownIds.has(item.song.id)).map(item => item.song),
-          scored.filter(item => !knownIds.has(item.song.id)).map(item => item.song),
-          strategyTarget,
-          existingIds,
-        );
-        const nextSongs = rerankForQueueDiversity(mixedSongs, {
+        const source = mixMode === 'deep' ? 'audio' : 'hybrid';
+        const nextSongs = rerankRecommendationCandidates({
+          known: knownCandidates,
+          [source]: filteredCandidates,
+        }, {
+          total: queuePlan.requestedCount,
+          historyEntries,
+          playlists,
+          ratings,
+          implicitFeedback,
+          excludeIds: existingIds,
           recentSongs: queue.slice(Math.max(0, queueIndex - 4), queueIndex + 1),
-        });
+          familiarityBias: queuePlan.requestedCount > 0
+            ? (strategyTarget.known - strategyTarget.unknown) / queuePlan.requestedCount
+            : 0,
+        }).map(item => item.song);
         if (controller.signal.aborted || generation !== requestGenerationRef.current) return;
 
         if (nextSongs.length === 0) {

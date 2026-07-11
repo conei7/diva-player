@@ -8,6 +8,9 @@ import FilterChips, { type RecTabKey } from '../components/watch/FilterChips';
 import RecommendationList from '../components/watch/RecommendationList';
 import { usePlayerStore } from '../stores/playerStore';
 import { useRatingStore } from '../stores/ratingStore';
+import { useHistoryStore } from '../stores/historyStore';
+import { usePlaylistStore } from '../stores/playlistStore';
+import { useImplicitFeedbackStore } from '../stores/implicitFeedbackStore';
 import {
   getSongById,
   getRecommendedSongs,
@@ -19,7 +22,7 @@ import type { Song } from '../types/vocadb';
 import { useSelectionStore } from '../stores/selectionStore';
 import QueueSidebar from '../components/player/QueueSidebar';
 import { diversifyAwayFromSeedVocalist } from '../utils/recommendationScoring';
-import { mixRecommendationSources, reasonForSource } from '../utils/recommendationMixing';
+import { rerankRecommendationCandidates } from '../utils/recommendationReranking';
 
 function WatchQueue() {
   const queue = usePlayerStore(s => s.queue);
@@ -88,6 +91,9 @@ export default function WatchPage() {
   const { currentSong, setQueue, setRootSeed, mixMode, setMixMode } = usePlayerStore();
   const currentSongId = currentSong?.id;
   const { ratings } = useRatingStore();
+  const { entries } = useHistoryStore();
+  const { playlists } = usePlaylistStore();
+  const implicitFeedback = useImplicitFeedbackStore(state => state.feedback);
 
   const [song, setSong] = useState<Song | null>(null);
   const [loadingSong, setLoadingSong] = useState(true);
@@ -225,15 +231,15 @@ export default function WatchPage() {
         getRecommendedSongs(s.id, PAGE_SIZE * 2, 0.0, ratings, offset),
         getAudioSimilarSongs(s.id, PAGE_SIZE, offset),
       ]);
-      const mixed = mixRecommendationSources({
-        hybrid: diversifyAwayFromSeedVocalist(s, hybrid, 6)
-          .map(song => ({ song, source: 'hybrid' as const, reason: reasonForSource('hybrid') })),
-        audio: diversifyAwayFromSeedVocalist(s, audio, 4)
-          .map(song => ({ song, source: 'audio' as const, reason: reasonForSource('audio') })),
+      const mixed = rerankRecommendationCandidates({
+        hybrid: diversifyAwayFromSeedVocalist(s, hybrid, 6),
+        audio: diversifyAwayFromSeedVocalist(s, audio, 4),
       }, {
-        quotas: { hybrid: 28, audio: 12 },
         total: PAGE_SIZE,
-        maxPerProducer: 3,
+        historyEntries: entries,
+        playlists,
+        ratings,
+        implicitFeedback,
         excludeIds: new Set([s.id]),
       });
       const items = mixed.map(item => item.song);
@@ -257,7 +263,7 @@ export default function WatchPage() {
     } catch {
       setTabs(prev => ({ ...prev, recommended: { ...prev.recommended, loading: false, hasMore: false } }));
     }
-  }, [ratings]);
+  }, [entries, implicitFeedback, playlists, ratings]);
 
   const fetchDeep = useCallback(async (s: Song, page: number) => {
     try {

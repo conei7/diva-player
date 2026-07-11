@@ -17,7 +17,7 @@ import {
   rankKnownSongs,
   uniqueSongsById,
 } from '../utils/recommendationScoring';
-import { mixRecommendationSources, reasonForSource } from '../utils/recommendationMixing';
+import { rerankRecommendationCandidates } from '../utils/recommendationReranking';
 
 type HomeCategoryId =
   | 'recommended'
@@ -132,18 +132,17 @@ export default function HomePage() {
     ]);
 
     const knownStart = pageNum * 10;
-    const mixed = mixRecommendationSources({
-      known: knownSongs.slice(knownStart, knownStart + 18).map(song => ({ song, source: 'known' as const, reason: reasonForSource('known') })),
-      hybrid: uniqueSongsById([...preferenceResults.flat(), ...seedResults.flat()])
-        .map(song => ({ song, source: 'hybrid' as const, reason: reasonForSource('hybrid') })),
-      audio: uniqueSongsById(audioResults.flat())
-        .map(song => ({ song, source: 'audio' as const, reason: reasonForSource('audio') })),
-      popular: popularResult.items
-        .map(song => ({ song, source: 'popular' as const, reason: reasonForSource('popular') })),
+    const mixed = rerankRecommendationCandidates({
+      known: knownSongs.slice(knownStart, knownStart + 18),
+      hybrid: uniqueSongsById([...preferenceResults.flat(), ...seedResults.flat()]),
+      audio: uniqueSongsById(audioResults.flat()),
+      popular: popularResult.items,
     }, {
-      quotas: { known: 11, hybrid: 7, audio: 4, popular: 2 },
       total: PAGE_SIZE,
-      maxPerProducer: 3,
+      historyEntries: entries,
+      playlists,
+      ratings,
+      implicitFeedback,
       excludeIds,
     });
     const result = mixed.map(item => item.song);
