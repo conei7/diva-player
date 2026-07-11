@@ -395,21 +395,33 @@ public class DbService
                     b.total_views AS baseline_views,
                     pb.total_views AS previous_views,
                     EXTRACT(EPOCH FROM (b.observed_at - pb.observed_at)) / 86400.0 AS prior_window_days,
-                    GREATEST(0, l.total_views - b.total_views) AS view_growth,
+                    (
+                        CASE WHEN b.youtube_views >= 100 THEN GREATEST(0, l.youtube_views - b.youtube_views) ELSE 0 END
+                        + CASE WHEN b.nico_views >= 100 THEN GREATEST(0, l.nico_views - b.nico_views) ELSE 0 END
+                    ) AS view_growth,
                     CASE
                         WHEN b.total_views > 0
-                            THEN ((l.total_views - b.total_views)::double precision / b.total_views)
+                            THEN ((
+                                CASE WHEN b.youtube_views >= 100 THEN GREATEST(0, l.youtube_views - b.youtube_views) ELSE 0 END
+                                + CASE WHEN b.nico_views >= 100 THEN GREATEST(0, l.nico_views - b.nico_views) ELSE 0 END
+                            )::double precision / b.total_views)
                         ELSE 0
                     END AS growth_rate,
                     (
-                        (GREATEST(0, l.total_views - b.total_views)::double precision / $1)
+                        ((
+                            CASE WHEN b.youtube_views >= 100 THEN GREATEST(0, l.youtube_views - b.youtube_views) ELSE 0 END
+                            + CASE WHEN b.nico_views >= 100 THEN GREATEST(0, l.nico_views - b.nico_views) ELSE 0 END
+                        )::double precision / $1)
                         / GREATEST(100.0, (GREATEST(0, b.total_views - COALESCE(pb.total_views, b.total_views))::double precision
                           / GREATEST(3.0, EXTRACT(EPOCH FROM (b.observed_at - pb.observed_at)) / 86400.0)))
                     ) AS surge_rate,
-                    LN(1 + GREATEST(0, l.youtube_views - b.youtube_views))
-                      + LN(1 + GREATEST(0, l.nico_views - b.nico_views)) AS popular_score,
+                    LN(1 + CASE WHEN b.youtube_views >= 100 THEN GREATEST(0, l.youtube_views - b.youtube_views) ELSE 0 END)
+                      + LN(1 + CASE WHEN b.nico_views >= 100 THEN GREATEST(0, l.nico_views - b.nico_views) ELSE 0 END) AS popular_score,
                     (
-                        GREATEST(0, l.total_views - b.total_views)
+                        (
+                            CASE WHEN b.youtube_views >= 100 THEN GREATEST(0, l.youtube_views - b.youtube_views) ELSE 0 END
+                            + CASE WHEN b.nico_views >= 100 THEN GREATEST(0, l.nico_views - b.nico_views) ELSE 0 END
+                        )
                         * EXP(-GREATEST(0, CURRENT_DATE - s.publish_date) / 30.0)
                     ) AS recent_score
                 FROM baseline b
