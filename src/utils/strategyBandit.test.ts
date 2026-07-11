@@ -3,6 +3,7 @@ import {
   adjustTargetForStrategy,
   createDefaultBanditStats,
   selectThompsonArm,
+  simulateThompsonSampling,
   updateBanditStats,
 } from './strategyBandit';
 
@@ -26,5 +27,17 @@ describe('autoplay strategy bandit', () => {
     expect(adjustTargetForStrategy({ known: 6, unknown: 4 }, 'familiar')).toEqual({ known: 7, unknown: 3 });
     expect(adjustTargetForStrategy({ known: 6, unknown: 4 }, 'balanced')).toEqual({ known: 6, unknown: 4 });
     expect(adjustTargetForStrategy({ known: 6, unknown: 4 }, 'explore')).toEqual({ known: 5, unknown: 5 });
+  });
+
+  it('learns to favor the highest-reward arm in an offline simulation', () => {
+    let state = 123456789;
+    const random = () => {
+      state = (state * 1664525 + 1013904223) >>> 0;
+      return state / 2 ** 32;
+    };
+    const result = simulateThompsonSampling({ familiar: 0.2, balanced: 0.5, explore: 0.8 }, 800, random);
+
+    expect(result.selections.explore).toBeGreaterThan(result.selections.balanced);
+    expect(result.selections.explore).toBeGreaterThan(result.selections.familiar);
   });
 });

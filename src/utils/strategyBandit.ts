@@ -82,3 +82,20 @@ export function adjustTargetForStrategy(target: KnownUnknownTarget, arm: AutoQue
   const known = Math.max(0, Math.min(total, Math.round(target.known + total * shift)));
   return { known, unknown: total - known };
 }
+
+/** A deterministic-test-friendly offline simulation for tuning strategy arms. */
+export function simulateThompsonSampling(
+  rewardRates: Record<AutoQueueStrategyArm, number>,
+  rounds: number,
+  random = Math.random,
+): { stats: StrategyBanditStats; selections: Record<AutoQueueStrategyArm, number> } {
+  let stats = createDefaultBanditStats();
+  const selections: Record<AutoQueueStrategyArm, number> = { familiar: 0, balanced: 0, explore: 0 };
+  for (let round = 0; round < Math.max(0, Math.floor(rounds)); round++) {
+    const arm = selectThompsonArm(stats, distribution => sampleBeta(distribution, random));
+    selections[arm]++;
+    const outcome = random() < rewardRates[arm] ? 'complete' : 'skip';
+    stats = updateBanditStats(stats, arm, outcome);
+  }
+  return { stats, selections };
+}
