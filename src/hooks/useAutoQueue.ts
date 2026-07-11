@@ -42,10 +42,11 @@ interface UseAutoQueueArgs {
   addManyToQueue: (songs: Song[], source: 'auto') => void;
 }
 
-function applyCandidatePenalties(
+/** Candidate generation only enforces hard exclusions. All soft scoring happens
+ * once in scoreQueueCandidates so history/playlist weights are not duplicated. */
+function filterCandidatePool(
   candidates: Song[],
   historyEntries: HistoryEntry[],
-  playlistSongIds: Set<number>,
   existingIds: Set<number>,
 ): Song[] {
   const now = Date.now();
@@ -58,22 +59,11 @@ function applyCandidatePenalties(
 
   return candidates
     .filter(song => !existingIds.has(song.id))
-    .map(song => {
-      let score = 1;
+    .filter(song => {
       const lastPlayed = lastPlayedMap.get(song.id);
-      if (lastPlayed) {
-        const hoursAgo = (now - lastPlayed) / oneHour;
-        if (hoursAgo < 1) score = 0;
-        else if (hoursAgo < 3) score *= 0.1;
-        else if (hoursAgo < 12) score *= 0.5;
-        else if (hoursAgo < 24) score *= 0.8;
-      }
-      if (playlistSongIds.has(song.id)) score *= 1.3;
-      return { song, score };
+      return !lastPlayed || (now - lastPlayed) / oneHour >= 1;
     })
-    .filter(item => item.score > 0)
-    .sort((a, b) => b.score - a.score)
-    .map(item => item.song);
+    .filter((song, index, songs) => songs.findIndex(candidate => candidate.id === song.id) === index);
 }
 
 async function fetchCandidates(
@@ -252,7 +242,7 @@ export function useAutoQueue({
         if (controller.signal.aborted || generation !== requestGenerationRef.current) return;
 
         setStatus('reranking');
-        const filteredCandidates = applyCandidatePenalties(candidates, historyEntries, playlistSongIds, existingIds);
+        const filteredCandidates = filterCandidatePool(candidates, historyEntries, existingIds);
         const knownCandidates = rankKnownSongs(
           historyEntries,
           playlistSongs,
