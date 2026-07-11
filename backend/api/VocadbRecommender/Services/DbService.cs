@@ -338,9 +338,7 @@ public class DbService
             "recent" => "g.recent_score DESC, g.view_growth DESC, s.publish_date DESC",
             _ => "g.popular_score DESC, g.growth_rate DESC, s.favorited_times DESC NULLS LAST",
         };
-        var sourceTable = normalizedMode == "recent"
-            ? "recent_candidates"
-            : normalizedMode == "growth" ? "ranked_growth" : "growth";
+        var sourceTable = normalizedMode == "recent" ? "recent_candidates" : "growth";
         var minimumCondition = normalizedMode == "growth" ? "g.popular_score > 0" : "g.view_growth > 0";
 
         using var conn = Open();
@@ -418,14 +416,17 @@ public class DbService
                         / GREATEST(100.0, (GREATEST(0, b.total_views - COALESCE(pb.total_views, b.total_views))::double precision
                           / GREATEST(3.0, EXTRACT(EPOCH FROM (b.observed_at - pb.observed_at)) / 86400.0)))
                     ) AS surge_rate,
-                    CASE WHEN b.youtube_views >= 100
-                        THEN LN(1 + GREATEST(0, l.youtube_views - b.youtube_views))
-                        ELSE 0.35 * LN(1 + l.youtube_views)
-                    END AS youtube_signal,
-                    CASE WHEN b.nico_views >= 100
-                        THEN LN(1 + GREATEST(0, l.nico_views - b.nico_views))
-                        ELSE 0.35 * LN(1 + l.nico_views)
-                    END AS nico_signal,
+                    (
+                        CASE WHEN b.youtube_views >= 100
+                            THEN LN(1 + GREATEST(0, l.youtube_views - b.youtube_views))
+                            ELSE 0.35 * LN(1 + l.youtube_views)
+                        END
+                        + CASE WHEN b.nico_views >= 100
+                            THEN LN(1 + GREATEST(0, l.nico_views - b.nico_views))
+                            ELSE 0.35 * LN(1 + l.nico_views)
+                        END
+                        + 0.5 * LN(1 + COALESCE(s.favorited_times, 0))
+                    ) AS popular_score,
                     (
                         (
                             CASE WHEN b.youtube_views >= 100 THEN GREATEST(0, l.youtube_views - b.youtube_views) ELSE 0 END
@@ -437,30 +438,6 @@ public class DbService
                 JOIN songs s ON s.id = b.song_id
                 JOIN latest l ON l.song_id = b.song_id
                 LEFT JOIN previous_baseline pb ON pb.song_id = b.song_id
-            ),
-            platform_ranks AS (
-                SELECT growth.*,
-                       ROW_NUMBER() OVER (ORDER BY youtube_signal DESC) AS youtube_rank,
-                       ROW_NUMBER() OVER (ORDER BY nico_signal DESC) AS nico_rank,
-                       MAX(youtube_signal) OVER () AS max_youtube_signal,
-                       MAX(nico_signal) OVER () AS max_nico_signal
-                FROM growth
-            ),
-            ranked_growth AS (
-                SELECT
-                    song_id, baseline_views, previous_views, prior_window_days,
-                    view_growth, growth_rate, surge_rate, recent_score,
-                    (
-                        70.0 * (
-                            CASE WHEN youtube_signal > 0 THEN 1.0 / (60 + youtube_rank) ELSE 0 END
-                            + CASE WHEN nico_signal > 0 THEN 1.0 / (60 + nico_rank) ELSE 0 END
-                        )
-                        + 0.3 * (
-                            CASE WHEN max_youtube_signal > 0 THEN youtube_signal / max_youtube_signal ELSE 0 END
-                            + CASE WHEN max_nico_signal > 0 THEN nico_signal / max_nico_signal ELSE 0 END
-                        )
-                    ) AS popular_score
-                FROM platform_ranks
             ),
             recent_candidates AS (
                 SELECT
