@@ -7,10 +7,16 @@ function song(id: number, producerId?: number): Song {
     id, name: `song-${id}`, defaultName: `song-${id}`, defaultNameLanguage: 'Japanese', artistString: '',
     createDate: '2026-01-01', favoritedTimes: 0, lengthSeconds: 180, pvServices: 'Youtube', ratingScore: 0,
     songType: 'Original', status: 'Finished', version: 1,
-    artists: producerId ? [{
-      artist: { id: producerId, name: `p-${producerId}`, additionalNames: '', artistType: 'Producer', deleted: false, status: 'Finished', version: 1 },
-      categories: 'Producer', effectiveRoles: 'Producer', id, isCustomName: false, isSupport: false, name: `p-${producerId}`, roles: 'Producer',
-    }] : [],
+    artists: [
+      {
+        artist: { id: 999, name: 'vocaloid', additionalNames: '', artistType: 'Vocaloid', deleted: false, status: 'Finished', version: 1 },
+        categories: 'Vocalist', effectiveRoles: 'Vocalist', id: 999, isCustomName: false, isSupport: false, name: 'vocaloid', roles: 'Vocalist',
+      },
+      ...(producerId ? [{
+        artist: { id: producerId, name: `p-${producerId}`, additionalNames: '', artistType: 'Producer' as const, deleted: false, status: 'Finished', version: 1 },
+        categories: 'Producer' as const, effectiveRoles: 'Producer', id: producerId, isCustomName: false, isSupport: false, name: `p-${producerId}`, roles: 'Producer',
+      }] : []),
+    ],
   };
 }
 
@@ -31,12 +37,12 @@ describe('rerankRecommendationCandidates', () => {
     expect(result[0].song.id).not.toBe(1);
   });
 
-  it('moves another producer ahead when a producer is already represented', () => {
+  it('keeps another producer near the top without excluding the same producer', () => {
     const result = rerankRecommendationCandidates({
       hybrid: [song(1, 10), song(2, 10), song(3, 20)],
     }, baseOptions);
 
-    expect(result.slice(0, 2).map(item => item.song.id)).toEqual([1, 3]);
+    expect(result.map(item => item.song.id)).toEqual([1, 2, 3]);
   });
 
   it('explains a candidate supported by audio and hybrid signals', () => {

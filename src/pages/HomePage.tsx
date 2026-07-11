@@ -18,6 +18,7 @@ import {
   uniqueSongsById,
 } from '../utils/recommendationScoring';
 import { rerankRecommendationCandidates } from '../utils/recommendationReranking';
+import { filterVoiceSynthSongs } from '../utils/voiceSynthSongs';
 
 type HomeCategoryId =
   | 'recommended'
@@ -29,9 +30,9 @@ type HomeCategoryId =
 
 const CATEGORIES: CategoryChip[] = [
   { id: 'recommended', label: 'あなたへのおすすめ' },
-  { id: 'popular', label: '人気の曲' },
-  { id: 'trending', label: '人気急上昇' },
-  { id: 'recent', label: '最近の投稿' },
+  { id: 'popular', label: 'いま人気急上昇' },
+  { id: 'trending', label: '急上昇中' },
+  { id: 'recent', label: '新着・伸びてる' },
   { id: 'deep', label: 'マイナー発掘' },
   { id: 'history_based', label: '最近聴いたPの曲' },
 ];
@@ -185,31 +186,17 @@ export default function HomePage() {
       } else {
         switch (category) {
           case 'popular': {
-            const searchResult = await searchSongs({
-              sort: 'FavoritedTimes',
-              maxResults: PAGE_SIZE,
-              start: pageNum * PAGE_SIZE,
-              getTotalCount: false,
-              onlyWithPVs: true,
-            });
-            result = searchResult.items;
+            result = await getTrendingSongs(30, PAGE_SIZE, pageNum * PAGE_SIZE, 'growth');
             break;
           }
           case 'recommended':
             result = await fetchRecommendedHomeSongs(pageNum);
             break;
           case 'trending':
-            result = await getTrendingSongs(30, PAGE_SIZE, pageNum * PAGE_SIZE);
+            result = await getTrendingSongs(7, PAGE_SIZE, pageNum * PAGE_SIZE, 'surge');
             break;
           case 'recent': {
-            const searchResult = await searchSongs({
-              sort: 'PublishDate',
-              maxResults: PAGE_SIZE,
-              start: pageNum * PAGE_SIZE,
-              getTotalCount: false,
-              onlyWithPVs: true,
-            });
-            result = searchResult.items;
+            result = await getTrendingSongs(30, PAGE_SIZE, pageNum * PAGE_SIZE, 'recent');
             break;
           }
           case 'deep': {
@@ -251,6 +238,7 @@ export default function HomePage() {
       }
 
       if (requestId !== requestIdRef.current) return;
+      result = filterVoiceSynthSongs(result);
 
       if (pageNum === 0) {
         setSongs(result);

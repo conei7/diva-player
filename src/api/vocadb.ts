@@ -207,11 +207,13 @@ export async function getTrendingSongs(
   days = 30,
   maxResults = 24,
   start = 0,
+  mode: 'growth' | 'surge' | 'recent' = 'growth',
 ): Promise<Song[]> {
   const params = new URLSearchParams({
     days: String(days),
     start: String(start),
     maxResults: String(maxResults),
+    mode,
   });
   const url = `${RECOMMENDER_API}/api/songs/trending?${params}`;
   const cacheKey = `trending:${url}`;

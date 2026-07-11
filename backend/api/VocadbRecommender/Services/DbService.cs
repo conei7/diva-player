@@ -316,17 +316,31 @@ public class DbService
         return result;
     }
 
-    public async Task<string> GetTrendingSongsJsonAsync(int days, int start, int maxResults)
+    public async Task<string> GetTrendingSongsJsonAsync(int days, int start, int maxResults, string? mode = null)
     {
         var clampedDays = Math.Clamp(days, 1, 365);
         var normalizedStart = Math.Max(0, start);
         var clampedMaxResults = Math.Clamp(maxResults, 1, 100);
-        var cacheKey = $"trending:{clampedDays}:{normalizedStart}:{clampedMaxResults}";
+        var normalizedMode = mode is "surge" or "recent" ? mode : "growth";
+        var cacheKey = $"trending:{normalizedMode}:{clampedDays}:{normalizedStart}:{clampedMaxResults}";
         if (_cache.TryGetValue(cacheKey, out string? cached))
             return cached!;
 
+        var modeCondition = normalizedMode switch
+        {
+            "surge" => "AND g.view_growth >= 500 AND g.surge_rate >= 1.35",
+            "recent" => "AND s.publish_date >= CURRENT_DATE - interval '120 days'",
+            _ => string.Empty,
+        };
+        var orderBy = normalizedMode switch
+        {
+            "surge" => "g.surge_rate DESC, g.view_growth DESC, s.favorited_times DESC NULLS LAST",
+            "recent" => "g.recent_score DESC, g.view_growth DESC, s.publish_date DESC",
+            _ => "g.view_growth DESC, g.growth_rate DESC, s.favorited_times DESC NULLS LAST",
+        };
+
         using var conn = Open();
-        await using var cmd = new NpgsqlCommand(@"
+        await using var cmd = new NpgsqlCommand($@"
             WITH baseline_day AS (
                 SELECT date_trunc('day', MAX(recorded_at)) AS day
                 FROM view_history
@@ -343,6 +357,17 @@ public class DbService
                   AND h.recorded_at < d.day + interval '1 day'
                 ORDER BY h.song_id, h.recorded_at ASC
             ),
+            previous_baseline AS (
+                SELECT DISTINCT ON (h.song_id)
+                       h.song_id,
+                       COALESCE(h.youtube_views, 0) + COALESCE(h.nico_views, 0) AS total_views
+                FROM view_history h
+                CROSS JOIN baseline_day d
+                WHERE d.day IS NOT NULL
+                  AND h.recorded_at >= d.day - interval '28 days'
+                  AND h.recorded_at < d.day - interval '27 days'
+                ORDER BY h.song_id, h.recorded_at ASC
+            ),
             growth AS (
                 SELECT
                     s.id AS song_id,
@@ -351,9 +376,18 @@ public class DbService
                         WHEN b.total_views > 0
                             THEN ((COALESCE(s.youtube_views, 0) + COALESCE(s.nico_views, 0) - b.total_views)::double precision / b.total_views)
                         ELSE 0
-                    END AS growth_rate
+                    END AS growth_rate,
+                    (
+                        (GREATEST(0, COALESCE(s.youtube_views, 0) + COALESCE(s.nico_views, 0) - b.total_views)::double precision / $1)
+                        / GREATEST(10.0, (GREATEST(0, b.total_views - COALESCE(pb.total_views, b.total_views))::double precision / 28.0))
+                    ) AS surge_rate,
+                    (
+                        GREATEST(0, COALESCE(s.youtube_views, 0) + COALESCE(s.nico_views, 0) - b.total_views)
+                        * EXP(-GREATEST(0, CURRENT_DATE - s.publish_date) / 30.0)
+                    ) AS recent_score
                 FROM baseline b
                 JOIN songs s ON s.id = b.song_id
+                LEFT JOIN previous_baseline pb ON pb.song_id = b.song_id
             )
             SELECT (s.raw_json || jsonb_strip_nulls(jsonb_build_object(
                 'youtubeViews', s.youtube_views,
@@ -370,10 +404,19 @@ public class DbService
             JOIN songs s ON s.id = g.song_id
             WHERE g.view_growth > 0
               AND EXISTS (
+                  SELECT 1
+                  FROM jsonb_array_elements(COALESCE(s.raw_json->'artists', '[]'::jsonb)) artist
+                  WHERE artist->'artist'->>'artistType' IN (
+                    'Vocaloid', 'UTAU', 'CeVIO', 'SynthesizerV', 'NEUTRINO',
+                    'VoiSona', 'Voiceroid', 'OtherVoiceSynthesizer', 'NewType'
+                  )
+              )
+              AND EXISTS (
                   SELECT 1 FROM pvs p
                   WHERE p.song_id = s.id AND p.disabled = FALSE
               )
-            ORDER BY g.view_growth DESC, g.growth_rate DESC, s.favorited_times DESC NULLS LAST
+            {modeCondition}
+            ORDER BY {orderBy}
             OFFSET $2 LIMIT $3", conn);
         cmd.Parameters.AddWithValue(clampedDays);
         cmd.Parameters.AddWithValue(normalizedStart);

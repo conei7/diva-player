@@ -6,6 +6,7 @@ import {
   getVocalistIds,
   scoreQueueCandidates,
 } from './recommendationScoring';
+import { filterVoiceSynthSongs } from './voiceSynthSongs';
 
 export type RecommendationSource = 'known' | 'hybrid' | 'audio' | 'popular';
 
@@ -64,7 +65,7 @@ export function rerankRecommendationCandidates(
 ): RankedRecommendation[] {
   const entries = new Map<number, { song: Song; evidence: number; sources: Set<RecommendationSource> }>();
   (Object.entries(pools) as Array<[RecommendationSource, Song[] | undefined]>).forEach(([source, songs]) => {
-    (songs ?? []).forEach((song, index) => {
+    filterVoiceSynthSongs(songs ?? []).forEach((song, index) => {
       if (excludeIds.has(song.id)) return;
       const rankSignal = 1 / Math.sqrt(index + 1);
       const current = entries.get(song.id) ?? { song, evidence: 0, sources: new Set<RecommendationSource>() };
@@ -109,9 +110,9 @@ export function rerankRecommendationCandidates(
       const entry = remaining[index];
       const known = knownIds.has(entry.song.id);
       const preference = preferenceScores.get(entry.song.id) ?? 1;
-      const producerPenalty = (producerCounts.get(getArtistBucket(entry.song)) ?? 0) * 0.34;
+      const producerPenalty = (producerCounts.get(getArtistBucket(entry.song)) ?? 0) * 0.10;
       const vocalistPenalty = getVocalistIds(entry.song)
-        .reduce((sum, vocalistId) => sum + (vocalistCounts.get(vocalistId) ?? 0), 0) * 0.09;
+        .reduce((sum, vocalistId) => sum + (vocalistCounts.get(vocalistId) ?? 0), 0) * 0.03;
       const familiarityAdjustment = (known ? 1 : -1) * familiarityBias * 0.2;
       const score = entry.evidence * 0.9 + Math.sqrt(Math.max(0, preference)) * 0.8
         + familiarityAdjustment - producerPenalty - vocalistPenalty;

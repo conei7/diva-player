@@ -291,9 +291,10 @@ app.MapGet("/api/songs/trending", async (
     int? days,
     int? start,
     int? maxResults,
+    string? mode,
     DbService db) =>
 {
-    var itemsJson = await db.GetTrendingSongsJsonAsync(days ?? 30, start ?? 0, maxResults ?? 24);
+    var itemsJson = await db.GetTrendingSongsJsonAsync(days ?? 30, start ?? 0, maxResults ?? 24, mode);
     var json = $$"""
     {
       "items": {{itemsJson}},
