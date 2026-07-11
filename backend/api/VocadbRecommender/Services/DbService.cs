@@ -338,6 +338,7 @@ public class DbService
             "recent" => "g.recent_score DESC, g.view_growth DESC, s.publish_date DESC",
             _ => "g.view_growth DESC, g.growth_rate DESC, s.favorited_times DESC NULLS LAST",
         };
+        var sourceTable = normalizedMode == "recent" ? "recent_candidates" : "growth";
 
         using var conn = Open();
         await using var cmd = new NpgsqlCommand($@"
@@ -406,6 +407,24 @@ public class DbService
                 JOIN songs s ON s.id = b.song_id
                 JOIN latest l ON l.song_id = b.song_id
                 LEFT JOIN previous_baseline pb ON pb.song_id = b.song_id
+            ),
+            recent_candidates AS (
+                SELECT
+                    s.id AS song_id,
+                    0::bigint AS baseline_views,
+                    NULL::bigint AS previous_views,
+                    (COALESCE(s.youtube_views, 0) + COALESCE(s.nico_views, 0)) AS view_growth,
+                    (
+                        (COALESCE(s.youtube_views, 0) + COALESCE(s.nico_views, 0))::double precision
+                        / GREATEST(1, CURRENT_DATE - s.publish_date)
+                    ) AS growth_rate,
+                    0::double precision AS surge_rate,
+                    (
+                        (COALESCE(s.youtube_views, 0) + COALESCE(s.nico_views, 0))::double precision
+                        / GREATEST(1, CURRENT_DATE - s.publish_date)
+                    ) AS recent_score
+                FROM songs s
+                WHERE s.publish_date >= CURRENT_DATE - interval '30 days'
             )
             SELECT (s.raw_json || jsonb_strip_nulls(jsonb_build_object(
                 'youtubeViews', s.youtube_views,
@@ -418,7 +437,7 @@ public class DbService
                 ),
                 'thumbUrl', COALESCE(s.raw_json->>'thumbUrl', s.raw_json->'pvs'->0->>'thumbUrl')
             )))::text
-            FROM growth g
+            FROM {sourceTable} g
             JOIN songs s ON s.id = g.song_id
             WHERE g.view_growth > 0
               AND EXISTS (
