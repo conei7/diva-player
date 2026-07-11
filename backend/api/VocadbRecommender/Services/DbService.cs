@@ -316,13 +316,14 @@ public class DbService
         return result;
     }
 
-    public async Task<string> GetTrendingSongsJsonAsync(int days, int start, int maxResults, string? mode = null)
+    public async Task<string> GetTrendingSongsJsonAsync(int days, int start, int maxResults, string? mode = null, string? platform = null)
     {
         var clampedDays = Math.Clamp(days, 1, 365);
         var normalizedStart = Math.Max(0, start);
         var clampedMaxResults = Math.Clamp(maxResults, 1, 100);
         var normalizedMode = mode is "surge" or "recent" ? mode : "growth";
-        var cacheKey = $"trending:{normalizedMode}:{clampedDays}:{normalizedStart}:{clampedMaxResults}";
+        var normalizedPlatform = platform == "nico" && normalizedMode == "growth" ? "nico" : "all";
+        var cacheKey = $"trending:{normalizedMode}:{normalizedPlatform}:{clampedDays}:{normalizedStart}:{clampedMaxResults}";
         if (_cache.TryGetValue(cacheKey, out string? cached))
             return cached!;
 
@@ -332,14 +333,18 @@ public class DbService
             "recent" => "AND s.publish_date >= CURRENT_DATE - interval '30 days'",
             _ => string.Empty,
         };
-        var orderBy = normalizedMode switch
+        var orderBy = normalizedPlatform == "nico"
+            ? "g.nico_signal DESC, g.popular_score DESC, s.favorited_times DESC NULLS LAST"
+            : normalizedMode switch
         {
             "surge" => "g.surge_rate DESC, g.view_growth DESC, s.favorited_times DESC NULLS LAST",
             "recent" => "g.recent_score DESC, g.view_growth DESC, s.publish_date DESC",
             _ => "g.popular_score DESC, g.growth_rate DESC, s.favorited_times DESC NULLS LAST",
         };
         var sourceTable = normalizedMode == "recent" ? "recent_candidates" : "growth";
-        var minimumCondition = normalizedMode == "growth" ? "g.popular_score > 0" : "g.view_growth > 0";
+        var minimumCondition = normalizedPlatform == "nico"
+            ? "g.nico_signal > 0"
+            : normalizedMode == "growth" ? "g.popular_score > 0" : "g.view_growth > 0";
 
         using var conn = Open();
         await using var cmd = new NpgsqlCommand($@"
@@ -427,6 +432,10 @@ public class DbService
                         END
                         + 0.5 * LN(1 + COALESCE(s.favorited_times, 0))
                     ) AS popular_score,
+                    CASE WHEN b.nico_views >= 100
+                        THEN LN(1 + GREATEST(0, l.nico_views - b.nico_views))
+                        ELSE 0.35 * LN(1 + l.nico_views)
+                    END AS nico_signal,
                     (
                         (
                             CASE WHEN b.youtube_views >= 100 THEN GREATEST(0, l.youtube_views - b.youtube_views) ELSE 0 END
@@ -452,6 +461,7 @@ public class DbService
                     ) AS growth_rate,
                     0::double precision AS surge_rate,
                     LN(1 + COALESCE(s.youtube_views, 0)) + LN(1 + COALESCE(s.nico_views, 0)) AS popular_score,
+                    LN(1 + COALESCE(s.nico_views, 0)) AS nico_signal,
                     (
                         (COALESCE(s.youtube_views, 0) + COALESCE(s.nico_views, 0))::double precision
                         / GREATEST(1, CURRENT_DATE - s.publish_date)

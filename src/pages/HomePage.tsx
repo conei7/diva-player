@@ -39,6 +39,38 @@ const CATEGORIES: CategoryChip[] = [
 
 const PAGE_SIZE = 24;
 
+/** Keeps platform variety as a soft preference, without reserving a fixed count. */
+function blendPopularPlatforms(general: Song[], nico: Song[], total: number): Song[] {
+  const candidates = [
+    ...general.map((song, rank) => ({ song, platform: 'youtube' as const, score: 1 / (rank + 1) })),
+    ...nico.map((song, rank) => ({ song, platform: 'nico' as const, score: 1 / (rank + 1) })),
+  ];
+  const seen = new Set<number>();
+  const counts = { youtube: 0, nico: 0 };
+  const result: Song[] = [];
+
+  while (candidates.length > 0 && result.length < total) {
+    let bestIndex = -1;
+    let bestScore = Number.NEGATIVE_INFINITY;
+    for (let index = 0; index < candidates.length; index++) {
+      const candidate = candidates[index];
+      if (seen.has(candidate.song.id)) continue;
+      const adjustedScore = candidate.score - counts[candidate.platform] * 0.18;
+      if (adjustedScore > bestScore) {
+        bestScore = adjustedScore;
+        bestIndex = index;
+      }
+    }
+    if (bestIndex < 0) break;
+    const [selected] = candidates.splice(bestIndex, 1);
+    if (seen.has(selected.song.id)) continue;
+    seen.add(selected.song.id);
+    counts[selected.platform]++;
+    result.push(selected.song);
+  }
+  return result;
+}
+
 function asHomeCategoryId(id: string): HomeCategoryId {
   return CATEGORIES.some(category => category.id === id)
     ? (id as HomeCategoryId)
@@ -186,7 +218,13 @@ export default function HomePage() {
       } else {
         switch (category) {
           case 'popular': {
-            result = await getTrendingSongs(30, PAGE_SIZE, pageNum * PAGE_SIZE, 'growth');
+            const candidateCount = PAGE_SIZE * 3;
+            const start = pageNum * candidateCount;
+            const [general, nico] = await Promise.all([
+              getTrendingSongs(30, candidateCount, start, 'growth'),
+              getTrendingSongs(30, candidateCount, start, 'growth', 'nico'),
+            ]);
+            result = blendPopularPlatforms(general, nico, PAGE_SIZE);
             break;
           }
           case 'recommended':
