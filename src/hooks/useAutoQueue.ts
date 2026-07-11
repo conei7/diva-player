@@ -15,6 +15,7 @@ import {
   uniqueSongsById,
 } from '../utils/recommendationScoring';
 import { createAutoQueuePlan, selectKnownUnknownMix } from '../utils/autoQueuePolicy';
+import { buildUserTasteProfile, type TasteSeed } from '../services/userTasteProfile';
 
 export type AutoQueueStatus = 'idle' | 'fetching' | 'reranking' | 'ready' | 'degraded' | 'exhausted' | 'error';
 export type AutoQueueMixMode = 'balanced' | 'deep' | 'producer';
@@ -71,9 +72,9 @@ async function fetchCandidates(
   currentSong: Song,
   rootSeed: Song | null,
   mixMode: AutoQueueMixMode,
+  tasteSeeds: TasteSeed[],
 ): Promise<Song[]> {
   const songId = currentSong.id;
-  const seedId = rootSeed?.id ?? songId;
   const randomOffset = Math.floor(Math.random() * 20);
 
   switch (mixMode) {
@@ -88,12 +89,45 @@ async function fetchCandidates(
     }
     case 'balanced':
     default:
-      if (seedId === songId) return getRecommendedSongs(songId, 60, 0, undefined, randomOffset);
-      return uniqueSongsById((await Promise.all([
-        getRecommendedSongs(seedId, 30, 0, undefined, randomOffset),
-        getRecommendedSongs(songId, 30, 0, undefined, randomOffset),
-      ])).flat());
+      return mergeSeedCandidates(await Promise.all(buildRecommendationSeeds(currentSong, rootSeed, tasteSeeds)
+        .map(async seed => ({
+          weight: seed.weight,
+          songs: await getRecommendedSongs(seed.songId, 30, 0, undefined, randomOffset),
+        }))));
   }
+}
+
+interface RecommendationSeed {
+  songId: number;
+  weight: number;
+}
+
+function buildRecommendationSeeds(currentSong: Song, rootSeed: Song | null, tasteSeeds: TasteSeed[]): RecommendationSeed[] {
+  const byId = new Map<number, number>();
+  const add = (songId: number, weight: number) => {
+    byId.set(songId, Math.max(weight, byId.get(songId) ?? 0));
+  };
+  add(rootSeed?.id ?? currentSong.id, 1);
+  add(currentSong.id, 0.9);
+  for (const seed of tasteSeeds) add(seed.song.id, seed.weight * (seed.kind === 'shortTerm' ? 0.9 : 0.8));
+  return [...byId.entries()]
+    .map(([songId, weight]) => ({ songId, weight }))
+    .sort((a, b) => b.weight - a.weight)
+    .slice(0, 5);
+}
+
+function mergeSeedCandidates(results: Array<{ weight: number; songs: Song[] }>): Song[] {
+  const scores = new Map<number, { song: Song; score: number }>();
+  for (const { weight, songs } of results) {
+    songs.forEach((song, index) => {
+      const current = scores.get(song.id) ?? { song, score: 0 };
+      current.score += weight / (60 + index + 1); // weighted reciprocal-rank fusion
+      scores.set(song.id, current);
+    });
+  }
+  return [...scores.values()]
+    .sort((a, b) => b.score - a.score)
+    .map(entry => entry.song);
 }
 
 /**
@@ -135,11 +169,17 @@ export function useAutoQueue({
     const existingIds = new Set(queue.map(song => song.id));
     const playlistSongIds = buildPlaylistSongSet(playlists);
     const playlistSongs = getPlaylistSongs(playlists);
+    const tasteProfile = buildUserTasteProfile(historyEntries, playlists, ratings, implicitFeedback);
     setStatus('fetching');
 
     void (async () => {
       try {
-        const candidates = await fetchCandidates(currentSong, rootSeed, mixMode);
+        const candidates = await fetchCandidates(
+          currentSong,
+          rootSeed,
+          mixMode,
+          [...tasteProfile.longTerm, ...tasteProfile.shortTerm],
+        );
         if (controller.signal.aborted || generation !== requestGenerationRef.current) return;
 
         setStatus('reranking');
