@@ -5,6 +5,8 @@ import type { Song } from '../types/vocadb';
 import { getHistoryOverview, type HistoryOverview } from '../services/historyStats';
 import { createHistoryBackup, importHistoryBackup } from '../services/historyBackup';
 import { downloadJson } from '../utils/playlistBackup';
+import { useAutoPlaySessionStore } from '../stores/autoPlaySessionStore';
+import { useAutoQueueDecisionStore } from '../stores/autoQueueDecisionStore';
 
 type HistorySortMode = 'recent' | 'name' | 'artist';
 
@@ -27,6 +29,11 @@ export default function HistoryPage() {
   const [backupMessage, setBackupMessage] = useState<string | null>(null);
   const [isImporting, setIsImporting] = useState(false);
   const importInputRef = useRef<HTMLInputElement>(null);
+  const autoPlaySession = useAutoPlaySessionStore(s => s.session);
+  const autoQueueDecisionCount = useAutoQueueDecisionStore(s => s.decisions.length);
+  const autoSkipRate = autoPlaySession
+    ? autoPlaySession.autoSkippedCount / Math.max(1, autoPlaySession.autoCompletedCount + autoPlaySession.autoSkippedCount)
+    : 0;
 
   useEffect(() => {
     if (!hasHydrated) return;
@@ -163,6 +170,29 @@ export default function HistoryPage() {
             <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>開始回数</p>
             <p className="mt-1 text-lg font-semibold" style={{ color: 'var(--color-text-primary)' }}>{overview.totalStarts}</p>
           </div>
+        </section>
+      )}
+
+      {(autoPlaySession || autoQueueDecisionCount > 0) && (
+        <section
+          aria-label="自動再生の状況"
+          className="mb-6 rounded-lg border p-4"
+          style={{ borderColor: 'var(--color-border)', background: 'var(--color-surface)' }}
+        >
+          <div className="flex items-baseline justify-between gap-3">
+            <h2 className="text-sm font-semibold" style={{ color: 'var(--color-text-primary)' }}>自動再生の状況</h2>
+            <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>判断ログ: {autoQueueDecisionCount}件</span>
+          </div>
+          {autoPlaySession ? (
+            <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+              <div><p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>自動再生</p><p className="text-base font-semibold">{autoPlaySession.autoPlayedCount}</p></div>
+              <div><p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>完走</p><p className="text-base font-semibold">{autoPlaySession.autoCompletedCount}</p></div>
+              <div><p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>スキップ率</p><p className="text-base font-semibold">{Math.round(autoSkipRate * 100)}%</p></div>
+              <div><p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>手動介入</p><p className="text-base font-semibold">{autoPlaySession.manualOverrideCount}</p></div>
+            </div>
+          ) : (
+            <p className="mt-2 text-sm" style={{ color: 'var(--color-text-muted)' }}>直近の自動再生セッションはありません。</p>
+          )}
         </section>
       )}
 
