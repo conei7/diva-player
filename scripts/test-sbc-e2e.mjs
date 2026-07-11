@@ -97,6 +97,30 @@ async function main() {
     assert(!home.warningVisible, 'The SBC unavailable warning is visible while the SBC API is healthy.');
     console.log(`PASS home page (${home.cards} visible song cards)`);
 
+    await page.goto(`${baseUrl}watch?v=1501`, { waitUntil: 'domcontentloaded' });
+    await page.waitForFunction(() => {
+      const raw = localStorage.getItem('diva_playerQueue');
+      if (!raw) return false;
+      try {
+        return (JSON.parse(raw).songIds?.length ?? 0) > 1;
+      } catch {
+        return false;
+      }
+    });
+    const autoplay = await page.evaluate(() => {
+      const queue = JSON.parse(localStorage.getItem('diva_playerQueue') ?? '{}');
+      const recommendationState = JSON.parse(localStorage.getItem('diva-queue-recommendations-v1') ?? '{}');
+      return {
+        queueLength: queue.songIds?.length ?? 0,
+        autoCount: (queue.queueSources ?? []).filter(source => source === 'auto').length,
+        reasonCount: Object.keys(recommendationState.state?.recommendations ?? {}).length,
+      };
+    });
+    assert(autoplay.queueLength > 1, 'Autoplay did not refill the single-song queue.');
+    assert(autoplay.autoCount > 0, 'Autoplay refill did not mark any queue item as auto.');
+    assert(autoplay.reasonCount > 0, 'Autoplay refill did not save recommendation reasons.');
+    console.log(`PASS autoplay refill (${autoplay.queueLength} queued, ${autoplay.autoCount} auto, ${autoplay.reasonCount} reasons)`);
+
     await page.goto(`${baseUrl}history`, { waitUntil: 'networkidle2' });
     await page.waitForSelector('h1');
     const history = await page.evaluate(() => ({
