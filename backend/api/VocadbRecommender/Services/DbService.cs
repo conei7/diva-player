@@ -328,7 +328,7 @@ public class DbService
 
         var modeCondition = normalizedMode switch
         {
-            "surge" => "AND g.previous_views IS NOT NULL AND g.baseline_views > g.previous_views AND g.view_growth >= 1000 AND g.surge_rate >= 1.5",
+            "surge" => "AND g.previous_views IS NOT NULL AND g.baseline_views > g.previous_views AND g.prior_window_days >= 3 AND g.view_growth >= 1000 AND g.surge_rate >= 1.5",
             "recent" => "AND s.publish_date >= CURRENT_DATE - interval '30 days'",
             _ => string.Empty,
         };
@@ -336,7 +336,7 @@ public class DbService
         {
             "surge" => "g.surge_rate DESC, g.view_growth DESC, s.favorited_times DESC NULLS LAST",
             "recent" => "g.recent_score DESC, g.view_growth DESC, s.publish_date DESC",
-            _ => "g.view_growth DESC, g.growth_rate DESC, s.favorited_times DESC NULLS LAST",
+            _ => "g.popular_score DESC, g.growth_rate DESC, s.favorited_times DESC NULLS LAST",
         };
         var sourceTable = normalizedMode == "recent" ? "recent_candidates" : "growth";
 
@@ -354,6 +354,8 @@ public class DbService
             latest AS (
                 SELECT DISTINCT ON (h.song_id)
                        h.song_id,
+                       COALESCE(h.youtube_views, 0) AS youtube_views,
+                       COALESCE(h.nico_views, 0) AS nico_views,
                        COALESCE(h.youtube_views, 0) + COALESCE(h.nico_views, 0) AS total_views
                 FROM view_history h
                 CROSS JOIN latest_day d
@@ -365,6 +367,9 @@ public class DbService
             baseline AS (
                 SELECT DISTINCT ON (h.song_id)
                        h.song_id,
+                       h.recorded_at AS observed_at,
+                       COALESCE(h.youtube_views, 0) AS youtube_views,
+                       COALESCE(h.nico_views, 0) AS nico_views,
                        COALESCE(h.youtube_views, 0) + COALESCE(h.nico_views, 0) AS total_views
                 FROM view_history h
                 CROSS JOIN baseline_day d
@@ -376,19 +381,20 @@ public class DbService
             previous_baseline AS (
                 SELECT DISTINCT ON (h.song_id)
                        h.song_id,
+                       h.recorded_at AS observed_at,
                        COALESCE(h.youtube_views, 0) + COALESCE(h.nico_views, 0) AS total_views
                 FROM view_history h
                 CROSS JOIN baseline_day d
                 WHERE d.day IS NOT NULL
-                  AND h.recorded_at >= d.day - interval '28 days'
-                  AND h.recorded_at < d.day - interval '27 days'
-                ORDER BY h.song_id, h.recorded_at ASC
+                  AND h.recorded_at < d.day - interval '3 days'
+                ORDER BY h.song_id, h.recorded_at DESC
             ),
             growth AS (
                 SELECT
                     s.id AS song_id,
                     b.total_views AS baseline_views,
                     pb.total_views AS previous_views,
+                    EXTRACT(EPOCH FROM (b.observed_at - pb.observed_at)) / 86400.0 AS prior_window_days,
                     GREATEST(0, l.total_views - b.total_views) AS view_growth,
                     CASE
                         WHEN b.total_views > 0
@@ -397,8 +403,11 @@ public class DbService
                     END AS growth_rate,
                     (
                         (GREATEST(0, l.total_views - b.total_views)::double precision / $1)
-                        / GREATEST(100.0, (GREATEST(0, b.total_views - COALESCE(pb.total_views, b.total_views))::double precision / 28.0))
+                        / GREATEST(100.0, (GREATEST(0, b.total_views - COALESCE(pb.total_views, b.total_views))::double precision
+                          / GREATEST(3.0, EXTRACT(EPOCH FROM (b.observed_at - pb.observed_at)) / 86400.0)))
                     ) AS surge_rate,
+                    LN(1 + GREATEST(0, l.youtube_views - b.youtube_views))
+                      + LN(1 + GREATEST(0, l.nico_views - b.nico_views)) AS popular_score,
                     (
                         GREATEST(0, l.total_views - b.total_views)
                         * EXP(-GREATEST(0, CURRENT_DATE - s.publish_date) / 30.0)
@@ -413,12 +422,14 @@ public class DbService
                     s.id AS song_id,
                     0::bigint AS baseline_views,
                     NULL::bigint AS previous_views,
+                    0::double precision AS prior_window_days,
                     (COALESCE(s.youtube_views, 0) + COALESCE(s.nico_views, 0)) AS view_growth,
                     (
                         (COALESCE(s.youtube_views, 0) + COALESCE(s.nico_views, 0))::double precision
                         / GREATEST(1, CURRENT_DATE - s.publish_date)
                     ) AS growth_rate,
                     0::double precision AS surge_rate,
+                    LN(1 + COALESCE(s.youtube_views, 0)) + LN(1 + COALESCE(s.nico_views, 0)) AS popular_score,
                     (
                         (COALESCE(s.youtube_views, 0) + COALESCE(s.nico_views, 0))::double precision
                         / GREATEST(1, CURRENT_DATE - s.publish_date)
