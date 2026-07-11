@@ -328,8 +328,8 @@ public class DbService
 
         var modeCondition = normalizedMode switch
         {
-            "surge" => "AND g.view_growth >= 500 AND g.surge_rate >= 1.35",
-            "recent" => "AND s.publish_date >= CURRENT_DATE - interval '120 days'",
+            "surge" => "AND g.previous_views IS NOT NULL AND g.baseline_views > g.previous_views AND g.view_growth >= 1000 AND g.surge_rate >= 1.5",
+            "recent" => "AND s.publish_date >= CURRENT_DATE - interval '31 days'",
             _ => string.Empty,
         };
         var orderBy = normalizedMode switch
@@ -371,6 +371,8 @@ public class DbService
             growth AS (
                 SELECT
                     s.id AS song_id,
+                    b.total_views AS baseline_views,
+                    pb.total_views AS previous_views,
                     GREATEST(0, COALESCE(s.youtube_views, 0) + COALESCE(s.nico_views, 0) - b.total_views) AS view_growth,
                     CASE
                         WHEN b.total_views > 0
@@ -379,7 +381,7 @@ public class DbService
                     END AS growth_rate,
                     (
                         (GREATEST(0, COALESCE(s.youtube_views, 0) + COALESCE(s.nico_views, 0) - b.total_views)::double precision / $1)
-                        / GREATEST(10.0, (GREATEST(0, b.total_views - COALESCE(pb.total_views, b.total_views))::double precision / 28.0))
+                        / GREATEST(100.0, (GREATEST(0, b.total_views - COALESCE(pb.total_views, b.total_views))::double precision / 28.0))
                     ) AS surge_rate,
                     (
                         GREATEST(0, COALESCE(s.youtube_views, 0) + COALESCE(s.nico_views, 0) - b.total_views)
