@@ -1,4 +1,7 @@
 import puppeteer from 'puppeteer';
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 const PAGE_TIMEOUT_MS = 60_000;
 
@@ -17,6 +20,38 @@ function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
 
+function createHistoryFixture() {
+  return {
+    kind: 'diva-player-history',
+    version: 1,
+    exportedAt: '2026-01-02T00:00:00.000Z',
+    events: [
+      { s: 1501, t: Date.UTC(2026, 0, 1, 0, 0, 0), o: 0, p: 60, d: 120, c: 1, f: 1 },
+      { s: 1501, t: Date.UTC(2026, 0, 2, 0, 0, 0), o: 1, p: 10, d: 120, c: 0, f: 1 },
+    ],
+  };
+}
+
+async function waitForDownloadedJson(downloadDir) {
+  const deadline = Date.now() + PAGE_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    const files = (await readdir(downloadDir)).filter(name => name.endsWith('.json'));
+    if (files.length > 0) return join(downloadDir, files[0]);
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  throw new Error('The history export did not create a JSON file.');
+}
+
+async function importHistory(page, filePath) {
+  const fileChooserPromise = page.waitForFileChooser();
+  await page.click('button[title="履歴バックアップを追加"]');
+  const fileChooser = await fileChooserPromise;
+  await fileChooser.accept([filePath]);
+  await page.waitForFunction(() =>
+    document.querySelector('[role="status"]')?.textContent?.includes('2 件を追加しました。') === true,
+  );
+}
+
 async function inspectPage(page) {
   return page.evaluate(() => ({
     title: document.title,
@@ -31,6 +66,7 @@ async function main() {
   const baseUrl = getBaseUrl();
   const browser = await puppeteer.launch({ headless: true });
   const page = await browser.newPage();
+  const tempDir = await mkdtemp(join(tmpdir(), 'diva-player-e2e-'));
   const failures = [];
   page.on('pageerror', error => failures.push(`page error: ${error.message}`));
   page.on('console', message => {
@@ -75,10 +111,47 @@ async function main() {
     assert(history.statsVisible, 'The history statistics region was not rendered.');
     console.log('PASS history controls and statistics');
 
+    const fixturePath = join(tempDir, 'history-fixture.json');
+    const downloadDir = join(tempDir, 'downloads');
+    await mkdir(downloadDir);
+    await writeFile(fixturePath, JSON.stringify(createHistoryFixture()), 'utf8');
+    await importHistory(page, fixturePath);
+
+    const cdp = await browser.target().createCDPSession();
+    await cdp.send('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: downloadDir });
+    await page.click('button[title="履歴をJSONで保存"]');
+    const exportedPath = await waitForDownloadedJson(downloadDir);
+    const exported = JSON.parse(await readFile(exportedPath, 'utf8'));
+    assert(exported.kind === 'diva-player-history', 'The exported history file has an invalid kind.');
+    assert(exported.version === 1, 'The exported history file has an invalid version.');
+    assert(exported.events.length === 2, 'The exported history file does not contain the imported events.');
+
+    const restoreContext = await browser.createBrowserContext();
+    try {
+      const restorePage = await restoreContext.newPage();
+      restorePage.setDefaultTimeout(PAGE_TIMEOUT_MS);
+      await restorePage.goto(`${baseUrl}history`, { waitUntil: 'networkidle2' });
+      await restorePage.waitForSelector('h1');
+      await importHistory(restorePage, exportedPath);
+      await restorePage.waitForFunction(() =>
+        document.querySelector('[aria-label="視聴統計"]')?.textContent?.replace(/\s/g, '').includes('開始回数2') === true,
+      );
+      const restored = await restorePage.evaluate(() => ({
+        total: document.querySelector('main')?.textContent?.includes('2 件'),
+        starts: document.querySelector('[aria-label="視聴統計"]')?.textContent?.replace(/\s/g, '').includes('開始回数2'),
+      }));
+      assert(restored.total, 'The restored history count is not 2.');
+      assert(restored.starts, 'The restored history statistics were not rebuilt.');
+    } finally {
+      await restoreContext.close();
+    }
+    console.log('PASS history backup export/import round trip');
+
     if (failures.length > 0) throw new Error(failures.join('\n'));
     console.log('SBC browser E2E test passed.');
   } finally {
     await browser.close();
+    await rm(tempDir, { recursive: true, force: true });
   }
 }
 
