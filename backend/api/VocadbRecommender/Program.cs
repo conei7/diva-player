@@ -223,7 +223,23 @@ app.MapGet("/api/recommend/audio", async (
 });
 
 // GET /api/health
-app.MapGet("/api/health", () => Results.Ok(new { status = "ok" }));
+app.MapGet("/api/health", async (DbService db, QdrantService qdrant, CancellationToken cancellationToken) =>
+{
+    var checks = await Task.WhenAll(
+        db.CheckHealthAsync(cancellationToken),
+        qdrant.CheckHealthAsync(cancellationToken));
+    var postgres = checks[0];
+    var qdrantStatus = checks[1];
+    var ready = postgres.Ok && qdrantStatus.Ok;
+
+    return Results.Json(
+        new
+        {
+            status = ready ? "ok" : "degraded",
+            dependencies = new { postgres, qdrant = qdrantStatus },
+        },
+        statusCode: ready ? StatusCodes.Status200OK : StatusCodes.Status503ServiceUnavailable);
+});
 
 // GET /api/songs/views?ids=1,2,3
 app.MapGet("/api/songs/views", async (string ids, DbService db) =>

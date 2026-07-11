@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Caching.Memory;
 using Npgsql;
+using System.Diagnostics;
 
 namespace VocadbRecommender.Services;
 
@@ -28,6 +29,22 @@ public class DbService
         var conn = new NpgsqlConnection(_connStr);
         await conn.OpenAsync();
         return conn;
+    }
+
+    public async Task<DependencyHealth> CheckHealthAsync(CancellationToken cancellationToken)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            await using var conn = await OpenAsync();
+            await using var cmd = new NpgsqlCommand("SELECT 1", conn) { CommandTimeout = 3 };
+            await cmd.ExecuteScalarAsync(cancellationToken);
+            return new DependencyHealth(true, stopwatch.ElapsedMilliseconds);
+        }
+        catch (Exception exception)
+        {
+            return new DependencyHealth(false, stopwatch.ElapsedMilliseconds, exception.GetType().Name);
+        }
     }
 
     public async Task<(string ItemsJson, int TotalCount)> SearchSongsAsync(

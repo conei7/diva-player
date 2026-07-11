@@ -1,0 +1,2 @@
+-- The original schema is initialized from ../schema.sql for fresh PostgreSQL volumes.
+-- Recording this marker lets existing installations enter the versioned migration flow safely.

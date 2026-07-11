@@ -1,6 +1,7 @@
 using Qdrant.Client;
 using Qdrant.Client.Grpc;
 using Microsoft.Extensions.Options;
+using System.Diagnostics;
 
 namespace VocadbRecommender.Services;
 
@@ -9,11 +10,33 @@ public class QdrantService
 {
     private readonly QdrantClient _client;
     private readonly RecommenderOptions _opts;
+    private readonly HttpClient _healthClient;
+    private readonly Uri _healthUri;
 
     public QdrantService(IOptions<RecommenderOptions> opts)
     {
         _opts = opts.Value;
         _client = new QdrantClient(new Uri(_opts.QdrantEndpoint));
+        var grpcEndpoint = new Uri(_opts.QdrantEndpoint);
+        var restPort = grpcEndpoint.Port == 6334 ? 6333 : grpcEndpoint.Port;
+        _healthUri = new UriBuilder(grpcEndpoint.Scheme, grpcEndpoint.Host, restPort, "healthz").Uri;
+        _healthClient = new HttpClient { Timeout = TimeSpan.FromSeconds(3) };
+    }
+
+    public async Task<DependencyHealth> CheckHealthAsync(CancellationToken cancellationToken)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            using var response = await _healthClient.GetAsync(_healthUri, cancellationToken);
+            return response.IsSuccessStatusCode
+                ? new DependencyHealth(true, stopwatch.ElapsedMilliseconds)
+                : new DependencyHealth(false, stopwatch.ElapsedMilliseconds, $"HTTP {(int)response.StatusCode}");
+        }
+        catch (Exception exception)
+        {
+            return new DependencyHealth(false, stopwatch.ElapsedMilliseconds, exception.GetType().Name);
+        }
     }
 
     /// <summary>

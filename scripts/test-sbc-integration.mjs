@@ -56,7 +56,9 @@ async function main() {
 
   const health = await getJson(baseUrl, '/api/health');
   assert(health.status === 'ok', 'Health endpoint did not return status=ok.');
-  console.log('PASS API health');
+  assert(health.dependencies?.postgres?.ok === true, 'PostgreSQL is not healthy.');
+  assert(health.dependencies?.qdrant?.ok === true, 'Qdrant is not healthy.');
+  console.log(`PASS API health (PostgreSQL ${health.dependencies.postgres.latencyMs}ms, Qdrant ${health.dependencies.qdrant.latencyMs}ms)`);
 
   const search = await getJson(
     baseUrl,

@@ -30,6 +30,23 @@ services:
       QDRANT__SERVICE__GRPC_PORT: 6334
     restart: unless-stopped
 
+  migrate:
+    image: postgres:16-alpine
+    environment:
+      PGHOST: postgres
+      PGPORT: 5432
+      PGDATABASE: vocadb_recommender
+      PGUSER: vocadb
+      PGPASSWORD: vocadb_secret
+    volumes:
+      - ./database/migrate.sh:/migrations/migrate.sh:ro
+      - ./database/migrations:/migrations/sql:ro
+    entrypoint: ["sh", "/migrations/migrate.sh"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
   api:
     build:
       context: ./api
@@ -45,6 +62,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       qdrant:
         condition: service_started
     restart: unless-stopped
