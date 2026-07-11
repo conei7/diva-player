@@ -112,6 +112,50 @@ function getVocalistIds(song: Song): number[] {
     .filter((id): id is number => id !== undefined);
 }
 
+export interface QueueDiversityOptions {
+  recentSongs: Song[];
+  producerLimit?: number;
+  vocalistLimit?: number;
+}
+
+/**
+ * Keeps all candidates available as fallbacks, but moves those that would make
+ * the next queue window too homogeneous behind more varied candidates.
+ */
+export function rerankForQueueDiversity(
+  candidates: Song[],
+  { recentSongs, producerLimit = 2, vocalistLimit = 3 }: QueueDiversityOptions,
+): Song[] {
+  const producerCounts = new Map<string, number>();
+  const vocalistCounts = new Map<number, number>();
+  const add = (song: Song) => {
+    const producer = getArtistBucket(song);
+    producerCounts.set(producer, (producerCounts.get(producer) ?? 0) + 1);
+    for (const vocalistId of getVocalistIds(song)) {
+      vocalistCounts.set(vocalistId, (vocalistCounts.get(vocalistId) ?? 0) + 1);
+    }
+  };
+  recentSongs.forEach(add);
+
+  const preferred: Song[] = [];
+  const deferred: Song[] = [];
+  const seen = new Set<number>();
+  for (const song of candidates) {
+    if (seen.has(song.id)) continue;
+    seen.add(song.id);
+    const producerOverLimit = (producerCounts.get(getArtistBucket(song)) ?? 0) >= producerLimit;
+    const vocalistOverLimit = getVocalistIds(song)
+      .some(vocalistId => (vocalistCounts.get(vocalistId) ?? 0) >= vocalistLimit);
+    if (producerOverLimit || vocalistOverLimit) {
+      deferred.push(song);
+      continue;
+    }
+    preferred.push(song);
+    add(song);
+  }
+  return [...preferred, ...deferred];
+}
+
 export function diversifyAwayFromSeedVocalist(
   seedSong: Song,
   songs: Song[],

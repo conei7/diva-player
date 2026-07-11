@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Song } from '../types/vocadb';
-import { diversifyAwayFromSeedVocalist } from './recommendationScoring';
+import { diversifyAwayFromSeedVocalist, rerankForQueueDiversity } from './recommendationScoring';
 
 function song(id: number, vocalistIds: number[] = []): Song {
   return {
@@ -55,5 +55,22 @@ describe('diversifyAwayFromSeedVocalist', () => {
     const result = diversifyAwayFromSeedVocalist(seed, candidates, 2);
 
     expect(result.map(item => item.id)).toEqual([2, 3]);
+  });
+});
+
+describe('rerankForQueueDiversity', () => {
+  it('moves producer-concentrated candidates behind a varied candidate', () => {
+    const producerArtist = {
+      id: 101, name: 'producer', additionalNames: '', artistType: 'Producer' as const,
+      deleted: false, status: 'Finished' as const, version: 1,
+    };
+    const withProducer = (id: number): Song => ({
+      ...song(id),
+      artists: [{ artist: producerArtist, categories: 'Producer', effectiveRoles: 'Producer', id, isCustomName: false, isSupport: false, name: 'producer', roles: 'Producer' }],
+    });
+    const recent = [withProducer(1), withProducer(2)];
+    const result = rerankForQueueDiversity([withProducer(3), song(4), withProducer(5)], { recentSongs: recent });
+
+    expect(result.map(item => item.id)).toEqual([4, 3, 5]);
   });
 });

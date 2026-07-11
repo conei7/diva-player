@@ -11,6 +11,7 @@ import {
   buildPlaylistSongSet,
   getPlaylistSongs,
   rankKnownSongs,
+  rerankForQueueDiversity,
   scoreQueueCandidates,
   uniqueSongsById,
 } from '../utils/recommendationScoring';
@@ -205,12 +206,15 @@ export function useAutoQueue({
           ...Object.keys(ratings).map(Number),
           ...Object.keys(implicitFeedback).map(Number),
         ]);
-        const nextSongs = selectKnownUnknownMix(
+        const mixedSongs = selectKnownUnknownMix(
           scored.filter(item => knownIds.has(item.song.id)).map(item => item.song),
           scored.filter(item => !knownIds.has(item.song.id)).map(item => item.song),
           queuePlan.target,
           existingIds,
         );
+        const nextSongs = rerankForQueueDiversity(mixedSongs, {
+          recentSongs: queue.slice(Math.max(0, queueIndex - 4), queueIndex + 1),
+        });
         if (controller.signal.aborted || generation !== requestGenerationRef.current) return;
 
         if (nextSongs.length === 0) {
