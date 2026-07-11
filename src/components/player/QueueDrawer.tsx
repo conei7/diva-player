@@ -4,6 +4,7 @@ import { useUiStore } from '../../stores/uiStore';
 import StarRating from './StarRating';
 import type { Song } from '../../types/vocadb';
 import { useQueueRecommendationStore } from '../../stores/queueRecommendationStore';
+import { useAutoQueueStatusStore } from '../../stores/autoQueueStatusStore';
 
 /** YoutubePVからサムネイルURLを生成 */
 function getThumbUrl(song: Song): string | null {
@@ -29,6 +30,7 @@ export default function QueueDrawer() {
   const { getRating, setRating } = useRatingStore();
   const openSaveToPlaylist = useUiStore(s => s.openSaveToPlaylist);
   const recommendations = useQueueRecommendationStore(s => s.recommendations);
+  const autoQueueStatus = useAutoQueueStatusStore(s => s.status);
   const duplicateCount = queue.length - new Set(queue.map(song => song.id)).size;
 
   return (
@@ -101,6 +103,13 @@ export default function QueueDrawer() {
                 </svg>
               </button>
             )}
+            {autoQueueStatus === 'fetching' || autoQueueStatus === 'reranking' ? (
+              <span className="text-[11px]" style={{ color: 'var(--color-text-muted)' }}>補充中…</span>
+            ) : autoQueueStatus === 'degraded' ? (
+              <span className="text-[11px]" style={{ color: '#fbbf24' }}>関連曲へフォールバック中</span>
+            ) : autoQueueStatus === 'exhausted' ? (
+              <span className="text-[11px]" style={{ color: 'var(--color-text-muted)' }}>候補がありません</span>
+            ) : null}
             <button
               className="btn-ghost p-1.5 rounded-lg"
               onClick={() => openSaveToPlaylist(queue)}

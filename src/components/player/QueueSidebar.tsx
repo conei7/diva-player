@@ -5,6 +5,7 @@ import StarRating from './StarRating';
 import type { Song } from '../../types/vocadb';
 import { useImplicitFeedbackStore } from '../../stores/implicitFeedbackStore';
 import { useQueueRecommendationStore } from '../../stores/queueRecommendationStore';
+import { useAutoQueueStatusStore } from '../../stores/autoQueueStatusStore';
 
 function getThumbUrl(song: Song): string | null {
   if (song.thumbUrl) return song.thumbUrl;
@@ -28,6 +29,7 @@ export default function QueueSidebar({ hideHeader }: QueueSidebarProps = {}) {
   const { getRating, setRating } = useRatingStore();
   const recordQueueRemove = useImplicitFeedbackStore(s => s.recordQueueRemove);
   const recommendations = useQueueRecommendationStore(s => s.recommendations);
+  const autoQueueStatus = useAutoQueueStatusStore(s => s.status);
   const currentRef = useRef<HTMLLIElement>(null);
 
   // 現在の曲が変わったら自動スクロール
@@ -58,6 +60,13 @@ export default function QueueSidebar({ hideHeader }: QueueSidebarProps = {}) {
               {queue.length}曲
             </span>
           )}
+          {autoQueueStatus === 'fetching' || autoQueueStatus === 'reranking' ? (
+            <span className="text-[10px]" style={{ color: 'var(--color-text-muted)' }}>補充中…</span>
+          ) : autoQueueStatus === 'degraded' ? (
+            <span className="text-[10px]" style={{ color: '#fbbf24' }}>関連曲で補充</span>
+          ) : autoQueueStatus === 'exhausted' ? (
+            <span className="text-[10px]" style={{ color: 'var(--color-text-muted)' }}>候補がありません</span>
+          ) : null}
         </div>
       )}
 

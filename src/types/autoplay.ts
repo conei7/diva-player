@@ -7,6 +7,8 @@ export type AutoQueueReasonCode =
   | 'new_discovery'
   | 'fallback';
 
+export type AutoQueueStatus = 'idle' | 'fetching' | 'reranking' | 'ready' | 'degraded' | 'exhausted' | 'error';
+
 export interface QueueRecommendation {
   strategyVersion: string;
   reasonCode: AutoQueueReasonCode;

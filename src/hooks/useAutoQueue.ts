@@ -20,9 +20,9 @@ import { buildUserTasteProfile, type TasteSeed } from '../services/userTasteProf
 import { useAutoPlaySessionStore } from '../stores/autoPlaySessionStore';
 import { useAutoQueueDecisionStore } from '../stores/autoQueueDecisionStore';
 import { useQueueRecommendationStore } from '../stores/queueRecommendationStore';
-import type { AutoQueueDecision, QueueRecommendation } from '../types/autoplay';
+import { useAutoQueueStatusStore } from '../stores/autoQueueStatusStore';
+import type { AutoQueueDecision, AutoQueueStatus, QueueRecommendation } from '../types/autoplay';
 
-export type AutoQueueStatus = 'idle' | 'fetching' | 'reranking' | 'ready' | 'degraded' | 'exhausted' | 'error';
 export type AutoQueueMixMode = 'balanced' | 'deep' | 'producer';
 
 interface UseAutoQueueArgs {
@@ -214,6 +214,10 @@ export function useAutoQueue({
   const [status, setStatus] = useState<AutoQueueStatus>('idle');
   const requestGenerationRef = useRef(0);
   const { autoCompletedCount, autoSkippedCount, consecutiveSkips } = adaptation;
+
+  useEffect(() => {
+    useAutoQueueStatusStore.getState().setStatus(status);
+  }, [status]);
 
   useEffect(() => {
     if (!currentSong) {
