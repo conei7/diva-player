@@ -15,8 +15,12 @@ import {
   scoreQueueCandidates,
   uniqueSongsById,
 } from '../utils/recommendationScoring';
-import { createAutoQueuePlan, selectKnownUnknownMix } from '../utils/autoQueuePolicy';
+import { createAutoQueuePlan, selectKnownUnknownMix, type AutoQueueAdaptation } from '../utils/autoQueuePolicy';
 import { buildUserTasteProfile, type TasteSeed } from '../services/userTasteProfile';
+import { useAutoPlaySessionStore } from '../stores/autoPlaySessionStore';
+import { useAutoQueueDecisionStore } from '../stores/autoQueueDecisionStore';
+import { useQueueRecommendationStore } from '../stores/queueRecommendationStore';
+import type { AutoQueueDecision, QueueRecommendation } from '../types/autoplay';
 
 export type AutoQueueStatus = 'idle' | 'fetching' | 'reranking' | 'ready' | 'degraded' | 'exhausted' | 'error';
 export type AutoQueueMixMode = 'balanced' | 'deep' | 'producer';
@@ -32,6 +36,7 @@ interface UseAutoQueueArgs {
   playlists: { songs: Song[] }[];
   implicitFeedback: Record<string, ImplicitSongFeedback>;
   autoPlayedCount: number;
+  adaptation: AutoQueueAdaptation;
   addManyToQueue: (songs: Song[], source: 'auto') => void;
 }
 
@@ -131,6 +136,62 @@ function mergeSeedCandidates(results: Array<{ weight: number; songs: Song[] }>):
     .map(entry => entry.song);
 }
 
+function buildRecommendationMetadata(
+  songs: Song[],
+  knownIds: Set<number>,
+  playlistSongIds: Set<number>,
+  tasteProfile: { longTerm: TasteSeed[]; shortTerm: TasteSeed[] },
+  rootSeed: Song | null,
+  currentSong: Song,
+  stage: 'early' | 'middle' | 'late',
+  target: { known: number; unknown: number },
+  queueLength: number,
+  recentSkipRate: number,
+): { queueRecommendations: Array<QueueRecommendation & { songId: number }>; decisions: AutoQueueDecision[] } {
+  const now = Date.now();
+  const sessionId = useAutoPlaySessionStore.getState().session?.id ?? null;
+  const seedSongIds = [
+    rootSeed?.id ?? currentSong.id,
+    currentSong.id,
+    ...tasteProfile.longTerm.map(seed => seed.song.id),
+    ...tasteProfile.shortTerm.map(seed => seed.song.id),
+  ].filter((id, index, ids) => ids.indexOf(id) === index);
+
+  const queueRecommendations = songs.map(song => {
+    const familiarity = knownIds.has(song.id) ? 'known' as const : 'unknown' as const;
+    const isPlaylistSong = playlistSongIds.has(song.id);
+    const reasonCode = familiarity === 'unknown'
+      ? 'new_discovery' as const
+      : isPlaylistSong ? 'playlist_familiar' as const : 'known_favorite' as const;
+    const reasonText = familiarity === 'unknown'
+      ? '長期・最近の好みに近い新規開拓曲'
+      : isPlaylistSong ? 'プレイリストにある、聴き慣れた曲'
+      : '履歴・評価をもとにした既知のおすすめ';
+    return {
+      songId: song.id,
+      strategyVersion: 'fixed-known-unknown-v1',
+      reasonCode,
+      reasonText,
+      seedSongIds,
+      familiarity,
+      generatedAt: now,
+    };
+  });
+  return {
+    queueRecommendations,
+    decisions: queueRecommendations.map((recommendation, index) => ({
+      ...recommendation,
+      id: `${now}-${recommendation.songId}-${index}`,
+      sessionId,
+      queuePosition: queueLength + index,
+      stage,
+      targetKnown: target.known,
+      targetUnknown: target.unknown,
+      recentSkipRate,
+    })),
+  };
+}
+
 /**
  * Owns one refill request at a time. Dependency changes abort the result path
  * and increment the request generation so an old recommendation response can
@@ -147,10 +208,12 @@ export function useAutoQueue({
   playlists,
   implicitFeedback,
   autoPlayedCount,
+  adaptation,
   addManyToQueue,
 }: UseAutoQueueArgs): AutoQueueStatus {
   const [status, setStatus] = useState<AutoQueueStatus>('idle');
   const requestGenerationRef = useRef(0);
+  const { autoCompletedCount, autoSkippedCount, consecutiveSkips } = adaptation;
 
   useEffect(() => {
     if (!currentSong) {
@@ -159,7 +222,11 @@ export function useAutoQueue({
     }
 
     const remaining = queue.length - 1 - queueIndex;
-    const queuePlan = createAutoQueuePlan(remaining, autoPlayedCount);
+    const queuePlan = createAutoQueuePlan(remaining, autoPlayedCount, {
+      autoCompletedCount,
+      autoSkippedCount,
+      consecutiveSkips,
+    });
     if (!queuePlan) {
       setStatus('ready');
       return;
@@ -222,6 +289,22 @@ export function useAutoQueue({
           return;
         }
         addManyToQueue(nextSongs, 'auto');
+        const outcomes = autoCompletedCount + autoSkippedCount;
+        const recentSkipRate = outcomes > 0 ? autoSkippedCount / outcomes : 0;
+        const metadata = buildRecommendationMetadata(
+          nextSongs,
+          knownIds,
+          playlistSongIds,
+          tasteProfile,
+          rootSeed,
+          currentSong,
+          queuePlan.stage,
+          queuePlan.target,
+          queue.length,
+          recentSkipRate,
+        );
+        useQueueRecommendationStore.getState().recordRecommendations(metadata.queueRecommendations);
+        useAutoQueueDecisionStore.getState().recordDecisions(metadata.decisions);
         setStatus('ready');
       } catch {
         if (controller.signal.aborted || generation !== requestGenerationRef.current) return;
@@ -232,6 +315,9 @@ export function useAutoQueue({
     return () => controller.abort();
   }, [
     addManyToQueue,
+    autoCompletedCount,
+    autoSkippedCount,
+    consecutiveSkips,
     autoPlayedCount,
     currentSong,
     historyEntries,

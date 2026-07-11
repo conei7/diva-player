@@ -42,7 +42,8 @@ function PlayerTracker() {
   const { ratings } = useRatingStore();
   const { playlists } = usePlaylistStore();
   const implicitFeedback = useImplicitFeedbackStore(s => s.feedback);
-  const autoPlayedCount = useAutoPlaySessionStore(s => s.session?.autoPlayedCount ?? 0);
+  const autoPlaySession = useAutoPlaySessionStore(s => s.session);
+  const autoPlayedCount = autoPlaySession?.autoPlayedCount ?? 0;
 
   // 再生完了率トラッキング
   const prevSongRef = useRef<{
@@ -141,6 +142,11 @@ function PlayerTracker() {
     playlists,
     implicitFeedback,
     autoPlayedCount,
+    adaptation: {
+      autoCompletedCount: autoPlaySession?.autoCompletedCount ?? 0,
+      autoSkippedCount: autoPlaySession?.autoSkippedCount ?? 0,
+      consecutiveSkips: autoPlaySession?.consecutiveSkips ?? 0,
+    },
     addManyToQueue,
   });
 

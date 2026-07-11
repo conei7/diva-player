@@ -3,6 +3,7 @@ import { useRatingStore } from '../../stores/ratingStore';
 import { useUiStore } from '../../stores/uiStore';
 import StarRating from './StarRating';
 import type { Song } from '../../types/vocadb';
+import { useQueueRecommendationStore } from '../../stores/queueRecommendationStore';
 
 /** YoutubePVからサムネイルURLを生成 */
 function getThumbUrl(song: Song): string | null {
@@ -27,6 +28,7 @@ export default function QueueDrawer() {
   } = usePlayerStore();
   const { getRating, setRating } = useRatingStore();
   const openSaveToPlaylist = useUiStore(s => s.openSaveToPlaylist);
+  const recommendations = useQueueRecommendationStore(s => s.recommendations);
   const duplicateCount = queue.length - new Set(queue.map(song => song.id)).size;
 
   return (
@@ -141,6 +143,7 @@ export default function QueueDrawer() {
                 const isCurrent = i === queueIndex;
                 const thumb = getThumbUrl(song);
                 const producer = getProducerString(song);
+                const recommendation = recommendations[String(song.id)];
 
                 return (
                   <li key={`${song.id}-${i}`}>
@@ -207,6 +210,11 @@ export default function QueueDrawer() {
                         {producer && (
                           <p className="text-[11px] truncate mt-0.5" style={{ color: 'var(--color-text-muted)' }}>
                             {producer}
+                          </p>
+                        )}
+                        {recommendation && (
+                          <p className="text-[10px] truncate mt-0.5" style={{ color: 'var(--color-accent-cyan)' }} title={recommendation.reasonText}>
+                            {recommendation.reasonText}
                           </p>
                         )}
                       </div>

@@ -4,6 +4,7 @@ import { useRatingStore } from '../../stores/ratingStore';
 import StarRating from './StarRating';
 import type { Song } from '../../types/vocadb';
 import { useImplicitFeedbackStore } from '../../stores/implicitFeedbackStore';
+import { useQueueRecommendationStore } from '../../stores/queueRecommendationStore';
 
 function getThumbUrl(song: Song): string | null {
   if (song.thumbUrl) return song.thumbUrl;
@@ -26,6 +27,7 @@ export default function QueueSidebar({ hideHeader }: QueueSidebarProps = {}) {
   const { queue, queueIndex, jumpToIndex, removeFromQueue } = usePlayerStore();
   const { getRating, setRating } = useRatingStore();
   const recordQueueRemove = useImplicitFeedbackStore(s => s.recordQueueRemove);
+  const recommendations = useQueueRecommendationStore(s => s.recommendations);
   const currentRef = useRef<HTMLLIElement>(null);
 
   // 現在の曲が変わったら自動スクロール
@@ -76,6 +78,7 @@ export default function QueueSidebar({ hideHeader }: QueueSidebarProps = {}) {
             const isCurrent = i === queueIndex;
             const thumb = getThumbUrl(song);
             const producer = getProducerString(song);
+            const recommendation = recommendations[String(song.id)];
 
             return (
               <li key={`${song.id}-${i}`} ref={isCurrent ? currentRef : null} className="group relative">
@@ -129,6 +132,11 @@ export default function QueueSidebar({ hideHeader }: QueueSidebarProps = {}) {
                     {producer && (
                       <p className="text-[10px] truncate mt-0.5" style={{ color: 'var(--color-text-muted)' }}>
                         {producer}
+                      </p>
+                    )}
+                    {recommendation && (
+                      <p className="text-[9px] truncate mt-0.5" style={{ color: 'var(--color-accent-cyan)' }} title={recommendation.reasonText}>
+                        {recommendation.reasonText}
                       </p>
                     )}
                   </div>

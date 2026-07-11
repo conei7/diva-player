@@ -13,6 +13,12 @@ export interface AutoQueuePlan {
   requestedCount: number;
 }
 
+export interface AutoQueueAdaptation {
+  autoCompletedCount: number;
+  autoSkippedCount: number;
+  consecutiveSkips: number;
+}
+
 export const AUTO_QUEUE_LOW_WATERMARK = 3;
 export const AUTO_QUEUE_TARGET_WATERMARK = 12;
 export const AUTO_QUEUE_MAX_BATCH_SIZE = 12;
@@ -28,14 +34,29 @@ export function getAutoQueueStage(autoPlayedCount: number): AutoQueueStage {
   return 'late';
 }
 
-export function getKnownUnknownTarget(stage: AutoQueueStage, requestedCount: number): KnownUnknownTarget {
+export function getKnownUnknownTarget(
+  stage: AutoQueueStage,
+  requestedCount: number,
+  adaptation?: AutoQueueAdaptation,
+): KnownUnknownTarget {
   const safeCount = Math.max(0, Math.floor(requestedCount));
-  const knownRatio = stage === 'early' ? 0.8 : stage === 'middle' ? 0.6 : 0.4;
+  let knownRatio = stage === 'early' ? 0.8 : stage === 'middle' ? 0.6 : 0.4;
+  const outcomes = (adaptation?.autoCompletedCount ?? 0) + (adaptation?.autoSkippedCount ?? 0);
+  const skipRate = outcomes > 0 ? (adaptation?.autoSkippedCount ?? 0) / outcomes : 0;
+  if (skipRate >= 0.4 || (adaptation?.consecutiveSkips ?? 0) >= 2) {
+    knownRatio = Math.min(0.9, knownRatio + 0.1);
+  } else if (outcomes >= 5 && skipRate <= 0.1) {
+    knownRatio = Math.max(0.2, knownRatio - 0.1);
+  }
   const known = Math.round(safeCount * knownRatio);
   return { known, unknown: safeCount - known };
 }
 
-export function createAutoQueuePlan(remainingCount: number, autoPlayedCount: number): AutoQueuePlan | null {
+export function createAutoQueuePlan(
+  remainingCount: number,
+  autoPlayedCount: number,
+  adaptation?: AutoQueueAdaptation,
+): AutoQueuePlan | null {
   if (remainingCount > AUTO_QUEUE_LOW_WATERMARK) return null;
 
   const requestedCount = Math.min(
@@ -43,7 +64,7 @@ export function createAutoQueuePlan(remainingCount: number, autoPlayedCount: num
     Math.max(0, AUTO_QUEUE_TARGET_WATERMARK - Math.max(0, remainingCount)),
   );
   const stage = getAutoQueueStage(autoPlayedCount);
-  return { stage, target: getKnownUnknownTarget(stage, requestedCount), requestedCount };
+  return { stage, target: getKnownUnknownTarget(stage, requestedCount, adaptation), requestedCount };
 }
 
 /**

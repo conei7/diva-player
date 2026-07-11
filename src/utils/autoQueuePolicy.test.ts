@@ -40,6 +40,19 @@ describe('auto queue policy', () => {
     expect(getKnownUnknownTarget('late', 10)).toEqual({ known: 4, unknown: 6 });
   });
 
+  it('reduces exploration after skips and increases it after sustained success', () => {
+    expect(getKnownUnknownTarget('middle', 10, {
+      autoCompletedCount: 1,
+      autoSkippedCount: 2,
+      consecutiveSkips: 2,
+    })).toEqual({ known: 7, unknown: 3 });
+    expect(getKnownUnknownTarget('middle', 10, {
+      autoCompletedCount: 9,
+      autoSkippedCount: 1,
+      consecutiveSkips: 0,
+    })).toEqual({ known: 5, unknown: 5 });
+  });
+
   it('refills only below the low watermark and targets a bounded queue', () => {
     expect(createAutoQueuePlan(4, 0)).toBeNull();
     expect(createAutoQueuePlan(3, 0)).toMatchObject({ requestedCount: 9, stage: 'early' });
