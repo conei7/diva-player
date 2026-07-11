@@ -499,6 +499,11 @@ async function isRecommenderAvailable(): Promise<boolean> {
   return _recommenderCheckPromise;
 }
 
+export interface MultiRecommendationSeed {
+  songId: number;
+  weight: number;
+}
+
 /**
  * 推薦曲を取得 (バックエンドAPIまたはVocaDBにフォールバック)
  */
@@ -538,6 +543,65 @@ export async function getRecommendedSongs(
 
   // フォールバック: VocaDB /related
   return getRelatedSongs(seedSongId);
+}
+
+/**
+ * Sends only temporary seed IDs and exclusions to the SBC. Older SBC versions
+ * transparently fall back to the existing per-seed endpoint.
+ */
+export async function getMultiRecommendedSongs(
+  seeds: MultiRecommendationSeed[],
+  count = 30,
+  excludeSongIds: number[] = [],
+): Promise<Song[]> {
+  const normalizedSeeds = seeds
+    .filter(seed => Number.isInteger(seed.songId) && seed.songId > 0 && Number.isFinite(seed.weight) && seed.weight > 0)
+    .slice(0, 8);
+  if (normalizedSeeds.length === 0) return [];
+
+  if (await isRecommenderAvailable()) {
+    try {
+      const res = await fetch(`${RECOMMENDER_API}/api/recommend/multi`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          seeds: normalizedSeeds,
+          count,
+          excludeSongIds: excludeSongIds.slice(0, 500),
+        }),
+      });
+      if (res.ok) {
+        const data: RecommendResponse = await res.json();
+        if (!data.error && data.items.length > 0) {
+          const songs = await Promise.all(data.items.map(item => getSongById(item.songId).catch(() => null)));
+          return songs.filter((song): song is Song => song !== null);
+        }
+      }
+    } catch {
+      // The existing per-seed path below remains available even if an older
+      // SBC does not provide the multi-seed endpoint yet.
+    }
+  }
+
+  const results = await Promise.all(normalizedSeeds.map(async seed => ({
+    weight: seed.weight,
+    songs: await getRecommendedSongs(seed.songId, count),
+  })));
+  const scoreBySongId = new Map<number, { song: Song; score: number }>();
+  const excluded = new Set(excludeSongIds);
+  normalizedSeeds.forEach(seed => excluded.add(seed.songId));
+  for (const { weight, songs } of results) {
+    songs.forEach((song, index) => {
+      if (excluded.has(song.id)) return;
+      const current = scoreBySongId.get(song.id) ?? { song, score: 0 };
+      current.score += weight / (60 + index + 1);
+      scoreBySongId.set(song.id, current);
+    });
+  }
+  return [...scoreBySongId.values()]
+    .sort((a, b) => b.score - a.score)
+    .slice(0, count)
+    .map(entry => entry.song);
 }
 
 /**

@@ -114,6 +114,60 @@ public class RecommendService
         return new RecommendResponse(items, null);
     }
 
+    /// <summary>
+    /// Merges several temporary browser-selected seeds with weighted reciprocal
+    /// rank fusion. No per-user data is persisted: callers send only the small
+    /// seed/exclusion summary for this request.
+    /// </summary>
+    public async Task<RecommendResponse> RecommendFromSeedsAsync(
+        IReadOnlyList<RecommendSeed> seeds,
+        int count,
+        double sessionProgress,
+        IReadOnlySet<int>? excludedSongIds = null)
+    {
+        var normalizedSeeds = seeds
+            .Where(seed => seed.SongId > 0 && seed.Weight > 0)
+            .GroupBy(seed => seed.SongId)
+            .Select(group => new RecommendSeed(group.Key, Math.Min(1.0, group.Max(seed => seed.Weight))))
+            .OrderByDescending(seed => seed.Weight)
+            .Take(8)
+            .ToList();
+        if (normalizedSeeds.Count == 0)
+            return new RecommendResponse([], "at least one valid seed is required");
+
+        var perSeedCount = Math.Min(100, Math.Max(30, count));
+        var results = await Task.WhenAll(normalizedSeeds.Select(async seed => new
+        {
+            Seed = seed,
+            Response = await RecommendAsync(seed.SongId, perSeedCount, sessionProgress),
+        }));
+        var excluded = excludedSongIds is null
+            ? new HashSet<int>()
+            : new HashSet<int>(excludedSongIds);
+        foreach (var seed in normalizedSeeds) excluded.Add(seed.SongId);
+        var scores = new Dictionary<int, (RecommendItem Item, double Score)>();
+        var errors = new List<string>();
+
+        foreach (var result in results)
+        {
+            if (!string.IsNullOrWhiteSpace(result.Response.Error)) errors.Add(result.Response.Error!);
+            foreach (var (item, rank) in result.Response.Items.Select((item, rank) => (item, rank)))
+            {
+                if (excluded.Contains(item.SongId)) continue;
+                var current = scores.GetValueOrDefault(item.SongId);
+                var score = current.Score + result.Seed.Weight / (60.0 + rank + 1);
+                scores[item.SongId] = (current.Item ?? item, score);
+            }
+        }
+
+        var items = scores.Values
+            .OrderByDescending(entry => entry.Score)
+            .Take(count)
+            .Select(entry => entry.Item with { Score = entry.Score })
+            .ToList();
+        return new RecommendResponse(items, items.Count > 0 ? null : errors.FirstOrDefault() ?? "no candidates found");
+    }
+
     // ---- 同一プロデューサー上限フィルタ --------------------------
 
     /// <summary>
@@ -283,3 +337,5 @@ public record RecommendResponse(
     List<RecommendItem> Items,
     string? Error
 );
+
+public record RecommendSeed(int SongId, double Weight);

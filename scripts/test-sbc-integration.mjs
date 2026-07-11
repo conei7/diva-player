@@ -88,6 +88,26 @@ async function main() {
   assert(!recommended.error, `/api/recommend returned an error: ${recommended.error}`);
   console.log(`PASS hybrid recommendation (${recommended.items.length} candidates)`);
 
+  const multiResponse = await fetch(`${baseUrl}/api/recommend/multi`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      seeds: [
+        { songId: metadata.seed.id, weight: 1.0 },
+        { songId: audio.seed.id, weight: 0.7 },
+      ],
+      count: 8,
+      excludeSongIds: [metadata.seed.id, audio.seed.id],
+    }),
+    signal: AbortSignal.timeout(DEFAULT_TIMEOUT_MS),
+  });
+  assert(multiResponse.ok, `/api/recommend/multi returned HTTP ${multiResponse.status}.`);
+  const multi = await multiResponse.json();
+  assertSongItems(multi, '/api/recommend/multi');
+  assert(!multi.error, `/api/recommend/multi returned an error: ${multi.error}`);
+  assert(multi.items.every(item => item.songId !== metadata.seed.id && item.songId !== audio.seed.id), '/api/recommend/multi returned an excluded song.');
+  console.log(`PASS multi-seed recommendation (${multi.items.length} candidates)`);
+
   console.log('SBC API integration test passed.');
 }
 

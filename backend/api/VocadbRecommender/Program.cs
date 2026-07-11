@@ -241,6 +241,28 @@ app.MapGet("/api/health", async (DbService db, QdrantService qdrant, Cancellatio
         statusCode: ready ? StatusCodes.Status200OK : StatusCodes.Status503ServiceUnavailable);
 });
 
+app.MapPost("/api/recommend/multi", async (
+    MultiRecommendRequest request,
+    RecommendService svc) =>
+{
+    if (request.Seeds is null || request.Seeds.Count is < 1 or > 8)
+        return Results.BadRequest("seeds must contain between 1 and 8 items");
+    if (request.Count is < 1 or > 100)
+        return Results.BadRequest("count must be between 1 and 100");
+    if (request.SessionProgress is < 0 or > 1)
+        return Results.BadRequest("sessionProgress must be between 0 and 1");
+    if (request.ExcludeSongIds?.Count > 500)
+        return Results.BadRequest("excludeSongIds must contain at most 500 items");
+
+    var seeds = request.Seeds
+        .Where(seed => seed.SongId > 0 && seed.Weight > 0)
+        .Select(seed => new RecommendSeed(seed.SongId, seed.Weight))
+        .ToList();
+    var excluded = request.ExcludeSongIds?.Where(id => id > 0).ToHashSet() ?? [];
+    var result = await svc.RecommendFromSeedsAsync(seeds, request.Count, request.SessionProgress, excluded);
+    return Results.Ok(result);
+});
+
 // GET /api/songs/views?ids=1,2,3
 app.MapGet("/api/songs/views", async (string ids, DbService db) =>
 {
@@ -343,3 +365,12 @@ app.MapGet("/api/songs/{id}/history", async (int id, DbService db) =>
 });
 
 app.Run();
+
+public record MultiRecommendRequest(
+    List<MultiRecommendSeed>? Seeds,
+    int Count = 60,
+    double SessionProgress = 0,
+    List<int>? ExcludeSongIds = null
+);
+
+public record MultiRecommendSeed(int SongId, double Weight);

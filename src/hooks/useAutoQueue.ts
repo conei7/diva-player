@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   getAudioSimilarSongs,
-  getRecommendedSongs,
+  getMultiRecommendedSongs,
   getSongsByProducerFromBackend,
 } from '../api/vocadb';
 import type { Song } from '../types/vocadb';
@@ -79,6 +79,7 @@ async function fetchCandidates(
   rootSeed: Song | null,
   mixMode: AutoQueueMixMode,
   tasteSeeds: TasteSeed[],
+  excludeSongIds: number[],
 ): Promise<Song[]> {
   const songId = currentSong.id;
   const randomOffset = Math.floor(Math.random() * 20);
@@ -95,11 +96,12 @@ async function fetchCandidates(
     }
     case 'balanced':
     default:
-      return mergeSeedCandidates(await Promise.all(buildRecommendationSeeds(currentSong, rootSeed, tasteSeeds)
-        .map(async seed => ({
-          weight: seed.weight,
-          songs: await getRecommendedSongs(seed.songId, 30, 0, undefined, randomOffset),
-        }))));
+      void randomOffset;
+      return getMultiRecommendedSongs(
+        buildRecommendationSeeds(currentSong, rootSeed, tasteSeeds),
+        60,
+        excludeSongIds,
+      );
   }
 }
 
@@ -120,20 +122,6 @@ function buildRecommendationSeeds(currentSong: Song, rootSeed: Song | null, tast
     .map(([songId, weight]) => ({ songId, weight }))
     .sort((a, b) => b.weight - a.weight)
     .slice(0, 5);
-}
-
-function mergeSeedCandidates(results: Array<{ weight: number; songs: Song[] }>): Song[] {
-  const scores = new Map<number, { song: Song; score: number }>();
-  for (const { weight, songs } of results) {
-    songs.forEach((song, index) => {
-      const current = scores.get(song.id) ?? { song, score: 0 };
-      current.score += weight / (60 + index + 1); // weighted reciprocal-rank fusion
-      scores.set(song.id, current);
-    });
-  }
-  return [...scores.values()]
-    .sort((a, b) => b.score - a.score)
-    .map(entry => entry.song);
 }
 
 function buildRecommendationMetadata(
@@ -251,6 +239,7 @@ export function useAutoQueue({
           rootSeed,
           mixMode,
           [...tasteProfile.longTerm, ...tasteProfile.shortTerm],
+          [...existingIds],
         );
         if (controller.signal.aborted || generation !== requestGenerationRef.current) return;
 
