@@ -39,14 +39,13 @@ const CATEGORIES: CategoryChip[] = [
 
 const PAGE_SIZE = 24;
 
-/** Keeps platform variety as a soft preference, without reserving a fixed count. */
+/** Merges the overall and NicoNico-specific rankings without reserving a fixed count. */
 function blendPopularPlatforms(general: Song[], nico: Song[], total: number): Song[] {
   const candidates = [
     ...general.map((song, rank) => ({ song, platform: 'youtube' as const, score: 1 / (rank + 1) })),
-    ...nico.map((song, rank) => ({ song, platform: 'nico' as const, score: 1 / (rank + 1) })),
+    ...nico.map((song, rank) => ({ song, platform: 'nico' as const, score: 0.55 / (rank + 1) })),
   ];
   const seen = new Set<number>();
-  const counts = { youtube: 0, nico: 0 };
   const result: Song[] = [];
 
   while (candidates.length > 0 && result.length < total) {
@@ -55,9 +54,8 @@ function blendPopularPlatforms(general: Song[], nico: Song[], total: number): So
     for (let index = 0; index < candidates.length; index++) {
       const candidate = candidates[index];
       if (seen.has(candidate.song.id)) continue;
-      const adjustedScore = candidate.score - counts[candidate.platform] * 0.18;
-      if (adjustedScore > bestScore) {
-        bestScore = adjustedScore;
+      if (candidate.score > bestScore) {
+        bestScore = candidate.score;
         bestIndex = index;
       }
     }
@@ -65,7 +63,6 @@ function blendPopularPlatforms(general: Song[], nico: Song[], total: number): So
     const [selected] = candidates.splice(bestIndex, 1);
     if (seen.has(selected.song.id)) continue;
     seen.add(selected.song.id);
-    counts[selected.platform]++;
     result.push(selected.song);
   }
   return result;
