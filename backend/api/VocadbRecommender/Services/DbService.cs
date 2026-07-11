@@ -339,6 +339,7 @@ public class DbService
             _ => "g.popular_score DESC, g.growth_rate DESC, s.favorited_times DESC NULLS LAST",
         };
         var sourceTable = normalizedMode == "recent" ? "recent_candidates" : "growth";
+        var minimumCondition = normalizedMode == "growth" ? "g.popular_score > 0" : "g.view_growth > 0";
 
         using var conn = Open();
         await using var cmd = new NpgsqlCommand($@"
@@ -415,8 +416,17 @@ public class DbService
                         / GREATEST(100.0, (GREATEST(0, b.total_views - COALESCE(pb.total_views, b.total_views))::double precision
                           / GREATEST(3.0, EXTRACT(EPOCH FROM (b.observed_at - pb.observed_at)) / 86400.0)))
                     ) AS surge_rate,
-                    LN(1 + CASE WHEN b.youtube_views >= 100 THEN GREATEST(0, l.youtube_views - b.youtube_views) ELSE 0 END)
-                      + LN(1 + CASE WHEN b.nico_views >= 100 THEN GREATEST(0, l.nico_views - b.nico_views) ELSE 0 END) AS popular_score,
+                    (
+                        CASE WHEN b.youtube_views >= 100
+                            THEN LN(1 + GREATEST(0, l.youtube_views - b.youtube_views))
+                            ELSE 0.35 * LN(1 + l.youtube_views)
+                        END
+                        + CASE WHEN b.nico_views >= 100
+                            THEN LN(1 + GREATEST(0, l.nico_views - b.nico_views))
+                            ELSE 0.35 * LN(1 + l.nico_views)
+                        END
+                        + 0.15 * LN(1 + COALESCE(s.favorited_times, 0))
+                    ) AS popular_score,
                     (
                         (
                             CASE WHEN b.youtube_views >= 100 THEN GREATEST(0, l.youtube_views - b.youtube_views) ELSE 0 END
@@ -462,7 +472,7 @@ public class DbService
             )))::text
             FROM {sourceTable} g
             JOIN songs s ON s.id = g.song_id
-            WHERE g.view_growth > 0
+            WHERE {minimumCondition}
               AND EXISTS (
                   SELECT 1
                   FROM jsonb_array_elements(COALESCE(s.raw_json->'artists', '[]'::jsonb)) artist
