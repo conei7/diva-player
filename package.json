@@ -11,6 +11,7 @@
     "lint": "eslint .",
     "test": "vitest run",
     "test:integration:sbc": "node scripts/test-sbc-integration.mjs",
+    "test:e2e:sbc": "node scripts/test-sbc-e2e.mjs",
     "preview": "vite preview"
   },
   "dependencies": {
