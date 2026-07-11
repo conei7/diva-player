@@ -9,6 +9,7 @@ import { useRatingStore } from './stores/ratingStore';
 import { useProgressStore } from './stores/progressStore';
 import { usePlaylistStore } from './stores/playlistStore';
 import { useImplicitFeedbackStore } from './stores/implicitFeedbackStore';
+import { useAutoPlaySessionStore } from './stores/autoPlaySessionStore';
 import {
   getRecommendedSongs,
   getAudioSimilarSongs,
@@ -21,8 +22,8 @@ import {
   rankKnownSongs,
   scoreQueueCandidates,
   uniqueSongsById,
-  weightedShuffleByScore,
 } from './utils/recommendationScoring';
+import { createAutoQueuePlan, selectKnownUnknownMix } from './utils/autoQueuePolicy';
 
 const HomePage = lazy(() => import('./pages/HomePage'));
 const WatchPage = lazy(() => import('./pages/WatchPage'));
@@ -119,6 +120,7 @@ function PlayerTracker() {
   const { ratings } = useRatingStore();
   const { playlists } = usePlaylistStore();
   const implicitFeedback = useImplicitFeedbackStore(s => s.feedback);
+  const autoPlayedCount = useAutoPlaySessionStore(s => s.session?.autoPlayedCount ?? 0);
   const fetchingForRef = useRef<number | null>(null);
   const ratingsRef = useRef(ratings);
   ratingsRef.current = ratings;
@@ -149,6 +151,13 @@ function PlayerTracker() {
       previous.duration,
       previous.source,
     );
+    if (previous.source === 'auto' && previous.duration > 0 && previous.progress >= 8) {
+      const completionRate = Math.max(0, Math.min(1, previous.progress / previous.duration));
+      const outcome = previous.progress < 30 || completionRate < 0.2
+        ? 'skip'
+        : completionRate >= 0.7 ? 'complete' : 'neutral';
+      useAutoPlaySessionStore.getState().recordAutoPlaybackOutcome(outcome);
+    }
   };
 
   // 視聴履歴 + 暗黙的フィードバック
@@ -211,7 +220,8 @@ function PlayerTracker() {
     if (fetchingForRef.current === currentSong.id) return;
 
     const remaining = queue.length - 1 - queueIndex;
-    if (remaining > 2) return;
+    const queuePlan = createAutoQueuePlan(remaining, autoPlayedCount);
+    if (!queuePlan) return;
 
     const songId = currentSong.id;
     fetchingForRef.current = songId;
@@ -272,10 +282,8 @@ function PlayerTracker() {
           existingIds,
           implicitFeedbackRef.current,
         ).map(item => item.song);
-        const sessionProgress = queue.length > 0 ? Math.min(1, queueIndex / queue.length) : 0;
-        const knownLimit = Math.round(18 - sessionProgress * 10);
         const mixedCandidates = uniqueSongsById([
-          ...knownCandidates.slice(0, Math.max(6, knownLimit)),
+          ...knownCandidates,
           ...filteredCandidates,
         ]);
         const scored = scoreQueueCandidates(
@@ -287,10 +295,15 @@ function PlayerTracker() {
           implicitFeedbackRef.current,
         );
         const topScored = scored.slice(0, 80);
-        // シャッフルして上位40件をキューに追加
-        const newSongs = weightedShuffleByScore(topScored, item => item.score)
-          .map(item => item.song)
-          .slice(0, 40);
+        const knownIds = new Set<number>([
+          ...historyEntries.map(entry => entry.song.id),
+          ...playlistSongs.map(song => song.id),
+          ...Object.keys(ratingsRef.current).map(Number),
+          ...Object.keys(implicitFeedbackRef.current).map(Number),
+        ]);
+        const knownPool = topScored.filter(item => knownIds.has(item.song.id)).map(item => item.song);
+        const unknownPool = topScored.filter(item => !knownIds.has(item.song.id)).map(item => item.song);
+        const newSongs = selectKnownUnknownMix(knownPool, unknownPool, queuePlan.target, existingIds);
         addManyToQueue(newSongs, 'auto');
         if (fetchingForRef.current === songId) {
           fetchingForRef.current = null;
@@ -302,7 +315,7 @@ function PlayerTracker() {
         }
       });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentSong?.id, queueIndex, queue.length]);
+  }, [currentSong?.id, queueIndex, queue.length, autoPlayedCount]);
 
   return null;
 }

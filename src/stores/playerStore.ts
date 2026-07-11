@@ -12,6 +12,7 @@ import { getSongById } from '../api/vocadb';
 import { dedupeQueueBySongId } from '../utils/queueUtils';
 import { storage } from '../utils/storage';
 import { useProgressStore } from './progressStore';
+import { useAutoPlaySessionStore } from './autoPlaySessionStore';
 
 type FailedPVMap = Record<string, string[]>;
 
@@ -194,7 +195,7 @@ interface PlayerState {
   error: string | null;
 
   // アクション
-  playSong: (song: Song, isUserAction?: boolean) => void;
+  playSong: (song: Song, isUserAction?: boolean, startsNewSession?: boolean) => void;
   pause: () => void;
   resume: () => void;
   next: () => void;
@@ -353,7 +354,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   queueSources: storedPlayerQueue?.queueSources ?? [],
   error: null,
 
-  playSong: (song: Song, isUserAction?: boolean) => {
+  playSong: (song: Song, isUserAction?: boolean, startsNewSession = true) => {
     const pv = getPlayablePV(song);
     if (!pv) {
       set({ error: `再生可能な動画が見つかりません: ${song.name}` });
@@ -374,6 +375,11 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       ? queueSources.map((source, index) => index === queueIndex ? 'manual' : source)
       : queueSources;
     const playbackSequence = get().playbackSequence + 1;
+    if (isUserAction && startsNewSession) {
+      useAutoPlaySessionStore.getState().startSession(song.id);
+    } else if (playbackSource === 'auto') {
+      useAutoPlaySessionStore.getState().recordAutoPlaybackStarted();
+    }
     savePlayerQueue(queue, queueIndex, song, nextQueueSources, playbackSource);
     
     set({
@@ -425,7 +431,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     if (queueIndex > 0) {
       const prevIndex = queueIndex - 1;
       set({ queueIndex: prevIndex });
-      get().playSong(queue[prevIndex], true);
+        get().playSong(queue[prevIndex], true, false);
     }
   },
 
@@ -502,6 +508,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     const nextSources = [...queueSources, ...songs.map(() => source)];
     set({ queue: nextQueue, queueSources: nextSources });
     savePlayerQueue(nextQueue, queueIndex, currentSong, nextSources, currentPlaybackSource);
+    if (source === 'auto') useAutoPlaySessionStore.getState().recordAutoQueueAdded(songs.length);
   },
 
   removeFromQueue: (index: number) => {
@@ -557,6 +564,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       currentPlaybackSource: 'manual',
       isPlaying: false,
     });
+    useAutoPlaySessionStore.getState().clearSession();
     clearStoredPlayerQueue();
   },
 
@@ -566,7 +574,8 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     const nextSources = queueSources.map((source, i) => i === index ? 'manual' : source);
     set({ queueIndex: index, queueSources: nextSources });
     savePlayerQueue(queue, index, queue[index], nextSources, 'manual');
-    get().playSong(queue[index], true);
+    useAutoPlaySessionStore.getState().recordManualOverride();
+    get().playSong(queue[index], true, false);
   },
 
   queueDrawerOpen: false,
