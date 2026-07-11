@@ -310,35 +310,33 @@ public class DbService
 
         using var conn = Open();
         await using var cmd = new NpgsqlCommand(@"
-            WITH latest AS (
-                SELECT DISTINCT ON (song_id)
-                       song_id,
-                       recorded_at,
-                       COALESCE(youtube_views, 0) + COALESCE(nico_views, 0) AS total_views
+            WITH baseline_day AS (
+                SELECT date_trunc('day', MAX(recorded_at)) AS day
                 FROM view_history
-                ORDER BY song_id, recorded_at DESC
+                WHERE recorded_at <= now() - ($1::int * interval '1 day')
             ),
             baseline AS (
-                SELECT DISTINCT ON (song_id)
-                       song_id,
-                       recorded_at,
-                       COALESCE(youtube_views, 0) + COALESCE(nico_views, 0) AS total_views
-                FROM view_history
-                WHERE recorded_at >= now() - ($1::int * interval '1 day')
-                ORDER BY song_id, recorded_at ASC
+                SELECT DISTINCT ON (h.song_id)
+                       h.song_id,
+                       COALESCE(h.youtube_views, 0) + COALESCE(h.nico_views, 0) AS total_views
+                FROM view_history h
+                CROSS JOIN baseline_day d
+                WHERE d.day IS NOT NULL
+                  AND h.recorded_at >= d.day
+                  AND h.recorded_at < d.day + interval '1 day'
+                ORDER BY h.song_id, h.recorded_at ASC
             ),
             growth AS (
                 SELECT
-                    l.song_id,
-                    GREATEST(0, l.total_views - b.total_views) AS view_growth,
+                    s.id AS song_id,
+                    GREATEST(0, COALESCE(s.youtube_views, 0) + COALESCE(s.nico_views, 0) - b.total_views) AS view_growth,
                     CASE
                         WHEN b.total_views > 0
-                            THEN ((l.total_views - b.total_views)::double precision / b.total_views)
+                            THEN ((COALESCE(s.youtube_views, 0) + COALESCE(s.nico_views, 0) - b.total_views)::double precision / b.total_views)
                         ELSE 0
                     END AS growth_rate
-                FROM latest l
-                JOIN baseline b ON b.song_id = l.song_id
-                WHERE l.recorded_at > b.recorded_at
+                FROM baseline b
+                JOIN songs s ON s.id = b.song_id
             )
             SELECT (s.raw_json || jsonb_strip_nulls(jsonb_build_object(
                 'youtubeViews', s.youtube_views,
