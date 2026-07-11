@@ -329,7 +329,7 @@ public class DbService
         var modeCondition = normalizedMode switch
         {
             "surge" => "AND g.previous_views IS NOT NULL AND g.baseline_views > g.previous_views AND g.view_growth >= 1000 AND g.surge_rate >= 1.5",
-            "recent" => "AND s.publish_date >= CURRENT_DATE - interval '31 days'",
+            "recent" => "AND s.publish_date >= CURRENT_DATE - interval '30 days'",
             _ => string.Empty,
         };
         var orderBy = normalizedMode switch
@@ -345,6 +345,21 @@ public class DbService
                 SELECT date_trunc('day', MAX(recorded_at)) AS day
                 FROM view_history
                 WHERE recorded_at <= now() - ($1::int * interval '1 day')
+            ),
+            latest_day AS (
+                SELECT date_trunc('day', MAX(recorded_at)) AS day
+                FROM view_history
+            ),
+            latest AS (
+                SELECT DISTINCT ON (h.song_id)
+                       h.song_id,
+                       COALESCE(h.youtube_views, 0) + COALESCE(h.nico_views, 0) AS total_views
+                FROM view_history h
+                CROSS JOIN latest_day d
+                WHERE d.day IS NOT NULL
+                  AND h.recorded_at >= d.day
+                  AND h.recorded_at < d.day + interval '1 day'
+                ORDER BY h.song_id, h.recorded_at DESC
             ),
             baseline AS (
                 SELECT DISTINCT ON (h.song_id)
@@ -373,22 +388,23 @@ public class DbService
                     s.id AS song_id,
                     b.total_views AS baseline_views,
                     pb.total_views AS previous_views,
-                    GREATEST(0, COALESCE(s.youtube_views, 0) + COALESCE(s.nico_views, 0) - b.total_views) AS view_growth,
+                    GREATEST(0, l.total_views - b.total_views) AS view_growth,
                     CASE
                         WHEN b.total_views > 0
-                            THEN ((COALESCE(s.youtube_views, 0) + COALESCE(s.nico_views, 0) - b.total_views)::double precision / b.total_views)
+                            THEN ((l.total_views - b.total_views)::double precision / b.total_views)
                         ELSE 0
                     END AS growth_rate,
                     (
-                        (GREATEST(0, COALESCE(s.youtube_views, 0) + COALESCE(s.nico_views, 0) - b.total_views)::double precision / $1)
+                        (GREATEST(0, l.total_views - b.total_views)::double precision / $1)
                         / GREATEST(100.0, (GREATEST(0, b.total_views - COALESCE(pb.total_views, b.total_views))::double precision / 28.0))
                     ) AS surge_rate,
                     (
-                        GREATEST(0, COALESCE(s.youtube_views, 0) + COALESCE(s.nico_views, 0) - b.total_views)
+                        GREATEST(0, l.total_views - b.total_views)
                         * EXP(-GREATEST(0, CURRENT_DATE - s.publish_date) / 30.0)
                     ) AS recent_score
                 FROM baseline b
                 JOIN songs s ON s.id = b.song_id
+                JOIN latest l ON l.song_id = b.song_id
                 LEFT JOIN previous_baseline pb ON pb.song_id = b.song_id
             )
             SELECT (s.raw_json || jsonb_strip_nulls(jsonb_build_object(
