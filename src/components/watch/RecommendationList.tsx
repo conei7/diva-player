@@ -6,6 +6,7 @@ import { usePlayerStore } from '../../stores/playerStore';
 import { useUiStore } from '../../stores/uiStore';
 import { usePlaylistStore, WATCH_LATER_ID } from '../../stores/playlistStore';
 import { useSelectionStore } from '../../stores/selectionStore';
+import { formatSongRelativeDate } from '../../utils/relativeDate';
 
 /**
  * RecommendationList - 推薦動画リスト
@@ -138,6 +139,7 @@ function RecItemRow({
   const producerName = producers.map(a => a.name || a.artist?.name).filter(Boolean).join(', ');
   const vocalists = song.artists?.filter(a => a.categories === 'Vocalist') || [];
   const vocalistName = vocalists.map(a => a.name || a.artist?.name).filter(Boolean).join(', ');
+  const relativeDate = formatSongRelativeDate(song);
 
   const handleCardClick = useCallback((e: React.MouseEvent) => {
     if (isSelectionMode) {
@@ -242,6 +244,11 @@ function RecItemRow({
           <p className="text-xs mt-0.5 truncate" style={{ color: 'var(--color-text-muted)' }}>
             {producerName || song.artistString}
           </p>
+          {relativeDate && (
+            <span className="text-[10px]" style={{ color: 'var(--color-text-muted)' }}>
+              {relativeDate}
+            </span>
+          )}
           {recommendationReason && (
             <p className="text-[10px] mt-1 truncate" style={{ color: 'var(--color-accent)' }}>
               {recommendationReason}

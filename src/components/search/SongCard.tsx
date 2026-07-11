@@ -4,6 +4,7 @@ import { usePlayerStore, getPlayablePV } from '../../stores/playerStore';
 import { useUiStore } from '../../stores/uiStore';
 import { usePlaylistStore, WATCH_LATER_ID } from '../../stores/playlistStore';
 import { useSelectionStore } from '../../stores/selectionStore';
+import { formatSongRelativeDate } from '../../utils/relativeDate';
 
 interface SongCardProps {
   song: Song;
@@ -82,6 +83,7 @@ export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect, 
   const producerName = producers.map(a => a.name || a.artist?.name).filter(Boolean).join(', ');
   const vocalists = song.artists?.filter(a => a.categories === 'Vocalist') || [];
   const vocalistName = vocalists.map(a => a.name || a.artist?.name).filter(Boolean).join(', ');
+  const relativeDate = formatSongRelativeDate(song);
 
   // 再生時間フォーマット
   const formatDuration = (seconds: number): string => {
@@ -396,6 +398,11 @@ export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect, 
 
         {/* 下部バッジ列 */}
         <div className="flex items-center flex-wrap gap-2 mt-2">
+          {relativeDate && (
+            <span className="text-[10px]" style={{ color: 'var(--color-text-muted)' }}>
+              {relativeDate}
+            </span>
+          )}
           {/* PVサービスバッジ / 再生数 */}
           {(pvServices.has('Youtube') || (song.youtubeViews || 0) > 0) && (
             <span className="text-[10px] font-bold px-1.5 py-0.5 rounded flex items-center gap-1"
