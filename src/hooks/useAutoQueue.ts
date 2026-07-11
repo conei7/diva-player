@@ -21,7 +21,9 @@ import { useAutoPlaySessionStore } from '../stores/autoPlaySessionStore';
 import { useAutoQueueDecisionStore } from '../stores/autoQueueDecisionStore';
 import { useQueueRecommendationStore } from '../stores/queueRecommendationStore';
 import { useAutoQueueStatusStore } from '../stores/autoQueueStatusStore';
-import type { AutoQueueDecision, AutoQueueStatus, QueueRecommendation } from '../types/autoplay';
+import { useAutoQueueBanditStore } from '../stores/autoQueueBanditStore';
+import { adjustTargetForStrategy } from '../utils/strategyBandit';
+import type { AutoQueueDecision, AutoQueueStatus, AutoQueueStrategyArm, QueueRecommendation } from '../types/autoplay';
 
 export type AutoQueueMixMode = 'balanced' | 'deep' | 'producer';
 
@@ -135,6 +137,7 @@ function buildRecommendationMetadata(
   target: { known: number; unknown: number },
   queueLength: number,
   recentSkipRate: number,
+  strategyArm: AutoQueueStrategyArm,
 ): { queueRecommendations: Array<QueueRecommendation & { songId: number }>; decisions: AutoQueueDecision[] } {
   const now = Date.now();
   const sessionId = useAutoPlaySessionStore.getState().session?.id ?? null;
@@ -176,6 +179,7 @@ function buildRecommendationMetadata(
       targetKnown: target.known,
       targetUnknown: target.unknown,
       recentSkipRate,
+      strategyArm,
     })),
   };
 }
@@ -223,6 +227,10 @@ export function useAutoQueue({
       setStatus('ready');
       return;
     }
+    const strategyArm = useAutoQueueBanditStore.getState().selectArm(
+      useAutoQueueDecisionStore.getState().decisions.length,
+    );
+    const strategyTarget = adjustTargetForStrategy(queuePlan.target, strategyArm);
 
     const generation = ++requestGenerationRef.current;
     const controller = new AbortController();
@@ -269,7 +277,7 @@ export function useAutoQueue({
         const mixedSongs = selectKnownUnknownMix(
           scored.filter(item => knownIds.has(item.song.id)).map(item => item.song),
           scored.filter(item => !knownIds.has(item.song.id)).map(item => item.song),
-          queuePlan.target,
+          strategyTarget,
           existingIds,
         );
         const nextSongs = rerankForQueueDiversity(mixedSongs, {
@@ -292,9 +300,10 @@ export function useAutoQueue({
           rootSeed,
           currentSong,
           queuePlan.stage,
-          queuePlan.target,
+          strategyTarget,
           queue.length,
           recentSkipRate,
+          strategyArm,
         );
         useQueueRecommendationStore.getState().recordRecommendations(metadata.queueRecommendations);
         useAutoQueueDecisionStore.getState().recordDecisions(metadata.decisions);

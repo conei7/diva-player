@@ -10,6 +10,8 @@ import { useProgressStore } from './stores/progressStore';
 import { usePlaylistStore } from './stores/playlistStore';
 import { useImplicitFeedbackStore } from './stores/implicitFeedbackStore';
 import { useAutoPlaySessionStore } from './stores/autoPlaySessionStore';
+import { useAutoQueueDecisionStore } from './stores/autoQueueDecisionStore';
+import { useAutoQueueBanditStore } from './stores/autoQueueBanditStore';
 import { useAutoQueue } from './hooks/useAutoQueue';
 
 const HomePage = lazy(() => import('./pages/HomePage'));
@@ -75,6 +77,8 @@ function PlayerTracker() {
         ? 'skip'
         : completionRate >= 0.7 ? 'complete' : 'neutral';
       useAutoPlaySessionStore.getState().recordAutoPlaybackOutcome(outcome);
+      const decision = useAutoQueueDecisionStore.getState().getLatestDecisionForSong(previous.id);
+      if (decision) useAutoQueueBanditStore.getState().recordOutcome(decision.strategyArm, outcome);
     }
   };
 

@@ -8,6 +8,7 @@ export type AutoQueueReasonCode =
   | 'fallback';
 
 export type AutoQueueStatus = 'idle' | 'fetching' | 'reranking' | 'ready' | 'degraded' | 'exhausted' | 'error';
+export type AutoQueueStrategyArm = 'familiar' | 'balanced' | 'explore';
 
 export interface QueueRecommendation {
   strategyVersion: string;
@@ -27,4 +28,5 @@ export interface AutoQueueDecision extends QueueRecommendation {
   targetKnown: number;
   targetUnknown: number;
   recentSkipRate: number;
+  strategyArm: AutoQueueStrategyArm;
 }
