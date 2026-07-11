@@ -441,7 +441,9 @@ public class DbService
             platform_ranks AS (
                 SELECT growth.*,
                        ROW_NUMBER() OVER (ORDER BY youtube_signal DESC) AS youtube_rank,
-                       ROW_NUMBER() OVER (ORDER BY nico_signal DESC) AS nico_rank
+                       ROW_NUMBER() OVER (ORDER BY nico_signal DESC) AS nico_rank,
+                       MAX(youtube_signal) OVER () AS max_youtube_signal,
+                       MAX(nico_signal) OVER () AS max_nico_signal
                 FROM growth
             ),
             ranked_growth AS (
@@ -449,8 +451,14 @@ public class DbService
                     song_id, baseline_views, previous_views, prior_window_days,
                     view_growth, growth_rate, surge_rate, recent_score,
                     (
-                        CASE WHEN youtube_signal > 0 THEN 1.0 / (60 + youtube_rank) ELSE 0 END
-                        + CASE WHEN nico_signal > 0 THEN 1.0 / (60 + nico_rank) ELSE 0 END
+                        70.0 * (
+                            CASE WHEN youtube_signal > 0 THEN 1.0 / (60 + youtube_rank) ELSE 0 END
+                            + CASE WHEN nico_signal > 0 THEN 1.0 / (60 + nico_rank) ELSE 0 END
+                        )
+                        + 0.3 * (
+                            CASE WHEN max_youtube_signal > 0 THEN youtube_signal / max_youtube_signal ELSE 0 END
+                            + CASE WHEN max_nico_signal > 0 THEN nico_signal / max_nico_signal ELSE 0 END
+                        )
                     ) AS popular_score
                 FROM platform_ranks
             ),
