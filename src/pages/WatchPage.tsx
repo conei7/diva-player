@@ -19,6 +19,7 @@ import type { Song } from '../types/vocadb';
 import { useSelectionStore } from '../stores/selectionStore';
 import QueueSidebar from '../components/player/QueueSidebar';
 import { diversifyAwayFromSeedVocalist } from '../utils/recommendationScoring';
+import { mixRecommendationSources, reasonForSource } from '../utils/recommendationMixing';
 
 function WatchQueue() {
   const queue = usePlayerStore(s => s.queue);
@@ -70,6 +71,7 @@ function WatchQueue() {
 
 interface TabState {
   items: Song[];
+  reasons?: Record<number, string>;
   loading: boolean;
   hasMore: boolean;
   page: number;
@@ -218,18 +220,35 @@ export default function WatchPage() {
 
   const fetchRecommended = useCallback(async (s: Song, page: number) => {
     try {
-      const items = diversifyAwayFromSeedVocalist(
-        s,
-        await getRecommendedSongs(s.id, PAGE_SIZE * 2, 0.0, ratings, randomOffsetRef.current + page * PAGE_SIZE * 2),
-        Math.max(6, Math.floor(PAGE_SIZE / 4)),
-      ).slice(0, PAGE_SIZE);
+      const offset = randomOffsetRef.current + page * PAGE_SIZE * 2;
+      const [hybrid, audio] = await Promise.all([
+        getRecommendedSongs(s.id, PAGE_SIZE * 2, 0.0, ratings, offset),
+        getAudioSimilarSongs(s.id, PAGE_SIZE, offset),
+      ]);
+      const mixed = mixRecommendationSources({
+        hybrid: diversifyAwayFromSeedVocalist(s, hybrid, 6)
+          .map(song => ({ song, source: 'hybrid' as const, reason: reasonForSource('hybrid') })),
+        audio: diversifyAwayFromSeedVocalist(s, audio, 4)
+          .map(song => ({ song, source: 'audio' as const, reason: reasonForSource('audio') })),
+      }, {
+        quotas: { hybrid: 28, audio: 12 },
+        total: PAGE_SIZE,
+        maxPerProducer: 3,
+        excludeIds: new Set([s.id]),
+      });
+      const items = mixed.map(item => item.song);
       const fresh = items.filter(item => !seenSets.current.recommended.has(item.id));
       fresh.forEach(item => seenSets.current.recommended.add(item.id));
+      const freshIds = new Set(fresh.map(item => item.id));
+      const reasons = Object.fromEntries(mixed
+        .filter(item => freshIds.has(item.song.id))
+        .map(item => [item.song.id, item.reason]));
 
       setTabs(prev => ({
         ...prev,
         recommended: {
           items: page === 0 ? fresh : [...prev.recommended.items, ...fresh],
+          reasons: page === 0 ? reasons : { ...prev.recommended.reasons, ...reasons },
           loading: false,
           hasMore: items.length >= PAGE_SIZE,
           page: page + 1,
@@ -414,6 +433,7 @@ export default function WatchPage() {
               songs={currentTab.items}
               loading={currentTab.loading}
               hasMore={currentTab.hasMore}
+              recommendationReasons={activeTab === 'recommended' ? currentTab.reasons : undefined}
             />
 
             {/* 無限スクロールセンチネル */}

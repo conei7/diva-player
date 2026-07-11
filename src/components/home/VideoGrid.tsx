@@ -13,6 +13,7 @@ interface VideoGridProps {
   songs: Song[];
   loading?: boolean;
   showScore?: boolean;
+  recommendationReasons?: Record<number, string>;
 }
 
 function SkeletonCard() {
@@ -27,7 +28,7 @@ function SkeletonCard() {
   );
 }
 
-export default function VideoGrid({ songs, loading }: VideoGridProps) {
+export default function VideoGrid({ songs, loading, recommendationReasons }: VideoGridProps) {
   const navigate = useNavigate();
   const setVisibleSongs = useSelectionStore(s => s.setVisibleSongs);
 
@@ -65,7 +66,13 @@ export default function VideoGrid({ songs, loading }: VideoGridProps) {
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-3">
       {songs.map((song, index) => (
-        <SongCard key={song.id} song={song} index={index} onPlay={handlePlay} />
+        <SongCard
+          key={song.id}
+          song={song}
+          index={index}
+          onPlay={handlePlay}
+          recommendationReason={recommendationReasons?.[song.id]}
+        />
       ))}
       {/* 追加ローディング */}
       {loading && songs.length > 0 &&

@@ -17,6 +17,7 @@ interface RecommendationListProps {
   songs: Song[];
   loading: boolean;
   hasMore: boolean;
+  recommendationReasons?: Record<number, string>;
 }
 
 /** サムネイルURLを解決 */
@@ -52,11 +53,13 @@ function RecItemRow({
   isActive,
   hiddenMode,
   isPlaying,
+  recommendationReason,
 }: {
   song: Song;
   isActive: boolean;
   hiddenMode: boolean;
   isPlaying: boolean;
+  recommendationReason?: string;
 }) {
   const navigate = useNavigate();
   const { openSaveToPlaylist } = useUiStore();
@@ -239,6 +242,11 @@ function RecItemRow({
           <p className="text-xs mt-0.5 truncate" style={{ color: 'var(--color-text-muted)' }}>
             {producerName || song.artistString}
           </p>
+          {recommendationReason && (
+            <p className="text-[10px] mt-1 truncate" style={{ color: 'var(--color-accent)' }}>
+              {recommendationReason}
+            </p>
+          )}
 
           <div className="flex items-center gap-2 mt-1 flex-wrap">
             {(ytPVs.length > 0 || (song.youtubeViews || 0) > 0) && (
@@ -359,6 +367,7 @@ function SkeletonItem() {  return (
 export default function RecommendationList({
   songs,
   loading,
+  recommendationReasons,
 }: RecommendationListProps) {
   const { currentSong, isPlaying, hiddenMode } = usePlayerStore();
 
@@ -392,6 +401,7 @@ export default function RecommendationList({
             isActive={currentSong?.id === song.id}
             hiddenMode={hiddenMode}
             isPlaying={isPlaying}
+            recommendationReason={recommendationReasons?.[song.id]}
           />
         </div>
       ))}

@@ -11,6 +11,7 @@ interface SongCardProps {
   onPlay?: (song: Song) => void;
   onAddToQueue?: (song: Song) => void;
   onSelect?: (song: Song) => void;
+  recommendationReason?: string;
 }
 
 const formatJapaneseViews = (views?: number): string => {
@@ -28,7 +29,7 @@ const formatJapaneseViews = (views?: number): string => {
  * SongCard - 検索結果の曲カード
  * サムネイル、曲名、アーティスト、PVサービスバッジ、再生ボタンを表示。
  */
-export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect }: SongCardProps) {
+export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect, recommendationReason }: SongCardProps) {
   const { currentSong, isPlaying, setQueue, hiddenMode } = usePlayerStore();
   const { openSaveToPlaylist } = useUiStore();
   const toggleSong = usePlaylistStore(s => s.toggleSongInPlaylist);
@@ -309,6 +310,11 @@ export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect }
             <p className="text-xs mt-0.5 truncate" style={{ color: 'var(--color-text-muted)' }}>
               {producerName || song.artistString}
             </p>
+            {recommendationReason && (
+              <p className="text-[10px] mt-1 truncate" style={{ color: 'var(--color-accent-cyan)' }} title={recommendationReason}>
+                {recommendationReason}
+              </p>
+            )}
           </div>
 
           {/* ⋮ メニューボタン (選択モード中は非表示) */}

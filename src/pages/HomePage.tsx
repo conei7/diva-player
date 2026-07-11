@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import CategoryChips, { type CategoryChip } from '../components/home/CategoryChips';
 import VideoGrid from '../components/home/VideoGrid';
-import { searchSongs, getTopSongs, getRecommendedSongs, getSimilarSongs, getTrendingSongs } from '../api/vocadb';
+import { searchSongs, getTopSongs, getRecommendedSongs, getSimilarSongs, getAudioSimilarSongs, getTrendingSongs } from '../api/vocadb';
 import { useHistoryStore } from '../stores/historyStore';
 import { usePlayerStore } from '../stores/playerStore';
 import { useRatingStore } from '../stores/ratingStore';
@@ -13,11 +13,11 @@ import { useImplicitFeedbackStore } from '../stores/implicitFeedbackStore';
 import type { Song } from '../types/vocadb';
 import SearchFilters from '../components/search/SearchFilters';
 import {
-  diversifyByArtist,
   getPlaylistSongs,
   rankKnownSongs,
   uniqueSongsById,
 } from '../utils/recommendationScoring';
+import { mixRecommendationSources, reasonForSource } from '../utils/recommendationMixing';
 
 type HomeCategoryId =
   | 'recommended'
@@ -56,6 +56,7 @@ export default function HomePage() {
   const [page, setPage] = useState(0);
   const [hasMore, setHasMore] = useState(true);
   const [isAdvancedOpen, setIsAdvancedOpen] = useState(false);
+  const [recommendationReasons, setRecommendationReasons] = useState<Record<number, string>>({});
 
   const sentinelRef = useRef<HTMLDivElement>(null);
   const fetchingRef = useRef(false);
@@ -106,7 +107,9 @@ export default function HomePage() {
       .slice(0, 3)
       .map(item => item.song.id);
 
-    const [popularResult, seedResults, preferenceResults] = await Promise.all([
+    const audioSeedIds = [...new Set([...seedIds, ...preferenceSeedIds])].slice(0, 2);
+
+    const [popularResult, seedResults, preferenceResults, audioResults] = await Promise.all([
       searchSongs({
         sort: 'FavoritedTimes',
         maxResults: 12,
@@ -122,18 +125,29 @@ export default function HomePage() {
         getSimilarSongs(seedId, 8, pageNum * 8)
           .catch(() => [] as Song[])
       )),
+      Promise.all(audioSeedIds.map(seedId =>
+        getAudioSimilarSongs(seedId, 8, pageNum * 8)
+          .catch(() => [] as Song[])
+      )),
     ]);
 
     const knownStart = pageNum * 10;
-    const mixed = uniqueSongsById([
-      ...knownSongs.slice(knownStart, knownStart + 10),
-      ...preferenceResults.flat(),
-      ...popularResult.items,
-      ...seedResults.flat(),
-      ...knownSongs.slice(knownStart + 10, knownStart + 14),
-    ]);
-
-    const result = diversifyByArtist(mixed, 2).slice(0, PAGE_SIZE);
+    const mixed = mixRecommendationSources({
+      known: knownSongs.slice(knownStart, knownStart + 18).map(song => ({ song, source: 'known' as const, reason: reasonForSource('known') })),
+      hybrid: uniqueSongsById([...preferenceResults.flat(), ...seedResults.flat()])
+        .map(song => ({ song, source: 'hybrid' as const, reason: reasonForSource('hybrid') })),
+      audio: uniqueSongsById(audioResults.flat())
+        .map(song => ({ song, source: 'audio' as const, reason: reasonForSource('audio') })),
+      popular: popularResult.items
+        .map(song => ({ song, source: 'popular' as const, reason: reasonForSource('popular') })),
+    }, {
+      quotas: { known: 11, hybrid: 7, audio: 4, popular: 2 },
+      total: PAGE_SIZE,
+      maxPerProducer: 3,
+      excludeIds,
+    });
+    const result = mixed.map(item => item.song);
+    if (pageNum === 0) setRecommendationReasons(Object.fromEntries(mixed.map(item => [item.song.id, item.reason])));
     return result.length > 0 ? result : getTopSongs(720, PAGE_SIZE);
   }, [currentSong, entries, playlists, ratings, implicitFeedback]);
 
@@ -241,6 +255,7 @@ export default function HomePage() {
 
       if (pageNum === 0) {
         setSongs(result);
+        if (category !== 'recommended') setRecommendationReasons({});
       } else {
         setSongs(prev => {
           const existingIds = new Set(prev.map(song => song.id));
@@ -397,6 +412,9 @@ export default function HomePage() {
       <VideoGrid
         songs={displaySongs}
         loading={hasSearched ? searchLoading : loading}
+        recommendationReasons={!isSearchMode && !isArtistMode && !hasSearched && activeCategory === 'recommended'
+          ? recommendationReasons
+          : undefined}
       />
 
       <div ref={sentinelRef} className="h-8 mt-6 flex items-center justify-center">
