@@ -30,9 +30,9 @@ type HomeCategoryId =
 
 const CATEGORIES: CategoryChip[] = [
   { id: 'recommended', label: 'あなたへのおすすめ' },
-  { id: 'popular', label: 'いま人気急上昇' },
-  { id: 'trending', label: '急上昇中' },
-  { id: 'recent', label: '新着・伸びてる' },
+  { id: 'popular', label: '人気の曲' },
+  { id: 'trending', label: '急上昇' },
+  { id: 'recent', label: '新着' },
   { id: 'deep', label: 'マイナー発掘' },
   { id: 'history_based', label: '最近聴いたPの曲' },
 ];
