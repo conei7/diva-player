@@ -8,6 +8,30 @@ export interface HistoryLikeEntry {
 export interface ScoredSong {
   song: Song;
   score: number;
+  breakdown?: QueueCandidateScoreBreakdown;
+}
+
+export interface ImplicitFeedbackBreakdown {
+  skipCount: number;
+  removeCount: number;
+  manualCompleteCount: number;
+  autoCompleteCount: number;
+  legacyCompleteCount: number;
+  negativeEvents: number;
+  positiveEvents: number;
+  recentNegativeMultiplier: number;
+  multiplier: number;
+}
+
+export interface QueueCandidateScoreBreakdown {
+  baseScore: number;
+  recencyMultiplier: number;
+  lastPlayedAt?: number;
+  playlistMultiplier: number;
+  ratingMultiplier: number;
+  implicitFeedback: ImplicitFeedbackBreakdown;
+  popularityMultiplier: number;
+  finalScore: number;
 }
 
 export interface ImplicitSongFeedbackLike {
@@ -229,8 +253,8 @@ export function scoreQueueCandidates(
   existingIds: Set<number>,
   implicitFeedback: Record<string, ImplicitSongFeedbackLike> = {},
 ): ScoredSong[] {
-  const now = Date.now();
   const lastPlayedMap = new Map<number, number>();
+  const now = Date.now();
 
   for (const entry of historyEntries) {
     const existing = lastPlayedMap.get(entry.song.id);
@@ -242,32 +266,67 @@ export function scoreQueueCandidates(
   return uniqueSongsById(candidates)
     .filter(song => !existingIds.has(song.id))
     .map(song => {
-      let score = 1.0;
+      const breakdown = explainQueueCandidateScore(
+        song,
+        historyEntries,
+        playlistSongIds,
+        ratings,
+        implicitFeedback,
+        lastPlayedMap,
+        now,
+      );
 
-      const lastPlayed = lastPlayedMap.get(song.id);
-      if (lastPlayed) {
-        const hoursAgo = (now - lastPlayed) / ONE_HOUR;
-        if (hoursAgo < 1) score *= 0.0;
-        else if (hoursAgo < 3) score *= 0.25;
-        else if (hoursAgo < 12) score *= 0.75;
-        else if (hoursAgo < 24) score *= 0.95;
-        else score *= 1.4;
-      }
-
-      if (playlistSongIds.has(song.id)) {
-        score *= 1.8;
-      }
-
-      const rating = ratings[String(song.id)] ?? 0;
-      if (rating >= 3) score *= 1 + (rating - 2) * 0.3;
-      score = applyImplicitFeedbackMultiplier(song, score, rating, implicitFeedback);
-
-      score *= 1 + Math.log10(Math.max(1, song.favoritedTimes ?? 1)) * 0.05;
-
-      return { song, score };
+      return { song, score: breakdown.finalScore, breakdown };
     })
     .filter(item => item.score > 0)
     .sort((a, b) => b.score - a.score);
+}
+
+export function explainQueueCandidateScore(
+  song: Song,
+  historyEntries: HistoryLikeEntry[],
+  playlistSongIds: Set<number>,
+  ratings: Record<string, number>,
+  implicitFeedback: Record<string, ImplicitSongFeedbackLike> = {},
+  lastPlayedMap?: Map<number, number>,
+  now = Date.now(),
+): QueueCandidateScoreBreakdown {
+  const playedAt = lastPlayedMap?.get(song.id) ?? historyEntries
+    .filter(entry => entry.song.id === song.id)
+    .reduce<number | undefined>((latest, entry) => !latest || entry.playedAt > latest ? entry.playedAt : latest, undefined);
+
+  let recencyMultiplier = 1.0;
+  if (playedAt) {
+    const hoursAgo = (now - playedAt) / ONE_HOUR;
+    if (hoursAgo < 1) recencyMultiplier = 0.0;
+    else if (hoursAgo < 3) recencyMultiplier = 0.25;
+    else if (hoursAgo < 12) recencyMultiplier = 0.75;
+    else if (hoursAgo < 24) recencyMultiplier = 0.95;
+    else recencyMultiplier = 1.4;
+  }
+
+  const playlistMultiplier = playlistSongIds.has(song.id) ? 1.8 : 1.0;
+  const rating = ratings[String(song.id)] ?? 0;
+  const ratingMultiplier = rating >= 3 ? 1 + (rating - 2) * 0.3 : 1.0;
+  const implicitFeedbackBreakdown = explainImplicitFeedback(song, rating, implicitFeedback);
+  const popularityMultiplier = 1 + Math.log10(Math.max(1, song.favoritedTimes ?? 1)) * 0.05;
+  const finalScore = 1.0
+    * recencyMultiplier
+    * playlistMultiplier
+    * ratingMultiplier
+    * implicitFeedbackBreakdown.multiplier
+    * popularityMultiplier;
+
+  return {
+    baseScore: 1.0,
+    recencyMultiplier,
+    ...(playedAt ? { lastPlayedAt: playedAt } : {}),
+    playlistMultiplier,
+    ratingMultiplier,
+    implicitFeedback: implicitFeedbackBreakdown,
+    popularityMultiplier,
+    finalScore,
+  };
 }
 
 function applyImplicitFeedbackMultiplier(
@@ -276,15 +335,47 @@ function applyImplicitFeedbackMultiplier(
   rating: number,
   feedbackMap: Record<string, ImplicitSongFeedbackLike>,
 ): number {
+  return score * explainImplicitFeedback(song, rating, feedbackMap).multiplier;
+}
+
+export function explainImplicitFeedback(
+  song: Song,
+  rating: number,
+  feedbackMap: Record<string, ImplicitSongFeedbackLike>,
+): ImplicitFeedbackBreakdown {
   const feedback = feedbackMap[String(song.id)];
-  if (!feedback) return score;
+  if (!feedback) {
+    return {
+      skipCount: 0,
+      removeCount: 0,
+      manualCompleteCount: 0,
+      autoCompleteCount: 0,
+      legacyCompleteCount: 0,
+      negativeEvents: 0,
+      positiveEvents: 0,
+      recentNegativeMultiplier: 1,
+      multiplier: 1,
+    };
+  }
 
   const negative = feedback.skipCount + feedback.removeCount * 2;
   const manualPositive = feedback.manualCompleteCount ?? 0;
   const autoPositive = feedback.autoCompleteCount ?? 0;
   const legacyPositive = Math.max(0, feedback.completeCount - manualPositive - autoPositive);
   const positive = manualPositive + autoPositive + legacyPositive;
-  if (negative === 0 && positive === 0) return score;
+  if (negative === 0 && positive === 0) {
+    return {
+      skipCount: feedback.skipCount,
+      removeCount: feedback.removeCount,
+      manualCompleteCount: manualPositive,
+      autoCompleteCount: autoPositive,
+      legacyCompleteCount: legacyPositive,
+      negativeEvents: negative,
+      positiveEvents: positive,
+      recentNegativeMultiplier: 1,
+      multiplier: 1,
+    };
+  }
 
   let multiplier = 1.0;
   multiplier *= Math.pow(0.72, Math.min(negative, 5));
@@ -293,16 +384,28 @@ function applyImplicitFeedbackMultiplier(
   multiplier *= Math.pow(1.03, Math.min(legacyPositive, 5));
 
   const lastNegativeAt = Math.max(feedback.lastSkippedAt ?? 0, feedback.lastRemovedAt ?? 0);
+  let recentNegativeMultiplier = 1;
   if (lastNegativeAt > 0) {
     const hoursAgo = (Date.now() - lastNegativeAt) / ONE_HOUR;
-    if (hoursAgo < 6) multiplier *= 0.45;
-    else if (hoursAgo < 24) multiplier *= 0.7;
-    else if (hoursAgo < 72) multiplier *= 0.85;
+    if (hoursAgo < 6) recentNegativeMultiplier = 0.45;
+    else if (hoursAgo < 24) recentNegativeMultiplier = 0.7;
+    else if (hoursAgo < 72) recentNegativeMultiplier = 0.85;
+    multiplier *= recentNegativeMultiplier;
   }
 
   if (rating >= 3) {
     multiplier = Math.max(multiplier, 0.75);
   }
 
-  return score * Math.max(0.05, Math.min(2.0, multiplier));
+  return {
+    skipCount: feedback.skipCount,
+    removeCount: feedback.removeCount,
+    manualCompleteCount: manualPositive,
+    autoCompleteCount: autoPositive,
+    legacyCompleteCount: legacyPositive,
+    negativeEvents: negative,
+    positiveEvents: positive,
+    recentNegativeMultiplier,
+    multiplier: Math.max(0.05, Math.min(2.0, multiplier)),
+  };
 }

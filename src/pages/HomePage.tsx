@@ -17,8 +17,9 @@ import {
   rankKnownSongs,
   uniqueSongsById,
 } from '../utils/recommendationScoring';
-import { rerankRecommendationCandidates } from '../utils/recommendationReranking';
+import { rerankRecommendationCandidatesDetailed } from '../utils/recommendationReranking';
 import { filterVoiceSynthSongs } from '../utils/voiceSynthSongs';
+import { useRecommendationDebugStore } from '../stores/recommendationDebugStore';
 
 type HomeCategoryId =
   | 'recommended'
@@ -133,7 +134,7 @@ export default function HomePage() {
     ]);
 
     const knownStart = pageNum * 10;
-    const mixed = rerankRecommendationCandidates({
+    const detailed = rerankRecommendationCandidatesDetailed({
       known: knownSongs.slice(knownStart, knownStart + 18),
       hybrid: uniqueSongsById([...preferenceResults.flat(), ...seedResults.flat()]),
       audio: uniqueSongsById(audioResults.flat()),
@@ -146,8 +147,19 @@ export default function HomePage() {
       implicitFeedback,
       excludeIds,
     });
+    const mixed = detailed.ranked;
     const result = mixed.map(item => item.song);
     if (pageNum === 0) setRecommendationReasons(Object.fromEntries(mixed.map(item => [item.song.id, item.reason])));
+    useRecommendationDebugStore.getState().recordSnapshot({
+      id: `${Date.now()}-home-${pageNum}`,
+      surface: 'home',
+      generatedAt: Date.now(),
+      seedSongIds: [...seedIds, ...preferenceSeedIds],
+      familiarityBias: 0,
+      candidateCount: detailed.trace.length,
+      selectedCount: detailed.ranked.length,
+      trace: detailed.trace,
+    });
     return result.length > 0 ? result : getTopSongs(720, PAGE_SIZE);
   }, [currentSong, entries, playlists, ratings, implicitFeedback]);
 

@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
 import TopNav from './TopNav';
 import Sidebar from './Sidebar';
@@ -9,6 +10,11 @@ import { useUiStore } from '../../stores/uiStore';
 import SelectionFAB from '../search/SelectionFAB';
 import { useSelectionStore } from '../../stores/selectionStore';
 import BackendStatusNotice from './BackendStatusNotice';
+import RecommendationDebugPanel from '../debug/RecommendationDebugPanel';
+import {
+  RECOMMENDATION_DEBUG_STORAGE_KEY,
+  useRecommendationDebugStore,
+} from '../../stores/recommendationDebugStore';
 
 /**
  * メインレイアウト (YouTube風)
@@ -22,10 +28,18 @@ export default function Layout() {
   const location = useLocation();
   const { sidebarExpanded } = useUiStore();
   const visibleSongs = useSelectionStore(s => s.visibleSongs);
+  const setDebugEnabled = useRecommendationDebugStore(s => s.setEnabled);
 
   const isWatchPage = location.pathname === '/watch';
   // /watch ではサイドバーを非表示
   const showSidebar = !isWatchPage;
+
+  useEffect(() => {
+    const requested = new URLSearchParams(location.search).get('recDebug');
+    if (requested === '1') sessionStorage.setItem(RECOMMENDATION_DEBUG_STORAGE_KEY, '1');
+    if (requested === '0') sessionStorage.removeItem(RECOMMENDATION_DEBUG_STORAGE_KEY);
+    setDebugEnabled(requested === '1' || (requested !== '0' && sessionStorage.getItem(RECOMMENDATION_DEBUG_STORAGE_KEY) === '1'));
+  }, [location.search, setDebugEnabled]);
 
   return (
     <div className="min-h-screen flex flex-col" style={{ background: 'var(--color-bg-primary)' }}>
@@ -60,6 +74,7 @@ export default function Layout() {
       <SongDetailsModal />
       <SaveToPlaylistModal />
       <SelectionFAB visibleSongs={visibleSongs} />
+      <RecommendationDebugPanel />
     </div>
   );
 }

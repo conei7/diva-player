@@ -22,7 +22,8 @@ import type { Song } from '../types/vocadb';
 import { useSelectionStore } from '../stores/selectionStore';
 import QueueSidebar from '../components/player/QueueSidebar';
 import { diversifyAwayFromSeedVocalist } from '../utils/recommendationScoring';
-import { rerankRecommendationCandidates } from '../utils/recommendationReranking';
+import { rerankRecommendationCandidatesDetailed } from '../utils/recommendationReranking';
+import { useRecommendationDebugStore } from '../stores/recommendationDebugStore';
 
 function WatchQueue() {
   const queue = usePlayerStore(s => s.queue);
@@ -231,7 +232,7 @@ export default function WatchPage() {
         getRecommendedSongs(s.id, PAGE_SIZE * 2, 0.0, ratings, offset),
         getAudioSimilarSongs(s.id, PAGE_SIZE, offset),
       ]);
-      const mixed = rerankRecommendationCandidates({
+      const detailed = rerankRecommendationCandidatesDetailed({
         hybrid: diversifyAwayFromSeedVocalist(s, hybrid, 6),
         audio: diversifyAwayFromSeedVocalist(s, audio, 4),
       }, {
@@ -242,6 +243,7 @@ export default function WatchPage() {
         implicitFeedback,
         excludeIds: new Set([s.id]),
       });
+      const mixed = detailed.ranked;
       const items = mixed.map(item => item.song);
       const fresh = items.filter(item => !seenSets.current.recommended.has(item.id));
       fresh.forEach(item => seenSets.current.recommended.add(item.id));
@@ -249,6 +251,18 @@ export default function WatchPage() {
       const reasons = Object.fromEntries(mixed
         .filter(item => freshIds.has(item.song.id))
         .map(item => [item.song.id, item.reason]));
+
+      useRecommendationDebugStore.getState().recordSnapshot({
+        id: `${Date.now()}-watch-${s.id}-${page}`,
+        surface: 'watch',
+        generatedAt: Date.now(),
+        seedSongIds: [s.id],
+        strategy: 'recommended',
+        familiarityBias: 0,
+        candidateCount: detailed.trace.length,
+        selectedCount: fresh.length,
+        trace: detailed.trace,
+      });
 
       setTabs(prev => ({
         ...prev,

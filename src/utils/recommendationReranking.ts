@@ -5,6 +5,7 @@ import {
   getArtistBucket,
   getVocalistIds,
   scoreQueueCandidates,
+  type QueueCandidateScoreBreakdown,
 } from './recommendationScoring';
 import { filterVoiceSynthSongs } from './voiceSynthSongs';
 
@@ -17,6 +18,35 @@ export interface RecommendationCandidate {
 
 export interface RankedRecommendation extends RecommendationCandidate {
   reason: string;
+}
+
+export interface RecommendationSourceTrace {
+  source: RecommendationSource;
+  sourceRank: number;
+  sourceWeight: number;
+  rankSignal: number;
+  evidenceContribution: number;
+}
+
+export interface RecommendationCandidateTrace {
+  songId: number;
+  songName: string;
+  sources: RecommendationSourceTrace[];
+  evidence: number;
+  preference?: QueueCandidateScoreBreakdown;
+  known: boolean;
+  familiarityAdjustment: number;
+  producerPenalty: number;
+  vocalistPenalty: number;
+  finalScore: number | null;
+  selectedRank: number | null;
+  status: 'selected' | 'not_selected';
+  reason: string;
+}
+
+export interface DetailedRerankResult {
+  ranked: RankedRecommendation[];
+  trace: RecommendationCandidateTrace[];
 }
 
 export interface RecommendationRerankOptions {
@@ -63,27 +93,80 @@ export function rerankRecommendationCandidates(
     familiarityBias = 0,
   }: RecommendationRerankOptions,
 ): RankedRecommendation[] {
-  const entries = new Map<number, { song: Song; evidence: number; sources: Set<RecommendationSource> }>();
+  return rerankRecommendationCandidatesDetailed(pools, {
+    total,
+    historyEntries,
+    playlists,
+    ratings,
+    implicitFeedback,
+    excludeIds,
+    recentSongs,
+    familiarityBias,
+  }).ranked;
+}
+
+export function rerankRecommendationCandidatesDetailed(
+  pools: Partial<Record<RecommendationSource, Song[]>>,
+  {
+    total,
+    historyEntries,
+    playlists,
+    ratings,
+    implicitFeedback,
+    excludeIds = new Set<number>(),
+    recentSongs = [],
+    familiarityBias = 0,
+  }: RecommendationRerankOptions,
+): DetailedRerankResult {
+  const entries = new Map<number, {
+    song: Song;
+    evidence: number;
+    sources: Set<RecommendationSource>;
+    sourceTraces: RecommendationSourceTrace[];
+    finalScore: number | null;
+    producerPenalty: number;
+    vocalistPenalty: number;
+    familiarityAdjustment: number;
+  }>();
   (Object.entries(pools) as Array<[RecommendationSource, Song[] | undefined]>).forEach(([source, songs]) => {
     filterVoiceSynthSongs(songs ?? []).forEach((song, index) => {
       if (excludeIds.has(song.id)) return;
       const rankSignal = 1 / Math.sqrt(index + 1);
-      const current = entries.get(song.id) ?? { song, evidence: 0, sources: new Set<RecommendationSource>() };
-      current.evidence += SOURCE_WEIGHT[source] * rankSignal;
+      const sourceWeight = SOURCE_WEIGHT[source];
+      const current = entries.get(song.id) ?? {
+        song,
+        evidence: 0,
+        sources: new Set<RecommendationSource>(),
+        sourceTraces: [],
+        finalScore: null,
+        producerPenalty: 0,
+        vocalistPenalty: 0,
+        familiarityAdjustment: 0,
+      };
+      current.evidence += sourceWeight * rankSignal;
       current.sources.add(source);
+      current.sourceTraces.push({
+        source,
+        sourceRank: index + 1,
+        sourceWeight,
+        rankSignal,
+        evidenceContribution: sourceWeight * rankSignal,
+      });
       entries.set(song.id, current);
     });
   });
 
   const playlistSongIds = buildPlaylistSongSet(playlists);
-  const preferenceScores = new Map(scoreQueueCandidates(
+  const scoredPreferences = scoreQueueCandidates(
     [...entries.values()].map(entry => entry.song),
     historyEntries,
     playlistSongIds,
     ratings,
     new Set(excludeIds),
     implicitFeedback,
-  ).map(item => [item.song.id, item.score]));
+  );
+  const scoredPreferenceMap = new Map(scoredPreferences.map(item => [item.song.id, item]));
+  const preferenceScores = new Map(scoredPreferences.map(item => [item.song.id, item.score]));
   const knownIds = new Set<number>([
     ...historyEntries.map(entry => entry.song.id),
     ...playlistSongIds,
@@ -116,6 +199,10 @@ export function rerankRecommendationCandidates(
       const familiarityAdjustment = (known ? 1 : -1) * familiarityBias * 0.2;
       const score = entry.evidence * 0.9 + Math.sqrt(Math.max(0, preference)) * 0.8
         + familiarityAdjustment - producerPenalty - vocalistPenalty;
+      entry.finalScore = score;
+      entry.producerPenalty = producerPenalty;
+      entry.vocalistPenalty = vocalistPenalty;
+      entry.familiarityAdjustment = familiarityAdjustment;
       if (score > bestScore) {
         bestScore = score;
         bestIndex = index;
@@ -127,5 +214,25 @@ export function rerankRecommendationCandidates(
     result.push({ song: selected.song, source: primarySource, reason: sourceReason(selected.sources, known) });
     addDiversity(selected.song);
   }
-  return result;
+  const rankedIds = new Map(result.map((item, index) => [item.song.id, index + 1]));
+  const trace = [...entries.values()].map(entry => {
+    const known = knownIds.has(entry.song.id);
+    const preferenceBreakdown = scoredPreferenceMap.get(entry.song.id)?.breakdown;
+    return {
+      songId: entry.song.id,
+      songName: entry.song.name,
+      sources: entry.sourceTraces,
+      evidence: entry.evidence,
+      ...(preferenceBreakdown ? { preference: preferenceBreakdown } : {}),
+      known,
+      familiarityAdjustment: entry.familiarityAdjustment,
+      producerPenalty: entry.producerPenalty,
+      vocalistPenalty: entry.vocalistPenalty,
+      finalScore: entry.finalScore,
+      selectedRank: rankedIds.get(entry.song.id) ?? null,
+      status: rankedIds.has(entry.song.id) ? 'selected' as const : 'not_selected' as const,
+      reason: sourceReason(entry.sources, known),
+    };
+  });
+  return { ranked: result, trace };
 }

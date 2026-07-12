@@ -13,7 +13,7 @@ import {
   rankKnownSongs,
 } from '../utils/recommendationScoring';
 import { createAutoQueuePlan, type AutoQueueAdaptation } from '../utils/autoQueuePolicy';
-import { rerankRecommendationCandidates } from '../utils/recommendationReranking';
+import { rerankRecommendationCandidatesDetailed } from '../utils/recommendationReranking';
 import { buildUserTasteProfile, type TasteSeed } from '../services/userTasteProfile';
 import { useAutoPlaySessionStore } from '../stores/autoPlaySessionStore';
 import { useAutoQueueDecisionStore } from '../stores/autoQueueDecisionStore';
@@ -22,6 +22,7 @@ import { useAutoQueueStatusStore } from '../stores/autoQueueStatusStore';
 import { useAutoQueueBanditStore } from '../stores/autoQueueBanditStore';
 import { adjustTargetForStrategy } from '../utils/strategyBandit';
 import type { AutoQueueDecision, AutoQueueStatus, AutoQueueStrategyArm, QueueRecommendation } from '../types/autoplay';
+import { useRecommendationDebugStore } from '../stores/recommendationDebugStore';
 
 export type AutoQueueMixMode = 'balanced' | 'deep' | 'producer';
 
@@ -255,7 +256,10 @@ export function useAutoQueue({
           ...Object.keys(implicitFeedback).map(Number),
         ]);
         const source = mixMode === 'deep' ? 'audio' : 'hybrid';
-        const nextSongs = rerankRecommendationCandidates({
+        const familiarityBias = queuePlan.requestedCount > 0
+          ? (strategyTarget.known - strategyTarget.unknown) / queuePlan.requestedCount
+          : 0;
+        const detailed = rerankRecommendationCandidatesDetailed({
           known: knownCandidates,
           [source]: filteredCandidates,
         }, {
@@ -266,10 +270,20 @@ export function useAutoQueue({
           implicitFeedback,
           excludeIds: existingIds,
           recentSongs: queue.slice(Math.max(0, queueIndex - 4), queueIndex + 1),
-          familiarityBias: queuePlan.requestedCount > 0
-            ? (strategyTarget.known - strategyTarget.unknown) / queuePlan.requestedCount
-            : 0,
-        }).map(item => item.song);
+          familiarityBias,
+        });
+        const nextSongs = detailed.ranked.map(item => item.song);
+        useRecommendationDebugStore.getState().recordSnapshot({
+          id: `${Date.now()}-autoplay-${generation}`,
+          surface: 'autoplay',
+          generatedAt: Date.now(),
+          seedSongIds: buildRecommendationSeeds(currentSong, rootSeed, [...tasteProfile.longTerm, ...tasteProfile.shortTerm]).map(seed => seed.songId),
+          strategy: `${mixMode}/${strategyArm}/${queuePlan.stage}`,
+          familiarityBias,
+          candidateCount: detailed.trace.length,
+          selectedCount: detailed.ranked.length,
+          trace: detailed.trace,
+        });
         if (controller.signal.aborted || generation !== requestGenerationRef.current) return;
 
         if (nextSongs.length === 0) {

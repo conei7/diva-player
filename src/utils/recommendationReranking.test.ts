@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Song } from '../types/vocadb';
-import { rerankRecommendationCandidates } from './recommendationReranking';
+import { rerankRecommendationCandidates, rerankRecommendationCandidatesDetailed } from './recommendationReranking';
 
 function song(id: number, producerId?: number): Song {
   return {
@@ -52,5 +52,24 @@ describe('rerankRecommendationCandidates', () => {
     }, { ...baseOptions, total: 1 });
 
     expect(result[0].reason).toContain('音響');
+  });
+
+  it('keeps the legacy ranking while exposing score contributions', () => {
+    const pools = {
+      hybrid: [song(1), song(2)],
+      audio: [song(2), song(3)],
+      popular: [song(3), song(1)],
+    };
+    const detailed = rerankRecommendationCandidatesDetailed(pools, { ...baseOptions, total: 3 });
+    const legacy = rerankRecommendationCandidates(pools, { ...baseOptions, total: 3 });
+
+    expect(detailed.ranked.map(item => item.song.id)).toEqual(legacy.map(item => item.song.id));
+    expect(detailed.trace).toHaveLength(3);
+    const dualSource = detailed.trace.find(item => item.songId === 2);
+    expect(dualSource?.sources.map(source => source.source)).toEqual(['hybrid', 'audio']);
+    expect(dualSource?.evidence).toBeCloseTo(
+      dualSource?.sources.reduce((sum, source) => sum + source.evidenceContribution, 0) ?? 0,
+    );
+    expect(detailed.trace.filter(item => item.status === 'selected')).toHaveLength(3);
   });
 });
