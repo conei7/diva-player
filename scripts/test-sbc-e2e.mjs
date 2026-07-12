@@ -95,7 +95,18 @@ async function main() {
     assert(home.searchInput, 'The global search input was not rendered.');
     assert(home.cards > 0, 'The home page did not render song cards.');
     assert(!home.warningVisible, 'The SBC unavailable warning is visible while the SBC API is healthy.');
-    console.log(`PASS home page (${home.cards} visible song cards)`);
+    await page.waitForFunction(() => {
+      const raw = localStorage.getItem('diva-recommendation-exposure-v1');
+      if (!raw) return false;
+      try {
+        return Object.keys(JSON.parse(raw)).length > 0;
+      } catch {
+        return false;
+      }
+    });
+    const exposureCount = await page.evaluate(() => Object.keys(JSON.parse(localStorage.getItem('diva-recommendation-exposure-v1') ?? '{}')).length);
+    assert(exposureCount > 0, 'Visible recommendation cards did not record exposure history.');
+    console.log(`PASS home page (${home.cards} visible song cards, ${exposureCount} exposures)`);
 
     await page.goto(`${baseUrl}watch?v=1501`, { waitUntil: 'domcontentloaded' });
     await page.waitForFunction(() => {
