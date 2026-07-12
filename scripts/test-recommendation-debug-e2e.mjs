@@ -34,14 +34,14 @@ async function main() {
 
     await page.evaluate(() => [...document.querySelectorAll('button')]
       .find(button => button.textContent?.includes('推薦デバッグ'))?.click());
-    await page.waitForSelector('[role="dialog"]');
-    await page.waitForFunction(() => document.querySelectorAll('[role="dialog"] tbody tr').length > 0);
+    await page.waitForSelector('[role="dialog"][aria-label="推薦デバッグ"]');
+    await page.waitForFunction(() => document.querySelectorAll('[role="dialog"][aria-label="推薦デバッグ"] tbody tr').length > 0);
     const dialog = await page.evaluate(() => ({
-      rows: document.querySelectorAll('[role="dialog"] tbody tr').length,
-      text: document.querySelector('[role="dialog"]')?.textContent ?? '',
+      rows: document.querySelectorAll('[role="dialog"][aria-label="推薦デバッグ"] tbody tr').length,
+      text: document.querySelector('[role="dialog"][aria-label="推薦デバッグ"]')?.textContent ?? '',
     }));
     assert(dialog.rows > 0, 'The recommendation debug dialog had no candidate rows.');
-    assert(dialog.text.includes('Evidence'), 'The recommendation debug table did not show score columns.');
+    assert(dialog.text.includes('Evidence'), `The recommendation debug table did not show score columns: ${dialog.text.slice(0, 500)}`);
     console.log(`PASS recommendation debug home (${dialog.rows} trace rows)`);
 
     await page.goto(new URL('watch?v=1501', baseUrl).toString(), { waitUntil: 'domcontentloaded' });
