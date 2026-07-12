@@ -86,6 +86,7 @@ function PlayerTracker() {
   useEffect(() => {
     if (!currentSong) {
       if (prevSongRef.current) finalizePreviousPlayback(prevSongRef.current);
+      useProgressStore.getState().resetProgress();
       return;
     }
 

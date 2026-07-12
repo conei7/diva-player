@@ -276,6 +276,7 @@ export default function TopNav() {
           {/* ロゴ */}
           <Link
             to="/"
+            aria-label="DIVA Player home"
             className="flex items-center gap-2 group"
             onClick={handleLogoClick}
           >

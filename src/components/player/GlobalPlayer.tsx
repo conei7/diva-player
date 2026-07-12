@@ -18,6 +18,7 @@ export default function GlobalPlayer() {
   const {
     currentSong, playerRect, isPlaying,
     pause, resume, next, previous,
+    closePlayer,
     shuffleEnabled, toggleShuffle,
     loopMode, toggleLoopMode,
   } = usePlayerStore();
@@ -130,6 +131,19 @@ export default function GlobalPlayer() {
 
         {/* コントロールボタン */}
         <div className="flex items-center gap-0.5 flex-shrink-0">
+          <button
+            className="btn-ghost p-1.5 rounded-full"
+            onClick={(event) => {
+              event.stopPropagation();
+              closePlayer();
+            }}
+            title="ミニプレイヤーを閉じる"
+            aria-label="ミニプレイヤーを閉じる"
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M18.3 5.71 12 12l6.3 6.29-1.41 1.42L10.59 13.4 4.29 19.7 2.88 18.29 9.17 12 2.88 5.71 4.29 4.3l6.3 6.29 6.29-6.29z" />
+            </svg>
+          </button>
           <button className="btn-ghost p-1.5 rounded-full" onClick={previous} title="前の曲">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
               <path d="M6 6h2v12H6zm3.5 6 8.5 6V6z" />

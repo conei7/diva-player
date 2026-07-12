@@ -2,6 +2,8 @@
 import { useEffect, useRef, useCallback } from 'react';
 import { usePlayerStore } from '../../stores/playerStore';
 import { useProgressStore } from '../../stores/progressStore';
+import { createPlaybackOwnership } from '../../services/playbackOwnership';
+import { createNicoProgressTracker, parseNicoPlayerMessage } from '../../services/nicoPlayerSync';
 
 /**
  * PlayerEmbed - YouTube / ニコニコ動画の埋め込みプレイヤー
@@ -28,7 +30,7 @@ declare global {
  * embed.nicovideo.jp の postMessage API でプログレス同期を試み、
  * 失敗した場合はタイマーベースのフォールバックで経過時間を推定する。
  */
-function NicoEmbed({ pvId, name, duration: songDuration }: { pvId: string; name?: string; duration?: number }) {
+function NicoEmbed({ pvId, name, duration: songDuration, isPlaying }: { pvId: string; name?: string; duration?: number; isPlaying: boolean }) {
   const { volume, setIsPlaying, next } = usePlayerStore();
   const setProgress = useProgressStore(s => s.setProgress);
   const setDuration = useProgressStore(s => s.setDuration);
@@ -37,31 +39,25 @@ function NicoEmbed({ pvId, name, duration: songDuration }: { pvId: string; name?
   const NICO_ORIGIN = 'https://embed.nicovideo.jp';
 
   const timerRef = useRef<number | null>(null);
-  const playStartRef = useRef<number | null>(null);
-  const baseProgressRef = useRef<number>(0);
-  const isActuallyPlayingRef = useRef(false);
+  const trackerRef = useRef(createNicoProgressTracker());
 
   const stopTimer = useCallback(() => {
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
-    playStartRef.current = null;
   }, []);
 
   const startTimer = useCallback(() => {
     stopTimer();
-    playStartRef.current = Date.now();
+    trackerRef.current.setPlaying(true);
     timerRef.current = window.setInterval(() => {
-      if (playStartRef.current !== null) {
-        const elapsed = (Date.now() - playStartRef.current) / 1000;
-        setProgress(baseProgressRef.current + elapsed);
-      }
+      setProgress(trackerRef.current.current());
     }, 500);
   }, [setProgress, stopTimer]);
 
   // マウント時: ニコニコはautoplayしないので一時停止状態にリセット
   useEffect(() => {
-    setIsPlaying(false);
     setProgress(0);
-    baseProgressRef.current = 0;
+    trackerRef.current.reset();
+    trackerRef.current.setDuration(songDuration);
     if (songDuration && songDuration > 0) setDuration(songDuration);
     return () => stopTimer();
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -71,89 +67,53 @@ function NicoEmbed({ pvId, name, duration: songDuration }: { pvId: string; name?
   const handleIframeLoad = useCallback(() => {
     if (songDuration && songDuration > 0) setDuration(songDuration);
     setTimeout(() => {
+      if (!isPlaying) return;
       iframeRef.current?.contentWindow?.postMessage(
         JSON.stringify({ eventName: 'player:play' }),
         NICO_ORIGIN,
       );
     }, 1000);
-  }, [setDuration, songDuration]);
+  }, [isPlaying, setDuration, songDuration]);
+
+  useEffect(() => {
+    iframeRef.current?.contentWindow?.postMessage(
+      JSON.stringify({ eventName: isPlaying ? 'player:play' : 'player:pause' }),
+      NICO_ORIGIN,
+    );
+  }, [isPlaying]);
 
   // ニコニコからのpostMessageを受信
   useEffect(() => {
     const handler = (e: MessageEvent) => {
       // embed.nicovideo.jp か www.nicovideo.jp からのメッセージのみ処理
       if (!e.origin.includes('nicovideo.jp')) return;
-      let msg: { eventName?: string; data?: Record<string, unknown> };
-      try {
-        msg = typeof e.data === 'string' ? JSON.parse(e.data) : e.data;
-      } catch {
-        return;
-      }
-      if (!msg.eventName) return;
-      switch (msg.eventName) {
-        case 'player:loadComplete':
-        case 'loadComplete': {
-          const len = (msg.data?.videoInfo as { lengthInSeconds?: number } | undefined)?.lengthInSeconds;
-          if (typeof len === 'number' && len > 0) setDuration(len);
-          break;
-        }
-        case 'player:currentTime': {
-          // 新API: currentTime は秒単位
-          const t = (msg.data as { currentTime?: number } | undefined)?.currentTime;
-          if (typeof t === 'number') {
-            baseProgressRef.current = t;
-            playStartRef.current = Date.now();
-            setProgress(t);
+      const message = parseNicoPlayerMessage(e.data);
+      if (!message) return;
+      switch (message.type) {
+        case 'ready': {
+          if (message.duration) {
+            trackerRef.current.setDuration(message.duration);
+            setDuration(message.duration);
           }
           break;
         }
-        case 'seekStatusChange': {
-          // 旧API: currentTime はミリ秒単位
-          const ms = (msg.data as { currentTime?: number } | undefined)?.currentTime;
-          if (typeof ms === 'number') {
-            const secs = ms / 1000;
-            baseProgressRef.current = secs;
-            playStartRef.current = Date.now();
-            setProgress(secs);
-          }
+        case 'progress': {
+          trackerRef.current.confirm(message.seconds);
+          setProgress(trackerRef.current.current());
           break;
         }
-        case 'player:play':
-          isActuallyPlayingRef.current = true;
+        case 'playing':
           setIsPlaying(true);
           startTimer();
           break;
-        case 'playerStatusChange': {
-          // 旧API: playerStatus 3=playing, 4=paused, 5=ended
-          const status = (msg.data as { playerStatus?: number } | undefined)?.playerStatus;
-          if (status === 3) {
-            isActuallyPlayingRef.current = true;
-            setIsPlaying(true);
-            startTimer();
-          } else if (status === 4) {
-            isActuallyPlayingRef.current = false;
-            setIsPlaying(false);
-            if (playStartRef.current !== null) {
-              baseProgressRef.current += (Date.now() - playStartRef.current) / 1000;
-            }
-            stopTimer();
-          } else if (status === 5) {
-            isActuallyPlayingRef.current = false;
-            stopTimer();
-            next();
-          }
-          break;
-        }
-        case 'player:pause':
-          isActuallyPlayingRef.current = false;
+        case 'paused':
+          trackerRef.current.setPlaying(false);
+          setProgress(trackerRef.current.current());
           setIsPlaying(false);
-          if (playStartRef.current !== null) {
-            baseProgressRef.current += (Date.now() - playStartRef.current) / 1000;
-          }
           stopTimer();
           break;
-        case 'player:ended':
-          isActuallyPlayingRef.current = false;
+        case 'ended':
+          trackerRef.current.setPlaying(false);
           stopTimer();
           next();
           break;
@@ -225,6 +185,29 @@ export default function PlayerEmbed() {
   const containerRef = useRef<HTMLDivElement>(null);
   const progressTimerRef = useRef<number | null>(null);
   const lastPVIdRef = useRef<string | null>(null);
+  const ownershipRef = useRef<ReturnType<typeof createPlaybackOwnership> | null>(null);
+
+  useEffect(() => {
+    const ownership = createPlaybackOwnership();
+    ownershipRef.current = ownership;
+    const unsubscribe = ownership.onRemoteClaim(() => {
+      const state = usePlayerStore.getState();
+      if (state.isPlaying) state.pause();
+    });
+    const release = () => ownership.release();
+    window.addEventListener('pagehide', release);
+    return () => {
+      unsubscribe();
+      window.removeEventListener('pagehide', release);
+      ownership.release();
+      ownership.destroy();
+      ownershipRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (isPlaying) ownershipRef.current?.claim(currentSong?.id ?? null);
+  }, [currentSong?.id, isPlaying]);
 
   // プログレス更新の定期実行
   const startProgressTimer = useCallback(() => {
@@ -296,7 +279,7 @@ export default function PlayerEmbed() {
             // ミュート解除して指定ボリュームを設定してから再生開始
             event.target.unMute();
             event.target.setVolume(volume);
-            event.target.playVideo();
+            if (usePlayerStore.getState().isPlaying) event.target.playVideo();
             const dur = event.target.getDuration();
             if (dur > 0) setDuration(dur);
             startProgressTimer();
@@ -376,7 +359,7 @@ export default function PlayerEmbed() {
 
   // ニコニコ動画の埋め込み
   if (currentPV?.service === 'NicoNicoDouga') {
-    return <NicoEmbed pvId={currentPV.pvId} name={currentPV.name} duration={currentSong?.lengthSeconds} />;
+    return <NicoEmbed pvId={currentPV.pvId} name={currentPV.name} duration={currentSong?.lengthSeconds} isPlaying={isPlaying} />;
   }
 
   // YouTube プレイヤーコンテナ

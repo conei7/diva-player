@@ -234,6 +234,7 @@ interface PlayerState {
   removeFromQueue: (index: number) => void;
   removeDuplicateQueueSongs: () => number;
   clearQueue: () => void;
+  closePlayer: () => void;
   jumpToIndex: (index: number) => void;
 
   // キュードロワー
@@ -555,6 +556,21 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
 
   clearQueue: () => {
     useProgressStore.getState().resetProgress();
+    set({
+      queue: [],
+      queueIndex: -1,
+      queueSources: [],
+      currentSong: null,
+      currentPV: null,
+      currentPlaybackSource: 'manual',
+      isPlaying: false,
+    });
+    useAutoPlaySessionStore.getState().clearSession();
+    clearStoredPlayerQueue();
+  },
+
+  closePlayer: () => {
+    // Keep progress intact until PlayerTracker finalizes the active history entry.
     set({
       queue: [],
       queueIndex: -1,
