@@ -501,7 +501,7 @@ public class DbService
                     SELECT 1 FROM song_features sf
                     WHERE sf.song_id = s.id AND sf.audio_computed IS TRUE
                 ),
-                'thumbUrl', COALESCE(s.raw_json->>'thumbUrl', s.raw_json->'pvs'->0->>'thumbUrl'){{debugFields}}
+                'thumbUrl', COALESCE(s.raw_json->>'thumbUrl', s.raw_json->'pvs'->0->>'thumbUrl'){debugFields}
             )))::text
             FROM {sourceTable} g
             JOIN songs s ON s.id = g.song_id
