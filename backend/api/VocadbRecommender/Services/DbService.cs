@@ -316,14 +316,15 @@ public class DbService
         return result;
     }
 
-    public async Task<string> GetTrendingSongsJsonAsync(int days, int start, int maxResults, string? mode = null, string? ranking = null, bool debug = false)
+    public async Task<string> GetTrendingSongsJsonAsync(int days, int start, int maxResults, string? mode = null, string? ranking = null, int seed = 0, bool debug = false)
     {
         var clampedDays = Math.Clamp(days, 1, 365);
         var normalizedStart = Math.Max(0, start);
         var clampedMaxResults = Math.Clamp(maxResults, 1, 100);
         var normalizedMode = mode is "surge" or "recent" ? mode : "growth";
         var normalizedRanking = ranking == "legacy" ? "legacy" : "quality";
-        var cacheKey = $"trending:{normalizedMode}:{normalizedRanking}:{debug}:{clampedDays}:{normalizedStart}:{clampedMaxResults}";
+        var normalizedSeed = Math.Clamp(seed, 0, 63);
+        var cacheKey = $"trending:{normalizedMode}:{normalizedRanking}:{normalizedSeed}:{debug}:{clampedDays}:{normalizedStart}:{clampedMaxResults}";
         if (_cache.TryGetValue(cacheKey, out string? cached))
             return cached!;
 
@@ -336,10 +337,10 @@ public class DbService
         };
         var orderBy = normalizedMode switch
         {
-            "surge" when normalizedRanking == "legacy" => "g.surge_rate DESC, g.view_growth DESC, s.favorited_times DESC NULLS LAST",
-            "surge" => "g.surge_rank_score DESC, g.view_growth DESC, g.quality_score DESC, s.favorited_times DESC NULLS LAST",
-            "recent" => "g.recent_score DESC, g.view_growth DESC, s.publish_date DESC",
-            _ => "g.popular_score DESC, g.growth_rate DESC, s.favorited_times DESC NULLS LAST",
+            "surge" when normalizedRanking == "legacy" => "g.surge_rate + (g.ranking_noise - 0.5) * 0.025 DESC, g.view_growth DESC, s.favorited_times DESC NULLS LAST",
+            "surge" => "g.surge_rank_score + (g.ranking_noise - 0.5) * 0.025 DESC, g.view_growth DESC, g.quality_score DESC, s.favorited_times DESC NULLS LAST",
+            "recent" => "g.recent_score + (g.ranking_noise - 0.5) * 0.015 DESC, g.view_growth DESC, s.publish_date DESC",
+            _ => "g.popular_score + (g.ranking_noise - 0.5) * 0.035 DESC, g.growth_rate DESC, s.favorited_times DESC NULLS LAST",
         };
         var sourceTable = normalizedMode switch
         {
@@ -451,7 +452,10 @@ public class DbService
                             + (10 * CASE WHEN b.nico_views >= 100 THEN GREATEST(0, l.nico_views - b.nico_views) ELSE 0 END)
                         )
                         * EXP(-GREATEST(0, CURRENT_DATE - s.publish_date) / 30.0)
-                    ) AS recent_score
+                    ) AS recent_score,
+                    CASE WHEN $4 = 0 THEN 0.5
+                         ELSE mod(abs(hashtext(s.id::text || ':' || $4::text))::bigint, 100000)::double precision / 100000.0
+                    END AS ranking_noise
                 FROM baseline b
                 JOIN songs s ON s.id = b.song_id
                 JOIN latest l ON l.song_id = b.song_id
@@ -491,7 +495,10 @@ public class DbService
                     (
                         (COALESCE(s.youtube_views, 0) + (10 * COALESCE(s.nico_views, 0)))::double precision
                         / GREATEST(1, CURRENT_DATE - s.publish_date)
-                    ) AS recent_score
+                    ) AS recent_score,
+                    CASE WHEN $4 = 0 THEN 0.5
+                         ELSE mod(abs(hashtext(s.id::text || ':' || $4::text))::bigint, 100000)::double precision / 100000.0
+                    END AS ranking_noise
                 FROM songs s
                 LEFT JOIN song_discovery_quality q ON q.song_id = s.id
                 WHERE s.publish_date >= CURRENT_DATE - interval '30 days'
@@ -531,6 +538,7 @@ public class DbService
         cmd.Parameters.AddWithValue(clampedDays);
         cmd.Parameters.AddWithValue(normalizedStart);
         cmd.Parameters.AddWithValue(clampedMaxResults);
+        cmd.Parameters.AddWithValue(normalizedSeed);
 
         var items = new List<string>();
         await using var reader = await cmd.ExecuteReaderAsync();

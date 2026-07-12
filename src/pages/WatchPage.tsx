@@ -24,6 +24,7 @@ import QueueSidebar from '../components/player/QueueSidebar';
 import { diversifyAwayFromSeedVocalist } from '../utils/recommendationScoring';
 import { rerankRecommendationCandidatesDetailed } from '../utils/recommendationReranking';
 import { useRecommendationDebugStore } from '../stores/recommendationDebugStore';
+import { createRankingSeed } from '../utils/rankingRandomization';
 
 function WatchQueue() {
   const queue = usePlayerStore(s => s.queue);
@@ -111,6 +112,7 @@ export default function WatchPage() {
 
   const fetchedForRef = useRef<number | null>(null);
   const randomOffsetRef = useRef(Math.floor(Math.random() * 20));
+  const rankingSeedRef = useRef(createRankingSeed());
   // URLからのロード中はナビゲーションエフェクトをブロックするフラグ
   const loadingFromUrlRef = useRef(false);
   const seenSets = useRef<Record<RecTabKey, Set<number>>>({
@@ -128,6 +130,7 @@ export default function WatchPage() {
     if (fetchedForRef.current === songId) return;
     fetchedForRef.current = songId;
     randomOffsetRef.current = Math.floor(Math.random() * 20);
+    rankingSeedRef.current = createRankingSeed();
     loadingFromUrlRef.current = true;
 
     setLoadingSong(true);
@@ -242,6 +245,8 @@ export default function WatchPage() {
         ratings,
         implicitFeedback,
         excludeIds: new Set([s.id]),
+        rankingSeed: rankingSeedRef.current,
+        explorationStrength: 0.06,
       });
       const mixed = detailed.ranked;
       const items = mixed.map(item => item.song);

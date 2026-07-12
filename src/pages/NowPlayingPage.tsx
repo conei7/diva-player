@@ -11,6 +11,7 @@ import {
 } from '../api/vocadb';
 import type { Song } from '../types/vocadb';
 import { useSelectionStore } from '../stores/selectionStore';
+import { createRankingSeed } from '../utils/rankingRandomization';
 
 /** サムネイルURLを解決 */
 function getThumbUrl(song: Song): string | null {
@@ -72,13 +73,14 @@ export default function NowPlayingPage() {
   const seenRecommendRef = useRef<Set<number>>(new Set());
   const seenRelatedRef   = useRef<Set<number>>(new Set());
   const seenDeepdigRef   = useRef<Set<number>>(new Set());
+  const rankingSeedRef   = useRef(createRankingSeed());
 
   const setVisibleSongs = useSelectionStore(s => s.setVisibleSongs);
 
   // おすすめ: メタデータ + 音声データ + プレイヤーデータ (/api/recommend)
   const fetchRecommend = useCallback(async (song: Song, page: number) => {
     const songs = await getRecommendedSongs(
-      song.id, PAGE_SIZE, 0.0, undefined, page * PAGE_SIZE
+      song.id, PAGE_SIZE, 0.0, undefined, (rankingSeedRef.current % 20) + page * PAGE_SIZE
     );
     const fresh = songs.filter(s => !seenRecommendRef.current.has(s.id));
     fresh.forEach(s => seenRecommendRef.current.add(s.id));
@@ -95,7 +97,7 @@ export default function NowPlayingPage() {
 
   // 関連曲: メタデータベクトルのみ (/api/recommend/metadata)
   const fetchRelated = useCallback(async (song: Song, page: number) => {
-    const songs = await getMetadataSimilarSongs(song.id, PAGE_SIZE, page * PAGE_SIZE);
+    const songs = await getMetadataSimilarSongs(song.id, PAGE_SIZE, (rankingSeedRef.current % 20) + page * PAGE_SIZE);
     const fresh = songs.filter(s => !seenRelatedRef.current.has(s.id));
     fresh.forEach(s => seenRelatedRef.current.add(s.id));
     setTabs(prev => ({
@@ -111,7 +113,7 @@ export default function NowPlayingPage() {
 
   // deep dig: 音響ベクトルのみ (/api/recommend/audio)
   const fetchDeepdig = useCallback(async (song: Song, page: number) => {
-    const songs = await getAudioSimilarSongs(song.id, PAGE_SIZE, page * PAGE_SIZE);
+    const songs = await getAudioSimilarSongs(song.id, PAGE_SIZE, (rankingSeedRef.current % 20) + page * PAGE_SIZE);
     const fresh = songs.filter(s => !seenDeepdigRef.current.has(s.id));
     fresh.forEach(s => seenDeepdigRef.current.add(s.id));
     setTabs(prev => ({
@@ -129,6 +131,7 @@ export default function NowPlayingPage() {
     if (!currentSong) return;
     if (fetchedForRef.current === currentSong.id) return;
     fetchedForRef.current = currentSong.id;
+    rankingSeedRef.current = createRankingSeed();
     seenRecommendRef.current = new Set([currentSong.id]);
     seenRelatedRef.current   = new Set([currentSong.id]);
     seenDeepdigRef.current   = new Set([currentSong.id]);

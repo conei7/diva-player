@@ -23,6 +23,7 @@ import { useAutoQueueBanditStore } from '../stores/autoQueueBanditStore';
 import { adjustTargetForStrategy } from '../utils/strategyBandit';
 import type { AutoQueueDecision, AutoQueueStatus, AutoQueueStrategyArm, QueueRecommendation } from '../types/autoplay';
 import { useRecommendationDebugStore } from '../stores/recommendationDebugStore';
+import { createRankingSeed } from '../utils/rankingRandomization';
 
 export type AutoQueueMixMode = 'balanced' | 'deep' | 'producer';
 
@@ -271,6 +272,8 @@ export function useAutoQueue({
           excludeIds: existingIds,
           recentSongs: queue.slice(Math.max(0, queueIndex - 4), queueIndex + 1),
           familiarityBias,
+          rankingSeed: createRankingSeed(),
+          explorationStrength: 0.05,
         });
         const nextSongs = detailed.ranked.map(item => item.song);
         useRecommendationDebugStore.getState().recordSnapshot({

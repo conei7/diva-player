@@ -20,6 +20,7 @@ import {
 import { rerankRecommendationCandidatesDetailed } from '../utils/recommendationReranking';
 import { filterVoiceSynthSongs } from '../utils/voiceSynthSongs';
 import { useRecommendationDebugStore } from '../stores/recommendationDebugStore';
+import { createRankingSeed } from '../utils/rankingRandomization';
 
 type HomeCategoryId =
   | 'recommended'
@@ -63,6 +64,7 @@ export default function HomePage() {
   const sentinelRef = useRef<HTMLDivElement>(null);
   const fetchingRef = useRef(false);
   const requestIdRef = useRef(0);
+  const rankingSeedRef = useRef(createRankingSeed());
 
   const { entries, hasHydrated } = useHistoryStore();
   const { currentSong } = usePlayerStore();
@@ -146,6 +148,8 @@ export default function HomePage() {
       ratings,
       implicitFeedback,
       excludeIds,
+      rankingSeed: rankingSeedRef.current,
+      explorationStrength: 0.055,
     });
     const mixed = detailed.ranked;
     const result = mixed.map(item => item.song);
@@ -198,17 +202,17 @@ export default function HomePage() {
       } else {
         switch (category) {
           case 'popular': {
-            result = await getTrendingSongs(30, PAGE_SIZE, pageNum * PAGE_SIZE, 'growth');
+            result = await getTrendingSongs(30, PAGE_SIZE, pageNum * PAGE_SIZE, 'growth', rankingSeedRef.current);
             break;
           }
           case 'recommended':
             result = await fetchRecommendedHomeSongs(pageNum);
             break;
           case 'trending':
-            result = await getTrendingSongs(7, PAGE_SIZE, pageNum * PAGE_SIZE, 'surge');
+            result = await getTrendingSongs(7, PAGE_SIZE, pageNum * PAGE_SIZE, 'surge', rankingSeedRef.current);
             break;
           case 'recent': {
-            result = await getTrendingSongs(30, PAGE_SIZE, pageNum * PAGE_SIZE, 'recent');
+            result = await getTrendingSongs(30, PAGE_SIZE, pageNum * PAGE_SIZE, 'recent', rankingSeedRef.current);
             break;
           }
           case 'deep': {

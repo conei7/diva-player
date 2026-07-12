@@ -72,4 +72,25 @@ describe('rerankRecommendationCandidates', () => {
     );
     expect(detailed.trace.filter(item => item.status === 'selected')).toHaveLength(3);
   });
+
+  it('keeps a seeded ordering stable and exposes the exploration adjustment', () => {
+    const pools = { hybrid: [song(1), song(2), song(3), song(4)] };
+    const first = rerankRecommendationCandidatesDetailed(pools, {
+      ...baseOptions, total: 4, rankingSeed: 1234,
+    });
+    const second = rerankRecommendationCandidatesDetailed(pools, {
+      ...baseOptions, total: 4, rankingSeed: 1234,
+    });
+
+    expect(first.ranked.map(item => item.song.id)).toEqual(second.ranked.map(item => item.song.id));
+    expect(first.trace.some(item => item.explorationAdjustment !== 0)).toBe(true);
+  });
+
+  it('does not randomize when no seed is supplied', () => {
+    const detailed = rerankRecommendationCandidatesDetailed(
+      { hybrid: [song(1), song(2)] },
+      { ...baseOptions, total: 2 },
+    );
+    expect(detailed.trace.every(item => item.explorationAdjustment === 0)).toBe(true);
+  });
 });
