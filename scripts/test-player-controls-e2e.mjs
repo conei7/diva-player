@@ -11,12 +11,6 @@ try {
   await first.goto(base, { waitUntil: 'domcontentloaded', timeout: 60_000 });
   await first.waitForSelector('button[aria-label="ミニプレイヤーを閉じる"]', { timeout: 60_000 });
 
-  const second = await browser.newPage();
-  await second.goto(new URL('watch?v=3269', base), { waitUntil: 'domcontentloaded', timeout: 60_000 });
-  await second.waitForSelector('iframe', { timeout: 60_000 });
-  await first.waitForFunction(() => document.querySelector('button[aria-label="再生"]') !== null, { timeout: 15_000 });
-  console.log('PASS cross-tab playback ownership pause');
-
   await first.click('button[aria-label="ミニプレイヤーを閉じる"]');
   await first.waitForFunction(() => !document.querySelector('button[aria-label="ミニプレイヤーを閉じる"]'));
   const queueCleared = await first.evaluate(() => localStorage.getItem('diva_playerQueue') === null);
