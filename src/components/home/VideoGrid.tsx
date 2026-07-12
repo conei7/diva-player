@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import type { Song } from '../../types/vocadb';
 import SongCard from '../search/SongCard';
 import { useSelectionStore } from '../../stores/selectionStore';
+import { useRecommendationExposureStore, type ExposureSurface } from '../../stores/recommendationExposureStore';
 
 /**
  * VideoGrid - YouTube風のレスポンシブ動画グリッド
@@ -14,6 +15,7 @@ interface VideoGridProps {
   loading?: boolean;
   showScore?: boolean;
   recommendationReasons?: Record<number, string>;
+  exposureSurface?: ExposureSurface;
 }
 
 function SkeletonCard() {
@@ -28,9 +30,11 @@ function SkeletonCard() {
   );
 }
 
-export default function VideoGrid({ songs, loading, recommendationReasons }: VideoGridProps) {
+export default function VideoGrid({ songs, loading, recommendationReasons, exposureSurface }: VideoGridProps) {
   const navigate = useNavigate();
   const setVisibleSongs = useSelectionStore(s => s.setVisibleSongs);
+  const recordVisible = useRecommendationExposureStore(s => s.recordVisible);
+  const recordClicked = useRecommendationExposureStore(s => s.recordClicked);
 
   // 表示中の曲リストをselectionStoreに登録（FABの全選択・フィルター用）
   useEffect(() => {
@@ -72,6 +76,8 @@ export default function VideoGrid({ songs, loading, recommendationReasons }: Vid
           index={index}
           onPlay={handlePlay}
           recommendationReason={recommendationReasons?.[song.id]}
+          onVisible={exposureSurface ? () => recordVisible(song.id, exposureSurface, index + 1) : undefined}
+          onExposureClick={exposureSurface ? () => recordClicked(song.id) : undefined}
         />
       ))}
       {/* 追加ローディング */}

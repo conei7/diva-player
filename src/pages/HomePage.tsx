@@ -21,6 +21,7 @@ import { rerankRecommendationCandidatesDetailed } from '../utils/recommendationR
 import { filterVoiceSynthSongs } from '../utils/voiceSynthSongs';
 import { useRecommendationDebugStore } from '../stores/recommendationDebugStore';
 import { createRankingSeed } from '../utils/rankingRandomization';
+import { rerankDisplayedSongs, useRecommendationExposureStore } from '../stores/recommendationExposureStore';
 
 type HomeCategoryId =
   | 'recommended'
@@ -150,6 +151,7 @@ export default function HomePage() {
       excludeIds,
       rankingSeed: rankingSeedRef.current,
       explorationStrength: 0.055,
+      exposureEntries: useRecommendationExposureStore.getState().entries,
     });
     const mixed = detailed.ranked;
     const result = mixed.map(item => item.song);
@@ -158,6 +160,7 @@ export default function HomePage() {
       id: `${Date.now()}-home-${pageNum}`,
       surface: 'home',
       generatedAt: Date.now(),
+      rankingSeed: rankingSeedRef.current,
       seedSongIds: [...seedIds, ...preferenceSeedIds],
       familiarityBias: 0,
       candidateCount: detailed.trace.length,
@@ -254,6 +257,9 @@ export default function HomePage() {
       }
 
       if (requestId !== requestIdRef.current) return;
+      if (!query && !artistIdParam && category !== 'recommended') {
+        result = rerankDisplayedSongs(result, rankingSeedRef.current);
+      }
       result = filterVoiceSynthSongs(result);
 
       if (pageNum === 0) {
@@ -417,6 +423,9 @@ export default function HomePage() {
         loading={hasSearched ? searchLoading : loading}
         recommendationReasons={!isSearchMode && !isArtistMode && !hasSearched && activeCategory === 'recommended'
           ? recommendationReasons
+          : undefined}
+        exposureSurface={!isSearchMode && !isArtistMode && !hasSearched
+          ? activeCategory === 'recommended' ? 'home-recommended' : 'home-discovery'
           : undefined}
       />
 

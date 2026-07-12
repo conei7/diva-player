@@ -1,6 +1,7 @@
 import { Fragment, useMemo, useState } from 'react';
 import { useRecommendationDebugStore } from '../../stores/recommendationDebugStore';
 import type { RecommendationDebugSnapshot, RecommendationDebugSurface } from '../../types/recommendationDebug';
+import { useRecommendationExposureStore } from '../../stores/recommendationExposureStore';
 
 const surfaceLabels: Record<RecommendationDebugSurface, string> = {
   home: 'トップ',
@@ -12,6 +13,7 @@ export default function RecommendationDebugPanel() {
   const enabled = useRecommendationDebugStore(state => state.enabled);
   const snapshots = useRecommendationDebugStore(state => state.snapshots);
   const clearSnapshots = useRecommendationDebugStore(state => state.clearSnapshots);
+  const clearExposure = useRecommendationExposureStore(state => state.clear);
   const [open, setOpen] = useState(false);
   const [surface, setSurface] = useState<'all' | RecommendationDebugSurface>('all');
   const [showUnselected, setShowUnselected] = useState(true);
@@ -82,6 +84,7 @@ export default function RecommendationDebugPanel() {
                 </label>
                 <button type="button" className="rounded border px-2 py-1 text-xs" onClick={exportJson}>JSON保存</button>
                 <button type="button" className="rounded border px-2 py-1 text-xs" onClick={clearSnapshots}>消去</button>
+                <button type="button" className="rounded border px-2 py-1 text-xs" onClick={clearExposure}>表示履歴を消去</button>
                 <button type="button" className="rounded border px-2 py-1 text-xs" onClick={() => setOpen(false)}>閉じる</button>
               </div>
             </div>
@@ -121,7 +124,7 @@ function SnapshotSection({
           {new Date(snapshot.generatedAt).toLocaleTimeString('ja-JP')} / 候補 {snapshot.candidateCount} / 採用 {snapshot.selectedCount}
         </span>
         <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
-          seed: {snapshot.seedSongIds.join(', ') || '-'} / bias: {snapshot.familiarityBias.toFixed(2)}
+          ranking seed: {snapshot.rankingSeed ?? '-'} / seed songs: {snapshot.seedSongIds.join(', ') || '-'} / bias: {snapshot.familiarityBias.toFixed(2)}
         </span>
       </div>
       <div className="overflow-x-auto">
@@ -136,6 +139,8 @@ function SnapshotSection({
               <th className="px-2 py-1">既知調整</th>
               <th className="px-2 py-1">P減点</th>
               <th className="px-2 py-1">歌声減点</th>
+              <th className="px-2 py-1">表示減点</th>
+              <th className="px-2 py-1">乱数補正</th>
               <th className="px-2 py-1">最終</th>
               <th className="px-2 py-1">状態</th>
             </tr>
@@ -159,12 +164,14 @@ function SnapshotSection({
                 <td className="px-2 py-2">{item.familiarityAdjustment.toFixed(3)}</td>
                 <td className="px-2 py-2">-{item.producerPenalty.toFixed(3)}</td>
                 <td className="px-2 py-2">-{item.vocalistPenalty.toFixed(3)}</td>
+                <td className="px-2 py-2">-{item.exposurePenalty.toFixed(3)}</td>
+                <td className="px-2 py-2">{item.explorationAdjustment.toFixed(3)}</td>
                 <td className="px-2 py-2 font-semibold">{item.finalScore?.toFixed(3) ?? '-'}</td>
                 <td className="px-2 py-2">{item.status === 'selected' ? '採用' : '未採用'}<br /><span style={{ color: 'var(--color-text-muted)' }}>{item.reason}</span></td>
               </tr>
               {expandedSongId === item.songId && (
                 <tr style={{ borderColor: 'var(--color-border)' }}>
-                  <td colSpan={10} className="px-3 py-3">
+                  <td colSpan={12} className="px-3 py-3">
                     <div className="grid gap-3 md:grid-cols-2">
                       <div>
                         <h4 className="mb-1 font-semibold">候補源の内訳</h4>

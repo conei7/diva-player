@@ -58,7 +58,10 @@ async function main() {
   assert(health.status === 'ok', 'Health endpoint did not return status=ok.');
   assert(health.dependencies?.postgres?.ok === true, 'PostgreSQL is not healthy.');
   assert(health.dependencies?.qdrant?.ok === true, 'Qdrant is not healthy.');
+  assert(health.discoveryQuality?.total > 0, 'Discovery quality table is empty.');
+  assert(health.discoveryQuality?.nicoRatio > 0, 'Discovery quality Nico presence ratio is zero.');
   console.log(`PASS API health (PostgreSQL ${health.dependencies.postgres.latencyMs}ms, Qdrant ${health.dependencies.qdrant.latencyMs}ms)`);
+  console.log(`PASS discovery quality health (${health.discoveryQuality.total} songs, short ${(health.discoveryQuality.shortRatio * 100).toFixed(2)}%, Nico ${(health.discoveryQuality.nicoRatio * 100).toFixed(2)}%)`);
 
   const search = await getJson(
     baseUrl,

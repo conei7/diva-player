@@ -12,6 +12,7 @@ import {
 import type { Song } from '../types/vocadb';
 import { useSelectionStore } from '../stores/selectionStore';
 import { createRankingSeed } from '../utils/rankingRandomization';
+import { rerankDisplayedSongs, useRecommendationExposureStore } from '../stores/recommendationExposureStore';
 
 /** サムネイルURLを解決 */
 function getThumbUrl(song: Song): string | null {
@@ -76,12 +77,14 @@ export default function NowPlayingPage() {
   const rankingSeedRef   = useRef(createRankingSeed());
 
   const setVisibleSongs = useSelectionStore(s => s.setVisibleSongs);
+  const recordVisible = useRecommendationExposureStore(s => s.recordVisible);
+  const recordClicked = useRecommendationExposureStore(s => s.recordClicked);
 
   // おすすめ: メタデータ + 音声データ + プレイヤーデータ (/api/recommend)
   const fetchRecommend = useCallback(async (song: Song, page: number) => {
-    const songs = await getRecommendedSongs(
+    const songs = rerankDisplayedSongs(await getRecommendedSongs(
       song.id, PAGE_SIZE, 0.0, undefined, (rankingSeedRef.current % 20) + page * PAGE_SIZE
-    );
+    ), rankingSeedRef.current);
     const fresh = songs.filter(s => !seenRecommendRef.current.has(s.id));
     fresh.forEach(s => seenRecommendRef.current.add(s.id));
     setTabs(prev => ({
@@ -97,7 +100,10 @@ export default function NowPlayingPage() {
 
   // 関連曲: メタデータベクトルのみ (/api/recommend/metadata)
   const fetchRelated = useCallback(async (song: Song, page: number) => {
-    const songs = await getMetadataSimilarSongs(song.id, PAGE_SIZE, (rankingSeedRef.current % 20) + page * PAGE_SIZE);
+    const songs = rerankDisplayedSongs(
+      await getMetadataSimilarSongs(song.id, PAGE_SIZE, (rankingSeedRef.current % 20) + page * PAGE_SIZE),
+      rankingSeedRef.current,
+    );
     const fresh = songs.filter(s => !seenRelatedRef.current.has(s.id));
     fresh.forEach(s => seenRelatedRef.current.add(s.id));
     setTabs(prev => ({
@@ -113,7 +119,10 @@ export default function NowPlayingPage() {
 
   // deep dig: 音響ベクトルのみ (/api/recommend/audio)
   const fetchDeepdig = useCallback(async (song: Song, page: number) => {
-    const songs = await getAudioSimilarSongs(song.id, PAGE_SIZE, (rankingSeedRef.current % 20) + page * PAGE_SIZE);
+    const songs = rerankDisplayedSongs(
+      await getAudioSimilarSongs(song.id, PAGE_SIZE, (rankingSeedRef.current % 20) + page * PAGE_SIZE),
+      rankingSeedRef.current,
+    );
     const fresh = songs.filter(s => !seenDeepdigRef.current.has(s.id));
     fresh.forEach(s => seenDeepdigRef.current.add(s.id));
     setTabs(prev => ({
@@ -280,6 +289,12 @@ export default function NowPlayingPage() {
                 song={song}
                 index={index}
                 onPlay={(s) => setQueue([s], 0)}
+                onVisible={() => recordVisible(
+                  song.id,
+                  activeTab === 'recommend' ? 'now-playing-recommend' : activeTab === 'related' ? 'now-playing-related' : 'now-playing-deepdig',
+                  index + 1,
+                )}
+                onExposureClick={() => recordClicked(song.id)}
               />
             </div>
           ))}

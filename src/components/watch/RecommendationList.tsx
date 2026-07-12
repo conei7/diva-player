@@ -7,6 +7,7 @@ import { useUiStore } from '../../stores/uiStore';
 import { usePlaylistStore, WATCH_LATER_ID } from '../../stores/playlistStore';
 import { useSelectionStore } from '../../stores/selectionStore';
 import { formatSongRelativeDate } from '../../utils/relativeDate';
+import { useRecommendationExposureStore, type ExposureSurface } from '../../stores/recommendationExposureStore';
 
 /**
  * RecommendationList - 推薦動画リスト
@@ -19,6 +20,7 @@ interface RecommendationListProps {
   loading: boolean;
   hasMore: boolean;
   recommendationReasons?: Record<number, string>;
+  exposureSurface?: ExposureSurface;
 }
 
 /** サムネイルURLを解決 */
@@ -55,12 +57,16 @@ function RecItemRow({
   hiddenMode,
   isPlaying,
   recommendationReason,
+  onVisible,
+  onExposureClick,
 }: {
   song: Song;
   isActive: boolean;
   hiddenMode: boolean;
   isPlaying: boolean;
   recommendationReason?: string;
+  onVisible?: () => void;
+  onExposureClick?: () => void;
 }) {
   const navigate = useNavigate();
   const { openSaveToPlaylist } = useUiStore();
@@ -77,6 +83,24 @@ function RecItemRow({
   const [menuPos, setMenuPos] = useState<{ top: number; right: number } | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const btnRef  = useRef<HTMLButtonElement>(null);
+  const itemRef = useRef<HTMLDivElement>(null);
+  const visibilityReportedRef = useRef(false);
+
+  useEffect(() => {
+    visibilityReportedRef.current = false;
+  }, [song.id]);
+
+  useEffect(() => {
+    if (!onVisible || !itemRef.current || typeof IntersectionObserver === 'undefined') return;
+    const observer = new IntersectionObserver(entries => {
+      if (!visibilityReportedRef.current && entries[0]?.isIntersecting && (entries[0].intersectionRatio ?? 0) >= 0.35) {
+        visibilityReportedRef.current = true;
+        onVisible();
+      }
+    }, { threshold: [0.35] });
+    observer.observe(itemRef.current);
+    return () => observer.disconnect();
+  }, [onVisible]);
 
   // メニュー外クリックで閉じる（Portal 対応: btnRef と menuRef 両方をチェック）
   useEffect(() => {
@@ -147,13 +171,15 @@ function RecItemRow({
       e.preventDefault();
       toggleSelection(song.id);
     } else {
+      onExposureClick?.();
       navigate(`/watch?v=${song.id}`);
     }
-  }, [isSelectionMode, toggleSelection, song.id, navigate]);
+  }, [isSelectionMode, toggleSelection, song.id, navigate, onExposureClick]);
 
   return (
     <>
     <div
+      ref={itemRef}
       className="rec-item animate-fade-in group relative"
       style={{
         background: isSelected
@@ -375,8 +401,11 @@ export default function RecommendationList({
   songs,
   loading,
   recommendationReasons,
+  exposureSurface,
 }: RecommendationListProps) {
   const { currentSong, isPlaying, hiddenMode } = usePlayerStore();
+  const recordVisible = useRecommendationExposureStore(s => s.recordVisible);
+  const recordClicked = useRecommendationExposureStore(s => s.recordClicked);
 
   if (loading && songs.length === 0) {
     return (
@@ -409,6 +438,8 @@ export default function RecommendationList({
             hiddenMode={hiddenMode}
             isPlaying={isPlaying}
             recommendationReason={recommendationReasons?.[song.id]}
+            onVisible={exposureSurface ? () => recordVisible(song.id, exposureSurface, index + 1) : undefined}
+            onExposureClick={exposureSurface ? () => recordClicked(song.id) : undefined}
           />
         </div>
       ))}

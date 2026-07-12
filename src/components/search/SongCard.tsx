@@ -13,6 +13,8 @@ interface SongCardProps {
   onAddToQueue?: (song: Song) => void;
   onSelect?: (song: Song) => void;
   recommendationReason?: string;
+  onVisible?: () => void;
+  onExposureClick?: () => void;
 }
 
 const formatJapaneseViews = (views?: number): string => {
@@ -30,7 +32,7 @@ const formatJapaneseViews = (views?: number): string => {
  * SongCard - 検索結果の曲カード
  * サムネイル、曲名、アーティスト、PVサービスバッジ、再生ボタンを表示。
  */
-export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect, recommendationReason }: SongCardProps) {
+export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect, recommendationReason, onVisible, onExposureClick }: SongCardProps) {
   const { currentSong, isPlaying, setQueue, hiddenMode } = usePlayerStore();
   const { openSaveToPlaylist } = useUiStore();
   const toggleSong = usePlaylistStore(s => s.toggleSongInPlaylist);
@@ -43,6 +45,8 @@ export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect, 
   const [menuPos, setMenuPos] = useState<{ top: number; right: number } | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const btnRef = useRef<HTMLButtonElement>(null);
+  const cardRef = useRef<HTMLDivElement>(null);
+  const visibilityReportedRef = useRef(false);
 
   // 複数選択ストア
   const isSelectionMode = useSelectionStore(s => s.isSelectionMode);
@@ -50,6 +54,22 @@ export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect, 
   const isSelected      = selectedSongIds.has(song.id);
   const toggleSelection = useSelectionStore(s => s.toggleSong);
   const enterSelectionMode = useSelectionStore(s => s.enterSelectionMode);
+
+  useEffect(() => {
+    visibilityReportedRef.current = false;
+  }, [song.id]);
+
+  useEffect(() => {
+    if (!onVisible || !cardRef.current || typeof IntersectionObserver === 'undefined') return;
+    const observer = new IntersectionObserver(entries => {
+      if (!visibilityReportedRef.current && entries[0]?.isIntersecting && (entries[0].intersectionRatio ?? 0) >= 0.35) {
+        visibilityReportedRef.current = true;
+        onVisible();
+      }
+    }, { threshold: [0.35] });
+    observer.observe(cardRef.current);
+    return () => observer.disconnect();
+  }, [onVisible]);
 
   // メニュー外クリックで閉じる
   useEffect(() => {
@@ -100,6 +120,8 @@ export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect, 
     }
     // 選択モード中は再生をブロック
     if (isSelectionMode) return;
+
+    onExposureClick?.();
     
     if (onPlay) {
       onPlay(song);
@@ -107,7 +129,7 @@ export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect, 
       setQueue([song], 0);
     }
     onSelect?.(song);
-  }, [isSelectionMode, onPlay, song, setQueue, onSelect]);
+  }, [isSelectionMode, onPlay, song, setQueue, onSelect, onExposureClick]);
 
   // カード全体でのクリックハンドラ
   const handleCardClick = useCallback((e: React.MouseEvent) => {
@@ -183,6 +205,7 @@ export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect, 
 
   return (
     <div
+      ref={cardRef}
       className="song-card rounded-xl overflow-hidden group relative"
       style={{
         background: isSelected

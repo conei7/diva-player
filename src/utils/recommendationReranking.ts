@@ -9,6 +9,7 @@ import {
 } from './recommendationScoring';
 import { filterVoiceSynthSongs } from './voiceSynthSongs';
 import { rankingNoise, type RankingSeed } from './rankingRandomization';
+import { calculateExposurePenalty, type RecommendationExposureEntry } from '../stores/recommendationExposureStore';
 
 export type RecommendationSource = 'known' | 'hybrid' | 'audio' | 'popular';
 
@@ -39,6 +40,7 @@ export interface RecommendationCandidateTrace {
   familiarityAdjustment: number;
   explorationAdjustment: number;
   baseScore: number | null;
+  exposurePenalty: number;
   producerPenalty: number;
   vocalistPenalty: number;
   finalScore: number | null;
@@ -66,6 +68,9 @@ export interface RecommendationRerankOptions {
   rankingSeed?: RankingSeed;
   /** Small score perturbation used only for near-ties. */
   explorationStrength?: number;
+  /** Browser-local display history used as a soft repeat penalty. */
+  exposureEntries?: Record<string, RecommendationExposureEntry>;
+  exposureNow?: number;
 }
 
 const SOURCE_WEIGHT: Record<RecommendationSource, number> = {
@@ -100,6 +105,8 @@ export function rerankRecommendationCandidates(
     familiarityBias = 0,
     rankingSeed = 0,
     explorationStrength = 0.045,
+    exposureEntries = {},
+    exposureNow = Date.now(),
   }: RecommendationRerankOptions,
 ): RankedRecommendation[] {
   return rerankRecommendationCandidatesDetailed(pools, {
@@ -113,6 +120,8 @@ export function rerankRecommendationCandidates(
     familiarityBias,
     rankingSeed,
     explorationStrength,
+    exposureEntries,
+    exposureNow,
   }).ranked;
 }
 
@@ -129,6 +138,8 @@ export function rerankRecommendationCandidatesDetailed(
     familiarityBias = 0,
     rankingSeed = 0,
     explorationStrength = 0.045,
+    exposureEntries = {},
+    exposureNow = Date.now(),
   }: RecommendationRerankOptions,
 ): DetailedRerankResult {
   const entries = new Map<number, {
@@ -142,6 +153,7 @@ export function rerankRecommendationCandidatesDetailed(
     familiarityAdjustment: number;
     explorationAdjustment: number;
     baseScore: number | null;
+    exposurePenalty: number;
   }>();
   (Object.entries(pools) as Array<[RecommendationSource, Song[] | undefined]>).forEach(([source, songs]) => {
     filterVoiceSynthSongs(songs ?? []).forEach((song, index) => {
@@ -159,6 +171,7 @@ export function rerankRecommendationCandidatesDetailed(
         familiarityAdjustment: 0,
         explorationAdjustment: 0,
         baseScore: null,
+        exposurePenalty: 0,
       };
       current.evidence += sourceWeight * rankSignal;
       current.sources.add(source);
@@ -214,8 +227,9 @@ export function rerankRecommendationCandidatesDetailed(
       const vocalistPenalty = getVocalistIds(entry.song)
         .reduce((sum, vocalistId) => sum + (vocalistCounts.get(vocalistId) ?? 0), 0) * 0.03;
       const familiarityAdjustment = (known ? 1 : -1) * familiarityBias * 0.2;
+      const exposurePenalty = calculateExposurePenalty(exposureEntries[String(entry.song.id)], exposureNow);
       const baseScore = entry.evidence * 0.9 + Math.sqrt(Math.max(0, preference)) * 0.8
-        + familiarityAdjustment - producerPenalty - vocalistPenalty;
+        + familiarityAdjustment - producerPenalty - vocalistPenalty - exposurePenalty;
       // The perturbation is deliberately small and deterministic. Hard filters,
       // user feedback, and diversity penalties are all applied before it.
       const explorationAdjustment = rankingSeed === 0
@@ -225,6 +239,7 @@ export function rerankRecommendationCandidatesDetailed(
       entry.finalScore = score;
       entry.baseScore = baseScore;
       entry.explorationAdjustment = explorationAdjustment;
+      entry.exposurePenalty = exposurePenalty;
       entry.producerPenalty = producerPenalty;
       entry.vocalistPenalty = vocalistPenalty;
       entry.familiarityAdjustment = familiarityAdjustment;
@@ -253,6 +268,7 @@ export function rerankRecommendationCandidatesDetailed(
       familiarityAdjustment: entry.familiarityAdjustment,
       explorationAdjustment: entry.explorationAdjustment,
       baseScore: entry.baseScore,
+      exposurePenalty: entry.exposurePenalty,
       producerPenalty: entry.producerPenalty,
       vocalistPenalty: entry.vocalistPenalty,
       finalScore: entry.finalScore,

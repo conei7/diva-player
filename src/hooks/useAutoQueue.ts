@@ -24,6 +24,7 @@ import { adjustTargetForStrategy } from '../utils/strategyBandit';
 import type { AutoQueueDecision, AutoQueueStatus, AutoQueueStrategyArm, QueueRecommendation } from '../types/autoplay';
 import { useRecommendationDebugStore } from '../stores/recommendationDebugStore';
 import { createRankingSeed } from '../utils/rankingRandomization';
+import { useRecommendationExposureStore } from '../stores/recommendationExposureStore';
 
 export type AutoQueueMixMode = 'balanced' | 'deep' | 'producer';
 
@@ -260,6 +261,7 @@ export function useAutoQueue({
         const familiarityBias = queuePlan.requestedCount > 0
           ? (strategyTarget.known - strategyTarget.unknown) / queuePlan.requestedCount
           : 0;
+        const rankingSeed = createRankingSeed();
         const detailed = rerankRecommendationCandidatesDetailed({
           known: knownCandidates,
           [source]: filteredCandidates,
@@ -272,14 +274,16 @@ export function useAutoQueue({
           excludeIds: existingIds,
           recentSongs: queue.slice(Math.max(0, queueIndex - 4), queueIndex + 1),
           familiarityBias,
-          rankingSeed: createRankingSeed(),
+          rankingSeed,
           explorationStrength: 0.05,
+          exposureEntries: useRecommendationExposureStore.getState().entries,
         });
         const nextSongs = detailed.ranked.map(item => item.song);
         useRecommendationDebugStore.getState().recordSnapshot({
           id: `${Date.now()}-autoplay-${generation}`,
           surface: 'autoplay',
           generatedAt: Date.now(),
+          rankingSeed,
           seedSongIds: buildRecommendationSeeds(currentSong, rootSeed, [...tasteProfile.longTerm, ...tasteProfile.shortTerm]).map(seed => seed.songId),
           strategy: `${mixMode}/${strategyArm}/${queuePlan.stage}`,
           familiarityBias,

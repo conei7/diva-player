@@ -225,11 +225,13 @@ app.MapGet("/api/recommend/audio", async (
 // GET /api/health
 app.MapGet("/api/health", async (DbService db, QdrantService qdrant, CancellationToken cancellationToken) =>
 {
-    var checks = await Task.WhenAll(
-        db.CheckHealthAsync(cancellationToken),
-        qdrant.CheckHealthAsync(cancellationToken));
-    var postgres = checks[0];
-    var qdrantStatus = checks[1];
+    var postgresTask = db.CheckHealthAsync(cancellationToken);
+    var qdrantTask = qdrant.CheckHealthAsync(cancellationToken);
+    var discoveryTask = db.CheckDiscoveryQualityAsync(cancellationToken);
+    await Task.WhenAll(postgresTask, qdrantTask, discoveryTask);
+    var postgres = await postgresTask;
+    var qdrantStatus = await qdrantTask;
+    var discoveryQuality = await discoveryTask;
     var ready = postgres.Ok && qdrantStatus.Ok;
 
     return Results.Json(
@@ -237,6 +239,7 @@ app.MapGet("/api/health", async (DbService db, QdrantService qdrant, Cancellatio
         {
             status = ready ? "ok" : "degraded",
             dependencies = new { postgres, qdrant = qdrantStatus },
+            discoveryQuality,
         },
         statusCode: ready ? StatusCodes.Status200OK : StatusCodes.Status503ServiceUnavailable);
 });

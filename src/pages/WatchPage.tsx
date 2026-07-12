@@ -25,6 +25,7 @@ import { diversifyAwayFromSeedVocalist } from '../utils/recommendationScoring';
 import { rerankRecommendationCandidatesDetailed } from '../utils/recommendationReranking';
 import { useRecommendationDebugStore } from '../stores/recommendationDebugStore';
 import { createRankingSeed } from '../utils/rankingRandomization';
+import { rerankDisplayedSongs, useRecommendationExposureStore } from '../stores/recommendationExposureStore';
 
 function WatchQueue() {
   const queue = usePlayerStore(s => s.queue);
@@ -186,7 +187,10 @@ export default function WatchPage() {
         .map(a => a.artist?.id)
         .filter((id): id is number => id !== undefined);
 
-      const items = await getSongsByProducerFromBackend(s.id, producerIds, PAGE_SIZE, page * PAGE_SIZE + (page === 0 ? randomOffsetRef.current : 0));
+      const items = rerankDisplayedSongs(
+        await getSongsByProducerFromBackend(s.id, producerIds, PAGE_SIZE, page * PAGE_SIZE + (page === 0 ? randomOffsetRef.current : 0)),
+        rankingSeedRef.current,
+      );
       const fresh = items.filter(item => !seenSets.current.producer.has(item.id));
       fresh.forEach(item => seenSets.current.producer.add(item.id));
 
@@ -206,11 +210,11 @@ export default function WatchPage() {
 
   const fetchRelated = useCallback(async (s: Song, page: number) => {
     try {
-      const items = diversifyAwayFromSeedVocalist(
+      const items = rerankDisplayedSongs(diversifyAwayFromSeedVocalist(
         s,
         await getMetadataSimilarSongs(s.id, PAGE_SIZE * 2, randomOffsetRef.current + page * PAGE_SIZE * 2),
         Math.max(6, Math.floor(PAGE_SIZE / 4)),
-      ).slice(0, PAGE_SIZE);
+      ).slice(0, PAGE_SIZE), rankingSeedRef.current);
       const fresh = items.filter(item => !seenSets.current.related.has(item.id));
       fresh.forEach(item => seenSets.current.related.add(item.id));
 
@@ -247,6 +251,7 @@ export default function WatchPage() {
         excludeIds: new Set([s.id]),
         rankingSeed: rankingSeedRef.current,
         explorationStrength: 0.06,
+        exposureEntries: useRecommendationExposureStore.getState().entries,
       });
       const mixed = detailed.ranked;
       const items = mixed.map(item => item.song);
@@ -261,6 +266,7 @@ export default function WatchPage() {
         id: `${Date.now()}-watch-${s.id}-${page}`,
         surface: 'watch',
         generatedAt: Date.now(),
+        rankingSeed: rankingSeedRef.current,
         seedSongIds: [s.id],
         strategy: 'recommended',
         familiarityBias: 0,
@@ -286,7 +292,10 @@ export default function WatchPage() {
 
   const fetchDeep = useCallback(async (s: Song, page: number) => {
     try {
-      const items = await getAudioSimilarSongs(s.id, PAGE_SIZE, page * PAGE_SIZE);
+      const items = rerankDisplayedSongs(
+        await getAudioSimilarSongs(s.id, PAGE_SIZE, page * PAGE_SIZE),
+        rankingSeedRef.current,
+      );
       const fresh = items.filter(item => !seenSets.current.deep.has(item.id));
       fresh.forEach(item => seenSets.current.deep.add(item.id));
 
@@ -459,6 +468,7 @@ export default function WatchPage() {
               loading={currentTab.loading}
               hasMore={currentTab.hasMore}
               recommendationReasons={activeTab === 'recommended' ? currentTab.reasons : undefined}
+              exposureSurface={activeTab === 'producer' ? 'watch-producer' : activeTab === 'related' ? 'watch-related' : activeTab === 'recommended' ? 'watch-recommended' : 'watch-deep'}
             />
 
             {/* 無限スクロールセンチネル */}
