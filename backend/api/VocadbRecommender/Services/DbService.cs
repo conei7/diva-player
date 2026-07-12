@@ -329,7 +329,7 @@ public class DbService
 
         var modeCondition = normalizedMode switch
         {
-            "surge" => "AND g.previous_views IS NOT NULL AND g.baseline_views > g.previous_views AND g.prior_window_days >= 3 AND g.view_growth >= 1000 AND g.surge_rate >= 1.5 AND s.song_type IN ('Original', 'Cover', 'Remix', 'Remaster', 'MusicPV') AND NOT (g.quality_score < 0.10 AND g.duration_score < 0.50 AND g.support_score = 0)",
+            "surge" => "AND g.previous_views IS NOT NULL AND g.baseline_views > g.previous_views AND g.prior_window_days >= 3 AND g.view_growth >= 1000 AND g.surge_rate >= 1.5 AND s.song_type IN ('Original', 'Cover', 'Remix', 'Remaster', 'MusicPV') AND NOT (g.quality_score < 0.30 AND g.duration_score < 0.50 AND g.support_score < 0.30) AND NOT (g.quality_score < 0.35 AND g.support_score < 0.30 AND EXISTS (SELECT 1 FROM unnest(g.quality_reasons) reason WHERE reason LIKE 'negative_tag:%')) AND NOT EXISTS (SELECT 1 FROM unnest(g.quality_reasons) reason WHERE reason IN ('negative_tag:out of scope (music pv)', 'negative_tag:架空の広告'))",
             "recent" => "AND s.publish_date >= CURRENT_DATE - interval '30 days'",
             _ => string.Empty,
         };
@@ -437,7 +437,10 @@ public class DbService
                         END))
                         + 0.5 * LN(1 + COALESCE(s.favorited_times, 0))
                     ) AS popular_score,
-                    COALESCE(q.quality_score, 0.5) AS quality_score,
+                    CASE WHEN COALESCE(q.duration_score, 0.5) < 0.50
+                        THEN GREATEST(0, COALESCE(q.quality_score, 0.5) - 0.25)
+                        ELSE COALESCE(q.quality_score, 0.5)
+                    END AS quality_score,
                     COALESCE(q.duration_score, 0.5) AS duration_score,
                     COALESCE(q.support_score, 0) AS support_score,
                     COALESCE(q.reason_codes, ARRAY['quality_missing']::text[]) AS quality_reasons,
