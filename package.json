@@ -13,6 +13,7 @@
     "test:integration:sbc": "node scripts/test-sbc-integration.mjs",
     "test:e2e:sbc": "node scripts/test-sbc-e2e.mjs",
     "test:e2e:recommendation-debug": "node scripts/test-recommendation-debug-e2e.mjs",
+    "analyze:surge-quality": "node scripts/analyze-surge-quality.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

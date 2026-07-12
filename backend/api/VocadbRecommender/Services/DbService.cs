@@ -316,30 +316,40 @@ public class DbService
         return result;
     }
 
-    public async Task<string> GetTrendingSongsJsonAsync(int days, int start, int maxResults, string? mode = null)
+    public async Task<string> GetTrendingSongsJsonAsync(int days, int start, int maxResults, string? mode = null, string? ranking = null, bool debug = false)
     {
         var clampedDays = Math.Clamp(days, 1, 365);
         var normalizedStart = Math.Max(0, start);
         var clampedMaxResults = Math.Clamp(maxResults, 1, 100);
         var normalizedMode = mode is "surge" or "recent" ? mode : "growth";
-        var cacheKey = $"trending:{normalizedMode}:{clampedDays}:{normalizedStart}:{clampedMaxResults}";
+        var normalizedRanking = ranking == "legacy" ? "legacy" : "quality";
+        var cacheKey = $"trending:{normalizedMode}:{normalizedRanking}:{debug}:{clampedDays}:{normalizedStart}:{clampedMaxResults}";
         if (_cache.TryGetValue(cacheKey, out string? cached))
             return cached!;
 
         var modeCondition = normalizedMode switch
         {
-            "surge" => "AND g.previous_views IS NOT NULL AND g.baseline_views > g.previous_views AND g.prior_window_days >= 3 AND g.view_growth >= 1000 AND g.surge_rate >= 1.5 AND s.song_type IN ('Original', 'Cover', 'Remix', 'Remaster', 'MusicPV')",
+            "surge" => "AND g.previous_views IS NOT NULL AND g.baseline_views > g.previous_views AND g.prior_window_days >= 3 AND g.view_growth >= 1000 AND g.surge_rate >= 1.5 AND s.song_type IN ('Original', 'Cover', 'Remix', 'Remaster', 'MusicPV') AND NOT (g.quality_score < 0.10 AND g.duration_score < 0.50 AND g.support_score = 0)",
             "recent" => "AND s.publish_date >= CURRENT_DATE - interval '30 days'",
             _ => string.Empty,
         };
         var orderBy = normalizedMode switch
         {
-            "surge" => "g.surge_rate DESC, g.view_growth DESC, s.favorited_times DESC NULLS LAST",
+            "surge" when normalizedRanking == "legacy" => "g.surge_rate DESC, g.view_growth DESC, s.favorited_times DESC NULLS LAST",
+            "surge" => "g.surge_rank_score DESC, g.view_growth DESC, g.quality_score DESC, s.favorited_times DESC NULLS LAST",
             "recent" => "g.recent_score DESC, g.view_growth DESC, s.publish_date DESC",
             _ => "g.popular_score DESC, g.growth_rate DESC, s.favorited_times DESC NULLS LAST",
         };
-        var sourceTable = normalizedMode == "recent" ? "recent_candidates" : "growth";
+        var sourceTable = normalizedMode switch
+        {
+            "recent" => "recent_candidates",
+            "surge" when normalizedRanking == "quality" => "surge_ranked",
+            _ => "growth",
+        };
         var minimumCondition = normalizedMode == "growth" ? "g.popular_score > 0" : "g.view_growth > 0";
+        var debugFields = debug && normalizedMode == "surge"
+            ? ", 'qualityScore', g.quality_score, 'surgeRankScore', g.surge_rank_score, 'qualityReasons', to_jsonb(g.quality_reasons)"
+            : string.Empty;
 
         using var conn = Open();
         await using var cmd = new NpgsqlCommand($@"
@@ -427,6 +437,10 @@ public class DbService
                         END))
                         + 0.5 * LN(1 + COALESCE(s.favorited_times, 0))
                     ) AS popular_score,
+                    COALESCE(q.quality_score, 0.5) AS quality_score,
+                    COALESCE(q.duration_score, 0.5) AS duration_score,
+                    COALESCE(q.support_score, 0) AS support_score,
+                    COALESCE(q.reason_codes, ARRAY['quality_missing']::text[]) AS quality_reasons,
                     (
                         (
                             CASE WHEN b.youtube_views >= 100 THEN GREATEST(0, l.youtube_views - b.youtube_views) ELSE 0 END
@@ -438,6 +452,19 @@ public class DbService
                 JOIN songs s ON s.id = b.song_id
                 JOIN latest l ON l.song_id = b.song_id
                 LEFT JOIN previous_baseline pb ON pb.song_id = b.song_id
+                LEFT JOIN song_discovery_quality q ON q.song_id = s.id
+            ),
+            surge_ranked AS (
+                SELECT
+                    g.*,
+                    PERCENT_RANK() OVER (ORDER BY g.view_growth) AS growth_percentile,
+                    PERCENT_RANK() OVER (ORDER BY g.surge_rate) AS acceleration_percentile,
+                    (
+                        0.45 * PERCENT_RANK() OVER (ORDER BY g.view_growth)
+                        + 0.30 * PERCENT_RANK() OVER (ORDER BY g.surge_rate)
+                        + 0.25 * g.quality_score
+                    ) AS surge_rank_score
+                FROM growth g
             ),
             recent_candidates AS (
                 SELECT
@@ -452,11 +479,17 @@ public class DbService
                     ) AS growth_rate,
                     0::double precision AS surge_rate,
                     LN(1 + COALESCE(s.youtube_views, 0) + (10 * COALESCE(s.nico_views, 0))) AS popular_score,
+                    COALESCE(q.quality_score, 0.5) AS quality_score,
+                    COALESCE(q.duration_score, 0.5) AS duration_score,
+                    COALESCE(q.support_score, 0) AS support_score,
+                    COALESCE(q.reason_codes, ARRAY['quality_missing']::text[]) AS quality_reasons,
+                    0::double precision AS surge_rank_score,
                     (
                         (COALESCE(s.youtube_views, 0) + (10 * COALESCE(s.nico_views, 0)))::double precision
                         / GREATEST(1, CURRENT_DATE - s.publish_date)
                     ) AS recent_score
                 FROM songs s
+                LEFT JOIN song_discovery_quality q ON q.song_id = s.id
                 WHERE s.publish_date >= CURRENT_DATE - interval '30 days'
             )
             SELECT (s.raw_json || jsonb_strip_nulls(jsonb_build_object(
@@ -468,15 +501,18 @@ public class DbService
                     SELECT 1 FROM song_features sf
                     WHERE sf.song_id = s.id AND sf.audio_computed IS TRUE
                 ),
-                'thumbUrl', COALESCE(s.raw_json->>'thumbUrl', s.raw_json->'pvs'->0->>'thumbUrl')
+                'thumbUrl', COALESCE(s.raw_json->>'thumbUrl', s.raw_json->'pvs'->0->>'thumbUrl'){{debugFields}}
             )))::text
             FROM {sourceTable} g
             JOIN songs s ON s.id = g.song_id
             WHERE {minimumCondition}
               AND EXISTS (
                   SELECT 1
-                  FROM jsonb_array_elements(COALESCE(s.raw_json->'artists', '[]'::jsonb)) artist
-                  WHERE artist->'artist'->>'artistType' IN (
+                  FROM song_artists sa
+                  JOIN artists a ON a.id = sa.artist_id
+                  WHERE sa.song_id = s.id
+                    AND sa.is_vocalist = TRUE
+                    AND a.artist_type IN (
                     'Vocaloid', 'UTAU', 'CeVIO', 'SynthesizerV', 'NEUTRINO',
                     'VoiSona', 'Voiceroid', 'OtherVoiceSynthesizer', 'NewType'
                   )

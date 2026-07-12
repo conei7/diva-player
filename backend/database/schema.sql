@@ -31,6 +31,25 @@ CREATE INDEX IF NOT EXISTS songs_publish_date_idx ON songs (publish_date);
 CREATE INDEX IF NOT EXISTS songs_favorited_idx    ON songs (favorited_times DESC);
 CREATE INDEX IF NOT EXISTS songs_type_idx         ON songs (song_type);
 
+-- Heuristic discovery quality signals are refreshed by diva-data-pipeline.
+CREATE TABLE IF NOT EXISTS song_discovery_quality (
+    song_id             INTEGER PRIMARY KEY REFERENCES songs(id) ON DELETE CASCADE,
+    quality_score       REAL NOT NULL DEFAULT 0.5,
+    duration_score      REAL NOT NULL DEFAULT 0.5,
+    support_score       REAL NOT NULL DEFAULT 0,
+    tag_support_score   REAL NOT NULL DEFAULT 0,
+    producer_score      REAL NOT NULL DEFAULT 0,
+    original_pv_score   REAL NOT NULL DEFAULT 0,
+    nico_presence_score REAL NOT NULL DEFAULT 0,
+    negative_penalty    REAL NOT NULL DEFAULT 0,
+    reason_codes        TEXT[] NOT NULL DEFAULT '{}',
+    model_version       TEXT NOT NULL DEFAULT 'heuristic-v1',
+    computed_at         TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS song_discovery_quality_score_idx
+    ON song_discovery_quality (quality_score DESC);
+
 -- External view counts are maintained by diva-data-pipeline.
 ALTER TABLE songs
     ADD COLUMN IF NOT EXISTS youtube_views BIGINT NOT NULL DEFAULT 0,
