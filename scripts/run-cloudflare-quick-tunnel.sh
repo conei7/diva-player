@@ -13,5 +13,12 @@ cleanup() {
 }
 trap cleanup INT TERM EXIT
 
-"$(dirname "$0")/sync-quick-tunnel-to-cloudflare.sh"
+while ! "$(dirname "$0")/sync-quick-tunnel-to-cloudflare.sh"; do
+  if ! kill -0 "$cloudflared_pid" 2>/dev/null; then
+    wait "$cloudflared_pid"
+    exit $?
+  fi
+  echo "Tunnel URL sync failed; retrying in 30 seconds" >&2
+  sleep 30
+done
 wait "$cloudflared_pid"
