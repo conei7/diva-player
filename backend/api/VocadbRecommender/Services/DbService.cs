@@ -305,7 +305,21 @@ public class DbService
                        SELECT artist_id FROM song_artists
                        WHERE song_id = s.id AND is_vocalist = TRUE
                    ) AS vocalist_ids,
-                   s.youtube_views, s.nico_views
+                   s.youtube_views, s.nico_views,
+                   EXISTS (
+                       SELECT 1 FROM song_artists sa
+                       JOIN artists a ON a.id = sa.artist_id
+                       WHERE sa.song_id = s.id
+                         AND sa.is_vocalist = TRUE
+                         AND a.artist_type IN (
+                           'Vocaloid', 'UTAU', 'CeVIO', 'SynthesizerV',
+                           'NEUTRINO', 'VoiSona'
+                         )
+                   ) AS has_core_voice_synth,
+                   EXISTS (
+                       SELECT 1 FROM pvs p
+                       WHERE p.song_id = s.id AND p.disabled = FALSE
+                   ) AS has_playable_pv
             FROM songs s
             LEFT JOIN song_features sf ON sf.song_id = s.id
             WHERE s.id = ANY($1)", conn);
@@ -325,7 +339,9 @@ public class DbService
                 ProducerIds:    reader.IsDBNull(7) ? [] : (int[])reader.GetValue(7),
                 VocalistIds:    reader.IsDBNull(8) ? [] : (int[])reader.GetValue(8),
                 YoutubeViews:   reader.IsDBNull(9) ? 0 : reader.GetInt64(9),
-                NicoViews:      reader.IsDBNull(10) ? 0 : reader.GetInt64(10)
+                 NicoViews:      reader.IsDBNull(10) ? 0 : reader.GetInt64(10),
+                 HasCoreVoiceSynthVocalist: !reader.IsDBNull(11) && reader.GetBoolean(11),
+                 HasPlayablePv:  !reader.IsDBNull(12) && reader.GetBoolean(12)
             );
 
             _cache.Set($"song:{info.Id}", info, TimeSpan.FromMinutes(30));
@@ -635,6 +651,22 @@ public class DbService
             WHERE sa.artist_id = ANY($1)
               AND sa.is_producer = TRUE
               AND sa.song_id <> $2
+              AND EXISTS (
+                  SELECT 1 FROM songs s
+                  WHERE s.id = sa.song_id
+                    AND s.song_type IN ('Original', 'Cover', 'Remix', 'Remaster', 'MusicPV')
+              )
+              AND EXISTS (
+                  SELECT 1 FROM song_artists synth_artist
+                  JOIN artists synth ON synth.id = synth_artist.artist_id
+                  WHERE synth_artist.song_id = sa.song_id
+                    AND synth_artist.is_vocalist = TRUE
+                    AND synth.artist_type IN ('Vocaloid', 'UTAU', 'CeVIO', 'SynthesizerV', 'NEUTRINO', 'VoiSona')
+              )
+              AND EXISTS (
+                  SELECT 1 FROM pvs p
+                  WHERE p.song_id = sa.song_id AND p.disabled = FALSE
+              )
             ORDER BY sa.song_id
             LIMIT $3", conn);
         cmd.Parameters.AddWithValue(producerIds);
@@ -671,6 +703,14 @@ public class DbService
                   )
             )
             AND s.id <> $1
+            AND s.song_type IN ('Original', 'Cover', 'Remix', 'Remaster', 'MusicPV')
+            AND EXISTS (
+                SELECT 1 FROM song_artists synth_artist
+                JOIN artists synth ON synth.id = synth_artist.artist_id
+                WHERE synth_artist.song_id = s.id
+                  AND synth_artist.is_vocalist = TRUE
+                  AND synth.artist_type IN ('Vocaloid', 'UTAU', 'CeVIO', 'SynthesizerV', 'NEUTRINO', 'VoiSona')
+            )
             AND EXISTS (SELECT 1 FROM pvs WHERE pvs.song_id = s.id AND pvs.disabled = FALSE)
             ORDER BY s.favorited_times DESC NULLS LAST
             LIMIT $2", conn);
@@ -696,5 +736,7 @@ public record SongInfo(
     int[]   ProducerIds,
     int[]   VocalistIds,
     long    YoutubeViews,
-    long    NicoViews
-);
+      long    NicoViews,
+      bool    HasCoreVoiceSynthVocalist,
+      bool    HasPlayablePv
+  );

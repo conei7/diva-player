@@ -110,6 +110,10 @@ app.MapGet("/api/recommend/similar", async (
 
     var seed = await db.GetSongInfoAsync(songId);
     var infos = await db.GetSongInfoBatchAsync(results.Select(r => r.SongId));
+    var infoMap = infos.ToDictionary(i => i.Id);
+    results = results
+        .Where(result => infoMap.TryGetValue(result.SongId, out var info) && DiscoveryEligibility.IsEligible(info))
+        .ToList();
     if (seed is not null)
     {
         results = RecommendationDiversity.ApplySeedArtistCaps(
@@ -122,7 +126,6 @@ app.MapGet("/api/recommend/similar", async (
     }
 
     results = results.Skip(skip).Take(count).ToList();
-    var infoMap = infos.ToDictionary(i => i.Id);
 
     var items = results
         .Where(r => infoMap.ContainsKey(r.SongId))
@@ -159,6 +162,10 @@ app.MapGet("/api/recommend/metadata", async (
 
     var seed = await db.GetSongInfoAsync(songId);
     var infos = await db.GetSongInfoBatchAsync(results.Select(r => r.SongId));
+    var infoMap = infos.ToDictionary(i => i.Id);
+    results = results
+        .Where(result => infoMap.TryGetValue(result.SongId, out var info) && DiscoveryEligibility.IsEligible(info))
+        .ToList();
     if (seed is not null)
     {
         results = RecommendationDiversity.ApplySeedArtistCaps(
@@ -171,7 +178,6 @@ app.MapGet("/api/recommend/metadata", async (
     }
 
     results = results.Skip(skip).Take(count).ToList();
-    var infoMap = infos.ToDictionary(i => i.Id);
 
     var items = results
         .Where(r => infoMap.ContainsKey(r.SongId))
@@ -200,13 +206,19 @@ app.MapGet("/api/recommend/audio", async (
         return Results.BadRequest("count must be between 1 and 100");
 
     int skip = offset ?? 0;
-    var results = await qdrant.SearchAudioOnlyAsync(songId, count, null, skip);
+    const int fetchCount = 200;
+    var results = await qdrant.SearchAudioOnlyAsync(songId, fetchCount, null, 0);
 
     if (results.Count == 0)
         return Results.Ok(new { items = Array.Empty<object>() });
 
     var infos = await db.GetSongInfoBatchAsync(results.Select(r => r.SongId));
     var infoMap = infos.ToDictionary(i => i.Id);
+    results = results
+        .Where(result => infoMap.TryGetValue(result.SongId, out var info) && DiscoveryEligibility.IsEligible(info))
+        .Skip(skip)
+        .Take(count)
+        .ToList();
 
     var items = results
         .Where(r => infoMap.ContainsKey(r.SongId))

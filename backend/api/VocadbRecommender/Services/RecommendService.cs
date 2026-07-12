@@ -81,6 +81,13 @@ public class RecommendService
         // --- 3. 候補多様性フィルタ: 同一プロデューサーを上位 N 件に制限 ---
         var candidateInfos = await _db.GetSongInfoBatchAsync(
             mergedCandidates.Select(c => c.Key));
+        var eligibleIds = candidateInfos
+            .Where(DiscoveryEligibility.IsEligible)
+            .Select(info => info.Id)
+            .ToHashSet();
+        mergedCandidates = mergedCandidates
+            .Where(candidate => eligibleIds.Contains(candidate.Key))
+            .ToList();
         // count の 1/3 を同一プロデューサー上限とし、残りを他プロデューサーで埋める
         // Fixed caps keep the ranked prefix stable when the endpoint applies pagination.
         const int maxSameProd = 16;
@@ -98,7 +105,9 @@ public class RecommendService
         double lambda = Math.Max(0.2, _opts.BaseDiversity - sessionProgress * 0.3);
         var reranked  = MmrRerank(filtered, candidateInfos, count, lambda);
 
-        var resultInfos = await _db.GetSongInfoBatchAsync(reranked.Select(r => r.SongId));
+        var resultInfos = (await _db.GetSongInfoBatchAsync(reranked.Select(r => r.SongId)))
+            .Where(DiscoveryEligibility.IsEligible)
+            .ToArray();
         var infoMap     = resultInfos.ToDictionary(i => i.Id);
 
         var items = reranked
