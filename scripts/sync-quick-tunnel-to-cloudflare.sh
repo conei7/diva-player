@@ -16,7 +16,7 @@ attempt=0
 tunnel_url=""
 while [ "$attempt" -lt 30 ]; do
   tunnel_url=$(grep -hEo 'https://[-a-zA-Z0-9.]+\.trycloudflare\.com' "$LOG_FILE" 2>/dev/null | tail -1 || true)
-  if [ -n "$tunnel_url" ] && curl -fsS --max-time 10 "$tunnel_url/backend-api/api/health" >/dev/null; then
+  if [ -n "$tunnel_url" ]; then
     break
   fi
   tunnel_url=""
