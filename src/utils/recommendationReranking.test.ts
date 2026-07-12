@@ -81,8 +81,12 @@ describe('rerankRecommendationCandidates', () => {
     const second = rerankRecommendationCandidatesDetailed(pools, {
       ...baseOptions, total: 4, rankingSeed: 1234,
     });
+    const different = rerankRecommendationCandidatesDetailed(pools, {
+      ...baseOptions, total: 4, rankingSeed: 5678,
+    });
 
     expect(first.ranked.map(item => item.song.id)).toEqual(second.ranked.map(item => item.song.id));
+    expect(first.ranked.map(item => item.song.id)).not.toEqual(different.ranked.map(item => item.song.id));
     expect(first.trace.some(item => item.explorationAdjustment !== 0)).toBe(true);
   });
 

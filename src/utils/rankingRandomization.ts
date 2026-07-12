@@ -7,9 +7,9 @@ export function createRankingSeed(): RankingSeed {
   if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
     const values = new Uint32Array(1);
     crypto.getRandomValues(values);
-    return values[0] & MAX_SEED;
+    return (values[0] & MAX_SEED) || 1;
   }
-  return Math.floor(Math.random() * MAX_SEED);
+  return Math.max(1, Math.floor(Math.random() * MAX_SEED));
 }
 
 /** Deterministic pseudo-random value in [-1, 1] for a song and page seed. */
