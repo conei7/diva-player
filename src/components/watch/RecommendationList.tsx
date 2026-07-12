@@ -244,11 +244,6 @@ function RecItemRow({
           <p className="text-xs mt-0.5 truncate" style={{ color: 'var(--color-text-muted)' }}>
             {producerName || song.artistString}
           </p>
-          {relativeDate && (
-            <span className="text-[10px]" style={{ color: 'var(--color-text-muted)' }}>
-              {relativeDate}
-            </span>
-          )}
           {recommendationReason && (
             <p className="text-[10px] mt-1 truncate" style={{ color: 'var(--color-accent)' }}>
               {recommendationReason}
@@ -277,6 +272,11 @@ function RecItemRow({
                       opacity: isNicoUnofficialOnly ? 0.8 : 1
                     }}>
                 📺 {formatJapaneseViews(song.nicoViews)}
+              </span>
+            )}
+            {relativeDate && (
+              <span className="text-[10px]" style={{ color: 'var(--color-text-muted)' }}>
+                {relativeDate}
               </span>
             )}
             {song.favoritedTimes > 0 && (

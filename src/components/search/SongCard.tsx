@@ -398,11 +398,6 @@ export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect, 
 
         {/* 下部バッジ列 */}
         <div className="flex items-center flex-wrap gap-2 mt-2">
-          {relativeDate && (
-            <span className="text-[10px]" style={{ color: 'var(--color-text-muted)' }}>
-              {relativeDate}
-            </span>
-          )}
           {/* PVサービスバッジ / 再生数 */}
           {(pvServices.has('Youtube') || (song.youtubeViews || 0) > 0) && (
             <span className="text-[10px] font-bold px-1.5 py-0.5 rounded flex items-center gap-1"
@@ -432,6 +427,12 @@ export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect, 
           )}
 
 
+
+          {relativeDate && (
+            <span className="text-[10px]" style={{ color: 'var(--color-text-muted)' }}>
+              {relativeDate}
+            </span>
+          )}
 
           {/* VocaDB お気に入り数 */}
           {song.favoritedTimes > 0 && (
