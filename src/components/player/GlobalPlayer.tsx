@@ -160,6 +160,7 @@ export default function GlobalPlayer() {
             }}
             onClick={() => isPlaying ? pause() : resume()}
             title={isPlaying ? '一時停止' : '再生'}
+            aria-label={isPlaying ? '一時停止' : '再生'}
           >
             {isPlaying ? (
               <svg width="14" height="14" viewBox="0 0 24 24" fill="white">
