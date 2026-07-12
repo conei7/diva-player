@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "include": [
+    "/backend-api/*",
+    "/invidious-api/*",
+    "/tunnel-admin/update",
+    "/watch",
+    "/playing",
+    "/history",
+    "/favorites",
+    "/playlists"
+  ],
+  "exclude": []
+}

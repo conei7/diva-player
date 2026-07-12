@@ -70,6 +70,8 @@ try {
 
     $apiTarget = "$cloudflareUrl/backend-api"
     Write-Host "[start-dev-sbc] Cloudflare URL is ready: $cloudflareUrl"
+    Write-Host "[start-dev-sbc] Syncing the current tunnel URL to Cloudflare Pages..."
+    Invoke-Sbc "cd ~/diva-player && sh scripts/sync-quick-tunnel-to-cloudflare.sh"
     Write-Host "[start-dev-sbc] Backend API target: $apiTarget"
     if ($CheckOnly) {
         return

@@ -10,7 +10,7 @@ export default defineConfig(({ mode }) => {
 
   return {
     plugins: [react(), tailwindcss()],
-    base: "/diva-player/",
+    base: env.VITE_BASE_PATH || "/diva-player/",
     server: {
       allowedHosts: true,
       proxy: {

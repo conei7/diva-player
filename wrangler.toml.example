@@ -1,0 +1,7 @@
+name = "diva-player"
+pages_build_output_dir = "./dist"
+compatibility_date = "2026-07-12"
+
+[[kv_namespaces]]
+binding = "TUNNEL_CONFIG"
+id = "replace-with-kv-namespace-id"

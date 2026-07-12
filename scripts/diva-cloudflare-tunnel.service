@@ -1,0 +1,14 @@
+[Unit]
+Description=Diva Player Cloudflare Quick Tunnel
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/diva-player
+ExecStart=/bin/sh %h/diva-player/scripts/run-cloudflare-quick-tunnel.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
