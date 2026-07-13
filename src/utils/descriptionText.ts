@@ -12,8 +12,6 @@ const TRAILING_URL_PUNCTUATION = /[.,!?;:、。！？；：)\]}」』】]+$/;
  */
 export function normalizeDescriptionText(value: string): string {
   return value
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<[^>]+>/g, '')
     .replace(/\r\n?/g, '\n')
     .replace(/\\r\\n/g, '\n')
     .replace(/\\n/g, '\n');

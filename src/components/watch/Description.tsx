@@ -51,14 +51,7 @@ export default function Description({ song }: DescriptionProps) {
       className="mt-3 rounded-xl p-3 transition-colors"
       style={{ background: 'var(--color-surface)' }}
       onClick={() => {
-        if (!expanded) {
-          setExpanded(true);
-        } else {
-          const selection = window.getSelection();
-          if (!selection || selection.toString().length === 0) {
-            setExpanded(false);
-          }
-        }
+        if (!expanded) setExpanded(true);
       }}
       aria-expanded={expanded}
     >

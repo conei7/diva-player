@@ -1,5 +1,5 @@
 export const HISTORY_DB_NAME = 'diva-listening-history';
-export const HISTORY_DB_VERSION = 3;
+export const HISTORY_DB_VERSION = 2;
 
 export const HISTORY_STORES = {
   plays: 'plays',
@@ -7,7 +7,6 @@ export const HISTORY_STORES = {
   applied: 'stats_applied',
   songStats: 'song_stats',
   yearStats: 'year_stats',
-  monthStats: 'month_stats',
   meta: 'stats_meta',
 } as const;
 
@@ -43,9 +42,6 @@ export function openHistoryDb(): Promise<IDBDatabase> {
       }
       if (!db.objectStoreNames.contains(HISTORY_STORES.yearStats)) {
         db.createObjectStore(HISTORY_STORES.yearStats, { keyPath: 'key' });
-      }
-      if (!db.objectStoreNames.contains(HISTORY_STORES.monthStats)) {
-        db.createObjectStore(HISTORY_STORES.monthStats, { keyPath: 'key' });
       }
       if (!db.objectStoreNames.contains(HISTORY_STORES.meta)) {
         db.createObjectStore(HISTORY_STORES.meta, { keyPath: 'key' });

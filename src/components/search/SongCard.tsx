@@ -108,9 +108,6 @@ export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect, 
 
   // 再生時間フォーマット
   const formatDuration = (seconds: number): string => {
-
-  // 再生時間フォーマット
-  const formatDuration = (seconds: number): string => {
     if (!seconds) return '--:--';
     const m = Math.floor(seconds / 60);
     const s = Math.floor(seconds % 60);
@@ -132,13 +129,11 @@ export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect, 
     } else {
       setQueue([song], 0);
     }
-  }, [isSelectionMode, onPlay, song, setQueue, onExposureClick]);
+    onSelect?.(song);
+  }, [isSelectionMode, onPlay, song, setQueue, onSelect, onExposureClick]);
 
   // カード全体でのクリックハンドラ
   const handleCardClick = useCallback((e: React.MouseEvent) => {
-    // 中クリックなどの場合は無視（onAuxClickで処理）
-    if (e.button !== 0) return;
-    
     if (isSelectionMode) {
       e.stopPropagation();
       e.preventDefault();
@@ -147,13 +142,6 @@ export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect, 
       handlePlay(e);
     }
   }, [isSelectionMode, toggleSelection, song.id, handlePlay]);
-
-  const handleCardAuxClick = useCallback((e: React.MouseEvent) => {
-    if (e.button === 1 && !isSelectionMode) {
-      e.stopPropagation();
-      window.open(`/watch?v=${song.id}`, '_blank', 'noopener,noreferrer');
-    }
-  }, [isSelectionMode, song.id]);
 
   const handleSongLinkClick = useCallback((e: React.MouseEvent<HTMLAnchorElement>) => {
     if (isSelectionMode) {
@@ -255,7 +243,6 @@ export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect, 
         userSelect: isSelectionMode ? 'none' : undefined,
       }}
       onClick={handleCardClick}
-      onAuxClick={handleCardAuxClick}
     >
       {/* サムネイル — クリックで再生（選択モード時は選択トグル） */}
       <Link
