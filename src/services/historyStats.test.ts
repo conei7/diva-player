@@ -5,6 +5,7 @@ import {
   emptyHistorySongStats,
   isFinalizedPlayEvent,
   isQualifiedPlay,
+  getYearAndMonth,
 } from './historyStats';
 import type { ListeningPlayEvent } from '../stores/historyStore';
 
@@ -29,15 +30,15 @@ describe('history statistics', () => {
 
   it('ignores an active event until it is finalized', () => {
     const stats = emptyHistorySongStats(42);
-    applyHistoryEventToStats(stats, event({ f: 0 }), 'Asia/Tokyo');
+    applyHistoryEventToStats(stats, event({ f: 0 }));
     expect(stats.startCount).toBe(0);
     expect(stats.qualifiedPlayCount).toBe(0);
   });
 
   it('separates manual and autoplay counts', () => {
     const stats = emptyHistorySongStats(42);
-    applyHistoryEventToStats(stats, event({ o: 0, p: 90, c: 1 }), 'Asia/Tokyo');
-    applyHistoryEventToStats(stats, event({ o: 1, p: 20 }), 'Asia/Tokyo');
+    applyHistoryEventToStats(stats, event({ o: 0, p: 90, c: 1 }));
+    applyHistoryEventToStats(stats, event({ o: 1, p: 20 }));
 
     expect(stats.startCount).toBe(2);
     expect(stats.qualifiedPlayCount).toBe(1);
@@ -49,8 +50,8 @@ describe('history statistics', () => {
 
   it('treats legacy events as finalized and tracks their date range', () => {
     const stats = emptyHistorySongStats(42);
-    applyHistoryEventToStats(stats, event({ t: 2_000, f: undefined }), 'Asia/Tokyo');
-    applyHistoryEventToStats(stats, event({ t: 1_000, p: 40 }), 'Asia/Tokyo');
+    applyHistoryEventToStats(stats, event({ t: 2_000, f: undefined }));
+    applyHistoryEventToStats(stats, event({ t: 1_000, p: 40 }));
 
     expect(isFinalizedPlayEvent(event({ f: undefined }))).toBe(true);
     expect(stats.firstPlayedAt).toBe(1_000);
@@ -64,5 +65,18 @@ describe('history statistics', () => {
 
     expect(compareHistoryStats(longer, base)).toBeLessThan(0);
     expect(compareHistoryStats(newer, longer)).toBeLessThan(0);
+  });
+
+  it('calculates correct year and month based on timeZone', () => {
+    // 2023-12-31 23:30:00 UTC = 2024-01-01 08:30:00 JST
+    const ts = Date.UTC(2023, 11, 31, 23, 30, 0);
+    
+    const jst = getYearAndMonth(ts, 'Asia/Tokyo');
+    expect(jst.year).toBe(2024);
+    expect(jst.month).toBe('2024-01');
+
+    const utc = getYearAndMonth(ts, 'UTC');
+    expect(utc.year).toBe(2023);
+    expect(utc.month).toBe('2023-12');
   });
 });

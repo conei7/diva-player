@@ -4,6 +4,7 @@ import { useUiStore } from '../../stores/uiStore';
 import { usePlayerStore } from '../../stores/playerStore';
 import { useSearchStore } from '../../stores/searchStore';
 import { useSelectionStore } from '../../stores/selectionStore';
+import SettingsModal from '../settings/SettingsModal';
 import {
   getSearchSuggestions,
   searchProducersByName,
@@ -68,6 +69,7 @@ export default function TopNav() {
   const [isSuggestLoading, setIsSuggestLoading] = useState(false);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [recentSearches, setRecentSearches] = useState<string[]>(() => readSearchHistory());
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const searchFormRef = useRef<HTMLFormElement>(null);
   const showRecentSearches = showSuggestions && searchQuery.trim().length === 0 && recentSearches.length > 0;
@@ -99,11 +101,15 @@ export default function TopNav() {
     // Ctrl/⌘クリックや中クリックは別タブ用なので、現在の検索状態を変更しない。
     if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
 
+    event.preventDefault();
     resetSearch();
     setSearchQuery('');
     setSearchMode('auto');
     setShowSuggestions(false);
     if (isSelectionMode) exitSelectionMode();
+    
+    navigate('/');
+    window.scrollTo(0, 0);
 
     clickCountRef.current += 1;
     if (clickTimerRef.current) clearTimeout(clickTimerRef.current);
@@ -535,9 +541,11 @@ export default function TopNav() {
           </button>
 
           <button
-            className="w-8 h-8 rounded-full flex items-center justify-center overflow-hidden"
+            onClick={() => setIsSettingsOpen(true)}
+            className="w-8 h-8 rounded-full flex items-center justify-center overflow-hidden transition-opacity hover:opacity-80"
             style={{ background: 'var(--gradient-primary)' }}
-            title="ユーザー"
+            title="設定・バックアップ"
+            aria-label="設定・バックアップ"
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="white">
               <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z" />
@@ -545,6 +553,8 @@ export default function TopNav() {
           </button>
         </div>
       </div>
+      
+      <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />
     </header>
   );
 }

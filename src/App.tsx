@@ -19,6 +19,7 @@ const WatchPage = lazy(() => import('./pages/WatchPage'));
 const PlaylistPage = lazy(() => import('./pages/PlaylistPage'));
 const HistoryPage = lazy(() => import('./pages/HistoryPage'));
 const FavoritesPage = lazy(() => import('./pages/FavoritesPage'));
+const ReportsPage = lazy(() => import('./pages/ReportsPage'));
 
 /**
  * App - ルートコンポーネント
@@ -172,6 +173,7 @@ function AppContent() {
             <Route path="/history" element={<HistoryPage />} />
             <Route path="/favorites" element={<FavoritesPage />} />
             <Route path="/playlists" element={<PlaylistPage />} />
+            <Route path="/reports" element={<ReportsPage />} />
             {/* 旧ルートの互換性 */}
             <Route path="/playing" element={<WatchPage />} />
           </Route>

@@ -225,11 +225,15 @@ export function rerankRecommendationCandidatesDetailed(
       const preference = preferenceScores.get(entry.song.id) ?? 1;
       const producerPenalty = (producerCounts.get(getArtistBucket(entry.song)) ?? 0) * 0.10;
       const vocalistPenalty = getVocalistIds(entry.song)
-        .reduce((sum, vocalistId) => sum + (vocalistCounts.get(vocalistId) ?? 0), 0) * 0.03;
+        .reduce((sum, vocalistId) => sum + (vocalistCounts.get(vocalistId) ?? 0), 0) * 0.12;
       const familiarityAdjustment = (known ? 1 : -1) * familiarityBias * 0.2;
       const exposurePenalty = calculateExposurePenalty(exposureEntries[String(entry.song.id)], exposureNow);
+      
+      // 音響情報あり（マイナー曲救済/有名曲加点）
+      const audioBonus = entry.song.audioComputed ? 0.4 : 0;
+      
       const baseScore = entry.evidence * 0.9 + Math.sqrt(Math.max(0, preference)) * 0.8
-        + familiarityAdjustment - producerPenalty - vocalistPenalty - exposurePenalty;
+        + familiarityAdjustment - producerPenalty - vocalistPenalty - exposurePenalty + audioBonus;
       // The perturbation is deliberately small and deterministic. Hard filters,
       // user feedback, and diversity penalties are all applied before it.
       const explorationAdjustment = rankingSeed === 0

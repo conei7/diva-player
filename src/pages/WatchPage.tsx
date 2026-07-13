@@ -248,7 +248,12 @@ export default function WatchPage() {
         playlists,
         ratings,
         implicitFeedback,
-        excludeIds: new Set([s.id]),
+        excludeIds: new Set([
+          s.id,
+          ...Object.keys(ratings)
+            .map(Number)
+            .filter((id) => ratings[id] > 0),
+        ]),
         rankingSeed: rankingSeedRef.current,
         explorationStrength: 0.06,
         exposureEntries: useRecommendationExposureStore.getState().entries,

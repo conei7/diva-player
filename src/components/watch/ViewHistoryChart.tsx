@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 
 interface ViewHistoryData {
   date: string;
-  youtube: number;
+  youtube: number | null;
   nico: number;
 }
 
@@ -51,7 +51,7 @@ const toViewCount = (value: unknown): number => {
 };
 
 const normalizeViewHistory = (history: unknown[]): ViewHistoryData[] => {
-  const daily = new Map<string, ViewHistoryData>();
+  const daily = new Map<string, { date: string; youtube: number; nico: number }>();
 
   for (const item of history) {
     if (!item || typeof item !== "object") continue;
@@ -72,7 +72,7 @@ const normalizeViewHistory = (history: unknown[]): ViewHistoryData[] => {
   let previousYoutube = 0;
   let previousNico = 0;
 
-  return [...daily.values()]
+  const result = [...daily.values()]
     .sort((a, b) => a.date.localeCompare(b.date))
     .map((entry) => {
       const youtube =
@@ -87,6 +87,22 @@ const normalizeViewHistory = (history: unknown[]): ViewHistoryData[] => {
 
       return { ...entry, youtube, nico };
     });
+
+  let firstYtChangeIdx = -1;
+  if (result.length > 0) {
+    const initialYt = result[0].youtube;
+    for (let i = 1; i < result.length; i++) {
+      if (result[i].youtube > initialYt) {
+        firstYtChangeIdx = i;
+        break;
+      }
+    }
+  }
+
+  return result.map((entry, i) => ({
+    ...entry,
+    youtube: (firstYtChangeIdx !== -1 && i < firstYtChangeIdx - 1) ? null : entry.youtube,
+  }));
 };
 
 const getNiceStep = (roughStep: number): number => {
@@ -159,10 +175,10 @@ export default function ViewHistoryChart({ songId }: { songId: number }) {
   }, [songId]);
 
   const chart = useMemo(() => {
-    const hasYoutube = data.some((d) => d.youtube > 0);
+    const hasYoutube = data.some((d) => (d.youtube ?? 0) > 0);
     const hasNico = data.some((d) => d.nico > 0);
     const maxValue = Math.max(
-      ...data.map((d) => Math.max(d.youtube, d.nico)),
+      ...data.map((d) => Math.max(d.youtube ?? 0, d.nico)),
       0,
     );
 
@@ -180,19 +196,31 @@ export default function ViewHistoryChart({ songId }: { songId: number }) {
       };
     }
 
+    const minTime = new Date(data[0].date).getTime();
+    const maxTime = new Date(data[data.length - 1].date).getTime();
+    const range = maxTime - minTime;
+
     const yStep = getNiceStep(maxValue / (Y_TICK_COUNT - 1));
     const yMax = yStep * (Y_TICK_COUNT - 1);
-    const getX = (index: number) => (index / (data.length - 1)) * 100;
+
+    const getX = (dateStr: string) => {
+      if (range <= 0) return 0;
+      const time = new Date(dateStr).getTime();
+      return ((time - minTime) / range) * 100;
+    };
     const getY = (value: number) => 100 - (value / yMax) * 100;
 
-    const youtubePoints = data.map((d, i) => ({
-      x: getX(i),
-      y: getY(d.youtube),
-      value: d.youtube,
-      date: d.date,
-    }));
-    const nicoPoints = data.map((d, i) => ({
-      x: getX(i),
+    const youtubePoints = data
+      .filter((d) => d.youtube !== null)
+      .map((d) => ({
+        x: getX(d.date),
+        y: getY(d.youtube!),
+        value: d.youtube!,
+        date: d.date,
+      }));
+
+    const nicoPoints = data.map((d) => ({
+      x: getX(d.date),
       y: getY(d.nico),
       value: d.nico,
       date: d.date,
@@ -204,15 +232,23 @@ export default function ViewHistoryChart({ songId }: { songId: number }) {
     const labelIndexes = new Set<number>();
     const maxLabels = Math.min(5, data.length);
     for (let i = 0; i < maxLabels; i += 1) {
-      labelIndexes.add(
-        Math.round(((data.length - 1) * i) / Math.max(maxLabels - 1, 1)),
-      );
+      const targetTime = minTime + (range * i) / Math.max(maxLabels - 1, 1);
+      let closestIdx = 0;
+      let minDiff = Infinity;
+      data.forEach((d, idx) => {
+        const diff = Math.abs(new Date(d.date).getTime() - targetTime);
+        if (diff < minDiff) {
+          minDiff = diff;
+          closestIdx = idx;
+        }
+      });
+      labelIndexes.add(closestIdx);
     }
 
     const xLabels = [...labelIndexes]
       .sort((a, b) => a - b)
       .map((index) => ({
-        x: getX(index),
+        x: getX(data[index].date),
         label: formatDateLabel(data[index].date),
       }));
 

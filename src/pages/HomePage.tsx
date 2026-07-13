@@ -86,7 +86,11 @@ export default function HomePage() {
   const isArtistMode = !!artistIdParam;
 
   const fetchRecommendedHomeSongs = useCallback(async (pageNum: number): Promise<Song[]> => {
-    const excludeIds = new Set<number>();
+    const excludeIds = new Set<number>(
+      Object.keys(ratings)
+        .map(Number)
+        .filter((id) => ratings[id] > 0)
+    );
     if (currentSong?.id) excludeIds.add(currentSong.id);
 
     const playlistSongs = getPlaylistSongs(playlists);
@@ -298,8 +302,12 @@ export default function HomePage() {
       return;
     }
 
+    if (hasSearched) {
+      return;
+    }
+
     fetchSongs(activeCategory, 0, searchQuery, requestId);
-  }, [activeCategory, searchQuery, artistIdParam, isSearchMode, isArtistMode, hasHydrated, fetchSongs]);
+  }, [activeCategory, searchQuery, artistIdParam, isSearchMode, isArtistMode, hasHydrated, fetchSongs, hasSearched]);
 
   const loadMore = useCallback(() => {
     if (hasSearched) {
