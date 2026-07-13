@@ -121,6 +121,9 @@ interface SearchState {
 
 const PAGE_SIZE = 24;
 
+// ホームへ戻ったあと、古い非同期検索レスポンスが結果を復活させないための世代番号。
+let searchGeneration = 0;
+
 /** ローカルソートをVocaDB APIソートに変換 */
 function toApiSort(sort: ExtendedSortRule): SongSortRule {
   if (LOCAL_SORT_RULES.has(sort)) return 'FavoritedTimes';
@@ -358,6 +361,7 @@ export const useSearchStore = create<SearchState>((set, get) => ({
   resetAdvancedFilters: () => set({ advancedFilters: DEFAULT_ADVANCED_FILTERS }),
 
   searchTitleOnly: async (query: string) => {
+    const generation = ++searchGeneration;
     const { sort, sortOrder, songTypeFilter, advancedFilters } = get();
     const trimmed = query.trim();
     set({
@@ -386,12 +390,14 @@ export const useSearchStore = create<SearchState>((set, get) => ({
             songTypes,
           });
 
+      if (generation !== searchGeneration) return;
       set({
         results: useBackend ? result.items : applyLocalSort(result.items, sort, sortOrder),
         totalCount: result.totalCount,
         isLoading: false,
       });
     } catch (error) {
+      if (generation !== searchGeneration) return;
       set({
         error: getSearchErrorMessage(error, useBackend),
         isLoading: false,
@@ -401,6 +407,7 @@ export const useSearchStore = create<SearchState>((set, get) => ({
   },
 
   searchByArtistId: async (artistId: number, artistName: string) => {
+    const generation = ++searchGeneration;
     const { sort, sortOrder, songTypeFilter, advancedFilters } = get();
     set({ isLoading: true, error: null, currentPage: 0, hasSearched: true, resolvedArtistId: artistId, query: artistName });
     const songTypes = songTypeFilter === 'Original' ? ['Original' as const] : undefined;
@@ -411,6 +418,7 @@ export const useSearchStore = create<SearchState>((set, get) => ({
           artistIds: [artistId],
           sort, sortOrder, start: 0, maxResults: PAGE_SIZE, songTypes, filters: advancedFilters
         });
+        if (generation !== searchGeneration) return;
         set({ results: result.items, totalCount: result.totalCount, isLoading: false });
         return;
       }
@@ -424,13 +432,16 @@ export const useSearchStore = create<SearchState>((set, get) => ({
         onlyWithPVs: true,
         songTypes,
       });
+      if (generation !== searchGeneration) return;
       set({ results: applyLocalSort(result.items, sort, sortOrder), totalCount: result.totalCount, isLoading: false });
     } catch (error) {
+      if (generation !== searchGeneration) return;
       set({ error: getSearchErrorMessage(error, useBackend), isLoading: false, results: [] });
     }
   },
 
   search: async () => {
+    const generation = ++searchGeneration;
     const { query, sort, sortOrder, vocalistFilters, vocalistMatchMode, songTypeFilter, advancedFilters } = get();
     set({ isLoading: true, error: null, currentPage: 0, hasSearched: true, resolvedArtistId: null });
     const songTypes = songTypeFilter === 'Original' ? ['Original' as const] : undefined;
@@ -467,6 +478,7 @@ export const useSearchStore = create<SearchState>((set, get) => ({
           songTypes,
           advancedFilters,
         );
+        if (generation !== searchGeneration) return;
         set({
           results: isLocal ? items : applyLocalSort(items, sort, sortOrder),
           totalCount,
@@ -491,6 +503,7 @@ export const useSearchStore = create<SearchState>((set, get) => ({
           ...artistResult.items,
           ...titleResult.items.filter(s => !artistSongIds.has(s.id)),
         ];
+        if (generation !== searchGeneration) return;
         set({
           results: isLocal ? merged : applyLocalSort(merged, sort, sortOrder),
           totalCount: artistResult.totalCount,
@@ -498,6 +511,7 @@ export const useSearchStore = create<SearchState>((set, get) => ({
           isLoading: false,
         });
       } else {
+        if (generation !== searchGeneration) return;
         set({
           results: isLocal ? titleResult.items : applyLocalSort(titleResult.items, sort, sortOrder),
           totalCount: titleResult.totalCount,
@@ -506,6 +520,7 @@ export const useSearchStore = create<SearchState>((set, get) => ({
         });
       }
     } catch (error) {
+      if (generation !== searchGeneration) return;
       set({
         error: getSearchErrorMessage(error, requiresBackend),
         isLoading: false,
@@ -515,6 +530,7 @@ export const useSearchStore = create<SearchState>((set, get) => ({
   },
 
   loadMore: async () => {
+    const generation = searchGeneration;
     const {
       query, sort, sortOrder, results, currentPage, isLoading, totalCount,
       resolvedArtistId, vocalistFilters, vocalistMatchMode, exactApiOffset, songTypeFilter,
@@ -543,6 +559,7 @@ export const useSearchStore = create<SearchState>((set, get) => ({
           songTypes,
           advancedFilters,
         );
+        if (generation !== searchGeneration) return;
         set({
           results: LOCAL_SORT_RULES.has(sort) ? [...results, ...items] : applyLocalSort([...results, ...items], sort, sortOrder),
           currentPage: nextPage,
@@ -567,6 +584,7 @@ export const useSearchStore = create<SearchState>((set, get) => ({
               onlyWithPVs: true,
               songTypes,
             });
+        if (generation !== searchGeneration) return;
         set({
           results: useBackend ? [...results, ...result.items] : applyLocalSort([...results, ...result.items], sort, sortOrder),
           currentPage: nextPage,
@@ -574,6 +592,7 @@ export const useSearchStore = create<SearchState>((set, get) => ({
         });
       }
     } catch (error) {
+      if (generation !== searchGeneration) return;
       set({
         error: getSearchErrorMessage(error, LOCAL_SORT_RULES.has(sort) || hasAdvancedFilters(advancedFilters)),
         isLoading: false,
@@ -581,18 +600,21 @@ export const useSearchStore = create<SearchState>((set, get) => ({
     }
   },
 
-  reset: () => set({
-    query: '',
-    resolvedArtistId: null,
-    vocalistFilters: [],
-    songTypeFilter: 'All',
-    advancedFilters: DEFAULT_ADVANCED_FILTERS,
-    results: [],
-    totalCount: 0,
-    currentPage: 0,
-    exactApiOffset: 0,
-    isLoading: false,
-    error: null,
-    hasSearched: false,
-  }),
+  reset: () => {
+    searchGeneration += 1;
+    set({
+      query: '',
+      resolvedArtistId: null,
+      vocalistFilters: [],
+      songTypeFilter: 'All',
+      advancedFilters: DEFAULT_ADVANCED_FILTERS,
+      results: [],
+      totalCount: 0,
+      currentPage: 0,
+      exactApiOffset: 0,
+      isLoading: false,
+      error: null,
+      hasSearched: false,
+    });
+  },
 }));

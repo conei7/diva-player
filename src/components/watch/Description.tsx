@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { Song } from '../../types/vocadb';
+import { tokenizeDescriptionText } from '../../utils/descriptionText';
 import ViewHistoryChart from './ViewHistoryChart';
 
 /**
@@ -28,6 +29,7 @@ export default function Description({ song }: DescriptionProps) {
   // PV情報を概要として使用
   const originalPV = song.pvs?.find(pv => pv.pvType === 'Original' && !pv.disabled);
   const description = originalPV?.description || '';
+  const descriptionTokens = tokenizeDescriptionText(description);
 
   // 投稿日
   const publishDate = song.publishDate
@@ -46,9 +48,12 @@ export default function Description({ song }: DescriptionProps) {
 
   return (
     <div
-      className="mt-3 rounded-xl p-3 cursor-pointer transition-colors"
+      className="mt-3 rounded-xl p-3 transition-colors"
       style={{ background: 'var(--color-surface)' }}
-      onClick={() => setExpanded(!expanded)}
+      onClick={() => {
+        if (!expanded) setExpanded(true);
+      }}
+      aria-expanded={expanded}
     >
       {/* ヘッダー行 */}
       <div className="flex items-center gap-3 text-sm flex-wrap">
@@ -65,11 +70,7 @@ export default function Description({ song }: DescriptionProps) {
             📺 {expanded ? (song.nicoViews || 0).toLocaleString() : formatJapaneseViews(song.nicoViews)}回
           </span>
         )}
-        {song.favoritedTimes > 0 && (
-          <span className="font-medium" style={{ color: 'var(--color-text-primary)' }}>
-            ♥ {song.favoritedTimes.toLocaleString()}
-          </span>
-        )}
+
         {publishDate && (
           <span style={{ color: 'var(--color-text-secondary)' }}>{publishDate}</span>
         )}
@@ -78,8 +79,22 @@ export default function Description({ song }: DescriptionProps) {
       {/* 概要テキスト */}
       <div className={expanded ? '' : 'line-clamp-2'}>
         {description ? (
-          <p className="text-sm mt-2 whitespace-pre-wrap" style={{ color: 'var(--color-text-primary)' }}>
-            {description}
+          <p className="text-sm mt-2 whitespace-pre-wrap break-words" style={{ color: 'var(--color-text-primary)' }}>
+            {descriptionTokens.map((token, index) => token.type === 'url' ? (
+              <a
+                key={`url-${index}`}
+                href={token.value}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="break-all underline decoration-dotted underline-offset-2"
+                style={{ color: 'var(--color-accent-blue)' }}
+                onClick={(event) => event.stopPropagation()}
+              >
+                {token.value}
+              </a>
+            ) : (
+              <span key={`text-${index}`}>{token.value}</span>
+            ))}
           </p>
         ) : (
           <p className="text-sm mt-2" style={{ color: 'var(--color-text-secondary)' }}>
@@ -212,6 +227,9 @@ export default function Description({ song }: DescriptionProps) {
       <button
         className="text-xs font-medium mt-2"
         style={{ color: 'var(--color-text-secondary)' }}
+        type="button"
+        aria-expanded={expanded}
+        aria-label={expanded ? '概要を折りたたむ' : '概要を展開する'}
         onClick={(e) => {
           e.stopPropagation();
           setExpanded(!expanded);

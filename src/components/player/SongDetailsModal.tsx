@@ -194,17 +194,7 @@ export default function SongDetailsModal() {
                   <dd style={{ color: 'var(--color-text-primary)' }}>{formatDuration(song.lengthSeconds)}</dd>
                 </>
               )}
-              {song.ratingScore > 0 && (
-                <>
-                  <dt style={{ color: 'var(--color-text-muted)' }}>VocaDB評価</dt>
-                  <dd style={{ color: 'var(--color-text-primary)' }}>
-                    {song.ratingScore.toFixed(2)}&nbsp;
-                    <span style={{ color: 'var(--color-text-muted)' }}>
-                      ({song.favoritedTimes.toLocaleString()} お気に入り)
-                    </span>
-                  </dd>
-                </>
-              )}
+
             </dl>
 
             {/* PVリンク */}

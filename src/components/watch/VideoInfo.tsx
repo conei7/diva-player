@@ -1,4 +1,5 @@
 import type { Song } from '../../types/vocadb';
+import { Link } from 'react-router-dom';
 
 
 /**
@@ -12,6 +13,14 @@ export default function VideoInfo({ song }: VideoInfoProps) {
   // P名を抽出
   const producer = song.artists?.find(a => a.categories?.includes('Producer'));
   const producerName = producer?.name || producer?.artist?.name || '';
+  const producerLabel = producerName || song.artistString;
+  const producerHref = producer
+    ? producer.artist?.id
+      ? `/?artistId=${producer.artist.id}&artistName=${encodeURIComponent(producerLabel)}`
+      : producerLabel
+        ? `/?q=${encodeURIComponent(producerLabel)}`
+        : null
+    : null;
 
   // ボーカリスト名を抽出
   const vocalists = song.artists
@@ -39,12 +48,20 @@ export default function VideoInfo({ song }: VideoInfoProps) {
 
         {/* 作者 */}
         <div className="flex flex-wrap items-center gap-2">
-          <span
-            className="text-sm font-medium cursor-pointer hover:underline"
-            style={{ color: 'var(--color-text-primary)' }}
-          >
-            {producerName || song.artistString}
-          </span>
+          {producerHref ? (
+            <Link
+              to={producerHref}
+              className="text-sm font-medium hover:underline"
+              style={{ color: 'var(--color-text-primary)' }}
+              aria-label={`${producerLabel} の曲を表示`}
+            >
+              {producerLabel}
+            </Link>
+          ) : (
+            <span className="text-sm font-medium" style={{ color: 'var(--color-text-primary)' }}>
+              {producerLabel}
+            </span>
+          )}
 
           {/* 曲タイプバッジ */}
           {song.songType !== 'Original' && song.songType !== 'Unspecified' && (

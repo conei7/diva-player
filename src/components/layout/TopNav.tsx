@@ -55,6 +55,7 @@ export default function TopNav() {
     addVocalistFilter,
     setVocalistFilters,
     setVocalistMatchMode,
+    reset: resetSearch,
   } = useSearchStore();
   const isSelectionMode = useSelectionStore(s => s.isSelectionMode);
   const enterSelectionMode = useSelectionStore(s => s.enterSelectionMode);
@@ -94,7 +95,16 @@ export default function TopNav() {
   // ロゴ5回クリックで隠しモードトグル
   const clickCountRef = useRef(0);
   const clickTimerRef = useRef<number | null>(null);
-  const handleLogoClick = () => {
+  const handleLogoClick = (event: React.MouseEvent<HTMLAnchorElement>) => {
+    // Ctrl/⌘クリックや中クリックは別タブ用なので、現在の検索状態を変更しない。
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+
+    resetSearch();
+    setSearchQuery('');
+    setSearchMode('auto');
+    setShowSuggestions(false);
+    if (isSelectionMode) exitSelectionMode();
+
     clickCountRef.current += 1;
     if (clickTimerRef.current) clearTimeout(clickTimerRef.current);
     clickTimerRef.current = window.setTimeout(() => {

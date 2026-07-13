@@ -146,12 +146,7 @@ export default function SongDetailsPanel({ song, onClose, inline }: SongDetailsP
             </p>
           </div>
         )}
-        {song.favoritedTimes > 0 && (
-          <div>
-            <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>お気に入り</span>
-            <p style={{ color: 'var(--color-text-primary)' }}>{song.favoritedTimes.toLocaleString()}</p>
-          </div>
-        )}
+
       </div>
 
       {/* プロデューサー */}

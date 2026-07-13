@@ -1,4 +1,4 @@
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import type { Song } from '../../types/vocadb';
 import { usePlayerStore, getPlayablePV } from '../../stores/playerStore';
 
@@ -44,6 +44,16 @@ export default function VideoCard({ song, showScore }: VideoCardProps) {
     navigate(`/watch?v=${song.id}`);
   };
 
+  const handleSongLinkClick = (event: React.MouseEvent<HTMLAnchorElement>) => {
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
+      event.stopPropagation();
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    handleClick();
+  };
+
   const handleProducerClick = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
@@ -60,9 +70,12 @@ export default function VideoCard({ song, showScore }: VideoCardProps) {
       onClick={handleClick}
       style={{ opacity: hasPlayablePV ? 1 : 0.5 }}
     >
-      <div
-        className="relative w-full rounded-xl overflow-hidden"
+      <Link
+        to={`/watch?v=${song.id}`}
+        className="block relative w-full rounded-xl overflow-hidden"
         style={{ aspectRatio: '16/9', background: 'var(--color-surface)' }}
+        onClick={handleSongLinkClick}
+        aria-label={`${song.name}を再生`}
       >
         {!hiddenMode && thumbUrl ? (
           <img
@@ -101,16 +114,18 @@ export default function VideoCard({ song, showScore }: VideoCardProps) {
         </div>
 
         <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors duration-200" />
-      </div>
+      </Link>
 
       <div className="pt-2.5 px-0.5">
-        <h3
-          className="line-clamp-2 text-sm font-medium leading-5 mb-1"
+        <Link
+          to={`/watch?v=${song.id}`}
+          className="block line-clamp-2 text-sm font-medium leading-5 mb-1"
           style={{ color: 'var(--color-text-primary)' }}
           title={song.name}
+          onClick={handleSongLinkClick}
         >
           {song.name}
-        </h3>
+        </Link>
 
         <div className="flex items-center flex-wrap gap-2 mt-0.5">
           <p

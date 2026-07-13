@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import type { Song } from '../../types/vocadb';
 import { usePlayerStore } from '../../stores/playerStore';
 import { useUiStore } from '../../stores/uiStore';
@@ -176,6 +176,27 @@ function RecItemRow({
     }
   }, [isSelectionMode, toggleSelection, song.id, navigate, onExposureClick]);
 
+  const handleItemLinkClick = useCallback((e: React.MouseEvent<HTMLAnchorElement>) => {
+    if (isSelectionMode) {
+      e.preventDefault();
+      e.stopPropagation();
+      toggleSelection(song.id);
+      return;
+    }
+    if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) {
+      e.stopPropagation();
+      return;
+    }
+    e.preventDefault();
+    e.stopPropagation();
+    handleCardClick(e);
+  }, [handleCardClick, isSelectionMode, song.id, toggleSelection]);
+
+  const handleItemLinkAuxClick = useCallback((e: React.MouseEvent<HTMLAnchorElement>) => {
+    if (isSelectionMode) e.preventDefault();
+    e.stopPropagation();
+  }, [isSelectionMode]);
+
   return (
     <>
     <div
@@ -192,9 +213,13 @@ function RecItemRow({
       onClick={handleCardClick}
     >
       {/* \u30b5\u30e0\u30cd\u30a4\u30eb */}
-      <div
-        className="relative w-40 flex-shrink-0 rounded-lg overflow-hidden"
+      <Link
+        to={`/watch?v=${song.id}`}
+        className="block relative w-40 flex-shrink-0 rounded-lg overflow-hidden"
         style={{ aspectRatio: '16/9', background: 'var(--color-surface)' }}
+        onClick={handleItemLinkClick}
+        onAuxClick={handleItemLinkAuxClick}
+        aria-label={`${song.name}を再生`}
       >
         {!hiddenMode && thumbUrl ? (
           <img src={thumbUrl} alt={song.name} className="w-full h-full object-cover" loading="lazy" />
@@ -248,16 +273,21 @@ function RecItemRow({
             </div>
           </div>
         )}
-      </div>
+      </Link>
 
       {/* \u30c6\u30ad\u30b9\u30c8 + \u22ee\u30dc\u30bf\u30f3 */}
       <div className="flex-1 min-w-0 py-0.5 flex items-start gap-1">
         <div className="flex-1 min-w-0">
-          <h4 className="line-clamp-2 text-sm font-medium leading-5"
-              style={{ color: isActive ? 'var(--color-accent-cyan)' : 'var(--color-text-primary)' }}
-              title={song.name}>
+          <Link
+            to={`/watch?v=${song.id}`}
+            className="block line-clamp-2 text-sm font-medium leading-5"
+            style={{ color: isActive ? 'var(--color-accent-cyan)' : 'var(--color-text-primary)' }}
+            title={song.name}
+            onClick={handleItemLinkClick}
+            onAuxClick={handleItemLinkAuxClick}
+          >
             {song.name}
-          </h4>
+          </Link>
           
           {vocalistName ? (
             <p className="text-xs mt-0.5 truncate" style={{ color: 'var(--color-text-secondary)' }}>
@@ -305,11 +335,7 @@ function RecItemRow({
                 {relativeDate}
               </span>
             )}
-            {song.favoritedTimes > 0 && (
-              <span className="text-[10px] flex items-center gap-0.5 font-medium" style={{ color: 'var(--color-text-muted)' }}>
-                ♥ {song.favoritedTimes.toLocaleString()}
-              </span>
-            )}
+
             
             <div className="flex-1" />
             

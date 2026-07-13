@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Song } from '../../types/vocadb';
+import { Link } from 'react-router-dom';
 import { usePlayerStore, getPlayablePV } from '../../stores/playerStore';
 import { useUiStore } from '../../stores/uiStore';
 import { usePlaylistStore, WATCH_LATER_ID } from '../../stores/playlistStore';
@@ -142,6 +143,29 @@ export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect, 
     }
   }, [isSelectionMode, toggleSelection, song.id, handlePlay]);
 
+  const handleSongLinkClick = useCallback((e: React.MouseEvent<HTMLAnchorElement>) => {
+    if (isSelectionMode) {
+      e.preventDefault();
+      e.stopPropagation();
+      toggleSelection(song.id);
+      return;
+    }
+    if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) {
+      e.stopPropagation();
+      return;
+    }
+    e.preventDefault();
+    e.stopPropagation();
+    handlePlay(e);
+  }, [handlePlay, isSelectionMode, song.id, toggleSelection]);
+
+  const handleSongLinkAuxClick = useCallback((e: React.MouseEvent<HTMLAnchorElement>) => {
+    if (isSelectionMode) {
+      e.preventDefault();
+    }
+    e.stopPropagation();
+  }, [isSelectionMode]);
+
   // 長押しで選択モード突入
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const handlePointerDown = useCallback(() => {
@@ -221,13 +245,17 @@ export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect, 
       onClick={handleCardClick}
     >
       {/* サムネイル — クリックで再生（選択モード時は選択トグル） */}
-      <div
-        className="relative aspect-video overflow-hidden cursor-pointer"
+      <Link
+        to={`/watch?v=${song.id}`}
+        className="block relative aspect-video overflow-hidden cursor-pointer"
         style={{ background: 'var(--color-surface)' }}
+        onClick={handleSongLinkClick}
+        onAuxClick={handleSongLinkAuxClick}
         onPointerDown={handlePointerDown}
         onPointerUp={handlePointerUp}
         onPointerLeave={handlePointerLeave}
         title={isSelectionMode ? (isSelected ? '選択解除' : '選択') : hasPlayablePV ? 'クリックして再生' : '再生可能なPVがありません'}
+        aria-label={`${song.name}を再生`}
       >
         {!hiddenMode && song.thumbUrl ? (
           <img
@@ -309,16 +337,22 @@ export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect, 
              style={{ background: 'rgba(0,0,0,0.7)', color: 'var(--color-text-primary)' }}>
           {formatDuration(song.lengthSeconds)}
         </div>
-      </div>
+      </Link>
 
       {/* 曲情報 */}
       <div className="p-3">
         {/* タイトル行 + ⋮メニュー */}
         <div className="flex items-start gap-1">
           <div className="flex-1 min-w-0">
-            <h3 className="text-sm font-semibold truncate" style={{ color: 'var(--color-text-primary)' }}>
+            <Link
+              to={`/watch?v=${song.id}`}
+              className="block text-sm font-semibold truncate"
+              style={{ color: 'var(--color-text-primary)' }}
+              onClick={handleSongLinkClick}
+              onAuxClick={handleSongLinkAuxClick}
+            >
               {song.name}
-            </h3>
+            </Link>
             
             {vocalistName ? (
               <p className="text-xs mt-0.5 truncate" style={{ color: 'var(--color-text-secondary)' }}>
@@ -454,17 +488,6 @@ export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect, 
           {relativeDate && (
             <span className="text-[10px]" style={{ color: 'var(--color-text-muted)' }}>
               {relativeDate}
-            </span>
-          )}
-
-          {/* VocaDB お気に入り数 */}
-          {song.favoritedTimes > 0 && (
-            <span className="text-[10px] flex items-center gap-0.5" style={{ color: 'var(--color-text-muted)' }}
-                  title="VocaDB お気に入り数">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/>
-              </svg>
-              {song.favoritedTimes.toLocaleString()}
             </span>
           )}
 
