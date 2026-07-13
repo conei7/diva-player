@@ -136,7 +136,7 @@ function SortableSongRow({
       <div ref={menuRef} className="relative flex-shrink-0">
         <button
           onClick={() => setMenuOpen(v => !v)}
-          className="opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-lg hover:bg-white/10 text-neutral-400 hover:text-white"
+          className="opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity p-2 rounded-lg hover:bg-white/10 text-neutral-400 hover:text-white"
         >
           <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
             <circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/>
@@ -144,7 +144,7 @@ function SortableSongRow({
         </button>
         {menuOpen && (
           <div
-            className="absolute right-0 bottom-full mb-1 z-50 rounded-xl overflow-hidden shadow-xl w-44"
+            className="absolute right-0 top-full mt-1 md:top-auto md:bottom-full md:mt-0 md:mb-1 z-50 rounded-xl overflow-hidden shadow-xl w-44"
             style={{ background: 'var(--color-bg-card)', border: '1px solid var(--color-border)' }}
           >
             <button className="context-menu-item" onClick={() => { onPlay(); setMenuOpen(false); }}>
@@ -254,14 +254,14 @@ function PlainSongRow({
       <div ref={menuRef} className="relative flex-shrink-0">
         <button
           onClick={() => setMenuOpen(v => !v)}
-          className="opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-lg hover:bg-white/10 text-neutral-400 hover:text-white"
+          className="opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity p-2 rounded-lg hover:bg-white/10 text-neutral-400 hover:text-white"
         >
           <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
             <circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/>
           </svg>
         </button>
         {menuOpen && (
-          <div className="absolute right-0 bottom-full mb-1 z-50 rounded-xl overflow-hidden shadow-xl w-44"
+          <div className="absolute right-0 top-full mt-1 md:top-auto md:bottom-full md:mt-0 md:mb-1 z-50 rounded-xl overflow-hidden shadow-xl w-44"
             style={{ background: 'var(--color-bg-card)', border: '1px solid var(--color-border)' }}>
             <button className="context-menu-item" onClick={() => { onPlay(); setMenuOpen(false); }}>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
@@ -338,7 +338,7 @@ function VirtualSongList({
       style={{
         border: '1px solid var(--color-border)',
         background: 'var(--color-bg-card)',
-        height: 'min(calc(100vh - 400px), 600px)',
+        height: 'min(calc(100dvh - 400px), 600px)',
         maxHeight: '600px',
       }}
     >
@@ -708,10 +708,10 @@ export default function PlaylistPage() {
   );
 
   return (
-    <div className="flex gap-4 px-4 py-4" style={{ minHeight: 'calc(100vh - 160px)' }}>
+    <div className="flex flex-col md:flex-row gap-4 px-4 py-4" style={{ minHeight: 'calc(100dvh - 160px)' }}>
 
       {/* ─── 左サイドバー ───────────────────────────────────────────── */}
-      <div className="w-64 flex-shrink-0 flex flex-col gap-2 overflow-y-auto" style={{ maxHeight: 'calc(100vh - 180px)' }}>
+      <div className={`w-full md:w-64 flex-shrink-0 flex flex-col gap-2 overflow-y-auto ${selectedPlaylist ? 'hidden md:flex' : 'flex'}`} style={{ maxHeight: 'calc(100dvh - 180px)' }}>
         <div className="flex items-center justify-between">
           <h2 className="text-xs font-semibold uppercase tracking-wider text-neutral-400">プレイリスト</h2>
           <button
@@ -849,7 +849,7 @@ export default function PlaylistPage() {
       </div>
 
       {/* ─── 右パネル ────────────────────────────────────────────────── */}
-      <div className="flex-1 min-w-0 flex flex-col gap-3 overflow-y-auto" style={{ maxHeight: 'calc(100vh - 180px)' }}>
+      <div className={`flex-1 min-w-0 flex flex-col gap-3 overflow-y-auto ${selectedPlaylist ? 'flex' : 'hidden md:flex'}`} style={{ maxHeight: 'calc(100dvh - 180px)' }}>
         {!selectedPlaylist ? (
           <div className="flex flex-col items-center justify-center h-full gap-3 text-neutral-500">
             <svg className="w-16 h-16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1">
@@ -859,6 +859,7 @@ export default function PlaylistPage() {
           </div>
         ) : (
           <>
+            <button type="button" className="md:hidden self-start btn-ghost text-sm px-2 py-1" onClick={() => setSelectedPlaylistId(null)}>← プレイリスト一覧</button>
             {/* ヘッダー */}
             <div className="flex items-start gap-4">
               <div

@@ -203,6 +203,16 @@ async function replaceHistory(events: ListeningPlayEvent[]): Promise<void> {
   await transactionToPromise(tx);
 }
 
+async function readAllHistoryEvents(): Promise<ListeningPlayEvent[]> {
+  const db = await openHistoryDb();
+  const tx = db.transaction(HISTORY_STORES.plays, 'readonly');
+  return new Promise<ListeningPlayEvent[]>((resolve, reject) => {
+    const request = tx.objectStore(HISTORY_STORES.plays).getAll();
+    request.onsuccess = () => resolve(request.result as ListeningPlayEvent[]);
+    request.onerror = () => reject(request.error);
+  });
+}
+
 async function mergeHistory(events: ListeningPlayEvent[]): Promise<void> {
   const db = await openHistoryDb();
   const readTx = db.transaction(HISTORY_STORES.plays, 'readonly');
@@ -237,7 +247,12 @@ function mergePlaylists(current: Playlist[], incoming: Playlist[], currentFolder
   const folderIds = new Set(currentFolders.map(folder => folder.id));
   const folders = [...currentFolders, ...incomingFolders.filter(folder => !folderIds.has(folder.id))];
   const playlistIds = new Set(current.map(playlist => playlist.id));
-  const playlists = [...current, ...incoming.map(playlist => ({ ...playlist, id: uniqueId(playlistIds, playlist.id) }))];
+  const imported = incoming.map(playlist => {
+    const id = uniqueId(playlistIds, playlist.id);
+    playlistIds.add(id);
+    return { ...playlist, id };
+  });
+  const playlists = [...current, ...imported];
   return { playlists, folders };
 }
 
@@ -245,14 +260,14 @@ export async function executeFullBackupImport(preview: FullBackupPreview, option
   const currentRatings = { ...useRatingStore.getState().ratings };
   const currentPlaylists = usePlaylistStore.getState().playlists.map(playlist => ({ ...playlist, songs: [...playlist.songs] }));
   const currentFolders = usePlaylistStore.getState().folders.map(folder => ({ ...folder }));
+  const currentHistory = await readAllHistoryEvents();
   try {
     const incoming = preview.parsed.sections;
-    const nextPlaylists = options.mode === 'replace'
-      ? incoming.playlists.playlists
-      : mergePlaylists(currentPlaylists, incoming.playlists.playlists, currentFolders, incoming.playlists.folders).playlists;
-    const nextFolders = options.mode === 'replace'
-      ? incoming.playlists.folders
-      : mergePlaylists(currentPlaylists, incoming.playlists.playlists, currentFolders, incoming.playlists.folders).folders;
+    const merged = options.mode === 'replace'
+      ? null
+      : mergePlaylists(currentPlaylists, incoming.playlists.playlists, currentFolders, incoming.playlists.folders);
+    const nextPlaylists = options.mode === 'replace' ? incoming.playlists.playlists : merged!.playlists;
+    const nextFolders = options.mode === 'replace' ? incoming.playlists.folders : merged!.folders;
     if (!nextPlaylists.some(playlist => playlist.id === WATCH_LATER_ID)) {
       const watchLater = currentPlaylists.find(playlist => playlist.id === WATCH_LATER_ID);
       if (watchLater) nextPlaylists.unshift(watchLater);
@@ -272,6 +287,12 @@ export async function executeFullBackupImport(preview: FullBackupPreview, option
     storage.set('playlistFolders', currentFolders);
     usePlaylistStore.getState().loadPlaylists();
     useRatingStore.setState({ ratings: currentRatings });
+    try {
+      await replaceHistory(currentHistory);
+      await useHistoryStore.getState().reloadHistory();
+    } catch (rollbackError) {
+      console.error('[FullBackup] History rollback failed', rollbackError);
+    }
     throw error;
   }
 }

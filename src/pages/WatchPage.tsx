@@ -56,7 +56,7 @@ function WatchQueue() {
       </button>
       
       {expanded && (
-        <div className="h-[400px] border-t" style={{ borderColor: 'var(--color-border)' }}>
+        <div className="border-t" style={{ borderColor: 'var(--color-border)', height: 'min(400px, 50dvh)' }}>
           <QueueSidebar hideHeader={true} />
         </div>
       )}

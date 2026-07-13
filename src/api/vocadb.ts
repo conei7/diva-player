@@ -7,7 +7,7 @@
  * - リトライロジック（指数バックオフ）
  */
 
-import type { Artist, ArtistSearchResult, Song, SongSearchParams, SongSearchResult } from '../types/vocadb';
+import type { AlbumSummary, Artist, ArtistSearchResult, Song, SongSearchParams, SongSearchResult } from '../types/vocadb';
 
 const BASE_URL = 'https://vocadb.net/api';
 const RECOMMENDER_API = import.meta.env.VITE_RECOMMENDER_API || '/backend-api';
@@ -201,6 +201,86 @@ export async function getTopSongs(
   
   setCache(cacheKey, data);
   return data;
+}
+
+export interface AlbumTrack {
+  song: Song;
+  discNumber: number;
+  trackNumber: number;
+}
+
+function readAlbumCover(value: Record<string, unknown>): string | undefined {
+  const direct = [value.coverUrl, value.mainPictureUrl, value.mainPicture]
+    .find(candidate => typeof candidate === 'string');
+  if (typeof direct === 'string') return direct;
+  if (value.mainPicture && typeof value.mainPicture === 'object') {
+    const nested = value.mainPicture as Record<string, unknown>;
+    if (typeof nested.url === 'string') return nested.url;
+    if (typeof nested.path === 'string') return nested.path;
+  }
+  return undefined;
+}
+
+export async function getAlbumsForSong(songId: number): Promise<AlbumSummary[]> {
+  const url = `${BASE_URL}/songs/${songId}?fields=Albums&lang=${DEFAULT_LANG}`;
+  const cacheKey = `albums-for-song:${songId}`;
+  const cached = getCached<AlbumSummary[]>(cacheKey);
+  if (cached) return cached;
+  const response = await fetchWithRetry(url);
+  const data = await response.json() as { albums?: unknown[] };
+  const albums = (data.albums ?? []).flatMap(value => {
+    if (!value || typeof value !== 'object') return [];
+    const item = value as Record<string, unknown>;
+    const id = typeof item.id === 'number' ? item.id : Number(item.id);
+    if (!Number.isInteger(id) || id <= 0 || typeof item.name !== 'string') return [];
+    return [{ id, name: item.name, releaseDate: typeof item.releaseDate === 'string' ? item.releaseDate : undefined, coverUrl: readAlbumCover(item) }];
+  });
+  setCache(cacheKey, albums);
+  return albums;
+}
+
+export async function getAlbumTracks(albumId: number): Promise<{ album: AlbumSummary; tracks: AlbumTrack[] }> {
+  const url = `${BASE_URL}/albums/${albumId}?fields=MainPicture,Names&lang=${DEFAULT_LANG}`;
+  const tracksUrl = `${BASE_URL}/albums/${albumId}/tracks?fields=PVs,Artists,ThumbUrl&lang=${DEFAULT_LANG}`;
+  const cacheKey = `album-tracks:${albumId}`;
+  const cached = getCached<{ album: AlbumSummary; tracks: AlbumTrack[] }>(cacheKey);
+  if (cached) return cached;
+  const [response, tracksResponse] = await Promise.all([fetchWithRetry(url), fetchWithRetry(tracksUrl)]);
+  const data = await response.json() as Record<string, unknown>;
+  const tracksData = await tracksResponse.json() as unknown;
+  const albumIdValue = typeof data.id === 'number' ? data.id : albumId;
+  const album: AlbumSummary = {
+    id: albumIdValue,
+    name: typeof data.name === 'string' ? data.name : `アルバム ${albumId}`,
+    releaseDate: typeof data.releaseDate === 'string' ? data.releaseDate : undefined,
+    coverUrl: readAlbumCover(data),
+  };
+  const rawTracks = Array.isArray(tracksData)
+    ? tracksData
+    : tracksData && typeof tracksData === 'object' && Array.isArray((tracksData as Record<string, unknown>).tracks)
+      ? (tracksData as Record<string, unknown>).tracks as unknown[]
+      : Array.isArray(data.tracks) ? data.tracks : [];
+  const tracks = rawTracks.flatMap(value => {
+    if (!value || typeof value !== 'object') return [];
+    const item = value as Record<string, unknown>;
+    const rawSong = item.song && typeof item.song === 'object' ? item.song : item;
+    const songRecord = rawSong && typeof rawSong === 'object' ? rawSong as Record<string, unknown> : undefined;
+    const songId = typeof item.songId === 'number' ? item.songId : Number(item.songId);
+    const songRecordId = songRecord ? Number(songRecord.id) : NaN;
+    const id = Number.isInteger(songId) && songId > 0
+      ? songId
+      : Number.isInteger(songRecordId) && songRecordId > 0 ? songRecordId : undefined;
+    if (!id) return [];
+    const discNumber = typeof item.discNumber === 'number' ? item.discNumber : 1;
+    const trackNumber = typeof item.trackNumber === 'number' ? item.trackNumber : (typeof item.track === 'number' ? item.track : 0);
+    return [{ songId: id, discNumber, trackNumber }];
+  });
+  const songs = await Promise.all(tracks.map(track => getSongById(track.songId).catch(() => null)));
+  const result = tracks.flatMap((track, index) => songs[index] ? [{ song: songs[index] as Song, discNumber: track.discNumber, trackNumber: track.trackNumber }] : []);
+  result.sort((a, b) => a.discNumber - b.discNumber || a.trackNumber - b.trackNumber || a.song.id - b.song.id);
+  const output = { album, tracks: result };
+  setCache(cacheKey, output);
+  return output;
 }
 
 export async function getTrendingSongs(

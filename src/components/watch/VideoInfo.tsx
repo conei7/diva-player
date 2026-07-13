@@ -1,5 +1,7 @@
 import type { Song } from '../../types/vocadb';
 import { Link } from 'react-router-dom';
+import OriginalVersionLink from './OriginalVersionLink';
+import AlbumPlaylistButton from '../playlist/AlbumPlaylistButton';
 
 
 /**
@@ -74,6 +76,8 @@ export default function VideoInfo({ song }: VideoInfoProps) {
           )}
         </div>
       </div>
+      <OriginalVersionLink song={song} />
+      <AlbumPlaylistButton song={song} />
     </div>
   );
 }

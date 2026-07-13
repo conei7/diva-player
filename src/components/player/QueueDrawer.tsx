@@ -51,11 +51,12 @@ export default function QueueDrawer() {
         style={{
           width: '360px',
           maxWidth: '90vw',
+          height: '100dvh',
           background: 'var(--color-surface)',
           borderLeft: '1px solid var(--color-border)',
           transform: queueDrawerOpen ? 'translateX(0)' : 'translateX(100%)',
           transition: 'transform 0.28s cubic-bezier(0.4, 0, 0.2, 1)',
-          paddingBottom: 'var(--player-bar-height)',
+          paddingBottom: 'calc(var(--player-bar-height) + env(safe-area-inset-bottom))',
           boxShadow: queueDrawerOpen ? '-8px 0 32px rgba(0,0,0,0.4)' : 'none',
         }}
         role="dialog"

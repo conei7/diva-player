@@ -3,6 +3,8 @@ import { useUiStore } from '../../stores/uiStore';
 import { usePlayerStore } from '../../stores/playerStore';
 import { useRatingStore } from '../../stores/ratingStore';
 import StarRating from './StarRating';
+import OriginalVersionLink from '../watch/OriginalVersionLink';
+import AlbumPlaylistButton from '../playlist/AlbumPlaylistButton';
 
 const VOCADB_BASE = 'https://vocadb.net';
 
@@ -152,6 +154,8 @@ export default function SongDetailsModal() {
                   size="md"
                 />
               </div>
+              <OriginalVersionLink song={song} />
+              <AlbumPlaylistButton song={song} />
             </div>
 
             {/* メタデータグリッド */}

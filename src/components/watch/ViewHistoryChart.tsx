@@ -1,10 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-
-interface ViewHistoryData {
-  date: string;
-  youtube: number;
-  nico: number;
-}
+import { normalizeViewHistory, type ViewHistoryData } from '../../utils/viewHistory';
 
 interface ChartState {
   songId: number;
@@ -32,62 +27,6 @@ const formatJapaneseViews = (views: number): string => {
   return rounded.toLocaleString();
 };
 
-const normalizeDateKey = (value: unknown): string | null => {
-  if (value === null || value === undefined) return null;
-
-  const text = String(value);
-  const isoDate = text.match(/^\d{4}-\d{2}-\d{2}/)?.[0];
-  if (isoDate) return isoDate;
-
-  const parsed = new Date(text);
-  if (Number.isNaN(parsed.getTime())) return null;
-  return parsed.toISOString().slice(0, 10);
-};
-
-const toViewCount = (value: unknown): number => {
-  const numeric = typeof value === "number" ? value : Number(value ?? 0);
-  if (!Number.isFinite(numeric) || numeric < 0) return 0;
-  return Math.round(numeric);
-};
-
-const normalizeViewHistory = (history: unknown[]): ViewHistoryData[] => {
-  const daily = new Map<string, ViewHistoryData>();
-
-  for (const item of history) {
-    if (!item || typeof item !== "object") continue;
-
-    const row = item as Partial<Record<keyof ViewHistoryData, unknown>>;
-    const date = normalizeDateKey(row.date);
-    if (!date) continue;
-
-    const current = daily.get(date) ?? { date, youtube: 0, nico: 0 };
-    daily.set(date, {
-      date,
-      // 同じ日付に複数レコードがある場合は、欠損値の0ではなく最大値を採用する。
-      youtube: Math.max(current.youtube, toViewCount(row.youtube)),
-      nico: Math.max(current.nico, toViewCount(row.nico)),
-    });
-  }
-
-  let previousYoutube = 0;
-  let previousNico = 0;
-
-  return [...daily.values()]
-    .sort((a, b) => a.date.localeCompare(b.date))
-    .map((entry) => {
-      const youtube =
-        entry.youtube > 0
-          ? Math.max(previousYoutube, entry.youtube)
-          : previousYoutube;
-      const nico =
-        entry.nico > 0 ? Math.max(previousNico, entry.nico) : previousNico;
-
-      previousYoutube = youtube;
-      previousNico = nico;
-
-      return { ...entry, youtube, nico };
-    });
-};
 
 const getNiceStep = (roughStep: number): number => {
   if (!Number.isFinite(roughStep) || roughStep <= 0) return 1;
@@ -115,6 +54,7 @@ export default function ViewHistoryChart({ songId }: { songId: number }) {
     date: string;
     label: string;
     color: string;
+    corrected?: boolean;
   } | null>(null);
 
   const [chartState, setChartState] = useState<ChartState>(() => ({
@@ -159,10 +99,10 @@ export default function ViewHistoryChart({ songId }: { songId: number }) {
   }, [songId]);
 
   const chart = useMemo(() => {
-    const hasYoutube = data.some((d) => d.youtube > 0);
-    const hasNico = data.some((d) => d.nico > 0);
+    const hasYoutube = data.some((d) => (d.youtube ?? 0) > 0);
+    const hasNico = data.some((d) => (d.nico ?? 0) > 0);
     const maxValue = Math.max(
-      ...data.map((d) => Math.max(d.youtube, d.nico)),
+      ...data.map((d) => Math.max(d.youtube ?? 0, d.nico ?? 0)),
       0,
     );
 
@@ -182,20 +122,29 @@ export default function ViewHistoryChart({ songId }: { songId: number }) {
 
     const yStep = getNiceStep(maxValue / (Y_TICK_COUNT - 1));
     const yMax = yStep * (Y_TICK_COUNT - 1);
-    const getX = (index: number) => (index / (data.length - 1)) * 100;
+    const timestamps = data.map((entry) => Date.parse(`${entry.date}T00:00:00Z`));
+    const minTime = Math.min(...timestamps);
+    const maxTime = Math.max(...timestamps);
+    const timeRange = Math.max(maxTime - minTime, 1);
+    const getX = (date: string) => {
+      const timestamp = Date.parse(`${date}T00:00:00Z`);
+      return ((timestamp - minTime) / timeRange) * 100;
+    };
     const getY = (value: number) => 100 - (value / yMax) * 100;
 
-    const youtubePoints = data.map((d, i) => ({
-      x: getX(i),
-      y: getY(d.youtube),
-      value: d.youtube,
+    const youtubePoints = data.filter(d => d.youtube !== null).map((d) => ({
+      x: getX(d.date),
+      y: getY(d.youtube ?? 0),
+      value: d.youtube ?? 0,
       date: d.date,
+      corrected: d.correctedYoutube,
     }));
-    const nicoPoints = data.map((d, i) => ({
-      x: getX(i),
-      y: getY(d.nico),
-      value: d.nico,
+    const nicoPoints = data.filter(d => d.nico !== null).map((d) => ({
+      x: getX(d.date),
+      y: getY(d.nico ?? 0),
+      value: d.nico ?? 0,
       date: d.date,
+      corrected: d.correctedNico,
     }));
 
     const pointsYoutube = youtubePoints.map((p) => `${p.x},${p.y}`).join(" ");
@@ -212,7 +161,7 @@ export default function ViewHistoryChart({ songId }: { songId: number }) {
     const xLabels = [...labelIndexes]
       .sort((a, b) => a - b)
       .map((index) => ({
-        x: getX(index),
+        x: getX(data[index].date),
         label: formatDateLabel(data[index].date),
       }));
 
@@ -411,6 +360,7 @@ export default function ViewHistoryChart({ songId }: { songId: number }) {
                 <span>{hoveredPoint.label}:</span>
                 <span className="font-bold text-sm ml-1">{hoveredPoint.value.toLocaleString()}</span>
               </div>
+              {hoveredPoint.corrected && <div className="text-amber-300">異常値を補正</div>}
             </div>
           </div>
         )}

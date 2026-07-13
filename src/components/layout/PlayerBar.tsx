@@ -242,12 +242,12 @@ export default function PlayerBar() {
           </button>
 
           {/* 隠しモードトグル */}
-          <ShareCurrentSong />
+          <span className="hidden md:block"><ShareCurrentSong /></span>
 
-          <SleepTimer />
+          <span className="hidden md:block"><SleepTimer /></span>
 
           <button
-            className="btn-ghost p-1.5 rounded-lg"
+            className="hidden sm:flex btn-ghost p-1.5 rounded-lg"
             onClick={toggleHiddenMode}
             title={hiddenMode ? '隠しモードOFF' : '隠しモードON'}
             style={{ color: hiddenMode ? 'var(--color-accent-cyan)' : 'var(--color-text-muted)' }}
@@ -267,6 +267,7 @@ export default function PlayerBar() {
           <button
             className="btn-ghost p-1.5 rounded-lg"
             onClick={toggleHistoryDrawer}
+            aria-label="履歴"
             title="視聴履歴"
             style={{ color: historyDrawerOpen ? 'var(--color-accent-cyan)' : 'var(--color-text-muted)' }}
           >
@@ -279,6 +280,7 @@ export default function PlayerBar() {
           <button
             className="lg:hidden btn-ghost p-1.5 rounded-lg relative"
             onClick={toggleQueueDrawer}
+            aria-label="キュー"
             title="再生キュー"
             style={{ color: queueDrawerOpen ? 'var(--color-accent-purple)' : 'var(--color-text-muted)' }}
           >

@@ -85,6 +85,13 @@ export interface Song {
   audioComputed?: boolean;
 }
 
+export interface AlbumSummary {
+  id: number;
+  name: string;
+  releaseDate?: string;
+  coverUrl?: string;
+}
+
 // ─── 検索結果 ───
 export interface PartialFindResult<T> {
   items: T[];

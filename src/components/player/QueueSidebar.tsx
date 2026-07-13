@@ -162,7 +162,7 @@ export default function QueueSidebar({ hideHeader }: QueueSidebarProps = {}) {
 
                 {/* 削除ボタン（ホバー時に表示） */}
                 <button
-                  className="absolute right-1 top-1/2 -translate-y-1/2 w-6 h-6 rounded flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                  className="absolute right-1 top-1/2 -translate-y-1/2 w-8 h-8 rounded flex items-center justify-center opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity"
                   style={{ background: 'rgba(239,68,68,0.15)', color: '#ef4444' }}
                   title="キューから削除"
                   onClick={(e) => {

@@ -148,7 +148,7 @@ export default function Sidebar() {
         className={`${isWatchPage ? '' : 'lg:hidden'} fixed top-0 left-0 z-50 flex flex-col transition-transform duration-300`}
         style={{
           width: 'var(--sidebar-width)',
-          height: '100vh',
+          height: '100dvh',
           background: 'var(--color-bg-secondary)',
           transform: mobileDrawerOpen ? 'translateX(0)' : 'translateX(-100%)',
         }}
