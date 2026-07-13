@@ -10,6 +10,7 @@ import {
   searchVocalistsByName,
   type SearchSuggestion,
 } from '../../api/vocadb';
+import SettingsModal from '../settings/SettingsModal';
 
 const SEARCH_HISTORY_KEY = 'divaSearchHistory';
 const MAX_SEARCH_HISTORY = 10;
@@ -68,6 +69,7 @@ export default function TopNav() {
   const [isSuggestLoading, setIsSuggestLoading] = useState(false);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [recentSearches, setRecentSearches] = useState<string[]>(() => readSearchHistory());
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const searchFormRef = useRef<HTMLFormElement>(null);
   const showRecentSearches = showSuggestions && searchQuery.trim().length === 0 && recentSearches.length > 0;
@@ -535,9 +537,11 @@ export default function TopNav() {
           </button>
 
           <button
+            onClick={() => setSettingsOpen(true)}
             className="w-8 h-8 rounded-full flex items-center justify-center overflow-hidden"
             style={{ background: 'var(--gradient-primary)' }}
-            title="ユーザー"
+            title="設定・バックアップ"
+            aria-label="設定・バックアップ"
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="white">
               <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z" />
@@ -545,6 +549,7 @@ export default function TopNav() {
           </button>
         </div>
       </div>
+      <SettingsModal isOpen={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </header>
   );
 }
