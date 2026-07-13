@@ -56,7 +56,7 @@ async function inspectPage(page) {
   return page.evaluate(() => ({
     title: document.title,
     searchInput: Boolean(document.querySelector('input[placeholder="ボカロP名や曲名で検索"]')),
-    cards: document.querySelectorAll('h3').length,
+    cards: document.querySelectorAll('a[href*="/watch?v="]').length,
     warningVisible: [...document.querySelectorAll('[role="status"]')]
       .some(element => element.textContent?.includes('SBCのデータサービスに接続できません')),
   }));
@@ -89,7 +89,7 @@ async function main() {
       }));
       throw new Error(`The global search input did not render: ${JSON.stringify(diagnostic)} (${error.message})`);
     }
-    await page.waitForSelector('h3');
+    await page.waitForSelector('a[href*="/watch?v="]');
     const home = await inspectPage(page);
     assert(home.title.includes('DIVA Player'), 'The DIVA Player title was not rendered.');
     assert(home.searchInput, 'The global search input was not rendered.');

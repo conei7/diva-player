@@ -2,7 +2,8 @@ import puppeteer from 'puppeteer';
 
 const baseUrl = process.argv[2] || 'https://diva-player.pages.dev/';
 const base = new URL(baseUrl);
-const expectedRoot = new URL(base.pathname, base.origin).pathname;
+const normalizePath = path => path.replace(/\/+$/, '') || '/';
+const expectedRoot = normalizePath(new URL(base.pathname, base.origin).pathname);
 const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox'] });
 
 try {
@@ -35,8 +36,8 @@ try {
   console.log(`PASS description expansion UX (${descriptionState.linkCount} inline links)`);
   const href = await page.$eval('a[aria-label="DIVA Player home"]', element => element.getAttribute('href'));
   await page.click('a[aria-label="DIVA Player home"]');
-  await page.waitForFunction(path => location.pathname === path, {}, expectedRoot);
-  if (href !== expectedRoot && !(expectedRoot === '/' && href === '/')) {
+  await page.waitForFunction(path => (location.pathname.replace(/\/+$/, '') || '/') === path, {}, expectedRoot);
+  if (normalizePath(href ?? '') !== expectedRoot) {
     throw new Error(`Unexpected home link href: ${href}; expected ${expectedRoot}`);
   }
   console.log(`PASS logo navigation (${href} -> ${expectedRoot})`);
