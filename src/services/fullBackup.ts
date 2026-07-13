@@ -221,6 +221,7 @@ async function mergeHistory(events: ListeningPlayEvent[]): Promise<void> {
   tx.objectStore(HISTORY_STORES.applied).clear();
   tx.objectStore(HISTORY_STORES.songStats).clear();
   tx.objectStore(HISTORY_STORES.yearStats).clear();
+  tx.objectStore(HISTORY_STORES.monthStats).clear();
   tx.objectStore(HISTORY_STORES.meta).clear();
   await transactionToPromise(tx);
 }

@@ -51,6 +51,15 @@ const menuItems: MenuItem[] = [
       </svg>
     ),
   },
+  {
+    path: '/reports',
+    label: 'レポート',
+    icon: (
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+        <path d="M5 19h14v2H5zM7 17H5V9h2zm6 0h-2V3h2zm6 0h-2v-5h2z" />
+      </svg>
+    ),
+  },
 ];
 
 export default function Sidebar() {
