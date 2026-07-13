@@ -201,6 +201,11 @@ export default function ViewHistoryChart({ songId }: { songId: number }) {
   }
 
   if (data.length < 2 || chart.yMax <= 0) {
+    const historyMessage = data.length === 0
+      ? "まだ再生履歴を取得できていません。PVが未登録・非公開、または初回取得待ちの可能性があります。"
+      : data.length === 1
+        ? "再生履歴は1日分です。次回の取得後に推移グラフを表示します。"
+        : "有効な再生数がまだありません。次回の取得結果をお待ちください。";
     return (
       <div
         className="w-full h-[180px] p-4 rounded-lg my-4 shadow-sm flex flex-col items-center justify-center text-center"
@@ -213,9 +218,7 @@ export default function ViewHistoryChart({ songId }: { songId: number }) {
           再生回数の推移
         </h3>
         <span className="text-xs" style={{ color: "var(--color-text-muted)" }}>
-          データ蓄積中です。
-          <br />
-          （複数日の履歴が蓄積されるとグラフが表示されます）
+          {historyMessage}
         </span>
       </div>
     );
