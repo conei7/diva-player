@@ -51,4 +51,14 @@ describe('filterViewHistoryByRange', () => {
     expect(filterViewHistoryByRange(history, '7d')).toHaveLength(4);
     expect(filterViewHistoryByRange(history, 'all')).toEqual(history);
   });
+
+  it('uses calendar cutoffs for gaps and preserves a single in-range point', () => {
+    const history = normalizeViewHistory([
+      { date: '2026-01-01', youtube: 1, nico: 0 },
+      { date: '2026-01-04', youtube: 2, nico: 0 },
+      { date: '2026-01-10', youtube: 3, nico: 0 },
+    ]);
+    expect(filterViewHistoryByRange(history, '7d').map(item => item.date)).toEqual(['2026-01-04', '2026-01-10']);
+    expect(filterViewHistoryByRange(history, '7d').filter(item => item.youtube !== null)).toHaveLength(2);
+  });
 });
