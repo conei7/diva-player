@@ -67,14 +67,14 @@ export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect, 
   // メニュー外クリックで閉じる
   useEffect(() => {
     if (!menuOpen) return;
-    const handler = (e: MouseEvent) => {
+    const handler = (e: PointerEvent) => {
       if (!menuRef.current?.contains(e.target as Node) && !menuPortalRef.current?.contains(e.target as Node)) {
         setMenuOpen(false);
         setMenuPos(null);
       }
     };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
+    document.addEventListener('pointerdown', handler);
+    return () => document.removeEventListener('pointerdown', handler);
   }, [menuOpen]);
 
   useEffect(() => {
