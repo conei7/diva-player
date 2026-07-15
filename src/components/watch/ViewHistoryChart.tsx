@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
-import { normalizeViewHistory, type ViewHistoryData } from '../../utils/viewHistory';
+import { filterViewHistoryByRange, normalizeViewHistory, type ViewHistoryData, type ViewHistoryRange } from '../../utils/viewHistory';
+import { formatJapaneseViews } from '../../utils/formatViews';
 
 interface ChartState {
   songId: number;
   data: ViewHistoryData[];
-  loading: boolean;
+  status: 'loading' | 'success' | 'error';
+  errorMessage?: string;
 }
 
 const SERIES = {
@@ -14,18 +16,6 @@ const SERIES = {
 
 const Y_TICK_COUNT = 5;
 const EMPTY_VIEW_HISTORY: ViewHistoryData[] = [];
-
-const formatJapaneseViews = (views: number): string => {
-  const rounded = Math.round(views);
-
-  if (rounded >= 100000000) {
-    return (rounded / 100000000).toFixed(1).replace(".0", "") + "億";
-  }
-  if (rounded >= 10000) {
-    return (rounded / 10000).toFixed(1).replace(".0", "") + "万";
-  }
-  return rounded.toLocaleString();
-};
 
 
 const getNiceStep = (roughStep: number): number => {
@@ -60,16 +50,20 @@ export default function ViewHistoryChart({ songId }: { songId: number }) {
   const [chartState, setChartState] = useState<ChartState>(() => ({
     songId,
     data: [],
-    loading: true,
+    status: 'loading',
   }));
+  const [range, setRange] = useState<ViewHistoryRange>('all');
+  const [retryToken, setRetryToken] = useState(0);
 
-  const loading = chartState.songId !== songId || chartState.loading;
-  const data =
-    chartState.songId === songId ? chartState.data : EMPTY_VIEW_HISTORY;
+  const loading = chartState.songId !== songId || chartState.status === 'loading';
+  const rawData = chartState.songId === songId ? chartState.data : EMPTY_VIEW_HISTORY;
+  const data = useMemo(() => filterViewHistoryByRange(rawData, range), [rawData, range]);
 
   useEffect(() => {
     let active = true;
     const controller = new AbortController();
+    setRange('all');
+    setChartState({ songId, data: [], status: 'loading' });
 
     fetch(`/backend-api/api/songs/${songId}/history`, {
       signal: controller.signal,
@@ -83,20 +77,37 @@ export default function ViewHistoryChart({ songId }: { songId: number }) {
         setChartState({
           songId,
           data: Array.isArray(history) ? normalizeViewHistory(history) : [],
-          loading: false,
+          status: 'success',
         });
       })
       .catch((err) => {
         if (!active || err?.name === "AbortError") return;
         console.error("Failed to fetch view history:", err);
-        setChartState({ songId, data: [], loading: false });
+        setChartState({ songId, data: [], status: 'error', errorMessage: '閲覧履歴を取得できませんでした。' });
       });
 
     return () => {
       active = false;
       controller.abort();
     };
-  }, [songId]);
+  }, [songId, retryToken]);
+
+  useEffect(() => {
+    if (!hoveredPoint) return;
+    const close = (event: Event) => {
+      if (event instanceof KeyboardEvent) {
+        if (event.key === 'Escape') setHoveredPoint(null);
+        return;
+      }
+      if (!(event.target as HTMLElement | null)?.closest('.view-history-point')) setHoveredPoint(null);
+    };
+    document.addEventListener('keydown', close);
+    document.addEventListener('pointerdown', close);
+    return () => {
+      document.removeEventListener('keydown', close);
+      document.removeEventListener('pointerdown', close);
+    };
+  }, [hoveredPoint]);
 
   const chart = useMemo(() => {
     const hasYoutube = data.some((d) => (d.youtube ?? 0) > 0);
@@ -170,7 +181,7 @@ export default function ViewHistoryChart({ songId }: { songId: number }) {
       return {
         value,
         y: getY(value),
-        label: formatJapaneseViews(value),
+        label: formatJapaneseViews(value, { zeroIsMissing: false, fallback: '0' }),
       };
     });
 
@@ -196,6 +207,22 @@ export default function ViewHistoryChart({ songId }: { songId: number }) {
         <span className="text-sm" style={{ color: "var(--color-text-muted)" }}>
           Loading history...
         </span>
+      </div>
+    );
+  }
+
+  if (chartState.status === 'error') {
+    return (
+      <div className="w-full min-h-[180px] p-4 rounded-lg my-4 flex flex-col items-center justify-center gap-3 text-center" style={{ background: "var(--color-bg-secondary)" }} role="alert">
+        <span className="text-sm" style={{ color: "var(--color-text-muted)" }}>{chartState.errorMessage}</span>
+        <button
+          type="button"
+          className="px-3 py-1.5 rounded-md text-xs font-semibold border"
+          style={{ color: "var(--color-text-primary)", borderColor: "var(--color-border)" }}
+          onClick={() => setRetryToken(value => value + 1)}
+        >
+          再試行
+        </button>
       </div>
     );
   }
@@ -236,6 +263,23 @@ export default function ViewHistoryChart({ songId }: { songId: number }) {
         >
           再生回数の推移
         </h3>
+        <div className="flex gap-1" role="group" aria-label="期間">
+          {(['7d', '30d', '90d', 'all'] as const).map(option => (
+            <button
+              key={option}
+              type="button"
+              aria-pressed={range === option}
+              className="px-2 py-1 rounded text-[10px] border"
+              style={{
+                color: range === option ? 'var(--color-text-primary)' : 'var(--color-text-muted)',
+                borderColor: range === option ? 'var(--color-accent-cyan)' : 'var(--color-border)',
+              }}
+              onClick={() => setRange(option)}
+            >
+              {option === 'all' ? '全期間' : option.replace('d', '日')}
+            </button>
+          ))}
+        </div>
         <div className="flex gap-4 text-xs font-semibold shrink-0">
           {chart.hasYoutube && (
             <span className="flex items-center gap-1">
@@ -314,7 +358,10 @@ export default function ViewHistoryChart({ songId }: { songId: number }) {
           chart.youtubePoints.map((point) => (
             <div
               key={`youtube-${point.date}`}
-              className="absolute w-3 h-3 rounded-full -translate-x-1/2 -translate-y-1/2 border-2 cursor-pointer transition-transform hover:scale-150"
+              className="view-history-point absolute w-3 h-3 rounded-full -translate-x-1/2 -translate-y-1/2 border-2 cursor-pointer transition-transform hover:scale-150"
+              role="button"
+              tabIndex={0}
+              aria-label={`${SERIES.youtube.label} ${point.date} ${formatJapaneseViews(point.value, { zeroIsMissing: false, fallback: '0' })}`}
               style={{
                 left: `${point.x}%`,
                 top: `${point.y}%`,
@@ -324,6 +371,9 @@ export default function ViewHistoryChart({ songId }: { songId: number }) {
               }}
               onMouseEnter={() => setHoveredPoint({ ...point, label: SERIES.youtube.label, color: SERIES.youtube.color })}
               onMouseLeave={() => setHoveredPoint(null)}
+              onFocus={() => setHoveredPoint({ ...point, label: SERIES.youtube.label, color: SERIES.youtube.color })}
+              onBlur={() => setHoveredPoint(null)}
+              onPointerDown={(event) => { if (event.pointerType === 'touch') setHoveredPoint({ ...point, label: SERIES.youtube.label, color: SERIES.youtube.color }); }}
             ></div>
           ))}
 
@@ -331,7 +381,10 @@ export default function ViewHistoryChart({ songId }: { songId: number }) {
           chart.nicoPoints.map((point) => (
             <div
               key={`nico-${point.date}`}
-              className="absolute w-3 h-3 rounded-full -translate-x-1/2 -translate-y-1/2 border-2 cursor-pointer transition-transform hover:scale-150"
+              className="view-history-point absolute w-3 h-3 rounded-full -translate-x-1/2 -translate-y-1/2 border-2 cursor-pointer transition-transform hover:scale-150"
+              role="button"
+              tabIndex={0}
+              aria-label={`${SERIES.nico.label} ${point.date} ${formatJapaneseViews(point.value, { zeroIsMissing: false, fallback: '0' })}`}
               style={{
                 left: `${point.x}%`,
                 top: `${point.y}%`,
@@ -341,6 +394,9 @@ export default function ViewHistoryChart({ songId }: { songId: number }) {
               }}
               onMouseEnter={() => setHoveredPoint({ ...point, label: SERIES.nico.label, color: SERIES.nico.color })}
               onMouseLeave={() => setHoveredPoint(null)}
+              onFocus={() => setHoveredPoint({ ...point, label: SERIES.nico.label, color: SERIES.nico.color })}
+              onBlur={() => setHoveredPoint(null)}
+              onPointerDown={(event) => { if (event.pointerType === 'touch') setHoveredPoint({ ...point, label: SERIES.nico.label, color: SERIES.nico.color }); }}
             ></div>
           ))}
 

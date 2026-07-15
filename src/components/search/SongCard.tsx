@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { Song } from '../../types/vocadb';
 import { Link } from 'react-router-dom';
 import { usePlayerStore, getPlayablePV } from '../../stores/playerStore';
@@ -6,6 +7,7 @@ import { useUiStore } from '../../stores/uiStore';
 import { usePlaylistStore, WATCH_LATER_ID } from '../../stores/playlistStore';
 import { useSelectionStore } from '../../stores/selectionStore';
 import { formatSongRelativeDate } from '../../utils/relativeDate';
+import { formatJapaneseViews } from '../../utils/formatViews';
 
 interface SongCardProps {
   song: Song;
@@ -17,17 +19,6 @@ interface SongCardProps {
   onVisible?: () => void;
   onExposureClick?: () => void;
 }
-
-const formatJapaneseViews = (views?: number): string => {
-  if (views === undefined || views <= 0) return '-';
-  if (views >= 100000000) {
-    return (views / 100000000).toFixed(1).replace('.0', '') + '億';
-  } else if (views >= 10000) {
-    return (views / 10000).toFixed(1).replace('.0', '') + '万';
-  } else {
-    return views.toLocaleString();
-  }
-};
 
 /**
  * SongCard - 検索結果の曲カード
@@ -45,6 +36,7 @@ export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect, 
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuPos, setMenuPos] = useState<{ top: number; right: number } | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const menuPortalRef = useRef<HTMLDivElement>(null);
   const btnRef = useRef<HTMLButtonElement>(null);
   const cardRef = useRef<HTMLDivElement>(null);
   const visibilityReportedRef = useRef(false);
@@ -76,13 +68,37 @@ export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect, 
   useEffect(() => {
     if (!menuOpen) return;
     const handler = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+      if (!menuRef.current?.contains(e.target as Node) && !menuPortalRef.current?.contains(e.target as Node)) {
         setMenuOpen(false);
         setMenuPos(null);
       }
     };
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
+  }, [menuOpen]);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        setMenuOpen(false);
+        setMenuPos(null);
+        btnRef.current?.focus();
+      }
+    };
+    const closeOnViewportChange = () => {
+      setMenuOpen(false);
+      setMenuPos(null);
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('resize', closeOnViewportChange);
+    window.addEventListener('scroll', closeOnViewportChange, true);
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('resize', closeOnViewportChange);
+      window.removeEventListener('scroll', closeOnViewportChange, true);
+    };
   }, [menuOpen]);
 
   // 利用可能なPVサービスのバッジ
@@ -218,10 +234,10 @@ export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect, 
     }
     const rect = btnRef.current?.getBoundingClientRect();
     if (!rect) return;
-    const menuHeight = 145;
+    const menuHeight = 190;
     const fitsBelow = rect.bottom + 4 + menuHeight <= window.innerHeight;
     setMenuPos({
-      top: fitsBelow ? rect.bottom + 4 : rect.top - menuHeight - 4,
+      top: Math.max(8, fitsBelow ? rect.bottom + 4 : rect.top - menuHeight - 4),
       right: window.innerWidth - rect.right,
     });
     setMenuOpen(true);
@@ -377,7 +393,11 @@ export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect, 
           <div className="relative flex-shrink-0" ref={menuRef}>
             <button
               ref={btnRef}
-              className="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded-md hover:bg-white/10"
+              type="button"
+              aria-haspopup="menu"
+              aria-expanded={menuOpen}
+              aria-label={`${song.name} のメニュー`}
+              className="opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity p-1 rounded-md hover:bg-white/10"
               style={{ color: 'var(--color-text-muted)' }}
               onClick={handleMenuToggle}
               title="メニュー"
@@ -387,8 +407,10 @@ export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect, 
               </svg>
             </button>
 
-            {menuOpen && menuPos && (
+            {menuOpen && menuPos && createPortal(
               <div
+                ref={menuPortalRef}
+                role="menu"
                 className="fixed z-[200] rounded-xl overflow-hidden shadow-2xl min-w-[180px]"
                 style={{ top: menuPos.top, right: menuPos.right, background: 'var(--color-bg-card)', border: '1px solid var(--color-border)' }}
               >
@@ -447,7 +469,8 @@ export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect, 
                   </svg>
                   共有
                 </button>
-              </div>
+              </div>,
+              document.body,
             )}
           </div>
           )}
@@ -467,7 +490,9 @@ export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect, 
               <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
                 <path d="M21.582 6.186a2.665 2.665 0 0 0-1.876-1.884C17.95 3.84 12 3.84 12 3.84s-5.95 0-7.706.462A2.665 2.665 0 0 0 2.418 6.186C2 7.952 2 12 2 12s0 4.048.418 5.814a2.665 2.665 0 0 0 1.876 1.884C6.05 20.16 12 20.16 12 20.16s5.95 0 7.706-.462a2.665 2.665 0 0 0 1.876-1.884C22 16.048 22 12 22 12s0-4.048-.418-5.814zM9.75 15.02v-6.04L15.05 12l-5.3 3.02z"/>
               </svg>
-              {formatJapaneseViews(song.youtubeViews) || (isYTUnofficialOnly ? '非公式YT' : 'YT')}
+              {song.youtubeViews && song.youtubeViews > 0
+                ? formatJapaneseViews(song.youtubeViews)
+                : (isYTUnofficialOnly ? '非公式YT' : 'YT')}
             </span>
           )}
           {(pvServices.has('NicoNicoDouga') || (song.nicoViews || 0) > 0) && (
@@ -479,7 +504,9 @@ export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect, 
                   }}
                   title="ニコニコ動画 再生回数">
               📺
-              {formatJapaneseViews(song.nicoViews) || (isNicoUnofficialOnly ? '非公式ニコ' : 'ニコ')}
+              {song.nicoViews && song.nicoViews > 0
+                ? formatJapaneseViews(song.nicoViews)
+                : (isNicoUnofficialOnly ? '非公式ニコ' : 'ニコ')}
             </span>
           )}
 

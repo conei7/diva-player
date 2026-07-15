@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { Song } from '../../types/vocadb';
 import { tokenizeDescriptionText } from '../../utils/descriptionText';
+import { formatJapaneseViews } from '../../utils/formatViews';
 import ViewHistoryChart from './ViewHistoryChart';
 
 /**
@@ -10,17 +11,6 @@ import ViewHistoryChart from './ViewHistoryChart';
 interface DescriptionProps {
   song: Song;
 }
-
-const formatJapaneseViews = (views?: number): string => {
-  if (views === undefined || views <= 0) return '-';
-  if (views >= 100000000) {
-    return (views / 100000000).toFixed(1).replace('.0', '') + '億';
-  } else if (views >= 10000) {
-    return (views / 10000).toFixed(1).replace('.0', '') + '万';
-  } else {
-    return views.toLocaleString();
-  }
-};
 
 export default function Description({ song }: DescriptionProps) {
   const [expanded, setExpanded] = useState(false);

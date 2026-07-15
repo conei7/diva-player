@@ -7,6 +7,7 @@ import { useUiStore } from '../../stores/uiStore';
 import { usePlaylistStore, WATCH_LATER_ID } from '../../stores/playlistStore';
 import { useSelectionStore } from '../../stores/selectionStore';
 import { formatSongRelativeDate } from '../../utils/relativeDate';
+import { formatJapaneseViews } from '../../utils/formatViews';
 import { useRecommendationExposureStore, type ExposureSurface } from '../../stores/recommendationExposureStore';
 
 /**
@@ -38,17 +39,6 @@ function formatDuration(seconds: number): string {
   const s = Math.floor(seconds % 60);
   return `${m}:${s.toString().padStart(2, '0')}`;
 }
-
-const formatJapaneseViews = (views?: number): string => {
-  if (views === undefined || views <= 0) return '-';
-  if (views >= 100000000) {
-    return (views / 100000000).toFixed(1).replace('.0', '') + '億';
-  } else if (views >= 10000) {
-    return (views / 10000).toFixed(1).replace('.0', '') + '万';
-  } else {
-    return views.toLocaleString();
-  }
-};
 
 /** 個別曲アイテム（⋮メニュー付き） */
 function RecItemRow({
