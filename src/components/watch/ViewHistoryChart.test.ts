@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { normalizeViewHistory } from '../../utils/viewHistory';
+import { filterViewHistoryByRange, normalizeViewHistory } from '../../utils/viewHistory';
 
 describe('normalizeViewHistory', () => {
   it('keeps irregular dates and treats an initial zero as missing', () => {
@@ -37,5 +37,28 @@ describe('normalizeViewHistory', () => {
       { date: '2026-01-03', youtube: 90, nico: 0 },
     ]);
     expect(sustained[1].youtube).toBe(80);
+  });
+});
+
+describe('filterViewHistoryByRange', () => {
+  it('uses the latest history date rather than the current wall clock', () => {
+    const history = normalizeViewHistory([
+      { date: '2026-01-01', youtube: 1 },
+      { date: '2026-01-05', youtube: 2 },
+      { date: '2026-01-06', youtube: 3 },
+      { date: '2026-01-07', youtube: 4 },
+    ]);
+    expect(filterViewHistoryByRange(history, '7d')).toHaveLength(4);
+    expect(filterViewHistoryByRange(history, 'all')).toEqual(history);
+  });
+
+  it('uses calendar cutoffs for gaps and preserves a single in-range point', () => {
+    const history = normalizeViewHistory([
+      { date: '2026-01-01', youtube: 1, nico: 0 },
+      { date: '2026-01-04', youtube: 2, nico: 0 },
+      { date: '2026-01-10', youtube: 3, nico: 0 },
+    ]);
+    expect(filterViewHistoryByRange(history, '7d').map(item => item.date)).toEqual(['2026-01-04', '2026-01-10']);
+    expect(filterViewHistoryByRange(history, '7d').filter(item => item.youtube !== null)).toHaveLength(2);
   });
 });

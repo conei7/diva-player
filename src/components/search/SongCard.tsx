@@ -6,6 +6,8 @@ import { useUiStore } from '../../stores/uiStore';
 import { usePlaylistStore, WATCH_LATER_ID } from '../../stores/playlistStore';
 import { useSelectionStore } from '../../stores/selectionStore';
 import { formatSongRelativeDate } from '../../utils/relativeDate';
+import SongCardMenu from './SongCardMenu';
+import SongCardBadges from './SongCardBadges';
 
 interface SongCardProps {
   song: Song;
@@ -17,17 +19,6 @@ interface SongCardProps {
   onVisible?: () => void;
   onExposureClick?: () => void;
 }
-
-const formatJapaneseViews = (views?: number): string => {
-  if (views === undefined || views <= 0) return '-';
-  if (views >= 100000000) {
-    return (views / 100000000).toFixed(1).replace('.0', '') + '億';
-  } else if (views >= 10000) {
-    return (views / 10000).toFixed(1).replace('.0', '') + '万';
-  } else {
-    return views.toLocaleString();
-  }
-};
 
 /**
  * SongCard - 検索結果の曲カード
@@ -45,6 +36,7 @@ export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect, 
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuPos, setMenuPos] = useState<{ top: number; right: number } | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const menuPortalRef = useRef<HTMLDivElement>(null);
   const btnRef = useRef<HTMLButtonElement>(null);
   const cardRef = useRef<HTMLDivElement>(null);
   const visibilityReportedRef = useRef(false);
@@ -75,14 +67,38 @@ export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect, 
   // メニュー外クリックで閉じる
   useEffect(() => {
     if (!menuOpen) return;
-    const handler = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+    const handler = (e: PointerEvent) => {
+      if (!menuRef.current?.contains(e.target as Node) && !menuPortalRef.current?.contains(e.target as Node)) {
         setMenuOpen(false);
         setMenuPos(null);
       }
     };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
+    document.addEventListener('pointerdown', handler);
+    return () => document.removeEventListener('pointerdown', handler);
+  }, [menuOpen]);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        setMenuOpen(false);
+        setMenuPos(null);
+        btnRef.current?.focus();
+      }
+    };
+    const closeOnViewportChange = () => {
+      setMenuOpen(false);
+      setMenuPos(null);
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('resize', closeOnViewportChange);
+    window.addEventListener('scroll', closeOnViewportChange, true);
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('resize', closeOnViewportChange);
+      window.removeEventListener('scroll', closeOnViewportChange, true);
+    };
   }, [menuOpen]);
 
   // 利用可能なPVサービスのバッジ
@@ -218,10 +234,10 @@ export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect, 
     }
     const rect = btnRef.current?.getBoundingClientRect();
     if (!rect) return;
-    const menuHeight = 145;
+    const menuHeight = 190;
     const fitsBelow = rect.bottom + 4 + menuHeight <= window.innerHeight;
     setMenuPos({
-      top: fitsBelow ? rect.bottom + 4 : rect.top - menuHeight - 4,
+      top: Math.max(8, fitsBelow ? rect.bottom + 4 : rect.top - menuHeight - 4),
       right: window.innerWidth - rect.right,
     });
     setMenuOpen(true);
@@ -372,137 +388,34 @@ export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect, 
             )}
           </div>
 
-          {/* ⋮ メニューボタン (選択モード中は非表示) */}
+          {/* メニュー操作は再生・選択ロジックから分離 */}
           {!isSelectionMode && (
-          <div className="relative flex-shrink-0" ref={menuRef}>
-            <button
-              ref={btnRef}
-              className="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded-md hover:bg-white/10"
-              style={{ color: 'var(--color-text-muted)' }}
-              onClick={handleMenuToggle}
-              title="メニュー"
-            >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-                <circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/>
-              </svg>
-            </button>
-
-            {menuOpen && menuPos && (
-              <div
-                className="fixed z-[200] rounded-xl overflow-hidden shadow-2xl min-w-[180px]"
-                style={{ top: menuPos.top, right: menuPos.right, background: 'var(--color-bg-card)', border: '1px solid var(--color-border)' }}
-              >
-                {/* 後で聴く */}
-                <button
-                  className="w-full flex items-center gap-3 px-4 py-2.5 text-sm hover:bg-white/5 transition-colors text-left"
-                  style={{ color: isWatchLater ? 'var(--color-accent-cyan)' : 'var(--color-text-primary)' }}
-                  onClick={(e) => { e.stopPropagation(); handleWatchLater(e); setMenuOpen(false); setMenuPos(null); }}
-                >
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill={isWatchLater ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2" className="flex-shrink-0">
-                    <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
-                  </svg>
-                  {isWatchLater ? '後で聴くから削除' : '後で聴く'}
-                </button>
-
-                {/* 再生リストに保存 */}
-                <button
-                  className="w-full flex items-center gap-3 px-4 py-2.5 text-sm hover:bg-white/5 transition-colors text-left"
-                  style={{ color: 'var(--color-text-primary)' }}
-                  onClick={handleSaveToPlaylist}
-                >
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="flex-shrink-0">
-                    <path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/>
-                    <polyline points="17 21 17 13 7 13 7 21"/>
-                    <polyline points="7 3 7 8 15 8"/>
-                  </svg>
-                  再生リストに保存
-                </button>
-
-                {/* キューに追加 */}
-                {onAddToQueue && hasPlayablePV && (
-                  <button
-                    className="w-full flex items-center gap-3 px-4 py-2.5 text-sm hover:bg-white/5 transition-colors text-left"
-                    style={{ color: 'var(--color-text-primary)' }}
-                    onClick={handleAddToQueueFromMenu}
-                  >
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="flex-shrink-0">
-                      <path d="M3 18h13v-2H3v2zm0-5h10v-2H3v2zm0-7v2h13V6H3zm18 9.59L17.42 12 21 8.41 19.59 7l-5 5 5 5L21 15.59z"/>
-                    </svg>
-                    キューに追加
-                  </button>
-                )}
-
-                <div className="border-t" style={{ borderColor: 'var(--color-border)' }} />
-
-                {/* 共有 */}
-                <button
-                  className="w-full flex items-center gap-3 px-4 py-2.5 text-sm hover:bg-white/5 transition-colors text-left"
-                  style={{ color: 'var(--color-text-primary)' }}
-                  onClick={handleShare}
-                  title="VocaDB URLをコピー"
-                >
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="flex-shrink-0">
-                    <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
-                    <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
-                  </svg>
-                  共有
-                </button>
-              </div>
-            )}
-          </div>
+            <SongCardMenu
+              songName={song.name}
+              menuOpen={menuOpen}
+              menuPos={menuPos}
+              menuRef={menuRef}
+              menuPortalRef={menuPortalRef}
+              buttonRef={btnRef}
+              isWatchLater={isWatchLater}
+              hasPlayablePV={hasPlayablePV}
+              onAddToQueue={onAddToQueue ? handleAddToQueueFromMenu : undefined}
+              onToggle={handleMenuToggle}
+              onWatchLater={handleWatchLater}
+              onSaveToPlaylist={handleSaveToPlaylist}
+              onShare={handleShare}
+              onClose={() => { setMenuOpen(false); setMenuPos(null); }}
+            />
           )}
         </div>
 
-        {/* 下部バッジ列 */}
-        <div className="flex items-center flex-wrap gap-2 mt-2">
-          {/* PVサービスバッジ / 再生数 */}
-          {(pvServices.has('Youtube') || (song.youtubeViews || 0) > 0) && (
-            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded flex items-center gap-1"
-                  style={{ 
-                    background: isYTUnofficialOnly ? 'rgba(100, 30, 30, 0.3)' : 'rgba(239, 68, 68, 0.12)', 
-                    color: isYTUnofficialOnly ? '#b91c1c' : '#ef4444',
-                    opacity: isYTUnofficialOnly ? 0.8 : 1
-                  }}
-                  title="YouTube 再生回数">
-              <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M21.582 6.186a2.665 2.665 0 0 0-1.876-1.884C17.95 3.84 12 3.84 12 3.84s-5.95 0-7.706.462A2.665 2.665 0 0 0 2.418 6.186C2 7.952 2 12 2 12s0 4.048.418 5.814a2.665 2.665 0 0 0 1.876 1.884C6.05 20.16 12 20.16 12 20.16s5.95 0 7.706-.462a2.665 2.665 0 0 0 1.876-1.884C22 16.048 22 12 22 12s0-4.048-.418-5.814zM9.75 15.02v-6.04L15.05 12l-5.3 3.02z"/>
-              </svg>
-              {formatJapaneseViews(song.youtubeViews) || (isYTUnofficialOnly ? '非公式YT' : 'YT')}
-            </span>
-          )}
-          {(pvServices.has('NicoNicoDouga') || (song.nicoViews || 0) > 0) && (
-            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded flex items-center gap-1"
-                  style={{ 
-                    background: isNicoUnofficialOnly ? 'rgba(30, 30, 100, 0.3)' : 'rgba(59, 130, 246, 0.12)', 
-                    color: isNicoUnofficialOnly ? '#1e40af' : '#3b82f6',
-                    opacity: isNicoUnofficialOnly ? 0.8 : 1
-                  }}
-                  title="ニコニコ動画 再生回数">
-              📺
-              {formatJapaneseViews(song.nicoViews) || (isNicoUnofficialOnly ? '非公式ニコ' : 'ニコ')}
-            </span>
-          )}
-
-
-
-          {relativeDate && (
-            <span className="text-[10px]" style={{ color: 'var(--color-text-muted)' }}>
-              {relativeDate}
-            </span>
-          )}
-
-          <div className="flex-1" />
-
-          {/* 曲タイプ (Remixなど) */}
-          {song.songType !== 'Original' && song.songType !== 'Unspecified' && (
-            <span className="text-[10px] px-1.5 py-0.5 rounded font-medium leading-none"
-                  style={{ background: 'rgba(139, 92, 246, 0.12)', color: 'var(--color-accent-purple)' }}>
-              {song.songType}
-            </span>
-          )}
-
-          {/* 詳細ボタン (削除 - カード全体クリックで選択) */}
-        </div>
+        <SongCardBadges
+          song={song}
+          pvServices={pvServices}
+          isYTUnofficialOnly={isYTUnofficialOnly}
+          isNicoUnofficialOnly={isNicoUnofficialOnly}
+          relativeDate={relativeDate}
+        />
       </div>
     </div>
   );

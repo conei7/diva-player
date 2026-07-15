@@ -6,6 +6,19 @@ export interface ViewHistoryData {
   correctedNico?: boolean;
 }
 
+export type ViewHistoryRange = '7d' | '30d' | '90d' | 'all';
+
+export function filterViewHistoryByRange(
+  history: ViewHistoryData[],
+  range: ViewHistoryRange,
+): ViewHistoryData[] {
+  if (range === 'all' || history.length === 0) return history;
+  const latest = Date.parse(`${history[history.length - 1].date}T00:00:00Z`);
+  const days = Number(range.slice(0, -1));
+  const cutoff = latest - (days - 1) * 24 * 60 * 60 * 1000;
+  return history.filter(item => Date.parse(`${item.date}T00:00:00Z`) >= cutoff);
+}
+
 function normalizeDateKey(value: unknown): string | null {
   if (value === null || value === undefined) return null;
   const text = String(value);
