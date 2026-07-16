@@ -71,6 +71,13 @@ async function main() {
   assert(Number.isInteger(search.items[0].id), 'PostgreSQL search returned an invalid song ID.');
   console.log(`PASS PostgreSQL search (${search.items.length} songs)`);
 
+  const globalFilterSearch = await getJson(
+    baseUrl,
+    '/api/songs/search?sort=YoutubeViews&order=desc&start=0&maxResults=1&minYoutubeViews=9223372036854775807',
+  );
+  assert(globalFilterSearch.totalCount === 0 && globalFilterSearch.items.length === 0, 'Global view threshold was not applied by SBC search.');
+  console.log('PASS global search filter parameters');
+
   const seedId = search.items[0].id;
   const views = await getJson(baseUrl, `/api/songs/views?ids=${seedId}`);
   assert(views[String(seedId)] || views[seedId], 'PostgreSQL views endpoint did not return the requested song.');
