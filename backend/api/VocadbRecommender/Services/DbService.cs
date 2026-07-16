@@ -103,7 +103,10 @@ public class DbService
         int? lengthMinSeconds = null,
         int? lengthMaxSeconds = null,
         string? pvService = null,
-        string? audioComputed = null)
+        string? audioComputed = null,
+        long? minYoutubeViews = null,
+        long? minNicoViews = null,
+        List<string>? excludedSongTypes = null)
     {
         using var conn = Open();
         
@@ -129,6 +132,18 @@ public class DbService
                 paramIndex++;
             }
             conditions.Add($"song_type IN ({string.Join(", ", typeParams)})");
+        }
+
+        if (excludedSongTypes != null && excludedSongTypes.Count > 0)
+        {
+            var typeParams = new List<string>();
+            foreach (var st in excludedSongTypes)
+            {
+                typeParams.Add($"${paramIndex}");
+                paramValues.Add(st);
+                paramIndex++;
+            }
+            conditions.Add($"song_type NOT IN ({string.Join(", ", typeParams)})");
         }
 
         if (artistIds != null && artistIds.Count > 0)
@@ -166,6 +181,20 @@ public class DbService
         {
             conditions.Add($"length_seconds <= ${paramIndex}");
             paramValues.Add(lengthMaxSeconds.Value);
+            paramIndex++;
+        }
+
+        if (minYoutubeViews is > 0)
+        {
+            conditions.Add($"youtube_views >= ${paramIndex}");
+            paramValues.Add(minYoutubeViews.Value);
+            paramIndex++;
+        }
+
+        if (minNicoViews is > 0)
+        {
+            conditions.Add($"nico_views >= ${paramIndex}");
+            paramValues.Add(minNicoViews.Value);
             paramIndex++;
         }
 

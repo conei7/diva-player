@@ -338,15 +338,26 @@ app.MapGet("/api/songs/search", async (
     int? lengthMaxSeconds,
     string? pvService,
     string? audioComputed,
+    long? minYoutubeViews,
+    long? minNicoViews,
+    string? excludeSongTypes,
     DbService db) =>
 {
-    var aIds = !string.IsNullOrWhiteSpace(artistIds) 
-        ? artistIds.Split(',').Select(int.Parse).ToList() 
-        : new List<int>();
-        
-    var sTypes = !string.IsNullOrWhiteSpace(songTypes)
-        ? songTypes.Split(',').ToList()
-        : new List<string>();
+    if (minYoutubeViews is < 0 || minNicoViews is < 0)
+        return Results.BadRequest(new { error = "view thresholds must be non-negative" });
+
+    if (!TryParseIntegerList(artistIds, out var aIds))
+        return Results.BadRequest(new { error = "artistIds must be comma-separated integers" });
+
+    var sTypes = ParseCsv(songTypes);
+    var excludedTypes = ParseCsv(excludeSongTypes);
+    var validSongTypes = new HashSet<string>(StringComparer.Ordinal)
+    {
+        "Original", "Remaster", "Remix", "Cover", "Arrangement", "Instrumental",
+        "Mashup", "MusicPV", "DramaPV", "Other", "Unspecified",
+    };
+    if (sTypes.Any(type => !validSongTypes.Contains(type)) || excludedTypes.Any(type => !validSongTypes.Contains(type)))
+        return Results.BadRequest(new { error = "unknown song type" });
 
     var (itemsJson, totalCount) = await db.SearchSongsAsync(
         query,
@@ -361,7 +372,10 @@ app.MapGet("/api/songs/search", async (
         lengthMinSeconds,
         lengthMaxSeconds,
         pvService,
-        audioComputed
+        audioComputed,
+        minYoutubeViews,
+        minNicoViews,
+        excludedTypes
     );
 
     // itemsJsonは文字列としてのJSON配列 "[{...}, {...}]" なので、
@@ -375,6 +389,22 @@ app.MapGet("/api/songs/search", async (
 
     return Results.Content(json, "application/json");
 });
+
+static List<string> ParseCsv(string? value) => string.IsNullOrWhiteSpace(value)
+    ? []
+    : value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+
+static bool TryParseIntegerList(string? value, out List<int> result)
+{
+    result = [];
+    if (string.IsNullOrWhiteSpace(value)) return true;
+    foreach (var item in ParseCsv(value))
+    {
+        if (!int.TryParse(item, out var parsed)) return false;
+        result.Add(parsed);
+    }
+    return true;
+}
 
 // GET /api/songs/{id}/history
 app.MapGet("/api/songs/{id}/history", async (int id, DbService db) =>
