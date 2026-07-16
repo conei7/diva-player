@@ -9,6 +9,7 @@
  * - isPinned プレイリストの編集・削除を禁止
  */
 import { useEffect, useState, useRef, useCallback } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import {
   DndContext,
@@ -40,6 +41,7 @@ import {
   toSafeFileName,
 } from '../utils/playlistBackup';
 import YouTubeImportModal from '../components/playlist/YouTubeImportModal';
+import { createPlaylistShareUrl, decodePlaylistShare } from '../utils/playlistShare';
 
 // ─── SortableSongRow ────────────────────────────────────────────────────────
 interface SortableSongRowProps {
@@ -416,6 +418,8 @@ function FolderItem({
 
 // ─── メインコンポーネント ──────────────────────────────────────────────────────
 export default function PlaylistPage() {
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const {
     playlists, folders,
     loadPlaylists,
@@ -448,8 +452,26 @@ export default function PlaylistPage() {
   const [dedupeNotice, setDedupeNotice] = useState<{ count: number } | null>(null);
   const [importNotice, setImportNotice] = useState<{ name: string; count: number } | null>(null);
   const [showYTImport, setShowYTImport] = useState(false);
+  const [shareNotice, setShareNotice] = useState('');
 
   useEffect(() => { loadPlaylists(); }, [loadPlaylists]);
+
+  useEffect(() => {
+    const encoded = searchParams.get('share');
+    if (!encoded) return;
+    const payload = decodePlaylistShare(encoded);
+    if (!payload) {
+      setShareNotice('共有リンクを読み込めませんでした。');
+      navigate('/playlists', { replace: true });
+      return;
+    }
+    const imported = createPlaylist(`${payload.name} (共有)`, selectedFolderId ?? undefined);
+    updatePlaylist(imported.id, { description: payload.description, coverArtUrl: payload.coverArtUrl });
+    addSongs(imported.id, payload.songs);
+    setSelectedPlaylistId(imported.id);
+    setShareNotice(`${payload.name} を共有リンクから追加しました。`);
+    navigate('/playlists', { replace: true });
+  }, [addSongs, createPlaylist, navigate, searchParams, selectedFolderId, updatePlaylist]);
 
   useEffect(() => {
     setSelectionMode(false);
@@ -607,6 +629,17 @@ export default function PlaylistPage() {
     downloadJson(`${toSafeFileName(playlist.name)}.diva-playlist.json`, createPlaylistExportPayload(playlist, exportedAt));
   }, []);
 
+  const sharePlaylist = useCallback(async (playlist: Playlist) => {
+    const url = createPlaylistShareUrl(playlist);
+    try {
+      await navigator.clipboard.writeText(url);
+      setShareNotice('共有リンクをクリップボードにコピーしました。');
+    } catch {
+      setShareNotice(`共有リンク: ${url}`);
+    }
+    setTimeout(() => setShareNotice(''), 6000);
+  }, []);
+
   const exportAllPlaylists = useCallback(() => {
     const exportedAt = new Date().toISOString();
     downloadJson(`diva-playlists-backup-${exportedAt.slice(0, 10)}.json`, createAllPlaylistsBackupPayload(folders, playlists, exportedAt));
@@ -709,6 +742,11 @@ export default function PlaylistPage() {
 
   return (
     <div className="flex flex-col md:flex-row gap-4 px-4 py-4" style={{ minHeight: 'calc(100dvh - 160px)' }}>
+      {shareNotice && (
+        <p className="fixed left-1/2 top-20 z-50 -translate-x-1/2 rounded-xl px-4 py-2 text-sm shadow-lg" role="status" style={{ background: 'var(--color-surface-elevated)', color: 'var(--color-accent-cyan)', border: '1px solid var(--color-border)' }}>
+          {shareNotice}
+        </p>
+      )}
 
       {/* ─── 左サイドバー ───────────────────────────────────────────── */}
       <div className={`w-full md:w-64 flex-shrink-0 flex flex-col gap-2 overflow-y-auto ${selectedPlaylist ? 'hidden md:flex' : 'flex'}`} style={{ maxHeight: 'calc(100dvh - 180px)' }}>
@@ -916,6 +954,12 @@ export default function PlaylistPage() {
                         <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
                         <path d="M7 10l5 5 5-5"/>
                         <path d="M12 15V3"/>
+                      </svg>
+                    </button>
+                    <button onClick={() => void sharePlaylist(selectedPlaylist)} className="btn-ghost p-2 rounded-xl" title="共有リンクをコピー" aria-label="共有リンクをコピー">
+                      <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
+                        <path d="m8.6 13.5 6.8 4M15.4 6.5l-6.8 4"/>
                       </svg>
                     </button>
                     {!selectedPlaylist.isPinned && (
