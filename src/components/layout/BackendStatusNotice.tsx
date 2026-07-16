@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
+import { checkBackendHealth } from '../../api/backendHealth';
 
 const CHECK_INTERVAL_MS = 30_000;
-const CHECK_TIMEOUT_MS = 1_500;
+const CHECK_TIMEOUT_MS = 5_000;
 
 /** Shows only when SBC-only features are unavailable; normal VocaDB playback remains usable. */
 export default function BackendStatusNotice() {
@@ -11,14 +12,8 @@ export default function BackendStatusNotice() {
     let active = true;
 
     const check = async () => {
-      try {
-        const response = await fetch('/backend-api/api/health', {
-          signal: AbortSignal.timeout(CHECK_TIMEOUT_MS),
-        });
-        if (active) setAvailable(response.ok);
-      } catch {
-        if (active) setAvailable(false);
-      }
+      const healthy = await checkBackendHealth({ timeoutMs: CHECK_TIMEOUT_MS });
+      if (active) setAvailable(healthy);
     };
 
     void check();

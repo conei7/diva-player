@@ -9,6 +9,7 @@
 
 import type { AlbumSummary, Artist, ArtistSearchResult, Song, SongSearchParams, SongSearchResult } from '../types/vocadb';
 import type { GlobalFilterSettings } from '../stores/globalFilterStore';
+import { checkBackendHealth } from './backendHealth';
 
 const BASE_URL = 'https://vocadb.net/api';
 const RECOMMENDER_API = import.meta.env.VITE_RECOMMENDER_API || '/backend-api';
@@ -602,13 +603,7 @@ async function isRecommenderAvailable(): Promise<boolean> {
   // 並行呼び出しでも1回だけヘルスチェックを実行
   if (!_recommenderCheckPromise) {
     _recommenderCheckPromise = (async () => {
-      let available: boolean;
-      try {
-        const res = await fetch(`${RECOMMENDER_API}/api/health`, { signal: AbortSignal.timeout(1500) });
-        available = res.ok;
-      } catch {
-        available = false;
-      }
+      const available = await checkBackendHealth({ baseUrl: RECOMMENDER_API });
       _recommenderAvailable = available;
       _recommenderCheckedAt = Date.now();
       return available;
