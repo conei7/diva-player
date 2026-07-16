@@ -4,6 +4,7 @@ import {
   getAudioSimilarSongs,
   getMultiRecommendedSongs,
   getSongsByProducerFromBackend,
+  getSongsByProducer,
   attachExternalViews,
 } from '../api/vocadb';
 import type { Song } from '../types/vocadb';
@@ -257,9 +258,15 @@ export function useAutoQueue({
         if (controller.signal.aborted || generation !== requestGenerationRef.current) return;
 
         setStatus('reranking');
+        const favoriteCandidates = (await Promise.all(favoriteProducers.map(producer =>
+          getSongsByProducer([producer.id], 0, 20, 0)
+            .then(result => result.items)
+            .catch(() => [] as Song[]),
+        ))).flat();
+        const candidatePool = [...candidates, ...favoriteCandidates];
         const enrichedCandidates = requiresExternalViewCounts(globalFilterSettings)
-          ? await attachExternalViews(candidates)
-          : candidates;
+          ? await attachExternalViews(candidatePool)
+          : candidatePool;
         const filteredCandidates = filterCandidatePool(enrichedCandidates, historyEntries, existingIds, globalFilterSettings, ratings);
         const knownCandidateSongs = rankKnownSongs(
           historyEntries,
