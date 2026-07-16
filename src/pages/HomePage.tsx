@@ -130,7 +130,7 @@ export default function HomePage() {
 
     const audioSeedIds = [...new Set([...seedIds, ...preferenceSeedIds])].slice(0, 2);
 
-    const [popularResult, seedResults, preferenceResults, audioResults] = await Promise.all([
+    const [popularResult, seedResults, preferenceResults, audioResults, favoriteResults] = await Promise.all([
       searchSongs({
         sort: 'FavoritedTimes',
         maxResults: 12,
@@ -150,12 +150,17 @@ export default function HomePage() {
         getAudioSimilarSongs(seedId, 8, pageNum * 8)
           .catch(() => [] as Song[])
       )),
+      Promise.all(favoriteProducers.map(producer =>
+        getSongsByProducer([producer.id], 0, 12, pageNum * 12)
+          .then(result => result.items)
+          .catch(() => [] as Song[]),
+      )),
     ]);
 
     const knownStart = pageNum * 10;
     const detailed = rerankRecommendationCandidatesDetailed({
       known: knownSongs.slice(knownStart, knownStart + 18),
-      hybrid: uniqueSongsById([...preferenceResults.flat(), ...seedResults.flat()]),
+      hybrid: uniqueSongsById([...favoriteResults.flat(), ...preferenceResults.flat(), ...seedResults.flat()]),
       audio: uniqueSongsById(audioResults.flat()),
       popular: popularResult.items,
     }, {

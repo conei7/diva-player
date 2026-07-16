@@ -16,6 +16,7 @@ import {
   getSongById,
   getRecommendedSongs,
   getSongsByProducerFromBackend,
+  getSongsByProducer,
   getAudioSimilarSongs,
   getMetadataSimilarSongs,
   attachExternalViews,
@@ -277,15 +278,20 @@ export default function WatchPage() {
   const fetchRecommended = useCallback(async (s: Song, page: number) => {
     try {
       const offset = randomOffsetRef.current + page * PAGE_SIZE * 2;
-      const [hybridRaw, audioRaw] = await Promise.all([
+      const [hybridRaw, audioRaw, favoriteRaw] = await Promise.all([
         getRecommendedSongs(s.id, PAGE_SIZE * 2, 0.0, ratings, offset),
         getAudioSimilarSongs(s.id, PAGE_SIZE, offset),
+        Promise.all(favoriteProducers.map(producer =>
+          getSongsByProducer([producer.id], 0, PAGE_SIZE, page * PAGE_SIZE)
+            .then(result => result.items)
+            .catch(() => [] as Song[]),
+        )).then(results => results.flat()),
       ]);
-      const [hybrid, audio] = requiresExternalViewCounts(globalFilterSettings)
-        ? await Promise.all([attachExternalViews(hybridRaw), attachExternalViews(audioRaw)])
-        : [hybridRaw, audioRaw];
+      const [hybrid, audio, favorite] = requiresExternalViewCounts(globalFilterSettings)
+        ? await Promise.all([attachExternalViews(hybridRaw), attachExternalViews(audioRaw), attachExternalViews(favoriteRaw)])
+        : [hybridRaw, audioRaw, favoriteRaw];
       const detailed = rerankRecommendationCandidatesDetailed({
-        hybrid: diversifyAwayFromSeedVocalist(s, filterDiscoverySongs(hybrid), 6),
+        hybrid: diversifyAwayFromSeedVocalist(s, filterDiscoverySongs([...favorite, ...hybrid]), 6),
         audio: diversifyAwayFromSeedVocalist(s, filterDiscoverySongs(audio), 4),
       }, {
         total: PAGE_SIZE,
@@ -327,7 +333,7 @@ export default function WatchPage() {
           items: page === 0 ? fresh : [...prev.recommended.items, ...fresh],
           reasons: page === 0 ? reasons : { ...prev.recommended.reasons, ...reasons },
           loading: false,
-          hasMore: hybridRaw.length >= PAGE_SIZE * 2 || audioRaw.length >= PAGE_SIZE,
+          hasMore: hybridRaw.length >= PAGE_SIZE * 2 || audioRaw.length >= PAGE_SIZE || favoriteRaw.length >= PAGE_SIZE,
           page: page + 1,
         },
       }));
