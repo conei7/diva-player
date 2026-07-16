@@ -133,10 +133,26 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
             <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
               <label className="text-sm">
                 YouTube最低再生数
+                <select className="input mt-1 w-full" defaultValue="" onChange={event => { if (event.target.value) updateDraft('minYoutubeViews', Number(event.target.value)); }}>
+                  <option value="">プリセットを選択</option>
+                  <option value={10_000}>1万</option>
+                  <option value={50_000}>5万</option>
+                  <option value={100_000}>10万</option>
+                  <option value={500_000}>50万</option>
+                  <option value={1_000_000}>100万</option>
+                </select>
                 <input className="input mt-1 w-full" type="number" min={0} step={1} value={draftFilters.minYoutubeViews} onChange={event => updateDraft('minYoutubeViews', Math.max(0, Number(event.target.value) || 0))} />
               </label>
               <label className="text-sm">
                 ニコニコ最低再生数
+                <select className="input mt-1 w-full" defaultValue="" onChange={event => { if (event.target.value) updateDraft('minNicoViews', Number(event.target.value)); }}>
+                  <option value="">プリセットを選択</option>
+                  <option value={1_000}>1千</option>
+                  <option value={5_000}>5千</option>
+                  <option value={10_000}>1万</option>
+                  <option value={50_000}>5万</option>
+                  <option value={100_000}>10万</option>
+                </select>
                 <input className="input mt-1 w-full" type="number" min={0} step={1} value={draftFilters.minNicoViews} onChange={event => updateDraft('minNicoViews', Math.max(0, Number(event.target.value) || 0))} />
               </label>
             </div>
