@@ -132,7 +132,7 @@ public class DbService
                 paramValues.Add(st);
                 paramIndex++;
             }
-            conditions.Add($"song_type IN ({string.Join(", ", typeParams)})");
+            conditions.Add($"COALESCE(NULLIF(raw_json->>'songType', ''), song_type, 'Unspecified') IN ({string.Join(", ", typeParams)})");
         }
 
         if (excludedSongTypes != null && excludedSongTypes.Count > 0)
@@ -144,7 +144,7 @@ public class DbService
                 paramValues.Add(st);
                 paramIndex++;
             }
-            conditions.Add($"song_type NOT IN ({string.Join(", ", typeParams)})");
+            conditions.Add($"COALESCE(NULLIF(raw_json->>'songType', ''), song_type, 'Unspecified') NOT IN ({string.Join(", ", typeParams)})");
         }
 
         if (artistIds != null && artistIds.Count > 0)
@@ -416,6 +416,7 @@ public class DbService
         var normalizedExcludedTypes = (excludedSongTypes ?? []).Where(type => !string.IsNullOrWhiteSpace(type)).Distinct(StringComparer.Ordinal).Order().ToArray();
         var normalizedMinYoutube = minYoutubeViews is > 0 ? minYoutubeViews.Value : 0;
         var normalizedMinNico = minNicoViews is > 0 ? minNicoViews.Value : 0;
+        const string songTypeExpression = "COALESCE(NULLIF(s.raw_json->>'songType', ''), s.song_type, 'Unspecified')";
         var cacheKey = $"trending:{normalizedMode}:{normalizedRanking}:{normalizedSeed}:{debug}:{clampedDays}:{normalizedStart}:{clampedMaxResults}:{normalizedMinYoutube}:{normalizedMinNico}:{string.Join(',', normalizedExcludedTypes)}";
         if (_cache.TryGetValue(cacheKey, out string? cached))
             return cached!;
@@ -423,10 +424,11 @@ public class DbService
         var modeCondition = normalizedMode switch
         {
             "surge" when normalizedRanking == "quality" => "AND g.previous_views IS NOT NULL AND g.baseline_views > g.previous_views AND g.prior_window_days >= 3 AND g.view_growth >= 1000 AND g.surge_rate >= 1.5 AND s.song_type IN ('Original', 'Cover', 'Remix', 'Remaster', 'MusicPV') AND NOT (g.quality_score < 0.30 AND g.duration_score < 0.50 AND g.support_score < 0.30) AND NOT (g.quality_score < 0.35 AND g.support_score < 0.30 AND EXISTS (SELECT 1 FROM unnest(g.quality_reasons) reason WHERE reason LIKE 'negative_tag:%')) AND NOT EXISTS (SELECT 1 FROM unnest(g.quality_reasons) reason WHERE reason IN ('negative_tag:out of scope (music pv)', 'negative_tag:架空の広告'))",
-            "surge" => "AND g.previous_views IS NOT NULL AND g.baseline_views > g.previous_views AND g.prior_window_days >= 3 AND g.view_growth >= 1000 AND g.surge_rate >= 1.5 AND s.song_type IN ('Original', 'Cover', 'Remix', 'Remaster', 'MusicPV')",
+            "surge" => $"AND g.previous_views IS NOT NULL AND g.baseline_views > g.previous_views AND g.prior_window_days >= 3 AND g.view_growth >= 1000 AND g.surge_rate >= 1.5 AND {songTypeExpression} IN ('Original', 'Cover', 'Remix', 'Remaster', 'MusicPV')",
             "recent" => "AND s.publish_date >= CURRENT_DATE - interval '30 days'",
             _ => string.Empty,
         };
+        var normalizedModeCondition = modeCondition.Replace("s.song_type", songTypeExpression, StringComparison.Ordinal);
         var orderBy = normalizedMode switch
         {
             "surge" when normalizedRanking == "legacy" => "g.surge_rate + (g.ranking_noise - 0.5) * 0.025 DESC, g.view_growth DESC, s.favorited_times DESC NULLS LAST",
@@ -448,7 +450,7 @@ public class DbService
         var nextFilterParameter = 5;
         if (normalizedMinYoutube > 0) filterConditions.Add($"COALESCE(s.youtube_views, 0) >= ${nextFilterParameter++}");
         if (normalizedMinNico > 0) filterConditions.Add($"COALESCE(s.nico_views, 0) >= ${nextFilterParameter++}");
-        if (normalizedExcludedTypes.Length > 0) filterConditions.Add($"s.song_type <> ALL(${nextFilterParameter})");
+        if (normalizedExcludedTypes.Length > 0) filterConditions.Add($"{songTypeExpression} <> ALL(${nextFilterParameter})");
         var globalFilterCondition = filterConditions.Count > 0 ? "AND " + string.Join(" AND ", filterConditions) : string.Empty;
 
         using var conn = Open();
@@ -631,7 +633,7 @@ public class DbService
                   SELECT 1 FROM pvs p
                   WHERE p.song_id = s.id AND p.disabled = FALSE
               )
-            {modeCondition}
+            {normalizedModeCondition}
             ORDER BY {orderBy}
             OFFSET $2 LIMIT $3", conn);
         cmd.Parameters.AddWithValue(clampedDays);
