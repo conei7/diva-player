@@ -168,6 +168,7 @@ export default function HomePage() {
       rankingSeed: rankingSeedRef.current,
       explorationStrength: 0.055,
       exposureEntries: useRecommendationExposureStore.getState().entries,
+      favoriteProducerIds: new Set(favoriteProducers.map(producer => producer.id)),
     });
     const mixed = detailed.ranked;
     const result = mixed.map(item => item.song);
@@ -184,7 +185,7 @@ export default function HomePage() {
       trace: detailed.trace,
     });
     return result.length > 0 ? result : getTopSongs(720, PAGE_SIZE);
-  }, [currentSong, entries, playlists, ratings, implicitFeedback]);
+  }, [currentSong, entries, favoriteProducers, playlists, ratings, implicitFeedback]);
 
   const fetchSongs = useCallback(async (
     category: HomeCategoryId,

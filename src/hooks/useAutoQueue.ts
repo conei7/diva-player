@@ -28,6 +28,7 @@ import { useRecommendationDebugStore } from '../stores/recommendationDebugStore'
 import { createRankingSeed } from '../utils/rankingRandomization';
 import { useRecommendationExposureStore } from '../stores/recommendationExposureStore';
 import { useGlobalFilterStore, type GlobalFilterSettings } from '../stores/globalFilterStore';
+import { useFavoriteProducerStore } from '../stores/favoriteProducerStore';
 import { applyDiscoveryFilter, requiresExternalViewCounts } from '../utils/globalFilters';
 
 export type AutoQueueMixMode = 'balanced' | 'deep' | 'producer';
@@ -207,6 +208,7 @@ export function useAutoQueue({
     cooldownHours: state.cooldownHours,
     excludeRatedFromDiscovery: state.excludeRatedFromDiscovery,
   })));
+  const favoriteProducers = useFavoriteProducerStore(state => state.producers);
   const requestGenerationRef = useRef(0);
   const { autoCompletedCount, autoSkippedCount, consecutiveSkips } = adaptation;
 
@@ -302,6 +304,7 @@ export function useAutoQueue({
           rankingSeed,
           explorationStrength: 0.05,
           exposureEntries: useRecommendationExposureStore.getState().entries,
+          favoriteProducerIds: new Set(favoriteProducers.map(producer => producer.id)),
         });
         const nextSongs = detailed.ranked.map(item => item.song);
         useRecommendationDebugStore.getState().recordSnapshot({
@@ -364,6 +367,7 @@ export function useAutoQueue({
     ratings,
     rootSeed,
     globalFilterSettings,
+    favoriteProducers,
   ]);
 
   return status;

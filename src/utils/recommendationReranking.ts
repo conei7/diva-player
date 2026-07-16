@@ -43,6 +43,8 @@ export interface RecommendationCandidateTrace {
   exposurePenalty: number;
   producerPenalty: number;
   vocalistPenalty: number;
+  favoriteProducer: boolean;
+  favoriteProducerAdjustment: number;
   finalScore: number | null;
   selectedRank: number | null;
   status: 'selected' | 'not_selected';
@@ -71,6 +73,8 @@ export interface RecommendationRerankOptions {
   /** Browser-local display history used as a soft repeat penalty. */
   exposureEntries?: Record<string, RecommendationExposureEntry>;
   exposureNow?: number;
+  /** Producer/circle/band IDs the user explicitly marked as favorites. */
+  favoriteProducerIds?: ReadonlySet<number>;
 }
 
 const SOURCE_WEIGHT: Record<RecommendationSource, number> = {
@@ -80,7 +84,8 @@ const SOURCE_WEIGHT: Record<RecommendationSource, number> = {
   popular: 0.55,
 };
 
-function sourceReason(sources: Set<RecommendationSource>, known: boolean): string {
+function sourceReason(sources: Set<RecommendationSource>, known: boolean, favoriteProducer: boolean): string {
+  if (favoriteProducer) return 'お気に入りPの楽曲を優先したおすすめ';
   if (sources.has('audio') && sources.has('hybrid')) return '音響・タグ・アーティスト情報が重なるおすすめ';
   if (sources.has('audio')) return '音響的に近いおすすめ';
   if (sources.has('hybrid')) return 'タグ・アーティスト情報も近いおすすめ';
@@ -107,6 +112,7 @@ export function rerankRecommendationCandidates(
     explorationStrength = 0.045,
     exposureEntries = {},
     exposureNow = Date.now(),
+    favoriteProducerIds = new Set<number>(),
   }: RecommendationRerankOptions,
 ): RankedRecommendation[] {
   return rerankRecommendationCandidatesDetailed(pools, {
@@ -122,6 +128,7 @@ export function rerankRecommendationCandidates(
     explorationStrength,
     exposureEntries,
     exposureNow,
+    favoriteProducerIds,
   }).ranked;
 }
 
@@ -140,6 +147,7 @@ export function rerankRecommendationCandidatesDetailed(
     explorationStrength = 0.045,
     exposureEntries = {},
     exposureNow = Date.now(),
+    favoriteProducerIds = new Set<number>(),
   }: RecommendationRerankOptions,
 ): DetailedRerankResult {
   const entries = new Map<number, {
@@ -150,6 +158,8 @@ export function rerankRecommendationCandidatesDetailed(
     finalScore: number | null;
     producerPenalty: number;
     vocalistPenalty: number;
+    favoriteProducer: boolean;
+    favoriteProducerAdjustment: number;
     familiarityAdjustment: number;
     explorationAdjustment: number;
     baseScore: number | null;
@@ -168,6 +178,8 @@ export function rerankRecommendationCandidatesDetailed(
         finalScore: null,
         producerPenalty: 0,
         vocalistPenalty: 0,
+        favoriteProducer: false,
+        favoriteProducerAdjustment: 0,
         familiarityAdjustment: 0,
         explorationAdjustment: 0,
         baseScore: null,
@@ -216,11 +228,25 @@ export function rerankRecommendationCandidatesDetailed(
 
   const remaining = [...entries.values()];
   const result: RankedRecommendation[] = [];
+  const favoriteLimit = favoriteProducerIds.size > 0
+    ? Math.max(1, Math.floor(total * 0.3))
+    : Number.POSITIVE_INFINITY;
+  let favoriteCount = 0;
   while (remaining.length > 0 && result.length < total) {
     let bestIndex = 0;
     let bestScore = Number.NEGATIVE_INFINITY;
     for (let index = 0; index < remaining.length; index++) {
       const entry = remaining[index];
+      const favoriteProducer = (entry.song.artists ?? []).some(artist =>
+        favoriteProducerIds.has(artist.artist?.id)
+        && (artist.categories === 'Producer' || artist.categories === 'Band' || artist.categories === 'Circle'),
+      );
+      if (favoriteCount >= favoriteLimit && favoriteProducer && remaining.some(candidate =>
+        !(candidate.song.artists ?? []).some(artist =>
+          favoriteProducerIds.has(artist.artist?.id)
+          && (artist.categories === 'Producer' || artist.categories === 'Band' || artist.categories === 'Circle'),
+        ),
+      )) continue;
       const known = knownIds.has(entry.song.id);
       const preference = preferenceScores.get(entry.song.id) ?? 1;
       const producerPenalty = (producerCounts.get(getArtistBucket(entry.song)) ?? 0) * 0.10;
@@ -230,12 +256,13 @@ export function rerankRecommendationCandidatesDetailed(
       const exposurePenalty = calculateExposurePenalty(exposureEntries[String(entry.song.id)], exposureNow);
       const baseScore = entry.evidence * 0.9 + Math.sqrt(Math.max(0, preference)) * 0.8
         + familiarityAdjustment - producerPenalty - vocalistPenalty - exposurePenalty;
+      const favoriteProducerAdjustment = favoriteProducer ? 0.45 : 0;
       // The perturbation is deliberately small and deterministic. Hard filters,
       // user feedback, and diversity penalties are all applied before it.
       const explorationAdjustment = rankingSeed === 0
         ? 0
         : rankingNoise(rankingSeed, entry.song.id) * explorationStrength;
-      const score = baseScore + explorationAdjustment;
+      const score = baseScore + favoriteProducerAdjustment + explorationAdjustment;
       entry.finalScore = score;
       entry.baseScore = baseScore;
       entry.explorationAdjustment = explorationAdjustment;
@@ -243,6 +270,8 @@ export function rerankRecommendationCandidatesDetailed(
       entry.producerPenalty = producerPenalty;
       entry.vocalistPenalty = vocalistPenalty;
       entry.familiarityAdjustment = familiarityAdjustment;
+      entry.favoriteProducer = favoriteProducer;
+      entry.favoriteProducerAdjustment = favoriteProducerAdjustment;
       if (score > bestScore) {
         bestScore = score;
         bestIndex = index;
@@ -250,8 +279,9 @@ export function rerankRecommendationCandidatesDetailed(
     }
     const [selected] = remaining.splice(bestIndex, 1);
     const known = knownIds.has(selected.song.id);
+    if (selected.favoriteProducer) favoriteCount++;
     const primarySource = [...selected.sources].sort((a, b) => SOURCE_WEIGHT[b] - SOURCE_WEIGHT[a])[0];
-    result.push({ song: selected.song, source: primarySource, reason: sourceReason(selected.sources, known) });
+    result.push({ song: selected.song, source: primarySource, reason: sourceReason(selected.sources, known, selected.favoriteProducer) });
     addDiversity(selected.song);
   }
   const rankedIds = new Map(result.map((item, index) => [item.song.id, index + 1]));
@@ -271,10 +301,12 @@ export function rerankRecommendationCandidatesDetailed(
       exposurePenalty: entry.exposurePenalty,
       producerPenalty: entry.producerPenalty,
       vocalistPenalty: entry.vocalistPenalty,
+      favoriteProducer: entry.favoriteProducer,
+      favoriteProducerAdjustment: entry.favoriteProducerAdjustment,
       finalScore: entry.finalScore,
       selectedRank: rankedIds.get(entry.song.id) ?? null,
       status: rankedIds.has(entry.song.id) ? 'selected' as const : 'not_selected' as const,
-      reason: sourceReason(entry.sources, known),
+      reason: sourceReason(entry.sources, known, entry.favoriteProducer),
     };
   });
   return { ranked: result, trace };

@@ -14,6 +14,7 @@ import {
   type GlobalFilterSettings,
 } from '../stores/globalFilterStore';
 import { normalizeFavoriteProducers, useFavoriteProducerStore, type FavoriteProducer } from '../stores/favoriteProducerStore';
+import { createStableId } from '../utils/id';
 
 const BACKUP_KIND = 'diva-player-full-backup';
 const BACKUP_VERSION = 3 as const;
@@ -298,8 +299,8 @@ async function mergeHistory(events: ListeningPlayEvent[]): Promise<void> {
 
 function uniqueId(existing: Set<string>, candidate: string): string {
   if (!existing.has(candidate)) return candidate;
-  let next = crypto.randomUUID();
-  while (existing.has(next)) next = crypto.randomUUID();
+  let next = createStableId('import');
+  while (existing.has(next)) next = createStableId('import');
   return next;
 }
 
