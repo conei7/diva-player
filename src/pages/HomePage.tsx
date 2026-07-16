@@ -67,6 +67,7 @@ export default function HomePage() {
 
   const sentinelRef = useRef<HTMLDivElement>(null);
   const fetchingRef = useRef(false);
+  const autoFillPagesRef = useRef(0);
   const requestIdRef = useRef(0);
   const rankingSeedRef = useRef(createRankingSeed());
 
@@ -305,6 +306,7 @@ export default function HomePage() {
     setSongs([]);
     setPage(0);
     setHasMore(true);
+    autoFillPagesRef.current = 0;
 
     const requestId = requestIdRef.current + 1;
     requestIdRef.current = requestId;
@@ -364,6 +366,23 @@ export default function HomePage() {
         ratings,
         lastPlayedAtBySongId: discoveryLastPlayed,
       });
+
+  // 足切り後の表示件数が少ない場合は、条件を満たす曲が24件揃うまで追加ページを先読みする。
+  // 候補が少ないカテゴリや厳しい再生数条件でも、1ページ目だけで打ち切らない。
+  useEffect(() => {
+    if (
+      hasSearched
+      || loading
+      || !hasMore
+      || fetchingRef.current
+      || displaySongs.length >= PAGE_SIZE
+      || autoFillPagesRef.current >= 8
+    ) return;
+
+    autoFillPagesRef.current += 1;
+    loadMore();
+  }, [displaySongs.length, hasSearched, loading, hasMore, loadMore]);
+
   useEffect(() => {
     setVisibleSongs(displaySongs);
   }, [displaySongs, setVisibleSongs]);

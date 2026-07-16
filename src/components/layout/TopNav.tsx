@@ -538,7 +538,7 @@ export default function TopNav() {
 
           <button
             onClick={() => setSettingsOpen(true)}
-            className="w-8 h-8 rounded-full flex items-center justify-center overflow-hidden"
+            className="h-8 rounded-full px-2 flex items-center justify-center gap-1.5 overflow-hidden"
             style={{ background: 'var(--gradient-primary)' }}
             title="設定・バックアップ"
             aria-label="設定・バックアップ"
@@ -546,6 +546,7 @@ export default function TopNav() {
             <svg width="18" height="18" viewBox="0 0 24 24" fill="white">
               <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z" />
             </svg>
+            <span className="hidden sm:inline text-[11px] font-semibold whitespace-nowrap">設定</span>
           </button>
         </div>
       </div>
