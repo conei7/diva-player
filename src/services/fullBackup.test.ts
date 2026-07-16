@@ -68,4 +68,24 @@ describe('parseFullBackup', () => {
     expect(preview?.preferencesIncluded).toBe(true);
     expect(preview?.parsed.sections.preferences?.globalFilters.minYoutubeViews).toBe(10_000);
   });
+
+  it('accepts v3 favorite producer preferences', () => {
+    const preview = parseFullBackup({
+      kind: 'diva-player-full-backup',
+      version: 3,
+      sections: {
+        history: { events: [] },
+        ratings: {},
+        playlists: { folders: [], playlists: [] },
+        preferences: {
+          globalFilters: { enabled: false, minYoutubeViews: 0, minNicoViews: 0, excludedSongTypes: [], cooldownHours: 0, excludeRatedFromDiscovery: false },
+          favoriteProducers: [{ id: 42, name: 'MIMI', artistType: 'Producer', createdAt: 123 }],
+        },
+      },
+    });
+
+    expect(preview?.parsed.sections.preferences?.favoriteProducers).toEqual([
+      { id: 42, name: 'MIMI', artistType: 'Producer', createdAt: 123 },
+    ]);
+  });
 });

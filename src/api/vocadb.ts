@@ -394,6 +394,29 @@ export type SearchSuggestion =
 
 const PRODUCER_ARTIST_TYPES = 'Producer%2CCircle%2CBand';
 
+function normalizeArtistQuery(value: string): string {
+  return value.normalize('NFKC').toLocaleLowerCase('ja-JP').replace(/[\s・._-]+/g, '');
+}
+
+/** APIの曲数順だけに依存せず、入力名との一致度を最優先する。 */
+export function rankArtistsByName(artists: Artist[], query: string): Artist[] {
+  const normalizedQuery = normalizeArtistQuery(query);
+  return artists
+    .map((artist, index) => {
+      const normalizedName = normalizeArtistQuery(artist.name);
+      const rank = normalizedName === normalizedQuery
+        ? 0
+        : normalizedName.startsWith(normalizedQuery)
+          ? 1
+          : normalizedName.includes(normalizedQuery)
+            ? 2
+            : 3;
+      return { artist, rank, index };
+    })
+    .sort((a, b) => a.rank - b.rank || a.index - b.index)
+    .map(item => item.artist);
+}
+
 async function searchArtistsByName(
   query: string,
   artistTypes: string,
@@ -421,7 +444,7 @@ async function searchArtistsByName(
     return result;
   })();
 
-  return data.items;
+  return rankArtistsByName(data.items, trimmed);
 }
 
 export async function searchProducersByName(query: string, maxResults = 8): Promise<Artist[]> {

@@ -19,6 +19,7 @@ const WatchPage = lazy(() => import('./pages/WatchPage'));
 const PlaylistPage = lazy(() => import('./pages/PlaylistPage'));
 const HistoryPage = lazy(() => import('./pages/HistoryPage'));
 const FavoritesPage = lazy(() => import('./pages/FavoritesPage'));
+const FavoriteProducersPage = lazy(() => import('./pages/FavoriteProducersPage'));
 const ReportsPage = lazy(() => import('./pages/ReportsPage'));
 
 /**
@@ -172,6 +173,7 @@ function AppContent() {
             <Route path="/watch" element={<WatchPage />} />
             <Route path="/history" element={<HistoryPage />} />
             <Route path="/favorites" element={<FavoritesPage />} />
+            <Route path="/favorite-producers" element={<FavoriteProducersPage />} />
             <Route path="/playlists" element={<PlaylistPage />} />
             <Route path="/reports" element={<ReportsPage />} />
             {/* 旧ルートの互換性 */}

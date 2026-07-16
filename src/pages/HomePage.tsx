@@ -3,7 +3,7 @@ import { useShallow } from 'zustand/react/shallow';
 import { useSearchParams } from 'react-router-dom';
 import CategoryChips, { type CategoryChip } from '../components/home/CategoryChips';
 import VideoGrid from '../components/home/VideoGrid';
-import { searchSongs, getTopSongs, getRecommendedSongs, getSimilarSongs, getAudioSimilarSongs, getTrendingSongs, attachExternalViews } from '../api/vocadb';
+import { searchSongs, getTopSongs, getRecommendedSongs, getSimilarSongs, getAudioSimilarSongs, getTrendingSongs, attachExternalViews, getSongsByProducer } from '../api/vocadb';
 import { useHistoryStore } from '../stores/historyStore';
 import { usePlayerStore } from '../stores/playerStore';
 import { useRatingStore } from '../stores/ratingStore';
@@ -25,6 +25,7 @@ import { useRecommendationDebugStore } from '../stores/recommendationDebugStore'
 import { createRankingSeed } from '../utils/rankingRandomization';
 import { rerankDisplayedSongs, useRecommendationExposureStore } from '../stores/recommendationExposureStore';
 import { applyDiscoveryFilter, applyGlobalSongFilter, requiresExternalViewCounts } from '../utils/globalFilters';
+import { useFavoriteProducerStore } from '../stores/favoriteProducerStore';
 
 type HomeCategoryId =
   | 'recommended'
@@ -32,7 +33,8 @@ type HomeCategoryId =
   | 'trending'
   | 'recent'
   | 'deep'
-  | 'history_based';
+  | 'history_based'
+  | 'favorite_producers';
 
 const CATEGORIES: CategoryChip[] = [
   { id: 'recommended', label: 'あなたへのおすすめ' },
@@ -41,6 +43,7 @@ const CATEGORIES: CategoryChip[] = [
   { id: 'recent', label: '新着' },
   { id: 'deep', label: 'マイナー発掘' },
   { id: 'history_based', label: '最近聴いたPの曲' },
+  { id: 'favorite_producers', label: 'お気に入りP' },
 ];
 
 const PAGE_SIZE = 24;
@@ -76,6 +79,7 @@ export default function HomePage() {
   const { ratings } = useRatingStore();
   const { playlists } = usePlaylistStore();
   const implicitFeedback = useImplicitFeedbackStore(state => state.feedback);
+  const favoriteProducers = useFavoriteProducerStore(state => state.producers);
   const globalFilterSettings = useGlobalFilterStore(useShallow(state => ({
     enabled: state.enabled,
     minYoutubeViews: state.minYoutubeViews,
@@ -265,6 +269,20 @@ export default function HomePage() {
             }
             break;
           }
+          case 'favorite_producers': {
+            if (favoriteProducers.length > 0) {
+              const producerResults = await Promise.all(favoriteProducers.map(producer =>
+                getSongsByProducer([producer.id], 0, 12, pageNum * 12).then(result => result.items).catch(() => [] as Song[]),
+              ));
+              const seen = new Set<number>();
+              result = producerResults.flat().filter(song => {
+                if (seen.has(song.id)) return false;
+                seen.add(song.id);
+                return true;
+              }).slice(0, PAGE_SIZE);
+            }
+            break;
+          }
         }
       }
 
@@ -299,7 +317,7 @@ export default function HomePage() {
       }
       fetchingRef.current = false;
     }
-  }, [artistIdParam, entries, fetchRecommendedHomeSongs, globalFilterSettings]);
+  }, [artistIdParam, entries, favoriteProducers, fetchRecommendedHomeSongs, globalFilterSettings]);
 
   useEffect(() => {
     setLoading(true);

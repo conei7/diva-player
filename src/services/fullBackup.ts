@@ -13,10 +13,11 @@ import {
   useGlobalFilterStore,
   type GlobalFilterSettings,
 } from '../stores/globalFilterStore';
+import { normalizeFavoriteProducers, useFavoriteProducerStore, type FavoriteProducer } from '../stores/favoriteProducerStore';
 
 const BACKUP_KIND = 'diva-player-full-backup';
-const BACKUP_VERSION = 2 as const;
-type SupportedBackupVersion = 1 | 2;
+const BACKUP_VERSION = 3 as const;
+type SupportedBackupVersion = 1 | 2 | 3;
 const MAX_HISTORY_EVENTS = 1_000_000;
 const MAX_PLAYLISTS = 10_000;
 
@@ -28,7 +29,7 @@ export interface FullBackupPayload {
     history: { events: ListeningPlayEvent[] };
     ratings: Record<string, number>;
     playlists: { folders: PlaylistFolder[]; playlists: Playlist[] };
-    preferences?: { globalFilters: GlobalFilterSettings };
+    preferences?: { globalFilters: GlobalFilterSettings; favoriteProducers?: FavoriteProducer[] };
   };
 }
 
@@ -149,7 +150,10 @@ export async function createFullBackup(): Promise<FullBackupPayload> {
         folders: folders.map(folder => ({ ...folder })),
         playlists: playlists.map(playlist => ({ ...playlist, songs: playlist.songs.map(song => ({ ...song })) })),
       },
-      preferences: { globalFilters: getGlobalFilterSettings() },
+      preferences: {
+        globalFilters: getGlobalFilterSettings(),
+        favoriteProducers: useFavoriteProducerStore.getState().producers.map(producer => ({ ...producer })),
+      },
     },
   };
 }
@@ -159,7 +163,7 @@ export function downloadFullBackup(payload: FullBackupPayload): void {
 }
 
 export function parseFullBackup(data: unknown): FullBackupPreview | null {
-  if (!isRecord(data) || data.kind !== BACKUP_KIND || (data.version !== 1 && data.version !== BACKUP_VERSION) || !isRecord(data.sections)) return null;
+  if (!isRecord(data) || data.kind !== BACKUP_KIND || (data.version !== 1 && data.version !== 2 && data.version !== BACKUP_VERSION) || !isRecord(data.sections)) return null;
   let invalidItems = 0;
   const rawHistory = isRecord(data.sections.history) && Array.isArray(data.sections.history.events) ? data.sections.history.events : [];
   if (rawHistory.length > MAX_HISTORY_EVENTS) return null;
@@ -185,6 +189,9 @@ export function parseFullBackup(data: unknown): FullBackupPreview | null {
     ? rawPreferences.globalFilters
     : undefined;
   if (rawPreferences && !rawGlobalFilters) invalidItems += 1;
+  const rawFavoriteProducers = rawPreferences && 'favoriteProducers' in rawPreferences
+    ? normalizeFavoriteProducers(rawPreferences.favoriteProducers)
+    : undefined;
   const parsed: FullBackupPayload = {
     kind: BACKUP_KIND,
     version: data.version as SupportedBackupVersion,
@@ -193,7 +200,12 @@ export function parseFullBackup(data: unknown): FullBackupPreview | null {
       history: { events },
       ratings,
       playlists: { folders, playlists },
-      ...(rawGlobalFilters ? { preferences: { globalFilters: normalizeGlobalFilterSettings(rawGlobalFilters) } } : {}),
+      ...(rawGlobalFilters ? {
+        preferences: {
+          globalFilters: normalizeGlobalFilterSettings(rawGlobalFilters),
+          ...(rawFavoriteProducers ? { favoriteProducers: rawFavoriteProducers } : {}),
+        },
+      } : {}),
     },
   };
   return {
@@ -289,6 +301,7 @@ export async function executeFullBackupImport(preview: FullBackupPreview, option
   const currentPlaylists = usePlaylistStore.getState().playlists.map(playlist => ({ ...playlist, songs: [...playlist.songs] }));
   const currentFolders = usePlaylistStore.getState().folders.map(folder => ({ ...folder }));
   const currentGlobalFilters = getGlobalFilterSettings();
+  const currentFavoriteProducers = useFavoriteProducerStore.getState().producers.map(producer => ({ ...producer }));
   const currentHistory = await readAllHistoryEvents();
   try {
     const incoming = preview.parsed.sections;
@@ -311,6 +324,13 @@ export async function executeFullBackupImport(preview: FullBackupPreview, option
     if (options.mode === 'replace' && incoming.preferences?.globalFilters) {
       useGlobalFilterStore.getState().setSettings(incoming.preferences.globalFilters);
     }
+    const incomingFavoriteProducers = incoming.preferences?.favoriteProducers;
+    if (incomingFavoriteProducers) {
+      const favoriteById = new Map<number, FavoriteProducer>();
+      if (options.mode !== 'replace') currentFavoriteProducers.forEach(producer => favoriteById.set(producer.id, producer));
+      incomingFavoriteProducers.forEach(producer => favoriteById.set(producer.id, producer));
+      useFavoriteProducerStore.setState({ producers: [...favoriteById.values()] });
+    }
     if (options.mode === 'replace') await replaceHistory(incoming.history.events);
     else await mergeHistory(incoming.history.events);
     await useHistoryStore.getState().reloadHistory();
@@ -320,6 +340,7 @@ export async function executeFullBackupImport(preview: FullBackupPreview, option
     usePlaylistStore.getState().loadPlaylists();
     useRatingStore.setState({ ratings: currentRatings });
     useGlobalFilterStore.getState().setSettings(currentGlobalFilters);
+    useFavoriteProducerStore.setState({ producers: currentFavoriteProducers });
     try {
       await replaceHistory(currentHistory);
       await useHistoryStore.getState().reloadHistory();

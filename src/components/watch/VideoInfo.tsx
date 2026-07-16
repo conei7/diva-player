@@ -2,6 +2,7 @@ import type { Song } from '../../types/vocadb';
 import { Link } from 'react-router-dom';
 import OriginalVersionLink from './OriginalVersionLink';
 import AlbumPlaylistButton from '../playlist/AlbumPlaylistButton';
+import FavoriteProducerButton from './FavoriteProducerButton';
 
 
 /**
@@ -63,6 +64,13 @@ export default function VideoInfo({ song }: VideoInfoProps) {
             <span className="text-sm font-medium" style={{ color: 'var(--color-text-primary)' }}>
               {producerLabel}
             </span>
+          )}
+          {producer?.artist?.id && (
+            <FavoriteProducerButton
+              id={producer.artist.id}
+              name={producerLabel}
+              artistType={producer.artist.artistType}
+            />
           )}
 
           {/* 曲タイプバッジ */}

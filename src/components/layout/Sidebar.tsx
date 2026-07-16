@@ -60,6 +60,15 @@ const menuItems: MenuItem[] = [
       </svg>
     ),
   },
+  {
+    path: '/favorite-producers',
+    label: 'お気に入りP',
+    icon: (
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+        <path d="m12 3 2.78 5.63 6.22.9-4.5 4.39 1.06 6.2L12 17.2l-5.56 2.92 1.06-6.2L3 9.53l6.22-.9L12 3z" />
+      </svg>
+    ),
+  },
 ];
 
 export default function Sidebar() {
