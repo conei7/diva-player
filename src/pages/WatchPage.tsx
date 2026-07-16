@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { useSearchParams, Navigate, useNavigate } from 'react-router-dom';
 import VideoPlayer from '../components/watch/VideoPlayer';
 import VideoInfo from '../components/watch/VideoInfo';
@@ -100,14 +101,14 @@ export default function WatchPage() {
   const { entries } = useHistoryStore();
   const { playlists } = usePlaylistStore();
   const implicitFeedback = useImplicitFeedbackStore(state => state.feedback);
-  const globalFilterSettings = useGlobalFilterStore(state => ({
+  const globalFilterSettings = useGlobalFilterStore(useShallow(state => ({
     enabled: state.enabled,
     minYoutubeViews: state.minYoutubeViews,
     minNicoViews: state.minNicoViews,
     excludedSongTypes: state.excludedSongTypes,
     cooldownHours: state.cooldownHours,
     excludeRatedFromDiscovery: state.excludeRatedFromDiscovery,
-  }));
+  })));
   const filterDiscoverySongs = useCallback((items: Song[]) => applyDiscoveryFilter(items, {
     settings: globalFilterSettings,
     ratings,

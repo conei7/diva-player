@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { Navigate } from 'react-router-dom';
 import { usePlayerStore } from '../stores/playerStore';
 import { useRatingStore } from '../stores/ratingStore';
@@ -66,14 +67,14 @@ export default function NowPlayingPage() {
   const { currentSong, setQueue } = usePlayerStore();
   const { getRating, setRating, ratings } = useRatingStore();
   const { entries } = useHistoryStore();
-  const globalFilterSettings = useGlobalFilterStore(state => ({
+  const globalFilterSettings = useGlobalFilterStore(useShallow(state => ({
     enabled: state.enabled,
     minYoutubeViews: state.minYoutubeViews,
     minNicoViews: state.minNicoViews,
     excludedSongTypes: state.excludedSongTypes,
     cooldownHours: state.cooldownHours,
     excludeRatedFromDiscovery: state.excludeRatedFromDiscovery,
-  }));
+  })));
 
   const [activeTab, setActiveTab] = useState<TabKey>('recommend');
   const [tabs, setTabs] = useState<Record<TabKey, TabState>>({

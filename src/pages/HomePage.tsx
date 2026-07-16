@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { useSearchParams } from 'react-router-dom';
 import CategoryChips, { type CategoryChip } from '../components/home/CategoryChips';
 import VideoGrid from '../components/home/VideoGrid';
@@ -74,14 +75,14 @@ export default function HomePage() {
   const { ratings } = useRatingStore();
   const { playlists } = usePlaylistStore();
   const implicitFeedback = useImplicitFeedbackStore(state => state.feedback);
-  const globalFilterSettings = useGlobalFilterStore(state => ({
+  const globalFilterSettings = useGlobalFilterStore(useShallow(state => ({
     enabled: state.enabled,
     minYoutubeViews: state.minYoutubeViews,
     minNicoViews: state.minNicoViews,
     excludedSongTypes: state.excludedSongTypes,
     cooldownHours: state.cooldownHours,
     excludeRatedFromDiscovery: state.excludeRatedFromDiscovery,
-  }));
+  })));
   const {
     results: searchResults,
     isLoading: searchLoading,
