@@ -340,6 +340,16 @@ export async function readYearStats(
     }));
 }
 
+/** Returns the latest known play timestamp for every song without loading song metadata. */
+export async function getLastPlayedAtMap(): Promise<Map<number, number>> {
+  if (typeof indexedDB === 'undefined') return new Map();
+  const db = await ensureStats();
+  const stats = await readSongStats(db);
+  return new Map(
+    stats.flatMap(item => item.lastPlayedAt === null ? [] : [[item.songId, item.lastPlayedAt] as const]),
+  );
+}
+
 export async function readMonthStats(db: IDBDatabase, month: string): Promise<HistorySongStats[]> {
   const tx = db.transaction(HISTORY_STORES.monthStats, 'readonly');
   const all = await requestToPromise(tx.objectStore(HISTORY_STORES.monthStats).getAll()) as MonthSongStats[];

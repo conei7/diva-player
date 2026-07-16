@@ -26,6 +26,8 @@ import { rerankRecommendationCandidatesDetailed } from '../utils/recommendationR
 import { useRecommendationDebugStore } from '../stores/recommendationDebugStore';
 import { createRankingSeed } from '../utils/rankingRandomization';
 import { rerankDisplayedSongs, useRecommendationExposureStore } from '../stores/recommendationExposureStore';
+import { useGlobalFilterStore } from '../stores/globalFilterStore';
+import { applyDiscoveryFilter } from '../utils/globalFilters';
 
 function WatchQueue() {
   const queue = usePlayerStore(s => s.queue);
@@ -97,6 +99,19 @@ export default function WatchPage() {
   const { entries } = useHistoryStore();
   const { playlists } = usePlaylistStore();
   const implicitFeedback = useImplicitFeedbackStore(state => state.feedback);
+  const globalFilterSettings = useGlobalFilterStore(state => ({
+    enabled: state.enabled,
+    minYoutubeViews: state.minYoutubeViews,
+    minNicoViews: state.minNicoViews,
+    excludedSongTypes: state.excludedSongTypes,
+    cooldownHours: state.cooldownHours,
+    excludeRatedFromDiscovery: state.excludeRatedFromDiscovery,
+  }));
+  const filterDiscoverySongs = useCallback((items: Song[]) => applyDiscoveryFilter(items, {
+    settings: globalFilterSettings,
+    ratings,
+    lastPlayedAtBySongId: new Map(entries.map(entry => [entry.song.id, entry.playedAt] as const)),
+  }), [entries, globalFilterSettings, ratings]);
 
   const [song, setSong] = useState<Song | null>(null);
   const [loadingSong, setLoadingSong] = useState(true);
@@ -188,7 +203,7 @@ export default function WatchPage() {
         .filter((id): id is number => id !== undefined);
 
       const items = rerankDisplayedSongs(
-        await getSongsByProducerFromBackend(s.id, producerIds, PAGE_SIZE, page * PAGE_SIZE + (page === 0 ? randomOffsetRef.current : 0)),
+        filterDiscoverySongs(await getSongsByProducerFromBackend(s.id, producerIds, PAGE_SIZE, page * PAGE_SIZE + (page === 0 ? randomOffsetRef.current : 0))),
         rankingSeedRef.current,
       );
       const fresh = items.filter(item => !seenSets.current.producer.has(item.id));
@@ -212,7 +227,7 @@ export default function WatchPage() {
     try {
       const items = rerankDisplayedSongs(diversifyAwayFromSeedVocalist(
         s,
-        await getMetadataSimilarSongs(s.id, PAGE_SIZE * 2, randomOffsetRef.current + page * PAGE_SIZE * 2),
+        filterDiscoverySongs(await getMetadataSimilarSongs(s.id, PAGE_SIZE * 2, randomOffsetRef.current + page * PAGE_SIZE * 2)),
         Math.max(6, Math.floor(PAGE_SIZE / 4)),
       ).slice(0, PAGE_SIZE), rankingSeedRef.current);
       const fresh = items.filter(item => !seenSets.current.related.has(item.id));
@@ -240,8 +255,8 @@ export default function WatchPage() {
         getAudioSimilarSongs(s.id, PAGE_SIZE, offset),
       ]);
       const detailed = rerankRecommendationCandidatesDetailed({
-        hybrid: diversifyAwayFromSeedVocalist(s, hybrid, 6),
-        audio: diversifyAwayFromSeedVocalist(s, audio, 4),
+        hybrid: diversifyAwayFromSeedVocalist(s, filterDiscoverySongs(hybrid), 6),
+        audio: diversifyAwayFromSeedVocalist(s, filterDiscoverySongs(audio), 4),
       }, {
         total: PAGE_SIZE,
         historyEntries: entries,
@@ -293,7 +308,7 @@ export default function WatchPage() {
   const fetchDeep = useCallback(async (s: Song, page: number) => {
     try {
       const items = rerankDisplayedSongs(
-        await getAudioSimilarSongs(s.id, PAGE_SIZE, page * PAGE_SIZE),
+        filterDiscoverySongs(await getAudioSimilarSongs(s.id, PAGE_SIZE, page * PAGE_SIZE)),
         rankingSeedRef.current,
       );
       const fresh = items.filter(item => !seenSets.current.deep.has(item.id));
@@ -342,13 +357,14 @@ export default function WatchPage() {
   }, [loadMore]);
 
   const currentTab = tabs[activeTab];
+  const displayTabItems = filterDiscoverySongs(currentTab.items);
 
 
 
   // 現在のタブの表示曲をselectionStoreに登録（FABの全選択・フィルター用）
   useEffect(() => {
-    setVisibleSongs(currentTab.items);
-  }, [currentTab.items, setVisibleSongs]);
+    setVisibleSongs(displayTabItems);
+  }, [displayTabItems, setVisibleSongs]);
 
   // 動画が自動再生で次に進んだ場合などにURLを同期する
   // loadingFromUrlRef が true の間 (URL変更後のフェッチ中) はナビゲートしない
@@ -464,7 +480,7 @@ export default function WatchPage() {
 
             {/* 推薦リスト */}
             <RecommendationList
-              songs={currentTab.items}
+              songs={displayTabItems}
               loading={currentTab.loading}
               hasMore={currentTab.hasMore}
               recommendationReasons={activeTab === 'recommended' ? currentTab.reasons : undefined}

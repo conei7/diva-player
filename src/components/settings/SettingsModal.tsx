@@ -6,6 +6,14 @@ import {
   parseFullBackup,
   type FullBackupPreview,
 } from '../../services/fullBackup';
+import {
+  DEFAULT_GLOBAL_FILTER_SETTINGS,
+  SONG_TYPES,
+  getGlobalFilterSettings,
+  useGlobalFilterStore,
+} from '../../stores/globalFilterStore';
+import type { GlobalFilterSettings } from '../../stores/globalFilterStore';
+import { useSearchStore } from '../../stores/searchStore';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -19,11 +27,18 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
   const [ratingPriority, setRatingPriority] = useState<'backup' | 'current'>('backup');
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
+  const [draftFilters, setDraftFilters] = useState<GlobalFilterSettings>(DEFAULT_GLOBAL_FILTER_SETTINGS);
+  const setGlobalFilterSettings = useGlobalFilterStore(state => state.setSettings);
+  const resetGlobalFilterSettings = useGlobalFilterStore(state => state.resetSettings);
+  const hasSearched = useSearchStore(state => state.hasSearched);
+  const refreshSearch = useSearchStore(state => state.search);
 
   useEffect(() => {
     if (!isOpen) {
       setPreview(null);
       setMessage('');
+    } else {
+      setDraftFilters(getGlobalFilterSettings());
     }
   }, [isOpen]);
 
@@ -82,6 +97,23 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     }
   };
 
+  const updateDraft = <K extends keyof GlobalFilterSettings>(key: K, value: GlobalFilterSettings[K]) => {
+    setDraftFilters(current => ({ ...current, [key]: value }));
+  };
+
+  const applyFilters = () => {
+    setGlobalFilterSettings(draftFilters);
+    if (hasSearched) void refreshSearch();
+    setMessage('表示・発見設定を適用しました。');
+  };
+
+  const resetFilters = () => {
+    resetGlobalFilterSettings();
+    setDraftFilters(DEFAULT_GLOBAL_FILTER_SETTINGS);
+    if (hasSearched) void refreshSearch();
+    setMessage('表示・発見設定を初期化しました。');
+  };
+
   return (
     <div className="fixed inset-0 z-[70] flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-label="設定・バックアップ">
       <button type="button" className="absolute inset-0 bg-black/70" aria-label="閉じる" onClick={onClose} />
@@ -91,6 +123,62 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
           <button type="button" className="btn-ghost rounded-lg px-2 py-1" onClick={onClose} aria-label="閉じる">×</button>
         </div>
         <div className="flex flex-col gap-3">
+          <section className="rounded-xl p-3" style={{ background: 'var(--color-bg-secondary)' }}>
+            <h3 className="font-semibold">表示・発見フィルター</h3>
+            <label className="mt-3 flex items-center gap-2 text-sm">
+              <input type="checkbox" checked={draftFilters.enabled} onChange={event => updateDraft('enabled', event.target.checked)} />
+              再生数・楽曲種別フィルターを有効にする
+            </label>
+            <p className="mt-1 text-xs opacity-70">指定した値以上の曲だけを検索・おすすめに表示します。再生数が不明な曲は除外されます。</p>
+            <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <label className="text-sm">
+                YouTube最低再生数
+                <input className="input mt-1 w-full" type="number" min={0} step={1} value={draftFilters.minYoutubeViews} onChange={event => updateDraft('minYoutubeViews', Math.max(0, Number(event.target.value) || 0))} />
+              </label>
+              <label className="text-sm">
+                ニコニコ最低再生数
+                <input className="input mt-1 w-full" type="number" min={0} step={1} value={draftFilters.minNicoViews} onChange={event => updateDraft('minNicoViews', Math.max(0, Number(event.target.value) || 0))} />
+              </label>
+            </div>
+            <div className="mt-3">
+              <span className="text-sm">除外する楽曲種別</span>
+              <div className="mt-2 grid grid-cols-2 gap-2 text-sm sm:grid-cols-3">
+                {SONG_TYPES.map(songType => (
+                  <label key={songType} className="flex items-center gap-1">
+                    <input
+                      type="checkbox"
+                      checked={draftFilters.excludedSongTypes.includes(songType)}
+                      onChange={event => updateDraft('excludedSongTypes', event.target.checked
+                        ? [...draftFilters.excludedSongTypes, songType]
+                        : draftFilters.excludedSongTypes.filter(type => type !== songType))}
+                    />
+                    {songType}
+                  </label>
+                ))}
+              </div>
+            </div>
+            <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <label className="text-sm">
+                再生クールダウン
+                <select className="input mt-1 w-full" value={draftFilters.cooldownHours} onChange={event => updateDraft('cooldownHours', Number(event.target.value))}>
+                  <option value={0}>指定なし</option>
+                  <option value={1}>1時間</option>
+                  <option value={6}>6時間</option>
+                  <option value={24}>24時間</option>
+                  <option value={72}>3日</option>
+                  <option value={168}>7日</option>
+                </select>
+              </label>
+              <label className="flex items-center gap-2 text-sm sm:mt-6">
+                <input type="checkbox" checked={draftFilters.excludeRatedFromDiscovery} onChange={event => updateDraft('excludeRatedFromDiscovery', event.target.checked)} />
+                評価済み楽曲を発見候補から除外
+              </label>
+            </div>
+            <div className="mt-3 flex gap-2">
+              <button type="button" className="btn-primary flex-1" disabled={busy} onClick={applyFilters}>適用</button>
+              <button type="button" className="btn-secondary" disabled={busy} onClick={resetFilters}>初期化</button>
+            </div>
+          </section>
           <button type="button" className="btn-primary w-full" disabled={busy} onClick={() => void exportBackup()}>履歴・評価・プレイリストをバックアップ</button>
           <input ref={inputRef} className="hidden" type="file" accept="application/json,.json" onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; if (file) readBackup(file); }} />
           <button type="button" className="btn-secondary w-full" disabled={busy} onClick={() => inputRef.current?.click()}>完全バックアップを選択</button>

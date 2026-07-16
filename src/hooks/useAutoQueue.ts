@@ -25,6 +25,8 @@ import type { AutoQueueDecision, AutoQueueStatus, AutoQueueStrategyArm, QueueRec
 import { useRecommendationDebugStore } from '../stores/recommendationDebugStore';
 import { createRankingSeed } from '../utils/rankingRandomization';
 import { useRecommendationExposureStore } from '../stores/recommendationExposureStore';
+import { useGlobalFilterStore, type GlobalFilterSettings } from '../stores/globalFilterStore';
+import { applyDiscoveryFilter } from '../utils/globalFilters';
 
 export type AutoQueueMixMode = 'balanced' | 'deep' | 'producer';
 
@@ -49,21 +51,21 @@ function filterCandidatePool(
   candidates: Song[],
   historyEntries: HistoryEntry[],
   existingIds: Set<number>,
+  settings: GlobalFilterSettings,
+  ratings: Record<string, number>,
 ): Song[] {
-  const now = Date.now();
-  const oneHour = 60 * 60 * 1000;
   const lastPlayedMap = new Map<number, number>();
   for (const entry of historyEntries) {
     const existing = lastPlayedMap.get(entry.song.id);
     if (!existing || entry.playedAt > existing) lastPlayedMap.set(entry.song.id, entry.playedAt);
   }
 
-  return candidates
+  return applyDiscoveryFilter(candidates, {
+    settings,
+    ratings,
+    lastPlayedAtBySongId: lastPlayedMap,
+  })
     .filter(song => !existingIds.has(song.id))
-    .filter(song => {
-      const lastPlayed = lastPlayedMap.get(song.id);
-      return !lastPlayed || (now - lastPlayed) / oneHour >= 1;
-    })
     .filter((song, index, songs) => songs.findIndex(candidate => candidate.id === song.id) === index);
 }
 
@@ -195,6 +197,14 @@ export function useAutoQueue({
   addManyToQueue,
 }: UseAutoQueueArgs): AutoQueueStatus {
   const [status, setStatus] = useState<AutoQueueStatus>('idle');
+  const globalFilterSettings = useGlobalFilterStore(state => ({
+    enabled: state.enabled,
+    minYoutubeViews: state.minYoutubeViews,
+    minNicoViews: state.minNicoViews,
+    excludedSongTypes: state.excludedSongTypes,
+    cooldownHours: state.cooldownHours,
+    excludeRatedFromDiscovery: state.excludeRatedFromDiscovery,
+  }));
   const requestGenerationRef = useRef(0);
   const { autoCompletedCount, autoSkippedCount, consecutiveSkips } = adaptation;
 
@@ -243,14 +253,18 @@ export function useAutoQueue({
         if (controller.signal.aborted || generation !== requestGenerationRef.current) return;
 
         setStatus('reranking');
-        const filteredCandidates = filterCandidatePool(candidates, historyEntries, existingIds);
-        const knownCandidates = rankKnownSongs(
+        const filteredCandidates = filterCandidatePool(candidates, historyEntries, existingIds, globalFilterSettings, ratings);
+        const knownCandidates = applyDiscoveryFilter(rankKnownSongs(
           historyEntries,
           playlistSongs,
           ratings,
           existingIds,
           implicitFeedback,
-        ).map(item => item.song);
+        ).map(item => item.song), {
+          settings: globalFilterSettings,
+          ratings,
+          lastPlayedAtBySongId: new Map(historyEntries.map(entry => [entry.song.id, entry.playedAt] as const)),
+        });
         const knownIds = new Set<number>([
           ...historyEntries.map(entry => entry.song.id),
           ...playlistSongs.map(song => song.id),
@@ -338,6 +352,7 @@ export function useAutoQueue({
     queueIndex,
     ratings,
     rootSeed,
+    globalFilterSettings,
   ]);
 
   return status;

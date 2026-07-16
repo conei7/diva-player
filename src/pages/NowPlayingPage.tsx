@@ -2,6 +2,7 @@ import { useEffect, useState, useRef, useCallback } from 'react';
 import { Navigate } from 'react-router-dom';
 import { usePlayerStore } from '../stores/playerStore';
 import { useRatingStore } from '../stores/ratingStore';
+import { useHistoryStore } from '../stores/historyStore';
 import SongCard from '../components/search/SongCard';
 import StarRating from '../components/player/StarRating';
 import {
@@ -13,6 +14,8 @@ import type { Song } from '../types/vocadb';
 import { useSelectionStore } from '../stores/selectionStore';
 import { createRankingSeed } from '../utils/rankingRandomization';
 import { rerankDisplayedSongs, useRecommendationExposureStore } from '../stores/recommendationExposureStore';
+import { useGlobalFilterStore } from '../stores/globalFilterStore';
+import { applyDiscoveryFilter } from '../utils/globalFilters';
 
 /** サムネイルURLを解決 */
 function getThumbUrl(song: Song): string | null {
@@ -60,7 +63,16 @@ function SkeletonGrid() {
 
 export default function NowPlayingPage() {
   const { currentSong, setQueue } = usePlayerStore();
-  const { getRating, setRating } = useRatingStore();
+  const { getRating, setRating, ratings } = useRatingStore();
+  const { entries } = useHistoryStore();
+  const globalFilterSettings = useGlobalFilterStore(state => ({
+    enabled: state.enabled,
+    minYoutubeViews: state.minYoutubeViews,
+    minNicoViews: state.minNicoViews,
+    excludedSongTypes: state.excludedSongTypes,
+    cooldownHours: state.cooldownHours,
+    excludeRatedFromDiscovery: state.excludeRatedFromDiscovery,
+  }));
 
   const [activeTab, setActiveTab] = useState<TabKey>('recommend');
   const [tabs, setTabs] = useState<Record<TabKey, TabState>>({
@@ -82,9 +94,13 @@ export default function NowPlayingPage() {
 
   // おすすめ: メタデータ + 音声データ + プレイヤーデータ (/api/recommend)
   const fetchRecommend = useCallback(async (song: Song, page: number) => {
-    const songs = rerankDisplayedSongs(await getRecommendedSongs(
+    const songs = rerankDisplayedSongs(applyDiscoveryFilter(await getRecommendedSongs(
       song.id, PAGE_SIZE, 0.0, undefined, (rankingSeedRef.current % 20) + page * PAGE_SIZE
-    ), rankingSeedRef.current);
+    ), {
+      settings: globalFilterSettings,
+      ratings,
+      lastPlayedAtBySongId: new Map(entries.map(entry => [entry.song.id, entry.playedAt] as const)),
+    }), rankingSeedRef.current);
     const fresh = songs.filter(s => !seenRecommendRef.current.has(s.id));
     fresh.forEach(s => seenRecommendRef.current.add(s.id));
     setTabs(prev => ({
@@ -96,12 +112,16 @@ export default function NowPlayingPage() {
         page:    page + 1,
       },
     }));
-  }, []);
+  }, [entries, globalFilterSettings, ratings]);
 
   // 関連曲: メタデータベクトルのみ (/api/recommend/metadata)
   const fetchRelated = useCallback(async (song: Song, page: number) => {
     const songs = rerankDisplayedSongs(
-      await getMetadataSimilarSongs(song.id, PAGE_SIZE, (rankingSeedRef.current % 20) + page * PAGE_SIZE),
+      applyDiscoveryFilter(await getMetadataSimilarSongs(song.id, PAGE_SIZE, (rankingSeedRef.current % 20) + page * PAGE_SIZE), {
+        settings: globalFilterSettings,
+        ratings,
+        lastPlayedAtBySongId: new Map(entries.map(entry => [entry.song.id, entry.playedAt] as const)),
+      }),
       rankingSeedRef.current,
     );
     const fresh = songs.filter(s => !seenRelatedRef.current.has(s.id));
@@ -115,12 +135,16 @@ export default function NowPlayingPage() {
         page:    page + 1,
       },
     }));
-  }, []);
+  }, [entries, globalFilterSettings, ratings]);
 
   // deep dig: 音響ベクトルのみ (/api/recommend/audio)
   const fetchDeepdig = useCallback(async (song: Song, page: number) => {
     const songs = rerankDisplayedSongs(
-      await getAudioSimilarSongs(song.id, PAGE_SIZE, (rankingSeedRef.current % 20) + page * PAGE_SIZE),
+      applyDiscoveryFilter(await getAudioSimilarSongs(song.id, PAGE_SIZE, (rankingSeedRef.current % 20) + page * PAGE_SIZE), {
+        settings: globalFilterSettings,
+        ratings,
+        lastPlayedAtBySongId: new Map(entries.map(entry => [entry.song.id, entry.playedAt] as const)),
+      }),
       rankingSeedRef.current,
     );
     const fresh = songs.filter(s => !seenDeepdigRef.current.has(s.id));
@@ -134,7 +158,7 @@ export default function NowPlayingPage() {
         page:    page + 1,
       },
     }));
-  }, []);
+  }, [entries, globalFilterSettings, ratings]);
 
   useEffect(() => {
     if (!currentSong) return;
@@ -185,7 +209,11 @@ export default function NowPlayingPage() {
   }, [loadMore]);
 
   // 現在のタブの表示曲をselectionStoreに登録（FABの全選択・フィルター用）
-  const activeTabItems = tabs[activeTab].items;
+  const activeTabItems = applyDiscoveryFilter(tabs[activeTab].items, {
+    settings: globalFilterSettings,
+    ratings,
+    lastPlayedAtBySongId: new Map(entries.map(entry => [entry.song.id, entry.playedAt] as const)),
+  });
   useEffect(() => {
     setVisibleSongs(activeTabItems);
   }, [activeTabItems, setVisibleSongs]);

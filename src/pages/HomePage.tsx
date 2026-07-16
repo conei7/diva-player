@@ -10,6 +10,7 @@ import { useSearchStore } from '../stores/searchStore';
 import { useSelectionStore } from '../stores/selectionStore';
 import { usePlaylistStore } from '../stores/playlistStore';
 import { useImplicitFeedbackStore } from '../stores/implicitFeedbackStore';
+import { useGlobalFilterStore } from '../stores/globalFilterStore';
 import type { Song } from '../types/vocadb';
 import SearchFilters from '../components/search/SearchFilters';
 import {
@@ -22,6 +23,7 @@ import { filterVoiceSynthSongs } from '../utils/voiceSynthSongs';
 import { useRecommendationDebugStore } from '../stores/recommendationDebugStore';
 import { createRankingSeed } from '../utils/rankingRandomization';
 import { rerankDisplayedSongs, useRecommendationExposureStore } from '../stores/recommendationExposureStore';
+import { applyDiscoveryFilter, applyGlobalSongFilter } from '../utils/globalFilters';
 
 type HomeCategoryId =
   | 'recommended'
@@ -72,6 +74,14 @@ export default function HomePage() {
   const { ratings } = useRatingStore();
   const { playlists } = usePlaylistStore();
   const implicitFeedback = useImplicitFeedbackStore(state => state.feedback);
+  const globalFilterSettings = useGlobalFilterStore(state => ({
+    enabled: state.enabled,
+    minYoutubeViews: state.minYoutubeViews,
+    minNicoViews: state.minNicoViews,
+    excludedSongTypes: state.excludedSongTypes,
+    cooldownHours: state.cooldownHours,
+    excludeRatedFromDiscovery: state.excludeRatedFromDiscovery,
+  }));
   const {
     results: searchResults,
     isLoading: searchLoading,
@@ -341,7 +351,14 @@ export default function HomePage() {
     return () => observer.disconnect();
   }, [loadMore]);
 
-  const displaySongs = hasSearched ? searchResults : songs;
+  const discoveryLastPlayed = new Map(entries.map(entry => [entry.song.id, entry.playedAt] as const));
+  const displaySongs = hasSearched
+    ? applyGlobalSongFilter(searchResults, globalFilterSettings)
+    : applyDiscoveryFilter(songs, {
+        settings: globalFilterSettings,
+        ratings,
+        lastPlayedAtBySongId: discoveryLastPlayed,
+      });
   useEffect(() => {
     setVisibleSongs(displaySongs);
   }, [displaySongs, setVisibleSongs]);
