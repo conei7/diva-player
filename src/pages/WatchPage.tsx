@@ -29,6 +29,7 @@ import { useRecommendationDebugStore } from '../stores/recommendationDebugStore'
 import { createRankingSeed } from '../utils/rankingRandomization';
 import { rerankDisplayedSongs, useRecommendationExposureStore } from '../stores/recommendationExposureStore';
 import { useGlobalFilterStore } from '../stores/globalFilterStore';
+import { useFavoriteProducerStore } from '../stores/favoriteProducerStore';
 import { applyDiscoveryFilter, requiresExternalViewCounts } from '../utils/globalFilters';
 
 function WatchQueue() {
@@ -101,6 +102,7 @@ export default function WatchPage() {
   const { entries } = useHistoryStore();
   const { playlists } = usePlaylistStore();
   const implicitFeedback = useImplicitFeedbackStore(state => state.feedback);
+  const favoriteProducers = useFavoriteProducerStore(state => state.producers);
   const globalFilterSettings = useGlobalFilterStore(useShallow(state => ({
     enabled: state.enabled,
     minYoutubeViews: state.minYoutubeViews,
@@ -295,6 +297,7 @@ export default function WatchPage() {
         rankingSeed: rankingSeedRef.current,
         explorationStrength: 0.06,
         exposureEntries: useRecommendationExposureStore.getState().entries,
+        favoriteProducerIds: new Set(favoriteProducers.map(producer => producer.id)),
       });
       const mixed = detailed.ranked;
       const items = mixed.map(item => item.song);
@@ -331,7 +334,7 @@ export default function WatchPage() {
     } catch {
       setTabs(prev => ({ ...prev, recommended: { ...prev.recommended, loading: false, hasMore: false } }));
     }
-  }, [entries, globalFilterSettings, implicitFeedback, playlists, ratings, filterDiscoverySongs]);
+  }, [entries, favoriteProducers, globalFilterSettings, implicitFeedback, playlists, ratings, filterDiscoverySongs]);
 
   const fetchDeep = useCallback(async (s: Song, page: number) => {
     try {

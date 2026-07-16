@@ -7,6 +7,7 @@
 import { create } from 'zustand';
 import type { Playlist, PlaylistFolder, Song, SmartPlaylistRule } from '../types/vocadb';
 import { storage } from '../utils/storage';
+import { createStableId } from '../utils/id';
 
 const PLAYLISTS_KEY = 'playlists';
 const FOLDERS_KEY   = 'playlistFolders';
@@ -146,7 +147,7 @@ export const usePlaylistStore = create<PlaylistState>((set, get) => ({
   // ─── プレイリスト CRUD ──────────────────────────────────────────────────────
   createPlaylist: (name, folderId) => {
     const p: Playlist = {
-      id: crypto.randomUUID(),
+      id: createStableId('playlist'),
       name,
       songs: [],
       folderId,
@@ -180,7 +181,7 @@ export const usePlaylistStore = create<PlaylistState>((set, get) => ({
   // ─── フォルダ CRUD ───────────────────────────────────────────────────────────
   createFolder: (name, parentId) => {
     const f: PlaylistFolder = {
-      id: crypto.randomUUID(),
+      id: createStableId('folder'),
       name,
       parentId,
       createdAt: Date.now(),
@@ -307,7 +308,7 @@ export const usePlaylistStore = create<PlaylistState>((set, get) => ({
 
   createSmartPlaylist: (name, smartRule, folderId) => {
     const playlist: Playlist = {
-      id: crypto.randomUUID(),
+      id: createStableId('playlist'),
       name,
       songs: [],
       folderId,

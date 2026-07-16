@@ -97,4 +97,31 @@ describe('rerankRecommendationCandidates', () => {
     );
     expect(detailed.trace.every(item => item.explorationAdjustment === 0)).toBe(true);
   });
+
+  it('boosts favorite producer songs while keeping a 30 percent cap when alternatives exist', () => {
+    const result = rerankRecommendationCandidatesDetailed({
+      hybrid: [song(1, 10), song(2, 10), song(3, 20), song(4, 30), song(5, 40)],
+    }, {
+      ...baseOptions,
+      total: 3,
+      favoriteProducerIds: new Set([10]),
+    });
+
+    expect(result.ranked[0].song.id).toBe(1);
+    expect(result.ranked.filter(item => item.song.id === 1 || item.song.id === 2)).toHaveLength(1);
+    expect(result.ranked.find(item => item.song.id === 1)?.reason).toContain('お気に入りP');
+    expect(result.trace.find(item => item.songId === 1)?.favoriteProducerAdjustment).toBeGreaterThan(0);
+  });
+
+  it('allows favorite producer songs after the non-favorite fallback is exhausted', () => {
+    const result = rerankRecommendationCandidates({
+      hybrid: [song(1, 10), song(2, 10)],
+    }, {
+      ...baseOptions,
+      total: 2,
+      favoriteProducerIds: new Set([10]),
+    });
+
+    expect(result.map(item => item.song.id)).toEqual([1, 2]);
+  });
 });
