@@ -3,6 +3,7 @@ import {
   getAudioSimilarSongs,
   getMultiRecommendedSongs,
   getSongsByProducerFromBackend,
+  attachExternalViews,
 } from '../api/vocadb';
 import type { Song } from '../types/vocadb';
 import type { HistoryEntry } from '../stores/historyStore';
@@ -26,7 +27,7 @@ import { useRecommendationDebugStore } from '../stores/recommendationDebugStore'
 import { createRankingSeed } from '../utils/rankingRandomization';
 import { useRecommendationExposureStore } from '../stores/recommendationExposureStore';
 import { useGlobalFilterStore, type GlobalFilterSettings } from '../stores/globalFilterStore';
-import { applyDiscoveryFilter } from '../utils/globalFilters';
+import { applyDiscoveryFilter, requiresExternalViewCounts } from '../utils/globalFilters';
 
 export type AutoQueueMixMode = 'balanced' | 'deep' | 'producer';
 
@@ -253,18 +254,27 @@ export function useAutoQueue({
         if (controller.signal.aborted || generation !== requestGenerationRef.current) return;
 
         setStatus('reranking');
-        const filteredCandidates = filterCandidatePool(candidates, historyEntries, existingIds, globalFilterSettings, ratings);
-        const knownCandidates = applyDiscoveryFilter(rankKnownSongs(
+        const enrichedCandidates = requiresExternalViewCounts(globalFilterSettings)
+          ? await attachExternalViews(candidates)
+          : candidates;
+        const filteredCandidates = filterCandidatePool(enrichedCandidates, historyEntries, existingIds, globalFilterSettings, ratings);
+        const knownCandidateSongs = rankKnownSongs(
           historyEntries,
           playlistSongs,
           ratings,
           existingIds,
           implicitFeedback,
-        ).map(item => item.song), {
+        ).map(item => item.song);
+        const knownCandidates = applyDiscoveryFilter(
+          requiresExternalViewCounts(globalFilterSettings)
+            ? await attachExternalViews(knownCandidateSongs)
+            : knownCandidateSongs,
+          {
           settings: globalFilterSettings,
           ratings,
           lastPlayedAtBySongId: new Map(historyEntries.map(entry => [entry.song.id, entry.playedAt] as const)),
-        });
+          },
+        );
         const knownIds = new Set<number>([
           ...historyEntries.map(entry => entry.song.id),
           ...playlistSongs.map(song => song.id),

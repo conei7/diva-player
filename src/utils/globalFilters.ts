@@ -46,6 +46,10 @@ export function applyDiscoveryFilter(songs: Song[], context: DiscoveryFilterCont
   return songs.filter(song => matchesDiscoveryFilter(song, context));
 }
 
+export function requiresExternalViewCounts(settings: GlobalFilterSettings): boolean {
+  return settings.enabled && (settings.minYoutubeViews > 0 || settings.minNicoViews > 0);
+}
+
 export function isSongType(value: string): value is SongType {
   return [
     'Original', 'Remaster', 'Remix', 'Cover', 'Arrangement', 'Instrumental',

@@ -7,20 +7,28 @@ import { storage } from '../utils/storage';
 import { HISTORY_STORES, openHistoryDb } from './historyDatabase';
 import { normalizeImportedEvent, playEventFingerprint } from './historyBackup';
 import { downloadJson } from '../utils/playlistBackup';
+import {
+  getGlobalFilterSettings,
+  normalizeGlobalFilterSettings,
+  useGlobalFilterStore,
+  type GlobalFilterSettings,
+} from '../stores/globalFilterStore';
 
 const BACKUP_KIND = 'diva-player-full-backup';
-const BACKUP_VERSION = 1 as const;
+const BACKUP_VERSION = 2 as const;
+type SupportedBackupVersion = 1 | 2;
 const MAX_HISTORY_EVENTS = 1_000_000;
 const MAX_PLAYLISTS = 10_000;
 
 export interface FullBackupPayload {
   kind: typeof BACKUP_KIND;
-  version: typeof BACKUP_VERSION;
+  version: SupportedBackupVersion;
   exportedAt: string;
   sections: {
     history: { events: ListeningPlayEvent[] };
     ratings: Record<string, number>;
     playlists: { folders: PlaylistFolder[]; playlists: Playlist[] };
+    preferences?: { globalFilters: GlobalFilterSettings };
   };
 }
 
@@ -30,6 +38,7 @@ export interface FullBackupPreview {
   playlistCount: number;
   folderCount: number;
   invalidItems: number;
+  preferencesIncluded: boolean;
   parsed: FullBackupPayload;
 }
 
@@ -140,6 +149,7 @@ export async function createFullBackup(): Promise<FullBackupPayload> {
         folders: folders.map(folder => ({ ...folder })),
         playlists: playlists.map(playlist => ({ ...playlist, songs: playlist.songs.map(song => ({ ...song })) })),
       },
+      preferences: { globalFilters: getGlobalFilterSettings() },
     },
   };
 }
@@ -149,7 +159,7 @@ export function downloadFullBackup(payload: FullBackupPayload): void {
 }
 
 export function parseFullBackup(data: unknown): FullBackupPreview | null {
-  if (!isRecord(data) || data.kind !== BACKUP_KIND || data.version !== BACKUP_VERSION || !isRecord(data.sections)) return null;
+  if (!isRecord(data) || data.kind !== BACKUP_KIND || (data.version !== 1 && data.version !== BACKUP_VERSION) || !isRecord(data.sections)) return null;
   let invalidItems = 0;
   const rawHistory = isRecord(data.sections.history) && Array.isArray(data.sections.history.events) ? data.sections.history.events : [];
   if (rawHistory.length > MAX_HISTORY_EVENTS) return null;
@@ -170,13 +180,31 @@ export function parseFullBackup(data: unknown): FullBackupPreview | null {
     if (!playlist) invalidItems += 1;
     return playlist !== null;
   });
+  const rawPreferences = isRecord(data.sections.preferences) ? data.sections.preferences : undefined;
+  const rawGlobalFilters = rawPreferences && isRecord(rawPreferences.globalFilters)
+    ? rawPreferences.globalFilters
+    : undefined;
+  if (rawPreferences && !rawGlobalFilters) invalidItems += 1;
   const parsed: FullBackupPayload = {
     kind: BACKUP_KIND,
-    version: BACKUP_VERSION,
+    version: data.version as SupportedBackupVersion,
     exportedAt: typeof data.exportedAt === 'string' ? data.exportedAt : new Date().toISOString(),
-    sections: { history: { events }, ratings, playlists: { folders, playlists } },
+    sections: {
+      history: { events },
+      ratings,
+      playlists: { folders, playlists },
+      ...(rawGlobalFilters ? { preferences: { globalFilters: normalizeGlobalFilterSettings(rawGlobalFilters) } } : {}),
+    },
   };
-  return { historyCount: events.length, ratingCount: Object.keys(ratings).length, playlistCount: playlists.length, folderCount: folders.length, invalidItems, parsed };
+  return {
+    historyCount: events.length,
+    ratingCount: Object.keys(ratings).length,
+    playlistCount: playlists.length,
+    folderCount: folders.length,
+    invalidItems,
+    preferencesIncluded: rawGlobalFilters !== undefined,
+    parsed,
+  };
 }
 
 function transactionToPromise(transaction: IDBTransaction): Promise<void> {
@@ -260,6 +288,7 @@ export async function executeFullBackupImport(preview: FullBackupPreview, option
   const currentRatings = { ...useRatingStore.getState().ratings };
   const currentPlaylists = usePlaylistStore.getState().playlists.map(playlist => ({ ...playlist, songs: [...playlist.songs] }));
   const currentFolders = usePlaylistStore.getState().folders.map(folder => ({ ...folder }));
+  const currentGlobalFilters = getGlobalFilterSettings();
   const currentHistory = await readAllHistoryEvents();
   try {
     const incoming = preview.parsed.sections;
@@ -279,6 +308,9 @@ export async function executeFullBackupImport(preview: FullBackupPreview, option
       ? { ...incoming.ratings }
       : options.ratingPriority === 'backup' ? { ...currentRatings, ...incoming.ratings } : { ...incoming.ratings, ...currentRatings };
     useRatingStore.setState({ ratings: nextRatings });
+    if (options.mode === 'replace' && incoming.preferences?.globalFilters) {
+      useGlobalFilterStore.getState().setSettings(incoming.preferences.globalFilters);
+    }
     if (options.mode === 'replace') await replaceHistory(incoming.history.events);
     else await mergeHistory(incoming.history.events);
     await useHistoryStore.getState().reloadHistory();
@@ -287,6 +319,7 @@ export async function executeFullBackupImport(preview: FullBackupPreview, option
     storage.set('playlistFolders', currentFolders);
     usePlaylistStore.getState().loadPlaylists();
     useRatingStore.setState({ ratings: currentRatings });
+    useGlobalFilterStore.getState().setSettings(currentGlobalFilters);
     try {
       await replaceHistory(currentHistory);
       await useHistoryStore.getState().reloadHistory();

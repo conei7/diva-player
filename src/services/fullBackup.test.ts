@@ -43,4 +43,29 @@ describe('parseFullBackup', () => {
     expect(preview?.ratingCount).toBe(1);
     expect(preview?.invalidItems).toBe(2);
   });
+
+  it('accepts v2 preferences while preserving v1 compatibility', () => {
+    const preview = parseFullBackup({
+      kind: 'diva-player-full-backup',
+      version: 2,
+      sections: {
+        history: { events: [] },
+        ratings: {},
+        playlists: { folders: [], playlists: [] },
+        preferences: {
+          globalFilters: {
+            enabled: true,
+            minYoutubeViews: 10_000,
+            minNicoViews: 0,
+            excludedSongTypes: ['Remix'],
+            cooldownHours: 24,
+            excludeRatedFromDiscovery: true,
+          },
+        },
+      },
+    });
+
+    expect(preview?.preferencesIncluded).toBe(true);
+    expect(preview?.parsed.sections.preferences?.globalFilters.minYoutubeViews).toBe(10_000);
+  });
 });

@@ -184,6 +184,7 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
           <button type="button" className="btn-secondary w-full" disabled={busy} onClick={() => inputRef.current?.click()}>完全バックアップを選択</button>
           {preview && (
             <div className="rounded-xl p-3 text-sm" style={{ background: 'var(--color-bg-secondary)' }}>
+              {preview.preferencesIncluded && <p className="mb-1 text-xs opacity-70">表示・発見設定を含むバックアップです。</p>}
               <p>履歴 {preview.historyCount.toLocaleString()}件 / 評価 {preview.ratingCount.toLocaleString()}件 / プレイリスト {preview.playlistCount.toLocaleString()}件 / フォルダ {preview.folderCount.toLocaleString()}件</p>
               {preview.invalidItems > 0 && <p className="mt-1 text-amber-300">無効項目 {preview.invalidItems}件を除外</p>}
               <div className="flex flex-wrap gap-3 mt-3">

@@ -63,7 +63,7 @@ function normalizeNonNegativeInteger(value: unknown, fallback: number): number {
     : fallback;
 }
 
-function normalizeSettings(value: unknown): GlobalFilterSettings {
+export function normalizeGlobalFilterSettings(value: unknown): GlobalFilterSettings {
   const source = typeof value === 'object' && value !== null ? value as Partial<GlobalFilterSettings> : {};
   const excludedSongTypes = Array.isArray(source.excludedSongTypes)
     ? [...new Set(source.excludedSongTypes.filter(isSongType))]
@@ -86,14 +86,14 @@ export const useGlobalFilterStore = create<GlobalFilterState>()(
   persist(
     (set) => ({
       ...DEFAULT_GLOBAL_FILTER_SETTINGS,
-      setSettings: settings => set(state => normalizeSettings({ ...state, ...settings })),
+      setSettings: settings => set(state => normalizeGlobalFilterSettings({ ...state, ...settings })),
       resetSettings: () => set(DEFAULT_GLOBAL_FILTER_SETTINGS),
     }),
     {
       name: 'diva-global-filters',
       version: STORAGE_VERSION,
       storage,
-      migrate: persisted => normalizeSettings(persisted),
+      migrate: persisted => normalizeGlobalFilterSettings(persisted),
       partialize: state => ({
         enabled: state.enabled,
         minYoutubeViews: state.minYoutubeViews,

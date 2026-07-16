@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import CategoryChips, { type CategoryChip } from '../components/home/CategoryChips';
 import VideoGrid from '../components/home/VideoGrid';
-import { searchSongs, getTopSongs, getRecommendedSongs, getSimilarSongs, getAudioSimilarSongs, getTrendingSongs } from '../api/vocadb';
+import { searchSongs, getTopSongs, getRecommendedSongs, getSimilarSongs, getAudioSimilarSongs, getTrendingSongs, attachExternalViews } from '../api/vocadb';
 import { useHistoryStore } from '../stores/historyStore';
 import { usePlayerStore } from '../stores/playerStore';
 import { useRatingStore } from '../stores/ratingStore';
@@ -23,7 +23,7 @@ import { filterVoiceSynthSongs } from '../utils/voiceSynthSongs';
 import { useRecommendationDebugStore } from '../stores/recommendationDebugStore';
 import { createRankingSeed } from '../utils/rankingRandomization';
 import { rerankDisplayedSongs, useRecommendationExposureStore } from '../stores/recommendationExposureStore';
-import { applyDiscoveryFilter, applyGlobalSongFilter } from '../utils/globalFilters';
+import { applyDiscoveryFilter, applyGlobalSongFilter, requiresExternalViewCounts } from '../utils/globalFilters';
 
 type HomeCategoryId =
   | 'recommended'
@@ -270,6 +270,9 @@ export default function HomePage() {
       if (!query && !artistIdParam && category !== 'recommended') {
         result = rerankDisplayedSongs(result, rankingSeedRef.current);
       }
+      if (requiresExternalViewCounts(globalFilterSettings)) {
+        result = await attachExternalViews(result);
+      }
       result = filterVoiceSynthSongs(result);
 
       if (pageNum === 0) {
@@ -293,7 +296,7 @@ export default function HomePage() {
       }
       fetchingRef.current = false;
     }
-  }, [artistIdParam, entries, fetchRecommendedHomeSongs]);
+  }, [artistIdParam, entries, fetchRecommendedHomeSongs, globalFilterSettings]);
 
   useEffect(() => {
     setLoading(true);

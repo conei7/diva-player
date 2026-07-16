@@ -17,6 +17,7 @@ import {
   getSongsByProducerFromBackend,
   getAudioSimilarSongs,
   getMetadataSimilarSongs,
+  attachExternalViews,
 } from '../api/vocadb';
 import type { Song } from '../types/vocadb';
 import { useSelectionStore } from '../stores/selectionStore';
@@ -27,7 +28,7 @@ import { useRecommendationDebugStore } from '../stores/recommendationDebugStore'
 import { createRankingSeed } from '../utils/rankingRandomization';
 import { rerankDisplayedSongs, useRecommendationExposureStore } from '../stores/recommendationExposureStore';
 import { useGlobalFilterStore } from '../stores/globalFilterStore';
-import { applyDiscoveryFilter } from '../utils/globalFilters';
+import { applyDiscoveryFilter, requiresExternalViewCounts } from '../utils/globalFilters';
 
 function WatchQueue() {
   const queue = usePlayerStore(s => s.queue);
@@ -202,8 +203,9 @@ export default function WatchPage() {
         .map(a => a.artist?.id)
         .filter((id): id is number => id !== undefined);
 
+      const producerSongs = await getSongsByProducerFromBackend(s.id, producerIds, PAGE_SIZE, page * PAGE_SIZE + (page === 0 ? randomOffsetRef.current : 0));
       const items = rerankDisplayedSongs(
-        filterDiscoverySongs(await getSongsByProducerFromBackend(s.id, producerIds, PAGE_SIZE, page * PAGE_SIZE + (page === 0 ? randomOffsetRef.current : 0))),
+        filterDiscoverySongs(requiresExternalViewCounts(globalFilterSettings) ? await attachExternalViews(producerSongs) : producerSongs),
         rankingSeedRef.current,
       );
       const fresh = items.filter(item => !seenSets.current.producer.has(item.id));
@@ -221,13 +223,14 @@ export default function WatchPage() {
     } catch {
       setTabs(prev => ({ ...prev, producer: { ...prev.producer, loading: false, hasMore: false } }));
     }
-  }, []);
+  }, [filterDiscoverySongs, globalFilterSettings]);
 
   const fetchRelated = useCallback(async (s: Song, page: number) => {
     try {
+      const relatedSongs = await getMetadataSimilarSongs(s.id, PAGE_SIZE * 2, randomOffsetRef.current + page * PAGE_SIZE * 2);
       const items = rerankDisplayedSongs(diversifyAwayFromSeedVocalist(
         s,
-        filterDiscoverySongs(await getMetadataSimilarSongs(s.id, PAGE_SIZE * 2, randomOffsetRef.current + page * PAGE_SIZE * 2)),
+        filterDiscoverySongs(requiresExternalViewCounts(globalFilterSettings) ? await attachExternalViews(relatedSongs) : relatedSongs),
         Math.max(6, Math.floor(PAGE_SIZE / 4)),
       ).slice(0, PAGE_SIZE), rankingSeedRef.current);
       const fresh = items.filter(item => !seenSets.current.related.has(item.id));
@@ -245,15 +248,18 @@ export default function WatchPage() {
     } catch {
       setTabs(prev => ({ ...prev, related: { ...prev.related, loading: false, hasMore: false } }));
     }
-  }, []);
+  }, [filterDiscoverySongs, globalFilterSettings]);
 
   const fetchRecommended = useCallback(async (s: Song, page: number) => {
     try {
       const offset = randomOffsetRef.current + page * PAGE_SIZE * 2;
-      const [hybrid, audio] = await Promise.all([
+      const [hybridRaw, audioRaw] = await Promise.all([
         getRecommendedSongs(s.id, PAGE_SIZE * 2, 0.0, ratings, offset),
         getAudioSimilarSongs(s.id, PAGE_SIZE, offset),
       ]);
+      const [hybrid, audio] = requiresExternalViewCounts(globalFilterSettings)
+        ? await Promise.all([attachExternalViews(hybridRaw), attachExternalViews(audioRaw)])
+        : [hybridRaw, audioRaw];
       const detailed = rerankRecommendationCandidatesDetailed({
         hybrid: diversifyAwayFromSeedVocalist(s, filterDiscoverySongs(hybrid), 6),
         audio: diversifyAwayFromSeedVocalist(s, filterDiscoverySongs(audio), 4),
@@ -303,12 +309,13 @@ export default function WatchPage() {
     } catch {
       setTabs(prev => ({ ...prev, recommended: { ...prev.recommended, loading: false, hasMore: false } }));
     }
-  }, [entries, implicitFeedback, playlists, ratings]);
+  }, [entries, globalFilterSettings, implicitFeedback, playlists, ratings, filterDiscoverySongs]);
 
   const fetchDeep = useCallback(async (s: Song, page: number) => {
     try {
+      const deepSongs = await getAudioSimilarSongs(s.id, PAGE_SIZE, page * PAGE_SIZE);
       const items = rerankDisplayedSongs(
-        filterDiscoverySongs(await getAudioSimilarSongs(s.id, PAGE_SIZE, page * PAGE_SIZE)),
+        filterDiscoverySongs(requiresExternalViewCounts(globalFilterSettings) ? await attachExternalViews(deepSongs) : deepSongs),
         rankingSeedRef.current,
       );
       const fresh = items.filter(item => !seenSets.current.deep.has(item.id));
@@ -326,7 +333,7 @@ export default function WatchPage() {
     } catch {
       setTabs(prev => ({ ...prev, deep: { ...prev.deep, loading: false, hasMore: false } }));
     }
-  }, []);
+  }, [filterDiscoverySongs, globalFilterSettings]);
 
   // 追加読み込み
   const loadMore = useCallback(() => {

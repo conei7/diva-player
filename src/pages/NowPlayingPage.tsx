@@ -9,13 +9,14 @@ import {
   getRecommendedSongs,
   getMetadataSimilarSongs,
   getAudioSimilarSongs,
+  attachExternalViews,
 } from '../api/vocadb';
 import type { Song } from '../types/vocadb';
 import { useSelectionStore } from '../stores/selectionStore';
 import { createRankingSeed } from '../utils/rankingRandomization';
 import { rerankDisplayedSongs, useRecommendationExposureStore } from '../stores/recommendationExposureStore';
 import { useGlobalFilterStore } from '../stores/globalFilterStore';
-import { applyDiscoveryFilter } from '../utils/globalFilters';
+import { applyDiscoveryFilter, requiresExternalViewCounts } from '../utils/globalFilters';
 
 /** サムネイルURLを解決 */
 function getThumbUrl(song: Song): string | null {
@@ -94,9 +95,13 @@ export default function NowPlayingPage() {
 
   // おすすめ: メタデータ + 音声データ + プレイヤーデータ (/api/recommend)
   const fetchRecommend = useCallback(async (song: Song, page: number) => {
-    const songs = rerankDisplayedSongs(applyDiscoveryFilter(await getRecommendedSongs(
+    const recommendedRaw = await getRecommendedSongs(
       song.id, PAGE_SIZE, 0.0, undefined, (rankingSeedRef.current % 20) + page * PAGE_SIZE
-    ), {
+    );
+    const recommendedSongs = requiresExternalViewCounts(globalFilterSettings)
+      ? await attachExternalViews(recommendedRaw)
+      : recommendedRaw;
+    const songs = rerankDisplayedSongs(applyDiscoveryFilter(recommendedSongs, {
       settings: globalFilterSettings,
       ratings,
       lastPlayedAtBySongId: new Map(entries.map(entry => [entry.song.id, entry.playedAt] as const)),
@@ -116,8 +121,12 @@ export default function NowPlayingPage() {
 
   // 関連曲: メタデータベクトルのみ (/api/recommend/metadata)
   const fetchRelated = useCallback(async (song: Song, page: number) => {
+    const relatedRaw = await getMetadataSimilarSongs(song.id, PAGE_SIZE, (rankingSeedRef.current % 20) + page * PAGE_SIZE);
+    const relatedSongs = requiresExternalViewCounts(globalFilterSettings)
+      ? await attachExternalViews(relatedRaw)
+      : relatedRaw;
     const songs = rerankDisplayedSongs(
-      applyDiscoveryFilter(await getMetadataSimilarSongs(song.id, PAGE_SIZE, (rankingSeedRef.current % 20) + page * PAGE_SIZE), {
+      applyDiscoveryFilter(relatedSongs, {
         settings: globalFilterSettings,
         ratings,
         lastPlayedAtBySongId: new Map(entries.map(entry => [entry.song.id, entry.playedAt] as const)),
@@ -139,8 +148,12 @@ export default function NowPlayingPage() {
 
   // deep dig: 音響ベクトルのみ (/api/recommend/audio)
   const fetchDeepdig = useCallback(async (song: Song, page: number) => {
+    const deepRaw = await getAudioSimilarSongs(song.id, PAGE_SIZE, (rankingSeedRef.current % 20) + page * PAGE_SIZE);
+    const deepSongs = requiresExternalViewCounts(globalFilterSettings)
+      ? await attachExternalViews(deepRaw)
+      : deepRaw;
     const songs = rerankDisplayedSongs(
-      applyDiscoveryFilter(await getAudioSimilarSongs(song.id, PAGE_SIZE, (rankingSeedRef.current % 20) + page * PAGE_SIZE), {
+      applyDiscoveryFilter(deepSongs, {
         settings: globalFilterSettings,
         ratings,
         lastPlayedAtBySongId: new Map(entries.map(entry => [entry.song.id, entry.playedAt] as const)),
