@@ -5,7 +5,7 @@
  */
 
 import { create } from 'zustand';
-import type { Playlist, PlaylistFolder, Song } from '../types/vocadb';
+import type { Playlist, PlaylistFolder, Song, SmartPlaylistRule } from '../types/vocadb';
 import { storage } from '../utils/storage';
 
 const PLAYLISTS_KEY = 'playlists';
@@ -38,7 +38,9 @@ interface PlaylistState {
   // プレイリスト CRUD
   createPlaylist: (name: string, folderId?: string) => Playlist;
   deletePlaylist: (id: string) => void;
-  updatePlaylist: (id: string, patch: Partial<Pick<Playlist, 'name' | 'description' | 'coverArtUrl' | 'folderId'>>) => void;
+  updatePlaylist: (id: string, patch: Partial<Pick<Playlist, 'name' | 'description' | 'coverArtUrl' | 'folderId' | 'smartRule'>>) => void;
+  createSmartPlaylist: (name: string, rule: SmartPlaylistRule, folderId?: string) => Playlist;
+  replacePlaylistSongs: (playlistId: string, songs: Song[]) => void;
 
   // フォルダ CRUD
   createFolder: (name: string, parentId?: string) => PlaylistFolder;
@@ -299,6 +301,30 @@ export const usePlaylistStore = create<PlaylistState>((set, get) => ({
       if (p.id !== playlistId) return p;
       return { ...p, songs: sortSongsBy(p.songs, by), updatedAt: Date.now() };
     });
+    set({ playlists: updated });
+    save(updated, get().folders);
+  },
+
+  createSmartPlaylist: (name, smartRule, folderId) => {
+    const playlist: Playlist = {
+      id: crypto.randomUUID(),
+      name,
+      songs: [],
+      folderId,
+      smartRule,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+    const updated = [...get().playlists, playlist];
+    set({ playlists: updated });
+    save(updated, get().folders);
+    return playlist;
+  },
+
+  replacePlaylistSongs: (playlistId, songs) => {
+    const updated = get().playlists.map(playlist => playlist.id === playlistId
+      ? { ...playlist, songs, updatedAt: Date.now() }
+      : playlist);
     set({ playlists: updated });
     save(updated, get().folders);
   },

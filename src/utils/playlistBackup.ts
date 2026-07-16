@@ -11,6 +11,7 @@ export type PlaylistBackupItem = {
   description?: string;
   coverArtUrl?: string;
   folderId?: string;
+  smartRule?: Playlist['smartRule'];
   songs: Song[];
 };
 
@@ -72,6 +73,25 @@ function parseImportedSong(value: unknown): Song | null {
   };
 }
 
+function parseSmartRule(value: unknown): Playlist['smartRule'] | undefined {
+  if (!isRecord(value)) return undefined;
+  const minYoutubeViews = value.minYoutubeViews;
+  const minNicoViews = value.minNicoViews;
+  if (typeof minYoutubeViews !== 'number' || !Number.isInteger(minYoutubeViews) || minYoutubeViews < 0) return undefined;
+  if (typeof minNicoViews !== 'number' || !Number.isInteger(minNicoViews) || minNicoViews < 0) return undefined;
+  const validTypes = ['Original', 'Remaster', 'Remix', 'Cover', 'Arrangement', 'Instrumental', 'Mashup', 'MusicPV', 'DramaPV', 'Other', 'Unspecified'] as const;
+  const excludedSongTypes = Array.isArray(value.excludedSongTypes)
+    ? value.excludedSongTypes.filter((item): item is typeof validTypes[number] => typeof item === 'string' && validTypes.includes(item as typeof validTypes[number]))
+    : [];
+  return {
+    minYoutubeViews,
+    minNicoViews,
+    excludedSongTypes,
+    producerId: typeof value.producerId === 'number' && Number.isInteger(value.producerId) && value.producerId > 0 ? value.producerId : undefined,
+    producerName: typeof value.producerName === 'string' ? value.producerName : undefined,
+  };
+}
+
 export function parsePlaylistImport(data: unknown): { name: string; description?: string; coverArtUrl?: string; songs: Song[] } | null {
   if (!isRecord(data)) return null;
   const playlist = isRecord(data.playlist) ? data.playlist : data;
@@ -108,6 +128,7 @@ export function parsePlaylistBackup(data: unknown): { folders: PlaylistBackupFol
       description: typeof playlist.description === 'string' ? playlist.description : undefined,
       coverArtUrl: typeof playlist.coverArtUrl === 'string' ? playlist.coverArtUrl : undefined,
       folderId: typeof playlist.folderId === 'string' ? playlist.folderId : undefined,
+      smartRule: parseSmartRule(playlist.smartRule),
       songs: (playlist.songs as unknown[]).map(parseImportedSong).filter((song): song is Song => song !== null),
     }));
 
@@ -166,6 +187,7 @@ export function createAllPlaylistsBackupPayload(
       description: playlist.description,
       coverArtUrl: playlist.coverArtUrl,
       folderId: playlist.folderId,
+      smartRule: playlist.smartRule,
       isPinned: playlist.isPinned,
       createdAt: playlist.createdAt,
       updatedAt: playlist.updatedAt,

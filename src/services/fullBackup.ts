@@ -1,5 +1,5 @@
 import type { ListeningPlayEvent } from '../stores/historyStore';
-import type { Playlist, PlaylistFolder, Song } from '../types/vocadb';
+import type { Playlist, PlaylistFolder, Song, SmartPlaylistRule } from '../types/vocadb';
 import { useHistoryStore } from '../stores/historyStore';
 import { usePlaylistStore, WATCH_LATER_ID } from '../stores/playlistStore';
 import { useRatingStore } from '../stores/ratingStore';
@@ -111,6 +111,26 @@ function parsePlaylist(value: unknown): Playlist | null {
     createdAt: finiteInteger(value.createdAt) ?? Date.now(),
     updatedAt: finiteInteger(value.updatedAt) ?? Date.now(),
     isPinned: value.isPinned === true,
+    smartRule: parseSmartRule(value.smartRule),
+  };
+}
+
+function parseSmartRule(value: unknown): SmartPlaylistRule | undefined {
+  if (!isRecord(value)) return undefined;
+  const excludedSongTypes = Array.isArray(value.excludedSongTypes)
+    ? value.excludedSongTypes.filter((item): item is SmartPlaylistRule['excludedSongTypes'][number] => typeof item === 'string' && [
+      'Original', 'Remaster', 'Remix', 'Cover', 'Arrangement', 'Instrumental', 'Mashup', 'MusicPV', 'DramaPV', 'Other', 'Unspecified',
+    ].includes(item))
+    : [];
+  if (typeof value.minYoutubeViews !== 'number' || !Number.isInteger(value.minYoutubeViews) || value.minYoutubeViews < 0) return undefined;
+  if (typeof value.minNicoViews !== 'number' || !Number.isInteger(value.minNicoViews) || value.minNicoViews < 0) return undefined;
+  const producerId = finiteInteger(value.producerId, 1);
+  return {
+    minYoutubeViews: value.minYoutubeViews,
+    minNicoViews: value.minNicoViews,
+    excludedSongTypes,
+    producerId,
+    producerName: typeof value.producerName === 'string' ? value.producerName : undefined,
   };
 }
 

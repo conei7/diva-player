@@ -42,6 +42,9 @@ import {
 } from '../utils/playlistBackup';
 import YouTubeImportModal from '../components/playlist/YouTubeImportModal';
 import { createPlaylistShareUrl, decodePlaylistShare } from '../utils/playlistShare';
+import { searchSongs, getSongsByProducer } from '../api/vocadb';
+import { applyGlobalSongFilter } from '../utils/globalFilters';
+import type { SmartPlaylistRule } from '../types/vocadb';
 
 // ─── SortableSongRow ────────────────────────────────────────────────────────
 interface SortableSongRowProps {
@@ -424,6 +427,7 @@ export default function PlaylistPage() {
     playlists, folders,
     loadPlaylists,
     createPlaylist, deletePlaylist, updatePlaylist,
+    createSmartPlaylist, replacePlaylistSongs,
     createFolder, deleteFolder,
     addSongs, removeSong, reorderSongs, sortSongs, removeDuplicateSongs,
   } = usePlaylistStore();
@@ -453,6 +457,12 @@ export default function PlaylistPage() {
   const [importNotice, setImportNotice] = useState<{ name: string; count: number } | null>(null);
   const [showYTImport, setShowYTImport] = useState(false);
   const [shareNotice, setShareNotice] = useState('');
+  const [showSmartBuilder, setShowSmartBuilder] = useState(false);
+  const [smartName, setSmartName] = useState('');
+  const [smartMinYoutube, setSmartMinYoutube] = useState(0);
+  const [smartMinNico, setSmartMinNico] = useState(0);
+  const [smartExcludeDerived, setSmartExcludeDerived] = useState(false);
+  const smartRefreshRef = useRef<string | null>(null);
 
   useEffect(() => { loadPlaylists(); }, [loadPlaylists]);
 
@@ -477,9 +487,33 @@ export default function PlaylistPage() {
     setSelectionMode(false);
     setSelectedIds(new Set());
     setFilterText('');
+    smartRefreshRef.current = null;
   }, [selectedPlaylistId]);
 
   const selectedPlaylist = playlists.find(p => p.id === selectedPlaylistId) ?? null;
+
+  const refreshSmartPlaylist = useCallback(async (playlist: Playlist) => {
+    if (!playlist.smartRule) return;
+    const rule = playlist.smartRule;
+    const raw = rule.producerId
+      ? (await getSongsByProducer([rule.producerId], 0, 100, 0)).items
+      : (await searchSongs({ sort: 'AdditionDate', maxResults: 100, start: 0, getTotalCount: false, onlyWithPVs: true })).items;
+    const filtered = applyGlobalSongFilter(raw, {
+      enabled: true,
+      minYoutubeViews: rule.minYoutubeViews,
+      minNicoViews: rule.minNicoViews,
+      excludedSongTypes: rule.excludedSongTypes,
+      cooldownHours: 0,
+      excludeRatedFromDiscovery: false,
+    });
+    replacePlaylistSongs(playlist.id, filtered.slice(0, 200));
+  }, [replacePlaylistSongs]);
+
+  useEffect(() => {
+    if (!selectedPlaylist?.smartRule || smartRefreshRef.current === selectedPlaylist.id) return;
+    smartRefreshRef.current = selectedPlaylist.id;
+    void refreshSmartPlaylist(selectedPlaylist);
+  }, [refreshSmartPlaylist, selectedPlaylist]);
   const selectedPlaylistDuplicateCount = selectedPlaylist
     ? selectedPlaylist.songs.length - new Set(selectedPlaylist.songs.map(s => s.id)).size
     : 0;
@@ -508,6 +542,22 @@ export default function PlaylistPage() {
     setNewName('');
     setSelectedPlaylistId(p.id);
   }, [newName, selectedFolderId, createPlaylist]);
+
+  const handleCreateSmart = useCallback(() => {
+    const name = smartName.trim() || 'スマートプレイリスト';
+    const rule: SmartPlaylistRule = {
+      minYoutubeViews: Math.max(0, smartMinYoutube),
+      minNicoViews: Math.max(0, smartMinNico),
+      excludedSongTypes: smartExcludeDerived ? ['Cover', 'Remix', 'Arrangement', 'Mashup'] : [],
+    };
+    const playlist = createSmartPlaylist(name, rule, selectedFolderId ?? undefined);
+    setSelectedPlaylistId(playlist.id);
+    setSmartName('');
+    setSmartMinYoutube(0);
+    setSmartMinNico(0);
+    setSmartExcludeDerived(false);
+    setShowSmartBuilder(false);
+  }, [createSmartPlaylist, selectedFolderId, smartExcludeDerived, smartMinNico, smartMinYoutube, smartName]);
 
   const handleCreateFolder = useCallback(() => {
     if (!newFolderName.trim()) return;
@@ -671,6 +721,7 @@ export default function PlaylistPage() {
           updatePlaylist(playlist.id, {
             description: item.description,
             coverArtUrl: item.coverArtUrl,
+            smartRule: item.smartRule,
           });
           addedSongs += addSongs(playlist.id, item.songs).added;
         });
@@ -735,7 +786,7 @@ export default function PlaylistPage() {
       </div>
       <div className="flex-1 min-w-0">
         <p className="text-xs font-medium truncate">{p.name}</p>
-        <p className="text-xs text-neutral-500">{p.songs.length} 曲</p>
+        <p className="text-xs text-neutral-500">{p.songs.length} 曲{p.smartRule ? ' ・自動更新' : ''}</p>
       </div>
     </button>
   );
@@ -847,6 +898,32 @@ export default function PlaylistPage() {
           />
           <button className="btn-primary text-xs px-2" onClick={handleCreate}>+</button>
         </div>
+        <button
+          type="button"
+          className="btn-secondary text-xs px-2 py-1.5"
+          onClick={() => setShowSmartBuilder(value => !value)}
+          aria-expanded={showSmartBuilder}
+        >
+          {showSmartBuilder ? 'スマート条件を閉じる' : 'スマートプレイリスト+'}
+        </button>
+        {showSmartBuilder && (
+          <div className="rounded-xl p-2 space-y-2" style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}>
+            <input className="search-input text-xs w-full" value={smartName} onChange={event => setSmartName(event.target.value)} placeholder="名前（例: 定番曲）" />
+            <label className="block text-xs">
+              YouTube最低再生数
+              <input className="input mt-1 w-full text-xs" type="number" min={0} value={smartMinYoutube} onChange={event => setSmartMinYoutube(Number(event.target.value) || 0)} />
+            </label>
+            <label className="block text-xs">
+              ニコニコ最低再生数
+              <input className="input mt-1 w-full text-xs" type="number" min={0} value={smartMinNico} onChange={event => setSmartMinNico(Number(event.target.value) || 0)} />
+            </label>
+            <label className="flex items-center gap-1 text-xs">
+              <input type="checkbox" checked={smartExcludeDerived} onChange={event => setSmartExcludeDerived(event.target.checked)} />
+              カバー・派生曲を除外
+            </label>
+            <button type="button" className="btn-primary w-full text-xs" onClick={handleCreateSmart}>条件を保存</button>
+          </div>
+        )}
         <input
           ref={importInputRef}
           type="file"
@@ -923,6 +1000,11 @@ export default function PlaylistPage() {
                   <div className="min-w-0">
 
                     <h1 className="text-2xl font-bold truncate">{selectedPlaylist.name}</h1>
+                    {selectedPlaylist.smartRule && (
+                      <p className="mt-1 text-xs" style={{ color: 'var(--color-accent-cyan)' }}>
+                        条件から自動更新（現在 {selectedPlaylist.songs.length} 曲）
+                      </p>
+                    )}
                     {selectedPlaylist.description && (
                       <p className="text-sm mt-1 line-clamp-2 text-neutral-400">{selectedPlaylist.description}</p>
                     )}

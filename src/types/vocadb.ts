@@ -149,6 +149,16 @@ export interface Playlist {
   updatedAt: number;
   /** true = 削除・移動不可のシステムプレイリスト（後で聴く等） */
   isPinned?: boolean;
+  /** 条件保存型プレイリスト。曲一覧は表示時に再計算される。 */
+  smartRule?: SmartPlaylistRule;
+}
+
+export interface SmartPlaylistRule {
+  minYoutubeViews: number;
+  minNicoViews: number;
+  excludedSongTypes: SongType[];
+  producerId?: number;
+  producerName?: string;
 }
 
 /** プレイリストをまとめるフォルダ（ツリー構造対応） */
