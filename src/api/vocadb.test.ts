@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Artist } from '../types/vocadb';
-import { rankArtistsByName } from './vocadb';
+import { rankArtistsByName, resolveProducerByName } from './vocadb';
 
 function artist(id: number, name: string): Artist {
   return { id, name, artistType: 'Producer' };
@@ -22,5 +22,30 @@ describe('rankArtistsByName', () => {
       artist(2, 'ＭＩＭＩ'),
     ], ' mimi ');
     expect(ranked[0]?.id).toBe(2);
+  });
+});
+
+describe('resolveProducerByName', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('fetches enough prefix candidates and selects the exact producer name', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        items: [
+          artist(677, '耳ロボP'),
+          artist(49431, 'MIMI'),
+        ],
+      }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const resolved = await resolveProducerByName('MIMI');
+
+    expect(resolved?.id).toBe(49431);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain('maxResults=20');
   });
 });

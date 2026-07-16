@@ -7,7 +7,7 @@ import { useSearchStore } from '../../stores/searchStore';
 import { useSelectionStore } from '../../stores/selectionStore';
 import {
   getSearchSuggestions,
-  searchProducersByName,
+  resolveProducerByName,
   searchVocalistsByName,
   type SearchSuggestion,
 } from '../../api/vocadb';
@@ -144,9 +144,9 @@ export default function TopNav() {
     }
 
     if (searchMode === 'producer') {
-      const producers = await searchProducersByName(trimmed, 1);
-      if (producers[0]) {
-        await searchByArtistId(producers[0].id, producers[0].name);
+      const producer = await resolveProducerByName(trimmed);
+      if (producer) {
+        await searchByArtistId(producer.id, producer.name);
       } else {
         await searchTitleOnly(trimmed);
       }

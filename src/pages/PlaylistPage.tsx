@@ -462,6 +462,10 @@ export default function PlaylistPage() {
   const [smartMinYoutube, setSmartMinYoutube] = useState(0);
   const [smartMinNico, setSmartMinNico] = useState(0);
   const [smartExcludeDerived, setSmartExcludeDerived] = useState(false);
+  const [smartRefreshStatuses, setSmartRefreshStatuses] = useState<Record<string, {
+    state: 'loading' | 'success' | 'error';
+    refreshedAt?: number;
+  }>>({});
   const smartRefreshRef = useRef<string | null>(null);
 
   useEffect(() => { loadPlaylists(); }, [loadPlaylists]);
@@ -494,25 +498,41 @@ export default function PlaylistPage() {
 
   const refreshSmartPlaylist = useCallback(async (playlist: Playlist) => {
     if (!playlist.smartRule) return;
-    const rule = playlist.smartRule;
-    const raw = rule.producerId
-      ? (await getSongsByProducer([rule.producerId], 0, 100, 0)).items
-      : (await searchSongs({ sort: 'AdditionDate', maxResults: 100, start: 0, getTotalCount: false, onlyWithPVs: true })).items;
-    const filtered = applyGlobalSongFilter(raw, {
-      enabled: true,
-      minYoutubeViews: rule.minYoutubeViews,
-      minNicoViews: rule.minNicoViews,
-      excludedSongTypes: rule.excludedSongTypes,
-      cooldownHours: 0,
-      excludeRatedFromDiscovery: false,
-    });
-    replacePlaylistSongs(playlist.id, filtered.slice(0, 200));
+    setSmartRefreshStatuses(current => ({
+      ...current,
+      [playlist.id]: { state: 'loading' },
+    }));
+    try {
+      const rule = playlist.smartRule;
+      const raw = rule.producerId
+        ? (await getSongsByProducer([rule.producerId], 0, 100, 0)).items
+        : (await searchSongs({ sort: 'AdditionDate', maxResults: 100, start: 0, getTotalCount: false, onlyWithPVs: true })).items;
+      const filtered = applyGlobalSongFilter(raw, {
+        enabled: true,
+        minYoutubeViews: rule.minYoutubeViews,
+        minNicoViews: rule.minNicoViews,
+        excludedSongTypes: rule.excludedSongTypes,
+        cooldownHours: 0,
+        excludeRatedFromDiscovery: false,
+      });
+      replacePlaylistSongs(playlist.id, filtered.slice(0, 200));
+      setSmartRefreshStatuses(current => ({
+        ...current,
+        [playlist.id]: { state: 'success', refreshedAt: Date.now() },
+      }));
+    } catch (error) {
+      setSmartRefreshStatuses(current => ({
+        ...current,
+        [playlist.id]: { state: 'error' },
+      }));
+      throw error;
+    }
   }, [replacePlaylistSongs]);
 
   useEffect(() => {
     if (!selectedPlaylist?.smartRule || smartRefreshRef.current === selectedPlaylist.id) return;
     smartRefreshRef.current = selectedPlaylist.id;
-    void refreshSmartPlaylist(selectedPlaylist);
+    void refreshSmartPlaylist(selectedPlaylist).catch(() => undefined);
   }, [refreshSmartPlaylist, selectedPlaylist]);
   const selectedPlaylistDuplicateCount = selectedPlaylist
     ? selectedPlaylist.songs.length - new Set(selectedPlaylist.songs.map(s => s.id)).size
@@ -520,6 +540,9 @@ export default function PlaylistPage() {
   const selectedPlaylistDurationText = selectedPlaylist
     ? formatTotalDuration(selectedPlaylist.songs.reduce((sum, song) => sum + (song.lengthSeconds || 0), 0))
     : '';
+  const selectedSmartRefreshStatus = selectedPlaylist
+    ? smartRefreshStatuses[selectedPlaylist.id]
+    : undefined;
   const pinnedPlaylists = playlists.filter(p => p.isPinned);
   const filteredSidebarPlaylists = (selectedFolderId
     ? playlists.filter(p => !p.isPinned && p.folderId === selectedFolderId)
@@ -1002,7 +1025,12 @@ export default function PlaylistPage() {
                     <h1 className="text-2xl font-bold truncate">{selectedPlaylist.name}</h1>
                     {selectedPlaylist.smartRule && (
                       <p className="mt-1 text-xs" style={{ color: 'var(--color-accent-cyan)' }}>
-                        条件から自動更新（現在 {selectedPlaylist.songs.length} 曲）
+                        {selectedSmartRefreshStatus?.state === 'loading' && '条件を再計算中…'}
+                        {selectedSmartRefreshStatus?.state === 'success' && (
+                          <>選択時に自動更新・最終更新 {new Date(selectedSmartRefreshStatus.refreshedAt ?? Date.now()).toLocaleTimeString('ja-JP')}（{selectedPlaylist.songs.length} 曲）</>
+                        )}
+                        {selectedSmartRefreshStatus?.state === 'error' && '更新に失敗しました。手動更新してください。'}
+                        {!selectedSmartRefreshStatus && `開いたときに自動更新（現在 ${selectedPlaylist.songs.length} 曲）`}
                       </p>
                     )}
                     {selectedPlaylist.description && (
@@ -1019,6 +1047,17 @@ export default function PlaylistPage() {
                     </p>
                   </div>
                   <div className="flex items-center gap-1.5 flex-shrink-0">
+                    {selectedPlaylist.smartRule && (
+                      <button
+                        type="button"
+                        className="btn-secondary text-sm px-3 py-2"
+                        disabled={selectedSmartRefreshStatus?.state === 'loading'}
+                        onClick={() => void refreshSmartPlaylist(selectedPlaylist).catch(() => undefined)}
+                        title="スマートプレイリストを今すぐ更新"
+                      >
+                        {selectedSmartRefreshStatus?.state === 'loading' ? '更新中…' : '条件を再更新'}
+                      </button>
+                    )}
                     {selectedPlaylist.songs.length > 0 && (
                       <button onClick={() => setQueue(selectedPlaylist.songs, 0)} className="btn-primary flex items-center gap-1.5 text-sm px-3 py-2">
                         <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
