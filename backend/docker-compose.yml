@@ -2,6 +2,8 @@ services:
   postgres:
     image: pgvector/pgvector:pg16
     container_name: vocadb_postgres
+    # VACUUM and vector operations can exceed Docker's 64 MiB default /dev/shm.
+    shm_size: "1gb"
     environment:
       POSTGRES_USER: vocadb
       POSTGRES_PASSWORD: vocadb_secret
