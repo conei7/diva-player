@@ -14,6 +14,7 @@ import {
 } from '../../stores/globalFilterStore';
 import type { GlobalFilterSettings } from '../../stores/globalFilterStore';
 import { useSearchStore } from '../../stores/searchStore';
+import { getGlobalFilterSummary, hasConfiguredSongFilters, isGlobalSongFilterActive, SONG_TYPE_LABELS } from '../../utils/globalFilters';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -98,7 +99,14 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
   };
 
   const updateDraft = <K extends keyof GlobalFilterSettings>(key: K, value: GlobalFilterSettings[K]) => {
-    setDraftFilters(current => ({ ...current, [key]: value }));
+    setDraftFilters(current => {
+      const next = { ...current, [key]: value };
+      if ((key === 'minYoutubeViews' || key === 'minNicoViews' || key === 'excludedSongTypes')
+        && hasConfiguredSongFilters(next)) {
+        next.enabled = true;
+      }
+      return next;
+    });
   };
 
   const applyFilters = () => {
@@ -129,8 +137,16 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
               <input type="checkbox" checked={draftFilters.enabled} onChange={event => updateDraft('enabled', event.target.checked)} />
               再生数・楽曲種別フィルターを有効にする
             </label>
-            <p className="mt-1 text-xs opacity-70">指定した値以上の曲だけを検索・おすすめに表示します。再生数が不明な曲は除外されます。</p>
-            <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <p className="mt-1 text-xs opacity-70">
+              指定した値以上の曲だけを検索・おすすめに表示します。再生数が不明な曲は除外されます。
+              {!draftFilters.enabled && hasConfiguredSongFilters(draftFilters) && ' 現在は停止中です。'}
+            </p>
+            {isGlobalSongFilterActive(draftFilters) && (
+              <p className="mt-2 rounded-lg px-2 py-1.5 text-xs" style={{ background: 'rgba(34, 211, 238, 0.1)', color: 'var(--color-accent-cyan)' }}>
+                適用中: {getGlobalFilterSummary(draftFilters).join(' / ')}
+              </p>
+            )}
+            <div className={`mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2 ${draftFilters.enabled ? '' : 'opacity-50'}`}>
               <label className="text-sm">
                 YouTube最低再生数
                 <select className="input mt-1 w-full" defaultValue="" onChange={event => { if (event.target.value) updateDraft('minYoutubeViews', Number(event.target.value)); }}>
@@ -158,7 +174,7 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
             </div>
             <div className="mt-3">
               <span className="text-sm">除外する楽曲種別</span>
-              <div className="mt-2 grid grid-cols-2 gap-2 text-sm sm:grid-cols-3">
+              <div className={`mt-2 grid grid-cols-2 gap-2 text-sm sm:grid-cols-3 ${draftFilters.enabled ? '' : 'opacity-50'}`}>
                 {SONG_TYPES.map(songType => (
                   <label key={songType} className="flex items-center gap-1">
                     <input
@@ -168,7 +184,7 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                         ? [...draftFilters.excludedSongTypes, songType]
                         : draftFilters.excludedSongTypes.filter(type => type !== songType))}
                     />
-                    {songType}
+                    {SONG_TYPE_LABELS[songType]} <span className="opacity-60">({songType})</span>
                   </label>
                 ))}
               </div>

@@ -8,17 +8,94 @@ export interface DiscoveryFilterContext {
   now?: number;
 }
 
-function meetsMinimumViews(minimum: number, value: number | undefined): boolean {
-  if (minimum <= 0) return true;
-  return value !== undefined && Number.isFinite(value) && value >= minimum;
+export type SongFilterRejectionReason =
+  | 'disabled'
+  | 'excluded-song-type'
+  | 'youtube-views-missing'
+  | 'youtube-views-below-minimum'
+  | 'nico-views-missing'
+  | 'nico-views-below-minimum'
+  | 'rated-song'
+  | 'cooldown';
+
+export interface SongFilterDecision {
+  accepted: boolean;
+  reason?: SongFilterRejectionReason;
+}
+
+export const SONG_TYPE_LABELS: Record<SongType, string> = {
+  Original: 'オリジナル',
+  Remaster: 'リマスター',
+  Remix: 'リミックス',
+  Cover: 'カバー',
+  Arrangement: 'アレンジ',
+  Instrumental: 'インスト',
+  Mashup: 'マッシュアップ',
+  MusicPV: '音楽PV',
+  DramaPV: 'ドラマPV',
+  Other: 'その他',
+  Unspecified: '未分類',
+};
+
+/** 再生数・曲種フィルターに条件が入力されているか。クールダウン等は含めない。 */
+export function hasConfiguredSongFilters(settings: GlobalFilterSettings): boolean {
+  return settings.minYoutubeViews > 0
+    || settings.minNicoViews > 0
+    || settings.excludedSongTypes.length > 0;
+}
+
+/** 現在、再生数・曲種フィルターが実際に表示結果へ適用されているか。 */
+export function isGlobalSongFilterActive(settings: GlobalFilterSettings): boolean {
+  return settings.enabled && hasConfiguredSongFilters(settings);
+}
+
+export function getGlobalFilterSummary(settings: GlobalFilterSettings): string[] {
+  if (!isGlobalSongFilterActive(settings)) return [];
+  const summary: string[] = [];
+  if (settings.minYoutubeViews > 0) summary.push(`YouTube ${settings.minYoutubeViews.toLocaleString()}以上`);
+  if (settings.minNicoViews > 0) summary.push(`ニコニコ ${settings.minNicoViews.toLocaleString()}以上`);
+  if (settings.excludedSongTypes.length > 0) {
+    summary.push(`${settings.excludedSongTypes.map(type => SONG_TYPE_LABELS[type]).join('・')}を除外`);
+  }
+  return summary;
+}
+
+function meetsMinimumViews(
+  minimum: number,
+  value: number | undefined,
+  missingReason: SongFilterRejectionReason,
+  belowMinimumReason: SongFilterRejectionReason,
+): SongFilterRejectionReason | undefined {
+  if (minimum <= 0) return undefined;
+  if (value === undefined || !Number.isFinite(value)) return missingReason;
+  if (value < minimum) return belowMinimumReason;
+  return undefined;
+}
+
+export function getGlobalSongFilterDecision(song: Song, settings: GlobalFilterSettings): SongFilterDecision {
+  if (!settings.enabled) return { accepted: true };
+  if (settings.excludedSongTypes.includes(song.songType)) {
+    return { accepted: false, reason: 'excluded-song-type' };
+  }
+  const youtubeReason = meetsMinimumViews(
+    settings.minYoutubeViews,
+    song.youtubeViews,
+    'youtube-views-missing',
+    'youtube-views-below-minimum',
+  );
+  if (youtubeReason) return { accepted: false, reason: youtubeReason };
+  const nicoReason = meetsMinimumViews(
+    settings.minNicoViews,
+    song.nicoViews,
+    'nico-views-missing',
+    'nico-views-below-minimum',
+  );
+  if (nicoReason) return { accepted: false, reason: nicoReason };
+  return { accepted: true };
 }
 
 export function matchesGlobalSongFilter(song: Song, settings: GlobalFilterSettings): boolean {
-  if (!settings.enabled) return true;
-  if (settings.excludedSongTypes.includes(song.songType)) return false;
-  if (!meetsMinimumViews(settings.minYoutubeViews, song.youtubeViews)) return false;
-  if (!meetsMinimumViews(settings.minNicoViews, song.nicoViews)) return false;
-  return true;
+  return getGlobalSongFilterDecision(song, settings).accepted;
 }
 
 export function applyGlobalSongFilter(songs: Song[], settings: GlobalFilterSettings): Song[] {

@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
+import { useShallow } from 'zustand/react/shallow';
 import { useUiStore } from '../../stores/uiStore';
 import { usePlayerStore } from '../../stores/playerStore';
 import { useSearchStore } from '../../stores/searchStore';
@@ -11,6 +12,8 @@ import {
   type SearchSuggestion,
 } from '../../api/vocadb';
 import SettingsModal from '../settings/SettingsModal';
+import { useGlobalFilterStore } from '../../stores/globalFilterStore';
+import { getGlobalFilterSummary, isGlobalSongFilterActive } from '../../utils/globalFilters';
 
 const SEARCH_HISTORY_KEY = 'divaSearchHistory';
 const MAX_SEARCH_HISTORY = 10;
@@ -70,6 +73,14 @@ export default function TopNav() {
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [recentSearches, setRecentSearches] = useState<string[]>(() => readSearchHistory());
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const globalFilterSettings = useGlobalFilterStore(useShallow(state => ({
+    enabled: state.enabled,
+    minYoutubeViews: state.minYoutubeViews,
+    minNicoViews: state.minNicoViews,
+    excludedSongTypes: state.excludedSongTypes,
+    cooldownHours: state.cooldownHours,
+    excludeRatedFromDiscovery: state.excludeRatedFromDiscovery,
+  })));
   const searchInputRef = useRef<HTMLInputElement>(null);
   const searchFormRef = useRef<HTMLFormElement>(null);
   const showRecentSearches = showSuggestions && searchQuery.trim().length === 0 && recentSearches.length > 0;
@@ -535,6 +546,18 @@ export default function TopNav() {
               </span>
             )}
           </button>
+
+          {isGlobalSongFilterActive(globalFilterSettings) && (
+            <button
+              type="button"
+              className="hidden max-w-48 truncate rounded-full px-2 py-1 text-[10px] font-semibold sm:inline"
+              style={{ background: 'rgba(34, 211, 238, 0.12)', color: 'var(--color-accent-cyan)' }}
+              title={`適用中: ${getGlobalFilterSummary(globalFilterSettings).join(' / ')}`}
+              onClick={() => setSettingsOpen(true)}
+            >
+              フィルター中
+            </button>
+          )}
 
           <button
             onClick={() => setSettingsOpen(true)}

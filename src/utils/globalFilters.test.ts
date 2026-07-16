@@ -1,7 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import type { Song } from '../types/vocadb';
 import { DEFAULT_GLOBAL_FILTER_SETTINGS } from '../stores/globalFilterStore';
-import { applyDiscoveryFilter, applyGlobalSongFilter, matchesGlobalSongFilter } from './globalFilters';
+import {
+  applyDiscoveryFilter,
+  applyGlobalSongFilter,
+  getGlobalFilterSummary,
+  getGlobalSongFilterDecision,
+  hasConfiguredSongFilters,
+  isGlobalSongFilterActive,
+  matchesGlobalSongFilter,
+} from './globalFilters';
 
 function song(overrides: Partial<Song> = {}): Song {
   return {
@@ -38,6 +46,22 @@ describe('global filters', () => {
     const settings = { ...DEFAULT_GLOBAL_FILTER_SETTINGS, enabled: true, excludedSongTypes: ['Remix' as const] };
     expect(matchesGlobalSongFilter(song({ songType: 'Remix' }), settings)).toBe(false);
     expect(matchesGlobalSongFilter(song({ songType: 'Original' }), settings)).toBe(true);
+  });
+
+  it('reports configured and active states separately', () => {
+    const configured = { ...DEFAULT_GLOBAL_FILTER_SETTINGS, excludedSongTypes: ['Cover' as const] };
+    expect(hasConfiguredSongFilters(configured)).toBe(true);
+    expect(isGlobalSongFilterActive(configured)).toBe(false);
+    expect(isGlobalSongFilterActive({ ...configured, enabled: true })).toBe(true);
+    expect(getGlobalFilterSummary({ ...configured, enabled: true })).toEqual(['カバーを除外']);
+  });
+
+  it('returns a typed rejection reason for each view threshold', () => {
+    const settings = { ...DEFAULT_GLOBAL_FILTER_SETTINGS, enabled: true, minYoutubeViews: 100, minNicoViews: 50 };
+    expect(getGlobalSongFilterDecision(song(), settings)).toEqual({ accepted: false, reason: 'youtube-views-missing' });
+    expect(getGlobalSongFilterDecision(song({ youtubeViews: 99, nicoViews: 100 }), settings)).toEqual({ accepted: false, reason: 'youtube-views-below-minimum' });
+    expect(getGlobalSongFilterDecision(song({ youtubeViews: 100 }), settings)).toEqual({ accepted: false, reason: 'nico-views-missing' });
+    expect(getGlobalSongFilterDecision(song({ youtubeViews: 100, nicoViews: 50 }), settings)).toEqual({ accepted: true });
   });
 
   it('applies rating and cooldown only to discovery candidates', () => {
