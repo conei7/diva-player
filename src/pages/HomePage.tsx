@@ -267,6 +267,7 @@ export default function HomePage() {
       }
 
       if (requestId !== requestIdRef.current) return;
+      const fetchedCount = result.length;
       if (!query && !artistIdParam && category !== 'recommended') {
         result = rerankDisplayedSongs(result, rankingSeedRef.current);
       }
@@ -285,7 +286,7 @@ export default function HomePage() {
           return [...prev, ...newSongs];
         });
       }
-      setHasMore(result.length >= PAGE_SIZE);
+      setHasMore(fetchedCount >= PAGE_SIZE);
     } catch (error) {
       if (requestId !== requestIdRef.current) return;
       console.error('Failed to fetch songs:', error);

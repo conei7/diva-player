@@ -113,7 +113,7 @@ export default function NowPlayingPage() {
       recommend: {
         items:   page === 0 ? fresh : [...prev.recommend.items, ...fresh],
         loading: false,
-        hasMore: songs.length >= PAGE_SIZE,
+        hasMore: recommendedRaw.length >= PAGE_SIZE,
         page:    page + 1,
       },
     }));
@@ -140,7 +140,7 @@ export default function NowPlayingPage() {
       related: {
         items:   page === 0 ? fresh : [...prev.related.items, ...fresh],
         loading: false,
-        hasMore: songs.length >= PAGE_SIZE,
+        hasMore: relatedRaw.length >= PAGE_SIZE,
         page:    page + 1,
       },
     }));
@@ -167,7 +167,7 @@ export default function NowPlayingPage() {
       deepdig: {
         items:   page === 0 ? fresh : [...prev.deepdig.items, ...fresh],
         loading: false,
-        hasMore: songs.length >= PAGE_SIZE,
+        hasMore: deepRaw.length >= PAGE_SIZE,
         page:    page + 1,
       },
     }));
@@ -199,6 +199,22 @@ export default function NowPlayingPage() {
     );
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentSong?.id]);
+
+  useEffect(() => {
+    if (!currentSong) return;
+    seenRecommendRef.current = new Set([currentSong.id]);
+    seenRelatedRef.current = new Set([currentSong.id]);
+    seenDeepdigRef.current = new Set([currentSong.id]);
+    setTabs({
+      recommend: { items: [], loading: true, hasMore: true, page: 0 },
+      related: { items: [], loading: true, hasMore: true, page: 0 },
+      deepdig: { items: [], loading: true, hasMore: true, page: 0 },
+    });
+    fetchRecommend(currentSong, 0).catch(() => undefined);
+    fetchRelated(currentSong, 0).catch(() => undefined);
+    fetchDeepdig(currentSong, 0).catch(() => undefined);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [globalFilterSettings]);
 
   const loadMore = useCallback(() => {
     if (!currentSong) return;

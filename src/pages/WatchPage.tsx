@@ -196,6 +196,27 @@ export default function WatchPage() {
 
   // --- フェッチ関数 ---
 
+  useEffect(() => {
+    if (!song || !songId || loadingFromUrlRef.current) return;
+    setTabs({
+      producer: { items: [], loading: true, hasMore: true, page: 0 },
+      related: { items: [], loading: true, hasMore: true, page: 0 },
+      recommended: { items: [], loading: true, hasMore: true, page: 0 },
+      deep: { items: [], loading: true, hasMore: true, page: 0 },
+    });
+    seenSets.current = {
+      producer: new Set([song.id]),
+      related: new Set([song.id]),
+      recommended: new Set([song.id]),
+      deep: new Set([song.id]),
+    };
+    fetchProducer(song, 0);
+    fetchRelated(song, 0);
+    fetchRecommended(song, 0);
+    fetchDeep(song, 0);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [globalFilterSettings]);
+
   const fetchProducer = useCallback(async (s: Song, page: number) => {
     try {
       const producerIds = (s.artists ?? [])
@@ -216,7 +237,7 @@ export default function WatchPage() {
         producer: {
           items: page === 0 ? fresh : [...prev.producer.items, ...fresh],
           loading: false,
-          hasMore: items.length >= PAGE_SIZE,
+          hasMore: producerSongs.length >= PAGE_SIZE,
           page: page + 1,
         },
       }));
@@ -241,7 +262,7 @@ export default function WatchPage() {
         related: {
           items: page === 0 ? fresh : [...prev.related.items, ...fresh],
           loading: false,
-          hasMore: items.length >= PAGE_SIZE,
+          hasMore: relatedSongs.length >= PAGE_SIZE * 2,
           page: page + 1,
         },
       }));
@@ -302,7 +323,7 @@ export default function WatchPage() {
           items: page === 0 ? fresh : [...prev.recommended.items, ...fresh],
           reasons: page === 0 ? reasons : { ...prev.recommended.reasons, ...reasons },
           loading: false,
-          hasMore: items.length >= PAGE_SIZE,
+          hasMore: hybridRaw.length >= PAGE_SIZE * 2 || audioRaw.length >= PAGE_SIZE,
           page: page + 1,
         },
       }));
@@ -326,7 +347,7 @@ export default function WatchPage() {
         deep: {
           items: page === 0 ? fresh : [...prev.deep.items, ...fresh],
           loading: false,
-          hasMore: items.length >= PAGE_SIZE,
+          hasMore: deepSongs.length >= PAGE_SIZE,
           page: page + 1,
         },
       }));
