@@ -466,6 +466,19 @@ export async function searchProducersByName(query: string, maxResults = 8): Prom
 }
 
 /**
+ * Resolve a producer entered in the dedicated producer-search mode.
+ *
+ * VocaDB sorts prefix matches by song count, so the exact match is not
+ * necessarily the first API result (for example, "MIMI" may be preceded by
+ * another producer). Fetch enough candidates before applying our exact-name
+ * ranking instead of asking the API for a single result.
+ */
+export async function resolveProducerByName(query: string): Promise<Artist | null> {
+  const producers = await searchProducersByName(query, 20);
+  return producers[0] ?? null;
+}
+
+/**
  * 検索バー用サジェスト候補を取得する。
  * 曲名、P/サークル/バンド、シンガーを並行取得し、UI側でそのまま選べる形にする。
  */
