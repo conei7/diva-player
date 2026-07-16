@@ -8,6 +8,7 @@
  */
 
 import type { AlbumSummary, Artist, ArtistSearchResult, Song, SongSearchParams, SongSearchResult } from '../types/vocadb';
+import type { GlobalFilterSettings } from '../stores/globalFilterStore';
 
 const BASE_URL = 'https://vocadb.net/api';
 const RECOMMENDER_API = import.meta.env.VITE_RECOMMENDER_API || '/backend-api';
@@ -289,6 +290,7 @@ export async function getTrendingSongs(
   start = 0,
   mode: 'growth' | 'surge' | 'recent' = 'growth',
   seed = 0,
+  globalFilters?: GlobalFilterSettings,
 ): Promise<Song[]> {
   const params = new URLSearchParams({
     days: String(days),
@@ -297,6 +299,17 @@ export async function getTrendingSongs(
     mode,
     seed: String(Math.max(0, Math.floor(seed)) % 64),
   });
+  if (globalFilters?.enabled) {
+    if (globalFilters.minYoutubeViews > 0) {
+      params.set('minYoutubeViews', String(globalFilters.minYoutubeViews));
+    }
+    if (globalFilters.minNicoViews > 0) {
+      params.set('minNicoViews', String(globalFilters.minNicoViews));
+    }
+    if (globalFilters.excludedSongTypes.length > 0) {
+      params.set('excludeSongTypes', globalFilters.excludedSongTypes.join(','));
+    }
+  }
   const url = `${RECOMMENDER_API}/api/songs/trending?${params}`;
   const cacheKey = `trending:${url}`;
 

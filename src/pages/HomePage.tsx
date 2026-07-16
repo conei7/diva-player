@@ -221,17 +221,17 @@ export default function HomePage() {
       } else {
         switch (category) {
           case 'popular': {
-            result = await getTrendingSongs(30, PAGE_SIZE, pageNum * PAGE_SIZE, 'growth', rankingSeedRef.current);
+            result = await getTrendingSongs(30, PAGE_SIZE, pageNum * PAGE_SIZE, 'growth', rankingSeedRef.current, globalFilterSettings);
             break;
           }
           case 'recommended':
             result = await fetchRecommendedHomeSongs(pageNum);
             break;
           case 'trending':
-            result = await getTrendingSongs(7, PAGE_SIZE, pageNum * PAGE_SIZE, 'surge', rankingSeedRef.current);
+            result = await getTrendingSongs(7, PAGE_SIZE, pageNum * PAGE_SIZE, 'surge', rankingSeedRef.current, globalFilterSettings);
             break;
           case 'recent': {
-            result = await getTrendingSongs(30, PAGE_SIZE, pageNum * PAGE_SIZE, 'recent', rankingSeedRef.current);
+            result = await getTrendingSongs(30, PAGE_SIZE, pageNum * PAGE_SIZE, 'recent', rankingSeedRef.current, globalFilterSettings);
             break;
           }
           case 'deep': {

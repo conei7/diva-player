@@ -310,9 +310,34 @@ app.MapGet("/api/songs/trending", async (
     string? ranking,
     int? seed,
     bool? debug,
+    long? minYoutubeViews,
+    long? minNicoViews,
+    string? excludeSongTypes,
     DbService db) =>
 {
-    var itemsJson = await db.GetTrendingSongsJsonAsync(days ?? 30, start ?? 0, maxResults ?? 24, mode, ranking, seed ?? 0, debug ?? false);
+    if (minYoutubeViews is < 0 || minNicoViews is < 0)
+        return Results.BadRequest(new { error = "view thresholds must be non-negative" });
+
+    var excludedTypes = ParseCsv(excludeSongTypes);
+    var validSongTypes = new HashSet<string>(StringComparer.Ordinal)
+    {
+        "Original", "Remaster", "Remix", "Cover", "Arrangement", "Instrumental",
+        "Mashup", "MusicPV", "DramaPV", "Other", "Unspecified",
+    };
+    if (excludedTypes.Any(type => !validSongTypes.Contains(type)))
+        return Results.BadRequest(new { error = "unknown song type" });
+
+    var itemsJson = await db.GetTrendingSongsJsonAsync(
+        days ?? 30,
+        start ?? 0,
+        maxResults ?? 24,
+        mode,
+        ranking,
+        seed ?? 0,
+        debug ?? false,
+        minYoutubeViews,
+        minNicoViews,
+        excludedTypes);
     var json = $$"""
     {
       "items": {{itemsJson}},

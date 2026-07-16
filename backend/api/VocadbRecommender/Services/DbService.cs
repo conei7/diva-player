@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Caching.Memory;
 using Npgsql;
+using NpgsqlTypes;
 using System.Diagnostics;
 
 namespace VocadbRecommender.Services;
@@ -404,7 +405,7 @@ public class DbService
         return result;
     }
 
-    public async Task<string> GetTrendingSongsJsonAsync(int days, int start, int maxResults, string? mode = null, string? ranking = null, int seed = 0, bool debug = false)
+    public async Task<string> GetTrendingSongsJsonAsync(int days, int start, int maxResults, string? mode = null, string? ranking = null, int seed = 0, bool debug = false, long? minYoutubeViews = null, long? minNicoViews = null, IReadOnlyCollection<string>? excludedSongTypes = null)
     {
         var clampedDays = Math.Clamp(days, 1, 365);
         var normalizedStart = Math.Max(0, start);
@@ -412,7 +413,10 @@ public class DbService
         var normalizedMode = mode is "surge" or "recent" ? mode : "growth";
         var normalizedRanking = ranking == "legacy" ? "legacy" : "quality";
         var normalizedSeed = Math.Clamp(seed, 0, 63);
-        var cacheKey = $"trending:{normalizedMode}:{normalizedRanking}:{normalizedSeed}:{debug}:{clampedDays}:{normalizedStart}:{clampedMaxResults}";
+        var normalizedExcludedTypes = (excludedSongTypes ?? []).Where(type => !string.IsNullOrWhiteSpace(type)).Distinct(StringComparer.Ordinal).Order().ToArray();
+        var normalizedMinYoutube = minYoutubeViews is > 0 ? minYoutubeViews.Value : 0;
+        var normalizedMinNico = minNicoViews is > 0 ? minNicoViews.Value : 0;
+        var cacheKey = $"trending:{normalizedMode}:{normalizedRanking}:{normalizedSeed}:{debug}:{clampedDays}:{normalizedStart}:{clampedMaxResults}:{normalizedMinYoutube}:{normalizedMinNico}:{string.Join(',', normalizedExcludedTypes)}";
         if (_cache.TryGetValue(cacheKey, out string? cached))
             return cached!;
 
@@ -440,6 +444,12 @@ public class DbService
         var debugFields = debug && normalizedMode == "surge"
             ? ", 'qualityScore', g.quality_score, 'surgeRankScore', g.surge_rank_score, 'qualityReasons', to_jsonb(g.quality_reasons)"
             : string.Empty;
+        var filterConditions = new List<string>();
+        var nextFilterParameter = 5;
+        if (normalizedMinYoutube > 0) filterConditions.Add($"COALESCE(s.youtube_views, 0) >= ${nextFilterParameter++}");
+        if (normalizedMinNico > 0) filterConditions.Add($"COALESCE(s.nico_views, 0) >= ${nextFilterParameter++}");
+        if (normalizedExcludedTypes.Length > 0) filterConditions.Add($"s.song_type <> ALL(${nextFilterParameter})");
+        var globalFilterCondition = filterConditions.Count > 0 ? "AND " + string.Join(" AND ", filterConditions) : string.Empty;
 
         using var conn = Open();
         await using var cmd = new NpgsqlCommand($@"
@@ -605,6 +615,7 @@ public class DbService
             FROM {sourceTable} g
             JOIN songs s ON s.id = g.song_id
             WHERE {minimumCondition}
+              {globalFilterCondition}
               AND EXISTS (
                   SELECT 1
                   FROM song_artists sa
@@ -627,6 +638,9 @@ public class DbService
         cmd.Parameters.AddWithValue(normalizedStart);
         cmd.Parameters.AddWithValue(clampedMaxResults);
         cmd.Parameters.AddWithValue(normalizedSeed);
+        if (normalizedMinYoutube > 0) cmd.Parameters.AddWithValue(normalizedMinYoutube);
+        if (normalizedMinNico > 0) cmd.Parameters.AddWithValue(normalizedMinNico);
+        if (normalizedExcludedTypes.Length > 0) cmd.Parameters.Add(new NpgsqlParameter { Value = normalizedExcludedTypes, NpgsqlDbType = NpgsqlDbType.Array | NpgsqlDbType.Text });
 
         var items = new List<string>();
         await using var reader = await cmd.ExecuteReaderAsync();
