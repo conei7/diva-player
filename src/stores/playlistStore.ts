@@ -254,6 +254,7 @@ export const usePlaylistStore = create<PlaylistState>((set, get) => ({
       const existingIds = new Set(p.songs.map(s => s.id));
       const newSongs = songs.filter(s => {
         if (existingIds.has(s.id)) { duplicates++; return false; }
+        existingIds.add(s.id);
         added++;
         return true;
       });

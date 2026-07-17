@@ -3,6 +3,7 @@ import { useEffect, useRef, useCallback } from 'react';
 import { usePlayerStore } from '../../stores/playerStore';
 import { useProgressStore } from '../../stores/progressStore';
 import { createPlaybackOwnership } from '../../services/playbackOwnership';
+import { createPlaybackAttemptController } from '../../services/playbackAttempt';
 import { createNicoProgressTracker, parseNicoPlayerMessage } from '../../services/nicoPlayerSync';
 
 /**
@@ -184,8 +185,13 @@ export default function PlayerEmbed() {
   const ytPlayerRef = useRef<YT.Player | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const progressTimerRef = useRef<number | null>(null);
-  const lastPVIdRef = useRef<string | null>(null);
+  const attemptControllerRef = useRef(createPlaybackAttemptController());
+  const volumeRef = useRef(volume);
   const ownershipRef = useRef<ReturnType<typeof createPlaybackOwnership> | null>(null);
+
+  useEffect(() => {
+    volumeRef.current = volume;
+  }, [volume]);
 
   useEffect(() => {
     const ownership = createPlaybackOwnership();
@@ -231,94 +237,116 @@ export default function PlayerEmbed() {
 
   // YouTube プレイヤー初期化/更新
   useEffect(() => {
+    const attemptController = attemptControllerRef.current;
+    const playerContainer = containerRef.current;
+    attemptController.cancel();
+
     if (!currentPV || currentPV.service !== 'Youtube') {
       // YouTube以外の場合、YTプレイヤーをクリーンアップ
       if (ytPlayerRef.current) {
         ytPlayerRef.current.destroy();
         ytPlayerRef.current = null;
       }
+      if (playerContainer) playerContainer.innerHTML = '';
       stopProgressTimer();
       return;
     }
 
     const pvId = currentPV.pvId;
-    if (lastPVIdRef.current === pvId) return;
-    lastPVIdRef.current = pvId;
+    let player: YT.Player | null = null;
+    const attempt = attemptController.start(pvId, () => {
+      handleFailure('YouTube動画の準備がタイムアウトしました');
+    });
 
-    const initPlayer = async () => {
-      await loadYouTubeAPI();
-      
-      // 既存プレイヤーの破棄
-      if (ytPlayerRef.current) {
+    const handleFailure = (message: string) => {
+      if (!attemptController.isCurrent(attempt)) return;
+      attemptController.cancel();
+      stopProgressTimer();
+      setIsPlaying(false);
+      setError(message);
+      if (ytPlayerRef.current === player && ytPlayerRef.current) {
         ytPlayerRef.current.destroy();
         ytPlayerRef.current = null;
       }
-
-      if (!containerRef.current) return;
-
-      // div要素を再作成（YT APIが要素を置き換えるため）
-      const playerDiv = document.createElement('div');
-      playerDiv.id = 'yt-player-embed';
-      containerRef.current.innerHTML = '';
-      containerRef.current.appendChild(playerDiv);
-
-      ytPlayerRef.current = new window.YT.Player('yt-player-embed', {
-        videoId: pvId,
-        width: '100%',
-        height: '100%',
-        playerVars: {
-          autoplay: 1,
-          // mute: 1 でミュート自動再生を許可し、onReady でアンミュートする。
-          // これにより Chrome の Autoplay Policy (クロスオリジン iframe 制限) を回避できる。
-          mute: 1,
-          controls: 1,
-          origin: window.location.origin,
-        },
-        events: {
-          onReady: (event: YT.PlayerEvent) => {
-            // ミュート解除して指定ボリュームを設定してから再生開始
-            event.target.unMute();
-            event.target.setVolume(volume);
-            if (usePlayerStore.getState().isPlaying) event.target.playVideo();
-            const dur = event.target.getDuration();
-            if (dur > 0) setDuration(dur);
-            startProgressTimer();
-          },
-          onStateChange: (event: YT.OnStateChangeEvent) => {
-            switch (event.data) {
-              case window.YT.PlayerState.PLAYING: {
-                setIsPlaying(true);
-                const dur = event.target.getDuration();
-                if (dur > 0) setDuration(dur);
-                startProgressTimer();
-                break;
-              }
-              case window.YT.PlayerState.PAUSED:
-                setIsPlaying(false);
-                stopProgressTimer();
-                break;
-              case window.YT.PlayerState.ENDED:
-                stopProgressTimer();
-                next();
-                break;
-            }
-          },
-          onError: () => {
-            setError('YouTube動画の再生中にエラーが発生しました');
-            stopProgressTimer();
-            // YouTube再生失敗時: 同じ曲の次のPV（NicoNico等）を試みる
-            setTimeout(() => tryNextPV(), 1000);
-          },
-        },
-      });
+      if (containerRef.current) containerRef.current.innerHTML = '';
+      tryNextPV();
     };
 
-    initPlayer();
+    const initPlayer = async () => {
+      try {
+        await loadYouTubeAPI();
+        if (!attemptController.isCurrent(attempt) || !playerContainer) return;
+
+        // div要素を再作成（YT APIが要素を置き換えるため）
+        const playerDiv = document.createElement('div');
+        playerDiv.id = 'yt-player-embed';
+        playerContainer.innerHTML = '';
+        playerContainer.appendChild(playerDiv);
+
+        player = new window.YT.Player('yt-player-embed', {
+          videoId: pvId,
+          width: '100%',
+          height: '100%',
+          playerVars: {
+            autoplay: 1,
+            // mute: 1 でミュート自動再生を許可し、onReady でアンミュートする。
+            mute: 1,
+            controls: 1,
+            origin: window.location.origin,
+          },
+          events: {
+            onReady: (event: YT.PlayerEvent) => {
+              if (!attemptController.isCurrent(attempt)) return;
+              attemptController.complete(attempt);
+              event.target.unMute();
+              event.target.setVolume(volumeRef.current);
+              if (usePlayerStore.getState().isPlaying) event.target.playVideo();
+              const dur = event.target.getDuration();
+              if (dur > 0) setDuration(dur);
+              startProgressTimer();
+            },
+            onStateChange: (event: YT.OnStateChangeEvent) => {
+              if (!attemptController.isCurrent(attempt)) return;
+              switch (event.data) {
+                case window.YT.PlayerState.PLAYING: {
+                  attemptController.complete(attempt);
+                  setIsPlaying(true);
+                  const dur = event.target.getDuration();
+                  if (dur > 0) setDuration(dur);
+                  startProgressTimer();
+                  break;
+                }
+                case window.YT.PlayerState.PAUSED:
+                  setIsPlaying(false);
+                  stopProgressTimer();
+                  break;
+                case window.YT.PlayerState.ENDED:
+                  stopProgressTimer();
+                  next();
+                  break;
+              }
+            },
+            onError: () => handleFailure('YouTube動画の再生中にエラーが発生しました'),
+          },
+        });
+        ytPlayerRef.current = player;
+      } catch {
+        handleFailure('YouTube動画の準備に失敗しました');
+      }
+    };
+
+    void initPlayer();
 
     return () => {
+      attemptController.cancel();
       stopProgressTimer();
+      if (ytPlayerRef.current === player && ytPlayerRef.current) {
+        ytPlayerRef.current.destroy();
+        ytPlayerRef.current = null;
+      }
+      if (playerContainer) playerContainer.innerHTML = '';
     };
-  }, [currentPV, volume, setDuration, setIsPlaying, setError, next, tryNextPV, startProgressTimer, stopProgressTimer]);
+  }, [currentPV, setDuration, setIsPlaying, setError, next, tryNextPV, startProgressTimer, stopProgressTimer]);
 
   // 再生/一時停止の同期
   useEffect(() => {
@@ -359,7 +387,7 @@ export default function PlayerEmbed() {
 
   // ニコニコ動画の埋め込み
   if (currentPV?.service === 'NicoNicoDouga') {
-    return <NicoEmbed pvId={currentPV.pvId} name={currentPV.name} duration={currentSong?.lengthSeconds} isPlaying={isPlaying} />;
+    return <NicoEmbed key={currentPV.pvId} pvId={currentPV.pvId} name={currentPV.name} duration={currentSong?.lengthSeconds} isPlaying={isPlaying} />;
   }
 
   // YouTube プレイヤーコンテナ
