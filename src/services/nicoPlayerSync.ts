@@ -5,6 +5,18 @@ export type NicoPlayerEvent =
   | { type: 'paused' }
   | { type: 'ended' };
 
+export function normalizeNicoVolume(volume: number): number {
+  if (!Number.isFinite(volume)) return 0;
+  return Math.max(0, Math.min(1, volume / 100));
+}
+
+export function createNicoVolumeMessage(volume: number): string {
+  return JSON.stringify({
+    eventName: 'player:volume',
+    data: { volume: normalizeNicoVolume(volume) },
+  });
+}
+
 export function parseNicoPlayerMessage(data: unknown): NicoPlayerEvent | null {
   let message: { eventName?: string; data?: Record<string, unknown> };
   try {

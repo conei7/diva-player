@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createNicoProgressTracker, normalizeNicoProgress, parseNicoPlayerMessage } from './nicoPlayerSync';
+import { createNicoProgressTracker, createNicoVolumeMessage, normalizeNicoProgress, normalizeNicoVolume, parseNicoPlayerMessage } from './nicoPlayerSync';
 
 describe('nico player synchronization', () => {
   it('parses current time in seconds and legacy milliseconds', () => {
@@ -29,5 +29,15 @@ describe('nico player synchronization', () => {
   it('clamps progress to valid bounds', () => {
     expect(normalizeNicoProgress(-1, 120)).toBe(0);
     expect(normalizeNicoProgress(200, 120)).toBe(120);
+  });
+
+  it('normalizes and serializes volume for the Nico iframe API', () => {
+    expect(normalizeNicoVolume(35)).toBeCloseTo(0.35);
+    expect(normalizeNicoVolume(-10)).toBe(0);
+    expect(normalizeNicoVolume(150)).toBe(1);
+    expect(JSON.parse(createNicoVolumeMessage(35))).toEqual({
+      eventName: 'player:volume',
+      data: { volume: 0.35 },
+    });
   });
 });

@@ -4,7 +4,7 @@ import { usePlayerStore } from '../../stores/playerStore';
 import { useProgressStore } from '../../stores/progressStore';
 import { createPlaybackOwnership } from '../../services/playbackOwnership';
 import { createPlaybackAttemptController } from '../../services/playbackAttempt';
-import { createNicoProgressTracker, parseNicoPlayerMessage } from '../../services/nicoPlayerSync';
+import { createNicoProgressTracker, createNicoVolumeMessage, parseNicoPlayerMessage } from '../../services/nicoPlayerSync';
 
 /**
  * PlayerEmbed - YouTube / ニコニコ動画の埋め込みプレイヤー
@@ -40,7 +40,25 @@ function NicoEmbed({ pvId, name, duration: songDuration, isPlaying }: { pvId: st
   const NICO_ORIGIN = 'https://embed.nicovideo.jp';
 
   const timerRef = useRef<number | null>(null);
+  const volumeRetryRef = useRef<number | null>(null);
+  const playTimerRef = useRef<number | null>(null);
   const trackerRef = useRef(createNicoProgressTracker());
+
+  const sendVolume = useCallback(() => {
+    iframeRef.current?.contentWindow?.postMessage(
+      createNicoVolumeMessage(volume),
+      NICO_ORIGIN,
+    );
+  }, [volume]);
+
+  const scheduleVolumeSync = useCallback(() => {
+    sendVolume();
+    if (volumeRetryRef.current !== null) window.clearTimeout(volumeRetryRef.current);
+    volumeRetryRef.current = window.setTimeout(() => {
+      volumeRetryRef.current = null;
+      sendVolume();
+    }, 500);
+  }, [sendVolume]);
 
   const stopTimer = useCallback(() => {
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
@@ -60,21 +78,30 @@ function NicoEmbed({ pvId, name, duration: songDuration, isPlaying }: { pvId: st
     trackerRef.current.reset();
     trackerRef.current.setDuration(songDuration);
     if (songDuration && songDuration > 0) setDuration(songDuration);
-    return () => stopTimer();
+    return () => {
+      stopTimer();
+      if (volumeRetryRef.current !== null) window.clearTimeout(volumeRetryRef.current);
+      if (playTimerRef.current !== null) window.clearTimeout(playTimerRef.current);
+      volumeRetryRef.current = null;
+      playTimerRef.current = null;
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pvId]);
 
   // iframeロード後にニコニコへ再生コマンドを送信し、タイマーも開始
   const handleIframeLoad = useCallback(() => {
     if (songDuration && songDuration > 0) setDuration(songDuration);
-    setTimeout(() => {
+    scheduleVolumeSync();
+    if (playTimerRef.current !== null) window.clearTimeout(playTimerRef.current);
+    playTimerRef.current = window.setTimeout(() => {
+      playTimerRef.current = null;
       if (!isPlaying) return;
       iframeRef.current?.contentWindow?.postMessage(
         JSON.stringify({ eventName: 'player:play' }),
         NICO_ORIGIN,
       );
     }, 1000);
-  }, [isPlaying, setDuration, songDuration]);
+  }, [isPlaying, scheduleVolumeSync, setDuration, songDuration]);
 
   useEffect(() => {
     iframeRef.current?.contentWindow?.postMessage(
@@ -124,13 +151,10 @@ function NicoEmbed({ pvId, name, duration: songDuration, isPlaying }: { pvId: st
     return () => window.removeEventListener('message', handler);
   }, [setProgress, setDuration, setIsPlaying, next, startTimer, stopTimer]);
 
-  // ボリューム同期
+  // ボリューム同期。iframeロード前に送ったメッセージを補うため遅延再送する。
   useEffect(() => {
-    iframeRef.current?.contentWindow?.postMessage(
-      JSON.stringify({ eventName: 'player:volume', data: { volume: volume / 100 } }),
-      NICO_ORIGIN,
-    );
-  }, [volume]);
+    scheduleVolumeSync();
+  }, [scheduleVolumeSync]);
 
   return (
     <iframe
