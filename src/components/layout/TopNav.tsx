@@ -559,6 +559,20 @@ export default function TopNav() {
             </button>
           )}
 
+          <Link
+            to="/playlists"
+            className="h-8 rounded-full px-2 flex items-center justify-center gap-1.5 transition-colors"
+            style={{ background: 'rgba(255,255,255,0.07)', color: 'var(--color-text-secondary)' }}
+            title="プレイリスト"
+            aria-label="プレイリスト"
+          >
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M4 6h12M4 10h12M4 14h7" />
+              <path d="M17 14v6m-3-3h6" />
+            </svg>
+            <span className="hidden sm:inline text-[11px] font-semibold whitespace-nowrap">プレイリスト</span>
+          </Link>
+
           <button
             onClick={() => setSettingsOpen(true)}
             className="h-8 rounded-full px-2 flex items-center justify-center gap-1.5 overflow-hidden"
