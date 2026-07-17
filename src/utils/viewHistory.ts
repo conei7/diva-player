@@ -126,7 +126,7 @@ export function normalizeViewHistory(history: unknown[]): ViewHistoryData[] {
       const current = sorted[index][service];
       if (current === null) continue;
       const next = sorted[index + 1]?.[service] ?? null;
-      if (previous === null && current === 0) {
+      if (previous === null && current === 0 && !sorted[index].baseline) {
         sorted[index][service] = null;
         continue;
       }

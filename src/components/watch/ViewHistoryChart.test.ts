@@ -100,6 +100,14 @@ describe('view history display transforms', () => {
     ]);
   });
 
+  it('keeps a zero API baseline as a valid growth origin', () => {
+    const history = normalizeViewHistory([
+      { date: '2026-01-01', youtube: 0, baseline: true },
+      { date: '2026-01-03', youtube: 25 },
+    ]);
+    expect(toGrowthViewHistory(history)[0].youtube).toBe(25);
+  });
+
   it('preserves a real cumulative decrease as a negative growth value', () => {
     const history = normalizeViewHistory([
       { date: '2026-01-01', youtube: 100 },
