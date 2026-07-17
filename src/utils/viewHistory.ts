@@ -4,9 +4,12 @@ export interface ViewHistoryData {
   nico: number | null;
   correctedYoutube?: boolean;
   correctedNico?: boolean;
+  baseline?: boolean;
 }
 
 export type ViewHistoryRange = '7d' | '30d' | '90d' | 'all';
+export type ViewHistoryBucket = 'day' | 'week' | 'month';
+export type ViewHistoryMetric = 'cumulative' | 'growth';
 
 export function filterViewHistoryByRange(
   history: ViewHistoryData[],
@@ -17,6 +20,71 @@ export function filterViewHistoryByRange(
   const days = Number(range.slice(0, -1));
   const cutoff = latest - (days - 1) * 24 * 60 * 60 * 1000;
   return history.filter(item => Date.parse(`${item.date}T00:00:00Z`) >= cutoff);
+}
+
+export function bucketForViewHistoryRange(range: ViewHistoryRange): ViewHistoryBucket {
+  if (range === '90d') return 'week';
+  if (range === 'all') return 'month';
+  return 'day';
+}
+
+function bucketKey(date: string, bucket: ViewHistoryBucket): string {
+  const parsed = new Date(`${date}T00:00:00Z`);
+  if (Number.isNaN(parsed.getTime())) return date;
+  if (bucket === 'month') return date.slice(0, 7);
+  if (bucket === 'week') {
+    const day = parsed.getUTCDay();
+    const mondayOffset = day === 0 ? -6 : 1 - day;
+    parsed.setUTCDate(parsed.getUTCDate() + mondayOffset);
+    return parsed.toISOString().slice(0, 10);
+  }
+  return date;
+}
+
+/** Keeps the last observation in each display bucket while preserving missing series. */
+export function aggregateViewHistory(
+  history: ViewHistoryData[],
+  bucket: ViewHistoryBucket,
+): ViewHistoryData[] {
+  const grouped = new Map<string, ViewHistoryData>();
+  for (const item of history) {
+    if (item.baseline) continue;
+    const key = bucketKey(item.date, bucket);
+    const previous = grouped.get(key);
+    grouped.set(key, {
+      date: item.date,
+      youtube: item.youtube ?? previous?.youtube ?? null,
+      nico: item.nico ?? previous?.nico ?? null,
+      correctedYoutube: Boolean(item.correctedYoutube || previous?.correctedYoutube),
+      correctedNico: Boolean(item.correctedNico || previous?.correctedNico),
+    });
+  }
+  return [...grouped.values()].sort((a, b) => a.date.localeCompare(b.date));
+}
+
+/** Converts cumulative snapshots into per-bucket changes. Negative changes remain visible. */
+export function toGrowthViewHistory(
+  history: ViewHistoryData[],
+  baseline?: ViewHistoryData | null,
+): ViewHistoryData[] {
+  const sorted = history.filter(item => !item.baseline).sort((a, b) => a.date.localeCompare(b.date));
+  const explicitBaseline = baseline ?? history.find(item => item.baseline) ?? null;
+  let previousYoutube = explicitBaseline?.youtube ?? null;
+  let previousNico = explicitBaseline?.nico ?? null;
+
+  return sorted.map(item => {
+    const youtube = item.youtube === null || previousYoutube === null ? null : item.youtube - previousYoutube;
+    const nico = item.nico === null || previousNico === null ? null : item.nico - previousNico;
+    if (item.youtube !== null) previousYoutube = item.youtube;
+    if (item.nico !== null) previousNico = item.nico;
+    return {
+      date: item.date,
+      youtube,
+      nico,
+      correctedYoutube: item.correctedYoutube,
+      correctedNico: item.correctedNico,
+    };
+  });
 }
 
 function normalizeDateKey(value: unknown): string | null {
@@ -48,6 +116,7 @@ export function normalizeViewHistory(history: unknown[]): ViewHistoryData[] {
       date,
       youtube: youtube === null ? current.youtube : Math.max(current.youtube ?? 0, youtube),
       nico: nico === null ? current.nico : Math.max(current.nico ?? 0, nico),
+      baseline: Boolean(current.baseline || row.baseline === true),
     });
   }
   const sorted = [...daily.values()].sort((a, b) => a.date.localeCompare(b.date));

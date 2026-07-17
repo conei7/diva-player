@@ -5,6 +5,17 @@ using System.Diagnostics;
 
 namespace VocadbRecommender.Services;
 
+public sealed record ViewHistoryPoint(
+    string Date,
+    long? Youtube,
+    long? Nico,
+    bool Baseline = false);
+
+public sealed record ViewHistoryResponse(
+    IReadOnlyList<ViewHistoryPoint> Points,
+    ViewHistoryPoint? Baseline,
+    string Bucket);
+
 /// <summary>PostgreSQL アクセスサービス</summary>
 public class DbService
 {
@@ -403,6 +414,92 @@ public class DbService
             });
         }
         return result;
+    }
+
+    public async Task<ViewHistoryResponse> GetViewHistoryWindowAsync(int songId, string range, string bucket)
+    {
+        var days = range switch
+        {
+            "7d" => 7,
+            "30d" => 30,
+            "90d" => 90,
+            "all" => (int?)null,
+            _ => 30,
+        };
+        var normalizedBucket = bucket is "day" or "week" or "month" ? bucket : "day";
+        var bucketExpression = normalizedBucket switch
+        {
+            "week" => "date_trunc('week', h.recorded_at AT TIME ZONE 'UTC')::date",
+            "month" => "date_trunc('month', h.recorded_at AT TIME ZONE 'UTC')::date",
+            _ => "(h.recorded_at AT TIME ZONE 'UTC')::date",
+        };
+
+        using var conn = Open();
+        await using var cmd = new NpgsqlCommand($@"
+            WITH latest AS (
+                SELECT MAX(recorded_at) AS latest_at
+                FROM view_history
+                WHERE song_id = $1
+            ), filtered AS (
+                SELECT {bucketExpression} AS bucket_date,
+                       h.recorded_at,
+                       h.youtube_views,
+                       h.nico_views
+                FROM view_history h
+                CROSS JOIN latest l
+                WHERE h.song_id = $1
+                  AND l.latest_at IS NOT NULL
+                  AND ($2::int IS NULL OR h.recorded_at >= l.latest_at - ($2::int * interval '1 day'))
+            ), points AS (
+                SELECT DISTINCT ON (bucket_date)
+                       bucket_date,
+                       recorded_at,
+                       youtube_views,
+                       nico_views,
+                       false AS is_baseline
+                FROM filtered
+                ORDER BY bucket_date, recorded_at DESC
+            ), baseline AS (
+                SELECT (h.recorded_at AT TIME ZONE 'UTC')::date AS bucket_date,
+                       h.recorded_at,
+                       h.youtube_views,
+                       h.nico_views,
+                       true AS is_baseline
+                FROM view_history h
+                CROSS JOIN latest l
+                WHERE h.song_id = $1
+                  AND $2::int IS NOT NULL
+                  AND h.recorded_at < l.latest_at - ($2::int * interval '1 day')
+                ORDER BY h.recorded_at DESC
+                LIMIT 1
+            )
+            SELECT bucket_date, youtube_views, nico_views, is_baseline
+            FROM points
+            UNION ALL
+            SELECT bucket_date, youtube_views, nico_views, is_baseline
+            FROM baseline
+            ORDER BY bucket_date ASC", conn);
+        cmd.Parameters.AddWithValue(songId);
+        cmd.Parameters.Add(new NpgsqlParameter("days", NpgsqlDbType.Integer)
+        {
+            Value = (object?)days ?? DBNull.Value,
+        });
+
+        var points = new List<ViewHistoryPoint>();
+        ViewHistoryPoint? baselinePoint = null;
+        await using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            var point = new ViewHistoryPoint(
+                reader.GetDateTime(0).ToString("yyyy-MM-dd"),
+                reader.IsDBNull(1) ? null : reader.GetInt64(1),
+                reader.IsDBNull(2) ? null : reader.GetInt64(2),
+                reader.GetBoolean(3));
+            if (point.Baseline) baselinePoint = point;
+            else points.Add(point);
+        }
+
+        return new ViewHistoryResponse(points, baselinePoint, normalizedBucket);
     }
 
     public async Task<string> GetTrendingSongsJsonAsync(int days, int start, int maxResults, string? mode = null, string? ranking = null, int seed = 0, bool debug = false, long? minYoutubeViews = null, long? minNicoViews = null, IReadOnlyCollection<string>? excludedSongTypes = null)

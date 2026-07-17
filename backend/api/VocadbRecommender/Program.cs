@@ -432,8 +432,23 @@ static bool TryParseIntegerList(string? value, out List<int> result)
 }
 
 // GET /api/songs/{id}/history
-app.MapGet("/api/songs/{id}/history", async (int id, DbService db) =>
+app.MapGet("/api/songs/{id}/history", async (int id, string? range, string? bucket, DbService db) =>
 {
+    if (!string.IsNullOrWhiteSpace(range))
+    {
+        var normalizedRange = range is "7d" or "30d" or "90d" or "all" ? range : "30d";
+        var normalizedBucket = bucket is "day" or "week" or "month"
+            ? bucket
+            : normalizedRange switch
+            {
+                "90d" => "week",
+                "all" => "month",
+                _ => "day",
+            };
+        var windowed = await db.GetViewHistoryWindowAsync(id, normalizedRange, normalizedBucket);
+        return Results.Ok(windowed);
+    }
+
     var history = await db.GetViewHistoryAsync(id);
     return Results.Ok(history);
 });

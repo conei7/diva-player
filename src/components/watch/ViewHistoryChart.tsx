@@ -1,5 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { filterViewHistoryByRange, normalizeViewHistory, type ViewHistoryData, type ViewHistoryRange } from '../../utils/viewHistory';
+import {
+  aggregateViewHistory,
+  bucketForViewHistoryRange,
+  normalizeViewHistory,
+  toGrowthViewHistory,
+  type ViewHistoryData,
+  type ViewHistoryMetric,
+  type ViewHistoryRange,
+} from '../../utils/viewHistory';
 import { formatJapaneseViews } from '../../utils/formatViews';
 
 interface ChartState {
@@ -18,6 +26,8 @@ const Y_TICK_COUNT = 5;
 const EMPTY_VIEW_HISTORY: ViewHistoryData[] = [];
 type ChartPoint = { x: number; y: number; value: number; date: string; corrected?: boolean };
 
+type ChartSegment = ChartPoint[];
+
 
 const getNiceStep = (roughStep: number): number => {
   if (!Number.isFinite(roughStep) || roughStep <= 0) return 1;
@@ -32,9 +42,15 @@ const getNiceStep = (roughStep: number): number => {
   return 10 * power;
 };
 
-const formatDateLabel = (date: string): string => {
-  const [, month, day] = date.split("-");
+const formatDateLabel = (date: string, includeYear = false): string => {
+  const [year, month, day] = date.split("-");
+  if (includeYear) return `${Number(year)}/${Number(month)}/${Number(day)}`;
   return `${Number(month)}/${Number(day)}`;
+};
+
+const formatChartValue = (value: number): string => {
+  if (value < 0) return `-${formatJapaneseViews(Math.abs(value), { zeroIsMissing: false, fallback: '0' })}`;
+  return formatJapaneseViews(value, { zeroIsMissing: false, fallback: '0' });
 };
 
 export default function ViewHistoryChart({ songId }: { songId: number }) {
@@ -53,13 +69,21 @@ export default function ViewHistoryChart({ songId }: { songId: number }) {
     data: [],
     status: 'loading',
   }));
-  const [range, setRange] = useState<ViewHistoryRange>('all');
+  const [range, setRange] = useState<ViewHistoryRange>('30d');
+  const [metric, setMetric] = useState<ViewHistoryMetric>('growth');
+  const [visibleSeries, setVisibleSeries] = useState({ youtube: true, nico: true });
   const [retryToken, setRetryToken] = useState(0);
   const touchStart = useRef<{ x: number; y: number } | null>(null);
 
   const loading = chartState.songId !== songId || chartState.status === 'loading';
   const rawData = chartState.songId === songId ? chartState.data : EMPTY_VIEW_HISTORY;
-  const data = useMemo(() => filterViewHistoryByRange(rawData, range), [rawData, range]);
+  const bucket = bucketForViewHistoryRange(range);
+  const cumulativeData = useMemo(() => aggregateViewHistory(rawData, bucket), [rawData, bucket]);
+  const baseline = rawData.find(item => item.baseline) ?? null;
+  const data = useMemo(
+    () => metric === 'growth' ? toGrowthViewHistory(cumulativeData, baseline) : cumulativeData,
+    [baseline, cumulativeData, metric],
+  );
 
   const toggleTouchPoint = (point: ChartPoint & { label: string; color: string }) => {
     setHoveredPoint(current => (
@@ -97,10 +121,10 @@ export default function ViewHistoryChart({ songId }: { songId: number }) {
   useEffect(() => {
     let active = true;
     const controller = new AbortController();
-    setRange('all');
     setChartState({ songId, data: [], status: 'loading' });
 
-    fetch(`/backend-api/api/songs/${songId}/history`, {
+    const bucket = bucketForViewHistoryRange(range);
+    fetch(`/backend-api/api/songs/${songId}/history?range=${range}&bucket=${bucket}`, {
       signal: controller.signal,
     })
       .then((res) => {
@@ -109,9 +133,15 @@ export default function ViewHistoryChart({ songId }: { songId: number }) {
       })
       .then((history: unknown) => {
         if (!active) return;
+        const payload = history && typeof history === 'object' && !Array.isArray(history)
+          ? history as { points?: unknown[]; baseline?: unknown }
+          : { points: Array.isArray(history) ? history : [], baseline: undefined };
+        const rows = payload.baseline && typeof payload.baseline === 'object'
+          ? [payload.baseline, ...(payload.points ?? [])]
+          : payload.points ?? [];
         setChartState({
           songId,
-          data: Array.isArray(history) ? normalizeViewHistory(history) : [],
+          data: normalizeViewHistory(rows),
           status: 'success',
         });
       })
@@ -125,7 +155,7 @@ export default function ViewHistoryChart({ songId }: { songId: number }) {
       active = false;
       controller.abort();
     };
-  }, [songId, retryToken]);
+  }, [songId, range, retryToken]);
 
   useEffect(() => {
     if (!hoveredPoint) return;
@@ -145,29 +175,32 @@ export default function ViewHistoryChart({ songId }: { songId: number }) {
   }, [hoveredPoint]);
 
   const chart = useMemo(() => {
-    const hasYoutube = data.some((d) => (d.youtube ?? 0) > 0);
-    const hasNico = data.some((d) => (d.nico ?? 0) > 0);
-    const maxValue = Math.max(
-      ...data.map((d) => Math.max(d.youtube ?? 0, d.nico ?? 0)),
+    const hasYoutube = data.some((d) => d.youtube !== null);
+    const hasNico = data.some((d) => d.nico !== null);
+    const maxAbsValue = Math.max(
+      ...data.flatMap((d) => [d.youtube, d.nico].filter((value): value is number => value !== null).map(Math.abs)),
       0,
     );
 
-    if (data.length < 2 || maxValue <= 0) {
+    if (data.length < 2 || maxAbsValue <= 0) {
       return {
         hasYoutube,
         hasNico,
-        pointsYoutube: "",
-        pointsNico: "",
+        youtubeSegments: [] as ChartSegment[],
+        nicoSegments: [] as ChartSegment[],
         youtubePoints: [],
         nicoPoints: [],
         xLabels: [],
         yTicks: [],
+        yMin: 0,
         yMax: 0,
+        ready: false,
       };
     }
 
-    const yStep = getNiceStep(maxValue / (Y_TICK_COUNT - 1));
+    const yStep = getNiceStep(maxAbsValue / (Y_TICK_COUNT - 1));
     const yMax = yStep * (Y_TICK_COUNT - 1);
+    const yMin = metric === 'growth' ? -yMax : 0;
     const timestamps = data.map((entry) => Date.parse(`${entry.date}T00:00:00Z`));
     const minTime = Math.min(...timestamps);
     const maxTime = Math.max(...timestamps);
@@ -176,25 +209,39 @@ export default function ViewHistoryChart({ songId }: { songId: number }) {
       const timestamp = Date.parse(`${date}T00:00:00Z`);
       return ((timestamp - minTime) / timeRange) * 100;
     };
-    const getY = (value: number) => 100 - (value / yMax) * 100;
+    const getY = (value: number) => 100 - ((value - yMin) / Math.max(yMax - yMin, 1)) * 100;
 
-    const youtubePoints = data.filter(d => d.youtube !== null).map((d) => ({
-      x: getX(d.date),
-      y: getY(d.youtube ?? 0),
-      value: d.youtube ?? 0,
-      date: d.date,
-      corrected: d.correctedYoutube,
-    }));
-    const nicoPoints = data.filter(d => d.nico !== null).map((d) => ({
-      x: getX(d.date),
-      y: getY(d.nico ?? 0),
-      value: d.nico ?? 0,
-      date: d.date,
-      corrected: d.correctedNico,
-    }));
+    const buildSeries = (service: 'youtube' | 'nico') => {
+      const points: ChartPoint[] = [];
+      const segments: ChartSegment[] = [];
+      let segment: ChartSegment = [];
+      data.forEach((item, index) => {
+        const value = item[service];
+        if (value === null) {
+          if (segment.length > 0) segments.push(segment);
+          segment = [];
+          return;
+        }
+        const point = {
+          x: getX(item.date),
+          y: getY(value),
+          value,
+          date: item.date,
+          corrected: service === 'youtube' ? item.correctedYoutube : item.correctedNico,
+        };
+        if (index > 0 && data[index - 1][service] === null && segment.length > 0) {
+          segments.push(segment);
+          segment = [];
+        }
+        segment.push(point);
+        points.push(point);
+      });
+      if (segment.length > 0) segments.push(segment);
+      return { points, segments };
+    };
 
-    const pointsYoutube = youtubePoints.map((p) => `${p.x},${p.y}`).join(" ");
-    const pointsNico = nicoPoints.map((p) => `${p.x},${p.y}`).join(" ");
+    const youtube = buildSeries('youtube');
+    const nico = buildSeries('nico');
 
     const labelIndexes = new Set<number>();
     const maxLabels = Math.min(5, data.length);
@@ -204,91 +251,41 @@ export default function ViewHistoryChart({ songId }: { songId: number }) {
       );
     }
 
+    const includeYear = new Set(data.map(item => item.date.slice(0, 4))).size > 1;
     const xLabels = [...labelIndexes]
       .sort((a, b) => a - b)
       .map((index) => ({
         x: getX(data[index].date),
-        label: formatDateLabel(data[index].date),
+        label: formatDateLabel(data[index].date, includeYear),
       }));
 
     const yTicks = Array.from({ length: Y_TICK_COUNT }, (_, index) => {
-      const value = yStep * index;
+      const value = metric === 'growth' ? yMin + yStep * index : yStep * index;
       return {
         value,
         y: getY(value),
-        label: formatJapaneseViews(value, { zeroIsMissing: false, fallback: '0' }),
+        label: formatChartValue(value),
       };
     });
 
     return {
       hasYoutube,
       hasNico,
-      pointsYoutube,
-      pointsNico,
-      youtubePoints,
-      nicoPoints,
+      youtubeSegments: youtube.segments,
+      nicoSegments: nico.segments,
+      youtubePoints: youtube.points,
+      nicoPoints: nico.points,
       xLabels,
       yTicks,
+      yMin,
       yMax,
+      ready: true,
     };
-  }, [data]);
-
-  if (loading) {
-    return (
-      <div
-        className="w-full h-[180px] flex items-center justify-center rounded-lg my-4"
-        style={{ background: "var(--color-bg-secondary)" }}
-      >
-        <span className="text-sm" style={{ color: "var(--color-text-muted)" }}>
-          Loading history...
-        </span>
-      </div>
-    );
-  }
-
-  if (chartState.status === 'error') {
-    return (
-      <div className="w-full min-h-[180px] p-4 rounded-lg my-4 flex flex-col items-center justify-center gap-3 text-center" style={{ background: "var(--color-bg-secondary)" }} role="alert">
-        <span className="text-sm" style={{ color: "var(--color-text-muted)" }}>{chartState.errorMessage}</span>
-        <button
-          type="button"
-          className="px-3 py-1.5 rounded-md text-xs font-semibold border"
-          style={{ color: "var(--color-text-primary)", borderColor: "var(--color-border)" }}
-          onClick={() => setRetryToken(value => value + 1)}
-        >
-          再試行
-        </button>
-      </div>
-    );
-  }
-
-  if (data.length < 2 || chart.yMax <= 0) {
-    const historyMessage = data.length === 0
-      ? "まだ再生履歴を取得できていません。PVが未登録・非公開、または初回取得待ちの可能性があります。"
-      : data.length === 1
-        ? "再生履歴は1日分です。次回の取得後に推移グラフを表示します。"
-        : "有効な再生数がまだありません。次回の取得結果をお待ちください。";
-    return (
-      <div
-        className="w-full h-[180px] p-4 rounded-lg my-4 shadow-sm flex flex-col items-center justify-center text-center"
-        style={{ background: "var(--color-bg-secondary)" }}
-      >
-        <h3
-          className="text-sm font-bold mb-2"
-          style={{ color: "var(--color-text-primary)" }}
-        >
-          再生回数の推移
-        </h3>
-        <span className="text-xs" style={{ color: "var(--color-text-muted)" }}>
-          {historyMessage}
-        </span>
-      </div>
-    );
-  }
+  }, [data, metric]);
 
   return (
     <div
-      className="w-full h-[250px] p-4 rounded-lg my-4 shadow-sm flex flex-col"
+      className="w-full min-h-[250px] p-4 rounded-lg my-4 shadow-sm flex flex-col"
       style={{ background: "var(--color-bg-secondary)" }}
     >
       <div className="flex justify-between items-center mb-4 gap-4 flex-wrap">
@@ -298,6 +295,23 @@ export default function ViewHistoryChart({ songId }: { songId: number }) {
         >
           再生回数の推移
         </h3>
+        <div className="flex gap-1 shrink-0 max-w-full overflow-x-auto" role="group" aria-label="表示指標">
+          {(['growth', 'cumulative'] as const).map(option => (
+            <button
+              key={option}
+              type="button"
+              aria-pressed={metric === option}
+              className="px-2 py-1 rounded text-[10px] border"
+              style={{
+                color: metric === option ? 'var(--color-text-primary)' : 'var(--color-text-muted)',
+                borderColor: metric === option ? 'var(--color-accent-cyan)' : 'var(--color-border)',
+              }}
+              onClick={() => setMetric(option)}
+            >
+              {option === 'growth' ? '増加数' : '累計'}
+            </button>
+          ))}
+        </div>
         <div className="flex gap-1 shrink-0 max-w-full overflow-x-auto" role="group" aria-label="期間">
           {(['7d', '30d', '90d', 'all'] as const).map(option => (
             <button
@@ -315,29 +329,66 @@ export default function ViewHistoryChart({ songId }: { songId: number }) {
             </button>
           ))}
         </div>
-        <div className="flex gap-4 text-xs font-semibold shrink-0">
+        <div className="flex gap-2 text-xs font-semibold shrink-0">
           {chart.hasYoutube && (
-            <span className="flex items-center gap-1">
+            <button
+              type="button"
+              aria-pressed={visibleSeries.youtube}
+              className="flex items-center gap-1 opacity-100 aria-[pressed=false]:opacity-40"
+              onClick={() => setVisibleSeries(value => ({ ...value, youtube: !value.youtube }))}
+            >
               <span
                 className="w-2 h-2 rounded-full"
                 style={{ background: SERIES.youtube.color }}
               ></span>
               {SERIES.youtube.label}
-            </span>
+            </button>
           )}
           {chart.hasNico && (
-            <span className="flex items-center gap-1">
+            <button
+              type="button"
+              aria-pressed={visibleSeries.nico}
+              className="flex items-center gap-1 opacity-100 aria-[pressed=false]:opacity-40"
+              onClick={() => setVisibleSeries(value => ({ ...value, nico: !value.nico }))}
+            >
               <span
                 className="w-2 h-2 rounded-full"
                 style={{ background: SERIES.nico.color }}
               ></span>
               {SERIES.nico.label}
-            </span>
+            </button>
           )}
         </div>
       </div>
 
-      <div className="relative grow ml-16 mb-7">
+      {loading ? (
+        <div className="grow min-h-[170px] flex items-center justify-center text-sm" style={{ color: "var(--color-text-muted)" }}>
+          履歴を読み込んでいます…
+        </div>
+      ) : chartState.status === 'error' ? (
+        <div className="grow min-h-[170px] flex flex-col items-center justify-center gap-3 text-center" role="alert">
+          <span className="text-sm" style={{ color: "var(--color-text-muted)" }}>{chartState.errorMessage}</span>
+          <button
+            type="button"
+            className="px-3 py-1.5 rounded-md text-xs font-semibold border"
+            style={{ color: "var(--color-text-primary)", borderColor: "var(--color-border)" }}
+            onClick={() => setRetryToken(value => value + 1)}
+          >
+            再試行
+          </button>
+        </div>
+      ) : !chart.ready ? (
+        <div className="grow min-h-[170px] p-4 flex flex-col items-center justify-center text-center">
+          <span className="text-xs" style={{ color: "var(--color-text-muted)" }}>
+            {data.length === 0
+              ? "この期間の再生履歴はありません。別の期間を選択できます。"
+              : data.length === 1
+                ? "比較できる再生履歴が1点しかありません。別の期間を選択できます。"
+                : "有効な再生数の変化がまだありません。"}
+          </span>
+        </div>
+      ) : (
+      <div className="relative grow min-h-[170px] ml-16 mb-7">
         {chart.yTicks.map((tick) => (
           <div
             key={tick.value}
@@ -365,38 +416,40 @@ export default function ViewHistoryChart({ songId }: { songId: number }) {
           preserveAspectRatio="none"
           overflow="visible"
         >
-          {chart.hasYoutube && (
+          {chart.hasYoutube && visibleSeries.youtube && chart.youtubeSegments.map((segment, index) => (
             <polyline
+              key={`youtube-segment-${index}`}
               fill="none"
               stroke={SERIES.youtube.color}
               strokeLinecap="round"
               strokeLinejoin="round"
               strokeWidth="2"
-              points={chart.pointsYoutube}
+              points={segment.map(point => `${point.x},${point.y}`).join(' ')}
               vectorEffect="non-scaling-stroke"
             />
-          )}
-          {chart.hasNico && (
+          ))}
+          {chart.hasNico && visibleSeries.nico && chart.nicoSegments.map((segment, index) => (
             <polyline
+              key={`nico-segment-${index}`}
               fill="none"
               stroke={SERIES.nico.color}
               strokeLinecap="round"
               strokeLinejoin="round"
               strokeWidth="2"
-              points={chart.pointsNico}
+              points={segment.map(point => `${point.x},${point.y}`).join(' ')}
               vectorEffect="non-scaling-stroke"
             />
-          )}
+          ))}
         </svg>
 
-        {chart.hasYoutube &&
+        {chart.hasYoutube && visibleSeries.youtube &&
           chart.youtubePoints.map((point) => (
             <div
               key={`youtube-${point.date}`}
               className="view-history-point absolute w-6 h-6 p-1 rounded-full -translate-x-1/2 -translate-y-1/2 border-2 cursor-pointer transition-transform hover:scale-125"
               role="button"
               tabIndex={0}
-              aria-label={`${SERIES.youtube.label} ${point.date} ${formatJapaneseViews(point.value, { zeroIsMissing: false, fallback: '0' })}`}
+              aria-label={`${SERIES.youtube.label} ${point.date} ${formatChartValue(point.value)}`}
               style={{
                 left: `${point.x}%`,
                 top: `${point.y}%`,
@@ -415,14 +468,14 @@ export default function ViewHistoryChart({ songId }: { songId: number }) {
             ></div>
           ))}
 
-        {chart.hasNico &&
+        {chart.hasNico && visibleSeries.nico &&
           chart.nicoPoints.map((point) => (
             <div
               key={`nico-${point.date}`}
               className="view-history-point absolute w-6 h-6 p-1 rounded-full -translate-x-1/2 -translate-y-1/2 border-2 cursor-pointer transition-transform hover:scale-125"
               role="button"
               tabIndex={0}
-              aria-label={`${SERIES.nico.label} ${point.date} ${formatJapaneseViews(point.value, { zeroIsMissing: false, fallback: '0' })}`}
+              aria-label={`${SERIES.nico.label} ${point.date} ${formatChartValue(point.value)}`}
               style={{
                 left: `${point.x}%`,
                 top: `${point.y}%`,
@@ -458,7 +511,7 @@ export default function ViewHistoryChart({ songId }: { songId: number }) {
               <div className="flex items-center gap-1.5 mt-0.5">
                 <span className="w-2 h-2 rounded-full" style={{ background: hoveredPoint.color }}></span>
                 <span>{hoveredPoint.label}:</span>
-                <span className="font-bold text-sm ml-1">{hoveredPoint.value.toLocaleString()}</span>
+                <span className="font-bold text-sm ml-1">{formatChartValue(hoveredPoint.value)}</span>
               </div>
               {hoveredPoint.corrected && <div className="text-amber-300">異常値を補正</div>}
             </div>
@@ -475,6 +528,7 @@ export default function ViewHistoryChart({ songId }: { songId: number }) {
           </div>
         ))}
       </div>
+      )}
     </div>
   );
 }
