@@ -84,4 +84,5 @@ src/
 - [開発ガイドライン](docs/GUIDELINE.md): コーディング規約
 - [推薦・履歴の技術メモ](docs/WEB_STATUS_AND_RECOMMENDATION_NOTES.md): 実装詳細
 - [SBC運用メモ](docs/SBC_OPERATIONS.md): 接続とデプロイの短縮版
+- [整備実装プラン](implementation_plan_reviewed.md): 文書整理、品質確認、DB監査、未解決課題の実行順序
 
