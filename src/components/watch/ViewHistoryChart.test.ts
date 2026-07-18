@@ -91,8 +91,8 @@ describe('view history display transforms', () => {
   it('uses the API baseline so the first growth point is not lost', () => {
     const history = normalizeViewHistory([
       { date: '2026-01-01', youtube: 100, nico: 20, baseline: true },
-      { date: '2026-01-03', youtube: 130, nico: 25 },
-      { date: '2026-01-04', youtube: 155, nico: 25 },
+      { date: '2026-01-02', youtube: 130, nico: 25 },
+      { date: '2026-01-03', youtube: 155, nico: 25 },
     ]);
     expect(toGrowthViewHistory(history).map(item => [item.youtube, item.nico])).toEqual([
       [30, 5],
@@ -103,7 +103,7 @@ describe('view history display transforms', () => {
   it('keeps a zero API baseline as a valid growth origin', () => {
     const history = normalizeViewHistory([
       { date: '2026-01-01', youtube: 0, baseline: true },
-      { date: '2026-01-03', youtube: 25 },
+      { date: '2026-01-02', youtube: 25 },
     ]);
     expect(toGrowthViewHistory(history)[0].youtube).toBe(25);
   });
@@ -114,5 +114,20 @@ describe('view history display transforms', () => {
       { date: '2026-01-02', youtube: 90 },
     ]);
     expect(toGrowthViewHistory(history)[1].youtube).toBe(-10);
+  });
+
+  it('does not assign multiple missing days of growth to the next observed day', () => {
+    const history = normalizeViewHistory([
+      { date: '2026-07-13', youtube: 90, nico: 40, baseline: true },
+      { date: '2026-07-14', youtube: 100, nico: 45 },
+      { date: '2026-07-17', youtube: 130, nico: 60 },
+      { date: '2026-07-18', youtube: 140, nico: 64 },
+    ]);
+
+    expect(toGrowthViewHistory(history, undefined, 'day').map(item => [item.youtube, item.nico])).toEqual([
+      [10, 5],
+      [null, null],
+      [10, 4],
+    ]);
   });
 });

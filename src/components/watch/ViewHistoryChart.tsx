@@ -81,8 +81,8 @@ export default function ViewHistoryChart({ songId }: { songId: number }) {
   const cumulativeData = useMemo(() => aggregateViewHistory(rawData, bucket), [rawData, bucket]);
   const baseline = rawData.find(item => item.baseline) ?? null;
   const data = useMemo(
-    () => metric === 'growth' ? toGrowthViewHistory(cumulativeData, baseline) : cumulativeData,
-    [baseline, cumulativeData, metric],
+    () => metric === 'growth' ? toGrowthViewHistory(cumulativeData, baseline, bucket) : cumulativeData,
+    [baseline, bucket, cumulativeData, metric],
   );
 
   const toggleTouchPoint = (point: ChartPoint & { label: string; color: string }) => {
@@ -288,14 +288,15 @@ export default function ViewHistoryChart({ songId }: { songId: number }) {
       className="w-full min-h-[250px] p-4 rounded-lg my-4 shadow-sm flex flex-col"
       style={{ background: "var(--color-bg-secondary)" }}
     >
-      <div className="flex justify-between items-center mb-4 gap-4 flex-wrap">
-        <h3
-          className="text-sm font-bold"
-          style={{ color: "var(--color-text-primary)" }}
-        >
-          再生回数の推移
-        </h3>
-        <div className="flex gap-1 shrink-0 max-w-full overflow-x-auto" role="group" aria-label="表示指標">
+      <div className="mb-4 flex flex-col gap-3">
+        <div className="flex items-center justify-between gap-3">
+          <h3
+            className="text-sm font-bold"
+            style={{ color: "var(--color-text-primary)" }}
+          >
+            再生回数の推移
+          </h3>
+          <div className="flex gap-1 shrink-0 max-w-full overflow-x-auto" role="group" aria-label="表示指標">
           {(['growth', 'cumulative'] as const).map(option => (
             <button
               key={option}
@@ -311,25 +312,27 @@ export default function ViewHistoryChart({ songId }: { songId: number }) {
               {option === 'growth' ? '増加数' : '累計'}
             </button>
           ))}
+          </div>
         </div>
-        <div className="flex gap-1 shrink-0 max-w-full overflow-x-auto" role="group" aria-label="期間">
-          {(['7d', '30d', '90d', 'all'] as const).map(option => (
-            <button
-              key={option}
-              type="button"
-              aria-pressed={range === option}
-              className="px-2 py-1 rounded text-[10px] border"
-              style={{
-                color: range === option ? 'var(--color-text-primary)' : 'var(--color-text-muted)',
-                borderColor: range === option ? 'var(--color-accent-cyan)' : 'var(--color-border)',
-              }}
-              onClick={() => setRange(option)}
-            >
-              {option === 'all' ? '全期間' : option.replace('d', '日')}
-            </button>
-          ))}
-        </div>
-        <div className="flex gap-2 text-xs font-semibold shrink-0">
+        <div className="flex min-w-0 flex-wrap items-center justify-between gap-3">
+          <div className="flex gap-1 shrink-0 max-w-full overflow-x-auto" role="group" aria-label="期間">
+            {(['7d', '30d', '90d', 'all'] as const).map(option => (
+              <button
+                key={option}
+                type="button"
+                aria-pressed={range === option}
+                className="px-2 py-1 rounded text-[10px] border"
+                style={{
+                  color: range === option ? 'var(--color-text-primary)' : 'var(--color-text-muted)',
+                  borderColor: range === option ? 'var(--color-accent-cyan)' : 'var(--color-border)',
+                }}
+                onClick={() => setRange(option)}
+              >
+                {option === 'all' ? '全期間' : option.replace('d', '日')}
+              </button>
+            ))}
+          </div>
+          <div className="flex gap-2 text-xs font-semibold shrink-0">
           {chart.hasYoutube && (
             <button
               type="button"
@@ -358,6 +361,7 @@ export default function ViewHistoryChart({ songId }: { songId: number }) {
               {SERIES.nico.label}
             </button>
           )}
+          </div>
         </div>
       </div>
 

@@ -66,17 +66,44 @@ export function aggregateViewHistory(
 export function toGrowthViewHistory(
   history: ViewHistoryData[],
   baseline?: ViewHistoryData | null,
+  bucket: ViewHistoryBucket = 'day',
 ): ViewHistoryData[] {
   const sorted = history.filter(item => !item.baseline).sort((a, b) => a.date.localeCompare(b.date));
   const explicitBaseline = baseline ?? history.find(item => item.baseline) ?? null;
   let previousYoutube = explicitBaseline?.youtube ?? null;
   let previousNico = explicitBaseline?.nico ?? null;
+  let previousYoutubeDate = previousYoutube === null ? null : explicitBaseline?.date ?? null;
+  let previousNicoDate = previousNico === null ? null : explicitBaseline?.date ?? null;
+
+  const isAdjacentBucket = (previousDate: string | null, currentDate: string): boolean => {
+    if (!previousDate) return false;
+    const previous = new Date(`${previousDate}T00:00:00Z`);
+    const current = new Date(`${currentDate}T00:00:00Z`);
+    if (Number.isNaN(previous.getTime()) || Number.isNaN(current.getTime())) return false;
+    if (bucket === 'month') {
+      previous.setUTCMonth(previous.getUTCMonth() + 1);
+      return previous.getUTCFullYear() === current.getUTCFullYear()
+        && previous.getUTCMonth() === current.getUTCMonth();
+    }
+    const expectedDays = bucket === 'week' ? 7 : 1;
+    return current.getTime() - previous.getTime() === expectedDays * 24 * 60 * 60 * 1000;
+  };
 
   return sorted.map(item => {
-    const youtube = item.youtube === null || previousYoutube === null ? null : item.youtube - previousYoutube;
-    const nico = item.nico === null || previousNico === null ? null : item.nico - previousNico;
-    if (item.youtube !== null) previousYoutube = item.youtube;
-    if (item.nico !== null) previousNico = item.nico;
+    const youtube = item.youtube === null || previousYoutube === null || !isAdjacentBucket(previousYoutubeDate, item.date)
+      ? null
+      : item.youtube - previousYoutube;
+    const nico = item.nico === null || previousNico === null || !isAdjacentBucket(previousNicoDate, item.date)
+      ? null
+      : item.nico - previousNico;
+    if (item.youtube !== null) {
+      previousYoutube = item.youtube;
+      previousYoutubeDate = item.date;
+    }
+    if (item.nico !== null) {
+      previousNico = item.nico;
+      previousNicoDate = item.date;
+    }
     return {
       date: item.date,
       youtube,
