@@ -451,33 +451,47 @@ public class DbService
                   AND l.latest_at IS NOT NULL
                   AND (@days::int IS NULL OR h.recorded_at >= l.latest_at - (@days::int * interval '1 day'))
             ), points AS (
-                SELECT DISTINCT ON (bucket_date)
-                       bucket_date,
-                       recorded_at,
-                       youtube_views,
-                       nico_views,
+                SELECT bucket_date,
+                       MAX(recorded_at) AS recorded_at,
+                       (ARRAY_AGG(youtube_views ORDER BY recorded_at DESC)
+                           FILTER (WHERE youtube_views > 0))[1] AS youtube_views,
+                       (ARRAY_AGG(nico_views ORDER BY recorded_at DESC)
+                           FILTER (WHERE nico_views > 0))[1] AS nico_views,
                        false AS is_baseline
                 FROM filtered
-                ORDER BY bucket_date, recorded_at DESC
+                GROUP BY bucket_date
             ), baseline AS (
-                SELECT (h.recorded_at AT TIME ZONE 'UTC')::date AS bucket_date,
-                       h.recorded_at,
-                       h.youtube_views,
-                       h.nico_views,
+                SELECT (l.latest_at - (@days::int * interval '1 day'))::date AS bucket_date,
+                       l.latest_at - (@days::int * interval '1 day') AS recorded_at,
+                       (
+                           SELECT h.youtube_views
+                           FROM view_history h
+                           WHERE h.song_id = @songId
+                             AND h.recorded_at < l.latest_at - (@days::int * interval '1 day')
+                             AND h.youtube_views > 0
+                           ORDER BY h.recorded_at DESC
+                           LIMIT 1
+                       ) AS youtube_views,
+                       (
+                           SELECT h.nico_views
+                           FROM view_history h
+                           WHERE h.song_id = @songId
+                             AND h.recorded_at < l.latest_at - (@days::int * interval '1 day')
+                             AND h.nico_views > 0
+                           ORDER BY h.recorded_at DESC
+                           LIMIT 1
+                       ) AS nico_views,
                        true AS is_baseline
-                FROM view_history h
-                CROSS JOIN latest l
-                WHERE h.song_id = @songId
-                  AND @days::int IS NOT NULL
-                  AND h.recorded_at < l.latest_at - (@days::int * interval '1 day')
-                ORDER BY h.recorded_at DESC
-                LIMIT 1
+                FROM latest l
+                WHERE @days::int IS NOT NULL
+                  AND l.latest_at IS NOT NULL
             )
             SELECT bucket_date, youtube_views, nico_views, is_baseline
             FROM points
             UNION ALL
             SELECT bucket_date, youtube_views, nico_views, is_baseline
             FROM baseline
+            WHERE youtube_views IS NOT NULL OR nico_views IS NOT NULL
             ORDER BY bucket_date ASC", conn);
         cmd.Parameters.AddWithValue("songId", songId);
         cmd.Parameters.Add(new NpgsqlParameter("days", NpgsqlDbType.Integer)
