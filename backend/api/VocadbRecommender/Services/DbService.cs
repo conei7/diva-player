@@ -451,12 +451,13 @@ public class DbService
                   AND l.latest_at IS NOT NULL
                   AND (@days::int IS NULL OR h.recorded_at >= l.latest_at - (@days::int * interval '1 day'))
             ), points AS (
+                -- YouTube/Nico updates are stored as separate snapshots and a song can
+                -- have multiple PVs per service. Zero means not observed here; the
+                -- service-level maximum matches the aggregate kept on songs.
                 SELECT bucket_date,
                        MAX(recorded_at) AS recorded_at,
-                       (ARRAY_AGG(youtube_views ORDER BY recorded_at DESC)
-                           FILTER (WHERE youtube_views > 0))[1] AS youtube_views,
-                       (ARRAY_AGG(nico_views ORDER BY recorded_at DESC)
-                           FILTER (WHERE nico_views > 0))[1] AS nico_views,
+                       MAX(NULLIF(youtube_views, 0)) AS youtube_views,
+                       MAX(NULLIF(nico_views, 0)) AS nico_views,
                        false AS is_baseline
                 FROM filtered
                 GROUP BY bucket_date
@@ -464,22 +465,16 @@ public class DbService
                 SELECT (l.latest_at - (@days::int * interval '1 day'))::date AS bucket_date,
                        l.latest_at - (@days::int * interval '1 day') AS recorded_at,
                        (
-                           SELECT h.youtube_views
+                           SELECT MAX(NULLIF(h.youtube_views, 0))
                            FROM view_history h
                            WHERE h.song_id = @songId
                              AND h.recorded_at < l.latest_at - (@days::int * interval '1 day')
-                             AND h.youtube_views > 0
-                           ORDER BY h.recorded_at DESC
-                           LIMIT 1
                        ) AS youtube_views,
                        (
-                           SELECT h.nico_views
+                           SELECT MAX(NULLIF(h.nico_views, 0))
                            FROM view_history h
                            WHERE h.song_id = @songId
                              AND h.recorded_at < l.latest_at - (@days::int * interval '1 day')
-                             AND h.nico_views > 0
-                           ORDER BY h.recorded_at DESC
-                           LIMIT 1
                        ) AS nico_views,
                        true AS is_baseline
                 FROM latest l
