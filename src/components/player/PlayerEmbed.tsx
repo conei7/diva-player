@@ -203,12 +203,13 @@ function loadYouTubeAPI(): Promise<void> {
 }
 
 export default function PlayerEmbed() {
-  const { currentSong, currentPV, isPlaying, volume, seekTarget, clearSeekTarget, setIsPlaying, setError, next, tryNextPV } = usePlayerStore();
+  const { currentSong, currentPV, isPlaying, volume, seekTarget, clearSeekTarget, setIsPlaying, setError, setVolume, next, tryNextPV } = usePlayerStore();
   const setProgress = useProgressStore(s => s.setProgress);
   const setDuration = useProgressStore(s => s.setDuration);
   const ytPlayerRef = useRef<YT.Player | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const progressTimerRef = useRef<number | null>(null);
+  const volumeSyncTimerRef = useRef<number | null>(null);
   const attemptControllerRef = useRef(createPlaybackAttemptController());
   const volumeRef = useRef(volume);
   const ownershipRef = useRef<ReturnType<typeof createPlaybackOwnership> | null>(null);
@@ -216,6 +217,32 @@ export default function PlayerEmbed() {
   useEffect(() => {
     volumeRef.current = volume;
   }, [volume]);
+
+  // YouTubeのネイティブ音量スライダーには音量変更イベントがないため、
+  // 定期的に実際のプレイヤー値を読み取り、アプリ側の状態へ反映する。
+  const stopVolumeSync = useCallback(() => {
+    if (volumeSyncTimerRef.current !== null) {
+      window.clearInterval(volumeSyncTimerRef.current);
+      volumeSyncTimerRef.current = null;
+    }
+  }, []);
+
+  const startVolumeSync = useCallback((player: YT.Player) => {
+    stopVolumeSync();
+    volumeSyncTimerRef.current = window.setInterval(() => {
+      if (ytPlayerRef.current !== player) return;
+      try {
+        const playerVolume = player.getVolume?.();
+        if (typeof playerVolume !== 'number' || !Number.isFinite(playerVolume)) return;
+        const nextVolume = Math.round(Math.max(0, Math.min(100, playerVolume)));
+        if (usePlayerStore.getState().volume !== nextVolume) {
+          setVolume(nextVolume);
+        }
+      } catch {
+        // プレイヤー破棄と同時に呼ばれた場合は無視する。
+      }
+    }, 250);
+  }, [setVolume, stopVolumeSync]);
 
   useEffect(() => {
     const ownership = createPlaybackOwnership();
@@ -267,6 +294,7 @@ export default function PlayerEmbed() {
 
     if (!currentPV || currentPV.service !== 'Youtube') {
       // YouTube以外の場合、YTプレイヤーをクリーンアップ
+      stopVolumeSync();
       if (ytPlayerRef.current) {
         ytPlayerRef.current.destroy();
         ytPlayerRef.current = null;
@@ -325,6 +353,7 @@ export default function PlayerEmbed() {
               attemptController.complete(attempt);
               event.target.unMute();
               event.target.setVolume(volumeRef.current);
+              startVolumeSync(event.target);
               if (usePlayerStore.getState().isPlaying) event.target.playVideo();
               const dur = event.target.getDuration();
               if (dur > 0) setDuration(dur);
@@ -364,6 +393,7 @@ export default function PlayerEmbed() {
 
     return () => {
       attemptController.cancel();
+      stopVolumeSync();
       stopProgressTimer();
       if (ytPlayerRef.current === player && ytPlayerRef.current) {
         ytPlayerRef.current.stopVideo?.();
@@ -372,7 +402,7 @@ export default function PlayerEmbed() {
       }
       if (playerContainer) playerContainer.innerHTML = '';
     };
-  }, [currentPV, currentSong?.id, setDuration, setIsPlaying, setError, next, tryNextPV, startProgressTimer, stopProgressTimer]);
+  }, [currentPV, currentSong?.id, setDuration, setIsPlaying, setError, next, tryNextPV, startProgressTimer, stopProgressTimer, startVolumeSync, stopVolumeSync]);
 
   // 再生/一時停止の同期
   useEffect(() => {
