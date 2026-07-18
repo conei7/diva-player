@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { Song } from '../types/vocadb';
-import { DEFAULT_GLOBAL_FILTER_SETTINGS } from '../stores/globalFilterStore';
+import { DEFAULT_GLOBAL_FILTER_SETTINGS, type GlobalFilterSettings } from '../stores/globalFilterStore';
 import {
   applyDiscoveryFilter,
   applyGlobalSongFilter,
+  areGlobalFilterSettingsEqual,
   getGlobalFilterSummary,
   getGlobalSongFilterDecision,
   hasConfiguredSongFilters,
@@ -54,6 +55,21 @@ describe('global filters', () => {
     expect(isGlobalSongFilterActive(configured)).toBe(false);
     expect(isGlobalSongFilterActive({ ...configured, enabled: true })).toBe(true);
     expect(getGlobalFilterSummary({ ...configured, enabled: true })).toEqual(['カバーを除外']);
+  });
+
+  it('compares saved and draft settings without depending on song type order', () => {
+    const first: GlobalFilterSettings = {
+      ...DEFAULT_GLOBAL_FILTER_SETTINGS,
+      enabled: true,
+      excludedSongTypes: ['Cover', 'Remix'],
+    };
+    const second: GlobalFilterSettings = {
+      ...DEFAULT_GLOBAL_FILTER_SETTINGS,
+      enabled: true,
+      excludedSongTypes: ['Remix', 'Cover'],
+    };
+    expect(areGlobalFilterSettingsEqual(first, second)).toBe(true);
+    expect(areGlobalFilterSettingsEqual(first, { ...second, minYoutubeViews: 1 })).toBe(false);
   });
 
   it('returns a typed rejection reason for each view threshold', () => {

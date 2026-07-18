@@ -49,6 +49,24 @@ export function isGlobalSongFilterActive(settings: GlobalFilterSettings): boolea
   return settings.enabled && hasConfiguredSongFilters(settings);
 }
 
+/** 設定画面のドラフトと保存済み設定を、曲種の並び順に依存せず比較する。 */
+export function areGlobalFilterSettingsEqual(
+  first: GlobalFilterSettings,
+  second: GlobalFilterSettings,
+): boolean {
+  if (first.enabled !== second.enabled
+    || first.minYoutubeViews !== second.minYoutubeViews
+    || first.minNicoViews !== second.minNicoViews
+    || first.cooldownHours !== second.cooldownHours
+    || first.excludeRatedFromDiscovery !== second.excludeRatedFromDiscovery
+    || first.excludedSongTypes.length !== second.excludedSongTypes.length) {
+    return false;
+  }
+
+  const secondTypes = new Set(second.excludedSongTypes);
+  return first.excludedSongTypes.every(songType => secondTypes.has(songType));
+}
+
 export function getGlobalFilterSummary(settings: GlobalFilterSettings): string[] {
   if (!isGlobalSongFilterActive(settings)) return [];
   const summary: string[] = [];

@@ -14,7 +14,13 @@ import {
 } from '../../stores/globalFilterStore';
 import type { GlobalFilterSettings } from '../../stores/globalFilterStore';
 import { useSearchStore } from '../../stores/searchStore';
-import { getGlobalFilterSummary, hasConfiguredSongFilters, isGlobalSongFilterActive, SONG_TYPE_LABELS } from '../../utils/globalFilters';
+import {
+  areGlobalFilterSettingsEqual,
+  getGlobalFilterSummary,
+  hasConfiguredSongFilters,
+  isGlobalSongFilterActive,
+  SONG_TYPE_LABELS,
+} from '../../utils/globalFilters';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -29,6 +35,7 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
   const [draftFilters, setDraftFilters] = useState<GlobalFilterSettings>(DEFAULT_GLOBAL_FILTER_SETTINGS);
+  const globalFilterState = useGlobalFilterStore();
   const setGlobalFilterSettings = useGlobalFilterStore(state => state.setSettings);
   const resetGlobalFilterSettings = useGlobalFilterStore(state => state.resetSettings);
   const hasSearched = useSearchStore(state => state.hasSearched);
@@ -44,6 +51,16 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
   }, [isOpen]);
 
   if (!isOpen) return null;
+
+  const savedFilters: GlobalFilterSettings = {
+    enabled: globalFilterState.enabled,
+    minYoutubeViews: globalFilterState.minYoutubeViews,
+    minNicoViews: globalFilterState.minNicoViews,
+    excludedSongTypes: globalFilterState.excludedSongTypes,
+    cooldownHours: globalFilterState.cooldownHours,
+    excludeRatedFromDiscovery: globalFilterState.excludeRatedFromDiscovery,
+  };
+  const filtersAreDirty = !areGlobalFilterSettingsEqual(draftFilters, savedFilters);
 
   const exportBackup = async () => {
     setBusy(true);
@@ -112,7 +129,10 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
   const applyFilters = () => {
     setGlobalFilterSettings(draftFilters);
     if (hasSearched) void refreshSearch();
-    setMessage('表示・発見設定を適用しました。');
+    const summary = getGlobalFilterSummary(draftFilters);
+    setMessage(summary.length > 0
+      ? `表示・発見設定を適用しました: ${summary.join(' / ')}`
+      : '表示・発見設定を適用しました（フィルター停止）。');
   };
 
   const resetFilters = () => {
@@ -141,9 +161,16 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
               指定した値以上の曲だけを検索・おすすめに表示します。再生数が不明な曲は除外されます。
               {!draftFilters.enabled && hasConfiguredSongFilters(draftFilters) && ' 現在は停止中です。'}
             </p>
-            {isGlobalSongFilterActive(draftFilters) && (
+            {isGlobalSongFilterActive(savedFilters) && (
               <p className="mt-2 rounded-lg px-2 py-1.5 text-xs" style={{ background: 'rgba(34, 211, 238, 0.1)', color: 'var(--color-accent-cyan)' }}>
-                適用中: {getGlobalFilterSummary(draftFilters).join(' / ')}
+                適用中: {getGlobalFilterSummary(savedFilters).join(' / ')}
+              </p>
+            )}
+            {filtersAreDirty && (
+              <p className="mt-2 rounded-lg px-2 py-1.5 text-xs text-amber-200" role="status" style={{ background: 'rgba(251, 191, 36, 0.1)' }}>
+                未適用の変更あり: {isGlobalSongFilterActive(draftFilters)
+                  ? getGlobalFilterSummary(draftFilters).join(' / ')
+                  : 'フィルター停止'}
               </p>
             )}
             <div className={`mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2 ${draftFilters.enabled ? '' : 'opacity-50'}`}>
@@ -207,7 +234,7 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
               </label>
             </div>
             <div className="mt-3 flex gap-2">
-              <button type="button" className="btn-primary flex-1" disabled={busy} onClick={applyFilters}>適用</button>
+              <button type="button" className="btn-primary flex-1" disabled={busy || !filtersAreDirty} onClick={applyFilters}>適用</button>
               <button type="button" className="btn-secondary" disabled={busy} onClick={resetFilters}>初期化</button>
             </div>
           </section>
