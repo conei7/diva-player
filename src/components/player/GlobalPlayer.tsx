@@ -16,7 +16,7 @@ export default function GlobalPlayer() {
   const location = useLocation();
   const navigate = useNavigate();
   const {
-    currentSong, playerRect, isPlaying,
+    currentSong, currentPV, playerRect, isPlaying,
     pause, resume, next, previous,
     closePlayer,
     shuffleEnabled, toggleShuffle,
@@ -38,6 +38,7 @@ export default function GlobalPlayer() {
     if (str.includes(' feat.')) return str.split(' feat.')[0];
     return str;
   })();
+  const playerKey = `${currentSong.id}:${currentPV?.service ?? 'none'}:${currentPV?.pvId ?? currentPV?.id ?? 'none'}`;
 
   const containerStyle: React.CSSProperties = (() => {
     if (isWatchPage && playerRect) {
@@ -101,7 +102,7 @@ export default function GlobalPlayer() {
           if (showMiniPlayer) navigate(`/watch?v=${currentSong.id}`);
         }}
       >
-        <PlayerEmbed />
+        <PlayerEmbed key={playerKey} />
       </div>
 
       {/* MiniPlayer コントロール (PiPモード時のみ表示) */}

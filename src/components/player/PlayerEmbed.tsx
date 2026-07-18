@@ -286,13 +286,14 @@ export default function PlayerEmbed() {
       if (!attemptController.isCurrent(attempt)) return;
       attemptController.cancel();
       stopProgressTimer();
-      setIsPlaying(false);
-      setError(message);
       if (ytPlayerRef.current === player && ytPlayerRef.current) {
+        ytPlayerRef.current.stopVideo?.();
         ytPlayerRef.current.destroy();
         ytPlayerRef.current = null;
       }
       if (containerRef.current) containerRef.current.innerHTML = '';
+      setIsPlaying(false);
+      setError(message);
       tryNextPV();
     };
 
@@ -365,12 +366,13 @@ export default function PlayerEmbed() {
       attemptController.cancel();
       stopProgressTimer();
       if (ytPlayerRef.current === player && ytPlayerRef.current) {
+        ytPlayerRef.current.stopVideo?.();
         ytPlayerRef.current.destroy();
         ytPlayerRef.current = null;
       }
       if (playerContainer) playerContainer.innerHTML = '';
     };
-  }, [currentPV, setDuration, setIsPlaying, setError, next, tryNextPV, startProgressTimer, stopProgressTimer]);
+  }, [currentPV, currentSong?.id, setDuration, setIsPlaying, setError, next, tryNextPV, startProgressTimer, stopProgressTimer]);
 
   // 再生/一時停止の同期
   useEffect(() => {
