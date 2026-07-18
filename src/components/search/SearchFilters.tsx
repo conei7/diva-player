@@ -1,6 +1,11 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { useSearchStore } from '../../stores/searchStore';
-import type { ExtendedSortRule } from '../../stores/searchStore';
+import {
+  ADVANCED_SEARCH_LIMITS,
+  sanitizeAdvancedIntegerInput,
+  type AdvancedSearchFilters,
+  type ExtendedSortRule,
+} from '../../stores/searchStore';
 import type { VocalistMatchMode } from '../../types/vocadb';
 import { searchVocalistsByName } from '../../api/vocadb';
 import type { Artist } from '../../types/vocadb';
@@ -231,6 +236,15 @@ export default function SearchFilters() {
 
   const nonPresetSelected = vocalistFilters.filter(v => !allPresets.some(p => p.id === v.id));
 
+  const updateBoundedInteger = (
+    key: keyof Pick<AdvancedSearchFilters, 'publishYearFrom' | 'publishYearTo' | 'lengthMinSeconds' | 'lengthMaxSeconds'>,
+    value: string,
+    min: number,
+    max: number,
+  ) => {
+    setAdvancedFilters({ [key]: sanitizeAdvancedIntegerInput(value, min, max) });
+  };
+
   return (
     <div className="flex flex-col gap-4 rounded-xl p-4"
          style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)' }}>
@@ -434,8 +448,11 @@ export default function SearchFilters() {
             <input
               type="number"
               inputMode="numeric"
+              min={ADVANCED_SEARCH_LIMITS.publishYearMin}
+              max={ADVANCED_SEARCH_LIMITS.publishYearMax}
+              step={1}
               value={advancedFilters.publishYearFrom}
-              onChange={e => setAdvancedFilters({ publishYearFrom: e.target.value })}
+              onChange={e => updateBoundedInteger('publishYearFrom', e.target.value, ADVANCED_SEARCH_LIMITS.publishYearMin, ADVANCED_SEARCH_LIMITS.publishYearMax)}
               placeholder="2007"
               className="w-full text-sm rounded-lg px-2 py-1.5 outline-none"
               style={{ background: 'var(--color-surface)', color: 'var(--color-text-primary)', border: '1px solid var(--color-border)' }}
@@ -444,8 +461,11 @@ export default function SearchFilters() {
             <input
               type="number"
               inputMode="numeric"
+              min={ADVANCED_SEARCH_LIMITS.publishYearMin}
+              max={ADVANCED_SEARCH_LIMITS.publishYearMax}
+              step={1}
               value={advancedFilters.publishYearTo}
-              onChange={e => setAdvancedFilters({ publishYearTo: e.target.value })}
+              onChange={e => updateBoundedInteger('publishYearTo', e.target.value, ADVANCED_SEARCH_LIMITS.publishYearMin, ADVANCED_SEARCH_LIMITS.publishYearMax)}
               placeholder="2026"
               className="w-full text-sm rounded-lg px-2 py-1.5 outline-none"
               style={{ background: 'var(--color-surface)', color: 'var(--color-text-primary)', border: '1px solid var(--color-border)' }}
@@ -459,8 +479,11 @@ export default function SearchFilters() {
             <input
               type="number"
               inputMode="numeric"
+              min={ADVANCED_SEARCH_LIMITS.lengthMinSeconds}
+              max={ADVANCED_SEARCH_LIMITS.lengthMaxSeconds}
+              step={1}
               value={advancedFilters.lengthMinSeconds}
-              onChange={e => setAdvancedFilters({ lengthMinSeconds: e.target.value })}
+              onChange={e => updateBoundedInteger('lengthMinSeconds', e.target.value, ADVANCED_SEARCH_LIMITS.lengthMinSeconds, ADVANCED_SEARCH_LIMITS.lengthMaxSeconds)}
               placeholder="60"
               className="w-full text-sm rounded-lg px-2 py-1.5 outline-none"
               style={{ background: 'var(--color-surface)', color: 'var(--color-text-primary)', border: '1px solid var(--color-border)' }}
@@ -469,8 +492,11 @@ export default function SearchFilters() {
             <input
               type="number"
               inputMode="numeric"
+              min={ADVANCED_SEARCH_LIMITS.lengthMinSeconds}
+              max={ADVANCED_SEARCH_LIMITS.lengthMaxSeconds}
+              step={1}
               value={advancedFilters.lengthMaxSeconds}
-              onChange={e => setAdvancedFilters({ lengthMaxSeconds: e.target.value })}
+              onChange={e => updateBoundedInteger('lengthMaxSeconds', e.target.value, ADVANCED_SEARCH_LIMITS.lengthMinSeconds, ADVANCED_SEARCH_LIMITS.lengthMaxSeconds)}
               placeholder="360"
               className="w-full text-sm rounded-lg px-2 py-1.5 outline-none"
               style={{ background: 'var(--color-surface)', color: 'var(--color-text-primary)', border: '1px solid var(--color-border)' }}

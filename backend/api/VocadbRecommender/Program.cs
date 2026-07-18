@@ -357,10 +357,10 @@ app.MapGet("/api/songs/search", async (
     string order,
     int? start,
     int? maxResults,
-    int? publishYearFrom,
-    int? publishYearTo,
-    int? lengthMinSeconds,
-    int? lengthMaxSeconds,
+    long? publishYearFrom,
+    long? publishYearTo,
+    long? lengthMinSeconds,
+    long? lengthMaxSeconds,
     string? pvService,
     string? audioComputed,
     long? minYoutubeViews,
@@ -368,6 +368,16 @@ app.MapGet("/api/songs/search", async (
     string? excludeSongTypes,
     DbService db) =>
 {
+    const long maxPublishYear = 5_874_896;
+    const long maxLengthSeconds = int.MaxValue;
+    if (publishYearFrom is < 1 or > maxPublishYear || publishYearTo is < 1 or > maxPublishYear)
+        return Results.BadRequest(new { error = "publish year must be between 1 and 5874896" });
+    if (lengthMinSeconds is < 0 or > maxLengthSeconds || lengthMaxSeconds is < 0 or > maxLengthSeconds)
+        return Results.BadRequest(new { error = "length seconds must be between 0 and 2147483647" });
+    if (publishYearFrom.HasValue && publishYearTo.HasValue && publishYearFrom > publishYearTo)
+        return Results.BadRequest(new { error = "publish year range is invalid" });
+    if (lengthMinSeconds.HasValue && lengthMaxSeconds.HasValue && lengthMinSeconds > lengthMaxSeconds)
+        return Results.BadRequest(new { error = "length range is invalid" });
     if (minYoutubeViews is < 0 || minNicoViews is < 0)
         return Results.BadRequest(new { error = "view thresholds must be non-negative" });
 
@@ -392,10 +402,10 @@ app.MapGet("/api/songs/search", async (
         order ?? "desc",
         start ?? 0,
         maxResults ?? 24,
-        publishYearFrom,
-        publishYearTo,
-        lengthMinSeconds,
-        lengthMaxSeconds,
+        (int?)publishYearFrom,
+        (int?)publishYearTo,
+        (int?)lengthMinSeconds,
+        (int?)lengthMaxSeconds,
         pvService,
         audioComputed,
         minYoutubeViews,

@@ -45,6 +45,14 @@ export interface AdvancedSearchFilters {
   audioComputed: 'any' | 'yes' | 'no';
 }
 
+// PostgreSQLのdate型が扱える上限と、DBのlength_seconds(int)に合わせる。
+export const ADVANCED_SEARCH_LIMITS = {
+  publishYearMin: 1,
+  publishYearMax: 5_874_896,
+  lengthMinSeconds: 0,
+  lengthMaxSeconds: 2_147_483_647,
+} as const;
+
 export const DEFAULT_ADVANCED_FILTERS: AdvancedSearchFilters = {
   publishYearFrom: '',
   publishYearTo: '',
@@ -53,6 +61,65 @@ export const DEFAULT_ADVANCED_FILTERS: AdvancedSearchFilters = {
   pvService: 'any',
   audioComputed: 'any',
 };
+
+export function sanitizeAdvancedIntegerInput(value: string, min: number, max: number): string {
+  const trimmed = value.trim();
+  if (trimmed === '') return '';
+  if (!/^\d+$/.test(trimmed)) return '';
+  const numeric = Number(trimmed);
+  if (!Number.isSafeInteger(numeric)) return String(max);
+  return String(Math.min(max, Math.max(min, numeric)));
+}
+
+function validateAdvancedInteger(value: string, label: string, min: number, max: number): string | null {
+  const trimmed = value.trim();
+  if (trimmed === '') return null;
+  if (!/^\d+$/.test(trimmed)) return `${label}は${min}以上${max.toLocaleString()}以下の整数で指定してください。`;
+  const numeric = Number(trimmed);
+  if (!Number.isSafeInteger(numeric) || numeric < min || numeric > max) {
+    return `${label}は${min}以上${max.toLocaleString()}以下の整数で指定してください。`;
+  }
+  return null;
+}
+
+export function validateAdvancedSearchFilters(filters: AdvancedSearchFilters): string | null {
+  const yearFromError = validateAdvancedInteger(
+    filters.publishYearFrom,
+    '投稿年',
+    ADVANCED_SEARCH_LIMITS.publishYearMin,
+    ADVANCED_SEARCH_LIMITS.publishYearMax,
+  );
+  if (yearFromError) return yearFromError;
+  const yearToError = validateAdvancedInteger(
+    filters.publishYearTo,
+    '投稿年',
+    ADVANCED_SEARCH_LIMITS.publishYearMin,
+    ADVANCED_SEARCH_LIMITS.publishYearMax,
+  );
+  if (yearToError) return yearToError;
+  const lengthFromError = validateAdvancedInteger(
+    filters.lengthMinSeconds,
+    '曲の長さ',
+    ADVANCED_SEARCH_LIMITS.lengthMinSeconds,
+    ADVANCED_SEARCH_LIMITS.lengthMaxSeconds,
+  );
+  if (lengthFromError) return lengthFromError;
+  const lengthToError = validateAdvancedInteger(
+    filters.lengthMaxSeconds,
+    '曲の長さ',
+    ADVANCED_SEARCH_LIMITS.lengthMinSeconds,
+    ADVANCED_SEARCH_LIMITS.lengthMaxSeconds,
+  );
+  if (lengthToError) return lengthToError;
+
+  const yearFrom = filters.publishYearFrom.trim() ? Number(filters.publishYearFrom) : null;
+  const yearTo = filters.publishYearTo.trim() ? Number(filters.publishYearTo) : null;
+  if (yearFrom !== null && yearTo !== null && yearFrom > yearTo) return '投稿年の開始値は終了値以下にしてください。';
+  const lengthFrom = filters.lengthMinSeconds.trim() ? Number(filters.lengthMinSeconds) : null;
+  const lengthTo = filters.lengthMaxSeconds.trim() ? Number(filters.lengthMaxSeconds) : null;
+  if (lengthFrom !== null && lengthTo !== null && lengthFrom > lengthTo) return '曲の長さの開始値は終了値以下にしてください。';
+  return null;
+}
 
 function hasAdvancedFilters(filters: AdvancedSearchFilters): boolean {
   return filters.publishYearFrom.trim() !== ''
@@ -71,6 +138,7 @@ export function hasGlobalSongFilters(settings: GlobalFilterSettings): boolean {
 }
 
 function getSearchErrorMessage(error: unknown, requiresBackend: boolean): string {
+  if (error instanceof Error && (error.message.includes('指定してください') || error.message.includes('以下にしてください'))) return error.message;
   if (requiresBackend) {
     return 'SBCのデータサービスに接続できないため、詳細検索と外部再生数順は現在利用できません。';
   }
@@ -150,6 +218,8 @@ async function searchSongsBackend(params: {
   filters?: AdvancedSearchFilters;
   globalFilters?: GlobalFilterSettings;
 }): Promise<{ items: Song[]; totalCount: number }> {
+  const validationError = params.filters ? validateAdvancedSearchFilters(params.filters) : null;
+  if (validationError) throw new Error(validationError);
   const qs = new URLSearchParams();
   if (params.query) qs.set('query', params.query);
   if (params.artistIds && params.artistIds.length > 0) qs.set('artistIds', params.artistIds.join(','));
