@@ -439,7 +439,7 @@ public class DbService
             WITH latest AS (
                 SELECT MAX(recorded_at) AS latest_at
                 FROM view_history
-                WHERE song_id = $1
+                WHERE song_id = @songId
             ), filtered AS (
                 SELECT {bucketExpression} AS bucket_date,
                        h.recorded_at,
@@ -447,9 +447,9 @@ public class DbService
                        h.nico_views
                 FROM view_history h
                 CROSS JOIN latest l
-                WHERE h.song_id = $1
+                WHERE h.song_id = @songId
                   AND l.latest_at IS NOT NULL
-                  AND ($2::int IS NULL OR h.recorded_at >= l.latest_at - ($2::int * interval '1 day'))
+                  AND (@days::int IS NULL OR h.recorded_at >= l.latest_at - (@days::int * interval '1 day'))
             ), points AS (
                 SELECT DISTINCT ON (bucket_date)
                        bucket_date,
@@ -467,9 +467,9 @@ public class DbService
                        true AS is_baseline
                 FROM view_history h
                 CROSS JOIN latest l
-                WHERE h.song_id = $1
-                  AND $2::int IS NOT NULL
-                  AND h.recorded_at < l.latest_at - ($2::int * interval '1 day')
+                WHERE h.song_id = @songId
+                  AND @days::int IS NOT NULL
+                  AND h.recorded_at < l.latest_at - (@days::int * interval '1 day')
                 ORDER BY h.recorded_at DESC
                 LIMIT 1
             )
@@ -479,7 +479,7 @@ public class DbService
             SELECT bucket_date, youtube_views, nico_views, is_baseline
             FROM baseline
             ORDER BY bucket_date ASC", conn);
-        cmd.Parameters.AddWithValue(songId);
+        cmd.Parameters.AddWithValue("songId", songId);
         cmd.Parameters.Add(new NpgsqlParameter("days", NpgsqlDbType.Integer)
         {
             Value = (object?)days ?? DBNull.Value,
