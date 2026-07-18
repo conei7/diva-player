@@ -212,6 +212,7 @@ function parseLegacyEntries(raw: string | null): LegacyHistoryEntry[] {
 }
 
 async function migrateLegacyHistory(): Promise<void> {
+  if (typeof localStorage === 'undefined') return;
   if (localStorage.getItem(LEGACY_MIGRATED_KEY) === '1') return;
 
   const localEntries = parseLegacyEntries(localStorage.getItem(LEGACY_HISTORY_KEY));
@@ -246,6 +247,10 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
     if (initializePromise) return initializePromise;
 
     initializePromise = (async () => {
+      if (typeof indexedDB === 'undefined') {
+        set({ hasHydrated: true });
+        return;
+      }
       await migrateLegacyHistory();
       const snapshot = await loadHistorySnapshot();
       set({ ...snapshot, hasHydrated: true });
