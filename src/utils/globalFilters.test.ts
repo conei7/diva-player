@@ -9,7 +9,9 @@ import {
   getGlobalSongFilterDecision,
   hasConfiguredSongFilters,
   isGlobalSongFilterActive,
+  isSongType,
   matchesGlobalSongFilter,
+  requiresExternalViewCounts,
 } from './globalFilters';
 
 function song(overrides: Partial<Song> = {}): Song {
@@ -78,6 +80,26 @@ describe('global filters', () => {
     expect(getGlobalSongFilterDecision(song({ youtubeViews: 99, nicoViews: 100 }), settings)).toEqual({ accepted: false, reason: 'youtube-views-below-minimum' });
     expect(getGlobalSongFilterDecision(song({ youtubeViews: 100 }), settings)).toEqual({ accepted: false, reason: 'nico-views-missing' });
     expect(getGlobalSongFilterDecision(song({ youtubeViews: 100, nicoViews: 50 }), settings)).toEqual({ accepted: true });
+  });
+
+  it('requests external view counts only for active view thresholds', () => {
+    expect(requiresExternalViewCounts(DEFAULT_GLOBAL_FILTER_SETTINGS)).toBe(false);
+    expect(requiresExternalViewCounts({
+      ...DEFAULT_GLOBAL_FILTER_SETTINGS,
+      enabled: true,
+      excludedSongTypes: ['Cover'],
+    })).toBe(false);
+    expect(requiresExternalViewCounts({
+      ...DEFAULT_GLOBAL_FILTER_SETTINGS,
+      enabled: true,
+      minYoutubeViews: 1,
+    })).toBe(true);
+  });
+
+  it('accepts only known VocaDB song types', () => {
+    expect(isSongType('Cover')).toBe(true);
+    expect(isSongType('Original')).toBe(true);
+    expect(isSongType('UnknownType')).toBe(false);
   });
 
   it('applies rating and cooldown only to discovery candidates', () => {
