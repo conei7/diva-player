@@ -57,6 +57,29 @@ async function main() {
       await assertNoHorizontalOverflow(page, label);
     }
 
+    await page.goto(new URL('playlists', baseUrl), { waitUntil: 'domcontentloaded' });
+    await waitForLayout(page);
+    const createButtonLayout = await page.$eval('button[aria-label="プレイリストを作成"]', button => {
+      const style = getComputedStyle(button);
+      return { display: style.display, alignItems: style.alignItems, justifyContent: style.justifyContent };
+    });
+    assert(createButtonLayout.display === 'flex'
+      && createButtonLayout.alignItems === 'center'
+      && createButtonLayout.justifyContent === 'center',
+    `Playlist create button is not centered: ${JSON.stringify(createButtonLayout)}`);
+    await page.type('input[placeholder="新しいプレイリスト"]', '長いタイトルでも操作が重ならないことを確認するプレイリスト');
+    await page.click('button[aria-label="プレイリストを作成"]');
+    await page.waitForSelector('main main section h1');
+    const headerLayout = await page.$eval('main main section', section => {
+      const sectionRect = section.getBoundingClientRect();
+      const buttonBottoms = [...section.querySelectorAll('button')].map(button => button.getBoundingClientRect().bottom);
+      return { sectionBottom: sectionRect.bottom, lastButtonBottom: Math.max(...buttonBottoms) };
+    });
+    assert(headerLayout.lastButtonBottom <= headerLayout.sectionBottom + 1,
+      `Playlist header actions are clipped: ${JSON.stringify(headerLayout)}`);
+    await assertNoHorizontalOverflow(page, 'selected playlist');
+    console.log('PASS playlist create button and selected header layout');
+
     await page.goto(baseUrl, { waitUntil: 'domcontentloaded' });
     await waitForLayout(page);
     await page.click('button[aria-label="メニュー"]');
