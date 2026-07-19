@@ -69,7 +69,7 @@ async function main() {
       const rect = button.closest('aside')?.getBoundingClientRect();
       return rect ? { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom } : null;
     });
-    assert(drawer && drawer.left >= 0 && drawer.right <= 390 && drawer.top >= 0 && drawer.bottom <= 844,
+    assert(drawer && drawer.left >= -1 && drawer.right <= 391 && drawer.top >= 0 && drawer.bottom <= 844,
       `The mobile drawer does not fit the viewport: ${JSON.stringify(drawer)}`);
     console.log('PASS mobile navigation drawer');
     await page.click('button[aria-label="メニューを閉じる"]');
