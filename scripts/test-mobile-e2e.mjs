@@ -47,7 +47,7 @@ async function main() {
       ['reports', 'h1', 'reports'],
       ['favorites', 'h1', 'favorites'],
       ['favorite-producers', 'h1', 'favorite producers'],
-      ['playlists', 'input[placeholder="新しいプレイリスト..."]', 'playlists'],
+      ['playlists', 'input[placeholder="新しいプレイリスト"]', 'playlists'],
       ['watch?v=1501', 'main', 'watch'],
     ]) {
       const response = await page.goto(new URL(route, baseUrl), { waitUntil: 'domcontentloaded' });

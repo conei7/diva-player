@@ -58,7 +58,7 @@ function PlaylistCover({ playlist, className = '' }: { playlist: Playlist; class
   if (!playlist.isPinned && thumbnails.length > 0) {
     const gridClass = thumbnails.length === 1 ? 'grid-cols-1' : 'grid-cols-2';
     return (
-      <div className={`grid h-full w-full ${gridClass} overflow-hidden ${className}`}>
+      <div className={`grid h-full w-full auto-rows-fr ${gridClass} overflow-hidden ${className}`}>
         {thumbnails.map((url, index) => (
           <img
             key={url}
@@ -1039,44 +1039,49 @@ export default function PlaylistPage() {
       </aside>
 
       {/* ─── 右パネル ────────────────────────────────────────────────── */}
-      <div className={`flex-1 min-w-0 flex flex-col gap-3 overflow-y-auto ${selectedPlaylist ? 'flex' : 'hidden md:flex'}`} style={{ maxHeight: 'calc(100dvh - 180px)' }}>
+      <main className={`min-w-0 flex-1 flex-col gap-3 overflow-y-auto ${selectedPlaylist ? 'flex' : 'hidden md:flex'}`} style={{ maxHeight: 'calc(100dvh - 180px)' }}>
         {!selectedPlaylist ? (
-          <div className="flex flex-col items-center justify-center h-full gap-3 text-neutral-500">
-            <svg className="w-16 h-16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1">
-              <path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>
-            </svg>
-            <p>プレイリストを選択してください</p>
+          <div
+            className="flex h-full min-h-[460px] flex-col justify-end overflow-hidden rounded-3xl border border-white/[0.07] p-7 lg:p-10"
+            style={{ background: 'radial-gradient(circle at 78% 18%, rgba(139,92,246,.24), transparent 32%), radial-gradient(circle at 18% 32%, rgba(6,214,160,.15), transparent 28%), linear-gradient(145deg, rgba(30,30,42,.96), rgba(15,15,15,.98))' }}
+          >
+            <div className="mb-auto grid grid-cols-3 gap-3 self-end opacity-75 lg:w-[58%]">
+              {playlists.filter(p => !p.isPinned).slice(0, 6).map((playlist, index) => (
+                <button
+                  key={playlist.id}
+                  type="button"
+                  onClick={() => setSelectedPlaylistId(playlist.id)}
+                  className={`group relative aspect-square overflow-hidden rounded-2xl bg-white/5 shadow-2xl transition-all duration-300 hover:-translate-y-1 hover:opacity-100 ${index === 1 || index === 4 ? 'translate-y-6' : ''}`}
+                  title={playlist.name}
+                >
+                  <PlaylistCover playlist={playlist} className="transition-transform duration-500 group-hover:scale-105" />
+                  <span className="absolute inset-x-0 bottom-0 truncate bg-gradient-to-t from-black/80 to-transparent px-2 pb-2 pt-6 text-left text-[11px] font-medium text-white/90">{playlist.name}</span>
+                </button>
+              ))}
+            </div>
+            <div className="relative max-w-2xl">
+              <p className="mb-3 text-xs font-bold uppercase tracking-[0.24em] text-emerald-300">Make it yours</p>
+              <h1 className="text-4xl font-black leading-[1.08] tracking-[-0.04em] text-white lg:text-6xl">音楽の居場所を<br />つくろう。</h1>
+              <p className="mt-5 max-w-lg text-sm leading-7 text-neutral-400 lg:text-base">左のライブラリからプレイリストを選ぶと、曲を再生・整理・共有できます。曲のサムネイルからカバーも自動で作られます。</p>
+            </div>
           </div>
         ) : (
           <>
-            <button type="button" className="md:hidden self-start btn-ghost text-sm px-2 py-1" onClick={() => setSelectedPlaylistId(null)}>← プレイリスト一覧</button>
+            <button type="button" className="md:hidden self-start rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-neutral-300" onClick={() => setSelectedPlaylistId(null)}>← ライブラリ</button>
             {/* ヘッダー */}
-            <div className="flex items-start gap-4">
-              <div
-                className="w-28 h-28 rounded-2xl flex-shrink-0 flex items-center justify-center overflow-hidden"
-                style={{ background: 'var(--color-bg-card)', border: '1px solid var(--color-border)' }}
-              >
-                {selectedPlaylist.isPinned ? (
-                  <svg className="w-12 h-12" style={{ color: 'var(--color-accent-cyan)' }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                    <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
-                  </svg>
-                ) : selectedPlaylist.coverArtUrl ? (
-                  <img src={selectedPlaylist.coverArtUrl} alt="" className="w-full h-full object-cover" />
-                ) : selectedPlaylist.songs[0]?.thumbUrl ? (
-                  <img src={selectedPlaylist.songs[0].thumbUrl} alt="" className="w-full h-full object-cover opacity-60" />
-                ) : (
-                  <svg className="w-12 h-12 text-neutral-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                    <path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>
-                  </svg>
-                )}
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-start justify-between gap-2">
-                  <div className="min-w-0">
-
-                    <h1 className="text-2xl font-bold truncate">{selectedPlaylist.name}</h1>
+            <section
+              className="relative overflow-hidden rounded-3xl border border-white/[0.08] p-4 shadow-2xl shadow-black/20 sm:p-6"
+              style={{ background: 'radial-gradient(circle at 88% 5%, rgba(139,92,246,.23), transparent 34%), linear-gradient(125deg, rgba(6,214,160,.12), rgba(30,30,38,.95) 45%, rgba(15,15,15,.98))' }}
+            >
+              <div className="relative flex flex-col gap-5 sm:flex-row sm:items-end">
+                <div className="aspect-square w-36 flex-shrink-0 overflow-hidden rounded-2xl bg-black/25 shadow-2xl ring-1 ring-white/10 sm:w-44 lg:w-52">
+                  <PlaylistCover playlist={selectedPlaylist} />
+                </div>
+                <div className="min-w-0 flex-1 pb-1">
+                  <p className="mb-2 text-[10px] font-bold uppercase tracking-[0.22em] text-white/60">{selectedPlaylist.smartRule ? 'Smart playlist' : selectedPlaylist.isPinned ? 'Pinned playlist' : 'Playlist'}</p>
+                  <h1 className="break-words text-3xl font-black leading-none tracking-[-0.035em] text-white sm:text-4xl lg:text-5xl">{selectedPlaylist.name}</h1>
                     {selectedPlaylist.smartRule && (
-                      <p className="mt-1 text-xs" style={{ color: 'var(--color-accent-cyan)' }}>
+                      <p className="mt-3 text-xs" style={{ color: 'var(--color-accent-cyan)' }}>
                         {selectedSmartRefreshStatus?.state === 'loading' && '条件を再計算中…'}
                         {selectedSmartRefreshStatus?.state === 'success' && (
                           <>選択時に自動更新・最終更新 {new Date(selectedSmartRefreshStatus.refreshedAt ?? Date.now()).toLocaleTimeString('ja-JP')}（{selectedPlaylist.songs.length} 曲）</>
@@ -1086,23 +1091,28 @@ export default function PlaylistPage() {
                       </p>
                     )}
                     {selectedPlaylist.description && (
-                      <p className="text-sm mt-1 line-clamp-2 text-neutral-400">{selectedPlaylist.description}</p>
+                      <p className="mt-3 line-clamp-2 max-w-2xl text-sm leading-6 text-neutral-300">{selectedPlaylist.description}</p>
                     )}
-                    <p className="text-sm mt-1 text-neutral-500">
-                      {selectedPlaylist.songs.length} 曲
+                    <p className="mt-3 text-sm font-medium text-neutral-400">
+                      <span className="text-white">{selectedPlaylist.songs.length}曲</span>
                       {selectedPlaylist.songs.length > 0 && (
-                        <span className="ml-2">・{selectedPlaylistDurationText}</span>
+                        <span className="ml-2">• {selectedPlaylistDurationText}</span>
                       )}
                       {filterText && filteredSongs.length !== selectedPlaylist.songs.length && (
                         <span className="ml-2 text-cyan-400">（フィルター中: {filteredSongs.length} 曲）</span>
                       )}
                     </p>
-                  </div>
-                  <div className="flex items-center gap-1.5 flex-shrink-0">
+                  <div className="mt-5 flex flex-wrap items-center gap-2">
+                    {selectedPlaylist.songs.length > 0 && (
+                      <button onClick={() => setQueue(selectedPlaylist.songs, 0)} className="flex h-11 items-center gap-2 rounded-full bg-white px-5 text-sm font-bold text-black shadow-lg shadow-white/10 transition-transform hover:scale-[1.03]">
+                        <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+                        再生
+                      </button>
+                    )}
                     {selectedPlaylist.smartRule && (
                       <button
                         type="button"
-                        className="btn-secondary text-sm px-3 py-2"
+                        className="rounded-full border border-emerald-300/20 bg-emerald-300/10 px-4 py-2.5 text-sm font-medium text-emerald-200 transition-colors hover:bg-emerald-300/15"
                         disabled={selectedSmartRefreshStatus?.state === 'loading'}
                         onClick={() => void refreshSmartPlaylist(selectedPlaylist).catch(() => undefined)}
                         title="スマートプレイリストを今すぐ更新"
@@ -1110,26 +1120,20 @@ export default function PlaylistPage() {
                         {selectedSmartRefreshStatus?.state === 'loading' ? '更新中…' : '条件を再更新'}
                       </button>
                     )}
-                    {selectedPlaylist.songs.length > 0 && (
-                      <button onClick={() => setQueue(selectedPlaylist.songs, 0)} className="btn-primary flex items-center gap-1.5 text-sm px-3 py-2">
-                        <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
-                        再生
-                      </button>
-                    )}
-                    <button onClick={() => setShowYTImport(true)} className="btn-secondary flex items-center gap-1.5 text-sm px-3 py-2" title="YouTubeプレイリストからインポート">
+                    <button onClick={() => setShowYTImport(true)} className="flex h-11 items-center gap-2 rounded-full border border-white/10 bg-white/[0.06] px-4 text-sm font-medium text-neutral-200 transition-colors hover:bg-white/10" title="YouTubeプレイリストからインポート">
                       <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor" style={{ color: '#ff0000' }}>
                         <path d="M23.5 6.19a3.02 3.02 0 0 0-2.12-2.14C19.51 3.5 12 3.5 12 3.5s-7.51 0-9.38.55A3.02 3.02 0 0 0 .5 6.19C0 8.07 0 12 0 12s0 3.93.5 5.81a3.02 3.02 0 0 0 2.12 2.14C4.49 20.5 12 20.5 12 20.5s7.51 0 9.38-.55a3.02 3.02 0 0 0 2.12-2.14C24 15.93 24 12 24 12s0-3.93-.5-5.81zM9.75 15.52V8.48L15.5 12l-5.75 3.52z"/>
                       </svg>
-                      YT
+                      YouTube
                     </button>
-                    <button onClick={() => exportPlaylist(selectedPlaylist)} className="btn-ghost p-2 rounded-xl" title="JSONエクスポート">
+                    <button onClick={() => exportPlaylist(selectedPlaylist)} className="flex h-11 w-11 items-center justify-center rounded-full border border-white/10 bg-white/[0.04] text-neutral-300 transition-colors hover:bg-white/10 hover:text-white" title="JSONエクスポート">
                       <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                         <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
                         <path d="M7 10l5 5 5-5"/>
                         <path d="M12 15V3"/>
                       </svg>
                     </button>
-                    <button onClick={() => void sharePlaylist(selectedPlaylist)} className="btn-ghost p-2 rounded-xl" title="共有リンクをコピー" aria-label="共有リンクをコピー">
+                    <button onClick={() => void sharePlaylist(selectedPlaylist)} className="flex h-11 w-11 items-center justify-center rounded-full border border-white/10 bg-white/[0.04] text-neutral-300 transition-colors hover:bg-white/10 hover:text-white" title="共有リンクをコピー" aria-label="共有リンクをコピー">
                       <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                         <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
                         <path d="m8.6 13.5 6.8 4M15.4 6.5l-6.8 4"/>
@@ -1137,13 +1141,13 @@ export default function PlaylistPage() {
                     </button>
                     {!selectedPlaylist.isPinned && (
                       <>
-                        <button onClick={() => openEdit(selectedPlaylist)} className="btn-ghost p-2 rounded-xl" title="編集">
+                        <button onClick={() => openEdit(selectedPlaylist)} className="flex h-11 w-11 items-center justify-center rounded-full border border-white/10 bg-white/[0.04] text-neutral-300 transition-colors hover:bg-white/10 hover:text-white" title="編集">
                           <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                             <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
                             <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
                           </svg>
                         </button>
-                        <button onClick={() => handleDelete(selectedPlaylist)} className="btn-ghost p-2 rounded-xl" title="削除" style={{ color: 'var(--color-error)' }}>
+                        <button onClick={() => handleDelete(selectedPlaylist)} className="flex h-11 w-11 items-center justify-center rounded-full border border-red-400/15 bg-red-400/[0.04] transition-colors hover:bg-red-400/10" title="削除" style={{ color: 'var(--color-error)' }}>
                           <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                             <path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/>
                             <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/>
@@ -1154,18 +1158,18 @@ export default function PlaylistPage() {
                   </div>
                 </div>
               </div>
-            </div>
+            </section>
 
             {/* ツールバー */}
             {selectedPlaylist.songs.length > 0 && (
-              <div className="flex items-center gap-2 flex-wrap">
-                <div className="relative">
-                  <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-neutral-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-white/[0.07] bg-white/[0.025] p-2">
+                <div className="relative min-w-[12rem] flex-1 sm:max-w-xs">
+                  <svg className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                     <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
                   </svg>
                   <input
                     type="text" value={filterText} onChange={e => setFilterText(e.target.value)}
-                    placeholder="曲をフィルター..." className="search-input text-xs pl-8 pr-6 py-1.5 w-48"
+                    placeholder="このプレイリストを検索" className="search-input w-full rounded-xl py-2 pl-9 pr-7 text-xs"
                   />
                   {filterText && (
                     <button onClick={() => setFilterText('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-neutral-500 hover:text-white">
@@ -1173,10 +1177,10 @@ export default function PlaylistPage() {
                     </button>
                   )}
                 </div>
-                <span className="text-xs text-neutral-500">並べ替え:</span>
+                <span className="hidden text-xs text-neutral-500 lg:inline">並べ替え</span>
                 {(['addedOrder', 'name', 'artist', 'publishDate'] as SortKey[]).map(key => (
                   <button key={key} onClick={() => sortSongs(selectedPlaylist.id, key)}
-                    className="text-xs px-2 py-1 rounded-lg border hover:bg-white/5 transition-colors"
+                    className="rounded-lg border px-2.5 py-1.5 text-xs transition-colors hover:bg-white/5"
                     style={{ borderColor: 'var(--color-border)', color: 'var(--color-text-secondary)' }}
                   >
                     {{ addedOrder: '追加順', name: '曲名', artist: 'アーティスト', publishDate: '公開日' }[key]}
@@ -1195,7 +1199,7 @@ export default function PlaylistPage() {
                 <div className="flex-1" />
                 <button
                   onClick={() => { setSelectionMode(v => !v); clearSelection(); }}
-                  className="text-xs px-3 py-1 rounded-lg border transition-colors"
+                  className="rounded-lg border px-3 py-1.5 text-xs transition-colors"
                   style={{
                     borderColor: selectionMode ? '#06b6d4' : 'var(--color-border)',
                     color: selectionMode ? '#06b6d4' : 'var(--color-text-secondary)',
@@ -1203,7 +1207,7 @@ export default function PlaylistPage() {
                   }}
                 >{selectionMode ? '選択解除' : '選択'}</button>
                 {selectionMode && (
-                  <button onClick={selectAll} className="text-xs px-3 py-1 rounded-lg border transition-colors"
+                  <button onClick={selectAll} className="rounded-lg border px-3 py-1.5 text-xs transition-colors"
                     style={{ borderColor: 'var(--color-border)', color: 'var(--color-text-secondary)' }}
                   >すべて選択</button>
                 )}
@@ -1269,7 +1273,7 @@ export default function PlaylistPage() {
               ) : (
               <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
                 <SortableContext items={filteredSongs.map(s => String(s.id))} strategy={verticalListSortingStrategy}>
-                  <div className="rounded-xl overflow-hidden" style={{ border: '1px solid var(--color-border)', background: 'var(--color-bg-card)' }}>
+                  <div className="overflow-hidden rounded-3xl border border-white/[0.07] bg-white/[0.025] p-1">
                     {filteredSongs.map((song, filteredIdx) => {
                       const globalIndex = selectedPlaylist.songs.findIndex(s => s.id === song.id);
                       return (
@@ -1296,7 +1300,7 @@ export default function PlaylistPage() {
             )}
           </>
         )}
-      </div>
+      </main>
 
       {/* ─── 一括選択フローティングバー ───────────────────────────────── */}
       {selectionMode && selectedIds.size > 0 && (
