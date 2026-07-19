@@ -8,7 +8,7 @@
  * - 曲行の ⋮ コンテキストメニュー（最上部/最下部へ移動、カバーに設定、削除）
  * - isPinned プレイリストの編集・削除を禁止
  */
-import { useEffect, useState, useRef, useCallback } from 'react';
+import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import {
@@ -43,8 +43,9 @@ import {
 import YouTubeImportModal from '../components/playlist/YouTubeImportModal';
 import { createPlaylistShareUrl, decodePlaylistShare } from '../utils/playlistShare';
 import { searchSongs, getSongsByProducer } from '../api/vocadb';
-import { applyGlobalSongFilter } from '../utils/globalFilters';
+import { applyDiscoveryFilterWithRelaxation } from '../utils/globalFilters';
 import type { SmartPlaylistRule } from '../types/vocadb';
+import { sortPlaylistSongs } from '../utils/playlistSorting';
 
 function PlaylistCover({ playlist, className = '' }: { playlist: Playlist; className?: string }) {
   const thumbnails = Array.from(new Set(
@@ -75,7 +76,7 @@ function PlaylistCover({ playlist, className = '' }: { playlist: Playlist; class
   return (
     <div
       className={`flex h-full w-full items-center justify-center ${className}`}
-      style={{ background: playlist.isPinned ? 'linear-gradient(145deg, rgba(6,214,160,.28), rgba(59,130,246,.12))' : 'linear-gradient(145deg, rgba(139,92,246,.3), rgba(236,72,153,.12))' }}
+      style={{ background: playlist.isPinned ? 'rgba(6,214,160,.14)' : 'var(--color-surface)' }}
     >
       {playlist.isPinned ? (
         <svg className="h-[42%] w-[42%]" style={{ color: 'var(--color-accent-cyan)' }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6">
@@ -137,7 +138,7 @@ function SortableSongRow({
     <div
       ref={setNodeRef}
       style={style}
-      className="group flex min-h-16 items-center gap-2 rounded-2xl border border-transparent px-3 py-2 transition-all hover:border-white/5 hover:bg-white/[0.06]"
+      className="group flex h-16 items-center gap-2 overflow-hidden border-b border-white/[0.05] px-3 transition-colors hover:bg-white/[0.05]"
     >
       {selectionMode ? (
         <input
@@ -179,8 +180,8 @@ function SortableSongRow({
         className="flex-1 min-w-0 cursor-pointer"
         onClick={selectionMode ? onToggleSelect : onPlay}
       >
-        <p className="text-sm font-medium truncate">{song.name}</p>
-        <p className="text-xs truncate text-neutral-400">{song.artistString}</p>
+        <p className="truncate text-sm font-medium leading-5">{song.name}</p>
+        <p className="truncate text-xs leading-4 text-neutral-400">{song.artistString}</p>
       </div>
       <div ref={menuRef} className="relative flex-shrink-0">
         <button
@@ -272,7 +273,7 @@ function PlainSongRow({
 
   return (
     <div
-      className="group flex min-h-16 items-center gap-2 rounded-2xl border border-transparent px-3 py-2 transition-all hover:border-white/5 hover:bg-white/[0.06]"
+      className="group flex h-full min-h-0 items-center gap-2 overflow-hidden border-b border-white/[0.05] px-3 transition-colors hover:bg-white/[0.05]"
       style={{ background: selected ? 'rgba(6,182,212,0.08)' : undefined }}
     >
       {selectionMode ? (
@@ -297,8 +298,8 @@ function PlainSongRow({
         )}
       </div>
       <div className="flex-1 min-w-0 cursor-pointer" onClick={selectionMode ? onToggleSelect : onPlay}>
-        <p className="text-sm font-medium truncate">{song.name}</p>
-        <p className="text-xs truncate text-neutral-400">{song.artistString}</p>
+        <p className="truncate text-sm font-medium leading-5">{song.name}</p>
+        <p className="truncate text-xs leading-4 text-neutral-400">{song.artistString}</p>
       </div>
       <div ref={menuRef} className="relative flex-shrink-0">
         <button
@@ -397,7 +398,7 @@ function VirtualSongList({
           const globalIndex = allSongs.findIndex(s => s.id === song.id);
           return (
             <div
-              key={song.id}
+              key={virtualItem.key}
               style={{
                 position: 'absolute',
                 top: virtualItem.start,
@@ -473,7 +474,7 @@ export default function PlaylistPage() {
     createPlaylist, deletePlaylist, updatePlaylist,
     createSmartPlaylist, replacePlaylistSongs,
     createFolder, deleteFolder,
-    addSongs, removeSong, reorderSongs, sortSongs, removeDuplicateSongs,
+    addSongs, removeSong, reorderSongs, removeDuplicateSongs,
   } = usePlaylistStore();
   const { setQueue, addToQueue } = usePlayerStore();
   const openSaveToPlaylist = useUiStore(s => s.openSaveToPlaylist);
@@ -487,6 +488,7 @@ export default function PlaylistPage() {
   const [playlistFilterText, setPlaylistFilterText] = useState('');
 
   const [filterText, setFilterText]     = useState('');
+  const [songSortKey, setSongSortKey] = useState<SortKey>('addedOrder');
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds]   = useState<Set<number>>(new Set());
 
@@ -509,6 +511,7 @@ export default function PlaylistPage() {
   const [smartRefreshStatuses, setSmartRefreshStatuses] = useState<Record<string, {
     state: 'loading' | 'success' | 'error';
     refreshedAt?: number;
+    relaxed?: boolean;
   }>>({});
   const smartRefreshRef = useRef<string | null>(null);
 
@@ -535,6 +538,7 @@ export default function PlaylistPage() {
     setSelectionMode(false);
     setSelectedIds(new Set());
     setFilterText('');
+    setSongSortKey('addedOrder');
     smartRefreshRef.current = null;
   }, [selectedPlaylistId]);
 
@@ -551,18 +555,24 @@ export default function PlaylistPage() {
       const raw = rule.producerId
         ? (await getSongsByProducer([rule.producerId], 0, 100, 0)).items
         : (await searchSongs({ sort: 'AdditionDate', maxResults: 100, start: 0, getTotalCount: false, onlyWithPVs: true })).items;
-      const filtered = applyGlobalSongFilter(raw, {
+      const result = applyDiscoveryFilterWithRelaxation(raw, {
+        settings: {
         enabled: true,
         minYoutubeViews: rule.minYoutubeViews,
         minNicoViews: rule.minNicoViews,
         excludedSongTypes: rule.excludedSongTypes,
         cooldownHours: 0,
         excludeRatedFromDiscovery: false,
-      });
-      replacePlaylistSongs(playlist.id, filtered.slice(0, 200));
+        },
+      }, 20);
+      replacePlaylistSongs(playlist.id, result.items.slice(0, 200));
       setSmartRefreshStatuses(current => ({
         ...current,
-        [playlist.id]: { state: 'success', refreshedAt: Date.now() },
+        [playlist.id]: {
+          state: 'success',
+          refreshedAt: Date.now(),
+          relaxed: result.relaxedConditions.length > 0,
+        },
       }));
     } catch (error) {
       setSmartRefreshStatuses(current => ({
@@ -597,11 +607,13 @@ export default function PlaylistPage() {
     return p.name.toLowerCase().includes(q);
   });
 
-  const filteredSongs = (selectedPlaylist?.songs ?? []).filter(s => {
-    if (!filterText.trim()) return true;
-    const q = filterText.toLowerCase();
-    return s.name.toLowerCase().includes(q) || (s.artistString ?? '').toLowerCase().includes(q);
-  });
+  const filteredSongs = useMemo(() => {
+    const q = filterText.trim().toLowerCase();
+    const songs = (selectedPlaylist?.songs ?? []).filter(song => !q
+      || song.name.toLowerCase().includes(q)
+      || (song.artistString ?? '').toLowerCase().includes(q));
+    return sortPlaylistSongs(songs, songSortKey);
+  }, [filterText, selectedPlaylist, songSortKey]);
 
   const handleCreate = useCallback(() => {
     if (!newName.trim()) return;
@@ -643,10 +655,13 @@ export default function PlaylistPage() {
     const { active, over } = event;
     if (!over || active.id === over.id) return;
     const songs = selectedPlaylist.songs;
-    const fromIndex = songs.findIndex(s => String(s.id) === active.id);
-    const toIndex   = songs.findIndex(s => String(s.id) === over.id);
+    const readDisplayedIndex = (id: string | number) => Number(String(id).split('-').at(-1));
+    const activeSong = filteredSongs[readDisplayedIndex(active.id)];
+    const overSong = filteredSongs[readDisplayedIndex(over.id)];
+    const fromIndex = activeSong ? songs.findIndex(s => s.id === activeSong.id) : -1;
+    const toIndex = overSong ? songs.findIndex(s => s.id === overSong.id) : -1;
     if (fromIndex !== -1 && toIndex !== -1) reorderSongs(selectedPlaylist.id, fromIndex, toIndex);
-  }, [selectedPlaylist, reorderSongs]);
+  }, [filteredSongs, selectedPlaylist, reorderSongs]);
 
   const toggleSelect = useCallback((songId: number) => {
     setSelectedIds(prev => {
@@ -830,7 +845,7 @@ export default function PlaylistPage() {
       onClick={() => setSelectedPlaylistId(p.id)}
       className="group flex w-full items-center gap-3 rounded-2xl border px-2.5 py-2 text-left transition-all duration-200"
       style={{
-        background: selectedPlaylistId === p.id ? 'linear-gradient(110deg, rgba(6,214,160,.14), rgba(139,92,246,.1))' : 'transparent',
+        background: selectedPlaylistId === p.id ? 'rgba(255,255,255,.08)' : 'transparent',
         color: 'var(--color-text-primary)',
         borderColor: selectedPlaylistId === p.id ? 'rgba(6,214,160,.28)' : p.isPinned ? 'rgba(6,214,160,.12)' : 'transparent',
       }}
@@ -845,7 +860,7 @@ export default function PlaylistPage() {
           {p.smartRule && <span className="rounded-full bg-cyan-400/10 px-1.5 py-0.5 text-cyan-300">スマート</span>}
         </p>
       </div>
-      {selectedPlaylistId === p.id && <span className="h-2 w-2 flex-shrink-0 rounded-full bg-emerald-300 shadow-[0_0_10px_rgba(6,214,160,.65)]" />}
+      {selectedPlaylistId === p.id && <span className="h-2 w-2 flex-shrink-0 rounded-full bg-emerald-300" />}
     </button>
   );
 
@@ -859,16 +874,13 @@ export default function PlaylistPage() {
 
       {/* ─── 左サイドバー ───────────────────────────────────────────── */}
       <aside
-        className={`w-full flex-shrink-0 flex-col gap-3 overflow-y-auto rounded-3xl border border-white/[0.07] bg-white/[0.025] p-3 shadow-2xl shadow-black/10 md:w-80 lg:w-[22rem] ${selectedPlaylist ? 'hidden md:flex' : 'flex'}`}
+        className={`w-full flex-shrink-0 flex-col gap-3 overflow-y-auto rounded-2xl border border-white/[0.07] bg-white/[0.025] p-3 md:w-72 lg:w-80 ${selectedPlaylist ? 'hidden md:flex' : 'flex'}`}
         style={{ maxHeight: 'calc(100dvh - 180px)' }}
       >
         <div className="flex items-center justify-between px-1 pt-1">
-          <div>
-            <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-emerald-300/80">Your library</p>
-            <div className="mt-0.5 flex items-baseline gap-2">
-              <h2 className="text-xl font-bold tracking-tight">プレイリスト</h2>
-              <span className="text-xs text-neutral-500">{playlists.length}</span>
-            </div>
+          <div className="flex items-baseline gap-2">
+            <h2 className="text-xl font-bold tracking-tight">プレイリスト</h2>
+            <span className="text-xs text-neutral-500">{playlists.length}</span>
           </div>
           <button
             onClick={() => setShowFolderInput(!showFolderInput)}
@@ -926,7 +938,7 @@ export default function PlaylistPage() {
         {/* ピン留め（後で聴く等） */}
         {pinnedPlaylists.length > 0 && (
           <section className="space-y-1">
-            <p className="px-2 text-[10px] font-bold uppercase tracking-[0.18em] text-neutral-500">Pinned</p>
+            <p className="px-2 text-[11px] font-medium text-neutral-500">ピン留め</p>
             {pinnedPlaylists.map(p => <SidebarItem key={p.id} p={p} />)}
           </section>
         )}
@@ -955,7 +967,7 @@ export default function PlaylistPage() {
 
         {/* 通常プレイリスト */}
         <section className="flex-1 space-y-1">
-          <p className="px-2 text-[10px] font-bold uppercase tracking-[0.18em] text-neutral-500">Playlists</p>
+          <p className="px-2 text-[11px] font-medium text-neutral-500">プレイリスト</p>
           {filteredSidebarPlaylists.length === 0 ? (
             <p className="text-xs text-center py-4 text-neutral-500">プレイリストがありません</p>
           ) : filteredSidebarPlaylists.map(p => <SidebarItem key={p.id} p={p} />)}
@@ -969,7 +981,7 @@ export default function PlaylistPage() {
             onKeyDown={e => e.key === 'Enter' && handleCreate()}
             placeholder="新しいプレイリスト" className="search-input min-w-0 flex-1 text-xs"
           />
-          <button className="btn-primary h-9 w-9 flex-shrink-0 rounded-xl p-0 text-lg" onClick={handleCreate} title="プレイリストを作成">+</button>
+          <button className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl bg-white text-lg font-semibold leading-none text-black transition-colors hover:bg-neutral-200" onClick={handleCreate} title="プレイリストを作成" aria-label="プレイリストを作成">+</button>
         </div>
         <button
           type="button"
@@ -1039,55 +1051,37 @@ export default function PlaylistPage() {
       </aside>
 
       {/* ─── 右パネル ────────────────────────────────────────────────── */}
-      <main className={`min-w-0 flex-1 flex-col gap-3 overflow-y-auto ${selectedPlaylist ? 'flex' : 'hidden md:flex'}`} style={{ maxHeight: 'calc(100dvh - 180px)' }}>
+      <main className={`min-w-0 flex-1 space-y-3 overflow-y-auto ${selectedPlaylist ? 'block' : 'hidden md:block'}`} style={{ maxHeight: 'calc(100dvh - 180px)' }}>
         {!selectedPlaylist ? (
-          <div
-            className="flex h-full min-h-[460px] flex-col justify-end overflow-hidden rounded-3xl border border-white/[0.07] p-7 lg:p-10"
-            style={{ background: 'radial-gradient(circle at 78% 18%, rgba(139,92,246,.24), transparent 32%), radial-gradient(circle at 18% 32%, rgba(6,214,160,.15), transparent 28%), linear-gradient(145deg, rgba(30,30,42,.96), rgba(15,15,15,.98))' }}
-          >
-            <div className="mb-auto grid grid-cols-3 gap-3 self-end opacity-75 lg:w-[58%]">
-              {playlists.filter(p => !p.isPinned).slice(0, 6).map((playlist, index) => (
-                <button
-                  key={playlist.id}
-                  type="button"
-                  onClick={() => setSelectedPlaylistId(playlist.id)}
-                  className={`group relative aspect-square overflow-hidden rounded-2xl bg-white/5 shadow-2xl transition-all duration-300 hover:-translate-y-1 hover:opacity-100 ${index === 1 || index === 4 ? 'translate-y-6' : ''}`}
-                  title={playlist.name}
-                >
-                  <PlaylistCover playlist={playlist} className="transition-transform duration-500 group-hover:scale-105" />
-                  <span className="absolute inset-x-0 bottom-0 truncate bg-gradient-to-t from-black/80 to-transparent px-2 pb-2 pt-6 text-left text-[11px] font-medium text-white/90">{playlist.name}</span>
-                </button>
-              ))}
-            </div>
-            <div className="relative max-w-2xl">
-              <p className="mb-3 text-xs font-bold uppercase tracking-[0.24em] text-emerald-300">Make it yours</p>
-              <h1 className="text-4xl font-black leading-[1.08] tracking-[-0.04em] text-white lg:text-6xl">音楽の居場所を<br />つくろう。</h1>
-              <p className="mt-5 max-w-lg text-sm leading-7 text-neutral-400 lg:text-base">左のライブラリからプレイリストを選ぶと、曲を再生・整理・共有できます。曲のサムネイルからカバーも自動で作られます。</p>
-            </div>
+          <div className="flex h-full min-h-[360px] flex-col items-center justify-center rounded-2xl border border-white/[0.07] bg-white/[0.02] px-6 text-center">
+            <svg className="h-10 w-10 text-neutral-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>
+            </svg>
+            <p className="mt-4 text-sm font-medium text-neutral-300">プレイリストを選択してください</p>
+            <p className="mt-1 text-xs text-neutral-500">曲の確認や再生、編集ができます</p>
           </div>
         ) : (
           <>
             <button type="button" className="md:hidden self-start rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-neutral-300" onClick={() => setSelectedPlaylistId(null)}>← ライブラリ</button>
             {/* ヘッダー */}
             <section
-              className="relative overflow-hidden rounded-3xl border border-white/[0.08] p-4 shadow-2xl shadow-black/20 sm:p-6"
-              style={{ background: 'radial-gradient(circle at 88% 5%, rgba(139,92,246,.23), transparent 34%), linear-gradient(125deg, rgba(6,214,160,.12), rgba(30,30,38,.95) 45%, rgba(15,15,15,.98))' }}
+              className="flex-shrink-0 rounded-2xl border border-white/[0.08] bg-white/[0.035] p-4"
             >
-              <div className="relative flex flex-col gap-5 sm:flex-row sm:items-end">
-                <div className="aspect-square w-36 flex-shrink-0 overflow-hidden rounded-2xl bg-black/25 shadow-2xl ring-1 ring-white/10 sm:w-44 lg:w-52">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
+                <div className="aspect-square w-28 flex-shrink-0 overflow-hidden rounded-xl bg-black/25 ring-1 ring-white/10 sm:w-32 lg:w-36">
                   <PlaylistCover playlist={selectedPlaylist} />
                 </div>
-                <div className="min-w-0 flex-1 pb-1">
-                  <p className="mb-2 text-[10px] font-bold uppercase tracking-[0.22em] text-white/60">{selectedPlaylist.smartRule ? 'Smart playlist' : selectedPlaylist.isPinned ? 'Pinned playlist' : 'Playlist'}</p>
-                  <h1 className="break-words text-3xl font-black leading-none tracking-[-0.035em] text-white sm:text-4xl lg:text-5xl">{selectedPlaylist.name}</h1>
+                <div className="min-w-0 flex-1">
+                  <p className="mb-1.5 text-xs text-neutral-500">{selectedPlaylist.smartRule ? 'スマートプレイリスト' : selectedPlaylist.isPinned ? 'ピン留め' : 'プレイリスト'}</p>
+                  <h1 className="break-words text-2xl font-bold leading-tight text-white sm:text-3xl">{selectedPlaylist.name}</h1>
                     {selectedPlaylist.smartRule && (
                       <p className="mt-3 text-xs" style={{ color: 'var(--color-accent-cyan)' }}>
                         {selectedSmartRefreshStatus?.state === 'loading' && '条件を再計算中…'}
                         {selectedSmartRefreshStatus?.state === 'success' && (
-                          <>選択時に自動更新・最終更新 {new Date(selectedSmartRefreshStatus.refreshedAt ?? Date.now()).toLocaleTimeString('ja-JP')}（{selectedPlaylist.songs.length} 曲）</>
+                          <>最終更新 {new Date(selectedSmartRefreshStatus.refreshedAt ?? Date.now()).toLocaleTimeString('ja-JP')}{selectedSmartRefreshStatus.relaxed ? '・候補不足のため再生数条件を緩和' : ''}</>
                         )}
                         {selectedSmartRefreshStatus?.state === 'error' && '更新に失敗しました。手動更新してください。'}
-                        {!selectedSmartRefreshStatus && `開いたときに自動更新（現在 ${selectedPlaylist.songs.length} 曲）`}
+                        {!selectedSmartRefreshStatus && '開いたときに自動更新します'}
                       </p>
                     )}
                     {selectedPlaylist.description && (
@@ -1102,9 +1096,9 @@ export default function PlaylistPage() {
                         <span className="ml-2 text-cyan-400">（フィルター中: {filteredSongs.length} 曲）</span>
                       )}
                     </p>
-                  <div className="mt-5 flex flex-wrap items-center gap-2">
+                  <div className="mt-4 flex flex-wrap items-center gap-2">
                     {selectedPlaylist.songs.length > 0 && (
-                      <button onClick={() => setQueue(selectedPlaylist.songs, 0)} className="flex h-11 items-center gap-2 rounded-full bg-white px-5 text-sm font-bold text-black shadow-lg shadow-white/10 transition-transform hover:scale-[1.03]">
+                      <button onClick={() => setQueue(selectedPlaylist.songs, 0)} className="flex h-10 items-center gap-2 rounded-full bg-white px-5 text-sm font-bold text-black transition-colors hover:bg-neutral-200">
                         <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
                         再生
                       </button>
@@ -1112,7 +1106,7 @@ export default function PlaylistPage() {
                     {selectedPlaylist.smartRule && (
                       <button
                         type="button"
-                        className="rounded-full border border-emerald-300/20 bg-emerald-300/10 px-4 py-2.5 text-sm font-medium text-emerald-200 transition-colors hover:bg-emerald-300/15"
+                        className="h-10 rounded-full border border-white/10 bg-white/[0.05] px-4 text-sm font-medium text-neutral-200 transition-colors hover:bg-white/10"
                         disabled={selectedSmartRefreshStatus?.state === 'loading'}
                         onClick={() => void refreshSmartPlaylist(selectedPlaylist).catch(() => undefined)}
                         title="スマートプレイリストを今すぐ更新"
@@ -1120,20 +1114,20 @@ export default function PlaylistPage() {
                         {selectedSmartRefreshStatus?.state === 'loading' ? '更新中…' : '条件を再更新'}
                       </button>
                     )}
-                    <button onClick={() => setShowYTImport(true)} className="flex h-11 items-center gap-2 rounded-full border border-white/10 bg-white/[0.06] px-4 text-sm font-medium text-neutral-200 transition-colors hover:bg-white/10" title="YouTubeプレイリストからインポート">
+                    <button onClick={() => setShowYTImport(true)} className="flex h-10 items-center gap-2 rounded-full border border-white/10 bg-white/[0.05] px-4 text-sm font-medium text-neutral-200 transition-colors hover:bg-white/10" title="YouTubeプレイリストからインポート">
                       <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor" style={{ color: '#ff0000' }}>
                         <path d="M23.5 6.19a3.02 3.02 0 0 0-2.12-2.14C19.51 3.5 12 3.5 12 3.5s-7.51 0-9.38.55A3.02 3.02 0 0 0 .5 6.19C0 8.07 0 12 0 12s0 3.93.5 5.81a3.02 3.02 0 0 0 2.12 2.14C4.49 20.5 12 20.5 12 20.5s7.51 0 9.38-.55a3.02 3.02 0 0 0 2.12-2.14C24 15.93 24 12 24 12s0-3.93-.5-5.81zM9.75 15.52V8.48L15.5 12l-5.75 3.52z"/>
                       </svg>
                       YouTube
                     </button>
-                    <button onClick={() => exportPlaylist(selectedPlaylist)} className="flex h-11 w-11 items-center justify-center rounded-full border border-white/10 bg-white/[0.04] text-neutral-300 transition-colors hover:bg-white/10 hover:text-white" title="JSONエクスポート">
+                    <button onClick={() => exportPlaylist(selectedPlaylist)} className="flex h-10 w-10 items-center justify-center rounded-full border border-white/10 bg-white/[0.04] text-neutral-300 transition-colors hover:bg-white/10 hover:text-white" title="JSONエクスポート">
                       <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                         <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
                         <path d="M7 10l5 5 5-5"/>
                         <path d="M12 15V3"/>
                       </svg>
                     </button>
-                    <button onClick={() => void sharePlaylist(selectedPlaylist)} className="flex h-11 w-11 items-center justify-center rounded-full border border-white/10 bg-white/[0.04] text-neutral-300 transition-colors hover:bg-white/10 hover:text-white" title="共有リンクをコピー" aria-label="共有リンクをコピー">
+                    <button onClick={() => void sharePlaylist(selectedPlaylist)} className="flex h-10 w-10 items-center justify-center rounded-full border border-white/10 bg-white/[0.04] text-neutral-300 transition-colors hover:bg-white/10 hover:text-white" title="共有リンクをコピー" aria-label="共有リンクをコピー">
                       <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                         <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
                         <path d="m8.6 13.5 6.8 4M15.4 6.5l-6.8 4"/>
@@ -1141,13 +1135,13 @@ export default function PlaylistPage() {
                     </button>
                     {!selectedPlaylist.isPinned && (
                       <>
-                        <button onClick={() => openEdit(selectedPlaylist)} className="flex h-11 w-11 items-center justify-center rounded-full border border-white/10 bg-white/[0.04] text-neutral-300 transition-colors hover:bg-white/10 hover:text-white" title="編集">
+                        <button onClick={() => openEdit(selectedPlaylist)} className="flex h-10 w-10 items-center justify-center rounded-full border border-white/10 bg-white/[0.04] text-neutral-300 transition-colors hover:bg-white/10 hover:text-white" title="編集">
                           <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                             <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
                             <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
                           </svg>
                         </button>
-                        <button onClick={() => handleDelete(selectedPlaylist)} className="flex h-11 w-11 items-center justify-center rounded-full border border-red-400/15 bg-red-400/[0.04] transition-colors hover:bg-red-400/10" title="削除" style={{ color: 'var(--color-error)' }}>
+                        <button onClick={() => handleDelete(selectedPlaylist)} className="flex h-10 w-10 items-center justify-center rounded-full border border-red-400/15 bg-red-400/[0.04] transition-colors hover:bg-red-400/10" title="削除" style={{ color: 'var(--color-error)' }}>
                           <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                             <path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/>
                             <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/>
@@ -1179,9 +1173,13 @@ export default function PlaylistPage() {
                 </div>
                 <span className="hidden text-xs text-neutral-500 lg:inline">並べ替え</span>
                 {(['addedOrder', 'name', 'artist', 'publishDate'] as SortKey[]).map(key => (
-                  <button key={key} onClick={() => sortSongs(selectedPlaylist.id, key)}
+                  <button key={key} onClick={() => setSongSortKey(key)} aria-pressed={songSortKey === key}
                     className="rounded-lg border px-2.5 py-1.5 text-xs transition-colors hover:bg-white/5"
-                    style={{ borderColor: 'var(--color-border)', color: 'var(--color-text-secondary)' }}
+                    style={{
+                      borderColor: songSortKey === key ? 'rgba(255,255,255,.35)' : 'var(--color-border)',
+                      color: songSortKey === key ? 'white' : 'var(--color-text-secondary)',
+                      background: songSortKey === key ? 'rgba(255,255,255,.08)' : 'transparent',
+                    }}
                   >
                     {{ addedOrder: '追加順', name: '曲名', artist: 'アーティスト', publishDate: '公開日' }[key]}
                   </button>
@@ -1255,7 +1253,7 @@ export default function PlaylistPage() {
               filteredSongs.length > VIRTUAL_THRESHOLD ? (
                 <>
                   <p className="text-xs text-neutral-500 mb-1">
-                    {filteredSongs.length} 件（大きいプレイリストは仮想スクロール表示・並べ替え不可）
+                    {filteredSongs.length} 件（表示を軽くするため仮想スクロールを使用）
                   </p>
                   <VirtualSongList
                     songs={filteredSongs}
@@ -1270,16 +1268,39 @@ export default function PlaylistPage() {
                     allSongs={selectedPlaylist.songs}
                   />
                 </>
+              ) : songSortKey === 'addedOrder' ? (
+                <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+                  <SortableContext items={filteredSongs.map((song, index) => `${song.id}-${index}`)} strategy={verticalListSortingStrategy}>
+                    <div className="overflow-hidden rounded-2xl border border-white/[0.07] bg-white/[0.025]">
+                      {filteredSongs.map((song, filteredIdx) => {
+                        const globalIndex = selectedPlaylist.songs.findIndex(s => s.id === song.id);
+                        return (
+                          <SortableSongRow
+                            key={`${song.id}-${filteredIdx}`}
+                            id={`${song.id}-${filteredIdx}`}
+                            index={filteredIdx}
+                            song={song}
+                            selectionMode={selectionMode}
+                            selected={selectedIds.has(song.id)}
+                            onToggleSelect={() => toggleSelect(song.id)}
+                            onPlay={() => setQueue(filteredSongs, filteredIdx)}
+                            onRemove={() => removeSong(selectedPlaylist.id, globalIndex)}
+                            onMoveTop={() => moveToTop(globalIndex)}
+                            onMoveBottom={() => moveToBottom(globalIndex)}
+                            onSetCover={() => handleSetCover(song)}
+                          />
+                        );
+                      })}
+                    </div>
+                  </SortableContext>
+                </DndContext>
               ) : (
-              <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-                <SortableContext items={filteredSongs.map(s => String(s.id))} strategy={verticalListSortingStrategy}>
-                  <div className="overflow-hidden rounded-3xl border border-white/[0.07] bg-white/[0.025] p-1">
-                    {filteredSongs.map((song, filteredIdx) => {
-                      const globalIndex = selectedPlaylist.songs.findIndex(s => s.id === song.id);
-                      return (
-                        <SortableSongRow
-                          key={song.id}
-                          id={String(song.id)}
+                <div className="overflow-hidden rounded-2xl border border-white/[0.07] bg-white/[0.025]">
+                  {filteredSongs.map((song, filteredIdx) => {
+                    const globalIndex = selectedPlaylist.songs.findIndex(s => s.id === song.id);
+                    return (
+                      <div key={`${song.id}-${filteredIdx}`} className="h-16">
+                        <PlainSongRow
                           index={filteredIdx}
                           song={song}
                           selectionMode={selectionMode}
@@ -1291,11 +1312,10 @@ export default function PlaylistPage() {
                           onMoveBottom={() => moveToBottom(globalIndex)}
                           onSetCover={() => handleSetCover(song)}
                         />
-                      );
-                    })}
-                  </div>
-                </SortableContext>
-              </DndContext>
+                      </div>
+                    );
+                  })}
+                </div>
               )
             )}
           </>
