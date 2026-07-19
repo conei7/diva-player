@@ -1,8 +1,7 @@
 # DIVA Player
 
-文書の入口は[ドキュメント案内](docs/README.md)です。構成、機能、保存データ、開発、
-SBC、Cloudflare、パイプライン、障害対応を含む全体像は
-[統合マニュアル](docs/PROJECT_MANUAL.md)を参照してください。
+構成、機能、保存データ、開発手順を含む全体像は
+[プロジェクトマニュアル](docs/PROJECT_MANUAL.md)を参照してください。
 
 **Dynamic Index for Virtual Artists**
 
@@ -79,10 +78,9 @@ src/
 
 ## ドキュメント
 
-- [ドキュメント案内](docs/README.md): 文書の用途と優先順位
-- [統合マニュアル](docs/PROJECT_MANUAL.md): 現行システムの正本
+- [プロジェクトマニュアル](docs/PROJECT_MANUAL.md): 公開仕様、構成、セットアップ
 - [開発ガイドライン](docs/GUIDELINE.md): コーディング規約
-- [推薦・履歴の技術メモ](docs/WEB_STATUS_AND_RECOMMENDATION_NOTES.md): 実装詳細
-- [SBC運用メモ](docs/SBC_OPERATIONS.md): 接続とデプロイの短縮版
-- [整備実装プラン](docs/MAINTENANCE_PLAN.md): 文書整理、品質確認、DB監査、未解決課題の実行順序
+
+稼働状況、運用手順、ロードマップは、秘密情報や内部構成を含むためprivateの
+`diva-data-pipeline/docs/diva-player/ACTIVE`を正本とします。
 
