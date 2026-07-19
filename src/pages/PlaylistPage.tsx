@@ -46,6 +46,50 @@ import { searchSongs, getSongsByProducer } from '../api/vocadb';
 import { applyGlobalSongFilter } from '../utils/globalFilters';
 import type { SmartPlaylistRule } from '../types/vocadb';
 
+function PlaylistCover({ playlist, className = '' }: { playlist: Playlist; className?: string }) {
+  const thumbnails = Array.from(new Set(
+    playlist.songs.map(song => song.thumbUrl).filter((url): url is string => Boolean(url)),
+  )).slice(0, 4);
+
+  if (playlist.coverArtUrl) {
+    return <img src={playlist.coverArtUrl} alt="" className={`h-full w-full object-cover ${className}`} />;
+  }
+
+  if (!playlist.isPinned && thumbnails.length > 0) {
+    const gridClass = thumbnails.length === 1 ? 'grid-cols-1' : 'grid-cols-2';
+    return (
+      <div className={`grid h-full w-full ${gridClass} overflow-hidden ${className}`}>
+        {thumbnails.map((url, index) => (
+          <img
+            key={url}
+            src={url}
+            alt=""
+            loading="lazy"
+            className={`h-full min-h-0 w-full object-cover ${thumbnails.length === 3 && index === 0 ? 'row-span-2' : ''}`}
+          />
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className={`flex h-full w-full items-center justify-center ${className}`}
+      style={{ background: playlist.isPinned ? 'linear-gradient(145deg, rgba(6,214,160,.28), rgba(59,130,246,.12))' : 'linear-gradient(145deg, rgba(139,92,246,.3), rgba(236,72,153,.12))' }}
+    >
+      {playlist.isPinned ? (
+        <svg className="h-[42%] w-[42%]" style={{ color: 'var(--color-accent-cyan)' }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6">
+          <circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15.5 14"/>
+        </svg>
+      ) : (
+        <svg className="h-[42%] w-[42%] text-white/65" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+          <path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>
+        </svg>
+      )}
+    </div>
+  );
+}
+
 // ─── SortableSongRow ────────────────────────────────────────────────────────
 interface SortableSongRowProps {
   id: string;
@@ -93,7 +137,7 @@ function SortableSongRow({
     <div
       ref={setNodeRef}
       style={style}
-      className="flex items-center gap-2 px-3 py-2 rounded-lg group hover:bg-white/5 transition-colors"
+      className="group flex min-h-16 items-center gap-2 rounded-2xl border border-transparent px-3 py-2 transition-all hover:border-white/5 hover:bg-white/[0.06]"
     >
       {selectionMode ? (
         <input
@@ -117,7 +161,7 @@ function SortableSongRow({
       )}
       <span className="text-xs w-5 text-center text-neutral-500 flex-shrink-0">{index + 1}</span>
       <div
-        className="w-9 h-9 rounded flex-shrink-0 overflow-hidden cursor-pointer"
+        className="h-11 w-11 flex-shrink-0 cursor-pointer overflow-hidden rounded-xl shadow-sm"
         style={{ background: 'var(--color-bg)' }}
         onClick={selectionMode ? onToggleSelect : onPlay}
       >
@@ -228,7 +272,7 @@ function PlainSongRow({
 
   return (
     <div
-      className="flex items-center gap-2 px-3 py-2 rounded-lg group hover:bg-white/5 transition-colors"
+      className="group flex min-h-16 items-center gap-2 rounded-2xl border border-transparent px-3 py-2 transition-all hover:border-white/5 hover:bg-white/[0.06]"
       style={{ background: selected ? 'rgba(6,182,212,0.08)' : undefined }}
     >
       {selectionMode ? (
@@ -238,7 +282,7 @@ function PlainSongRow({
       )}
       <span className="text-xs w-5 text-center text-neutral-500 flex-shrink-0">{index + 1}</span>
       <div
-        className="w-9 h-9 rounded flex-shrink-0 overflow-hidden cursor-pointer"
+        className="h-11 w-11 flex-shrink-0 cursor-pointer overflow-hidden rounded-xl shadow-sm"
         style={{ background: 'var(--color-bg)' }}
         onClick={selectionMode ? onToggleSelect : onPlay}
       >
@@ -327,7 +371,7 @@ function VirtualSongList({
 }: VirtualSongListProps) {
   const { setQueue } = usePlayerStore();
   const parentRef = useRef<HTMLDivElement>(null);
-  const ROW_HEIGHT = 52;
+  const ROW_HEIGHT = 64;
 
   const rowVirtualizer = useVirtualizer({
     count: songs.length,
@@ -784,38 +828,29 @@ export default function PlaylistPage() {
   const SidebarItem = ({ p }: { p: Playlist }) => (
     <button
       onClick={() => setSelectedPlaylistId(p.id)}
-      className="w-full flex items-center gap-2 px-2 py-2 rounded-xl text-left group"
+      className="group flex w-full items-center gap-3 rounded-2xl border px-2.5 py-2 text-left transition-all duration-200"
       style={{
-        background: selectedPlaylistId === p.id ? 'var(--color-bg-hover)' : 'transparent',
+        background: selectedPlaylistId === p.id ? 'linear-gradient(110deg, rgba(6,214,160,.14), rgba(139,92,246,.1))' : 'transparent',
         color: 'var(--color-text-primary)',
-        border: p.isPinned && selectedPlaylistId !== p.id ? '1px solid rgba(6,182,212,0.15)' : '1px solid transparent',
+        borderColor: selectedPlaylistId === p.id ? 'rgba(6,214,160,.28)' : p.isPinned ? 'rgba(6,214,160,.12)' : 'transparent',
       }}
     >
-      <div
-        className="w-8 h-8 rounded-lg flex-shrink-0 flex items-center justify-center overflow-hidden"
-        style={{ background: 'var(--color-bg)' }}
-      >
-        {p.isPinned ? (
-          <svg className="w-4 h-4" style={{ color: 'var(--color-accent-cyan)' }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
-          </svg>
-        ) : p.coverArtUrl ? (
-          <img src={p.coverArtUrl} alt="" className="w-full h-full object-cover" />
-        ) : (
-          <svg className="w-4 h-4 text-neutral-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-            <path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>
-          </svg>
-        )}
+      <div className="h-12 w-12 flex-shrink-0 overflow-hidden rounded-xl bg-black/20 shadow-md transition-transform duration-200 group-hover:scale-[1.03]">
+        <PlaylistCover playlist={p} />
       </div>
       <div className="flex-1 min-w-0">
-        <p className="text-xs font-medium truncate">{p.name}</p>
-        <p className="text-xs text-neutral-500">{p.songs.length} 曲{p.smartRule ? ' ・自動更新' : ''}</p>
+        <p className="truncate text-sm font-semibold">{p.name}</p>
+        <p className="mt-0.5 flex items-center gap-1.5 text-[11px] text-neutral-500">
+          <span>{p.songs.length}曲</span>
+          {p.smartRule && <span className="rounded-full bg-cyan-400/10 px-1.5 py-0.5 text-cyan-300">スマート</span>}
+        </p>
       </div>
+      {selectedPlaylistId === p.id && <span className="h-2 w-2 flex-shrink-0 rounded-full bg-emerald-300 shadow-[0_0_10px_rgba(6,214,160,.65)]" />}
     </button>
   );
 
   return (
-    <div className="flex flex-col md:flex-row gap-4 px-4 py-4" style={{ minHeight: 'calc(100dvh - 160px)' }}>
+    <div className="flex flex-col gap-4 px-3 py-3 md:flex-row md:px-4 md:py-4" style={{ minHeight: 'calc(100dvh - 160px)' }}>
       {shareNotice && (
         <p className="fixed left-1/2 top-20 z-50 -translate-x-1/2 rounded-xl px-4 py-2 text-sm shadow-lg" role="status" style={{ background: 'var(--color-surface-elevated)', color: 'var(--color-accent-cyan)', border: '1px solid var(--color-border)' }}>
           {shareNotice}
@@ -823,12 +858,21 @@ export default function PlaylistPage() {
       )}
 
       {/* ─── 左サイドバー ───────────────────────────────────────────── */}
-      <div className={`w-full md:w-64 flex-shrink-0 flex flex-col gap-2 overflow-y-auto ${selectedPlaylist ? 'hidden md:flex' : 'flex'}`} style={{ maxHeight: 'calc(100dvh - 180px)' }}>
-        <div className="flex items-center justify-between">
-          <h2 className="text-xs font-semibold uppercase tracking-wider text-neutral-400">プレイリスト</h2>
+      <aside
+        className={`w-full flex-shrink-0 flex-col gap-3 overflow-y-auto rounded-3xl border border-white/[0.07] bg-white/[0.025] p-3 shadow-2xl shadow-black/10 md:w-80 lg:w-[22rem] ${selectedPlaylist ? 'hidden md:flex' : 'flex'}`}
+        style={{ maxHeight: 'calc(100dvh - 180px)' }}
+      >
+        <div className="flex items-center justify-between px-1 pt-1">
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-emerald-300/80">Your library</p>
+            <div className="mt-0.5 flex items-baseline gap-2">
+              <h2 className="text-xl font-bold tracking-tight">プレイリスト</h2>
+              <span className="text-xs text-neutral-500">{playlists.length}</span>
+            </div>
+          </div>
           <button
             onClick={() => setShowFolderInput(!showFolderInput)}
-            className="p-1 rounded hover:text-white text-neutral-500 transition-colors"
+            className="flex h-9 w-9 items-center justify-center rounded-full border border-white/10 bg-white/5 text-neutral-400 transition-all hover:border-white/20 hover:bg-white/10 hover:text-white"
             title="フォルダを作成"
           >
             <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -839,7 +883,7 @@ export default function PlaylistPage() {
         </div>
 
         {showFolderInput && (
-          <div className="flex gap-1">
+          <div className="flex gap-2 rounded-2xl border border-white/[0.07] bg-black/15 p-2">
             <input
               type="text" value={newFolderName}
               onChange={e => setNewFolderName(e.target.value)}
@@ -851,19 +895,17 @@ export default function PlaylistPage() {
           </div>
         )}
 
-        {/* ピン留め（後で聴く等） */}
-        {pinnedPlaylists.map(p => <SidebarItem key={p.id} p={p} />)}
-        {pinnedPlaylists.length > 0 && <div className="border-t" style={{ borderColor: 'var(--color-border)' }} />}
-
         {playlists.some(p => !p.isPinned) && (
           <div className="relative">
+            <svg className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+            </svg>
             <input
               type="search"
               value={playlistFilterText}
               onChange={e => setPlaylistFilterText(e.target.value)}
               placeholder="プレイリストを検索"
-              className="search-input text-xs w-full pr-8"
-              style={{ paddingLeft: '0.5rem' }}
+              className="search-input w-full rounded-2xl py-2.5 pl-10 pr-8 text-sm"
             />
             {playlistFilterText && (
               <button
@@ -881,49 +923,57 @@ export default function PlaylistPage() {
           </div>
         )}
 
+        {/* ピン留め（後で聴く等） */}
+        {pinnedPlaylists.length > 0 && (
+          <section className="space-y-1">
+            <p className="px-2 text-[10px] font-bold uppercase tracking-[0.18em] text-neutral-500">Pinned</p>
+            {pinnedPlaylists.map(p => <SidebarItem key={p.id} p={p} />)}
+          </section>
+        )}
+
         {/* フォルダフィルター */}
-        <button
-          onClick={() => setSelectedFolderId(null)}
-          className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm text-left"
-          style={{ background: selectedFolderId === null ? 'var(--color-bg-hover)' : 'transparent', color: 'var(--color-text-secondary)' }}
-        >
-          <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
-          </svg>
-          すべて
-        </button>
+        <section className="rounded-2xl bg-black/10 p-1">
+          <button
+            onClick={() => setSelectedFolderId(null)}
+            className="flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-sm transition-colors"
+            style={{ background: selectedFolderId === null ? 'rgba(255,255,255,.07)' : 'transparent', color: 'var(--color-text-secondary)' }}
+          >
+            <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+            </svg>
+            すべてのプレイリスト
+          </button>
 
-        {folders.map(f => (
-          <FolderItem key={f.id} folder={f} depth={0}
-            selectedFolderId={selectedFolderId}
-            onSelect={id => setSelectedFolderId(id)}
-            onDelete={deleteFolder}
-          />
-        ))}
-
-        <div className="border-t" style={{ borderColor: 'var(--color-border)' }} />
+          {folders.map(f => (
+            <FolderItem key={f.id} folder={f} depth={0}
+              selectedFolderId={selectedFolderId}
+              onSelect={id => setSelectedFolderId(id)}
+              onDelete={deleteFolder}
+            />
+          ))}
+        </section>
 
         {/* 通常プレイリスト */}
-        <div className="space-y-0.5 flex-1">
+        <section className="flex-1 space-y-1">
+          <p className="px-2 text-[10px] font-bold uppercase tracking-[0.18em] text-neutral-500">Playlists</p>
           {filteredSidebarPlaylists.length === 0 ? (
             <p className="text-xs text-center py-4 text-neutral-500">プレイリストがありません</p>
           ) : filteredSidebarPlaylists.map(p => <SidebarItem key={p.id} p={p} />)}
-        </div>
+        </section>
 
         {/* 新規プレイリスト作成 */}
-        <div className="flex gap-1 mt-auto pt-2">
+        <div className="mt-auto flex gap-2 rounded-2xl border border-white/[0.07] bg-black/15 p-2">
           <input
             type="text" value={newName}
             onChange={e => setNewName(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && handleCreate()}
-            placeholder="新しいプレイリスト..." className="search-input text-xs flex-1"
-            style={{ paddingLeft: '0.5rem' }}
+            placeholder="新しいプレイリスト" className="search-input min-w-0 flex-1 text-xs"
           />
-          <button className="btn-primary text-xs px-2" onClick={handleCreate}>+</button>
+          <button className="btn-primary h-9 w-9 flex-shrink-0 rounded-xl p-0 text-lg" onClick={handleCreate} title="プレイリストを作成">+</button>
         </div>
         <button
           type="button"
-          className="btn-secondary text-xs px-2 py-1.5"
+          className="rounded-xl border border-violet-400/20 bg-violet-400/[0.06] px-3 py-2 text-xs font-medium text-violet-200 transition-colors hover:bg-violet-400/10"
           onClick={() => setShowSmartBuilder(value => !value)}
           aria-expanded={showSmartBuilder}
         >
@@ -957,34 +1007,36 @@ export default function PlaylistPage() {
             if (file) void importPlaylistJson(file);
           }}
         />
-        <button
-          type="button"
-          onClick={() => importInputRef.current?.click()}
-          className="btn-secondary text-xs px-2 py-1.5 flex items-center justify-center gap-1.5"
-          title="DIVA PlayerのプレイリストJSONをインポート"
-        >
+        <div className="grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            onClick={() => importInputRef.current?.click()}
+            className="flex items-center justify-center gap-1.5 rounded-xl border border-white/[0.07] bg-white/[0.025] px-2 py-2 text-xs text-neutral-400 transition-colors hover:bg-white/[0.06] hover:text-white"
+            title="DIVA PlayerのプレイリストJSONをインポート"
+          >
           <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
             <path d="M7 10l5-5 5 5"/>
             <path d="M12 5v12"/>
           </svg>
-          JSONインポート
-        </button>
-        <button
-          type="button"
-          onClick={exportAllPlaylists}
-          className="btn-secondary text-xs px-2 py-1.5 flex items-center justify-center gap-1.5"
-          disabled={playlists.length === 0}
-          title="すべてのプレイリストとフォルダをJSONでバックアップ"
-        >
+            読み込む
+          </button>
+          <button
+            type="button"
+            onClick={exportAllPlaylists}
+            className="flex items-center justify-center gap-1.5 rounded-xl border border-white/[0.07] bg-white/[0.025] px-2 py-2 text-xs text-neutral-400 transition-colors hover:bg-white/[0.06] hover:text-white disabled:opacity-40"
+            disabled={playlists.length === 0}
+            title="すべてのプレイリストとフォルダをJSONでバックアップ"
+          >
           <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
             <path d="M7 10l5 5 5-5"/>
             <path d="M12 15V3"/>
           </svg>
-          全バックアップ
-        </button>
-      </div>
+            バックアップ
+          </button>
+        </div>
+      </aside>
 
       {/* ─── 右パネル ────────────────────────────────────────────────── */}
       <div className={`flex-1 min-w-0 flex flex-col gap-3 overflow-y-auto ${selectedPlaylist ? 'flex' : 'hidden md:flex'}`} style={{ maxHeight: 'calc(100dvh - 180px)' }}>
