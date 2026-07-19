@@ -7,7 +7,7 @@ export type AutoQueueReasonCode =
   | 'new_discovery'
   | 'fallback';
 
-export type AutoQueueStatus = 'idle' | 'fetching' | 'reranking' | 'ready' | 'degraded' | 'exhausted' | 'error';
+export type AutoQueueStatus = 'idle' | 'fetching' | 'reranking' | 'ready' | 'relaxed' | 'degraded' | 'exhausted' | 'error';
 export type AutoQueueStrategyArm = 'familiar' | 'balanced' | 'explore';
 
 export interface QueueRecommendation {

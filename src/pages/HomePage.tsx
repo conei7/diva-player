@@ -24,7 +24,13 @@ import { filterVoiceSynthSongs } from '../utils/voiceSynthSongs';
 import { useRecommendationDebugStore } from '../stores/recommendationDebugStore';
 import { createRankingSeed } from '../utils/rankingRandomization';
 import { rerankDisplayedSongs, useRecommendationExposureStore } from '../stores/recommendationExposureStore';
-import { applyDiscoveryFilter, applyGlobalSongFilter, requiresExternalViewCounts } from '../utils/globalFilters';
+import {
+  applyDiscoveryFilter,
+  applyDiscoveryFilterWithRelaxation,
+  applyGlobalSongFilter,
+  getDiscoveryRelaxationMessage,
+  requiresExternalViewCounts,
+} from '../utils/globalFilters';
 import { useFavoriteProducerStore } from '../stores/favoriteProducerStore';
 
 type HomeCategoryId =
@@ -383,13 +389,25 @@ export default function HomePage() {
   }, [loadMore]);
 
   const discoveryLastPlayed = new Map(entries.map(entry => [entry.song.id, entry.playedAt] as const));
+  const discoveryContext = {
+    settings: globalFilterSettings,
+    ratings,
+    lastPlayedAtBySongId: discoveryLastPlayed,
+  };
+  const strictDiscoverySongs = applyDiscoveryFilter(songs, discoveryContext);
+  const shouldRelaxDiscovery = !hasSearched
+    && !loading
+    && strictDiscoverySongs.length < PAGE_SIZE
+    && (!hasMore || autoFillPagesRef.current >= 8);
+  const discoveryResult = shouldRelaxDiscovery
+    ? applyDiscoveryFilterWithRelaxation(songs, discoveryContext, PAGE_SIZE)
+    : { items: strictDiscoverySongs, relaxedConditions: [] };
   const displaySongs = hasSearched
     ? applyGlobalSongFilter(searchResults, globalFilterSettings)
-    : applyDiscoveryFilter(songs, {
-        settings: globalFilterSettings,
-        ratings,
-        lastPlayedAtBySongId: discoveryLastPlayed,
-      });
+    : discoveryResult.items;
+  const relaxationMessage = hasSearched
+    ? null
+    : getDiscoveryRelaxationMessage(discoveryResult.relaxedConditions);
 
   // 足切り後の表示件数が少ない場合は、条件を満たす曲が24件揃うまで追加ページを先読みする。
   // 候補が少ないカテゴリや厳しい再生数条件でも、1ページ目だけで打ち切らない。
@@ -399,13 +417,13 @@ export default function HomePage() {
       || loading
       || !hasMore
       || fetchingRef.current
-      || displaySongs.length >= PAGE_SIZE
+      || strictDiscoverySongs.length >= PAGE_SIZE
       || autoFillPagesRef.current >= 8
     ) return;
 
     autoFillPagesRef.current += 1;
     loadMore();
-  }, [displaySongs.length, hasSearched, loading, hasMore, loadMore]);
+  }, [strictDiscoverySongs.length, hasSearched, loading, hasMore, loadMore]);
 
   useEffect(() => {
     setVisibleSongs(displaySongs);
@@ -480,6 +498,16 @@ export default function HomePage() {
       {hasSearched && searchError && (
         <p className="mb-4 text-sm" role="alert" style={{ color: 'var(--color-error)' }}>
           {searchError}
+        </p>
+      )}
+
+      {relaxationMessage && (
+        <p
+          className="mb-4 rounded-lg border px-3 py-2 text-sm"
+          role="status"
+          style={{ borderColor: 'var(--color-border)', color: 'var(--color-text-secondary)', background: 'var(--color-surface)' }}
+        >
+          {relaxationMessage}
         </p>
       )}
 

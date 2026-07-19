@@ -64,6 +64,8 @@ export default function QueueSidebar({ hideHeader }: QueueSidebarProps = {}) {
             <span className="text-[10px]" style={{ color: 'var(--color-text-muted)' }}>補充中…</span>
           ) : autoQueueStatus === 'degraded' ? (
             <span className="text-[10px]" style={{ color: '#fbbf24' }}>関連曲で補充</span>
+          ) : autoQueueStatus === 'relaxed' ? (
+            <span className="text-[10px]" style={{ color: '#fbbf24' }}>条件を緩和して補充</span>
           ) : autoQueueStatus === 'exhausted' ? (
             <span className="text-[10px]" style={{ color: 'var(--color-text-muted)' }}>候補がありません</span>
           ) : null}

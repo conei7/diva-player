@@ -17,7 +17,12 @@ import { useSelectionStore } from '../stores/selectionStore';
 import { createRankingSeed } from '../utils/rankingRandomization';
 import { rerankDisplayedSongs, useRecommendationExposureStore } from '../stores/recommendationExposureStore';
 import { useGlobalFilterStore } from '../stores/globalFilterStore';
-import { applyDiscoveryFilter, requiresExternalViewCounts } from '../utils/globalFilters';
+import {
+  applyDiscoveryFilterWithRelaxation,
+  getDiscoveryRelaxationMessage,
+  requiresExternalViewCounts,
+  type DiscoveryRelaxedCondition,
+} from '../utils/globalFilters';
 
 /** サムネイルURLを解決 */
 function getThumbUrl(song: Song): string | null {
@@ -31,6 +36,7 @@ type TabKey = 'recommend' | 'related' | 'deepdig';
 
 interface TabState {
   items: Song[];
+  relaxedConditions: DiscoveryRelaxedCondition[];
   loading: boolean;
   hasMore: boolean;
   page: number;
@@ -78,9 +84,9 @@ export default function NowPlayingPage() {
 
   const [activeTab, setActiveTab] = useState<TabKey>('recommend');
   const [tabs, setTabs] = useState<Record<TabKey, TabState>>({
-    recommend: { items: [], loading: false, hasMore: true, page: 0 },
-    related:   { items: [], loading: false, hasMore: true, page: 0 },
-    deepdig:   { items: [], loading: false, hasMore: true, page: 0 },
+    recommend: { items: [], relaxedConditions: [], loading: false, hasMore: true, page: 0 },
+    related:   { items: [], relaxedConditions: [], loading: false, hasMore: true, page: 0 },
+    deepdig:   { items: [], relaxedConditions: [], loading: false, hasMore: true, page: 0 },
   });
 
   const fetchedForRef   = useRef<number | null>(null);
@@ -102,17 +108,21 @@ export default function NowPlayingPage() {
     const recommendedSongs = requiresExternalViewCounts(globalFilterSettings)
       ? await attachExternalViews(recommendedRaw)
       : recommendedRaw;
-    const songs = rerankDisplayedSongs(applyDiscoveryFilter(recommendedSongs, {
+    const filtered = applyDiscoveryFilterWithRelaxation(recommendedSongs, {
       settings: globalFilterSettings,
       ratings,
       lastPlayedAtBySongId: new Map(entries.map(entry => [entry.song.id, entry.playedAt] as const)),
-    }), rankingSeedRef.current);
+    }, PAGE_SIZE);
+    const songs = rerankDisplayedSongs(filtered.items, rankingSeedRef.current);
     const fresh = songs.filter(s => !seenRecommendRef.current.has(s.id));
     fresh.forEach(s => seenRecommendRef.current.add(s.id));
     setTabs(prev => ({
       ...prev,
       recommend: {
         items:   page === 0 ? fresh : [...prev.recommend.items, ...fresh],
+        relaxedConditions: page === 0
+          ? filtered.relaxedConditions
+          : [...new Set([...prev.recommend.relaxedConditions, ...filtered.relaxedConditions])],
         loading: false,
         hasMore: recommendedRaw.length >= PAGE_SIZE,
         page:    page + 1,
@@ -126,20 +136,21 @@ export default function NowPlayingPage() {
     const relatedSongs = requiresExternalViewCounts(globalFilterSettings)
       ? await attachExternalViews(relatedRaw)
       : relatedRaw;
-    const songs = rerankDisplayedSongs(
-      applyDiscoveryFilter(relatedSongs, {
+    const filtered = applyDiscoveryFilterWithRelaxation(relatedSongs, {
         settings: globalFilterSettings,
         ratings,
         lastPlayedAtBySongId: new Map(entries.map(entry => [entry.song.id, entry.playedAt] as const)),
-      }),
-      rankingSeedRef.current,
-    );
+      }, PAGE_SIZE);
+    const songs = rerankDisplayedSongs(filtered.items, rankingSeedRef.current);
     const fresh = songs.filter(s => !seenRelatedRef.current.has(s.id));
     fresh.forEach(s => seenRelatedRef.current.add(s.id));
     setTabs(prev => ({
       ...prev,
       related: {
         items:   page === 0 ? fresh : [...prev.related.items, ...fresh],
+        relaxedConditions: page === 0
+          ? filtered.relaxedConditions
+          : [...new Set([...prev.related.relaxedConditions, ...filtered.relaxedConditions])],
         loading: false,
         hasMore: relatedRaw.length >= PAGE_SIZE,
         page:    page + 1,
@@ -153,20 +164,21 @@ export default function NowPlayingPage() {
     const deepSongs = requiresExternalViewCounts(globalFilterSettings)
       ? await attachExternalViews(deepRaw)
       : deepRaw;
-    const songs = rerankDisplayedSongs(
-      applyDiscoveryFilter(deepSongs, {
+    const filtered = applyDiscoveryFilterWithRelaxation(deepSongs, {
         settings: globalFilterSettings,
         ratings,
         lastPlayedAtBySongId: new Map(entries.map(entry => [entry.song.id, entry.playedAt] as const)),
-      }),
-      rankingSeedRef.current,
-    );
+      }, PAGE_SIZE);
+    const songs = rerankDisplayedSongs(filtered.items, rankingSeedRef.current);
     const fresh = songs.filter(s => !seenDeepdigRef.current.has(s.id));
     fresh.forEach(s => seenDeepdigRef.current.add(s.id));
     setTabs(prev => ({
       ...prev,
       deepdig: {
         items:   page === 0 ? fresh : [...prev.deepdig.items, ...fresh],
+        relaxedConditions: page === 0
+          ? filtered.relaxedConditions
+          : [...new Set([...prev.deepdig.relaxedConditions, ...filtered.relaxedConditions])],
         loading: false,
         hasMore: deepRaw.length >= PAGE_SIZE,
         page:    page + 1,
@@ -184,9 +196,9 @@ export default function NowPlayingPage() {
     seenDeepdigRef.current   = new Set([currentSong.id]);
 
     setTabs({
-      recommend: { items: [], loading: true, hasMore: true, page: 0 },
-      related:   { items: [], loading: true, hasMore: true, page: 0 },
-      deepdig:   { items: [], loading: true, hasMore: true, page: 0 },
+      recommend: { items: [], relaxedConditions: [], loading: true, hasMore: true, page: 0 },
+      related:   { items: [], relaxedConditions: [], loading: true, hasMore: true, page: 0 },
+      deepdig:   { items: [], relaxedConditions: [], loading: true, hasMore: true, page: 0 },
     });
 
     fetchRecommend(currentSong, 0).catch(() =>
@@ -207,9 +219,9 @@ export default function NowPlayingPage() {
     seenRelatedRef.current = new Set([currentSong.id]);
     seenDeepdigRef.current = new Set([currentSong.id]);
     setTabs({
-      recommend: { items: [], loading: true, hasMore: true, page: 0 },
-      related: { items: [], loading: true, hasMore: true, page: 0 },
-      deepdig: { items: [], loading: true, hasMore: true, page: 0 },
+      recommend: { items: [], relaxedConditions: [], loading: true, hasMore: true, page: 0 },
+      related: { items: [], relaxedConditions: [], loading: true, hasMore: true, page: 0 },
+      deepdig: { items: [], relaxedConditions: [], loading: true, hasMore: true, page: 0 },
     });
     fetchRecommend(currentSong, 0).catch(() => undefined);
     fetchRelated(currentSong, 0).catch(() => undefined);
@@ -239,11 +251,8 @@ export default function NowPlayingPage() {
   }, [loadMore]);
 
   // 現在のタブの表示曲をselectionStoreに登録（FABの全選択・フィルター用）
-  const activeTabItems = applyDiscoveryFilter(tabs[activeTab].items, {
-    settings: globalFilterSettings,
-    ratings,
-    lastPlayedAtBySongId: new Map(entries.map(entry => [entry.song.id, entry.playedAt] as const)),
-  });
+  const activeTabItems = tabs[activeTab].items;
+  const relaxationMessage = getDiscoveryRelaxationMessage(tabs[activeTab].relaxedConditions);
   useEffect(() => {
     setVisibleSongs(activeTabItems);
   }, [activeTabItems, setVisibleSongs]);
@@ -322,6 +331,15 @@ export default function NowPlayingPage() {
       </div>
 
       {/* コンテンツ */}
+      {relaxationMessage && (
+        <p
+          className="mb-4 rounded-lg border px-3 py-2 text-sm"
+          role="status"
+          style={{ borderColor: 'var(--color-border)', color: 'var(--color-text-secondary)', background: 'var(--color-surface)' }}
+        >
+          {relaxationMessage}
+        </p>
+      )}
       {tab.loading && tab.items.length === 0 && <SkeletonGrid />}
 
       {!tab.loading && tab.items.length === 0 && (

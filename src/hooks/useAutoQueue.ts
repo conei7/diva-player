@@ -30,7 +30,11 @@ import { createRankingSeed } from '../utils/rankingRandomization';
 import { useRecommendationExposureStore } from '../stores/recommendationExposureStore';
 import { useGlobalFilterStore, type GlobalFilterSettings } from '../stores/globalFilterStore';
 import { useFavoriteProducerStore } from '../stores/favoriteProducerStore';
-import { applyDiscoveryFilter, requiresExternalViewCounts } from '../utils/globalFilters';
+import {
+  applyDiscoveryFilterWithRelaxation,
+  requiresExternalViewCounts,
+  type DiscoveryFilterResult,
+} from '../utils/globalFilters';
 
 export type AutoQueueMixMode = 'balanced' | 'deep' | 'producer';
 
@@ -57,20 +61,23 @@ function filterCandidatePool(
   existingIds: Set<number>,
   settings: GlobalFilterSettings,
   ratings: Record<string, number>,
-): Song[] {
+  minimumCount: number,
+): DiscoveryFilterResult {
   const lastPlayedMap = new Map<number, number>();
   for (const entry of historyEntries) {
     const existing = lastPlayedMap.get(entry.song.id);
     if (!existing || entry.playedAt > existing) lastPlayedMap.set(entry.song.id, entry.playedAt);
   }
 
-  return applyDiscoveryFilter(candidates, {
+  const uniqueCandidates = candidates
+    .filter(song => !existingIds.has(song.id))
+    .filter((song, index, songs) => songs.findIndex(candidate => candidate.id === song.id) === index);
+
+  return applyDiscoveryFilterWithRelaxation(uniqueCandidates, {
     settings,
     ratings,
     lastPlayedAtBySongId: lastPlayedMap,
-  })
-    .filter(song => !existingIds.has(song.id))
-    .filter((song, index, songs) => songs.findIndex(candidate => candidate.id === song.id) === index);
+  }, minimumCount);
 }
 
 async function fetchCandidates(
@@ -267,7 +274,14 @@ export function useAutoQueue({
         const enrichedCandidates = requiresExternalViewCounts(globalFilterSettings)
           ? await attachExternalViews(candidatePool)
           : candidatePool;
-        const filteredCandidates = filterCandidatePool(enrichedCandidates, historyEntries, existingIds, globalFilterSettings, ratings);
+        const filteredCandidates = filterCandidatePool(
+          enrichedCandidates,
+          historyEntries,
+          existingIds,
+          globalFilterSettings,
+          ratings,
+          queuePlan.requestedCount,
+        );
         const knownCandidateSongs = rankKnownSongs(
           historyEntries,
           playlistSongs,
@@ -275,7 +289,7 @@ export function useAutoQueue({
           existingIds,
           implicitFeedback,
         ).map(item => item.song);
-        const knownCandidates = applyDiscoveryFilter(
+        const knownCandidates = applyDiscoveryFilterWithRelaxation(
           requiresExternalViewCounts(globalFilterSettings)
             ? await attachExternalViews(knownCandidateSongs)
             : knownCandidateSongs,
@@ -284,7 +298,12 @@ export function useAutoQueue({
           ratings,
           lastPlayedAtBySongId: new Map(historyEntries.map(entry => [entry.song.id, entry.playedAt] as const)),
           },
+          strategyTarget.known,
         );
+        const relaxedConditions = [...new Set([
+          ...filteredCandidates.relaxedConditions,
+          ...knownCandidates.relaxedConditions,
+        ])];
         const knownIds = new Set<number>([
           ...historyEntries.map(entry => entry.song.id),
           ...playlistSongs.map(song => song.id),
@@ -297,8 +316,8 @@ export function useAutoQueue({
           : 0;
         const rankingSeed = createRankingSeed();
         const detailed = rerankRecommendationCandidatesDetailed({
-          known: knownCandidates,
-          [source]: filteredCandidates,
+          known: knownCandidates.items,
+          [source]: filteredCandidates.items,
         }, {
           total: queuePlan.requestedCount,
           historyEntries,
@@ -350,7 +369,7 @@ export function useAutoQueue({
         );
         useQueueRecommendationStore.getState().recordRecommendations(metadata.queueRecommendations);
         useAutoQueueDecisionStore.getState().recordDecisions(metadata.decisions);
-        setStatus('ready');
+        setStatus(relaxedConditions.length > 0 ? 'relaxed' : 'ready');
       } catch {
         if (controller.signal.aborted || generation !== requestGenerationRef.current) return;
         setStatus('degraded');

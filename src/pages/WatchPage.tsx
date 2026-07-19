@@ -31,7 +31,12 @@ import { createRankingSeed } from '../utils/rankingRandomization';
 import { rerankDisplayedSongs, useRecommendationExposureStore } from '../stores/recommendationExposureStore';
 import { useGlobalFilterStore } from '../stores/globalFilterStore';
 import { useFavoriteProducerStore } from '../stores/favoriteProducerStore';
-import { applyDiscoveryFilter, requiresExternalViewCounts } from '../utils/globalFilters';
+import {
+  applyDiscoveryFilterWithRelaxation,
+  getDiscoveryRelaxationMessage,
+  requiresExternalViewCounts,
+  type DiscoveryRelaxedCondition,
+} from '../utils/globalFilters';
 
 function WatchQueue() {
   const queue = usePlayerStore(s => s.queue);
@@ -84,6 +89,7 @@ function WatchQueue() {
 interface TabState {
   items: Song[];
   reasons?: Record<number, string>;
+  relaxedConditions: DiscoveryRelaxedCondition[];
   loading: boolean;
   hasMore: boolean;
   page: number;
@@ -112,11 +118,11 @@ export default function WatchPage() {
     cooldownHours: state.cooldownHours,
     excludeRatedFromDiscovery: state.excludeRatedFromDiscovery,
   })));
-  const filterDiscoverySongs = useCallback((items: Song[]) => applyDiscoveryFilter(items, {
+  const filterDiscoverySongs = useCallback((items: Song[], minimumCount = PAGE_SIZE) => applyDiscoveryFilterWithRelaxation(items, {
     settings: globalFilterSettings,
     ratings,
     lastPlayedAtBySongId: new Map(entries.map(entry => [entry.song.id, entry.playedAt] as const)),
-  }), [entries, globalFilterSettings, ratings]);
+  }, minimumCount), [entries, globalFilterSettings, ratings]);
 
   const [song, setSong] = useState<Song | null>(null);
   const [loadingSong, setLoadingSong] = useState(true);
@@ -125,10 +131,10 @@ export default function WatchPage() {
 
   const [activeTab, setActiveTab] = useState<RecTabKey>('recommended');
   const [tabs, setTabs] = useState<Record<RecTabKey, TabState>>({
-    producer: { items: [], loading: false, hasMore: true, page: 0 },
-    related: { items: [], loading: false, hasMore: true, page: 0 },
-    recommended: { items: [], loading: false, hasMore: true, page: 0 },
-    deep: { items: [], loading: false, hasMore: true, page: 0 },
+    producer: { items: [], relaxedConditions: [], loading: false, hasMore: true, page: 0 },
+    related: { items: [], relaxedConditions: [], loading: false, hasMore: true, page: 0 },
+    recommended: { items: [], relaxedConditions: [], loading: false, hasMore: true, page: 0 },
+    deep: { items: [], relaxedConditions: [], loading: false, hasMore: true, page: 0 },
   });
 
   const fetchedForRef = useRef<number | null>(null);
@@ -160,10 +166,10 @@ export default function WatchPage() {
 
     // タブリセット
     setTabs({
-      producer: { items: [], loading: true, hasMore: true, page: 0 },
-      related: { items: [], loading: true, hasMore: true, page: 0 },
-      recommended: { items: [], loading: true, hasMore: true, page: 0 },
-      deep: { items: [], loading: true, hasMore: true, page: 0 },
+      producer: { items: [], relaxedConditions: [], loading: true, hasMore: true, page: 0 },
+      related: { items: [], relaxedConditions: [], loading: true, hasMore: true, page: 0 },
+      recommended: { items: [], relaxedConditions: [], loading: true, hasMore: true, page: 0 },
+      deep: { items: [], relaxedConditions: [], loading: true, hasMore: true, page: 0 },
     });
     seenSets.current = {
       producer: new Set([songId]),
@@ -203,10 +209,10 @@ export default function WatchPage() {
   useEffect(() => {
     if (!song || !songId || loadingFromUrlRef.current) return;
     setTabs({
-      producer: { items: [], loading: true, hasMore: true, page: 0 },
-      related: { items: [], loading: true, hasMore: true, page: 0 },
-      recommended: { items: [], loading: true, hasMore: true, page: 0 },
-      deep: { items: [], loading: true, hasMore: true, page: 0 },
+      producer: { items: [], relaxedConditions: [], loading: true, hasMore: true, page: 0 },
+      related: { items: [], relaxedConditions: [], loading: true, hasMore: true, page: 0 },
+      recommended: { items: [], relaxedConditions: [], loading: true, hasMore: true, page: 0 },
+      deep: { items: [], relaxedConditions: [], loading: true, hasMore: true, page: 0 },
     });
     seenSets.current = {
       producer: new Set([song.id]),
@@ -229,8 +235,11 @@ export default function WatchPage() {
         .filter((id): id is number => id !== undefined);
 
       const producerSongs = await getSongsByProducerFromBackend(s.id, producerIds, PAGE_SIZE, page * PAGE_SIZE + (page === 0 ? randomOffsetRef.current : 0));
+      const filtered = filterDiscoverySongs(
+        requiresExternalViewCounts(globalFilterSettings) ? await attachExternalViews(producerSongs) : producerSongs,
+      );
       const items = rerankDisplayedSongs(
-        filterDiscoverySongs(requiresExternalViewCounts(globalFilterSettings) ? await attachExternalViews(producerSongs) : producerSongs),
+        filtered.items,
         rankingSeedRef.current,
       );
       const fresh = items.filter(item => !seenSets.current.producer.has(item.id));
@@ -240,6 +249,9 @@ export default function WatchPage() {
         ...prev,
         producer: {
           items: page === 0 ? fresh : [...prev.producer.items, ...fresh],
+          relaxedConditions: page === 0
+            ? filtered.relaxedConditions
+            : [...new Set([...prev.producer.relaxedConditions, ...filtered.relaxedConditions])],
           loading: false,
           hasMore: producerSongs.length >= PAGE_SIZE,
           page: page + 1,
@@ -253,9 +265,12 @@ export default function WatchPage() {
   const fetchRelated = useCallback(async (s: Song, page: number) => {
     try {
       const relatedSongs = await getMetadataSimilarSongs(s.id, PAGE_SIZE * 2, randomOffsetRef.current + page * PAGE_SIZE * 2);
+      const filtered = filterDiscoverySongs(
+        requiresExternalViewCounts(globalFilterSettings) ? await attachExternalViews(relatedSongs) : relatedSongs,
+      );
       const items = rerankDisplayedSongs(diversifyAwayFromSeedVocalist(
         s,
-        filterDiscoverySongs(requiresExternalViewCounts(globalFilterSettings) ? await attachExternalViews(relatedSongs) : relatedSongs),
+        filtered.items,
         Math.max(6, Math.floor(PAGE_SIZE / 4)),
       ).slice(0, PAGE_SIZE), rankingSeedRef.current);
       const fresh = items.filter(item => !seenSets.current.related.has(item.id));
@@ -265,6 +280,9 @@ export default function WatchPage() {
         ...prev,
         related: {
           items: page === 0 ? fresh : [...prev.related.items, ...fresh],
+          relaxedConditions: page === 0
+            ? filtered.relaxedConditions
+            : [...new Set([...prev.related.relaxedConditions, ...filtered.relaxedConditions])],
           loading: false,
           hasMore: relatedSongs.length >= PAGE_SIZE * 2,
           page: page + 1,
@@ -290,9 +308,15 @@ export default function WatchPage() {
       const [hybrid, audio, favorite] = requiresExternalViewCounts(globalFilterSettings)
         ? await Promise.all([attachExternalViews(hybridRaw), attachExternalViews(audioRaw), attachExternalViews(favoriteRaw)])
         : [hybridRaw, audioRaw, favoriteRaw];
+      const hybridFiltered = filterDiscoverySongs([...favorite, ...hybrid], PAGE_SIZE);
+      const audioFiltered = filterDiscoverySongs(audio, 4);
+      const relaxedConditions = [...new Set([
+        ...hybridFiltered.relaxedConditions,
+        ...audioFiltered.relaxedConditions,
+      ])];
       const detailed = rerankRecommendationCandidatesDetailed({
-        hybrid: diversifyAwayFromSeedVocalist(s, filterDiscoverySongs([...favorite, ...hybrid]), 6),
-        audio: diversifyAwayFromSeedVocalist(s, filterDiscoverySongs(audio), 4),
+        hybrid: diversifyAwayFromSeedVocalist(s, hybridFiltered.items, 6),
+        audio: diversifyAwayFromSeedVocalist(s, audioFiltered.items, 4),
       }, {
         total: PAGE_SIZE,
         historyEntries: entries,
@@ -332,6 +356,9 @@ export default function WatchPage() {
         recommended: {
           items: page === 0 ? fresh : [...prev.recommended.items, ...fresh],
           reasons: page === 0 ? reasons : { ...prev.recommended.reasons, ...reasons },
+          relaxedConditions: page === 0
+            ? relaxedConditions
+            : [...new Set([...prev.recommended.relaxedConditions, ...relaxedConditions])],
           loading: false,
           hasMore: hybridRaw.length >= PAGE_SIZE * 2 || audioRaw.length >= PAGE_SIZE || favoriteRaw.length >= PAGE_SIZE,
           page: page + 1,
@@ -345,8 +372,11 @@ export default function WatchPage() {
   const fetchDeep = useCallback(async (s: Song, page: number) => {
     try {
       const deepSongs = await getAudioSimilarSongs(s.id, PAGE_SIZE, page * PAGE_SIZE);
+      const filtered = filterDiscoverySongs(
+        requiresExternalViewCounts(globalFilterSettings) ? await attachExternalViews(deepSongs) : deepSongs,
+      );
       const items = rerankDisplayedSongs(
-        filterDiscoverySongs(requiresExternalViewCounts(globalFilterSettings) ? await attachExternalViews(deepSongs) : deepSongs),
+        filtered.items,
         rankingSeedRef.current,
       );
       const fresh = items.filter(item => !seenSets.current.deep.has(item.id));
@@ -356,6 +386,9 @@ export default function WatchPage() {
         ...prev,
         deep: {
           items: page === 0 ? fresh : [...prev.deep.items, ...fresh],
+          relaxedConditions: page === 0
+            ? filtered.relaxedConditions
+            : [...new Set([...prev.deep.relaxedConditions, ...filtered.relaxedConditions])],
           loading: false,
           hasMore: deepSongs.length >= PAGE_SIZE,
           page: page + 1,
@@ -395,7 +428,8 @@ export default function WatchPage() {
   }, [loadMore]);
 
   const currentTab = tabs[activeTab];
-  const displayTabItems = filterDiscoverySongs(currentTab.items);
+  const displayTabItems = currentTab.items;
+  const relaxationMessage = getDiscoveryRelaxationMessage(currentTab.relaxedConditions);
 
 
 
@@ -517,6 +551,15 @@ export default function WatchPage() {
             </div>
 
             {/* 推薦リスト */}
+            {relaxationMessage && (
+              <p
+                className="mb-2 rounded-lg border px-3 py-2 text-xs"
+                role="status"
+                style={{ borderColor: 'var(--color-border)', color: 'var(--color-text-secondary)', background: 'var(--color-surface)' }}
+              >
+                {relaxationMessage}
+              </p>
+            )}
             <RecommendationList
               songs={displayTabItems}
               loading={currentTab.loading}

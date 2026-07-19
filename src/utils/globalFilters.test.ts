@@ -3,9 +3,11 @@ import type { Song } from '../types/vocadb';
 import { DEFAULT_GLOBAL_FILTER_SETTINGS, type GlobalFilterSettings } from '../stores/globalFilterStore';
 import {
   applyDiscoveryFilter,
+  applyDiscoveryFilterWithRelaxation,
   applyGlobalSongFilter,
   areGlobalFilterSettingsEqual,
   getGlobalFilterSummary,
+  getDiscoveryRelaxationMessage,
   getGlobalSongFilterDecision,
   hasConfiguredSongFilters,
   isGlobalSongFilterActive,
@@ -118,5 +120,71 @@ describe('global filters', () => {
       now,
     });
     expect(filtered.map(item => item.id)).toEqual([3]);
+  });
+
+  it('relaxes discovery conditions in order while preserving excluded song types', () => {
+    const now = 10_000_000;
+    const songs = [
+      song({ id: 1, youtubeViews: 1_000 }),
+      song({ id: 2, youtubeViews: 600 }),
+      song({ id: 3, youtubeViews: 100 }),
+      song({ id: 4, youtubeViews: 10_000, songType: 'Cover' }),
+    ];
+    const result = applyDiscoveryFilterWithRelaxation(songs, {
+      settings: {
+        ...DEFAULT_GLOBAL_FILTER_SETTINGS,
+        enabled: true,
+        minYoutubeViews: 1_000,
+        excludedSongTypes: ['Cover'],
+        cooldownHours: 24,
+        excludeRatedFromDiscovery: true,
+      },
+      ratings: { '2': 5 },
+      lastPlayedAtBySongId: new Map([[1, now - 1_000]]),
+      now,
+    }, 3);
+
+    expect(result.items.map(item => item.id)).toEqual([1, 2, 3]);
+    expect(result.relaxedConditions).toEqual([
+      'cooldown',
+      'rated-songs',
+      'view-thresholds-removed',
+    ]);
+    expect(result.items.some(item => item.songType === 'Cover')).toBe(false);
+  });
+
+  it('stops at the first relaxation stage that supplies enough candidates', () => {
+    const now = 10_000_000;
+    const result = applyDiscoveryFilterWithRelaxation([
+      song({ id: 1 }),
+      song({ id: 2 }),
+    ], {
+      settings: {
+        ...DEFAULT_GLOBAL_FILTER_SETTINGS,
+        cooldownHours: 24,
+        excludeRatedFromDiscovery: true,
+      },
+      ratings: { '2': 5 },
+      lastPlayedAtBySongId: new Map([[1, now - 1_000]]),
+      now,
+    }, 1);
+
+    expect(result.items.map(item => item.id)).toEqual([1]);
+    expect(result.relaxedConditions).toEqual(['cooldown']);
+    expect(getDiscoveryRelaxationMessage(result.relaxedConditions)).toContain('最近再生した曲');
+  });
+
+  it('does not report relaxation when no stage adds candidates', () => {
+    const result = applyDiscoveryFilterWithRelaxation([
+      song({ id: 1, songType: 'Cover' }),
+    ], {
+      settings: {
+        ...DEFAULT_GLOBAL_FILTER_SETTINGS,
+        enabled: true,
+        excludedSongTypes: ['Cover'],
+        cooldownHours: 24,
+      },
+    }, 1);
+    expect(result).toEqual({ items: [], relaxedConditions: [] });
   });
 });
