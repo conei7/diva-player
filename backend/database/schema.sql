@@ -170,23 +170,6 @@ CREATE TABLE IF NOT EXISTS markov_transitions (
 );
 
 -- ============================================================
--- セッションテーブル (MMR用の再生履歴)
--- ============================================================
-CREATE TABLE IF NOT EXISTS play_sessions (
-    session_id  UUID    DEFAULT gen_random_uuid() PRIMARY KEY,
-    created_at  TIMESTAMPTZ DEFAULT now()
-);
-
-CREATE TABLE IF NOT EXISTS session_plays (
-    id          SERIAL PRIMARY KEY,
-    session_id  UUID REFERENCES play_sessions(session_id) ON DELETE CASCADE,
-    song_id     INTEGER REFERENCES songs(id),
-    played_at   TIMESTAMPTZ DEFAULT now()
-);
-
-CREATE INDEX IF NOT EXISTS sp_session_idx ON session_plays (session_id, played_at DESC);
-
--- ============================================================
 -- TF-IDF 事前計算テーブル (検索・特徴量生成の高速化)
 -- ============================================================
 CREATE TABLE IF NOT EXISTS tag_idf (
