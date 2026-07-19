@@ -19,6 +19,7 @@
     "test:e2e:pages-nico": "node scripts/test-pages-nico-e2e.mjs",
     "test:e2e:navigation": "node scripts/test-navigation-e2e.mjs",
     "test:e2e:player-controls": "node scripts/test-player-controls-e2e.mjs",
+    "test:e2e:background-playback": "node scripts/test-background-playback-e2e.mjs",
     "test:e2e:mobile": "node scripts/test-mobile-e2e.mjs",
     "analyze:surge-quality": "node scripts/analyze-surge-quality.mjs",
     "preview": "vite preview"

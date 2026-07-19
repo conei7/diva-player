@@ -5,6 +5,7 @@ import { useProgressStore } from '../../stores/progressStore';
 import { createPlaybackOwnership } from '../../services/playbackOwnership';
 import { createPlaybackAttemptController } from '../../services/playbackAttempt';
 import { createNicoProgressTracker, createNicoVolumeMessage, parseNicoPlayerMessage } from '../../services/nicoPlayerSync';
+import { getPlaybackEndCheckDelayMs, hasReachedPlaybackEnd } from '../../services/playbackEndRecovery';
 
 /**
  * PlayerEmbed - YouTube / ニコニコ動画の埋め込みプレイヤー
@@ -43,6 +44,8 @@ function NicoEmbed({ pvId, name, duration: songDuration, isPlaying }: { pvId: st
   const volumeRetryRef = useRef<number | null>(null);
   const playTimerRef = useRef<number | null>(null);
   const trackerRef = useRef(createNicoProgressTracker());
+  const durationRef = useRef(songDuration);
+  const advancedRef = useRef(false);
 
   const sendVolume = useCallback(() => {
     iframeRef.current?.contentWindow?.postMessage(
@@ -64,17 +67,29 @@ function NicoEmbed({ pvId, name, duration: songDuration, isPlaying }: { pvId: st
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
   }, []);
 
+  const advanceOnce = useCallback(() => {
+    if (advancedRef.current) return;
+    advancedRef.current = true;
+    trackerRef.current.setPlaying(false);
+    stopTimer();
+    next();
+  }, [next, stopTimer]);
+
   const startTimer = useCallback(() => {
     stopTimer();
     trackerRef.current.setPlaying(true);
     timerRef.current = window.setInterval(() => {
-      setProgress(trackerRef.current.current());
+      const current = trackerRef.current.current();
+      setProgress(current);
+      if (hasReachedPlaybackEnd(current, durationRef.current ?? 0)) advanceOnce();
     }, 500);
-  }, [setProgress, stopTimer]);
+  }, [advanceOnce, setProgress, stopTimer]);
 
   // マウント時: ニコニコはautoplayしないので一時停止状態にリセット
   useEffect(() => {
     setProgress(0);
+    advancedRef.current = false;
+    durationRef.current = songDuration;
     trackerRef.current.reset();
     trackerRef.current.setDuration(songDuration);
     if (songDuration && songDuration > 0) setDuration(songDuration);
@@ -120,6 +135,7 @@ function NicoEmbed({ pvId, name, duration: songDuration, isPlaying }: { pvId: st
       switch (message.type) {
         case 'ready': {
           if (message.duration) {
+            durationRef.current = message.duration;
             trackerRef.current.setDuration(message.duration);
             setDuration(message.duration);
           }
@@ -127,7 +143,9 @@ function NicoEmbed({ pvId, name, duration: songDuration, isPlaying }: { pvId: st
         }
         case 'progress': {
           trackerRef.current.confirm(message.seconds);
-          setProgress(trackerRef.current.current());
+          const current = trackerRef.current.current();
+          setProgress(current);
+          if (hasReachedPlaybackEnd(current, durationRef.current ?? 0)) advanceOnce();
           break;
         }
         case 'playing':
@@ -135,21 +153,44 @@ function NicoEmbed({ pvId, name, duration: songDuration, isPlaying }: { pvId: st
           startTimer();
           break;
         case 'paused':
+          if (document.hidden && usePlayerStore.getState().isPlaying) {
+            iframeRef.current?.contentWindow?.postMessage(
+              JSON.stringify({ eventName: 'player:play' }),
+              NICO_ORIGIN,
+            );
+            startTimer();
+            break;
+          }
           trackerRef.current.setPlaying(false);
           setProgress(trackerRef.current.current());
           setIsPlaying(false);
           stopTimer();
           break;
         case 'ended':
-          trackerRef.current.setPlaying(false);
-          stopTimer();
-          next();
+          advanceOnce();
           break;
       }
     };
     window.addEventListener('message', handler);
     return () => window.removeEventListener('message', handler);
-  }, [setProgress, setDuration, setIsPlaying, next, startTimer, stopTimer]);
+  }, [advanceOnce, setProgress, setDuration, setIsPlaying, startTimer, stopTimer]);
+
+  useEffect(() => {
+    const recoverPlayback = () => {
+      if (!usePlayerStore.getState().isPlaying) return;
+      iframeRef.current?.contentWindow?.postMessage(
+        JSON.stringify({ eventName: 'player:play' }),
+        NICO_ORIGIN,
+      );
+      startTimer();
+    };
+    document.addEventListener('visibilitychange', recoverPlayback);
+    window.addEventListener('pageshow', recoverPlayback);
+    return () => {
+      document.removeEventListener('visibilitychange', recoverPlayback);
+      window.removeEventListener('pageshow', recoverPlayback);
+    };
+  }, [startTimer]);
 
   // ボリューム同期。iframeロード前に送ったメッセージを補うため遅延再送する。
   useEffect(() => {
@@ -203,13 +244,15 @@ function loadYouTubeAPI(): Promise<void> {
 }
 
 export default function PlayerEmbed() {
-  const { currentSong, currentPV, isPlaying, volume, seekTarget, clearSeekTarget, setIsPlaying, setError, setVolume, next, tryNextPV } = usePlayerStore();
+  const { currentSong, currentPV, playbackSequence, isPlaying, volume, seekTarget, clearSeekTarget, setIsPlaying, setError, setVolume, tryNextPV } = usePlayerStore();
   const setProgress = useProgressStore(s => s.setProgress);
   const setDuration = useProgressStore(s => s.setDuration);
   const ytPlayerRef = useRef<YT.Player | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const progressTimerRef = useRef<number | null>(null);
   const volumeSyncTimerRef = useRef<number | null>(null);
+  const endRecoveryTimerRef = useRef<number | null>(null);
+  const advancedPVRef = useRef<string | null>(null);
   const attemptControllerRef = useRef(createPlaybackAttemptController());
   const volumeRef = useRef(volume);
   const ownershipRef = useRef<ReturnType<typeof createPlaybackOwnership> | null>(null);
@@ -286,11 +329,67 @@ export default function PlayerEmbed() {
     }
   }, []);
 
+  const clearEndRecoveryTimer = useCallback(() => {
+    if (endRecoveryTimerRef.current !== null) {
+      window.clearTimeout(endRecoveryTimerRef.current);
+      endRecoveryTimerRef.current = null;
+    }
+  }, []);
+
+  const advanceOnce = useCallback(() => {
+    const activePV = usePlayerStore.getState().currentPV;
+    if (!activePV) return;
+    const key = `${activePV.service}:${activePV.pvId ?? activePV.id}`;
+    if (advancedPVRef.current === key) return;
+    advancedPVRef.current = key;
+    clearEndRecoveryTimer();
+    stopProgressTimer();
+    usePlayerStore.getState().next();
+  }, [clearEndRecoveryTimer, stopProgressTimer]);
+
+  const scheduleEndRecovery = useCallback((player: YT.Player) => {
+    clearEndRecoveryTimer();
+    const check = () => {
+      if (ytPlayerRef.current !== player) return;
+      try {
+        const currentTime = player.getCurrentTime?.() ?? 0;
+        const duration = player.getDuration?.() ?? 0;
+        const playerState = player.getPlayerState?.();
+        if (playerState === window.YT.PlayerState.ENDED || hasReachedPlaybackEnd(currentTime, duration)) {
+          advanceOnce();
+          return;
+        }
+        if (!usePlayerStore.getState().isPlaying) return;
+        if (playerState === window.YT.PlayerState.PAUSED) player.playVideo?.();
+        endRecoveryTimerRef.current = window.setTimeout(
+          check,
+          getPlaybackEndCheckDelayMs(currentTime, duration),
+        );
+      } catch {
+        // Player destruction can race with a scheduled check.
+      }
+    };
+    let currentTime = 0;
+    let duration = 0;
+    try {
+      currentTime = player.getCurrentTime?.() ?? 0;
+      duration = player.getDuration?.() ?? 0;
+    } catch {
+      // Use the periodic fallback delay until the player is ready.
+    }
+    endRecoveryTimerRef.current = window.setTimeout(
+      check,
+      getPlaybackEndCheckDelayMs(currentTime, duration),
+    );
+  }, [advanceOnce, clearEndRecoveryTimer]);
+
   // YouTube プレイヤー初期化/更新
   useEffect(() => {
     const attemptController = attemptControllerRef.current;
     const playerContainer = containerRef.current;
     attemptController.cancel();
+    advancedPVRef.current = null;
+    clearEndRecoveryTimer();
 
     if (!currentPV || currentPV.service !== 'Youtube') {
       // YouTube以外の場合、YTプレイヤーをクリーンアップ
@@ -358,6 +457,7 @@ export default function PlayerEmbed() {
               const dur = event.target.getDuration();
               if (dur > 0) setDuration(dur);
               startProgressTimer();
+              if (usePlayerStore.getState().isPlaying) scheduleEndRecovery(event.target);
             },
             onStateChange: (event: YT.OnStateChangeEvent) => {
               if (!attemptController.isCurrent(attempt)) return;
@@ -368,15 +468,21 @@ export default function PlayerEmbed() {
                   const dur = event.target.getDuration();
                   if (dur > 0) setDuration(dur);
                   startProgressTimer();
+                  scheduleEndRecovery(event.target);
                   break;
                 }
                 case window.YT.PlayerState.PAUSED:
+                  if (document.hidden && usePlayerStore.getState().isPlaying) {
+                    event.target.playVideo();
+                    scheduleEndRecovery(event.target);
+                    break;
+                  }
                   setIsPlaying(false);
                   stopProgressTimer();
+                  clearEndRecoveryTimer();
                   break;
                 case window.YT.PlayerState.ENDED:
-                  stopProgressTimer();
-                  next();
+                  advanceOnce();
                   break;
               }
             },
@@ -395,6 +501,7 @@ export default function PlayerEmbed() {
       attemptController.cancel();
       stopVolumeSync();
       stopProgressTimer();
+      clearEndRecoveryTimer();
       if (ytPlayerRef.current === player && ytPlayerRef.current) {
         ytPlayerRef.current.stopVideo?.();
         ytPlayerRef.current.destroy();
@@ -402,7 +509,33 @@ export default function PlayerEmbed() {
       }
       if (playerContainer) playerContainer.innerHTML = '';
     };
-  }, [currentPV, currentSong?.id, setDuration, setIsPlaying, setError, next, tryNextPV, startProgressTimer, stopProgressTimer, startVolumeSync, stopVolumeSync]);
+  }, [advanceOnce, clearEndRecoveryTimer, currentPV, currentSong?.id, playbackSequence, scheduleEndRecovery, setDuration, setIsPlaying, setError, tryNextPV, startProgressTimer, stopProgressTimer, startVolumeSync, stopVolumeSync]);
+
+  useEffect(() => {
+    const recoverPlayback = () => {
+      const player = ytPlayerRef.current;
+      if (!player || currentPV?.service !== 'Youtube' || !usePlayerStore.getState().isPlaying) return;
+      try {
+        const currentTime = player.getCurrentTime?.() ?? 0;
+        const duration = player.getDuration?.() ?? 0;
+        const playerState = player.getPlayerState?.();
+        if (playerState === window.YT.PlayerState.ENDED || hasReachedPlaybackEnd(currentTime, duration)) {
+          advanceOnce();
+          return;
+        }
+        if (playerState === window.YT.PlayerState.PAUSED) player.playVideo?.();
+        scheduleEndRecovery(player);
+      } catch {
+        // The iframe may be between player generations.
+      }
+    };
+    document.addEventListener('visibilitychange', recoverPlayback);
+    window.addEventListener('pageshow', recoverPlayback);
+    return () => {
+      document.removeEventListener('visibilitychange', recoverPlayback);
+      window.removeEventListener('pageshow', recoverPlayback);
+    };
+  }, [advanceOnce, currentPV, scheduleEndRecovery]);
 
   // 再生/一時停止の同期
   useEffect(() => {
@@ -443,7 +576,7 @@ export default function PlayerEmbed() {
 
   // ニコニコ動画の埋め込み
   if (currentPV?.service === 'NicoNicoDouga') {
-    return <NicoEmbed key={currentPV.pvId} pvId={currentPV.pvId} name={currentPV.name} duration={currentSong?.lengthSeconds} isPlaying={isPlaying} />;
+    return <NicoEmbed key={`${currentPV.pvId}:${playbackSequence}`} pvId={currentPV.pvId} name={currentPV.name} duration={currentSong?.lengthSeconds} isPlaying={isPlaying} />;
   }
 
   // YouTube プレイヤーコンテナ
