@@ -8,7 +8,9 @@
     "/playing",
     "/history",
     "/favorites",
-    "/playlists"
+    "/favorite-producers",
+    "/playlists",
+    "/reports"
   ],
   "exclude": []
 }
