@@ -93,13 +93,22 @@ export default function QueueSidebar({ hideHeader }: QueueSidebarProps = {}) {
 
             return (
               <li key={`${song.id}-${i}`} ref={isCurrent ? currentRef : null} className="group relative">
-                <button
+                <div
+                  role="button"
+                  tabIndex={0}
                   className="w-full flex items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-white/5 pr-8"
                   style={{
                     background: isCurrent ? 'rgba(139,92,246,0.12)' : 'transparent',
                     borderLeft: isCurrent ? '3px solid var(--color-accent-purple)' : '3px solid transparent',
                   }}
                   onClick={() => jumpToIndex(i)}
+                  onKeyDown={(event) => {
+                    if (event.target !== event.currentTarget) return;
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault();
+                      jumpToIndex(i);
+                    }
+                  }}
                 >
                   {/* インデックス or 再生中アイコン */}
                   <div
@@ -160,7 +169,7 @@ export default function QueueSidebar({ hideHeader }: QueueSidebarProps = {}) {
                       size="sm"
                     />
                   </div>
-                </button>
+                </div>
 
                 {/* 削除ボタン（ホバー時に表示） */}
                 <button

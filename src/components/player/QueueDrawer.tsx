@@ -159,7 +159,9 @@ export default function QueueDrawer() {
 
                 return (
                   <li key={`${song.id}-${i}`}>
-                    <button
+                    <div
+                      role="button"
+                      tabIndex={0}
                       className="w-full flex items-center gap-3 px-3 py-2.5 text-left transition-colors"
                       style={{
                         background: isCurrent
@@ -170,6 +172,13 @@ export default function QueueDrawer() {
                           : '3px solid transparent',
                       }}
                       onClick={() => jumpToIndex(i)}
+                      onKeyDown={(event) => {
+                        if (event.target !== event.currentTarget) return;
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault();
+                          jumpToIndex(i);
+                        }
+                      }}
                     >
                       {/* インデックス番号 or 再生中アイコン */}
                       <div
@@ -239,7 +248,7 @@ export default function QueueDrawer() {
                           size="sm"
                         />
                       </div>
-                    </button>
+                    </div>
                   </li>
                 );
               })}
