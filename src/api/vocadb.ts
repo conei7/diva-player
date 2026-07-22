@@ -377,13 +377,13 @@ export async function findArtistByName(query: string): Promise<Artist | null> {
  */
 const VOCALIST_ARTIST_TYPES = encodeURIComponent(VOCALIST_SEARCH_ARTIST_TYPES.join(','));
 
-export async function searchVocalistsByName(query: string): Promise<Artist[]> {
+export async function searchVocalistsByName(query: string, maxResults = 20): Promise<Artist[]> {
   const trimmed = query.trim();
   if (trimmed.length < 1) return [];
 
   const queryParams = buildSearchParams({
     query: trimmed,
-    maxResults: 8,
+    maxResults,
     nameMatchMode: 'StartsWith',
     lang: DEFAULT_LANG,
   });
@@ -399,7 +399,19 @@ export async function searchVocalistsByName(query: string): Promise<Artist[]> {
     return result;
   })();
 
-  return data.items;
+  return rankArtistsByName(data.items, trimmed);
+}
+
+/** Groups voicebank variants such as ずんだもん (VOICEPEAK) under one singer query. */
+export function selectVocalistVariants(artists: Artist[], query: string): Artist[] {
+  const normalizedQuery = query.normalize('NFKC').trim().toLocaleLowerCase('ja-JP');
+  if (!normalizedQuery) return [];
+  return artists.filter(artist => {
+    const normalizedName = artist.name.normalize('NFKC').trim().toLocaleLowerCase('ja-JP');
+    return normalizedName === normalizedQuery
+      || normalizedName.startsWith(`${normalizedQuery} `)
+      || normalizedName.startsWith(`${normalizedQuery} (`);
+  });
 }
 
 export type SearchSuggestion =

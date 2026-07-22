@@ -34,6 +34,7 @@ export function applyLocalSort(songs: Song[], sort: ExtendedSortRule, order: Sor
 export interface VocalistFilter {
   id: number;
   name: string;
+  variantGroup?: string;
 }
 
 export interface AdvancedSearchFilters {
@@ -207,9 +208,11 @@ function toApiSort(sort: ExtendedSortRule): SongSortRule {
 }
 
 /** バックエンドのカスタム検索APIを呼び出す */
-async function searchSongsBackend(params: {
+export async function searchSongsBackend(params: {
   query?: string;
   artistIds?: number[];
+  anyArtistIds?: number[];
+  artistIdGroups?: number[][];
   songTypes?: SongType[];
   sort: ExtendedSortRule;
   sortOrder: SortOrder;
@@ -223,6 +226,10 @@ async function searchSongsBackend(params: {
   const qs = new URLSearchParams();
   if (params.query) qs.set('query', params.query);
   if (params.artistIds && params.artistIds.length > 0) qs.set('artistIds', params.artistIds.join(','));
+  if (params.anyArtistIds && params.anyArtistIds.length > 0) qs.set('anyArtistIds', params.anyArtistIds.join(','));
+  if (params.artistIdGroups && params.artistIdGroups.length > 0) {
+    qs.set('artistIdGroups', params.artistIdGroups.map(group => group.join(',')).join('|'));
+  }
   if (params.songTypes && params.songTypes.length > 0) qs.set('songTypes', params.songTypes.join(','));
   qs.set('sort', params.sort);
   qs.set('order', params.sortOrder);
@@ -264,56 +271,65 @@ async function fetchByArtistIds(
 ): Promise<{ items: Song[]; totalCount: number; nextApiStart?: number }> {
   const apiSort = toApiSort(sort);
   const producerIds = producerArtistId ? [producerArtistId] : [];
+  const variantGroups = new Map<string, VocalistFilter[]>();
+  const ungroupedFilters: VocalistFilter[] = [];
+  for (const filter of vocalistFilters) {
+    if (!filter.variantGroup) {
+      ungroupedFilters.push(filter);
+      continue;
+    }
+    const group = variantGroups.get(filter.variantGroup) ?? [];
+    group.push(filter);
+    variantGroups.set(filter.variantGroup, group);
+  }
+  const logicalFilterGroups = [
+    ...ungroupedFilters.map(filter => [filter]),
+    ...variantGroups.values(),
+  ];
 
   if (vocalistMatchMode === 'Any' && vocalistFilters.length > 1) {
-    // OR: vocalist ごとに並行リクエストしてマージ
-    const useBackend = LOCAL_SORT_RULES.has(sort)
-      || (filters ? hasAdvancedFilters(filters) : false)
-      || (globalFilters ? hasGlobalSongFilters(globalFilters) : false);
-    const results = await Promise.all(
-      vocalistFilters.map(v =>
-        useBackend
-          ? searchSongsBackend({
-              artistIds: [...producerIds, v.id],
-              sort, sortOrder, start, maxResults: PAGE_SIZE, songTypes, filters, globalFilters
-            })
-          : searchSongs({
-              artistIds: [...producerIds, v.id],
-              sort: apiSort,
-              maxResults: PAGE_SIZE,
-              start,
-              getTotalCount: true,
-              onlyWithPVs: true,
-              songTypes,
-            }),
-      ),
-    );
-    const seen = new Set<number>(existingIds);
-    const merged: Song[] = [];
-    for (const r of results) {
-      for (const s of r.items) {
-        if (!seen.has(s.id)) { seen.add(s.id); merged.push(s); }
-      }
-    }
-    return {
-      items: merged.slice(0, PAGE_SIZE),
-      totalCount: results.reduce((sum, r) => sum + r.totalCount, 0),
-    };
+    // PostgreSQL側でボーカリストIDをOR結合し、重複除外・全体ソート・ページングを正しく行う。
+    return searchSongsBackend({
+      artistIds: producerIds.length > 0 ? producerIds : undefined,
+      anyArtistIds: vocalistFilters.map(v => v.id),
+      sort,
+      sortOrder,
+      start,
+      maxResults: PAGE_SIZE,
+      songTypes,
+      filters,
+      globalFilters,
+    });
   }
 
   // AND (All / 1vocalist)
   if (vocalistMatchMode !== 'Exact') {
-    const allIds = [...producerIds, ...vocalistFilters.map(v => v.id)];
+    const allIds = [...producerIds, ...ungroupedFilters.map(v => v.id)];
+    const artistIdGroups = [...variantGroups.values()].map(group => group.map(filter => filter.id));
+    if (artistIdGroups.length > 0) {
+      return searchSongsBackend({
+        artistIds: allIds.length > 0 ? allIds : undefined,
+        artistIdGroups,
+        sort,
+        sortOrder,
+        start,
+        maxResults: PAGE_SIZE,
+        songTypes,
+        filters,
+        globalFilters,
+      });
+    }
+    const allRequiredIds = [...producerIds, ...vocalistFilters.map(v => v.id)];
     if (LOCAL_SORT_RULES.has(sort)
       || (filters ? hasAdvancedFilters(filters) : false)
       || (globalFilters ? hasGlobalSongFilters(globalFilters) : false)) {
       return searchSongsBackend({
-        artistIds: allIds.length > 0 ? allIds : undefined,
+        artistIds: allRequiredIds.length > 0 ? allRequiredIds : undefined,
         sort, sortOrder, start, maxResults: PAGE_SIZE, songTypes, filters, globalFilters
       });
     }
     const result = await searchSongs({
-      artistIds: allIds.length > 0 ? allIds : undefined,
+      artistIds: allRequiredIds.length > 0 ? allRequiredIds : undefined,
       sort: apiSort,
       maxResults: PAGE_SIZE,
       start,
@@ -332,6 +348,7 @@ async function fetchByArtistIds(
   const filterIds = new Set(vocalistFilters.map(v => v.id));
   const filterNames = vocalistFilters.map(v => v.name);
   const allIds = [...producerIds, ...vocalistFilters.map(v => v.id)];
+  const hasVariantGroups = variantGroups.size > 0;
   const seen = new Set<number>(existingIds);
   const matched: Song[] = [];
   let apiOffset = start;
@@ -347,11 +364,12 @@ async function fetchByArtistIds(
 
   // PAGE_SIZE 件見つかるまで、または API 結果が尽きるまでループ
   outer: while (matched.length < PAGE_SIZE) {
-    const batch = LOCAL_SORT_RULES.has(sort)
+    const batch = hasVariantGroups || LOCAL_SORT_RULES.has(sort)
       || (filters ? hasAdvancedFilters(filters) : false)
       || (globalFilters ? hasGlobalSongFilters(globalFilters) : false)
       ? await searchSongsBackend({
-          artistIds: allIds.length > 0 ? allIds : undefined,
+          artistIds: hasVariantGroups ? (producerIds.length > 0 ? producerIds : undefined) : (allIds.length > 0 ? allIds : undefined),
+          anyArtistIds: hasVariantGroups ? vocalistFilters.map(v => v.id) : undefined,
           sort, sortOrder, start: apiOffset, maxResults: BATCH, songTypes, filters, globalFilters
         })
       : await searchSongs({
@@ -381,11 +399,10 @@ async function fetchByArtistIds(
       );
 
       // フィルターの各アーティストが、対応するボーカリストによって網羅されている
-      const filterCovered = vocalistFilters.every(f =>
-        songVocs.some(
-          v => v.artist.id === f.id ||
-            (v.name || v.artist.name || '').startsWith(f.name),
-        ),
+      const filterCovered = logicalFilterGroups.every(group =>
+        group.some(f => songVocs.some(
+          v => v.artist.id === f.id || (v.name || v.artist.name || '').startsWith(f.name),
+        )),
       );
 
       if (allBelongToFilter && filterCovered) {

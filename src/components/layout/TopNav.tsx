@@ -8,6 +8,7 @@ import { useSelectionStore } from '../../stores/selectionStore';
 import {
   getSearchSuggestions,
   resolveProducerByName,
+  selectVocalistVariants,
   searchVocalistsByName,
   type SearchSuggestion,
 } from '../../api/vocadb';
@@ -154,12 +155,18 @@ export default function TopNav() {
     }
 
     if (searchMode === 'vocalist') {
-      const vocalists = await searchVocalistsByName(trimmed);
-      const vocalist = vocalists[0];
-      if (vocalist) {
+      const vocalists = selectVocalistVariants(
+        await searchVocalistsByName(trimmed, 50),
+        trimmed,
+      );
+      if (vocalists.length > 0) {
         setSearchStoreQuery('');
-        setVocalistFilters([{ id: vocalist.id, name: vocalist.name }]);
-        setVocalistMatchMode('All');
+        setVocalistFilters(vocalists.map(vocalist => ({
+          id: vocalist.id,
+          name: vocalist.name,
+          variantGroup: vocalists.length > 1 ? trimmed : undefined,
+        })));
+        setVocalistMatchMode(vocalists.length > 1 ? 'Any' : 'All');
         await runSearch();
       } else {
         await searchTitleOnly(trimmed);

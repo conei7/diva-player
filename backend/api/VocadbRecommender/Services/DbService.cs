@@ -116,6 +116,8 @@ public class DbService
     public async Task<(string ItemsJson, int TotalCount)> SearchSongsAsync(
         string? query,
         List<int>? artistIds,
+        List<int>? anyArtistIds,
+        List<List<int>>? artistIdGroups,
         List<string>? songTypes,
         string sort,
         string order,
@@ -175,6 +177,23 @@ public class DbService
             {
                 conditions.Add($"EXISTS (SELECT 1 FROM song_artists sa WHERE sa.song_id = songs.id AND sa.artist_id = ${paramIndex})");
                 paramValues.Add(aId);
+                paramIndex++;
+            }
+        }
+
+        if (anyArtistIds != null && anyArtistIds.Count > 0)
+        {
+            conditions.Add($"EXISTS (SELECT 1 FROM song_artists sa WHERE sa.song_id = songs.id AND sa.artist_id = ANY(${paramIndex}))");
+            paramValues.Add(anyArtistIds.Distinct().ToArray());
+            paramIndex++;
+        }
+
+        if (artistIdGroups != null)
+        {
+            foreach (var artistIdGroup in artistIdGroups.Where(group => group.Count > 0))
+            {
+                conditions.Add($"EXISTS (SELECT 1 FROM song_artists sa WHERE sa.song_id = songs.id AND sa.artist_id = ANY(${paramIndex}))");
+                paramValues.Add(artistIdGroup.Distinct().ToArray());
                 paramIndex++;
             }
         }

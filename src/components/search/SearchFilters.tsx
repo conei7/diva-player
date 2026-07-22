@@ -145,7 +145,7 @@ export default function SearchFilters() {
     sort, setSort, search,
     sortOrder, setSortOrder,
     vocalistFilters, vocalistMatchMode,
-    addVocalistFilter, removeVocalistFilter, setVocalistMatchMode,
+    addVocalistFilter, removeVocalistFilter, setVocalistFilters, setVocalistMatchMode,
     songTypeFilter, setSongTypeFilter,
     advancedFilters, setAdvancedFilters, resetAdvancedFilters,
   } = useSearchStore();
@@ -211,6 +211,25 @@ export default function SearchFilters() {
   }, []);
 
   const selectedIds = new Set(vocalistFilters.map(v => v.id));
+  const visibleVocalistFilters = vocalistFilters.filter((filter, index, all) =>
+    !filter.variantGroup
+      || all.findIndex(candidate => candidate.variantGroup === filter.variantGroup) === index,
+  );
+
+  const vocalistFilterLabel = (filter: typeof vocalistFilters[number]): string => {
+    if (!filter.variantGroup) return filter.name;
+    const variantCount = vocalistFilters.filter(candidate => candidate.variantGroup === filter.variantGroup).length;
+    return `${filter.variantGroup}（${variantCount}音源）`;
+  };
+
+  const removeVocalistSelection = (filter: typeof vocalistFilters[number]) => {
+    if (filter.variantGroup) {
+      setVocalistFilters(vocalistFilters.filter(candidate => candidate.variantGroup !== filter.variantGroup));
+    } else {
+      removeVocalistFilter(filter.id);
+    }
+    search();
+  };
 
   const handleTogglePreset = (v: PresetVocalist) => {
     if (selectedIds.has(v.id)) {
@@ -229,7 +248,9 @@ export default function SearchFilters() {
     search();
   };
 
-  const nonPresetSelected = vocalistFilters.filter(v => !allPresets.some(p => p.id === v.id));
+  const nonPresetSelected = visibleVocalistFilters.filter(
+    v => v.variantGroup || !allPresets.some(p => p.id === v.id),
+  );
 
   const updateBoundedInteger = (
     key: keyof Pick<AdvancedSearchFilters, 'publishYearFrom' | 'publishYearTo' | 'lengthMinSeconds' | 'lengthMaxSeconds'>,
@@ -262,7 +283,7 @@ export default function SearchFilters() {
             </span>
             {vocalistFilters.length > 0 && (
               <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full" style={{ background: 'var(--color-accent-purple)', color: '#fff' }}>
-                {vocalistFilters.length}
+                {visibleVocalistFilters.length}
               </span>
             )}
           </div>
@@ -389,9 +410,9 @@ export default function SearchFilters() {
                   border: '1px solid rgba(139, 92, 246, 0.35)',
                 }}
               >
-                {v.name}
+                {vocalistFilterLabel(v)}
                 <button
-                  onClick={() => { removeVocalistFilter(v.id); search(); }}
+                  onClick={() => removeVocalistSelection(v)}
                   className="opacity-70 hover:opacity-100 transition-opacity ml-0.5"
                 >
                   <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
@@ -406,9 +427,9 @@ export default function SearchFilters() {
           </div>
         )}
         {/* Active filters display even when collapsed if any */}
-        {!isExpanded && vocalistFilters.length > 0 && (
+        {!isExpanded && visibleVocalistFilters.length > 0 && (
           <div className="flex flex-wrap gap-1.5 mt-1">
-            {vocalistFilters.map(v => (
+            {visibleVocalistFilters.map(v => (
               <span
                 key={v.id}
                 className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full"
@@ -418,9 +439,9 @@ export default function SearchFilters() {
                   border: '1px solid rgba(139, 92, 246, 0.35)',
                 }}
               >
-                {v.name}
+                {vocalistFilterLabel(v)}
                 <button
-                  onClick={() => { removeVocalistFilter(v.id); search(); }}
+                  onClick={() => removeVocalistSelection(v)}
                   className="opacity-70 hover:opacity-100 transition-opacity ml-0.5"
                 >
                   <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">

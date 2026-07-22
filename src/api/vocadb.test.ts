@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Artist } from '../types/vocadb';
-import { rankArtistsByName, resolveProducerByName, searchVocalistsByName } from './vocadb';
+import { rankArtistsByName, resolveProducerByName, searchVocalistsByName, selectVocalistVariants } from './vocadb';
 import { VOCALIST_SEARCH_ARTIST_TYPES } from '../config/voiceSynthTypes';
 
 function artist(id: number, name: string): Artist {
@@ -70,5 +70,19 @@ describe('searchVocalistsByName', () => {
     expect(requestUrl.searchParams.get('artistTypes')).toContain('ACEVirtualSinger');
     expect(requestUrl.searchParams.get('artistTypes')).toContain('VOICEVOX');
     expect(requestUrl.searchParams.get('artistTypes')).toContain('AIVOICE');
+  });
+});
+
+describe('selectVocalistVariants', () => {
+  it('groups exact singer names and parenthesized or spaced voicebank variants', () => {
+    const candidates: Artist[] = [
+      { id: 1, name: 'ずんだもん', artistType: 'UTAU' },
+      { id: 2, name: 'ずんだもん (VOICEPEAK)', artistType: 'OtherVoiceSynthesizer' },
+      { id: 3, name: 'ずんだもん (CeVIO AI)', artistType: 'CeVIO' },
+      { id: 4, name: 'ずんだもん VoiSona', artistType: 'VoiSona' },
+      { id: 5, name: 'ずんだもんち', artistType: 'OtherVocalist' },
+    ];
+
+    expect(selectVocalistVariants(candidates, 'ずんだもん').map(item => item.id)).toEqual([1, 2, 3, 4]);
   });
 });

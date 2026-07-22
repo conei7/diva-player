@@ -348,10 +348,12 @@ app.MapGet("/api/songs/trending", async (
     return Results.Content(json, "application/json");
 });
 
-// GET /api/songs/search?query=...&artistIds=1,2&songTypes=Original&sort=YoutubeViews&order=desc&start=0&maxResults=24
+// GET /api/songs/search?query=...&artistIds=1,2&anyArtistIds=3,4&artistIdGroups=5,6|7,8&songTypes=Original&sort=YoutubeViews&order=desc&start=0&maxResults=24
 app.MapGet("/api/songs/search", async (
     string? query,
     string? artistIds,
+    string? anyArtistIds,
+    string? artistIdGroups,
     string? songTypes,
     string sort,
     string order,
@@ -383,6 +385,10 @@ app.MapGet("/api/songs/search", async (
 
     if (!TryParseIntegerList(artistIds, out var aIds))
         return Results.BadRequest(new { error = "artistIds must be comma-separated integers" });
+    if (!TryParseIntegerList(anyArtistIds, out var anyAIds))
+        return Results.BadRequest(new { error = "anyArtistIds must be comma-separated integers" });
+    if (!TryParseIntegerGroups(artistIdGroups, out var aIdGroups))
+        return Results.BadRequest(new { error = "artistIdGroups must contain pipe-separated integer lists" });
 
     var sTypes = ParseCsv(songTypes);
     var excludedTypes = ParseCsv(excludeSongTypes);
@@ -397,6 +403,8 @@ app.MapGet("/api/songs/search", async (
     var (itemsJson, totalCount) = await db.SearchSongsAsync(
         query,
         aIds,
+        anyAIds,
+        aIdGroups,
         sTypes,
         sort,
         order ?? "desc",
@@ -436,6 +444,18 @@ static bool TryParseIntegerList(string? value, out List<int> result)
     foreach (var item in ParseCsv(value))
     {
         if (!int.TryParse(item, out var parsed)) return false;
+        result.Add(parsed);
+    }
+    return true;
+}
+
+static bool TryParseIntegerGroups(string? value, out List<List<int>> result)
+{
+    result = [];
+    if (string.IsNullOrWhiteSpace(value)) return true;
+    foreach (var group in value.Split('|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+    {
+        if (!TryParseIntegerList(group, out var parsed) || parsed.Count == 0) return false;
         result.Add(parsed);
     }
     return true;
