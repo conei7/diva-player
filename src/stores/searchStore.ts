@@ -479,6 +479,8 @@ export const useSearchStore = create<SearchState>((set, get) => ({
       query: trimmed,
       isLoading: true,
       error: null,
+      results: [],
+      totalCount: 0,
       currentPage: 0,
       hasSearched: true,
       resolvedArtistId: null,
@@ -523,7 +525,16 @@ export const useSearchStore = create<SearchState>((set, get) => ({
     const generation = ++searchGeneration;
     const { sort, sortOrder, songTypeFilter, advancedFilters } = get();
     const globalFilters = getGlobalFilterSettings();
-    set({ isLoading: true, error: null, currentPage: 0, hasSearched: true, resolvedArtistId: artistId, query: artistName });
+    set({
+      isLoading: true,
+      error: null,
+      results: [],
+      totalCount: 0,
+      currentPage: 0,
+      hasSearched: true,
+      resolvedArtistId: artistId,
+      query: artistName,
+    });
     const songTypes = songTypeFilter === 'Original' ? ['Original' as const] : undefined;
     const useBackend = LOCAL_SORT_RULES.has(sort)
       || hasAdvancedFilters(advancedFilters)
@@ -560,7 +571,15 @@ export const useSearchStore = create<SearchState>((set, get) => ({
     const generation = ++searchGeneration;
     const { query, sort, sortOrder, vocalistFilters, vocalistMatchMode, songTypeFilter, advancedFilters } = get();
     const globalFilters = getGlobalFilterSettings();
-    set({ isLoading: true, error: null, currentPage: 0, hasSearched: true, resolvedArtistId: null });
+    set({
+      isLoading: true,
+      error: null,
+      results: [],
+      totalCount: 0,
+      currentPage: 0,
+      hasSearched: true,
+      resolvedArtistId: null,
+    });
     const songTypes = songTypeFilter === 'Original' ? ['Original' as const] : undefined;
     const apiSort = toApiSort(sort);
     const requiresBackend = LOCAL_SORT_RULES.has(sort)

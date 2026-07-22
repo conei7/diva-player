@@ -4,6 +4,7 @@ import type { Song, PV } from '../../types/vocadb';
 import { useSearchStore } from '../../stores/searchStore';
 import { usePlayerStore } from '../../stores/playerStore';
 import PlayerEmbed from '../player/PlayerEmbed';
+import { formatDistinctArtistNames } from '../../utils/artistNames';
 
 interface SongDetailsPanelProps {
   song: Song | null;
@@ -74,8 +75,8 @@ export default function SongDetailsPanel({ song, onClose, inline }: SongDetailsP
 
   const producers = song.artists?.filter(a => a.categories?.includes('Producer')) ?? [];
   const vocalists = song.artists?.filter(a => a.categories === 'Vocalist') ?? [];
-  const producerName = producers.map(a => a.name || a.artist?.name).filter(Boolean).join(', ');
-  const vocalistName = vocalists.map(a => a.name || a.artist?.name).filter(Boolean).join(', ');
+  const producerName = formatDistinctArtistNames(producers.map(a => a.name || a.artist?.name));
+  const vocalistName = formatDistinctArtistNames(vocalists.map(a => a.name || a.artist?.name));
 
   const vocadbUrl = `https://vocadb.net/S/${song.id}`;
 

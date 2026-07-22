@@ -57,7 +57,6 @@ export default function TopNav() {
     search: runSearch,
     searchTitleOnly,
     searchByArtistId,
-    addVocalistFilter,
     setVocalistFilters,
     setVocalistMatchMode,
     reset: resetSearch,
@@ -218,7 +217,7 @@ export default function TopNav() {
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
-  const handleSuggestionSelect = (suggestion: SearchSuggestion) => {
+  const handleSuggestionSelect = async (suggestion: SearchSuggestion) => {
     rememberSearch(suggestion.label);
     setShowSuggestions(false);
     if (suggestion.kind === 'song') {
@@ -234,11 +233,23 @@ export default function TopNav() {
       return;
     }
 
-    setSearchQuery('');
+    const vocalistQuery = searchQuery.trim() || suggestion.label;
+    const matchedVocalists = selectVocalistVariants(
+      await searchVocalistsByName(vocalistQuery, 50),
+      vocalistQuery,
+    );
+    const vocalists = matchedVocalists.length > 0 ? matchedVocalists : [suggestion.artist];
+
+    setSearchQuery(vocalistQuery);
     setSearchStoreQuery('');
-    addVocalistFilter({ id: suggestion.id, name: suggestion.label });
-    runSearch();
+    setVocalistFilters(vocalists.map(vocalist => ({
+      id: vocalist.id,
+      name: vocalist.name,
+      variantGroup: vocalists.length > 1 ? vocalistQuery : undefined,
+    })));
+    setVocalistMatchMode(vocalists.length > 1 ? 'Any' : 'All');
     navigate('/');
+    await runSearch();
   };
 
   const handleRecentSearchSelect = async (term: string) => {

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useSearchStore } from '../../stores/searchStore';
 import {
   ADVANCED_SEARCH_LIMITS,
@@ -7,7 +7,7 @@ import {
   type ExtendedSortRule,
 } from '../../stores/searchStore';
 import type { VocalistMatchMode } from '../../types/vocadb';
-import { searchVocalistsByName } from '../../api/vocadb';
+import { searchVocalistsByName, selectVocalistVariants } from '../../api/vocadb';
 import type { Artist } from '../../types/vocadb';
 import { VOICE_SYNTH_ARTIST_TYPES, VOICE_SYNTH_TYPE_LABELS } from '../../config/voiceSynthTypes';
 
@@ -185,10 +185,6 @@ export default function SearchFilters() {
   }, []);
 
   const activeCategories = dynamicCategories ?? VOCALIST_CATEGORIES;
-  const allPresets = useMemo(
-    () => activeCategories.flatMap(c => c.vocalists),
-    [activeCategories],
-  );
 
   useEffect(() => {
     if (vocalistQuery.trim().length < 1) { setSuggestions([]); return; }
@@ -240,17 +236,30 @@ export default function SearchFilters() {
     search();
   };
 
-  const handleSelectSuggestion = (v: Artist) => {
-    addVocalistFilter({ id: v.id, name: v.name });
+  const handleSelectSuggestion = async (v: Artist) => {
+    const query = vocalistQuery.trim() || v.name;
+    const matchedVocalists = selectVocalistVariants(
+      await searchVocalistsByName(query, 50),
+      query,
+    );
+    const vocalists = matchedVocalists.length > 0 ? matchedVocalists : [v];
+    const newIds = new Set(vocalists.map(vocalist => vocalist.id));
+    setVocalistFilters([
+      ...vocalistFilters.filter(existing => !newIds.has(existing.id)),
+      ...vocalists.map(vocalist => ({
+        id: vocalist.id,
+        name: vocalist.name,
+        variantGroup: vocalists.length > 1 ? query : undefined,
+      })),
+    ]);
+    if (vocalistFilters.length === 0) {
+      setVocalistMatchMode(vocalists.length > 1 ? 'Any' : 'All');
+    }
     setVocalistQuery('');
     setSuggestions([]);
     setShowSuggestions(false);
-    search();
+    await search();
   };
-
-  const nonPresetSelected = visibleVocalistFilters.filter(
-    v => v.variantGroup || !allPresets.some(p => p.id === v.id),
-  );
 
   const updateBoundedInteger = (
     key: keyof Pick<AdvancedSearchFilters, 'publishYearFrom' | 'publishYearTo' | 'lengthMinSeconds' | 'lengthMaxSeconds'>,
@@ -398,9 +407,9 @@ export default function SearchFilters() {
         </div>
 
         {/* プリセット外の選択チップ */}
-        {isExpanded && nonPresetSelected.length > 0 && (
+        {isExpanded && visibleVocalistFilters.length > 0 && (
           <div className="flex flex-wrap gap-1.5">
-            {nonPresetSelected.map(v => (
+            {visibleVocalistFilters.map(v => (
               <span
                 key={v.id}
                 className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full"

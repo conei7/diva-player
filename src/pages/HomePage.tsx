@@ -444,7 +444,9 @@ export default function HomePage() {
               {searchQuery ? `「${searchQuery}」の検索結果` : '検索結果'}
             </h1>
             <p className="text-sm" style={{ color: 'var(--color-text-muted)' }}>
-              {hasSearched ? `${totalCount.toLocaleString()} 件` : `${songs.length} 件`}
+              {hasSearched
+                ? searchLoading ? '検索中…' : `${totalCount.toLocaleString()} 件`
+                : `${songs.length} 件`}
             </p>
           </div>
           <button
