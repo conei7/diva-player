@@ -514,6 +514,9 @@ export default function PlaylistPage() {
     relaxed?: boolean;
   }>>({});
   const smartRefreshRef = useRef<string | null>(null);
+  const smartRefreshRetryRef = useRef(new Set<string>());
+  const smartRefreshRetryTimerRef = useRef<number | null>(null);
+  const [smartRefreshRetryTick, setSmartRefreshRetryTick] = useState(0);
 
   useEffect(() => { loadPlaylists(); }, [loadPlaylists]);
 
@@ -540,6 +543,11 @@ export default function PlaylistPage() {
     setFilterText('');
     setSongSortKey('addedOrder');
     smartRefreshRef.current = null;
+    smartRefreshRetryRef.current.clear();
+    if (smartRefreshRetryTimerRef.current !== null) {
+      window.clearTimeout(smartRefreshRetryTimerRef.current);
+      smartRefreshRetryTimerRef.current = null;
+    }
   }, [selectedPlaylistId]);
 
   const selectedPlaylist = playlists.find(p => p.id === selectedPlaylistId) ?? null;
@@ -566,6 +574,7 @@ export default function PlaylistPage() {
         },
       }, 20);
       replacePlaylistSongs(playlist.id, result.items.slice(0, 200));
+      smartRefreshRetryRef.current.delete(playlist.id);
       setSmartRefreshStatuses(current => ({
         ...current,
         [playlist.id]: {
@@ -575,10 +584,18 @@ export default function PlaylistPage() {
         },
       }));
     } catch (error) {
+      smartRefreshRef.current = null;
       setSmartRefreshStatuses(current => ({
         ...current,
         [playlist.id]: { state: 'error' },
       }));
+      if (!smartRefreshRetryRef.current.has(playlist.id)) {
+        smartRefreshRetryRef.current.add(playlist.id);
+        smartRefreshRetryTimerRef.current = window.setTimeout(() => {
+          smartRefreshRetryTimerRef.current = null;
+          setSmartRefreshRetryTick(current => current + 1);
+        }, 5000);
+      }
       throw error;
     }
   }, [replacePlaylistSongs]);
@@ -587,7 +604,13 @@ export default function PlaylistPage() {
     if (!selectedPlaylist?.smartRule || smartRefreshRef.current === selectedPlaylist.id) return;
     smartRefreshRef.current = selectedPlaylist.id;
     void refreshSmartPlaylist(selectedPlaylist).catch(() => undefined);
-  }, [refreshSmartPlaylist, selectedPlaylist]);
+    return () => {
+      if (smartRefreshRetryTimerRef.current !== null) {
+        window.clearTimeout(smartRefreshRetryTimerRef.current);
+        smartRefreshRetryTimerRef.current = null;
+      }
+    };
+  }, [refreshSmartPlaylist, selectedPlaylist, smartRefreshRetryTick]);
   const selectedPlaylistDuplicateCount = selectedPlaylist
     ? selectedPlaylist.songs.length - new Set(selectedPlaylist.songs.map(s => s.id)).size
     : 0;
