@@ -78,6 +78,7 @@ try {
             player.playVideo = () => {
               if (state !== 1) startedAt = Date.now();
               state = 1;
+              window.__backgroundPlaybackStarted = true;
               options.events.onStateChange({ data: state, target: player });
             };
             player.pauseVideo = () => { elapsed = player.getCurrentTime(); state = 2; };
@@ -105,6 +106,7 @@ try {
     return queue?.currentSongId === 900001 && document.querySelector('#yt-player-embed');
   });
   await playerPage.keyboard.press('Space');
+  await playerPage.waitForFunction(() => window.__backgroundPlaybackStarted === true);
   await playerPage.waitForFunction(() => {
     const queue = JSON.parse(localStorage.getItem('diva_playerQueue') || 'null');
     return queue?.currentSongId === 900001;
@@ -123,6 +125,9 @@ try {
       visibilityState: document.visibilityState,
     };
   });
+  if (result.backgroundPauseCount < 1) {
+    throw new Error(`The fixture did not reproduce a background pause: ${JSON.stringify(result)}`);
+  }
   if (result.currentSongId !== 900002) {
     throw new Error(`Background end recovery did not advance the queue: ${JSON.stringify(result)}`);
   }
