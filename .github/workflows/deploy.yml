@@ -31,6 +31,22 @@ jobs:
         run: npm run test
       - name: Build
         run: npm run build
+      - name: Start preview server for E2E
+        run: |
+          npm run preview -- --host 127.0.0.1 > "$RUNNER_TEMP/diva-player-preview.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/diva-player-preview.pid"
+          for i in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:4173/diva-player/ > /dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat "$RUNNER_TEMP/diva-player-preview.log"
+          exit 1
+      - name: Player controls E2E
+        run: npm run test:e2e:player-controls -- http://127.0.0.1:4173/diva-player/
+      - name: Background playback E2E
+        run: npm run test:e2e:background-playback -- http://127.0.0.1:4173/diva-player/
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist

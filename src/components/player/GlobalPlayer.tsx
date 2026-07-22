@@ -134,6 +134,7 @@ export default function GlobalPlayer() {
         <div className="flex items-center gap-0.5 flex-shrink-0">
           <button
             className="btn-ghost p-1.5 rounded-full"
+            data-testid="mini-player-close"
             onClick={(event) => {
               event.stopPropagation();
               closePlayer();
