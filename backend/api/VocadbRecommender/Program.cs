@@ -367,6 +367,7 @@ app.MapGet("/api/songs/search", async (
     string? audioComputed,
     long? minYoutubeViews,
     long? minNicoViews,
+    bool? onlyWithPVs,
     string? excludeSongTypes,
     DbService db) =>
 {
@@ -418,6 +419,7 @@ app.MapGet("/api/songs/search", async (
         audioComputed,
         minYoutubeViews,
         minNicoViews,
+        onlyWithPVs ?? false,
         excludedTypes
     );
 

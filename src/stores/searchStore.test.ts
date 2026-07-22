@@ -71,6 +71,7 @@ describe('backend artist union search', () => {
     expect(url.searchParams.get('anyArtistIds')).toBe('58538,98107,106655');
     expect(url.searchParams.get('songTypes')).toBe('Original');
     expect(url.searchParams.get('start')).toBe('24');
+    expect(url.searchParams.get('onlyWithPVs')).toBe('true');
     expect(result.totalCount).toBe(1608);
   });
 

@@ -235,6 +235,7 @@ export async function searchSongsBackend(params: {
   qs.set('order', params.sortOrder);
   qs.set('start', params.start.toString());
   qs.set('maxResults', params.maxResults.toString());
+  qs.set('onlyWithPVs', 'true');
   if (params.filters) {
     const f = params.filters;
     if (f.publishYearFrom.trim()) qs.set('publishYearFrom', f.publishYearFrom.trim());

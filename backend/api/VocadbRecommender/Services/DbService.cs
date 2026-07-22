@@ -131,6 +131,7 @@ public class DbService
         string? audioComputed = null,
         long? minYoutubeViews = null,
         long? minNicoViews = null,
+        bool onlyWithPVs = false,
         List<string>? excludedSongTypes = null)
     {
         using var conn = Open();
@@ -238,6 +239,11 @@ public class DbService
             conditions.Add($"nico_views >= ${paramIndex}");
             paramValues.Add(minNicoViews.Value);
             paramIndex++;
+        }
+
+        if (onlyWithPVs)
+        {
+            conditions.Add("EXISTS (SELECT 1 FROM pvs p WHERE p.song_id = songs.id AND p.disabled = FALSE)");
         }
 
         if (!string.IsNullOrWhiteSpace(pvService) && pvService != "any")
