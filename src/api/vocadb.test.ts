@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Artist } from '../types/vocadb';
-import { rankArtistsByName, resolveProducerByName } from './vocadb';
+import { rankArtistsByName, resolveProducerByName, searchVocalistsByName } from './vocadb';
+import { VOCALIST_SEARCH_ARTIST_TYPES } from '../config/voiceSynthTypes';
 
 function artist(id: number, name: string): Artist {
   return { id, name, artistType: 'Producer' };
@@ -47,5 +48,27 @@ describe('resolveProducerByName', () => {
     expect(resolved?.id).toBe(49431);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(String(fetchMock.mock.calls[0]?.[0])).toContain('maxResults=20');
+  });
+});
+
+describe('searchVocalistsByName', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('requests every configured voice-synth type including the new VocaDB types', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ items: [] }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await searchVocalistsByName('voice-synth-contract');
+
+    const requestUrl = new URL(String(fetchMock.mock.calls[0]?.[0]));
+    expect(requestUrl.searchParams.get('artistTypes')?.split(',')).toEqual(VOCALIST_SEARCH_ARTIST_TYPES);
+    expect(requestUrl.searchParams.get('artistTypes')).toContain('ACEVirtualSinger');
+    expect(requestUrl.searchParams.get('artistTypes')).toContain('VOICEVOX');
+    expect(requestUrl.searchParams.get('artistTypes')).toContain('AIVOICE');
   });
 });

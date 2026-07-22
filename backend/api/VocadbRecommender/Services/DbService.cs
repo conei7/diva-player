@@ -19,6 +19,17 @@ public sealed record ViewHistoryResponse(
 /// <summary>PostgreSQL アクセスサービス</summary>
 public class DbService
 {
+    internal static readonly string[] VoiceSynthArtistTypes =
+    [
+        "Vocaloid", "UTAU", "CeVIO", "SynthesizerV", "NEUTRINO", "VoiSona",
+        "Voiceroid", "OtherVoiceSynthesizer", "NewType",
+        "ACEVirtualSinger", "VOICEVOX", "AIVOICE"
+    ];
+
+    private static readonly string VoiceSynthArtistTypesSql = string.Join(
+        ", ",
+        VoiceSynthArtistTypes.Select(static artistType => $"'{artistType}'"));
+
     private readonly string _connStr;
     private readonly IMemoryCache _cache;
 
@@ -334,7 +345,7 @@ public class DbService
             return [.. result];
 
         await using var conn = await OpenAsync();
-        await using var cmd = new NpgsqlCommand(@"
+        await using var cmd = new NpgsqlCommand($@"
             SELECT s.id, s.name, s.artist_string, s.length_seconds,
                    s.song_type, s.favorited_times,
                    sf.state_cluster,
@@ -352,12 +363,7 @@ public class DbService
                        JOIN artists a ON a.id = sa.artist_id
                        WHERE sa.song_id = s.id
                          AND sa.is_vocalist = TRUE
-                          AND a.artist_type IN (
-                            'Vocaloid', 'UTAU', 'CeVIO', 'SynthesizerV',
-                            'NEUTRINO', 'VoiSona', 'Voiceroid',
-                            'OtherVoiceSynthesizer', 'NewType',
-                            'ACEVirtualSinger', 'VOICEVOX', 'AIVOICE'
-                          )
+                         AND a.artist_type IN ({VoiceSynthArtistTypesSql})
                    ) AS has_core_voice_synth,
                    EXISTS (
                        SELECT 1 FROM pvs p
@@ -732,11 +738,7 @@ public class DbService
                   JOIN artists a ON a.id = sa.artist_id
                   WHERE sa.song_id = s.id
                     AND sa.is_vocalist = TRUE
-                    AND a.artist_type IN (
-                    'Vocaloid', 'UTAU', 'CeVIO', 'SynthesizerV', 'NEUTRINO',
-                    'VoiSona', 'Voiceroid', 'OtherVoiceSynthesizer', 'NewType',
-                    'ACEVirtualSinger', 'VOICEVOX', 'AIVOICE'
-                  )
+                    AND a.artist_type IN ({VoiceSynthArtistTypesSql})
               )
               AND EXISTS (
                   SELECT 1 FROM pvs p
@@ -799,7 +801,7 @@ public class DbService
     {
         if (producerIds.Length == 0) return [];
         using var conn = Open();
-        await using var cmd = new NpgsqlCommand(@"
+        await using var cmd = new NpgsqlCommand($@"
             SELECT DISTINCT sa.song_id
             FROM song_artists sa
             WHERE sa.artist_id = ANY($1)
@@ -815,11 +817,7 @@ public class DbService
                   JOIN artists synth ON synth.id = synth_artist.artist_id
                   WHERE synth_artist.song_id = sa.song_id
                     AND synth_artist.is_vocalist = TRUE
-                    AND synth.artist_type IN (
-                        'Vocaloid', 'UTAU', 'CeVIO', 'SynthesizerV', 'NEUTRINO',
-                        'VoiSona', 'Voiceroid', 'OtherVoiceSynthesizer', 'NewType',
-                        'ACEVirtualSinger', 'VOICEVOX', 'AIVOICE'
-                    )
+                    AND synth.artist_type IN ({VoiceSynthArtistTypesSql})
               )
               AND EXISTS (
                   SELECT 1 FROM pvs p
@@ -845,7 +843,7 @@ public class DbService
         int seedSongId, int limit)
     {
         using var conn = Open();
-        await using var cmd = new NpgsqlCommand(@"
+        await using var cmd = new NpgsqlCommand($@"
             SELECT s.id, s.name, s.artist_string
             FROM songs s
             WHERE EXISTS (
@@ -867,11 +865,7 @@ public class DbService
                 JOIN artists synth ON synth.id = synth_artist.artist_id
                 WHERE synth_artist.song_id = s.id
                   AND synth_artist.is_vocalist = TRUE
-                  AND synth.artist_type IN (
-                      'Vocaloid', 'UTAU', 'CeVIO', 'SynthesizerV', 'NEUTRINO',
-                      'VoiSona', 'Voiceroid', 'OtherVoiceSynthesizer', 'NewType',
-                      'ACEVirtualSinger', 'VOICEVOX', 'AIVOICE'
-                  )
+                  AND synth.artist_type IN ({VoiceSynthArtistTypesSql})
             )
             AND EXISTS (SELECT 1 FROM pvs WHERE pvs.song_id = s.id AND pvs.disabled = FALSE)
             ORDER BY s.favorited_times DESC NULLS LAST

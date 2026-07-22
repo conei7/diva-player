@@ -3,6 +3,8 @@
  * Based on: https://vocadb.net/swagger/index.html
  */
 
+import type { VoiceSynthArtistType } from '../config/voiceSynthTypes';
+
 // ─── PV (動画) ───
 export type PVService = 'Youtube' | 'NicoNicoDouga' | 'SoundCloud' | 'Vimeo' | 'Piapro' | 'Bilibili' | 'File' | 'LocalFile' | 'Creofuga' | 'Bandcamp';
 export type PVType = 'Original' | 'Reprint' | 'Other';
@@ -23,7 +25,7 @@ export interface PV {
 }
 
 // ─── アーティスト ───
-export type ArtistType = 'Producer' | 'Vocalist' | 'Vocaloid' | 'UTAU' | 'CeVIO' | 'Illustrator' | 'Lyricist' | 'Animator' | 'CoverArtist' | 'OtherVoiceSynthesizer' | 'OtherVocalist' | 'OtherGroup' | 'OtherIndividual' | 'Unknown' | 'Band' | 'Circle' | 'Label' | 'SynthesizerV' | 'NEUTRINO' | 'VoiSona' | 'NewType' | 'Voiceroid' | 'ACEVirtualSinger' | 'VOICEVOX' | 'AIVOICE' | 'Instrumentalist' | 'Designer';
+export type ArtistType = VoiceSynthArtistType | 'Producer' | 'Vocalist' | 'Illustrator' | 'Lyricist' | 'Animator' | 'CoverArtist' | 'OtherVocalist' | 'OtherGroup' | 'OtherIndividual' | 'Unknown' | 'Band' | 'Circle' | 'Label' | 'Instrumentalist' | 'Designer';
 export type ArtistCategory = 'Producer' | 'Vocalist' | 'Illustrator' | 'Lyricist' | 'Animator' | 'Band' | 'Circle' | 'Label' | 'Subject' | 'Nothing' | 'Other';
 
 export interface ArtistRef {
