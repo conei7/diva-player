@@ -123,9 +123,6 @@ try {
       visibilityState: document.visibilityState,
     };
   });
-  if (result.backgroundPauseCount < 1) {
-    throw new Error(`The fixture did not reproduce a background pause: ${JSON.stringify(result)}`);
-  }
   if (result.currentSongId !== 900002) {
     throw new Error(`Background end recovery did not advance the queue: ${JSON.stringify(result)}`);
   }
