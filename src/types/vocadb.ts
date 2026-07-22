@@ -23,7 +23,7 @@ export interface PV {
 }
 
 // ─── アーティスト ───
-export type ArtistType = 'Producer' | 'Vocalist' | 'Vocaloid' | 'UTAU' | 'CeVIO' | 'Illustrator' | 'Lyricist' | 'Animator' | 'CoverArtist' | 'OtherVoiceSynthesizer' | 'OtherVocalist' | 'OtherGroup' | 'OtherIndividual' | 'Unknown' | 'Band' | 'Circle' | 'Label' | 'SynthesizerV' | 'NEUTRINO' | 'VoiSona' | 'NewType' | 'Voiceroid' | 'Instrumentalist' | 'Designer';
+export type ArtistType = 'Producer' | 'Vocalist' | 'Vocaloid' | 'UTAU' | 'CeVIO' | 'Illustrator' | 'Lyricist' | 'Animator' | 'CoverArtist' | 'OtherVoiceSynthesizer' | 'OtherVocalist' | 'OtherGroup' | 'OtherIndividual' | 'Unknown' | 'Band' | 'Circle' | 'Label' | 'SynthesizerV' | 'NEUTRINO' | 'VoiSona' | 'NewType' | 'Voiceroid' | 'ACEVirtualSinger' | 'VOICEVOX' | 'AIVOICE' | 'Instrumentalist' | 'Designer';
 export type ArtistCategory = 'Producer' | 'Vocalist' | 'Illustrator' | 'Lyricist' | 'Animator' | 'Band' | 'Circle' | 'Label' | 'Subject' | 'Nothing' | 'Other';
 
 export interface ArtistRef {

@@ -36,6 +36,9 @@ describe('filterVoiceSynthSongs', () => {
       'Voiceroid',
       'OtherVoiceSynthesizer',
       'NewType',
+      'ACEVirtualSinger',
+      'VOICEVOX',
+      'AIVOICE',
     ];
     expect(filterVoiceSynthSongs(types.map((type, index) => song(index + 1, type)))).toHaveLength(types.length);
   });

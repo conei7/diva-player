@@ -374,7 +374,7 @@ export async function findArtistByName(query: string): Promise<Artist | null> {
 /**
  * ボーカリスト（Vocaloid / UTAU / CeVIO など）を名前で検索してサジェスト用リストを返す。
  */
-const VOCALIST_ARTIST_TYPES = 'Vocaloid%2CUTAU%2CCeVIO%2CSynthesizerV%2CNEUTRINO%2CVoiSona%2CVoiceroid%2COtherVoiceSynthesizer%2COtherVocalist';
+const VOCALIST_ARTIST_TYPES = 'Vocaloid%2CUTAU%2CCeVIO%2CSynthesizerV%2CNEUTRINO%2CVoiSona%2CVoiceroid%2COtherVoiceSynthesizer%2CNewType%2CACEVirtualSinger%2CVOICEVOX%2CAIVOICE%2COtherVocalist';
 
 export async function searchVocalistsByName(query: string): Promise<Artist[]> {
   const trimmed = query.trim();

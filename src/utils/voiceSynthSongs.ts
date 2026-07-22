@@ -3,6 +3,7 @@ import type { Song } from '../types/vocadb';
 const VOICE_SYNTH_TYPES = new Set([
   'Vocaloid', 'UTAU', 'CeVIO', 'SynthesizerV', 'NEUTRINO', 'VoiSona',
   'Voiceroid', 'OtherVoiceSynthesizer', 'NewType',
+  'ACEVirtualSinger', 'VOICEVOX', 'AIVOICE',
 ]);
 
 /** Excludes the occasional human-vocal / non-vocaloid record registered in VocaDB. */

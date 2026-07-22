@@ -352,10 +352,12 @@ public class DbService
                        JOIN artists a ON a.id = sa.artist_id
                        WHERE sa.song_id = s.id
                          AND sa.is_vocalist = TRUE
-                         AND a.artist_type IN (
-                           'Vocaloid', 'UTAU', 'CeVIO', 'SynthesizerV',
-                           'NEUTRINO', 'VoiSona'
-                         )
+                          AND a.artist_type IN (
+                            'Vocaloid', 'UTAU', 'CeVIO', 'SynthesizerV',
+                            'NEUTRINO', 'VoiSona', 'Voiceroid',
+                            'OtherVoiceSynthesizer', 'NewType',
+                            'ACEVirtualSinger', 'VOICEVOX', 'AIVOICE'
+                          )
                    ) AS has_core_voice_synth,
                    EXISTS (
                        SELECT 1 FROM pvs p
@@ -732,7 +734,8 @@ public class DbService
                     AND sa.is_vocalist = TRUE
                     AND a.artist_type IN (
                     'Vocaloid', 'UTAU', 'CeVIO', 'SynthesizerV', 'NEUTRINO',
-                    'VoiSona', 'Voiceroid', 'OtherVoiceSynthesizer', 'NewType'
+                    'VoiSona', 'Voiceroid', 'OtherVoiceSynthesizer', 'NewType',
+                    'ACEVirtualSinger', 'VOICEVOX', 'AIVOICE'
                   )
               )
               AND EXISTS (
@@ -812,7 +815,11 @@ public class DbService
                   JOIN artists synth ON synth.id = synth_artist.artist_id
                   WHERE synth_artist.song_id = sa.song_id
                     AND synth_artist.is_vocalist = TRUE
-                    AND synth.artist_type IN ('Vocaloid', 'UTAU', 'CeVIO', 'SynthesizerV', 'NEUTRINO', 'VoiSona')
+                    AND synth.artist_type IN (
+                        'Vocaloid', 'UTAU', 'CeVIO', 'SynthesizerV', 'NEUTRINO',
+                        'VoiSona', 'Voiceroid', 'OtherVoiceSynthesizer', 'NewType',
+                        'ACEVirtualSinger', 'VOICEVOX', 'AIVOICE'
+                    )
               )
               AND EXISTS (
                   SELECT 1 FROM pvs p
@@ -860,7 +867,11 @@ public class DbService
                 JOIN artists synth ON synth.id = synth_artist.artist_id
                 WHERE synth_artist.song_id = s.id
                   AND synth_artist.is_vocalist = TRUE
-                  AND synth.artist_type IN ('Vocaloid', 'UTAU', 'CeVIO', 'SynthesizerV', 'NEUTRINO', 'VoiSona')
+                  AND synth.artist_type IN (
+                      'Vocaloid', 'UTAU', 'CeVIO', 'SynthesizerV', 'NEUTRINO',
+                      'VoiSona', 'Voiceroid', 'OtherVoiceSynthesizer', 'NewType',
+                      'ACEVirtualSinger', 'VOICEVOX', 'AIVOICE'
+                  )
             )
             AND EXISTS (SELECT 1 FROM pvs WHERE pvs.song_id = s.id AND pvs.disabled = FALSE)
             ORDER BY s.favorited_times DESC NULLS LAST

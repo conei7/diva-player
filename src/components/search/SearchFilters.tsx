@@ -19,12 +19,15 @@ interface HallOfFameData {
 }
 
 // artist_type → 表示ラベルのマッピング（表示順も兼ねる）
-const TYPE_DISPLAY_ORDER = ['Vocaloid', 'UTAU', 'CeVIO', 'SynthesizerV', 'OtherVoiceSynthesizer'] as const;
+const TYPE_DISPLAY_ORDER = ['Vocaloid', 'UTAU', 'CeVIO', 'SynthesizerV', 'ACEVirtualSinger', 'VOICEVOX', 'AIVOICE', 'OtherVoiceSynthesizer'] as const;
 const TYPE_LABELS: Record<string, string> = {
   Vocaloid:              'ボカロ',
   UTAU:                  'UTAU',
   CeVIO:                 'CeVIO',
   SynthesizerV:          'SynthV',
+  ACEVirtualSinger:      'ACE',
+  VOICEVOX:              'VOICEVOX',
+  AIVOICE:               'A.I.VOICE',
   OtherVoiceSynthesizer: 'その他の合成音声',
 };
 
