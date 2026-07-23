@@ -1,7 +1,48 @@
-import { describe, expect, it } from 'vitest';
-import { parseFullBackup } from './fullBackup';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { parseFullBackup, readPersistedPlaylistsForBackup } from './fullBackup';
+import { usePlaylistStore } from '../stores/playlistStore';
+
+function createLocalStorage(initial: Record<string, string> = {}) {
+  const values = new Map(Object.entries(initial));
+  return {
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => { values.set(key, value); },
+    removeItem: (key: string) => { values.delete(key); },
+    key: (index: number) => [...values.keys()][index] ?? null,
+    get length() { return values.size; },
+  };
+}
 
 describe('parseFullBackup', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    usePlaylistStore.setState({ playlists: [], folders: [] });
+  });
+
+  it('hydrates persisted playlists before creating a backup snapshot', () => {
+    vi.stubGlobal('localStorage', createLocalStorage({
+      diva_playlists: JSON.stringify([{
+        id: 'playlist-1',
+        name: '保存済み',
+        songs: [{ id: 10, name: '曲' }],
+        createdAt: 1,
+        updatedAt: 1,
+      }]),
+      diva_playlistFolders: JSON.stringify([{
+        id: 'folder-1',
+        name: 'フォルダ',
+        createdAt: 1,
+        updatedAt: 1,
+      }]),
+    }));
+    usePlaylistStore.setState({ playlists: [], folders: [] });
+
+    const snapshot = readPersistedPlaylistsForBackup();
+
+    expect(snapshot.playlists.map(playlist => playlist.id)).toEqual(['watch-later', 'playlist-1']);
+    expect(snapshot.folders.map(folder => folder.id)).toEqual(['folder-1']);
+  });
+
   it('validates all three user-data sections and reports counts', () => {
     const preview = parseFullBackup({
       kind: 'diva-player-full-backup',

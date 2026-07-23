@@ -195,6 +195,14 @@ export function getCurrentBackupCounts(payload: FullBackupPayload): FullBackupCo
   return getCountsFromSections(payload.sections);
 }
 
+export function readPersistedPlaylistsForBackup(): Pick<FullBackupPayload['sections']['playlists'], 'folders' | 'playlists'> {
+  // playlistStore is hydrated lazily by PlaylistPage. A backup can also be
+  // started directly from another page, so load the persisted data explicitly.
+  usePlaylistStore.getState().loadPlaylists();
+  const { playlists, folders } = usePlaylistStore.getState();
+  return { playlists, folders };
+}
+
 export async function createFullBackup(): Promise<FullBackupPayload> {
   const db = await openHistoryDb();
   const historyTx = db.transaction(HISTORY_STORES.plays, 'readonly');
@@ -209,7 +217,7 @@ export async function createFullBackup(): Promise<FullBackupPayload> {
       }));
     request.onerror = () => reject(request.error);
   });
-  const { playlists, folders } = usePlaylistStore.getState();
+  const { playlists, folders } = readPersistedPlaylistsForBackup();
   const sections: FullBackupPayload['sections'] = {
     history: { events },
     ratings: { ...useRatingStore.getState().ratings },

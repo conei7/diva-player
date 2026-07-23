@@ -31,6 +31,7 @@ import { createRankingSeed } from '../utils/rankingRandomization';
 import { rerankDisplayedSongs, useRecommendationExposureStore } from '../stores/recommendationExposureStore';
 import { useGlobalFilterStore } from '../stores/globalFilterStore';
 import { useFavoriteProducerStore } from '../stores/favoriteProducerStore';
+import { useUiStore } from '../stores/uiStore';
 import {
   applyDiscoveryFilterWithRelaxation,
   getDiscoveryRelaxationMessage,
@@ -41,6 +42,7 @@ import {
 function WatchQueue() {
   const queue = usePlayerStore(s => s.queue);
   const queueIndex = usePlayerStore(s => s.queueIndex);
+  const openSaveToPlaylist = useUiStore(s => s.openSaveToPlaylist);
   const [expanded, setExpanded] = useState(false);
 
   if (queue.length <= 1) return null;
@@ -48,23 +50,39 @@ function WatchQueue() {
 
   return (
     <div className="mb-4 rounded-xl overflow-hidden" style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)' }}>
-      <button 
-        className="w-full flex items-center justify-between px-4 py-3 transition-colors hover:bg-white/5"
-        onClick={() => setExpanded(!expanded)}
-      >
-        <div className="text-left">
-          <h3 className="text-sm font-semibold truncate max-w-[200px] sm:max-w-[300px]" style={{ color: 'var(--color-text-primary)' }}>
-            次: {nextSong?.name || '終了'}
-          </h3>
-          <p className="text-xs mt-0.5" style={{ color: 'var(--color-text-muted)' }}>ミックスリスト - {queueIndex + 1}/{queue.length}曲</p>
-        </div>
-        <svg 
-          width="24" height="24" viewBox="0 0 24 24" fill="currentColor" 
-          className={`transition-transform duration-200 ${expanded ? 'rotate-180' : ''}`}
+      <div className="flex items-center transition-colors hover:bg-white/5">
+        <button
+          className="flex min-w-0 flex-1 items-center justify-between px-4 py-3"
+          onClick={() => setExpanded(!expanded)}
+          aria-expanded={expanded}
         >
-          <path d="M7 10l5 5 5-5z" />
-        </svg>
-      </button>
+          <div className="min-w-0 text-left">
+            <h3 className="truncate text-sm font-semibold max-w-[180px] sm:max-w-[280px]" style={{ color: 'var(--color-text-primary)' }}>
+              次: {nextSong?.name || '終了'}
+            </h3>
+            <p className="mt-0.5 text-xs" style={{ color: 'var(--color-text-muted)' }}>ミックスリスト - {queueIndex + 1}/{queue.length}曲</p>
+          </div>
+          <svg
+            width="24" height="24" viewBox="0 0 24 24" fill="currentColor"
+            className={`ml-2 shrink-0 transition-transform duration-200 ${expanded ? 'rotate-180' : ''}`}
+          >
+            <path d="M7 10l5 5 5-5z" />
+          </svg>
+        </button>
+        <button
+          type="button"
+          className="btn-ghost mr-2 shrink-0 rounded-lg p-2"
+          onClick={() => openSaveToPlaylist(queue, { source: 'queue', queueIndex })}
+          title="キューをプレイリストに保存"
+          aria-label="キューをプレイリストに保存"
+          style={{ color: 'var(--color-accent-cyan)' }}
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M12 5v14M5 12h14" />
+            <path d="M4 4h16v16H4z" opacity=".35" />
+          </svg>
+        </button>
+      </div>
       
       {expanded && (
         <div className="border-t" style={{ borderColor: 'var(--color-border)', height: 'min(400px, 50dvh)' }}>
