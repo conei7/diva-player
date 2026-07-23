@@ -46,6 +46,16 @@ import { searchSongs, getSongsByProducer } from '../api/vocadb';
 import { applyDiscoveryFilterWithRelaxation } from '../utils/globalFilters';
 import type { SmartPlaylistRule } from '../types/vocadb';
 import { sortPlaylistSongs } from '../utils/playlistSorting';
+import { storage } from '../utils/storage';
+import {
+  DEFAULT_PLAYLIST_LIST_PREFERENCES,
+  normalizePlaylistListPreferences,
+  sortPlaylistsForDisplay,
+  type PlaylistListDensity,
+  type PlaylistListSortKey,
+} from '../utils/playlistListPreferences';
+
+const PLAYLIST_LIST_PREFERENCES_KEY = 'playlistListPreferences';
 
 function PlaylistCover({ playlist, className = '' }: { playlist: Playlist; className?: string }) {
   const thumbnails = Array.from(new Set(
@@ -481,6 +491,10 @@ export default function PlaylistPage() {
 
   const [selectedPlaylistId, setSelectedPlaylistId] = useState<string | null>(null);
   const [selectedFolderId, setSelectedFolderId]     = useState<string | null>(null);
+  const [showAllFolders, setShowAllFolders] = useState(true);
+  const [playlistListPreferences, setPlaylistListPreferences] = useState(() => normalizePlaylistListPreferences(
+    storage.get(PLAYLIST_LIST_PREFERENCES_KEY) ?? DEFAULT_PLAYLIST_LIST_PREFERENCES,
+  ));
   const importInputRef = useRef<HTMLInputElement>(null);
   const [newName, setNewName]                       = useState('');
   const [newFolderName, setNewFolderName]           = useState('');
@@ -519,6 +533,10 @@ export default function PlaylistPage() {
   const [smartRefreshRetryTick, setSmartRefreshRetryTick] = useState(0);
 
   useEffect(() => { loadPlaylists(); }, [loadPlaylists]);
+
+  useEffect(() => {
+    storage.set(PLAYLIST_LIST_PREFERENCES_KEY, playlistListPreferences);
+  }, [playlistListPreferences]);
 
   useEffect(() => {
     const encoded = searchParams.get('share');
@@ -621,10 +639,12 @@ export default function PlaylistPage() {
     ? smartRefreshStatuses[selectedPlaylist.id]
     : undefined;
   const pinnedPlaylists = playlists.filter(p => p.isPinned);
-  const filteredSidebarPlaylists = (selectedFolderId
-    ? playlists.filter(p => !p.isPinned && p.folderId === selectedFolderId)
-    : playlists.filter(p => !p.isPinned && !p.folderId)
-  ).filter(p => {
+  const folderScopedPlaylists = showAllFolders
+    ? playlists.filter(p => !p.isPinned)
+    : selectedFolderId
+      ? playlists.filter(p => !p.isPinned && p.folderId === selectedFolderId)
+      : playlists.filter(p => !p.isPinned && !p.folderId);
+  const filteredSidebarPlaylists = sortPlaylistsForDisplay(folderScopedPlaylists, playlistListPreferences.sortKey, playlistListPreferences.sortOrder).filter(p => {
     const q = playlistFilterText.trim().toLowerCase();
     if (!q) return true;
     return p.name.toLowerCase().includes(q);
@@ -863,21 +883,23 @@ export default function PlaylistPage() {
   }, [deletePlaylist]);
 
   // サイドバープレイリスト行（コンポーネント内関数）
-  const SidebarItem = ({ p }: { p: Playlist }) => (
+  const SidebarItem = ({ p }: { p: Playlist }) => {
+    const compact = playlistListPreferences.density === 'compact';
+    return (
     <button
       onClick={() => setSelectedPlaylistId(p.id)}
-      className="group flex w-full items-center gap-3 rounded-2xl border px-2.5 py-2 text-left transition-all duration-200"
+      className={`group flex w-full items-center rounded-2xl border text-left transition-all duration-200 ${compact ? 'gap-2 px-2 py-1.5' : 'gap-3 px-2.5 py-2'}`}
       style={{
         background: selectedPlaylistId === p.id ? 'rgba(255,255,255,.08)' : 'transparent',
         color: 'var(--color-text-primary)',
         borderColor: selectedPlaylistId === p.id ? 'rgba(6,214,160,.28)' : p.isPinned ? 'rgba(6,214,160,.12)' : 'transparent',
       }}
     >
-      <div className="h-12 w-12 flex-shrink-0 overflow-hidden rounded-xl bg-black/20 shadow-md transition-transform duration-200 group-hover:scale-[1.03]">
+      <div className={`${compact ? 'h-9 w-9 rounded-lg' : 'h-12 w-12 rounded-xl'} flex-shrink-0 overflow-hidden bg-black/20 shadow-md transition-transform duration-200 group-hover:scale-[1.03]`}>
         <PlaylistCover playlist={p} />
       </div>
       <div className="flex-1 min-w-0">
-        <p className="truncate text-sm font-semibold">{p.name}</p>
+        <p className={`${compact ? 'text-xs' : 'text-sm'} truncate font-semibold`}>{p.name}</p>
         <p className="mt-0.5 flex items-center gap-1.5 text-[11px] text-neutral-500">
           <span>{p.songs.length}曲</span>
           {p.smartRule && <span className="rounded-full bg-cyan-400/10 px-1.5 py-0.5 text-cyan-300">スマート</span>}
@@ -885,7 +907,8 @@ export default function PlaylistPage() {
       </div>
       {selectedPlaylistId === p.id && <span className="h-2 w-2 flex-shrink-0 rounded-full bg-emerald-300" />}
     </button>
-  );
+    );
+  };
 
   return (
     <div
@@ -963,6 +986,39 @@ export default function PlaylistPage() {
           </div>
         )}
 
+        {playlists.some(p => !p.isPinned) && (
+          <div className="flex flex-wrap items-center gap-2 rounded-xl border border-white/[0.07] bg-black/10 p-2">
+            <label className="flex min-w-0 flex-1 items-center gap-2 text-xs text-neutral-400">
+              <span className="shrink-0">並べ替え</span>
+              <select
+                className="input min-w-0 flex-1 py-1.5 text-xs"
+                value={playlistListPreferences.sortKey}
+                onChange={event => setPlaylistListPreferences(current => ({ ...current, sortKey: event.target.value as PlaylistListSortKey }))}
+              >
+                <option value="updatedAt">更新順</option>
+                <option value="name">名前順</option>
+                <option value="songCount">曲数順</option>
+              </select>
+            </label>
+            <button
+              type="button"
+              className="rounded-lg border border-white/10 px-2 py-1.5 text-xs text-neutral-300 hover:bg-white/10"
+              onClick={() => setPlaylistListPreferences(current => ({ ...current, sortOrder: current.sortOrder === 'desc' ? 'asc' : 'desc' }))}
+              title="並び順を反転"
+            >
+              {playlistListPreferences.sortOrder === 'desc' ? '降順' : '昇順'}
+            </button>
+            <button
+              type="button"
+              className="rounded-lg border border-white/10 px-2 py-1.5 text-xs text-neutral-300 hover:bg-white/10"
+              onClick={() => setPlaylistListPreferences(current => ({ ...current, density: current.density === 'comfortable' ? 'compact' : 'comfortable' as PlaylistListDensity }))}
+              title="表示密度を切り替え"
+            >
+              {playlistListPreferences.density === 'comfortable' ? 'コンパクト' : 'ゆったり'}
+            </button>
+          </div>
+        )}
+
         {/* ピン留め（後で聴く等） */}
         {pinnedPlaylists.length > 0 && (
           <section className="space-y-1">
@@ -974,9 +1030,9 @@ export default function PlaylistPage() {
         {/* フォルダフィルター */}
         <section className="rounded-2xl bg-black/10 p-1">
           <button
-            onClick={() => setSelectedFolderId(null)}
+            onClick={() => { setShowAllFolders(true); setSelectedFolderId(null); }}
             className="flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-sm transition-colors"
-            style={{ background: selectedFolderId === null ? 'rgba(255,255,255,.07)' : 'transparent', color: 'var(--color-text-secondary)' }}
+            style={{ background: showAllFolders ? 'rgba(255,255,255,.07)' : 'transparent', color: 'var(--color-text-secondary)' }}
           >
             <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
@@ -984,10 +1040,21 @@ export default function PlaylistPage() {
             すべてのプレイリスト
           </button>
 
+          <button
+            onClick={() => { setShowAllFolders(false); setSelectedFolderId(null); }}
+            className="flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-xs transition-colors"
+            style={{ background: !showAllFolders && selectedFolderId === null ? 'rgba(255,255,255,.07)' : 'transparent', color: 'var(--color-text-muted)' }}
+          >
+            <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M4 4h16v16H4z" />
+            </svg>
+            フォルダなし
+          </button>
+
           {folders.map(f => (
             <FolderItem key={f.id} folder={f} depth={0}
               selectedFolderId={selectedFolderId}
-              onSelect={id => setSelectedFolderId(id)}
+              onSelect={id => { setShowAllFolders(false); setSelectedFolderId(id); }}
               onDelete={deleteFolder}
             />
           ))}
