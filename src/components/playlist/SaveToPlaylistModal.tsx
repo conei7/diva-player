@@ -4,13 +4,15 @@
  * uiStore.saveToPlaylistSong が非 null のときに表示される。
  * Portal 経由で body 直下にレンダリング。
  */
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { useUiStore } from '../../stores/uiStore';
 import { usePlaylistStore, WATCH_LATER_ID } from '../../stores/playlistStore';
+import { getQueueSongsForScope, type QueueSaveScope } from '../../utils/queuePlaylist';
 
 export function SaveToPlaylistModal() {
   const songs = useUiStore(s => s.saveToPlaylistSongs);
+  const saveContext = useUiStore(s => s.saveToPlaylistContext);
   const close = useUiStore(s => s.closeSaveToPlaylist);
   const playlists = usePlaylistStore(s => s.playlists);
   const createPlaylist = usePlaylistStore(s => s.createPlaylist);
@@ -21,6 +23,8 @@ export function SaveToPlaylistModal() {
 
   const [newName, setNewName] = useState('');
   const [showCreate, setShowCreate] = useState(false);
+  const [queueSaveScope, setQueueSaveScope] = useState<QueueSaveScope>('currentAndRemaining');
+  const [notice, setNotice] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
   const backdropRef = useRef<HTMLDivElement>(null);
 
@@ -30,8 +34,10 @@ export function SaveToPlaylistModal() {
       loadPlaylists();
       setNewName('');
       setShowCreate(false);
+      setQueueSaveScope('currentAndRemaining');
+      setNotice('');
     }
-  }, [songs, loadPlaylists]);
+  }, [songs, loadPlaylists, saveContext.source, saveContext.queueIndex]);
 
   // 新規プレイリスト作成フォームが開いたらフォーカス
   useEffect(() => {
@@ -43,16 +49,21 @@ export function SaveToPlaylistModal() {
     [close],
   );
 
+  const selectedSongs = useMemo(() => songs && saveContext.source === 'queue'
+    ? getQueueSongsForScope(songs, saveContext.queueIndex ?? -1, queueSaveScope)
+    : songs ?? [], [songs, saveContext.source, saveContext.queueIndex, queueSaveScope]);
+
   const handleCreate = useCallback(() => {
     const name = newName.trim();
     if (!name || !songs || songs.length === 0) return;
     const pl = createPlaylist(name);
-    addSongs(pl.id, songs);
+    const result = addSongs(pl.id, selectedSongs);
     setNewName('');
     setShowCreate(false);
-  }, [newName, songs, createPlaylist, addSongs]);
+    setNotice(`${result.added}曲を「${pl.name}」に追加しました${result.duplicates > 0 ? `（重複 ${result.duplicates}曲）` : ''}`);
+  }, [newName, songs, selectedSongs, createPlaylist, addSongs]);
 
-  if (!songs || songs.length === 0) return null;
+  if (!songs || songs.length === 0 || selectedSongs.length === 0) return null;
 
   // ソート: 後で聴く → その他
   const sorted = [...playlists].sort((a, b) => {
@@ -81,28 +92,45 @@ export function SaveToPlaylistModal() {
 
         {/* 保存先の曲情報 */}
         <div className="flex items-center gap-2 px-4 py-2 bg-neutral-800">
-          {songs.length === 1 ? (
+          {selectedSongs.length === 1 ? (
             <>
-              {songs[0].thumbUrl && (
-                <img src={songs[0].thumbUrl} alt="" className="w-8 h-8 rounded object-cover flex-shrink-0" />
+              {selectedSongs[0].thumbUrl && (
+                <img src={selectedSongs[0].thumbUrl} alt="" className="w-8 h-8 rounded object-cover flex-shrink-0" />
               )}
-              <span className="text-xs text-neutral-300 truncate">{songs[0].name}</span>
+              <span className="text-xs text-neutral-300 truncate">{selectedSongs[0].name}</span>
             </>
           ) : (
-            <span className="text-xs text-neutral-300 truncate">{songs.length} 曲を選択中</span>
+            <span className="text-xs text-neutral-300 truncate">{selectedSongs.length} 曲を選択中</span>
           )}
         </div>
+
+        {saveContext.source === 'queue' && (
+          <div className="space-y-1 border-b border-neutral-700 bg-neutral-850 px-4 py-2 text-xs text-neutral-300">
+            <p className="text-[11px] text-neutral-500">キューから保存する範囲</p>
+            <label className="flex items-center gap-2"><input type="radio" checked={queueSaveScope === 'currentAndRemaining'} onChange={() => setQueueSaveScope('currentAndRemaining')} /> 再生中の曲以降（{getQueueSongsForScope(songs, saveContext.queueIndex ?? -1, 'currentAndRemaining').length}曲）</label>
+            <label className="flex items-center gap-2"><input type="radio" checked={queueSaveScope === 'remaining'} onChange={() => setQueueSaveScope('remaining')} /> 次の曲だけ（{getQueueSongsForScope(songs, saveContext.queueIndex ?? -1, 'remaining').length}曲）</label>
+            <label className="flex items-center gap-2"><input type="radio" checked={queueSaveScope === 'all'} onChange={() => setQueueSaveScope('all')} /> キュー全体（{songs.length}曲）</label>
+          </div>
+        )}
+
+        {notice && <p className="border-b border-neutral-700 bg-cyan-950/40 px-4 py-2 text-xs text-cyan-200" role="status">{notice}</p>}
 
         {/* プレイリスト一覧 */}
         <div className="overflow-y-auto flex-1 py-1">
           {sorted.map(pl => {
-            const checked = songs.every(s => isSongIn(pl.id, s.id));
+            const selectedCount = selectedSongs.filter(s => isSongIn(pl.id, s.id)).length;
+            const checked = selectedCount === selectedSongs.length;
             
             const handleToggle = () => {
-              if (checked) {
-                songs.forEach(s => removeSongById(pl.id, s.id));
+              if (saveContext.source === 'queue') {
+                const result = addSongs(pl.id, selectedSongs);
+                setNotice(`${result.added}曲を「${pl.name}」に追加しました${result.duplicates > 0 ? `（重複 ${result.duplicates}曲）` : ''}`);
+              } else if (checked) {
+                selectedSongs.forEach(s => removeSongById(pl.id, s.id));
+                setNotice(`「${pl.name}」から${selectedSongs.length}曲を外しました`);
               } else {
-                addSongs(pl.id, songs);
+                const result = addSongs(pl.id, selectedSongs);
+                setNotice(`${result.added}曲を「${pl.name}」に追加しました${result.duplicates > 0 ? `（重複 ${result.duplicates}曲）` : ''}`);
               }
             };
 

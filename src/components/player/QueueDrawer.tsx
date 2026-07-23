@@ -115,7 +115,7 @@ export default function QueueDrawer() {
             ) : null}
             <button
               className="btn-ghost p-1.5 rounded-lg"
-              onClick={() => openSaveToPlaylist(queue)}
+              onClick={() => openSaveToPlaylist(queue, { source: 'queue', queueIndex })}
               disabled={queue.length === 0}
               title="Save queue to playlist"
               style={{ color: queue.length > 0 ? 'var(--color-accent-cyan)' : 'var(--color-text-muted)' }}

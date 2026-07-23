@@ -6,6 +6,7 @@ import type { Song } from '../../types/vocadb';
 import { useImplicitFeedbackStore } from '../../stores/implicitFeedbackStore';
 import { useQueueRecommendationStore } from '../../stores/queueRecommendationStore';
 import { useAutoQueueStatusStore } from '../../stores/autoQueueStatusStore';
+import { useUiStore } from '../../stores/uiStore';
 
 function getThumbUrl(song: Song): string | null {
   if (song.thumbUrl) return song.thumbUrl;
@@ -30,6 +31,7 @@ export default function QueueSidebar({ hideHeader }: QueueSidebarProps = {}) {
   const recordQueueRemove = useImplicitFeedbackStore(s => s.recordQueueRemove);
   const recommendations = useQueueRecommendationStore(s => s.recommendations);
   const autoQueueStatus = useAutoQueueStatusStore(s => s.status);
+  const openSaveToPlaylist = useUiStore(s => s.openSaveToPlaylist);
   const currentRef = useRef<HTMLLIElement>(null);
 
   // 現在の曲が変わったら自動スクロール
@@ -69,6 +71,20 @@ export default function QueueSidebar({ hideHeader }: QueueSidebarProps = {}) {
           ) : autoQueueStatus === 'exhausted' ? (
             <span className="text-[10px]" style={{ color: 'var(--color-text-muted)' }}>候補がありません</span>
           ) : null}
+          <button
+            type="button"
+            className="btn-ghost ml-auto rounded-lg p-1.5"
+            onClick={() => openSaveToPlaylist(queue, { source: 'queue', queueIndex })}
+            disabled={queue.length === 0}
+            title="キューをプレイリストに保存"
+            aria-label="キューをプレイリストに保存"
+            style={{ color: queue.length > 0 ? 'var(--color-accent-cyan)' : 'var(--color-text-muted)' }}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M12 5v14M5 12h14" />
+              <path d="M4 4h16v16H4z" opacity=".35" />
+            </svg>
+          </button>
         </div>
       )}
 

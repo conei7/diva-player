@@ -6,6 +6,11 @@
 import { create } from 'zustand';
 import type { Song } from '../types/vocadb';
 
+export interface SaveToPlaylistContext {
+  source: 'default' | 'queue';
+  queueIndex?: number;
+}
+
 interface UiState {
   /** 詳細モーダルに表示中の楽曲。null = モーダル閉じている */
   detailSong: Song | null;
@@ -18,7 +23,8 @@ interface UiState {
 
   /** 「プレイリストに保存」モーダルの対象曲。null = 閉じている */
   saveToPlaylistSongs: Song[] | null;
-  openSaveToPlaylist: (songOrSongs: Song | Song[]) => void;
+  saveToPlaylistContext: SaveToPlaylistContext;
+  openSaveToPlaylist: (songOrSongs: Song | Song[], context?: SaveToPlaylistContext) => void;
   closeSaveToPlaylist: () => void;
 
   /** サイドバー展開状態 (デスクトップ) */
@@ -38,8 +44,12 @@ export const useUiStore = create<UiState>()((set) => ({
   closeSongDetail: () => set({ detailSong: null }),
 
   saveToPlaylistSongs: null,
-  openSaveToPlaylist: (songOrSongs) => set({ saveToPlaylistSongs: Array.isArray(songOrSongs) ? songOrSongs : [songOrSongs] }),
-  closeSaveToPlaylist: () => set({ saveToPlaylistSongs: null }),
+  saveToPlaylistContext: { source: 'default' },
+  openSaveToPlaylist: (songOrSongs, context = { source: 'default' }) => set({
+    saveToPlaylistSongs: Array.isArray(songOrSongs) ? [...songOrSongs] : [songOrSongs],
+    saveToPlaylistContext: context,
+  }),
+  closeSaveToPlaylist: () => set({ saveToPlaylistSongs: null, saveToPlaylistContext: { source: 'default' } }),
 
   sidebarExpanded: true,
   toggleSidebar: () => set((s) => ({ sidebarExpanded: !s.sidebarExpanded })),
