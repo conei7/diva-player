@@ -88,4 +88,39 @@ describe('parseFullBackup', () => {
       { id: 42, name: 'MIMI', artistType: 'Producer', createdAt: 123 },
     ]);
   });
+
+  it('requires a matching v4 manifest before restore', () => {
+    const base = {
+      kind: 'diva-player-full-backup' as const,
+      version: 4 as const,
+      exportedAt: '2026-07-18T00:00:00.000Z',
+      sections: {
+        history: { events: [] },
+        ratings: { '10': 5 },
+        playlists: {
+          folders: [],
+          playlists: [{
+            id: 'playlist-1',
+            name: 'お気に入り',
+            songs: [{ id: 10, name: '曲' }],
+            createdAt: 1,
+            updatedAt: 1,
+          }],
+        },
+      },
+    };
+    const valid = parseFullBackup({
+      ...base,
+      manifest: { schemaVersion: 4, historyEvents: 0, ratingCount: 1, playlistCount: 1, playlistSongCount: 1, folderCount: 0, favoriteProducerCount: 0 },
+    });
+    expect(valid?.canRestore).toBe(true);
+    expect(valid?.manifestValid).toBe(true);
+
+    const mismatch = parseFullBackup({
+      ...base,
+      manifest: { schemaVersion: 4, historyEvents: 0, ratingCount: 1, playlistCount: 1, playlistSongCount: 99, folderCount: 0, favoriteProducerCount: 0 },
+    });
+    expect(mismatch?.canRestore).toBe(false);
+    expect(mismatch?.validationMessages).toContain('manifestと実データの件数が一致しません。');
+  });
 });

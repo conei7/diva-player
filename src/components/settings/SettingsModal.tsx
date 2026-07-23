@@ -4,6 +4,8 @@ import {
   downloadFullBackup,
   executeFullBackupImport,
   parseFullBackup,
+  readCurrentBackupCounts,
+  type FullBackupCounts,
   type FullBackupPreview,
 } from '../../services/fullBackup';
 import {
@@ -30,6 +32,7 @@ interface SettingsModalProps {
 export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [preview, setPreview] = useState<FullBackupPreview | null>(null);
+  const [currentCounts, setCurrentCounts] = useState<FullBackupCounts | null>(null);
   const [mode, setMode] = useState<'merge' | 'replace'>('merge');
   const [ratingPriority, setRatingPriority] = useState<'backup' | 'current'>('backup');
   const [message, setMessage] = useState('');
@@ -44,6 +47,7 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
   useEffect(() => {
     if (!isOpen) {
       setPreview(null);
+      setCurrentCounts(null);
       setMessage('');
     } else {
       setDraftFilters(getGlobalFilterSettings());
@@ -83,6 +87,12 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
       try {
         const parsed = parseFullBackup(JSON.parse(String(reader.result)));
         setPreview(parsed);
+        setCurrentCounts(null);
+        if (parsed) {
+          void readCurrentBackupCounts().then(setCurrentCounts).catch(error => {
+            console.error('[FullBackup] Current count read failed', error);
+          });
+        }
         setMessage(parsed ? '内容を確認してください。' : '対応していないバックアップです。');
       } catch {
         setPreview(null);
@@ -104,8 +114,9 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     setBusy(true);
     setMessage('復元中…');
     try {
-      await executeFullBackupImport(preview, { mode, ratingPriority });
+      const result = await executeFullBackupImport(preview, { mode, ratingPriority });
       setPreview(null);
+      setCurrentCounts(result.after);
       setMessage('復元が完了しました。');
     } catch (error) {
       console.error(error);
@@ -244,7 +255,13 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
           {preview && (
             <div className="rounded-xl p-3 text-sm" style={{ background: 'var(--color-bg-secondary)' }}>
               {preview.preferencesIncluded && <p className="mb-1 text-xs opacity-70">表示・発見設定を含むバックアップです。</p>}
-              <p>履歴 {preview.historyCount.toLocaleString()}件 / 評価 {preview.ratingCount.toLocaleString()}件 / プレイリスト {preview.playlistCount.toLocaleString()}件 / フォルダ {preview.folderCount.toLocaleString()}件</p>
+              <p>履歴 {preview.historyCount.toLocaleString()}件 / 評価 {preview.ratingCount.toLocaleString()}件 / プレイリスト {preview.playlistCount.toLocaleString()}件 / 曲 {preview.playlistSongCount.toLocaleString()}件 / フォルダ {preview.folderCount.toLocaleString()}件</p>
+              {currentCounts && (
+                <p className="mt-1 text-xs opacity-70">現在: プレイリスト {currentCounts.playlistCount.toLocaleString()}件 / 曲 {currentCounts.playlistSongCount.toLocaleString()}件 / 評価 {currentCounts.ratingCount.toLocaleString()}件</p>
+              )}
+              {preview.validationMessages.map(validationMessage => (
+                <p key={validationMessage} className="mt-1 text-amber-300" role="alert">{validationMessage}</p>
+              ))}
               {preview.invalidItems > 0 && <p className="mt-1 text-amber-300">無効項目 {preview.invalidItems}件を除外</p>}
               <div className="flex flex-wrap gap-3 mt-3">
                 <label><input type="radio" checked={mode === 'merge'} onChange={() => setMode('merge')} /> 追加</label>
@@ -257,7 +274,7 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                   <label><input type="radio" checked={ratingPriority === 'current'} onChange={() => setRatingPriority('current')} /> 現在</label>
                 </div>
               )}
-              <button type="button" className="btn-primary mt-3 w-full" disabled={busy} onClick={() => void importBackup()}>この内容を復元</button>
+              <button type="button" className="btn-primary mt-3 w-full" disabled={busy || !preview.canRestore} onClick={() => void importBackup()}>この内容を復元</button>
             </div>
           )}
           {message && <p className="text-sm text-center" role="status">{message}</p>}
