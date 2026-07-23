@@ -1,8 +1,5 @@
 # DIVA Player
 
-構成、機能、保存データ、開発手順を含む全体像は
-[プロジェクトマニュアル](docs/PROJECT_MANUAL.md)を参照してください。
-
 **Dynamic Index for Virtual Artists**
 
 VocaDB API を活用したボカロ特化ミュージックプレイヤー SPA。YouTube・ニコニコ動画のボカロ楽曲をシームレスに検索・再生できます。
@@ -78,9 +75,6 @@ src/
 
 ## ドキュメント
 
-- [プロジェクトマニュアル](docs/PROJECT_MANUAL.md): 公開仕様、構成、セットアップ
-- [開発ガイドライン](docs/GUIDELINE.md): コーディング規約
-
-稼働状況、運用手順、ロードマップは、秘密情報や内部構成を含むためprivateの
-`diva-data-pipeline/docs/diva-player/ACTIVE`を正本とします。
+セットアップと公開仕様はこのREADMEを参照してください。稼働状況、内部仕様、運用手順、ロードマップは、privateの
+`diva-data-pipeline/docs/diva-player/ACTIVE`を正本とします。このリポジトリには重複する`docs/`を置きません。
 
