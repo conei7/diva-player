@@ -43,15 +43,40 @@ describe('smart playlist UI summaries', () => {
     expect(params.get('artistIds')).toBe('39');
     expect(params.get('minYoutubeViews')).toBe('100000000');
     expect(params.get('excludeSongTypes')).toBe('Cover');
-    expect(params.get('sort')).toBe('YoutubeViews');
+    expect(params.get('sort')).toBe('FavoritedTimes');
     expect(params.get('maxResults')).toBe('200');
   });
 
   it('never fills a smart playlist with songs outside its conditions', () => {
     const songs = [
-      { id: 1, name: 'matched', songType: 'Original', youtubeViews: 100_000_000 },
-      { id: 2, name: 'too low', songType: 'Original', youtubeViews: 99_999_999 },
-      { id: 3, name: 'excluded', songType: 'Cover', youtubeViews: 200_000_000 },
+      {
+        id: 1,
+        name: 'matched',
+        songType: 'Original',
+        youtubeViews: 100_000_000,
+        artists: [{ categories: 'Vocalist', artist: { artistType: 'Vocaloid' } }],
+      },
+      {
+        id: 2,
+        name: 'too low',
+        songType: 'Original',
+        youtubeViews: 99_999_999,
+        artists: [{ categories: 'Vocalist', artist: { artistType: 'Vocaloid' } }],
+      },
+      {
+        id: 3,
+        name: 'excluded',
+        songType: 'Cover',
+        youtubeViews: 200_000_000,
+        artists: [{ categories: 'Vocalist', artist: { artistType: 'UTAU' } }],
+      },
+      {
+        id: 4,
+        name: 'human song',
+        songType: 'Original',
+        youtubeViews: 200_000_000,
+        artists: [{ categories: 'Vocalist', artist: { artistType: 'OtherVocalist' } }],
+      },
     ] as Song[];
 
     expect(filterSmartPlaylistSongs(songs, rule({

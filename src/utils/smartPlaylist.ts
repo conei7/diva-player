@@ -1,4 +1,5 @@
 import type { Song, SongType, SmartPlaylistRule } from '../types/vocadb';
+import { isVoiceSynthArtistType } from '../config/voiceSynthTypes';
 import { applyGlobalSongFilter, SONG_TYPE_LABELS } from './globalFilters';
 
 export const SMART_DERIVED_SONG_TYPES: SongType[] = ['Cover', 'Remix', 'Arrangement', 'Mashup'];
@@ -24,11 +25,8 @@ export function buildSmartPlaylistSearchParams(
   maxResults = 200,
 ): URLSearchParams {
   const params = new URLSearchParams({
-    sort: rule.minYoutubeViews > 0
-      ? 'YoutubeViews'
-      : rule.minNicoViews > 0
-        ? 'NicoViews'
-        : 'FavoritedTimes',
+    // 全楽曲DBには一般楽曲も含まれるため、VocaDB内で評価された曲を先に取得する。
+    sort: 'FavoritedTimes',
     order: 'desc',
     start: '0',
     maxResults: String(maxResults),
@@ -45,7 +43,7 @@ export function buildSmartPlaylistSearchParams(
 
 /** DB検索結果にも同じ条件を再適用し、条件外の曲が入らないことを保証する。 */
 export function filterSmartPlaylistSongs(songs: Song[], rule: SmartPlaylistRule): Song[] {
-  return applyGlobalSongFilter(songs, {
+  const matchingConditions = applyGlobalSongFilter(songs, {
     enabled: true,
     minYoutubeViews: rule.minYoutubeViews,
     minNicoViews: rule.minNicoViews,
@@ -53,4 +51,8 @@ export function filterSmartPlaylistSongs(songs: Song[], rule: SmartPlaylistRule)
     cooldownHours: 0,
     excludeRatedFromDiscovery: false,
   });
+  return matchingConditions.filter(song => song.artists?.some(artist =>
+    artist.categories?.includes('Vocalist')
+      && isVoiceSynthArtistType(artist.artist?.artistType),
+  ));
 }
