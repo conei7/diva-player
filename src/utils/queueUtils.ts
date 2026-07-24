@@ -7,6 +7,16 @@ export interface DedupedQueue {
   removed: number;
 }
 
+/** Returns a new Fisher-Yates shuffled array without mutating the source. */
+export function shuffleQueue<T>(items: readonly T[], random: () => number = Math.random): T[] {
+  const shuffled = [...items];
+  for (let index = shuffled.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(random() * (index + 1));
+    [shuffled[index], shuffled[swapIndex]] = [shuffled[swapIndex], shuffled[index]];
+  }
+  return shuffled;
+}
+
 export function dedupeQueueBySongId(queue: Song[], queueIndex: number, currentSong: Song | null): DedupedQueue {
   if (queue.length <= 1) {
     return { queue, queueIndex, currentSong, removed: 0 };

@@ -9,7 +9,7 @@
 import { create } from 'zustand';
 import type { Song, PV, PVService, PVType } from '../types/vocadb';
 import { getSongById } from '../api/vocadb';
-import { dedupeQueueBySongId } from '../utils/queueUtils';
+import { dedupeQueueBySongId, shuffleQueue } from '../utils/queueUtils';
 import { storage } from '../utils/storage';
 import { useProgressStore } from './progressStore';
 import { useAutoPlaySessionStore } from './autoPlaySessionStore';
@@ -228,6 +228,7 @@ interface PlayerState {
   
   // キュー操作
   setQueue: (songs: Song[], startIndex?: number) => void;
+  setQueueShuffled: (songs: Song[]) => void;
   replaceQueueList: (songs: Song[]) => void;
   addToQueue: (song: Song, source?: PlaybackSource) => void;
   addManyToQueue: (songs: Song[], source?: PlaybackSource) => void;
@@ -470,11 +471,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     if (shuffleEnabled && songs.length > 0) {
       const current = songs[startIndex];
       const rest = songs.filter((_, i) => i !== startIndex);
-      for (let i = rest.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [rest[i], rest[j]] = [rest[j], rest[i]];
-      }
-      const shuffled = current ? [current, ...rest] : rest;
+      const shuffled = current ? [current, ...shuffleQueue(rest)] : shuffleQueue(rest);
       const shuffledSources = shuffled.map(() => 'manual' as PlaybackSource);
       set({ queue: shuffled, queueIndex: 0, queueSources: shuffledSources, originalQueue: songs });
       savePlayerQueue(shuffled, 0, shuffled[0] ?? null, shuffledSources, 'manual');
@@ -484,6 +481,27 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       savePlayerQueue(songs, startIndex, songs[startIndex] ?? null, manualSources, 'manual');
       if (songs.length > 0) get().playSong(songs[startIndex], true);
     }
+  },
+
+  setQueueShuffled: (songs: Song[]) => {
+    if (songs.length === 0) {
+      set({ shuffleEnabled: true, queue: [], queueIndex: -1, queueSources: [], originalQueue: [] });
+      clearStoredPlayerQueue();
+      return;
+    }
+
+    const originalQueue = [...songs];
+    const shuffled = shuffleQueue(originalQueue);
+    const shuffledSources = shuffled.map(() => 'manual' as PlaybackSource);
+    set({
+      shuffleEnabled: true,
+      queue: shuffled,
+      queueIndex: 0,
+      queueSources: shuffledSources,
+      originalQueue,
+    });
+    savePlayerQueue(shuffled, 0, shuffled[0] ?? null, shuffledSources, 'manual');
+    get().playSong(shuffled[0], true);
   },
 
   replaceQueueList: (songs: Song[]) => {
@@ -652,11 +670,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       if (queue.length === 0) { set({ shuffleEnabled: true }); return; }
       const current = queue[queueIndex];
       const rest = queue.filter((_, i) => i !== queueIndex);
-      for (let i = rest.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [rest[i], rest[j]] = [rest[j], rest[i]];
-      }
-      const shuffled = current ? [current, ...rest] : rest;
+      const shuffled = current ? [current, ...shuffleQueue(rest)] : shuffleQueue(rest);
       const shuffledSources = mapSourcesBySongId(shuffled, queue, queueSources);
       set({
         shuffleEnabled: true,

@@ -43,7 +43,6 @@ import YouTubeImportModal from '../components/playlist/YouTubeImportModal';
 import { createPlaylistShareUrl, decodePlaylistShare } from '../utils/playlistShare';
 import { searchSongs, getSongsByProducer } from '../api/vocadb';
 import { applyDiscoveryFilterWithRelaxation } from '../utils/globalFilters';
-import type { SmartPlaylistRule } from '../types/vocadb';
 import { sortPlaylistSongs } from '../utils/playlistSorting';
 import { storage } from '../utils/storage';
 import {
@@ -62,6 +61,10 @@ import {
 } from '../components/playlist/PlaylistSongRow';
 import PlaylistToast from '../components/playlist/PlaylistToast';
 import { usePlaylistToast } from '../hooks/usePlaylistToast';
+import SmartPlaylistBuilder, {
+  SmartPlaylistRuleSummary,
+  type SmartPlaylistBuilderValues,
+} from '../components/playlist/SmartPlaylistBuilder';
 
 const PLAYLIST_LIST_PREFERENCES_KEY = 'playlistListPreferences';
 
@@ -150,9 +153,7 @@ export default function PlaylistPage() {
     createFolder, deleteFolder,
     addSongs, removeSong, removeSongs, restoreRemovedSongs, reorderSongs, removeDuplicateSongsWithUndo,
   } = usePlaylistStore();
-  const { setQueue, addToQueue } = usePlayerStore();
-  const toggleShuffle = usePlayerStore(s => s.toggleShuffle);
-  const shuffleEnabled = usePlayerStore(s => s.shuffleEnabled);
+  const { setQueue, setQueueShuffled, addToQueue } = usePlayerStore();
   const openSaveToPlaylist = useUiStore(s => s.openSaveToPlaylist);
 
   const [selectedPlaylistId, setSelectedPlaylistId] = useState<string | null>(null);
@@ -180,10 +181,7 @@ export default function PlaylistPage() {
 
   const [showYTImport, setShowYTImport] = useState(false);
   const [showSmartBuilder, setShowSmartBuilder] = useState(false);
-  const [smartName, setSmartName] = useState('');
-  const [smartMinYoutube, setSmartMinYoutube] = useState(0);
-  const [smartMinNico, setSmartMinNico] = useState(0);
-  const [smartExcludeDerived, setSmartExcludeDerived] = useState(false);
+  const [smartEditingPlaylist, setSmartEditingPlaylist] = useState<Playlist | null>(null);
   const [smartRefreshStatuses, setSmartRefreshStatuses] = useState<Record<string, {
     state: 'loading' | 'success' | 'error';
     refreshedAt?: number;
@@ -315,6 +313,8 @@ export default function PlaylistPage() {
     if (!q) return true;
     return p.name.toLowerCase().includes(q);
   });
+  const smartSidebarPlaylists = filteredSidebarPlaylists.filter(playlist => Boolean(playlist.smartRule));
+  const regularSidebarPlaylists = filteredSidebarPlaylists.filter(playlist => !playlist.smartRule);
 
   const filteredSongs = useMemo(() => {
     const q = filterText.trim().toLowerCase();
@@ -331,21 +331,29 @@ export default function PlaylistPage() {
     setSelectedPlaylistId(p.id);
   }, [newName, selectedFolderId, createPlaylist]);
 
-  const handleCreateSmart = useCallback(() => {
-    const name = smartName.trim() || 'スマートプレイリスト';
-    const rule: SmartPlaylistRule = {
-      minYoutubeViews: Math.max(0, smartMinYoutube),
-      minNicoViews: Math.max(0, smartMinNico),
-      excludedSongTypes: smartExcludeDerived ? ['Cover', 'Remix', 'Arrangement', 'Mashup'] : [],
-    };
-    const playlist = createSmartPlaylist(name, rule, selectedFolderId ?? undefined);
-    setSelectedPlaylistId(playlist.id);
-    setSmartName('');
-    setSmartMinYoutube(0);
-    setSmartMinNico(0);
-    setSmartExcludeDerived(false);
+  const openSmartBuilder = useCallback((playlist?: Playlist) => {
+    setSmartEditingPlaylist(playlist ?? null);
+    setShowSmartBuilder(true);
+  }, []);
+
+  const closeSmartBuilder = useCallback(() => {
     setShowSmartBuilder(false);
-  }, [createSmartPlaylist, selectedFolderId, smartExcludeDerived, smartMinNico, smartMinYoutube, smartName]);
+    setSmartEditingPlaylist(null);
+  }, []);
+
+  const handleSmartSubmit = useCallback(({ name, rule }: SmartPlaylistBuilderValues) => {
+    if (smartEditingPlaylist) {
+      updatePlaylist(smartEditingPlaylist.id, { name, smartRule: rule });
+      smartRefreshRef.current = null;
+      setSmartRefreshStatuses(current => ({ ...current, [smartEditingPlaylist.id]: { state: 'loading' } }));
+      showToast('スマートプレイリストの条件を更新しました', 'success');
+    } else {
+      const playlist = createSmartPlaylist(name, rule, selectedFolderId ?? undefined);
+      setSelectedPlaylistId(playlist.id);
+      showToast('スマートプレイリストを作成しました', 'success');
+    }
+    closeSmartBuilder();
+  }, [closeSmartBuilder, createSmartPlaylist, selectedFolderId, showToast, smartEditingPlaylist, updatePlaylist]);
 
   const handleCreateFolder = useCallback(() => {
     if (!newFolderName.trim()) return;
@@ -584,9 +592,8 @@ export default function PlaylistPage() {
 
   const handleShufflePlay = useCallback(() => {
     if (!selectedPlaylist || selectedPlaylist.songs.length === 0) return;
-    if (!shuffleEnabled) toggleShuffle();
-    setQueue(selectedPlaylist.songs, 0);
-  }, [selectedPlaylist, shuffleEnabled, toggleShuffle, setQueue]);
+    setQueueShuffled(selectedPlaylist.songs);
+  }, [selectedPlaylist, setQueueShuffled]);
 
   // サイドバープレイリスト行
   const SidebarItem = ({ p }: { p: Playlist }) => {
@@ -648,6 +655,18 @@ export default function PlaylistPage() {
                 <line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/>
               </svg>
             </button>
+            <button
+              type="button"
+              onClick={() => openSmartBuilder()}
+              className="flex h-8 w-8 items-center justify-center rounded-full border border-violet-300/20 bg-violet-300/10 text-violet-200 transition-all hover:border-violet-200/40 hover:bg-violet-300/20 hover:text-white"
+              title="スマートプレイリストを作成"
+              aria-label="スマートプレイリストを作成"
+            >
+              <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+                <path d="m12 3 1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3Z" />
+                <path d="m19 15 .7 2.3L22 18l-2.3.7L19 21l-.7-2.3L16 18l2.3-.7L19 15Z" />
+              </svg>
+            </button>
             {/* ⋯ その他メニュー */}
             <PopoverMenu
               trigger={
@@ -661,15 +680,6 @@ export default function PlaylistPage() {
                 </button>
               }
             >
-              <button
-                className="context-menu-item"
-                onClick={() => setShowSmartBuilder(v => !v)}
-              >
-                <svg className="w-4 h-4 text-violet-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01z"/>
-                </svg>
-                <span>スマートプレイリスト作成</span>
-              </button>
               <button
                 className="context-menu-item"
                 onClick={() => importInputRef.current?.click()}
@@ -811,12 +821,26 @@ export default function PlaylistPage() {
           ))}
         </section>
 
-        {/* ── 通常プレイリスト ── */}
-        <section className="min-h-0 flex-1 space-y-1 overflow-y-auto pr-1">
-          <p className="px-2 text-[11px] font-medium text-neutral-500">プレイリスト</p>
-          {filteredSidebarPlaylists.length === 0 ? (
-            <p className="text-xs text-center py-4 text-neutral-500">プレイリストがありません</p>
-          ) : filteredSidebarPlaylists.map(p => <SidebarItem key={p.id} p={p} />)}
+        {/* ── プレイリスト ── */}
+        <section className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
+          {smartSidebarPlaylists.length > 0 && (
+            <div className="space-y-1">
+              <p className="flex items-center gap-1.5 px-2 text-[11px] font-medium text-violet-200/80">
+                <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+                  <path d="m12 3 1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3Z" />
+                </svg>
+                スマートプレイリスト
+                <span className="text-[10px] text-neutral-500">{smartSidebarPlaylists.length}</span>
+              </p>
+              {smartSidebarPlaylists.map(p => <SidebarItem key={p.id} p={p} />)}
+            </div>
+          )}
+          <div className="space-y-1">
+            <p className="px-2 text-[11px] font-medium text-neutral-500">プレイリスト</p>
+            {regularSidebarPlaylists.length === 0 && smartSidebarPlaylists.length === 0 ? (
+              <p className="py-4 text-center text-xs text-neutral-500">プレイリストがありません</p>
+            ) : regularSidebarPlaylists.map(p => <SidebarItem key={p.id} p={p} />)}
+          </div>
         </section>
 
         {/* ── 新規作成 ── */}
@@ -838,32 +862,6 @@ export default function PlaylistPage() {
             </svg>
           </button>
         </div>
-
-        {/* スマートプレイリストビルダー（⋯メニューから開くインライン表示） */}
-        {showSmartBuilder && (
-          <div className="rounded-xl p-2 space-y-2 animate-fade-in" style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}>
-            <div className="flex items-center justify-between">
-              <p className="text-xs font-semibold text-violet-200">スマートプレイリスト</p>
-              <button onClick={() => setShowSmartBuilder(false)} className="text-neutral-500 hover:text-white p-1">
-                <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
-              </button>
-            </div>
-            <input className="search-input text-xs w-full" value={smartName} onChange={event => setSmartName(event.target.value)} placeholder="名前（例: 定番曲）" />
-            <label className="block text-xs">
-              YouTube最低再生数
-              <input className="input mt-1 w-full text-xs" type="number" min={0} value={smartMinYoutube} onChange={event => setSmartMinYoutube(Number(event.target.value) || 0)} />
-            </label>
-            <label className="block text-xs">
-              ニコニコ最低再生数
-              <input className="input mt-1 w-full text-xs" type="number" min={0} value={smartMinNico} onChange={event => setSmartMinNico(Number(event.target.value) || 0)} />
-            </label>
-            <label className="flex items-center gap-1 text-xs">
-              <input type="checkbox" checked={smartExcludeDerived} onChange={event => setSmartExcludeDerived(event.target.checked)} />
-              カバー・派生曲を除外
-            </label>
-            <button type="button" className="btn-primary w-full text-xs" onClick={handleCreateSmart}>条件を保存</button>
-          </div>
-        )}
 
         <input
           ref={importInputRef}
@@ -926,6 +924,23 @@ export default function PlaylistPage() {
                         {selectedSmartRefreshStatus?.state === 'error' && '更新に失敗しました。手動更新してください。'}
                         {!selectedSmartRefreshStatus && '開いたときに自動更新します'}
                       </p>
+                    )}
+                    {selectedPlaylist.smartRule && (
+                      <div className="mt-3 rounded-xl border border-cyan-300/15 bg-cyan-300/[0.05] p-3">
+                        <div className="flex items-center justify-between gap-3">
+                          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-cyan-200/70">更新条件</p>
+                          <button
+                            type="button"
+                            className="text-xs font-medium text-cyan-200 transition-colors hover:text-white"
+                            onClick={() => openSmartBuilder(selectedPlaylist)}
+                          >
+                            条件を編集
+                          </button>
+                        </div>
+                        <div className="mt-2">
+                          <SmartPlaylistRuleSummary rule={selectedPlaylist.smartRule} />
+                        </div>
+                      </div>
                     )}
                     {selectedPlaylist.description && (
                       <p className="mt-3 line-clamp-2 max-w-2xl text-sm leading-6 text-neutral-300">{selectedPlaylist.description}</p>
@@ -1274,6 +1289,16 @@ export default function PlaylistPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {showSmartBuilder && (
+        <SmartPlaylistBuilder
+          mode={smartEditingPlaylist ? 'edit' : 'create'}
+          initialName={smartEditingPlaylist?.name}
+          initialRule={smartEditingPlaylist?.smartRule}
+          onClose={closeSmartBuilder}
+          onSubmit={handleSmartSubmit}
+        />
       )}
 
       {/* ─── YouTube インポートモーダル ──────────────────────────────── */}
