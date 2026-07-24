@@ -6,6 +6,20 @@ export interface BackendHealthOptions {
   fetchImpl?: typeof fetch;
 }
 
+export type BackendConnectivityStatus = 'checking' | 'healthy' | 'offline' | 'unavailable';
+
+export function resolveBackendConnectivityStatus({
+  available,
+  online,
+}: {
+  available: boolean | null;
+  online: boolean;
+}): BackendConnectivityStatus {
+  if (!online) return 'offline';
+  if (available === null) return 'checking';
+  return available ? 'healthy' : 'unavailable';
+}
+
 const wait = (delayMs: number) => new Promise(resolve => setTimeout(resolve, delayMs));
 
 export async function checkBackendHealth({
