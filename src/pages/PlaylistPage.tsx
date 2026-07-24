@@ -41,8 +41,8 @@ import {
 } from '../utils/playlistBackup';
 import YouTubeImportModal from '../components/playlist/YouTubeImportModal';
 import { createPlaylistShareUrl, decodePlaylistShare } from '../utils/playlistShare';
-import { searchSongs, getSongsByProducer } from '../api/vocadb';
-import { applyDiscoveryFilterWithRelaxation } from '../utils/globalFilters';
+import { searchSmartPlaylistSongs } from '../api/vocadb';
+import { filterSmartPlaylistSongs } from '../utils/smartPlaylist';
 import { sortPlaylistSongs } from '../utils/playlistSorting';
 import { storage } from '../utils/storage';
 import {
@@ -183,9 +183,9 @@ export default function PlaylistPage() {
   const [showSmartBuilder, setShowSmartBuilder] = useState(false);
   const [smartEditingPlaylist, setSmartEditingPlaylist] = useState<Playlist | null>(null);
   const [smartRefreshStatuses, setSmartRefreshStatuses] = useState<Record<string, {
-    state: 'loading' | 'success' | 'error';
+    state: 'loading' | 'success' | 'empty' | 'error';
     refreshedAt?: number;
-    relaxed?: boolean;
+    matchedCount?: number;
   }>>({});
   const smartRefreshRef = useRef<string | null>(null);
   const smartRefreshRetryRef = useRef(new Set<string>());
@@ -241,27 +241,16 @@ export default function PlaylistPage() {
     }));
     try {
       const rule = playlist.smartRule;
-      const raw = rule.producerId
-        ? (await getSongsByProducer([rule.producerId], 0, 100, 0)).items
-        : (await searchSongs({ sort: 'AdditionDate', maxResults: 100, start: 0, getTotalCount: false, onlyWithPVs: true })).items;
-      const result = applyDiscoveryFilterWithRelaxation(raw, {
-        settings: {
-        enabled: true,
-        minYoutubeViews: rule.minYoutubeViews,
-        minNicoViews: rule.minNicoViews,
-        excludedSongTypes: rule.excludedSongTypes,
-        cooldownHours: 0,
-        excludeRatedFromDiscovery: false,
-        },
-      }, 20);
-      replacePlaylistSongs(playlist.id, result.items.slice(0, 200));
+      const result = await searchSmartPlaylistSongs(rule, 200);
+      const matchingSongs = filterSmartPlaylistSongs(result.items, rule);
+      replacePlaylistSongs(playlist.id, matchingSongs);
       smartRefreshRetryRef.current.delete(playlist.id);
       setSmartRefreshStatuses(current => ({
         ...current,
         [playlist.id]: {
-          state: 'success',
+          state: matchingSongs.length > 0 ? 'success' : 'empty',
           refreshedAt: Date.now(),
-          relaxed: result.relaxedConditions.length > 0,
+          matchedCount: result.totalCount,
         },
       }));
     } catch (error) {
@@ -919,8 +908,15 @@ export default function PlaylistPage() {
                       <p className="mt-3 text-xs" style={{ color: 'var(--color-accent-cyan)' }}>
                         {selectedSmartRefreshStatus?.state === 'loading' && '条件を再計算中…'}
                         {selectedSmartRefreshStatus?.state === 'success' && (
-                          <>最終更新 {new Date(selectedSmartRefreshStatus.refreshedAt ?? Date.now()).toLocaleTimeString('ja-JP')}{selectedSmartRefreshStatus.relaxed ? '・候補不足のため再生数条件を緩和' : ''}</>
+                          <>
+                            最終更新 {new Date(selectedSmartRefreshStatus.refreshedAt ?? Date.now()).toLocaleTimeString('ja-JP')}
+                            ・条件一致 {selectedSmartRefreshStatus.matchedCount ?? selectedPlaylist.songs.length}曲
+                            {(selectedSmartRefreshStatus.matchedCount ?? 0) > selectedPlaylist.songs.length
+                              ? `・上位${selectedPlaylist.songs.length}曲を表示`
+                              : ''}
+                          </>
                         )}
+                        {selectedSmartRefreshStatus?.state === 'empty' && '条件に一致する曲はありません。条件を変更して再更新してください。'}
                         {selectedSmartRefreshStatus?.state === 'error' && '更新に失敗しました。手動更新してください。'}
                         {!selectedSmartRefreshStatus && '開いたときに自動更新します'}
                       </p>

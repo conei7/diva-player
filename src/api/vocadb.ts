@@ -7,10 +7,11 @@
  * - リトライロジック（指数バックオフ）
  */
 
-import type { AlbumSummary, Artist, ArtistSearchResult, Song, SongSearchParams, SongSearchResult } from '../types/vocadb';
+import type { AlbumSummary, Artist, ArtistSearchResult, SmartPlaylistRule, Song, SongSearchParams, SongSearchResult } from '../types/vocadb';
 import type { GlobalFilterSettings } from '../stores/globalFilterStore';
 import { VOCALIST_SEARCH_ARTIST_TYPES } from '../config/voiceSynthTypes';
 import { checkBackendHealth } from './backendHealth';
+import { buildSmartPlaylistSearchParams } from '../utils/smartPlaylist';
 
 const BASE_URL = 'https://vocadb.net/api';
 const RECOMMENDER_API = import.meta.env.VITE_RECOMMENDER_API || '/backend-api';
@@ -204,6 +205,22 @@ export async function getTopSongs(
   
   setCache(cacheKey, data);
   return data;
+}
+
+/**
+ * スマートプレイリストの保存条件をDB側で先に適用して検索する。
+ * VocaDBの先頭ページを取得してから絞り込むと、全体には該当曲があっても0件になるため。
+ */
+export async function searchSmartPlaylistSongs(
+  rule: SmartPlaylistRule,
+  maxResults = 200,
+): Promise<{ items: Song[]; totalCount: number }> {
+  const params = buildSmartPlaylistSearchParams(rule, maxResults);
+  const response = await fetch(`${RECOMMENDER_API}/api/songs/search?${params.toString()}`);
+  if (!response.ok) {
+    throw new Error(`Smart playlist search failed: ${response.status}`);
+  }
+  return response.json();
 }
 
 export interface AlbumTrack {

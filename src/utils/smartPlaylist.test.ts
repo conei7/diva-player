@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import type { SmartPlaylistRule } from '../types/vocadb';
-import { formatSmartPlaylistRule, SMART_DERIVED_SONG_TYPES } from './smartPlaylist';
+import type { SmartPlaylistRule, Song } from '../types/vocadb';
+import {
+  buildSmartPlaylistSearchParams,
+  filterSmartPlaylistSongs,
+  formatSmartPlaylistRule,
+  SMART_DERIVED_SONG_TYPES,
+} from './smartPlaylist';
 
 const rule = (overrides: Partial<SmartPlaylistRule> = {}): SmartPlaylistRule => ({
   minYoutubeViews: 0,
@@ -26,5 +31,32 @@ describe('smart playlist UI summaries', () => {
       'ニコニコ 5,000以上',
       '除外: カバー・リミックス・アレンジ・マッシュアップ',
     ]);
+  });
+
+  it('builds a database query that applies the saved conditions before pagination', () => {
+    const params = buildSmartPlaylistSearchParams(rule({
+      producerId: 39,
+      minYoutubeViews: 100_000_000,
+      excludedSongTypes: ['Cover'],
+    }));
+
+    expect(params.get('artistIds')).toBe('39');
+    expect(params.get('minYoutubeViews')).toBe('100000000');
+    expect(params.get('excludeSongTypes')).toBe('Cover');
+    expect(params.get('sort')).toBe('YoutubeViews');
+    expect(params.get('maxResults')).toBe('200');
+  });
+
+  it('never fills a smart playlist with songs outside its conditions', () => {
+    const songs = [
+      { id: 1, name: 'matched', songType: 'Original', youtubeViews: 100_000_000 },
+      { id: 2, name: 'too low', songType: 'Original', youtubeViews: 99_999_999 },
+      { id: 3, name: 'excluded', songType: 'Cover', youtubeViews: 200_000_000 },
+    ] as Song[];
+
+    expect(filterSmartPlaylistSongs(songs, rule({
+      minYoutubeViews: 100_000_000,
+      excludedSongTypes: ['Cover'],
+    })).map(song => song.id)).toEqual([1]);
   });
 });
