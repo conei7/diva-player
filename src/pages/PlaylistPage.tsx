@@ -145,10 +145,10 @@ export default function PlaylistPage() {
   const {
     playlists, folders,
     loadPlaylists,
-    createPlaylist, deletePlaylist, updatePlaylist,
+    createPlaylist, deletePlaylist, restoreDeletedPlaylist, updatePlaylist,
     createSmartPlaylist, replacePlaylistSongs,
     createFolder, deleteFolder,
-    addSongs, removeSong, reorderSongs, removeDuplicateSongs,
+    addSongs, removeSong, removeSongs, restoreRemovedSongs, reorderSongs, removeDuplicateSongsWithUndo,
   } = usePlaylistStore();
   const { setQueue, addToQueue } = usePlayerStore();
   const toggleShuffle = usePlayerStore(s => s.toggleShuffle);
@@ -390,22 +390,50 @@ export default function PlaylistPage() {
   const deleteSelected = useCallback(() => {
     if (!selectedPlaylist) return;
     const songs = selectedPlaylist.songs;
-    [...songs].reverse().forEach((s, revIdx) => {
-      if (selectedIds.has(s.id)) removeSong(selectedPlaylist.id, songs.length - 1 - revIdx);
-    });
+    const indexes = songs.flatMap((song, index) => selectedIds.has(song.id) ? [index] : []);
+    const snapshot = removeSongs(selectedPlaylist.id, indexes);
     setSelectedIds(new Set());
     setSelectionMode(false);
-  }, [selectedPlaylist, selectedIds, removeSong]);
+    if (snapshot) {
+      showToast(`${snapshot.removed.length} 曲を削除しました`, 'info', {
+        label: '元に戻す',
+        onAction: () => {
+          const restored = restoreRemovedSongs(snapshot);
+          if (restored > 0) showToast(`${restored} 曲を元に戻しました`, 'success');
+        },
+      });
+    }
+  }, [selectedPlaylist, selectedIds, removeSongs, restoreRemovedSongs, showToast]);
 
   const removeDuplicatesFromSelectedPlaylist = useCallback(() => {
     if (!selectedPlaylist) return;
-    const count = removeDuplicateSongs(selectedPlaylist.id);
-    if (count > 0) {
+    const snapshot = removeDuplicateSongsWithUndo(selectedPlaylist.id);
+    if (snapshot) {
+      const count = snapshot.removed.length;
       setSelectedIds(new Set());
       setSelectionMode(false);
-      showToast(`${count} 曲の重複を削除しました`, 'success');
+      showToast(`${count} 曲の重複を削除しました`, 'success', {
+        label: '元に戻す',
+        onAction: () => {
+          const restored = restoreRemovedSongs(snapshot, { allowDuplicateIds: true });
+          if (restored > 0) showToast(`${restored} 曲を元に戻しました`, 'success');
+        },
+      });
     }
-  }, [selectedPlaylist, removeDuplicateSongs, showToast]);
+  }, [selectedPlaylist, removeDuplicateSongsWithUndo, restoreRemovedSongs, showToast]);
+
+  const removeSongWithUndo = useCallback((playlistId: string, songIndex: number) => {
+    const snapshot = removeSong(playlistId, songIndex);
+    if (!snapshot) return;
+    const title = snapshot.removed[0]?.song.name;
+    showToast(title ? `「${title}」を削除しました` : '曲を削除しました', 'info', {
+      label: '元に戻す',
+      onAction: () => {
+        const restored = restoreRemovedSongs(snapshot);
+        if (restored > 0) showToast(`${restored} 曲を元に戻しました`, 'success');
+      },
+    });
+  }, [removeSong, restoreRemovedSongs, showToast]);
 
   const addSelectedToQueue = useCallback(() => {
     if (!selectedPlaylist) return;
@@ -539,9 +567,20 @@ export default function PlaylistPage() {
   const handleDelete = useCallback((p: Playlist) => {
     if (p.isPinned) return;
     if (!window.confirm(`「${p.name}」を削除してもよいですか？`)) return;
-    deletePlaylist(p.id);
+    const snapshot = deletePlaylist(p.id);
     setSelectedPlaylistId(null);
-  }, [deletePlaylist]);
+    if (snapshot) {
+      showToast(`「${p.name}」を削除しました`, 'info', {
+        label: '元に戻す',
+        onAction: () => {
+          if (restoreDeletedPlaylist(snapshot)) {
+            setSelectedPlaylistId(snapshot.playlist.id);
+            showToast(`「${snapshot.playlist.name}」を元に戻しました`, 'success');
+          }
+        },
+      });
+    }
+  }, [deletePlaylist, restoreDeletedPlaylist, showToast]);
 
   const handleShufflePlay = useCallback(() => {
     if (!selectedPlaylist || selectedPlaylist.songs.length === 0) return;
@@ -1103,7 +1142,7 @@ export default function PlaylistPage() {
                     selectedIds={selectedIds}
                     onToggleSelect={toggleSelect}
                     onSetCover={handleSetCover}
-                    onRemoveSong={idx => removeSong(selectedPlaylist.id, idx)}
+                    onRemoveSong={idx => removeSongWithUndo(selectedPlaylist.id, idx)}
                     onMoveTop={moveToTop}
                     onMoveBottom={moveToBottom}
                     allSongs={selectedPlaylist.songs}
@@ -1125,7 +1164,7 @@ export default function PlaylistPage() {
                             selected={selectedIds.has(song.id)}
                             onToggleSelect={() => toggleSelect(song.id)}
                             onPlay={() => setQueue(filteredSongs, filteredIdx)}
-                            onRemove={() => removeSong(selectedPlaylist.id, globalIndex)}
+                            onRemove={() => removeSongWithUndo(selectedPlaylist.id, globalIndex)}
                             onMoveTop={() => moveToTop(globalIndex)}
                             onMoveBottom={() => moveToBottom(globalIndex)}
                             onSetCover={() => handleSetCover(song)}
@@ -1148,7 +1187,7 @@ export default function PlaylistPage() {
                           selected={selectedIds.has(song.id)}
                           onToggleSelect={() => toggleSelect(song.id)}
                           onPlay={() => setQueue(filteredSongs, filteredIdx)}
-                          onRemove={() => removeSong(selectedPlaylist.id, globalIndex)}
+                          onRemove={() => removeSongWithUndo(selectedPlaylist.id, globalIndex)}
                           onMoveTop={() => moveToTop(globalIndex)}
                           onMoveBottom={() => moveToBottom(globalIndex)}
                           onSetCover={() => handleSetCover(song)}

@@ -26,6 +26,23 @@ export interface AddSongsResult {
   duplicates: number;
 }
 
+export interface RemovedSong {
+  song: Song;
+  index: number;
+}
+
+export interface RemovedSongsSnapshot {
+  playlistId: string;
+  removed: RemovedSong[];
+  previousCoverArtUrl?: string;
+  kind: 'remove' | 'duplicates';
+}
+
+export interface DeletedPlaylistSnapshot {
+  playlist: Playlist;
+  index: number;
+}
+
 // ─── 並べ替えキー ────────────────────────────────────────────────────────────
 export type SortKey = 'name' | 'artist' | 'publishDate' | 'addedOrder';
 
@@ -38,7 +55,8 @@ interface PlaylistState {
 
   // プレイリスト CRUD
   createPlaylist: (name: string, folderId?: string) => Playlist;
-  deletePlaylist: (id: string) => void;
+  deletePlaylist: (id: string) => DeletedPlaylistSnapshot | null;
+  restoreDeletedPlaylist: (snapshot: DeletedPlaylistSnapshot) => boolean;
   updatePlaylist: (id: string, patch: Partial<Pick<Playlist, 'name' | 'description' | 'coverArtUrl' | 'folderId' | 'smartRule'>>) => void;
   createSmartPlaylist: (name: string, rule: SmartPlaylistRule, folderId?: string) => Playlist;
   replacePlaylistSongs: (playlistId: string, songs: Song[]) => void;
@@ -53,11 +71,14 @@ interface PlaylistState {
   addSong: (playlistId: string, song: Song) => AddSongResult;
   /** 複数曲を一括追加。 */
   addSongs: (playlistId: string, songs: Song[]) => AddSongsResult;
-  removeSong: (playlistId: string, songIndex: number) => void;
+  removeSong: (playlistId: string, songIndex: number) => RemovedSongsSnapshot | null;
+  removeSongs: (playlistId: string, songIndexes: number[]) => RemovedSongsSnapshot | null;
+  restoreRemovedSongs: (snapshot: RemovedSongsSnapshot, options?: { allowDuplicateIds?: boolean }) => number;
   removeSongById: (playlistId: string, songId: number) => void;
   reorderSongs: (playlistId: string, fromIndex: number, toIndex: number) => void;
   sortSongs: (playlistId: string, by: SortKey) => void;
   removeDuplicateSongs: (playlistId: string) => number;
+  removeDuplicateSongsWithUndo: (playlistId: string) => RemovedSongsSnapshot | null;
 
   /** ソングが存在しなければ追加、存在すれば削除。true = 追加, false = 削除 */
   toggleSongInPlaylist: (playlistId: string, song: Song) => boolean;
@@ -163,11 +184,25 @@ export const usePlaylistStore = create<PlaylistState>((set, get) => ({
 
   deletePlaylist: (id) => {
     // isPinned のプレイリストは削除不可
-    const target = get().playlists.find(p => p.id === id);
-    if (target?.isPinned) return;
-    const updated = get().playlists.filter(p => p.id !== id);
+    const current = get().playlists;
+    const index = current.findIndex(p => p.id === id);
+    const target = index >= 0 ? current[index] : undefined;
+    if (!target || target.isPinned) return null;
+    const updated = current.filter(p => p.id !== id);
     set({ playlists: updated });
     save(updated, get().folders);
+    return { playlist: target, index };
+  },
+
+  restoreDeletedPlaylist: (snapshot) => {
+    const current = get().playlists;
+    if (current.some(p => p.id === snapshot.playlist.id)) return false;
+    const index = Math.max(0, Math.min(snapshot.index, current.length));
+    const updated = [...current];
+    updated.splice(index, 0, snapshot.playlist);
+    set({ playlists: updated });
+    save(updated, get().folders);
+    return true;
   },
 
   updatePlaylist: (id, patch) => {
@@ -265,16 +300,65 @@ export const usePlaylistStore = create<PlaylistState>((set, get) => ({
     return { added, duplicates };
   },
 
-  removeSong: (playlistId, songIndex) => {
-    const updated = get().playlists.map(p => {
-      if (p.id !== playlistId) return p;
-      const songs = p.songs.filter((_, i) => i !== songIndex);
-      // 先頭曲削除時にカバーを更新
-      const newCover = songs[0]?.thumbUrl ?? undefined;
-      return { ...p, songs, coverArtUrl: p.coverArtUrl === p.songs[songIndex]?.thumbUrl ? newCover : p.coverArtUrl, updatedAt: Date.now() };
+  removeSong: (playlistId, songIndex) => get().removeSongs(playlistId, [songIndex]),
+  removeSongs: (playlistId, songIndexes) => {
+    const current = get().playlists;
+    const target = current.find(p => p.id === playlistId);
+    if (!target) return null;
+    const indexes = [...new Set(songIndexes)]
+      .filter(index => Number.isInteger(index) && index >= 0 && index < target.songs.length)
+      .sort((a, b) => a - b);
+    if (indexes.length === 0) return null;
+
+    const indexSet = new Set(indexes);
+    const snapshot: RemovedSongsSnapshot = {
+      playlistId,
+      removed: indexes.map(index => ({ song: target.songs[index], index })),
+      previousCoverArtUrl: target.coverArtUrl,
+      kind: 'remove',
+    };
+    const songs = target.songs.filter((_, index) => !indexSet.has(index));
+    const removedCover = snapshot.removed.some(item => item.song.thumbUrl === target.coverArtUrl);
+    const updated = current.map(p => p.id !== playlistId ? p : {
+      ...p,
+      songs,
+      coverArtUrl: removedCover ? songs[0]?.thumbUrl : p.coverArtUrl,
+      updatedAt: Date.now(),
     });
     set({ playlists: updated });
     save(updated, get().folders);
+    return snapshot;
+  },
+
+  restoreRemovedSongs: (snapshot, options) => {
+    const current = get().playlists;
+    const target = current.find(p => p.id === snapshot.playlistId);
+    if (!target) return 0;
+
+    const allowDuplicateIds = options?.allowDuplicateIds ?? false;
+    const existingIds = new Set(target.songs.map(song => song.id));
+    const restored = [...target.songs];
+    let count = 0;
+    for (const removed of [...snapshot.removed].sort((a, b) => a.index - b.index)) {
+      if (!allowDuplicateIds && existingIds.has(removed.song.id)) continue;
+      const index = Math.max(0, Math.min(removed.index, restored.length));
+      restored.splice(index, 0, removed.song);
+      if (!allowDuplicateIds) existingIds.add(removed.song.id);
+      count++;
+    }
+    if (count === 0) return 0;
+
+    const currentFirstThumb = target.songs[0]?.thumbUrl;
+    const coverWasAutoUpdated = target.coverArtUrl === currentFirstThumb || target.coverArtUrl === undefined;
+    const updated = current.map(p => p.id !== snapshot.playlistId ? p : {
+      ...p,
+      songs: restored,
+      coverArtUrl: coverWasAutoUpdated ? snapshot.previousCoverArtUrl : p.coverArtUrl,
+      updatedAt: Date.now(),
+    });
+    set({ playlists: updated });
+    save(updated, get().folders);
+    return count;
   },
 
   removeSongById: (playlistId, songId) => {
@@ -331,29 +415,19 @@ export const usePlaylistStore = create<PlaylistState>((set, get) => ({
     save(updated, get().folders);
   },
 
-  removeDuplicateSongs: (playlistId) => {
-    let removed = 0;
-    const updated = get().playlists.map(p => {
-      if (p.id !== playlistId) return p;
+  removeDuplicateSongs: (playlistId) => get().removeDuplicateSongsWithUndo(playlistId)?.removed.length ?? 0,
 
-      const seen = new Set<number>();
-      const songs = p.songs.filter(song => {
-        if (seen.has(song.id)) {
-          removed++;
-          return false;
-        }
-        seen.add(song.id);
-        return true;
-      });
-
-      return removed > 0 ? { ...p, songs, updatedAt: Date.now() } : p;
+  removeDuplicateSongsWithUndo: (playlistId) => {
+    const target = get().playlists.find(p => p.id === playlistId);
+    if (!target) return null;
+    const seen = new Set<number>();
+    const indexes = target.songs.flatMap((song, index) => {
+      if (seen.has(song.id)) return [index];
+      seen.add(song.id);
+      return [];
     });
-
-    if (removed > 0) {
-      set({ playlists: updated });
-      save(updated, get().folders);
-    }
-    return removed;
+    const snapshot = get().removeSongs(playlistId, indexes);
+    return snapshot ? { ...snapshot, kind: 'duplicates' } : null;
   },
 
   toggleSongInPlaylist: (playlistId, song) => {

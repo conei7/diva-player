@@ -58,6 +58,19 @@ function ToastMessage({ toast, onDismiss }: { toast: ToastItem; onDismiss: () =>
       }}
     >
       {toast.message}
+      {toast.action && (
+        <button
+          type="button"
+          onClick={event => {
+            event.stopPropagation();
+            toast.action?.onAction();
+            onDismiss();
+          }}
+          className="ml-3 rounded-lg border border-current/40 px-2 py-1 text-xs font-semibold transition hover:bg-white/10"
+        >
+          {toast.action.label}
+        </button>
+      )}
     </div>
   );
 }
