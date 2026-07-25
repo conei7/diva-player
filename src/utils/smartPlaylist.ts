@@ -31,6 +31,7 @@ export function buildSmartPlaylistSearchParams(
     start: '0',
     maxResults: String(maxResults),
     onlyWithPVs: 'true',
+    voiceSynthOnly: 'true',
   });
   if (rule.producerId) params.set('artistIds', String(rule.producerId));
   if (rule.minYoutubeViews > 0) params.set('minYoutubeViews', String(rule.minYoutubeViews));

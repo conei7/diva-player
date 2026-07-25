@@ -348,7 +348,7 @@ app.MapGet("/api/songs/trending", async (
     return Results.Content(json, "application/json");
 });
 
-// GET /api/songs/search?query=...&artistIds=1,2&anyArtistIds=3,4&artistIdGroups=5,6|7,8&songTypes=Original&sort=YoutubeViews&order=desc&start=0&maxResults=24
+// GET /api/songs/search?query=...&artistIds=1,2&anyArtistIds=3,4&artistIdGroups=5,6|7,8&songTypes=Original&sort=YoutubeViews&order=desc&start=0&maxResults=24&voiceSynthOnly=true
 app.MapGet("/api/songs/search", async (
     string? query,
     string? artistIds,
@@ -369,6 +369,7 @@ app.MapGet("/api/songs/search", async (
     long? minNicoViews,
     bool? onlyWithPVs,
     string? excludeSongTypes,
+    bool? voiceSynthOnly,
     DbService db) =>
 {
     const long maxPublishYear = 5_874_896;
@@ -420,7 +421,8 @@ app.MapGet("/api/songs/search", async (
         minYoutubeViews,
         minNicoViews,
         onlyWithPVs ?? false,
-        excludedTypes
+        excludedTypes,
+        voiceSynthOnly ?? false
     );
 
     // itemsJsonは文字列としてのJSON配列 "[{...}, {...}]" なので、

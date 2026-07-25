@@ -186,6 +186,7 @@ export default function PlaylistPage() {
     state: 'loading' | 'success' | 'empty' | 'error';
     refreshedAt?: number;
     matchedCount?: number;
+    loadedCount?: number;
   }>>({});
   const smartRefreshRef = useRef<string | null>(null);
   const smartRefreshRetryRef = useRef(new Set<string>());
@@ -250,7 +251,8 @@ export default function PlaylistPage() {
         [playlist.id]: {
           state: matchingSongs.length > 0 ? 'success' : 'empty',
           refreshedAt: Date.now(),
-          matchedCount: matchingSongs.length,
+          matchedCount: result.totalCount,
+          loadedCount: matchingSongs.length,
         },
       }));
     } catch (error) {
@@ -911,6 +913,9 @@ export default function PlaylistPage() {
                           <>
                             最終更新 {new Date(selectedSmartRefreshStatus.refreshedAt ?? Date.now()).toLocaleTimeString('ja-JP')}
                             ・条件一致 {selectedSmartRefreshStatus.matchedCount ?? selectedPlaylist.songs.length}曲
+                            {(selectedSmartRefreshStatus.matchedCount ?? 0) > (selectedSmartRefreshStatus.loadedCount ?? selectedPlaylist.songs.length)
+                              ? `・上位${selectedSmartRefreshStatus.loadedCount}曲を表示`
+                              : ''}
                           </>
                         )}
                         {selectedSmartRefreshStatus?.state === 'empty' && '条件に一致する曲はありません。条件を変更して再更新してください。'}

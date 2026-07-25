@@ -132,7 +132,8 @@ public class DbService
         long? minYoutubeViews = null,
         long? minNicoViews = null,
         bool onlyWithPVs = false,
-        List<string>? excludedSongTypes = null)
+        List<string>? excludedSongTypes = null,
+        bool voiceSynthOnly = false)
     {
         using var conn = Open();
         
@@ -244,6 +245,11 @@ public class DbService
         if (onlyWithPVs)
         {
             conditions.Add("EXISTS (SELECT 1 FROM pvs p WHERE p.song_id = songs.id AND p.disabled = FALSE)");
+        }
+
+        if (voiceSynthOnly)
+        {
+            conditions.Add($"EXISTS (SELECT 1 FROM song_artists sa JOIN artists a ON a.id = sa.artist_id WHERE sa.song_id = songs.id AND sa.is_vocalist = TRUE AND a.artist_type IN ({VoiceSynthArtistTypesSql}))");
         }
 
         if (!string.IsNullOrWhiteSpace(pvService) && pvService != "any")

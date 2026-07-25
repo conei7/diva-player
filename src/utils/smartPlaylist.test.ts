@@ -45,6 +45,7 @@ describe('smart playlist UI summaries', () => {
     expect(params.get('excludeSongTypes')).toBe('Cover');
     expect(params.get('sort')).toBe('FavoritedTimes');
     expect(params.get('maxResults')).toBe('200');
+    expect(params.get('voiceSynthOnly')).toBe('true');
   });
 
   it('never fills a smart playlist with songs outside its conditions', () => {
