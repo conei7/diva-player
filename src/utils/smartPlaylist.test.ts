@@ -5,6 +5,7 @@ import {
   filterSmartPlaylistSongs,
   formatSmartPlaylistRule,
   SMART_DERIVED_SONG_TYPES,
+  normalizeSmartPlaylistRule,
 } from './smartPlaylist';
 
 const rule = (overrides: Partial<SmartPlaylistRule> = {}): SmartPlaylistRule => ({
@@ -16,7 +17,7 @@ const rule = (overrides: Partial<SmartPlaylistRule> = {}): SmartPlaylistRule => 
 
 describe('smart playlist UI summaries', () => {
   it('shows a useful empty condition summary', () => {
-    expect(formatSmartPlaylistRule(rule())).toEqual(['条件なし']);
+    expect(formatSmartPlaylistRule(rule())).toEqual(['条件なし', '上限 200曲', 'VocaDB支持順']);
   });
 
   it('formats thresholds, producer and exclusions for the builder and header', () => {
@@ -30,6 +31,16 @@ describe('smart playlist UI summaries', () => {
       'YouTube 100,000以上',
       'ニコニコ 5,000以上',
       '除外: カバー・リミックス・アレンジ・マッシュアップ',
+      '上限 200曲',
+      'VocaDB支持順',
+    ]);
+  });
+
+  it('formats custom limit and sort choices', () => {
+    expect(formatSmartPlaylistRule(rule({ maxSongs: 50, sortBy: 'YoutubeViews' }))).toEqual([
+      '条件なし',
+      '上限 50曲',
+      'YouTube再生数順',
     ]);
   });
 
@@ -46,6 +57,28 @@ describe('smart playlist UI summaries', () => {
     expect(params.get('sort')).toBe('FavoritedTimes');
     expect(params.get('maxResults')).toBe('200');
     expect(params.get('voiceSynthOnly')).toBe('true');
+  });
+
+  it('maps the selected limit and sort to the database query', () => {
+    const params = buildSmartPlaylistSearchParams(rule({ maxSongs: 50, sortBy: 'NicoViews' }));
+    expect(params.get('sort')).toBe('NicoViews');
+    expect(params.get('maxResults')).toBe('50');
+  });
+
+  it('normalizes legacy and invalid rule values to safe defaults', () => {
+    expect(normalizeSmartPlaylistRule({
+      minYoutubeViews: -10,
+      minNicoViews: Number.NaN,
+      excludedSongTypes: ['Cover', 'not-a-song-type'] as SmartPlaylistRule['excludedSongTypes'],
+      maxSongs: 75 as SmartPlaylistRule['maxSongs'],
+      sortBy: 'Unknown' as SmartPlaylistRule['sortBy'],
+    })).toMatchObject({
+      minYoutubeViews: 0,
+      minNicoViews: 0,
+      excludedSongTypes: ['Cover'],
+      maxSongs: 200,
+      sortBy: 'FavoritedTimes',
+    });
   });
 
   it('never fills a smart playlist with songs outside its conditions', () => {

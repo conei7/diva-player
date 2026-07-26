@@ -1,5 +1,6 @@
 import type { ListeningPlayEvent } from '../stores/historyStore';
 import type { Playlist, PlaylistFolder, Song, SmartPlaylistRule } from '../types/vocadb';
+import { normalizeSmartPlaylistRule } from '../utils/smartPlaylist';
 import { useHistoryStore } from '../stores/historyStore';
 import { usePlaylistStore, WATCH_LATER_ID } from '../stores/playlistStore';
 import { useRatingStore } from '../stores/ratingStore';
@@ -152,13 +153,15 @@ function parseSmartRule(value: unknown): SmartPlaylistRule | undefined {
   if (typeof value.minYoutubeViews !== 'number' || !Number.isInteger(value.minYoutubeViews) || value.minYoutubeViews < 0) return undefined;
   if (typeof value.minNicoViews !== 'number' || !Number.isInteger(value.minNicoViews) || value.minNicoViews < 0) return undefined;
   const producerId = finiteInteger(value.producerId, 1);
-  return {
+  return normalizeSmartPlaylistRule({
     minYoutubeViews: value.minYoutubeViews,
     minNicoViews: value.minNicoViews,
     excludedSongTypes,
+    maxSongs: value.maxSongs as SmartPlaylistRule['maxSongs'],
+    sortBy: value.sortBy as SmartPlaylistRule['sortBy'],
     producerId,
     producerName: typeof value.producerName === 'string' ? value.producerName : undefined,
-  };
+  });
 }
 
 function copyRatings(value: unknown, onInvalid: () => void): Record<string, number> {

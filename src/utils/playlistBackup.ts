@@ -1,4 +1,5 @@
-import type { Playlist, PlaylistFolder, Song } from '../types/vocadb';
+import type { Playlist, PlaylistFolder, Song, SmartPlaylistRule } from '../types/vocadb';
+import { normalizeSmartPlaylistRule } from './smartPlaylist';
 
 export type PlaylistBackupFolder = {
   id: string;
@@ -83,13 +84,15 @@ function parseSmartRule(value: unknown): Playlist['smartRule'] | undefined {
   const excludedSongTypes = Array.isArray(value.excludedSongTypes)
     ? value.excludedSongTypes.filter((item): item is typeof validTypes[number] => typeof item === 'string' && validTypes.includes(item as typeof validTypes[number]))
     : [];
-  return {
+  return normalizeSmartPlaylistRule({
     minYoutubeViews,
     minNicoViews,
     excludedSongTypes,
+    maxSongs: value.maxSongs as SmartPlaylistRule['maxSongs'],
+    sortBy: value.sortBy as SmartPlaylistRule['sortBy'],
     producerId: typeof value.producerId === 'number' && Number.isInteger(value.producerId) && value.producerId > 0 ? value.producerId : undefined,
     producerName: typeof value.producerName === 'string' ? value.producerName : undefined,
-  };
+  });
 }
 
 export function parsePlaylistImport(data: unknown): { name: string; description?: string; coverArtUrl?: string; songs: Song[] } | null {

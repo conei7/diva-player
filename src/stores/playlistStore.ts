@@ -8,6 +8,7 @@ import { create } from 'zustand';
 import type { Playlist, PlaylistFolder, Song, SmartPlaylistRule } from '../types/vocadb';
 import { storage } from '../utils/storage';
 import { createStableId } from '../utils/id';
+import { normalizeSmartPlaylistRule } from '../utils/smartPlaylist';
 
 const PLAYLISTS_KEY = 'playlists';
 const FOLDERS_KEY   = 'playlistFolders';
@@ -151,7 +152,9 @@ export const usePlaylistStore = create<PlaylistState>((set, get) => ({
 
   // ─── ロード ────────────────────────────────────────────────────────────────
   loadPlaylists: () => {
-    const stored = storage.get<Playlist[]>(PLAYLISTS_KEY) ?? [];
+    const stored = (storage.get<Playlist[]>(PLAYLISTS_KEY) ?? []).map(playlist => playlist.smartRule
+      ? { ...playlist, smartRule: normalizeSmartPlaylistRule(playlist.smartRule) }
+      : playlist);
     const folders = storage.get<PlaylistFolder[]>(FOLDERS_KEY) ?? [];
     // 「後で聴く」がなければ作成
     const hasWL = stored.some(p => p.id === WATCH_LATER_ID);
@@ -206,8 +209,11 @@ export const usePlaylistStore = create<PlaylistState>((set, get) => ({
   },
 
   updatePlaylist: (id, patch) => {
+    const normalizedPatch = patch.smartRule
+      ? { ...patch, smartRule: normalizeSmartPlaylistRule(patch.smartRule) }
+      : patch;
     const updated = get().playlists.map(p =>
-      p.id === id ? { ...p, ...patch, updatedAt: Date.now() } : p
+      p.id === id ? { ...p, ...normalizedPatch, updatedAt: Date.now() } : p
     );
     set({ playlists: updated });
     save(updated, get().folders);
@@ -392,12 +398,13 @@ export const usePlaylistStore = create<PlaylistState>((set, get) => ({
   },
 
   createSmartPlaylist: (name, smartRule, folderId) => {
+    const normalizedRule = normalizeSmartPlaylistRule(smartRule);
     const playlist: Playlist = {
       id: createStableId('playlist'),
       name,
       songs: [],
       folderId,
-      smartRule,
+      smartRule: normalizedRule,
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };

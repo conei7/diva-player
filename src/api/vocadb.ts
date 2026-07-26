@@ -213,10 +213,11 @@ export async function getTopSongs(
  */
 export async function searchSmartPlaylistSongs(
   rule: SmartPlaylistRule,
-  maxResults = 200,
+  maxResults?: number,
+  signal?: AbortSignal,
 ): Promise<{ items: Song[]; totalCount: number }> {
   const params = buildSmartPlaylistSearchParams(rule, maxResults);
-  const response = await fetch(`${RECOMMENDER_API}/api/songs/search?${params.toString()}`);
+  const response = await fetch(`${RECOMMENDER_API}/api/songs/search?${params.toString()}`, { signal });
   if (!response.ok) {
     throw new Error(`Smart playlist search failed: ${response.status}`);
   }

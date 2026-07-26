@@ -1,6 +1,14 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { SmartPlaylistRule } from '../../types/vocadb';
-import { SMART_DERIVED_SONG_TYPES, formatSmartPlaylistRule } from '../../utils/smartPlaylist';
+import { searchSmartPlaylistSongs } from '../../api/vocadb';
+import {
+  SMART_DERIVED_SONG_TYPES,
+  SMART_PLAYLIST_MAX_SONGS,
+  SMART_PLAYLIST_SORTS,
+  formatSmartPlaylistRule,
+  filterSmartPlaylistSongs,
+  normalizeSmartPlaylistRule,
+} from '../../utils/smartPlaylist';
 
 export interface SmartPlaylistBuilderValues {
   name: string;
@@ -19,16 +27,12 @@ const EMPTY_RULE: SmartPlaylistRule = {
   minYoutubeViews: 0,
   minNicoViews: 0,
   excludedSongTypes: [],
+  maxSongs: 200,
+  sortBy: 'FavoritedTimes',
 };
 
 function normalizeRule(rule?: SmartPlaylistRule): SmartPlaylistRule {
-  return {
-    minYoutubeViews: Math.max(0, Math.floor(rule?.minYoutubeViews ?? 0)),
-    minNicoViews: Math.max(0, Math.floor(rule?.minNicoViews ?? 0)),
-    excludedSongTypes: [...(rule?.excludedSongTypes ?? [])],
-    producerId: rule?.producerId,
-    producerName: rule?.producerName,
-  };
+  return normalizeSmartPlaylistRule(rule);
 }
 
 export function SmartPlaylistRuleSummary({ rule, compact = false }: { rule: SmartPlaylistRule; compact?: boolean }) {
@@ -57,9 +61,40 @@ export default function SmartPlaylistBuilder({
   const [name, setName] = useState(initialName);
   const [rule, setRule] = useState<SmartPlaylistRule>(() => normalizeRule(initialRule ?? EMPTY_RULE));
   const [showAdvanced, setShowAdvanced] = useState(() => (initialRule?.excludedSongTypes.length ?? 0) > 0);
+  const [preview, setPreview] = useState<{
+    state: 'loading' | 'success' | 'empty' | 'error';
+    matchedCount?: number;
+    loadedCount?: number;
+    names?: string[];
+  } | null>(null);
 
   const summary = useMemo(() => formatSmartPlaylistRule(rule), [rule]);
   const derivedExcluded = SMART_DERIVED_SONG_TYPES.every(type => rule.excludedSongTypes.includes(type));
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      setPreview({ state: 'loading' });
+      void searchSmartPlaylistSongs(rule, 5, controller.signal)
+        .then(result => {
+          const matchingSongs = filterSmartPlaylistSongs(result.items, rule);
+          setPreview({
+            state: matchingSongs.length > 0 ? 'success' : 'empty',
+            matchedCount: result.totalCount,
+            loadedCount: matchingSongs.length,
+            names: matchingSongs.slice(0, 5).map(song => song.name),
+          });
+        })
+        .catch(() => {
+          if (controller.signal.aborted) return;
+          setPreview({ state: 'error' });
+        });
+    }, 400);
+    return () => {
+      controller.abort();
+      window.clearTimeout(timer);
+    };
+  }, [rule]);
 
   const updateRule = (patch: Partial<SmartPlaylistRule>) => {
     setRule(current => ({ ...current, ...patch }));
@@ -74,6 +109,7 @@ export default function SmartPlaylistBuilder({
   };
 
   const submit = () => {
+    if (preview?.state === 'empty' && !window.confirm('一致する曲が0件の条件を保存しますか？')) return;
     onSubmit({
       name: name.trim() || 'スマートプレイリスト',
       rule: normalizeRule(rule),
@@ -161,6 +197,27 @@ export default function SmartPlaylistBuilder({
         </section>
 
         <section className="mt-3 rounded-2xl border border-white/[0.08] bg-white/[0.03] p-4">
+          <div>
+            <h3 className="text-sm font-semibold text-white">保存と並び順</h3>
+            <p className="mt-1 text-xs leading-5 text-neutral-500">条件に一致した曲のうち、ここで指定した件数を保存します。</p>
+          </div>
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            <label className="flex flex-col gap-1.5">
+              <span className="text-xs text-neutral-400">保存曲数</span>
+              <select className="input w-full" value={rule.maxSongs ?? 200} onChange={event => updateRule({ maxSongs: Number(event.target.value) as SmartPlaylistRule['maxSongs'] })}>
+                {SMART_PLAYLIST_MAX_SONGS.map(value => <option key={value} value={value}>{value}曲</option>)}
+              </select>
+            </label>
+            <label className="flex flex-col gap-1.5">
+              <span className="text-xs text-neutral-400">並び順</span>
+              <select className="input w-full" value={rule.sortBy ?? 'FavoritedTimes'} onChange={event => updateRule({ sortBy: event.target.value as SmartPlaylistRule['sortBy'] })}>
+                {SMART_PLAYLIST_SORTS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+              </select>
+            </label>
+          </div>
+        </section>
+
+        <section className="mt-3 rounded-2xl border border-white/[0.08] bg-white/[0.03] p-4">
           <button type="button" className="flex w-full items-center justify-between text-left" onClick={() => setShowAdvanced(value => !value)} aria-expanded={showAdvanced}>
             <span>
               <span className="block text-sm font-semibold text-white">除外条件</span>
@@ -190,6 +247,21 @@ export default function SmartPlaylistBuilder({
               <span key={item} className="rounded-full border border-cyan-300/20 bg-cyan-300/[0.08] px-2.5 py-1 text-xs text-cyan-50/90">{item}</span>
             ))}
           </div>
+        </section>
+
+        <section className="mt-3 rounded-2xl border border-white/[0.08] bg-white/[0.025] p-4" aria-live="polite">
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-sm font-semibold text-white">一致件数プレビュー</p>
+            {preview?.state === 'loading' && <span className="text-xs text-cyan-300">確認中…</span>}
+          </div>
+          {preview?.state === 'success' && (
+            <>
+              <p className="mt-2 text-sm text-neutral-300">総一致 {preview.matchedCount ?? 0}曲 / 保存予定 {Math.min(preview.matchedCount ?? 0, rule.maxSongs ?? 200)}曲</p>
+              <ul className="mt-2 space-y-1 text-xs text-neutral-500">{preview.names?.map(name => <li key={name} className="truncate">・{name}</li>)}</ul>
+            </>
+          )}
+          {preview?.state === 'empty' && <p className="mt-2 text-sm text-amber-200">一致する曲はありません。保存する場合は明示確認が必要です。</p>}
+          {preview?.state === 'error' && <p className="mt-2 text-sm text-amber-200">一致件数を取得できませんでした。条件は保存できますが、更新にはAPI接続が必要です。</p>}
         </section>
 
         <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">

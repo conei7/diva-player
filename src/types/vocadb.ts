@@ -159,9 +159,16 @@ export interface SmartPlaylistRule {
   minYoutubeViews: number;
   minNicoViews: number;
   excludedSongTypes: SongType[];
+  /** 保存する曲数。旧データでは未設定のため200として扱う。 */
+  maxSongs?: SmartPlaylistMaxSongs;
+  /** 候補の並び順。旧データではFavoritedTimesとして扱う。 */
+  sortBy?: SmartPlaylistSortBy;
   producerId?: number;
   producerName?: string;
 }
+
+export type SmartPlaylistMaxSongs = 50 | 100 | 200;
+export type SmartPlaylistSortBy = 'FavoritedTimes' | 'YoutubeViews' | 'NicoViews' | 'PublishDate';
 
 /** プレイリストをまとめるフォルダ（ツリー構造対応） */
 export interface PlaylistFolder {

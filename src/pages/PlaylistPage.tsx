@@ -42,7 +42,7 @@ import {
 import YouTubeImportModal from '../components/playlist/YouTubeImportModal';
 import { createPlaylistShareUrl, decodePlaylistShare } from '../utils/playlistShare';
 import { searchSmartPlaylistSongs } from '../api/vocadb';
-import { filterSmartPlaylistSongs } from '../utils/smartPlaylist';
+import { filterSmartPlaylistSongs, normalizeSmartPlaylistRule } from '../utils/smartPlaylist';
 import { sortPlaylistSongs } from '../utils/playlistSorting';
 import { storage } from '../utils/storage';
 import {
@@ -244,8 +244,8 @@ export default function PlaylistPage() {
       [playlist.id]: { state: 'loading' },
     }));
     try {
-      const rule = playlist.smartRule;
-      const result = await searchSmartPlaylistSongs(rule, 200);
+      const rule = normalizeSmartPlaylistRule(playlist.smartRule);
+      const result = await searchSmartPlaylistSongs(rule, rule.maxSongs);
       const matchingSongs = filterSmartPlaylistSongs(result.items, rule);
       replacePlaylistSongs(playlist.id, matchingSongs);
       smartRefreshRetryRef.current.delete(playlist.id);
