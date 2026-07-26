@@ -65,6 +65,8 @@ import SmartPlaylistBuilder, {
   SmartPlaylistRuleSummary,
   type SmartPlaylistBuilderValues,
 } from '../components/playlist/SmartPlaylistBuilder';
+import PlaylistHealthModal from '../components/playlist/PlaylistHealthModal';
+import { analyzePlaylistHealth } from '../utils/playlistHealth';
 
 const PLAYLIST_LIST_PREFERENCES_KEY = 'playlistListPreferences';
 
@@ -180,6 +182,7 @@ export default function PlaylistPage() {
   const [editFolderId, setEditFolderId] = useState<string>('');
 
   const [showYTImport, setShowYTImport] = useState(false);
+  const [showHealthModal, setShowHealthModal] = useState(false);
   const [showSmartBuilder, setShowSmartBuilder] = useState(false);
   const [smartEditingPlaylist, setSmartEditingPlaylist] = useState<Playlist | null>(null);
   const [smartRefreshStatuses, setSmartRefreshStatuses] = useState<Record<string, {
@@ -287,6 +290,10 @@ export default function PlaylistPage() {
   const selectedPlaylistDuplicateCount = selectedPlaylist
     ? selectedPlaylist.songs.length - new Set(selectedPlaylist.songs.map(s => s.id)).size
     : 0;
+  const selectedPlaylistHealth = useMemo(
+    () => analyzePlaylistHealth(selectedPlaylist?.songs ?? []),
+    [selectedPlaylist],
+  );
   const selectedPlaylistDurationText = selectedPlaylist
     ? formatTotalDuration(selectedPlaylist.songs.reduce((sum, song) => sum + (song.lengthSeconds || 0), 0))
     : '';
@@ -433,6 +440,20 @@ export default function PlaylistPage() {
       },
     });
   }, [removeSong, restoreRemovedSongs, showToast]);
+
+  const removeHealthIssues = useCallback((indexes: number[]) => {
+    if (!selectedPlaylist || indexes.length === 0) return;
+    const snapshot = removeSongs(selectedPlaylist.id, indexes);
+    setShowHealthModal(false);
+    if (!snapshot) return;
+    showToast(`${snapshot.removed.length}曲を削除しました`, 'info', {
+      label: '元に戻す',
+      onAction: () => {
+        const restored = restoreRemovedSongs(snapshot, { allowDuplicateIds: true });
+        if (restored > 0) showToast(`${restored}曲を元に戻しました`, 'success');
+      },
+    });
+  }, [removeSongs, restoreRemovedSongs, selectedPlaylist, showToast]);
 
   const addSelectedToQueue = useCallback(() => {
     if (!selectedPlaylist) return;
@@ -1094,6 +1115,14 @@ export default function PlaylistPage() {
                     重複削除 ({selectedPlaylistDuplicateCount})
                   </button>
                 )}
+                <button
+                  type="button"
+                  className="rounded-lg border border-amber-300/20 bg-amber-300/[0.05] px-2.5 py-1.5 text-xs text-amber-100 transition-colors hover:bg-amber-300/10"
+                  onClick={() => setShowHealthModal(true)}
+                  title="PVや重複の問題を確認"
+                >
+                  健全性{selectedPlaylistHealth.entries.length > 0 ? ` (${selectedPlaylistHealth.entries.length})` : ''}
+                </button>
                 <div className="flex-1" />
                 <button
                   onClick={() => { setSelectionMode(v => !v); clearSelection(); }}
@@ -1287,6 +1316,14 @@ export default function PlaylistPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {showHealthModal && selectedPlaylist && (
+        <PlaylistHealthModal
+          songs={selectedPlaylist.songs}
+          onClose={() => setShowHealthModal(false)}
+          onRemove={removeHealthIssues}
+        />
       )}
 
       {showSmartBuilder && (
