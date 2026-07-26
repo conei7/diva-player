@@ -1,4 +1,4 @@
-name: Deploy to GitHub Pages
+name: Deploy DIVA Player
 
 on:
   push:
@@ -7,11 +7,9 @@ on:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
-  group: "pages"
+  group: "cloudflare-pages"
   cancel-in-progress: false
 
 jobs:
@@ -47,10 +45,6 @@ jobs:
         run: npm run test:e2e:player-controls -- http://127.0.0.1:4173/diva-player/
       - name: Background playback E2E
         run: npm run test:e2e:background-playback -- http://127.0.0.1:4173/diva-player/
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: dist
-
   deploy-cloudflare:
     needs: build
     runs-on: ubuntu-latest
@@ -73,13 +67,3 @@ jobs:
       - name: Deploy to Cloudflare Pages
         if: env.CLOUDFLARE_API_TOKEN != '' && env.CLOUDFLARE_ACCOUNT_ID != ''
         run: npx wrangler pages deploy dist --project-name diva-player --branch main
-
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - uses: actions/deploy-pages@v4
-        id: deployment

@@ -55,7 +55,9 @@ services:
       dockerfile: Dockerfile
     container_name: vocadb_api
     environment:
-      ConnectionStrings__Postgres: "Host=postgres;Port=5432;Database=vocadb_recommender;Username=vocadb;Password=vocadb_secret"
+      # Keep API pooling bounded so scheduled/import jobs can still obtain a
+      # connection when the PostgreSQL server is under load.
+      ConnectionStrings__Postgres: "Host=postgres;Port=5432;Database=vocadb_recommender;Username=vocadb;Password=vocadb_secret;Maximum Pool Size=24;Timeout=5;Application Name=diva-api"
       Recommender__QdrantEndpoint: "http://qdrant:6334"
       ASPNETCORE_URLS: "http://+:5000"
       ASPNETCORE_ENVIRONMENT: "Development"
