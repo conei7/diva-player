@@ -73,6 +73,11 @@ export default function SmartPlaylistBuilder({
 
   useEffect(() => {
     const controller = new AbortController();
+    let timedOut = false;
+    const timeout = window.setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, 12_000);
     const timer = window.setTimeout(() => {
       setPreview({ state: 'loading' });
       void searchSmartPlaylistSongs(rule, 5, controller.signal)
@@ -86,12 +91,16 @@ export default function SmartPlaylistBuilder({
           });
         })
         .catch(() => {
-          if (controller.signal.aborted) return;
+          if (controller.signal.aborted && !timedOut) return;
           setPreview({ state: 'error' });
+        })
+        .finally(() => {
+          window.clearTimeout(timeout);
         });
     }, 400);
     return () => {
       controller.abort();
+      window.clearTimeout(timeout);
       window.clearTimeout(timer);
     };
   }, [rule]);
