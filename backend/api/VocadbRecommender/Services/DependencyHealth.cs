@@ -9,5 +9,6 @@ public sealed record DiscoveryQualityHealth(
     double AverageQuality,
     double ShortRatio,
     double NicoRatio,
+    double DiscoveryEligibleRatio,
     DateTimeOffset? LatestComputedAt,
     string? Error = null);

@@ -358,7 +358,7 @@ app.MapGet("/api/songs/trending", async (
     return Results.Content(json, "application/json");
 });
 
-// GET /api/songs/search?query=...&artistIds=1,2&anyArtistIds=3,4&artistIdGroups=5,6|7,8&songTypes=Original&sort=YoutubeViews&order=desc&start=0&maxResults=24&voiceSynthOnly=true
+// GET /api/songs/search?query=...&artistIds=1,2&anyArtistIds=3,4&artistIdGroups=5,6|7,8&songTypes=Original&sort=YoutubeViews&order=desc&start=0&maxResults=24&voiceSynthOnly=true&discoveryOnly=true
 app.MapGet("/api/songs/search", async (
     string? query,
     string? artistIds,
@@ -380,6 +380,7 @@ app.MapGet("/api/songs/search", async (
     bool? onlyWithPVs,
     string? excludeSongTypes,
     bool? voiceSynthOnly,
+    bool? discoveryOnly,
     HttpContext http,
     DbService db) =>
 {
@@ -434,7 +435,8 @@ app.MapGet("/api/songs/search", async (
         minNicoViews,
         onlyWithPVs ?? false,
         excludedTypes,
-        voiceSynthOnly ?? false
+        voiceSynthOnly ?? false,
+        discoveryOnly ?? false
     );
     requestStopwatch.Stop();
     static string Duration(long milliseconds) => milliseconds.ToString(CultureInfo.InvariantCulture);

@@ -72,6 +72,7 @@ describe('backend artist union search', () => {
     expect(url.searchParams.get('songTypes')).toBe('Original');
     expect(url.searchParams.get('start')).toBe('24');
     expect(url.searchParams.get('onlyWithPVs')).toBe('true');
+    expect(url.searchParams.get('discoveryOnly')).toBeNull();
     expect(result.totalCount).toBe(1608);
   });
 
@@ -92,6 +93,27 @@ describe('backend artist union search', () => {
 
     const url = new URL(String(fetchMock.mock.calls[0]?.[0]), 'https://example.test');
     expect(url.searchParams.get('artistIdGroups')).toBe('58538,98107|1,2');
+  });
+
+  it('requests the reusable quality boundary only for discovery surfaces', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      headers: { get: () => null },
+      json: async () => ({ items: [], totalCount: 0 }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await searchSongsBackend({
+      query: 'discovery-boundary-test',
+      sort: 'FavoritedTimes',
+      sortOrder: 'desc',
+      start: 0,
+      maxResults: 24,
+      discoveryOnly: true,
+    });
+
+    const url = new URL(String(fetchMock.mock.calls[0]?.[0]), 'https://example.test');
+    expect(url.searchParams.get('discoveryOnly')).toBe('true');
   });
 
   it('reuses identical backend searches for one minute', async () => {

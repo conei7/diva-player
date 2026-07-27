@@ -3,7 +3,7 @@ import { useShallow } from 'zustand/react/shallow';
 import { useSearchParams } from 'react-router-dom';
 import CategoryChips, { type CategoryChip } from '../components/home/CategoryChips';
 import VideoGrid from '../components/home/VideoGrid';
-import { searchSongs, getTopSongs, getRecommendedSongs, getSimilarSongs, getAudioSimilarSongs, getTrendingSongs, attachExternalViews } from '../api/vocadb';
+import { getRecommendedSongs, getSimilarSongs, getAudioSimilarSongs, getTrendingSongs, attachExternalViews } from '../api/vocadb';
 import { useHistoryStore } from '../stores/historyStore';
 import { usePlayerStore } from '../stores/playerStore';
 import { useRatingStore } from '../stores/ratingStore';
@@ -166,6 +166,7 @@ export default function HomePage() {
           sortOrder: 'desc',
           start: pageNum * 12,
           maxResults: 12,
+          discoveryOnly: true,
         })
           .then(result => result.items)
           .catch(() => [] as Song[]),
@@ -177,6 +178,7 @@ export default function HomePage() {
         sortOrder: 'desc',
         maxResults: 12,
         start: pageNum * 12,
+        discoveryOnly: true,
       }),
       pageNum === 0
         ? resolveWithin(optionalSources, INITIAL_OPTIONAL_RECOMMENDATION_BUDGET_MS, [[], [], [], []] as Song[][][])
@@ -223,7 +225,7 @@ export default function HomePage() {
         detail: { page: pageNum, timedOut: true },
       });
     }
-    return result.length > 0 ? result : getTopSongs(720, PAGE_SIZE);
+    return result.length > 0 ? result : popularResult.items;
   }, [currentSong, entries, favoriteProducers, playlists, ratings, implicitFeedback]);
 
   const fetchSongs = useCallback(async (
@@ -277,12 +279,12 @@ export default function HomePage() {
             break;
           }
           case 'deep': {
-            const searchResult = await searchSongs({
+            const searchResult = await searchSongsBackend({
               sort: 'AdditionDate',
+              sortOrder: 'desc',
               maxResults: PAGE_SIZE,
               start: pageNum * PAGE_SIZE + Math.floor(Math.random() * 100),
-              getTotalCount: false,
-              onlyWithPVs: true,
+              discoveryOnly: true,
             });
             result = searchResult.items;
             break;
@@ -295,19 +297,26 @@ export default function HomePage() {
               .filter((id): id is number => id !== undefined) ?? [];
 
             if (producers.length > 0) {
-              const searchResult = await searchSongs({
+              const searchResult = await searchSongsBackend({
                 artistIds: producers,
                 sort: 'FavoritedTimes',
+                sortOrder: 'desc',
                 maxResults: PAGE_SIZE,
                 start: pageNum * PAGE_SIZE,
-                getTotalCount: false,
-                onlyWithPVs: true,
+                discoveryOnly: true,
               });
               result = searchResult.items;
             }
 
             if (result.length === 0) {
-              result = await getTopSongs(720, PAGE_SIZE);
+              const fallback = await searchSongsBackend({
+                sort: 'FavoritedTimes',
+                sortOrder: 'desc',
+                maxResults: PAGE_SIZE,
+                start: pageNum * PAGE_SIZE,
+                discoveryOnly: true,
+              });
+              result = fallback.items;
             }
             break;
           }
@@ -325,6 +334,7 @@ export default function HomePage() {
                   sortOrder: 'desc',
                   start: pageNum * 12,
                   maxResults: 12,
+                  discoveryOnly: true,
                 }).then(result => result.items).catch(() => [] as Song[]),
               ));
               const seen = new Set<number>();

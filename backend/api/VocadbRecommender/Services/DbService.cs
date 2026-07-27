@@ -92,22 +92,25 @@ public class DbService
                        COALESCE(AVG(quality_score), 0),
                        COALESCE(AVG(CASE WHEN duration_score < 0.5 THEN 1.0 ELSE 0.0 END), 0),
                        COALESCE(AVG(CASE WHEN nico_presence_score > 0 THEN 1.0 ELSE 0.0 END), 0),
+                       COALESCE(AVG(CASE WHEN discovery_eligible THEN 1.0 ELSE 0.0 END), 0),
                        MAX(computed_at)
                 FROM song_discovery_quality", conn) { CommandTimeout = 3 };
             await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
             if (!await reader.ReadAsync(cancellationToken))
-                return new DiscoveryQualityHealth(false, stopwatch.ElapsedMilliseconds, 0, 0, 0, 0, null, "no result");
+                return new DiscoveryQualityHealth(false, stopwatch.ElapsedMilliseconds, 0, 0, 0, 0, 0, null, "no result");
 
             var total = reader.GetInt64(0);
             var averageQuality = reader.GetDouble(1);
             var shortRatio = reader.GetDouble(2);
             var nicoRatio = reader.GetDouble(3);
-            DateTimeOffset? latest = reader.IsDBNull(4) ? null : reader.GetFieldValue<DateTimeOffset>(4);
+            var eligibleRatio = reader.GetDouble(4);
+            DateTimeOffset? latest = reader.IsDBNull(5) ? null : reader.GetFieldValue<DateTimeOffset>(5);
             var warnings = new List<string>();
             if (total == 0) warnings.Add("empty");
             if (latest is null || DateTimeOffset.UtcNow - latest.Value > TimeSpan.FromHours(48)) warnings.Add("stale");
             if (nicoRatio == 0) warnings.Add("nico_presence_zero");
             if (shortRatio > 0.08) warnings.Add("short_ratio_high");
+            if (eligibleRatio < 0.85) warnings.Add("discovery_eligible_ratio_low");
             return new DiscoveryQualityHealth(
                 warnings.Count == 0,
                 stopwatch.ElapsedMilliseconds,
@@ -115,12 +118,13 @@ public class DbService
                 averageQuality,
                 shortRatio,
                 nicoRatio,
+                eligibleRatio,
                 latest,
                 warnings.Count == 0 ? null : string.Join(',', warnings));
         }
         catch (Exception exception)
         {
-            return new DiscoveryQualityHealth(false, stopwatch.ElapsedMilliseconds, 0, 0, 0, 0, null, exception.GetType().Name);
+            return new DiscoveryQualityHealth(false, stopwatch.ElapsedMilliseconds, 0, 0, 0, 0, 0, null, exception.GetType().Name);
         }
     }
 
@@ -144,7 +148,8 @@ public class DbService
         long? minNicoViews = null,
         bool onlyWithPVs = false,
         List<string>? excludedSongTypes = null,
-        bool voiceSynthOnly = false)
+        bool voiceSynthOnly = false,
+        bool discoveryOnly = false)
     {
         var totalStopwatch = Stopwatch.StartNew();
         var cacheKey = "song-search:v1:" + JsonSerializer.Serialize(new
@@ -169,6 +174,7 @@ public class DbService
             onlyWithPVs,
             excludedSongTypes,
             voiceSynthOnly,
+            discoveryOnly,
         });
         if (_cache.TryGetValue(cacheKey, out CachedSongSearch? cached) && cached is not null)
         {
@@ -299,6 +305,11 @@ public class DbService
         if (voiceSynthOnly)
         {
             conditions.Add($"EXISTS (SELECT 1 FROM song_artists sa JOIN artists a ON a.id = sa.artist_id WHERE sa.song_id = songs.id AND sa.is_vocalist = TRUE AND a.artist_type IN ({VoiceSynthArtistTypesSql}))");
+        }
+
+        if (discoveryOnly)
+        {
+            conditions.Add("EXISTS (SELECT 1 FROM song_discovery_quality dq WHERE dq.song_id = songs.id AND dq.discovery_eligible = TRUE)");
         }
 
         if (!string.IsNullOrWhiteSpace(pvService) && pvService != "any")
@@ -474,9 +485,11 @@ public class DbService
                    EXISTS (
                        SELECT 1 FROM pvs p
                        WHERE p.song_id = s.id AND p.disabled = FALSE
-                   ) AS has_playable_pv
+                   ) AS has_playable_pv,
+                   COALESCE(q.discovery_eligible, FALSE) AS discovery_eligible
             FROM songs s
             LEFT JOIN song_features sf ON sf.song_id = s.id
+            LEFT JOIN song_discovery_quality q ON q.song_id = s.id
             WHERE s.id = ANY($1)", conn);
         cmd.Parameters.AddWithValue(missingIds.ToArray());
 
@@ -496,7 +509,8 @@ public class DbService
                 YoutubeViews:   reader.IsDBNull(9) ? 0 : reader.GetInt64(9),
                  NicoViews:      reader.IsDBNull(10) ? 0 : reader.GetInt64(10),
                  HasCoreVoiceSynthVocalist: !reader.IsDBNull(11) && reader.GetBoolean(11),
-                 HasPlayablePv:  !reader.IsDBNull(12) && reader.GetBoolean(12)
+                 HasPlayablePv:  !reader.IsDBNull(12) && reader.GetBoolean(12),
+                 DiscoveryEligible: !reader.IsDBNull(13) && reader.GetBoolean(13)
             );
 
             _cache.Set($"song:{info.Id}", info, TimeSpan.FromMinutes(30));
@@ -643,7 +657,7 @@ public class DbService
 
         var modeCondition = normalizedMode switch
         {
-            "surge" when normalizedRanking == "quality" => "AND g.previous_views IS NOT NULL AND g.baseline_views > g.previous_views AND g.prior_window_days >= 3 AND g.view_growth >= 1000 AND g.surge_rate >= 1.5 AND s.song_type IN ('Original', 'Cover', 'Remix', 'Remaster', 'MusicPV') AND NOT (g.quality_score < 0.30 AND g.duration_score < 0.50 AND g.support_score < 0.30) AND NOT (g.quality_score < 0.35 AND g.support_score < 0.30 AND EXISTS (SELECT 1 FROM unnest(g.quality_reasons) reason WHERE reason LIKE 'negative_tag:%')) AND NOT EXISTS (SELECT 1 FROM unnest(g.quality_reasons) reason WHERE reason IN ('negative_tag:out of scope (music pv)', 'negative_tag:架空の広告'))",
+            "surge" when normalizedRanking == "quality" => "AND g.previous_views IS NOT NULL AND g.baseline_views > g.previous_views AND g.prior_window_days >= 3 AND g.view_growth >= 1000 AND g.surge_rate >= 1.5 AND s.song_type IN ('Original', 'Cover', 'Remix', 'Remaster', 'Arrangement', 'Mashup', 'MusicPV') AND NOT (g.quality_score < 0.30 AND g.duration_score < 0.50 AND g.support_score < 0.30) AND NOT (g.quality_score < 0.35 AND g.support_score < 0.30 AND EXISTS (SELECT 1 FROM unnest(g.quality_reasons) reason WHERE reason LIKE 'negative_tag:%'))",
             "surge" => $"AND g.previous_views IS NOT NULL AND g.baseline_views > g.previous_views AND g.prior_window_days >= 3 AND g.view_growth >= 1000 AND g.surge_rate >= 1.5 AND {songTypeExpression} IN ('Original', 'Cover', 'Remix', 'Remaster', 'MusicPV')",
             "recent" => "AND s.publish_date >= CURRENT_DATE - interval '30 days'",
             _ => string.Empty,
@@ -766,6 +780,7 @@ public class DbService
                     COALESCE(q.duration_score, 0.5) AS duration_score,
                     COALESCE(q.support_score, 0) AS support_score,
                     COALESCE(q.reason_codes, ARRAY['quality_missing']::text[]) AS quality_reasons,
+                    COALESCE(q.discovery_eligible, FALSE) AS discovery_eligible,
                     (
                         (
                             CASE WHEN b.youtube_views >= 100 THEN GREATEST(0, l.youtube_views - b.youtube_views) ELSE 0 END
@@ -811,6 +826,7 @@ public class DbService
                     COALESCE(q.duration_score, 0.5) AS duration_score,
                     COALESCE(q.support_score, 0) AS support_score,
                     COALESCE(q.reason_codes, ARRAY['quality_missing']::text[]) AS quality_reasons,
+                    COALESCE(q.discovery_eligible, FALSE) AS discovery_eligible,
                     0::double precision AS surge_rank_score,
                     (
                         (COALESCE(s.youtube_views, 0) + (10 * COALESCE(s.nico_views, 0)))::double precision
@@ -837,6 +853,7 @@ public class DbService
             FROM {sourceTable} g
             JOIN songs s ON s.id = g.song_id
             WHERE {minimumCondition}
+              AND g.discovery_eligible
               {globalFilterCondition}
               AND EXISTS (
                   SELECT 1
@@ -916,7 +933,11 @@ public class DbService
               AND EXISTS (
                   SELECT 1 FROM songs s
                   WHERE s.id = sa.song_id
-                    AND s.song_type IN ('Original', 'Cover', 'Remix', 'Remaster', 'MusicPV')
+                    AND s.song_type IN ('Original', 'Cover', 'Remix', 'Remaster', 'Arrangement', 'Mashup', 'MusicPV')
+                    AND EXISTS (
+                        SELECT 1 FROM song_discovery_quality dq
+                        WHERE dq.song_id = s.id AND dq.discovery_eligible = TRUE
+                    )
               )
               AND EXISTS (
                   SELECT 1 FROM song_artists synth_artist
@@ -965,7 +986,11 @@ public class DbService
                   )
             )
             AND s.id <> $1
-            AND s.song_type IN ('Original', 'Cover', 'Remix', 'Remaster', 'MusicPV')
+            AND s.song_type IN ('Original', 'Cover', 'Remix', 'Remaster', 'Arrangement', 'Mashup', 'MusicPV')
+            AND EXISTS (
+                SELECT 1 FROM song_discovery_quality dq
+                WHERE dq.song_id = s.id AND dq.discovery_eligible = TRUE
+            )
             AND EXISTS (
                 SELECT 1 FROM song_artists synth_artist
                 JOIN artists synth ON synth.id = synth_artist.artist_id
@@ -1000,5 +1025,6 @@ public record SongInfo(
     long    YoutubeViews,
       long    NicoViews,
       bool    HasCoreVoiceSynthVocalist,
-      bool    HasPlayablePv
+      bool    HasPlayablePv,
+      bool    DiscoveryEligible
   );

@@ -224,6 +224,7 @@ export async function searchSongsBackend(params: {
   maxResults: number;
   filters?: AdvancedSearchFilters;
   globalFilters?: GlobalFilterSettings;
+  discoveryOnly?: boolean;
 }): Promise<{ items: Song[]; totalCount: number }> {
   const startedAt = performanceNow();
   const validationError = params.filters ? validateAdvancedSearchFilters(params.filters) : null;
@@ -241,6 +242,7 @@ export async function searchSongsBackend(params: {
   qs.set('start', params.start.toString());
   qs.set('maxResults', params.maxResults.toString());
   qs.set('onlyWithPVs', 'true');
+  if (params.discoveryOnly) qs.set('discoveryOnly', 'true');
   if (params.filters) {
     const f = params.filters;
     if (f.publishYearFrom.trim()) qs.set('publishYearFrom', f.publishYearFrom.trim());

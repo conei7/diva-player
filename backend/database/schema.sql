@@ -61,12 +61,17 @@ CREATE TABLE IF NOT EXISTS song_discovery_quality (
     nico_presence_score REAL NOT NULL DEFAULT 0,
     negative_penalty    REAL NOT NULL DEFAULT 0,
     reason_codes        TEXT[] NOT NULL DEFAULT '{}',
+    discovery_eligible  BOOLEAN NOT NULL DEFAULT TRUE,
+    eligibility_reason_codes TEXT[] NOT NULL DEFAULT ARRAY['legacy_unclassified']::text[],
     model_version       TEXT NOT NULL DEFAULT 'heuristic-v1',
     computed_at         TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE INDEX IF NOT EXISTS song_discovery_quality_score_idx
     ON song_discovery_quality (quality_score DESC);
+CREATE INDEX IF NOT EXISTS song_discovery_eligible_score_idx
+    ON song_discovery_quality (quality_score DESC, song_id)
+    WHERE discovery_eligible = TRUE;
 
 -- External view counts are maintained by diva-data-pipeline.
 ALTER TABLE songs

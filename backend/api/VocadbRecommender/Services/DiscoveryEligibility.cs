@@ -8,7 +8,9 @@ namespace VocadbRecommender.Services;
 public static class DiscoveryEligibility
 {
     public static bool IsEligible(SongInfo song)
-        => song.HasCoreVoiceSynthVocalist
+        => song.DiscoveryEligible
+            && song.HasCoreVoiceSynthVocalist
             && song.HasPlayablePv
-            && song.SongType is "Original" or "Cover" or "Remix" or "Remaster" or "MusicPV";
+            && song.SongType is "Original" or "Cover" or "Remix" or "Remaster"
+                or "Arrangement" or "Mashup" or "MusicPV";
 }
