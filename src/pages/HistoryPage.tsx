@@ -126,7 +126,7 @@ export default function HistoryPage() {
             {totalPlays} 件
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center justify-end gap-2 flex-wrap">
           <input
             ref={importInputRef}
             type="file"
