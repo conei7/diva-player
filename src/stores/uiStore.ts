@@ -36,6 +36,11 @@ interface UiState {
   mobileDrawerOpen: boolean;
   toggleMobileDrawer: () => void;
   closeMobileDrawer: () => void;
+
+  /** 詳細検索パネルの開閉（TopNavとHomePageで共有） */
+  advancedSearchOpen: boolean;
+  toggleAdvancedSearch: () => void;
+  setAdvancedSearchOpen: (v: boolean) => void;
 }
 
 export const useUiStore = create<UiState>()((set) => ({
@@ -58,4 +63,8 @@ export const useUiStore = create<UiState>()((set) => ({
   mobileDrawerOpen: false,
   toggleMobileDrawer: () => set((s) => ({ mobileDrawerOpen: !s.mobileDrawerOpen })),
   closeMobileDrawer: () => set({ mobileDrawerOpen: false }),
+
+  advancedSearchOpen: false,
+  toggleAdvancedSearch: () => set((s) => ({ advancedSearchOpen: !s.advancedSearchOpen })),
+  setAdvancedSearchOpen: (v) => set({ advancedSearchOpen: v }),
 }));

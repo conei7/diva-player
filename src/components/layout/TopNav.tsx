@@ -50,7 +50,7 @@ export default function TopNav() {
   const navigate = useNavigate();
   const location = useLocation();
   const isWatchPage = location.pathname === '/watch';
-  const { toggleSidebar, toggleMobileDrawer } = useUiStore();
+  const { toggleSidebar, toggleMobileDrawer, advancedSearchOpen, toggleAdvancedSearch } = useUiStore();
   const { hiddenMode, toggleHiddenMode } = usePlayerStore();
   const {
     setQuery: setSearchStoreQuery,
@@ -513,48 +513,31 @@ export default function TopNav() {
           </form>
         </div>
 
-        {/* ─── 右: ユーザーアイコン ─── */}
-        <div className="flex items-center gap-1 flex-shrink-0">
+        {/* ─── 右: 統一アクションボタン ─── */}
+        <div className="flex items-center gap-1.5 flex-shrink-0">
           {/* 隠しモード表示 */}
           {hiddenMode && (
             <span
-              className="text-[10px] font-bold px-2 py-1 rounded-full mr-1 hidden sm:inline"
+              className="text-[10px] font-bold px-2 py-1 rounded-full mr-0.5 hidden sm:inline"
               style={{ background: 'rgba(100,100,100,0.3)', color: 'var(--color-text-muted)' }}
             >
               隠しモード
             </span>
           )}
-          {/* 複数選択モードトグルボタン */}
+
+          {/* 複数選択モード */}
           <button
+            className="topnav-action-btn"
+            data-active={isSelectionMode}
             onClick={() => isSelectionMode ? exitSelectionMode() : enterSelectionMode()}
-            className="w-8 h-8 rounded-full flex items-center justify-center transition-all relative"
-            style={{
-              background: isSelectionMode
-                ? 'var(--gradient-primary)'
-                : 'rgba(255,255,255,0.07)',
-              border: isSelectionMode
-                ? 'none'
-                : '1px solid var(--color-border)',
-              color: isSelectionMode ? '#fff' : 'var(--color-text-secondary)',
-            }}
             title={isSelectionMode ? `選択モード終了 (${selectedCount}曲選択中)` : '複数選択モード'}
             aria-label="複数選択モード"
             aria-pressed={isSelectionMode}
           >
-            {isSelectionMode ? (
-              /* チェック済みアイコン（アクティブ時） */
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                <rect x="3" y="3" width="18" height="18" rx="3"/>
-                <path d="M9 12l2 2 4-4"/>
-              </svg>
-            ) : (
-              /* チェックボックスアイコン（非アクティブ時） */
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <rect x="3" y="3" width="18" height="18" rx="3"/>
-                <path d="M9 12l2 2 4-4" strokeOpacity="0.4"/>
-              </svg>
-            )}
-            {/* 選択数バッジ */}
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={isSelectionMode ? 2.5 : 2}>
+              <rect x="3" y="3" width="18" height="18" rx="3"/>
+              <path d="M9 12l2 2 4-4" strokeOpacity={isSelectionMode ? 1 : 0.5}/>
+            </svg>
             {isSelectionMode && selectedCount > 0 && (
               <span
                 className="absolute -top-1 -right-1 min-w-[16px] h-4 rounded-full text-[9px] font-bold flex items-center justify-center px-1"
@@ -565,29 +548,42 @@ export default function TopNav() {
             )}
           </button>
 
-          {isGlobalSongFilterActive(globalFilterSettings) && (
-            <button
-              type="button"
-              className="hidden max-w-48 truncate rounded-full px-2 py-1 text-[10px] font-semibold sm:inline"
-              style={{ background: 'rgba(34, 211, 238, 0.12)', color: 'var(--color-accent-cyan)' }}
-              title={`適用中: ${getGlobalFilterSummary(globalFilterSettings).join(' / ')}`}
-              onClick={() => setSettingsOpen(true)}
-            >
-              フィルター中
-            </button>
-          )}
-
+          {/* 詳細検索 */}
           <button
+            className="topnav-action-btn"
+            data-active={advancedSearchOpen}
+            onClick={() => {
+              if (location.pathname !== '/') navigate('/');
+              toggleAdvancedSearch();
+            }}
+            title={advancedSearchOpen ? '詳細検索を閉じる' : '詳細検索'}
+            aria-label="詳細検索"
+            aria-pressed={advancedSearchOpen}
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <line x1="4" y1="7" x2="20" y2="7" />
+              <line x1="4" y1="12" x2="20" y2="12" />
+              <line x1="4" y1="17" x2="20" y2="17" />
+              <circle cx="8" cy="7" r="2" fill="currentColor" />
+              <circle cx="16" cy="12" r="2" fill="currentColor" />
+              <circle cx="10" cy="17" r="2" fill="currentColor" />
+            </svg>
+          </button>
+
+          {/* 設定 */}
+          <button
+            className="topnav-action-btn"
             onClick={() => setSettingsOpen(true)}
-            className="h-8 rounded-full px-2 flex items-center justify-center gap-1.5 overflow-hidden"
-            style={{ background: 'var(--gradient-primary)' }}
             title="設定・バックアップ"
             aria-label="設定・バックアップ"
           >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="white">
-              <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z" />
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.484.484 0 0 0-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.49.49 0 0 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.07.62-.07.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6A3.6 3.6 0 1 1 12 8.4a3.6 3.6 0 0 1 0 7.2z" />
             </svg>
-            <span className="hidden sm:inline text-[11px] font-semibold whitespace-nowrap">設定</span>
+            {/* フィルター適用中のドットインジケーター */}
+            {isGlobalSongFilterActive(globalFilterSettings) && (
+              <span className="action-dot" title={`フィルター適用中: ${getGlobalFilterSummary(globalFilterSettings).join(' / ')}`} />
+            )}
           </button>
         </div>
       </div>

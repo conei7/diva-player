@@ -11,6 +11,7 @@ import { searchSongsBackend, useSearchStore } from '../stores/searchStore';
 import { usePlaylistStore } from '../stores/playlistStore';
 import { useImplicitFeedbackStore } from '../stores/implicitFeedbackStore';
 import { useGlobalFilterStore } from '../stores/globalFilterStore';
+import { useUiStore } from '../stores/uiStore';
 import type { Song } from '../types/vocadb';
 import SearchFilters from '../components/search/SearchFilters';
 import {
@@ -75,7 +76,7 @@ export default function HomePage() {
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(0);
   const [hasMore, setHasMore] = useState(true);
-  const [isAdvancedOpen, setIsAdvancedOpen] = useState(false);
+  const advancedSearchOpen = useUiStore(s => s.advancedSearchOpen);
   const [recommendationReasons, setRecommendationReasons] = useState<Record<number, string>>({});
 
   const sentinelRef = useRef<HTMLDivElement>(null);
@@ -563,14 +564,14 @@ export default function HomePage() {
 
   return (
     <div className="w-full px-4 sm:px-6 lg:px-8 py-4">
-      {isAdvancedOpen && (
+      {advancedSearchOpen && (
         <div className="mb-6">
           <SearchFilters />
         </div>
       )}
 
       {(isSearchMode || hasSearched) && !isArtistMode && (
-        <div className="mb-6 flex items-center justify-between">
+        <div className="mb-6">
           <div>
             <h1 className="text-xl font-bold mb-1" style={{ color: 'var(--color-text-primary)' }}>
               {searchQuery ? `「${searchQuery}」の検索結果` : '検索結果'}
@@ -581,13 +582,6 @@ export default function HomePage() {
                 : `${songs.length} 件`}
             </p>
           </div>
-          <button
-            className="text-sm px-4 py-2 rounded-lg border transition-colors flex items-center gap-2"
-            style={{ borderColor: 'var(--color-border)', color: 'var(--color-text-secondary)' }}
-            onClick={() => setIsAdvancedOpen(!isAdvancedOpen)}
-          >
-            詳細検索 {isAdvancedOpen ? '▲' : '▼'}
-          </button>
         </div>
       )}
 
@@ -604,17 +598,7 @@ export default function HomePage() {
         </div>
       )}
 
-      {!isSearchMode && !isArtistMode && !hasSearched && (
-        <div className="mb-4 flex items-center justify-end">
-          <button
-            className="text-sm px-4 py-2 rounded-lg border transition-colors flex items-center gap-2"
-            style={{ borderColor: 'var(--color-border)', color: 'var(--color-text-secondary)' }}
-            onClick={() => setIsAdvancedOpen(!isAdvancedOpen)}
-          >
-            詳細検索 {isAdvancedOpen ? '▲' : '▼'}
-          </button>
-        </div>
-      )}
+
 
       {!isSearchMode && !isArtistMode && !hasSearched && (
         <div

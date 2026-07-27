@@ -119,6 +119,54 @@ body {
   box-shadow: 0 0 15px rgba(139, 92, 246, 0.15), 0 0 30px rgba(139, 92, 246, 0.05);
 }
 
+/* ─── TopNav 統一アクションボタン ─── */
+.topnav-action-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  flex-shrink: 0;
+  border: none;
+  cursor: pointer;
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--color-text-secondary);
+  transition: background 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.topnav-action-btn:hover {
+  background: rgba(255, 255, 255, 0.14);
+  color: var(--color-text-primary);
+}
+
+.topnav-action-btn:active {
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.topnav-action-btn[data-active="true"] {
+  color: var(--color-accent-cyan);
+  background: rgba(6, 214, 160, 0.12);
+}
+
+.topnav-action-btn[data-active="true"]:hover {
+  background: rgba(6, 214, 160, 0.2);
+}
+
+/* ドットインジケーター（フィルター適用中など） */
+.topnav-action-btn .action-dot {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-accent-cyan);
+  box-shadow: 0 0 6px rgba(6, 214, 160, 0.6);
+  pointer-events: none;
+}
+
 /* ─── アニメーション ─── */
 @keyframes slideRight {
   from { opacity: 0; transform: translateX(40px); }
