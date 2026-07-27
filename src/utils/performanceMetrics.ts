@@ -66,7 +66,12 @@ export function recordPerformanceMetric(input: {
       // 古いブラウザではoptions形式のmeasureを利用できないため、記録配列だけを使う。
     }
   }
-  if (performanceDebugEnabled()) console.info('[DIVA Performance]', metric);
+  if (performanceDebugEnabled()) {
+    console.info('[DIVA Performance]', metric);
+    if (typeof document !== 'undefined') {
+      document.documentElement.dataset.divaPerformance = JSON.stringify(metrics.slice(-20));
+    }
+  }
   return metric;
 }
 
@@ -80,7 +85,10 @@ export function clearPerformanceMetrics(): void {
     performance.clearMeasures?.('diva:search.backend');
     performance.clearMeasures?.('diva:search.vocadb');
     performance.clearMeasures?.('diva:home.load');
+    performance.clearMeasures?.('diva:home.paint');
+    performance.clearMeasures?.('diva:search.paint');
   }
+  if (typeof document !== 'undefined') delete document.documentElement.dataset.divaPerformance;
 }
 
 declare global {
