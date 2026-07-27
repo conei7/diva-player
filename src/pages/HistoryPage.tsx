@@ -2,8 +2,9 @@ import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import { useHistoryStore } from '../stores/historyStore';
 import VideoGrid from '../components/home/VideoGrid';
 import type { Song } from '../types/vocadb';
-import { getHistoryOverview, type HistoryOverview } from '../services/historyStats';
+import { createHistoryCsv, getHistoryOverview, type HistoryOverview } from '../services/historyStats';
 import { createHistoryBackup, importHistoryBackup } from '../services/historyBackup';
+import { downloadCsv } from '../utils/csv';
 import { downloadJson } from '../utils/playlistBackup';
 import { useAutoPlaySessionStore } from '../stores/autoPlaySessionStore';
 import { useAutoQueueDecisionStore } from '../stores/autoQueueDecisionStore';
@@ -28,6 +29,7 @@ export default function HistoryPage() {
   const [overview, setOverview] = useState<HistoryOverview | null>(null);
   const [backupMessage, setBackupMessage] = useState<string | null>(null);
   const [isImporting, setIsImporting] = useState(false);
+  const [isExportingCsv, setIsExportingCsv] = useState(false);
   const importInputRef = useRef<HTMLInputElement>(null);
   const autoPlaySession = useAutoPlaySessionStore(s => s.session);
   const autoQueueDecisionCount = useAutoQueueDecisionStore(s => s.decisions.length);
@@ -77,6 +79,21 @@ export default function HistoryPage() {
     }
   };
 
+  const handleCsvExport = async () => {
+    setIsExportingCsv(true);
+    try {
+      const csv = await createHistoryCsv();
+      const date = new Date().toISOString().slice(0, 10);
+      downloadCsv(`diva-listening-history-${date}.csv`, csv);
+      setBackupMessage('再生履歴CSVを保存しました。');
+    } catch (error) {
+      console.error('[History] Failed to export CSV', error);
+      setBackupMessage('再生履歴CSVのエクスポートに失敗しました。');
+    } finally {
+      setIsExportingCsv(false);
+    }
+  };
+
   const handleImport = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     event.target.value = '';
@@ -119,6 +136,14 @@ export default function HistoryPage() {
           />
           <button className="yt-action-btn" onClick={handleExport} title="履歴をJSONで保存">
             <span>エクスポート</span>
+          </button>
+          <button
+            className="yt-action-btn"
+            onClick={handleCsvExport}
+            disabled={isExportingCsv}
+            title="履歴をCSVで保存"
+          >
+            <span>{isExportingCsv ? 'CSV作成中…' : 'CSV保存'}</span>
           </button>
           <button
             className="yt-action-btn"

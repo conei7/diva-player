@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { getHistoryReport, type HistoryReport } from '../services/historyStats';
+import { buildHistoryReportCsv, getHistoryReport, type HistoryReport } from '../services/historyStats';
+import { downloadCsv } from '../utils/csv';
+import { toSafeFileName } from '../utils/playlistBackup';
 
 function currentKey(period: 'month' | 'year'): string {
   const parts = new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit' }).formatToParts(new Date());
@@ -21,6 +23,7 @@ export default function ReportsPage() {
   const [report, setReport] = useState<HistoryReport | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [exportMessage, setExportMessage] = useState('');
 
   useEffect(() => {
     const next = currentKey(period);
@@ -42,6 +45,12 @@ export default function ReportsPage() {
   const manualStarts = report?.manualPlayCount ?? 0;
   const autoStarts = report?.autoPlayCount ?? 0;
 
+  const handleCsvExport = () => {
+    if (!report) return;
+    downloadCsv(`diva-listening-report-${toSafeFileName(period)}-${toSafeFileName(key)}.csv`, buildHistoryReportCsv(report));
+    setExportMessage('レポートCSVを保存しました。');
+  };
+
   return (
     <main className="w-full max-w-5xl mx-auto px-4 py-6 pb-32 overflow-y-auto">
       <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
@@ -53,8 +62,18 @@ export default function ReportsPage() {
           {period === 'month'
             ? <input type="month" value={key} onChange={event => setKey(event.target.value)} className="rounded-lg px-3 py-2 bg-black/30 border border-white/10" />
             : <input type="number" min="2000" max="2100" value={key} onChange={event => setKey(event.target.value)} className="rounded-lg px-3 py-2 bg-black/30 border border-white/10 w-28" />}
+          <button
+            type="button"
+            onClick={handleCsvExport}
+            disabled={loading || !report}
+            className="rounded-lg px-3 py-2 bg-cyan-500/20 border border-cyan-300/30 disabled:opacity-50"
+            title="表示中のレポートをCSVで保存"
+          >
+            CSV保存
+          </button>
         </div>
       </div>
+      {exportMessage && <p className="mb-4 text-sm text-white/60" role="status">{exportMessage}</p>}
       {loading && <p className="py-20 text-center text-white/60">集計中…</p>}
       {!loading && error && <p className="py-20 text-center text-red-300">{error}</p>}
       {!loading && !error && report && (

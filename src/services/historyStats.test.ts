@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   applyHistoryEventToStats,
+  buildHistoryCsv,
+  buildHistoryReportCsv,
   compareHistoryStats,
   emptyHistorySongStats,
   isFinalizedPlayEvent,
@@ -64,5 +66,76 @@ describe('history statistics', () => {
 
     expect(compareHistoryStats(longer, base)).toBeLessThan(0);
     expect(compareHistoryStats(newer, longer)).toBeLessThan(0);
+  });
+
+  it('exports finalized events with song metadata and escaped values', () => {
+    const csv = buildHistoryCsv([
+      event({ id: 2, t: 2_000, f: 0 }),
+      event({ id: 1, t: 1_000, p: 30, c: 1 }),
+    ], new Map([[42, { songName: '曲, "名前"', artistString: '作家' }]]));
+
+    expect(csv).toContain('曲名');
+    expect(csv).toContain('"曲, ""名前"""');
+    expect(csv).toContain('はい');
+    expect(csv).not.toContain(',2,');
+    expect(csv.indexOf('\r\n1,')).toBeGreaterThan(-1);
+    expect(csv.indexOf('\r\n2,')).toBe(-1);
+  });
+
+  it('exports report overview, buckets, and top songs even when sections are empty', () => {
+    const csv = buildHistoryReportCsv({
+      period: 'month',
+      key: '2026-01',
+      totalStarts: 0,
+      manualPlayCount: 0,
+      autoPlayCount: 0,
+      uniqueSongCount: 0,
+      totalQualifiedPlays: 0,
+      totalCompletes: 0,
+      totalListenedSeconds: 0,
+      firstPlayedAt: null,
+      lastPlayedAt: null,
+      topSongs: [],
+      topSongsWithMeta: [],
+      buckets: [],
+    });
+
+    expect(csv).toContain('セクション');
+    expect(csv).toContain('概要,month,2026-01');
+    expect(csv).not.toContain('推移');
+  });
+
+  it('includes report bucket and top-song rows', () => {
+    const csv = buildHistoryReportCsv({
+      period: 'year',
+      key: '2026',
+      totalStarts: 2,
+      manualPlayCount: 1,
+      autoPlayCount: 1,
+      uniqueSongCount: 1,
+      totalQualifiedPlays: 1,
+      totalCompletes: 1,
+      totalListenedSeconds: 90,
+      firstPlayedAt: 1_000,
+      lastPlayedAt: 2_000,
+      topSongs: [],
+      topSongsWithMeta: [{
+        songId: 42,
+        songName: '曲名',
+        artistString: '作者',
+        startCount: 2,
+        qualifiedPlayCount: 1,
+        completeCount: 1,
+        manualPlayCount: 1,
+        autoPlayCount: 1,
+        listenedSeconds: 90,
+        firstPlayedAt: 1_000,
+        lastPlayedAt: 2_000,
+      }],
+      buckets: [{ key: '2026-01', starts: 2, qualifiedPlays: 1, listenedSeconds: 90 }],
+    });
+
+    expect(csv).toContain('推移,year,2026-01');
+    expect(csv).toContain('上位曲,year,2026,42,曲名,作者');
   });
 });

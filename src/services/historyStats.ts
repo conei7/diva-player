@@ -1,6 +1,7 @@
 import type { ListeningPlayEvent } from '../stores/historyStore';
 import { HISTORY_STORES, openHistoryDb } from './historyDatabase';
 import { getSongById } from '../api/vocadb';
+import { serializeCsv } from '../utils/csv';
 
 const STATS_VERSION = 2;
 const DEFAULT_TIME_ZONE = 'Asia/Tokyo';
@@ -61,6 +62,11 @@ export interface HistoryReport extends HistoryOverview {
   key: string;
   topSongsWithMeta: Array<HistorySongStats & { songName: string; artistString: string; thumbUrl?: string }>;
   buckets: ReportBucket[];
+}
+
+export interface HistorySongCsvMeta {
+  songName: string;
+  artistString: string;
 }
 
 function requestToPromise<T>(request: IDBRequest<T>): Promise<T> {
@@ -402,6 +408,25 @@ async function enrichTopSongs(stats: HistorySongStats[]): Promise<HistoryReport[
   return result.sort(compareHistoryStats);
 }
 
+async function enrichSongMetadata(songIds: readonly number[]): Promise<Map<number, HistorySongCsvMeta>> {
+  const result = new Map<number, HistorySongCsvMeta>();
+  const queue = [...new Set(songIds)];
+  const worker = async () => {
+    while (queue.length > 0) {
+      const songId = queue.shift();
+      if (songId === undefined) return;
+      try {
+        const song = await getSongById(songId);
+        result.set(songId, { songName: song.name, artistString: song.artistString });
+      } catch {
+        result.set(songId, { songName: `曲ID ${songId}`, artistString: '' });
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(5, queue.length) }, () => worker()));
+  return result;
+}
+
 export async function getHistoryReport(
   period: 'month' | 'year',
   key: string | number,
@@ -443,4 +468,111 @@ export async function getHistoryReport(
     topSongsWithMeta: await enrichTopSongs([...stats].sort(compareHistoryStats).slice(0, 20)),
     buckets: [...buckets.values()].sort((a, b) => a.key.localeCompare(b.key)),
   };
+}
+
+function formatCsvDate(timestamp: number | null, timeZone: string): string {
+  if (timestamp === null) return '';
+  return new Intl.DateTimeFormat('ja-JP', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).format(new Date(timestamp));
+}
+
+export function buildHistoryCsv(
+  events: readonly ListeningPlayEvent[],
+  songs: ReadonlyMap<number, HistorySongCsvMeta> = new Map(),
+  timeZone = DEFAULT_TIME_ZONE,
+): string {
+  const headers = [
+    'イベントID',
+    '再生日時(ISO)',
+    '再生日時(表示)',
+    '曲ID',
+    '曲名',
+    'アーティスト',
+    '再生方式',
+    '再生時間(秒)',
+    '曲の長さ(秒)',
+    '再生率',
+    '有効再生',
+    '完走',
+  ];
+  const rows = events
+    .filter(isFinalizedPlayEvent)
+    .slice()
+    .sort((a, b) => a.t - b.t || (a.id ?? 0) - (b.id ?? 0))
+    .map(event => {
+      const metadata = songs.get(event.s) ?? { songName: `曲ID ${event.s}`, artistString: '' };
+      const progress = event.d && event.d > 0 && event.p !== undefined
+        ? Number((Math.max(0, event.p) / event.d).toFixed(4))
+        : '';
+      return [
+        event.id ?? '',
+        new Date(event.t).toISOString(),
+        formatCsvDate(event.t, timeZone),
+        event.s,
+        metadata.songName,
+        metadata.artistString,
+        event.o === 1 ? '自動' : '手動',
+        event.p === undefined ? '' : Math.max(0, Math.round(event.p)),
+        event.d === undefined ? '' : Math.max(0, Math.round(event.d)),
+        progress,
+        isQualifiedPlay(event) ? 'はい' : 'いいえ',
+        event.c === 1 ? 'はい' : 'いいえ',
+      ];
+    });
+  return serializeCsv(headers, rows);
+}
+
+export async function createHistoryCsv(timeZone = DEFAULT_TIME_ZONE): Promise<string> {
+  const db = await ensureStats(timeZone);
+  const events = await readAllEvents(db);
+  const songIds = events.filter(isFinalizedPlayEvent).map(event => event.s);
+  const songs = await enrichSongMetadata(songIds);
+  return buildHistoryCsv(events, songs, timeZone);
+}
+
+export function buildHistoryReportCsv(report: HistoryReport): string {
+  const headers = [
+    'セクション',
+    '期間',
+    'キー',
+    '曲ID',
+    '曲名',
+    'アーティスト',
+    '開始回数',
+    '有効再生',
+    '完走',
+    '手動再生',
+    '自動再生',
+    '再生時間(秒)',
+    '最初の再生日時(ISO)',
+    '最後の再生日時(ISO)',
+  ];
+  const rows: unknown[][] = [[
+    '概要', report.period, report.key, '', '', '',
+    report.totalStarts, report.totalQualifiedPlays, report.totalCompletes,
+    report.manualPlayCount, report.autoPlayCount, report.totalListenedSeconds,
+    report.firstPlayedAt === null ? '' : new Date(report.firstPlayedAt).toISOString(),
+    report.lastPlayedAt === null ? '' : new Date(report.lastPlayedAt).toISOString(),
+  ]];
+  for (const bucket of report.buckets) {
+    rows.push(['推移', report.period, bucket.key, '', '', '', bucket.starts, bucket.qualifiedPlays, '', '', '', bucket.listenedSeconds, '', '']);
+  }
+  for (const song of report.topSongsWithMeta) {
+    rows.push([
+      '上位曲', report.period, report.key, song.songId, song.songName, song.artistString,
+      song.startCount, song.qualifiedPlayCount, song.completeCount, song.manualPlayCount,
+      song.autoPlayCount, song.listenedSeconds,
+      song.firstPlayedAt === null ? '' : new Date(song.firstPlayedAt).toISOString(),
+      song.lastPlayedAt === null ? '' : new Date(song.lastPlayedAt).toISOString(),
+    ]);
+  }
+  return serializeCsv(headers, rows);
 }
