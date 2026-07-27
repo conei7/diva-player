@@ -2,6 +2,7 @@ using Microsoft.Extensions.Caching.Memory;
 using Npgsql;
 using NpgsqlTypes;
 using System.Diagnostics;
+using System.Text.Json;
 
 namespace VocadbRecommender.Services;
 
@@ -15,6 +16,15 @@ public sealed record ViewHistoryResponse(
     IReadOnlyList<ViewHistoryPoint> Points,
     ViewHistoryPoint? Baseline,
     string Bucket);
+
+public sealed record SongSearchExecution(
+    string ItemsJson,
+    int TotalCount,
+    long ConnectionMs,
+    long CountMs,
+    long DataMs,
+    long TotalMs,
+    bool CacheHit);
 
 /// <summary>PostgreSQL アクセスサービス</summary>
 public class DbService
@@ -32,6 +42,7 @@ public class DbService
 
     private readonly string _connStr;
     private readonly IMemoryCache _cache;
+    private sealed record CachedSongSearch(string ItemsJson, int TotalCount);
 
     public DbService(IConfiguration cfg, IMemoryCache cache)
     {
@@ -113,7 +124,7 @@ public class DbService
         }
     }
 
-    public async Task<(string ItemsJson, int TotalCount)> SearchSongsAsync(
+    public async Task<SongSearchExecution> SearchSongsAsync(
         string? query,
         List<int>? artistIds,
         List<int>? anyArtistIds,
@@ -135,7 +146,45 @@ public class DbService
         List<string>? excludedSongTypes = null,
         bool voiceSynthOnly = false)
     {
+        var totalStopwatch = Stopwatch.StartNew();
+        var cacheKey = "song-search:v1:" + JsonSerializer.Serialize(new
+        {
+            query = query?.Trim().ToLowerInvariant(),
+            artistIds,
+            anyArtistIds,
+            artistIdGroups,
+            songTypes,
+            sort,
+            order,
+            start,
+            maxResults,
+            publishYearFrom,
+            publishYearTo,
+            lengthMinSeconds,
+            lengthMaxSeconds,
+            pvService,
+            audioComputed,
+            minYoutubeViews,
+            minNicoViews,
+            onlyWithPVs,
+            excludedSongTypes,
+            voiceSynthOnly,
+        });
+        if (_cache.TryGetValue(cacheKey, out CachedSongSearch? cached) && cached is not null)
+        {
+            return new SongSearchExecution(
+                cached.ItemsJson,
+                cached.TotalCount,
+                0,
+                0,
+                0,
+                totalStopwatch.ElapsedMilliseconds,
+                true);
+        }
+
+        var connectionStopwatch = Stopwatch.StartNew();
         using var conn = Open();
+        connectionStopwatch.Stop();
         
         // --- 1. WHERE 句の構築 ---
         var conditions = new List<string>();
@@ -300,6 +349,7 @@ public class DbService
         string orderDir = (order.ToLower() == "asc") ? "ASC" : "DESC";
 
         // --- 3. Total Count (フィルターなしは推定値で高速化) ---
+        var countStopwatch = Stopwatch.StartNew();
         int totalCount;
         if (!hasFilter)
         {
@@ -314,10 +364,25 @@ public class DbService
             await using var countCmd = new NpgsqlCommand(countSql, conn);
             foreach (var v in paramValues) countCmd.Parameters.AddWithValue(v);
             totalCount = Convert.ToInt32(await countCmd.ExecuteScalarAsync() ?? 0);
-            if (totalCount == 0) return ("[]", 0);
+            if (totalCount == 0)
+            {
+                countStopwatch.Stop();
+                var emptyResult = new CachedSongSearch("[]", 0);
+                _cache.Set(cacheKey, emptyResult, TimeSpan.FromMinutes(1));
+                return new SongSearchExecution(
+                    emptyResult.ItemsJson,
+                    emptyResult.TotalCount,
+                    connectionStopwatch.ElapsedMilliseconds,
+                    countStopwatch.ElapsedMilliseconds,
+                    0,
+                    totalStopwatch.ElapsedMilliseconds,
+                    false);
+            }
         }
+        countStopwatch.Stop();
 
         // --- 4. データ取得 (行単位で読み取り、C#側でJSON配列構築) ---
+        var dataStopwatch = Stopwatch.StartNew();
         string dataSql = $@"
             SELECT raw_json || jsonb_strip_nulls(jsonb_build_object(
                 'youtubeViews', youtube_views,
@@ -346,7 +411,17 @@ public class DbService
         }
 
         var itemsJson = items.Count > 0 ? "[" + string.Join(",", items) + "]" : "[]";
-        return (itemsJson, totalCount);
+        dataStopwatch.Stop();
+        var result = new CachedSongSearch(itemsJson, totalCount);
+        _cache.Set(cacheKey, result, TimeSpan.FromMinutes(1));
+        return new SongSearchExecution(
+            result.ItemsJson,
+            result.TotalCount,
+            connectionStopwatch.ElapsedMilliseconds,
+            countStopwatch.ElapsedMilliseconds,
+            dataStopwatch.ElapsedMilliseconds,
+            totalStopwatch.ElapsedMilliseconds,
+            false);
     }
 
     // ---- 楽曲情報 -------------------------------------------------

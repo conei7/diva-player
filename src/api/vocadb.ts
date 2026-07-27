@@ -12,6 +12,8 @@ import type { GlobalFilterSettings } from '../stores/globalFilterStore';
 import { VOCALIST_SEARCH_ARTIST_TYPES } from '../config/voiceSynthTypes';
 import { checkBackendHealth } from './backendHealth';
 import { buildSmartPlaylistSearchParams } from '../utils/smartPlaylist';
+import { AsyncTtlCache } from '../utils/asyncTtlCache';
+import { performanceNow, recordPerformanceMetric, type PerformanceSegment } from '../utils/performanceMetrics';
 
 const BASE_URL = 'https://vocadb.net/api';
 const RECOMMENDER_API = import.meta.env.VITE_RECOMMENDER_API || '/backend-api';
@@ -20,21 +22,15 @@ const DEFAULT_FIELDS = 'PVs,Artists,ThumbUrl';
 const CACHE_TTL = 5 * 60 * 1000; // 5分
 const MAX_RETRIES = 3;
 
-// シンプルなメモリキャッシュ
-const cache = new Map<string, { data: unknown; timestamp: number }>();
+// 上限付きメモリキャッシュ。検索の同時実行は同じPromiseへまとめる。
+const cache = new AsyncTtlCache(CACHE_TTL, 250);
 
 function getCached<T>(key: string): T | null {
-  const entry = cache.get(key);
-  if (!entry) return null;
-  if (Date.now() - entry.timestamp > CACHE_TTL) {
-    cache.delete(key);
-    return null;
-  }
-  return entry.data as T;
+  return cache.peek<T>(key);
 }
 
 function setCache(key: string, data: unknown): void {
-  cache.set(key, { data, timestamp: Date.now() });
+  cache.set(key, data);
 }
 
 /**
@@ -94,19 +90,26 @@ function buildSearchParams(params: Record<string, string | number | boolean | st
  */
 export async function attachExternalViews(songs: Song[]): Promise<Song[]> {
   if (!songs || songs.length === 0) return songs;
+  const missingSongs = songs.filter(song => song.youtubeViews === undefined || song.nicoViews === undefined);
+  if (missingSongs.length === 0) return songs;
+
   try {
-    const ids = songs.map(s => s.id).join(',');
-    const res = await fetch(`${RECOMMENDER_API}/api/songs/views?ids=${ids}`);
-    if (res.ok) {
-      const viewsMap: Record<number, { youtubeViews: number; nicoViews: number }> = await res.json();
-      return songs.map(song => {
-        const views = viewsMap[song.id];
-        if (views) {
-          return { ...song, youtubeViews: views.youtubeViews, nicoViews: views.nicoViews };
-        }
-        return song;
-      });
-    }
+    const ids = [...new Set(missingSongs.map(song => song.id))].sort((a, b) => a - b).join(',');
+    const { value: viewsMap } = await cache.get<Record<number, { youtubeViews: number; nicoViews: number }>>(
+      `external-views:${ids}`,
+      async () => {
+        const res = await fetch(`${RECOMMENDER_API}/api/songs/views?ids=${ids}`);
+        if (!res.ok) throw new Error(`External view request failed: ${res.status}`);
+        return res.json();
+      },
+    );
+    return songs.map(song => {
+      const views = viewsMap[song.id];
+      if (views) {
+        return { ...song, youtubeViews: views.youtubeViews, nicoViews: views.nicoViews };
+      }
+      return song;
+    });
   } catch (e) {
     console.error('Failed to fetch external views', e);
   }
@@ -117,6 +120,7 @@ export async function attachExternalViews(songs: Song[]): Promise<Song[]> {
  * 曲を検索
  */
 export async function searchSongs(params: SongSearchParams): Promise<SongSearchResult> {
+  const startedAt = performanceNow();
   const queryParams = buildSearchParams({
     query: params.query || '',
     'tagName[]': params.tagName,
@@ -144,17 +148,34 @@ export async function searchSongs(params: SongSearchParams): Promise<SongSearchR
 
   const url = `${BASE_URL}/songs?${queryParams}`;
   const cacheKey = url;
-  
-  const cached = getCached<SongSearchResult>(cacheKey);
-  if (cached) return cached;
-
-  const response = await fetchWithRetry(url);
-  const data: SongSearchResult = await response.json();
-  
-  data.items = await attachExternalViews(data.items);
-  
-  setCache(cacheKey, data);
-  return data;
+  const segments: PerformanceSegment[] = [];
+  const { value, status } = await cache.get<SongSearchResult>(cacheKey, async () => {
+    const fetchStartedAt = performanceNow();
+    const response = await fetchWithRetry(url);
+    const responseAt = performanceNow();
+    const data: SongSearchResult = await response.json();
+    const parsedAt = performanceNow();
+    data.items = await attachExternalViews(data.items);
+    const enrichedAt = performanceNow();
+    segments.push(
+      { name: 'network', durationMs: responseAt - fetchStartedAt },
+      { name: 'parse', durationMs: parsedAt - responseAt },
+      { name: 'externalViews', durationMs: enrichedAt - parsedAt },
+    );
+    return data;
+  });
+  recordPerformanceMetric({
+    name: 'search.vocadb',
+    startedAt,
+    segments,
+    detail: {
+      cache: status,
+      query: params.query || '',
+      start: params.start || 0,
+      count: value.items.length,
+    },
+  });
+  return value;
 }
 
 /**

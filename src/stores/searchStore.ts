@@ -6,7 +6,11 @@ import { create } from 'zustand';
 import type { Song, SongSortRule, SongType, VocalistMatchMode } from '../types/vocadb';
 import { findArtistByName, searchSongs } from '../api/vocadb';
 import { getGlobalFilterSettings, type GlobalFilterSettings } from './globalFilterStore';
+import { AsyncTtlCache } from '../utils/asyncTtlCache';
+import { parseServerTiming, performanceNow, recordPerformanceMetric, type PerformanceSegment } from '../utils/performanceMetrics';
 const RECOMMENDER_API = import.meta.env.VITE_RECOMMENDER_API || '/backend-api';
+const BACKEND_SEARCH_CACHE_TTL = 60_000;
+const backendSearchCache = new AsyncTtlCache(BACKEND_SEARCH_CACHE_TTL, 100);
 
 // VocaDB APIに存在しないローカルソート種別
 export type LocalSortRule = 'YoutubeViews' | 'NicoViews' | 'TotalViews';
@@ -221,6 +225,7 @@ export async function searchSongsBackend(params: {
   filters?: AdvancedSearchFilters;
   globalFilters?: GlobalFilterSettings;
 }): Promise<{ items: Song[]; totalCount: number }> {
+  const startedAt = performanceNow();
   const validationError = params.filters ? validateAdvancedSearchFilters(params.filters) : null;
   if (validationError) throw new Error(validationError);
   const qs = new URLSearchParams();
@@ -252,9 +257,43 @@ export async function searchSongsBackend(params: {
     if (f.excludedSongTypes.length > 0) qs.set('excludeSongTypes', f.excludedSongTypes.join(','));
   }
 
-  const res = await fetch(`${RECOMMENDER_API}/api/songs/search?${qs.toString()}`);
-  if (!res.ok) throw new Error('Search failed');
-  return res.json();
+  const url = `${RECOMMENDER_API}/api/songs/search?${qs.toString()}`;
+  const segments: PerformanceSegment[] = [];
+  const { value, status } = await backendSearchCache.get<{
+    data: { items: Song[]; totalCount: number };
+    serverTiming: PerformanceSegment[];
+    serverCache?: string;
+  }>(url, async () => {
+    const fetchStartedAt = performanceNow();
+    const res = await fetch(url);
+    const responseAt = performanceNow();
+    if (!res.ok) throw new Error('Search failed');
+    const data: { items: Song[]; totalCount: number } = await res.json();
+    const parsedAt = performanceNow();
+    segments.push(
+      { name: 'network', durationMs: responseAt - fetchStartedAt },
+      { name: 'parse', durationMs: parsedAt - responseAt },
+    );
+    return {
+      data,
+      serverTiming: parseServerTiming(res.headers?.get?.('Server-Timing') ?? null),
+      serverCache: res.headers?.get?.('X-Diva-Search-Cache') ?? undefined,
+    };
+  });
+  recordPerformanceMetric({
+    name: 'search.backend',
+    startedAt,
+    segments: [...segments, ...value.serverTiming],
+    detail: {
+      cache: status,
+      serverCache: value.serverCache,
+      query: params.query || '',
+      start: params.start,
+      count: value.data.items.length,
+      totalCount: value.data.totalCount,
+    },
+  });
+  return value.data;
 }
 
 /** ボーカリストIDを使った曲検索の共通ヘルパー */

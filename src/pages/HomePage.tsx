@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { useSearchParams } from 'react-router-dom';
 import CategoryChips, { type CategoryChip } from '../components/home/CategoryChips';
@@ -8,7 +8,6 @@ import { useHistoryStore } from '../stores/historyStore';
 import { usePlayerStore } from '../stores/playerStore';
 import { useRatingStore } from '../stores/ratingStore';
 import { useSearchStore } from '../stores/searchStore';
-import { useSelectionStore } from '../stores/selectionStore';
 import { usePlaylistStore } from '../stores/playlistStore';
 import { useImplicitFeedbackStore } from '../stores/implicitFeedbackStore';
 import { useGlobalFilterStore } from '../stores/globalFilterStore';
@@ -32,6 +31,8 @@ import {
   requiresExternalViewCounts,
 } from '../utils/globalFilters';
 import { useFavoriteProducerStore } from '../stores/favoriteProducerStore';
+import { performanceNow, recordPerformanceMetric, type PerformanceSegment } from '../utils/performanceMetrics';
+import { selectRotatingWindow } from '../utils/pageWindow';
 
 type HomeCategoryId =
   | 'recommended'
@@ -53,6 +54,7 @@ const CATEGORIES: CategoryChip[] = [
 ];
 
 const PAGE_SIZE = 24;
+const MAX_FAVORITE_PRODUCER_REQUESTS = 4;
 
 function asHomeCategoryId(id: string): HomeCategoryId {
   return CATEGORIES.some(category => category.id === id)
@@ -79,6 +81,8 @@ export default function HomePage() {
   const autoFillPagesRef = useRef(0);
   const requestIdRef = useRef(0);
   const rankingSeedRef = useRef(createRankingSeed());
+  const pendingHomePaintRef = useRef<{ startedAt: number; category: HomeCategoryId } | null>(null);
+  const pendingSearchPaintRef = useRef<number | null>(null);
 
   const { entries, hasHydrated } = useHistoryStore();
   const { currentSong } = usePlayerStore();
@@ -102,8 +106,6 @@ export default function HomePage() {
     error: searchError,
     loadMore: searchLoadMore,
   } = useSearchStore();
-  const setVisibleSongs = useSelectionStore(state => state.setVisibleSongs);
-
   const isSearchMode = searchQuery.length > 0;
   const isArtistMode = !!artistIdParam;
 
@@ -112,6 +114,7 @@ export default function HomePage() {
     if (currentSong?.id) excludeIds.add(currentSong.id);
 
     const playlistSongs = getPlaylistSongs(playlists);
+    const playlistSongIds = new Set(playlistSongs.map(song => song.id));
     const rankedKnown = rankKnownSongs(entries, playlistSongs, ratings, excludeIds, implicitFeedback);
     const knownSongs = rankedKnown.map(item => item.song);
 
@@ -128,7 +131,7 @@ export default function HomePage() {
         const rating = ratings[String(item.song.id)] ?? 0;
         const feedback = implicitFeedback[String(item.song.id)];
         const manualCompletes = feedback?.manualCompleteCount ?? 0;
-        const inPlaylist = playlistSongs.some(song => song.id === item.song.id);
+        const inPlaylist = playlistSongIds.has(item.song.id);
         return rating >= 3 || manualCompletes >= 2 || inPlaylist;
       })
       .slice(0, 3)
@@ -136,6 +139,11 @@ export default function HomePage() {
 
     const audioSeedIds = [...new Set([...seedIds, ...preferenceSeedIds])].slice(0, 2);
 
+    const favoriteProducerWindow = selectRotatingWindow(
+      favoriteProducers,
+      pageNum,
+      MAX_FAVORITE_PRODUCER_REQUESTS,
+    );
     const [popularResult, seedResults, preferenceResults, audioResults, favoriteResults] = await Promise.all([
       searchSongs({
         sort: 'FavoritedTimes',
@@ -156,7 +164,7 @@ export default function HomePage() {
         getAudioSimilarSongs(seedId, 8, pageNum * 8)
           .catch(() => [] as Song[])
       )),
-      Promise.all(favoriteProducers.map(producer =>
+      Promise.all(favoriteProducerWindow.map(producer =>
         getSongsByProducer([producer.id], 0, 12, pageNum * 12)
           .then(result => result.items)
           .catch(() => [] as Song[]),
@@ -206,9 +214,13 @@ export default function HomePage() {
   ) => {
     if (pageNum > 0 && fetchingRef.current) return;
     fetchingRef.current = true;
+    const startedAt = performanceNow();
+    const segments: PerformanceSegment[] = [];
+    if (pageNum === 0) pendingHomePaintRef.current = { startedAt, category };
 
     try {
       let result: Song[] = [];
+      const sourceStartedAt = performanceNow();
 
       if (artistIdParam) {
         const searchResult = await searchSongs({
@@ -283,7 +295,12 @@ export default function HomePage() {
           }
           case 'favorite_producers': {
             if (favoriteProducers.length > 0) {
-              const producerResults = await Promise.all(favoriteProducers.map(producer =>
+              const favoriteProducerWindow = selectRotatingWindow(
+                favoriteProducers,
+                pageNum,
+                MAX_FAVORITE_PRODUCER_REQUESTS,
+              );
+              const producerResults = await Promise.all(favoriteProducerWindow.map(producer =>
                 getSongsByProducer([producer.id], 0, 12, pageNum * 12).then(result => result.items).catch(() => [] as Song[]),
               ));
               const seen = new Set<number>();
@@ -297,16 +314,29 @@ export default function HomePage() {
           }
         }
       }
+      segments.push({ name: 'source', durationMs: performanceNow() - sourceStartedAt });
 
-      if (requestId !== requestIdRef.current) return;
+      if (requestId !== requestIdRef.current) {
+        recordPerformanceMetric({
+          name: 'home.load',
+          startedAt,
+          segments,
+          detail: { category, page: pageNum, stale: true },
+        });
+        return;
+      }
       const fetchedCount = result.length;
       if (!query && !artistIdParam && category !== 'recommended') {
         result = rerankDisplayedSongs(result, rankingSeedRef.current);
       }
       if (requiresExternalViewCounts(globalFilterSettings)) {
+        const externalViewsStartedAt = performanceNow();
         result = await attachExternalViews(result);
+        segments.push({ name: 'externalViews', durationMs: performanceNow() - externalViewsStartedAt });
       }
+      const filterStartedAt = performanceNow();
       result = filterVoiceSynthSongs(result);
+      segments.push({ name: 'voiceFilter', durationMs: performanceNow() - filterStartedAt });
 
       if (pageNum === 0) {
         setSongs(result);
@@ -319,6 +349,18 @@ export default function HomePage() {
         });
       }
       setHasMore(fetchedCount >= PAGE_SIZE);
+      recordPerformanceMetric({
+        name: 'home.load',
+        startedAt,
+        segments,
+        detail: {
+          category,
+          page: pageNum,
+          fetchedCount,
+          displayedCount: result.length,
+          favoriteProducerRequests: Math.min(favoriteProducers.length, MAX_FAVORITE_PRODUCER_REQUESTS),
+        },
+      });
     } catch (error) {
       if (requestId !== requestIdRef.current) return;
       console.error('Failed to fetch songs:', error);
@@ -388,26 +430,86 @@ export default function HomePage() {
     return () => observer.disconnect();
   }, [loadMore]);
 
-  const discoveryLastPlayed = new Map(entries.map(entry => [entry.song.id, entry.playedAt] as const));
-  const discoveryContext = {
+  const discoveryLastPlayed = useMemo(
+    () => new Map(entries.map(entry => [entry.song.id, entry.playedAt] as const)),
+    [entries],
+  );
+  const discoveryContext = useMemo(() => ({
     settings: globalFilterSettings,
     ratings,
     lastPlayedAtBySongId: discoveryLastPlayed,
-  };
-  const strictDiscoverySongs = applyDiscoveryFilter(songs, discoveryContext);
+  }), [discoveryLastPlayed, globalFilterSettings, ratings]);
+  const strictDiscoverySongs = useMemo(
+    () => applyDiscoveryFilter(songs, discoveryContext),
+    [discoveryContext, songs],
+  );
   const shouldRelaxDiscovery = !hasSearched
     && !loading
     && strictDiscoverySongs.length < PAGE_SIZE
     && (!hasMore || autoFillPagesRef.current >= 8);
-  const discoveryResult = shouldRelaxDiscovery
-    ? applyDiscoveryFilterWithRelaxation(songs, discoveryContext, PAGE_SIZE)
-    : { items: strictDiscoverySongs, relaxedConditions: [] };
-  const displaySongs = hasSearched
-    ? applyGlobalSongFilter(searchResults, globalFilterSettings)
-    : discoveryResult.items;
+  const discoveryResult = useMemo(
+    () => shouldRelaxDiscovery
+      ? applyDiscoveryFilterWithRelaxation(songs, discoveryContext, PAGE_SIZE)
+      : { items: strictDiscoverySongs, relaxedConditions: [] },
+    [discoveryContext, shouldRelaxDiscovery, songs, strictDiscoverySongs],
+  );
+  const displaySongs = useMemo(
+    () => hasSearched
+      ? applyGlobalSongFilter(searchResults, globalFilterSettings)
+      : discoveryResult.items,
+    [discoveryResult.items, globalFilterSettings, hasSearched, searchResults],
+  );
   const relaxationMessage = hasSearched
     ? null
     : getDiscoveryRelaxationMessage(discoveryResult.relaxedConditions);
+
+  useEffect(() => {
+    if (searchLoading) {
+      pendingSearchPaintRef.current ??= performanceNow();
+      return;
+    }
+    if (!hasSearched || pendingSearchPaintRef.current === null || typeof requestAnimationFrame === 'undefined') return;
+
+    const startedAt = pendingSearchPaintRef.current;
+    let secondFrame = 0;
+    const firstFrame = requestAnimationFrame(() => {
+      secondFrame = requestAnimationFrame(() => {
+        if (pendingSearchPaintRef.current !== startedAt) return;
+        pendingSearchPaintRef.current = null;
+        recordPerformanceMetric({
+          name: 'search.paint',
+          startedAt,
+          detail: { displayedCount: displaySongs.length },
+        });
+      });
+    });
+    return () => {
+      cancelAnimationFrame(firstFrame);
+      if (secondFrame) cancelAnimationFrame(secondFrame);
+    };
+  }, [displaySongs.length, hasSearched, searchLoading]);
+
+  useEffect(() => {
+    const pending = pendingHomePaintRef.current;
+    if (loading || hasSearched || !pending || typeof requestAnimationFrame === 'undefined') return;
+
+    let secondFrame = 0;
+    const firstFrame = requestAnimationFrame(() => {
+      secondFrame = requestAnimationFrame(() => {
+        if (pendingHomePaintRef.current !== pending) return;
+        pendingHomePaintRef.current = null;
+        recordPerformanceMetric({
+          name: 'home.paint',
+          startedAt: pending.startedAt,
+          detail: { category: pending.category, displayedCount: displaySongs.length },
+        });
+      });
+    });
+    return () => {
+      cancelAnimationFrame(firstFrame);
+      if (secondFrame) cancelAnimationFrame(secondFrame);
+    };
+  }, [displaySongs.length, hasSearched, loading]);
 
   // 足切り後の表示件数が少ない場合は、条件を満たす曲が24件揃うまで追加ページを先読みする。
   // 候補が少ないカテゴリや厳しい再生数条件でも、1ページ目だけで打ち切らない。
@@ -424,10 +526,6 @@ export default function HomePage() {
     autoFillPagesRef.current += 1;
     loadMore();
   }, [strictDiscoverySongs.length, hasSearched, loading, hasMore, loadMore]);
-
-  useEffect(() => {
-    setVisibleSongs(displaySongs);
-  }, [displaySongs, setVisibleSongs]);
 
   return (
     <div className="w-full px-4 sm:px-6 lg:px-8 py-4">

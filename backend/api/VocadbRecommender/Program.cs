@@ -1,4 +1,7 @@
 using VocadbRecommender.Services;
+using Microsoft.AspNetCore.ResponseCompression;
+using System.Diagnostics;
+using System.Globalization;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -8,6 +11,11 @@ builder.Services.Configure<RecommenderOptions>(
 
 // --- サービス登録 ---
 builder.Services.AddMemoryCache();
+builder.Services.AddResponseCompression(options =>
+{
+    options.EnableForHttps = true;
+    options.MimeTypes = ResponseCompressionDefaults.MimeTypes.Concat(["application/json"]);
+});
 builder.Services.AddSingleton<DbService>();
 builder.Services.AddSingleton<QdrantService>();
 builder.Services.AddSingleton<MarkovService>();
@@ -20,10 +28,12 @@ builder.Services.AddCors(options =>
         policy
             .AllowAnyOrigin()
             .AllowAnyMethod()
-            .AllowAnyHeader());
+            .AllowAnyHeader()
+            .WithExposedHeaders("Server-Timing", "X-Diva-Search-Cache"));
 });
 
 var app = builder.Build();
+app.UseResponseCompression();
 app.UseCors("AllowFrontend");
 
 app.MapGet("/api/recommend", async (
@@ -370,8 +380,10 @@ app.MapGet("/api/songs/search", async (
     bool? onlyWithPVs,
     string? excludeSongTypes,
     bool? voiceSynthOnly,
+    HttpContext http,
     DbService db) =>
 {
+    var requestStopwatch = Stopwatch.StartNew();
     const long maxPublishYear = 5_874_896;
     const long maxLengthSeconds = int.MaxValue;
     if (publishYearFrom is < 1 or > maxPublishYear || publishYearTo is < 1 or > maxPublishYear)
@@ -402,7 +414,7 @@ app.MapGet("/api/songs/search", async (
     if (sTypes.Any(type => !validSongTypes.Contains(type)) || excludedTypes.Any(type => !validSongTypes.Contains(type)))
         return Results.BadRequest(new { error = "unknown song type" });
 
-    var (itemsJson, totalCount) = await db.SearchSongsAsync(
+    var execution = await db.SearchSongsAsync(
         query,
         aIds,
         anyAIds,
@@ -424,13 +436,22 @@ app.MapGet("/api/songs/search", async (
         excludedTypes,
         voiceSynthOnly ?? false
     );
+    requestStopwatch.Stop();
+    static string Duration(long milliseconds) => milliseconds.ToString(CultureInfo.InvariantCulture);
+    http.Response.Headers["Server-Timing"] =
+        $"db-open;dur={Duration(execution.ConnectionMs)}, " +
+        $"db-count;dur={Duration(execution.CountMs)}, " +
+        $"db-data;dur={Duration(execution.DataMs)}, " +
+        $"api-total;dur={Duration(requestStopwatch.ElapsedMilliseconds)}";
+    http.Response.Headers["X-Diva-Search-Cache"] = execution.CacheHit ? "hit" : "miss";
+    http.Response.Headers["Timing-Allow-Origin"] = "*";
 
     // itemsJsonは文字列としてのJSON配列 "[{...}, {...}]" なので、
     // Content() を使ってそのまま application/json で返す
     var json = $$"""
     {
-      "items": {{itemsJson}},
-      "totalCount": {{totalCount}}
+      "items": {{execution.ItemsJson}},
+      "totalCount": {{execution.TotalCount}}
     }
     """;
 

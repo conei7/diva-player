@@ -30,6 +30,12 @@ CREATE TABLE IF NOT EXISTS songs (
 CREATE INDEX IF NOT EXISTS songs_publish_date_idx ON songs (publish_date);
 CREATE INDEX IF NOT EXISTS songs_favorited_idx    ON songs (favorited_times DESC);
 CREATE INDEX IF NOT EXISTS songs_type_idx         ON songs (song_type);
+CREATE INDEX IF NOT EXISTS songs_name_trgm_idx
+    ON songs USING gin (name gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS songs_name_en_trgm_idx
+    ON songs USING gin (name_en gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS songs_artist_string_trgm_idx
+    ON songs USING gin (artist_string gin_trgm_ops);
 
 -- Heuristic discovery quality signals are refreshed by diva-data-pipeline.
 CREATE TABLE IF NOT EXISTS song_discovery_quality (
@@ -136,6 +142,7 @@ CREATE TABLE IF NOT EXISTS pvs (
 );
 
 CREATE INDEX IF NOT EXISTS pvs_song_idx ON pvs (song_id);
+CREATE INDEX IF NOT EXISTS pvs_playable_song_idx ON pvs (song_id) WHERE disabled = FALSE;
 
 -- ============================================================
 -- 特徴量テーブル (Qdrant へのメタデータを補助)

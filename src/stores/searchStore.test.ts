@@ -93,4 +93,25 @@ describe('backend artist union search', () => {
     const url = new URL(String(fetchMock.mock.calls[0]?.[0]), 'https://example.test');
     expect(url.searchParams.get('artistIdGroups')).toBe('58538,98107|1,2');
   });
+
+  it('reuses identical backend searches for one minute', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      headers: { get: () => null },
+      json: async () => ({ items: [], totalCount: 12 }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const params = {
+      query: 'cache-contract-search',
+      sort: 'FavoritedTimes' as const,
+      sortOrder: 'desc' as const,
+      start: 0,
+      maxResults: 24,
+    };
+
+    await searchSongsBackend(params);
+    await searchSongsBackend(params);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
 });

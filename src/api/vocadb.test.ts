@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { Artist } from '../types/vocadb';
-import { rankArtistsByName, resolveProducerByName, searchVocalistsByName, selectVocalistVariants } from './vocadb';
+import type { Artist, Song } from '../types/vocadb';
+import { attachExternalViews, rankArtistsByName, resolveProducerByName, searchVocalistsByName, selectVocalistVariants } from './vocadb';
 import { VOCALIST_SEARCH_ARTIST_TYPES } from '../config/voiceSynthTypes';
 
 function artist(id: number, name: string): Artist {
@@ -84,5 +84,41 @@ describe('selectVocalistVariants', () => {
     ];
 
     expect(selectVocalistVariants(candidates, 'ずんだもん').map(item => item.id)).toEqual([1, 2, 3, 4]);
+  });
+});
+
+describe('attachExternalViews', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('does not request view counts that are already present', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const songs = [
+      { id: 1, youtubeViews: 10, nicoViews: 20 },
+      { id: 2, youtubeViews: 30, nicoViews: 40 },
+    ] as Song[];
+
+    expect(await attachExternalViews(songs)).toBe(songs);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('requests only songs with missing external counts', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ 2: { youtubeViews: 50, nicoViews: 60 } }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const songs = [
+      { id: 1, youtubeViews: 10, nicoViews: 20 },
+      { id: 2 },
+    ] as Song[];
+
+    const enriched = await attachExternalViews(songs);
+
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain('ids=2');
+    expect(enriched[0]).toBe(songs[0]);
+    expect(enriched[1]).toMatchObject({ id: 2, youtubeViews: 50, nicoViews: 60 });
   });
 });
