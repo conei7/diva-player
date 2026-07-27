@@ -50,7 +50,13 @@ export default function TopNav() {
   const navigate = useNavigate();
   const location = useLocation();
   const isWatchPage = location.pathname === '/watch';
-  const { toggleSidebar, toggleMobileDrawer, advancedSearchOpen, toggleAdvancedSearch } = useUiStore();
+  const {
+    toggleSidebar,
+    toggleMobileDrawer,
+    advancedSearchOpen,
+    toggleAdvancedSearch,
+    setAdvancedSearchOpen,
+  } = useUiStore();
   const { hiddenMode, toggleHiddenMode } = usePlayerStore();
   const {
     setQuery: setSearchStoreQuery,
@@ -553,7 +559,11 @@ export default function TopNav() {
             className="topnav-action-btn"
             data-active={advancedSearchOpen}
             onClick={() => {
-              if (location.pathname !== '/') navigate('/');
+              if (location.pathname !== '/') {
+                setAdvancedSearchOpen(true);
+                navigate('/');
+                return;
+              }
               toggleAdvancedSearch();
             }}
             title={advancedSearchOpen ? '詳細検索を閉じる' : '詳細検索'}
