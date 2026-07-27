@@ -30,6 +30,18 @@ CREATE TABLE IF NOT EXISTS songs (
 CREATE INDEX IF NOT EXISTS songs_publish_date_idx ON songs (publish_date);
 CREATE INDEX IF NOT EXISTS songs_favorited_idx    ON songs (favorited_times DESC);
 CREATE INDEX IF NOT EXISTS songs_type_idx         ON songs (song_type);
+CREATE INDEX IF NOT EXISTS songs_favorited_search_idx
+    ON songs (favorited_times DESC NULLS LAST);
+CREATE INDEX IF NOT EXISTS songs_youtube_views_search_idx
+    ON songs (youtube_views DESC NULLS LAST);
+CREATE INDEX IF NOT EXISTS songs_nico_views_search_idx
+    ON songs (nico_views DESC NULLS LAST);
+CREATE INDEX IF NOT EXISTS songs_total_views_search_idx
+    ON songs ((COALESCE(youtube_views, 0) + COALESCE(nico_views, 0)) DESC NULLS LAST);
+CREATE INDEX IF NOT EXISTS songs_rating_search_idx
+    ON songs (rating_score DESC NULLS LAST);
+CREATE INDEX IF NOT EXISTS songs_publish_date_search_idx
+    ON songs (publish_date DESC NULLS LAST);
 CREATE INDEX IF NOT EXISTS songs_name_trgm_idx
     ON songs USING gin (name gin_trgm_ops);
 CREATE INDEX IF NOT EXISTS songs_name_en_trgm_idx
