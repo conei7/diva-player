@@ -3,11 +3,11 @@ import { useShallow } from 'zustand/react/shallow';
 import { useSearchParams } from 'react-router-dom';
 import CategoryChips, { type CategoryChip } from '../components/home/CategoryChips';
 import VideoGrid from '../components/home/VideoGrid';
-import { searchSongs, getTopSongs, getRecommendedSongs, getSimilarSongs, getAudioSimilarSongs, getTrendingSongs, attachExternalViews, getSongsByProducer } from '../api/vocadb';
+import { searchSongs, getTopSongs, getRecommendedSongs, getSimilarSongs, getAudioSimilarSongs, getTrendingSongs, attachExternalViews } from '../api/vocadb';
 import { useHistoryStore } from '../stores/historyStore';
 import { usePlayerStore } from '../stores/playerStore';
 import { useRatingStore } from '../stores/ratingStore';
-import { useSearchStore } from '../stores/searchStore';
+import { searchSongsBackend, useSearchStore } from '../stores/searchStore';
 import { usePlaylistStore } from '../stores/playlistStore';
 import { useImplicitFeedbackStore } from '../stores/implicitFeedbackStore';
 import { useGlobalFilterStore } from '../stores/globalFilterStore';
@@ -33,6 +33,7 @@ import {
 import { useFavoriteProducerStore } from '../stores/favoriteProducerStore';
 import { performanceNow, recordPerformanceMetric, type PerformanceSegment } from '../utils/performanceMetrics';
 import { selectRotatingWindow } from '../utils/pageWindow';
+import { resolveWithin } from '../utils/timeBudget';
 
 type HomeCategoryId =
   | 'recommended'
@@ -55,6 +56,7 @@ const CATEGORIES: CategoryChip[] = [
 
 const PAGE_SIZE = 24;
 const MAX_FAVORITE_PRODUCER_REQUESTS = 4;
+const INITIAL_OPTIONAL_RECOMMENDATION_BUDGET_MS = 2_500;
 
 function asHomeCategoryId(id: string): HomeCategoryId {
   return CATEGORIES.some(category => category.id === id)
@@ -144,14 +146,7 @@ export default function HomePage() {
       pageNum,
       MAX_FAVORITE_PRODUCER_REQUESTS,
     );
-    const [popularResult, seedResults, preferenceResults, audioResults, favoriteResults] = await Promise.all([
-      searchSongs({
-        sort: 'FavoritedTimes',
-        maxResults: 12,
-        start: pageNum * 12,
-        getTotalCount: false,
-        onlyWithPVs: true,
-      }),
+    const optionalSources = Promise.all([
       Promise.all(seedIds.map(seedId =>
         getRecommendedSongs(seedId, 8, 0.0, ratings, pageNum * 8)
           .catch(() => [] as Song[])
@@ -165,11 +160,29 @@ export default function HomePage() {
           .catch(() => [] as Song[])
       )),
       Promise.all(favoriteProducerWindow.map(producer =>
-        getSongsByProducer([producer.id], 0, 12, pageNum * 12)
+        searchSongsBackend({
+          artistIds: [producer.id],
+          sort: 'FavoritedTimes',
+          sortOrder: 'desc',
+          start: pageNum * 12,
+          maxResults: 12,
+        })
           .then(result => result.items)
           .catch(() => [] as Song[]),
       )),
     ]);
+    const [popularResult, optionalResult] = await Promise.all([
+      searchSongsBackend({
+        sort: 'FavoritedTimes',
+        sortOrder: 'desc',
+        maxResults: 12,
+        start: pageNum * 12,
+      }),
+      pageNum === 0
+        ? resolveWithin(optionalSources, INITIAL_OPTIONAL_RECOMMENDATION_BUDGET_MS, [[], [], [], []] as Song[][][])
+        : optionalSources.then(value => ({ value, timedOut: false })),
+    ]);
+    const [seedResults, preferenceResults, audioResults, favoriteResults] = optionalResult.value;
 
     const knownStart = pageNum * 10;
     const detailed = rerankRecommendationCandidatesDetailed({
@@ -203,6 +216,13 @@ export default function HomePage() {
       selectedCount: detailed.ranked.length,
       trace: detailed.trace,
     });
+    if (optionalResult.timedOut) {
+      recordPerformanceMetric({
+        name: 'home.optional-budget',
+        startedAt: performanceNow() - INITIAL_OPTIONAL_RECOMMENDATION_BUDGET_MS,
+        detail: { page: pageNum, timedOut: true },
+      });
+    }
     return result.length > 0 ? result : getTopSongs(720, PAGE_SIZE);
   }, [currentSong, entries, favoriteProducers, playlists, ratings, implicitFeedback]);
 
@@ -223,23 +243,21 @@ export default function HomePage() {
       const sourceStartedAt = performanceNow();
 
       if (artistIdParam) {
-        const searchResult = await searchSongs({
+        const searchResult = await searchSongsBackend({
           artistIds: [Number(artistIdParam)],
           sort: 'FavoritedTimes',
+          sortOrder: 'desc',
           maxResults: PAGE_SIZE,
           start: pageNum * PAGE_SIZE,
-          getTotalCount: false,
-          onlyWithPVs: true,
         });
         result = searchResult.items;
       } else if (query) {
-        const searchResult = await searchSongs({
+        const searchResult = await searchSongsBackend({
           query,
           sort: 'FavoritedTimes',
+          sortOrder: 'desc',
           maxResults: PAGE_SIZE,
           start: pageNum * PAGE_SIZE,
-          getTotalCount: false,
-          onlyWithPVs: true,
         });
         result = searchResult.items;
       } else {
@@ -301,7 +319,13 @@ export default function HomePage() {
                 MAX_FAVORITE_PRODUCER_REQUESTS,
               );
               const producerResults = await Promise.all(favoriteProducerWindow.map(producer =>
-                getSongsByProducer([producer.id], 0, 12, pageNum * 12).then(result => result.items).catch(() => [] as Song[]),
+                searchSongsBackend({
+                  artistIds: [producer.id],
+                  sort: 'FavoritedTimes',
+                  sortOrder: 'desc',
+                  start: pageNum * 12,
+                  maxResults: 12,
+                }).then(result => result.items).catch(() => [] as Song[]),
               ));
               const seen = new Set<number>();
               result = producerResults.flat().filter(song => {

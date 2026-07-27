@@ -296,6 +296,44 @@ export async function searchSongsBackend(params: {
   return value.data;
 }
 
+async function searchSongsPreferBackend(params: {
+  query?: string;
+  artistIds?: number[];
+  sort: ExtendedSortRule;
+  sortOrder: SortOrder;
+  start: number;
+  maxResults: number;
+  songTypes?: SongType[];
+  getTotalCount: boolean;
+}): Promise<{ items: Song[]; totalCount: number }> {
+  try {
+    return await searchSongsBackend({
+      query: params.query,
+      artistIds: params.artistIds,
+      sort: params.sort,
+      sortOrder: params.sortOrder,
+      start: params.start,
+      maxResults: params.maxResults,
+      songTypes: params.songTypes,
+    });
+  } catch {
+    const fallback = await searchSongs({
+      query: params.query,
+      artistIds: params.artistIds,
+      sort: toApiSort(params.sort),
+      maxResults: params.maxResults,
+      start: params.start,
+      getTotalCount: params.getTotalCount,
+      onlyWithPVs: true,
+      songTypes: params.songTypes,
+    });
+    return {
+      ...fallback,
+      items: applyLocalSort(fallback.items, params.sort, params.sortOrder),
+    };
+  }
+}
+
 /** ボーカリストIDを使った曲検索の共通ヘルパー */
 async function fetchByArtistIds(
   producerArtistId: number | undefined,
@@ -527,26 +565,25 @@ export const useSearchStore = create<SearchState>((set, get) => ({
       exactApiOffset: 0,
     });
     const songTypes = songTypeFilter === 'Original' ? ['Original' as const] : undefined;
-    const apiSort = toApiSort(sort);
     const useBackend = LOCAL_SORT_RULES.has(sort)
       || hasAdvancedFilters(advancedFilters)
       || hasGlobalSongFilters(globalFilters);
     try {
       const result = useBackend
         ? await searchSongsBackend({ query: trimmed, sort, sortOrder, start: 0, maxResults: PAGE_SIZE, songTypes, filters: advancedFilters, globalFilters })
-        : await searchSongs({
+        : await searchSongsPreferBackend({
             query: trimmed,
-            sort: apiSort,
+            sort,
+            sortOrder,
             maxResults: PAGE_SIZE,
             start: 0,
             getTotalCount: true,
-            onlyWithPVs: true,
             songTypes,
           });
 
       if (generation !== searchGeneration) return;
       set({
-        results: useBackend ? result.items : applyLocalSort(result.items, sort, sortOrder),
+        results: result.items,
         totalCount: result.totalCount,
         isLoading: false,
       });
@@ -589,17 +626,17 @@ export const useSearchStore = create<SearchState>((set, get) => ({
         return;
       }
       
-      const result = await searchSongs({
+      const result = await searchSongsPreferBackend({
         artistIds: [artistId],
-        sort: toApiSort(sort),
+        sort,
+        sortOrder,
         maxResults: PAGE_SIZE,
         start: 0,
         getTotalCount: true,
-        onlyWithPVs: true,
         songTypes,
       });
       if (generation !== searchGeneration) return;
-      set({ results: applyLocalSort(result.items, sort, sortOrder), totalCount: result.totalCount, isLoading: false });
+      set({ results: result.items, totalCount: result.totalCount, isLoading: false });
     } catch (error) {
       if (generation !== searchGeneration) return;
       set({ error: getSearchErrorMessage(error, useBackend), isLoading: false, results: [] });
@@ -620,7 +657,6 @@ export const useSearchStore = create<SearchState>((set, get) => ({
       resolvedArtistId: null,
     });
     const songTypes = songTypeFilter === 'Original' ? ['Original' as const] : undefined;
-    const apiSort = toApiSort(sort);
     const requiresBackend = LOCAL_SORT_RULES.has(sort)
       || hasAdvancedFilters(advancedFilters)
       || hasGlobalSongFilters(globalFilters);
@@ -630,13 +666,13 @@ export const useSearchStore = create<SearchState>((set, get) => ({
         findArtistByName(query),
         isLocal
           ? searchSongsBackend({ query, sort, sortOrder, start: 0, maxResults: PAGE_SIZE, songTypes, filters: advancedFilters, globalFilters })
-          : searchSongs({
+          : searchSongsPreferBackend({
               query,
-              sort: apiSort,
+              sort,
+              sortOrder,
               maxResults: PAGE_SIZE,
               start: 0,
               getTotalCount: true,
-              onlyWithPVs: true,
               songTypes,
             }),
       ]);
@@ -667,15 +703,15 @@ export const useSearchStore = create<SearchState>((set, get) => ({
       } else if (producerArtistId) {
         const artistResult = isLocal
           ? await searchSongsBackend({ artistIds: [producerArtistId], sort, sortOrder, start: 0, maxResults: PAGE_SIZE, songTypes, filters: advancedFilters, globalFilters })
-          : await searchSongs({
+          : await searchSongsPreferBackend({
               artistIds: [producerArtistId],
-              sort: apiSort,
+              sort,
+              sortOrder,
               maxResults: PAGE_SIZE,
               start: 0,
               getTotalCount: true,
-              onlyWithPVs: true,
-          songTypes,
-        });
+              songTypes,
+            });
         const artistSongIds = new Set(artistResult.items.map(s => s.id));
         const merged = [
           ...artistResult.items,
@@ -683,7 +719,7 @@ export const useSearchStore = create<SearchState>((set, get) => ({
         ];
         if (generation !== searchGeneration) return;
         set({
-          results: isLocal ? merged : applyLocalSort(merged, sort, sortOrder),
+          results: merged,
           totalCount: artistResult.totalCount,
           resolvedArtistId: producerArtistId,
           isLoading: false,
@@ -691,7 +727,7 @@ export const useSearchStore = create<SearchState>((set, get) => ({
       } else {
         if (generation !== searchGeneration) return;
         set({
-          results: isLocal ? titleResult.items : applyLocalSort(titleResult.items, sort, sortOrder),
+          results: titleResult.items,
           totalCount: titleResult.totalCount,
           resolvedArtistId: null,
           isLoading: false,
@@ -756,19 +792,19 @@ export const useSearchStore = create<SearchState>((set, get) => ({
               artistIds: resolvedArtistId ? [resolvedArtistId] : undefined,
               sort, sortOrder, start: nextPage * PAGE_SIZE, maxResults: PAGE_SIZE, songTypes, filters: advancedFilters, globalFilters
             })
-          : await searchSongs({
+          : await searchSongsPreferBackend({
               query: resolvedArtistId ? undefined : query,
               artistIds: resolvedArtistId ? [resolvedArtistId] : undefined,
-              sort: toApiSort(sort),
+              sort,
+              sortOrder,
               maxResults: PAGE_SIZE,
               start: nextPage * PAGE_SIZE,
               getTotalCount: false,
-              onlyWithPVs: true,
               songTypes,
             });
         if (generation !== searchGeneration) return;
         set({
-          results: useBackend ? [...results, ...result.items] : applyLocalSort([...results, ...result.items], sort, sortOrder),
+          results: [...results, ...result.items],
           currentPage: nextPage,
           isLoading: false
         });
