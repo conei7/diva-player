@@ -10,7 +10,9 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { usePlayerStore } from '../../stores/playerStore';
+import { useRatingStore } from '../../stores/ratingStore';
 import type { Song } from '../../types/vocadb';
+import StarRating from '../player/StarRating';
 
 // ─── 共通メニューボタン ──────────────────────────────────────────────────────
 function SongContextMenu({
@@ -111,6 +113,9 @@ function SongRowContent({
   onToggleSelect, onPlay, onRemove, onMoveTop, onMoveBottom, onSetCover,
   dragHandleProps,
 }: SongRowContentProps) {
+  const rating = useRatingStore(state => state.ratings[String(song.id)] ?? 0);
+  const setRating = useRatingStore(state => state.setRating);
+
   return (
     <>
       {selectionMode ? (
@@ -144,7 +149,14 @@ function SongRowContent({
       </div>
       <div className="flex min-w-0 flex-1 cursor-pointer flex-col justify-center overflow-hidden" onClick={selectionMode ? onToggleSelect : onPlay}>
         <p className="truncate break-all text-sm font-medium leading-5">{song.name}</p>
-        <p className="truncate break-all text-xs leading-4 text-neutral-400">{song.artistString}</p>
+        <div className="flex min-w-0 items-center gap-2">
+          <p className="min-w-0 truncate break-all text-xs leading-4 text-neutral-400">{song.artistString}</p>
+          <StarRating
+            size="sm"
+            rating={rating}
+            onRate={nextRating => setRating(song.id, nextRating)}
+          />
+        </div>
       </div>
       <SongContextMenu onPlay={onPlay} onMoveTop={onMoveTop} onMoveBottom={onMoveBottom} onSetCover={onSetCover} onRemove={onRemove} />
     </>
