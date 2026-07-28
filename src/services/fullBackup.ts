@@ -161,6 +161,12 @@ function parseSmartRule(value: unknown): SmartPlaylistRule | undefined {
     sortBy: value.sortBy as SmartPlaylistRule['sortBy'],
     producerId,
     producerName: typeof value.producerName === 'string' ? value.producerName : undefined,
+    publishYearFrom: typeof value.publishYearFrom === 'string' ? value.publishYearFrom : undefined,
+    publishYearTo: typeof value.publishYearTo === 'string' ? value.publishYearTo : undefined,
+    lengthMinSeconds: typeof value.lengthMinSeconds === 'string' ? value.lengthMinSeconds : undefined,
+    lengthMaxSeconds: typeof value.lengthMaxSeconds === 'string' ? value.lengthMaxSeconds : undefined,
+    pvService: value.pvService as SmartPlaylistRule['pvService'],
+    audioComputed: value.audioComputed as SmartPlaylistRule['audioComputed'],
   });
 }
 

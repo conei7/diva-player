@@ -4,6 +4,7 @@ import OriginalVersionLink from './OriginalVersionLink';
 import AlbumPlaylistButton from '../playlist/AlbumPlaylistButton';
 import FavoriteProducerButton from './FavoriteProducerButton';
 import { getSongProducerEntries } from '../../utils/songArtists';
+import PVSourceSelector from '../player/PVSourceSelector';
 
 
 /**
@@ -85,6 +86,7 @@ export default function VideoInfo({ song }: VideoInfoProps) {
         </div>
       </div>
       <OriginalVersionLink song={song} />
+      <div className="mt-2"><PVSourceSelector song={song} /></div>
       <AlbumPlaylistButton song={song} />
     </div>
   );

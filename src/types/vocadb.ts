@@ -8,6 +8,7 @@ import type { VoiceSynthArtistType } from '../config/voiceSynthTypes';
 // ─── PV (動画) ───
 export type PVService = 'Youtube' | 'NicoNicoDouga' | 'SoundCloud' | 'Vimeo' | 'Piapro' | 'Bilibili' | 'File' | 'LocalFile' | 'Creofuga' | 'Bandcamp';
 export type PVType = 'Original' | 'Reprint' | 'Other';
+export type PVPreference = 'auto' | 'Youtube' | 'NicoNicoDouga';
 
 export interface PV {
   author: string;
@@ -165,6 +166,12 @@ export interface SmartPlaylistRule {
   sortBy?: SmartPlaylistSortBy;
   producerId?: number;
   producerName?: string;
+  publishYearFrom?: string;
+  publishYearTo?: string;
+  lengthMinSeconds?: string;
+  lengthMaxSeconds?: string;
+  pvService?: 'any' | 'youtube' | 'niconico' | 'both';
+  audioComputed?: 'any' | 'yes' | 'no';
 }
 
 export type SmartPlaylistMaxSongs = 50 | 100 | 200;

@@ -7,16 +7,18 @@
  */
 
 import { create } from 'zustand';
-import type { Song, PV, PVService, PVType } from '../types/vocadb';
+import type { Song, PV, PVService, PVType, PVPreference } from '../types/vocadb';
 import { getSongById } from '../api/vocadb';
 import { dedupeQueueBySongId, shuffleQueue } from '../utils/queueUtils';
 import { storage } from '../utils/storage';
 import { useProgressStore } from './progressStore';
 import { useAutoPlaySessionStore } from './autoPlaySessionStore';
 
-type FailedPVMap = Record<string, string[]>;
+type FailedPVMap = Record<string, Record<string, number>>;
 
 const FAILED_PVS_KEY = 'failedPVs';
+const PV_PREFERENCE_KEY = 'pvPreference';
+const FAILED_PV_RETRY_MS = 30 * 60 * 1000;
 const VOLUME_KEY = 'volume';
 const LOOP_MODE_KEY = 'loopMode';
 const PLAYER_QUEUE_KEY = 'playerQueue';
@@ -49,27 +51,72 @@ function getPVFailureKey(pv: PV): string {
 }
 
 function getFailedPVMap(): FailedPVMap {
-  return storage.get<FailedPVMap>(FAILED_PVS_KEY) ?? {};
+  const stored = storage.get<unknown>(FAILED_PVS_KEY);
+  if (!stored || typeof stored !== 'object') return {};
+
+  const normalized: FailedPVMap = {};
+  for (const [songId, value] of Object.entries(stored as Record<string, unknown>)) {
+    if (Array.isArray(value)) {
+      // 旧形式は期限切れとして扱い、既存ユーザーを永続的にPVから遠ざけない。
+      normalized[songId] = Object.fromEntries(value.filter(item => typeof item === 'string').map(key => [key, 0]));
+      continue;
+    }
+    if (!value || typeof value !== 'object') continue;
+    const failures = Object.entries(value as Record<string, unknown>)
+      .filter(([, failedAt]) => typeof failedAt === 'number' && Number.isFinite(failedAt))
+      .map(([key, failedAt]) => [key, failedAt as number] as const);
+    if (failures.length > 0) normalized[songId] = Object.fromEntries(failures);
+  }
+  return normalized;
 }
 
 function getFailedPVKeys(songId: number): Set<string> {
-  return new Set(getFailedPVMap()[String(songId)] ?? []);
+  const now = Date.now();
+  const failures = getFailedPVMap()[String(songId)] ?? {};
+  return new Set(Object.entries(failures)
+    .filter(([, failedAt]) => now - failedAt < FAILED_PV_RETRY_MS)
+    .map(([key]) => key));
 }
 
 function markPVFailed(songId: number, pv: PV): void {
   const songKey = String(songId);
   const failureKey = getPVFailureKey(pv);
   const failedMap = getFailedPVMap();
-  const currentFailures = new Set(failedMap[songKey] ?? []);
-
-  currentFailures.add(failureKey);
+  const currentFailures = { ...(failedMap[songKey] ?? {}), [failureKey]: Date.now() };
   storage.set(FAILED_PVS_KEY, {
     ...failedMap,
-    [songKey]: Array.from(currentFailures),
+    [songKey]: currentFailures,
   });
 }
 
-function choosePVByPriority(pvs: PV[]): PV | null {
+function clearPVFailure(songId: number, pv: PV): void {
+  const songKey = String(songId);
+  const failedMap = getFailedPVMap();
+  const currentFailures = { ...(failedMap[songKey] ?? {}) };
+  delete currentFailures[getPVFailureKey(pv)];
+  if (Object.keys(currentFailures).length === 0) delete failedMap[songKey];
+  else failedMap[songKey] = currentFailures;
+  storage.set(FAILED_PVS_KEY, failedMap);
+}
+
+function getStoredPVPreference(): PVPreference {
+  const stored = storage.get<PVPreference>(PV_PREFERENCE_KEY);
+  return stored === 'Youtube' || stored === 'NicoNicoDouga' ? stored : 'auto';
+}
+
+function choosePVByPriority(pvs: PV[], preference: PVPreference = 'auto'): PV | null {
+  const preferredServices: PVService[] = preference === 'Youtube'
+    ? ['Youtube', 'NicoNicoDouga']
+    : preference === 'NicoNicoDouga'
+      ? ['NicoNicoDouga', 'Youtube']
+      : ['Youtube', 'NicoNicoDouga'];
+  for (const service of preferredServices) {
+    for (const { pvType } of pvPriorities.filter(item => item.service === service)) {
+      const match = pvs.find(pv => pv.service === service && pv.pvType === pvType);
+      if (match) return match;
+    }
+  }
+
   for (const { service, pvType } of pvPriorities) {
     const match = pvs.find(pv => pv.service === service && pv.pvType === pvType);
     if (match) return match;
@@ -172,7 +219,8 @@ export function getPlayablePV(song: Song): PV | null {
   const failedPVKeys = getFailedPVKeys(song.id);
   const unfailedPVs = enabledPVs.filter(pv => !failedPVKeys.has(getPVFailureKey(pv)));
 
-  return choosePVByPriority(unfailedPVs) || choosePVByPriority(enabledPVs);
+  const preference = getStoredPVPreference();
+  return choosePVByPriority(unfailedPVs, preference) || choosePVByPriority(enabledPVs, preference);
 }
 
 export type MixMode = 'balanced' | 'deep' | 'producer';
@@ -181,6 +229,7 @@ interface PlayerState {
   // 現在の再生状態
   currentSong: Song | null;
   currentPV: PV | null;
+  pvPreference: PVPreference;
   currentPlaybackSource: PlaybackSource;
   playbackSequence: number;
   isPlaying: boolean;
@@ -204,6 +253,9 @@ interface PlayerState {
   setIsPlaying: (isPlaying: boolean) => void;
   setError: (error: string | null) => void;
   tryNextPV: () => void;
+  selectPV: (pv: PV) => void;
+  setPVPreference: (preference: PVPreference) => void;
+  markPVHealthy: (pv: PV) => void;
 
   // 詳細パネルのプレイヤー表示先DOM
   detailPanelEl: HTMLElement | null;
@@ -331,6 +383,7 @@ async function restoreStoredPlayerQueue(): Promise<void> {
 export const usePlayerStore = create<PlayerState>((set, get) => ({
   currentSong: initialCurrentSong,
   currentPV: initialCurrentSong ? getPlayablePV(initialCurrentSong) : null,
+  pvPreference: getStoredPVPreference(),
   currentPlaybackSource: storedPlayerQueue?.currentPlaybackSource ?? 'manual',
   playbackSequence: 0,
   isPlaying: false,
@@ -445,6 +498,29 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   setIsPlaying: (isPlaying: boolean) => set({ isPlaying }),
   setError: (error: string | null) => set({ error }),
 
+  selectPV: (pv: PV) => {
+    const { currentSong, isPlaying } = get();
+    if (!currentSong || pv.disabled || !['Youtube', 'NicoNicoDouga'].includes(pv.service)) return;
+    clearPVFailure(currentSong.id, pv);
+    useProgressStore.getState().setDuration(currentSong.lengthSeconds || pv.length || 0);
+    useProgressStore.getState().setProgress(0);
+    set({ currentPV: pv, playbackSequence: get().playbackSequence + 1, isPlaying, error: null });
+  },
+
+  setPVPreference: (preference: PVPreference) => {
+    storage.set(PV_PREFERENCE_KEY, preference);
+    const currentSong = get().currentSong;
+    set({ pvPreference: preference });
+    if (!currentSong) return;
+    const nextPV = getPlayablePV(currentSong);
+    if (nextPV && nextPV.id !== get().currentPV?.id) get().selectPV(nextPV);
+  },
+
+  markPVHealthy: (pv: PV) => {
+    const currentSong = get().currentSong;
+    if (currentSong) clearPVFailure(currentSong.id, pv);
+  },
+
   tryNextPV: () => {
     const { currentSong, currentPV } = get();
     if (!currentSong || !currentSong.pvs) { get().next(); return; }
@@ -456,7 +532,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     const failedPVKeys = getFailedPVKeys(currentSong.id);
     const enabledPVs = getEnabledPlayablePVs(currentSong).filter(pv => pv.id !== currentPV?.id);
     const unfailedPVs = enabledPVs.filter(pv => !failedPVKeys.has(getPVFailureKey(pv)));
-    const nextPV = choosePVByPriority(unfailedPVs) || choosePVByPriority(enabledPVs);
+    const nextPV = choosePVByPriority(unfailedPVs, get().pvPreference) || choosePVByPriority(enabledPVs, get().pvPreference);
 
     if (nextPV) {
       set({ currentPV: nextPV, error: null });

@@ -5,6 +5,7 @@ import {
   SMART_DERIVED_SONG_TYPES,
   SMART_PLAYLIST_MAX_SONGS,
   SMART_PLAYLIST_SORTS,
+  SMART_PLAYLIST_PRESETS,
   formatSmartPlaylistRule,
   filterSmartPlaylistSongs,
   normalizeSmartPlaylistRule,
@@ -60,7 +61,16 @@ export default function SmartPlaylistBuilder({
 }: SmartPlaylistBuilderProps) {
   const [name, setName] = useState(initialName);
   const [rule, setRule] = useState<SmartPlaylistRule>(() => normalizeRule(initialRule ?? EMPTY_RULE));
-  const [showAdvanced, setShowAdvanced] = useState(() => (initialRule?.excludedSongTypes.length ?? 0) > 0);
+  const [showAdvanced, setShowAdvanced] = useState(() => {
+    if (!initialRule) return false;
+    return (initialRule.excludedSongTypes?.length ?? 0) > 0
+      || !!initialRule.publishYearFrom
+      || !!initialRule.publishYearTo
+      || !!initialRule.lengthMinSeconds
+      || !!initialRule.lengthMaxSeconds
+      || (initialRule.pvService ?? 'any') !== 'any'
+      || (initialRule.audioComputed ?? 'any') !== 'any';
+  });
   const [preview, setPreview] = useState<{
     state: 'loading' | 'success' | 'empty' | 'error';
     matchedCount?: number;
@@ -171,6 +181,25 @@ export default function SmartPlaylistBuilder({
           />
         </label>
 
+        <label className="mt-3 flex flex-col gap-1.5">
+          <span className="text-xs font-medium text-neutral-300">条件プリセット</span>
+          <select
+            className="input w-full"
+            defaultValue=""
+            onChange={event => {
+              const preset = SMART_PLAYLIST_PRESETS.find(item => item.id === event.target.value);
+              if (preset) {
+                setRule(current => normalizeRule({ ...current, ...preset.rule }));
+                setShowAdvanced(true);
+              }
+              event.target.value = '';
+            }}
+          >
+            <option value="">プリセットを選択</option>
+            {SMART_PLAYLIST_PRESETS.map(preset => <option key={preset.id} value={preset.id}>{preset.label}</option>)}
+          </select>
+        </label>
+
         <section className="mt-5 rounded-2xl border border-white/[0.08] bg-white/[0.03] p-4">
           <div className="flex items-start justify-between gap-3">
             <div>
@@ -245,6 +274,41 @@ export default function SmartPlaylistBuilder({
                   <span className="mt-0.5 block text-xs leading-5 text-neutral-500">カバー、リミックス、アレンジ、マッシュアップを除外します。</span>
                 </span>
               </label>
+              <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                <label className="flex flex-col gap-1.5">
+                  <span className="text-xs text-neutral-400">公開年（開始）</span>
+                  <input className="input w-full" inputMode="numeric" value={rule.publishYearFrom ?? ''} onChange={event => updateRule({ publishYearFrom: event.target.value.replace(/\D/g, '').slice(0, 4) })} placeholder="例: 2020" />
+                </label>
+                <label className="flex flex-col gap-1.5">
+                  <span className="text-xs text-neutral-400">公開年（終了）</span>
+                  <input className="input w-full" inputMode="numeric" value={rule.publishYearTo ?? ''} onChange={event => updateRule({ publishYearTo: event.target.value.replace(/\D/g, '').slice(0, 4) })} placeholder="例: 2024" />
+                </label>
+                <label className="flex flex-col gap-1.5">
+                  <span className="text-xs text-neutral-400">長さ（最短秒）</span>
+                  <input className="input w-full" inputMode="numeric" value={rule.lengthMinSeconds ?? ''} onChange={event => updateRule({ lengthMinSeconds: event.target.value.replace(/\D/g, '') })} placeholder="例: 60" />
+                </label>
+                <label className="flex flex-col gap-1.5">
+                  <span className="text-xs text-neutral-400">長さ（最長秒）</span>
+                  <input className="input w-full" inputMode="numeric" value={rule.lengthMaxSeconds ?? ''} onChange={event => updateRule({ lengthMaxSeconds: event.target.value.replace(/\D/g, '') })} placeholder="例: 360" />
+                </label>
+                <label className="flex flex-col gap-1.5">
+                  <span className="text-xs text-neutral-400">利用可能PV</span>
+                  <select className="input w-full" value={rule.pvService ?? 'any'} onChange={event => updateRule({ pvService: event.target.value as SmartPlaylistRule['pvService'] })}>
+                    <option value="any">指定なし</option>
+                    <option value="youtube">YouTubeあり</option>
+                    <option value="niconico">ニコニコあり</option>
+                    <option value="both">両方あり</option>
+                  </select>
+                </label>
+                <label className="flex flex-col gap-1.5">
+                  <span className="text-xs text-neutral-400">音響データ</span>
+                  <select className="input w-full" value={rule.audioComputed ?? 'any'} onChange={event => updateRule({ audioComputed: event.target.value as SmartPlaylistRule['audioComputed'] })}>
+                    <option value="any">指定なし</option>
+                    <option value="yes">あり</option>
+                    <option value="no">なし</option>
+                  </select>
+                </label>
+              </div>
             </div>
           )}
         </section>

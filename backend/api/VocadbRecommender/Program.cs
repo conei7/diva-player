@@ -376,6 +376,7 @@ app.MapGet("/api/songs/search", async (
     string? artistIds,
     string? anyArtistIds,
     string? artistIdGroups,
+    string? artistRole,
     string? songTypes,
     string sort,
     string order,
@@ -417,6 +418,15 @@ app.MapGet("/api/songs/search", async (
     if (!TryParseIntegerGroups(artistIdGroups, out var aIdGroups))
         return Results.BadRequest(new { error = "artistIdGroups must contain pipe-separated integer lists" });
 
+    var validArtistRoles = new HashSet<string>(StringComparer.Ordinal)
+    {
+        "Default", "Vocalist", "Composer", "Lyricist", "Arranger", "Illustrator", "Animator",
+        "Instrumentalist", "Mixer", "Mastering", "Publisher", "Distributor", "Encoder", "Chorus",
+        "Other", "VoiceDataProvider", "VocalDataProvider", "VoiceManipulator",
+    };
+    if (!string.IsNullOrWhiteSpace(artistRole) && !validArtistRoles.Contains(artistRole))
+        return Results.BadRequest(new { error = "unknown artist role" });
+
     var sTypes = ParseCsv(songTypes);
     var excludedTypes = ParseCsv(excludeSongTypes);
     var validSongTypes = new HashSet<string>(StringComparer.Ordinal)
@@ -432,6 +442,7 @@ app.MapGet("/api/songs/search", async (
         aIds,
         anyAIds,
         aIdGroups,
+        artistRole,
         sTypes,
         sort,
         order ?? "desc",

@@ -16,6 +16,8 @@ import {
 } from '../../stores/globalFilterStore';
 import type { GlobalFilterSettings } from '../../stores/globalFilterStore';
 import { useSearchStore } from '../../stores/searchStore';
+import { usePlayerStore } from '../../stores/playerStore';
+import type { PVPreference } from '../../types/vocadb';
 import {
   areGlobalFilterSettingsEqual,
   getGlobalFilterSummary,
@@ -43,6 +45,8 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
   const resetGlobalFilterSettings = useGlobalFilterStore(state => state.resetSettings);
   const hasSearched = useSearchStore(state => state.hasSearched);
   const refreshSearch = useSearchStore(state => state.search);
+  const pvPreference = usePlayerStore(state => state.pvPreference);
+  const setPVPreference = usePlayerStore(state => state.setPVPreference);
 
   useEffect(() => {
     if (!isOpen) {
@@ -248,6 +252,22 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
               <button type="button" className="btn-primary flex-1" disabled={busy || !filtersAreDirty} onClick={applyFilters}>適用</button>
               <button type="button" className="btn-secondary" disabled={busy} onClick={resetFilters}>初期化</button>
             </div>
+          </section>
+          <section className="rounded-xl p-3" style={{ background: 'var(--color-bg-secondary)' }}>
+            <h3 className="font-semibold">再生PV</h3>
+            <label className="mt-3 block text-sm">
+              優先するサービス
+              <select
+                className="input mt-1 w-full"
+                value={pvPreference}
+                onChange={event => setPVPreference(event.target.value as PVPreference)}
+              >
+                <option value="auto">自動（YouTube公式を優先）</option>
+                <option value="Youtube">YouTube優先</option>
+                <option value="NicoNicoDouga">ニコニコ優先</option>
+              </select>
+            </label>
+            <p className="mt-1 text-xs opacity-70">曲ごとの再生画面では、利用可能なPVを個別に選択できます。再生不能PVは30分後に再試行します。</p>
           </section>
           <button type="button" className="btn-primary w-full" disabled={busy} onClick={() => void exportBackup()}>履歴・評価・プレイリストをバックアップ</button>
           <input ref={inputRef} className="hidden" type="file" accept="application/json,.json" onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; if (file) readBackup(file); }} />

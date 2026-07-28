@@ -4,6 +4,7 @@ import { useRatingStore } from '../../stores/ratingStore';
 import StarRating from '../player/StarRating';
 import ShareCurrentSong from '../player/ShareCurrentSong';
 import SleepTimer from '../player/SleepTimer';
+import PVSourceSelector from '../player/PVSourceSelector';
 
 /**
  * PlayerBar - 画面下部固定のプレイヤーコントロール (YouTube Music スタイル)
@@ -200,6 +201,7 @@ export default function PlayerBar() {
                 : (currentPV.pvType !== 'Original' ? '非公式ニコ' : 'ニコニコ')}
             </span>
           )}
+          <PVSourceSelector compact />
 
           {/* ボリューム */}
           <div className="hidden sm:flex items-center gap-1.5 mr-1">

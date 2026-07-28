@@ -65,6 +65,39 @@ describe('smart playlist UI summaries', () => {
     expect(params.get('maxResults')).toBe('50');
   });
 
+  it('passes metadata conditions to the database and filters the preview consistently', () => {
+    const params = buildSmartPlaylistSearchParams(rule({
+      publishYearFrom: '2020',
+      publishYearTo: '2024',
+      lengthMinSeconds: '60',
+      lengthMaxSeconds: '180',
+      pvService: 'both',
+      audioComputed: 'yes',
+    }));
+    expect(params.get('publishYearFrom')).toBe('2020');
+    expect(params.get('lengthMaxSeconds')).toBe('180');
+    expect(params.get('pvService')).toBe('both');
+    expect(params.get('audioComputed')).toBe('yes');
+
+    const matching = {
+      ...({ id: 10, name: 'matching', songType: 'Original', publishDate: '2022-01-01', lengthSeconds: 120, audioComputed: true } as Song),
+      pvs: [
+        { service: 'Youtube', disabled: false },
+        { service: 'NicoNicoDouga', disabled: false },
+      ],
+      artists: [{ categories: 'Vocalist', artist: { artistType: 'Vocaloid' } }],
+    } as Song;
+    const outside = { ...matching, id: 11, publishDate: '2019-01-01' } as Song;
+    expect(filterSmartPlaylistSongs([matching, outside], rule({
+      publishYearFrom: '2020',
+      publishYearTo: '2024',
+      lengthMinSeconds: '60',
+      lengthMaxSeconds: '180',
+      pvService: 'both',
+      audioComputed: 'yes',
+    })).map(song => song.id)).toEqual([10]);
+  });
+
   it('normalizes legacy and invalid rule values to safe defaults', () => {
     expect(normalizeSmartPlaylistRule({
       minYoutubeViews: -10,

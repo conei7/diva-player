@@ -50,6 +50,27 @@ describe('backend artist union search', () => {
     vi.unstubAllGlobals();
   });
 
+  it('encodes a credit role together with an artist id', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ items: [], totalCount: 0 }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await searchSongsBackend({
+      artistIds: [123],
+      artistRole: 'Illustrator',
+      sort: 'FavoritedTimes',
+      sortOrder: 'desc',
+      start: 0,
+      maxResults: 24,
+    });
+
+    const url = new URL(String(fetchMock.mock.calls[0]?.[0]), 'https://example.test');
+    expect(url.searchParams.get('artistIds')).toBe('123');
+    expect(url.searchParams.get('artistRole')).toBe('Illustrator');
+  });
+
   it('sends singer variants as anyArtistIds while keeping required artists separate', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,

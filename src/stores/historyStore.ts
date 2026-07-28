@@ -40,6 +40,8 @@ interface LegacyPersistedHistory {
 interface HistoryState {
   entries: HistoryEntry[];
   totalPlays: number;
+  hasMoreEntries: boolean;
+  isLoadingMore: boolean;
   hasHydrated: boolean;
   activePlayEventId?: number;
   activeSongId?: number;
@@ -49,11 +51,14 @@ interface HistoryState {
   addToHistory: (song: Song, source?: 'manual' | 'auto', playbackSequence?: number) => void;
   finalizeHistoryEntry: (songId: number, progressSeconds: number, durationSeconds: number, playbackSequence?: number) => void;
   reloadHistory: () => Promise<void>;
+  loadMoreHistory: () => Promise<void>;
   clearHistory: () => Promise<void>;
   setHasHydrated: (hasHydrated: boolean) => void;
 }
 
 let initializePromise: Promise<void> | null = null;
+let oldestLoadedEventId: number | undefined;
+let historyPageHasMore = false;
 const pendingFinalizations = new Map<number, { progressSeconds: number; durationSeconds: number }>();
 
 function requestToPromise<T>(request: IDBRequest<T>): Promise<T> {
@@ -137,20 +142,23 @@ async function countPlayEvents(): Promise<number> {
   return requestToPromise(tx.objectStore(PLAY_STORE).count());
 }
 
-async function loadHistorySnapshot(): Promise<Pick<HistoryState, 'entries' | 'totalPlays'>> {
+async function loadHistorySnapshot(): Promise<Pick<HistoryState, 'entries' | 'totalPlays' | 'hasMoreEntries'>> {
   const events = await readRecentPlayEvents(RECENT_ENTRY_LIMIT);
   const entries = await loadEntriesFromEvents(events);
   const totalPlays = await countPlayEvents();
-  return { entries, totalPlays };
+  oldestLoadedEventId = events.at(-1)?.id;
+  historyPageHasMore = events.length >= RECENT_ENTRY_LIMIT && oldestLoadedEventId !== undefined;
+  return { entries, totalPlays, hasMoreEntries: historyPageHasMore };
 }
 
-async function readRecentPlayEvents(limit: number): Promise<ListeningPlayEvent[]> {
+async function readRecentPlayEvents(limit: number, beforeId?: number): Promise<ListeningPlayEvent[]> {
   const db = await openHistoryDb();
 
   return new Promise((resolve, reject) => {
     const tx = db.transaction(PLAY_STORE, 'readonly');
     const store = tx.objectStore(PLAY_STORE);
-    const request = store.openCursor(null, 'prev');
+    const range = beforeId === undefined ? undefined : IDBKeyRange.upperBound(beforeId, true);
+    const request = store.openCursor(range ?? null, 'prev');
     const events: ListeningPlayEvent[] = [];
 
     request.onsuccess = () => {
@@ -237,6 +245,8 @@ async function migrateLegacyHistory(): Promise<void> {
 export const useHistoryStore = create<HistoryState>((set, get) => ({
   entries: [],
   totalPlays: 0,
+  hasMoreEntries: false,
+  isLoadingMore: false,
   hasHydrated: false,
   activePlayEventId: undefined,
   activeSongId: undefined,
@@ -248,7 +258,7 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
 
     initializePromise = (async () => {
       if (typeof indexedDB === 'undefined') {
-        set({ hasHydrated: true });
+        set({ hasHydrated: true, hasMoreEntries: false });
         return;
       }
       await migrateLegacyHistory();
@@ -265,6 +275,27 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
   reloadHistory: async () => {
     const snapshot = await loadHistorySnapshot();
     set({ ...snapshot, hasHydrated: true });
+  },
+
+  loadMoreHistory: async () => {
+    const { hasMoreEntries, isLoadingMore } = get();
+    if (!hasMoreEntries || isLoadingMore || oldestLoadedEventId === undefined) return;
+    set({ isLoadingMore: true });
+    try {
+      const events = await readRecentPlayEvents(RECENT_ENTRY_LIMIT, oldestLoadedEventId);
+      const olderEntries = await loadEntriesFromEvents(events);
+      oldestLoadedEventId = events.at(-1)?.id;
+      historyPageHasMore = events.length >= RECENT_ENTRY_LIMIT && oldestLoadedEventId !== undefined;
+      const latestEntries = get().entries;
+      set({
+        entries: [...latestEntries, ...olderEntries],
+        hasMoreEntries: historyPageHasMore,
+        isLoadingMore: false,
+      });
+    } catch (error) {
+      console.error('[History] Failed to load more listening history', error);
+      set({ isLoadingMore: false });
+    }
   },
 
   addToHistory: (song, source = 'manual', playbackSequence) => {
@@ -310,7 +341,7 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
       });
 
     set({
-      entries: [newEntry, ...entries].slice(0, RECENT_ENTRY_LIMIT),
+      entries: [newEntry, ...entries],
       totalPlays: totalPlays + 1,
       activePlayEventId: undefined,
       activeSongId: song.id,
@@ -337,9 +368,13 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
   clearHistory: async () => {
     await clearPlayEvents();
     pendingFinalizations.clear();
+    oldestLoadedEventId = undefined;
+    historyPageHasMore = false;
     set({
       entries: [],
       totalPlays: 0,
+      hasMoreEntries: false,
+      isLoadingMore: false,
       activePlayEventId: undefined,
       activeSongId: undefined,
       activePlayedAt: undefined,

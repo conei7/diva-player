@@ -23,7 +23,7 @@ function formatDuration(seconds: number): string {
  * HistoryPage - 視聴履歴ページ
  */
 export default function HistoryPage() {
-  const { entries, totalPlays, hasHydrated, clearHistory, reloadHistory } = useHistoryStore();
+  const { entries, totalPlays, hasHydrated, hasMoreEntries, isLoadingMore, clearHistory, reloadHistory, loadMoreHistory } = useHistoryStore();
   const [filterText, setFilterText] = useState('');
   const [sortMode, setSortMode] = useState<HistorySortMode>('recent');
   const [overview, setOverview] = useState<HistoryOverview | null>(null);
@@ -256,6 +256,26 @@ export default function HistoryPage() {
               {songs.length} / {entries.length} 件を表示中
             </p>
           )}
+        </div>
+      )}
+
+      {entries.length > 0 && (
+        <div className="mb-4 flex items-center gap-3">
+          {hasMoreEntries ? (
+            <button
+              type="button"
+              className="yt-action-btn"
+              onClick={() => void loadMoreHistory()}
+              disabled={isLoadingMore}
+            >
+              {isLoadingMore ? '読み込み中…' : 'さらに読み込む'}
+            </button>
+          ) : (
+            <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>全履歴を読み込み済み</span>
+          )}
+          <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
+            表示中 {entries.length.toLocaleString()} / {totalPlays.toLocaleString()} 件
+          </span>
         </div>
       )}
 

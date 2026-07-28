@@ -133,6 +133,7 @@ public class DbService
         List<int>? artistIds,
         List<int>? anyArtistIds,
         List<List<int>>? artistIdGroups,
+        string? artistRole,
         List<string>? songTypes,
         string sort,
         string order,
@@ -158,6 +159,7 @@ public class DbService
             artistIds,
             anyArtistIds,
             artistIdGroups,
+            artistRole,
             songTypes,
             sort,
             order,
@@ -236,6 +238,13 @@ public class DbService
                 paramValues.Add(aId);
                 paramIndex++;
             }
+        }
+
+        if (!string.IsNullOrWhiteSpace(artistRole))
+        {
+            conditions.Add($"EXISTS (SELECT 1 FROM song_artists sa WHERE sa.song_id = songs.id AND sa.roles @> ARRAY[${paramIndex}]::text[])");
+            paramValues.Add(artistRole);
+            paramIndex++;
         }
 
         if (anyArtistIds != null && anyArtistIds.Count > 0)

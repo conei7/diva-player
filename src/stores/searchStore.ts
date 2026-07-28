@@ -158,6 +158,7 @@ interface SearchState {
 
   // アーティスト検索モード時に使うアーティストID（null = 曲名検索）
   resolvedArtistId: number | null;
+  artistRole: string | null;
 
   // ボーカリストフィルター
   vocalistFilters: VocalistFilter[];
@@ -195,7 +196,7 @@ interface SearchState {
   resetAdvancedFilters: () => void;
   search: () => Promise<void>;
   searchTitleOnly: (query: string) => Promise<void>;
-  searchByArtistId: (artistId: number, artistName: string) => Promise<void>;
+  searchByArtistId: (artistId: number, artistName: string, artistRole?: string) => Promise<void>;
   loadMore: () => Promise<void>;
   reset: () => void;
 }
@@ -215,6 +216,7 @@ function toApiSort(sort: ExtendedSortRule): SongSortRule {
 export async function searchSongsBackend(params: {
   query?: string;
   artistIds?: number[];
+  artistRole?: string;
   anyArtistIds?: number[];
   artistIdGroups?: number[][];
   songTypes?: SongType[];
@@ -232,6 +234,7 @@ export async function searchSongsBackend(params: {
   const qs = new URLSearchParams();
   if (params.query) qs.set('query', params.query);
   if (params.artistIds && params.artistIds.length > 0) qs.set('artistIds', params.artistIds.join(','));
+  if (params.artistRole) qs.set('artistRole', params.artistRole);
   if (params.anyArtistIds && params.anyArtistIds.length > 0) qs.set('anyArtistIds', params.anyArtistIds.join(','));
   if (params.artistIdGroups && params.artistIdGroups.length > 0) {
     qs.set('artistIdGroups', params.artistIdGroups.map(group => group.join(',')).join('|'));
@@ -301,6 +304,7 @@ export async function searchSongsBackend(params: {
 async function searchSongsPreferBackend(params: {
   query?: string;
   artistIds?: number[];
+  artistRole?: string;
   sort: ExtendedSortRule;
   sortOrder: SortOrder;
   start: number;
@@ -312,6 +316,7 @@ async function searchSongsPreferBackend(params: {
     return await searchSongsBackend({
       query: params.query,
       artistIds: params.artistIds,
+      artistRole: params.artistRole,
       sort: params.sort,
       sortOrder: params.sortOrder,
       start: params.start,
@@ -509,6 +514,7 @@ export const useSearchStore = create<SearchState>((set, get) => ({
   sort: 'FavoritedTimes' as ExtendedSortRule,
   sortOrder: 'desc' as SortOrder,
   resolvedArtistId: null,
+  artistRole: null,
   vocalistFilters: [],
   vocalistMatchMode: 'All',
   songTypeFilter: 'All',
@@ -523,7 +529,7 @@ export const useSearchStore = create<SearchState>((set, get) => ({
 
   // Typing a new query leaves an artist-detail result behind otherwise; the
   // next submit would keep searching the previously resolved artist.
-  setQuery: (query: string) => set({ query, resolvedArtistId: null }),
+  setQuery: (query: string) => set({ query, resolvedArtistId: null, artistRole: null }),
 
   setSort: (sort: ExtendedSortRule) => set({ sort }),
   setSortOrder: (order: SortOrder) => set({ sortOrder: order }),
@@ -565,6 +571,7 @@ export const useSearchStore = create<SearchState>((set, get) => ({
       currentPage: 0,
       hasSearched: true,
       resolvedArtistId: null,
+      artistRole: null,
       vocalistFilters: [],
       exactApiOffset: 0,
     });
@@ -601,7 +608,7 @@ export const useSearchStore = create<SearchState>((set, get) => ({
     }
   },
 
-  searchByArtistId: async (artistId: number, artistName: string) => {
+  searchByArtistId: async (artistId: number, artistName: string, artistRole?: string) => {
     const generation = ++searchGeneration;
     const { sort, sortOrder, songTypeFilter, advancedFilters } = get();
     const globalFilters = getGlobalFilterSettings();
@@ -613,18 +620,21 @@ export const useSearchStore = create<SearchState>((set, get) => ({
       currentPage: 0,
       hasSearched: true,
       resolvedArtistId: artistId,
+      artistRole: artistRole || null,
       query: artistName,
       vocalistFilters: [],
       exactApiOffset: 0,
     });
     const songTypes = songTypeFilter === 'Original' ? ['Original' as const] : undefined;
-    const useBackend = LOCAL_SORT_RULES.has(sort)
+    const useBackend = !!artistRole
+      || LOCAL_SORT_RULES.has(sort)
       || hasAdvancedFilters(advancedFilters)
       || hasGlobalSongFilters(globalFilters);
     try {
       if (useBackend) {
         const result = await searchSongsBackend({
           artistIds: [artistId],
+          artistRole,
           sort, sortOrder, start: 0, maxResults: PAGE_SIZE, songTypes, filters: advancedFilters, globalFilters
         });
         if (generation !== searchGeneration) return;
@@ -651,7 +661,7 @@ export const useSearchStore = create<SearchState>((set, get) => ({
 
   search: async () => {
     const generation = ++searchGeneration;
-    const { query, sort, sortOrder, resolvedArtistId, vocalistFilters, vocalistMatchMode, songTypeFilter, advancedFilters } = get();
+    const { query, sort, sortOrder, resolvedArtistId, artistRole, vocalistFilters, vocalistMatchMode, songTypeFilter, advancedFilters } = get();
     const globalFilters = getGlobalFilterSettings();
     set({
       isLoading: true,
@@ -663,7 +673,8 @@ export const useSearchStore = create<SearchState>((set, get) => ({
       resolvedArtistId,
     });
     const songTypes = songTypeFilter === 'Original' ? ['Original' as const] : undefined;
-    const requiresBackend = LOCAL_SORT_RULES.has(sort)
+    const requiresBackend = !!artistRole
+      || LOCAL_SORT_RULES.has(sort)
       || hasAdvancedFilters(advancedFilters)
       || hasGlobalSongFilters(globalFilters);
     try {
@@ -672,6 +683,7 @@ export const useSearchStore = create<SearchState>((set, get) => ({
         const result = isLocal
           ? await searchSongsBackend({
               artistIds: [resolvedArtistId],
+              artistRole: artistRole || undefined,
               sort,
               sortOrder,
               start: 0,
@@ -737,7 +749,7 @@ export const useSearchStore = create<SearchState>((set, get) => ({
         });
       } else if (producerArtistId) {
         const artistResult = isLocal
-          ? await searchSongsBackend({ artistIds: [producerArtistId], sort, sortOrder, start: 0, maxResults: PAGE_SIZE, songTypes, filters: advancedFilters, globalFilters })
+          ? await searchSongsBackend({ artistIds: [producerArtistId], artistRole: artistRole || undefined, sort, sortOrder, start: 0, maxResults: PAGE_SIZE, songTypes, filters: advancedFilters, globalFilters })
           : await searchSongsPreferBackend({
               artistIds: [producerArtistId],
               sort,
@@ -782,7 +794,7 @@ export const useSearchStore = create<SearchState>((set, get) => ({
     const generation = searchGeneration;
     const {
       query, sort, sortOrder, results, currentPage, isLoading, totalCount,
-      resolvedArtistId, vocalistFilters, vocalistMatchMode, exactApiOffset, songTypeFilter,
+      resolvedArtistId, artistRole, vocalistFilters, vocalistMatchMode, exactApiOffset, songTypeFilter,
       advancedFilters,
     } = get();
     const globalFilters = getGlobalFilterSettings();
@@ -825,6 +837,7 @@ export const useSearchStore = create<SearchState>((set, get) => ({
           ? await searchSongsBackend({
               query: resolvedArtistId ? undefined : query,
               artistIds: resolvedArtistId ? [resolvedArtistId] : undefined,
+              artistRole: resolvedArtistId ? (artistRole || undefined) : undefined,
               sort, sortOrder, start: nextPage * PAGE_SIZE, maxResults: PAGE_SIZE, songTypes, filters: advancedFilters, globalFilters
             })
           : await searchSongsPreferBackend({
@@ -847,7 +860,7 @@ export const useSearchStore = create<SearchState>((set, get) => ({
     } catch (error) {
       if (generation !== searchGeneration) return;
       set({
-        error: getSearchErrorMessage(error, LOCAL_SORT_RULES.has(sort) || hasAdvancedFilters(advancedFilters) || hasGlobalSongFilters(globalFilters)),
+        error: getSearchErrorMessage(error, !!artistRole || LOCAL_SORT_RULES.has(sort) || hasAdvancedFilters(advancedFilters) || hasGlobalSongFilters(globalFilters)),
         isLoading: false,
       });
     }
@@ -858,6 +871,7 @@ export const useSearchStore = create<SearchState>((set, get) => ({
     set({
       query: '',
       resolvedArtistId: null,
+      artistRole: null,
       vocalistFilters: [],
       songTypeFilter: 'All',
       advancedFilters: DEFAULT_ADVANCED_FILTERS,

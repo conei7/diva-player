@@ -151,11 +151,29 @@ export default function Description({ song }: DescriptionProps) {
               <div>
                 <span className="text-xs font-medium" style={{ color: 'var(--color-text-muted)' }}>その他参加</span>
                 <div className="flex flex-wrap gap-1 mt-1">
-                  {others.map(a => (
-                    <span key={a.id} className="text-sm px-2 py-0.5 rounded-full" style={{ background: 'var(--color-surface-hover)', color: 'var(--color-text-secondary)' }}>
-                      {a.name || a.artist?.name} ({a.categories})
-                    </span>
-                  ))}
+                  {others.map(a => {
+                    const artistName = a.name || a.artist?.name || '';
+                    const role = (a.roles || a.effectiveRoles || a.categories || 'Other').split(',')[0].trim();
+                    const artistId = a.artist?.id;
+                    return (
+                      <button
+                        key={a.id}
+                        type="button"
+                        className="text-sm px-2 py-0.5 rounded-full hover:brightness-125 transition-all"
+                        style={{ background: 'var(--color-surface-hover)', color: 'var(--color-text-secondary)' }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (artistId) {
+                            navigate(`/?artistId=${artistId}&artistRole=${encodeURIComponent(role)}&artistName=${encodeURIComponent(artistName)}`);
+                          } else if (artistName) {
+                            navigate(`/?q=${encodeURIComponent(artistName)}`);
+                          }
+                        }}
+                      >
+                        {artistName} ({role})
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
             )}

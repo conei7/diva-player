@@ -69,6 +69,7 @@ export default function HomePage() {
   const [searchParams] = useSearchParams();
   const searchQuery = searchParams.get('q') || '';
   const artistIdParam = searchParams.get('artistId');
+  const artistRoleParam = searchParams.get('artistRole');
   const artistNameParam = searchParams.get('artistName') || '';
 
   const [activeCategory, setActiveCategory] = useState<HomeCategoryId>('recommended');
@@ -123,8 +124,8 @@ export default function HomePage() {
     if (!Number.isInteger(artistId) || artistId <= 0) return;
 
     setAdvancedSearchOpen(true);
-    searchByArtistId(artistId, decodeURIComponent(artistNameParam));
-  }, [artistIdParam, artistNameParam, searchByArtistId, setAdvancedSearchOpen]);
+    searchByArtistId(artistId, decodeURIComponent(artistNameParam), artistRoleParam || undefined);
+  }, [artistIdParam, artistNameParam, artistRoleParam, searchByArtistId, setAdvancedSearchOpen]);
 
   const fetchRecommendedHomeSongs = useCallback(async (pageNum: number): Promise<Song[]> => {
     const excludeIds = new Set<number>();
@@ -262,6 +263,7 @@ export default function HomePage() {
       if (artistIdParam) {
         const searchResult = await searchSongsBackend({
           artistIds: [Number(artistIdParam)],
+          artistRole: artistRoleParam || undefined,
           sort: 'FavoritedTimes',
           sortOrder: 'desc',
           maxResults: PAGE_SIZE,
@@ -426,7 +428,7 @@ export default function HomePage() {
       }
       fetchingRef.current = false;
     }
-  }, [artistIdParam, entries, favoriteProducers, fetchRecommendedHomeSongs, globalFilterSettings]);
+  }, [artistIdParam, artistRoleParam, entries, favoriteProducers, fetchRecommendedHomeSongs, globalFilterSettings]);
 
   useEffect(() => {
     setLoading(true);

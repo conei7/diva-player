@@ -33,7 +33,11 @@ declare global {
  * 失敗した場合はタイマーベースのフォールバックで経過時間を推定する。
  */
 function NicoEmbed({ pvId, name, duration: songDuration, isPlaying }: { pvId: string; name?: string; duration?: number; isPlaying: boolean }) {
-  const { volume, setIsPlaying, next } = usePlayerStore();
+  const { volume, setIsPlaying, next, markPVHealthy } = usePlayerStore();
+  const markCurrentPVHealthy = useCallback(() => {
+    const pv = usePlayerStore.getState().currentPV;
+    if (pv) markPVHealthy(pv);
+  }, [markPVHealthy]);
   const setProgress = useProgressStore(s => s.setProgress);
   const setDuration = useProgressStore(s => s.setDuration);
   const iframeRef = useRef<HTMLIFrameElement>(null);
@@ -135,6 +139,7 @@ function NicoEmbed({ pvId, name, duration: songDuration, isPlaying }: { pvId: st
       if (!message) return;
       switch (message.type) {
         case 'ready': {
+          markCurrentPVHealthy();
           if (message.duration) {
             durationRef.current = message.duration;
             trackerRef.current.setDuration(message.duration);
@@ -150,6 +155,7 @@ function NicoEmbed({ pvId, name, duration: songDuration, isPlaying }: { pvId: st
           break;
         }
         case 'playing':
+          markCurrentPVHealthy();
           setIsPlaying(true);
           startTimer();
           break;
@@ -174,7 +180,7 @@ function NicoEmbed({ pvId, name, duration: songDuration, isPlaying }: { pvId: st
     };
     window.addEventListener('message', handler);
     return () => window.removeEventListener('message', handler);
-  }, [advanceOnce, setProgress, setDuration, setIsPlaying, startTimer, stopTimer]);
+  }, [advanceOnce, markCurrentPVHealthy, setProgress, setDuration, setIsPlaying, startTimer, stopTimer]);
 
   useEffect(() => {
     const recoverPlayback = () => {
@@ -245,7 +251,7 @@ function loadYouTubeAPI(): Promise<void> {
 }
 
 export default function PlayerEmbed() {
-  const { currentSong, currentPV, playbackSequence, isPlaying, volume, seekTarget, clearSeekTarget, setIsPlaying, setError, setVolume, tryNextPV } = usePlayerStore();
+  const { currentSong, currentPV, playbackSequence, isPlaying, volume, seekTarget, clearSeekTarget, setIsPlaying, setError, setVolume, tryNextPV, markPVHealthy } = usePlayerStore();
   const setProgress = useProgressStore(s => s.setProgress);
   const setDuration = useProgressStore(s => s.setDuration);
   const ytPlayerRef = useRef<YT.Player | null>(null);
@@ -452,6 +458,7 @@ export default function PlayerEmbed() {
             onReady: (event: YT.PlayerEvent) => {
               if (!attemptController.isCurrent(attempt)) return;
               attemptController.complete(attempt);
+              markPVHealthy(currentPV);
               event.target.unMute();
               event.target.setVolume(volumeRef.current);
               startVolumeSync(event.target);
@@ -466,6 +473,7 @@ export default function PlayerEmbed() {
               switch (event.data) {
                 case window.YT.PlayerState.PLAYING: {
                   attemptController.complete(attempt);
+                  markPVHealthy(currentPV);
                   setIsPlaying(true);
                   const dur = event.target.getDuration();
                   if (dur > 0) setDuration(dur);
@@ -511,7 +519,7 @@ export default function PlayerEmbed() {
       }
       if (playerContainer) playerContainer.innerHTML = '';
     };
-  }, [advanceOnce, clearEndRecoveryTimer, currentPV, currentSong?.id, playbackSequence, scheduleEndRecovery, setDuration, setIsPlaying, setError, tryNextPV, startProgressTimer, stopProgressTimer, startVolumeSync, stopVolumeSync]);
+  }, [advanceOnce, clearEndRecoveryTimer, currentPV, currentSong?.id, markPVHealthy, playbackSequence, scheduleEndRecovery, setDuration, setIsPlaying, setError, tryNextPV, startProgressTimer, stopProgressTimer, startVolumeSync, stopVolumeSync]);
 
   useEffect(() => {
     const recoverPlayback = () => {
