@@ -82,6 +82,7 @@ CREATE TABLE IF NOT EXISTS view_history (
     id              BIGSERIAL PRIMARY KEY,
     song_id         INTEGER NOT NULL REFERENCES songs(id) ON DELETE CASCADE,
     recorded_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    recorded_date   DATE,
     youtube_views   BIGINT NOT NULL DEFAULT 0,
     nico_views      BIGINT NOT NULL DEFAULT 0
 );
@@ -92,6 +93,10 @@ CREATE INDEX IF NOT EXISTS view_history_song_date_idx
 -- Supports the time-window baseline used by the trending ranking.
 CREATE INDEX IF NOT EXISTS view_history_recorded_song_idx
     ON view_history (recorded_at ASC, song_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS view_history_song_recorded_date_idx
+    ON view_history (song_id, recorded_date)
+    WHERE recorded_date IS NOT NULL;
 
 -- ============================================================
 -- アーティストテーブル
@@ -155,11 +160,17 @@ CREATE TABLE IF NOT EXISTS pvs (
     pv_id       TEXT NOT NULL,
     pv_type     TEXT,           -- Original / Reprint / Other
     disabled    BOOLEAN DEFAULT FALSE,
+    stats_last_attempt_at TIMESTAMPTZ,
+    stats_last_success_at TIMESTAMPTZ,
+    stats_consecutive_failures INTEGER NOT NULL DEFAULT 0,
     UNIQUE (service, pv_id)
 );
 
 CREATE INDEX IF NOT EXISTS pvs_song_idx ON pvs (song_id);
 CREATE INDEX IF NOT EXISTS pvs_playable_song_idx ON pvs (song_id) WHERE disabled = FALSE;
+CREATE INDEX IF NOT EXISTS pvs_stats_due_idx
+    ON pvs (service, stats_last_success_at ASC NULLS FIRST, song_id)
+    WHERE disabled = FALSE;
 
 -- ============================================================
 -- 特徴量テーブル (Qdrant へのメタデータを補助)
