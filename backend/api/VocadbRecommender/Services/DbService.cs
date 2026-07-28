@@ -541,6 +541,58 @@ public class DbService
         return [.. result];
     }
 
+    public async Task<int[]> GetMetadataRelationshipCandidateIdsAsync(int seedSongId, int limit)
+    {
+        var normalizedLimit = Math.Clamp(limit, 1, 1000);
+        var cacheKey = $"metadata-relationship:{seedSongId}:{normalizedLimit}";
+        if (_cache.TryGetValue(cacheKey, out int[]? cached) && cached is not null)
+            return cached;
+
+        await using var conn = await OpenAsync();
+        await using var cmd = new NpgsqlCommand(@"
+            WITH seed_tags AS (
+                SELECT st.tag_id
+                FROM song_tags st
+                JOIN tags t ON t.id = st.tag_id
+                WHERE st.song_id = $1
+                  AND COALESCE(t.category, '') <> 'Vocalists'
+            ),
+            tag_frequency AS (
+                SELECT candidate_tag.tag_id, COUNT(*)::double precision AS frequency
+                FROM song_tags candidate_tag
+                JOIN seed_tags seed_tag ON seed_tag.tag_id = candidate_tag.tag_id
+                GROUP BY candidate_tag.tag_id
+            )
+            SELECT candidate_tag.song_id
+            FROM song_tags candidate_tag
+            JOIN seed_tags seed_tag ON seed_tag.tag_id = candidate_tag.tag_id
+            JOIN tag_frequency frequency ON frequency.tag_id = candidate_tag.tag_id
+            JOIN song_discovery_quality quality
+              ON quality.song_id = candidate_tag.song_id
+             AND quality.discovery_eligible = TRUE
+            WHERE candidate_tag.song_id <> $1
+            GROUP BY candidate_tag.song_id
+            ORDER BY
+                SUM(
+                    (1.0 + LN(1.0 + LEAST(candidate_tag.tag_count, 20)))
+                    / LN(2.0 + frequency.frequency)
+                ) DESC,
+                COUNT(*) DESC,
+                candidate_tag.song_id
+            LIMIT $2", conn);
+        cmd.Parameters.AddWithValue(seedSongId);
+        cmd.Parameters.AddWithValue(normalizedLimit);
+
+        var result = new List<int>(normalizedLimit);
+        await using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+            result.Add(reader.GetInt32(0));
+
+        var ids = result.ToArray();
+        _cache.Set(cacheKey, ids, TimeSpan.FromMinutes(15));
+        return ids;
+    }
+
     public async Task<List<object>> GetViewHistoryAsync(int songId)
     {
         using var conn = Open();

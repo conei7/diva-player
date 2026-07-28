@@ -84,10 +84,9 @@ public static class MetadataRelationshipRanking
 
     private static double RelatedScore(SongInfo seed, SongInfo candidate, double vectorScore)
     {
-        var values = new List<(double Value, double Weight)>
-        {
-            (Math.Clamp(vectorScore, 0, 1), 0.08),
-        };
+        var values = new List<(double Value, double Weight)>();
+        if (vectorScore >= 0)
+            values.Add((Math.Clamp(vectorScore, 0, 1), 0.08));
 
         AddIfAvailable(values, TagSimilarity(seed, candidate), 0.34);
         AddIfAvailable(values, AlbumSimilarity(seed, candidate), 0.24);

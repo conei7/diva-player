@@ -161,26 +161,43 @@ app.MapGet("/api/recommend/metadata", async (
         return Results.BadRequest("count must be between 1 and 100");
 
     int skip = offset ?? 0;
-    const int fetchCount = 800;
-    var results = await qdrant.SearchMetadataSimilarAsync(songId, fetchCount, null, 0);
+    const int vectorCandidateCount = 400;
+    const int tagCandidateCount = 600;
+    var vectorTask = qdrant.SearchMetadataSimilarAsync(songId, vectorCandidateCount, null, 0);
+    var tagTask = db.GetMetadataRelationshipCandidateIdsAsync(songId, tagCandidateCount);
+    var seedTask = db.GetSongInfoAsync(songId);
+    await Task.WhenAll(vectorTask, tagTask, seedTask);
 
+    var seed = await seedTask;
+    if (seed is null)
+        return Results.Ok(new { items = Array.Empty<object>() });
+
+    var candidateScores = (await vectorTask)
+        .ToDictionary(candidate => candidate.SongId, candidate => candidate.Score);
+    foreach (var candidateId in await tagTask)
+        candidateScores.TryAdd(candidateId, -1);
+    foreach (var candidateId in await db.GetSongsByProducersAsync(
+        seed.ProducerIds,
+        seed.Id,
+        100))
+        candidateScores.TryAdd(candidateId, -1);
+
+    var results = candidateScores
+        .Select(candidate => (SongId: candidate.Key, Score: candidate.Value))
+        .ToList();
     if (results.Count == 0)
         return Results.Ok(new { items = Array.Empty<object>() });
 
-    var seed = await db.GetSongInfoAsync(songId);
     var infos = await db.GetSongInfoBatchAsync(results.Select(r => r.SongId));
     var infoMap = infos.ToDictionary(i => i.Id);
     results = results
         .Where(result => infoMap.TryGetValue(result.SongId, out var info) && DiscoveryEligibility.IsEligible(info))
         .ToList();
-    if (seed is not null)
-    {
-        results = MetadataRelationshipRanking.RerankRelated(
-            results,
-            seed,
-            infos,
-            Math.Min(fetchCount, count + skip));
-    }
+    results = MetadataRelationshipRanking.RerankRelated(
+        results,
+        seed,
+        infos,
+        Math.Min(results.Count, count + skip));
 
     results = results.Skip(skip).Take(count).ToList();
 
