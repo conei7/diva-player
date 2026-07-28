@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Artist, Song } from '../types/vocadb';
-import { attachExternalViews, rankArtistsByName, resolveProducerByName, searchVocalistsByName, selectVocalistVariants } from './vocadb';
+import { attachExternalViews, getTopSongs, rankArtistsByName, resolveProducerByName, searchVocalistsByName, selectVocalistVariants } from './vocadb';
 import { VOCALIST_SEARCH_ARTIST_TYPES } from '../config/voiceSynthTypes';
 
 function artist(id: number, name: string): Artist {
@@ -120,5 +120,24 @@ describe('attachExternalViews', () => {
     expect(String(fetchMock.mock.calls[0]?.[0])).toContain('ids=2');
     expect(enriched[0]).toBe(songs[0]);
     expect(enriched[1]).toMatchObject({ id: 2, youtubeViews: 50, nicoViews: 60 });
+  });
+});
+
+describe('trending fallback pagination', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('forwards the page offset to the VocaDB fallback', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => [],
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await getTopSongs(168, 24, 48);
+
+    const requestUrl = new URL(String(fetchMock.mock.calls[0]?.[0]));
+    expect(requestUrl.searchParams.get('start')).toBe('48');
   });
 });

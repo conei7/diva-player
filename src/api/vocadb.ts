@@ -204,10 +204,12 @@ export async function getSongById(id: number): Promise<Song> {
 export async function getTopSongs(
   durationHours: number = 720,
   maxResults: number = 24,
+  start: number = 0,
 ): Promise<Song[]> {
   const queryParams = buildSearchParams({
     durationHours,
     maxResults,
+    start,
     fields: DEFAULT_FIELDS,
     languagePreference: DEFAULT_LANG,
     filterBy: 'CreateDate',
@@ -371,7 +373,7 @@ export async function getTrendingSongs(
     }
   }
 
-  return getTopSongs(168, maxResults);
+  return getTopSongs(168, maxResults, start);
 }
 
 /**

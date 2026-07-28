@@ -676,7 +676,15 @@ public class DbService
             "surge" when normalizedRanking == "quality" => "surge_ranked",
             _ => "growth",
         };
-        var minimumCondition = normalizedMode == "growth" ? "g.popular_score > 0" : "g.view_growth > 0";
+        // Recent songs are intentionally allowed to have zero recorded views;
+        // requiring view_growth > 0 made a freshly published song disappear
+        // until the first analytics snapshot arrived.
+        var minimumCondition = normalizedMode switch
+        {
+            "growth" => "g.popular_score > 0",
+            "surge" => "g.view_growth > 0",
+            _ => "TRUE",
+        };
         var debugFields = debug && normalizedMode == "surge"
             ? ", 'qualityScore', g.quality_score, 'surgeRankScore', g.surge_rank_score, 'qualityReasons', to_jsonb(g.quality_reasons)"
             : string.Empty;
@@ -826,7 +834,10 @@ public class DbService
                     COALESCE(q.duration_score, 0.5) AS duration_score,
                     COALESCE(q.support_score, 0) AS support_score,
                     COALESCE(q.reason_codes, ARRAY['quality_missing']::text[]) AS quality_reasons,
-                    COALESCE(q.discovery_eligible, FALSE) AS discovery_eligible,
+                    -- A missing quality row is normal for a newly ingested
+                    -- song. Keep explicit FALSE values excluded, but let the
+                    -- recent feed surface unscored new releases.
+                    COALESCE(q.discovery_eligible, TRUE) AS discovery_eligible,
                     0::double precision AS surge_rank_score,
                     (
                         (COALESCE(s.youtube_views, 0) + (10 * COALESCE(s.nico_views, 0)))::double precision

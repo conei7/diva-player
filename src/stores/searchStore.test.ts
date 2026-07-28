@@ -3,6 +3,7 @@ import {
   ADVANCED_SEARCH_LIMITS,
   DEFAULT_ADVANCED_FILTERS,
   sanitizeAdvancedIntegerInput,
+  useSearchStore,
   searchSongsBackend,
   validateAdvancedSearchFilters,
 } from './searchStore';
@@ -135,5 +136,17 @@ describe('backend artist union search', () => {
     await searchSongsBackend(params);
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('direct artist search state', () => {
+  it('clears the resolved artist when the user starts a new text query', () => {
+    useSearchStore.setState({ resolvedArtistId: 123, query: 'old artist' });
+
+    useSearchStore.getState().setQuery('new query');
+
+    expect(useSearchStore.getState().resolvedArtistId).toBeNull();
+    expect(useSearchStore.getState().query).toBe('new query');
+    useSearchStore.getState().reset();
   });
 });

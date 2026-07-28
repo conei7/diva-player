@@ -253,7 +253,10 @@ export default function WatchPage() {
         .map(a => a.artist?.id)
         .filter((id): id is number => id !== undefined);
 
-      const producerSongs = await getSongsByProducerFromBackend(s.id, producerIds, PAGE_SIZE, page * PAGE_SIZE + (page === 0 ? randomOffsetRef.current : 0));
+      // Producer pagination is already popularity-ordered by the backend.
+      // Applying the mix tab's random offset here skipped the first page and
+      // made the same-P tab appear to miss songs when its pool was small.
+      const producerSongs = await getSongsByProducerFromBackend(s.id, producerIds, PAGE_SIZE, page * PAGE_SIZE);
       const filtered = filterDiscoverySongs(
         requiresExternalViewCounts(globalFilterSettings) ? await attachExternalViews(producerSongs) : producerSongs,
       );

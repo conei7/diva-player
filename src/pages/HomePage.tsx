@@ -77,11 +77,15 @@ export default function HomePage() {
   const [page, setPage] = useState(0);
   const [hasMore, setHasMore] = useState(true);
   const advancedSearchOpen = useUiStore(s => s.advancedSearchOpen);
+  const setAdvancedSearchOpen = useUiStore(s => s.setAdvancedSearchOpen);
   const [recommendationReasons, setRecommendationReasons] = useState<Record<number, string>>({});
 
   const sentinelRef = useRef<HTMLDivElement>(null);
   const fetchingRef = useRef(false);
   const autoFillPagesRef = useRef(0);
+  // Keep paging while the current page is filtered out, but stop if an API
+  // fallback starts returning the same page forever.
+  const sourceSongIdsRef = useRef<Set<number>>(new Set());
   const requestIdRef = useRef(0);
   const rankingSeedRef = useRef(createRankingSeed());
   const pendingHomePaintRef = useRef<{ startedAt: number; category: HomeCategoryId } | null>(null);
@@ -108,9 +112,19 @@ export default function HomePage() {
     totalCount,
     error: searchError,
     loadMore: searchLoadMore,
+    searchByArtistId,
   } = useSearchStore();
   const isSearchMode = searchQuery.length > 0;
   const isArtistMode = !!artistIdParam;
+
+  useEffect(() => {
+    if (!artistIdParam) return;
+    const artistId = Number(artistIdParam);
+    if (!Number.isInteger(artistId) || artistId <= 0) return;
+
+    setAdvancedSearchOpen(true);
+    searchByArtistId(artistId, decodeURIComponent(artistNameParam));
+  }, [artistIdParam, artistNameParam, searchByArtistId, setAdvancedSearchOpen]);
 
   const fetchRecommendedHomeSongs = useCallback(async (pageNum: number): Promise<Song[]> => {
     const excludeIds = new Set<number>();
@@ -361,6 +375,9 @@ export default function HomePage() {
         return;
       }
       const fetchedCount = result.length;
+      const sourceIds = result.map(song => song.id);
+      const newSourceCount = sourceIds.filter(id => !sourceSongIdsRef.current.has(id)).length;
+      sourceIds.forEach(id => sourceSongIdsRef.current.add(id));
       if (!query && !artistIdParam && category !== 'recommended') {
         result = rerankDisplayedSongs(result, rankingSeedRef.current);
       }
@@ -383,7 +400,10 @@ export default function HomePage() {
           return [...prev, ...newSongs];
         });
       }
-      setHasMore(fetchedCount >= PAGE_SIZE);
+      // A filtered page may contain no visible songs even though the source
+      // still has more candidates. Continue until the source is exhausted or
+      // a broken fallback repeats the same page.
+      setHasMore(fetchedCount >= PAGE_SIZE && (pageNum === 0 || newSourceCount > 0));
       recordPerformanceMetric({
         name: 'home.load',
         startedAt,
@@ -414,9 +434,15 @@ export default function HomePage() {
     setPage(0);
     setHasMore(true);
     autoFillPagesRef.current = 0;
+    sourceSongIdsRef.current.clear();
 
     const requestId = requestIdRef.current + 1;
     requestIdRef.current = requestId;
+
+    if (isArtistMode) {
+      setLoading(false);
+      return;
+    }
 
     if (!isSearchMode && !isArtistMode && !hasHydrated && (activeCategory === 'recommended' || activeCategory === 'history_based')) {
       return;
@@ -481,7 +507,7 @@ export default function HomePage() {
   const shouldRelaxDiscovery = !hasSearched
     && !loading
     && strictDiscoverySongs.length < PAGE_SIZE
-    && (!hasMore || autoFillPagesRef.current >= 8);
+    && !hasMore;
   const discoveryResult = useMemo(
     () => shouldRelaxDiscovery
       ? applyDiscoveryFilterWithRelaxation(songs, discoveryContext, PAGE_SIZE)
@@ -555,7 +581,6 @@ export default function HomePage() {
       || !hasMore
       || fetchingRef.current
       || strictDiscoverySongs.length >= PAGE_SIZE
-      || autoFillPagesRef.current >= 8
     ) return;
 
     autoFillPagesRef.current += 1;
@@ -585,14 +610,14 @@ export default function HomePage() {
         </div>
       )}
 
-      {isArtistMode && !isSearchMode && !hasSearched && (
+      {isArtistMode && !isSearchMode && (
         <div className="mb-6 flex items-center justify-between">
           <div>
             <h1 className="text-xl font-bold mb-1" style={{ color: 'var(--color-text-primary)' }}>
               {decodeURIComponent(artistNameParam)} の楽曲
             </h1>
             <p className="text-sm" style={{ color: 'var(--color-text-muted)' }}>
-              {songs.length} 件
+              {searchLoading ? '検索中…' : `${totalCount.toLocaleString()} 件`}
             </p>
           </div>
         </div>

@@ -521,7 +521,9 @@ export const useSearchStore = create<SearchState>((set, get) => ({
   error: null,
   hasSearched: false,
 
-  setQuery: (query: string) => set({ query }),
+  // Typing a new query leaves an artist-detail result behind otherwise; the
+  // next submit would keep searching the previously resolved artist.
+  setQuery: (query: string) => set({ query, resolvedArtistId: null }),
 
   setSort: (sort: ExtendedSortRule) => set({ sort }),
   setSortOrder: (order: SortOrder) => set({ sortOrder: order }),
@@ -612,6 +614,8 @@ export const useSearchStore = create<SearchState>((set, get) => ({
       hasSearched: true,
       resolvedArtistId: artistId,
       query: artistName,
+      vocalistFilters: [],
+      exactApiOffset: 0,
     });
     const songTypes = songTypeFilter === 'Original' ? ['Original' as const] : undefined;
     const useBackend = LOCAL_SORT_RULES.has(sort)
@@ -647,7 +651,7 @@ export const useSearchStore = create<SearchState>((set, get) => ({
 
   search: async () => {
     const generation = ++searchGeneration;
-    const { query, sort, sortOrder, vocalistFilters, vocalistMatchMode, songTypeFilter, advancedFilters } = get();
+    const { query, sort, sortOrder, resolvedArtistId, vocalistFilters, vocalistMatchMode, songTypeFilter, advancedFilters } = get();
     const globalFilters = getGlobalFilterSettings();
     set({
       isLoading: true,
@@ -656,7 +660,7 @@ export const useSearchStore = create<SearchState>((set, get) => ({
       totalCount: 0,
       currentPage: 0,
       hasSearched: true,
-      resolvedArtistId: null,
+      resolvedArtistId,
     });
     const songTypes = songTypeFilter === 'Original' ? ['Original' as const] : undefined;
     const requiresBackend = LOCAL_SORT_RULES.has(sort)
@@ -664,6 +668,32 @@ export const useSearchStore = create<SearchState>((set, get) => ({
       || hasGlobalSongFilters(globalFilters);
     try {
       const isLocal = requiresBackend;
+      if (resolvedArtistId && vocalistFilters.length === 0) {
+        const result = isLocal
+          ? await searchSongsBackend({
+              artistIds: [resolvedArtistId],
+              sort,
+              sortOrder,
+              start: 0,
+              maxResults: PAGE_SIZE,
+              songTypes,
+              filters: advancedFilters,
+              globalFilters,
+            })
+          : await searchSongsPreferBackend({
+              artistIds: [resolvedArtistId],
+              sort,
+              sortOrder,
+              maxResults: PAGE_SIZE,
+              start: 0,
+              getTotalCount: true,
+              songTypes,
+            });
+        if (generation !== searchGeneration) return;
+        set({ results: result.items, totalCount: result.totalCount, isLoading: false });
+        return;
+      }
+
       const [artist, titleResult] = await Promise.all([
         findArtistByName(query),
         isLocal
@@ -679,7 +709,10 @@ export const useSearchStore = create<SearchState>((set, get) => ({
             }),
       ]);
 
-      const producerArtistId = artist?.id;
+      // Keep an ID selected from a direct P/singer navigation when advanced
+      // vocalist filters are added; name resolution is producer-only and can
+      // otherwise drop a singer constraint.
+      const producerArtistId = resolvedArtistId ?? artist?.id;
 
       if (vocalistFilters.length > 0) {
         const { items, totalCount, nextApiStart } = await fetchByArtistIds(
