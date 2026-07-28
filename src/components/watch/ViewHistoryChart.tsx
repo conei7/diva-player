@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   aggregateViewHistory,
   bucketForViewHistoryRange,
+  getViewHistoryYAxisRange,
   normalizeViewHistory,
   toGrowthViewHistory,
   type ViewHistoryData,
@@ -70,7 +71,7 @@ export default function ViewHistoryChart({ songId }: { songId: number }) {
     status: 'loading',
   }));
   const [range, setRange] = useState<ViewHistoryRange>('30d');
-  const [metric, setMetric] = useState<ViewHistoryMetric>('growth');
+  const [metric, setMetric] = useState<ViewHistoryMetric>('cumulative');
   const [visibleSeries, setVisibleSeries] = useState({ youtube: true, nico: true });
   const [retryToken, setRetryToken] = useState(0);
   const touchStart = useRef<{ x: number; y: number } | null>(null);
@@ -78,10 +79,12 @@ export default function ViewHistoryChart({ songId }: { songId: number }) {
   const loading = chartState.songId !== songId || chartState.status === 'loading';
   const rawData = chartState.songId === songId ? chartState.data : EMPTY_VIEW_HISTORY;
   const bucket = bucketForViewHistoryRange(range);
-  const cumulativeData = useMemo(() => aggregateViewHistory(rawData, bucket), [rawData, bucket]);
+  const cumulativeData = useMemo(() => aggregateViewHistory(rawData, 'day'), [rawData]);
   const baseline = rawData.find(item => item.baseline) ?? null;
   const data = useMemo(
-    () => metric === 'growth' ? toGrowthViewHistory(cumulativeData, baseline, bucket) : cumulativeData,
+    () => metric === 'growth'
+      ? toGrowthViewHistory(aggregateViewHistory(cumulativeData, bucket), baseline, bucket)
+      : cumulativeData,
     [baseline, bucket, cumulativeData, metric],
   );
 
@@ -123,8 +126,9 @@ export default function ViewHistoryChart({ songId }: { songId: number }) {
     const controller = new AbortController();
     setChartState({ songId, data: [], status: 'loading' });
 
-    const bucket = bucketForViewHistoryRange(range);
-    fetch(`/backend-api/api/songs/${songId}/history?range=${range}&bucket=${bucket}`, {
+    // Fetch daily snapshots once so cumulative mode can show every measurement.
+    // Growth mode applies the requested week/month aggregation in the client.
+    fetch(`/backend-api/api/songs/${songId}/history?range=${range}&bucket=day`, {
       signal: controller.signal,
     })
       .then((res) => {
@@ -177,12 +181,9 @@ export default function ViewHistoryChart({ songId }: { songId: number }) {
   const chart = useMemo(() => {
     const hasYoutube = data.some((d) => d.youtube !== null);
     const hasNico = data.some((d) => d.nico !== null);
-    const maxAbsValue = Math.max(
-      ...data.flatMap((d) => [d.youtube, d.nico].filter((value): value is number => value !== null).map(Math.abs)),
-      0,
-    );
+    const valueRange = getViewHistoryYAxisRange(data, metric);
 
-    if (data.length < 2 || maxAbsValue <= 0) {
+    if (data.length < 2 || valueRange.yMax <= 0) {
       return {
         hasYoutube,
         hasNico,
@@ -198,9 +199,9 @@ export default function ViewHistoryChart({ songId }: { songId: number }) {
       };
     }
 
-    const yStep = getNiceStep(maxAbsValue / (Y_TICK_COUNT - 1));
+    const yStep = getNiceStep(valueRange.yMax / (Y_TICK_COUNT - 1));
     const yMax = yStep * (Y_TICK_COUNT - 1);
-    const yMin = metric === 'growth' ? -yMax : 0;
+    const yMin = valueRange.yMin < 0 ? -yMax : 0;
     const timestamps = data.map((entry) => Date.parse(`${entry.date}T00:00:00Z`));
     const minTime = Math.min(...timestamps);
     const maxTime = Math.max(...timestamps);
@@ -260,7 +261,7 @@ export default function ViewHistoryChart({ songId }: { songId: number }) {
       }));
 
     const yTicks = Array.from({ length: Y_TICK_COUNT }, (_, index) => {
-      const value = metric === 'growth' ? yMin + yStep * index : yStep * index;
+      const value = yMin + yStep * index;
       return {
         value,
         y: getY(value),

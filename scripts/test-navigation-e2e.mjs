@@ -61,9 +61,10 @@ try {
   await page.waitForSelector('a[href*="/watch?v="]', { timeout: 60_000 });
   const songHref = await page.$eval('a[href*="/watch?v="]', element => element.getAttribute('href'));
   if (!songHref?.includes('/watch?v=')) throw new Error(`Song card is not a semantic link: ${songHref}`);
+  if (!songHref.includes('autoplay=0')) throw new Error(`Song card link does not suppress new-tab autoplay: ${songHref}`);
   const vocadbFavoriteBadgeCount = await page.$$eval('[title="VocaDB お気に入り数"]', elements => elements.length);
   if (vocadbFavoriteBadgeCount !== 0) throw new Error('VocaDB favorite badge is still visible.');
-  console.log(`PASS semantic song link and hidden VocaDB favorite badge (${songHref})`);
+  console.log(`PASS semantic song link, new-tab autoplay guard, and hidden VocaDB favorite badge (${songHref})`);
 } finally {
   await browser.close();
 }

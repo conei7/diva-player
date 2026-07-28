@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import OriginalVersionLink from './OriginalVersionLink';
 import AlbumPlaylistButton from '../playlist/AlbumPlaylistButton';
 import FavoriteProducerButton from './FavoriteProducerButton';
+import { getSongProducerEntries } from '../../utils/songArtists';
 
 
 /**
@@ -14,16 +15,7 @@ interface VideoInfoProps {
 
 export default function VideoInfo({ song }: VideoInfoProps) {
   // P名を抽出
-  const producer = song.artists?.find(a => a.categories?.includes('Producer'));
-  const producerName = producer?.name || producer?.artist?.name || '';
-  const producerLabel = producerName || song.artistString;
-  const producerHref = producer
-    ? producer.artist?.id
-      ? `/?artistId=${producer.artist.id}&artistName=${encodeURIComponent(producerLabel)}`
-      : producerLabel
-        ? `/?q=${encodeURIComponent(producerLabel)}`
-        : null
-    : null;
+  const producers = getSongProducerEntries(song);
 
   // ボーカリスト名を抽出
   const vocalists = song.artists
@@ -51,26 +43,34 @@ export default function VideoInfo({ song }: VideoInfoProps) {
 
         {/* 作者 */}
         <div className="flex flex-wrap items-center gap-2">
-          {producerHref ? (
-            <Link
-              to={producerHref}
-              className="text-sm font-medium hover:underline"
-              style={{ color: 'var(--color-text-primary)' }}
-              aria-label={`${producerLabel} の曲を表示`}
-            >
-              {producerLabel}
-            </Link>
-          ) : (
-            <span className="text-sm font-medium" style={{ color: 'var(--color-text-primary)' }}>
-              {producerLabel}
+          {producers.length > 0 ? producers.map((producer, index) => (
+            <span key={`${producer.id ?? producer.name}-${index}`} className="inline-flex items-center gap-1">
+              {producer.href ? (
+                <Link
+                  to={producer.href}
+                  className="text-sm font-medium hover:underline"
+                  style={{ color: 'var(--color-text-primary)' }}
+                  aria-label={`${producer.name} の曲を表示`}
+                >
+                  {producer.name}
+                </Link>
+              ) : (
+                <span className="text-sm font-medium" style={{ color: 'var(--color-text-primary)' }}>
+                  {producer.name}
+                </span>
+              )}
+              {producer.id && (
+                <FavoriteProducerButton
+                  id={producer.id}
+                  name={producer.name}
+                  artistType={producer.artistType}
+                />
+              )}
             </span>
-          )}
-          {producer?.artist?.id && (
-            <FavoriteProducerButton
-              id={producer.artist.id}
-              name={producerLabel}
-              artistType={producer.artist.artistType}
-            />
+          )) : (
+            <span className="text-sm font-medium" style={{ color: 'var(--color-text-primary)' }}>
+              {song.artistString}
+            </span>
           )}
 
           {/* 曲タイプバッジ */}

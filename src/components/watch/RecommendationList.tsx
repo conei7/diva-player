@@ -204,7 +204,7 @@ function RecItemRow({
     >
       {/* \u30b5\u30e0\u30cd\u30a4\u30eb */}
       <Link
-        to={`/watch?v=${song.id}`}
+        to={`/watch?v=${song.id}&autoplay=0`}
         className="block relative w-40 flex-shrink-0 rounded-lg overflow-hidden"
         style={{ aspectRatio: '16/9', background: 'var(--color-surface)' }}
         onClick={handleItemLinkClick}
@@ -269,7 +269,7 @@ function RecItemRow({
       <div className="flex-1 min-w-0 py-0.5 flex items-start gap-1">
         <div className="flex-1 min-w-0">
           <Link
-            to={`/watch?v=${song.id}`}
+          to={`/watch?v=${song.id}&autoplay=0`}
             className="block line-clamp-2 text-sm font-medium leading-5"
             style={{ color: isActive ? 'var(--color-accent-cyan)' : 'var(--color-text-primary)' }}
             title={song.name}

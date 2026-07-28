@@ -195,7 +195,7 @@ interface PlayerState {
   error: string | null;
 
   // アクション
-  playSong: (song: Song, isUserAction?: boolean, startsNewSession?: boolean) => void;
+  playSong: (song: Song, isUserAction?: boolean, startsNewSession?: boolean, startPlaying?: boolean) => void;
   pause: () => void;
   resume: () => void;
   next: () => void;
@@ -227,7 +227,7 @@ interface PlayerState {
   clearSeekTarget: () => void;
   
   // キュー操作
-  setQueue: (songs: Song[], startIndex?: number) => void;
+  setQueue: (songs: Song[], startIndex?: number, autoplay?: boolean) => void;
   setQueueShuffled: (songs: Song[]) => void;
   replaceQueueList: (songs: Song[]) => void;
   addToQueue: (song: Song, source?: PlaybackSource) => void;
@@ -356,7 +356,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   queueSources: storedPlayerQueue?.queueSources ?? [],
   error: null,
 
-  playSong: (song: Song, isUserAction?: boolean, startsNewSession = true) => {
+  playSong: (song: Song, isUserAction?: boolean, startsNewSession = true, startPlaying = true) => {
     const pv = getPlayablePV(song);
     if (!pv) {
       set({ error: `再生可能な動画が見つかりません: ${song.name}` });
@@ -377,9 +377,9 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       ? queueSources.map((source, index) => index === queueIndex ? 'manual' : source)
       : queueSources;
     const playbackSequence = get().playbackSequence + 1;
-    if (isUserAction && startsNewSession) {
+    if (isUserAction && startsNewSession && startPlaying) {
       useAutoPlaySessionStore.getState().startSession(song.id);
-    } else if (playbackSource === 'auto') {
+    } else if (playbackSource === 'auto' && startPlaying) {
       useAutoPlaySessionStore.getState().recordAutoPlaybackStarted();
     }
     savePlayerQueue(queue, queueIndex, song, nextQueueSources, playbackSource);
@@ -390,7 +390,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       currentPlaybackSource: playbackSource,
       playbackSequence,
       queueSources: nextQueueSources,
-      isPlaying: true,
+      isPlaying: startPlaying,
       error: null,
       ...(isUserAction ? { rootSeed: song } : {}),
     });
@@ -465,7 +465,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     }
   },
 
-  setQueue: (songs: Song[], startIndex = 0) => {
+  setQueue: (songs: Song[], startIndex = 0, autoplay = true) => {
     const { shuffleEnabled } = get();
     const manualSources = songs.map(() => 'manual' as PlaybackSource);
     if (shuffleEnabled && songs.length > 0) {
@@ -475,11 +475,11 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       const shuffledSources = shuffled.map(() => 'manual' as PlaybackSource);
       set({ queue: shuffled, queueIndex: 0, queueSources: shuffledSources, originalQueue: songs });
       savePlayerQueue(shuffled, 0, shuffled[0] ?? null, shuffledSources, 'manual');
-      get().playSong(shuffled[0], true);
+      get().playSong(shuffled[0], autoplay, autoplay, autoplay);
     } else {
       set({ queue: songs, queueIndex: startIndex, queueSources: manualSources, originalQueue: [] });
       savePlayerQueue(songs, startIndex, songs[startIndex] ?? null, manualSources, 'manual');
-      if (songs.length > 0) get().playSong(songs[startIndex], true);
+      if (songs.length > 0) get().playSong(songs[startIndex], autoplay, autoplay, autoplay);
     }
   },
 

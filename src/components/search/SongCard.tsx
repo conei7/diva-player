@@ -263,7 +263,7 @@ export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect, 
     >
       {/* サムネイル — クリックで再生（選択モード時は選択トグル） */}
       <Link
-        to={`/watch?v=${song.id}`}
+        to={`/watch?v=${song.id}&autoplay=0`}
         className="block relative aspect-video overflow-hidden cursor-pointer"
         style={{ background: 'var(--color-surface)' }}
         onClick={handleSongLinkClick}
@@ -362,7 +362,7 @@ export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect, 
         <div className="flex items-start gap-1">
           <div className="flex-1 min-w-0">
             <Link
-              to={`/watch?v=${song.id}`}
+            to={`/watch?v=${song.id}&autoplay=0`}
               className="block text-sm font-semibold truncate"
               style={{ color: 'var(--color-text-primary)' }}
               onClick={handleSongLinkClick}

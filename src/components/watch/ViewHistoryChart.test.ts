@@ -3,6 +3,7 @@ import {
   aggregateViewHistory,
   bucketForViewHistoryRange,
   filterViewHistoryByRange,
+  getViewHistoryYAxisRange,
   normalizeViewHistory,
   toGrowthViewHistory,
 } from '../../utils/viewHistory';
@@ -114,6 +115,30 @@ describe('view history display transforms', () => {
       { date: '2026-01-02', youtube: 90 },
     ]);
     expect(toGrowthViewHistory(history)[1].youtube).toBe(-10);
+  });
+
+  it('keeps every daily cumulative point when no aggregation is requested', () => {
+    const history = normalizeViewHistory([
+      { date: '2026-01-01', youtube: 100 },
+      { date: '2026-01-03', youtube: 130 },
+      { date: '2026-01-06', youtube: 160 },
+    ]);
+    expect(aggregateViewHistory(history, 'day').map(item => item.date)).toEqual([
+      '2026-01-01',
+      '2026-01-03',
+      '2026-01-06',
+    ]);
+  });
+
+  it('only opens a negative growth axis when a negative value exists', () => {
+    expect(getViewHistoryYAxisRange([
+      { date: '2026-01-01', youtube: 10, nico: null },
+      { date: '2026-01-02', youtube: 20, nico: null },
+    ], 'growth')).toEqual({ yMin: 0, yMax: 20 });
+    expect(getViewHistoryYAxisRange([
+      { date: '2026-01-01', youtube: -10, nico: null },
+      { date: '2026-01-02', youtube: 20, nico: null },
+    ], 'growth')).toEqual({ yMin: -20, yMax: 20 });
   });
 
   it('does not assign multiple missing days of growth to the next observed day', () => {

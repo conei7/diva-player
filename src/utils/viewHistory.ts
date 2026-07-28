@@ -11,6 +11,27 @@ export type ViewHistoryRange = '7d' | '30d' | '90d' | 'all';
 export type ViewHistoryBucket = 'day' | 'week' | 'month';
 export type ViewHistoryMetric = 'cumulative' | 'growth';
 
+export interface ViewHistoryYAxisRange {
+  yMin: number;
+  yMax: number;
+}
+
+export function getViewHistoryYAxisRange(
+  history: ViewHistoryData[],
+  metric: ViewHistoryMetric,
+): ViewHistoryYAxisRange {
+  const values = history.flatMap(item => [item.youtube, item.nico]
+    .filter((value): value is number => value !== null && Number.isFinite(value)));
+  const maxValue = Math.max(...values, 0);
+  if (metric === 'growth' && values.some(value => value < 0)) {
+    return {
+      yMin: -Math.max(...values.map(value => Math.abs(value)), 0),
+      yMax: Math.max(...values.map(value => Math.abs(value)), 0),
+    };
+  }
+  return { yMin: 0, yMax: maxValue };
+}
+
 export function filterViewHistoryByRange(
   history: ViewHistoryData[],
   range: ViewHistoryRange,

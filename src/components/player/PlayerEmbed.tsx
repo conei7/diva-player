@@ -37,7 +37,8 @@ function NicoEmbed({ pvId, name, duration: songDuration, isPlaying }: { pvId: st
   const setProgress = useProgressStore(s => s.setProgress);
   const setDuration = useProgressStore(s => s.setDuration);
   const iframeRef = useRef<HTMLIFrameElement>(null);
-  const embedUrl = `https://embed.nicovideo.jp/watch/${pvId}?autoplay=1&allowProgrammaticFullscreen=1`;
+  const initialAutoplayRef = useRef(isPlaying);
+  const embedUrl = `https://embed.nicovideo.jp/watch/${pvId}?autoplay=${initialAutoplayRef.current ? 1 : 0}&allowProgrammaticFullscreen=1`;
   const NICO_ORIGIN = 'https://embed.nicovideo.jp';
 
   const timerRef = useRef<number | null>(null);
@@ -255,6 +256,7 @@ export default function PlayerEmbed() {
   const advancedPVRef = useRef<string | null>(null);
   const attemptControllerRef = useRef(createPlaybackAttemptController());
   const volumeRef = useRef(volume);
+  const initialAutoplayRef = useRef(isPlaying);
   const ownershipRef = useRef<ReturnType<typeof createPlaybackOwnership> | null>(null);
 
   useEffect(() => {
@@ -440,7 +442,7 @@ export default function PlayerEmbed() {
           width: '100%',
           height: '100%',
           playerVars: {
-            autoplay: 1,
+            autoplay: initialAutoplayRef.current ? 1 : 0,
             // mute: 1 でミュート自動再生を許可し、onReady でアンミュートする。
             mute: 1,
             controls: 1,

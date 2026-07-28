@@ -120,6 +120,7 @@ export default function WatchPage() {
   const navigate = useNavigate();
   const songIdStr = searchParams.get('v');
   const songId = songIdStr ? Number(songIdStr) : null;
+  const shouldAutoplay = searchParams.get('autoplay') !== '0';
 
   const { currentSong, setQueue, setRootSeed, mixMode, setMixMode } = usePlayerStore();
   const currentSongId = currentSong?.id;
@@ -205,7 +206,7 @@ export default function WatchPage() {
         // 再生開始（現在の曲と違う場合のみ）
         if (currentSong?.id !== loadedSong.id) {
           setRootSeed(loadedSong); // ユーザーが能動的に選んだ曲をRoot Seedに
-          setQueue([loadedSong], 0);
+          setQueue([loadedSong], 0, shouldAutoplay);
         }
 
         // 推薦データの取得

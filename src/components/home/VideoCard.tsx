@@ -71,7 +71,7 @@ export default function VideoCard({ song, showScore }: VideoCardProps) {
       style={{ opacity: hasPlayablePV ? 1 : 0.5 }}
     >
       <Link
-        to={`/watch?v=${song.id}`}
+        to={`/watch?v=${song.id}&autoplay=0`}
         className="block relative w-full rounded-xl overflow-hidden"
         style={{ aspectRatio: '16/9', background: 'var(--color-surface)' }}
         onClick={handleSongLinkClick}
@@ -118,7 +118,7 @@ export default function VideoCard({ song, showScore }: VideoCardProps) {
 
       <div className="pt-2.5 px-0.5">
         <Link
-          to={`/watch?v=${song.id}`}
+          to={`/watch?v=${song.id}&autoplay=0`}
           className="block line-clamp-2 text-sm font-medium leading-5 mb-1"
           style={{ color: 'var(--color-text-primary)' }}
           title={song.name}

@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import type { Song } from '../../types/vocadb';
 import { tokenizeDescriptionText } from '../../utils/descriptionText';
 import { formatJapaneseViews } from '../../utils/formatViews';
+import { getPVServiceLabel } from '../../utils/pvService';
 import ViewHistoryChart from './ViewHistoryChart';
 
 /**
@@ -183,15 +184,20 @@ export default function Description({ song }: DescriptionProps) {
                               background: isOriginal ? 'rgba(239,68,68,0.15)' : 'rgba(100,30,30,0.3)',
                               color: isOriginal ? '#ef4444' : '#b91c1c'
                             };
-                          } else {
+                          } else if (pv.service === 'NicoNicoDouga') {
                             return {
                               background: isOriginal ? 'rgba(59,130,246,0.15)' : 'rgba(30,30,100,0.3)',
                               color: isOriginal ? '#3b82f6' : '#1e40af'
                             };
+                          } else {
+                            return {
+                              background: isOriginal ? 'rgba(148,163,184,0.15)' : 'rgba(71,85,105,0.3)',
+                              color: isOriginal ? '#cbd5e1' : '#94a3b8',
+                            };
                           }
                         })()}
                       >
-                        {pv.service === 'Youtube' ? 'YT' : 'ニコ'}
+                        {getPVServiceLabel(pv.service)}
                       </span>
                       {pv.name || pv.url}
                       {pv.pvType !== 'Original' && (
