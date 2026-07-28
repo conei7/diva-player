@@ -616,7 +616,7 @@ export default function HomePage() {
         <div className="mb-6 flex items-center justify-between">
           <div>
             <h1 className="text-xl font-bold mb-1" style={{ color: 'var(--color-text-primary)' }}>
-              {decodeURIComponent(artistNameParam)} の楽曲
+              {decodeURIComponent(artistNameParam)}{artistRoleParam ? ` (${artistRoleParam})` : ''} の楽曲
             </h1>
             <p className="text-sm" style={{ color: 'var(--color-text-muted)' }}>
               {searchLoading ? '検索中…' : `${totalCount.toLocaleString()} 件`}
