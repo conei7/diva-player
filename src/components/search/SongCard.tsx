@@ -185,7 +185,11 @@ export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect, 
 
   // 長押しで選択モード突入
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const handlePointerDown = useCallback(() => {
+  const handlePointerDown = useCallback((event: React.PointerEvent<HTMLAnchorElement>) => {
+    // Long-press selection is intentionally mouse/pen-only. On touch devices
+    // a held finger is commonly used to scroll, so entering selection mode
+    // after 500ms makes normal browsing feel like an accidental action.
+    if (event.pointerType === 'touch') return;
     if (isSelectionMode) return;
     longPressTimer.current = setTimeout(() => {
       enterSelectionMode();
@@ -270,6 +274,7 @@ export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect, 
         onAuxClick={handleSongLinkAuxClick}
         onPointerDown={handlePointerDown}
         onPointerUp={handlePointerUp}
+        onPointerCancel={handlePointerUp}
         onPointerLeave={handlePointerLeave}
         title={isSelectionMode ? (isSelected ? '選択解除' : '選択') : hasPlayablePV ? 'クリックして再生' : '再生可能なPVがありません'}
         aria-label={`${song.name}を再生`}

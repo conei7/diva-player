@@ -21,6 +21,7 @@ export default function GlobalPlayer() {
     closePlayer,
     shuffleEnabled, toggleShuffle,
     loopMode, toggleLoopMode,
+    queue, queueDrawerOpen, toggleQueueDrawer,
   } = usePlayerStore();
 
   const isWatchPage = location.pathname === '/watch';
@@ -89,7 +90,7 @@ export default function GlobalPlayer() {
   })();
 
   return (
-    <div className="overflow-hidden" style={containerStyle}>
+    <div className={`overflow-hidden${showMiniPlayer ? ' global-mini-player' : ''}`} data-testid="global-player" style={containerStyle}>
       {/* プレイヤー本体 (iframe) */}
       <div 
         style={{ 
@@ -107,7 +108,7 @@ export default function GlobalPlayer() {
 
       {/* MiniPlayer コントロール (PiPモード時のみ表示) */}
       <div 
-        className="flex items-center gap-2 px-3 py-2"
+        className="flex items-center gap-2 px-3 py-2 mini-player-controls"
         style={{ 
            display: showMiniPlayer ? 'flex' : 'none',
            opacity: showMiniPlayer ? 1 : 0,
@@ -133,7 +134,7 @@ export default function GlobalPlayer() {
         {/* コントロールボタン */}
         <div className="flex items-center gap-0.5 flex-shrink-0">
           <button
-            className="btn-ghost p-1.5 rounded-full"
+            className="btn-ghost p-1.5 rounded-full mini-player-control"
             data-testid="mini-player-close"
             onClick={(event) => {
               event.stopPropagation();
@@ -146,14 +147,14 @@ export default function GlobalPlayer() {
               <path d="M18.3 5.71 12 12l6.3 6.29-1.41 1.42L10.59 13.4 4.29 19.7 2.88 18.29 9.17 12 2.88 5.71 4.29 4.3l6.3 6.29 6.29-6.29z" />
             </svg>
           </button>
-          <button className="btn-ghost p-1.5 rounded-full" onClick={previous} title="前の曲">
+          <button className="btn-ghost p-1.5 rounded-full mini-player-control" onClick={previous} title="前の曲" aria-label="前の曲">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
               <path d="M6 6h2v12H6zm3.5 6 8.5 6V6z" />
             </svg>
           </button>
 
           <button
-            className="rounded-full flex items-center justify-center"
+            className="rounded-full flex items-center justify-center mini-player-control mini-player-play"
             style={{
               width: 32,
               height: 32,
@@ -175,14 +176,14 @@ export default function GlobalPlayer() {
             )}
           </button>
 
-          <button className="btn-ghost p-1.5 rounded-full" onClick={next} title="次の曲">
+          <button className="btn-ghost p-1.5 rounded-full mini-player-control" onClick={next} title="次の曲" aria-label="次の曲">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
               <path d="m6 18 8.5-6L6 6v12zM16 6v12h2V6h-2z" />
             </svg>
           </button>
 
           <button
-            className="btn-ghost p-1.5 rounded-full"
+            className="btn-ghost p-1.5 rounded-full mini-player-control mini-player-optional"
             onClick={toggleShuffle}
             title={shuffleEnabled ? 'シャッフルOFF' : 'シャッフルON'}
             style={{ color: shuffleEnabled ? 'var(--color-accent-cyan)' : undefined }}
@@ -194,7 +195,7 @@ export default function GlobalPlayer() {
 
           {/* ループモードボタン */}
           <button
-            className="btn-ghost p-1.5 rounded-full relative"
+            className="btn-ghost p-1.5 rounded-full relative mini-player-control mini-player-optional"
             onClick={toggleLoopMode}
             title={loopMode === 'none' ? 'ループOFF' : loopMode === 'all' ? '全体ループ' : '1曲ループ'}
             style={{ color: loopMode !== 'none' ? 'var(--color-accent-cyan)' : undefined }}
@@ -209,7 +210,28 @@ export default function GlobalPlayer() {
           </button>
 
           <button
-            className="btn-ghost p-1.5 rounded-full"
+            className="btn-ghost p-1.5 rounded-full relative mini-player-control"
+            data-testid="mini-player-queue"
+            onClick={toggleQueueDrawer}
+            title="再生キュー"
+            aria-label="再生キュー"
+            style={{ color: queueDrawerOpen ? 'var(--color-accent-purple)' : undefined }}
+          >
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M3 18h13v-2H3v2zm0-5h10v-2H3v2zm0-7v2h13V6H3zm18 9.59L17.42 12 21 8.41 19.59 7l-5 5 5 5L21 15.59z"/>
+            </svg>
+            {queue.length > 0 && (
+              <span
+                className="absolute -top-0.5 -right-0.5 text-[9px] font-bold w-4 h-4 rounded-full flex items-center justify-center leading-none"
+                style={{ background: 'var(--color-accent-purple)', color: '#fff' }}
+              >
+                {queue.length > 99 ? '99+' : queue.length}
+              </span>
+            )}
+          </button>
+
+          <button
+            className="btn-ghost p-1.5 rounded-full mini-player-control"
             onClick={() => navigate(`/watch?v=${currentSong.id}`)}
             title="全画面で表示"
           >

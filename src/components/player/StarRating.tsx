@@ -31,6 +31,7 @@ export default function StarRating({ rating, onRate, size = 'md' }: StarRatingPr
           <button
             key={n}
             type="button"
+            className="rating-star-button"
             aria-label={`${n}星`}
             onMouseEnter={() => setHovered(n)}
             onClick={(e) => {

@@ -4,6 +4,7 @@ import TopNav from './TopNav';
 import Sidebar from './Sidebar';
 import GlobalPlayer from '../player/GlobalPlayer';
 import HistoryDrawer from '../player/HistoryDrawer';
+import QueueDrawer from '../player/QueueDrawer';
 import SongDetailsModal from '../player/SongDetailsModal';
 import { SaveToPlaylistModal } from '../playlist/SaveToPlaylistModal';
 import { useUiStore } from '../../stores/uiStore';
@@ -71,6 +72,7 @@ export default function Layout() {
       <GlobalPlayer />
 
       <HistoryDrawer />
+      <QueueDrawer />
       <SongDetailsModal />
       <SaveToPlaylistModal />
       <SelectionFAB visibleSongs={visibleSongs} />

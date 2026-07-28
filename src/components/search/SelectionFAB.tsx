@@ -282,6 +282,7 @@ export default function SelectionFAB({ visibleSongs }: SelectionFABProps) {
       {/* FABバー */}
       <div
         className="fixed bottom-4 left-1/2 z-[250] flex items-center gap-1 px-4 py-2.5 rounded-full shadow-2xl"
+        data-testid="selection-fab"
         style={{
           transform: 'translateX(-50%)',
           background: 'var(--color-surface)',

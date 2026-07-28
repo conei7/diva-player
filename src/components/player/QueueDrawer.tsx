@@ -47,7 +47,7 @@ export default function QueueDrawer() {
 
       {/* ドロワー本体 */}
       <div
-        className="fixed top-0 right-0 z-50 h-full flex flex-col"
+        className="fixed top-0 right-0 z-50 h-full flex flex-col queue-drawer"
         style={{
           width: '360px',
           maxWidth: '90vw',
@@ -56,10 +56,11 @@ export default function QueueDrawer() {
           borderLeft: '1px solid var(--color-border)',
           transform: queueDrawerOpen ? 'translateX(0)' : 'translateX(100%)',
           transition: 'transform 0.28s cubic-bezier(0.4, 0, 0.2, 1)',
-          paddingBottom: 'calc(var(--player-bar-height) + env(safe-area-inset-bottom))',
+          paddingBottom: 'env(safe-area-inset-bottom)',
           boxShadow: queueDrawerOpen ? '-8px 0 32px rgba(0,0,0,0.4)' : 'none',
         }}
         role="dialog"
+        data-testid="queue-drawer"
         aria-label="再生キュー"
       >
         {/* ヘッダー */}
@@ -162,7 +163,7 @@ export default function QueueDrawer() {
                     <div
                       role="button"
                       tabIndex={0}
-                      className="w-full flex items-center gap-3 px-3 py-2.5 text-left transition-colors"
+                      className="w-full flex items-center gap-3 px-3 py-2.5 text-left transition-colors queue-drawer-row"
                       style={{
                         background: isCurrent
                           ? 'rgba(139, 92, 246, 0.12)'

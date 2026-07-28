@@ -82,6 +82,24 @@ async function main() {
 
     await page.goto(baseUrl, { waitUntil: 'domcontentloaded' });
     await waitForLayout(page);
+    const topNavTargets = await page.$$eval('.topnav-action-btn', buttons => buttons.map(button => {
+      const rect = button.getBoundingClientRect();
+      return { width: rect.width, height: rect.height };
+    }));
+    assert(topNavTargets.length > 0 && topNavTargets.every(({ width, height }) => width >= 40 && height >= 40),
+      `Mobile top-nav controls are too small: ${JSON.stringify(topNavTargets)}`);
+    console.log('PASS mobile top-nav tap targets');
+
+    const longPressResult = await page.$eval('.song-card a[href*="/watch?v="]', link => new Promise(resolve => {
+      link.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerType: 'touch' }));
+      window.setTimeout(() => {
+        link.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerType: 'touch' }));
+        resolve(!document.querySelector('[data-testid="selection-fab"]'));
+      }, 650);
+    }));
+    assert(longPressResult, 'Touch long-press unexpectedly entered selection mode');
+    console.log('PASS touch long-press does not enter selection mode');
+
     await page.click('button[aria-label="メニュー"]');
     await page.waitForSelector('button[aria-label="メニューを閉じる"]', { visible: true });
     await page.waitForFunction(() => {
