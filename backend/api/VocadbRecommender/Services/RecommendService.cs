@@ -89,16 +89,11 @@ public class RecommendService
             .Where(candidate => eligibleIds.Contains(candidate.Key))
             .ToList();
         // count の 1/3 を同一プロデューサー上限とし、残りを他プロデューサーで埋める
-        // Fixed caps keep the ranked prefix stable when the endpoint applies pagination.
-        const int maxSameProd = 16;
-        const int maxSameVocalist = 12;
-        mergedCandidates = RecommendationDiversity.ApplySeedArtistCaps(
+        // Shared singers stay eligible; singer-only matches receive a continuous score correction.
+        mergedCandidates = MetadataRelationshipRanking.CorrectSingerOnlyBias(
             mergedCandidates,
             seedSong,
-            candidateInfos,
-            maxSameProd,
-            maxSameVocalist,
-            minimumResults: count);
+            candidateInfos);
         var filtered = await _markov.FilterAsync(
             seedSong, mergedCandidates, candidateInfos);
 

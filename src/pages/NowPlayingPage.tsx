@@ -132,7 +132,7 @@ export default function NowPlayingPage() {
 
   // 関連曲: メタデータベクトルのみ (/api/recommend/metadata)
   const fetchRelated = useCallback(async (song: Song, page: number) => {
-    const relatedRaw = await getMetadataSimilarSongs(song.id, PAGE_SIZE, (rankingSeedRef.current % 20) + page * PAGE_SIZE);
+    const relatedRaw = await getMetadataSimilarSongs(song.id, PAGE_SIZE, page * PAGE_SIZE);
     const relatedSongs = requiresExternalViewCounts(globalFilterSettings)
       ? await attachExternalViews(relatedRaw)
       : relatedRaw;

@@ -474,7 +474,25 @@ public class DbService
                        SELECT artist_id FROM song_artists
                        WHERE song_id = s.id AND is_vocalist = TRUE
                    ) AS vocalist_ids,
-                   s.youtube_views, s.nico_views,
+                   s.youtube_views, s.nico_views, s.publish_date,
+                   ARRAY(
+                       SELECT st.tag_id
+                       FROM song_tags st
+                       JOIN tags t ON t.id = st.tag_id
+                       WHERE st.song_id = s.id
+                         AND COALESCE(t.category, '') <> 'Vocalists'
+                   ) AS related_tag_ids,
+                   ARRAY(
+                       SELECT (album ->> 'id')::int
+                       FROM jsonb_array_elements(
+                           CASE
+                               WHEN jsonb_typeof(s.raw_json -> 'albums') = 'array'
+                                   THEN s.raw_json -> 'albums'
+                               ELSE '[]'::jsonb
+                           END
+                       ) album
+                       WHERE album ->> 'id' ~ '^[0-9]+$'
+                   ) AS album_ids,
                    EXISTS (
                        SELECT 1 FROM song_artists sa
                        JOIN artists a ON a.id = sa.artist_id
@@ -507,10 +525,13 @@ public class DbService
                 ProducerIds:    reader.IsDBNull(7) ? [] : (int[])reader.GetValue(7),
                 VocalistIds:    reader.IsDBNull(8) ? [] : (int[])reader.GetValue(8),
                 YoutubeViews:   reader.IsDBNull(9) ? 0 : reader.GetInt64(9),
-                 NicoViews:      reader.IsDBNull(10) ? 0 : reader.GetInt64(10),
-                 HasCoreVoiceSynthVocalist: !reader.IsDBNull(11) && reader.GetBoolean(11),
-                 HasPlayablePv:  !reader.IsDBNull(12) && reader.GetBoolean(12),
-                 DiscoveryEligible: !reader.IsDBNull(13) && reader.GetBoolean(13)
+                NicoViews:      reader.IsDBNull(10) ? 0 : reader.GetInt64(10),
+                PublishDate:    reader.IsDBNull(11) ? null : reader.GetDateTime(11),
+                RelatedTagIds:  reader.IsDBNull(12) ? [] : (int[])reader.GetValue(12),
+                AlbumIds:       reader.IsDBNull(13) ? [] : (int[])reader.GetValue(13),
+                HasCoreVoiceSynthVocalist: !reader.IsDBNull(14) && reader.GetBoolean(14),
+                HasPlayablePv:  !reader.IsDBNull(15) && reader.GetBoolean(15),
+                DiscoveryEligible: !reader.IsDBNull(16) && reader.GetBoolean(16)
             );
 
             _cache.Set($"song:{info.Id}", info, TimeSpan.FromMinutes(30));
@@ -1034,8 +1055,11 @@ public record SongInfo(
     int[]   ProducerIds,
     int[]   VocalistIds,
     long    YoutubeViews,
-      long    NicoViews,
-      bool    HasCoreVoiceSynthVocalist,
-      bool    HasPlayablePv,
-      bool    DiscoveryEligible
-  );
+    long    NicoViews,
+    DateTime? PublishDate,
+    int[]   RelatedTagIds,
+    int[]   AlbumIds,
+    bool    HasCoreVoiceSynthVocalist,
+    bool    HasPlayablePv,
+    bool    DiscoveryEligible
+);

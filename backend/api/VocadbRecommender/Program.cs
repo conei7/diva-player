@@ -110,7 +110,7 @@ app.MapGet("/api/recommend/similar", async (
     int skip = offset ?? 0;
 
     // ハイブリッドコレクション優先、なければメタデータコレクション
-    const int fetchCount = 200;
+    const int fetchCount = 400;
     var results = await qdrant.SearchSimilarAsync(songId, fetchCount, null, 0);
     if (results.Count == 0)
         results = await qdrant.SearchMetadataSimilarAsync(songId, fetchCount, null, 0);
@@ -126,13 +126,10 @@ app.MapGet("/api/recommend/similar", async (
         .ToList();
     if (seed is not null)
     {
-        results = RecommendationDiversity.ApplySeedArtistCaps(
+        results = MetadataRelationshipRanking.CorrectSingerOnlyBias(
             results,
             seed,
-            infos,
-            maxSameProducer: 2,
-            maxSameVocalist: 4,
-            minimumResults: count + skip);
+            infos);
     }
 
     results = results.Skip(skip).Take(count).ToList();
@@ -164,7 +161,7 @@ app.MapGet("/api/recommend/metadata", async (
         return Results.BadRequest("count must be between 1 and 100");
 
     int skip = offset ?? 0;
-    const int fetchCount = 200;
+    const int fetchCount = 800;
     var results = await qdrant.SearchMetadataSimilarAsync(songId, fetchCount, null, 0);
 
     if (results.Count == 0)
@@ -178,13 +175,11 @@ app.MapGet("/api/recommend/metadata", async (
         .ToList();
     if (seed is not null)
     {
-        results = RecommendationDiversity.ApplySeedArtistCaps(
+        results = MetadataRelationshipRanking.RerankRelated(
             results,
             seed,
             infos,
-            maxSameProducer: 2,
-            maxSameVocalist: 4,
-            minimumResults: count + skip);
+            Math.Min(fetchCount, count + skip));
     }
 
     results = results.Skip(skip).Take(count).ToList();

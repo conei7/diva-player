@@ -24,7 +24,6 @@ import {
 import type { Song } from '../types/vocadb';
 import { useSelectionStore } from '../stores/selectionStore';
 import QueueSidebar from '../components/player/QueueSidebar';
-import { diversifyAwayFromSeedVocalist } from '../utils/recommendationScoring';
 import { rerankRecommendationCandidatesDetailed } from '../utils/recommendationReranking';
 import { useRecommendationDebugStore } from '../stores/recommendationDebugStore';
 import { createRankingSeed } from '../utils/rankingRandomization';
@@ -286,15 +285,14 @@ export default function WatchPage() {
 
   const fetchRelated = useCallback(async (s: Song, page: number) => {
     try {
-      const relatedSongs = await getMetadataSimilarSongs(s.id, PAGE_SIZE * 2, randomOffsetRef.current + page * PAGE_SIZE * 2);
+      const relatedSongs = await getMetadataSimilarSongs(s.id, PAGE_SIZE * 2, page * PAGE_SIZE * 2);
       const filtered = filterDiscoverySongs(
         requiresExternalViewCounts(globalFilterSettings) ? await attachExternalViews(relatedSongs) : relatedSongs,
       );
-      const items = rerankDisplayedSongs(diversifyAwayFromSeedVocalist(
-        s,
-        filtered.items,
-        Math.max(6, Math.floor(PAGE_SIZE / 4)),
-      ).slice(0, PAGE_SIZE), rankingSeedRef.current);
+      const items = rerankDisplayedSongs(
+        filtered.items.slice(0, PAGE_SIZE),
+        rankingSeedRef.current,
+      );
       const fresh = items.filter(item => !seenSets.current.related.has(item.id));
       fresh.forEach(item => seenSets.current.related.add(item.id));
 
@@ -337,8 +335,8 @@ export default function WatchPage() {
         ...audioFiltered.relaxedConditions,
       ])];
       const detailed = rerankRecommendationCandidatesDetailed({
-        hybrid: diversifyAwayFromSeedVocalist(s, hybridFiltered.items, 6),
-        audio: diversifyAwayFromSeedVocalist(s, audioFiltered.items, 4),
+        hybrid: hybridFiltered.items,
+        audio: audioFiltered.items,
       }, {
         total: PAGE_SIZE,
         historyEntries: entries,
