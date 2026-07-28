@@ -35,7 +35,10 @@ export default function Description({ song }: DescriptionProps) {
   // アーティスト情報
   const producers = song.artists?.filter(a => a.categories?.includes('Producer')) || [];
   const vocalists = song.artists?.filter(a => a.categories === 'Vocalist') || [];
-  const others = song.artists?.filter(a => !['Producer', 'Vocalist'].includes(a.categories)) || [];
+  const others = song.artists?.filter(a => {
+    const categories = a.categories || '';
+    return !categories.includes('Vocalist') && (categories.includes('Illustrator') || categories.includes('Animator') || categories.includes('Composer') || categories.includes('Lyricist') || categories.includes('Instrumentalist') || categories.includes('Other'));
+  }) || [];
 
   return (
     <div
@@ -151,13 +154,16 @@ export default function Description({ song }: DescriptionProps) {
               <div>
                 <span className="text-xs font-medium" style={{ color: 'var(--color-text-muted)' }}>その他参加</span>
                 <div className="flex flex-wrap gap-1 mt-1">
-                  {others.map(a => {
+                  {others.flatMap(a => {
                     const artistName = a.name || a.artist?.name || '';
-                    const role = (a.roles || a.effectiveRoles || a.categories || 'Other').split(',')[0].trim();
+                    const roles = (a.roles || a.effectiveRoles || a.categories || 'Other')
+                      .split(',')
+                      .map(role => role.trim())
+                      .filter(role => role && !['Default', 'Producer', 'Vocalist'].includes(role));
                     const artistId = a.artist?.id;
-                    return (
+                    return (roles.length > 0 ? roles : ['Other']).map(role => (
                       <button
-                        key={a.id}
+                        key={`${a.id}-${role}`}
                         type="button"
                         className="text-sm px-2 py-0.5 rounded-full hover:brightness-125 transition-all"
                         style={{ background: 'var(--color-surface-hover)', color: 'var(--color-text-secondary)' }}
@@ -172,7 +178,7 @@ export default function Description({ song }: DescriptionProps) {
                       >
                         {artistName} ({role})
                       </button>
-                    );
+                    ));
                   })}
                 </div>
               </div>
