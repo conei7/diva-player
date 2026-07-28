@@ -82,6 +82,7 @@ async function main() {
 
     await page.goto(baseUrl, { waitUntil: 'domcontentloaded' });
     await waitForLayout(page);
+    await page.waitForSelector('a[href*="/watch?v="]', { timeout: 10_000 }).catch(() => {});
     const topNavTargets = await page.$$eval('.topnav-action-btn', buttons => buttons.map(button => {
       const rect = button.getBoundingClientRect();
       return { width: rect.width, height: rect.height };
