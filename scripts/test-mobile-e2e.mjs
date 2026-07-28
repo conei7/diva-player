@@ -90,7 +90,10 @@ async function main() {
       `Mobile top-nav controls are too small: ${JSON.stringify(topNavTargets)}`);
     console.log('PASS mobile top-nav tap targets');
 
-    const longPressResult = await page.$eval('.song-card a[href*="/watch?v="]', link => new Promise(resolve => {
+    const longPressSelector = await page.$('.song-card a[href*="/watch?v="]')
+      ? '.song-card a[href*="/watch?v="]'
+      : 'a[href*="/watch?v="]';
+    const longPressResult = await page.$eval(longPressSelector, link => new Promise(resolve => {
       link.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerType: 'touch' }));
       window.setTimeout(() => {
         link.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerType: 'touch' }));
