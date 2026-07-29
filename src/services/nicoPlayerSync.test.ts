@@ -22,11 +22,13 @@ describe('nico player synchronization', () => {
 
   it('parses current time in seconds and legacy milliseconds', () => {
     expect(parseNicoPlayerMessage(JSON.stringify({ eventName: 'player:currentTime', data: { currentTime: 12.5 } }))).toEqual({ type: 'progress', seconds: 12.5 });
+    expect(parseNicoPlayerMessage({ eventName: 'playerMetadataChange', data: { currentTime: 12500 } })).toEqual({ type: 'progress', seconds: 12.5 });
     expect(parseNicoPlayerMessage({ eventName: 'seekStatusChange', data: { currentTime: 12500 } })).toEqual({ type: 'progress', seconds: 12.5 });
   });
 
   it('maps status and ignores malformed messages', () => {
     expect(parseNicoPlayerMessage({ eventName: 'playerStatusChange', data: { playerStatus: 3 } })).toEqual({ type: 'playing' });
+    expect(parseNicoPlayerMessage({ eventName: 'statusChange', data: { playerStatus: 4, seekStatus: 0 } })).toEqual({ type: 'paused' });
     expect(parseNicoPlayerMessage({ eventName: 'playerStatusChange', data: { playerStatus: 5 } })).toEqual({ type: 'ended' });
     expect(parseNicoPlayerMessage('{bad')).toBeNull();
   });

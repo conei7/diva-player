@@ -202,9 +202,17 @@ function NicoEmbed({ pvId, name, duration: songDuration, isPlaying }: { pvId: st
           break;
         }
         case 'progress': {
+          const confirmsPlayback = message.seconds > 0 && attemptTokenRef.current !== null;
           trackerRef.current.confirm(message.seconds);
           const current = trackerRef.current.current();
           setProgress(current);
+          if (confirmsPlayback) {
+            markCurrentPVHealthy();
+            completePlaybackAttempt();
+            requestedPlayingRef.current = true;
+            setIsPlaying(true);
+            startTimer();
+          }
           if (hasReachedPlaybackEnd(current, durationRef.current ?? 0)) advanceOnce();
           break;
         }

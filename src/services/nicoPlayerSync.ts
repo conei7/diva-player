@@ -56,6 +56,13 @@ export function createNicoVolumeMessage(playerId: string, volume: number): NicoC
   });
 }
 
+function parseNicoPlayerStatus(status: unknown): NicoPlayerEvent | null {
+  if (status === 3) return { type: 'playing' };
+  if (status === 4) return { type: 'paused' };
+  if (status === 5) return { type: 'ended' };
+  return null;
+}
+
 export function parseNicoPlayerMessage(data: unknown): NicoPlayerEvent | null {
   let message: { eventName?: string; data?: Record<string, unknown> };
   try {
@@ -78,6 +85,12 @@ export function parseNicoPlayerMessage(data: unknown): NicoPlayerEvent | null {
       const seconds = (message.data as { currentTime?: unknown } | undefined)?.currentTime;
       return typeof seconds === 'number' && Number.isFinite(seconds) ? { type: 'progress', seconds } : null;
     }
+    case 'playerMetadataChange': {
+      const milliseconds = (message.data as { currentTime?: unknown } | undefined)?.currentTime;
+      return typeof milliseconds === 'number' && Number.isFinite(milliseconds)
+        ? { type: 'progress', seconds: milliseconds / 1000 }
+        : null;
+    }
     case 'seekStatusChange': {
       const milliseconds = (message.data as { currentTime?: unknown } | undefined)?.currentTime;
       return typeof milliseconds === 'number' && Number.isFinite(milliseconds)
@@ -92,10 +105,11 @@ export function parseNicoPlayerMessage(data: unknown): NicoPlayerEvent | null {
       return { type: 'ended' };
     case 'playerStatusChange': {
       const status = (message.data as { playerStatus?: unknown } | undefined)?.playerStatus;
-      if (status === 3) return { type: 'playing' };
-      if (status === 4) return { type: 'paused' };
-      if (status === 5) return { type: 'ended' };
-      return null;
+      return parseNicoPlayerStatus(status);
+    }
+    case 'statusChange': {
+      const status = (message.data as { playerStatus?: unknown } | undefined)?.playerStatus;
+      return parseNicoPlayerStatus(status);
     }
     default:
       return null;
