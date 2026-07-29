@@ -6,6 +6,7 @@ import { createPlaybackOwnership } from '../../services/playbackOwnership';
 import { createPlaybackAttemptController, type PlaybackAttemptToken } from '../../services/playbackAttempt';
 import {
   buildNicoEmbedUrl,
+  createNicoMuteMessage,
   createNicoPlaybackMessage,
   createNicoProgressTracker,
   createNicoVolumeMessage,
@@ -50,6 +51,7 @@ function NicoEmbed({ pvId, name, duration: songDuration, isPlaying }: { pvId: st
   const initialAutoplayRef = useRef(isPlaying);
   const playerIdRef = useRef(`diva-player-${pvId}-${Date.now().toString(36)}`);
   const requestedPlayingRef = useRef(isPlaying);
+  const autoplayMutedRef = useRef(initialAutoplayRef.current);
   const embedUrl = buildNicoEmbedUrl(pvId, initialAutoplayRef.current, playerIdRef.current);
   const NICO_ORIGIN = 'https://embed.nicovideo.jp';
 
@@ -75,6 +77,18 @@ function NicoEmbed({ pvId, name, duration: songDuration, isPlaying }: { pvId: st
       NICO_ORIGIN,
     );
   }, []);
+
+  const sendMuted = useCallback((muted: boolean) => {
+    iframeRef.current?.contentWindow?.postMessage(
+      createNicoMuteMessage(playerIdRef.current, muted),
+      NICO_ORIGIN,
+    );
+  }, []);
+
+  const prepareAndSendPlaybackState = useCallback((playing: boolean) => {
+    if (playing && autoplayMutedRef.current) sendMuted(true);
+    sendPlaybackState(playing);
+  }, [sendMuted, sendPlaybackState]);
 
   const cancelPlaybackAttempt = useCallback(() => {
     attemptControllerRef.current.cancel();
@@ -152,14 +166,14 @@ function NicoEmbed({ pvId, name, duration: songDuration, isPlaying }: { pvId: st
   const handleIframeLoad = useCallback(() => {
     if (songDuration && songDuration > 0) setDuration(songDuration);
     scheduleVolumeSync();
-    sendPlaybackState(requestedPlayingRef.current);
+    prepareAndSendPlaybackState(requestedPlayingRef.current);
     ensurePlaybackAttempt();
     if (playTimerRef.current !== null) window.clearTimeout(playTimerRef.current);
     playTimerRef.current = window.setTimeout(() => {
       playTimerRef.current = null;
-      sendPlaybackState(requestedPlayingRef.current);
+      prepareAndSendPlaybackState(requestedPlayingRef.current);
     }, 750);
-  }, [ensurePlaybackAttempt, scheduleVolumeSync, sendPlaybackState, setDuration, songDuration]);
+  }, [ensurePlaybackAttempt, prepareAndSendPlaybackState, scheduleVolumeSync, setDuration, songDuration]);
 
   useEffect(() => {
     requestedPlayingRef.current = isPlaying;
@@ -183,7 +197,7 @@ function NicoEmbed({ pvId, name, duration: songDuration, isPlaying }: { pvId: st
             setDuration(message.duration);
           }
           scheduleVolumeSync();
-          sendPlaybackState(requestedPlayingRef.current);
+          prepareAndSendPlaybackState(requestedPlayingRef.current);
           ensurePlaybackAttempt();
           break;
         }
@@ -199,6 +213,11 @@ function NicoEmbed({ pvId, name, duration: songDuration, isPlaying }: { pvId: st
           completePlaybackAttempt();
           requestedPlayingRef.current = true;
           setIsPlaying(true);
+          if (autoplayMutedRef.current && navigator.userActivation?.hasBeenActive) {
+            autoplayMutedRef.current = false;
+            sendMuted(false);
+            scheduleVolumeSync();
+          }
           startTimer();
           break;
         case 'paused':
@@ -223,7 +242,22 @@ function NicoEmbed({ pvId, name, duration: songDuration, isPlaying }: { pvId: st
     };
     window.addEventListener('message', handler);
     return () => window.removeEventListener('message', handler);
-  }, [advanceOnce, completePlaybackAttempt, ensurePlaybackAttempt, markCurrentPVHealthy, scheduleVolumeSync, sendPlaybackState, setProgress, setDuration, setIsPlaying, startTimer, stopTimer]);
+  }, [advanceOnce, completePlaybackAttempt, ensurePlaybackAttempt, markCurrentPVHealthy, prepareAndSendPlaybackState, scheduleVolumeSync, sendMuted, sendPlaybackState, setProgress, setDuration, setIsPlaying, startTimer, stopTimer]);
+
+  useEffect(() => {
+    const restoreAutoplayAudio = () => {
+      if (!autoplayMutedRef.current || !usePlayerStore.getState().isPlaying) return;
+      autoplayMutedRef.current = false;
+      sendMuted(false);
+      scheduleVolumeSync();
+    };
+    window.addEventListener('pointerdown', restoreAutoplayAudio, { capture: true });
+    window.addEventListener('keydown', restoreAutoplayAudio, { capture: true });
+    return () => {
+      window.removeEventListener('pointerdown', restoreAutoplayAudio, { capture: true });
+      window.removeEventListener('keydown', restoreAutoplayAudio, { capture: true });
+    };
+  }, [scheduleVolumeSync, sendMuted]);
 
   useEffect(() => {
     const recoverPlayback = () => {

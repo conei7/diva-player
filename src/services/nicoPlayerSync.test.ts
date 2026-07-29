@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildNicoEmbedUrl,
+  createNicoMuteMessage,
   createNicoPlaybackMessage,
   createNicoProgressTracker,
   createNicoVolumeMessage,
@@ -72,6 +73,12 @@ describe('nico player synchronization', () => {
       playerId: 'diva-player-1',
       eventName: 'pause',
       data: {},
+    });
+    expect(createNicoMuteMessage('diva-player-1', true)).toEqual({
+      sourceConnectorType: 1,
+      playerId: 'diva-player-1',
+      eventName: 'mute',
+      data: { mute: true },
     });
   });
 });

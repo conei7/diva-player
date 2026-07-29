@@ -5,7 +5,7 @@ export type NicoPlayerEvent =
   | { type: 'paused' }
   | { type: 'ended' };
 
-export type NicoControllerEventName = 'play' | 'pause' | 'volumeChange';
+export type NicoControllerEventName = 'play' | 'pause' | 'mute' | 'volumeChange';
 
 export interface NicoControllerMessage {
   sourceConnectorType: 1;
@@ -44,6 +44,10 @@ export function createNicoControllerMessage(
 
 export function createNicoPlaybackMessage(playerId: string, isPlaying: boolean): NicoControllerMessage {
   return createNicoControllerMessage(playerId, isPlaying ? 'play' : 'pause');
+}
+
+export function createNicoMuteMessage(playerId: string, muted: boolean): NicoControllerMessage {
+  return createNicoControllerMessage(playerId, 'mute', { mute: muted });
 }
 
 export function createNicoVolumeMessage(playerId: string, volume: number): NicoControllerMessage {
