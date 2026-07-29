@@ -794,18 +794,18 @@ public class DbService
         {
             "recent" => "SELECT id FROM songs WHERE publish_date >= CURRENT_DATE - interval '30 days'",
             "popular" => """
-                SELECT id FROM songs WHERE publish_date >= CURRENT_DATE - interval '365 days'
+                SELECT id FROM songs WHERE publish_date >= CURRENT_DATE - interval '120 days'
                 UNION
-                SELECT id FROM (SELECT id FROM songs WHERE publish_date IS NOT NULL ORDER BY youtube_views DESC NULLS LAST LIMIT 25000) youtube_top
+                SELECT id FROM (SELECT id FROM songs WHERE publish_date IS NOT NULL ORDER BY youtube_views DESC NULLS LAST LIMIT 5000) youtube_top
                 UNION
-                SELECT id FROM (SELECT id FROM songs WHERE publish_date IS NOT NULL ORDER BY nico_views DESC NULLS LAST LIMIT 25000) nico_top
+                SELECT id FROM (SELECT id FROM songs WHERE publish_date IS NOT NULL ORDER BY nico_views DESC NULLS LAST LIMIT 5000) nico_top
                 """,
             "deep" => """
                 SELECT song_id AS id
                 FROM song_discovery_quality
                 WHERE discovery_eligible
                 ORDER BY quality_score DESC, support_score DESC, song_id
-                LIMIT 50000
+                LIMIT 10000
                 """,
             _ => "SELECT id FROM songs WHERE FALSE",
         };
