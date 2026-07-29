@@ -223,8 +223,6 @@ export function getPlayablePV(song: Song): PV | null {
   return choosePVByPriority(unfailedPVs, preference) || choosePVByPriority(enabledPVs, preference);
 }
 
-export type MixMode = 'balanced' | 'deep' | 'producer';
-
 interface PlayerState {
   // 現在の再生状態
   currentSong: Song | null;
@@ -311,9 +309,6 @@ interface PlayerState {
   rootSeed: Song | null;
   setRootSeed: (song: Song | null) => void;
 
-  // Mixモード
-  mixMode: MixMode;
-  setMixMode: (mode: MixMode) => void;
 }
 
 const storedPlayerQueue = getStoredPlayerQueue();
@@ -719,10 +714,6 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   // ─── ルートシード ──────────────────────────────────────────────────────────
   rootSeed: null,
   setRootSeed: (song) => set({ rootSeed: song }),
-
-  // ─── Mixモード ─────────────────────────────────────────────────────────────
-  mixMode: 'balanced',
-  setMixMode: (mode) => set({ mixMode: mode }),
 
   toggleShuffle: () => {
     const { shuffleEnabled, queue, queueIndex, queueSources, currentSong, currentPlaybackSource, originalQueue } = get();

@@ -25,69 +25,71 @@ export default function VideoInfo({ song }: VideoInfoProps) {
     .filter(Boolean) || [];
 
   return (
-    <div className="mt-3">
-      {/* 曲名 */}
-      <h1
-        className="text-xl font-bold leading-tight"
-        style={{ color: 'var(--color-text-primary)' }}
-      >
-        {song.name}
-      </h1>
+    <div className="mt-3 flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+      <div className="min-w-0 flex-1">
+        {/* 曲名 */}
+        <h1 className="text-xl font-bold leading-tight" style={{ color: 'var(--color-text-primary)' }}>
+          {song.name}
+        </h1>
 
-      <div className="mt-2 flex flex-col gap-1">
-        {/* ボーカリスト */}
-        {vocalists.length > 0 && (
-          <span className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
-            feat. {vocalists.join(', ')}
-          </span>
-        )}
-
-        {/* 作者 */}
-        <div className="flex flex-wrap items-center gap-2">
-          {producers.length > 0 ? producers.map((producer, index) => (
-            <span key={`${producer.id ?? producer.name}-${index}`} className="inline-flex items-center gap-1">
-              {producer.href ? (
-                <Link
-                  to={producer.href}
-                  className="text-sm font-medium hover:underline"
-                  style={{ color: 'var(--color-text-primary)' }}
-                  aria-label={`${producer.name} の曲を表示`}
-                >
-                  {producer.name}
-                </Link>
-              ) : (
-                <span className="text-sm font-medium" style={{ color: 'var(--color-text-primary)' }}>
-                  {producer.name}
-                </span>
-              )}
-              {producer.id && (
-                <FavoriteProducerButton
-                  id={producer.id}
-                  name={producer.name}
-                  artistType={producer.artistType}
-                />
-              )}
-            </span>
-          )) : (
-            <span className="text-sm font-medium" style={{ color: 'var(--color-text-primary)' }}>
-              {song.artistString}
+        <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+          {/* ボーカリスト */}
+          {vocalists.length > 0 && (
+            <span className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+              feat. {vocalists.join(', ')}
             </span>
           )}
 
-          {/* 曲タイプバッジ */}
-          {song.songType !== 'Original' && song.songType !== 'Unspecified' && (
-            <span
-              className="text-[10px] font-medium px-2 py-0.5 rounded-full"
-              style={{ background: 'rgba(139, 92, 246, 0.15)', color: 'var(--color-accent-purple)' }}
-            >
-              {song.songType}
-            </span>
-          )}
+          {/* 作者 */}
+          <div className="flex flex-wrap items-center gap-2">
+            {producers.length > 0 ? producers.map((producer, index) => (
+              <span key={`${producer.id ?? producer.name}-${index}`} className="inline-flex items-center gap-1">
+                {producer.href ? (
+                  <Link
+                    to={producer.href}
+                    className="text-sm font-medium hover:underline"
+                    style={{ color: 'var(--color-text-primary)' }}
+                    aria-label={`${producer.name} の曲を表示`}
+                  >
+                    {producer.name}
+                  </Link>
+                ) : (
+                  <span className="text-sm font-medium" style={{ color: 'var(--color-text-primary)' }}>
+                    {producer.name}
+                  </span>
+                )}
+                {producer.id && (
+                  <FavoriteProducerButton
+                    id={producer.id}
+                    name={producer.name}
+                    artistType={producer.artistType}
+                  />
+                )}
+              </span>
+            )) : (
+              <span className="text-sm font-medium" style={{ color: 'var(--color-text-primary)' }}>
+                {song.artistString}
+              </span>
+            )}
+
+            {/* 曲タイプバッジ */}
+            {song.songType !== 'Original' && song.songType !== 'Unspecified' && (
+              <span
+                className="rounded-full px-2 py-0.5 text-[10px] font-medium"
+                style={{ background: 'rgba(139, 92, 246, 0.15)', color: 'var(--color-accent-purple)' }}
+              >
+                {song.songType}
+              </span>
+            )}
+          </div>
         </div>
       </div>
-      <OriginalVersionLink song={song} />
-      <div className="mt-2"><PVSourceSelector song={song} /></div>
-      <AlbumPlaylistButton song={song} />
+
+      <div className="flex min-w-0 flex-wrap items-center gap-2 lg:max-w-[58%] lg:justify-end">
+        <PVSourceSelector song={song} />
+        <OriginalVersionLink song={song} />
+        <AlbumPlaylistButton song={song} />
+      </div>
     </div>
   );
 }

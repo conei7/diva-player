@@ -33,7 +33,6 @@ const ReportsPage = lazy(() => import('./pages/ReportsPage'));
 function PlayerTracker() {
   const currentSong = usePlayerStore(s => s.currentSong);
   const rootSeed = usePlayerStore(s => s.rootSeed);
-  const mixMode = usePlayerStore(s => s.mixMode);
   const queue = usePlayerStore(s => s.queue);
   const queueIndex = usePlayerStore(s => s.queueIndex);
   const addManyToQueue = usePlayerStore(s => s.addManyToQueue);
@@ -141,7 +140,6 @@ function PlayerTracker() {
   useAutoQueue({
     currentSong,
     rootSeed,
-    mixMode,
     queue,
     queueIndex,
     historyEntries,

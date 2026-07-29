@@ -23,23 +23,43 @@ export default function PVSourceSelector({ song, compact = false }: PVSourceSele
 
   const currentKey = currentPV ? `${currentPV.service}:${currentPV.pvId || currentPV.id}` : '';
   return (
-    <label className={compact ? 'inline-flex items-center' : 'flex items-center gap-2'}>
+    <label className={compact ? 'inline-flex min-w-0 items-center' : 'flex min-w-0 items-center gap-2'}>
       {!compact && <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>再生PV</span>}
-      <select
-        className="input max-w-[14rem] text-xs"
-        value={currentKey}
-        onChange={event => {
-          const next = playablePVs.find(pv => `${pv.service}:${pv.pvId || pv.id}` === event.target.value);
-          if (next) selectPV(next);
-        }}
-        aria-label="再生PVを選択"
-      >
-        {playablePVs.map(pv => (
-          <option key={`${pv.service}:${pv.pvId || pv.id}`} value={`${pv.service}:${pv.pvId || pv.id}`}>
-            {labelForPV(pv)}
-          </option>
-        ))}
-      </select>
+      <span className={`relative min-w-0 ${compact ? 'w-[min(20rem,42vw)] max-w-[20rem]' : 'w-full max-w-[32rem]'}`}>
+        <select
+          className="input w-full min-w-0 appearance-none truncate pr-10 text-xs"
+          value={currentKey}
+          onChange={event => {
+            const next = playablePVs.find(pv => `${pv.service}:${pv.pvId || pv.id}` === event.target.value);
+            if (next) selectPV(next);
+          }}
+          aria-label="再生PVを選択"
+          style={{
+            color: 'var(--color-text-primary)',
+            background: 'var(--color-bg-secondary)',
+            colorScheme: 'dark',
+          }}
+        >
+          {playablePVs.map(pv => (
+            <option
+              key={`${pv.service}:${pv.pvId || pv.id}`}
+              value={`${pv.service}:${pv.pvId || pv.id}`}
+              style={{ background: 'var(--color-bg-secondary)', color: 'var(--color-text-primary)' }}
+            >
+              {labelForPV(pv)}
+            </option>
+          ))}
+        </select>
+        <span
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-y-0 right-0 flex w-9 items-center justify-center border-l"
+          style={{ color: 'var(--color-text-secondary)', borderColor: 'var(--color-border)' }}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+            <path d="m7 10 5 5 5-5z" />
+          </svg>
+        </span>
+      </span>
     </label>
   );
 }

@@ -121,7 +121,7 @@ export default function WatchPage() {
   const songId = songIdStr ? Number(songIdStr) : null;
   const shouldAutoplay = searchParams.get('autoplay') !== '0';
 
-  const { currentSong, setQueue, setRootSeed, mixMode, setMixMode } = usePlayerStore();
+  const { currentSong, setQueue, setRootSeed } = usePlayerStore();
   const currentSongId = currentSong?.id;
   const { ratings } = useRatingStore();
   const { entries } = useHistoryStore();
@@ -537,29 +537,6 @@ export default function WatchPage() {
             
             {/* キュー (ミックスリスト) */}
             <WatchQueue />
-
-            {/* ミックスモード切替 */}
-            <div className="flex items-center gap-1.5 mb-2">
-              <span className="text-[11px] mr-1" style={{ color: 'var(--color-text-muted)' }}>自動再生:</span>
-              {(['balanced', 'deep', 'producer'] as const).map(mode => {
-                const labels = { balanced: 'バランス', deep: 'Deep Dig', producer: '同じP' };
-                const isActive = mixMode === mode;
-                return (
-                  <button
-                    key={mode}
-                    onClick={() => setMixMode(mode)}
-                    className="rounded-full transition-all text-[11px] px-2.5 py-1"
-                    style={{
-                      background: isActive ? 'var(--color-accent-cyan)' : 'rgba(255,255,255,0.08)',
-                      color: isActive ? '#0f0f0f' : 'var(--color-text-muted)',
-                      fontWeight: isActive ? 600 : 400,
-                    }}
-                  >
-                    {labels[mode]}
-                  </button>
-                );
-              })}
-            </div>
 
             {/* フィルターチップス */}
             <div className="sticky z-30 pb-2 pt-2 -mx-2 px-2 bg-[#0f0f0f]" style={{ top: 'var(--header-height)' }}>

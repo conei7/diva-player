@@ -55,10 +55,10 @@ export default function AlbumPlaylistButton({ song }: { song: Song }) {
   };
 
   return (
-    <div className="mt-3">
+    <div className="flex flex-wrap items-center gap-2">
       <button type="button" className="btn-secondary text-xs px-3 py-1.5" disabled={busy} onClick={() => void loadAlbums()}>アルバムをプレイリスト化</button>
       {open && albums.length > 0 && (
-        <div className="mt-2 flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <select className="min-w-0 max-w-full rounded-lg px-2 py-1.5 text-xs bg-black/30 border border-white/10" value={selectedId} onChange={event => setSelectedId(event.target.value ? Number(event.target.value) : '')} disabled={busy}>
             {albums.map(album => <option key={album.id} value={album.id}>{album.name}</option>)}
           </select>

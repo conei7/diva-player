@@ -1,9 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import {
-  getAudioSimilarSongs,
   getMultiRecommendedSongs,
-  getSongsByProducerFromBackend,
   getSongsByProducer,
   attachExternalViews,
 } from '../api/vocadb';
@@ -36,12 +34,9 @@ import {
   type DiscoveryFilterResult,
 } from '../utils/globalFilters';
 
-export type AutoQueueMixMode = 'balanced' | 'deep' | 'producer';
-
 interface UseAutoQueueArgs {
   currentSong: Song | null;
   rootSeed: Song | null;
-  mixMode: AutoQueueMixMode;
   queue: Song[];
   queueIndex: number;
   historyEntries: HistoryEntry[];
@@ -83,32 +78,14 @@ function filterCandidatePool(
 async function fetchCandidates(
   currentSong: Song,
   rootSeed: Song | null,
-  mixMode: AutoQueueMixMode,
   tasteSeeds: TasteSeed[],
   excludeSongIds: number[],
 ): Promise<Song[]> {
-  const songId = currentSong.id;
-  const randomOffset = Math.floor(Math.random() * 20);
-
-  switch (mixMode) {
-    case 'deep':
-      return getAudioSimilarSongs(songId, 40, randomOffset);
-    case 'producer': {
-      const producerIds = (currentSong.artists ?? [])
-        .filter(artist => artist.categories?.includes('Producer'))
-        .map(artist => artist.artist?.id)
-        .filter((id): id is number => id !== undefined);
-      return getSongsByProducerFromBackend(songId, producerIds, 40, randomOffset);
-    }
-    case 'balanced':
-    default:
-      void randomOffset;
-      return getMultiRecommendedSongs(
-        buildRecommendationSeeds(currentSong, rootSeed, tasteSeeds),
-        60,
-        excludeSongIds,
-      );
-  }
+  return getMultiRecommendedSongs(
+    buildRecommendationSeeds(currentSong, rootSeed, tasteSeeds),
+    60,
+    excludeSongIds,
+  );
 }
 
 interface RecommendationSeed {
@@ -196,7 +173,6 @@ function buildRecommendationMetadata(
 export function useAutoQueue({
   currentSong,
   rootSeed,
-  mixMode,
   queue,
   queueIndex,
   historyEntries,
@@ -258,7 +234,6 @@ export function useAutoQueue({
         const candidates = await fetchCandidates(
           currentSong,
           rootSeed,
-          mixMode,
           [...tasteProfile.longTerm, ...tasteProfile.shortTerm],
           [...existingIds],
         );
@@ -310,7 +285,7 @@ export function useAutoQueue({
           ...Object.keys(ratings).map(Number),
           ...Object.keys(implicitFeedback).map(Number),
         ]);
-        const source = mixMode === 'deep' ? 'audio' : 'hybrid';
+        const source = 'hybrid' as const;
         const familiarityBias = queuePlan.requestedCount > 0
           ? (strategyTarget.known - strategyTarget.unknown) / queuePlan.requestedCount
           : 0;
@@ -339,7 +314,7 @@ export function useAutoQueue({
           generatedAt: Date.now(),
           rankingSeed,
           seedSongIds: buildRecommendationSeeds(currentSong, rootSeed, [...tasteProfile.longTerm, ...tasteProfile.shortTerm]).map(seed => seed.songId),
-          strategy: `${mixMode}/${strategyArm}/${queuePlan.stage}`,
+          strategy: `balanced/${strategyArm}/${queuePlan.stage}`,
           familiarityBias,
           candidateCount: detailed.trace.length,
           selectedCount: detailed.ranked.length,
@@ -386,7 +361,6 @@ export function useAutoQueue({
     currentSong,
     historyEntries,
     implicitFeedback,
-    mixMode,
     playlists,
     queue,
     queueIndex,

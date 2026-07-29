@@ -19,9 +19,9 @@ export default function OriginalVersionLink({ song }: { song: Song }) {
 
   if (!originalId || originalId === song.id || !original) return null;
   return (
-    <div className="mt-3 rounded-xl px-3 py-2" style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}>
-      <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>原曲</span>
-      <Link to={`/watch?v=${original.id}`} className="block mt-0.5 text-sm font-medium hover:underline truncate" title={original.name}>
+    <div className="inline-flex min-w-0 max-w-full items-center gap-2 rounded-xl px-3 py-2" style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}>
+      <span className="shrink-0 text-xs" style={{ color: 'var(--color-text-muted)' }}>原曲</span>
+      <Link to={`/watch?v=${original.id}`} className="min-w-0 truncate text-sm font-medium hover:underline" title={original.name}>
         {original.name}
       </Link>
     </div>
