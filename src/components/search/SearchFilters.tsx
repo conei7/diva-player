@@ -154,6 +154,7 @@ export default function SearchFilters() {
   const [suggestions, setSuggestions] = useState<Artist[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
+  const [isAdvancedExpanded, setIsAdvancedExpanded] = useState(false);
   const suggestRef = useRef<HTMLDivElement>(null);
 
   // hall_of_fame_singers.json を非同期で取得 (失敗時はハードコードにフォールバック)
@@ -270,33 +271,124 @@ export default function SearchFilters() {
     setAdvancedFilters({ [key]: sanitizeAdvancedIntegerInput(value, min, max) });
   };
 
+  /* ---------- 選択チップ（共通） ---------- */
+  const vocalistChips = (
+    <div className="flex flex-wrap gap-1.5">
+      {visibleVocalistFilters.map(v => (
+        <span
+          key={v.id}
+          className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full"
+          style={{
+            background: 'rgba(139, 92, 246, 0.15)',
+            color: 'var(--color-accent-purple)',
+            border: '1px solid rgba(139, 92, 246, 0.35)',
+          }}
+        >
+          {vocalistFilterLabel(v)}
+          <button
+            onClick={() => removeVocalistSelection(v)}
+            className="opacity-70 hover:opacity-100 transition-opacity ml-0.5"
+          >
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
+            </svg>
+          </button>
+        </span>
+      ))}
+    </div>
+  );
+
   return (
-    <div className="flex flex-col gap-4 rounded-xl p-4"
+    <div className="flex flex-col gap-0 rounded-xl overflow-hidden"
          style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)' }}>
 
-      {/* ===== シンガーで絞り込み ===== */}
-      <div className="flex flex-col gap-3">
+      {/* ===== セクション1: ソート・基本フィルタ ===== */}
+      <div className="flex items-center justify-between flex-wrap gap-2 px-4 py-3"
+           style={{ background: 'rgba(255,255,255,0.02)' }}>
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* オリジナル曲のみ */}
+          <button
+            className="text-xs px-3 py-1.5 rounded-full transition-colors"
+            style={{
+              background: songTypeFilter === 'Original' ? 'rgba(139, 92, 246, 0.2)' : 'transparent',
+              color: songTypeFilter === 'Original' ? 'var(--color-accent-purple)' : 'var(--color-text-muted)',
+              border: songTypeFilter === 'Original'
+                ? '1px solid rgba(139, 92, 246, 0.4)'
+                : '1px solid var(--color-border)',
+            }}
+            onClick={() => {
+              const next = songTypeFilter === 'Original' ? 'All' : 'Original';
+              setSongTypeFilter(next);
+              search();
+            }}
+            title="カバー・リミックスを除外し、オリジナル曲のみ表示"
+          >
+            {songTypeFilter === 'Original' ? '✦ オリジナルのみ' : 'オリジナルのみ'}
+          </button>
+        </div>
 
-        {/* ヘッダー：タイトル + 一致条件 */}
-        <div 
-          className="flex items-center justify-between flex-wrap gap-2 cursor-pointer select-none"
+        <div className="flex items-center gap-2">
+          <label htmlFor="sort-select" className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
+            並び替え
+          </label>
+          <select
+            id="sort-select"
+            value={sort}
+            onChange={(e) => { setSort(e.target.value as ExtendedSortRule); search(); }}
+            className="text-sm rounded-lg px-2.5 py-1.5 outline-none cursor-pointer transition-colors"
+            style={{
+              background: 'var(--color-surface-elevated)',
+              color: 'var(--color-text-primary)',
+              border: '1px solid var(--color-border)',
+            }}
+          >
+            {SORT_OPTIONS.map(opt => (
+              <option key={opt.value} value={opt.value}>{opt.label}</option>
+            ))}
+          </select>
+
+          {/* 昇順 / 降順トグル */}
+          <button
+            id="sort-order-toggle"
+            onClick={() => { setSortOrder(sortOrder === 'desc' ? 'asc' : 'desc'); search(); }}
+            title={sortOrder === 'desc' ? '降順 (クリックで昇順に)' : '昇順 (クリックで降順に)'}
+            className="flex items-center justify-center rounded-lg transition-colors"
+            style={{
+              width: '32px', height: '32px',
+              background: 'var(--color-surface-elevated)',
+              color: 'var(--color-text-secondary)',
+              border: '1px solid var(--color-border)',
+              flexShrink: 0,
+            }}
+          >
+            {sortOrder === 'desc'
+              ? <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M7 14l5-5 5 5z" transform="rotate(180 12 12)"/><path d="M7 10l5 5 5-5z"/></svg>
+              : <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M7 14l5-5 5 5z"/><path d="M7 10l5 5 5-5z" transform="rotate(180 12 12)"/></svg>
+            }
+          </button>
+        </div>
+      </div>
+
+      {/* ===== セクション2: シンガーで絞り込み ===== */}
+      <div className="px-4 py-2" style={{ borderTop: '1px solid var(--color-border)' }}>
+        <div
+          className="search-section-header"
           onClick={() => setIsExpanded(!isExpanded)}
         >
-          <div className="flex items-center gap-2">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
-                 style={{ transform: isExpanded ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s', color: 'var(--color-text-muted)' }}>
-              <path d="M6 9l6 6 6-6"/>
-            </svg>
-            <span className="text-sm font-semibold" style={{ color: 'var(--color-text-primary)' }}>
-              シンガーで絞り込み
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+               style={{ transform: isExpanded ? 'rotate(180deg)' : 'rotate(0deg)' }}>
+            <path d="M6 9l6 6 6-6"/>
+          </svg>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" style={{ color: 'var(--color-accent-purple)', opacity: 0.7 }}>
+            <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/>
+          </svg>
+          <span>シンガーで絞り込み</span>
+          {vocalistFilters.length > 0 && (
+            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full" style={{ background: 'var(--color-accent-purple)', color: '#fff' }}>
+              {visibleVocalistFilters.length}
             </span>
-            {vocalistFilters.length > 0 && (
-              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full" style={{ background: 'var(--color-accent-purple)', color: '#fff' }}>
-                {visibleVocalistFilters.length}
-              </span>
-            )}
-          </div>
-
+          )}
+          <div className="flex-1" />
           <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
             {MATCH_MODES.map(m => (
               <button
@@ -317,332 +409,239 @@ export default function SearchFilters() {
           </div>
         </div>
 
+        {/* 選択済みチップ（折りたたみ時） */}
+        {!isExpanded && visibleVocalistFilters.length > 0 && (
+          <div className="pb-2">{vocalistChips}</div>
+        )}
+
         {/* 展開時のみ表示されるエリア */}
         {isExpanded && (
-          <div className="flex flex-col gap-3 mt-2 animate-fade-in">
+          <div className="flex flex-col gap-3 pb-3 animate-fade-in">
 
-        {/* カテゴリ別プリセットボタン */}
-        {categoriesLoading ? (
-          <div className="flex items-center gap-2 py-2" style={{ color: 'var(--color-text-muted)' }}>
-            <svg className="animate-spin" width="14" height="14" viewBox="0 0 24 24" fill="none"
-                 stroke="currentColor" strokeWidth="2">
-              <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4
-                       M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
-            </svg>
-            <span className="text-xs">シンガー一覧を読み込み中...</span>
+            {/* カテゴリ別プリセットボタン */}
+            {categoriesLoading ? (
+              <div className="flex items-center gap-2 py-2" style={{ color: 'var(--color-text-muted)' }}>
+                <svg className="animate-spin" width="14" height="14" viewBox="0 0 24 24" fill="none"
+                     stroke="currentColor" strokeWidth="2">
+                  <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4
+                           M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
+                </svg>
+                <span className="text-xs">シンガー一覧を読み込み中...</span>
+              </div>
+            ) : (
+              activeCategories.map(cat => (
+              <div key={cat.label} className="flex flex-col gap-1.5">
+                <span className="text-[10px] font-bold tracking-wider uppercase"
+                      style={{ color: 'var(--color-text-muted)', opacity: 0.7 }}>
+                  {cat.label}
+                </span>
+                <div className="flex flex-wrap gap-1.5">
+                  {cat.vocalists.map(v => {
+                    const isOn = selectedIds.has(v.id);
+                    return (
+                      <button
+                        key={v.id}
+                        onClick={() => handleTogglePreset(v)}
+                        className="text-xs px-2.5 py-1 rounded-full transition-all duration-150"
+                        style={{
+                          background: isOn ? 'rgba(139, 92, 246, 0.2)' : 'var(--color-surface-elevated)',
+                          color: isOn ? 'var(--color-accent-purple)' : 'var(--color-text-secondary)',
+                          border: isOn
+                            ? '1px solid rgba(139, 92, 246, 0.5)'
+                            : '1px solid var(--color-border)',
+                          fontWeight: isOn ? 600 : 400,
+                        }}
+                      >
+                        {isOn && <span className="mr-0.5 text-[10px]">✓</span>}
+                        {v.name}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+              ))
+            )}
+
+            {/* その他: テキスト入力 + サジェスト */}
+            <div className="relative" ref={suggestRef}>
+              <div className="flex items-center gap-2 text-xs mb-1" style={{ color: 'var(--color-text-muted)' }}>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M15.5 14h-.79l-.28-.27A6.47 6.47 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/>
+                </svg>
+                その他のシンガーを検索
+              </div>
+              <input
+                type="text"
+                value={vocalistQuery}
+                onChange={e => setVocalistQuery(e.target.value)}
+                onFocus={() => suggestions.length > 0 && setShowSuggestions(true)}
+                placeholder="シンガー名を入力..."
+                className="w-full text-sm rounded-lg px-3 py-1.5 outline-none transition-colors"
+                style={{
+                  background: 'var(--color-surface-elevated)',
+                  color: 'var(--color-text-primary)',
+                  border: '1px solid var(--color-border)',
+                }}
+              />
+              {showSuggestions && suggestions.length > 0 && (
+                <ul
+                  className="absolute top-full left-0 right-0 z-20 mt-1 rounded-lg overflow-hidden shadow-xl"
+                  style={{ background: 'var(--color-surface-elevated)', border: '1px solid var(--color-border)' }}
+                >
+                  {suggestions.map(s => (
+                    <li
+                      key={s.id}
+                      className="px-3 py-2 text-sm cursor-pointer transition-colors hover:bg-white/5"
+                      style={{ color: 'var(--color-text-primary)' }}
+                      onMouseDown={() => handleSelectSuggestion(s)}
+                    >
+                      <span>{s.name}</span>
+                      <span className="ml-2 text-xs opacity-50">{s.artistType}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
+            {/* 選択済みチップ（展開時） */}
+            {visibleVocalistFilters.length > 0 && vocalistChips}
           </div>
-        ) : (
-          activeCategories.map(cat => (
-          <div key={cat.label} className="flex flex-col gap-1.5">
-            <span className="text-[10px] font-bold tracking-wider uppercase"
-                  style={{ color: 'var(--color-text-muted)', opacity: 0.7 }}>
-              {cat.label}
-            </span>
-            <div className="flex flex-wrap gap-1.5">
-              {cat.vocalists.map(v => {
-                const isOn = selectedIds.has(v.id);
-                return (
-                  <button
-                    key={v.id}
-                    onClick={() => handleTogglePreset(v)}
-                    className="text-xs px-2.5 py-1 rounded-full transition-all duration-150"
-                    style={{
-                      background: isOn ? 'rgba(139, 92, 246, 0.2)' : 'var(--color-surface-elevated)',
-                      color: isOn ? 'var(--color-accent-purple)' : 'var(--color-text-secondary)',
-                      border: isOn
-                        ? '1px solid rgba(139, 92, 246, 0.5)'
-                        : '1px solid var(--color-border)',
-                      fontWeight: isOn ? 600 : 400,
-                    }}
-                  >
-                    {isOn && <span className="mr-0.5 text-[10px]">✓</span>}
-                    {v.name}
-                  </button>
-                );
-              })}
+        )}
+      </div>
+
+      {/* ===== セクション3: 絞り込み条件 ===== */}
+      <div className="px-4 py-2" style={{ borderTop: '1px solid var(--color-border)' }}>
+        <div
+          className="search-section-header"
+          onClick={() => setIsAdvancedExpanded(!isAdvancedExpanded)}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+               style={{ transform: isAdvancedExpanded ? 'rotate(180deg)' : 'rotate(0deg)' }}>
+            <path d="M6 9l6 6 6-6"/>
+          </svg>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" style={{ color: 'var(--color-accent-cyan)', opacity: 0.7 }}>
+            <path d="M3 17v2h6v-2H3zM3 5v2h10V5H3zm10 16v-2h8v-2h-8v-2h-2v6h2zM7 9v2H3v2h4v2h2V9H7zm14 4v-2H11v2h10zm-6-4h2V7h4V5h-4V3h-2v6z"/>
+          </svg>
+          <span>絞り込み条件</span>
+        </div>
+
+        {isAdvancedExpanded && (
+          <div className="pb-3 animate-fade-in">
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+              <div className="flex flex-col gap-1">
+                <label className="text-[11px]" style={{ color: 'var(--color-text-muted)' }}>投稿年</label>
+                <div className="flex items-center gap-1.5">
+                  <input
+                    type="number"
+                    inputMode="numeric"
+                    min={ADVANCED_SEARCH_LIMITS.publishYearMin}
+                    max={ADVANCED_SEARCH_LIMITS.publishYearMax}
+                    step={1}
+                    value={advancedFilters.publishYearFrom}
+                    onChange={e => updateBoundedInteger('publishYearFrom', e.target.value, ADVANCED_SEARCH_LIMITS.publishYearMin, ADVANCED_SEARCH_LIMITS.publishYearMax)}
+                    placeholder="2007"
+                    className="w-full text-sm rounded-lg px-2 py-1.5 outline-none"
+                    style={{ background: 'var(--color-surface-elevated)', color: 'var(--color-text-primary)', border: '1px solid var(--color-border)' }}
+                  />
+                  <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>〜</span>
+                  <input
+                    type="number"
+                    inputMode="numeric"
+                    min={ADVANCED_SEARCH_LIMITS.publishYearMin}
+                    max={ADVANCED_SEARCH_LIMITS.publishYearMax}
+                    step={1}
+                    value={advancedFilters.publishYearTo}
+                    onChange={e => updateBoundedInteger('publishYearTo', e.target.value, ADVANCED_SEARCH_LIMITS.publishYearMin, ADVANCED_SEARCH_LIMITS.publishYearMax)}
+                    placeholder="2026"
+                    className="w-full text-sm rounded-lg px-2 py-1.5 outline-none"
+                    style={{ background: 'var(--color-surface-elevated)', color: 'var(--color-text-primary)', border: '1px solid var(--color-border)' }}
+                  />
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <label className="text-[11px]" style={{ color: 'var(--color-text-muted)' }}>曲の長さ（秒）</label>
+                <div className="flex items-center gap-1.5">
+                  <input
+                    type="number"
+                    inputMode="numeric"
+                    min={ADVANCED_SEARCH_LIMITS.lengthMinSeconds}
+                    max={ADVANCED_SEARCH_LIMITS.lengthMaxSeconds}
+                    step={1}
+                    value={advancedFilters.lengthMinSeconds}
+                    onChange={e => updateBoundedInteger('lengthMinSeconds', e.target.value, ADVANCED_SEARCH_LIMITS.lengthMinSeconds, ADVANCED_SEARCH_LIMITS.lengthMaxSeconds)}
+                    placeholder="60"
+                    className="w-full text-sm rounded-lg px-2 py-1.5 outline-none"
+                    style={{ background: 'var(--color-surface-elevated)', color: 'var(--color-text-primary)', border: '1px solid var(--color-border)' }}
+                  />
+                  <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>〜</span>
+                  <input
+                    type="number"
+                    inputMode="numeric"
+                    min={ADVANCED_SEARCH_LIMITS.lengthMinSeconds}
+                    max={ADVANCED_SEARCH_LIMITS.lengthMaxSeconds}
+                    step={1}
+                    value={advancedFilters.lengthMaxSeconds}
+                    onChange={e => updateBoundedInteger('lengthMaxSeconds', e.target.value, ADVANCED_SEARCH_LIMITS.lengthMinSeconds, ADVANCED_SEARCH_LIMITS.lengthMaxSeconds)}
+                    placeholder="360"
+                    className="w-full text-sm rounded-lg px-2 py-1.5 outline-none"
+                    style={{ background: 'var(--color-surface-elevated)', color: 'var(--color-text-primary)', border: '1px solid var(--color-border)' }}
+                  />
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <label htmlFor="pv-service-filter" className="text-[11px]" style={{ color: 'var(--color-text-muted)' }}>PV</label>
+                <select
+                  id="pv-service-filter"
+                  value={advancedFilters.pvService}
+                  onChange={e => setAdvancedFilters({ pvService: e.target.value as typeof advancedFilters.pvService })}
+                  className="text-sm rounded-lg px-2 py-1.5 outline-none"
+                  style={{ background: 'var(--color-surface-elevated)', color: 'var(--color-text-primary)', border: '1px solid var(--color-border)' }}
+                >
+                  <option value="any">指定なし</option>
+                  <option value="youtube">YouTubeあり</option>
+                  <option value="niconico">ニコニコあり</option>
+                  <option value="both">両方あり</option>
+                </select>
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <label htmlFor="audio-computed-filter" className="text-[11px]" style={{ color: 'var(--color-text-muted)' }}>音声特徴量</label>
+                <select
+                  id="audio-computed-filter"
+                  value={advancedFilters.audioComputed}
+                  onChange={e => setAdvancedFilters({ audioComputed: e.target.value as typeof advancedFilters.audioComputed })}
+                  className="text-sm rounded-lg px-2 py-1.5 outline-none"
+                  style={{ background: 'var(--color-surface-elevated)', color: 'var(--color-text-primary)', border: '1px solid var(--color-border)' }}
+                >
+                  <option value="any">指定なし</option>
+                  <option value="yes">あり</option>
+                  <option value="no">なし</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 mt-3">
+              <button
+                type="button"
+                className="text-xs px-3 py-1.5 rounded-lg transition-colors"
+                style={{ background: 'transparent', color: 'var(--color-text-muted)', border: '1px solid var(--color-border)' }}
+                onClick={() => { resetAdvancedFilters(); search(); }}
+              >
+                条件をクリア
+              </button>
+              <button
+                type="button"
+                className="text-xs px-3 py-1.5 rounded-lg transition-colors"
+                style={{ background: 'var(--color-accent-purple)', color: '#fff', border: '1px solid rgba(139, 92, 246, 0.4)' }}
+                onClick={() => search()}
+              >
+                条件を適用
+              </button>
             </div>
           </div>
-          ))
         )}
-
-        {/* その他: テキスト入力 + サジェスト */}
-        <div className="relative" ref={suggestRef}>
-          <div className="flex items-center gap-2 text-xs mb-1" style={{ color: 'var(--color-text-muted)' }}>
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M15.5 14h-.79l-.28-.27A6.47 6.47 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/>
-            </svg>
-            その他のシンガーを検索
-          </div>
-          <input
-            type="text"
-            value={vocalistQuery}
-            onChange={e => setVocalistQuery(e.target.value)}
-            onFocus={() => suggestions.length > 0 && setShowSuggestions(true)}
-            placeholder="シンガー名を入力..."
-            className="w-full text-sm rounded-lg px-3 py-1.5 outline-none transition-colors"
-            style={{
-              background: 'var(--color-surface-elevated)',
-              color: 'var(--color-text-primary)',
-              border: '1px solid var(--color-border)',
-            }}
-          />
-          {showSuggestions && suggestions.length > 0 && (
-            <ul
-              className="absolute top-full left-0 right-0 z-20 mt-1 rounded-lg overflow-hidden shadow-xl"
-              style={{ background: 'var(--color-surface-elevated)', border: '1px solid var(--color-border)' }}
-            >
-              {suggestions.map(s => (
-                <li
-                  key={s.id}
-                  className="px-3 py-2 text-sm cursor-pointer transition-colors hover:bg-white/5"
-                  style={{ color: 'var(--color-text-primary)' }}
-                  onMouseDown={() => handleSelectSuggestion(s)}
-                >
-                  <span>{s.name}</span>
-                  <span className="ml-2 text-xs opacity-50">{s.artistType}</span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-
-        {/* プリセット外の選択チップ */}
-        {isExpanded && visibleVocalistFilters.length > 0 && (
-          <div className="flex flex-wrap gap-1.5">
-            {visibleVocalistFilters.map(v => (
-              <span
-                key={v.id}
-                className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full"
-                style={{
-                  background: 'rgba(139, 92, 246, 0.15)',
-                  color: 'var(--color-accent-purple)',
-                  border: '1px solid rgba(139, 92, 246, 0.35)',
-                }}
-              >
-                {vocalistFilterLabel(v)}
-                <button
-                  onClick={() => removeVocalistSelection(v)}
-                  className="opacity-70 hover:opacity-100 transition-opacity ml-0.5"
-                >
-                  <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
-                  </svg>
-                </button>
-              </span>
-            ))}
-          </div>
-        )}
-
-          </div>
-        )}
-        {/* Active filters display even when collapsed if any */}
-        {!isExpanded && visibleVocalistFilters.length > 0 && (
-          <div className="flex flex-wrap gap-1.5 mt-1">
-            {visibleVocalistFilters.map(v => (
-              <span
-                key={v.id}
-                className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full"
-                style={{
-                  background: 'rgba(139, 92, 246, 0.15)',
-                  color: 'var(--color-accent-purple)',
-                  border: '1px solid rgba(139, 92, 246, 0.35)',
-                }}
-              >
-                {vocalistFilterLabel(v)}
-                <button
-                  onClick={() => removeVocalistSelection(v)}
-                  className="opacity-70 hover:opacity-100 transition-opacity ml-0.5"
-                >
-                  <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
-                  </svg>
-                </button>
-              </span>
-            ))}
-          </div>
-        )}
-      </div>
-
-      <div style={{ borderTop: '1px solid var(--color-border)' }} />
-
-      {/* ===== 詳細条件 ===== */}
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
-        <div className="flex flex-col gap-1">
-          <label className="text-[11px]" style={{ color: 'var(--color-text-muted)' }}>投稿年</label>
-          <div className="flex items-center gap-1.5">
-            <input
-              type="number"
-              inputMode="numeric"
-              min={ADVANCED_SEARCH_LIMITS.publishYearMin}
-              max={ADVANCED_SEARCH_LIMITS.publishYearMax}
-              step={1}
-              value={advancedFilters.publishYearFrom}
-              onChange={e => updateBoundedInteger('publishYearFrom', e.target.value, ADVANCED_SEARCH_LIMITS.publishYearMin, ADVANCED_SEARCH_LIMITS.publishYearMax)}
-              placeholder="2007"
-              className="w-full text-sm rounded-lg px-2 py-1.5 outline-none"
-              style={{ background: 'var(--color-surface)', color: 'var(--color-text-primary)', border: '1px solid var(--color-border)' }}
-            />
-            <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>〜</span>
-            <input
-              type="number"
-              inputMode="numeric"
-              min={ADVANCED_SEARCH_LIMITS.publishYearMin}
-              max={ADVANCED_SEARCH_LIMITS.publishYearMax}
-              step={1}
-              value={advancedFilters.publishYearTo}
-              onChange={e => updateBoundedInteger('publishYearTo', e.target.value, ADVANCED_SEARCH_LIMITS.publishYearMin, ADVANCED_SEARCH_LIMITS.publishYearMax)}
-              placeholder="2026"
-              className="w-full text-sm rounded-lg px-2 py-1.5 outline-none"
-              style={{ background: 'var(--color-surface)', color: 'var(--color-text-primary)', border: '1px solid var(--color-border)' }}
-            />
-          </div>
-        </div>
-
-        <div className="flex flex-col gap-1">
-          <label className="text-[11px]" style={{ color: 'var(--color-text-muted)' }}>曲の長さ（秒）</label>
-          <div className="flex items-center gap-1.5">
-            <input
-              type="number"
-              inputMode="numeric"
-              min={ADVANCED_SEARCH_LIMITS.lengthMinSeconds}
-              max={ADVANCED_SEARCH_LIMITS.lengthMaxSeconds}
-              step={1}
-              value={advancedFilters.lengthMinSeconds}
-              onChange={e => updateBoundedInteger('lengthMinSeconds', e.target.value, ADVANCED_SEARCH_LIMITS.lengthMinSeconds, ADVANCED_SEARCH_LIMITS.lengthMaxSeconds)}
-              placeholder="60"
-              className="w-full text-sm rounded-lg px-2 py-1.5 outline-none"
-              style={{ background: 'var(--color-surface)', color: 'var(--color-text-primary)', border: '1px solid var(--color-border)' }}
-            />
-            <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>〜</span>
-            <input
-              type="number"
-              inputMode="numeric"
-              min={ADVANCED_SEARCH_LIMITS.lengthMinSeconds}
-              max={ADVANCED_SEARCH_LIMITS.lengthMaxSeconds}
-              step={1}
-              value={advancedFilters.lengthMaxSeconds}
-              onChange={e => updateBoundedInteger('lengthMaxSeconds', e.target.value, ADVANCED_SEARCH_LIMITS.lengthMinSeconds, ADVANCED_SEARCH_LIMITS.lengthMaxSeconds)}
-              placeholder="360"
-              className="w-full text-sm rounded-lg px-2 py-1.5 outline-none"
-              style={{ background: 'var(--color-surface)', color: 'var(--color-text-primary)', border: '1px solid var(--color-border)' }}
-            />
-          </div>
-        </div>
-
-        <div className="flex flex-col gap-1">
-          <label htmlFor="pv-service-filter" className="text-[11px]" style={{ color: 'var(--color-text-muted)' }}>PV</label>
-          <select
-            id="pv-service-filter"
-            value={advancedFilters.pvService}
-            onChange={e => setAdvancedFilters({ pvService: e.target.value as typeof advancedFilters.pvService })}
-            className="text-sm rounded-lg px-2 py-1.5 outline-none"
-            style={{ background: 'var(--color-surface)', color: 'var(--color-text-primary)', border: '1px solid var(--color-border)' }}
-          >
-            <option value="any">指定なし</option>
-            <option value="youtube">YouTubeあり</option>
-            <option value="niconico">ニコニコあり</option>
-            <option value="both">両方あり</option>
-          </select>
-        </div>
-
-        <div className="flex flex-col gap-1">
-          <label htmlFor="audio-computed-filter" className="text-[11px]" style={{ color: 'var(--color-text-muted)' }}>音声特徴量</label>
-          <select
-            id="audio-computed-filter"
-            value={advancedFilters.audioComputed}
-            onChange={e => setAdvancedFilters({ audioComputed: e.target.value as typeof advancedFilters.audioComputed })}
-            className="text-sm rounded-lg px-2 py-1.5 outline-none"
-            style={{ background: 'var(--color-surface)', color: 'var(--color-text-primary)', border: '1px solid var(--color-border)' }}
-          >
-            <option value="any">指定なし</option>
-            <option value="yes">あり</option>
-            <option value="no">なし</option>
-          </select>
-        </div>
-
-        <div className="md:col-span-2 xl:col-span-4 flex items-center justify-end gap-2">
-          <button
-            type="button"
-            className="text-xs px-3 py-1.5 rounded-lg transition-colors"
-            style={{ background: 'var(--color-surface)', color: 'var(--color-text-muted)', border: '1px solid var(--color-border)' }}
-            onClick={() => { resetAdvancedFilters(); search(); }}
-          >
-            条件をクリア
-          </button>
-          <button
-            type="button"
-            className="text-xs px-3 py-1.5 rounded-lg transition-colors"
-            style={{ background: 'var(--color-accent-purple)', color: '#fff', border: '1px solid rgba(139, 92, 246, 0.4)' }}
-            onClick={() => search()}
-          >
-            条件を適用
-          </button>
-        </div>
-      </div>
-
-      <div style={{ borderTop: '1px solid var(--color-border)' }} />
-
-      {/* ===== ソート ===== */}
-      <div className="flex items-center justify-end flex-wrap gap-3">
-        <div className="flex items-center gap-2">
-          {/* オリジナル曲のみフィルター */}
-          <button
-            className="text-xs px-3 py-1.5 rounded-lg transition-colors"
-            style={{
-              background: songTypeFilter === 'Original' ? 'rgba(139, 92, 246, 0.2)' : 'var(--color-surface)',
-              color: songTypeFilter === 'Original' ? 'var(--color-accent-purple)' : 'var(--color-text-muted)',
-              border: songTypeFilter === 'Original'
-                ? '1px solid rgba(139, 92, 246, 0.4)'
-                : '1px solid var(--color-border)',
-            }}
-            onClick={() => {
-              const next = songTypeFilter === 'Original' ? 'All' : 'Original';
-              setSongTypeFilter(next);
-              search();
-            }}
-            title="カバー・リミックスを除外し、オリジナル曲のみ表示"
-          >
-            {songTypeFilter === 'Original' ? '✦ オリジナルのみ' : 'オリジナルのみ'}
-          </button>
-          <label htmlFor="sort-select" className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
-            並び替え:
-          </label>
-          <select
-            id="sort-select"
-            value={sort}
-            onChange={(e) => { setSort(e.target.value as ExtendedSortRule); search(); }}
-            className="text-sm rounded-lg px-3 py-1.5 outline-none cursor-pointer transition-colors"
-            style={{
-              background: 'var(--color-surface)',
-              color: 'var(--color-text-primary)',
-              border: '1px solid var(--color-border)',
-            }}
-          >
-            {SORT_OPTIONS.map(opt => (
-              <option key={opt.value} value={opt.value}>{opt.label}</option>
-            ))}
-          </select>
-
-          {/* 昇順 / 降順トグル */}
-          <button
-            id="sort-order-toggle"
-            onClick={() => { setSortOrder(sortOrder === 'desc' ? 'asc' : 'desc'); search(); }}
-            title={sortOrder === 'desc' ? '降順 (クリックで昇順に)' : '昇順 (クリックで降順に)'}
-            className="flex items-center justify-center rounded-lg transition-colors"
-            style={{
-              width: '32px', height: '32px',
-              background: 'var(--color-surface)',
-              color: 'var(--color-text-secondary)',
-              border: '1px solid var(--color-border)',
-              flexShrink: 0,
-            }}
-          >
-            {sortOrder === 'desc'
-              ? <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M7 14l5-5 5 5z" transform="rotate(180 12 12)"/><path d="M7 10l5 5 5-5z"/></svg>
-              : <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M7 14l5-5 5 5z"/><path d="M7 10l5 5 5-5z" transform="rotate(180 12 12)"/></svg>
-            }
-          </button>
-        </div>
       </div>
     </div>
   );

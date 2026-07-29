@@ -167,6 +167,79 @@ body {
   pointer-events: none;
 }
 
+/* ─── 検索フィルターセクション ─── */
+.search-section-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0;
+  cursor: pointer;
+  user-select: none;
+  color: var(--color-text-secondary);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  letter-spacing: 0.025em;
+  transition: color 0.15s ease;
+}
+
+.search-section-header:hover {
+  color: var(--color-text-primary);
+}
+
+.search-section-header svg {
+  flex-shrink: 0;
+  transition: transform 0.2s ease;
+}
+
+/* ─── 設定モーダル タブバー ─── */
+.settings-tab-bar {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.settings-tab {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.375rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: 8px;
+  border: none;
+  cursor: pointer;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  background: transparent;
+  color: var(--color-text-muted);
+  transition: all 0.2s ease;
+}
+
+.settings-tab:hover {
+  color: var(--color-text-secondary);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.settings-tab[data-active="true"] {
+  color: var(--color-text-primary);
+  background: rgba(255, 255, 255, 0.08);
+  font-weight: 600;
+}
+
+/* ─── PiP ミニプレイヤー強化 ─── */
+.global-mini-player {
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  background: rgba(15, 15, 15, 0.88) !important;
+  box-shadow:
+    0 8px 40px rgba(0, 0, 0, 0.7),
+    0 0 1px rgba(255, 255, 255, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05) !important;
+}
+
 /* ─── アニメーション ─── */
 @keyframes slideRight {
   from { opacity: 0; transform: translateX(40px); }
