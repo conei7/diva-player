@@ -34,6 +34,7 @@ import {
 import { useFavoriteProducerStore } from '../stores/favoriteProducerStore';
 import { performanceNow, recordPerformanceMetric, type PerformanceSegment } from '../utils/performanceMetrics';
 import { selectRotatingWindow } from '../utils/pageWindow';
+import { interleaveUniqueSongs, selectRecentProducerIds } from '../utils/recentProducers';
 import { resolveWithin } from '../utils/timeBudget';
 
 type HomeCategoryId =
@@ -282,7 +283,7 @@ export default function HomePage() {
       } else {
         switch (category) {
           case 'popular': {
-            result = await getTrendingSongs(30, PAGE_SIZE, pageNum * PAGE_SIZE, 'growth', rankingSeedRef.current, globalFilterSettings);
+            result = await getTrendingSongs(30, PAGE_SIZE, pageNum * PAGE_SIZE, 'popular', rankingSeedRef.current, globalFilterSettings);
             break;
           }
           case 'recommended':
@@ -296,33 +297,26 @@ export default function HomePage() {
             break;
           }
           case 'deep': {
-            const searchResult = await searchSongsBackend({
-              sort: 'AdditionDate',
-              sortOrder: 'desc',
-              maxResults: PAGE_SIZE,
-              start: pageNum * PAGE_SIZE + Math.floor(Math.random() * 100),
-              discoveryOnly: true,
-            });
-            result = searchResult.items;
+            result = await getTrendingSongs(30, PAGE_SIZE, pageNum * PAGE_SIZE, 'deep', rankingSeedRef.current, globalFilterSettings);
             break;
           }
           case 'history_based': {
-            const recentSong = entries[0]?.song;
-            const producers = recentSong?.artists
-              ?.filter(artist => artist.categories?.includes('Producer'))
-              .map(artist => artist.artist?.id)
-              .filter((id): id is number => id !== undefined) ?? [];
+            const producers = selectRecentProducerIds(entries);
+            const recentSongIds = new Set(entries.slice(0, 50).map(entry => entry.song.id));
 
             if (producers.length > 0) {
-              const searchResult = await searchSongsBackend({
-                artistIds: producers,
-                sort: 'FavoritedTimes',
-                sortOrder: 'desc',
-                maxResults: PAGE_SIZE,
-                start: pageNum * PAGE_SIZE,
-                discoveryOnly: true,
-              });
-              result = searchResult.items;
+              const producerWindow = selectRotatingWindow(producers, pageNum, 4);
+              const producerResults = await Promise.all(producerWindow.map(producerId =>
+                searchSongsBackend({
+                  anyArtistIds: [producerId],
+                  sort: 'FavoritedTimes',
+                  sortOrder: 'desc',
+                  maxResults: 12,
+                  start: pageNum * 12,
+                  discoveryOnly: true,
+                }).then(searchResult => searchResult.items).catch(() => [] as Song[]),
+              ));
+              result = interleaveUniqueSongs(producerResults, recentSongIds, PAGE_SIZE);
             }
 
             if (result.length === 0) {

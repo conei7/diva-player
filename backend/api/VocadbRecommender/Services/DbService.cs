@@ -40,6 +40,12 @@ public class DbService
         ", ",
         VoiceSynthArtistTypes.Select(static artistType => $"'{artistType}'"));
 
+    private static string NicoWeightSql(string youtubeExpression) =>
+        $"LEAST(8.0, GREATEST(3.0, 3.0 + (LN(1 + GREATEST(0, {youtubeExpression})) / LN(10.0)) * 0.75))";
+
+    private static string WeightedViewsSql(string youtubeExpression, string nicoExpression) =>
+        $"(COALESCE({youtubeExpression}, 0) + ({NicoWeightSql($"COALESCE({youtubeExpression}, 0)")} * COALESCE({nicoExpression}, 0)))";
+
     private readonly string _connStr;
     private readonly IMemoryCache _cache;
     private sealed record CachedSongSearch(string ItemsJson, int TotalCount);
@@ -726,7 +732,7 @@ public class DbService
         var clampedDays = Math.Clamp(days, 1, 365);
         var normalizedStart = Math.Max(0, start);
         var clampedMaxResults = Math.Clamp(maxResults, 1, 100);
-        var normalizedMode = mode is "surge" or "recent" ? mode : "growth";
+        var normalizedMode = mode is "popular" or "surge" or "recent" or "deep" ? mode : "growth";
         var normalizedRanking = ranking == "legacy" ? "legacy" : "quality";
         var normalizedSeed = Math.Clamp(seed, 0, 63);
         var normalizedExcludedTypes = (excludedSongTypes ?? []).Where(type => !string.IsNullOrWhiteSpace(type)).Distinct(StringComparer.Ordinal).Order().ToArray();
@@ -742,6 +748,7 @@ public class DbService
             "surge" when normalizedRanking == "quality" => "AND g.previous_views IS NOT NULL AND g.baseline_views > g.previous_views AND g.prior_window_days >= 3 AND g.view_growth >= 1000 AND g.surge_rate >= 1.5 AND s.song_type IN ('Original', 'Cover', 'Remix', 'Remaster', 'Arrangement', 'Mashup', 'MusicPV') AND NOT (g.quality_score < 0.30 AND g.duration_score < 0.50 AND g.support_score < 0.30) AND NOT (g.quality_score < 0.35 AND g.support_score < 0.30 AND EXISTS (SELECT 1 FROM unnest(g.quality_reasons) reason WHERE reason LIKE 'negative_tag:%'))",
             "surge" => $"AND g.previous_views IS NOT NULL AND g.baseline_views > g.previous_views AND g.prior_window_days >= 3 AND g.view_growth >= 1000 AND g.surge_rate >= 1.5 AND {songTypeExpression} IN ('Original', 'Cover', 'Remix', 'Remaster', 'MusicPV')",
             "recent" => "AND s.publish_date >= CURRENT_DATE - interval '30 days'",
+            "deep" => "AND g.baseline_views BETWEEN 100 AND 150000",
             _ => string.Empty,
         };
         var normalizedModeCondition = modeCondition.Replace("s.song_type", songTypeExpression, StringComparison.Ordinal);
@@ -750,11 +757,13 @@ public class DbService
             "surge" when normalizedRanking == "legacy" => "g.surge_rate + (g.ranking_noise - 0.5) * 0.025 DESC, g.view_growth DESC, s.favorited_times DESC NULLS LAST",
             "surge" => "g.surge_rank_score + (g.ranking_noise - 0.5) * 0.025 DESC, g.view_growth DESC, g.quality_score DESC, s.favorited_times DESC NULLS LAST",
             "recent" => "g.recent_score + (g.ranking_noise - 0.5) * 0.015 DESC, g.view_growth DESC, s.publish_date DESC",
+            "popular" => "g.recent_score + (g.ranking_noise - 0.5) * 0.015 DESC, g.view_growth DESC, s.publish_date DESC",
+            "deep" => "g.deep_score DESC, g.quality_score DESC, g.view_growth DESC",
             _ => "g.popular_score + (g.ranking_noise - 0.5) * 0.035 DESC, g.growth_rate DESC, s.favorited_times DESC NULLS LAST",
         };
         var sourceTable = normalizedMode switch
         {
-            "recent" => "recent_candidates",
+            "recent" or "popular" or "deep" => "catalog_candidates",
             "surge" when normalizedRanking == "quality" => "surge_ranked",
             _ => "growth",
         };
@@ -765,6 +774,7 @@ public class DbService
         {
             "growth" => "g.popular_score > 0",
             "surge" => "g.view_growth > 0",
+            "popular" or "recent" => "g.recent_score > 0",
             _ => "TRUE",
         };
         var debugFields = debug && normalizedMode == "surge"
@@ -776,6 +786,10 @@ public class DbService
         if (normalizedMinNico > 0) filterConditions.Add($"COALESCE(s.nico_views, 0) >= ${nextFilterParameter++}");
         if (normalizedExcludedTypes.Length > 0) filterConditions.Add($"{songTypeExpression} <> ALL(${nextFilterParameter})");
         var globalFilterCondition = filterConditions.Count > 0 ? "AND " + string.Join(" AND ", filterConditions) : string.Empty;
+        var latestTotalViewsSql = WeightedViewsSql("h.youtube_views", "h.nico_views");
+        var baselineTotalViewsSql = WeightedViewsSql("h.youtube_views", "h.nico_views");
+        var currentSongTotalViewsSql = WeightedViewsSql("s.youtube_views", "s.nico_views");
+        var growthNicoWeightSql = NicoWeightSql("b.youtube_views");
 
         using var conn = Open();
         await using var cmd = new NpgsqlCommand($@"
@@ -793,7 +807,7 @@ public class DbService
                        h.song_id,
                        COALESCE(h.youtube_views, 0) AS youtube_views,
                        COALESCE(h.nico_views, 0) AS nico_views,
-                       COALESCE(h.youtube_views, 0) + (10 * COALESCE(h.nico_views, 0)) AS total_views
+                       {latestTotalViewsSql} AS total_views
                 FROM view_history h
                 CROSS JOIN latest_day d
                 WHERE d.day IS NOT NULL
@@ -807,7 +821,7 @@ public class DbService
                        h.recorded_at AS observed_at,
                        COALESCE(h.youtube_views, 0) AS youtube_views,
                        COALESCE(h.nico_views, 0) AS nico_views,
-                       COALESCE(h.youtube_views, 0) + (10 * COALESCE(h.nico_views, 0)) AS total_views
+                       {baselineTotalViewsSql} AS total_views
                 FROM view_history h
                 CROSS JOIN baseline_day d
                 WHERE d.day IS NOT NULL
@@ -819,7 +833,7 @@ public class DbService
                 SELECT DISTINCT ON (h.song_id)
                        h.song_id,
                        h.recorded_at AS observed_at,
-                       COALESCE(h.youtube_views, 0) + (10 * COALESCE(h.nico_views, 0)) AS total_views
+                       {baselineTotalViewsSql} AS total_views
                 FROM view_history h
                 CROSS JOIN baseline_day d
                 WHERE d.day IS NOT NULL
@@ -834,20 +848,20 @@ public class DbService
                     EXTRACT(EPOCH FROM (b.observed_at - pb.observed_at)) / 86400.0 AS prior_window_days,
                     (
                         CASE WHEN b.youtube_views >= 100 THEN GREATEST(0, l.youtube_views - b.youtube_views) ELSE 0 END
-                        + (10 * CASE WHEN b.nico_views >= 100 THEN GREATEST(0, l.nico_views - b.nico_views) ELSE 0 END)
+                        + ({growthNicoWeightSql} * CASE WHEN b.nico_views >= 100 THEN GREATEST(0, l.nico_views - b.nico_views) ELSE 0 END)
                     ) AS view_growth,
                     CASE
                         WHEN b.total_views > 0
                             THEN ((
                                 CASE WHEN b.youtube_views >= 100 THEN GREATEST(0, l.youtube_views - b.youtube_views) ELSE 0 END
-                                + (10 * CASE WHEN b.nico_views >= 100 THEN GREATEST(0, l.nico_views - b.nico_views) ELSE 0 END)
+                                + ({growthNicoWeightSql} * CASE WHEN b.nico_views >= 100 THEN GREATEST(0, l.nico_views - b.nico_views) ELSE 0 END)
                             )::double precision / b.total_views)
                         ELSE 0
                     END AS growth_rate,
                     (
                         ((
                             CASE WHEN b.youtube_views >= 100 THEN GREATEST(0, l.youtube_views - b.youtube_views) ELSE 0 END
-                            + (10 * CASE WHEN b.nico_views >= 100 THEN GREATEST(0, l.nico_views - b.nico_views) ELSE 0 END)
+                            + ({growthNicoWeightSql} * CASE WHEN b.nico_views >= 100 THEN GREATEST(0, l.nico_views - b.nico_views) ELSE 0 END)
                         )::double precision / $1)
                         / GREATEST(100.0, (GREATEST(0, b.total_views - COALESCE(pb.total_views, b.total_views))::double precision
                           / GREATEST(3.0, EXTRACT(EPOCH FROM (b.observed_at - pb.observed_at)) / 86400.0)))
@@ -857,7 +871,7 @@ public class DbService
                             THEN LN(1 + GREATEST(0, l.youtube_views - b.youtube_views))
                             ELSE 0.35 * LN(1 + l.youtube_views)
                         END
-                        + LN(1 + (10 * CASE WHEN b.nico_views >= 100
+                        + LN(1 + ({growthNicoWeightSql} * CASE WHEN b.nico_views >= 100
                             THEN GREATEST(0, l.nico_views - b.nico_views)
                             ELSE 0.35 * l.nico_views
                         END))
@@ -874,7 +888,7 @@ public class DbService
                     (
                         (
                             CASE WHEN b.youtube_views >= 100 THEN GREATEST(0, l.youtube_views - b.youtube_views) ELSE 0 END
-                            + (10 * CASE WHEN b.nico_views >= 100 THEN GREATEST(0, l.nico_views - b.nico_views) ELSE 0 END)
+                            + ({growthNicoWeightSql} * CASE WHEN b.nico_views >= 100 THEN GREATEST(0, l.nico_views - b.nico_views) ELSE 0 END)
                         )
                         * EXP(-GREATEST(0, CURRENT_DATE - s.publish_date) / 30.0)
                     ) AS recent_score,
@@ -899,19 +913,19 @@ public class DbService
                     ) AS surge_rank_score
                 FROM growth g
             ),
-            recent_candidates AS (
+            catalog_candidates AS (
                 SELECT
                     s.id AS song_id,
-                    0::bigint AS baseline_views,
-                    NULL::bigint AS previous_views,
+                    {currentSongTotalViewsSql}::double precision AS baseline_views,
+                    NULL::double precision AS previous_views,
                     0::double precision AS prior_window_days,
-                    (COALESCE(s.youtube_views, 0) + (10 * COALESCE(s.nico_views, 0))) AS view_growth,
+                    {currentSongTotalViewsSql}::double precision AS view_growth,
                     (
-                        (COALESCE(s.youtube_views, 0) + (10 * COALESCE(s.nico_views, 0)))::double precision
+                        {currentSongTotalViewsSql}::double precision
                         / GREATEST(1, CURRENT_DATE - s.publish_date)
                     ) AS growth_rate,
                     0::double precision AS surge_rate,
-                    LN(1 + COALESCE(s.youtube_views, 0) + (10 * COALESCE(s.nico_views, 0))) AS popular_score,
+                    LN(1 + {currentSongTotalViewsSql}) AS popular_score,
                     COALESCE(q.quality_score, 0.5) AS quality_score,
                     COALESCE(q.duration_score, 0.5) AS duration_score,
                     COALESCE(q.support_score, 0) AS support_score,
@@ -922,15 +936,26 @@ public class DbService
                     COALESCE(q.discovery_eligible, TRUE) AS discovery_eligible,
                     0::double precision AS surge_rank_score,
                     (
-                        (COALESCE(s.youtube_views, 0) + (10 * COALESCE(s.nico_views, 0)))::double precision
+                        {currentSongTotalViewsSql}::double precision
                         / GREATEST(1, CURRENT_DATE - s.publish_date)
                     ) AS recent_score,
                     CASE WHEN $4 = 0 THEN 0.5
                          ELSE mod(abs(hashtext(s.id::text || ':' || $4::text))::bigint, 100000)::double precision / 100000.0
-                    END AS ranking_noise
+                    END AS ranking_noise,
+                    (
+                        0.60 * COALESCE(q.quality_score, 0.5)
+                        + 0.20 * COALESCE(q.support_score, 0)
+                        + 0.15 * CASE WHEN EXISTS (
+                            SELECT 1 FROM song_features sf
+                            WHERE sf.song_id = s.id AND sf.audio_computed IS TRUE
+                        ) THEN 1.0 ELSE 0.0 END
+                        + 0.05 * CASE WHEN $4 = 0 THEN 0.5
+                            ELSE mod(abs(hashtext('deep:' || s.id::text || ':' || $4::text))::bigint, 100000)::double precision / 100000.0
+                          END
+                    ) AS deep_score
                 FROM songs s
                 LEFT JOIN song_discovery_quality q ON q.song_id = s.id
-                WHERE s.publish_date >= CURRENT_DATE - interval '30 days'
+                WHERE s.publish_date IS NOT NULL
             )
             SELECT (s.raw_json || jsonb_strip_nulls(jsonb_build_object(
                 'youtubeViews', s.youtube_views,

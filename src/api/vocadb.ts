@@ -331,7 +331,7 @@ export async function getTrendingSongs(
   days = 30,
   maxResults = 24,
   start = 0,
-  mode: 'growth' | 'surge' | 'recent' = 'growth',
+  mode: 'growth' | 'popular' | 'surge' | 'recent' | 'deep' = 'growth',
   seed = 0,
   globalFilters?: GlobalFilterSettings,
 ): Promise<Song[]> {
