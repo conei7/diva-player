@@ -790,6 +790,25 @@ public class DbService
         var baselineTotalViewsSql = WeightedViewsSql("h.youtube_views", "h.nico_views");
         var currentSongTotalViewsSql = WeightedViewsSql("s.youtube_views", "s.nico_views");
         var growthNicoWeightSql = NicoWeightSql("b.youtube_views");
+        var catalogCandidateSql = normalizedMode switch
+        {
+            "recent" => "SELECT id FROM songs WHERE publish_date >= CURRENT_DATE - interval '30 days'",
+            "popular" => """
+                SELECT id FROM songs WHERE publish_date >= CURRENT_DATE - interval '365 days'
+                UNION
+                SELECT id FROM (SELECT id FROM songs WHERE publish_date IS NOT NULL ORDER BY youtube_views DESC NULLS LAST LIMIT 25000) youtube_top
+                UNION
+                SELECT id FROM (SELECT id FROM songs WHERE publish_date IS NOT NULL ORDER BY nico_views DESC NULLS LAST LIMIT 25000) nico_top
+                """,
+            "deep" => """
+                SELECT song_id AS id
+                FROM song_discovery_quality
+                WHERE discovery_eligible
+                ORDER BY quality_score DESC, support_score DESC, song_id
+                LIMIT 50000
+                """,
+            _ => "SELECT id FROM songs WHERE FALSE",
+        };
 
         using var conn = Open();
         await using var cmd = new NpgsqlCommand($@"
@@ -954,6 +973,7 @@ public class DbService
                           END
                     ) AS deep_score
                 FROM songs s
+                JOIN ({catalogCandidateSql}) candidate ON candidate.id = s.id
                 LEFT JOIN song_discovery_quality q ON q.song_id = s.id
                 WHERE s.publish_date IS NOT NULL
             )
