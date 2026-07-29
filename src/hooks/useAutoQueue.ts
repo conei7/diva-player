@@ -327,7 +327,7 @@ export function useAutoQueue({
           generatedAt: Date.now(),
           rankingSeed,
           seedSongIds: buildRecommendationSeeds(currentSong, rootSeed, [...tasteProfile.longTerm, ...tasteProfile.shortTerm]).map(seed => seed.songId),
-          strategy: `balanced/${strategyArm}/${queuePlan.stage}`,
+          strategy: `balanced/${queuePlan.stage}`,
           familiarityBias,
           candidateCount: detailed.trace.length,
           selectedCount: detailed.ranked.length,

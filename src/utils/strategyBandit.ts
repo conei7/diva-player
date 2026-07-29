@@ -1,8 +1,8 @@
 import type { AutoQueueStrategyArm } from '../types/autoplay';
 import type { KnownUnknownTarget } from './autoQueuePolicy';
 
-export const AUTO_QUEUE_STRATEGY_ARMS: AutoQueueStrategyArm[] = ['familiar', 'balanced', 'explore'];
-export const MIN_BANDIT_DECISIONS = 30;
+export const AUTO_QUEUE_STRATEGY_ARMS: AutoQueueStrategyArm[] = ['balanced'];
+export const MIN_BANDIT_DECISIONS = 0;
 
 export interface BetaDistribution {
   alpha: number;
@@ -13,9 +13,7 @@ export type StrategyBanditStats = Record<AutoQueueStrategyArm, BetaDistribution>
 
 export function createDefaultBanditStats(): StrategyBanditStats {
   return {
-    familiar: { alpha: 1, beta: 1 },
     balanced: { alpha: 1, beta: 1 },
-    explore: { alpha: 1, beta: 1 },
   };
 }
 
@@ -24,11 +22,11 @@ export function updateBanditStats(
   arm: AutoQueueStrategyArm,
   outcome: 'complete' | 'skip' | 'neutral',
 ): StrategyBanditStats {
-  if (outcome === 'neutral') return stats;
-  const distribution = stats[arm];
+  void arm;
+  const distribution = stats.balanced ?? { alpha: 1, beta: 1 };
+  if (outcome === 'neutral') return { balanced: distribution };
   return {
-    ...stats,
-    [arm]: outcome === 'complete'
+    balanced: outcome === 'complete'
       ? { ...distribution, alpha: distribution.alpha + 1 }
       : { ...distribution, beta: distribution.beta + 1 },
   };
@@ -77,10 +75,8 @@ export function selectThompsonArm(
 }
 
 export function adjustTargetForStrategy(target: KnownUnknownTarget, arm: AutoQueueStrategyArm): KnownUnknownTarget {
-  const total = target.known + target.unknown;
-  const shift = arm === 'familiar' ? 0.1 : arm === 'explore' ? -0.1 : 0;
-  const known = Math.max(0, Math.min(total, Math.round(target.known + total * shift)));
-  return { known, unknown: total - known };
+  void arm;
+  return target;
 }
 
 /** A deterministic-test-friendly offline simulation for tuning strategy arms. */
@@ -90,7 +86,7 @@ export function simulateThompsonSampling(
   random = Math.random,
 ): { stats: StrategyBanditStats; selections: Record<AutoQueueStrategyArm, number> } {
   let stats = createDefaultBanditStats();
-  const selections: Record<AutoQueueStrategyArm, number> = { familiar: 0, balanced: 0, explore: 0 };
+  const selections: Record<AutoQueueStrategyArm, number> = { balanced: 0 };
   for (let round = 0; round < Math.max(0, Math.floor(rounds)); round++) {
     const arm = selectThompsonArm(stats, distribution => sampleBeta(distribution, random));
     selections[arm]++;

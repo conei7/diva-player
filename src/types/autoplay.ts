@@ -8,7 +8,9 @@ export type AutoQueueReasonCode =
   | 'fallback';
 
 export type AutoQueueStatus = 'idle' | 'fetching' | 'reranking' | 'ready' | 'relaxed' | 'degraded' | 'exhausted' | 'error';
-export type AutoQueueStrategyArm = 'familiar' | 'balanced' | 'explore';
+/** Autoplay has one supported policy. Legacy persisted decisions may still
+ * contain the removed arm names, but new decisions are always balanced. */
+export type AutoQueueStrategyArm = 'balanced';
 
 export interface QueueRecommendation {
   strategyVersion: string;

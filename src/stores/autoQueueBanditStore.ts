@@ -3,8 +3,6 @@ import { persist } from 'zustand/middleware';
 import type { AutoQueueStrategyArm } from '../types/autoplay';
 import {
   createDefaultBanditStats,
-  MIN_BANDIT_DECISIONS,
-  selectThompsonArm,
   updateBanditStats,
   type StrategyBanditStats,
 } from '../utils/strategyBandit';
@@ -18,11 +16,9 @@ interface AutoQueueBanditState {
 
 export const useAutoQueueBanditStore = create<AutoQueueBanditState>()(
   persist(
-    (set, get) => ({
+    (set) => ({
       stats: createDefaultBanditStats(),
-      selectArm: (decisionCount) => decisionCount < MIN_BANDIT_DECISIONS
-        ? 'balanced'
-        : selectThompsonArm(get().stats),
+      selectArm: () => 'balanced',
       recordOutcome: (arm, outcome) => set(state => ({ stats: updateBanditStats(state.stats, arm, outcome) })),
       reset: () => set({ stats: createDefaultBanditStats() }),
     }),
