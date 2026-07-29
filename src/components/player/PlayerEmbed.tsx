@@ -5,6 +5,7 @@ import { useProgressStore } from '../../stores/progressStore';
 import { createPlaybackOwnership } from '../../services/playbackOwnership';
 import { createPlaybackAttemptController, type PlaybackAttemptToken } from '../../services/playbackAttempt';
 import {
+  buildNicoEmbedUrl,
   createNicoPlaybackMessage,
   createNicoProgressTracker,
   createNicoVolumeMessage,
@@ -49,7 +50,7 @@ function NicoEmbed({ pvId, name, duration: songDuration, isPlaying }: { pvId: st
   const initialAutoplayRef = useRef(isPlaying);
   const playerIdRef = useRef(`diva-player-${pvId}-${Date.now().toString(36)}`);
   const requestedPlayingRef = useRef(isPlaying);
-  const embedUrl = `https://embed.nicovideo.jp/watch/${pvId}?autoplay=${initialAutoplayRef.current ? 1 : 0}&allowProgrammaticFullscreen=1&playerId=${encodeURIComponent(playerIdRef.current)}`;
+  const embedUrl = buildNicoEmbedUrl(pvId, initialAutoplayRef.current, playerIdRef.current);
   const NICO_ORIGIN = 'https://embed.nicovideo.jp';
 
   const timerRef = useRef<number | null>(null);

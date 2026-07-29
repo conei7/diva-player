@@ -121,6 +121,32 @@ describe('attachExternalViews', () => {
     expect(enriched[0]).toBe(songs[0]);
     expect(enriched[1]).toMatchObject({ id: 2, youtubeViews: 50, nicoViews: 60 });
   });
+
+  it('coalesces concurrent view-count requests into one batch', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        91001: { youtubeViews: 100, nicoViews: 200 },
+        91002: { youtubeViews: 300, nicoViews: 400 },
+      }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const [first, second, overlap] = await Promise.all([
+      attachExternalViews([{ id: 91001 }] as Song[]),
+      attachExternalViews([{ id: 91002 }] as Song[]),
+      attachExternalViews([{ id: 91001 }, { id: 91002 }] as Song[]),
+    ]);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain('ids=91001,91002');
+    expect(first[0]).toMatchObject({ youtubeViews: 100, nicoViews: 200 });
+    expect(second[0]).toMatchObject({ youtubeViews: 300, nicoViews: 400 });
+    expect(overlap).toMatchObject([
+      { youtubeViews: 100, nicoViews: 200 },
+      { youtubeViews: 300, nicoViews: 400 },
+    ]);
+  });
 });
 
 describe('trending fallback pagination', () => {

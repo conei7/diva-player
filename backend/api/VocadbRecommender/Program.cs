@@ -59,9 +59,17 @@ builder.Services.AddRateLimiter(options =>
         if (string.IsNullOrWhiteSpace(clientKey))
             clientKey = httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
 
-        return RateLimitPartition.GetFixedWindowLimiter(clientKey, _ => new FixedWindowRateLimiterOptions
+        var isExternalViews = httpContext.Request.Path.Equals(
+            "/api/songs/views",
+            StringComparison.OrdinalIgnoreCase);
+        var partitionKey = $"{(isExternalViews ? "views" : "default")}:{clientKey}";
+
+        return RateLimitPartition.GetFixedWindowLimiter(partitionKey, _ => new FixedWindowRateLimiterOptions
         {
-            PermitLimit = 120,
+            // External view counts are a cheap batch lookup and are loaded by
+            // several independent UI sections. Keep them from exhausting the
+            // recommendation/search budget while retaining abuse protection.
+            PermitLimit = isExternalViews ? 600 : 120,
             Window = TimeSpan.FromMinutes(1),
             QueueLimit = 0,
             AutoReplenishment = true,

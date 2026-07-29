@@ -21,9 +21,23 @@ const DEFAULT_LANG = 'Japanese';
 const DEFAULT_FIELDS = 'PVs,Artists,ThumbUrl';
 const CACHE_TTL = 5 * 60 * 1000; // 5分
 const MAX_RETRIES = 3;
+const EXTERNAL_VIEWS_BATCH_DELAY_MS = 20;
+const EXTERNAL_VIEWS_BATCH_SIZE = 200;
+
+interface ExternalViewCounts {
+  youtubeViews: number;
+  nicoViews: number;
+}
+
+interface ExternalViewRequest {
+  resolve: (value: ExternalViewCounts | undefined) => void;
+  reject: (reason?: unknown) => void;
+}
 
 // 上限付きメモリキャッシュ。検索の同時実行は同じPromiseへまとめる。
 const cache = new AsyncTtlCache(CACHE_TTL, 250);
+let pendingExternalViewRequests = new Map<number, ExternalViewRequest[]>();
+let externalViewsBatchTimer: ReturnType<typeof setTimeout> | null = null;
 
 function getCached<T>(key: string): T | null {
   return cache.peek<T>(key);
@@ -31,6 +45,46 @@ function getCached<T>(key: string): T | null {
 
 function setCache(key: string, data: unknown): void {
   cache.set(key, data);
+}
+
+async function flushExternalViewRequests(): Promise<void> {
+  const requests = pendingExternalViewRequests;
+  pendingExternalViewRequests = new Map();
+  externalViewsBatchTimer = null;
+  const ids = [...requests.keys()].sort((a, b) => a - b);
+
+  try {
+    const chunks: number[][] = [];
+    for (let index = 0; index < ids.length; index += EXTERNAL_VIEWS_BATCH_SIZE) {
+      chunks.push(ids.slice(index, index + EXTERNAL_VIEWS_BATCH_SIZE));
+    }
+    const responses = await Promise.all(chunks.map(async chunk => {
+      const res = await fetch(`${RECOMMENDER_API}/api/songs/views?ids=${chunk.join(',')}`);
+      if (!res.ok) throw new Error(`External view request failed: ${res.status}`);
+      return res.json() as Promise<Record<number, ExternalViewCounts>>;
+    }));
+    const viewsMap = Object.assign({}, ...responses) as Record<number, ExternalViewCounts>;
+    requests.forEach((waiters, id) => {
+      waiters.forEach(({ resolve }) => resolve(viewsMap[id]));
+    });
+  } catch (error) {
+    requests.forEach(waiters => {
+      waiters.forEach(({ reject }) => reject(error));
+    });
+  }
+}
+
+function requestExternalViews(id: number): Promise<ExternalViewCounts | undefined> {
+  return new Promise((resolve, reject) => {
+    const waiters = pendingExternalViewRequests.get(id) ?? [];
+    waiters.push({ resolve, reject });
+    pendingExternalViewRequests.set(id, waiters);
+    if (externalViewsBatchTimer === null) {
+      externalViewsBatchTimer = setTimeout(() => {
+        void flushExternalViewRequests();
+      }, EXTERNAL_VIEWS_BATCH_DELAY_MS);
+    }
+  });
 }
 
 /**
@@ -94,15 +148,15 @@ export async function attachExternalViews(songs: Song[]): Promise<Song[]> {
   if (missingSongs.length === 0) return songs;
 
   try {
-    const ids = [...new Set(missingSongs.map(song => song.id))].sort((a, b) => a - b).join(',');
-    const { value: viewsMap } = await cache.get<Record<number, { youtubeViews: number; nicoViews: number }>>(
-      `external-views:${ids}`,
-      async () => {
-        const res = await fetch(`${RECOMMENDER_API}/api/songs/views?ids=${ids}`);
-        if (!res.ok) throw new Error(`External view request failed: ${res.status}`);
-        return res.json();
-      },
-    );
+    const ids = [...new Set(missingSongs.map(song => song.id))];
+    const entries = await Promise.all(ids.map(async id => {
+      const { value } = await cache.get<ExternalViewCounts | undefined>(
+        `external-view:${id}`,
+        () => requestExternalViews(id),
+      );
+      return [id, value] as const;
+    }));
+    const viewsMap = Object.fromEntries(entries) as Record<number, ExternalViewCounts | undefined>;
     return songs.map(song => {
       const views = viewsMap[song.id];
       if (views) {

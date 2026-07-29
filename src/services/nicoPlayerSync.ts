@@ -14,6 +14,16 @@ export interface NicoControllerMessage {
   data: Record<string, unknown>;
 }
 
+export function buildNicoEmbedUrl(pvId: string, autoplay: boolean, playerId: string): string {
+  const params = new URLSearchParams({
+    jsapi: '1',
+    autoplay: autoplay ? '1' : '0',
+    allowProgrammaticFullscreen: '1',
+    playerId,
+  });
+  return `https://embed.nicovideo.jp/watch/${encodeURIComponent(pvId)}?${params.toString()}`;
+}
+
 export function normalizeNicoVolume(volume: number): number {
   if (!Number.isFinite(volume)) return 0;
   return Math.max(0, Math.min(1, volume / 100));

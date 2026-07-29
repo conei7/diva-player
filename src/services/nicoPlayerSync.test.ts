@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildNicoEmbedUrl,
   createNicoPlaybackMessage,
   createNicoProgressTracker,
   createNicoVolumeMessage,
@@ -9,6 +10,15 @@ import {
 } from './nicoPlayerSync';
 
 describe('nico player synchronization', () => {
+  it('enables the iframe control API and preserves autoplay intent', () => {
+    const url = new URL(buildNicoEmbedUrl('sm7918983', true, 'diva-player-1'));
+    expect(url.origin).toBe('https://embed.nicovideo.jp');
+    expect(url.pathname).toBe('/watch/sm7918983');
+    expect(url.searchParams.get('jsapi')).toBe('1');
+    expect(url.searchParams.get('autoplay')).toBe('1');
+    expect(url.searchParams.get('playerId')).toBe('diva-player-1');
+  });
+
   it('parses current time in seconds and legacy milliseconds', () => {
     expect(parseNicoPlayerMessage(JSON.stringify({ eventName: 'player:currentTime', data: { currentTime: 12.5 } }))).toEqual({ type: 'progress', seconds: 12.5 });
     expect(parseNicoPlayerMessage({ eventName: 'seekStatusChange', data: { currentTime: 12500 } })).toEqual({ type: 'progress', seconds: 12.5 });
