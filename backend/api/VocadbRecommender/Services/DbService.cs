@@ -976,6 +976,36 @@ public class DbService
                 JOIN ({catalogCandidateSql}) candidate ON candidate.id = s.id
                 LEFT JOIN song_discovery_quality q ON q.song_id = s.id
                 WHERE s.publish_date IS NOT NULL
+            ),
+            ranked_ids AS (
+                SELECT
+                    s.id AS song_id,
+                    ROW_NUMBER() OVER (ORDER BY {orderBy}) AS rank
+                FROM {sourceTable} g
+                JOIN songs s ON s.id = g.song_id
+                WHERE {minimumCondition}
+                  AND g.discovery_eligible
+                  {globalFilterCondition}
+                  AND EXISTS (
+                      SELECT 1
+                      FROM song_artists sa
+                      JOIN artists a ON a.id = sa.artist_id
+                      WHERE sa.song_id = s.id
+                        AND sa.is_vocalist = TRUE
+                        AND a.artist_type IN ({VoiceSynthArtistTypesSql})
+                  )
+                  AND EXISTS (
+                      SELECT 1 FROM pvs p
+                      WHERE p.song_id = s.id AND p.disabled = FALSE
+                  )
+                  {normalizedModeCondition}
+            ),
+            limited_ids AS (
+                SELECT song_id, rank
+                FROM ranked_ids
+                WHERE rank > $2
+                ORDER BY rank
+                LIMIT $3
             )
             SELECT (s.raw_json || jsonb_strip_nulls(jsonb_build_object(
                 'youtubeViews', s.youtube_views,
@@ -988,26 +1018,10 @@ public class DbService
                 ),
                 'thumbUrl', COALESCE(s.raw_json->>'thumbUrl', s.raw_json->'pvs'->0->>'thumbUrl'){debugFields}
             )))::text
-            FROM {sourceTable} g
-            JOIN songs s ON s.id = g.song_id
-            WHERE {minimumCondition}
-              AND g.discovery_eligible
-              {globalFilterCondition}
-              AND EXISTS (
-                  SELECT 1
-                  FROM song_artists sa
-                  JOIN artists a ON a.id = sa.artist_id
-                  WHERE sa.song_id = s.id
-                    AND sa.is_vocalist = TRUE
-                    AND a.artist_type IN ({VoiceSynthArtistTypesSql})
-              )
-              AND EXISTS (
-                  SELECT 1 FROM pvs p
-                  WHERE p.song_id = s.id AND p.disabled = FALSE
-              )
-            {normalizedModeCondition}
-            ORDER BY {orderBy}
-            OFFSET $2 LIMIT $3", conn);
+            FROM limited_ids ranked
+            JOIN {sourceTable} g ON g.song_id = ranked.song_id
+            JOIN songs s ON s.id = ranked.song_id
+            ORDER BY ranked.rank", conn);
         cmd.Parameters.AddWithValue(clampedDays);
         cmd.Parameters.AddWithValue(normalizedStart);
         cmd.Parameters.AddWithValue(clampedMaxResults);
