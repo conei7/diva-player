@@ -18,6 +18,114 @@ function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
 
+const fixtureProducer = {
+  id: 424242,
+  artistType: 'Producer',
+  name: 'DIVA Performance Producer',
+  additionalNames: '',
+  deleted: false,
+  releaseDate: '2020-01-01T00:00:00Z',
+  status: 'Finished',
+  version: 1,
+};
+const fixtureVocalist = {
+  id: 424243,
+  artistType: 'Vocaloid',
+  name: 'DIVA Performance Vocalist',
+  additionalNames: '',
+  deleted: false,
+  releaseDate: '2020-01-01T00:00:00Z',
+  status: 'Finished',
+  version: 1,
+};
+const fixtureSong = {
+  artists: [
+    {
+      artist: fixtureProducer,
+      categories: 'Producer',
+      effectiveRoles: 'Producer',
+      id: fixtureProducer.id,
+      isCustomName: false,
+      isSupport: false,
+      name: fixtureProducer.name,
+      roles: 'Producer',
+    },
+    {
+      artist: fixtureVocalist,
+      categories: 'Vocalist',
+      effectiveRoles: 'Vocalist',
+      id: fixtureVocalist.id,
+      isCustomName: false,
+      isSupport: false,
+      name: fixtureVocalist.name,
+      roles: 'Vocalist',
+    },
+  ],
+  artistString: fixtureProducer.name,
+  createDate: '2020-01-01T00:00:00Z',
+  defaultName: 'DIVA Performance Song',
+  defaultNameLanguage: 'Japanese',
+  favoritedTimes: 42,
+  id: 2501,
+  lengthSeconds: 180,
+  name: 'DIVA Performance Song',
+  publishDate: '2020-01-01T00:00:00Z',
+  pvs: [],
+  pvServices: '',
+  ratingScore: 5,
+  songType: 'Original',
+  status: 'Finished',
+  tags: [],
+  thumbUrl: '',
+  version: 1,
+  youtubeViews: 1234,
+  nicoViews: 567,
+};
+
+async function installApiFixtures(page) {
+  await page.setRequestInterception(true);
+  page.on('request', request => {
+    const url = new URL(request.url());
+    const path = url.pathname;
+    const isBackend = path.startsWith('/backend-api/');
+    const isVocaDb = url.hostname === 'vocadb.net';
+    if (!isBackend && !isVocaDb) {
+      void request.continue();
+      return;
+    }
+
+    let body = null;
+    if (path.endsWith('/api/health')) {
+      body = { status: 'ok', postgres: true, qdrant: true };
+    } else if (path.includes('/api/songs/search')) {
+      body = { items: [fixtureSong], totalCount: 1 };
+    } else if (path.includes('/api/recommend')) {
+      body = { items: [] };
+    } else if (path.match(/\/api\/songs\/\d+$/)) {
+      body = fixtureSong;
+    } else if (isVocaDb && path.match(/\/api\/songs$/)) {
+      body = { items: [fixtureSong], term: url.searchParams.get('query') ?? '', totalCount: 1 };
+    } else if (isVocaDb && path.startsWith('/api/songs/')) {
+      body = [fixtureSong];
+    } else if (isVocaDb && path.match(/\/api\/artists$/)) {
+      body = { items: [{ id: fixtureProducer.id, name: fixtureProducer.name, artistType: fixtureProducer.artistType }], term: url.searchParams.get('query') ?? '', totalCount: 1 };
+    }
+
+    if (body) {
+      void request.respond({
+        status: 200,
+        headers: {
+          'access-control-allow-origin': '*',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify(body),
+      });
+    } else {
+      void request.respond({ status: 404, headers: { 'content-type': 'application/json' }, body: '{}' });
+    }
+  });
+}
+
 async function waitForMetric(page, name) {
   try {
     await page.waitForFunction(metricName =>
@@ -53,9 +161,10 @@ async function waitForCards(page, label) {
 
 async function main() {
   const baseUrl = getBaseUrl();
-  const browser = await puppeteer.launch({ headless: true });
+  const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox'] });
   const page = await browser.newPage();
   page.setDefaultTimeout(PAGE_TIMEOUT_MS);
+  await installApiFixtures(page);
 
   try {
     await page.goto(baseUrl, { waitUntil: 'domcontentloaded' });
