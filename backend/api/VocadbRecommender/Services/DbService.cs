@@ -778,7 +778,7 @@ public class DbService
             _ => "TRUE",
         };
         var debugFields = debug && normalizedMode == "surge"
-            ? ", 'qualityScore', g.quality_score, 'surgeRankScore', g.surge_rank_score, 'qualityReasons', to_jsonb(g.quality_reasons)"
+            ? ", 'qualityScore', ranked.quality_score, 'surgeRankScore', ranked.surge_rank_score, 'qualityReasons', to_jsonb(ranked.quality_reasons)"
             : string.Empty;
         var filterConditions = new List<string>();
         var nextFilterParameter = 5;
@@ -980,6 +980,11 @@ public class DbService
             ranked_ids AS (
                 SELECT
                     s.id AS song_id,
+                    g.view_growth,
+                    g.growth_rate,
+                    g.quality_score,
+                    g.surge_rank_score,
+                    g.quality_reasons,
                     ROW_NUMBER() OVER (ORDER BY {orderBy}) AS rank
                 FROM {sourceTable} g
                 JOIN songs s ON s.id = g.song_id
@@ -1001,7 +1006,7 @@ public class DbService
                   {normalizedModeCondition}
             ),
             limited_ids AS (
-                SELECT song_id, rank
+                SELECT song_id, view_growth, growth_rate, quality_score, surge_rank_score, quality_reasons, rank
                 FROM ranked_ids
                 WHERE rank > $2
                 ORDER BY rank
@@ -1010,8 +1015,8 @@ public class DbService
             SELECT (s.raw_json || jsonb_strip_nulls(jsonb_build_object(
                 'youtubeViews', s.youtube_views,
                 'nicoViews', s.nico_views,
-                'viewGrowth', g.view_growth,
-                'growthRate', g.growth_rate,
+                'viewGrowth', ranked.view_growth,
+                'growthRate', ranked.growth_rate,
                 'audioComputed', EXISTS (
                     SELECT 1 FROM song_features sf
                     WHERE sf.song_id = s.id AND sf.audio_computed IS TRUE
@@ -1019,7 +1024,6 @@ public class DbService
                 'thumbUrl', COALESCE(s.raw_json->>'thumbUrl', s.raw_json->'pvs'->0->>'thumbUrl'){debugFields}
             )))::text
             FROM limited_ids ranked
-            JOIN {sourceTable} g ON g.song_id = ranked.song_id
             JOIN songs s ON s.id = ranked.song_id
             ORDER BY ranked.rank", conn);
         cmd.Parameters.AddWithValue(clampedDays);
