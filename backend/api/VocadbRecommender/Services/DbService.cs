@@ -767,6 +767,9 @@ public class DbService
             "surge" when normalizedRanking == "quality" => "surge_ranked",
             _ => "growth",
         };
+        var surgeRankScoreExpression = sourceTable == "growth"
+            ? "0::double precision"
+            : "g.surge_rank_score";
         // Recent songs are intentionally allowed to have zero recorded views;
         // requiring view_growth > 0 made a freshly published song disappear
         // until the first analytics snapshot arrived.
@@ -983,7 +986,7 @@ public class DbService
                     g.view_growth,
                     g.growth_rate,
                     g.quality_score,
-                    g.surge_rank_score,
+                    {surgeRankScoreExpression} AS surge_rank_score,
                     g.quality_reasons,
                     ROW_NUMBER() OVER (ORDER BY {orderBy}) AS rank
                 FROM {sourceTable} g
