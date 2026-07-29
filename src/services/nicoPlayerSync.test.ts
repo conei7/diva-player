@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { createNicoProgressTracker, createNicoVolumeMessage, normalizeNicoProgress, normalizeNicoVolume, parseNicoPlayerMessage } from './nicoPlayerSync';
+import {
+  createNicoPlaybackMessage,
+  createNicoProgressTracker,
+  createNicoVolumeMessage,
+  normalizeNicoProgress,
+  normalizeNicoVolume,
+  parseNicoPlayerMessage,
+} from './nicoPlayerSync';
 
 describe('nico player synchronization', () => {
   it('parses current time in seconds and legacy milliseconds', () => {
@@ -35,9 +42,26 @@ describe('nico player synchronization', () => {
     expect(normalizeNicoVolume(35)).toBeCloseTo(0.35);
     expect(normalizeNicoVolume(-10)).toBe(0);
     expect(normalizeNicoVolume(150)).toBe(1);
-    expect(JSON.parse(createNicoVolumeMessage(35))).toEqual({
-      eventName: 'player:volume',
+    expect(createNicoVolumeMessage('diva-player-1', 35)).toEqual({
+      sourceConnectorType: 1,
+      playerId: 'diva-player-1',
+      eventName: 'volumeChange',
       data: { volume: 0.35 },
+    });
+  });
+
+  it('uses the current Nico connector protocol for playback commands', () => {
+    expect(createNicoPlaybackMessage('diva-player-1', true)).toEqual({
+      sourceConnectorType: 1,
+      playerId: 'diva-player-1',
+      eventName: 'play',
+      data: {},
+    });
+    expect(createNicoPlaybackMessage('diva-player-1', false)).toEqual({
+      sourceConnectorType: 1,
+      playerId: 'diva-player-1',
+      eventName: 'pause',
+      data: {},
     });
   });
 });

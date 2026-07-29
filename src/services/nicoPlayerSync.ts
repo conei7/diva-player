@@ -5,15 +5,40 @@ export type NicoPlayerEvent =
   | { type: 'paused' }
   | { type: 'ended' };
 
+export type NicoControllerEventName = 'play' | 'pause' | 'volumeChange';
+
+export interface NicoControllerMessage {
+  sourceConnectorType: 1;
+  playerId: string;
+  eventName: NicoControllerEventName;
+  data: Record<string, unknown>;
+}
+
 export function normalizeNicoVolume(volume: number): number {
   if (!Number.isFinite(volume)) return 0;
   return Math.max(0, Math.min(1, volume / 100));
 }
 
-export function createNicoVolumeMessage(volume: number): string {
-  return JSON.stringify({
-    eventName: 'player:volume',
-    data: { volume: normalizeNicoVolume(volume) },
+export function createNicoControllerMessage(
+  playerId: string,
+  eventName: NicoControllerEventName,
+  data: Record<string, unknown> = {},
+): NicoControllerMessage {
+  return {
+    sourceConnectorType: 1,
+    playerId,
+    eventName,
+    data,
+  };
+}
+
+export function createNicoPlaybackMessage(playerId: string, isPlaying: boolean): NicoControllerMessage {
+  return createNicoControllerMessage(playerId, isPlaying ? 'play' : 'pause');
+}
+
+export function createNicoVolumeMessage(playerId: string, volume: number): NicoControllerMessage {
+  return createNicoControllerMessage(playerId, 'volumeChange', {
+    volume: normalizeNicoVolume(volume),
   });
 }
 
