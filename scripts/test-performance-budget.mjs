@@ -19,13 +19,36 @@ function assert(condition, message) {
 }
 
 async function waitForMetric(page, name) {
-  await page.waitForFunction(metricName =>
-    window.__DIVA_PERFORMANCE__?.getMetrics().some(metric => metric.name === metricName), name,
-  );
+  try {
+    await page.waitForFunction(metricName =>
+      window.__DIVA_PERFORMANCE__?.getMetrics().some(metric => metric.name === metricName), {}, name,
+    );
+  } catch (error) {
+    const diagnostic = await page.evaluate(() => ({
+      url: location.href,
+      metrics: window.__DIVA_PERFORMANCE__?.getMetrics() ?? [],
+      cards: document.querySelectorAll('a[href*="/watch?v="]').length,
+    }));
+    throw new Error(`${name} was not recorded: ${JSON.stringify(diagnostic)} (${error.message})`);
+  }
   return page.evaluate(metricName => {
     const metrics = window.__DIVA_PERFORMANCE__?.getMetrics() ?? [];
     return metrics.filter(metric => metric.name === metricName).at(-1) ?? null;
   }, name);
+}
+
+async function waitForCards(page, label) {
+  try {
+    await page.waitForSelector('a[href*="/watch?v="]');
+  } catch (error) {
+    const diagnostic = await page.evaluate(() => ({
+      url: location.href,
+      text: document.body.innerText.slice(0, 300),
+      metrics: window.__DIVA_PERFORMANCE__?.getMetrics() ?? [],
+      cards: document.querySelectorAll('a[href*="/watch?v="]').length,
+    }));
+    throw new Error(`${label} cards did not render: ${JSON.stringify(diagnostic)} (${error.message})`);
+  }
 }
 
 async function main() {
@@ -36,12 +59,18 @@ async function main() {
 
   try {
     await page.goto(baseUrl, { waitUntil: 'domcontentloaded' });
-    await page.waitForSelector('a[href*="/watch?v="]');
+    await waitForCards(page, 'home');
     const homeLoad = await waitForMetric(page, 'home.load');
     const homePaint = await waitForMetric(page, 'home.paint');
 
-    await page.goto(`${baseUrl}?q=Tell%20Your%20World`, { waitUntil: 'domcontentloaded' });
-    await page.waitForSelector('a[href*="/watch?v="]');
+    // This producer name is present in the SBC/VocaDB fixture and keeps the
+    // search paint budget independent of a single localized song title.
+    const searchInput = 'form input[type="text"]';
+    await page.waitForSelector(searchInput);
+    await page.click(searchInput);
+    await page.type(searchInput, 'wowaka');
+    await page.keyboard.press('Enter');
+    await waitForCards(page, 'search');
     const searchPaint = await waitForMetric(page, 'search.paint');
 
     const metrics = { 'home.load': homeLoad, 'home.paint': homePaint, 'search.paint': searchPaint };
