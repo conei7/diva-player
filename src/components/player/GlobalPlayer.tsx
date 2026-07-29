@@ -27,6 +27,7 @@ export default function GlobalPlayer() {
   const isWatchPage = location.pathname === '/watch';
   // WatchPage 以外で曲が選択されていればミニプレイヤーを表示
   const showMiniPlayer = !isWatchPage && !!currentSong;
+  const canShuffle = queue.length > 1;
 
   // 再生する曲がない場合は表示しない (ただしアンマウントはしたくないため opacity: 0 などで対応も可能だが、
   // 最初は何もないのでnullでOK。一度曲がセットされた後は常に存在する)
@@ -185,8 +186,10 @@ export default function GlobalPlayer() {
           <button
             className="btn-ghost p-1.5 rounded-full mini-player-control mini-player-optional"
             onClick={toggleShuffle}
+            disabled={!canShuffle && !shuffleEnabled}
             title={shuffleEnabled ? 'シャッフルOFF' : 'シャッフルON'}
-            style={{ color: shuffleEnabled ? 'var(--color-accent-cyan)' : undefined }}
+            style={{ color: shuffleEnabled ? 'var(--color-accent-cyan)' : undefined, opacity: canShuffle || shuffleEnabled ? 1 : 0.45 }}
+            aria-label={shuffleEnabled ? 'シャッフルOFF' : canShuffle ? 'シャッフルON' : 'シャッフル不可'}
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
               <path d="M10.59 9.17 5.41 4 4 5.41l5.17 5.17 1.42-1.41zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4h-5.5zm.33 9.41-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04-3.13-3.13z"/>

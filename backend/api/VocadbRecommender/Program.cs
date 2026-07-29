@@ -1,7 +1,9 @@
 using VocadbRecommender.Services;
 using Microsoft.AspNetCore.ResponseCompression;
+using Microsoft.AspNetCore.RateLimiting;
 using System.Diagnostics;
 using System.Globalization;
+using System.Threading.RateLimiting;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -21,20 +23,56 @@ builder.Services.AddSingleton<QdrantService>();
 builder.Services.AddSingleton<MarkovService>();
 builder.Services.AddScoped<RecommendService>();
 
-// --- CORS: GitHub Pages + localhost ---
+var allowedOrigins = builder.Configuration
+    .GetSection("Recommender:AllowedOrigins")
+    .Get<string[]>()
+    ?? [
+        "https://diva-player.pages.dev",
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://192.168.40.79:8080",
+    ];
+
+// --- CORS: 公開Web、SBC LAN、ローカル開発だけを許可 ---
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowFrontend", policy =>
         policy
-            .AllowAnyOrigin()
-            .AllowAnyMethod()
-            .AllowAnyHeader()
+            .WithOrigins(allowedOrigins)
+            .WithMethods("GET", "POST", "OPTIONS")
+            .WithHeaders("Accept", "Content-Type", "Cache-Control")
             .WithExposedHeaders("Server-Timing", "X-Diva-Search-Cache"));
+});
+
+// 推薦・検索APIは高コストなDB/Qdrant処理を含むため、クライアントIP単位で抑制する。
+// Pages proxyは信頼できるCloudflareヘッダーからX-Diva-Client-Keyを付与し、
+// 直接SBCへ到達した場合は接続元アドレスへフォールバックする。
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(httpContext =>
+    {
+        if (httpContext.Request.Path.Equals("/api/health", StringComparison.OrdinalIgnoreCase))
+            return RateLimitPartition.GetNoLimiter("health");
+
+        var clientKey = httpContext.Request.Headers["X-Diva-Client-Key"].ToString();
+        if (string.IsNullOrWhiteSpace(clientKey))
+            clientKey = httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+
+        return RateLimitPartition.GetFixedWindowLimiter(clientKey, _ => new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = 120,
+            Window = TimeSpan.FromMinutes(1),
+            QueueLimit = 0,
+            AutoReplenishment = true,
+        });
+    });
 });
 
 var app = builder.Build();
 app.UseResponseCompression();
 app.UseCors("AllowFrontend");
+app.UseRateLimiter();
 
 app.MapGet("/api/recommend", async (
     int songId,

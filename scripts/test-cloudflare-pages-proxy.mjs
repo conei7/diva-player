@@ -26,6 +26,8 @@ try {
   assert.equal(backendResponse.status, 200);
   assert.equal(calls[0].target, 'https://stable-test.trycloudflare.com/backend-api/api/health?full=1');
   assert.equal(calls[0].init.headers.get('x-diva-pages-proxy'), '1');
+  assert.equal(calls[0].init.headers.get('x-diva-client-key'), 'pages-anonymous');
+  assert.equal(calls[0].init.headers.get('x-forwarded-for'), null);
 
   const invalidResponse = await proxyBackend({
     request: new Request('https://diva-player.pages.dev/backend-api/api/health'),

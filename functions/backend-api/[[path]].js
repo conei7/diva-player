@@ -11,6 +11,13 @@ export async function onRequest({ request, env }) {
   const target = new URL(`${incoming.pathname}${incoming.search}`, `${tunnelUrl}/`);
   const headers = new Headers(request.headers);
   headers.delete('host');
+  // Do not forward client-controlled identity headers. Cloudflare sets
+  // cf-connecting-ip at the edge; the API uses this value for rate limiting.
+  headers.delete('x-diva-client-key');
+  headers.delete('x-forwarded-for');
+  headers.delete('x-real-ip');
+  headers.delete('x-forwarded-proto');
+  headers.set('x-diva-client-key', request.headers.get('cf-connecting-ip') || 'pages-anonymous');
   headers.set('x-diva-pages-proxy', '1');
 
   return fetch(target, {

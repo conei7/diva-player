@@ -6,10 +6,14 @@
  */
 import { create } from 'zustand';
 import type { Song } from '../types/vocadb';
+import { readLongPressSelectionEnabled, writeLongPressSelectionEnabled } from '../utils/selectionPreferences';
 
 interface SelectionState {
   /** 複数選択モードのON/OFF */
   isSelectionMode: boolean;
+  /** カード長押しで複数選択モードへ入るか */
+  longPressSelectionEnabled: boolean;
+  setLongPressSelectionEnabled: (enabled: boolean) => void;
   /** 選択されたSong IDのSet */
   selectedSongIds: Set<number>;
   /** 現在の画面で表示されている全曲（FABの全選択/フィルター対象） */
@@ -32,6 +36,11 @@ interface SelectionState {
 
 export const useSelectionStore = create<SelectionState>((set, get) => ({
   isSelectionMode: false,
+  longPressSelectionEnabled: readLongPressSelectionEnabled(),
+  setLongPressSelectionEnabled: (enabled) => {
+    writeLongPressSelectionEnabled(enabled);
+    set({ longPressSelectionEnabled: enabled });
+  },
   selectedSongIds: new Set<number>(),
   visibleSongs: [],
   setVisibleSongs: (songs) => set({ visibleSongs: songs }),

@@ -17,6 +17,7 @@ import {
 import type { GlobalFilterSettings } from '../../stores/globalFilterStore';
 import { useSearchStore } from '../../stores/searchStore';
 import { usePlayerStore } from '../../stores/playerStore';
+import { useSelectionStore } from '../../stores/selectionStore';
 import type { PVPreference } from '../../types/vocadb';
 import {
   areGlobalFilterSettingsEqual,
@@ -47,6 +48,8 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
   const refreshSearch = useSearchStore(state => state.search);
   const pvPreference = usePlayerStore(state => state.pvPreference);
   const setPVPreference = usePlayerStore(state => state.setPVPreference);
+  const longPressSelectionEnabled = useSelectionStore(state => state.longPressSelectionEnabled);
+  const setLongPressSelectionEnabled = useSelectionStore(state => state.setLongPressSelectionEnabled);
 
   useEffect(() => {
     if (!isOpen) {
@@ -268,6 +271,14 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
               </select>
             </label>
             <p className="mt-1 text-xs opacity-70">曲ごとの再生画面では、利用可能なPVを個別に選択できます。再生不能PVは30分後に再試行します。</p>
+          </section>
+          <section className="rounded-xl p-3" style={{ background: 'var(--color-bg-secondary)' }}>
+            <h3 className="font-semibold">選択操作</h3>
+            <label className="mt-3 flex items-center gap-2 text-sm">
+              <input type="checkbox" checked={longPressSelectionEnabled} onChange={event => setLongPressSelectionEnabled(event.target.checked)} />
+              曲カードの長押しで複数選択モードを開始
+            </label>
+            <p className="mt-1 text-xs opacity-70">無効にすると、カードの長押しで選択モードへ移行しません。タッチ操作では常に長押し選択を開始しません。</p>
           </section>
           <button type="button" className="btn-primary w-full" disabled={busy} onClick={() => void exportBackup()}>履歴・評価・プレイリストをバックアップ</button>
           <input ref={inputRef} className="hidden" type="file" accept="application/json,.json" onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; if (file) readBackup(file); }} />

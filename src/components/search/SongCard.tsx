@@ -40,10 +40,12 @@ export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect, 
   const menuPortalRef = useRef<HTMLDivElement>(null);
   const btnRef = useRef<HTMLButtonElement>(null);
   const cardRef = useRef<HTMLDivElement>(null);
+  const longPressTriggered = useRef(false);
   const visibilityReportedRef = useRef(false);
 
   // 複数選択ストア
   const isSelectionMode = useSelectionStore(s => s.isSelectionMode);
+  const longPressSelectionEnabled = useSelectionStore(s => s.longPressSelectionEnabled);
   const selectedSongIds = useSelectionStore(s => s.selectedSongIds);
   const isSelected      = selectedSongIds.has(song.id);
   const toggleSelection = useSelectionStore(s => s.toggleSong);
@@ -161,6 +163,12 @@ export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect, 
   }, [isSelectionMode, toggleSelection, song.id, handlePlay]);
 
   const handleSongLinkClick = useCallback((e: React.MouseEvent<HTMLAnchorElement>) => {
+    if (longPressTriggered.current) {
+      longPressTriggered.current = false;
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
     if (isSelectionMode) {
       e.preventDefault();
       e.stopPropagation();
@@ -189,18 +197,26 @@ export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect, 
     // Long-press selection is intentionally mouse/pen-only. On touch devices
     // a held finger is commonly used to scroll, so entering selection mode
     // after 500ms makes normal browsing feel like an accidental action.
-    if (event.pointerType === 'touch') return;
+    if (!longPressSelectionEnabled || event.pointerType === 'touch') return;
     if (isSelectionMode) return;
+    longPressTriggered.current = false;
     longPressTimer.current = setTimeout(() => {
+      longPressTriggered.current = true;
       enterSelectionMode();
       toggleSelection(song.id);
     }, 500);
-  }, [isSelectionMode, enterSelectionMode, toggleSelection, song.id]);
+  }, [isSelectionMode, enterSelectionMode, toggleSelection, song.id, longPressSelectionEnabled]);
   const handlePointerUp = useCallback(() => {
-    if (longPressTimer.current) clearTimeout(longPressTimer.current);
+    if (longPressTimer.current) {
+      clearTimeout(longPressTimer.current);
+      longPressTimer.current = null;
+    }
   }, []);
   const handlePointerLeave = useCallback(() => {
-    if (longPressTimer.current) clearTimeout(longPressTimer.current);
+    if (longPressTimer.current) {
+      clearTimeout(longPressTimer.current);
+      longPressTimer.current = null;
+    }
   }, []);
 
   const handleWatchLater = useCallback((e: React.MouseEvent) => {
