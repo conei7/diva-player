@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
-import { useHistoryStore } from '../stores/historyStore';
+import { searchHistoryEntries, useHistoryStore, type HistoryEntry } from '../stores/historyStore';
 import VideoGrid from '../components/home/VideoGrid';
 import type { Song } from '../types/vocadb';
 import { createHistoryCsv, getHistoryOverview, type HistoryOverview } from '../services/historyStats';
@@ -25,6 +25,7 @@ function formatDuration(seconds: number): string {
 export default function HistoryPage() {
   const { entries, totalPlays, hasHydrated, hasMoreEntries, isLoadingMore, clearHistory, reloadHistory, loadMoreHistory } = useHistoryStore();
   const [filterText, setFilterText] = useState('');
+  const [searchedEntries, setSearchedEntries] = useState<HistoryEntry[] | null>(null);
   const [sortMode, setSortMode] = useState<HistorySortMode>('recent');
   const [overview, setOverview] = useState<HistoryOverview | null>(null);
   const [backupMessage, setBackupMessage] = useState<string | null>(null);
@@ -38,6 +39,29 @@ export default function HistoryPage() {
     : 0;
 
   useEffect(() => {
+    const query = filterText.trim();
+    if (!query || !hasHydrated) {
+      setSearchedEntries(null);
+      return;
+    }
+
+    let cancelled = false;
+    setSearchedEntries(null);
+    const timer = window.setTimeout(() => {
+      void searchHistoryEntries(query).then(result => {
+        if (!cancelled) setSearchedEntries(result);
+      }).catch(error => {
+        console.error('[History] Failed to search the complete history', error);
+        if (!cancelled) setSearchedEntries([]);
+      });
+    }, 180);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [filterText, hasHydrated, totalPlays]);
+
+  useEffect(() => {
     if (!hasHydrated) return;
     let cancelled = false;
     void getHistoryOverview().then(result => {
@@ -49,14 +73,8 @@ export default function HistoryPage() {
   }, [hasHydrated, totalPlays]);
 
   const songs: Song[] = useMemo(() => {
-    const normalizedFilter = filterText.trim().toLowerCase();
-    const historySongs = entries.map(e => e.song);
-    const filtered = normalizedFilter
-      ? historySongs.filter(song =>
-          song.name.toLowerCase().includes(normalizedFilter) ||
-          (song.artistString ?? '').toLowerCase().includes(normalizedFilter)
-        )
-      : historySongs;
+    const sourceEntries = filterText.trim() ? (searchedEntries ?? []) : entries;
+    const filtered = sourceEntries.map(e => e.song);
 
     if (sortMode === 'name') {
       return [...filtered].sort((a, b) => a.name.localeCompare(b.name, 'ja'));
@@ -65,7 +83,7 @@ export default function HistoryPage() {
       return [...filtered].sort((a, b) => (a.artistString ?? '').localeCompare(b.artistString ?? '', 'ja'));
     }
     return filtered;
-  }, [entries, filterText, sortMode]);
+  }, [entries, filterText, searchedEntries, sortMode]);
 
   const handleExport = async () => {
     try {
@@ -221,7 +239,7 @@ export default function HistoryPage() {
         </section>
       )}
 
-      {entries.length > 0 && (
+      {(entries.length > 0 || totalPlays > 0) && (
         <div className="mb-4 max-w-2xl">
           <div className="flex flex-col gap-2 sm:flex-row">
             <input
@@ -253,13 +271,13 @@ export default function HistoryPage() {
           </div>
           {filterText.trim() && (
             <p className="text-xs mt-1" style={{ color: 'var(--color-text-muted)' }}>
-              {songs.length} / {entries.length} 件を表示中
+              {searchedEntries === null ? '履歴を読み込み中…' : `${songs.length} / ${totalPlays} 件を表示中`}
             </p>
           )}
         </div>
       )}
 
-      {entries.length > 0 && (
+      {entries.length > 0 && !filterText.trim() && (
         <div className="mb-4 flex items-center gap-3">
           {hasMoreEntries ? (
             <button

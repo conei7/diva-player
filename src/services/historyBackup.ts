@@ -3,7 +3,7 @@ import { HISTORY_STORES, openHistoryDb } from './historyDatabase';
 
 const BACKUP_KIND = 'diva-player-history';
 const BACKUP_VERSION = 1;
-const MAX_IMPORT_EVENTS = 1_000_000;
+export const MAX_IMPORT_EVENTS = 1_000_000;
 
 export interface HistoryBackupPayload {
   kind: typeof BACKUP_KIND;
@@ -74,6 +74,27 @@ export function parseHistoryBackup(data: unknown): ListeningPlayEvent[] | null {
     .filter((event): event is ListeningPlayEvent => event !== null);
 }
 
+export function dedupeHistoryEvents(
+  existingEvents: ListeningPlayEvent[],
+  importedEvents: ListeningPlayEvent[],
+): { eventsToAdd: ListeningPlayEvent[]; duplicates: number } {
+  const existingFingerprints = new Set(existingEvents.map(playEventFingerprint));
+  const seenInBackup = new Set<string>();
+  const eventsToAdd: ListeningPlayEvent[] = [];
+  let duplicates = 0;
+
+  for (const event of importedEvents) {
+    const fingerprint = playEventFingerprint(event);
+    if (existingFingerprints.has(fingerprint) || seenInBackup.has(fingerprint)) {
+      duplicates += 1;
+      continue;
+    }
+    seenInBackup.add(fingerprint);
+    eventsToAdd.push(event);
+  }
+  return { eventsToAdd, duplicates };
+}
+
 function requestToPromise<T>(request: IDBRequest<T>): Promise<T> {
   return new Promise((resolve, reject) => {
     request.onsuccess = () => resolve(request.result);
@@ -125,20 +146,7 @@ export async function importHistoryBackup(data: unknown): Promise<HistoryImportR
   if (parsed === null) throw new Error('This is not a supported DIVA listening-history backup.');
 
   const existingEvents = await readAllEvents();
-  const existingFingerprints = new Set(existingEvents.map(playEventFingerprint));
-  const seenInBackup = new Set<string>();
-  const eventsToAdd: ListeningPlayEvent[] = [];
-  let duplicates = 0;
-
-  for (const event of parsed) {
-    const fingerprint = playEventFingerprint(event);
-    if (existingFingerprints.has(fingerprint) || seenInBackup.has(fingerprint)) {
-      duplicates += 1;
-      continue;
-    }
-    seenInBackup.add(fingerprint);
-    eventsToAdd.push(event);
-  }
+  const { eventsToAdd, duplicates } = dedupeHistoryEvents(existingEvents, parsed);
   const skipped = (data as { events: unknown[] }).events.length - parsed.length;
 
   if (eventsToAdd.length === 0) return { imported: 0, duplicates, skipped };

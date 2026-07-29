@@ -127,7 +127,8 @@ public class RecommendService
         IReadOnlyList<RecommendSeed> seeds,
         int count,
         double sessionProgress,
-        IReadOnlySet<int>? excludedSongIds = null)
+        IReadOnlySet<int>? excludedSongIds = null,
+        int offset = 0)
     {
         var normalizedSeeds = seeds
             .Where(seed => seed.SongId > 0 && seed.Weight > 0)
@@ -166,6 +167,7 @@ public class RecommendService
 
         var items = scores.Values
             .OrderByDescending(entry => entry.Score)
+            .Skip(offset)
             .Take(count)
             .Select(entry => entry.Item with { Score = entry.Score })
             .ToList();

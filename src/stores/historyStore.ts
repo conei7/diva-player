@@ -3,11 +3,13 @@ import { get as idbGet, del as idbDel } from 'idb-keyval';
 import { getSongById } from '../api/vocadb';
 import type { Song } from '../types/vocadb';
 import { HISTORY_STORES, openHistoryDb } from '../services/historyDatabase';
+import { filterHistoryEntries } from '../utils/historySearch';
 
 const PLAY_STORE = HISTORY_STORES.plays;
 const LEGACY_HISTORY_KEY = 'diva-history';
 const LEGACY_MIGRATED_KEY = 'diva-history-log-migrated-v1';
 const RECENT_ENTRY_LIMIT = 300;
+const SONG_FETCH_CONCURRENCY = 8;
 const DUPLICATE_PLAY_WINDOW_MS = 2000;
 
 export interface HistoryEntry {
@@ -142,6 +144,21 @@ async function countPlayEvents(): Promise<number> {
   return requestToPromise(tx.objectStore(PLAY_STORE).count());
 }
 
+async function readAllPlayEvents(): Promise<ListeningPlayEvent[]> {
+  const db = await openHistoryDb();
+  const tx = db.transaction(PLAY_STORE, 'readonly');
+  return requestToPromise(tx.objectStore(PLAY_STORE).getAll());
+}
+
+/** Search the complete raw event log, not only the 300 entries shown initially. */
+export async function searchHistoryEntries(query: string): Promise<HistoryEntry[]> {
+  if (!query.trim() || typeof indexedDB === 'undefined') return [];
+  const events = await readAllPlayEvents();
+  events.sort((a, b) => (b.id ?? 0) - (a.id ?? 0) || b.t - a.t);
+  const entries = await loadEntriesFromEvents(events);
+  return filterHistoryEntries(entries, query);
+}
+
 async function loadHistorySnapshot(): Promise<Pick<HistoryState, 'entries' | 'totalPlays' | 'hasMoreEntries'>> {
   const events = await readRecentPlayEvents(RECENT_ENTRY_LIMIT);
   const entries = await loadEntriesFromEvents(events);
@@ -192,15 +209,17 @@ async function clearPlayEvents(): Promise<void> {
 
 async function loadEntriesFromEvents(events: ListeningPlayEvent[]): Promise<HistoryEntry[]> {
   const songIds = [...new Set(events.map(event => event.s))];
-  const songPairs = await Promise.all(
-    songIds.map(async id => {
+  const songPairs: Array<readonly [number, Song | null]> = [];
+  for (let index = 0; index < songIds.length; index += SONG_FETCH_CONCURRENCY) {
+    const batch = await Promise.all(songIds.slice(index, index + SONG_FETCH_CONCURRENCY).map(async id => {
       try {
         return [id, await getSongById(id)] as const;
       } catch {
         return [id, null] as const;
       }
-    }),
-  );
+    }));
+    songPairs.push(...batch);
+  }
   const songMap = new Map(songPairs);
 
   return events.flatMap(event => {

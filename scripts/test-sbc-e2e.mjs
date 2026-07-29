@@ -160,6 +160,9 @@ async function main() {
     assert(exported.kind === 'diva-player-history', 'The exported history file has an invalid kind.');
     assert(exported.version === 1, 'The exported history file has an invalid version.');
     assert(exported.events.length === 2, 'The exported history file does not contain the imported events.');
+    assert(exported.events.every(event => event.f === 1), 'The exported history contains an active event.');
+    assert(new Set(exported.events.map(event => `${event.s}:${event.t}:${event.p ?? ''}:${event.d ?? ''}`)).size === exported.events.length,
+      'The exported history contains duplicate playback events.');
 
     const restoreContext = await browser.createBrowserContext();
     try {

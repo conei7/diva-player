@@ -59,7 +59,7 @@ async function flushExternalViewRequests(): Promise<void> {
       chunks.push(ids.slice(index, index + EXTERNAL_VIEWS_BATCH_SIZE));
     }
     const responses = await Promise.all(chunks.map(async chunk => {
-      const res = await fetch(`${RECOMMENDER_API}/api/songs/views?ids=${chunk.join(',')}`);
+      const res = await fetchWithRetry(`${RECOMMENDER_API}/api/songs/views?ids=${chunk.join(',')}`);
       if (!res.ok) throw new Error(`External view request failed: ${res.status}`);
       return res.json() as Promise<Record<number, ExternalViewCounts>>;
     }));
@@ -99,7 +99,17 @@ async function fetchWithRetry(url: string, retries = MAX_RETRIES): Promise<Respo
       
       // 4xxエラーはリトライしない
       if (response.status >= 400 && response.status < 500) {
-        throw new Error(`API Error ${response.status}: ${response.statusText}`);
+        if (response.status === 429) {
+          const retryAfter = response.headers.get('retry-after');
+          recordPerformanceMetric({
+            name: 'api.rate-limit',
+            startedAt: performanceNow(),
+            detail: { url, retryAfter: retryAfter ?? '', status: response.status },
+          });
+        }
+        const error = new Error(`API Error ${response.status}: ${response.statusText}`);
+        error.name = 'DivaApiClientError';
+        throw error;
       }
       
       // 5xxエラーはリトライ
@@ -111,6 +121,7 @@ async function fetchWithRetry(url: string, retries = MAX_RETRIES): Promise<Respo
       
       throw new Error(`API Error ${response.status} after ${retries + 1} attempts`);
     } catch (error) {
+      if (error instanceof Error && error.name === 'DivaApiClientError') throw error;
       if (attempt === retries) throw error;
       const delay = Math.pow(2, attempt) * 500;
       await new Promise(resolve => setTimeout(resolve, delay));
@@ -778,7 +789,8 @@ export async function getRecommendedSongs(
   }
 
   // フォールバック: VocaDB /related
-  return getRelatedSongs(seedSongId);
+  const fallback = await getRelatedSongs(seedSongId);
+  return fallback.slice(offset, offset + count);
 }
 
 /**
@@ -789,6 +801,7 @@ export async function getMultiRecommendedSongs(
   seeds: MultiRecommendationSeed[],
   count = 30,
   excludeSongIds: number[] = [],
+  offset = 0,
 ): Promise<Song[]> {
   const normalizedSeeds = seeds
     .filter(seed => Number.isInteger(seed.songId) && seed.songId > 0 && Number.isFinite(seed.weight) && seed.weight > 0)
@@ -803,6 +816,7 @@ export async function getMultiRecommendedSongs(
         body: JSON.stringify({
           seeds: normalizedSeeds,
           count,
+          offset,
           excludeSongIds: excludeSongIds.slice(0, 500),
         }),
       });
@@ -821,7 +835,7 @@ export async function getMultiRecommendedSongs(
 
   const results = await Promise.all(normalizedSeeds.map(async seed => ({
     weight: seed.weight,
-    songs: await getRecommendedSongs(seed.songId, count),
+    songs: await getRecommendedSongs(seed.songId, count, 0.0, undefined, offset),
   })));
   const scoreBySongId = new Map<number, { song: Song; score: number }>();
   const excluded = new Set(excludeSongIds);

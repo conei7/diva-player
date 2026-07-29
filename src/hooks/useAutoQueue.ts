@@ -81,11 +81,24 @@ async function fetchCandidates(
   tasteSeeds: TasteSeed[],
   excludeSongIds: number[],
 ): Promise<Song[]> {
-  return getMultiRecommendedSongs(
-    buildRecommendationSeeds(currentSong, rootSeed, tasteSeeds),
-    60,
-    excludeSongIds,
-  );
+  const seeds = buildRecommendationSeeds(currentSong, rootSeed, tasteSeeds);
+  const candidates: Song[] = [];
+  const seen = new Set<number>(excludeSongIds);
+  const pageSize = 60;
+  const maxPages = 3;
+
+  for (let page = 0; page < maxPages && candidates.length < pageSize; page += 1) {
+    const batch = await getMultiRecommendedSongs(seeds, pageSize, excludeSongIds, page * pageSize);
+    let added = 0;
+    for (const song of batch) {
+      if (seen.has(song.id)) continue;
+      seen.add(song.id);
+      candidates.push(song);
+      added += 1;
+    }
+    if (batch.length < pageSize || added === 0) break;
+  }
+  return candidates.slice(0, pageSize);
 }
 
 interface RecommendationSeed {

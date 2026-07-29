@@ -41,7 +41,7 @@ builder.Services.AddCors(options =>
             .WithOrigins(allowedOrigins)
             .WithMethods("GET", "POST", "OPTIONS")
             .WithHeaders("Accept", "Content-Type", "Cache-Control")
-            .WithExposedHeaders("Server-Timing", "X-Diva-Search-Cache"));
+            .WithExposedHeaders("Server-Timing", "X-Diva-Search-Cache", "Retry-After", "X-Diva-Rate-Limit"));
 });
 
 // 推薦・検索APIは高コストなDB/Qdrant処理を含むため、クライアントIP単位で抑制する。
@@ -50,6 +50,21 @@ builder.Services.AddCors(options =>
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.OnRejected = (context, _) =>
+    {
+        var path = context.HttpContext.Request.Path;
+        var isExternalViews = path.Equals("/api/songs/views", StringComparison.OrdinalIgnoreCase);
+        context.HttpContext.Response.Headers.RetryAfter = "60";
+        context.HttpContext.Response.Headers["X-Diva-Rate-Limit"] = isExternalViews ? "views;600/min" : "default;120/min";
+        var logger = context.HttpContext.RequestServices.GetRequiredService<ILoggerFactory>()
+            .CreateLogger("DivaRateLimit");
+        logger.LogWarning(
+            "rate_limit_rejected path={Path} scope={Scope} traceId={TraceId}",
+            path.Value,
+            isExternalViews ? "views" : "default",
+            context.HttpContext.TraceIdentifier);
+        return ValueTask.CompletedTask;
+    };
     options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(httpContext =>
     {
         if (httpContext.Request.Path.Equals("/api/health", StringComparison.OrdinalIgnoreCase))
@@ -334,6 +349,8 @@ app.MapPost("/api/recommend/multi", async (
         return Results.BadRequest("count must be between 1 and 100");
     if (request.SessionProgress is < 0 or > 1)
         return Results.BadRequest("sessionProgress must be between 0 and 1");
+    if (request.Offset is < 0 or > 10_000)
+        return Results.BadRequest("offset must be between 0 and 10000");
     if (request.ExcludeSongIds?.Count > 500)
         return Results.BadRequest("excludeSongIds must contain at most 500 items");
 
@@ -342,7 +359,7 @@ app.MapPost("/api/recommend/multi", async (
         .Select(seed => new RecommendSeed(seed.SongId, seed.Weight))
         .ToList();
     var excluded = request.ExcludeSongIds?.Where(id => id > 0).ToHashSet() ?? [];
-    var result = await svc.RecommendFromSeedsAsync(seeds, request.Count, request.SessionProgress, excluded);
+    var result = await svc.RecommendFromSeedsAsync(seeds, request.Count, request.SessionProgress, excluded, request.Offset);
     return Results.Ok(result);
 });
 
@@ -585,7 +602,8 @@ public record MultiRecommendRequest(
     List<MultiRecommendSeed>? Seeds,
     int Count = 60,
     double SessionProgress = 0,
-    List<int>? ExcludeSongIds = null
+    List<int>? ExcludeSongIds = null,
+    int Offset = 0
 );
 
 public record MultiRecommendSeed(int SongId, double Weight);

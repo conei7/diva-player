@@ -45,6 +45,12 @@ jobs:
         run: npm run test:e2e:player-controls -- http://127.0.0.1:4173/diva-player/
       - name: Background playback E2E
         run: npm run test:e2e:background-playback -- http://127.0.0.1:4173/diva-player/
+      - name: Cloudflare proxy contract test
+        run: npm run test:cloudflare-proxy
+      - name: Navigation E2E
+        run: npm run test:e2e:navigation -- http://127.0.0.1:4173/diva-player/
+      - name: Performance budget E2E
+        run: npm run test:performance-budget -- http://127.0.0.1:4173/diva-player/
   deploy-cloudflare:
     needs: build
     runs-on: ubuntu-latest
@@ -67,3 +73,6 @@ jobs:
       - name: Deploy to Cloudflare Pages
         if: env.CLOUDFLARE_API_TOKEN != '' && env.CLOUDFLARE_ACCOUNT_ID != ''
         run: npx wrangler pages deploy dist --project-name diva-player --branch main
+      - name: Nico autoplay smoke test
+        if: env.CLOUDFLARE_API_TOKEN != '' && env.CLOUDFLARE_ACCOUNT_ID != ''
+        run: npm run test:e2e:pages-nico -- https://diva-player.pages.dev/
