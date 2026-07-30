@@ -27,6 +27,19 @@ import {
   SONG_TYPE_LABELS,
 } from '../../utils/globalFilters';
 
+/* ─── 共通UIパーツ ─── */
+
+function ToggleSwitch({ checked, onChange, disabled }: { checked: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
+  return (
+    <label className="ui-switch" style={disabled ? { opacity: 0.45, pointerEvents: 'none' } : undefined}>
+      <input type="checkbox" checked={checked} onChange={e => onChange(e.target.checked)} disabled={disabled} />
+      <span className="ui-switch-track" />
+    </label>
+  );
+}
+
+/* ─── SettingsModal ─── */
+
 interface SettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -41,7 +54,7 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
   const [draftFilters, setDraftFilters] = useState<GlobalFilterSettings>(DEFAULT_GLOBAL_FILTER_SETTINGS);
-  const [activeTab, setActiveTab] = useState<'settings' | 'data'>('settings');
+  const [activeTab, setActiveTab] = useState<'filter' | 'playback' | 'data'>('filter');
   const globalFilterState = useGlobalFilterStore();
   const setGlobalFilterSettings = useGlobalFilterStore(state => state.setSettings);
   const resetGlobalFilterSettings = useGlobalFilterStore(state => state.resetSettings);
@@ -150,231 +163,305 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     if (hasSearched) void refreshSearch();
     const summary = getGlobalFilterSummary(draftFilters);
     setMessage(summary.length > 0
-      ? `表示・発見設定を適用しました: ${summary.join(' / ')}`
-      : '表示・発見設定を適用しました（フィルター停止）。');
+      ? `適用: ${summary.join(' / ')}`
+      : 'フィルターを停止しました。');
   };
 
   const resetFilters = () => {
     resetGlobalFilterSettings();
     setDraftFilters(DEFAULT_GLOBAL_FILTER_SETTINGS);
     if (hasSearched) void refreshSearch();
-    setMessage('表示・発見設定を初期化しました。');
+    setMessage('フィルターを初期化しました。');
+  };
+
+  const toggleExcludedType = (songType: string) => {
+    updateDraft('excludedSongTypes',
+      draftFilters.excludedSongTypes.includes(songType)
+        ? draftFilters.excludedSongTypes.filter(t => t !== songType)
+        : [...draftFilters.excludedSongTypes, songType]);
   };
 
   return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-label="設定・バックアップ">
-      <button type="button" className="absolute inset-0 bg-black/70" aria-label="閉じる" onClick={onClose} />
-      <div className="relative max-h-[calc(100dvh-2rem)] w-full max-w-lg overflow-y-auto rounded-2xl p-5 shadow-2xl" style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)' }}>
-        {/* ヘッダー */}
-        <div className="flex items-center justify-between gap-3 mb-4">
-          <h2 className="text-lg font-bold">設定</h2>
-          <button type="button" className="btn-ghost rounded-lg px-2 py-1" onClick={onClose} aria-label="閉じる">×</button>
-        </div>
+    <div className="fixed inset-0 z-[70] flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-label="設定">
+      <button type="button" className="absolute inset-0 bg-black/70 backdrop-blur-sm" aria-label="閉じる" onClick={onClose} />
 
-        {/* タブバー */}
-        <div className="settings-tab-bar mb-4">
-          <button
-            type="button"
-            className="settings-tab"
-            data-active={activeTab === 'settings'}
-            onClick={() => setActiveTab('settings')}
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.484.484 0 0 0-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.49.49 0 0 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.07.62-.07.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6A3.6 3.6 0 1 1 12 8.4a3.6 3.6 0 0 1 0 7.2z"/>
-            </svg>
-            設定
-          </button>
-          <button
-            type="button"
-            className="settings-tab"
-            data-active={activeTab === 'data'}
-            onClick={() => setActiveTab('data')}
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/>
-            </svg>
-            データ
-          </button>
+      <div className="relative max-h-[calc(100dvh-2rem)] w-full max-w-lg overflow-y-auto rounded-2xl shadow-2xl"
+           style={{ background: 'var(--color-bg-secondary)', border: '1px solid rgba(255,255,255,0.06)' }}>
+
+        {/* ヘッダー */}
+        <div className="sticky top-0 z-10 px-5 pt-5 pb-3" style={{ background: 'var(--color-bg-secondary)' }}>
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-base font-bold" style={{ color: 'var(--color-text-primary)' }}>設定</h2>
+            <button type="button" className="btn-ghost rounded-full w-8 h-8 flex items-center justify-center" onClick={onClose} aria-label="閉じる">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+            </button>
+          </div>
+
+          {/* 3タブ */}
+          <div className="settings-tab-bar">
+            <button type="button" className="settings-tab" data-active={activeTab === 'filter'} onClick={() => setActiveTab('filter')}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M3 17v2h6v-2H3zM3 5v2h10V5H3zm10 16v-2h8v-2h-8v-2h-2v6h2zM7 9v2H3v2h4v2h2V9H7zm14 4v-2H11v2h10zm-6-4h2V7h4V5h-4V3h-2v6z"/></svg>
+              表示・発見
+            </button>
+            <button type="button" className="settings-tab" data-active={activeTab === 'playback'} onClick={() => setActiveTab('playback')}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg>
+              再生・操作
+            </button>
+            <button type="button" className="settings-tab" data-active={activeTab === 'data'} onClick={() => setActiveTab('data')}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
+              データ
+            </button>
+          </div>
         </div>
 
         {/* タブコンテンツ */}
-        <div className="flex flex-col gap-3">
+        <div className="px-5 pb-5 flex flex-col gap-4">
 
-          {/* ===== 設定タブ ===== */}
-          {activeTab === 'settings' && (
+          {/* ========== 表示・発見タブ ========== */}
+          {activeTab === 'filter' && (
             <>
-              {/* 表示・発見フィルター */}
-              <section className="rounded-xl p-3" style={{ background: 'var(--color-bg-secondary)' }}>
-                <h3 className="font-semibold text-sm">表示・発見フィルター</h3>
-                <label className="mt-3 flex items-center gap-2 text-sm">
-                  <input type="checkbox" checked={draftFilters.enabled} onChange={event => updateDraft('enabled', event.target.checked)} />
-                  再生数・楽曲種別フィルターを有効にする
-                </label>
-                <p className="mt-1 text-xs opacity-70">
-                  指定した値以上の曲だけを検索・おすすめに表示します。再生数が不明な曲は除外されます。
-                  {!draftFilters.enabled && hasConfiguredSongFilters(draftFilters) && ' 現在は停止中です。'}
-                </p>
+              {/* フィルター有効/無効 */}
+              <div className="settings-section">
+                <div className="settings-section-title">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M10 18h4v-2h-4v2zM3 6v2h18V6H3zm3 7h12v-2H6v2z"/></svg>
+                  フィルター
+                </div>
+
+                <div className="setting-row">
+                  <div className="setting-row-info">
+                    <span className="setting-row-title">再生数・楽曲種別フィルター</span>
+                    <span className="setting-row-desc">
+                      指定値以上の曲だけを検索・おすすめに表示
+                      {!draftFilters.enabled && hasConfiguredSongFilters(draftFilters) && '（停止中）'}
+                    </span>
+                  </div>
+                  <ToggleSwitch checked={draftFilters.enabled} onChange={v => updateDraft('enabled', v)} />
+                </div>
+
                 {isGlobalSongFilterActive(savedFilters) && (
-                  <p className="mt-2 rounded-lg px-2 py-1.5 text-xs" style={{ background: 'rgba(34, 211, 238, 0.1)', color: 'var(--color-accent-cyan)' }}>
+                  <p className="rounded-lg px-2.5 py-1.5 text-[11px] mt-1" style={{ background: 'rgba(6, 214, 160, 0.08)', color: 'var(--color-accent-cyan)' }}>
                     適用中: {getGlobalFilterSummary(savedFilters).join(' / ')}
                   </p>
                 )}
                 {filtersAreDirty && (
-                  <p className="mt-2 rounded-lg px-2 py-1.5 text-xs text-amber-200" role="status" style={{ background: 'rgba(251, 191, 36, 0.1)' }}>
-                    未適用の変更あり: {isGlobalSongFilterActive(draftFilters)
-                      ? getGlobalFilterSummary(draftFilters).join(' / ')
-                      : 'フィルター停止'}
+                  <p className="rounded-lg px-2.5 py-1.5 text-[11px] mt-1 text-amber-200" role="status" style={{ background: 'rgba(251, 191, 36, 0.08)' }}>
+                    未適用の変更あり
                   </p>
                 )}
-                <div className={`mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2 ${draftFilters.enabled ? '' : 'opacity-50'}`}>
-                  <label className="text-sm">
-                    YouTube最低再生数
-                    <select className="input mt-1 w-full" defaultValue="" onChange={event => { if (event.target.value) updateDraft('minYoutubeViews', Number(event.target.value)); }}>
-                      <option value="">プリセットを選択</option>
+              </div>
+
+              {/* 再生数閾値 */}
+              <div className="settings-section" style={draftFilters.enabled ? undefined : { opacity: 0.45 }}>
+                <div className="settings-section-title">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M16 6l2.29 2.29-4.88 4.88-4-4L2 16.59 3.41 18l6-6 4 4 6.3-6.29L22 12V6h-6z"/></svg>
+                  最低再生数
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="flex flex-col gap-1.5">
+                    <span className="text-[11px]" style={{ color: 'var(--color-text-muted)' }}>YouTube</span>
+                    <select className="ui-select w-full" defaultValue="" onChange={e => { if (e.target.value) updateDraft('minYoutubeViews', Number(e.target.value)); }}>
+                      <option value="">プリセット</option>
                       <option value={10_000}>1万</option>
                       <option value={50_000}>5万</option>
                       <option value={100_000}>10万</option>
                       <option value={500_000}>50万</option>
                       <option value={1_000_000}>100万</option>
                     </select>
-                    <input className="input mt-1 w-full" type="number" min={0} step={1} value={draftFilters.minYoutubeViews} onChange={event => updateDraft('minYoutubeViews', Math.max(0, Number(event.target.value) || 0))} />
-                  </label>
-                  <label className="text-sm">
-                    ニコニコ最低再生数
-                    <select className="input mt-1 w-full" defaultValue="" onChange={event => { if (event.target.value) updateDraft('minNicoViews', Number(event.target.value)); }}>
-                      <option value="">プリセットを選択</option>
+                    <input className="ui-number-input" type="number" min={0} step={1} value={draftFilters.minYoutubeViews} onChange={e => updateDraft('minYoutubeViews', Math.max(0, Number(e.target.value) || 0))} />
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <span className="text-[11px]" style={{ color: 'var(--color-text-muted)' }}>ニコニコ</span>
+                    <select className="ui-select w-full" defaultValue="" onChange={e => { if (e.target.value) updateDraft('minNicoViews', Number(e.target.value)); }}>
+                      <option value="">プリセット</option>
                       <option value={1_000}>1千</option>
                       <option value={5_000}>5千</option>
                       <option value={10_000}>1万</option>
                       <option value={50_000}>5万</option>
                       <option value={100_000}>10万</option>
                     </select>
-                    <input className="input mt-1 w-full" type="number" min={0} step={1} value={draftFilters.minNicoViews} onChange={event => updateDraft('minNicoViews', Math.max(0, Number(event.target.value) || 0))} />
-                  </label>
-                </div>
-                <div className="mt-3">
-                  <span className="text-sm">除外する楽曲種別</span>
-                  <div className={`mt-2 grid grid-cols-2 gap-2 text-sm sm:grid-cols-3 ${draftFilters.enabled ? '' : 'opacity-50'}`}>
-                    {SONG_TYPES.map(songType => (
-                      <label key={songType} className="flex items-center gap-1">
-                        <input
-                          type="checkbox"
-                          checked={draftFilters.excludedSongTypes.includes(songType)}
-                          onChange={event => updateDraft('excludedSongTypes', event.target.checked
-                            ? [...draftFilters.excludedSongTypes, songType]
-                            : draftFilters.excludedSongTypes.filter(type => type !== songType))}
-                        />
-                        {SONG_TYPE_LABELS[songType]} <span className="opacity-60">({songType})</span>
-                      </label>
-                    ))}
+                    <input className="ui-number-input" type="number" min={0} step={1} value={draftFilters.minNicoViews} onChange={e => updateDraft('minNicoViews', Math.max(0, Number(e.target.value) || 0))} />
                   </div>
                 </div>
-                <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
-                  <label className="text-sm">
-                    再生クールダウン
-                    <select className="input mt-1 w-full" value={draftFilters.cooldownHours} onChange={event => updateDraft('cooldownHours', Number(event.target.value))}>
-                      <option value={0}>指定なし</option>
-                      <option value={1}>1時間</option>
-                      <option value={6}>6時間</option>
-                      <option value={24}>24時間</option>
-                      <option value={72}>3日</option>
-                      <option value={168}>7日</option>
-                    </select>
-                  </label>
-                  <label className="flex items-center gap-2 text-sm sm:mt-6">
-                    <input type="checkbox" checked={draftFilters.excludeRatedFromDiscovery} onChange={event => updateDraft('excludeRatedFromDiscovery', event.target.checked)} />
-                    評価済み楽曲を発見候補から除外
-                  </label>
-                </div>
-                <div className="mt-3 flex gap-2">
-                  <button type="button" className="btn-primary flex-1" disabled={busy || !filtersAreDirty} onClick={applyFilters}>適用</button>
-                  <button type="button" className="btn-secondary" disabled={busy} onClick={resetFilters}>初期化</button>
-                </div>
-              </section>
+              </div>
 
-              {/* 再生PV */}
-              <section className="rounded-xl p-3" style={{ background: 'var(--color-bg-secondary)' }}>
-                <h3 className="font-semibold text-sm">再生PV</h3>
-                <label className="mt-3 block text-sm">
-                  優先するサービス
-                  <select
-                    className="input mt-1 w-full"
-                    value={pvPreference}
-                    onChange={event => setPVPreference(event.target.value as PVPreference)}
-                  >
-                    <option value="auto">自動（YouTube公式を優先）</option>
-                    <option value="Youtube">YouTube優先</option>
-                    <option value="NicoNicoDouga">ニコニコ優先</option>
+              {/* 除外する楽曲種別 */}
+              <div className="settings-section" style={draftFilters.enabled ? undefined : { opacity: 0.45 }}>
+                <div className="settings-section-title">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>
+                  除外する楽曲種別
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {SONG_TYPES.map(songType => (
+                    <button
+                      key={songType}
+                      type="button"
+                      className="ui-chip-toggle"
+                      data-active={draftFilters.excludedSongTypes.includes(songType)}
+                      data-variant="danger"
+                      onClick={() => toggleExcludedType(songType)}
+                    >
+                      {SONG_TYPE_LABELS[songType]}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* その他のフィルター */}
+              <div className="settings-section">
+                <div className="setting-row" style={{ paddingTop: 0 }}>
+                  <div className="setting-row-info">
+                    <span className="setting-row-title">再生クールダウン</span>
+                    <span className="setting-row-desc">最近聴いた曲を一定時間、おすすめから除外</span>
+                  </div>
+                  <select className="ui-select" value={draftFilters.cooldownHours} onChange={e => updateDraft('cooldownHours', Number(e.target.value))}>
+                    <option value={0}>なし</option>
+                    <option value={1}>1時間</option>
+                    <option value={6}>6時間</option>
+                    <option value={24}>24時間</option>
+                    <option value={72}>3日</option>
+                    <option value={168}>7日</option>
                   </select>
-                </label>
-                <p className="mt-1 text-xs opacity-70">曲ごとの再生画面では、利用可能なPVを個別に選択できます。再生不能PVは30分後に再試行します。</p>
-              </section>
+                </div>
+                <div className="setting-row" style={{ paddingBottom: 0 }}>
+                  <div className="setting-row-info">
+                    <span className="setting-row-title">評価済みを発見候補から除外</span>
+                    <span className="setting-row-desc">すでに評価した曲をおすすめに出さない</span>
+                  </div>
+                  <ToggleSwitch checked={draftFilters.excludeRatedFromDiscovery} onChange={v => updateDraft('excludeRatedFromDiscovery', v)} />
+                </div>
+              </div>
 
-              {/* 選択操作 */}
-              <section className="rounded-xl p-3" style={{ background: 'var(--color-bg-secondary)' }}>
-                <h3 className="font-semibold text-sm">選択操作</h3>
-                <label className="mt-3 flex items-center gap-2 text-sm">
-                  <input type="checkbox" checked={longPressSelectionEnabled} onChange={event => setLongPressSelectionEnabled(event.target.checked)} />
-                  曲カードの長押しで複数選択モードを開始
-                </label>
-                <p className="mt-1 text-xs opacity-70">無効にすると、カードの長押しで選択モードへ移行しません。タッチ操作では常に長押し選択を開始しません。</p>
-              </section>
+              {/* 適用/初期化 */}
+              <div className="flex gap-2">
+                <button type="button" className="btn-primary flex-1" disabled={busy || !filtersAreDirty} onClick={applyFilters}>
+                  適用
+                </button>
+                <button type="button" className="btn-secondary px-4" disabled={busy} onClick={resetFilters}>
+                  初期化
+                </button>
+              </div>
             </>
           )}
 
-          {/* ===== データタブ ===== */}
+          {/* ========== 再生・操作タブ ========== */}
+          {activeTab === 'playback' && (
+            <>
+              <div className="settings-section">
+                <div className="settings-section-title">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M21 3H3c-1.11 0-2 .89-2 2v14c0 1.11.89 2 2 2h18c1.11 0 2-.89 2-2V5c0-1.11-.89-2-2-2zm-9 8H3V5h9v6z"/></svg>
+                  PV設定
+                </div>
+                <div className="setting-row" style={{ paddingTop: 0, paddingBottom: 0 }}>
+                  <div className="setting-row-info">
+                    <span className="setting-row-title">優先するサービス</span>
+                    <span className="setting-row-desc">曲ごとの再生画面で個別選択も可能</span>
+                  </div>
+                  <select
+                    className="ui-select"
+                    value={pvPreference}
+                    onChange={e => setPVPreference(e.target.value as PVPreference)}
+                  >
+                    <option value="auto">自動</option>
+                    <option value="Youtube">YouTube</option>
+                    <option value="NicoNicoDouga">ニコニコ</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="settings-section">
+                <div className="settings-section-title">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M9 11.24V7.5C9 6.12 10.12 5 11.5 5S14 6.12 14 7.5v3.74c1.21-.81 2-2.18 2-3.74C16 5.01 13.99 3 11.5 3S7 5.01 7 7.5c0 1.56.79 2.93 2 3.74zm9.84 4.63l-4.54-2.26c-.17-.07-.35-.11-.54-.11H13v-6c0-.83-.67-1.5-1.5-1.5S10 6.67 10 7.5v10.74l-3.43-.72c-.08-.01-.15-.03-.24-.03-.31 0-.59.13-.79.33l-.79.8 4.94 4.94c.27.27.65.44 1.06.44h6.79c.75 0 1.33-.55 1.44-1.28l.75-5.27c.01-.07.02-.14.02-.2 0-.62-.38-1.16-.91-1.38z"/></svg>
+                  操作
+                </div>
+                <div className="setting-row" style={{ paddingTop: 0, paddingBottom: 0 }}>
+                  <div className="setting-row-info">
+                    <span className="setting-row-title">長押しで複数選択</span>
+                    <span className="setting-row-desc">曲カードの長押しで選択モードを開始</span>
+                  </div>
+                  <ToggleSwitch checked={longPressSelectionEnabled} onChange={setLongPressSelectionEnabled} />
+                </div>
+              </div>
+            </>
+          )}
+
+          {/* ========== データタブ ========== */}
           {activeTab === 'data' && (
             <>
-              <section className="rounded-xl p-3" style={{ background: 'var(--color-bg-secondary)' }}>
-                <h3 className="font-semibold text-sm">バックアップ</h3>
-                <p className="mt-2 text-xs opacity-70">
-                  履歴・評価・プレイリスト・設定をJSONファイルとしてエクスポートし、別のブラウザやデバイスへ移行できます。
+              <div className="settings-section">
+                <div className="settings-section-title">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M19 12v7H5v-7H3v7c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2v-7h-2zm-6 .67l2.59-2.58L17 11.5l-5 5-5-5 1.41-1.41L11 12.67V3h2v9.67z"/></svg>
+                  エクスポート
+                </div>
+                <p className="text-[11px] mb-3" style={{ color: 'var(--color-text-muted)' }}>
+                  履歴・評価・プレイリスト・設定をJSONとして保存します。
                 </p>
-                <button type="button" className="btn-primary w-full mt-3" disabled={busy} onClick={() => void exportBackup()}>
-                  履歴・評価・プレイリストをバックアップ
+                <button type="button" className="btn-primary w-full" disabled={busy} onClick={() => void exportBackup()}>
+                  バックアップを作成
                 </button>
-              </section>
+              </div>
 
-              <section className="rounded-xl p-3" style={{ background: 'var(--color-bg-secondary)' }}>
-                <h3 className="font-semibold text-sm">復元</h3>
-                <p className="mt-2 text-xs opacity-70">
-                  エクスポートしたJSONファイルを選択し、データを復元します。
+              <div className="settings-section">
+                <div className="settings-section-title">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M5 20h14v-2H5v2zM5 10h4v6h6v-6h4l-7-7-7 7z"/></svg>
+                  インポート
+                </div>
+                <p className="text-[11px] mb-3" style={{ color: 'var(--color-text-muted)' }}>
+                  保存したJSONファイルからデータを復元します。
                 </p>
-                <input ref={inputRef} className="hidden" type="file" accept="application/json,.json" onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; if (file) readBackup(file); }} />
-                <button type="button" className="btn-secondary w-full mt-3" disabled={busy} onClick={() => inputRef.current?.click()}>
-                  完全バックアップを選択
+                <input ref={inputRef} className="hidden" type="file" accept="application/json,.json" onChange={e => { const file = e.target.files?.[0]; e.target.value = ''; if (file) readBackup(file); }} />
+                <button type="button" className="btn-secondary w-full" disabled={busy} onClick={() => inputRef.current?.click()}>
+                  ファイルを選択
                 </button>
 
                 {preview && (
-                  <div className="mt-3 rounded-lg p-3 text-sm" style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)' }}>
-                    {preview.preferencesIncluded && <p className="mb-1 text-xs opacity-70">表示・発見設定を含むバックアップです。</p>}
-                    <p>履歴 {preview.historyCount.toLocaleString()}件 / 評価 {preview.ratingCount.toLocaleString()}件 / プレイリスト {preview.playlistCount.toLocaleString()}件 / 曲 {preview.playlistSongCount.toLocaleString()}件 / フォルダ {preview.folderCount.toLocaleString()}件</p>
+                  <div className="mt-3 rounded-xl p-3 text-sm" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                    {preview.preferencesIncluded && <p className="mb-1 text-[11px]" style={{ color: 'var(--color-text-muted)' }}>設定を含むバックアップ</p>}
+                    <p className="text-xs" style={{ color: 'var(--color-text-secondary)' }}>
+                      履歴 {preview.historyCount.toLocaleString()} / 評価 {preview.ratingCount.toLocaleString()} / PL {preview.playlistCount.toLocaleString()} / 曲 {preview.playlistSongCount.toLocaleString()} / フォルダ {preview.folderCount.toLocaleString()}
+                    </p>
                     {currentCounts && (
-                      <p className="mt-1 text-xs opacity-70">現在: プレイリスト {currentCounts.playlistCount.toLocaleString()}件 / 曲 {currentCounts.playlistSongCount.toLocaleString()}件 / 評価 {currentCounts.ratingCount.toLocaleString()}件</p>
+                      <p className="mt-1 text-[11px]" style={{ color: 'var(--color-text-muted)' }}>
+                        現在: PL {currentCounts.playlistCount.toLocaleString()} / 曲 {currentCounts.playlistSongCount.toLocaleString()} / 評価 {currentCounts.ratingCount.toLocaleString()}
+                      </p>
                     )}
-                    {preview.validationMessages.map(validationMessage => (
-                      <p key={validationMessage} className="mt-1 text-amber-300" role="alert">{validationMessage}</p>
+                    {preview.validationMessages.map(msg => (
+                      <p key={msg} className="mt-1 text-amber-300 text-xs" role="alert">{msg}</p>
                     ))}
-                    {preview.invalidItems > 0 && <p className="mt-1 text-amber-300">無効項目 {preview.invalidItems}件を除外</p>}
-                    <div className="flex flex-wrap gap-3 mt-3">
-                      <label><input type="radio" checked={mode === 'merge'} onChange={() => setMode('merge')} /> 追加</label>
-                      <label><input type="radio" checked={mode === 'replace'} onChange={() => setMode('replace')} /> 置換</label>
+                    {preview.invalidItems > 0 && <p className="mt-1 text-amber-300 text-xs">無効項目 {preview.invalidItems}件を除外</p>}
+
+                    <div className="mt-3">
+                      <div className="ui-segmented w-full">
+                        <button type="button" data-active={mode === 'merge'} onClick={() => setMode('merge')}>追加</button>
+                        <button type="button" data-active={mode === 'replace'} onClick={() => setMode('replace')}>置換</button>
+                      </div>
                     </div>
+
                     {mode === 'merge' && (
-                      <div className="flex flex-wrap gap-3 mt-2">
-                        <span>評価の優先:</span>
-                        <label><input type="radio" checked={ratingPriority === 'backup'} onChange={() => setRatingPriority('backup')} /> バックアップ</label>
-                        <label><input type="radio" checked={ratingPriority === 'current'} onChange={() => setRatingPriority('current')} /> 現在</label>
+                      <div className="mt-2">
+                        <span className="text-[11px] block mb-1" style={{ color: 'var(--color-text-muted)' }}>評価の優先</span>
+                        <div className="ui-segmented w-full">
+                          <button type="button" data-active={ratingPriority === 'backup'} onClick={() => setRatingPriority('backup')}>バックアップ</button>
+                          <button type="button" data-active={ratingPriority === 'current'} onClick={() => setRatingPriority('current')}>現在のデータ</button>
+                        </div>
                       </div>
                     )}
-                    <button type="button" className="btn-primary mt-3 w-full" disabled={busy || !preview.canRestore} onClick={() => void importBackup()}>この内容を復元</button>
+
+                    <button type="button" className="btn-primary mt-3 w-full" disabled={busy || !preview.canRestore} onClick={() => void importBackup()}>
+                      この内容を復元
+                    </button>
                   </div>
                 )}
-              </section>
+              </div>
             </>
           )}
 
-          {message && <p className="text-sm text-center" role="status">{message}</p>}
+          {message && (
+            <p className="text-xs text-center py-1 rounded-lg" role="status"
+               style={{ color: 'var(--color-text-secondary)', background: 'rgba(255,255,255,0.03)' }}>
+              {message}
+            </p>
+          )}
         </div>
       </div>
     </div>
