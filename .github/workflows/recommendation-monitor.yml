@@ -20,4 +20,4 @@ jobs:
       - name: Install dependencies
         run: npm ci
       - name: Check deployed recommendation API
-        run: npm run test:recommendation-regression -- --base-url https://diva-player.pages.dev
+        run: npm run test:recommendation-regression -- --base-url https://diva-player.pages.dev/backend-api

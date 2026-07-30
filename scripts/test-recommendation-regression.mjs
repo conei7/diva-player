@@ -7,7 +7,7 @@ const SAMPLE_SIZE = 5;
 function getBaseUrl() {
   const argumentIndex = process.argv.indexOf('--base-url');
   const provided = argumentIndex >= 0 ? process.argv[argumentIndex + 1] : process.env.SBC_API_URL;
-  if (!provided) throw new Error('Set SBC_API_URL or pass --base-url https://diva-player.pages.dev.');
+  if (!provided) throw new Error('Set SBC_API_URL or pass --base-url https://diva-player.pages.dev/backend-api.');
   return new URL(provided).toString().replace(/\/$/, '');
 }
 
