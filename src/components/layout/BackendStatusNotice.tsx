@@ -7,7 +7,7 @@ import {
 } from '../../api/backendHealth';
 
 const CHECK_INTERVAL_MS = 30_000;
-const CHECK_TIMEOUT_MS = 5_000;
+const CHECK_TIMEOUT_MS = 20_000;
 
 const STATUS_COPY: Record<Exclude<BackendConnectivityStatus, 'healthy' | 'checking'>, {
   title: string;

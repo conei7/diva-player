@@ -8,6 +8,11 @@ export interface BackendHealthOptions {
 
 export type BackendConnectivityStatus = 'checking' | 'healthy' | 'offline' | 'unavailable';
 
+// /api/health includes the actionable audio-feature boundary, which may take
+// several seconds on a cold PostgreSQL cache. Keep the client from declaring
+// the backend unavailable before that legitimate health response arrives.
+const DEFAULT_HEALTH_TIMEOUT_MS = 20_000;
+
 export function resolveBackendConnectivityStatus({
   available,
   online,
@@ -24,7 +29,7 @@ const wait = (delayMs: number) => new Promise(resolve => setTimeout(resolve, del
 
 export async function checkBackendHealth({
   baseUrl = '/backend-api',
-  timeoutMs = 5_000,
+  timeoutMs = DEFAULT_HEALTH_TIMEOUT_MS,
   attempts = 2,
   retryDelayMs = 400,
   fetchImpl = fetch,
