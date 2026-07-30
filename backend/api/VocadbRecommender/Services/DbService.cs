@@ -141,54 +141,21 @@ public class DbService
         {
             await using var conn = await OpenAsync();
             await using var cmd = new NpgsqlCommand(@"
-                WITH audio_targets AS (
-                    SELECT DISTINCT s.id
-                    FROM songs s
-                    JOIN pvs p ON p.song_id = s.id
-                        AND p.disabled = FALSE
-                        AND p.pv_type IN ('Original', 'Reprint')
-                    WHERE (s.nico_views >= $1 OR s.youtube_views >= $2)
-                      AND (
-                          s.song_type = 'Original'
-                          OR (
-                              s.song_type <> 'Original'
-                              AND s.raw_json->>'originalVersionId' IS NOT NULL
-                              AND EXISTS (
-                                  SELECT 1
-                                  FROM song_artists sa_cover
-                                  JOIN song_artists sa_orig ON sa_cover.artist_id = sa_orig.artist_id
-                                  WHERE sa_cover.song_id = s.id
-                                    AND sa_cover.is_producer = TRUE
-                                    AND sa_orig.song_id = (s.raw_json->>'originalVersionId')::int
-                                    AND sa_orig.is_producer = TRUE
-                              )
-                          )
-                      )
-                      AND EXISTS (
-                          SELECT 1
-                          FROM song_artists sa_vocal
-                          JOIN artists a_vocal ON a_vocal.id = sa_vocal.artist_id
-                          WHERE sa_vocal.song_id = s.id
-                            AND sa_vocal.is_vocalist = TRUE
-                            AND a_vocal.artist_type = ANY($3)
-                      )
-                )
                 SELECT COUNT(*)::bigint,
                        COUNT(*) FILTER (WHERE sf.audio_computed IS TRUE)::bigint,
                        COUNT(*) FILTER (WHERE sf.audio_computed IS NOT TRUE)::bigint,
                        MAX(sf.computed_at) FILTER (WHERE sf.audio_computed IS TRUE)
-                FROM audio_targets target
-                LEFT JOIN song_features sf ON sf.song_id = target.id", conn)
+                FROM songs s
+                LEFT JOIN song_features sf ON sf.song_id = s.id
+                WHERE s.nico_views >= $1 OR s.youtube_views >= $2", conn)
             {
-                // The target-pool joins scan the large song/PV tables; keep
-                // this health probe bounded but separate from the 3s liveness
-                // query so normal backlog reporting is not misclassified as
-                // a database failure.
+                // The high-view pool scans the large songs table; keep this
+                // probe bounded but separate from the 3s liveness query so
+                // normal backlog reporting is not misclassified as a failure.
                 CommandTimeout = 10
             };
             cmd.Parameters.AddWithValue(5_000);
             cmd.Parameters.AddWithValue(50_000);
-            cmd.Parameters.AddWithValue(VoiceSynthArtistTypes);
             await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
             if (!await reader.ReadAsync(cancellationToken))
                 return new AudioFeatureHealth(false, stopwatch.ElapsedMilliseconds, 0, 0, 0, 0, null, null, "no result");
