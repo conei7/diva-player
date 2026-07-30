@@ -12,6 +12,7 @@
     "lint": "eslint .",
     "test": "vitest run",
     "test:integration:sbc": "node scripts/test-sbc-integration.mjs",
+    "test:recommendation-regression": "node scripts/test-recommendation-regression.mjs",
     "test:e2e:sbc": "node scripts/test-sbc-e2e.mjs",
     "test:e2e:recommendation-debug": "node scripts/test-recommendation-debug-e2e.mjs",
     "test:e2e:trending-seeds": "node scripts/test-trending-seeds.mjs",

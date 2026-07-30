@@ -12,3 +12,14 @@ public sealed record DiscoveryQualityHealth(
     double DiscoveryEligibleRatio,
     DateTimeOffset? LatestComputedAt,
     string? Error = null);
+
+public sealed record AudioFeatureHealth(
+    bool Ok,
+    long LatencyMs,
+    long TargetCount,
+    long ComputedCount,
+    long PendingCount,
+    double ComputedRatio,
+    DateTimeOffset? LatestComputedAt,
+    double? LatestAgeHours,
+    string? Error = null);

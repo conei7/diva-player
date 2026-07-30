@@ -43,6 +43,16 @@ interface TabState {
 }
 
 const PAGE_SIZE = 20;
+const INITIAL_REFILL_PAGES = 3;
+
+function mergeUniqueSongs(groups: Song[][]): Song[] {
+  const seen = new Set<number>();
+  return groups.flat().filter(item => {
+    if (seen.has(item.id)) return false;
+    seen.add(item.id);
+    return true;
+  });
+}
 
 // タブ表示順を左から: おすすめ → 関連曲 → deep dig
 const TAB_ORDER: TabKey[] = ['recommend', 'related', 'deepdig'];
@@ -102,9 +112,17 @@ export default function NowPlayingPage() {
 
   // おすすめ: メタデータ + 音声データ + プレイヤーデータ (/api/recommend)
   const fetchRecommend = useCallback(async (song: Song, page: number) => {
-    const recommendedRaw = await getRecommendedSongs(
-      song.id, PAGE_SIZE, 0.0, undefined, (rankingSeedRef.current % 20) + page * PAGE_SIZE
+    const pagesToFetch = page === 0 ? INITIAL_REFILL_PAGES : 1;
+    const recommendedPages = await Promise.all(
+      Array.from({ length: pagesToFetch }, (_, index) => getRecommendedSongs(
+        song.id,
+        PAGE_SIZE,
+        0.0,
+        undefined,
+        (rankingSeedRef.current % 20) + (page + index) * PAGE_SIZE,
+      )),
     );
+    const recommendedRaw = mergeUniqueSongs(recommendedPages);
     const recommendedSongs = requiresExternalViewCounts(globalFilterSettings)
       ? await attachExternalViews(recommendedRaw)
       : recommendedRaw;
@@ -124,15 +142,21 @@ export default function NowPlayingPage() {
           ? filtered.relaxedConditions
           : [...new Set([...prev.recommend.relaxedConditions, ...filtered.relaxedConditions])],
         loading: false,
-        hasMore: recommendedRaw.length >= PAGE_SIZE,
-        page:    page + 1,
+        hasMore: recommendedPages[recommendedPages.length - 1].length >= PAGE_SIZE,
+        page:    page + pagesToFetch,
       },
     }));
   }, [entries, globalFilterSettings, ratings]);
 
   // 関連曲: メタデータベクトルのみ (/api/recommend/metadata)
   const fetchRelated = useCallback(async (song: Song, page: number) => {
-    const relatedRaw = await getMetadataSimilarSongs(song.id, PAGE_SIZE, page * PAGE_SIZE);
+    const pagesToFetch = page === 0 ? INITIAL_REFILL_PAGES : 1;
+    const relatedPages = await Promise.all(
+      Array.from({ length: pagesToFetch }, (_, index) =>
+        getMetadataSimilarSongs(song.id, PAGE_SIZE, (page + index) * PAGE_SIZE),
+      ),
+    );
+    const relatedRaw = mergeUniqueSongs(relatedPages);
     const relatedSongs = requiresExternalViewCounts(globalFilterSettings)
       ? await attachExternalViews(relatedRaw)
       : relatedRaw;
@@ -152,8 +176,8 @@ export default function NowPlayingPage() {
           ? filtered.relaxedConditions
           : [...new Set([...prev.related.relaxedConditions, ...filtered.relaxedConditions])],
         loading: false,
-        hasMore: relatedRaw.length >= PAGE_SIZE,
-        page:    page + 1,
+        hasMore: relatedPages[relatedPages.length - 1].length >= PAGE_SIZE,
+        page:    page + pagesToFetch,
       },
     }));
   }, [entries, globalFilterSettings, ratings]);

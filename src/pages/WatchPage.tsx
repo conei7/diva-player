@@ -113,6 +113,16 @@ interface TabState {
 }
 
 const PAGE_SIZE = 40;
+const INITIAL_REFILL_PAGES = 3;
+
+function mergeUniqueSongs(groups: Song[][]): Song[] {
+  const seen = new Set<number>();
+  return groups.flat().filter(item => {
+    if (seen.has(item.id)) return false;
+    seen.add(item.id);
+    return true;
+  });
+}
 
 export default function WatchPage() {
   const [searchParams] = useSearchParams();
@@ -285,7 +295,13 @@ export default function WatchPage() {
 
   const fetchRelated = useCallback(async (s: Song, page: number) => {
     try {
-      const relatedSongs = await getMetadataSimilarSongs(s.id, PAGE_SIZE * 2, page * PAGE_SIZE * 2);
+      const pagesToFetch = page === 0 ? INITIAL_REFILL_PAGES : 1;
+      const relatedPages = await Promise.all(
+        Array.from({ length: pagesToFetch }, (_, index) =>
+          getMetadataSimilarSongs(s.id, PAGE_SIZE * 2, (page + index) * PAGE_SIZE * 2),
+        ),
+      );
+      const relatedSongs = mergeUniqueSongs(relatedPages);
       const filtered = filterDiscoverySongs(
         requiresExternalViewCounts(globalFilterSettings) ? await attachExternalViews(relatedSongs) : relatedSongs,
       );
@@ -304,8 +320,8 @@ export default function WatchPage() {
             ? filtered.relaxedConditions
             : [...new Set([...prev.related.relaxedConditions, ...filtered.relaxedConditions])],
           loading: false,
-          hasMore: relatedSongs.length >= PAGE_SIZE * 2,
-          page: page + 1,
+          hasMore: relatedPages[relatedPages.length - 1].length >= PAGE_SIZE * 2,
+          page: page + pagesToFetch,
         },
       }));
     } catch {
@@ -315,16 +331,25 @@ export default function WatchPage() {
 
   const fetchRecommended = useCallback(async (s: Song, page: number) => {
     try {
-      const offset = randomOffsetRef.current + page * PAGE_SIZE * 2;
-      const [hybridRaw, audioRaw, favoriteRaw] = await Promise.all([
-        getRecommendedSongs(s.id, PAGE_SIZE * 2, 0.0, ratings, offset),
-        getAudioSimilarSongs(s.id, PAGE_SIZE, offset),
-        Promise.all(favoriteProducers.map(producer =>
-          getSongsByProducer([producer.id], 0, PAGE_SIZE, page * PAGE_SIZE)
-            .then(result => result.items)
-            .catch(() => [] as Song[]),
-        )).then(results => results.flat()),
-      ]);
+      const pagesToFetch = page === 0 ? INITIAL_REFILL_PAGES : 1;
+      const pageResults = await Promise.all(
+        Array.from({ length: pagesToFetch }, (_, index) => {
+          const sourcePage = page + index;
+          const offset = randomOffsetRef.current + sourcePage * PAGE_SIZE * 2;
+          return Promise.all([
+            getRecommendedSongs(s.id, PAGE_SIZE * 2, 0.0, ratings, offset),
+            getAudioSimilarSongs(s.id, PAGE_SIZE, offset),
+            Promise.all(favoriteProducers.map(producer =>
+              getSongsByProducer([producer.id], 0, PAGE_SIZE, sourcePage * PAGE_SIZE)
+                .then(result => result.items)
+                .catch(() => [] as Song[]),
+            )).then(results => results.flat()),
+          ]);
+        }),
+      );
+      const hybridRaw = mergeUniqueSongs(pageResults.map(result => result[0]));
+      const audioRaw = mergeUniqueSongs(pageResults.map(result => result[1]));
+      const favoriteRaw = mergeUniqueSongs(pageResults.map(result => result[2]));
       const [hybrid, audio, favorite] = requiresExternalViewCounts(globalFilterSettings)
         ? await Promise.all([attachExternalViews(hybridRaw), attachExternalViews(audioRaw), attachExternalViews(favoriteRaw)])
         : [hybridRaw, audioRaw, favoriteRaw];
@@ -380,8 +405,10 @@ export default function WatchPage() {
             ? relaxedConditions
             : [...new Set([...prev.recommended.relaxedConditions, ...relaxedConditions])],
           loading: false,
-          hasMore: hybridRaw.length >= PAGE_SIZE * 2 || audioRaw.length >= PAGE_SIZE || favoriteRaw.length >= PAGE_SIZE,
-          page: page + 1,
+          hasMore: pageResults[pageResults.length - 1][0].length >= PAGE_SIZE * 2
+            || pageResults[pageResults.length - 1][1].length >= PAGE_SIZE
+            || pageResults[pageResults.length - 1][2].length >= PAGE_SIZE,
+          page: page + pagesToFetch,
         },
       }));
     } catch {
