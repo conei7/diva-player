@@ -10,7 +10,7 @@ const PRODUCER_ROLES = new Set(['Composer', 'Arranger']);
 
 function isProducerLike(artist: NonNullable<Song['artists']>[number]): boolean {
   if (PRODUCER_CATEGORIES.has(artist.categories)) return true;
-  if (PRODUCER_TYPES.has(artist.artist.artistType)) return true;
+  if (artist.artist?.artistType && PRODUCER_TYPES.has(artist.artist.artistType)) return true;
   const roles = `${artist.roles},${artist.effectiveRoles}`
     .split(/[,;]/)
     .map(role => role.trim())
@@ -32,8 +32,8 @@ export function selectRecentProducerIds(
     const recencyScore = historyWindow - index;
 
     for (const artist of entry.song.artists ?? []) {
-      const id = artist.artist.id;
-      if (!Number.isInteger(id) || id <= 0 || !isProducerLike(artist)) continue;
+      const id = artist.artist?.id;
+      if (id === undefined || !Number.isInteger(id) || id <= 0 || !isProducerLike(artist)) continue;
       scores.set(id, (scores.get(id) ?? 0) + recencyScore);
     }
   });

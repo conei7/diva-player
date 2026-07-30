@@ -25,6 +25,7 @@
     "test:e2e:background-playback": "node scripts/test-background-playback-e2e.mjs",
     "test:e2e:mobile": "node scripts/test-mobile-e2e.mjs",
     "analyze:surge-quality": "node scripts/analyze-surge-quality.mjs",
+    "audit:custom-producers": "node scripts/audit-custom-producer-shape.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

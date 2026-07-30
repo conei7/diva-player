@@ -56,4 +56,28 @@ describe('getSongProducerEntries', () => {
 
     expect(producers).toEqual([]);
   });
+
+  it('keeps custom-name producers when VocaDB omits the nested artist object', () => {
+    const producers = getSongProducerEntries({
+      artistString: '上田剛士 feat. various',
+      artists: [
+        {
+          id: 2704501,
+          categories: 'Producer',
+          effectiveRoles: 'Composer',
+          isCustomName: true,
+          isSupport: false,
+          name: '上田剛士',
+          roles: 'Composer',
+        },
+      ],
+    });
+
+    expect(producers).toEqual([{
+      id: undefined,
+      name: '上田剛士',
+      artistType: undefined,
+      href: '/?q=%E4%B8%8A%E7%94%B0%E5%89%9B%E5%A3%AB',
+    }]);
+  });
 });

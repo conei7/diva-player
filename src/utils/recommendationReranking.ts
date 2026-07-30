@@ -238,12 +238,12 @@ export function rerankRecommendationCandidatesDetailed(
     for (let index = 0; index < remaining.length; index++) {
       const entry = remaining[index];
       const favoriteProducer = (entry.song.artists ?? []).some(artist =>
-        favoriteProducerIds.has(artist.artist?.id)
+        artist.artist?.id !== undefined && favoriteProducerIds.has(artist.artist.id)
         && (artist.categories === 'Producer' || artist.categories === 'Band' || artist.categories === 'Circle'),
       );
       if (favoriteCount >= favoriteLimit && favoriteProducer && remaining.some(candidate =>
         !(candidate.song.artists ?? []).some(artist =>
-          favoriteProducerIds.has(artist.artist?.id)
+          artist.artist?.id !== undefined && favoriteProducerIds.has(artist.artist.id)
           && (artist.categories === 'Producer' || artist.categories === 'Band' || artist.categories === 'Circle'),
         ),
       )) continue;

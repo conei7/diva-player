@@ -61,10 +61,12 @@ async function main() {
   assert(health.discoveryQuality?.total > 0, 'Discovery quality table is empty.');
   assert(health.discoveryQuality?.nicoRatio > 0, 'Discovery quality Nico presence ratio is zero.');
   assert(health.audioFeatures && Number.isInteger(health.audioFeatures.targetCount), 'Audio feature health is missing.');
+  assert(Number.isInteger(health.audioFeatures.actionableTargetCount), 'Audio actionable backlog is missing.');
+  assert(Number.isInteger(health.audioFeatures.actionablePendingCount), 'Audio actionable pending count is missing.');
   assert(health.audioFeatures.ok !== false, `Audio feature backlog is unhealthy: ${health.audioFeatures.error ?? 'unknown'}.`);
   console.log(`PASS API health (PostgreSQL ${health.dependencies.postgres.latencyMs}ms, Qdrant ${health.dependencies.qdrant.latencyMs}ms)`);
   console.log(`PASS discovery quality health (${health.discoveryQuality.total} songs, short ${(health.discoveryQuality.shortRatio * 100).toFixed(2)}%, Nico ${(health.discoveryQuality.nicoRatio * 100).toFixed(2)}%)`);
-  console.log(`PASS audio feature health (${health.audioFeatures.computedCount}/${health.audioFeatures.targetCount} computed, pending ${health.audioFeatures.pendingCount})`);
+  console.log(`PASS audio feature health (${health.audioFeatures.computedCount}/${health.audioFeatures.targetCount} computed, pending ${health.audioFeatures.pendingCount}; actionable ${health.audioFeatures.actionablePendingCount}/${health.audioFeatures.actionableTargetCount} pending)`);
 
   const search = await getJson(
     baseUrl,

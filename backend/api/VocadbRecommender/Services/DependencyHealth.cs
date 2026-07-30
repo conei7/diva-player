@@ -20,6 +20,10 @@ public sealed record AudioFeatureHealth(
     long ComputedCount,
     long PendingCount,
     double ComputedRatio,
+    long ActionableTargetCount,
+    long ActionableComputedCount,
+    long ActionablePendingCount,
+    double ActionableComputedRatio,
     DateTimeOffset? LatestComputedAt,
     double? LatestAgeHours,
     string? Error = null);

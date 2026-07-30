@@ -480,13 +480,13 @@ async function fetchByArtistIds(
 
       // 曲の全ボーカリストがフィルターのいずれかのアーティスト（またはそのバリアント）に属する
       const allBelongToFilter = songVocs.every(v =>
-        vocBelongsToFilter(v.artist.id, v.name || v.artist.name || ''),
+        vocBelongsToFilter(v.artist?.id ?? 0, v.name || v.artist?.name || ''),
       );
 
       // フィルターの各アーティストが、対応するボーカリストによって網羅されている
       const filterCovered = logicalFilterGroups.every(group =>
         group.some(f => songVocs.some(
-          v => v.artist.id === f.id || (v.name || v.artist.name || '').startsWith(f.name),
+          v => v.artist?.id === f.id || (v.name || v.artist?.name || '').startsWith(f.name),
         )),
       );
 

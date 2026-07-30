@@ -54,7 +54,7 @@ function PVBadge({ pv }: { pv: PV }) {
  * 画面右側にスライドインして表示する。
  */
 export default function SongDetailsPanel({ song, onClose, inline }: SongDetailsPanelProps) {
-  const { searchByArtistId } = useSearchStore();
+  const { search, searchByArtistId, setQuery } = useSearchStore();
   const { currentSong, currentPV, hiddenMode } = usePlayerStore();
   const isCurrentlyPlaying = currentSong?.id === song?.id && !!currentPV;
   // Esc キーで閉じる (overlay mode only)
@@ -77,6 +77,17 @@ export default function SongDetailsPanel({ song, onClose, inline }: SongDetailsP
   const vocalists = song.artists?.filter(a => a.categories === 'Vocalist') ?? [];
   const producerName = formatDistinctArtistNames(producers.map(a => a.name || a.artist?.name));
   const vocalistName = formatDistinctArtistNames(vocalists.map(a => a.name || a.artist?.name));
+
+  const handleArtistSearch = (artist: NonNullable<Song['artists']>[number]) => {
+    const name = artist.name || artist.artist?.name || '';
+    if (artist.artist?.id) {
+      void searchByArtistId(artist.artist.id, name);
+    } else if (name) {
+      setQuery(name);
+      void search();
+    }
+    if (!inline) onClose();
+  };
 
   const vocadbUrl = `https://vocadb.net/S/${song.id}`;
 
@@ -160,8 +171,8 @@ export default function SongDetailsPanel({ song, onClose, inline }: SongDetailsP
             {producers.map(a => (
               <button key={a.id} className="text-xs px-2 py-1 rounded-full text-left transition-opacity hover:opacity-70"
                     style={{ background: 'var(--color-surface)', color: 'var(--color-text-secondary)' }}
-                    onClick={() => { searchByArtistId(a.artist.id, a.name || a.artist.name); if (!inline) onClose(); }}>
-                {a.name || a.artist.name}
+                    onClick={() => handleArtistSearch(a)}>
+                {a.name || a.artist?.name}
               </button>
             ))}
           </div>
@@ -182,8 +193,8 @@ export default function SongDetailsPanel({ song, onClose, inline }: SongDetailsP
                       color: 'var(--color-accent-green)',
                       border: '1px solid rgba(6, 214, 160, 0.2)',
                     }}
-                    onClick={() => { searchByArtistId(a.artist.id, a.name || a.artist.name); if (!inline) onClose(); }}>
-                {a.name || a.artist.name}
+                    onClick={() => handleArtistSearch(a)}>
+                {a.name || a.artist?.name}
                 {a.isSupport && <span style={{ opacity: 0.6 }}> (サポート)</span>}
               </button>
             ))}

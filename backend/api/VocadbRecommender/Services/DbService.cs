@@ -141,13 +141,53 @@ public class DbService
         {
             await using var conn = await OpenAsync();
             await using var cmd = new NpgsqlCommand(@"
+                WITH actionable_targets AS (
+                    SELECT s.id, sf.audio_computed
+                    FROM songs s
+                    JOIN pvs p ON p.song_id = s.id
+                        AND p.disabled = FALSE
+                        AND p.pv_type IN ('Original', 'Reprint')
+                    LEFT JOIN song_features sf ON sf.song_id = s.id
+                    WHERE (s.nico_views >= $1 OR s.youtube_views >= $2)
+                      AND (
+                          s.song_type = 'Original'
+                          OR (
+                              s.song_type <> 'Original'
+                              AND s.raw_json->>'originalVersionId' IS NOT NULL
+                              AND EXISTS (
+                                  SELECT 1
+                                  FROM song_artists sa_cover
+                                  JOIN song_artists sa_orig ON sa_cover.artist_id = sa_orig.artist_id
+                                  WHERE sa_cover.song_id = s.id
+                                    AND sa_cover.is_producer = TRUE
+                                    AND sa_orig.song_id = (s.raw_json->>'originalVersionId')::int
+                                    AND sa_orig.is_producer = TRUE
+                              )
+                          )
+                      )
+                      AND EXISTS (
+                          SELECT 1
+                          FROM song_artists sa_vocal
+                          JOIN artists a_vocal ON a_vocal.id = sa_vocal.artist_id
+                          WHERE sa_vocal.song_id = s.id
+                            AND sa_vocal.is_vocalist = TRUE
+                            AND a_vocal.artist_type IN (" + VoiceSynthArtistTypesSql + @")
+                      )
+                    GROUP BY s.id, sf.audio_computed
+                ), high_view_pool AS (
+                    SELECT s.id, sf.audio_computed, sf.computed_at
+                    FROM songs s
+                    LEFT JOIN song_features sf ON sf.song_id = s.id
+                    WHERE s.nico_views >= $1 OR s.youtube_views >= $2
+                )
                 SELECT COUNT(*)::bigint,
-                       COUNT(*) FILTER (WHERE sf.audio_computed IS TRUE)::bigint,
-                       COUNT(*) FILTER (WHERE sf.audio_computed IS NOT TRUE)::bigint,
-                       MAX(sf.computed_at) FILTER (WHERE sf.audio_computed IS TRUE)
-                FROM songs s
-                LEFT JOIN song_features sf ON sf.song_id = s.id
-                WHERE s.nico_views >= $1 OR s.youtube_views >= $2", conn)
+                       COUNT(*) FILTER (WHERE audio_computed IS TRUE)::bigint,
+                       COUNT(*) FILTER (WHERE audio_computed IS NOT TRUE)::bigint,
+                       MAX(computed_at) FILTER (WHERE audio_computed IS TRUE),
+                       (SELECT COUNT(*)::bigint FROM actionable_targets),
+                       (SELECT COUNT(*) FILTER (WHERE audio_computed IS TRUE)::bigint FROM actionable_targets),
+                       (SELECT COUNT(*) FILTER (WHERE audio_computed IS NOT TRUE)::bigint FROM actionable_targets)
+                FROM high_view_pool", conn)
             {
                 // The high-view pool scans the large songs table; keep this
                 // probe bounded but separate from the 3s liveness query so
@@ -158,12 +198,15 @@ public class DbService
             cmd.Parameters.AddWithValue(50_000);
             await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
             if (!await reader.ReadAsync(cancellationToken))
-                return new AudioFeatureHealth(false, stopwatch.ElapsedMilliseconds, 0, 0, 0, 0, null, null, "no result");
+                return new AudioFeatureHealth(false, stopwatch.ElapsedMilliseconds, 0, 0, 0, 0, 0, 0, 0, 0, null, null, "no result");
 
             var targetCount = reader.GetInt64(0);
             var computedCount = reader.GetInt64(1);
             var pendingCount = reader.GetInt64(2);
             DateTimeOffset? latest = reader.IsDBNull(3) ? null : reader.GetFieldValue<DateTimeOffset>(3);
+            var actionableTargetCount = reader.GetInt64(4);
+            var actionableComputedCount = reader.GetInt64(5);
+            var actionablePendingCount = reader.GetInt64(6);
             double? latestAgeHours = latest is null
                 ? null
                 : Math.Max(0, (DateTimeOffset.UtcNow - latest.Value).TotalHours);
@@ -177,13 +220,17 @@ public class DbService
                 computedCount,
                 pendingCount,
                 targetCount == 0 ? 0 : computedCount / (double)targetCount,
+                actionableTargetCount,
+                actionableComputedCount,
+                actionablePendingCount,
+                actionableTargetCount == 0 ? 0 : actionableComputedCount / (double)actionableTargetCount,
                 latest,
                 latestAgeHours,
                 warnings.Count == 0 ? null : string.Join(',', warnings));
         }
         catch (Exception exception)
         {
-            return new AudioFeatureHealth(false, stopwatch.ElapsedMilliseconds, 0, 0, 0, 0, null, null, exception.GetType().Name);
+            return new AudioFeatureHealth(false, stopwatch.ElapsedMilliseconds, 0, 0, 0, 0, 0, 0, 0, 0, null, null, exception.GetType().Name);
         }
     }
 

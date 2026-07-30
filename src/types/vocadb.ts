@@ -42,7 +42,9 @@ export interface ArtistRef {
 }
 
 export interface ArtistForSong {
-  artist: ArtistRef;
+  // VocaDB omits the nested artist object for custom-name credits while
+  // retaining the display name and song-artist row id.
+  artist?: ArtistRef;
   categories: ArtistCategory;
   effectiveRoles: string;
   id: number;

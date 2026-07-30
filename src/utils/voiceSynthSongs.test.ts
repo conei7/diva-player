@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import type { ArtistForSong, Song } from '../types/vocadb';
 import { filterVoiceSynthSongs } from './voiceSynthSongs';
 
-function song(id: number, artistType: ArtistForSong['artist']['artistType']): Song {
+type ArtistType = NonNullable<ArtistForSong['artist']>['artistType'];
+
+function song(id: number, artistType: ArtistType): Song {
   return {
     id,
     name: `song-${id}`,
@@ -18,7 +20,7 @@ function song(id: number, artistType: ArtistForSong['artist']['artistType']): So
     status: 'Finished',
     version: 1,
     artists: [{
-      artist: { artistType } as ArtistForSong['artist'],
+      artist: { artistType } as NonNullable<ArtistForSong['artist']>,
       categories: 'Vocalist',
     } as ArtistForSong],
   };
@@ -26,7 +28,7 @@ function song(id: number, artistType: ArtistForSong['artist']['artistType']): So
 
 describe('filterVoiceSynthSongs', () => {
   it('keeps all voice-synth artist types accepted by discovery APIs', () => {
-    const types: ArtistForSong['artist']['artistType'][] = [
+    const types: ArtistType[] = [
       'Vocaloid',
       'UTAU',
       'CeVIO',

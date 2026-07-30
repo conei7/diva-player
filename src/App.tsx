@@ -13,6 +13,7 @@ import { useAutoPlaySessionStore } from './stores/autoPlaySessionStore';
 import { useAutoQueueDecisionStore } from './stores/autoQueueDecisionStore';
 import { useAutoQueueBanditStore } from './stores/autoQueueBanditStore';
 import { useAutoQueue } from './hooks/useAutoQueue';
+import AppErrorBoundary from './components/AppErrorBoundary';
 
 const HomePage = lazy(() => import('./pages/HomePage'));
 const WatchPage = lazy(() => import('./pages/WatchPage'));
@@ -186,7 +187,9 @@ function AppContent() {
 export default function App() {
   return (
     <BrowserRouter basename={import.meta.env.BASE_URL.replace(/\/$/, '')}>
-      <AppContent />
+      <AppErrorBoundary>
+        <AppContent />
+      </AppErrorBoundary>
     </BrowserRouter>
   );
 }
