@@ -1,9 +1,20 @@
 name: Recommendation regression monitor
 
 on:
+  push:
+    branches: [ main ]
+    paths:
+      - '.github/workflows/recommendation-monitor.yml'
+      - 'scripts/test-recommendation-regression.mjs'
+      - 'package.json'
+      - 'package-lock.json'
   schedule:
     - cron: '17 * * * *'
   workflow_dispatch:
+
+concurrency:
+  group: recommendation-regression-monitor
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -11,6 +22,7 @@ permissions:
 jobs:
   recommendation-regression:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
