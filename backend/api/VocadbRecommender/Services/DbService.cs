@@ -189,10 +189,10 @@ public class DbService
                        (SELECT COUNT(*) FILTER (WHERE audio_computed IS NOT TRUE)::bigint FROM actionable_targets)
                 FROM high_view_pool", conn)
             {
-                // The high-view pool scans the large songs table; keep this
-                // probe bounded but separate from the 3s liveness query so
-                // normal backlog reporting is not misclassified as a failure.
-                CommandTimeout = 10
+                // The actionable boundary joins the large credit/PV tables;
+                // keep it separate from the 3s liveness query and allow a
+                // cold-cache probe to finish without marking the API broken.
+                CommandTimeout = 20
             };
             cmd.Parameters.AddWithValue(5_000);
             cmd.Parameters.AddWithValue(50_000);
