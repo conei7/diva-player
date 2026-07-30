@@ -180,7 +180,11 @@ public class DbService
                 FROM audio_targets target
                 LEFT JOIN song_features sf ON sf.song_id = target.id", conn)
             {
-                CommandTimeout = 3
+                // The target-pool joins scan the large song/PV tables; keep
+                // this health probe bounded but separate from the 3s liveness
+                // query so normal backlog reporting is not misclassified as
+                // a database failure.
+                CommandTimeout = 10
             };
             cmd.Parameters.AddWithValue(5_000);
             cmd.Parameters.AddWithValue(50_000);
