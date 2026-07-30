@@ -18,7 +18,7 @@ import type { GlobalFilterSettings } from '../../stores/globalFilterStore';
 import { useSearchStore } from '../../stores/searchStore';
 import { usePlayerStore } from '../../stores/playerStore';
 import { useSelectionStore } from '../../stores/selectionStore';
-import type { PVPreference } from '../../types/vocadb';
+import type { PVPreference, SongType } from '../../types/vocadb';
 import {
   areGlobalFilterSettingsEqual,
   getGlobalFilterSummary,
@@ -174,7 +174,7 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     setMessage('フィルターを初期化しました。');
   };
 
-  const toggleExcludedType = (songType: string) => {
+  const toggleExcludedType = (songType: SongType) => {
     updateDraft('excludedSongTypes',
       draftFilters.excludedSongTypes.includes(songType)
         ? draftFilters.excludedSongTypes.filter(t => t !== songType)
