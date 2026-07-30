@@ -32,7 +32,17 @@ jobs:
       - name: Install dependencies
         run: npm ci
       - name: Check deployed recommendation API
-        run: npm run test:recommendation-regression -- --base-url https://diva-player.pages.dev/backend-api --report-file recommendation-regression-report.json
+        run: |
+          for attempt in 1 2; do
+            if npm run test:recommendation-regression -- --base-url https://diva-player.pages.dev/backend-api --report-file recommendation-regression-report.json; then
+              exit 0
+            fi
+            if [ "$attempt" -lt 2 ]; then
+              echo "Transient failure; retrying the complete public check in 20 seconds."
+              sleep 20
+            fi
+          done
+          exit 1
       - name: Save recommendation regression report
         if: always()
         uses: actions/upload-artifact@v4
