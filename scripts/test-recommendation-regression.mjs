@@ -74,7 +74,8 @@ async function main() {
 
   for (const seed of seeds) {
     for (const endpoint of endpoints) {
-      const result = await getJson(baseUrl, `${endpoint}?songId=${seed.id}&count=20&offset=0`);
+      const sessionProgress = endpoint === '/api/recommend' ? '&sessionProgress=0' : '';
+      const result = await getJson(baseUrl, `${endpoint}?songId=${seed.id}&count=20&offset=0${sessionProgress}`);
       const count = validateItems(result.data, endpoint, seed.id);
       latencySamples.push(result.elapsedMs);
       endpointCounts.set(endpoint, [...(endpointCounts.get(endpoint) ?? []), count]);
