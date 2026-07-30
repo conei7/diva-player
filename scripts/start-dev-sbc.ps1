@@ -30,7 +30,7 @@ function Test-CloudflareHealth {
     }
 
     try {
-        $health = Invoke-WebRequest -Uri "$CloudflareUrl/backend-api/api/health" -UseBasicParsing -TimeoutSec 8
+        $health = Invoke-WebRequest -Uri "$CloudflareUrl/backend-api/api/health" -UseBasicParsing -TimeoutSec 20
         return $health.StatusCode -eq 200
     } catch {
         return $false
@@ -45,7 +45,7 @@ try {
     }
 
     Write-Host "[start-dev-sbc] Checking SBC web/API on localhost:$RemoteWebPort..."
-    Invoke-Sbc "curl -fsS --max-time 5 http://localhost:$RemoteWebPort/backend-api/api/health >/dev/null"
+    Invoke-Sbc "curl -fsS --max-time 20 http://localhost:$RemoteWebPort/backend-api/api/health >/dev/null"
 
     $cloudflareUrl = Get-CloudflareUrl
     $cloudflareOk = Test-CloudflareHealth $cloudflareUrl
