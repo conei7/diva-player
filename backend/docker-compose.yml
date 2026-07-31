@@ -59,6 +59,8 @@ services:
       # connection when the PostgreSQL server is under load.
       ConnectionStrings__Postgres: "Host=postgres;Port=5432;Database=vocadb_recommender;Username=vocadb;Password=vocadb_secret;Maximum Pool Size=24;Timeout=5;Application Name=diva-api"
       Recommender__QdrantEndpoint: "http://qdrant:6334"
+      Recommender__YouTubeApiKey: "${YOUTUBE_API_KEY:-}"
+      Recommender__YouTubePlaylistCacheHours: "6"
       ASPNETCORE_URLS: "http://+:5000"
       ASPNETCORE_ENVIRONMENT: "Development"
     ports:

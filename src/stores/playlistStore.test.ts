@@ -113,3 +113,30 @@ describe('playlist undo snapshots', () => {
     expect(usePlaylistStore.getState().playlists).toEqual([pinned]);
   });
 });
+
+describe('YouTube linked playlists', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    usePlaylistStore.setState({ playlists: [], folders: [] });
+  });
+
+  it('keeps linked playlists read-only and applies sync atomically', () => {
+    vi.stubGlobal('localStorage', createLocalStorage());
+    vi.stubGlobal('crypto', undefined);
+    const sync = {
+      playlistId: 'PL1234567890',
+      sourceUrl: 'https://www.youtube.com/playlist?list=PL1234567890',
+      enabled: true,
+      intervalHours: 24,
+      lastStatus: 'success' as const,
+    };
+    const linked = usePlaylistStore.getState().createYouTubeLinkedPlaylist('linked', [song(1)], sync);
+    expect(usePlaylistStore.getState().addSong(linked.id, song(2))).toEqual({ success: false, isDuplicate: false });
+    expect(usePlaylistStore.getState().removeSong(linked.id, 0)).toBeNull();
+    expect(usePlaylistStore.getState().reorderSongs(linked.id, 0, 0)).toBeUndefined();
+    expect(usePlaylistStore.getState().applyYouTubeSync(linked.id, [song(3)], { ...sync, lastStatus: 'partial' })).toBe(true);
+    expect(usePlaylistStore.getState().playlists.find(item => item.id === linked.id)?.songs.map(item => item.id)).toEqual([3]);
+    expect(usePlaylistStore.getState().unlinkYouTubeSync(linked.id)).toBe(true);
+    expect(usePlaylistStore.getState().playlists.find(item => item.id === linked.id)?.youtubeSync).toBeUndefined();
+  });
+});

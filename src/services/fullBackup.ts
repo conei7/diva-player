@@ -7,7 +7,7 @@ import { useRatingStore } from '../stores/ratingStore';
 import { storage } from '../utils/storage';
 import { HISTORY_STORES, openHistoryDb } from './historyDatabase';
 import { normalizeImportedEvent, playEventFingerprint } from './historyBackup';
-import { downloadJson } from '../utils/playlistBackup';
+import { downloadJson, parseYouTubePlaylistSync } from '../utils/playlistBackup';
 import {
   getGlobalFilterSettings,
   normalizeGlobalFilterSettings,
@@ -18,8 +18,8 @@ import { normalizeFavoriteProducers, useFavoriteProducerStore, type FavoriteProd
 import { createStableId } from '../utils/id';
 
 const BACKUP_KIND = 'diva-player-full-backup';
-const BACKUP_VERSION = 4 as const;
-type SupportedBackupVersion = 1 | 2 | 3 | 4;
+const BACKUP_VERSION = 5 as const;
+type SupportedBackupVersion = 1 | 2 | 3 | 4 | 5;
 const MAX_HISTORY_EVENTS = 1_000_000;
 const MAX_PLAYLISTS = 10_000;
 
@@ -46,7 +46,7 @@ export interface FullBackupCounts {
 }
 
 export interface FullBackupManifest extends FullBackupCounts {
-  schemaVersion: 4;
+  schemaVersion: 4 | 5;
 }
 
 export interface FullBackupPreview {
@@ -140,6 +140,7 @@ function parsePlaylist(value: unknown): Playlist | null {
     updatedAt: finiteInteger(value.updatedAt) ?? Date.now(),
     isPinned: value.isPinned === true,
     smartRule: parseSmartRule(value.smartRule),
+    youtubeSync: parseYouTubePlaylistSync(value.youtubeSync),
   };
 }
 
@@ -192,11 +193,11 @@ function getCountsFromSections(sections: FullBackupPayload['sections']): FullBac
 }
 
 function createManifest(sections: FullBackupPayload['sections']): FullBackupManifest {
-  return { schemaVersion: 4, ...getCountsFromSections(sections) };
+  return { schemaVersion: BACKUP_VERSION, ...getCountsFromSections(sections) };
 }
 
-function manifestMatches(manifest: unknown, counts: FullBackupCounts): boolean {
-  if (!isRecord(manifest) || manifest.schemaVersion !== 4) return false;
+function manifestMatches(manifest: unknown, counts: FullBackupCounts, schemaVersion: 4 | 5): boolean {
+  if (!isRecord(manifest) || manifest.schemaVersion !== schemaVersion) return false;
   return Object.keys(counts).every(key => manifest[key] === counts[key as keyof FullBackupCounts]);
 }
 
@@ -257,7 +258,7 @@ export function downloadFullBackup(payload: FullBackupPayload): void {
 }
 
 export function parseFullBackup(data: unknown): FullBackupPreview | null {
-  if (!isRecord(data) || data.kind !== BACKUP_KIND || (data.version !== 1 && data.version !== 2 && data.version !== 3 && data.version !== BACKUP_VERSION) || !isRecord(data.sections)) return null;
+  if (!isRecord(data) || data.kind !== BACKUP_KIND || (data.version !== 1 && data.version !== 2 && data.version !== 3 && data.version !== 4 && data.version !== BACKUP_VERSION) || !isRecord(data.sections)) return null;
   let invalidItems = 0;
   const validationMessages: string[] = [];
   const rawHistory = isRecord(data.sections.history) && Array.isArray(data.sections.history.events) ? data.sections.history.events : [];
@@ -291,7 +292,7 @@ export function parseFullBackup(data: unknown): FullBackupPreview | null {
     kind: BACKUP_KIND,
     version: data.version as SupportedBackupVersion,
     exportedAt: typeof data.exportedAt === 'string' ? data.exportedAt : new Date().toISOString(),
-    ...(data.version === 4 && isRecord(data.manifest) ? { manifest: data.manifest as unknown as FullBackupManifest } : {}),
+    ...(data.version >= 4 && isRecord(data.manifest) ? { manifest: data.manifest as unknown as FullBackupManifest } : {}),
     sections: {
       history: { events },
       ratings,
@@ -305,10 +306,10 @@ export function parseFullBackup(data: unknown): FullBackupPreview | null {
     },
   };
   const counts = getCountsFromSections(parsed.sections);
-  const legacyFormat = data.version !== 4;
-  const manifestValid = legacyFormat || manifestMatches(data.manifest, counts);
+  const legacyFormat = data.version < 4;
+  const manifestValid = legacyFormat || manifestMatches(data.manifest, counts, data.version === 4 ? 4 : 5);
   if (legacyFormat) validationMessages.push('旧形式のバックアップです。内容の件数検証は行われません。');
-  if (data.version === 4 && !manifestValid) validationMessages.push('manifestと実データの件数が一致しません。');
+  if (data.version >= 4 && !manifestValid) validationMessages.push('manifestと実データの件数が一致しません。');
   if (invalidItems > 0) validationMessages.push(`${invalidItems}件の無効な項目があります。`);
   const canRestore = manifestValid && invalidItems === 0;
   return {

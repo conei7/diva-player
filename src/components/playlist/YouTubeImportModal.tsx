@@ -4,15 +4,18 @@
  * YouTube プレイリスト URL からビデオIDを取得し、
  * VocaDB で一致する曲を検索してプレイリストへインポートする。
  *
- * 外部 API: Invidious (inv.nadeko.net) を Viteプロキシ経由で使用。
+ * 一度だけの取り込みは Invidious の公開プロキシを使い、リンク作成・自動同期は
+ * SBC の YouTube Data API キャッシュ経由で取得する。
  */
 
 import { useState } from 'react';
 import type { Song } from '../../types/vocadb';
+import { extractYouTubePlaylistId, fetchYouTubePlaylistSongs, type YouTubePlaylistSongsResponse } from '../../api/youtubePlaylist';
 
 interface Props {
   onClose: () => void;
   onImport: (songs: Song[]) => void;
+  onLink?: (response: YouTubePlaylistSongsResponse) => void;
 }
 
 interface InvidiousVideo {
@@ -29,17 +32,6 @@ interface InvidiousPlaylist {
 // 本番環境ではブラウザから直接アクセス（クロスオリジン要求なし）。
 const INVIDIOUS_PROXY = '/invidious-api';
 const VOCADB_BASE    = 'https://vocadb.net/api';
-
-function extractPlaylistId(url: string): string | null {
-  try {
-    const u = new URL(url);
-    return u.searchParams.get('list');
-  } catch {
-    // plain ID
-    if (/^PL[A-Za-z0-9_-]{16,}$/.test(url.trim())) return url.trim();
-    return null;
-  }
-}
 
 async function fetchPlaylistVideos(listId: string, onProgress?: (loaded: number) => void): Promise<string[]> {
   const seen = new Set<string>();
@@ -81,19 +73,21 @@ async function fetchVocadbByYouTubeId(videoId: string): Promise<Song | null> {
   return data as Song;
 }
 
-export default function YouTubeImportModal({ onClose, onImport }: Props) {
+export default function YouTubeImportModal({ onClose, onImport, onLink }: Props) {
   const [url, setUrl] = useState('');
+  const [mode, setMode] = useState<'import' | 'link'>('import');
   const [phase, setPhase] = useState<'idle' | 'fetching' | 'matching' | 'done' | 'error'>('idle');
   const [log, setLog] = useState<string[]>([]);
   const [songs, setSongs] = useState<Song[]>([]);
   const [unmatched, setUnmatched] = useState<string[]>([]);
   const [showUnmatched, setShowUnmatched] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
+  const [linkedResponse, setLinkedResponse] = useState<YouTubePlaylistSongsResponse | null>(null);
 
   const appendLog = (msg: string) => setLog(prev => [...prev, msg]);
 
   const handleImport = async () => {
-    const listId = extractPlaylistId(url.trim());
+    const listId = extractYouTubePlaylistId(url.trim());
     if (!listId) {
       setErrorMsg('有効な YouTube プレイリスト URL または ID を入力してください');
       return;
@@ -103,10 +97,23 @@ export default function YouTubeImportModal({ onClose, onImport }: Props) {
     setLog([]);
     setSongs([]);
     setUnmatched([]);
+    setLinkedResponse(null);
     setShowUnmatched(false);
     setErrorMsg('');
 
     try {
+      if (mode === 'link') {
+        appendLog('YouTubeプレイリストを同期用に取得中...');
+        const response = await fetchYouTubePlaylistSongs(listId, { refresh: true });
+        setLinkedResponse(response);
+        setSongs(response.songs);
+        setUnmatched(response.unmatchedVideoIds);
+        setPhase('done');
+        appendLog(`${response.videoCount} 件の動画、${response.matchedCount} 件の曲を取得しました`);
+        if (response.unmatchedVideoIds.length > 0) appendLog(`未マッチ: ${response.unmatchedVideoIds.length} 件`);
+        return;
+      }
+
       appendLog('YouTube プレイリストを取得中...');
       const videoIds = await fetchPlaylistVideos(listId, (loaded) => {
         appendLog(`ページ取得中: ${loaded} 件取得済み`);
@@ -178,6 +185,25 @@ export default function YouTubeImportModal({ onClose, onImport }: Props) {
           </button>
         </div>
 
+        <div className="flex gap-2 rounded-xl border border-white/10 p-1 text-xs">
+          <button
+            type="button"
+            className={`flex-1 rounded-lg px-3 py-2 transition-colors ${mode === 'import' ? 'bg-white/10 text-white' : 'text-neutral-500'}`}
+            onClick={() => setMode('import')}
+            disabled={phase === 'fetching' || phase === 'matching'}
+          >
+            一度だけ追加
+          </button>
+          <button
+            type="button"
+            className={`flex-1 rounded-lg px-3 py-2 transition-colors ${mode === 'link' ? 'bg-white/10 text-white' : 'text-neutral-500'}`}
+            onClick={() => setMode('link')}
+            disabled={phase === 'fetching' || phase === 'matching' || !onLink}
+          >
+            自動同期としてリンク
+          </button>
+        </div>
+
         {/* エラー */}
         {errorMsg && (
           <p className="text-sm" style={{ color: 'var(--color-error, #f87171)' }}>{errorMsg}</p>
@@ -196,7 +222,7 @@ export default function YouTubeImportModal({ onClose, onImport }: Props) {
         {/* 結果サマリー */}
         {phase === 'done' && (
           <p className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
-            {songs.length} 件の曲が VocaDB でマッチしました
+            {mode === 'link' ? `${songs.length} 件の曲を同期できます` : `${songs.length} 件の曲が VocaDB でマッチしました`}
           </p>
         )}
 
@@ -238,12 +264,16 @@ export default function YouTubeImportModal({ onClose, onImport }: Props) {
           <button className="btn-secondary text-sm" onClick={onClose}>
             キャンセル
           </button>
-          {phase === 'done' && songs.length > 0 && (
+          {phase === 'done' && (songs.length > 0 || (mode === 'link' && linkedResponse)) && (
             <button
               className="btn-primary text-sm"
-              onClick={() => { onImport(songs); onClose(); }}
+              onClick={() => {
+                if (mode === 'link' && linkedResponse && onLink) onLink(linkedResponse);
+                else onImport(songs);
+                onClose();
+              }}
             >
-              {songs.length} 曲をインポート
+              {mode === 'link' ? '同期プレイリストを作成' : `${songs.length} 曲をインポート`}
             </button>
           )}
         </div>

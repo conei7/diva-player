@@ -3,6 +3,8 @@ using Microsoft.AspNetCore.ResponseCompression;
 using Microsoft.AspNetCore.RateLimiting;
 using System.Diagnostics;
 using System.Globalization;
+using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Threading.RateLimiting;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -22,6 +24,12 @@ builder.Services.AddSingleton<DbService>();
 builder.Services.AddSingleton<QdrantService>();
 builder.Services.AddSingleton<MarkovService>();
 builder.Services.AddScoped<RecommendService>();
+builder.Services.AddHttpClient<YouTubePlaylistService>(client =>
+{
+    client.BaseAddress = new Uri("https://www.googleapis.com/youtube/v3/");
+    client.Timeout = TimeSpan.FromSeconds(30);
+    client.DefaultRequestHeaders.UserAgent.ParseAdd("DIVA-Player/1.0");
+});
 
 var allowedOrigins = builder.Configuration
     .GetSection("Recommender:AllowedOrigins")
@@ -54,14 +62,17 @@ builder.Services.AddRateLimiter(options =>
     {
         var path = context.HttpContext.Request.Path;
         var isExternalViews = path.Equals("/api/songs/views", StringComparison.OrdinalIgnoreCase);
+        var isYouTubePlaylist = path.StartsWithSegments("/api/youtube/playlists");
         context.HttpContext.Response.Headers.RetryAfter = "60";
-        context.HttpContext.Response.Headers["X-Diva-Rate-Limit"] = isExternalViews ? "views;600/min" : "default;120/min";
+        context.HttpContext.Response.Headers["X-Diva-Rate-Limit"] = isExternalViews
+            ? "views;600/min"
+            : isYouTubePlaylist ? "youtube;20/min" : "default;120/min";
         var logger = context.HttpContext.RequestServices.GetRequiredService<ILoggerFactory>()
             .CreateLogger("DivaRateLimit");
         logger.LogWarning(
             "rate_limit_rejected path={Path} scope={Scope} traceId={TraceId}",
             path.Value,
-            isExternalViews ? "views" : "default",
+            isExternalViews ? "views" : isYouTubePlaylist ? "youtube" : "default",
             context.HttpContext.TraceIdentifier);
         return ValueTask.CompletedTask;
     };
@@ -77,14 +88,16 @@ builder.Services.AddRateLimiter(options =>
         var isExternalViews = httpContext.Request.Path.Equals(
             "/api/songs/views",
             StringComparison.OrdinalIgnoreCase);
-        var partitionKey = $"{(isExternalViews ? "views" : "default")}:{clientKey}";
+        var isYouTubePlaylist = httpContext.Request.Path.StartsWithSegments("/api/youtube/playlists");
+        var scope = isExternalViews ? "views" : isYouTubePlaylist ? "youtube" : "default";
+        var partitionKey = $"{scope}:{clientKey}";
 
         return RateLimitPartition.GetFixedWindowLimiter(partitionKey, _ => new FixedWindowRateLimiterOptions
         {
             // External view counts are a cheap batch lookup and are loaded by
             // several independent UI sections. Keep them from exhausting the
             // recommendation/search budget while retaining abuse protection.
-            PermitLimit = isExternalViews ? 600 : 120,
+            PermitLimit = isExternalViews ? 600 : isYouTubePlaylist ? 20 : 120,
             Window = TimeSpan.FromMinutes(1),
             QueueLimit = 0,
             AutoReplenishment = true,
@@ -96,6 +109,38 @@ var app = builder.Build();
 app.UseResponseCompression();
 app.UseCors("AllowFrontend");
 app.UseRateLimiter();
+
+app.MapGet("/api/youtube/playlists/{playlistId}/songs", async (
+    string playlistId,
+    bool? refresh,
+    YouTubePlaylistService service,
+    CancellationToken cancellationToken) =>
+{
+    if (!Regex.IsMatch(playlistId, "^[A-Za-z0-9_-]{8,100}$"))
+        return Results.BadRequest("invalid playlist id");
+    try
+    {
+        var response = await service.GetAsync(playlistId, refresh == true, cancellationToken);
+        return Results.Ok(new
+        {
+            response.PlaylistId,
+            response.Title,
+            response.VideoCount,
+            response.MatchedCount,
+            response.UnmatchedVideoIds,
+            songs = response.SongsJson
+                .Select(json => JsonSerializer.Deserialize<JsonElement>(json))
+                .ToArray(),
+            response.SourceFetchedAt,
+            response.Stale,
+            response.Truncated,
+        });
+    }
+    catch (YouTubePlaylistException exception)
+    {
+        return Results.Problem(exception.Message, statusCode: exception.StatusCode);
+    }
+});
 
 app.MapGet("/api/recommend", async (
     int songId,

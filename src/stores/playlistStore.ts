@@ -5,13 +5,17 @@
  */
 
 import { create } from 'zustand';
-import type { Playlist, PlaylistFolder, Song, SmartPlaylistRule } from '../types/vocadb';
+import type { Playlist, PlaylistFolder, Song, SmartPlaylistRule, YouTubePlaylistSync } from '../types/vocadb';
 import { storage } from '../utils/storage';
 import { createStableId } from '../utils/id';
 import { normalizeSmartPlaylistRule } from '../utils/smartPlaylist';
 
 const PLAYLISTS_KEY = 'playlists';
 const FOLDERS_KEY   = 'playlistFolders';
+
+function isYouTubeLinked(playlist: Playlist): boolean {
+  return playlist.youtubeSync?.enabled === true;
+}
 
 /** 後で聴くプレイリストの固定 ID */
 export const WATCH_LATER_ID = 'watch-later';
@@ -60,6 +64,9 @@ interface PlaylistState {
   restoreDeletedPlaylist: (snapshot: DeletedPlaylistSnapshot) => boolean;
   updatePlaylist: (id: string, patch: Partial<Pick<Playlist, 'name' | 'description' | 'coverArtUrl' | 'folderId' | 'smartRule'>>) => void;
   createSmartPlaylist: (name: string, rule: SmartPlaylistRule, folderId?: string) => Playlist;
+  createYouTubeLinkedPlaylist: (name: string, songs: Song[], sync: YouTubePlaylistSync, folderId?: string) => Playlist;
+  applyYouTubeSync: (playlistId: string, songs: Song[], sync: YouTubePlaylistSync) => boolean;
+  unlinkYouTubeSync: (playlistId: string) => boolean;
   replacePlaylistSongs: (playlistId: string, songs: Song[]) => void;
 
   // フォルダ CRUD
@@ -270,8 +277,13 @@ export const usePlaylistStore = create<PlaylistState>((set, get) => ({
   // ─── 曲操作 ─────────────────────────────────────────────────────────────────
   addSong: (playlistId, song) => {
     let isDuplicate = false;
+    let isReadOnly = false;
     const updated = get().playlists.map(p => {
       if (p.id !== playlistId) return p;
+      if (isYouTubeLinked(p)) {
+        isReadOnly = true;
+        return p;
+      }
       if (p.songs.some(s => s.id === song.id)) {
         isDuplicate = true;
         return p;
@@ -284,7 +296,7 @@ export const usePlaylistStore = create<PlaylistState>((set, get) => ({
       set({ playlists: updated });
       save(updated, get().folders);
     }
-    return { success: !isDuplicate, isDuplicate };
+    return { success: !isDuplicate && !isReadOnly, isDuplicate };
   },
 
   addSongs: (playlistId, songs) => {
@@ -292,6 +304,7 @@ export const usePlaylistStore = create<PlaylistState>((set, get) => ({
     let duplicates = 0;
     const updated = get().playlists.map(p => {
       if (p.id !== playlistId) return p;
+      if (isYouTubeLinked(p)) return p;
       const existingIds = new Set(p.songs.map(s => s.id));
       const newSongs = songs.filter(s => {
         if (existingIds.has(s.id)) { duplicates++; return false; }
@@ -311,6 +324,7 @@ export const usePlaylistStore = create<PlaylistState>((set, get) => ({
     const current = get().playlists;
     const target = current.find(p => p.id === playlistId);
     if (!target) return null;
+    if (isYouTubeLinked(target)) return null;
     const indexes = [...new Set(songIndexes)]
       .filter(index => Number.isInteger(index) && index >= 0 && index < target.songs.length)
       .sort((a, b) => a - b);
@@ -340,6 +354,7 @@ export const usePlaylistStore = create<PlaylistState>((set, get) => ({
     const current = get().playlists;
     const target = current.find(p => p.id === snapshot.playlistId);
     if (!target) return 0;
+    if (isYouTubeLinked(target)) return 0;
 
     const allowDuplicateIds = options?.allowDuplicateIds ?? false;
     const existingIds = new Set(target.songs.map(song => song.id));
@@ -370,6 +385,7 @@ export const usePlaylistStore = create<PlaylistState>((set, get) => ({
   removeSongById: (playlistId, songId) => {
     const updated = get().playlists.map(p => {
       if (p.id !== playlistId) return p;
+      if (isYouTubeLinked(p)) return p;
       return { ...p, songs: p.songs.filter(s => s.id !== songId), updatedAt: Date.now() };
     });
     set({ playlists: updated });
@@ -379,6 +395,7 @@ export const usePlaylistStore = create<PlaylistState>((set, get) => ({
   reorderSongs: (playlistId, fromIndex, toIndex) => {
     const updated = get().playlists.map(p => {
       if (p.id !== playlistId) return p;
+      if (isYouTubeLinked(p)) return p;
       const songs = [...p.songs];
       const [moved] = songs.splice(fromIndex, 1);
       songs.splice(toIndex, 0, moved);
@@ -391,6 +408,7 @@ export const usePlaylistStore = create<PlaylistState>((set, get) => ({
   sortSongs: (playlistId, by) => {
     const updated = get().playlists.map(p => {
       if (p.id !== playlistId) return p;
+      if (isYouTubeLinked(p)) return p;
       return { ...p, songs: sortSongsBy(p.songs, by), updatedAt: Date.now() };
     });
     set({ playlists: updated });
@@ -414,8 +432,54 @@ export const usePlaylistStore = create<PlaylistState>((set, get) => ({
     return playlist;
   },
 
-  replacePlaylistSongs: (playlistId, songs) => {
+  createYouTubeLinkedPlaylist: (name, songs, sync, folderId) => {
+    const now = Date.now();
+    const playlist: Playlist = {
+      id: createStableId('playlist'),
+      name,
+      songs,
+      folderId,
+      coverArtUrl: songs[0]?.thumbUrl,
+      youtubeSync: sync,
+      createdAt: now,
+      updatedAt: now,
+    };
+    const updated = [...get().playlists, playlist];
+    set({ playlists: updated });
+    save(updated, get().folders);
+    return playlist;
+  },
+
+  applyYouTubeSync: (playlistId, songs, sync) => {
+    const target = get().playlists.find(playlist => playlist.id === playlistId);
+    if (!target?.youtubeSync || target.youtubeSync.playlistId !== sync.playlistId) return false;
     const updated = get().playlists.map(playlist => playlist.id === playlistId
+      ? {
+          ...playlist,
+          songs,
+          youtubeSync: sync,
+          coverArtUrl: playlist.coverArtUrl ?? songs[0]?.thumbUrl,
+          updatedAt: Date.now(),
+        }
+      : playlist);
+    set({ playlists: updated });
+    save(updated, get().folders);
+    return true;
+  },
+
+  unlinkYouTubeSync: (playlistId) => {
+    const target = get().playlists.find(playlist => playlist.id === playlistId);
+    if (!target?.youtubeSync) return false;
+    const updated = get().playlists.map(playlist => playlist.id === playlistId
+      ? { ...playlist, youtubeSync: undefined, updatedAt: Date.now() }
+      : playlist);
+    set({ playlists: updated });
+    save(updated, get().folders);
+    return true;
+  },
+
+  replacePlaylistSongs: (playlistId, songs) => {
+    const updated = get().playlists.map(playlist => playlist.id === playlistId && !isYouTubeLinked(playlist)
       ? { ...playlist, songs, updatedAt: Date.now() }
       : playlist);
     set({ playlists: updated });

@@ -13,6 +13,7 @@ export type PlaylistBackupItem = {
   coverArtUrl?: string;
   folderId?: string;
   smartRule?: Playlist['smartRule'];
+  youtubeSync?: Playlist['youtubeSync'];
   songs: Song[];
 };
 
@@ -45,6 +46,37 @@ export function downloadJson(fileName: string, data: unknown): void {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
+}
+
+export function parseYouTubePlaylistSync(value: unknown): Playlist['youtubeSync'] | undefined {
+  if (!isRecord(value)
+    || typeof value.playlistId !== 'string'
+    || !/^[A-Za-z0-9_-]{8,100}$/.test(value.playlistId)
+    || typeof value.sourceUrl !== 'string'
+    || typeof value.enabled !== 'boolean'
+    || typeof value.intervalHours !== 'number'
+    || !Number.isInteger(value.intervalHours)
+    || value.intervalHours < 1
+    || value.intervalHours > 168) return undefined;
+  const statuses = ['never', 'success', 'partial', 'error'] as const;
+  const nonNegativeInteger = (item: unknown): number | undefined =>
+    typeof item === 'number' && Number.isInteger(item) && item >= 0 ? item : undefined;
+  return {
+    playlistId: value.playlistId,
+    sourceUrl: value.sourceUrl,
+    enabled: value.enabled,
+    intervalHours: value.intervalHours,
+    lastAttemptAt: nonNegativeInteger(value.lastAttemptAt),
+    lastSuccessfulAt: nonNegativeInteger(value.lastSuccessfulAt),
+    nextSyncAt: nonNegativeInteger(value.nextSyncAt),
+    lastStatus: typeof value.lastStatus === 'string' && statuses.includes(value.lastStatus as typeof statuses[number])
+      ? value.lastStatus as typeof statuses[number]
+      : undefined,
+    lastVideoCount: nonNegativeInteger(value.lastVideoCount),
+    lastMatchedCount: nonNegativeInteger(value.lastMatchedCount),
+    lastUnmatchedCount: nonNegativeInteger(value.lastUnmatchedCount),
+    lastError: typeof value.lastError === 'string' ? value.lastError.slice(0, 500) : undefined,
+  };
 }
 
 function parseImportedSong(value: unknown): Song | null {
@@ -132,6 +164,7 @@ export function parsePlaylistBackup(data: unknown): { folders: PlaylistBackupFol
       coverArtUrl: typeof playlist.coverArtUrl === 'string' ? playlist.coverArtUrl : undefined,
       folderId: typeof playlist.folderId === 'string' ? playlist.folderId : undefined,
       smartRule: parseSmartRule(playlist.smartRule),
+      youtubeSync: parseYouTubePlaylistSync(playlist.youtubeSync),
       songs: (playlist.songs as unknown[]).map(parseImportedSong).filter((song): song is Song => song !== null),
     }));
 
@@ -191,6 +224,7 @@ export function createAllPlaylistsBackupPayload(
       coverArtUrl: playlist.coverArtUrl,
       folderId: playlist.folderId,
       smartRule: playlist.smartRule,
+      youtubeSync: playlist.youtubeSync,
       isPinned: playlist.isPinned,
       createdAt: playlist.createdAt,
       updatedAt: playlist.updatedAt,

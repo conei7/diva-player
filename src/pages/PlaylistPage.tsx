@@ -67,6 +67,8 @@ import SmartPlaylistBuilder, {
 } from '../components/playlist/SmartPlaylistBuilder';
 import PlaylistHealthModal from '../components/playlist/PlaylistHealthModal';
 import { analyzePlaylistHealth } from '../utils/playlistHealth';
+import { normalizeYouTubePlaylistUrl, type YouTubePlaylistSongsResponse } from '../api/youtubePlaylist';
+import { syncYouTubePlaylist } from '../services/youtubePlaylistSync';
 
 const PLAYLIST_LIST_PREFERENCES_KEY = 'playlistListPreferences';
 
@@ -151,7 +153,7 @@ export default function PlaylistPage() {
     playlists, folders,
     loadPlaylists,
     createPlaylist, deletePlaylist, restoreDeletedPlaylist, updatePlaylist,
-    createSmartPlaylist, replacePlaylistSongs,
+    createSmartPlaylist, createYouTubeLinkedPlaylist, unlinkYouTubeSync, replacePlaylistSongs,
     createFolder, deleteFolder,
     addSongs, removeSong, removeSongs, restoreRemovedSongs, reorderSongs, removeDuplicateSongsWithUndo,
   } = usePlaylistStore();
@@ -236,6 +238,7 @@ export default function PlaylistPage() {
   }, [selectedPlaylistId]);
 
   const selectedPlaylist = playlists.find(p => p.id === selectedPlaylistId) ?? null;
+  const isYouTubeLinked = selectedPlaylist?.youtubeSync?.enabled === true;
 
   const refreshSmartPlaylist = useCallback(async (playlist: Playlist) => {
     if (!playlist.smartRule) return;
@@ -478,6 +481,37 @@ export default function PlaylistPage() {
       showToast(`${result.duplicates} 曲は既にプレイリストにあるためスキップしました`, 'warning');
     }
   }, [selectedPlaylist, addSongs, showToast]);
+
+  const handleYTLink = useCallback((response: YouTubePlaylistSongsResponse) => {
+    const now = Date.now();
+    const sync = {
+      playlistId: response.playlistId,
+      sourceUrl: normalizeYouTubePlaylistUrl(response.playlistId),
+      enabled: true,
+      intervalHours: 24,
+      lastAttemptAt: now,
+      lastSuccessfulAt: now,
+      nextSyncAt: now + 24 * 60 * 60 * 1000,
+      lastStatus: response.unmatchedVideoIds.length > 0 || response.truncated ? 'partial' as const : 'success' as const,
+      lastVideoCount: response.videoCount,
+      lastMatchedCount: response.matchedCount,
+      lastUnmatchedCount: response.unmatchedVideoIds.length,
+    };
+    const linked = createYouTubeLinkedPlaylist(response.title, response.songs, sync, selectedFolderId ?? undefined);
+    setSelectedPlaylistId(linked.id);
+    showToast(`「${response.title}」を自動同期プレイリストとして追加しました`, 'success');
+  }, [createYouTubeLinkedPlaylist, selectedFolderId, showToast]);
+
+  const refreshYouTubePlaylist = useCallback(async () => {
+    if (!selectedPlaylist) return;
+    const result = await syncYouTubePlaylist(selectedPlaylist, { refresh: true });
+    showToast(
+      result === 'error' ? 'YouTubeプレイリストの同期に失敗しました'
+        : result === 'partial' ? '同期しました（一部の動画はVocaDB未登録です）'
+          : 'YouTubeプレイリストを同期しました',
+      result === 'error' ? 'warning' : 'success',
+    );
+  }, [selectedPlaylist, showToast]);
 
   const handleSetCover   = useCallback((song: Song) => {
     if (!selectedPlaylist) return;
@@ -964,6 +998,38 @@ export default function PlaylistPage() {
                     {selectedPlaylist.description && (
                       <p className="mt-3 line-clamp-2 max-w-2xl text-sm leading-6 text-neutral-300">{selectedPlaylist.description}</p>
                     )}
+                    {selectedPlaylist.youtubeSync && (
+                      <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl border border-red-300/15 bg-red-300/[0.04] p-3 text-xs text-red-100/80">
+                        <span className="font-semibold text-red-200">YouTube自動同期</span>
+                        <span>
+                          {selectedPlaylist.youtubeSync.lastStatus === 'error'
+                            ? '前回の同期に失敗しました'
+                            : selectedPlaylist.youtubeSync.lastStatus === 'partial'
+                              ? `未マッチ ${selectedPlaylist.youtubeSync.lastUnmatchedCount ?? 0}件`
+                              : 'YouTubeの順序をミラー表示中'}
+                        </span>
+                        {selectedPlaylist.youtubeSync.lastSuccessfulAt && (
+                          <span className="text-neutral-500">
+                            最終同期 {new Date(selectedPlaylist.youtubeSync.lastSuccessfulAt).toLocaleString('ja-JP')}
+                          </span>
+                        )}
+                        <a
+                          href={selectedPlaylist.youtubeSync.sourceUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="ml-auto text-red-200 underline underline-offset-2"
+                        >
+                          YouTubeで開く
+                        </a>
+                        <button
+                          type="button"
+                          onClick={() => void refreshYouTubePlaylist()}
+                          className="rounded-lg border border-red-200/20 px-2 py-1 text-red-100 transition-colors hover:bg-red-200/10"
+                        >
+                          今すぐ同期
+                        </button>
+                      </div>
+                    )}
                     <p className="mt-3 text-sm font-medium text-neutral-400">
                       <span className="text-white">{selectedPlaylist.songs.length}曲</span>
                       {selectedPlaylist.songs.length > 0 && (
@@ -1007,7 +1073,7 @@ export default function PlaylistPage() {
                     )}
 
                     {/* 編集・削除（テキスト付き） */}
-                    {!selectedPlaylist.isPinned && (
+                    {!selectedPlaylist.isPinned && !isYouTubeLinked && (
                       <>
                         <button
                           onClick={() => openEdit(selectedPlaylist)}
@@ -1033,6 +1099,17 @@ export default function PlaylistPage() {
                           削除
                         </button>
                       </>
+                    )}
+                    {isYouTubeLinked && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (unlinkYouTubeSync(selectedPlaylist.id)) showToast('同期を解除しました。現在の曲一覧は保持されます', 'info');
+                        }}
+                        className="flex h-10 items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.04] px-4 text-sm text-neutral-300 transition-colors hover:bg-white/10 hover:text-white"
+                      >
+                        同期を解除
+                      </button>
                     )}
 
                     {/* ⋯ メニュー（エクスポート・共有・YouTubeインポート） */}
@@ -1094,7 +1171,7 @@ export default function PlaylistPage() {
 
                 <span className="hidden text-xs text-neutral-500 lg:inline">並べ替え</span>
                 {(['addedOrder', 'name', 'artist', 'publishDate'] as SortKey[]).map(key => (
-                  <button key={key} onClick={() => setSongSortKey(key)} aria-pressed={songSortKey === key}
+                  <button key={key} onClick={() => setSongSortKey(key)} aria-pressed={songSortKey === key} disabled={isYouTubeLinked}
                     className="rounded-lg border px-2.5 py-1.5 text-xs transition-colors hover:bg-white/5"
                     style={{
                       borderColor: songSortKey === key ? 'rgba(255,255,255,.35)' : 'var(--color-border)',
@@ -1107,6 +1184,7 @@ export default function PlaylistPage() {
                 ))}
                 {selectedPlaylistDuplicateCount > 0 && (
                   <button
+                    disabled={isYouTubeLinked}
                     onClick={removeDuplicatesFromSelectedPlaylist}
                     className="text-xs px-2 py-1 rounded-lg border transition-colors hover:bg-white/5"
                     style={{ borderColor: 'rgba(251,191,36,0.45)', color: '#fbbf24' }}
@@ -1338,7 +1416,7 @@ export default function PlaylistPage() {
 
       {/* ─── YouTube インポートモーダル ──────────────────────────────── */}
       {showYTImport && selectedPlaylist && (
-        <YouTubeImportModal onClose={() => setShowYTImport(false)} onImport={handleYTImport} />
+        <YouTubeImportModal onClose={() => setShowYTImport(false)} onImport={handleYTImport} onLink={handleYTLink} />
       )}
     </div>
   );

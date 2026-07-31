@@ -12,6 +12,7 @@ import SelectionFAB from '../search/SelectionFAB';
 import { useSelectionStore } from '../../stores/selectionStore';
 import BackendStatusNotice from './BackendStatusNotice';
 import RecommendationDebugPanel from '../debug/RecommendationDebugPanel';
+import { useYouTubePlaylistSync } from '../../hooks/useYouTubePlaylistSync';
 import {
   RECOMMENDATION_DEBUG_STORAGE_KEY,
   useRecommendationDebugStore,
@@ -30,6 +31,7 @@ export default function Layout() {
   const { sidebarExpanded } = useUiStore();
   const visibleSongs = useSelectionStore(s => s.visibleSongs);
   const setDebugEnabled = useRecommendationDebugStore(s => s.setEnabled);
+  useYouTubePlaylistSync();
 
   const isWatchPage = location.pathname === '/watch';
   // /watch ではサイドバーを非表示

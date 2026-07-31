@@ -134,6 +134,76 @@ public class DbService
         }
     }
 
+    public async Task<YouTubePlaylistCache?> GetYouTubePlaylistCacheAsync(string playlistId, CancellationToken cancellationToken)
+    {
+        await using var conn = await OpenAsync();
+        await using var cmd = new NpgsqlCommand(@"
+            SELECT title, video_ids::text, etag, truncated, fetched_at
+            FROM youtube_playlist_cache
+            WHERE playlist_id = $1", conn);
+        cmd.Parameters.AddWithValue(playlistId);
+        await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken)) return null;
+        var ids = JsonSerializer.Deserialize<string[]>(reader.GetString(1)) ?? [];
+        var cache = new YouTubePlaylistCache(
+            playlistId,
+            reader.GetString(0),
+            ids,
+            reader.IsDBNull(2) ? null : reader.GetString(2),
+            reader.GetFieldValue<DateTimeOffset>(4))
+        {
+            Truncated = reader.GetBoolean(3),
+        };
+        return cache;
+    }
+
+    public async Task UpsertYouTubePlaylistCacheAsync(YouTubePlaylistCache cache, CancellationToken cancellationToken)
+    {
+        await using var conn = await OpenAsync();
+        await using var cmd = new NpgsqlCommand(@"
+            INSERT INTO youtube_playlist_cache (playlist_id, title, video_ids, etag, truncated, fetched_at, updated_at)
+            VALUES ($1, $2, $3::jsonb, $4, $5, $6, now())
+            ON CONFLICT (playlist_id) DO UPDATE SET
+                title = EXCLUDED.title,
+                video_ids = EXCLUDED.video_ids,
+                etag = EXCLUDED.etag,
+                truncated = EXCLUDED.truncated,
+                fetched_at = EXCLUDED.fetched_at,
+                updated_at = now()", conn);
+        cmd.Parameters.AddWithValue(cache.PlaylistId);
+        cmd.Parameters.AddWithValue(cache.Title);
+        cmd.Parameters.AddWithValue(JsonSerializer.Serialize(cache.VideoIds));
+        cmd.Parameters.AddWithValue(cache.Etag is null ? DBNull.Value : cache.Etag);
+        cmd.Parameters.AddWithValue(cache.Truncated);
+        cmd.Parameters.AddWithValue(cache.FetchedAt);
+        await cmd.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    public async Task<Dictionary<string, string>> GetSongsByYouTubeVideoIdsAsync(
+        IReadOnlyCollection<string> videoIds,
+        CancellationToken cancellationToken)
+    {
+        if (videoIds.Count == 0) return [];
+        await using var conn = await OpenAsync();
+        await using var cmd = new NpgsqlCommand(@"
+            SELECT p.pv_id, (s.raw_json || jsonb_strip_nulls(jsonb_build_object(
+                'youtubeViews', s.youtube_views,
+                'nicoViews', s.nico_views,
+                'thumbUrl', COALESCE(s.raw_json->>'thumbUrl', s.raw_json->'pvs'->0->>'thumbUrl')
+            )))::text
+            FROM pvs p
+            JOIN songs s ON s.id = p.song_id
+            WHERE p.service = 'Youtube'
+              AND p.disabled = FALSE
+              AND p.pv_id = ANY($1)", conn);
+        cmd.Parameters.Add(new NpgsqlParameter { Value = videoIds.ToArray(), NpgsqlDbType = NpgsqlDbType.Array | NpgsqlDbType.Text });
+        var result = new Dictionary<string, string>(StringComparer.Ordinal);
+        await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+            result.TryAdd(reader.GetString(0), reader.GetString(1));
+        return result;
+    }
+
     public async Task<AudioFeatureHealth> CheckAudioFeatureHealthAsync(CancellationToken cancellationToken)
     {
         var stopwatch = Stopwatch.StartNew();

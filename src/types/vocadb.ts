@@ -143,6 +143,21 @@ export interface Artist {
 export type ArtistSearchResult = PartialFindResult<Artist>;
 
 // ─── プレイリスト ───
+export interface YouTubePlaylistSync {
+  playlistId: string;
+  sourceUrl: string;
+  enabled: boolean;
+  intervalHours: number;
+  lastAttemptAt?: number;
+  lastSuccessfulAt?: number;
+  nextSyncAt?: number;
+  lastStatus?: 'never' | 'success' | 'partial' | 'error';
+  lastVideoCount?: number;
+  lastMatchedCount?: number;
+  lastUnmatchedCount?: number;
+  lastError?: string;
+}
+
 export interface Playlist {
   id: string;
   name: string;
@@ -156,6 +171,8 @@ export interface Playlist {
   isPinned?: boolean;
   /** 条件保存型プレイリスト。曲一覧は表示時に再計算される。 */
   smartRule?: SmartPlaylistRule;
+  /** YouTube公開プレイリストとの一方向ミラー設定。 */
+  youtubeSync?: YouTubePlaylistSync;
 }
 
 export interface SmartPlaylistRule {
