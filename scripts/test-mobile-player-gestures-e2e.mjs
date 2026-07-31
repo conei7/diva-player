@@ -1,7 +1,7 @@
 import puppeteer from 'puppeteer';
 
 const baseUrl = process.argv[2] || 'http://127.0.0.1:4173/diva-player/';
-const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox'] });
+const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox', '--touch-events=enabled'] });
 
 const songs = ['First gesture fixture', 'Second gesture fixture', 'Third gesture fixture'].map((name, index) => ({
   id: 901000 + index,
@@ -49,7 +49,7 @@ async function swipe(page, from, to) {
 
 try {
   const page = await browser.newPage();
-  await page.setViewport({ width: 390, height: 844, deviceScaleFactor: 1 });
+  await page.setViewport({ width: 390, height: 844, deviceScaleFactor: 1, isMobile: true, hasTouch: true });
   await page.goto(baseUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
   await page.evaluate(currentSongs => {
     localStorage.setItem('diva_playerQueue', JSON.stringify({
