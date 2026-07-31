@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useRef } from 'react';
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { BrowserRouter, Routes, Route } from 'react-router';
 import Layout from './components/layout/Layout';
 import MediaSession from './components/player/MediaSession';
 import KeyboardShortcuts from './components/player/KeyboardShortcuts';

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { getSearchSuggestions, type SearchSuggestion } from '../../api/vocadb';
 import { useSearchStore } from '../../stores/searchStore';
 

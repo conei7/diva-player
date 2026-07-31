@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { useShallow } from 'zustand/react/shallow';
-import { Navigate } from 'react-router-dom';
+import { Navigate } from 'react-router';
 import { usePlayerStore } from '../stores/playerStore';
 import { useRatingStore } from '../stores/ratingStore';
 import { useHistoryStore } from '../stores/historyStore';

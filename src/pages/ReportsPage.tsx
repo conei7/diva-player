@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 import { buildHistoryReportCsv, getHistoryReport, type HistoryReport } from '../services/historyStats';
 import { downloadCsv } from '../utils/csv';
 import { toSafeFileName } from '../utils/playlistBackup';

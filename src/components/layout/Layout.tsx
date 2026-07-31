@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { Outlet, useLocation } from 'react-router-dom';
+import { Outlet, useLocation } from 'react-router';
 import TopNav from './TopNav';
 import Sidebar from './Sidebar';
 import GlobalPlayer from '../player/GlobalPlayer';

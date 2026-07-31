@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import type { Song } from '../../types/vocadb';
 import SongCard from '../search/SongCard';
 import { useSelectionStore } from '../../stores/selectionStore';

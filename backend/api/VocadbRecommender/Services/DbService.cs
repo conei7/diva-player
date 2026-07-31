@@ -281,26 +281,45 @@ public class DbService
         {
             await using var conn = await OpenAsync();
             await using var cmd = new NpgsqlCommand(@"
-                WITH actionable_targets AS (
-                    SELECT s.id, sf.audio_computed
+                WITH high_view_pool AS MATERIALIZED (
+                    SELECT s.id,
+                           s.song_type,
+                           s.raw_json,
+                           sf.audio_computed,
+                           sf.computed_at
                     FROM songs s
-                    JOIN pvs p ON p.song_id = s.id
-                        AND p.disabled = FALSE
-                        AND p.pv_type IN ('Original', 'Reprint')
                     LEFT JOIN song_features sf ON sf.song_id = s.id
                     WHERE (s.nico_views >= $1 OR s.youtube_views >= $2)
+                ), high_view_summary AS (
+                    SELECT COUNT(*)::bigint AS target_count,
+                           COUNT(*) FILTER (WHERE audio_computed IS TRUE)::bigint AS computed_count,
+                           COUNT(*) FILTER (WHERE audio_computed IS NOT TRUE)::bigint AS pending_count,
+                           MAX(computed_at) FILTER (WHERE audio_computed IS TRUE) AS latest_computed_at
+                    FROM high_view_pool
+                ), actionable_summary AS (
+                    SELECT COUNT(*)::bigint AS target_count,
+                           COUNT(*) FILTER (WHERE h.audio_computed IS TRUE)::bigint AS computed_count,
+                           COUNT(*) FILTER (WHERE h.audio_computed IS NOT TRUE)::bigint AS pending_count
+                    FROM high_view_pool h
+                    WHERE EXISTS (
+                          SELECT 1
+                          FROM pvs p
+                          WHERE p.song_id = h.id
+                            AND p.disabled = FALSE
+                            AND p.pv_type IN ('Original', 'Reprint')
+                      )
                       AND (
-                          s.song_type = 'Original'
+                          h.song_type = 'Original'
                           OR (
-                              s.song_type <> 'Original'
-                              AND s.raw_json->>'originalVersionId' IS NOT NULL
+                              h.song_type <> 'Original'
+                              AND h.raw_json->>'originalVersionId' IS NOT NULL
                               AND EXISTS (
                                   SELECT 1
                                   FROM song_artists sa_cover
                                   JOIN song_artists sa_orig ON sa_cover.artist_id = sa_orig.artist_id
-                                  WHERE sa_cover.song_id = s.id
+                                  WHERE sa_cover.song_id = h.id
                                     AND sa_cover.is_producer = TRUE
-                                    AND sa_orig.song_id = (s.raw_json->>'originalVersionId')::int
+                                    AND sa_orig.song_id = (h.raw_json->>'originalVersionId')::int
                                     AND sa_orig.is_producer = TRUE
                               )
                           )
@@ -309,25 +328,20 @@ public class DbService
                           SELECT 1
                           FROM song_artists sa_vocal
                           JOIN artists a_vocal ON a_vocal.id = sa_vocal.artist_id
-                          WHERE sa_vocal.song_id = s.id
+                          WHERE sa_vocal.song_id = h.id
                             AND sa_vocal.is_vocalist = TRUE
                             AND a_vocal.artist_type IN (" + VoiceSynthArtistTypesSql + @")
                       )
-                    GROUP BY s.id, sf.audio_computed
-                ), high_view_pool AS (
-                    SELECT s.id, sf.audio_computed, sf.computed_at
-                    FROM songs s
-                    LEFT JOIN song_features sf ON sf.song_id = s.id
-                    WHERE s.nico_views >= $1 OR s.youtube_views >= $2
                 )
-                SELECT COUNT(*)::bigint,
-                       COUNT(*) FILTER (WHERE audio_computed IS TRUE)::bigint,
-                       COUNT(*) FILTER (WHERE audio_computed IS NOT TRUE)::bigint,
-                       MAX(computed_at) FILTER (WHERE audio_computed IS TRUE),
-                       (SELECT COUNT(*)::bigint FROM actionable_targets),
-                       (SELECT COUNT(*) FILTER (WHERE audio_computed IS TRUE)::bigint FROM actionable_targets),
-                       (SELECT COUNT(*) FILTER (WHERE audio_computed IS NOT TRUE)::bigint FROM actionable_targets)
-                FROM high_view_pool", conn)
+                SELECT high_view.target_count,
+                       high_view.computed_count,
+                       high_view.pending_count,
+                       high_view.latest_computed_at,
+                       actionable.target_count,
+                       actionable.computed_count,
+                       actionable.pending_count
+                FROM high_view_summary high_view
+                CROSS JOIN actionable_summary actionable", conn)
             {
                 // The actionable boundary joins the large credit/PV tables;
                 // keep it separate from the 3s liveness query and allow a

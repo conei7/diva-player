@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import type { Song } from '../../types/vocadb';
 import { tokenizeDescriptionText } from '../../utils/descriptionText';
 import { formatJapaneseViews } from '../../utils/formatViews';

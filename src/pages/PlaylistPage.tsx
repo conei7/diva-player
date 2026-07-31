@@ -11,7 +11,7 @@
  * - シャッフル再生ボタン
  */
 import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router';
 import {
   DndContext,
   closestCenter,

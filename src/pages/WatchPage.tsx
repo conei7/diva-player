@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { useShallow } from 'zustand/react/shallow';
-import { useSearchParams, Navigate, useNavigate } from 'react-router-dom';
+import { useSearchParams, Navigate, useNavigate } from 'react-router';
 import VideoPlayer from '../components/watch/VideoPlayer';
 import VideoInfo from '../components/watch/VideoInfo';
 import ActionBar from '../components/watch/ActionBar';

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 import type { Song } from '../../types/vocadb';
 import { getSongById } from '../../api/vocadb';
 

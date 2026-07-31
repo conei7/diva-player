@@ -1,4 +1,4 @@
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { usePlayerStore } from '../../stores/playerStore';
 import PlayerEmbed from '../player/PlayerEmbed';
 

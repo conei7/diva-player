@@ -1,4 +1,4 @@
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router';
 import type { Song } from '../../types/vocadb';
 import { usePlayerStore, getPlayablePV } from '../../stores/playerStore';
 

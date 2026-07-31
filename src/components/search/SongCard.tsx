@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Song } from '../../types/vocadb';
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 import { usePlayerStore, getPlayablePV } from '../../stores/playerStore';
 import { useUiStore } from '../../stores/uiStore';
 import { usePlaylistStore, WATCH_LATER_ID } from '../../stores/playlistStore';

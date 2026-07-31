@@ -1,5 +1,5 @@
 import type { Song } from '../../types/vocadb';
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 import OriginalVersionLink from './OriginalVersionLink';
 import AlbumPlaylistButton from '../playlist/AlbumPlaylistButton';
 import FavoriteProducerButton from './FavoriteProducerButton';

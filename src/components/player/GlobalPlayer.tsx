@@ -1,5 +1,5 @@
 import { useCallback } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router';
 import { usePlayerStore } from '../../stores/playerStore';
 import { usePlayerInteractionStore } from '../../stores/playerInteractionStore';
 import { usePlayerSwipeGesture } from '../../hooks/usePlayerSwipeGesture';
