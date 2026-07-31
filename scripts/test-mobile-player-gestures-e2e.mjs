@@ -48,14 +48,19 @@ try {
   }, songs);
   await page.goto(baseUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
   await page.waitForSelector('[data-testid="mini-player-gesture-surface"]', { timeout: 60_000 });
-  await page.waitForFunction(() => document.querySelector('[data-testid="global-player"]')?.textContent?.includes('Second gesture fixture'));
+  const waitForSong = (name) => page.waitForFunction(
+    expected => document.querySelector('[data-testid="global-player"]')?.textContent?.includes(expected),
+    { timeout: 60_000 },
+    name,
+  );
+  await waitForSong('Second gesture fixture');
 
   await swipe(page, 280, 80);
-  await page.waitForFunction(() => document.querySelector('[data-testid="global-player"]')?.textContent?.includes('Third gesture fixture'));
+  await waitForSong('Third gesture fixture');
   console.log('PASS left swipe advances queue');
 
   await swipe(page, 80, 280);
-  await page.waitForFunction(() => document.querySelector('[data-testid="global-player"]')?.textContent?.includes('Second gesture fixture'));
+  await waitForSong('Second gesture fixture');
   console.log('PASS right swipe goes to previous queue item');
 
   await page.evaluate(() => {
