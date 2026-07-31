@@ -18,6 +18,7 @@ import type { GlobalFilterSettings } from '../../stores/globalFilterStore';
 import { useSearchStore } from '../../stores/searchStore';
 import { usePlayerStore } from '../../stores/playerStore';
 import { useSelectionStore } from '../../stores/selectionStore';
+import { usePlayerInteractionStore } from '../../stores/playerInteractionStore';
 import type { PVPreference, SongType } from '../../types/vocadb';
 import {
   areGlobalFilterSettingsEqual,
@@ -64,6 +65,8 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
   const setPVPreference = usePlayerStore(state => state.setPVPreference);
   const longPressSelectionEnabled = useSelectionStore(state => state.longPressSelectionEnabled);
   const setLongPressSelectionEnabled = useSelectionStore(state => state.setLongPressSelectionEnabled);
+  const swipeGestureEnabled = usePlayerInteractionStore(state => state.swipeGestureEnabled);
+  const setSwipeGestureEnabled = usePlayerInteractionStore(state => state.setSwipeGestureEnabled);
 
   useEffect(() => {
     if (!isOpen) {
@@ -380,6 +383,13 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                     <span className="setting-row-desc">曲カードの長押しで選択モードを開始</span>
                   </div>
                   <ToggleSwitch checked={longPressSelectionEnabled} onChange={setLongPressSelectionEnabled} />
+                </div>
+                <div className="setting-row" style={{ paddingTop: 0, paddingBottom: 0 }}>
+                  <div className="setting-row-info">
+                    <span className="setting-row-title">PiPのスワイプ操作</span>
+                    <span className="setting-row-desc">左・右で曲送り、上で再生画面を開く（スマホ・タッチ操作のみ）</span>
+                  </div>
+                  <ToggleSwitch checked={swipeGestureEnabled} onChange={setSwipeGestureEnabled} />
                 </div>
               </div>
             </div>

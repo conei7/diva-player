@@ -1,5 +1,8 @@
+import { useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { usePlayerStore } from '../../stores/playerStore';
+import { usePlayerInteractionStore } from '../../stores/playerInteractionStore';
+import { usePlayerSwipeGesture } from '../../hooks/usePlayerSwipeGesture';
 import PlayerEmbed from '../player/PlayerEmbed';
 
 /**
@@ -23,11 +26,21 @@ export default function GlobalPlayer() {
     loopMode, toggleLoopMode,
     queue, queueDrawerOpen, toggleQueueDrawer,
   } = usePlayerStore();
+  const swipeGestureEnabled = usePlayerInteractionStore(state => state.swipeGestureEnabled);
 
   const isWatchPage = location.pathname === '/watch';
   // WatchPage 以外で曲が選択されていればミニプレイヤーを表示
   const showMiniPlayer = !isWatchPage && !!currentSong;
   const canShuffle = queue.length > 1;
+  const handleSwipe = useCallback((direction: 'left' | 'right' | 'up') => {
+    if (direction === 'left') next();
+    else if (direction === 'right') previous();
+    else navigate(`/watch?v=${currentSong?.id ?? ''}`);
+  }, [currentSong?.id, navigate, next, previous]);
+  const swipeHandlers = usePlayerSwipeGesture({
+    enabled: showMiniPlayer && swipeGestureEnabled,
+    onSwipe: handleSwipe,
+  });
 
   // 再生する曲がない場合は表示しない (ただしアンマウントはしたくないため opacity: 0 などで対応も可能だが、
   // 最初は何もないのでnullでOK。一度曲がセットされた後は常に存在する)
@@ -110,6 +123,8 @@ export default function GlobalPlayer() {
       {/* MiniPlayer コントロール (PiPモード時のみ表示) */}
       <div 
         className="mini-player-controls"
+        data-testid="mini-player-gesture-surface"
+        {...swipeHandlers}
         style={{ 
            display: showMiniPlayer ? 'flex' : 'none',
            flexDirection: 'column',
@@ -117,6 +132,7 @@ export default function GlobalPlayer() {
            padding: '0.5rem 0.75rem 0.625rem',
            opacity: showMiniPlayer ? 1 : 0,
            transition: 'opacity 0.3s',
+           touchAction: 'pan-y',
         }}
       >
         {/* 1行目: 曲情報 + 閉じるボタン */}

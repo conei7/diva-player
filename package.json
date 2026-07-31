@@ -23,6 +23,7 @@
     "test:performance-budget": "node scripts/test-performance-budget.mjs",
     "test:e2e:player-controls": "node scripts/test-player-controls-e2e.mjs",
     "test:e2e:external-players": "node scripts/test-external-players-e2e.mjs",
+    "test:e2e:mobile-player-gestures": "node scripts/test-mobile-player-gestures-e2e.mjs",
     "test:e2e:background-playback": "node scripts/test-background-playback-e2e.mjs",
     "test:e2e:mobile": "node scripts/test-mobile-e2e.mjs",
     "analyze:surge-quality": "node scripts/analyze-surge-quality.mjs",

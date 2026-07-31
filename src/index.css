@@ -725,6 +725,17 @@ body {
   touch-action: manipulation;
 }
 
+.mini-player-controls {
+  touch-action: pan-y;
+  user-select: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mini-player-controls {
+    transition: none !important;
+  }
+}
+
 @media (max-width: 640px) {
   .topnav-action-btn {
     width: 44px;
