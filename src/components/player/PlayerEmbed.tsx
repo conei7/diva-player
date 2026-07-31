@@ -189,8 +189,8 @@ function NicoEmbed({ pvId, name, duration: songDuration, isPlaying }: { pvId: st
   // ニコニコからのpostMessageを受信
   useEffect(() => {
     const handler = (e: MessageEvent) => {
-      // embed.nicovideo.jp か www.nicovideo.jp からのメッセージのみ処理
-      if (!e.origin.includes('nicovideo.jp')) return;
+      // 許可originと、このコンポーネントが作ったiframeの両方を確認する。
+      if (e.origin !== NICO_ORIGIN || e.source !== iframeRef.current?.contentWindow) return;
       const message = parseNicoPlayerMessage(e.data);
       if (!message) return;
       switch (message.type) {

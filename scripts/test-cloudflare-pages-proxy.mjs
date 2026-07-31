@@ -15,6 +15,7 @@ globalThis.fetch = async (target, init) => {
 
 try {
   const env = {
+    PAGES_PROXY_KEY: 'test-proxy-key',
     TUNNEL_CONFIG: {
       get: async key => key === 'quick_tunnel_url' ? 'https://stable-test.trycloudflare.com' : null,
     },
@@ -27,6 +28,7 @@ try {
   assert.equal(calls[0].target, 'https://stable-test.trycloudflare.com/backend-api/api/health?full=1');
   assert.equal(calls[0].init.headers.get('x-diva-pages-proxy'), '1');
   assert.equal(calls[0].init.headers.get('x-diva-client-key'), 'pages-anonymous');
+  assert.equal(calls[0].init.headers.get('x-diva-pages-proxy-key'), 'test-proxy-key');
   assert.equal(calls[0].init.headers.get('x-forwarded-for'), null);
 
   const invalidResponse = await proxyBackend({
@@ -37,10 +39,24 @@ try {
   assert.equal(calls.length, 1, 'Invalid tunnel origins must never be fetched.');
 
   const invidiousResponse = await proxyInvidious({
-    request: new Request('https://diva-player.pages.dev/invidious-api/api/v1/search?q=miku'),
+    request: new Request('https://diva-player.pages.dev/invidious-api/api/v1/playlists/PL123456?page=1'),
   });
   assert.equal(invidiousResponse.status, 200);
-  assert.equal(calls[1].target, 'https://inv.nadeko.net/api/v1/search?q=miku');
+  assert.equal(calls[1].target, 'https://inv.nadeko.net/api/v1/playlists/PL123456?page=1');
+  const unsupportedInvidiousResponse = await proxyInvidious({
+    request: new Request('https://diva-player.pages.dev/invidious-api/api/v1/search?q=miku'),
+  });
+  assert.equal(unsupportedInvidiousResponse.status, 404);
+  assert.equal(calls.length, 2, 'Unsupported Invidious paths must never be fetched.');
+  const invalidPageResponse = await proxyInvidious({
+    request: new Request('https://diva-player.pages.dev/invidious-api/api/v1/playlists/PL123456?page=51'),
+  });
+  assert.equal(invalidPageResponse.status, 400);
+  const invalidMethodResponse = await proxyInvidious({
+    request: new Request('https://diva-player.pages.dev/invidious-api/api/v1/playlists/PL123456', { method: 'POST' }),
+  });
+  assert.equal(invalidMethodResponse.status, 405);
+  assert.equal(calls.length, 2, 'Invalid Invidious requests must never be fetched.');
 
   let written = null;
   const updateEnv = {

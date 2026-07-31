@@ -17,8 +17,11 @@ export async function onRequest({ request, env }) {
   headers.delete('x-forwarded-for');
   headers.delete('x-real-ip');
   headers.delete('x-forwarded-proto');
-  headers.set('x-diva-client-key', request.headers.get('cf-connecting-ip') || 'pages-anonymous');
+  const clientIp = request.headers.get('cf-connecting-ip') || 'pages-anonymous';
+  headers.set('x-diva-client-key', clientIp);
   headers.set('x-diva-pages-proxy', '1');
+  headers.delete('x-diva-pages-proxy-key');
+  if (env.PAGES_PROXY_KEY) headers.set('x-diva-pages-proxy-key', env.PAGES_PROXY_KEY);
 
   return fetch(target, {
     method: request.method,

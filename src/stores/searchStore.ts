@@ -759,11 +759,11 @@ export const useSearchStore = create<SearchState>((set, get) => ({
               getTotalCount: true,
               songTypes,
             });
-        const artistSongIds = new Set(artistResult.items.map(s => s.id));
-        const merged = [
-          ...artistResult.items,
-          ...titleResult.items.filter(s => !artistSongIds.has(s.id)),
-        ];
+        // Once the query resolves to a producer, keep that producer search as
+        // the authoritative result set. Merging a separate title page here
+        // made results.length exceed artistResult.totalCount and stopped
+        // pagination before all producer songs could be loaded.
+        const merged = artistResult.items;
         if (generation !== searchGeneration) return;
         set({
           results: merged,

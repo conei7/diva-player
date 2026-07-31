@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   checkBackendHealth,
@@ -34,20 +34,29 @@ export default function BackendStatusNotice() {
   const [available, setAvailable] = useState<boolean | null>(null);
   const [online, setOnline] = useState(() => typeof navigator === 'undefined' || navigator.onLine);
   const [checking, setChecking] = useState(false);
+  const checkInFlightRef = useRef<Promise<void> | null>(null);
 
   const check = useCallback(async () => {
-    if (typeof navigator !== 'undefined' && !navigator.onLine) {
-      setOnline(false);
-      setAvailable(false);
-      setChecking(false);
-      return;
-    }
+    if (checkInFlightRef.current) return checkInFlightRef.current;
 
-    setOnline(true);
-    setChecking(true);
-    const healthy = await checkBackendHealth({ timeoutMs: CHECK_TIMEOUT_MS });
-    setAvailable(healthy);
-    setChecking(false);
+    const request = (async () => {
+      if (typeof navigator !== 'undefined' && !navigator.onLine) {
+        setOnline(false);
+        setAvailable(false);
+        setChecking(false);
+        return;
+      }
+
+      setOnline(true);
+      setChecking(true);
+      const healthy = await checkBackendHealth({ timeoutMs: CHECK_TIMEOUT_MS });
+      setAvailable(healthy);
+      setChecking(false);
+    })();
+    checkInFlightRef.current = request.finally(() => {
+      checkInFlightRef.current = null;
+    });
+    return checkInFlightRef.current;
   }, []);
 
   useEffect(() => {

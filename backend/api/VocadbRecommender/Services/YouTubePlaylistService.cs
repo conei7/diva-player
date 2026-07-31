@@ -32,6 +32,7 @@ public sealed class YouTubePlaylistException(string message, int statusCode = St
 public sealed class YouTubePlaylistService
 {
     private const int MaxPages = 50;
+    private static readonly TimeSpan MinimumForcedRefreshAge = TimeSpan.FromMinutes(5);
     private readonly HttpClient _http;
     private readonly DbService _db;
     private readonly string _apiKey;
@@ -55,6 +56,10 @@ public sealed class YouTubePlaylistService
     {
         var cached = await _db.GetYouTubePlaylistCacheAsync(playlistId, cancellationToken);
         var cacheIsFresh = cached is not null && DateTimeOffset.UtcNow - cached.FetchedAt < _cacheTtl;
+        var refreshIsTooSoon = cached is not null
+            && DateTimeOffset.UtcNow - cached.FetchedAt < MinimumForcedRefreshAge;
+        if (cached is not null && forceRefresh && refreshIsTooSoon)
+            return await ResolveAsync(cached, stale: false, truncated: cached.Truncated, cancellationToken);
         if (cached is not null && !forceRefresh && cacheIsFresh)
             return await ResolveAsync(cached, stale: false, truncated: cached.Truncated, cancellationToken);
 

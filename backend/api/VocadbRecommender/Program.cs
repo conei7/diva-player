@@ -3,6 +3,8 @@ using Microsoft.AspNetCore.ResponseCompression;
 using Microsoft.AspNetCore.RateLimiting;
 using System.Diagnostics;
 using System.Globalization;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading.RateLimiting;
@@ -30,6 +32,8 @@ builder.Services.AddHttpClient<YouTubePlaylistService>(client =>
     client.Timeout = TimeSpan.FromSeconds(30);
     client.DefaultRequestHeaders.UserAgent.ParseAdd("DIVA-Player/1.0");
 });
+
+var pagesProxyKey = builder.Configuration["Recommender:PagesProxyKey"]?.Trim() ?? string.Empty;
 
 var allowedOrigins = builder.Configuration
     .GetSection("Recommender:AllowedOrigins")
@@ -61,35 +65,47 @@ builder.Services.AddRateLimiter(options =>
     options.OnRejected = (context, _) =>
     {
         var path = context.HttpContext.Request.Path;
+        var isHealth = path.Equals("/api/health", StringComparison.OrdinalIgnoreCase);
         var isExternalViews = path.Equals("/api/songs/views", StringComparison.OrdinalIgnoreCase);
         var isYouTubePlaylist = path.StartsWithSegments("/api/youtube/playlists");
         context.HttpContext.Response.Headers.RetryAfter = "60";
         context.HttpContext.Response.Headers["X-Diva-Rate-Limit"] = isExternalViews
             ? "views;600/min"
+            : isHealth ? "health;6/min"
             : isYouTubePlaylist ? "youtube;20/min" : "default;120/min";
         var logger = context.HttpContext.RequestServices.GetRequiredService<ILoggerFactory>()
             .CreateLogger("DivaRateLimit");
         logger.LogWarning(
             "rate_limit_rejected path={Path} scope={Scope} traceId={TraceId}",
             path.Value,
-            isExternalViews ? "views" : isYouTubePlaylist ? "youtube" : "default",
+            isExternalViews ? "views" : isHealth ? "health" : isYouTubePlaylist ? "youtube" : "default",
             context.HttpContext.TraceIdentifier);
         return ValueTask.CompletedTask;
     };
     options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(httpContext =>
     {
-        if (httpContext.Request.Path.Equals("/api/health", StringComparison.OrdinalIgnoreCase))
-            return RateLimitPartition.GetNoLimiter("health");
-
-        var clientKey = httpContext.Request.Headers["X-Diva-Client-Key"].ToString();
-        if (string.IsNullOrWhiteSpace(clientKey))
-            clientKey = httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
-
+        var isHealth = httpContext.Request.Path.Equals("/api/health", StringComparison.OrdinalIgnoreCase);
         var isExternalViews = httpContext.Request.Path.Equals(
             "/api/songs/views",
             StringComparison.OrdinalIgnoreCase);
         var isYouTubePlaylist = httpContext.Request.Path.StartsWithSegments("/api/youtube/playlists");
-        var scope = isExternalViews ? "views" : isYouTubePlaylist ? "youtube" : "default";
+        var scope = isHealth ? "health" : isExternalViews ? "views" : isYouTubePlaylist ? "youtube" : "default";
+
+        var remoteIp = httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+        var cloudflareIp = httpContext.Request.Headers["CF-Connecting-IP"].ToString();
+        var suppliedClientKey = httpContext.Request.Headers["X-Diva-Client-Key"].ToString();
+        var suppliedProxyKey = httpContext.Request.Headers["X-Diva-Pages-Proxy-Key"].ToString();
+        var proxyMarker = httpContext.Request.Headers["X-Diva-Pages-Proxy"].ToString();
+        // Only a Pages Function that knows the deployment secret may select the
+        // Cloudflare client identity. Without the secret, fall back to the
+        // transport peer so direct callers cannot spoof arbitrary partitions.
+        var validProxyKey = !string.IsNullOrEmpty(pagesProxyKey)
+            && FixedTimeEquals(suppliedProxyKey, pagesProxyKey);
+        var isTrustedPagesProxy = proxyMarker == "1"
+            && !string.IsNullOrWhiteSpace(cloudflareIp)
+            && suppliedClientKey == cloudflareIp
+            && validProxyKey;
+        var clientKey = isTrustedPagesProxy ? cloudflareIp : remoteIp;
         var partitionKey = $"{scope}:{clientKey}";
 
         return RateLimitPartition.GetFixedWindowLimiter(partitionKey, _ => new FixedWindowRateLimiterOptions
@@ -97,7 +113,7 @@ builder.Services.AddRateLimiter(options =>
             // External view counts are a cheap batch lookup and are loaded by
             // several independent UI sections. Keep them from exhausting the
             // recommendation/search budget while retaining abuse protection.
-            PermitLimit = isExternalViews ? 600 : isYouTubePlaylist ? 20 : 120,
+            PermitLimit = isHealth ? 6 : isExternalViews ? 600 : isYouTubePlaylist ? 20 : 120,
             Window = TimeSpan.FromMinutes(1),
             QueueLimit = 0,
             AutoReplenishment = true,
@@ -105,10 +121,26 @@ builder.Services.AddRateLimiter(options =>
     });
 });
 
+static bool FixedTimeEquals(string left, string right)
+{
+    if (left.Length != right.Length) return false;
+    return CryptographicOperations.FixedTimeEquals(
+        Encoding.UTF8.GetBytes(left),
+        Encoding.UTF8.GetBytes(right));
+}
+
 var app = builder.Build();
 app.UseResponseCompression();
 app.UseCors("AllowFrontend");
 app.UseRateLimiter();
+
+var healthGate = new SemaphoreSlim(1, 1);
+HealthSnapshot? healthSnapshot = null;
+const int maxSearchStart = 100_000;
+const int maxSearchResults = 200;
+const int maxSearchQueryLength = 200;
+const int maxSearchArtistIds = 100;
+const int maxSearchArtistGroups = 20;
 
 app.MapGet("/api/youtube/playlists/{playlistId}/songs", async (
     string playlistId,
@@ -153,8 +185,10 @@ app.MapGet("/api/recommend", async (
         return Results.BadRequest("count must be between 1 and 100");
 
     // offset をサポート: 十分な候補を取得して offset 分スキップ
-    if (offset is < 0)
-        return Results.BadRequest("offset must be non-negative");
+    if (offset is < 0 or > 10_000)
+        return Results.BadRequest("offset must be between 0 and 10000");
+    if (!double.IsFinite(sessionProgress) || sessionProgress is < 0 or > 1)
+        return Results.BadRequest("sessionProgress must be between 0 and 1");
 
     int take = count;
     int skip = offset ?? 0;
@@ -182,8 +216,8 @@ app.MapGet("/api/recommend/producer", async (
 {
     if (count is < 1 or > 100)
         return Results.BadRequest("count must be between 1 and 100");
-    if (offset is < 0)
-        return Results.BadRequest("offset must be non-negative");
+    if (offset is < 0 or > 10_000)
+        return Results.BadRequest("offset must be between 0 and 10000");
 
     int skip = offset ?? 0;
     var songs = await db.GetSongsByProducerAsync(songId, count + skip);
@@ -212,6 +246,8 @@ app.MapGet("/api/recommend/similar", async (
 {
     if (count is < 1 or > 100)
         return Results.BadRequest("count must be between 1 and 100");
+    if (offset is < 0 or > 10_000)
+        return Results.BadRequest("offset must be between 0 and 10000");
 
     int skip = offset ?? 0;
 
@@ -265,6 +301,9 @@ app.MapGet("/api/recommend/metadata", async (
 {
     if (count is < 1 or > 100)
         return Results.BadRequest("count must be between 1 and 100");
+
+    if (offset is < 0 or > 10_000)
+        return Results.BadRequest("offset must be between 0 and 10000");
 
     int skip = offset ?? 0;
     const int vectorCandidateCount = 400;
@@ -333,6 +372,9 @@ app.MapGet("/api/recommend/audio", async (
     if (count is < 1 or > 100)
         return Results.BadRequest("count must be between 1 and 100");
 
+    if (offset is < 0 or > 10_000)
+        return Results.BadRequest("offset must be between 0 and 10000");
+
     int skip = offset ?? 0;
     const int fetchCount = 200;
     var results = await qdrant.SearchAudioOnlyAsync(songId, fetchCount, null, 0);
@@ -365,26 +407,38 @@ app.MapGet("/api/recommend/audio", async (
 // GET /api/health
 app.MapGet("/api/health", async (DbService db, QdrantService qdrant, CancellationToken cancellationToken) =>
 {
-    var postgresTask = db.CheckHealthAsync(cancellationToken);
-    var qdrantTask = qdrant.CheckHealthAsync(cancellationToken);
-    var discoveryTask = db.CheckDiscoveryQualityAsync(cancellationToken);
-    var audioFeatureTask = db.CheckAudioFeatureHealthAsync(cancellationToken);
-    await Task.WhenAll(postgresTask, qdrantTask, discoveryTask, audioFeatureTask);
-    var postgres = await postgresTask;
-    var qdrantStatus = await qdrantTask;
-    var discoveryQuality = await discoveryTask;
-    var audioFeatures = await audioFeatureTask;
-    var ready = postgres.Ok && qdrantStatus.Ok;
+    await healthGate.WaitAsync(cancellationToken);
+    try
+    {
+        if (healthSnapshot is not null && healthSnapshot.ExpiresAt > DateTimeOffset.UtcNow)
+            return Results.Json(healthSnapshot.Payload, statusCode: healthSnapshot.StatusCode);
 
-    return Results.Json(
-        new
-        {
-            status = ready ? "ok" : "degraded",
-            dependencies = new { postgres, qdrant = qdrantStatus },
+        var postgresTask = db.CheckHealthAsync(cancellationToken);
+        var qdrantTask = qdrant.CheckHealthAsync(cancellationToken);
+        var discoveryTask = db.CheckDiscoveryQualityAsync(cancellationToken);
+        var audioFeatureTask = db.CheckAudioFeatureHealthAsync(cancellationToken);
+        await Task.WhenAll(postgresTask, qdrantTask, discoveryTask, audioFeatureTask);
+        var postgres = await postgresTask;
+        var qdrantStatus = await qdrantTask;
+        var discoveryQuality = await discoveryTask;
+        var audioFeatures = await audioFeatureTask;
+        var ready = postgres.Ok && qdrantStatus.Ok;
+        var payload = new HealthPayload(
+            ready ? "ok" : "degraded",
+            new { postgres, qdrant = qdrantStatus },
             discoveryQuality,
-            audioFeatures,
-        },
-        statusCode: ready ? StatusCodes.Status200OK : StatusCodes.Status503ServiceUnavailable);
+            audioFeatures);
+        healthSnapshot = new HealthSnapshot(
+            payload,
+            ready ? StatusCodes.Status200OK : StatusCodes.Status503ServiceUnavailable,
+            DateTimeOffset.UtcNow.AddSeconds(30));
+
+        return Results.Json(payload, statusCode: healthSnapshot.StatusCode);
+    }
+    finally
+    {
+        healthGate.Release();
+    }
 });
 
 app.MapPost("/api/recommend/multi", async (
@@ -395,7 +449,7 @@ app.MapPost("/api/recommend/multi", async (
         return Results.BadRequest("seeds must contain between 1 and 8 items");
     if (request.Count is < 1 or > 100)
         return Results.BadRequest("count must be between 1 and 100");
-    if (request.SessionProgress is < 0 or > 1)
+    if (!double.IsFinite(request.SessionProgress) || request.SessionProgress is < 0 or > 1)
         return Results.BadRequest("sessionProgress must be between 0 and 1");
     if (request.Offset is < 0 or > 10_000)
         return Results.BadRequest("offset must be between 0 and 10000");
@@ -403,7 +457,7 @@ app.MapPost("/api/recommend/multi", async (
         return Results.BadRequest("excludeSongIds must contain at most 500 items");
 
     var seeds = request.Seeds
-        .Where(seed => seed.SongId > 0 && seed.Weight > 0)
+        .Where(seed => seed.SongId > 0 && double.IsFinite(seed.Weight) && seed.Weight > 0)
         .Select(seed => new RecommendSeed(seed.SongId, seed.Weight))
         .ToList();
     var excluded = request.ExcludeSongIds?.Where(id => id > 0).ToHashSet() ?? [];
@@ -416,7 +470,11 @@ app.MapGet("/api/songs/views", async (string ids, DbService db) =>
 {
     if (string.IsNullOrWhiteSpace(ids)) return Results.Ok(new Dictionary<int, object>());
 
-    var idList = ids.Split(',')
+    var rawIds = ids.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+    if (rawIds.Length > 500)
+        return Results.BadRequest(new { error = "ids must contain at most 500 items" });
+
+    var idList = rawIds
         .Where(x => int.TryParse(x, out _))
         .Select(int.Parse)
         .Distinct()
@@ -450,8 +508,16 @@ app.MapGet("/api/songs/trending", async (
 {
     if (minYoutubeViews is < 0 || minNicoViews is < 0)
         return Results.BadRequest(new { error = "view thresholds must be non-negative" });
+    if (start is < 0 or > maxSearchStart)
+        return Results.BadRequest(new { error = "start must be between 0 and 100000" });
+    if (maxResults is < 1 or > 100)
+        return Results.BadRequest(new { error = "maxResults must be between 1 and 100" });
+    if (excludeSongTypes is { Length: > 16_384 })
+        return Results.BadRequest(new { error = "song type filters are too long" });
 
     var excludedTypes = ParseCsv(excludeSongTypes);
+    if (excludedTypes.Count > 20)
+        return Results.BadRequest(new { error = "song type filters are too large" });
     var validSongTypes = new HashSet<string>(StringComparer.Ordinal)
     {
         "Original", "Remaster", "Remix", "Cover", "Arrangement", "Instrumental",
@@ -511,6 +577,19 @@ app.MapGet("/api/songs/search", async (
     var requestStopwatch = Stopwatch.StartNew();
     const long maxPublishYear = 5_874_896;
     const long maxLengthSeconds = int.MaxValue;
+    const int maxFilterStringLength = 16_384;
+    if (query is { Length: > maxSearchQueryLength })
+        return Results.BadRequest(new { error = "query is too long" });
+    if (artistIds is { Length: > maxFilterStringLength }
+        || anyArtistIds is { Length: > maxFilterStringLength }
+        || artistIdGroups is { Length: > maxFilterStringLength }
+        || songTypes is { Length: > maxFilterStringLength }
+        || excludeSongTypes is { Length: > maxFilterStringLength })
+        return Results.BadRequest(new { error = "search filters are too long" });
+    if (start is < 0 or > maxSearchStart)
+        return Results.BadRequest(new { error = "start must be between 0 and 100000" });
+    if (maxResults is < 1 or > maxSearchResults)
+        return Results.BadRequest(new { error = "maxResults must be between 1 and 200" });
     if (publishYearFrom is < 1 or > maxPublishYear || publishYearTo is < 1 or > maxPublishYear)
         return Results.BadRequest(new { error = "publish year must be between 1 and 5874896" });
     if (lengthMinSeconds is < 0 or > maxLengthSeconds || lengthMaxSeconds is < 0 or > maxLengthSeconds)
@@ -528,6 +607,10 @@ app.MapGet("/api/songs/search", async (
         return Results.BadRequest(new { error = "anyArtistIds must be comma-separated integers" });
     if (!TryParseIntegerGroups(artistIdGroups, out var aIdGroups))
         return Results.BadRequest(new { error = "artistIdGroups must contain pipe-separated integer lists" });
+    if (aIds.Count > maxSearchArtistIds || anyAIds.Count > maxSearchArtistIds)
+        return Results.BadRequest(new { error = "artist id filters are too large" });
+    if (aIdGroups.Count > maxSearchArtistGroups || aIdGroups.Any(group => group.Count > maxSearchArtistIds))
+        return Results.BadRequest(new { error = "artist id groups are too large" });
 
     var validArtistRoles = new HashSet<string>(StringComparer.Ordinal)
     {
@@ -540,6 +623,8 @@ app.MapGet("/api/songs/search", async (
 
     var sTypes = ParseCsv(songTypes);
     var excludedTypes = ParseCsv(excludeSongTypes);
+    if (sTypes.Count > 20 || excludedTypes.Count > 20)
+        return Results.BadRequest(new { error = "song type filters are too large" });
     var validSongTypes = new HashSet<string>(StringComparer.Ordinal)
     {
         "Original", "Remaster", "Remix", "Cover", "Arrangement", "Instrumental",
@@ -655,3 +740,14 @@ public record MultiRecommendRequest(
 );
 
 public record MultiRecommendSeed(int SongId, double Weight);
+
+public record HealthPayload(
+    string status,
+    object dependencies,
+    DiscoveryQualityHealth discoveryQuality,
+    AudioFeatureHealth audioFeatures);
+
+public record HealthSnapshot(
+    HealthPayload Payload,
+    int StatusCode,
+    DateTimeOffset ExpiresAt);
