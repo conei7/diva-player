@@ -21,16 +21,30 @@ const songs = ['First gesture fixture', 'Second gesture fixture', 'Third gesture
 }));
 
 async function swipe(page, from, to) {
-  await page.evaluate(([start, end]) => new Promise(resolve => {
-    const surface = document.querySelector('[data-testid="mini-player-gesture-surface"]');
-    if (!surface) throw new Error('gesture surface not found');
-    const pointerId = 42;
-    surface.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId, pointerType: 'touch', clientX: start, clientY: 100 }));
-    window.setTimeout(() => {
-      surface.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId, pointerType: 'touch', clientX: end, clientY: 100 }));
-      resolve();
-    }, 80);
-  }), [from, to]);
+  const rect = await page.$eval('[data-testid="mini-player-gesture-surface"]', element => {
+    const box = element.getBoundingClientRect();
+    return { x: box.x, y: box.y, width: box.width, height: box.height };
+  });
+  const client = await page.createCDPSession();
+  const y = rect.y + rect.height / 2;
+  const startX = from < to ? rect.x + 24 : rect.x + rect.width - 24;
+  const endX = from < to ? rect.x + rect.width - 24 : rect.x + 24;
+  await client.send('Input.dispatchTouchEvent', {
+    type: 'touchStart',
+    touchPoints: [{ x: startX, y, radiusX: 1, radiusY: 1, id: 1 }],
+    modifiers: 0,
+  });
+  await client.send('Input.dispatchTouchEvent', {
+    type: 'touchMove',
+    touchPoints: [{ x: endX, y, radiusX: 1, radiusY: 1, id: 1 }],
+    modifiers: 0,
+  });
+  await client.send('Input.dispatchTouchEvent', {
+    type: 'touchEnd',
+    touchPoints: [],
+    modifiers: 0,
+  });
+  await client.detach();
 }
 
 try {
@@ -64,13 +78,25 @@ try {
   await waitForSong('Second gesture fixture');
   console.log('PASS right swipe goes to previous queue item');
 
-  await page.evaluate(() => {
-    const surface = document.querySelector('[data-testid="mini-player-gesture-surface"]');
-    if (!surface) throw new Error('gesture surface not found');
-    const pointerId = 43;
-    surface.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId, pointerType: 'touch', clientX: 100, clientY: 100 }));
-    surface.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId, pointerType: 'touch', clientX: 102, clientY: 210 }));
+  const rect = await page.$eval('[data-testid="mini-player-gesture-surface"]', element => {
+    const box = element.getBoundingClientRect();
+    return { x: box.x, y: box.y, width: box.width, height: box.height };
   });
+  const client = await page.createCDPSession();
+  const x = rect.x + rect.width / 2;
+  const startY = rect.y + rect.height / 2;
+  await client.send('Input.dispatchTouchEvent', {
+    type: 'touchStart',
+    touchPoints: [{ x, y: startY, radiusX: 1, radiusY: 1, id: 2 }],
+    modifiers: 0,
+  });
+  await client.send('Input.dispatchTouchEvent', {
+    type: 'touchMove',
+    touchPoints: [{ x, y: startY + 110, radiusX: 1, radiusY: 1, id: 2 }],
+    modifiers: 0,
+  });
+  await client.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [], modifiers: 0 });
+  await client.detach();
   await new Promise(resolve => setTimeout(resolve, 100));
   const stillCurrent = await page.$eval('[data-testid="global-player"]', element => element.textContent?.includes('Second gesture fixture'));
   if (!stillCurrent) throw new Error('downward movement unexpectedly changed the queue');
