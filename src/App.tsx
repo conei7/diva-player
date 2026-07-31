@@ -14,6 +14,7 @@ import { useAutoQueueDecisionStore } from './stores/autoQueueDecisionStore';
 import { useAutoQueueBanditStore } from './stores/autoQueueBanditStore';
 import { useAutoQueue } from './hooks/useAutoQueue';
 import AppErrorBoundary from './components/AppErrorBoundary';
+import { formatDocumentTitle } from './utils/documentTitle';
 
 const HomePage = lazy(() => import('./pages/HomePage'));
 const WatchPage = lazy(() => import('./pages/WatchPage'));
@@ -160,6 +161,12 @@ function PlayerTracker() {
 }
 
 function AppContent() {
+  const currentSong = usePlayerStore(s => s.currentSong);
+
+  useEffect(() => {
+    document.title = formatDocumentTitle(currentSong);
+  }, [currentSong]);
+
   return (
     <>
       <PlayerTracker />

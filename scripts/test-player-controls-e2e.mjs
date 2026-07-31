@@ -34,9 +34,12 @@ try {
   }, fixtureSong);
   await first.goto(baseUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
   await first.waitForSelector('[data-testid="mini-player-close"]', { timeout: 60_000 });
+  await first.waitForFunction(() => document.title === 'Player controls fixture — Fixture producer | DIVA Player');
+  console.log('PASS dynamic browser tab title');
 
   await first.click('[data-testid="mini-player-close"]');
   await first.waitForFunction(() => !document.querySelector('[data-testid="mini-player-close"]'));
+  await first.waitForFunction(() => document.title === 'DIVA Player — ボカロミュージックプレイヤー');
   const queueCleared = await first.evaluate(() => localStorage.getItem('diva_playerQueue') === null);
   if (!queueCleared) throw new Error('Closing the mini player did not clear the persisted queue.');
   console.log('PASS mini-player close control');
