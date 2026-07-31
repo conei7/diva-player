@@ -19,6 +19,31 @@ async function waitForLayout(page) {
   await new Promise(resolve => setTimeout(resolve, 750));
 }
 
+async function assertBackendNoticePlacement(page, label) {
+  const placement = await page.$eval('header', header => {
+    const notice = document.querySelector('[data-testid="backend-status-notice"]');
+    if (!notice) return null;
+    const headerRect = header.getBoundingClientRect();
+    const noticeRect = notice.getBoundingClientRect();
+    const mainRect = document.querySelector('main')?.getBoundingClientRect();
+    return {
+      headerBottom: headerRect.bottom,
+      noticeTop: noticeRect.top,
+      noticeBottom: noticeRect.bottom,
+      mainTop: mainRect?.top ?? null,
+    };
+  });
+  if (!placement) {
+    console.log(`SKIP ${label} backend notice placement (API healthy)`);
+    return;
+  }
+  assert(placement.headerBottom <= placement.noticeTop + 1,
+    `${label} backend notice overlaps the header: ${JSON.stringify(placement)}`);
+  assert(placement.noticeBottom <= (placement.mainTop ?? placement.noticeBottom) + 1,
+    `${label} main content overlaps the backend notice: ${JSON.stringify(placement)}`);
+  console.log(`PASS ${label} backend notice placement`);
+}
+
 async function assertNoHorizontalOverflow(page, label) {
   const dimensions = await page.evaluate(() => ({
     viewportWidth: window.innerWidth,
@@ -54,6 +79,7 @@ async function main() {
       assert(response?.ok(), `${label} returned HTTP ${response?.status() ?? 'unknown'}`);
       await waitForLayout(page);
       await page.waitForSelector(selector);
+      await assertBackendNoticePlacement(page, label);
       await assertNoHorizontalOverflow(page, label);
     }
 
@@ -129,6 +155,16 @@ async function main() {
 
     await page.click('button[aria-label="設定・バックアップ"]');
     await page.waitForSelector('[role="dialog"][aria-label="設定・バックアップ"]', { visible: true });
+    await page.waitForSelector('[role="tablist"] [role="tab"][aria-selected="true"]');
+    await page.click('[role="tab"][aria-controls="settings-panel-data"]');
+    await page.waitForSelector('[role="tabpanel"]#settings-panel-data');
+    const settingsTabs = await page.$$eval('[role="dialog"][aria-label="設定・バックアップ"] [role="tab"]', tabs => tabs.map(tab => ({
+      selected: tab.getAttribute('aria-selected'),
+      controls: tab.getAttribute('aria-controls'),
+    })));
+    assert(settingsTabs.length === 3 && settingsTabs.filter(tab => tab.selected === 'true').length === 1,
+      `Settings tabs do not expose a single active tab: ${JSON.stringify(settingsTabs)}`);
+    console.log('PASS settings tab separation and accessibility');
     const settingsPanel = await page.$eval('[role="dialog"][aria-label="設定・バックアップ"] > div', element => {
       const rect = element.getBoundingClientRect();
       return {

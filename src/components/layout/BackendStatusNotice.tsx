@@ -17,12 +17,12 @@ const STATUS_COPY: Record<Exclude<BackendConnectivityStatus, 'healthy' | 'checki
 }> = {
   offline: {
     title: 'オフラインモードです',
-    message: 'ブラウザがオフラインのため、SBCのデータサービスを利用できません。保存済みプレイリスト・履歴・評価は引き続き利用できます。',
+    message: 'ブラウザがオフラインのため、データAPIサービスを利用できません。保存済みプレイリスト・履歴・評価は引き続き利用できます。',
     background: 'color-mix(in srgb, #fbbf24 12%, var(--color-bg-primary))',
     color: '#fbbf24',
   },
   unavailable: {
-    title: 'SBCのデータサービスに接続できません',
+    title: 'データAPIサービスに接続できません',
     message: '通常のVocaDB検索・再生と保存済みプレイリスト・履歴・評価は利用できます。詳細検索、外部再生数、人気急上昇、関連曲・推薦の一部は利用できないか簡易候補に切り替わります。',
     background: 'color-mix(in srgb, var(--color-error) 12%, var(--color-bg-primary))',
     color: 'var(--color-text-secondary)',
@@ -85,6 +85,7 @@ export default function BackendStatusNotice() {
   return (
     <div
       className="border-b px-4 py-2.5 text-sm"
+      data-testid="backend-status-notice"
       role="status"
       aria-live="polite"
       style={{

@@ -182,7 +182,7 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
   };
 
   return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-label="設定">
+    <div className="fixed inset-0 z-[70] flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-label="設定・バックアップ">
       <button type="button" className="absolute inset-0 bg-black/70 backdrop-blur-sm" aria-label="閉じる" onClick={onClose} />
 
       <div className="relative max-h-[calc(100dvh-2rem)] w-full max-w-lg overflow-y-auto rounded-2xl shadow-2xl"
@@ -198,16 +198,16 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
           </div>
 
           {/* 3タブ */}
-          <div className="settings-tab-bar">
-            <button type="button" className="settings-tab" data-active={activeTab === 'filter'} onClick={() => setActiveTab('filter')}>
+          <div className="settings-tab-bar" role="tablist" aria-label="設定カテゴリ">
+            <button type="button" role="tab" id="settings-tab-filter" aria-controls="settings-panel-filter" aria-selected={activeTab === 'filter'} className="settings-tab" data-active={activeTab === 'filter'} onClick={() => setActiveTab('filter')}>
               <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M3 17v2h6v-2H3zM3 5v2h10V5H3zm10 16v-2h8v-2h-8v-2h-2v6h2zM7 9v2H3v2h4v2h2V9H7zm14 4v-2H11v2h10zm-6-4h2V7h4V5h-4V3h-2v6z"/></svg>
               表示・発見
             </button>
-            <button type="button" className="settings-tab" data-active={activeTab === 'playback'} onClick={() => setActiveTab('playback')}>
+            <button type="button" role="tab" id="settings-tab-playback" aria-controls="settings-panel-playback" aria-selected={activeTab === 'playback'} className="settings-tab" data-active={activeTab === 'playback'} onClick={() => setActiveTab('playback')}>
               <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg>
               再生・操作
             </button>
-            <button type="button" className="settings-tab" data-active={activeTab === 'data'} onClick={() => setActiveTab('data')}>
+            <button type="button" role="tab" id="settings-tab-data" aria-controls="settings-panel-data" aria-selected={activeTab === 'data'} className="settings-tab" data-active={activeTab === 'data'} onClick={() => setActiveTab('data')}>
               <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
               データ
             </button>
@@ -219,7 +219,7 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
 
           {/* ========== 表示・発見タブ ========== */}
           {activeTab === 'filter' && (
-            <>
+            <div id="settings-panel-filter" role="tabpanel" aria-labelledby="settings-tab-filter" tabIndex={0} className="flex flex-col gap-4">
               {/* フィルター有効/無効 */}
               <div className="settings-section">
                 <div className="settings-section-title">
@@ -341,12 +341,12 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                   初期化
                 </button>
               </div>
-            </>
+            </div>
           )}
 
           {/* ========== 再生・操作タブ ========== */}
           {activeTab === 'playback' && (
-            <>
+            <div id="settings-panel-playback" role="tabpanel" aria-labelledby="settings-tab-playback" tabIndex={0} className="flex flex-col gap-4">
               <div className="settings-section">
                 <div className="settings-section-title">
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M21 3H3c-1.11 0-2 .89-2 2v14c0 1.11.89 2 2 2h18c1.11 0 2-.89 2-2V5c0-1.11-.89-2-2-2zm-9 8H3V5h9v6z"/></svg>
@@ -382,12 +382,12 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                   <ToggleSwitch checked={longPressSelectionEnabled} onChange={setLongPressSelectionEnabled} />
                 </div>
               </div>
-            </>
+            </div>
           )}
 
           {/* ========== データタブ ========== */}
           {activeTab === 'data' && (
-            <>
+            <div id="settings-panel-data" role="tabpanel" aria-labelledby="settings-tab-data" tabIndex={0} className="flex flex-col gap-4">
               <div className="settings-section">
                 <div className="settings-section-title">
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M19 12v7H5v-7H3v7c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2v-7h-2zm-6 .67l2.59-2.58L17 11.5l-5 5-5-5 1.41-1.41L11 12.67V3h2v9.67z"/></svg>
@@ -453,7 +453,7 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                   </div>
                 )}
               </div>
-            </>
+            </div>
           )}
 
           {message && (

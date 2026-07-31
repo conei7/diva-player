@@ -45,14 +45,15 @@ export default function Layout() {
   return (
     <div className="min-h-screen flex flex-col" style={{ background: 'var(--color-bg-primary)' }}>
       <TopNav />
-      <BackendStatusNotice />
+      <div style={{ paddingTop: 'var(--header-height)' }}>
+        <BackendStatusNotice />
+      </div>
       <Sidebar />
 
       {/* メインコンテンツ */}
       <main
         className="flex-1 transition-all duration-300"
         style={{
-          paddingTop: 'var(--header-height)',
           marginLeft: showSidebar
             ? `max(0px, ${sidebarExpanded ? 'var(--sidebar-width)' : 'var(--sidebar-collapsed-width)'})`
             : '0px',
