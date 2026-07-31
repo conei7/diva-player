@@ -36,7 +36,8 @@ async function swipe(page, from, to) {
 try {
   const page = await browser.newPage();
   await page.setViewport({ width: 390, height: 844, deviceScaleFactor: 1 });
-  await page.evaluateOnNewDocument(currentSongs => {
+  await page.goto(baseUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+  await page.evaluate(currentSongs => {
     localStorage.setItem('diva_playerQueue', JSON.stringify({
       queue: currentSongs,
       queueIndex: 1,
@@ -46,7 +47,7 @@ try {
       currentPlaybackSource: 'manual',
     }));
   }, songs);
-  await page.goto(baseUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+  await page.reload({ waitUntil: 'domcontentloaded', timeout: 60_000 });
   await page.waitForSelector('[data-testid="mini-player-gesture-surface"]', { timeout: 60_000 });
   const waitForSong = (name) => page.waitForFunction(
     expected => document.querySelector('[data-testid="global-player"]')?.textContent?.includes(expected),
