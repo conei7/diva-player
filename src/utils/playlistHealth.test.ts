@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { Song } from '../types/vocadb';
+import type { PVService, Song } from '../types/vocadb';
 import { analyzePlaylistHealth } from './playlistHealth';
 
 const song = (id: number, pvs?: Song['pvs']): Song => ({
@@ -19,7 +19,7 @@ const song = (id: number, pvs?: Song['pvs']): Song => ({
   version: 1,
 });
 
-const pv = (service: 'Youtube' | 'NicoNicoDouga' | 'SoundCloud', disabled = false) => ({
+const pv = (service: PVService, disabled = false) => ({
   id: 1,
   pvId: 'pv',
   service,
@@ -36,7 +36,7 @@ describe('analyzePlaylistHealth', () => {
     const report = analyzePlaylistHealth([
       song(1),
       song(2, [pv('Youtube', true)]),
-      song(3, [pv('SoundCloud')]),
+      song(3, [pv('Vimeo')]),
       song(4, [pv('Youtube')]),
       song(4, [pv('Youtube')]),
     ]);
@@ -51,11 +51,10 @@ describe('analyzePlaylistHealth', () => {
     expect(report.entries[3].issues).toEqual(['duplicate']);
   });
 
-  it('does not flag a song with an enabled YouTube or NicoNico PV', () => {
+  it('does not flag a song with an enabled supported PV', () => {
     const report = analyzePlaylistHealth([
-      song(1, [pv('Youtube', true), pv('NicoNicoDouga')]),
+      song(1, [pv('Youtube', true), pv('SoundCloud')]),
     ]);
     expect(report.entries).toHaveLength(0);
   });
 });
-

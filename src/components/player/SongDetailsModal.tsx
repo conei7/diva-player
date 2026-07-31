@@ -4,6 +4,8 @@ import { usePlayerStore } from '../../stores/playerStore';
 import { useRatingStore } from '../../stores/ratingStore';
 import StarRating from './StarRating';
 import OriginalVersionLink from '../watch/OriginalVersionLink';
+import { isPlayablePV } from '../../utils/playablePV';
+import { getPVServiceLabel } from '../../utils/pvService';
 import AlbumPlaylistButton from '../playlist/AlbumPlaylistButton';
 
 const VOCADB_BASE = 'https://vocadb.net';
@@ -77,7 +79,7 @@ export default function SongDetailsModal() {
   const vocalists  = song.artists?.filter(a => a.categories.includes('Vocalist'))  ?? [];
 
   // PV一覧 (有効なもの)
-  const pvLinks = (song.pvs ?? []).filter(pv => !pv.disabled && (pv.service === 'Youtube' || pv.service === 'NicoNicoDouga'));
+  const pvLinks = (song.pvs ?? []).filter(isPlayablePV);
 
   const handlePlay = () => {
     setQueue([song], 0);
@@ -229,7 +231,7 @@ export default function SongDetailsModal() {
                     })()}
                     onClick={(e) => e.stopPropagation()}
                   >
-                    {pv.service === 'Youtube' ? '▶ YouTube' : '▶ ニコニコ'}
+                    ▶ {getPVServiceLabel(pv.service)}
                     {pv.pvType !== 'Original' && (
                       <span className="ml-1 opacity-70">(非公式)</span>
                     )}

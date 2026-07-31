@@ -9,6 +9,7 @@ import { formatSongRelativeDate } from '../../utils/relativeDate';
 import SongCardMenu from './SongCardMenu';
 import SongCardBadges from './SongCardBadges';
 import { formatDistinctArtistNames } from '../../utils/artistNames';
+import { isPlayablePV } from '../../utils/playablePV';
 
 interface SongCardProps {
   song: Song;
@@ -106,7 +107,7 @@ export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect, 
 
   // 利用可能なPVサービスのバッジ
   const pvServices = song.pvs?.reduce((acc, pv) => {
-    if (!pv.disabled && (pv.service === 'Youtube' || pv.service === 'NicoNicoDouga')) {
+    if (isPlayablePV(pv)) {
       acc.add(pv.service);
     }
     return acc;

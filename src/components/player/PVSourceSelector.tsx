@@ -1,6 +1,7 @@
 import type { Song } from '../../types/vocadb';
 import { usePlayerStore } from '../../stores/playerStore';
 import { getPVServiceLabel } from '../../utils/pvService';
+import { isPlayablePV } from '../../utils/playablePV';
 
 interface PVSourceSelectorProps {
   song?: Song | null;
@@ -17,7 +18,7 @@ export default function PVSourceSelector({ song, compact = false }: PVSourceSele
   const currentPV = usePlayerStore(state => state.currentPV);
   const selectPV = usePlayerStore(state => state.selectPV);
   const targetSong = song ?? currentSong;
-  const playablePVs = targetSong?.pvs?.filter(pv => !pv.disabled && (pv.service === 'Youtube' || pv.service === 'NicoNicoDouga')) ?? [];
+  const playablePVs = targetSong?.pvs?.filter(isPlayablePV) ?? [];
 
   if (!targetSong || playablePVs.length < 2 || currentSong?.id !== targetSong.id) return null;
 

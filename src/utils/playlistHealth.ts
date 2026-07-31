@@ -1,4 +1,5 @@
 import type { Song } from '../types/vocadb';
+import { isPlayablePV } from './playablePV';
 
 export type PlaylistHealthIssueKind =
   | 'duplicate'
@@ -17,8 +18,6 @@ export interface PlaylistHealthReport {
   entries: PlaylistHealthEntry[];
   counts: Record<PlaylistHealthIssueKind, number>;
 }
-
-const PLAYABLE_SERVICES = new Set(['Youtube', 'NicoNicoDouga']);
 
 /** Analyze a playlist without changing its contents. */
 export function analyzePlaylistHealth(songs: Song[]): PlaylistHealthReport {
@@ -43,7 +42,7 @@ export function analyzePlaylistHealth(songs: Song[]): PlaylistHealthReport {
       const enabledPvs = pvs.filter(pv => !pv.disabled);
       if (enabledPvs.length === 0) {
         issues.push('all-pv-disabled');
-      } else if (!enabledPvs.some(pv => PLAYABLE_SERVICES.has(pv.service))) {
+      } else if (!enabledPvs.some(isPlayablePV)) {
         issues.push('no-playable-pv');
       }
     }
@@ -61,4 +60,3 @@ export const PLAYLIST_HEALTH_ISSUE_LABELS: Record<PlaylistHealthIssueKind, strin
   'all-pv-disabled': 'PVがすべて無効',
   'no-playable-pv': '再生対応PVなし',
 };
-

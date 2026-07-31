@@ -53,6 +53,26 @@ export default function SongCardBadges({
         </span>
       )}
 
+      {pvServices.has('SoundCloud') && (
+        <span
+          className="text-[10px] font-bold px-1.5 py-0.5 rounded"
+          style={{ background: 'rgba(249, 115, 22, 0.14)', color: '#fb923c' }}
+          title="SoundCloudで再生可能"
+        >
+          SC
+        </span>
+      )}
+
+      {pvServices.has('Bilibili') && (
+        <span
+          className="text-[10px] font-bold px-1.5 py-0.5 rounded"
+          style={{ background: 'rgba(244, 114, 182, 0.14)', color: '#f472b6' }}
+          title="Bilibiliで再生可能"
+        >
+          Bili
+        </span>
+      )}
+
       {relativeDate && (
         <span className="text-[10px]" style={{ color: 'var(--color-text-muted)' }}>
           {relativeDate}

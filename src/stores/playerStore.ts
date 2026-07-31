@@ -13,6 +13,7 @@ import { dedupeQueueBySongId, shuffleQueue } from '../utils/queueUtils';
 import { storage } from '../utils/storage';
 import { useProgressStore } from './progressStore';
 import { useAutoPlaySessionStore } from './autoPlaySessionStore';
+import { isPlayablePV } from '../utils/playablePV';
 
 type FailedPVMap = Record<string, Record<string, number>>;
 
@@ -44,6 +45,12 @@ const pvPriorities: Array<{ service: PVService; pvType: PVType }> = [
   { service: 'NicoNicoDouga', pvType: 'Original' },
   { service: 'NicoNicoDouga', pvType: 'Reprint' },
   { service: 'NicoNicoDouga', pvType: 'Other' },
+  { service: 'SoundCloud', pvType: 'Original' },
+  { service: 'SoundCloud', pvType: 'Reprint' },
+  { service: 'SoundCloud', pvType: 'Other' },
+  { service: 'Bilibili', pvType: 'Original' },
+  { service: 'Bilibili', pvType: 'Reprint' },
+  { service: 'Bilibili', pvType: 'Other' },
 ];
 
 function getPVFailureKey(pv: PV): string {
@@ -106,10 +113,10 @@ function getStoredPVPreference(): PVPreference {
 
 function choosePVByPriority(pvs: PV[], preference: PVPreference = 'auto'): PV | null {
   const preferredServices: PVService[] = preference === 'Youtube'
-    ? ['Youtube', 'NicoNicoDouga']
+    ? ['Youtube', 'NicoNicoDouga', 'SoundCloud', 'Bilibili']
     : preference === 'NicoNicoDouga'
-      ? ['NicoNicoDouga', 'Youtube']
-      : ['Youtube', 'NicoNicoDouga'];
+      ? ['NicoNicoDouga', 'Youtube', 'SoundCloud', 'Bilibili']
+      : ['Youtube', 'NicoNicoDouga', 'SoundCloud', 'Bilibili'];
   for (const service of preferredServices) {
     for (const { pvType } of pvPriorities.filter(item => item.service === service)) {
       const match = pvs.find(pv => pv.service === service && pv.pvType === pvType);
@@ -122,11 +129,11 @@ function choosePVByPriority(pvs: PV[], preference: PVPreference = 'auto'): PV | 
     if (match) return match;
   }
 
-  return pvs.find(pv => pv.service === 'Youtube' || pv.service === 'NicoNicoDouga') || null;
+  return pvs.find(isPlayablePV) || null;
 }
 
 function getEnabledPlayablePVs(song: Song): PV[] {
-  return (song.pvs ?? []).filter(pv => !pv.disabled);
+  return (song.pvs ?? []).filter(isPlayablePV);
 }
 
 function clampVolume(volume: number): number {
@@ -495,7 +502,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
 
   selectPV: (pv: PV) => {
     const { currentSong, isPlaying } = get();
-    if (!currentSong || pv.disabled || !['Youtube', 'NicoNicoDouga'].includes(pv.service)) return;
+    if (!currentSong || !isPlayablePV(pv)) return;
     clearPVFailure(currentSong.id, pv);
     useProgressStore.getState().setDuration(currentSong.lengthSeconds || pv.length || 0);
     useProgressStore.getState().setProgress(0);

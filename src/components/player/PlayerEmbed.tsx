@@ -13,13 +13,17 @@ import {
   parseNicoPlayerMessage,
 } from '../../services/nicoPlayerSync';
 import { getPlaybackEndCheckDelayMs, hasReachedPlaybackEnd } from '../../services/playbackEndRecovery';
+import SoundCloudEmbed from './SoundCloudEmbed';
+import BilibiliEmbed from './BilibiliEmbed';
 
 /**
- * PlayerEmbed - YouTube / ニコニコ動画の埋め込みプレイヤー
+ * PlayerEmbed - YouTube / ニコニコ / SoundCloud / Bilibili 埋め込みプレイヤー
  *
  * 選択されたPVのサービスに応じて適切なiframeを表示。
  * YouTube: IFrame Player API を使用して再生制御。
- * ニコニコ: iframe埋め込み制限のため「ニコニコで開く」UIを表示。
+ * ニコニコ: connector protocolで再生状態・音量・進捗を同期。
+ * SoundCloud: Widget APIで再生状態・音量・進捗を同期。
+ * Bilibili: 公式iframeとネイティブ操作を使用。
  */
 
 // YouTube IFrame API の型
@@ -669,6 +673,14 @@ export default function PlayerEmbed() {
   // ニコニコ動画の埋め込み
   if (currentPV?.service === 'NicoNicoDouga') {
     return <NicoEmbed key={`${currentPV.pvId}:${playbackSequence}`} pvId={currentPV.pvId} name={currentPV.name} duration={currentSong?.lengthSeconds} isPlaying={isPlaying} />;
+  }
+
+  if (currentPV?.service === 'SoundCloud') {
+    return <SoundCloudEmbed key={`${currentPV.pvId}:${playbackSequence}`} pv={currentPV} isPlaying={isPlaying} />;
+  }
+
+  if (currentPV?.service === 'Bilibili') {
+    return <BilibiliEmbed key={`${currentPV.pvId}:${playbackSequence}`} pv={currentPV} isPlaying={isPlaying} duration={currentSong?.lengthSeconds} />;
   }
 
   // YouTube プレイヤーコンテナ

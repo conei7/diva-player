@@ -2,6 +2,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { Song } from '../types/vocadb';
 
 let usePlayerStore: typeof import('./playerStore').usePlayerStore;
+let getPlayablePV: typeof import('./playerStore').getPlayablePV;
 
 beforeAll(async () => {
   const values = new Map<string, string>();
@@ -12,7 +13,7 @@ beforeAll(async () => {
     removeItem: (key: string) => { values.delete(key); },
     key: (index: number) => [...values.keys()][index] ?? null,
   });
-  ({ usePlayerStore } = await import('./playerStore'));
+  ({ usePlayerStore, getPlayablePV } = await import('./playerStore'));
 });
 
 const song: Song = {
@@ -60,5 +61,28 @@ describe('player queue autoplay', () => {
   it('continues to autoplay normal queue selection', () => {
     usePlayerStore.getState().setQueue([song], 0);
     expect(usePlayerStore.getState().isPlaying).toBe(true);
+  });
+
+  it('keeps existing services ahead of SoundCloud and Bilibili in auto mode', () => {
+    const result = getPlayablePV({
+      ...song,
+      pvs: [
+        { ...song.pvs![0], id: 2, pvId: 'bili', service: 'Bilibili' },
+        { ...song.pvs![0], id: 3, pvId: 'soundcloud', service: 'SoundCloud' },
+        song.pvs![0],
+      ],
+    });
+    expect(result?.service).toBe('Youtube');
+  });
+
+  it('plays a SoundCloud-only or Bilibili-only song', () => {
+    expect(getPlayablePV({
+      ...song,
+      pvs: [{ ...song.pvs![0], pvId: '103524583 producer/track', service: 'SoundCloud' }],
+    })?.service).toBe('SoundCloud');
+    expect(getPlayablePV({
+      ...song,
+      pvs: [{ ...song.pvs![0], pvId: '45451154', service: 'Bilibili' }],
+    })?.service).toBe('Bilibili');
   });
 });

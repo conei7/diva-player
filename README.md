@@ -2,7 +2,7 @@
 
 **Dynamic Index for Virtual Artists**
 
-VocaDB API を活用したボカロ特化ミュージックプレイヤー SPA。YouTube・ニコニコ動画のボカロ楽曲をシームレスに検索・再生できます。
+VocaDB API を活用したボカロ特化ミュージックプレイヤー SPA。YouTube・ニコニコ動画・SoundCloud・Bilibiliのボカロ楽曲を検索・再生できます。
 
 ## 技術スタック
 
@@ -16,7 +16,7 @@ VocaDB API を活用したボカロ特化ミュージックプレイヤー SPA�
 ## 機能
 
 - ボカロ楽曲の検索（モード切替 / 候補 / 詳細フィルター）
-- YouTube・ニコニコ動画の埋め込み再生
+- YouTube・ニコニコ動画・SoundCloud・Bilibiliの埋め込み再生
 - プレイリスト、星評価、キューのローカル永続化
 - IndexedDBによる軽量な長期視聴履歴
 - Qdrant/PostgreSQLとローカル嗜好を組み合わせた推薦、自動キュー、関連曲

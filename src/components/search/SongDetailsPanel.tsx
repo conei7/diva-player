@@ -5,6 +5,8 @@ import { useSearchStore } from '../../stores/searchStore';
 import { usePlayerStore } from '../../stores/playerStore';
 import PlayerEmbed from '../player/PlayerEmbed';
 import { formatDistinctArtistNames } from '../../utils/artistNames';
+import { getPVServiceLabel } from '../../utils/pvService';
+import { isPlayablePV } from '../../utils/playablePV';
 
 interface SongDetailsPanelProps {
   song: Song | null;
@@ -14,16 +16,20 @@ interface SongDetailsPanelProps {
 
 function PVBadge({ pv }: { pv: PV }) {
   const isNico = pv.service === 'NicoNicoDouga';
-  const label = isNico ? 'ニコ' : 'YT';
+  const isYoutube = pv.service === 'Youtube';
+  const label = getPVServiceLabel(pv.service);
   const isOriginal = pv.pvType === 'Original';
-  const color = isNico ? (isOriginal ? '#3b82f6' : '#1e40af') : (isOriginal ? '#ef4444' : '#b91c1c');
-  const bg = isNico 
+  const color = isNico ? (isOriginal ? '#3b82f6' : '#1e40af')
+    : isYoutube ? (isOriginal ? '#ef4444' : '#b91c1c')
+      : pv.service === 'SoundCloud' ? '#fb923c' : '#f472b6';
+  const bg = isNico
     ? (isOriginal ? 'rgba(59,130,246,0.15)' : 'rgba(30,30,100,0.3)') 
-    : (isOriginal ? 'rgba(239,68,68,0.15)' : 'rgba(100,30,30,0.3)');
+    : isYoutube ? (isOriginal ? 'rgba(239,68,68,0.15)' : 'rgba(100,30,30,0.3)')
+      : pv.service === 'SoundCloud' ? 'rgba(249,115,22,0.14)' : 'rgba(244,114,182,0.14)';
   const typeLabel = pv.pvType === 'Original' ? '公式' : pv.pvType === 'Reprint' ? '転載' : 'その他';
-  const watchUrl = isNico
+  const watchUrl = pv.url || (isNico
     ? `https://www.nicovideo.jp/watch/${pv.pvId}`
-    : `https://www.youtube.com/watch?v=${pv.pvId}`;
+    : isYoutube ? `https://www.youtube.com/watch?v=${pv.pvId}` : '#');
 
   return (
     <a
@@ -69,9 +75,7 @@ export default function SongDetailsPanel({ song, onClose, inline }: SongDetailsP
 
   if (!song) return null;
 
-  const playablePVs = song.pvs?.filter(
-    pv => !pv.disabled && (pv.service === 'Youtube' || pv.service === 'NicoNicoDouga'),
-  ) ?? [];
+  const playablePVs = song.pvs?.filter(isPlayablePV) ?? [];
 
   const producers = song.artists?.filter(a => a.categories?.includes('Producer')) ?? [];
   const vocalists = song.artists?.filter(a => a.categories === 'Vocalist') ?? [];
