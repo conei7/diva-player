@@ -40,6 +40,7 @@ import { resolveWithin } from '../utils/timeBudget';
 type HomeCategoryId =
   | 'recommended'
   | 'popular'
+  | 'pace'
   | 'trending'
   | 'recent'
   | 'deep'
@@ -49,6 +50,7 @@ type HomeCategoryId =
 const CATEGORIES: CategoryChip[] = [
   { id: 'recommended', label: 'あなたへのおすすめ' },
   { id: 'popular', label: '人気の曲' },
+  { id: 'pace', label: '再生ペース' },
   { id: 'trending', label: '急上昇' },
   { id: 'recent', label: '新着' },
   { id: 'deep', label: 'マイナー発掘' },
@@ -283,7 +285,11 @@ export default function HomePage() {
       } else {
         switch (category) {
           case 'popular': {
-            result = await getTrendingSongs(30, PAGE_SIZE, pageNum * PAGE_SIZE, 'popular', rankingSeedRef.current, globalFilterSettings);
+            result = await getTrendingSongs(30, PAGE_SIZE, pageNum * PAGE_SIZE, 'alltime', rankingSeedRef.current, globalFilterSettings);
+            break;
+          }
+          case 'pace': {
+            result = await getTrendingSongs(30, PAGE_SIZE, pageNum * PAGE_SIZE, 'pace', rankingSeedRef.current, globalFilterSettings);
             break;
           }
           case 'recommended':

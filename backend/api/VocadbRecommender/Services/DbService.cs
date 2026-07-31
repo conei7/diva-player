@@ -2,6 +2,7 @@ using Microsoft.Extensions.Caching.Memory;
 using Npgsql;
 using NpgsqlTypes;
 using System.Diagnostics;
+using System.Globalization;
 using System.Text.Json;
 
 namespace VocadbRecommender.Services;
@@ -40,15 +41,84 @@ public class DbService
         ", ",
         VoiceSynthArtistTypes.Select(static artistType => $"'{artistType}'"));
 
-    private static string NicoWeightSql(string youtubeExpression) =>
+    private sealed record ViewWeightBand(long YoutubeMin, double Weight);
+    private sealed record ViewWeightProfile(double FallbackWeight, double MaxWeight, IReadOnlyList<ViewWeightBand> Bands);
+
+    private static string FormatSqlNumber(double value) =>
+        value.ToString("R", CultureInfo.InvariantCulture);
+
+    private static string LegacyNicoWeightSql(string youtubeExpression) =>
         $"LEAST(8.0, GREATEST(3.0, 3.0 + (LN(1 + GREATEST(0, {youtubeExpression})) / LN(10.0)) * 0.75))";
 
-    private static string WeightedViewsSql(string youtubeExpression, string nicoExpression) =>
-        $"(COALESCE({youtubeExpression}, 0) + ({NicoWeightSql($"COALESCE({youtubeExpression}, 0)")} * COALESCE({nicoExpression}, 0)))";
+    private static string NicoWeightSql(string youtubeExpression, ViewWeightProfile? profile)
+    {
+        if (profile is null || profile.Bands.Count == 0)
+            return LegacyNicoWeightSql(youtubeExpression);
+
+        var value = $"GREATEST(0, COALESCE({youtubeExpression}, 0))";
+        var fallback = FormatSqlNumber(Math.Min(profile.MaxWeight, profile.FallbackWeight));
+        var bands = profile.Bands.OrderBy(static band => band.YoutubeMin).ToArray();
+        var parts = new List<string> { $"CASE WHEN {value} <= 0 THEN {fallback}" };
+        var first = bands[0];
+        parts.Add($"WHEN {value} < {first.YoutubeMin} THEN {FormatSqlNumber(Math.Min(profile.MaxWeight, first.Weight))}");
+        for (var index = 1; index < bands.Length; index++)
+        {
+            var previous = bands[index - 1];
+            var current = bands[index];
+            var previousWeight = Math.Min(profile.MaxWeight, previous.Weight);
+            var currentWeight = Math.Min(profile.MaxWeight, current.Weight);
+            var interpolation = $"({FormatSqlNumber(previousWeight)} + ({FormatSqlNumber(currentWeight - previousWeight)}) * (LN({value} / {previous.YoutubeMin}.0) / LN({current.YoutubeMin}.0 / {previous.YoutubeMin}.0)))";
+            parts.Add($"WHEN {value} < {current.YoutubeMin} THEN {interpolation}");
+        }
+        parts.Add($"ELSE {FormatSqlNumber(Math.Min(profile.MaxWeight, bands[^1].Weight))} END");
+        return string.Join(" ", parts);
+    }
+
+    private static string WeightedViewsSql(string youtubeExpression, string nicoExpression, ViewWeightProfile? profile) =>
+        $"(COALESCE({youtubeExpression}, 0) + ({NicoWeightSql($"COALESCE({youtubeExpression}, 0)", profile)} * COALESCE({nicoExpression}, 0)))";
 
     private readonly string _connStr;
     private readonly IMemoryCache _cache;
     private sealed record CachedSongSearch(string ItemsJson, int TotalCount);
+
+    private async Task<ViewWeightProfile?> LoadViewWeightProfileAsync(NpgsqlConnection conn)
+    {
+        const string cacheKey = "platform_view_weight_profile";
+        if (_cache.TryGetValue(cacheKey, out ViewWeightProfile? cached))
+            return cached;
+
+        try
+        {
+            await using var cmd = new NpgsqlCommand(@"
+                SELECT p.fallback_weight, p.max_weight, b.youtube_min, b.applied_weight
+                FROM platform_view_weight_profiles p
+                LEFT JOIN platform_view_weight_bands b ON b.profile_id = p.id
+                WHERE p.profile_month = (SELECT MAX(profile_month) FROM platform_view_weight_profiles)
+                ORDER BY b.youtube_min", conn);
+            var bands = new List<ViewWeightBand>();
+            double? fallback = null;
+            double maxWeight = 25.0;
+            await using var reader = await cmd.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                fallback ??= reader.GetDouble(0);
+                maxWeight = reader.GetDouble(1);
+                if (!reader.IsDBNull(2) && !reader.IsDBNull(3))
+                    bands.Add(new ViewWeightBand(reader.GetInt64(2), reader.GetDouble(3)));
+            }
+
+            if (fallback is null)
+                return null;
+            var profile = new ViewWeightProfile(fallback.Value, maxWeight, bands);
+            _cache.Set(cacheKey, profile, TimeSpan.FromMinutes(5));
+            return profile;
+        }
+        catch (PostgresException)
+        {
+            // The API remains compatible while an older database is being migrated.
+            return null;
+        }
+    }
 
     public DbService(IConfiguration cfg, IMemoryCache cache)
     {
@@ -902,7 +972,15 @@ public class DbService
         var clampedDays = Math.Clamp(days, 1, 365);
         var normalizedStart = Math.Max(0, start);
         var clampedMaxResults = Math.Clamp(maxResults, 1, 100);
-        var normalizedMode = mode is "popular" or "surge" or "recent" or "deep" ? mode : "growth";
+        var normalizedMode = mode switch
+        {
+            "alltime" => "alltime",
+            "pace" or "popular" => "pace",
+            "surge" => "surge",
+            "recent" => "recent",
+            "deep" => "deep",
+            _ => "growth",
+        };
         var normalizedRanking = ranking == "legacy" ? "legacy" : "quality";
         var normalizedSeed = Math.Clamp(seed, 0, 63);
         var normalizedExcludedTypes = (excludedSongTypes ?? []).Where(type => !string.IsNullOrWhiteSpace(type)).Distinct(StringComparer.Ordinal).Order().ToArray();
@@ -927,13 +1005,14 @@ public class DbService
             "surge" when normalizedRanking == "legacy" => "g.surge_rate + (g.ranking_noise - 0.5) * 0.025 DESC, g.view_growth DESC, s.favorited_times DESC NULLS LAST",
             "surge" => "g.surge_rank_score + (g.ranking_noise - 0.5) * 0.025 DESC, g.view_growth DESC, g.quality_score DESC, s.favorited_times DESC NULLS LAST",
             "recent" => "g.recent_score + (g.ranking_noise - 0.5) * 0.015 DESC, g.view_growth DESC, s.publish_date DESC",
-            "popular" => "g.recent_score + (g.ranking_noise - 0.5) * 0.015 DESC, g.view_growth DESC, s.publish_date DESC",
+            "alltime" => "g.popular_score + (g.ranking_noise - 0.5) * 0.015 DESC, g.view_growth DESC, s.favorited_times DESC NULLS LAST",
+            "pace" => "g.recent_score + (g.ranking_noise - 0.5) * 0.015 DESC, g.view_growth DESC, s.publish_date DESC",
             "deep" => "g.deep_score DESC, g.quality_score DESC, g.view_growth DESC",
             _ => "g.popular_score + (g.ranking_noise - 0.5) * 0.035 DESC, g.growth_rate DESC, s.favorited_times DESC NULLS LAST",
         };
         var sourceTable = normalizedMode switch
         {
-            "recent" or "popular" or "deep" => "catalog_candidates",
+            "alltime" or "pace" or "recent" or "deep" => "catalog_candidates",
             "surge" when normalizedRanking == "quality" => "surge_ranked",
             _ => "growth",
         };
@@ -947,7 +1026,8 @@ public class DbService
         {
             "growth" => "g.popular_score > 0",
             "surge" => "g.view_growth > 0",
-            "popular" or "recent" => "g.recent_score > 0",
+            "alltime" => "g.popular_score > 0",
+            "pace" or "recent" => "g.recent_score > 0",
             _ => "TRUE",
         };
         var debugFields = debug && normalizedMode == "surge"
@@ -959,19 +1039,49 @@ public class DbService
         if (normalizedMinNico > 0) filterConditions.Add($"COALESCE(s.nico_views, 0) >= ${nextFilterParameter++}");
         if (normalizedExcludedTypes.Length > 0) filterConditions.Add($"{songTypeExpression} <> ALL(${nextFilterParameter})");
         var globalFilterCondition = filterConditions.Count > 0 ? "AND " + string.Join(" AND ", filterConditions) : string.Empty;
-        var latestTotalViewsSql = WeightedViewsSql("h.youtube_views", "h.nico_views");
-        var baselineTotalViewsSql = WeightedViewsSql("h.youtube_views", "h.nico_views");
-        var currentSongTotalViewsSql = WeightedViewsSql("s.youtube_views", "s.nico_views");
-        var growthNicoWeightSql = NicoWeightSql("b.youtube_views");
+        using var conn = Open();
+        var viewWeightProfile = await LoadViewWeightProfileAsync(conn);
+        var latestTotalViewsSql = WeightedViewsSql("h.youtube_views", "h.nico_views", viewWeightProfile);
+        var baselineTotalViewsSql = WeightedViewsSql("h.youtube_views", "h.nico_views", viewWeightProfile);
+        var currentSongTotalViewsSql = WeightedViewsSql("s.youtube_views", "s.nico_views", viewWeightProfile);
+        var growthNicoWeightSql = NicoWeightSql("b.youtube_views", viewWeightProfile);
         var catalogCandidateSql = normalizedMode switch
         {
             "recent" => "SELECT id FROM songs WHERE publish_date >= CURRENT_DATE - interval '30 days'",
-            "popular" => """
+            "alltime" or "pace" => $"""
                 SELECT id FROM songs WHERE publish_date >= CURRENT_DATE - interval '90 days'
                 UNION
-                SELECT id FROM (SELECT id FROM songs WHERE publish_date IS NOT NULL ORDER BY youtube_views DESC NULLS LAST LIMIT 2000) youtube_top
+                SELECT id FROM (
+                    SELECT s.id
+                    FROM songs s
+                    WHERE s.publish_date IS NOT NULL
+                      AND EXISTS (
+                          SELECT 1
+                          FROM song_artists sa
+                          JOIN artists a ON a.id = sa.artist_id
+                          WHERE sa.song_id = s.id
+                            AND sa.is_vocalist = TRUE
+                            AND a.artist_type IN ({VoiceSynthArtistTypesSql})
+                      )
+                    ORDER BY s.youtube_views DESC NULLS LAST
+                    LIMIT 2000
+                ) youtube_top
                 UNION
-                SELECT id FROM (SELECT id FROM songs WHERE publish_date IS NOT NULL ORDER BY nico_views DESC NULLS LAST LIMIT 2000) nico_top
+                SELECT id FROM (
+                    SELECT s.id
+                    FROM songs s
+                    WHERE s.publish_date IS NOT NULL
+                      AND EXISTS (
+                          SELECT 1
+                          FROM song_artists sa
+                          JOIN artists a ON a.id = sa.artist_id
+                          WHERE sa.song_id = s.id
+                            AND sa.is_vocalist = TRUE
+                            AND a.artist_type IN ({VoiceSynthArtistTypesSql})
+                      )
+                    ORDER BY s.nico_views DESC NULLS LAST
+                    LIMIT 2000
+                ) nico_top
                 """,
             "deep" => """
                 SELECT song_id AS id
@@ -983,7 +1093,6 @@ public class DbService
             _ => "SELECT id FROM songs WHERE FALSE",
         };
 
-        using var conn = Open();
         await using var cmd = new NpgsqlCommand($@"
             WITH baseline_day AS (
                 SELECT date_trunc('day', MAX(recorded_at)) AS day
