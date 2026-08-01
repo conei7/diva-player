@@ -224,9 +224,7 @@ try {
   const pathBeforeDiscovery = normalizePath(new URL(page.url()).pathname);
   await page.click('button[aria-label="発掘ミックスを生成して再生"]');
   await page.waitForFunction(() => [...document.querySelectorAll('button[aria-label="発掘ミックスを生成して再生"]')]
-    .find(button => button.getBoundingClientRect().width > 0)?.getAttribute('aria-busy') === 'true', { timeout: 10_000 });
-  await page.waitForFunction(() => [...document.querySelectorAll('button[aria-label="発掘ミックスを生成して再生"]')]
-    .find(button => button.getBoundingClientRect().width > 0)?.getAttribute('aria-busy') === 'false', { timeout: 60_000 });
+    .find(button => button.getBoundingClientRect().width > 0)?.textContent?.includes('曲を再生中'), { timeout: 60_000 });
   const discoveryResultText = await page.$$eval('button[aria-label="発掘ミックスを生成して再生"]', buttons => (
     buttons.find(button => button.getBoundingClientRect().width > 0)?.textContent?.trim() ?? ''
   ));
