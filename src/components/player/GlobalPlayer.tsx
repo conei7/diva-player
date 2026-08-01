@@ -147,7 +147,7 @@ export default function GlobalPlayer() {
             >
               {currentSong.name}
             </p>
-            <p className="text-xs truncate" style={{ color: 'var(--color-text-muted)' }}>
+            <p className="text-xs truncate" style={{ color: 'var(--color-text-secondary)' }}>
               {producerName}
             </p>
           </div>

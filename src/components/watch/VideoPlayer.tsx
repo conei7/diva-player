@@ -44,25 +44,32 @@ export default function VideoPlayer() {
       }
     };
 
+    const scheduleUpdate = () => {
+      if (animationFrameId) cancelAnimationFrame(animationFrameId);
+      animationFrameId = requestAnimationFrame(updateRect);
+    };
+
     // 初期化時
     updateRect();
 
     // ResizeObserverでサイズ変更を監視
     const observer = new ResizeObserver(() => {
-      animationFrameId = requestAnimationFrame(updateRect);
+      scheduleUpdate();
     });
     observer.observe(ref.current);
     
     // ウィンドウリサイズ時
     const handleResize = () => {
-      animationFrameId = requestAnimationFrame(updateRect);
+      scheduleUpdate();
     };
     
     window.addEventListener('resize', handleResize);
+    window.addEventListener('diva:backend-status-layout', scheduleUpdate);
 
     return () => {
       observer.disconnect();
       window.removeEventListener('resize', handleResize);
+      window.removeEventListener('diva:backend-status-layout', scheduleUpdate);
       if (animationFrameId) cancelAnimationFrame(animationFrameId);
       setPlayerRect(null);
     };

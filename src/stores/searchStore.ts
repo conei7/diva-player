@@ -515,7 +515,7 @@ async function fetchByArtistIds(
 
 export const useSearchStore = create<SearchState>((set, get) => ({
   query: '',
-  sort: 'FavoritedTimes' as ExtendedSortRule,
+  sort: 'TotalViews' as ExtendedSortRule,
   sortOrder: 'desc' as SortOrder,
   resolvedArtistId: null,
   artistRole: null,
@@ -874,6 +874,8 @@ export const useSearchStore = create<SearchState>((set, get) => ({
     searchGeneration += 1;
     set({
       query: '',
+      sort: 'TotalViews' as ExtendedSortRule,
+      sortOrder: 'desc' as SortOrder,
       resolvedArtistId: null,
       artistRole: null,
       vocalistFilters: [],

@@ -10,6 +10,11 @@ import {
 } from './searchStore';
 
 describe('search result sorting', () => {
+  it('defaults to weighted total views', () => {
+    useSearchStore.getState().reset();
+    expect(useSearchStore.getState().sort).toBe('TotalViews');
+  });
+
   it('keeps the API order for weighted total views', () => {
     const songs = [
       { id: 1, youtubeViews: 0, nicoViews: 50 },

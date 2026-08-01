@@ -777,6 +777,14 @@ select optgroup {
     inset 0 1px 0 rgba(255, 255, 255, 0.05) !important;
 }
 
+.global-mini-player .mini-player-controls {
+  color: var(--color-text-primary);
+}
+
+.global-mini-player .mini-player-controls .btn-ghost {
+  color: var(--color-text-secondary);
+}
+
 /* ─── アニメーション ─── */
 @keyframes slideRight {
   from { opacity: 0; transform: translateX(40px); }
