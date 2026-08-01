@@ -638,7 +638,7 @@ export default function PlaylistPage() {
 
   const handleShufflePlay = useCallback(() => {
     if (!selectedPlaylist || selectedPlaylist.songs.length === 0) return;
-    setQueueShuffled(selectedPlaylist.songs);
+    setQueueShuffled(selectedPlaylist.songs, selectedPlaylist.name);
   }, [selectedPlaylist, setQueueShuffled]);
 
   // サイドバープレイリスト行
@@ -1044,7 +1044,7 @@ export default function PlaylistPage() {
                   <div className="mt-4 flex flex-wrap items-center gap-2">
                     {selectedPlaylist.songs.length > 0 && (
                       <>
-                        <button onClick={() => setQueue(selectedPlaylist.songs, 0)} className="flex h-10 items-center gap-2 rounded-full bg-white px-5 text-sm font-bold text-black transition-colors hover:bg-neutral-200">
+                        <button onClick={() => setQueue(selectedPlaylist.songs, 0, true, 'manual', selectedPlaylist.name)} className="flex h-10 items-center gap-2 rounded-full bg-white px-5 text-sm font-bold text-black transition-colors hover:bg-neutral-200">
                           <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
                           再生
                         </button>
@@ -1282,7 +1282,7 @@ export default function PlaylistPage() {
                             selectionMode={selectionMode}
                             selected={selectedIds.has(song.id)}
                             onToggleSelect={() => toggleSelect(song.id)}
-                            onPlay={() => setQueue(filteredSongs, filteredIdx)}
+                            onPlay={() => setQueue(filteredSongs, filteredIdx, true, 'manual', selectedPlaylist.name)}
                             onRemove={() => removeSongWithUndo(selectedPlaylist.id, globalIndex)}
                             onMoveTop={() => moveToTop(globalIndex)}
                             onMoveBottom={() => moveToBottom(globalIndex)}
@@ -1305,7 +1305,7 @@ export default function PlaylistPage() {
                           selectionMode={selectionMode}
                           selected={selectedIds.has(song.id)}
                           onToggleSelect={() => toggleSelect(song.id)}
-                          onPlay={() => setQueue(filteredSongs, filteredIdx)}
+                          onPlay={() => setQueue(filteredSongs, filteredIdx, true, 'manual', selectedPlaylist.name)}
                           onRemove={() => removeSongWithUndo(selectedPlaylist.id, globalIndex)}
                           onMoveTop={() => moveToTop(globalIndex)}
                           onMoveBottom={() => moveToBottom(globalIndex)}

@@ -64,11 +64,37 @@ describe('player queue autoplay', () => {
   });
 
   it('preserves discovery as the playback source while starting the queue', () => {
-    usePlayerStore.getState().setQueue([song], 0, true, 'discovery');
+    usePlayerStore.getState().setQueue([song], 0, true, 'discovery', '発掘ミックス');
     const state = usePlayerStore.getState();
     expect(state.isPlaying).toBe(true);
     expect(state.currentPlaybackSource).toBe('discovery');
     expect(state.queueSources).toEqual(['discovery']);
+    expect(state.queueTitle).toBe('発掘ミックス');
+  });
+
+  it('restores a removed queue item at its original position without changing the source title', () => {
+    const second = { ...song, id: song.id + 1, name: 'Second queue fixture' };
+    usePlayerStore.getState().setQueue([song, second], 0, false, 'manual', 'お気に入り曲');
+
+    const removed = usePlayerStore.getState().removeFromQueue(1);
+    expect(usePlayerStore.getState().queue.map(item => item.id)).toEqual([song.id]);
+    expect(removed).not.toBeNull();
+
+    usePlayerStore.getState().restoreQueueItem(removed!);
+    const state = usePlayerStore.getState();
+    expect(state.queue.map(item => item.id)).toEqual([song.id, second.id]);
+    expect(state.queueTitle).toBe('お気に入り曲');
+  });
+
+  it('continues with the previous song when removing the current last queue item', () => {
+    const second = { ...song, id: song.id + 1, name: 'Second queue fixture' };
+    usePlayerStore.getState().setQueue([song, second], 1, false, 'manual', 'テストプレイリスト');
+
+    usePlayerStore.getState().removeFromQueue(1);
+    const state = usePlayerStore.getState();
+    expect(state.queue.map(item => item.id)).toEqual([song.id]);
+    expect(state.queueIndex).toBe(0);
+    expect(state.currentSong?.id).toBe(song.id);
   });
 
   it('keeps existing services ahead of SoundCloud and Bilibili in auto mode', () => {

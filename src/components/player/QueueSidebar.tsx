@@ -1,4 +1,4 @@
-import { useRef, useEffect } from 'react';
+import { useRef, useEffect, useState } from 'react';
 import { usePlayerStore } from '../../stores/playerStore';
 import { useRatingStore } from '../../stores/ratingStore';
 import StarRating from './StarRating';
@@ -26,13 +26,40 @@ interface QueueSidebarProps {
 }
 
 export default function QueueSidebar({ hideHeader }: QueueSidebarProps = {}) {
-  const { queue, queueIndex, jumpToIndex, removeFromQueue } = usePlayerStore();
+  const { queue, queueIndex, jumpToIndex, removeFromQueue, restoreQueueItem } = usePlayerStore();
   const { getRating, setRating } = useRatingStore();
   const recordQueueRemove = useImplicitFeedbackStore(s => s.recordQueueRemove);
   const recommendations = useQueueRecommendationStore(s => s.recommendations);
   const autoQueueStatus = useAutoQueueStatusStore(s => s.status);
   const openSaveToPlaylist = useUiStore(s => s.openSaveToPlaylist);
   const currentRef = useRef<HTMLLIElement>(null);
+  const removalTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [removedItem, setRemovedItem] = useState<ReturnType<typeof removeFromQueue>>(null);
+
+  useEffect(() => () => {
+    if (removalTimerRef.current) clearTimeout(removalTimerRef.current);
+  }, []);
+
+  const handleQueueRemove = (index: number) => {
+    if (removalTimerRef.current) clearTimeout(removalTimerRef.current);
+    if (removedItem) recordQueueRemove(removedItem.song.id);
+    const removed = removeFromQueue(index);
+    if (!removed) return;
+    setRemovedItem(removed);
+    removalTimerRef.current = setTimeout(() => {
+      recordQueueRemove(removed.song.id);
+      setRemovedItem(null);
+      removalTimerRef.current = null;
+    }, 8000);
+  };
+
+  const undoQueueRemove = () => {
+    if (!removedItem) return;
+    if (removalTimerRef.current) clearTimeout(removalTimerRef.current);
+    removalTimerRef.current = null;
+    restoreQueueItem(removedItem);
+    setRemovedItem(null);
+  };
 
   // 現在の曲が変わったら自動スクロール
   useEffect(() => {
@@ -40,7 +67,7 @@ export default function QueueSidebar({ hideHeader }: QueueSidebarProps = {}) {
   }, [queueIndex]);
 
   return (
-    <div className="flex flex-col h-full overflow-hidden">
+    <div className="relative flex flex-col h-full overflow-hidden">
       {/* ヘッダー */}
       {!hideHeader && (
         <div
@@ -112,7 +139,7 @@ export default function QueueSidebar({ hideHeader }: QueueSidebarProps = {}) {
                 <div
                   role="button"
                   tabIndex={0}
-                  className="w-full flex items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-white/5 pr-8"
+                  className="w-full flex items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-white/5"
                   style={{
                     background: isCurrent ? 'rgba(139,92,246,0.12)' : 'transparent',
                     borderLeft: isCurrent ? '3px solid var(--color-accent-purple)' : '3px solid transparent',
@@ -185,29 +212,39 @@ export default function QueueSidebar({ hideHeader }: QueueSidebarProps = {}) {
                       size="sm"
                     />
                   </div>
+                  <button
+                    className="ml-2 flex h-7 w-7 shrink-0 items-center justify-center rounded opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100"
+                    style={{ background: 'rgba(239,68,68,0.15)', color: '#ef4444' }}
+                    title="キューから外す（プレイリストは変更しません）"
+                    aria-label={`${song.name}をキューから外す`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleQueueRemove(i);
+                    }}
+                  >
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M4 6h10M4 12h8M4 18h10M17 12h5" />
+                    </svg>
+                  </button>
                 </div>
-
-                {/* 削除ボタン（ホバー時に表示） */}
-                <button
-                  className="absolute right-1 top-1/2 -translate-y-1/2 w-8 h-8 rounded flex items-center justify-center opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity"
-                  style={{ background: 'rgba(239,68,68,0.15)', color: '#ef4444' }}
-                  title="キューから削除"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    // キューからの削除 = 強いネガティブフィードバック (0.0 = 聴きたくない)
-                    recordQueueRemove(song.id);
-                    removeFromQueue(i);
-                  }}
-                >
-                  <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
-                  </svg>
-                </button>
               </li>
             );
           })
         )}
       </ul>
+      {removedItem && (
+        <div className="absolute bottom-3 left-3 right-3 z-10 rounded-lg border px-3 py-2 text-xs shadow-xl"
+             style={{ background: 'var(--color-surface-elevated)', borderColor: 'var(--color-border)', color: 'var(--color-text-primary)' }}>
+          <div className="flex items-center gap-3">
+            <span className="min-w-0 flex-1 truncate" title={removedItem.song.name}>
+              「{removedItem.song.name}」をキューから外しました。プレイリストは変更されません。
+            </span>
+            <button type="button" className="shrink-0 font-semibold" style={{ color: 'var(--color-accent-cyan)' }} onClick={undoQueueRemove}>
+              元に戻す
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

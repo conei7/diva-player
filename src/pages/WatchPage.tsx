@@ -41,6 +41,7 @@ import {
 function WatchQueue() {
   const queue = usePlayerStore(s => s.queue);
   const queueIndex = usePlayerStore(s => s.queueIndex);
+  const queueTitle = usePlayerStore(s => s.queueTitle);
   const openSaveToPlaylist = useUiStore(s => s.openSaveToPlaylist);
   const [expanded, setExpanded] = useState(false);
 
@@ -59,7 +60,7 @@ function WatchQueue() {
             <h3 className="truncate text-sm font-semibold max-w-[180px] sm:max-w-[280px]" style={{ color: 'var(--color-text-primary)' }}>
               次: {nextSong?.name || '終了'}
             </h3>
-            <p className="mt-0.5 text-xs" style={{ color: 'var(--color-text-muted)' }}>ミックスリスト - {queueIndex + 1}/{queue.length}曲</p>
+            <p className="mt-0.5 text-xs" style={{ color: 'var(--color-text-muted)' }}>{queueTitle} - {queueIndex + 1}/{queue.length}曲</p>
           </div>
           <svg
             width="24" height="24" viewBox="0 0 24 24" fill="currentColor"

@@ -17,7 +17,7 @@ export async function playDiscoveryMix(): Promise<DigGenerationResult> {
   });
 
   if (result.songs.length > 0) {
-    usePlayerStore.getState().setQueue(result.songs, 0, true, 'discovery');
+    usePlayerStore.getState().setQueue(result.songs, 0, true, 'discovery', '発掘ミックス');
   }
   return result;
 }
