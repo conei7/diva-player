@@ -87,6 +87,30 @@ function validateDigItems(data, endpoint, excludedIds) {
   return data.items;
 }
 
+function getDigProducerShare(items) {
+  if (items.length === 0) return 0;
+  const counts = new Map();
+  for (const item of items) {
+    const producerIds = (item.artists ?? [])
+      .filter(artist => String(artist.categories ?? '').split(',').map(value => value.trim()).some(category => ['Producer', 'Band', 'Circle'].includes(category)))
+      .map(artist => artist.artist?.id ?? `name:${normalizeArtist(artist.name)}`);
+    for (const producerId of new Set(producerIds)) {
+      counts.set(producerId, (counts.get(producerId) ?? 0) + 1);
+    }
+  }
+  return Math.max(0, ...counts.values()) / items.length;
+}
+
+function digJaccard(itemsA, itemsB) {
+  const a = new Set(itemsA.map(item => item.id));
+  const b = new Set(itemsB.map(item => item.id));
+  const union = new Set([...a, ...b]);
+  if (union.size === 0) return 0;
+  let intersection = 0;
+  for (const id of a) if (b.has(id)) intersection += 1;
+  return intersection / union.size;
+}
+
 function normalizeArtist(value) {
   return String(value ?? '').normalize('NFKC').trim().toLocaleLowerCase('ja-JP');
 }
@@ -187,6 +211,18 @@ async function main() {
   const digItems = validateDigItems(digResult.data, '/api/recommend/dig', digSeedIds);
   assert(digItems.length > 0, '/api/recommend/dig returned no discovery candidates.');
   assert(digResult.elapsedMs <= maxLatencyMs, `/api/recommend/dig latency ${digResult.elapsedMs}ms exceeded ${maxLatencyMs}ms.`);
+  const alternateDigResult = await postJson(baseUrl, '/api/recommend/dig', {
+    seeds: [...digSeedIds].map((songId, index) => ({ songId, weight: 1 - index * 0.15 })),
+    count: 20,
+    offset: 0,
+    generationSeed: 29,
+    excludeSongIds: [...digSeedIds],
+  });
+  const alternateDigItems = validateDigItems(alternateDigResult.data, '/api/recommend/dig', digSeedIds);
+  const digGenerationOverlap = digJaccard(digItems, alternateDigItems);
+  const digMaxProducerShare = Math.max(getDigProducerShare(digItems), getDigProducerShare(alternateDigItems));
+  assert(digGenerationOverlap < 0.85, `/api/recommend/dig generation overlap ${digGenerationOverlap.toFixed(3)} indicates ineffective random discovery.`);
+  assert(digMaxProducerShare < 0.5, `/api/recommend/dig producer share ${digMaxProducerShare.toFixed(3)} indicates catalog concentration.`);
 
   const p95 = percentile(latencySamples, 0.95);
 
@@ -222,7 +258,13 @@ async function main() {
       audioFeatures,
     },
     latency: { p95Ms: p95, maximumMs: maxLatencyMs },
-    dig: { count: digItems.length, latencyMs: digResult.elapsedMs, seedIds: [...digSeedIds] },
+    dig: {
+      count: digItems.length,
+      latencyMs: digResult.elapsedMs,
+      seedIds: [...digSeedIds],
+      generationOverlap: digGenerationOverlap,
+      maxProducerShare: digMaxProducerShare,
+    },
     quality: {
       endpoints: endpointQuality,
       maxModeOverlap: observedMaxModeOverlap,
@@ -248,7 +290,7 @@ async function main() {
   });
   console.log(`PASS recommendation regression (${summary.join('; ')})`);
   console.log(`PASS recommendation latency (p95=${p95}ms, max=${maxLatencyMs}ms)`);
-  console.log(`PASS Dig discovery (${digItems.length} candidates, latency=${digResult.elapsedMs}ms)`);
+  console.log(`PASS Dig discovery (${digItems.length} candidates, latency=${digResult.elapsedMs}ms, generationOverlap=${digGenerationOverlap.toFixed(2)}, producerShare=${digMaxProducerShare.toFixed(2)})`);
   console.log(`PASS recommendation diversity (${endpointQuality.map(quality => `${quality.endpoint} artist=${quality.maxArtistShare.toFixed(2)} seedOverlap=${quality.maxSeedOverlap.toFixed(2)} unique=${quality.uniqueRatio.toFixed(2)}`).join('; ')}; modeOverlap=${observedMaxModeOverlap.toFixed(2)})`);
 }
 

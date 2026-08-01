@@ -21,7 +21,7 @@ function isYouTubeLinked(playlist: Playlist): boolean {
 export const WATCH_LATER_ID = 'watch-later';
 /** Reserved generated playlist ID. It is created lazily on first Dig use. */
 export const DIG_PLAYLIST_ID = 'dig-playlist';
-export const DIG_PLAYLIST_NAME = 'Dig';
+export const DIG_PLAYLIST_NAME = '発掘ミックス';
 
 // ─── 追加結果 ───────────────────────────────────────────────────────────────
 export interface AddSongResult {
@@ -503,7 +503,7 @@ export const usePlaylistStore = create<PlaylistState>((set, get) => ({
     const playlist: Playlist = {
       id: DIG_PLAYLIST_ID,
       name: DIG_PLAYLIST_NAME,
-      description: '生成時点で未聴の曲から編成する発掘プレイリスト',
+      description: '高評価曲との音響的な近さから、未聴曲を確率的に発掘するミックス',
       songs: [],
       isPinned: true,
       createdAt: now,
@@ -522,7 +522,7 @@ export const usePlaylistStore = create<PlaylistState>((set, get) => ({
       ? {
           ...playlist,
           name: DIG_PLAYLIST_NAME,
-          description: `生成時点で未聴の曲から編成・${new Date(generatedAt).toLocaleString('ja-JP')}`,
+          description: `音響的に近い未聴曲から確率編成・${new Date(generatedAt).toLocaleString('ja-JP')}`,
           songs,
           isPinned: true,
           coverArtUrl: songs[0]?.thumbUrl ?? playlist.coverArtUrl,

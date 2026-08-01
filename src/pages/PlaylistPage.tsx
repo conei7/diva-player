@@ -31,7 +31,6 @@ import { usePlayerStore } from '../stores/playerStore';
 import { useHistoryStore } from '../stores/historyStore';
 import { useRatingStore } from '../stores/ratingStore';
 import { useImplicitFeedbackStore } from '../stores/implicitFeedbackStore';
-import { useFavoriteProducerStore } from '../stores/favoriteProducerStore';
 import { getGlobalFilterSettings } from '../stores/globalFilterStore';
 import { useUiStore } from '../stores/uiStore';
 import type { Playlist, PlaylistFolder, Song } from '../types/vocadb';
@@ -168,8 +167,6 @@ export default function PlaylistPage() {
   const historyEntries = useHistoryStore(state => state.entries);
   const ratings = useRatingStore(state => state.ratings);
   const implicitFeedback = useImplicitFeedbackStore(state => state.feedback);
-  const favoriteProducers = useFavoriteProducerStore(state => state.producers);
-  const favoriteProducerIds = useMemo(() => favoriteProducers.map(producer => producer.id), [favoriteProducers]);
   const openSaveToPlaylist = useUiStore(s => s.openSaveToPlaylist);
 
   const [selectedPlaylistId, setSelectedPlaylistId] = useState<string | null>(null);
@@ -314,7 +311,6 @@ export default function PlaylistPage() {
         playlists,
         ratings,
         implicitFeedback,
-        favoriteProducerIds,
         globalFilters: getGlobalFilterSettings(),
       });
       if (requestId !== digRequestRef.current) return;
@@ -342,7 +338,7 @@ export default function PlaylistPage() {
         },
       }));
       if (playAfter) setQueue(updated.songs, 0, true);
-      showToast(`Digを${result.songs.length}曲で編成しました`, 'success');
+      showToast(`発掘ミックスを${result.songs.length}曲で編成しました`, 'success');
     } catch (error) {
       if (requestId !== digRequestRef.current) return;
       setDigStatuses(current => ({
@@ -352,9 +348,9 @@ export default function PlaylistPage() {
           error: error instanceof Error ? error.message : 'unknown',
         },
       }));
-      showToast('Digの生成に失敗しました。既存のプレイリストは保持しています。', 'warning');
+      showToast('発掘ミックスの生成に失敗しました。既存の曲一覧は保持しています。', 'warning');
     }
-  }, [favoriteProducerIds, getOrCreateDigPlaylist, historyEntries, implicitFeedback, playlists, ratings, replaceDigPlaylistSongs, setQueue, showToast]);
+  }, [getOrCreateDigPlaylist, historyEntries, implicitFeedback, playlists, ratings, replaceDigPlaylistSongs, setQueue, showToast]);
 
   useEffect(() => {
     if (searchParams.get('playlist') !== DIG_PLAYLIST_ID) return;
@@ -1048,17 +1044,17 @@ export default function PlaylistPage() {
                   <PlaylistCover playlist={selectedPlaylist} />
                 </div>
                 <div className="min-w-0 flex-1">
-                  <p className="mb-1.5 text-xs text-neutral-500">{isDigPlaylist ? `${DIG_PLAYLIST_NAME}プレイリスト` : selectedPlaylist.smartRule ? 'スマートプレイリスト' : selectedPlaylist.isPinned ? 'ピン留め' : 'プレイリスト'}</p>
+                  <p className="mb-1.5 text-xs text-neutral-500">{isDigPlaylist ? DIG_PLAYLIST_NAME : selectedPlaylist.smartRule ? 'スマートプレイリスト' : selectedPlaylist.isPinned ? 'ピン留め' : 'プレイリスト'}</p>
                   <h1 className="break-words text-2xl font-bold leading-tight text-white sm:text-3xl">{selectedPlaylist.name}</h1>
                     {isDigPlaylist && (
                       <div className="mt-3 rounded-xl border border-emerald-300/15 bg-emerald-300/[0.05] p-3 text-sm text-emerald-50/85">
-                        <p className="font-medium text-emerald-100">生成時点で未聴の曲を、好み・音響・品質から発掘</p>
+                        <p className="font-medium text-emerald-100">高評価曲に音響的に近い未聴曲を、毎回違う組み合わせで発掘</p>
                         <p className="mt-1 text-xs text-emerald-100/65">
                           {selectedDigStatus?.state === 'loading' && '候補を集めています…'}
                           {selectedDigStatus?.state === 'success' && `最終更新 ${new Date(selectedDigStatus.generatedAt ?? selectedPlaylist.updatedAt).toLocaleString('ja-JP')}`}
                           {selectedDigStatus?.state === 'empty' && '未聴の候補が見つかりませんでした。'}
                           {selectedDigStatus?.state === 'error' && '生成に失敗しました。現在の曲一覧は保持しています。'}
-                          {!selectedDigStatus && selectedPlaylist.songs.length === 0 && 'サイドバーの「Digして再生」から編成できます。'}
+                          {!selectedDigStatus && selectedPlaylist.songs.length === 0 && 'サイドバーの「発掘ミックスを作る」から編成できます。'}
                           {!selectedDigStatus && selectedPlaylist.songs.length > 0 && `最終更新 ${new Date(selectedPlaylist.updatedAt).toLocaleString('ja-JP')}`}
                         </p>
                         {selectedDigStatus?.state === 'success' && selectedDigStatus.candidateCount !== undefined && (
@@ -1182,9 +1178,9 @@ export default function PlaylistPage() {
                         className="h-10 rounded-full border border-emerald-300/25 bg-emerald-300/10 px-4 text-sm font-medium text-emerald-100 transition-colors hover:bg-emerald-300/20"
                         disabled={selectedDigStatus?.state === 'loading'}
                         onClick={() => void refreshDigPlaylist({ playAfter: true })}
-                        title="未聴の曲でDigを編成して再生"
+                        title="音響的に近い未聴曲から発掘ミックスを作って再生"
                       >
-                        {selectedDigStatus?.state === 'loading' ? 'Dig生成中…' : '新しくDigして再生'}
+                        {selectedDigStatus?.state === 'loading' ? '発掘中…' : '作り直して再生'}
                       </button>
                     )}
 

@@ -72,6 +72,24 @@ describe('Dig playlist candidate preparation', () => {
     expect(seeds.every(seed => seed.weight > 0 && seed.weight <= 1)).toBe(true);
   });
 
+  it('gives a five-star song substantially more seed weight than incidental playback', () => {
+    const now = Date.now();
+    const seeds = buildDigTasteSeeds({
+      historyEntries: [
+        { song: song(1), playedAt: now },
+        { song: song(2), playedAt: now },
+      ],
+      playlists: [],
+      ratings: { '1': 5 },
+      implicitFeedback: {},
+    }, 12, now);
+    const fiveStar = seeds.find(seed => seed.songId === 1);
+    const incidental = seeds.find(seed => seed.songId === 2);
+
+    expect(fiveStar?.weight).toBe(1);
+    expect(incidental?.weight ?? 1).toBeLessThan(0.3);
+  });
+
   it('treats every playback, rating, and feedback item as known', () => {
     const known = buildDigKnownIds([1, 2], { '3': 4, '0': 5 }, {
       '4': { skipCount: 1, completeCount: 0, removeCount: 0 },
@@ -103,6 +121,6 @@ describe('Dig playlist candidate preparation', () => {
 
     expect(result.songs.map(item => item.id)).toEqual([1, 3, 4]);
     expect(getDigRecommendedSongs).toHaveBeenCalledTimes(2);
-    expect(getDigRecommendedSongs.mock.calls[0][3]).toContain(2);
+    expect(getDigRecommendedSongs.mock.calls[0][2]).toContain(2);
   });
 });

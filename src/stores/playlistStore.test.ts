@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Song } from '../types/vocadb';
-import { DIG_PLAYLIST_ID, usePlaylistStore } from './playlistStore';
+import { DIG_PLAYLIST_ID, DIG_PLAYLIST_NAME, usePlaylistStore } from './playlistStore';
 import { useUiStore } from './uiStore';
 
 function createLocalStorage() {
@@ -153,6 +153,7 @@ describe('Dig generated playlist', () => {
     const first = usePlaylistStore.getState().getOrCreateDigPlaylist();
     const second = usePlaylistStore.getState().getOrCreateDigPlaylist();
     expect(first.id).toBe(DIG_PLAYLIST_ID);
+    expect(first.name).toBe(DIG_PLAYLIST_NAME);
     expect(second.id).toBe(first.id);
     expect(second.isPinned).toBe(true);
 

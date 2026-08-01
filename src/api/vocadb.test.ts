@@ -202,7 +202,6 @@ describe('Dig recommendation API', () => {
 
     const songs = await getDigRecommendedSongs(
       Array.from({ length: 30 }, (_, index) => ({ songId: index + 1, weight: 1 })),
-      Array.from({ length: 25 }, (_, index) => index + 1),
       100,
       Array.from({ length: 600 }, (_, index) => index + 1),
       0,
@@ -212,7 +211,7 @@ describe('Dig recommendation API', () => {
     expect(songs.map(song => song.id)).toEqual([501]);
     const request = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body));
     expect(request.seeds).toHaveLength(24);
-    expect(request.favoriteProducerIds).toHaveLength(20);
+    expect(request.favoriteProducerIds).toBeUndefined();
     expect(request.excludeSongIds).toHaveLength(500);
     expect(request.generationSeed).toBe(42);
   });

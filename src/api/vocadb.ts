@@ -771,7 +771,6 @@ function isSongPayload(value: unknown): value is Song {
 /** Fetches a privacy-preserving, quality-filtered discovery page for Dig. */
 export async function getDigRecommendedSongs(
   seeds: DigRecommendationSeed[],
-  favoriteProducerIds: number[] = [],
   count = 100,
   excludeSongIds: number[] = [],
   offset = 0,
@@ -780,9 +779,6 @@ export async function getDigRecommendedSongs(
   const normalizedSeeds = seeds
     .filter(seed => Number.isInteger(seed.songId) && seed.songId > 0 && Number.isFinite(seed.weight) && seed.weight > 0)
     .slice(0, 24);
-  const normalizedFavorites = favoriteProducerIds
-    .filter(id => Number.isInteger(id) && id > 0)
-    .slice(0, 20);
   if (await isRecommenderAvailable()) {
     try {
       const res = await fetch(`${RECOMMENDER_API}/api/recommend/dig`, {
@@ -790,7 +786,6 @@ export async function getDigRecommendedSongs(
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           seeds: normalizedSeeds,
-          favoriteProducerIds: normalizedFavorites,
           count: Math.min(100, Math.max(1, count)),
           offset: Math.max(0, offset),
           generationSeed,

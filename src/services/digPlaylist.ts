@@ -16,7 +16,6 @@ export interface DigGenerationInput {
   playlists: Array<{ songs: Song[] }>;
   ratings: Record<string, number>;
   implicitFeedback: Record<string, ImplicitSongFeedback>;
-  favoriteProducerIds?: number[];
   globalFilters?: GlobalFilterSettings;
 }
 
@@ -161,7 +160,6 @@ export async function generateDigPlaylist(
   for (let page = 0; page < DIG_MAX_PAGES && candidates.length < targetCount; page++) {
     const pageSongs = await getDigRecommendedSongs(
       seeds,
-      input.favoriteProducerIds ?? [],
       DIG_PAGE_SIZE,
       serverExclusions,
       page * DIG_PAGE_SIZE,
