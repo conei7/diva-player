@@ -66,13 +66,13 @@ export function buildDigTasteSeeds(
     const feedback = input.implicitFeedback[String(entry.song.id)];
     const rating = input.ratings[String(entry.song.id)] ?? 0;
     const negative = (feedback?.skipCount ?? 0) + (feedback?.removeCount ?? 0) * 2;
-    const positive = (feedback?.manualCompleteCount ?? 0) + (feedback?.completeCount ?? 0);
+    const positive = feedback?.manualCompleteCount ?? 0;
     if (negative > positive && rating < 3) continue;
+    if (rating < 3 && positive === 0) continue;
     addScore(scores, entry.song.id,
       Math.exp(-ageDays / 30) * 0.7
       + Math.max(0, rating - 2) * 0.55
-      + Math.min(4, feedback?.manualCompleteCount ?? 0) * 0.35
-      + Math.min(4, feedback?.autoCompleteCount ?? 0) * 0.08);
+      + Math.min(4, positive) * 0.35);
   }
 
   for (const playlist of input.playlists) {
@@ -89,7 +89,7 @@ export function buildDigTasteSeeds(
 
   for (const [rawId, feedback] of Object.entries(input.implicitFeedback)) {
     const songId = Number(rawId);
-    const positive = (feedback.manualCompleteCount ?? 0) + feedback.completeCount;
+    const positive = feedback.manualCompleteCount ?? 0;
     const negative = feedback.skipCount + feedback.removeCount * 2;
     if (positive > negative) addScore(scores, songId, Math.min(3, positive) * 0.12);
   }

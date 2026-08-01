@@ -24,13 +24,16 @@ describe('buildUserTasteProfile', () => {
     expect(profile.longTerm[0].song.id).toBe(1);
   });
 
-  it('uses recent songs as short-term seeds and excludes dominant negative songs', () => {
+  it('uses intentional recent listening as a short-term seed and excludes passive discovery', () => {
     const now = Date.UTC(2026, 6, 11);
     const profile = buildUserTasteProfile(
       [{ song: song(1), playedAt: now - 60 * 60 * 1000 }, { song: song(2), playedAt: now - 30 * 60 * 1000 }],
       [],
       {},
-      { '2': { skipCount: 3, completeCount: 0, removeCount: 1 } },
+      {
+        '1': { skipCount: 0, completeCount: 1, manualCompleteCount: 1, removeCount: 0 },
+        '2': { skipCount: 0, completeCount: 1, discoveryCompleteCount: 1, removeCount: 0 },
+      },
       now,
     );
 

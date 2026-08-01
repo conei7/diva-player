@@ -56,7 +56,7 @@ function PlayerTracker() {
     id: number;
     progress: number;
     duration: number;
-    source: 'manual' | 'auto';
+    source: 'manual' | 'auto' | 'discovery';
     playbackSequence: number;
   } | null>(null);
   const finalizedPlaybackSequenceRef = useRef<number | null>(null);

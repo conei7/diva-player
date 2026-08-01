@@ -63,6 +63,14 @@ describe('player queue autoplay', () => {
     expect(usePlayerStore.getState().isPlaying).toBe(true);
   });
 
+  it('preserves discovery as the playback source while starting the queue', () => {
+    usePlayerStore.getState().setQueue([song], 0, true, 'discovery');
+    const state = usePlayerStore.getState();
+    expect(state.isPlaying).toBe(true);
+    expect(state.currentPlaybackSource).toBe('discovery');
+    expect(state.queueSources).toEqual(['discovery']);
+  });
+
   it('keeps existing services ahead of SoundCloud and Bilibili in auto mode', () => {
     const result = getPlayablePV({
       ...song,

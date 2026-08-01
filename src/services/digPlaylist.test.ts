@@ -87,7 +87,27 @@ describe('Dig playlist candidate preparation', () => {
     const incidental = seeds.find(seed => seed.songId === 2);
 
     expect(fiveStar?.weight).toBe(1);
-    expect(incidental?.weight ?? 1).toBeLessThan(0.3);
+    expect(incidental).toBeUndefined();
+  });
+
+  it('does not turn discovery or autoplay completion into a taste seed', () => {
+    const now = Date.now();
+    const seeds = buildDigTasteSeeds({
+      historyEntries: [{ song: song(1), playedAt: now }],
+      playlists: [],
+      ratings: {},
+      implicitFeedback: {
+        '1': {
+          skipCount: 0,
+          completeCount: 4,
+          autoCompleteCount: 2,
+          discoveryCompleteCount: 2,
+          removeCount: 0,
+        },
+      },
+    }, 12, now);
+
+    expect(seeds).toEqual([]);
   });
 
   it('treats every playback, rating, and feedback item as known', () => {

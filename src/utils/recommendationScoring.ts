@@ -39,6 +39,7 @@ export interface ImplicitSongFeedbackLike {
   completeCount: number;
   manualCompleteCount?: number;
   autoCompleteCount?: number;
+  discoveryCompleteCount?: number;
   removeCount: number;
   lastSkippedAt?: number;
   lastCompletedAt?: number;
@@ -361,7 +362,8 @@ export function explainImplicitFeedback(
   const negative = feedback.skipCount + feedback.removeCount * 2;
   const manualPositive = feedback.manualCompleteCount ?? 0;
   const autoPositive = feedback.autoCompleteCount ?? 0;
-  const legacyPositive = Math.max(0, feedback.completeCount - manualPositive - autoPositive);
+  const discoveryPositive = feedback.discoveryCompleteCount ?? 0;
+  const legacyPositive = Math.max(0, feedback.completeCount - manualPositive - autoPositive - discoveryPositive);
   const positive = manualPositive + autoPositive + legacyPositive;
   if (negative === 0 && positive === 0) {
     return {

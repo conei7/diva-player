@@ -6,6 +6,7 @@ export interface ImplicitSongFeedback {
   completeCount: number;
   manualCompleteCount?: number;
   autoCompleteCount?: number;
+  discoveryCompleteCount?: number;
   removeCount: number;
   lastSkippedAt?: number;
   lastCompletedAt?: number;
@@ -14,7 +15,7 @@ export interface ImplicitSongFeedback {
 
 interface ImplicitFeedbackState {
   feedback: Record<string, ImplicitSongFeedback>;
-  recordPlayback: (songId: string | number, progress: number, duration: number, source?: 'manual' | 'auto') => void;
+  recordPlayback: (songId: string | number, progress: number, duration: number, source?: 'manual' | 'auto' | 'discovery') => void;
   recordQueueRemove: (songId: string | number) => void;
   getFeedback: (songId: string | number) => ImplicitSongFeedback | undefined;
   clearFeedback: () => void;
@@ -81,6 +82,9 @@ export const useImplicitFeedbackStore = create<ImplicitFeedbackState>()(
                 autoCompleteCount: source === 'auto'
                   ? (current.autoCompleteCount ?? 0) + 1
                   : (current.autoCompleteCount ?? 0),
+                discoveryCompleteCount: source === 'discovery'
+                  ? (current.discoveryCompleteCount ?? 0) + 1
+                  : (current.discoveryCompleteCount ?? 0),
                 lastCompletedAt: now,
               };
 

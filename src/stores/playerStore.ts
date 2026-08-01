@@ -26,7 +26,7 @@ const PLAYER_QUEUE_KEY = 'playerQueue';
 const DEFAULT_VOLUME = 50;
 
 type LoopMode = 'none' | 'all' | 'one';
-export type PlaybackSource = 'manual' | 'auto';
+export type PlaybackSource = 'manual' | 'auto' | 'discovery';
 
 interface StoredPlayerQueue {
   songIds?: number[];
@@ -162,8 +162,8 @@ function getStoredPlayerQueue(): StoredPlayerQueue | null {
   const normalizedIndex = queueIndex >= 0 && queueIndex < queueLength ? queueIndex : -1;
   const queueSources = normalizeQueueSources(queueLength, stored.queueSources);
   const currentSong = stored.currentSong ?? legacyQueue?.[normalizedIndex] ?? null;
-  const currentPlaybackSource = stored.currentPlaybackSource === 'auto'
-    ? 'auto'
+  const currentPlaybackSource = stored.currentPlaybackSource === 'auto' || stored.currentPlaybackSource === 'discovery'
+    ? stored.currentPlaybackSource
     : queueSources[normalizedIndex] ?? 'manual';
   return {
     songIds,
@@ -179,7 +179,9 @@ function getStoredPlayerQueue(): StoredPlayerQueue | null {
 function normalizeQueueSources(queueLength: number, queueSources?: PlaybackSource[]): PlaybackSource[] {
   return Array.from(
     { length: queueLength },
-    (_, index) => queueSources?.[index] === 'auto' ? 'auto' : 'manual',
+    (_, index) => queueSources?.[index] === 'auto' || queueSources?.[index] === 'discovery'
+      ? queueSources[index]
+      : 'manual',
   );
 }
 
@@ -208,7 +210,7 @@ function mapSourcesBySongId(
   const sourceBySongId = new Map<number, PlaybackSource>();
   previousQueue.forEach((song, index) => {
     if (!sourceBySongId.has(song.id)) {
-      sourceBySongId.set(song.id, previousSources[index] === 'auto' ? 'auto' : 'manual');
+      sourceBySongId.set(song.id, previousSources[index] ?? 'manual');
     }
   });
   return nextQueue.map(song => sourceBySongId.get(song.id) ?? 'manual');
@@ -284,7 +286,7 @@ interface PlayerState {
   clearSeekTarget: () => void;
   
   // キュー操作
-  setQueue: (songs: Song[], startIndex?: number, autoplay?: boolean) => void;
+  setQueue: (songs: Song[], startIndex?: number, autoplay?: boolean, source?: PlaybackSource) => void;
   setQueueShuffled: (songs: Song[]) => void;
   replaceQueueList: (songs: Song[]) => void;
   addToQueue: (song: Song, source?: PlaybackSource) => void;
@@ -343,7 +345,9 @@ async function restoreStoredPlayerQueue(): Promise<void> {
     try {
       return {
         song: await getSongById(id),
-        source: stored.queueSources?.[index] === 'auto' ? 'auto' as const : 'manual' as const,
+        source: stored.queueSources?.[index] === 'auto' || stored.queueSources?.[index] === 'discovery'
+          ? stored.queueSources[index]
+          : 'manual' as const,
       };
     } catch {
       return null;
@@ -543,21 +547,21 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     }
   },
 
-  setQueue: (songs: Song[], startIndex = 0, autoplay = true) => {
+  setQueue: (songs: Song[], startIndex = 0, autoplay = true, source: PlaybackSource = 'manual') => {
     const { shuffleEnabled } = get();
-    const manualSources = songs.map(() => 'manual' as PlaybackSource);
+    const queueSources = songs.map(() => source);
     if (shuffleEnabled && songs.length > 0) {
       const current = songs[startIndex];
       const rest = songs.filter((_, i) => i !== startIndex);
       const shuffled = current ? [current, ...shuffleQueue(rest)] : shuffleQueue(rest);
-      const shuffledSources = shuffled.map(() => 'manual' as PlaybackSource);
+      const shuffledSources = shuffled.map(() => source);
       set({ queue: shuffled, queueIndex: 0, queueSources: shuffledSources, originalQueue: songs });
-      savePlayerQueue(shuffled, 0, shuffled[0] ?? null, shuffledSources, 'manual');
-      get().playSong(shuffled[0], autoplay, autoplay, autoplay);
+      savePlayerQueue(shuffled, 0, shuffled[0] ?? null, shuffledSources, source);
+      get().playSong(shuffled[0], source === 'manual' && autoplay, source === 'manual' && autoplay, autoplay);
     } else {
-      set({ queue: songs, queueIndex: startIndex, queueSources: manualSources, originalQueue: [] });
-      savePlayerQueue(songs, startIndex, songs[startIndex] ?? null, manualSources, 'manual');
-      if (songs.length > 0) get().playSong(songs[startIndex], autoplay, autoplay, autoplay);
+      set({ queue: songs, queueIndex: startIndex, queueSources, originalQueue: [] });
+      savePlayerQueue(songs, startIndex, songs[startIndex] ?? null, queueSources, source);
+      if (songs.length > 0) get().playSong(songs[startIndex], source === 'manual' && autoplay, source === 'manual' && autoplay, autoplay);
     }
   },
 

@@ -20,7 +20,12 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 function hasDominantNegativeFeedback(feedback: ImplicitSongFeedback | undefined): boolean {
   if (!feedback) return false;
-  const positive = (feedback.manualCompleteCount ?? 0) + (feedback.autoCompleteCount ?? 0) + feedback.completeCount;
+  const discoveryPositive = feedback.discoveryCompleteCount ?? 0;
+  const legacyPositive = Math.max(0, feedback.completeCount
+    - (feedback.manualCompleteCount ?? 0)
+    - (feedback.autoCompleteCount ?? 0)
+    - discoveryPositive);
+  const positive = (feedback.manualCompleteCount ?? 0) + (feedback.autoCompleteCount ?? 0) + legacyPositive;
   const negative = feedback.skipCount + feedback.removeCount * 2;
   return negative > positive;
 }
@@ -56,6 +61,7 @@ export function buildUserTasteProfile(
   const longTermEntries: Array<{ song: Song; score: number; kind: TasteSeedKind }> = [];
   const shortTermEntries: Array<{ song: Song; score: number; kind: TasteSeedKind }> = [];
   const playlistSongs = uniqueSongsById(playlists.flatMap(playlist => playlist.songs));
+  const playlistSongIds = new Set(playlistSongs.map(song => song.id));
 
   for (const song of playlistSongs) {
     const rating = ratings[String(song.id)] ?? 0;
@@ -69,6 +75,7 @@ export function buildUserTasteProfile(
     const rating = ratings[String(entry.song.id)] ?? 0;
     const manualCompletes = feedback?.manualCompleteCount ?? 0;
     const autoCompletes = feedback?.autoCompleteCount ?? 0;
+    if (rating < 3 && manualCompletes === 0 && !playlistSongIds.has(entry.song.id)) continue;
     const longScore = Math.exp(-ageDays / 21) * 2
       + Math.max(0, rating - 2) * 2.5
       + Math.min(4, manualCompletes) * 0.9

@@ -50,7 +50,7 @@ interface HistoryState {
   activePlayedAt?: number;
   activePlaybackSequence?: number;
   initializeHistory: () => Promise<void>;
-  addToHistory: (song: Song, source?: 'manual' | 'auto', playbackSequence?: number) => void;
+  addToHistory: (song: Song, source?: 'manual' | 'auto' | 'discovery', playbackSequence?: number) => void;
   finalizeHistoryEntry: (songId: number, progressSeconds: number, durationSeconds: number, playbackSequence?: number) => void;
   reloadHistory: () => Promise<void>;
   loadMoreHistory: () => Promise<void>;

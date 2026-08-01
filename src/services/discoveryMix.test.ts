@@ -58,7 +58,7 @@ describe('ephemeral discovery mix playback', () => {
     const result = await playDiscoveryMix();
 
     expect(result.songs.map(item => item.id)).toEqual([11, 12]);
-    expect(setQueue).toHaveBeenCalledWith(result.songs, 0, true);
+    expect(setQueue).toHaveBeenCalledWith(result.songs, 0, true, 'discovery');
     expect(usePlaylistStore.getState().playlists).toEqual([]);
   });
 

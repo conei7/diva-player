@@ -170,12 +170,13 @@ public sealed class DigDiscoveryService
                 var info = infos[songId];
                 var relevance = Math.Exp((scores[songId] - maxScore) / SamplingTemperature);
                 var quality = Math.Sqrt(RecommendationQuality.EvidenceMultiplier(info));
+                var popularity = SoftPopularityMultiplier(info);
                 var repeatCount = info.ProducerIds
                     .Select(id => producerCounts.GetValueOrDefault(id))
                     .DefaultIfEmpty(0)
                     .Max();
                 var novelty = Math.Pow(RepeatProducerMultiplier, repeatCount);
-                var weight = Math.Max(1e-12, relevance * quality * novelty);
+                var weight = Math.Max(1e-12, relevance * quality * popularity * novelty);
                 weighted.Add((songId, weight));
                 totalWeight += weight;
             }
@@ -200,6 +201,17 @@ public sealed class DigDiscoveryService
         }
 
         return [.. selected];
+    }
+
+    // Popularity is only a tie-break-like prior: the logarithmic curve and
+    // narrow 0.90-1.10 range keep obscure songs viable while making broadly
+    // heard songs modestly more likely among similarly close audio matches.
+    private static double SoftPopularityMultiplier(SongInfo info)
+    {
+        var effectiveViews = Math.Max(0L, info.YoutubeViews) + Math.Max(0L, info.NicoViews) * 3.0;
+        var logViews = Math.Log10(1.0 + effectiveViews);
+        var normalized = Math.Clamp((logViews - 3.0) / 3.0, 0.0, 1.0);
+        return 0.90 + normalized * 0.20;
     }
 
     private static double WeightedRandomKey(int seed, int id, double weight) =>
