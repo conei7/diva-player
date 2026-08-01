@@ -32,6 +32,14 @@ function assertSongItems(data, endpoint) {
   }
 }
 
+function assertDigItems(data, endpoint) {
+  assert(data && Array.isArray(data.items), `${endpoint} did not return an items array.`);
+  for (const item of data.items) {
+    assert(Number.isInteger(item.id), `${endpoint} returned an invalid full song id.`);
+    assert(typeof item.name === 'string', `${endpoint} returned an invalid full song name.`);
+  }
+}
+
 async function findSeedWithResults(baseUrl, endpoint) {
   const search = await getJson(
     baseUrl,
@@ -129,6 +137,29 @@ async function main() {
   assert(!multi.error, `/api/recommend/multi returned an error: ${multi.error}`);
   assert(multi.items.every(item => item.songId !== metadata.seed.id && item.songId !== audio.seed.id), '/api/recommend/multi returned an excluded song.');
   console.log(`PASS multi-seed recommendation (${multi.items.length} candidates)`);
+
+  const digResponse = await fetch(`${baseUrl}/api/recommend/dig`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      seeds: [
+        { songId: metadata.seed.id, weight: 1.0 },
+        { songId: audio.seed.id, weight: 0.8 },
+      ],
+      count: 8,
+      offset: 0,
+      generationSeed: 17,
+      excludeSongIds: [metadata.seed.id, audio.seed.id],
+    }),
+    signal: AbortSignal.timeout(DEFAULT_TIMEOUT_MS),
+  });
+  assert(digResponse.ok, `/api/recommend/dig returned HTTP ${digResponse.status}.`);
+  const dig = await digResponse.json();
+  assertDigItems(dig, '/api/recommend/dig');
+  assert(dig.items.length > 0, '/api/recommend/dig returned no discovery candidates.');
+  assert(dig.items.every(item => item.id !== metadata.seed.id && item.id !== audio.seed.id), '/api/recommend/dig returned an excluded song.');
+  assert(new Set(dig.items.map(item => item.id)).size === dig.items.length, '/api/recommend/dig returned duplicate song IDs.');
+  console.log(`PASS Dig discovery recommendation (${dig.items.length} full song candidates)`);
 
   console.log('SBC API integration test passed.');
 }

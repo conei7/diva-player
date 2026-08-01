@@ -55,12 +55,35 @@ async function getJson(baseUrl, path) {
   return { data: await response.json(), elapsedMs };
 }
 
+async function postJson(baseUrl, path, body) {
+  const startedAt = performance.now();
+  const response = await fetch(`${baseUrl}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(DEFAULT_TIMEOUT_MS),
+  });
+  const elapsedMs = Math.round(performance.now() - startedAt);
+  if (!response.ok) throw new Error(`${path} returned HTTP ${response.status}.`);
+  return { data: await response.json(), elapsedMs };
+}
+
 function validateItems(data, endpoint, seedId) {
   assert(data && Array.isArray(data.items), `${endpoint} did not return an items array.`);
   const ids = data.items.map(item => item.songId);
   assert(ids.every(Number.isInteger), `${endpoint} returned an invalid songId.`);
   assert(!ids.includes(seedId), `${endpoint} returned its seed song ${seedId}.`);
   assert(new Set(ids).size === ids.length, `${endpoint} returned duplicate song IDs.`);
+  return data.items;
+}
+
+function validateDigItems(data, endpoint, excludedIds) {
+  assert(data && Array.isArray(data.items), `${endpoint} did not return an items array.`);
+  const ids = data.items.map(item => item.id);
+  assert(ids.every(Number.isInteger), `${endpoint} returned an invalid full song id.`);
+  assert(ids.every(id => !excludedIds.has(id)), `${endpoint} returned an excluded song.`);
+  assert(new Set(ids).size === ids.length, `${endpoint} returned duplicate song IDs.`);
+  assert(data.items.every(item => typeof item.name === 'string'), `${endpoint} returned an invalid full song name.`);
   return data.items;
 }
 
@@ -153,6 +176,18 @@ async function main() {
     }
   }
 
+  const digSeedIds = new Set(seeds.slice(0, 3).map(seed => seed.id));
+  const digResult = await postJson(baseUrl, '/api/recommend/dig', {
+    seeds: [...digSeedIds].map((songId, index) => ({ songId, weight: 1 - index * 0.15 })),
+    count: 20,
+    offset: 0,
+    generationSeed: 23,
+    excludeSongIds: [...digSeedIds],
+  });
+  const digItems = validateDigItems(digResult.data, '/api/recommend/dig', digSeedIds);
+  assert(digItems.length > 0, '/api/recommend/dig returned no discovery candidates.');
+  assert(digResult.elapsedMs <= maxLatencyMs, `/api/recommend/dig latency ${digResult.elapsedMs}ms exceeded ${maxLatencyMs}ms.`);
+
   const p95 = percentile(latencySamples, 0.95);
 
   const endpointQuality = endpoints.map(endpoint => {
@@ -187,6 +222,7 @@ async function main() {
       audioFeatures,
     },
     latency: { p95Ms: p95, maximumMs: maxLatencyMs },
+    dig: { count: digItems.length, latencyMs: digResult.elapsedMs, seedIds: [...digSeedIds] },
     quality: {
       endpoints: endpointQuality,
       maxModeOverlap: observedMaxModeOverlap,
@@ -212,6 +248,7 @@ async function main() {
   });
   console.log(`PASS recommendation regression (${summary.join('; ')})`);
   console.log(`PASS recommendation latency (p95=${p95}ms, max=${maxLatencyMs}ms)`);
+  console.log(`PASS Dig discovery (${digItems.length} candidates, latency=${digResult.elapsedMs}ms)`);
   console.log(`PASS recommendation diversity (${endpointQuality.map(quality => `${quality.endpoint} artist=${quality.maxArtistShare.toFixed(2)} seedOverlap=${quality.maxSeedOverlap.toFixed(2)} unique=${quality.uniqueRatio.toFixed(2)}`).join('; ')}; modeOverlap=${observedMaxModeOverlap.toFixed(2)})`);
 }
 

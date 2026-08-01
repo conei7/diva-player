@@ -19,6 +19,9 @@ function isYouTubeLinked(playlist: Playlist): boolean {
 
 /** 後で聴くプレイリストの固定 ID */
 export const WATCH_LATER_ID = 'watch-later';
+/** Reserved generated playlist ID. It is created lazily on first Dig use. */
+export const DIG_PLAYLIST_ID = 'dig-playlist';
+export const DIG_PLAYLIST_NAME = 'Dig';
 
 // ─── 追加結果 ───────────────────────────────────────────────────────────────
 export interface AddSongResult {
@@ -68,6 +71,8 @@ interface PlaylistState {
   applyYouTubeSync: (playlistId: string, songs: Song[], sync: YouTubePlaylistSync) => boolean;
   unlinkYouTubeSync: (playlistId: string) => boolean;
   replacePlaylistSongs: (playlistId: string, songs: Song[]) => void;
+  getOrCreateDigPlaylist: () => Playlist;
+  replaceDigPlaylistSongs: (songs: Song[], generatedAt?: number) => Playlist;
 
   // フォルダ CRUD
   createFolder: (name: string, parentId?: string) => PlaylistFolder;
@@ -159,9 +164,14 @@ export const usePlaylistStore = create<PlaylistState>((set, get) => ({
 
   // ─── ロード ────────────────────────────────────────────────────────────────
   loadPlaylists: () => {
-    const stored = (storage.get<Playlist[]>(PLAYLISTS_KEY) ?? []).map(playlist => playlist.smartRule
-      ? { ...playlist, smartRule: normalizeSmartPlaylistRule(playlist.smartRule) }
-      : playlist);
+    const stored = (storage.get<Playlist[]>(PLAYLISTS_KEY) ?? []).map(playlist => {
+      const normalized = playlist.smartRule
+        ? { ...playlist, smartRule: normalizeSmartPlaylistRule(playlist.smartRule) }
+        : playlist;
+      return normalized.id === DIG_PLAYLIST_ID
+        ? { ...normalized, name: DIG_PLAYLIST_NAME, isPinned: true }
+        : normalized;
+    });
     const folders = storage.get<PlaylistFolder[]>(FOLDERS_KEY) ?? [];
     // 「後で聴く」がなければ作成
     const hasWL = stored.some(p => p.id === WATCH_LATER_ID);
@@ -484,6 +494,44 @@ export const usePlaylistStore = create<PlaylistState>((set, get) => ({
       : playlist);
     set({ playlists: updated });
     save(updated, get().folders);
+  },
+
+  getOrCreateDigPlaylist: () => {
+    const existing = get().playlists.find(playlist => playlist.id === DIG_PLAYLIST_ID);
+    if (existing) return existing;
+    const now = Date.now();
+    const playlist: Playlist = {
+      id: DIG_PLAYLIST_ID,
+      name: DIG_PLAYLIST_NAME,
+      description: '生成時点で未聴の曲から編成する発掘プレイリスト',
+      songs: [],
+      isPinned: true,
+      createdAt: now,
+      updatedAt: now,
+    };
+    const updated = [...get().playlists, playlist];
+    set({ playlists: updated });
+    save(updated, get().folders);
+    return playlist;
+  },
+
+  replaceDigPlaylistSongs: (songs, generatedAt = Date.now()) => {
+    const existing = get().playlists.find(playlist => playlist.id === DIG_PLAYLIST_ID);
+    const target = existing ?? get().getOrCreateDigPlaylist();
+    const updated = get().playlists.map(playlist => playlist.id === DIG_PLAYLIST_ID
+      ? {
+          ...playlist,
+          name: DIG_PLAYLIST_NAME,
+          description: `生成時点で未聴の曲から編成・${new Date(generatedAt).toLocaleString('ja-JP')}`,
+          songs,
+          isPinned: true,
+          coverArtUrl: songs[0]?.thumbUrl ?? playlist.coverArtUrl,
+          updatedAt: generatedAt,
+        }
+      : playlist);
+    set({ playlists: updated });
+    save(updated, get().folders);
+    return updated.find(playlist => playlist.id === target.id) ?? target;
   },
 
   removeDuplicateSongs: (playlistId) => get().removeDuplicateSongsWithUndo(playlistId)?.removed.length ?? 0,

@@ -58,3 +58,24 @@ export function openHistoryDb(): Promise<IDBDatabase> {
 
   return dbPromise;
 }
+
+/** Returns every song that has ever started playback in this browser. */
+export async function getPlayedSongIds(): Promise<Set<number>> {
+  if (typeof indexedDB === 'undefined') return new Set();
+  const db = await openHistoryDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(HISTORY_STORES.plays, 'readonly');
+    const index = tx.objectStore(HISTORY_STORES.plays).index('songId');
+    const request = index.getAllKeys();
+    request.onsuccess = () => {
+      const ids = new Set<number>();
+      for (const key of request.result) {
+        const id = typeof key === 'number' ? key : Number(key);
+        if (Number.isInteger(id) && id > 0) ids.add(id);
+      }
+      resolve(ids);
+    };
+    request.onerror = () => reject(request.error);
+    tx.onerror = () => reject(tx.error);
+  });
+}

@@ -466,6 +466,114 @@ app.MapPost("/api/recommend/multi", async (
     return Results.Ok(result);
 });
 
+app.MapPost("/api/recommend/dig", async (
+    DigRecommendRequest request,
+    RecommendService svc,
+    DbService db) =>
+{
+    if (request.Seeds is { Count: > 24 })
+        return Results.BadRequest("seeds must contain at most 24 items");
+    if (request.FavoriteProducerIds is { Count: > 20 })
+        return Results.BadRequest("favoriteProducerIds must contain at most 20 items");
+    if (request.Count is < 1 or > 100)
+        return Results.BadRequest("count must be between 1 and 100");
+    if (request.Offset is < 0 or > 10_000)
+        return Results.BadRequest("offset must be between 0 and 10000");
+    if (request.ExcludeSongIds?.Count > 500)
+        return Results.BadRequest("excludeSongIds must contain at most 500 items");
+
+    var excluded = request.ExcludeSongIds?.Where(id => id > 0).ToHashSet() ?? [];
+    var rawSeeds = request.Seeds ?? [];
+    var validSeeds = rawSeeds
+        .Where(seed => seed.SongId > 0 && double.IsFinite(seed.Weight) && seed.Weight > 0)
+        .GroupBy(seed => seed.SongId)
+        .Select(group => new MultiRecommendSeed(group.Key, Math.Min(1.0, group.Max(seed => seed.Weight))))
+        .ToList();
+
+    // Pick at most one strong seed per precomputed audio/state cluster. This
+    // keeps one favorite vocalist or producer from consuming the whole Dig.
+    var seedInfos = await db.GetSongInfoBatchAsync(validSeeds.Select(seed => seed.SongId));
+    var infoById = seedInfos.ToDictionary(info => info.Id);
+    var selectedSeeds = validSeeds
+        .Where(seed => infoById.ContainsKey(seed.SongId))
+        .GroupBy(seed => infoById[seed.SongId].StateCluster >= 0
+            ? $"cluster:{infoById[seed.SongId].StateCluster}"
+            : $"song:{seed.SongId}")
+        .Select(group => group
+            .OrderByDescending(seed => seed.Weight)
+            .ThenBy(seed => DigNoise(request.GenerationSeed, seed.SongId))
+            .First())
+        .OrderByDescending(seed => seed.Weight)
+        .ThenBy(seed => DigNoise(request.GenerationSeed, seed.SongId))
+        .Take(8)
+        .Select(seed => new RecommendSeed(seed.SongId, seed.Weight))
+        .ToList();
+
+    var ranked = new List<(int SongId, double Score)>();
+    if (selectedSeeds.Count > 0 && request.Offset < 200)
+    {
+        var response = await svc.RecommendFromSeedsAsync(selectedSeeds, 100, 0, excluded, 0);
+        ranked.AddRange(response.Items
+            .Where(item => !excluded.Contains(item.SongId))
+            .Select(item => (item.SongId, item.Score + DigNoise(request.GenerationSeed, item.SongId) * 0.002)));
+    }
+
+    // Favorite producers remain a low-weight discovery source, and also make
+    // cold-start profiles useful when the user has only saved producers.
+    var favoriteIds = request.FavoriteProducerIds?.Where(id => id > 0).Distinct().ToArray() ?? [];
+    if (favoriteIds.Length > 0)
+    {
+        var producerSongIds = await db.GetSongsByProducersAsync(
+            favoriteIds,
+            selectedSeeds.FirstOrDefault()?.SongId ?? 0,
+            80);
+        ranked.AddRange(producerSongIds
+            .Where(id => !excluded.Contains(id))
+            .Select(id => (id, 0.12 + DigNoise(request.GenerationSeed, id) * 0.002)));
+    }
+
+    if (ranked.Count == 0)
+    {
+        var fallback = await db.SearchSongsAsync(
+            query: null,
+            artistIds: null,
+            anyArtistIds: null,
+            artistIdGroups: null,
+            artistRole: null,
+            songTypes: null,
+            sort: "FavoritedTimes",
+            order: "desc",
+            start: 0,
+            maxResults: 200,
+            onlyWithPVs: true,
+            voiceSynthOnly: true,
+            discoveryOnly: true);
+        var fallbackItems = JsonSerializer.Deserialize<JsonElement[]>(fallback.ItemsJson) ?? [];
+        ranked.AddRange(fallbackItems.Select((item, index) =>
+        {
+            var id = item.TryGetProperty("id", out var idValue) && idValue.TryGetInt32(out var parsedId) ? parsedId : 0;
+            return (id, 1.0 / (index + 1) + DigNoise(request.GenerationSeed, id) * 0.002);
+        }).Where(item => item.id > 0 && !excluded.Contains(item.id)));
+    }
+
+    var orderedIds = ranked
+        .Where(item => item.SongId > 0 && !excluded.Contains(item.SongId))
+        .GroupBy(item => item.SongId)
+        .Select(group => group.OrderByDescending(item => item.Score).First())
+        .OrderByDescending(item => item.Score)
+        .ThenBy(item => item.SongId)
+        .Skip(request.Offset)
+        .Take(request.Count)
+        .Select(item => item.SongId)
+        .ToArray();
+    var songsById = await db.GetSongsJsonByIdsAsync(orderedIds);
+    var items = orderedIds
+        .Where(songsById.ContainsKey)
+        .Select(id => JsonSerializer.Deserialize<JsonElement>(songsById[id]))
+        .ToArray();
+    return Results.Ok(new { items, totalCount = ranked.Select(item => item.SongId).Distinct().Count() });
+});
+
 // GET /api/songs/views?ids=1,2,3
 app.MapGet("/api/songs/views", async (string ids, DbService db) =>
 {
@@ -730,6 +838,18 @@ app.MapGet("/api/songs/{id}/history", async (int id, string? range, string? buck
     return Results.Ok(history);
 });
 
+static double DigNoise(int seed, int songId)
+{
+    unchecked
+    {
+        var value = (uint)(seed * 1103515245 + songId * 12345 + 0x6d2b79f5);
+        value ^= value >> 15;
+        value *= 2246822519u;
+        value ^= value >> 13;
+        return value / (double)uint.MaxValue;
+    }
+}
+
 app.Run();
 
 public record MultiRecommendRequest(
@@ -741,6 +861,15 @@ public record MultiRecommendRequest(
 );
 
 public record MultiRecommendSeed(int SongId, double Weight);
+
+public record DigRecommendRequest(
+    List<MultiRecommendSeed>? Seeds,
+    List<int>? FavoriteProducerIds = null,
+    int Count = 100,
+    int Offset = 0,
+    int GenerationSeed = 0,
+    List<int>? ExcludeSongIds = null
+);
 
 public record HealthPayload(
     string status,

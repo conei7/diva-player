@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Song } from '../types/vocadb';
-import { usePlaylistStore } from './playlistStore';
+import { DIG_PLAYLIST_ID, usePlaylistStore } from './playlistStore';
 import { useUiStore } from './uiStore';
 
 function createLocalStorage() {
@@ -138,5 +138,28 @@ describe('YouTube linked playlists', () => {
     expect(usePlaylistStore.getState().playlists.find(item => item.id === linked.id)?.songs.map(item => item.id)).toEqual([3]);
     expect(usePlaylistStore.getState().unlinkYouTubeSync(linked.id)).toBe(true);
     expect(usePlaylistStore.getState().playlists.find(item => item.id === linked.id)?.youtubeSync).toBeUndefined();
+  });
+});
+
+describe('Dig generated playlist', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    usePlaylistStore.setState({ playlists: [], folders: [] });
+  });
+
+  it('creates one pinned Dig playlist and replaces it atomically', () => {
+    vi.stubGlobal('localStorage', createLocalStorage());
+    vi.stubGlobal('crypto', undefined);
+    const first = usePlaylistStore.getState().getOrCreateDigPlaylist();
+    const second = usePlaylistStore.getState().getOrCreateDigPlaylist();
+    expect(first.id).toBe(DIG_PLAYLIST_ID);
+    expect(second.id).toBe(first.id);
+    expect(second.isPinned).toBe(true);
+
+    const updated = usePlaylistStore.getState().replaceDigPlaylistSongs([song(7), song(8)], 1_700_000_000_000);
+    expect(updated.id).toBe(DIG_PLAYLIST_ID);
+    expect(updated.songs.map(item => item.id)).toEqual([7, 8]);
+    expect(updated.updatedAt).toBe(1_700_000_000_000);
+    expect(usePlaylistStore.getState().playlists.filter(item => item.id === DIG_PLAYLIST_ID)).toHaveLength(1);
   });
 });

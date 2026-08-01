@@ -2,7 +2,7 @@ import type { ListeningPlayEvent } from '../stores/historyStore';
 import type { Playlist, PlaylistFolder, Song, SmartPlaylistRule } from '../types/vocadb';
 import { normalizeSmartPlaylistRule } from '../utils/smartPlaylist';
 import { useHistoryStore } from '../stores/historyStore';
-import { usePlaylistStore, WATCH_LATER_ID } from '../stores/playlistStore';
+import { DIG_PLAYLIST_ID, DIG_PLAYLIST_NAME, usePlaylistStore, WATCH_LATER_ID } from '../stores/playlistStore';
 import { useRatingStore } from '../stores/ratingStore';
 import { storage } from '../utils/storage';
 import { HISTORY_STORES, openHistoryDb } from './historyDatabase';
@@ -396,13 +396,18 @@ function uniqueId(existing: Set<string>, candidate: string): string {
 function mergePlaylists(current: Playlist[], incoming: Playlist[], currentFolders: PlaylistFolder[], incomingFolders: PlaylistFolder[]): { playlists: Playlist[]; folders: PlaylistFolder[] } {
   const folderIds = new Set(currentFolders.map(folder => folder.id));
   const folders = [...currentFolders, ...incomingFolders.filter(folder => !folderIds.has(folder.id))];
-  const playlistIds = new Set(current.map(playlist => playlist.id));
-  const imported = incoming.map(playlist => {
+  const currentDig = current.find(playlist => playlist.id === DIG_PLAYLIST_ID);
+  const incomingDig = incoming.find(playlist => playlist.id === DIG_PLAYLIST_ID);
+  const playlistIds = new Set(current.filter(playlist => playlist.id !== DIG_PLAYLIST_ID).map(playlist => playlist.id));
+  const imported = incoming.filter(playlist => playlist.id !== DIG_PLAYLIST_ID).map(playlist => {
     const id = uniqueId(playlistIds, playlist.id);
     playlistIds.add(id);
     return { ...playlist, id };
   });
-  const playlists = [...current, ...imported];
+  const dig = incomingDig ?? currentDig;
+  const playlists = dig
+    ? [{ ...dig, id: DIG_PLAYLIST_ID, name: DIG_PLAYLIST_NAME, isPinned: true }, ...current.filter(playlist => playlist.id !== DIG_PLAYLIST_ID), ...imported]
+    : [...current, ...imported];
   return { playlists, folders };
 }
 

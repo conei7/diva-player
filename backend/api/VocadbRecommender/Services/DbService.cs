@@ -704,6 +704,38 @@ public class DbService
             false);
     }
 
+    /// <summary>
+    /// Returns the full cached VocaDB payload for a ranked ID list. This keeps
+    /// generated playlists from issuing one external request per candidate.
+    /// </summary>
+    public async Task<Dictionary<int, string>> GetSongsJsonByIdsAsync(IEnumerable<int> songIds)
+    {
+        var ids = songIds.Where(id => id > 0).Distinct().ToArray();
+        if (ids.Length == 0) return [];
+
+        await using var conn = await OpenAsync();
+        await using var cmd = new NpgsqlCommand(@"
+            SELECT id,
+                   (COALESCE(raw_json, '{}'::jsonb) || jsonb_strip_nulls(jsonb_build_object(
+                       'youtubeViews', youtube_views,
+                       'nicoViews', nico_views,
+                       'audioComputed', EXISTS (
+                           SELECT 1 FROM song_features sf
+                           WHERE sf.song_id = songs.id AND sf.audio_computed IS TRUE
+                       ),
+                       'thumbUrl', COALESCE(raw_json->>'thumbUrl', raw_json->'pvs'->0->>'thumbUrl')
+                   )))::text
+            FROM songs
+            WHERE id = ANY($1)", conn);
+        cmd.Parameters.Add(new NpgsqlParameter { Value = ids, NpgsqlDbType = NpgsqlDbType.Array | NpgsqlDbType.Integer });
+
+        var result = new Dictionary<int, string>();
+        await using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+            result[reader.GetInt32(0)] = reader.GetString(1);
+        return result;
+    }
+
     // ---- 楽曲情報 -------------------------------------------------
 
     public async Task<SongInfo?> GetSongInfoAsync(int songId)

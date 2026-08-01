@@ -751,6 +751,75 @@ export interface MultiRecommendationSeed {
   weight: number;
 }
 
+export interface DigRecommendationSeed {
+  songId: number;
+  weight: number;
+}
+
+interface DigRecommendationResponse {
+  items: unknown[];
+  error?: string | null;
+}
+
+function isSongPayload(value: unknown): value is Song {
+  return typeof value === 'object'
+    && value !== null
+    && typeof (value as { id?: unknown }).id === 'number'
+    && typeof (value as { name?: unknown }).name === 'string';
+}
+
+/** Fetches a privacy-preserving, quality-filtered discovery page for Dig. */
+export async function getDigRecommendedSongs(
+  seeds: DigRecommendationSeed[],
+  favoriteProducerIds: number[] = [],
+  count = 100,
+  excludeSongIds: number[] = [],
+  offset = 0,
+  generationSeed = 0,
+): Promise<Song[]> {
+  const normalizedSeeds = seeds
+    .filter(seed => Number.isInteger(seed.songId) && seed.songId > 0 && Number.isFinite(seed.weight) && seed.weight > 0)
+    .slice(0, 24);
+  const normalizedFavorites = favoriteProducerIds
+    .filter(id => Number.isInteger(id) && id > 0)
+    .slice(0, 20);
+  if (await isRecommenderAvailable()) {
+    try {
+      const res = await fetch(`${RECOMMENDER_API}/api/recommend/dig`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          seeds: normalizedSeeds,
+          favoriteProducerIds: normalizedFavorites,
+          count: Math.min(100, Math.max(1, count)),
+          offset: Math.max(0, offset),
+          generationSeed,
+          excludeSongIds: excludeSongIds.slice(0, 500),
+        }),
+      });
+      if (res.ok) {
+        const data: DigRecommendationResponse = await res.json();
+        if (!data.error && Array.isArray(data.items)) {
+          const directSongs = data.items.filter(isSongPayload);
+          if (directSongs.length > 0) return attachExternalViews(directSongs);
+          const ids = data.items
+            .filter(item => typeof item === 'object' && item !== null && typeof (item as { songId?: unknown }).songId === 'number')
+            .map(item => (item as { songId: number }).songId);
+          if (ids.length > 0) {
+            const songs = await Promise.all(ids.map(id => getSongById(id).catch(() => null)));
+            return songs.filter((song): song is Song => song !== null);
+          }
+        }
+        return [];
+      }
+    } catch (error) {
+      throw error instanceof Error ? error : new Error('Dig recommendation failed');
+    }
+  }
+
+  throw new Error('Dig recommendation backend is unavailable');
+}
+
 /**
  * 推薦曲を取得 (バックエンドAPIまたはVocaDBにフォールバック)
  */
