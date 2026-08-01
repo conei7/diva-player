@@ -1,5 +1,6 @@
 import type { Song } from '../../types/vocadb';
 import { formatJapaneseViews } from '../../utils/formatViews';
+import { getPVBadgeStyle, isUnofficialOnly } from '../../utils/pvBadge';
 
 interface SongCardBadgesProps {
   song: Song;
@@ -17,14 +18,16 @@ export default function SongCardBadges({
   isNicoUnofficialOnly,
   relativeDate,
 }: SongCardBadgesProps) {
+  const isSoundCloudUnofficialOnly = isUnofficialOnly(song.pvs ?? [], 'SoundCloud');
+  const isBilibiliUnofficialOnly = isUnofficialOnly(song.pvs ?? [], 'Bilibili');
+
   return (
     <div className="flex items-center flex-wrap gap-2 mt-2">
       {(pvServices.has('Youtube') || (song.youtubeViews || 0) > 0) && (
         <span
           className="text-[10px] font-bold px-1.5 py-0.5 rounded flex items-center gap-1"
           style={{
-            background: isYTUnofficialOnly ? 'rgba(100, 30, 30, 0.3)' : 'rgba(239, 68, 68, 0.12)',
-            color: isYTUnofficialOnly ? '#b91c1c' : '#ef4444',
+            ...getPVBadgeStyle('Youtube', isYTUnofficialOnly ? 'Reprint' : 'Original'),
             opacity: isYTUnofficialOnly ? 0.8 : 1,
           }}
           title="YouTube 再生回数"
@@ -40,8 +43,7 @@ export default function SongCardBadges({
         <span
           className="text-[10px] font-bold px-1.5 py-0.5 rounded flex items-center gap-1"
           style={{
-            background: isNicoUnofficialOnly ? 'rgba(30, 30, 100, 0.3)' : 'rgba(59, 130, 246, 0.12)',
-            color: isNicoUnofficialOnly ? '#1e40af' : '#3b82f6',
+            ...getPVBadgeStyle('NicoNicoDouga', isNicoUnofficialOnly ? 'Reprint' : 'Original'),
             opacity: isNicoUnofficialOnly ? 0.8 : 1,
           }}
           title="ニコニコ動画 再生回数"
@@ -56,7 +58,10 @@ export default function SongCardBadges({
       {pvServices.has('SoundCloud') && (
         <span
           className="text-[10px] font-bold px-1.5 py-0.5 rounded"
-          style={{ background: 'rgba(249, 115, 22, 0.14)', color: '#fb923c' }}
+          style={{
+            ...getPVBadgeStyle('SoundCloud', isSoundCloudUnofficialOnly ? 'Reprint' : 'Original'),
+            opacity: isSoundCloudUnofficialOnly ? 0.8 : 1,
+          }}
           title="SoundCloudで再生可能"
         >
           SC
@@ -66,7 +71,10 @@ export default function SongCardBadges({
       {pvServices.has('Bilibili') && (
         <span
           className="text-[10px] font-bold px-1.5 py-0.5 rounded"
-          style={{ background: 'rgba(244, 114, 182, 0.14)', color: '#f472b6' }}
+          style={{
+            ...getPVBadgeStyle('Bilibili', isBilibiliUnofficialOnly ? 'Reprint' : 'Original'),
+            opacity: isBilibiliUnofficialOnly ? 0.8 : 1,
+          }}
           title="Bilibiliで再生可能"
         >
           Bili

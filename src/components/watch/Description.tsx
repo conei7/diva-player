@@ -4,6 +4,7 @@ import type { Song } from '../../types/vocadb';
 import { tokenizeDescriptionText } from '../../utils/descriptionText';
 import { formatJapaneseViews } from '../../utils/formatViews';
 import { getPVServiceLabel } from '../../utils/pvService';
+import { getPVBadgeStyle } from '../../utils/pvBadge';
 import ViewHistoryChart from './ViewHistoryChart';
 
 /**
@@ -201,25 +202,7 @@ export default function Description({ song }: DescriptionProps) {
                     >
                       <span
                         className="text-[10px] font-bold px-1.5 py-0.5 rounded"
-                        style={(() => {
-                          const isOriginal = pv.pvType === 'Original';
-                          if (pv.service === 'Youtube') {
-                            return {
-                              background: isOriginal ? 'rgba(239,68,68,0.15)' : 'rgba(100,30,30,0.3)',
-                              color: isOriginal ? '#ef4444' : '#b91c1c'
-                            };
-                          } else if (pv.service === 'NicoNicoDouga') {
-                            return {
-                              background: isOriginal ? 'rgba(59,130,246,0.15)' : 'rgba(30,30,100,0.3)',
-                              color: isOriginal ? '#3b82f6' : '#1e40af'
-                            };
-                          } else {
-                            return {
-                              background: isOriginal ? 'rgba(148,163,184,0.15)' : 'rgba(71,85,105,0.3)',
-                              color: isOriginal ? '#cbd5e1' : '#94a3b8',
-                            };
-                          }
-                        })()}
+                        style={getPVBadgeStyle(pv.service, pv.pvType)}
                       >
                         {getPVServiceLabel(pv.service)}
                       </span>

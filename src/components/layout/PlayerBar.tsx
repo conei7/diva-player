@@ -5,6 +5,8 @@ import StarRating from '../player/StarRating';
 import ShareCurrentSong from '../player/ShareCurrentSong';
 import SleepTimer from '../player/SleepTimer';
 import PVSourceSelector from '../player/PVSourceSelector';
+import { getPVBadgeStyle } from '../../utils/pvBadge';
+import { getPVServiceLabel } from '../../utils/pvService';
 
 /**
  * PlayerBar - 画面下部固定のプレイヤーコントロール (YouTube Music スタイル)
@@ -182,24 +184,14 @@ export default function PlayerBar() {
           {currentPV && (
             <span
               className="hidden lg:inline text-[10px] font-bold px-2 py-0.5 rounded-full mr-1"
-              style={(() => {
-                const isOriginal = currentPV.pvType === 'Original';
-                if (currentPV.service === 'Youtube') {
-                  return {
-                    background: isOriginal ? 'rgba(239, 68, 68, 0.15)' : 'rgba(100, 30, 30, 0.3)',
-                    color: isOriginal ? '#ef4444' : '#b91c1c'
-                  };
-                } else {
-                  return {
-                    background: isOriginal ? 'rgba(59, 130, 246, 0.15)' : 'rgba(30, 30, 100, 0.3)',
-                    color: isOriginal ? '#3b82f6' : '#1e40af'
-                  };
-                }
-              })()}
+              style={getPVBadgeStyle(currentPV.service, currentPV.pvType)}
             >
+              {currentPV.pvType !== 'Original' && '非公式'}
               {currentPV.service === 'Youtube'
-                ? (currentPV.pvType !== 'Original' ? '非公式YT' : 'YouTube')
-                : (currentPV.pvType !== 'Original' ? '非公式ニコ' : 'ニコニコ')}
+                ? 'YouTube'
+                : currentPV.service === 'NicoNicoDouga'
+                  ? 'ニコニコ'
+                  : getPVServiceLabel(currentPV.service)}
             </span>
           )}
           <PVSourceSelector compact />

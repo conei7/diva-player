@@ -318,6 +318,7 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
   },
 
   addToHistory: (song, source = 'manual', playbackSequence) => {
+    if (!get().hasHydrated) return;
     const playedAt = Date.now();
     const { entries, totalPlays, activePlaybackSequence } = get();
     if (playbackSequence !== undefined && activePlaybackSequence === playbackSequence) return;

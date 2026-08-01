@@ -6,6 +6,7 @@ import { usePlayerStore } from '../../stores/playerStore';
 import PlayerEmbed from '../player/PlayerEmbed';
 import { formatDistinctArtistNames } from '../../utils/artistNames';
 import { getPVServiceLabel } from '../../utils/pvService';
+import { getPVBadgeStyle } from '../../utils/pvBadge';
 import { isPlayablePV } from '../../utils/playablePV';
 
 interface SongDetailsPanelProps {
@@ -15,21 +16,11 @@ interface SongDetailsPanelProps {
 }
 
 function PVBadge({ pv }: { pv: PV }) {
-  const isNico = pv.service === 'NicoNicoDouga';
-  const isYoutube = pv.service === 'Youtube';
   const label = getPVServiceLabel(pv.service);
-  const isOriginal = pv.pvType === 'Original';
-  const color = isNico ? (isOriginal ? '#3b82f6' : '#1e40af')
-    : isYoutube ? (isOriginal ? '#ef4444' : '#b91c1c')
-      : pv.service === 'SoundCloud' ? '#fb923c' : '#f472b6';
-  const bg = isNico
-    ? (isOriginal ? 'rgba(59,130,246,0.15)' : 'rgba(30,30,100,0.3)') 
-    : isYoutube ? (isOriginal ? 'rgba(239,68,68,0.15)' : 'rgba(100,30,30,0.3)')
-      : pv.service === 'SoundCloud' ? 'rgba(249,115,22,0.14)' : 'rgba(244,114,182,0.14)';
   const typeLabel = pv.pvType === 'Original' ? '公式' : pv.pvType === 'Reprint' ? '転載' : 'その他';
-  const watchUrl = pv.url || (isNico
+  const watchUrl = pv.url || (pv.service === 'NicoNicoDouga'
     ? `https://www.nicovideo.jp/watch/${pv.pvId}`
-    : isYoutube ? `https://www.youtube.com/watch?v=${pv.pvId}` : '#');
+    : pv.service === 'Youtube' ? `https://www.youtube.com/watch?v=${pv.pvId}` : '#');
 
   return (
     <a
@@ -37,10 +28,10 @@ function PVBadge({ pv }: { pv: PV }) {
       target="_blank"
       rel="noopener noreferrer"
       className="flex items-center gap-2 px-3 py-2 rounded-lg transition-opacity hover:opacity-80"
-      style={{ background: bg, textDecoration: 'none' }}
+      style={{ ...getPVBadgeStyle(pv.service, pv.pvType), textDecoration: 'none' }}
       onClick={(e) => e.stopPropagation()}
     >
-      <span style={{ color, fontWeight: 700, fontSize: 12 }}>{label}</span>
+      <span style={{ color: 'inherit', fontWeight: 700, fontSize: 12 }}>{label}</span>
       <span style={{ color: 'var(--color-text-secondary)', fontSize: 12 }}>
         {pv.name || pv.pvId}
       </span>

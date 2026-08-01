@@ -15,6 +15,7 @@ import { useAutoQueueBanditStore } from './stores/autoQueueBanditStore';
 import { useAutoQueue } from './hooks/useAutoQueue';
 import AppErrorBoundary from './components/AppErrorBoundary';
 import { formatDocumentTitle } from './utils/documentTitle';
+import { shouldRecordPlayback } from './utils/playbackHistory';
 
 const HomePage = lazy(() => import('./pages/HomePage'));
 const WatchPage = lazy(() => import('./pages/WatchPage'));
@@ -43,7 +44,7 @@ function PlayerTracker() {
   const progress = useProgressStore(s => s.progress);
   const duration = useProgressStore(s => s.duration);
   
-  const { addToHistory, finalizeHistoryEntry, entries: historyEntries } = useHistoryStore();
+  const { addToHistory, finalizeHistoryEntry, entries: historyEntries, hasHydrated: historyHydrated } = useHistoryStore();
   const { ratings } = useRatingStore();
   const { playlists } = usePlaylistStore();
   const implicitFeedback = useImplicitFeedbackStore(s => s.feedback);
@@ -93,6 +94,18 @@ function PlayerTracker() {
       return;
     }
 
+    if (!historyHydrated) return;
+
+    // The persisted player queue is restored with sequence 0. It represents
+    // the previous session, so do not append the same song again on app boot.
+    // Waiting for hydration also prevents a race where the history snapshot
+    // is still empty and the duplicate check cannot see the previous event.
+    const recordPlayback = shouldRecordPlayback(
+      historyHydrated,
+      true,
+      currentPlaybackSequence,
+    );
+
     // 前の曲の再生完了率を送信
     if (
       prevSongRef.current
@@ -112,9 +125,11 @@ function PlayerTracker() {
       playbackSequence: currentPlaybackSequence,
     };
 
-    addToHistory(currentSong, currentPlaybackSource, currentPlaybackSequence);
+    if (recordPlayback) {
+      addToHistory(currentSong, currentPlaybackSource, currentPlaybackSequence);
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentSong?.id, currentPlaybackSequence]);
+  }, [currentSong?.id, currentPlaybackSequence, historyHydrated]);
 
   // progress/duration を prevSongRef に反映
   useEffect(() => {

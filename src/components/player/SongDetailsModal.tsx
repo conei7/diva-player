@@ -6,6 +6,7 @@ import StarRating from './StarRating';
 import OriginalVersionLink from '../watch/OriginalVersionLink';
 import { isPlayablePV } from '../../utils/playablePV';
 import { getPVServiceLabel } from '../../utils/pvService';
+import { getPVBadgeStyle } from '../../utils/pvBadge';
 import AlbumPlaylistButton from '../playlist/AlbumPlaylistButton';
 
 const VOCADB_BASE = 'https://vocadb.net';
@@ -213,22 +214,7 @@ export default function SongDetailsModal() {
                     target="_blank"
                     rel="noopener noreferrer"
                     className="text-xs px-3 py-1.5 rounded-lg transition-colors"
-                    style={(() => {
-                      const isOriginal = pv.pvType === 'Original';
-                      if (pv.service === 'Youtube') {
-                        return {
-                          background: isOriginal ? 'rgba(239, 68, 68, 0.15)' : 'rgba(100, 30, 30, 0.3)',
-                          color: isOriginal ? '#ef4444' : '#b91c1c',
-                          border: isOriginal ? '1px solid rgba(239, 68, 68, 0.3)' : '1px solid rgba(100, 30, 30, 0.4)'
-                        };
-                      } else {
-                        return {
-                          background: isOriginal ? 'rgba(59, 130, 246, 0.15)' : 'rgba(30, 30, 100, 0.3)',
-                          color: isOriginal ? '#3b82f6' : '#1e40af',
-                          border: isOriginal ? '1px solid rgba(59, 130, 246, 0.3)' : '1px solid rgba(30, 30, 100, 0.4)'
-                        };
-                      }
-                    })()}
+                    style={getPVBadgeStyle(pv.service, pv.pvType)}
                     onClick={(e) => e.stopPropagation()}
                   >
                     ▶ {getPVServiceLabel(pv.service)}
