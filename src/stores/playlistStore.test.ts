@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Song } from '../types/vocadb';
-import { DIG_PLAYLIST_ID, DIG_PLAYLIST_NAME, usePlaylistStore } from './playlistStore';
+import { LEGACY_DIG_PLAYLIST_ID, usePlaylistStore } from './playlistStore';
 import { useUiStore } from './uiStore';
 
 function createLocalStorage() {
@@ -141,26 +141,24 @@ describe('YouTube linked playlists', () => {
   });
 });
 
-describe('Dig generated playlist', () => {
+describe('legacy generated playlist migration', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     usePlaylistStore.setState({ playlists: [], folders: [] });
   });
 
-  it('creates one pinned Dig playlist and replaces it atomically', () => {
-    vi.stubGlobal('localStorage', createLocalStorage());
+  it('removes the old ephemeral Dig playlist while preserving user playlists', () => {
+    const localStorage = createLocalStorage();
+    localStorage.setItem('diva_playlists', JSON.stringify([
+      { id: LEGACY_DIG_PLAYLIST_ID, name: '発掘ミックス', songs: [song(7)], isPinned: true, createdAt: 1, updatedAt: 1 },
+      { id: 'user-playlist', name: '保存曲', songs: [song(8)], createdAt: 2, updatedAt: 2 },
+    ]));
+    vi.stubGlobal('localStorage', localStorage);
     vi.stubGlobal('crypto', undefined);
-    const first = usePlaylistStore.getState().getOrCreateDigPlaylist();
-    const second = usePlaylistStore.getState().getOrCreateDigPlaylist();
-    expect(first.id).toBe(DIG_PLAYLIST_ID);
-    expect(first.name).toBe(DIG_PLAYLIST_NAME);
-    expect(second.id).toBe(first.id);
-    expect(second.isPinned).toBe(true);
+    usePlaylistStore.getState().loadPlaylists();
 
-    const updated = usePlaylistStore.getState().replaceDigPlaylistSongs([song(7), song(8)], 1_700_000_000_000);
-    expect(updated.id).toBe(DIG_PLAYLIST_ID);
-    expect(updated.songs.map(item => item.id)).toEqual([7, 8]);
-    expect(updated.updatedAt).toBe(1_700_000_000_000);
-    expect(usePlaylistStore.getState().playlists.filter(item => item.id === DIG_PLAYLIST_ID)).toHaveLength(1);
+    expect(usePlaylistStore.getState().playlists.some(item => item.id === LEGACY_DIG_PLAYLIST_ID)).toBe(false);
+    expect(usePlaylistStore.getState().playlists.find(item => item.id === 'user-playlist')?.songs.map(item => item.id)).toEqual([8]);
+    expect(JSON.parse(localStorage.getItem('diva_playlists') ?? '[]').some((item: { id: string }) => item.id === LEGACY_DIG_PLAYLIST_ID)).toBe(false);
   });
 });

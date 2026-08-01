@@ -2,7 +2,7 @@ import type { ListeningPlayEvent } from '../stores/historyStore';
 import type { Playlist, PlaylistFolder, Song, SmartPlaylistRule } from '../types/vocadb';
 import { normalizeSmartPlaylistRule } from '../utils/smartPlaylist';
 import { useHistoryStore } from '../stores/historyStore';
-import { DIG_PLAYLIST_ID, DIG_PLAYLIST_NAME, usePlaylistStore, WATCH_LATER_ID } from '../stores/playlistStore';
+import { LEGACY_DIG_PLAYLIST_ID, usePlaylistStore, WATCH_LATER_ID } from '../stores/playlistStore';
 import { useRatingStore } from '../stores/ratingStore';
 import { storage } from '../utils/storage';
 import { HISTORY_STORES, openHistoryDb } from './historyDatabase';
@@ -396,19 +396,14 @@ function uniqueId(existing: Set<string>, candidate: string): string {
 function mergePlaylists(current: Playlist[], incoming: Playlist[], currentFolders: PlaylistFolder[], incomingFolders: PlaylistFolder[]): { playlists: Playlist[]; folders: PlaylistFolder[] } {
   const folderIds = new Set(currentFolders.map(folder => folder.id));
   const folders = [...currentFolders, ...incomingFolders.filter(folder => !folderIds.has(folder.id))];
-  const currentDig = current.find(playlist => playlist.id === DIG_PLAYLIST_ID);
-  const incomingDig = incoming.find(playlist => playlist.id === DIG_PLAYLIST_ID);
-  const playlistIds = new Set(current.filter(playlist => playlist.id !== DIG_PLAYLIST_ID).map(playlist => playlist.id));
-  const imported = incoming.filter(playlist => playlist.id !== DIG_PLAYLIST_ID).map(playlist => {
+  const retained = current.filter(playlist => playlist.id !== LEGACY_DIG_PLAYLIST_ID);
+  const playlistIds = new Set(retained.map(playlist => playlist.id));
+  const imported = incoming.filter(playlist => playlist.id !== LEGACY_DIG_PLAYLIST_ID).map(playlist => {
     const id = uniqueId(playlistIds, playlist.id);
     playlistIds.add(id);
     return { ...playlist, id };
   });
-  const dig = incomingDig ?? currentDig;
-  const playlists = dig
-    ? [{ ...dig, id: DIG_PLAYLIST_ID, name: DIG_PLAYLIST_NAME, isPinned: true }, ...current.filter(playlist => playlist.id !== DIG_PLAYLIST_ID), ...imported]
-    : [...current, ...imported];
-  return { playlists, folders };
+  return { playlists: [...retained, ...imported], folders };
 }
 
 export async function executeFullBackupImport(preview: FullBackupPreview, options: FullBackupImportOptions): Promise<FullBackupImportResult> {
@@ -423,7 +418,9 @@ export async function executeFullBackupImport(preview: FullBackupPreview, option
     const merged = options.mode === 'replace'
       ? null
       : mergePlaylists(currentPlaylists, incoming.playlists.playlists, currentFolders, incoming.playlists.folders);
-    const nextPlaylists = options.mode === 'replace' ? incoming.playlists.playlists : merged!.playlists;
+    const nextPlaylists = options.mode === 'replace'
+      ? incoming.playlists.playlists.filter(playlist => playlist.id !== LEGACY_DIG_PLAYLIST_ID)
+      : merged!.playlists;
     const nextFolders = options.mode === 'replace' ? incoming.playlists.folders : merged!.folders;
     if (!nextPlaylists.some(playlist => playlist.id === WATCH_LATER_ID)) {
       const watchLater = currentPlaylists.find(playlist => playlist.id === WATCH_LATER_ID);

@@ -26,12 +26,8 @@ import {
   sortableKeyboardCoordinates,
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
-import { DIG_PLAYLIST_ID, DIG_PLAYLIST_NAME, usePlaylistStore, type SortKey } from '../stores/playlistStore';
+import { usePlaylistStore, type SortKey } from '../stores/playlistStore';
 import { usePlayerStore } from '../stores/playerStore';
-import { useHistoryStore } from '../stores/historyStore';
-import { useRatingStore } from '../stores/ratingStore';
-import { useImplicitFeedbackStore } from '../stores/implicitFeedbackStore';
-import { getGlobalFilterSettings } from '../stores/globalFilterStore';
 import { useUiStore } from '../stores/uiStore';
 import type { Playlist, PlaylistFolder, Song } from '../types/vocadb';
 import {
@@ -73,7 +69,6 @@ import PlaylistHealthModal from '../components/playlist/PlaylistHealthModal';
 import { analyzePlaylistHealth } from '../utils/playlistHealth';
 import { normalizeYouTubePlaylistUrl, type YouTubePlaylistSongsResponse } from '../api/youtubePlaylist';
 import { syncYouTubePlaylist } from '../services/youtubePlaylistSync';
-import { generateDigPlaylist } from '../services/digPlaylist';
 
 const PLAYLIST_LIST_PREFERENCES_KEY = 'playlistListPreferences';
 
@@ -159,14 +154,10 @@ export default function PlaylistPage() {
     loadPlaylists,
     createPlaylist, deletePlaylist, restoreDeletedPlaylist, updatePlaylist,
     createSmartPlaylist, createYouTubeLinkedPlaylist, unlinkYouTubeSync, replacePlaylistSongs,
-    getOrCreateDigPlaylist, replaceDigPlaylistSongs,
     createFolder, deleteFolder,
     addSongs, removeSong, removeSongs, restoreRemovedSongs, reorderSongs, removeDuplicateSongsWithUndo,
   } = usePlaylistStore();
   const { setQueue, setQueueShuffled, addToQueue } = usePlayerStore();
-  const historyEntries = useHistoryStore(state => state.entries);
-  const ratings = useRatingStore(state => state.ratings);
-  const implicitFeedback = useImplicitFeedbackStore(state => state.feedback);
   const openSaveToPlaylist = useUiStore(s => s.openSaveToPlaylist);
 
   const [selectedPlaylistId, setSelectedPlaylistId] = useState<string | null>(null);
@@ -196,13 +187,6 @@ export default function PlaylistPage() {
   const [showHealthModal, setShowHealthModal] = useState(false);
   const [showSmartBuilder, setShowSmartBuilder] = useState(false);
   const [smartEditingPlaylist, setSmartEditingPlaylist] = useState<Playlist | null>(null);
-  const [digStatuses, setDigStatuses] = useState<Record<string, {
-    state: 'loading' | 'success' | 'empty' | 'error';
-    generatedAt?: number;
-    candidateCount?: number;
-    knownCount?: number;
-    error?: string;
-  }>>({});
   const [smartRefreshStatuses, setSmartRefreshStatuses] = useState<Record<string, {
     state: 'loading' | 'success' | 'empty' | 'error';
     refreshedAt?: number;
@@ -210,7 +194,6 @@ export default function PlaylistPage() {
     loadedCount?: number;
   }>>({});
   const smartRefreshRef = useRef<string | null>(null);
-  const digRequestRef = useRef(0);
   const smartRefreshRetryRef = useRef(new Set<string>());
   const smartRefreshRetryTimerRef = useRef<number | null>(null);
   const [smartRefreshRetryTick, setSmartRefreshRetryTick] = useState(0);
@@ -256,7 +239,6 @@ export default function PlaylistPage() {
 
   const selectedPlaylist = playlists.find(p => p.id === selectedPlaylistId) ?? null;
   const isYouTubeLinked = selectedPlaylist?.youtubeSync?.enabled === true;
-  const isDigPlaylist = selectedPlaylist?.id === DIG_PLAYLIST_ID;
 
   const refreshSmartPlaylist = useCallback(async (playlist: Playlist) => {
     if (!playlist.smartRule) return;
@@ -296,72 +278,6 @@ export default function PlaylistPage() {
     }
   }, [replacePlaylistSongs]);
 
-  const refreshDigPlaylist = useCallback(async ({ playAfter = false } = {}) => {
-    const requestId = ++digRequestRef.current;
-    const existing = getOrCreateDigPlaylist();
-    const generatedAt = Date.now();
-    setSelectedPlaylistId(existing.id);
-    setDigStatuses(current => ({
-      ...current,
-      [DIG_PLAYLIST_ID]: { state: 'loading' },
-    }));
-    try {
-      const result = await generateDigPlaylist({
-        historyEntries,
-        playlists,
-        ratings,
-        implicitFeedback,
-        globalFilters: getGlobalFilterSettings(),
-      });
-      if (requestId !== digRequestRef.current) return;
-      if (result.songs.length === 0) {
-        setDigStatuses(current => ({
-          ...current,
-          [DIG_PLAYLIST_ID]: {
-            state: 'empty',
-            generatedAt,
-            candidateCount: result.candidateCount,
-            knownCount: result.knownCount,
-          },
-        }));
-        showToast('未聴の候補が見つかりませんでした。条件や履歴を確認してください。', 'warning');
-        return;
-      }
-      const updated = replaceDigPlaylistSongs(result.songs, generatedAt);
-      setDigStatuses(current => ({
-        ...current,
-        [DIG_PLAYLIST_ID]: {
-          state: 'success',
-          generatedAt,
-          candidateCount: result.candidateCount,
-          knownCount: result.knownCount,
-        },
-      }));
-      if (playAfter) setQueue(updated.songs, 0, true);
-      showToast(`発掘ミックスを${result.songs.length}曲で編成しました`, 'success');
-    } catch (error) {
-      if (requestId !== digRequestRef.current) return;
-      setDigStatuses(current => ({
-        ...current,
-        [DIG_PLAYLIST_ID]: {
-          state: 'error',
-          error: error instanceof Error ? error.message : 'unknown',
-        },
-      }));
-      showToast('発掘ミックスの生成に失敗しました。既存の曲一覧は保持しています。', 'warning');
-    }
-  }, [getOrCreateDigPlaylist, historyEntries, implicitFeedback, playlists, ratings, replaceDigPlaylistSongs, setQueue, showToast]);
-
-  useEffect(() => {
-    if (searchParams.get('playlist') !== DIG_PLAYLIST_ID) return;
-    const playlist = getOrCreateDigPlaylist();
-    setSelectedPlaylistId(playlist.id);
-    if (searchParams.get('generate') === '1') {
-      navigate(`/playlists?playlist=${DIG_PLAYLIST_ID}`, { replace: true });
-      void refreshDigPlaylist({ playAfter: true });
-    }
-  }, [getOrCreateDigPlaylist, navigate, refreshDigPlaylist, searchParams]);
-
   useEffect(() => {
     if (!selectedPlaylist?.smartRule || smartRefreshRef.current === selectedPlaylist.id) return;
     smartRefreshRef.current = selectedPlaylist.id;
@@ -387,7 +303,6 @@ export default function PlaylistPage() {
   const selectedSmartRefreshStatus = selectedPlaylist
     ? smartRefreshStatuses[selectedPlaylist.id]
     : undefined;
-  const selectedDigStatus = isDigPlaylist ? digStatuses[DIG_PLAYLIST_ID] : undefined;
   const pinnedPlaylists = playlists.filter(p => p.isPinned);
   const folderScopedPlaylists = showAllFolders
     ? playlists.filter(p => !p.isPinned)
@@ -1044,24 +959,8 @@ export default function PlaylistPage() {
                   <PlaylistCover playlist={selectedPlaylist} />
                 </div>
                 <div className="min-w-0 flex-1">
-                  <p className="mb-1.5 text-xs text-neutral-500">{isDigPlaylist ? DIG_PLAYLIST_NAME : selectedPlaylist.smartRule ? 'スマートプレイリスト' : selectedPlaylist.isPinned ? 'ピン留め' : 'プレイリスト'}</p>
+                  <p className="mb-1.5 text-xs text-neutral-500">{selectedPlaylist.smartRule ? 'スマートプレイリスト' : selectedPlaylist.isPinned ? 'ピン留め' : 'プレイリスト'}</p>
                   <h1 className="break-words text-2xl font-bold leading-tight text-white sm:text-3xl">{selectedPlaylist.name}</h1>
-                    {isDigPlaylist && (
-                      <div className="mt-3 rounded-xl border border-emerald-300/15 bg-emerald-300/[0.05] p-3 text-sm text-emerald-50/85">
-                        <p className="font-medium text-emerald-100">高評価曲に音響的に近い未聴曲を、毎回違う組み合わせで発掘</p>
-                        <p className="mt-1 text-xs text-emerald-100/65">
-                          {selectedDigStatus?.state === 'loading' && '候補を集めています…'}
-                          {selectedDigStatus?.state === 'success' && `最終更新 ${new Date(selectedDigStatus.generatedAt ?? selectedPlaylist.updatedAt).toLocaleString('ja-JP')}`}
-                          {selectedDigStatus?.state === 'empty' && '未聴の候補が見つかりませんでした。'}
-                          {selectedDigStatus?.state === 'error' && '生成に失敗しました。現在の曲一覧は保持しています。'}
-                          {!selectedDigStatus && selectedPlaylist.songs.length === 0 && 'サイドバーの「発掘ミックスを作る」から編成できます。'}
-                          {!selectedDigStatus && selectedPlaylist.songs.length > 0 && `最終更新 ${new Date(selectedPlaylist.updatedAt).toLocaleString('ja-JP')}`}
-                        </p>
-                        {selectedDigStatus?.state === 'success' && selectedDigStatus.candidateCount !== undefined && (
-                          <p className="mt-1 text-[11px] text-emerald-100/55">候補 {selectedDigStatus.candidateCount}曲・既知ID {selectedDigStatus.knownCount ?? 0}件を除外</p>
-                        )}
-                      </div>
-                    )}
                     {selectedPlaylist.smartRule && (
                       <p className="mt-3 text-xs" style={{ color: 'var(--color-accent-cyan)' }}>
                         {selectedSmartRefreshStatus?.state === 'loading' && '条件を再計算中…'}
@@ -1172,18 +1071,6 @@ export default function PlaylistPage() {
                         {selectedSmartRefreshStatus?.state === 'loading' ? '更新中…' : '条件を再更新'}
                       </button>
                     )}
-                    {isDigPlaylist && (
-                      <button
-                        type="button"
-                        className="h-10 rounded-full border border-emerald-300/25 bg-emerald-300/10 px-4 text-sm font-medium text-emerald-100 transition-colors hover:bg-emerald-300/20"
-                        disabled={selectedDigStatus?.state === 'loading'}
-                        onClick={() => void refreshDigPlaylist({ playAfter: true })}
-                        title="音響的に近い未聴曲から発掘ミックスを作って再生"
-                      >
-                        {selectedDigStatus?.state === 'loading' ? '発掘中…' : '作り直して再生'}
-                      </button>
-                    )}
-
                     {/* 編集・削除（テキスト付き） */}
                     {!selectedPlaylist.isPinned && !isYouTubeLinked && (
                       <>

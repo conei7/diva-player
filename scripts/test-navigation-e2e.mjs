@@ -121,6 +121,8 @@ async function installApiFixtures(page) {
     } else if (path.endsWith('/api/songs/views')) {
       const ids = (url.searchParams.get('ids') ?? '').split(',').filter(Boolean);
       response = fixtureResponse(Object.fromEntries(ids.map(id => [id, { youtubeViews: 1234, nicoViews: 567 }])));
+    } else if (path.endsWith('/api/recommend/dig')) {
+      response = fixtureResponse({ items: fixtureSongs, totalCount: fixtureSongs.length });
     } else if (path.includes('/api/recommend')) {
       response = fixtureResponse({ items: [] });
     } else if (path.includes('/api/songs/search')) {
@@ -148,6 +150,7 @@ async function installApiFixtures(page) {
 
 try {
   const page = await browser.newPage();
+  await page.setViewport({ width: 1440, height: 900 });
   await installApiFixtures(page);
   await page.goto(new URL('watch?v=1501', base), { waitUntil: 'domcontentloaded', timeout: 60_000 });
   await page.waitForSelector('a[aria-label="DIVA Player home"]', { timeout: 60_000 });
@@ -198,6 +201,45 @@ try {
       && input.value === '';
   }, { timeout: 60_000 });
   console.log('PASS search state resets on home navigation');
+
+  const discoveryMixState = await page.evaluate(() => {
+    const buttons = [...document.querySelectorAll('button[aria-label="発掘ミックスを生成して再生"]')];
+    const visibleButton = buttons.find(button => {
+      const rect = button.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0;
+    });
+    const navigationContainsMix = [...document.querySelectorAll('nav a')]
+      .some(link => link.textContent?.includes('発掘ミックス'));
+    const rect = visibleButton?.getBoundingClientRect();
+    return {
+      found: Boolean(visibleButton),
+      navigationContainsMix,
+      y: rect?.y ?? -1,
+      viewportHeight: window.innerHeight,
+    };
+  });
+  if (!discoveryMixState.found || discoveryMixState.navigationContainsMix || discoveryMixState.y < discoveryMixState.viewportHeight / 2) {
+    throw new Error(`Discovery mix is not an independent lower-sidebar action: ${JSON.stringify(discoveryMixState)}`);
+  }
+  const pathBeforeDiscovery = normalizePath(new URL(page.url()).pathname);
+  await page.click('button[aria-label="発掘ミックスを生成して再生"]');
+  await page.waitForFunction(() => [...document.querySelectorAll('button[aria-label="発掘ミックスを生成して再生"]')]
+    .find(button => button.getBoundingClientRect().width > 0)?.getAttribute('aria-busy') === 'true', { timeout: 10_000 });
+  await page.waitForFunction(() => [...document.querySelectorAll('button[aria-label="発掘ミックスを生成して再生"]')]
+    .find(button => button.getBoundingClientRect().width > 0)?.getAttribute('aria-busy') === 'false', { timeout: 60_000 });
+  const discoveryResultText = await page.$$eval('button[aria-label="発掘ミックスを生成して再生"]', buttons => (
+    buttons.find(button => button.getBoundingClientRect().width > 0)?.textContent?.trim() ?? ''
+  ));
+  // The watch-page fixture song was just played and must be excluded, leaving
+  // only the second fixture as an unheard direct-queue candidate.
+  if (!discoveryResultText.includes('1曲を再生中')) {
+    throw new Error(`Discovery mix did not populate the direct queue: ${discoveryResultText}`);
+  }
+  const pathAfterDiscovery = normalizePath(new URL(page.url()).pathname);
+  if (pathAfterDiscovery !== pathBeforeDiscovery) {
+    throw new Error(`Discovery mix unexpectedly navigated: ${pathBeforeDiscovery} -> ${pathAfterDiscovery}`);
+  }
+  console.log(`PASS direct discovery-mix queue action (sidebar y=${Math.round(discoveryMixState.y)})`);
 
   await page.waitForSelector('a[href*="/watch?v="]', { timeout: 60_000 });
   const songHref = await page.$eval('a[href*="/watch?v="]', element => element.getAttribute('href'));

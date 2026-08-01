@@ -1,5 +1,6 @@
 import { Link, useLocation } from 'react-router';
 import { useUiStore } from '../../stores/uiStore';
+import DiscoveryMixButton from './DiscoveryMixButton';
 
 /**
  * Sidebar - YouTube風の左サイドバー
@@ -61,16 +62,6 @@ const menuItems: MenuItem[] = [
     ),
   },
   {
-    path: '/playlists?playlist=dig-playlist&generate=1',
-    label: '発掘ミックスを作る',
-    icon: (
-      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-        <path d="m12 3 1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3Z" />
-        <path d="m19 15 .7 2.3L22 18l-2.3.7L19 21l-.7-2.3L16 18l2.3-.7L19 15Z" />
-      </svg>
-    ),
-  },
-  {
     path: '/favorite-producers',
     label: 'お気に入りP',
     icon: (
@@ -89,9 +80,7 @@ export default function Sidebar() {
   const content = (
     <nav className="flex flex-col py-2 h-full">
       {menuItems.map((item) => {
-        const isActive = item.path.startsWith('/playlists?playlist=dig-playlist')
-          ? location.pathname === '/playlists' && location.search.includes('playlist=dig-playlist')
-          : location.pathname === item.path;
+        const isActive = location.pathname === item.path;
         return (
           <Link
             key={item.path}
@@ -122,9 +111,11 @@ export default function Sidebar() {
         );
       })}
 
+      <DiscoveryMixButton expanded={sidebarExpanded} onStarted={closeMobileDrawer} />
+
       {/* 下部区切り線 + ブランディング */}
       {sidebarExpanded && (
-        <div className="mt-auto px-4 pb-4">
+        <div className="px-4 pb-4 pt-3">
           <div className="border-t pt-4" style={{ borderColor: 'var(--color-border)' }}>
             <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
               DIVA Player v0.1
