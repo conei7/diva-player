@@ -18,6 +18,13 @@ describe('checkBackendHealth', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(2);
   });
 
+  it('treats a rate-limited response as reachable', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({ ok: false, status: 429 });
+
+    await expect(checkBackendHealth({ fetchImpl, retryDelayMs: 0 })).resolves.toBe(true);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
   it('returns false after all attempts fail', async () => {
     const fetchImpl = vi.fn().mockResolvedValue({ ok: false });
 

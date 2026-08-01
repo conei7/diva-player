@@ -44,6 +44,10 @@ export async function checkBackendHealth({
         signal: AbortSignal.timeout(timeoutMs),
       });
       if (response.ok) return true;
+      // A rate-limited response still proves that the API route is reachable.
+      // Do not show the outage banner merely because health polling from
+      // multiple tabs exhausted the dedicated probe bucket.
+      if (response.status === 429) return true;
     } catch {
       // A transient tunnel or network failure is retried below.
     }

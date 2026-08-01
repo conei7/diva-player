@@ -45,6 +45,7 @@ var allowedOrigins = builder.Configuration
         "http://127.0.0.1:5173",
         "http://192.168.40.79:8080",
     ];
+const int healthPermitLimit = 60;
 
 // --- CORS: 公開Web、SBC LAN、ローカル開発だけを許可 ---
 builder.Services.AddCors(options =>
@@ -72,7 +73,7 @@ builder.Services.AddRateLimiter(options =>
         context.HttpContext.Response.Headers.RetryAfter = "60";
         context.HttpContext.Response.Headers["X-Diva-Rate-Limit"] = isExternalViews
             ? "views;600/min"
-            : isHealth ? "health;6/min"
+            : isHealth ? $"health;{healthPermitLimit}/min"
             : isYouTubePlaylist ? "youtube;20/min" : "default;120/min";
         var logger = context.HttpContext.RequestServices.GetRequiredService<ILoggerFactory>()
             .CreateLogger("DivaRateLimit");
@@ -114,7 +115,7 @@ builder.Services.AddRateLimiter(options =>
             // External view counts are a cheap batch lookup and are loaded by
             // several independent UI sections. Keep them from exhausting the
             // recommendation/search budget while retaining abuse protection.
-            PermitLimit = isHealth ? 6 : isExternalViews ? 600 : isYouTubePlaylist ? 20 : 120,
+            PermitLimit = isHealth ? healthPermitLimit : isExternalViews ? 600 : isYouTubePlaylist ? 20 : 120,
             Window = TimeSpan.FromMinutes(1),
             QueueLimit = 0,
             AutoReplenishment = true,
