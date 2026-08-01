@@ -138,11 +138,11 @@ try {
   if (
     bilibiliSrc.searchParams.get('aid') !== '45451154'
     || bilibiliSrc.searchParams.get('danmaku') !== '0'
-    || bilibiliSrc.searchParams.get('muted') !== '1'
+    || bilibiliSrc.searchParams.get('muted') !== '0'
   ) {
     throw new Error(`Unexpected Bilibili embed: ${bilibiliSrc}`);
   }
-  console.log('PASS Bilibili aid embed starts safely muted');
+  console.log('PASS Bilibili aid embed keeps native player audio enabled');
 } finally {
   await browser.close();
 }
