@@ -2,6 +2,7 @@ import { useState } from 'react';
 import StarRating from '../player/StarRating';
 import { useRatingStore } from '../../stores/ratingStore';
 import { useUiStore } from '../../stores/uiStore';
+import { usePlaylistStore, WATCH_LATER_ID } from '../../stores/playlistStore';
 import type { Song } from '../../types/vocadb';
 
 /**
@@ -18,7 +19,11 @@ interface ActionBarProps {
 export default function ActionBar({ song }: ActionBarProps) {
   const { getRating, setRating } = useRatingStore();
   const { openSaveToPlaylist } = useUiStore();
+  const toggleSongInPlaylist = usePlaylistStore(state => state.toggleSongInPlaylist);
+  const getOrCreateWatchLater = usePlaylistStore(state => state.getOrCreateWatchLater);
+  const isSongInPlaylist = usePlaylistStore(state => state.isSongInPlaylist);
   const rating = getRating(song.id);
+  const isWatchLater = isSongInPlaylist(WATCH_LATER_ID, song.id);
   const [shareToast, setShareToast] = useState(false);
 
   const handleShare = async () => {
@@ -42,6 +47,13 @@ export default function ActionBar({ song }: ActionBarProps) {
 
   const handleSave = () => {
     openSaveToPlaylist(song);
+  };
+
+  const handleWatchLater = () => {
+    // Layout loads playlists asynchronously; ensure the system playlist exists
+    // even if the user clicks immediately after opening a watch page.
+    getOrCreateWatchLater();
+    toggleSongInPlaylist(WATCH_LATER_ID, song);
   };
 
 
@@ -84,6 +96,23 @@ export default function ActionBar({ song }: ActionBarProps) {
             <path d="M14 10H2v2h12v-2zm0-4H2v2h12V6zm4 8v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zM2 16h8v-2H2v2z" />
           </svg>
           <span className="hidden sm:inline">保存</span>
+        </button>
+      </div>
+
+      {/* ─── 後で聴く（固定プレイリスト）ボタン ─── */}
+      <div className="relative">
+        <button
+          className="yt-action-btn"
+          onClick={handleWatchLater}
+          title={isWatchLater ? '後で聴くから削除' : '後で聴く'}
+          aria-label={isWatchLater ? '後で聴くから削除' : '後で聴く'}
+          style={isWatchLater ? { color: 'var(--color-accent-cyan)' } : undefined}
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill={isWatchLater ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2">
+            <circle cx="12" cy="12" r="9" />
+            <polyline points="12 7 12 12 15.5 14" />
+          </svg>
+          <span className="hidden sm:inline">後で聴く</span>
         </button>
       </div>
 

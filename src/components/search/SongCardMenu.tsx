@@ -108,7 +108,7 @@ export default function SongCardMenu({
             onClick={(event) => { onSaveToPlaylist(event); onClose(); }}
           >
             <span aria-hidden="true">▣</span>
-            再生リストに保存
+            プレイリストに保存
           </button>
 
           {onAddToQueue && hasPlayablePV && (

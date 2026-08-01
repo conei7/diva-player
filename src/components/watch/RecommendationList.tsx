@@ -382,7 +382,7 @@ function RecItemRow({
             <path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/>
             <polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/>
           </svg>
-          再生リストに保存
+          プレイリストに保存
         </button>
         <div className="border-t" style={{ borderColor: 'var(--color-border)' }} />
         <button className="w-full flex items-center gap-3 px-4 py-2.5 text-sm hover:bg-white/5 transition-colors text-left"
