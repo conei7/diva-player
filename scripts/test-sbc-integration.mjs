@@ -92,12 +92,12 @@ async function main() {
   assert(Array.isArray(trending.items), 'Trending endpoint did not return an items array.');
   console.log(`PASS PostgreSQL trending (${trending.items.length} songs)`);
 
-  const seededA = await getJson(baseUrl, '/api/songs/trending?days=7&start=0&maxResults=24&mode=surge&seed=11');
-  const seededB = await getJson(baseUrl, '/api/songs/trending?days=7&start=0&maxResults=24&mode=surge&seed=11');
-  const seededC = await getJson(baseUrl, '/api/songs/trending?days=7&start=0&maxResults=24&mode=surge&seed=12');
-  assert(JSON.stringify(seededA.items.map(item => item.id)) === JSON.stringify(seededB.items.map(item => item.id)), 'Trending seed is not stable.');
-  assert(seededA.items.length < 2 || JSON.stringify(seededA.items.map(item => item.id)) !== JSON.stringify(seededC.items.map(item => item.id)), 'Trending seed has no exploration effect.');
-  console.log(`PASS seeded trending stability (${seededA.items.length} items)`);
+  for (const [mode, days] of [['alltime', 30], ['pace', 30], ['surge', 7], ['recent', 30]]) {
+    const rankedA = await getJson(baseUrl, `/api/songs/trending?days=${days}&start=0&maxResults=24&mode=${mode}&seed=11`);
+    const rankedB = await getJson(baseUrl, `/api/songs/trending?days=${days}&start=0&maxResults=24&mode=${mode}&seed=12`);
+    assert(JSON.stringify(rankedA.items.map(item => item.id)) === JSON.stringify(rankedB.items.map(item => item.id)), `${mode} ranking changed with its exploration seed.`);
+    console.log(`PASS deterministic ${mode} ranking (${rankedA.items.length} items)`);
+  }
 
   const metadata = await findSeedWithResults(baseUrl, '/api/recommend/metadata');
   console.log(`PASS Qdrant metadata similarity (seed ${metadata.seed.id}, ${metadata.data.items.length} candidates)`);

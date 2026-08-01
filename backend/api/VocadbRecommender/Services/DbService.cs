@@ -1016,11 +1016,14 @@ public class DbService
         var normalizedModeCondition = modeCondition.Replace("s.song_type", songTypeExpression, StringComparison.Ordinal);
         var orderBy = normalizedMode switch
         {
-            "surge" when normalizedRanking == "legacy" => "g.surge_rate + (g.ranking_noise - 0.5) * 0.025 DESC, g.view_growth DESC, s.favorited_times DESC NULLS LAST",
-            "surge" => "g.surge_rank_score + (g.ranking_noise - 0.5) * 0.025 DESC, g.view_growth DESC, g.quality_score DESC, s.favorited_times DESC NULLS LAST",
-            "recent" => "g.recent_score + (g.ranking_noise - 0.5) * 0.015 DESC, g.view_growth DESC, s.publish_date DESC",
-            "alltime" => "g.popular_score + (g.ranking_noise - 0.5) * 0.015 DESC, g.view_growth DESC, s.favorited_times DESC NULLS LAST",
-            "pace" => "g.recent_score + (g.ranking_noise - 0.5) * 0.015 DESC, g.view_growth DESC, s.publish_date DESC",
+            // These four feeds are user-facing rankings. Keep their order
+            // independent of the optional exploration seed and break ties by
+            // song ID so repeated requests produce the same list.
+            "surge" when normalizedRanking == "legacy" => "g.surge_rate DESC, g.view_growth DESC, s.favorited_times DESC NULLS LAST, s.id ASC",
+            "surge" => "g.surge_rank_score DESC, g.view_growth DESC, g.quality_score DESC, s.favorited_times DESC NULLS LAST, s.id ASC",
+            "recent" => "g.recent_score DESC, g.view_growth DESC, s.publish_date DESC, s.id ASC",
+            "alltime" => "g.popular_score DESC, g.view_growth DESC, s.favorited_times DESC NULLS LAST, s.id ASC",
+            "pace" => "g.recent_score DESC, g.view_growth DESC, s.publish_date DESC, s.id ASC",
             "deep" => "g.deep_score DESC, g.quality_score DESC, g.view_growth DESC",
             _ => "g.popular_score + (g.ranking_noise - 0.5) * 0.035 DESC, g.growth_rate DESC, s.favorited_times DESC NULLS LAST",
         };

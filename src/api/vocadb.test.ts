@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Artist, Song } from '../types/vocadb';
-import { attachExternalViews, getTopSongs, rankArtistsByName, resolveProducerByName, searchVocalistsByName, selectVocalistVariants } from './vocadb';
+import { attachExternalViews, getTopSongs, getTrendingSongs, rankArtistsByName, resolveProducerByName, searchVocalistsByName, selectVocalistVariants } from './vocadb';
 import { VOCALIST_SEARCH_ARTIST_TYPES } from '../config/voiceSynthTypes';
 
 function artist(id: number, name: string): Artist {
@@ -165,5 +165,19 @@ describe('trending fallback pagination', () => {
 
     const requestUrl = new URL(String(fetchMock.mock.calls[0]?.[0]));
     expect(requestUrl.searchParams.get('start')).toBe('48');
+  });
+
+  it('uses the zero seed for ranking requests without exploration', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ items: [] }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await getTrendingSongs(30, 24, 0, 'alltime', 0);
+
+    const trendingCall = fetchMock.mock.calls.find(call => String(call[0]).includes('/api/songs/trending'));
+    const requestUrl = new URL(String(trendingCall?.[0]), 'https://example.test');
+    expect(requestUrl.searchParams.get('seed')).toBe('0');
   });
 });

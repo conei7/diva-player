@@ -36,6 +36,7 @@ import { performanceNow, recordPerformanceMetric, type PerformanceSegment } from
 import { selectRotatingWindow } from '../utils/pageWindow';
 import { interleaveUniqueSongs, selectRecentProducerIds } from '../utils/recentProducers';
 import { resolveWithin } from '../utils/timeBudget';
+import { isDeterministicHomeRankingCategory } from '../utils/homeRanking';
 
 type HomeCategoryId =
   | 'recommended'
@@ -285,21 +286,21 @@ export default function HomePage() {
       } else {
         switch (category) {
           case 'popular': {
-            result = await getTrendingSongs(30, PAGE_SIZE, pageNum * PAGE_SIZE, 'alltime', rankingSeedRef.current, globalFilterSettings);
+            result = await getTrendingSongs(30, PAGE_SIZE, pageNum * PAGE_SIZE, 'alltime', 0, globalFilterSettings);
             break;
           }
           case 'pace': {
-            result = await getTrendingSongs(30, PAGE_SIZE, pageNum * PAGE_SIZE, 'pace', rankingSeedRef.current, globalFilterSettings);
+            result = await getTrendingSongs(30, PAGE_SIZE, pageNum * PAGE_SIZE, 'pace', 0, globalFilterSettings);
             break;
           }
           case 'recommended':
             result = await fetchRecommendedHomeSongs(pageNum);
             break;
           case 'trending':
-            result = await getTrendingSongs(7, PAGE_SIZE, pageNum * PAGE_SIZE, 'surge', rankingSeedRef.current, globalFilterSettings);
+            result = await getTrendingSongs(7, PAGE_SIZE, pageNum * PAGE_SIZE, 'surge', 0, globalFilterSettings);
             break;
           case 'recent': {
-            result = await getTrendingSongs(30, PAGE_SIZE, pageNum * PAGE_SIZE, 'recent', rankingSeedRef.current, globalFilterSettings);
+            result = await getTrendingSongs(30, PAGE_SIZE, pageNum * PAGE_SIZE, 'recent', 0, globalFilterSettings);
             break;
           }
           case 'deep': {
@@ -380,7 +381,7 @@ export default function HomePage() {
       const sourceIds = result.map(song => song.id);
       const newSourceCount = sourceIds.filter(id => !sourceSongIdsRef.current.has(id)).length;
       sourceIds.forEach(id => sourceSongIdsRef.current.add(id));
-      if (!query && !artistIdParam && category !== 'recommended') {
+      if (!query && !artistIdParam && category !== 'recommended' && !isDeterministicHomeRankingCategory(category)) {
         result = rerankDisplayedSongs(result, rankingSeedRef.current);
       }
       if (requiresExternalViewCounts(globalFilterSettings)) {
