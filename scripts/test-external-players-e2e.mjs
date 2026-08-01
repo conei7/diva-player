@@ -34,6 +34,7 @@ const bilibiliSong = song(
 async function preparePage(fixtureSong) {
   const page = await browser.newPage();
   await page.evaluateOnNewDocument(currentSong => {
+    localStorage.setItem('diva_volume', JSON.stringify(23));
     localStorage.setItem('diva_playerQueue', JSON.stringify({
       queue: [currentSong],
       queueIndex: 0,
@@ -57,17 +58,29 @@ async function preparePage(fixtureSong) {
             };
             const Widget = function () {
               const listeners = {};
+              let paused = true;
               const widget = {
                 bind(name, listener) {
                   listeners[name] = listener;
                   if (name === Events.READY) setTimeout(() => { window.__soundCloudReady = true; listener(); }, 0);
                 },
                 unbind(name) { delete listeners[name]; },
-                play() { window.__soundCloudPlayCalls = (window.__soundCloudPlayCalls || 0) + 1; setTimeout(() => listeners[Events.PLAY]?.(), 0); },
-                pause() { window.__soundCloudPauseCalls = (window.__soundCloudPauseCalls || 0) + 1; setTimeout(() => listeners[Events.PAUSE]?.(), 0); },
+                play() {
+                  window.__soundCloudPlayCalls = (window.__soundCloudPlayCalls || 0) + 1;
+                  // Reproduce the transient stale PAUSE observed while a real
+                  // SoundCloud Widget play request is settling.
+                  setTimeout(() => listeners[Events.PAUSE]?.(), 0);
+                  setTimeout(() => { paused = false; listeners[Events.PLAY]?.(); }, 50);
+                },
+                pause() {
+                  window.__soundCloudPauseCalls = (window.__soundCloudPauseCalls || 0) + 1;
+                  paused = true;
+                  setTimeout(() => listeners[Events.PAUSE]?.(), 0);
+                },
                 seekTo(ms) { listeners[Events.SEEK]?.({ currentPosition: ms }); },
                 setVolume(value) { window.__soundCloudVolume = value; },
                 getDuration(callback) { callback(120000); },
+                isPaused(callback) { callback(paused); },
               };
               window.__soundCloudWidget = widget;
               return widget;
@@ -104,18 +117,32 @@ try {
   await soundCloudPage.click('button[title="再生"]');
   await soundCloudPage.waitForFunction(() => window.__soundCloudPlayCalls > 0);
   await soundCloudPage.waitForSelector('button[title="一時停止"]');
+  await new Promise(resolve => setTimeout(resolve, 500));
+  const soundCloudState = await soundCloudPage.evaluate(() => ({
+    playCalls: window.__soundCloudPlayCalls || 0,
+    pauseCalls: window.__soundCloudPauseCalls || 0,
+    volume: window.__soundCloudVolume,
+  }));
+  if (soundCloudState.playCalls !== 1 || soundCloudState.pauseCalls !== 0 || soundCloudState.volume !== 23) {
+    throw new Error(`Unstable SoundCloud state: ${JSON.stringify(soundCloudState)}`);
+  }
   await soundCloudPage.click('button[title="一時停止"]');
   await soundCloudPage.waitForFunction(() => window.__soundCloudPauseCalls > 0);
-  console.log('PASS SoundCloud embed and Widget API controls');
+  await soundCloudPage.waitForSelector('button[title="再生"]');
+  console.log('PASS SoundCloud stable playback and inherited volume');
 
   const bilibiliPage = await preparePage(bilibiliSong);
   await bilibiliPage.goto(baseUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
   await bilibiliPage.waitForSelector('[data-testid="bilibili-player-embed"]', { timeout: 60_000 });
   const bilibiliSrc = new URL(await bilibiliPage.$eval('[data-testid="bilibili-player-embed"]', iframe => iframe.src));
-  if (bilibiliSrc.searchParams.get('aid') !== '45451154' || bilibiliSrc.searchParams.get('danmaku') !== '0') {
+  if (
+    bilibiliSrc.searchParams.get('aid') !== '45451154'
+    || bilibiliSrc.searchParams.get('danmaku') !== '0'
+    || bilibiliSrc.searchParams.get('muted') !== '1'
+  ) {
     throw new Error(`Unexpected Bilibili embed: ${bilibiliSrc}`);
   }
-  console.log('PASS Bilibili aid embed');
+  console.log('PASS Bilibili aid embed starts safely muted');
 } finally {
   await browser.close();
 }

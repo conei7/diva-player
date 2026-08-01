@@ -59,10 +59,11 @@ describe('Bilibili embed URL', () => {
       service: 'Bilibili',
       pvId: '45451154',
       url: 'https://www.bilibili.com/video/av45451154',
-    }), true)!);
+    }), true, true)!);
     expect(embed.origin).toBe('https://player.bilibili.com');
     expect(embed.searchParams.get('aid')).toBe('45451154');
     expect(embed.searchParams.get('autoplay')).toBe('1');
+    expect(embed.searchParams.get('muted')).toBe('1');
     expect(embed.searchParams.get('danmaku')).toBe('0');
   });
 
@@ -72,5 +73,6 @@ describe('Bilibili embed URL', () => {
       pvId: 'BV1xx411c7mD',
     }), false)!);
     expect(embed.searchParams.get('bvid')).toBe('BV1xx411c7mD');
+    expect(embed.searchParams.get('muted')).toBe('0');
   });
 });

@@ -54,6 +54,7 @@ export function buildSoundCloudEmbedUrl(
 export function buildBilibiliEmbedUrl(
   pv: Pick<PV, 'pvId' | 'url'>,
   autoplay: boolean,
+  muted = false,
 ): string | null {
   const source = `${pv.pvId} ${pv.url}`;
   const bvid = source.match(/(?:\/video\/)?(BV[0-9A-Za-z]+)/i)?.[1];
@@ -63,6 +64,7 @@ export function buildBilibiliEmbedUrl(
 
   const params = new URLSearchParams({
     autoplay: autoplay ? '1' : '0',
+    muted: muted ? '1' : '0',
     danmaku: '0',
     high_quality: '1',
   });
