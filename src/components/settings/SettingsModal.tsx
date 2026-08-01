@@ -297,14 +297,14 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                 <div className="setting-row" style={{ paddingTop: 0, paddingBottom: 0 }}>
                   <div className="setting-row-info">
                     <span className="setting-row-title">優先するサービス</span>
-                    <span className="setting-row-desc">曲ごとの再生画面で個別選択も可能</span>
+                    <span className="setting-row-desc">自動は公式PVを優先し、両方公式ならYouTube</span>
                   </div>
                   <select
                     className="ui-select"
                     value={pvPreference}
                     onChange={e => setPVPreference(e.target.value as PVPreference)}
                   >
-                    <option value="auto">自動</option>
+                    <option value="auto">自動（公式優先）</option>
                     <option value="Youtube">YouTube</option>
                     <option value="NicoNicoDouga">ニコニコ</option>
                   </select>

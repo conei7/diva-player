@@ -22,11 +22,15 @@ export type SortOrder = 'desc' | 'asc';
 /** ローカルソートを適用する */
 export function applyLocalSort(songs: Song[], sort: ExtendedSortRule, order: SortOrder = 'desc'): Song[] {
   const dir = order === 'asc' ? 1 : -1;
-  if (LOCAL_SORT_RULES.has(sort)) {
+  if (sort === 'TotalViews') {
+    // 月次学習したYouTube↔ニコニコ換算係数はAPI側だけが正本。
+    // APIが返した重み付き合計順をブラウザで単純加算して上書きしない。
+    return songs;
+  }
+  if (sort === 'YoutubeViews' || sort === 'NicoViews') {
     return [...songs].sort((a, b) => {
       if (sort === 'YoutubeViews') return dir * ((a.youtubeViews ?? 0) - (b.youtubeViews ?? 0));
       if (sort === 'NicoViews')   return dir * ((a.nicoViews ?? 0) - (b.nicoViews ?? 0));
-      if (sort === 'TotalViews')  return dir * (((a.youtubeViews ?? 0) + (a.nicoViews ?? 0)) - ((b.youtubeViews ?? 0) + (b.nicoViews ?? 0)));
       return 0;
     });
   }

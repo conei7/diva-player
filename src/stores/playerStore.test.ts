@@ -109,6 +109,30 @@ describe('player queue autoplay', () => {
     expect(result?.service).toBe('Youtube');
   });
 
+  it('prefers an official NicoNico PV over a YouTube reprint in auto mode', () => {
+    const result = getPlayablePV({
+      ...song,
+      pvs: [
+        { ...song.pvs![0], id: 2, pvId: 'youtube-reprint', pvType: 'Reprint' },
+        { ...song.pvs![0], id: 3, pvId: 'nico-original', service: 'NicoNicoDouga', pvType: 'Original' },
+      ],
+    });
+    expect(result?.service).toBe('NicoNicoDouga');
+    expect(result?.pvType).toBe('Original');
+  });
+
+  it('uses YouTube when both YouTube and NicoNico have official PVs in auto mode', () => {
+    const result = getPlayablePV({
+      ...song,
+      pvs: [
+        { ...song.pvs![0], id: 2, pvId: 'nico-original', service: 'NicoNicoDouga' },
+        { ...song.pvs![0], id: 3, pvId: 'youtube-original' },
+      ],
+    });
+    expect(result?.service).toBe('Youtube');
+    expect(result?.pvType).toBe('Original');
+  });
+
   it('plays a SoundCloud-only or Bilibili-only song', () => {
     expect(getPlayablePV({
       ...song,

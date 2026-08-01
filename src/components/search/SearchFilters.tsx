@@ -4,7 +4,6 @@ import {
   ADVANCED_SEARCH_LIMITS,
   sanitizeAdvancedIntegerInput,
   type AdvancedSearchFilters,
-  type ExtendedSortRule,
 } from '../../stores/searchStore';
 import type { VocalistMatchMode } from '../../types/vocadb';
 import { searchVocalistsByName, selectVocalistVariants } from '../../api/vocadb';
@@ -22,17 +21,6 @@ interface HallOfFameData {
 // artist_type → 表示ラベルのマッピング（表示順も兼ねる）
 const TYPE_DISPLAY_ORDER = VOICE_SYNTH_ARTIST_TYPES;
 const TYPE_LABELS: Readonly<Record<string, string>> = VOICE_SYNTH_TYPE_LABELS;
-
-const SORT_OPTIONS: { value: ExtendedSortRule; label: string }[] = [
-  { value: 'FavoritedTimes', label: '人気順' },
-  { value: 'RatingScore',    label: '評価順' },
-  { value: 'TotalViews',     label: '合計再生数' },
-  { value: 'YoutubeViews',   label: 'YouTube再生' },
-  { value: 'NicoViews',     label: 'ニコニコ再生' },
-  { value: 'PublishDate',    label: '公開日' },
-  { value: 'AdditionDate',   label: '登録日' },
-  { value: 'Name',           label: '名前順' },
-];
 
 const MATCH_MODES: { value: VocalistMatchMode; label: string }[] = [
   { value: 'All',   label: 'すべて含む' },
@@ -142,8 +130,7 @@ const VOCALIST_CATEGORIES: { label: string; vocalists: PresetVocalist[] }[] = [
 
 export default function SearchFilters() {
   const {
-    sort, setSort, search,
-    sortOrder, setSortOrder,
+    search,
     vocalistFilters, vocalistMatchMode,
     addVocalistFilter, removeVocalistFilter, setVocalistFilters, setVocalistMatchMode,
     songTypeFilter, setSongTypeFilter,
@@ -302,9 +289,8 @@ export default function SearchFilters() {
     <div className="flex flex-col gap-0 rounded-2xl overflow-hidden"
          style={{ background: 'var(--color-bg-secondary)', border: '1px solid rgba(255,255,255,0.06)' }}>
 
-      {/* ===== セクション1: ソート・基本フィルタ ===== */}
-      <div className="flex items-center justify-between flex-wrap gap-2 px-4 py-3">
-        {/* 左: オリジナルのみ + ソート */}
+      {/* ===== セクション1: 基本フィルタ ===== */}
+      <div className="flex items-center flex-wrap gap-2 px-4 py-3">
         <div className="flex items-center gap-2 flex-wrap">
           <button
             type="button"
@@ -320,38 +306,6 @@ export default function SearchFilters() {
           </button>
         </div>
 
-        {/* 右: ソート */}
-        <div className="flex items-center gap-2">
-          <select
-            id="sort-select"
-            value={sort}
-            onChange={(e) => { setSort(e.target.value as ExtendedSortRule); search(); }}
-            className="ui-select"
-          >
-            {SORT_OPTIONS.map(opt => (
-              <option key={opt.value} value={opt.value}>{opt.label}</option>
-            ))}
-          </select>
-
-          <button
-            id="sort-order-toggle"
-            onClick={() => { setSortOrder(sortOrder === 'desc' ? 'asc' : 'desc'); search(); }}
-            title={sortOrder === 'desc' ? '降順 → 昇順' : '昇順 → 降順'}
-            className="flex items-center justify-center rounded-lg transition-all"
-            style={{
-              width: '32px', height: '32px',
-              background: 'rgba(255,255,255,0.05)',
-              color: 'var(--color-text-secondary)',
-              border: '1px solid rgba(255,255,255,0.08)',
-              flexShrink: 0,
-            }}
-          >
-            {sortOrder === 'desc'
-              ? <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M7 14l5-5 5 5z" transform="rotate(180 12 12)"/><path d="M7 10l5 5 5-5z"/></svg>
-              : <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M7 14l5-5 5 5z"/><path d="M7 10l5 5 5-5z" transform="rotate(180 12 12)"/></svg>
-            }
-          </button>
-        </div>
       </div>
 
       {/* ===== セクション2: シンガーで絞り込み ===== */}

@@ -2,11 +2,23 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   ADVANCED_SEARCH_LIMITS,
   DEFAULT_ADVANCED_FILTERS,
+  applyLocalSort,
   sanitizeAdvancedIntegerInput,
   useSearchStore,
   searchSongsBackend,
   validateAdvancedSearchFilters,
 } from './searchStore';
+
+describe('search result sorting', () => {
+  it('keeps the API order for weighted total views', () => {
+    const songs = [
+      { id: 1, youtubeViews: 0, nicoViews: 50 },
+      { id: 2, youtubeViews: 100, nicoViews: 0 },
+    ] as Parameters<typeof applyLocalSort>[0];
+
+    expect(applyLocalSort(songs, 'TotalViews', 'desc').map(song => song.id)).toEqual([1, 2]);
+  });
+});
 
 describe('advanced search input limits', () => {
   it('rejects values outside the database-safe ranges', () => {

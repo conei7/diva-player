@@ -614,11 +614,14 @@ public class DbService
         bool hasFilter = conditions.Count > 0;
 
         // --- 2. ORDER BY 句の構築 ---
+        var viewWeightProfile = sort == "TotalViews"
+            ? await LoadViewWeightProfileAsync(conn)
+            : null;
         string orderBy = sort switch
         {
             "YoutubeViews" => "youtube_views",
             "NicoViews" => "nico_views",
-            "TotalViews" => "(COALESCE(youtube_views, 0) + COALESCE(nico_views, 0))",
+            "TotalViews" => WeightedViewsSql("youtube_views", "nico_views", viewWeightProfile),
             "FavoritedTimes" => "favorited_times",
             "RatingScore" => "rating_score",
             "PublishDate" => "publish_date",

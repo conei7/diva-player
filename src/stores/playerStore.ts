@@ -120,6 +120,21 @@ function getStoredPVPreference(): PVPreference {
 }
 
 function choosePVByPriority(pvs: PV[], preference: PVPreference = 'auto'): PV | null {
+  if (preference === 'auto') {
+    const serviceOrder: PVService[] = ['Youtube', 'NicoNicoDouga', 'SoundCloud', 'Bilibili'];
+    const automaticPriorities: Array<{ service: PVService; pvType: PVType }> = [
+      ...serviceOrder.map(service => ({ service, pvType: 'Original' as const })),
+      ...serviceOrder.flatMap(service => [
+        { service, pvType: 'Reprint' as const },
+        { service, pvType: 'Other' as const },
+      ]),
+    ];
+    for (const { service, pvType } of automaticPriorities) {
+      const match = pvs.find(pv => pv.service === service && pv.pvType === pvType);
+      if (match) return match;
+    }
+  }
+
   const preferredServices: PVService[] = preference === 'Youtube'
     ? ['Youtube', 'NicoNicoDouga', 'SoundCloud', 'Bilibili']
     : preference === 'NicoNicoDouga'

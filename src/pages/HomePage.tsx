@@ -14,6 +14,7 @@ import { useGlobalFilterStore } from '../stores/globalFilterStore';
 import { useUiStore } from '../stores/uiStore';
 import type { Song } from '../types/vocadb';
 import SearchFilters from '../components/search/SearchFilters';
+import SearchSortControls from '../components/search/SearchSortControls';
 import {
   getPlaylistSongs,
   rankKnownSongs,
@@ -592,6 +593,11 @@ export default function HomePage() {
 
   return (
     <div className="w-full px-4 sm:px-6 lg:px-8 py-4">
+      {(advancedSearchOpen || isSearchMode || isArtistMode || hasSearched) && (
+        <div className="mb-3 flex justify-end">
+          <SearchSortControls />
+        </div>
+      )}
       {advancedSearchOpen && (
         <div className="mb-6">
           <SearchFilters />
