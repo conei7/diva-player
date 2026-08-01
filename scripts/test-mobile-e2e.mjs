@@ -153,19 +153,19 @@ async function main() {
       return drawer && drawer.getBoundingClientRect().right <= 1;
     });
 
-    await page.click('button[aria-label="設定・バックアップ"]');
-    await page.waitForSelector('[role="dialog"][aria-label="設定・バックアップ"]', { visible: true });
+    await page.click('button[aria-label="設定"]');
+    await page.waitForSelector('[role="dialog"][aria-label="設定"]', { visible: true });
     await page.waitForSelector('[role="tablist"] [role="tab"][aria-selected="true"]');
     await page.click('[role="tab"][aria-controls="settings-panel-data"]');
     await page.waitForSelector('[role="tabpanel"]#settings-panel-data');
-    const settingsTabs = await page.$$eval('[role="dialog"][aria-label="設定・バックアップ"] [role="tab"]', tabs => tabs.map(tab => ({
+    const settingsTabs = await page.$$eval('[role="dialog"][aria-label="設定"] [role="tab"]', tabs => tabs.map(tab => ({
       selected: tab.getAttribute('aria-selected'),
       controls: tab.getAttribute('aria-controls'),
     })));
     assert(settingsTabs.length === 3 && settingsTabs.filter(tab => tab.selected === 'true').length === 1,
       `Settings tabs do not expose a single active tab: ${JSON.stringify(settingsTabs)}`);
     console.log('PASS settings tab separation and accessibility');
-    const settingsPanel = await page.$eval('[role="dialog"][aria-label="設定・バックアップ"] > div', element => {
+    const settingsPanel = await page.$eval('[role="dialog"][aria-label="設定"] > div', element => {
       const rect = element.getBoundingClientRect();
       return {
         left: rect.left,
@@ -184,6 +184,26 @@ async function main() {
     assert(['auto', 'scroll'].includes(settingsPanel.overflowY),
       `The settings panel is not scrollable: ${JSON.stringify(settingsPanel)}`);
     console.log('PASS mobile settings dialog');
+
+    await page.evaluate(() => {
+      const button = [...document.querySelectorAll('button')].find(element => element.textContent?.includes('データとバックアップを開く'));
+      if (button instanceof HTMLButtonElement) button.click();
+    });
+    await page.waitForSelector('[role="dialog"][aria-label="データとバックアップ"]', { visible: true });
+    const backupPanel = await page.$eval('[role="dialog"][aria-label="データとバックアップ"] > div', element => {
+      const rect = element.getBoundingClientRect();
+      const tapTargets = [...element.querySelectorAll('button')].map(button => {
+        const buttonRect = button.getBoundingClientRect();
+        return { width: buttonRect.width, height: buttonRect.height, text: button.textContent?.trim() };
+      });
+      return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom, viewportWidth: innerWidth, viewportHeight: innerHeight, tapTargets };
+    });
+    assert(backupPanel.left >= 0 && backupPanel.right <= backupPanel.viewportWidth
+      && backupPanel.top >= 0 && backupPanel.bottom <= backupPanel.viewportHeight,
+    `The backup panel does not fit the viewport: ${JSON.stringify(backupPanel)}`);
+    assert(backupPanel.tapTargets.filter(target => target.text?.includes('設定に戻る') || target.text === '').every(target => target.width >= 40 && target.height >= 40),
+      `Backup navigation tap targets are too small: ${JSON.stringify(backupPanel.tapTargets)}`);
+    console.log('PASS separated backup dialog and mobile layout');
     console.log('Mobile browser E2E test passed.');
   } finally {
     await browser.close();

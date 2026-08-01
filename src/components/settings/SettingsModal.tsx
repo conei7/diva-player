@@ -1,13 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
-import {
-  createFullBackup,
-  downloadFullBackup,
-  executeFullBackupImport,
-  parseFullBackup,
-  readCurrentBackupCounts,
-  type FullBackupCounts,
-  type FullBackupPreview,
-} from '../../services/fullBackup';
+import { useEffect, useState } from 'react';
 import {
   DEFAULT_GLOBAL_FILTER_SETTINGS,
   SONG_TYPES,
@@ -27,6 +18,7 @@ import {
   isGlobalSongFilterActive,
   SONG_TYPE_LABELS,
 } from '../../utils/globalFilters';
+import BackupModal from './BackupModal';
 
 /* ─── 共通UIパーツ ─── */
 
@@ -47,15 +39,10 @@ interface SettingsModalProps {
 }
 
 export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
-  const inputRef = useRef<HTMLInputElement>(null);
-  const [preview, setPreview] = useState<FullBackupPreview | null>(null);
-  const [currentCounts, setCurrentCounts] = useState<FullBackupCounts | null>(null);
-  const [mode, setMode] = useState<'merge' | 'replace'>('merge');
-  const [ratingPriority, setRatingPriority] = useState<'backup' | 'current'>('backup');
   const [message, setMessage] = useState('');
-  const [busy, setBusy] = useState(false);
   const [draftFilters, setDraftFilters] = useState<GlobalFilterSettings>(DEFAULT_GLOBAL_FILTER_SETTINGS);
   const [activeTab, setActiveTab] = useState<'filter' | 'playback' | 'data'>('filter');
+  const [backupOpen, setBackupOpen] = useState(false);
   const globalFilterState = useGlobalFilterStore();
   const setGlobalFilterSettings = useGlobalFilterStore(state => state.setSettings);
   const resetGlobalFilterSettings = useGlobalFilterStore(state => state.resetSettings);
@@ -70,15 +57,27 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
 
   useEffect(() => {
     if (!isOpen) {
-      setPreview(null);
-      setCurrentCounts(null);
       setMessage('');
+      setBackupOpen(false);
     } else {
       setDraftFilters(getGlobalFilterSettings());
     }
   }, [isOpen]);
 
+  useEffect(() => {
+    if (!isOpen || backupOpen) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [backupOpen, isOpen, onClose]);
+
   if (!isOpen) return null;
+
+  if (backupOpen) {
+    return <BackupModal isOpen onBack={() => setBackupOpen(false)} onClose={onClose} />;
+  }
 
   const savedFilters: GlobalFilterSettings = {
     enabled: globalFilterState.enabled,
@@ -89,66 +88,6 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     excludeRatedFromDiscovery: globalFilterState.excludeRatedFromDiscovery,
   };
   const filtersAreDirty = !areGlobalFilterSettingsEqual(draftFilters, savedFilters);
-
-  const exportBackup = async () => {
-    setBusy(true);
-    setMessage('バックアップを作成中…');
-    try {
-      downloadFullBackup(await createFullBackup());
-      setMessage('バックアップを保存しました。');
-    } catch (error) {
-      console.error(error);
-      setMessage('バックアップの作成に失敗しました。');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const readBackup = (file: File) => {
-    setBusy(true);
-    const reader = new FileReader();
-    reader.onload = () => {
-      try {
-        const parsed = parseFullBackup(JSON.parse(String(reader.result)));
-        setPreview(parsed);
-        setCurrentCounts(null);
-        if (parsed) {
-          void readCurrentBackupCounts().then(setCurrentCounts).catch(error => {
-            console.error('[FullBackup] Current count read failed', error);
-          });
-        }
-        setMessage(parsed ? '内容を確認してください。' : '対応していないバックアップです。');
-      } catch {
-        setPreview(null);
-        setMessage('JSONを読み込めませんでした。');
-      } finally {
-        setBusy(false);
-      }
-    };
-    reader.onerror = () => {
-      setBusy(false);
-      setMessage('ファイルを読み込めませんでした。');
-    };
-    reader.readAsText(file);
-  };
-
-  const importBackup = async () => {
-    if (!preview) return;
-    if (mode === 'replace' && !window.confirm('現在の履歴・評価・プレイリストを置き換えます。続行しますか？')) return;
-    setBusy(true);
-    setMessage('復元中…');
-    try {
-      const result = await executeFullBackupImport(preview, { mode, ratingPriority });
-      setPreview(null);
-      setCurrentCounts(result.after);
-      setMessage('復元が完了しました。');
-    } catch (error) {
-      console.error(error);
-      setMessage('復元に失敗しました。現在のデータは維持されています。');
-    } finally {
-      setBusy(false);
-    }
-  };
 
   const updateDraft = <K extends keyof GlobalFilterSettings>(key: K, value: GlobalFilterSettings[K]) => {
     setDraftFilters(current => {
@@ -185,7 +124,7 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
   };
 
   return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-label="設定・バックアップ">
+    <div className="fixed inset-0 z-[70] flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-label="設定">
       <button type="button" className="absolute inset-0 bg-black/70 backdrop-blur-sm" aria-label="閉じる" onClick={onClose} />
 
       <div className="relative max-h-[calc(100dvh-2rem)] w-full max-w-lg overflow-y-auto rounded-2xl shadow-2xl"
@@ -337,10 +276,10 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
 
               {/* 適用/初期化 */}
               <div className="flex gap-2">
-                <button type="button" className="btn-primary flex-1" disabled={busy || !filtersAreDirty} onClick={applyFilters}>
+                <button type="button" className="btn-primary flex-1" disabled={!filtersAreDirty} onClick={applyFilters}>
                   適用
                 </button>
-                <button type="button" className="btn-secondary px-4" disabled={busy} onClick={resetFilters}>
+                <button type="button" className="btn-secondary px-4" onClick={resetFilters}>
                   初期化
                 </button>
               </div>
@@ -398,70 +337,26 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
           {/* ========== データタブ ========== */}
           {activeTab === 'data' && (
             <div id="settings-panel-data" role="tabpanel" aria-labelledby="settings-tab-data" tabIndex={0} className="flex flex-col gap-4">
-              <div className="settings-section">
-                <div className="settings-section-title">
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M19 12v7H5v-7H3v7c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2v-7h-2zm-6 .67l2.59-2.58L17 11.5l-5 5-5-5 1.41-1.41L11 12.67V3h2v9.67z"/></svg>
-                  エクスポート
+              <div className="settings-data-hero">
+                <div className="settings-data-icon" aria-hidden="true">
+                  <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M12 3v12" /><path d="m7 10 5 5 5-5" /><path d="M5 21h14a2 2 0 0 0 2-2v-4" /><path d="M3 15v4a2 2 0 0 0 2 2" />
+                  </svg>
                 </div>
-                <p className="text-[11px] mb-3" style={{ color: 'var(--color-text-muted)' }}>
-                  履歴・評価・プレイリスト・設定をJSONとして保存します。
-                </p>
-                <button type="button" className="btn-primary w-full" disabled={busy} onClick={() => void exportBackup()}>
-                  バックアップを作成
+                <span className="backup-version-badge">完全バックアップ v5</span>
+                <h3>大切なデータをまとめて管理</h3>
+                <p>履歴、評価、プレイリスト、お気に入りP、表示設定をひとつのJSONファイルとして保存・復元できます。</p>
+                <div className="settings-data-items" aria-label="バックアップ対象">
+                  {['履歴', '評価', 'プレイリスト', 'お気に入りP', '表示設定'].map(item => <span key={item}>{item}</span>)}
+                </div>
+                <button type="button" className="btn-primary w-full" onClick={() => setBackupOpen(true)}>
+                  データとバックアップを開く
                 </button>
               </div>
 
               <div className="settings-section">
-                <div className="settings-section-title">
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M5 20h14v-2H5v2zM5 10h4v6h6v-6h4l-7-7-7 7z"/></svg>
-                  インポート
-                </div>
-                <p className="text-[11px] mb-3" style={{ color: 'var(--color-text-muted)' }}>
-                  保存したJSONファイルからデータを復元します。
-                </p>
-                <input ref={inputRef} className="hidden" type="file" accept="application/json,.json" onChange={e => { const file = e.target.files?.[0]; e.target.value = ''; if (file) readBackup(file); }} />
-                <button type="button" className="btn-secondary w-full" disabled={busy} onClick={() => inputRef.current?.click()}>
-                  ファイルを選択
-                </button>
-
-                {preview && (
-                  <div className="mt-3 rounded-xl p-3 text-sm" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
-                    {preview.preferencesIncluded && <p className="mb-1 text-[11px]" style={{ color: 'var(--color-text-muted)' }}>設定を含むバックアップ</p>}
-                    <p className="text-xs" style={{ color: 'var(--color-text-secondary)' }}>
-                      履歴 {preview.historyCount.toLocaleString()} / 評価 {preview.ratingCount.toLocaleString()} / PL {preview.playlistCount.toLocaleString()} / 曲 {preview.playlistSongCount.toLocaleString()} / フォルダ {preview.folderCount.toLocaleString()}
-                    </p>
-                    {currentCounts && (
-                      <p className="mt-1 text-[11px]" style={{ color: 'var(--color-text-muted)' }}>
-                        現在: PL {currentCounts.playlistCount.toLocaleString()} / 曲 {currentCounts.playlistSongCount.toLocaleString()} / 評価 {currentCounts.ratingCount.toLocaleString()}
-                      </p>
-                    )}
-                    {preview.validationMessages.map(msg => (
-                      <p key={msg} className="mt-1 text-amber-300 text-xs" role="alert">{msg}</p>
-                    ))}
-                    {preview.invalidItems > 0 && <p className="mt-1 text-amber-300 text-xs">無効項目 {preview.invalidItems}件を除外</p>}
-
-                    <div className="mt-3">
-                      <div className="ui-segmented w-full">
-                        <button type="button" data-active={mode === 'merge'} onClick={() => setMode('merge')}>追加</button>
-                        <button type="button" data-active={mode === 'replace'} onClick={() => setMode('replace')}>置換</button>
-                      </div>
-                    </div>
-
-                    {mode === 'merge' && (
-                      <div className="mt-2">
-                        <span className="text-[11px] block mb-1" style={{ color: 'var(--color-text-muted)' }}>評価の優先</span>
-                        <div className="ui-segmented w-full">
-                          <button type="button" data-active={ratingPriority === 'backup'} onClick={() => setRatingPriority('backup')}>バックアップ</button>
-                          <button type="button" data-active={ratingPriority === 'current'} onClick={() => setRatingPriority('current')}>現在のデータ</button>
-                        </div>
-                      </div>
-                    )}
-
-                    <button type="button" className="btn-primary mt-3 w-full" disabled={busy || !preview.canRestore} onClick={() => void importBackup()}>
-                      この内容を復元
-                    </button>
-                  </div>
-                )}
+                <div className="settings-section-title">保存について</div>
+                <p className="setting-row-desc">データはこのブラウザ内に保存されています。端末移行やブラウザデータ消去に備え、定期的な完全バックアップをおすすめします。</p>
               </div>
             </div>
           )}
