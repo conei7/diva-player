@@ -272,6 +272,7 @@ app.MapGet("/api/recommend/similar", async (
             results,
             seed,
             infos);
+        results = RecommendationQuality.ApplyEvidencePenalty(results, infos);
     }
 
     results = results.Skip(skip).Take(count).ToList();

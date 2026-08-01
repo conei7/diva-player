@@ -94,6 +94,9 @@ public class RecommendService
             mergedCandidates,
             seedSong,
             candidateInfos);
+        mergedCandidates = RecommendationQuality.ApplyEvidencePenalty(
+            mergedCandidates,
+            candidateInfos);
         var filtered = await _markov.FilterAsync(
             seedSong, mergedCandidates, candidateInfos);
 

@@ -774,6 +774,18 @@ public class DbService
                        WHERE p.song_id = s.id AND p.disabled = FALSE
                    ) AS has_playable_pv,
                    COALESCE(q.discovery_eligible, FALSE) AS discovery_eligible
+                   ,COALESCE(q.quality_score, 0.5)::double precision AS quality_score
+                   ,EXISTS (
+                       SELECT 1 FROM song_features audio_features
+                       WHERE audio_features.song_id = s.id
+                         AND audio_features.audio_computed IS TRUE
+                   ) AS has_audio_features
+                   ,EXISTS (
+                       SELECT 1 FROM pvs original_pv
+                       WHERE original_pv.song_id = s.id
+                         AND original_pv.disabled = FALSE
+                         AND original_pv.pv_type = 'Original'
+                   ) AS has_original_pv
             FROM songs s
             LEFT JOIN song_features sf ON sf.song_id = s.id
             LEFT JOIN song_discovery_quality q ON q.song_id = s.id
@@ -800,7 +812,10 @@ public class DbService
                 AlbumIds:       reader.IsDBNull(13) ? [] : (int[])reader.GetValue(13),
                 HasCoreVoiceSynthVocalist: !reader.IsDBNull(14) && reader.GetBoolean(14),
                 HasPlayablePv:  !reader.IsDBNull(15) && reader.GetBoolean(15),
-                DiscoveryEligible: !reader.IsDBNull(16) && reader.GetBoolean(16)
+                DiscoveryEligible: !reader.IsDBNull(16) && reader.GetBoolean(16),
+                QualityScore: reader.IsDBNull(17) ? 0.5 : reader.GetDouble(17),
+                HasAudioFeatures: !reader.IsDBNull(18) && reader.GetBoolean(18),
+                HasOriginalPv: !reader.IsDBNull(19) && reader.GetBoolean(19)
             );
 
             _cache.Set($"song:{info.Id}", info, TimeSpan.FromMinutes(30));
@@ -1484,5 +1499,8 @@ public record SongInfo(
     int[]   AlbumIds,
     bool    HasCoreVoiceSynthVocalist,
     bool    HasPlayablePv,
-    bool    DiscoveryEligible
+    bool    DiscoveryEligible,
+    double  QualityScore,
+    bool    HasAudioFeatures,
+    bool    HasOriginalPv
 );

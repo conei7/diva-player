@@ -97,7 +97,7 @@ public static class MetadataRelationshipRanking
         AddIfAvailable(values, SongTypeSimilarity(seed, candidate), 0.06);
         AddIfAvailable(values, LengthSimilarity(seed, candidate), 0.05);
 
-        return WeightedAverage(values);
+        return WeightedAverage(values) * RecommendationQuality.EvidenceMultiplier(candidate);
     }
 
     private static double IndependentContextScore(SongInfo seed, SongInfo candidate)
