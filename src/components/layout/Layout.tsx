@@ -47,7 +47,10 @@ export default function Layout() {
   return (
     <div className="min-h-screen flex flex-col" style={{ background: 'var(--color-bg-primary)' }}>
       <TopNav />
-      <div style={{ paddingTop: 'var(--header-height)' }}>
+      <div
+        data-testid="backend-status-layout"
+        style={{ paddingTop: 'var(--header-height)' }}
+      >
         <BackendStatusNotice />
       </div>
       <Sidebar />

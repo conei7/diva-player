@@ -52,11 +52,17 @@ export default function VideoPlayer() {
     // 初期化時
     updateRect();
 
-    // ResizeObserverでサイズ変更を監視
+    // VideoPlayer自身だけでなく、ページ上部の接続状態バナーを含む
+    // レイアウト領域も監視する。バナーは通常フロー内で表示・非表示が
+    // 切り替わるため、親の高さが変わった後に確定した位置を再計測する。
     const observer = new ResizeObserver(() => {
       scheduleUpdate();
     });
     observer.observe(ref.current);
+    const backendStatusLayout = document.querySelector<HTMLElement>(
+      '[data-testid="backend-status-layout"]',
+    );
+    if (backendStatusLayout) observer.observe(backendStatusLayout);
     
     // ウィンドウリサイズ時
     const handleResize = () => {
@@ -64,12 +70,10 @@ export default function VideoPlayer() {
     };
     
     window.addEventListener('resize', handleResize);
-    window.addEventListener('diva:backend-status-layout', scheduleUpdate);
 
     return () => {
       observer.disconnect();
       window.removeEventListener('resize', handleResize);
-      window.removeEventListener('diva:backend-status-layout', scheduleUpdate);
       if (animationFrameId) cancelAnimationFrame(animationFrameId);
       setPlayerRect(null);
     };

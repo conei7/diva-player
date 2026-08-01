@@ -88,11 +88,6 @@ export default function BackendStatusNotice() {
   }, [check]);
 
   const status = resolveBackendConnectivityStatus({ available, online });
-  useEffect(() => {
-    // The notice is in normal document flow. Its appearance/disappearance
-    // shifts the WatchPage placeholder, so the global iframe must remeasure.
-    window.dispatchEvent(new Event('diva:backend-status-layout'));
-  }, [status]);
 
   if (status === 'healthy' || status === 'checking') return null;
 
