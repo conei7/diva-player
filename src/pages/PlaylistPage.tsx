@@ -168,7 +168,8 @@ export default function PlaylistPage() {
   const historyEntries = useHistoryStore(state => state.entries);
   const ratings = useRatingStore(state => state.ratings);
   const implicitFeedback = useImplicitFeedbackStore(state => state.feedback);
-  const favoriteProducerIds = useFavoriteProducerStore(state => state.producers.map(producer => producer.id));
+  const favoriteProducers = useFavoriteProducerStore(state => state.producers);
+  const favoriteProducerIds = useMemo(() => favoriteProducers.map(producer => producer.id), [favoriteProducers]);
   const openSaveToPlaylist = useUiStore(s => s.openSaveToPlaylist);
 
   const [selectedPlaylistId, setSelectedPlaylistId] = useState<string | null>(null);
