@@ -662,7 +662,7 @@ export default function HomePage() {
 
       {!isSearchMode && !isArtistMode && !hasSearched && activeCategory === 'trending' && (
         <p className="mb-4 text-sm" style={{ color: 'var(--color-text-secondary)' }}>
-          直近7日間の再生増加が平常時より加速している曲。強い加速を優先し、相対的な伸びと楽曲情報の信頼性も加味します。
+          直近約7日間の再生増加が平常時より加速している曲。強い加速を優先し、相対的な伸びと楽曲情報の信頼性も加味します。
         </p>
       )}
 
