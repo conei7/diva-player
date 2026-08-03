@@ -1104,7 +1104,7 @@ public class DbService
             ? ", 'qualityScore', ranked.quality_score, 'surgeRankScore', ranked.surge_rank_score, 'qualityReasons', to_jsonb(ranked.quality_reasons)"
             : string.Empty;
         var trendFields = normalizedMode == "surge"
-            ? ", 'surgeRate', ranked.surge_rate, 'trendTier', ranked.trend_tier, 'trendWindowDays', $1"
+            ? ", 'surgeRate', ranked.surge_rate, 'trendTier', ranked.trend_tier, 'trendWindowDays', ROUND(ranked.current_window_days)"
             : string.Empty;
         var filterConditions = new List<string>();
         var nextFilterParameter = 5;
@@ -1167,58 +1167,61 @@ public class DbService
         };
 
         await using var cmd = new NpgsqlCommand($@"
-            WITH baseline_day AS (
-                SELECT date_trunc('day', MAX(recorded_at)) AS day
-                FROM view_history
-                WHERE recorded_at <= now() - ($1::int * interval '1 day')
-            ),
-            latest_day AS (
-                SELECT date_trunc('day', MAX(recorded_at)) AS day
+            WITH latest_watermark AS (
+                SELECT MAX(recorded_at) AS observed_at
                 FROM view_history
             ),
             latest AS (
                 SELECT DISTINCT ON (h.song_id)
                        h.song_id,
+                       h.recorded_at AS observed_at,
                        COALESCE(h.youtube_views, 0) AS youtube_views,
                        COALESCE(h.nico_views, 0) AS nico_views,
                        {latestTotalViewsSql} AS total_views
                 FROM view_history h
-                CROSS JOIN latest_day d
-                WHERE d.day IS NOT NULL
-                  AND h.recorded_at >= d.day
-                  AND h.recorded_at < d.day + interval '1 day'
+                CROSS JOIN latest_watermark watermark
+                WHERE watermark.observed_at IS NOT NULL
+                  AND h.recorded_at >= watermark.observed_at - interval '2 days'
                 ORDER BY h.song_id, h.recorded_at DESC
             ),
             baseline AS (
-                SELECT DISTINCT ON (h.song_id)
-                       h.song_id,
+                SELECT latest.song_id,
                        h.recorded_at AS observed_at,
                        COALESCE(h.youtube_views, 0) AS youtube_views,
                        COALESCE(h.nico_views, 0) AS nico_views,
                        {baselineTotalViewsSql} AS total_views
-                FROM view_history h
-                CROSS JOIN baseline_day d
-                WHERE d.day IS NOT NULL
-                  AND h.recorded_at >= d.day
-                  AND h.recorded_at < d.day + interval '1 day'
-                ORDER BY h.song_id, h.recorded_at ASC
+                FROM latest
+                JOIN LATERAL (
+                    SELECT history.*
+                    FROM view_history history
+                    WHERE history.song_id = latest.song_id
+                      AND history.recorded_at <= latest.observed_at - ($1::int * interval '1 day')
+                      AND history.recorded_at >= latest.observed_at - (($1::int + 3) * interval '1 day')
+                    ORDER BY history.recorded_at DESC
+                    LIMIT 1
+                ) h ON TRUE
             ),
             previous_baseline AS (
-                SELECT DISTINCT ON (h.song_id)
-                       h.song_id,
+                SELECT baseline.song_id,
                        h.recorded_at AS observed_at,
                        {baselineTotalViewsSql} AS total_views
-                FROM view_history h
-                CROSS JOIN baseline_day d
-                WHERE d.day IS NOT NULL
-                  AND h.recorded_at < d.day - interval '3 days'
-                ORDER BY h.song_id, h.recorded_at DESC
+                FROM baseline
+                JOIN LATERAL (
+                    SELECT history.*
+                    FROM view_history history
+                    WHERE history.song_id = baseline.song_id
+                      AND history.recorded_at <= baseline.observed_at - interval '3 days'
+                      AND history.recorded_at >= baseline.observed_at - interval '10 days'
+                    ORDER BY history.recorded_at DESC
+                    LIMIT 1
+                ) h ON TRUE
             ),
             growth AS (
                 SELECT
                     s.id AS song_id,
                     b.total_views AS baseline_views,
                     pb.total_views AS previous_views,
+                    EXTRACT(EPOCH FROM (l.observed_at - b.observed_at)) / 86400.0 AS current_window_days,
                     EXTRACT(EPOCH FROM (b.observed_at - pb.observed_at)) / 86400.0 AS prior_window_days,
                     (
                         CASE WHEN b.youtube_views >= 100 THEN GREATEST(0, l.youtube_views - b.youtube_views) ELSE 0 END
@@ -1236,7 +1239,7 @@ public class DbService
                         ((
                             CASE WHEN b.youtube_views >= 100 THEN GREATEST(0, l.youtube_views - b.youtube_views) ELSE 0 END
                             + ({growthNicoWeightSql} * CASE WHEN b.nico_views >= 100 THEN GREATEST(0, l.nico_views - b.nico_views) ELSE 0 END)
-                        )::double precision / $1)
+                        )::double precision / GREATEST(1.0, EXTRACT(EPOCH FROM (l.observed_at - b.observed_at)) / 86400.0))
                         / GREATEST(100.0, (GREATEST(0, b.total_views - COALESCE(pb.total_views, b.total_views))::double precision
                           / GREATEST(3.0, EXTRACT(EPOCH FROM (b.observed_at - pb.observed_at)) / 86400.0)))
                     ) AS surge_rate,
@@ -1298,6 +1301,7 @@ public class DbService
                     s.id AS song_id,
                     {currentSongTotalViewsSql}::double precision AS baseline_views,
                     NULL::double precision AS previous_views,
+                    0::double precision AS current_window_days,
                     0::double precision AS prior_window_days,
                     {currentSongTotalViewsSql}::double precision AS view_growth,
                     (
@@ -1344,6 +1348,7 @@ public class DbService
                     g.view_growth,
                     g.growth_rate,
                     g.surge_rate,
+                    g.current_window_days,
                     {trendTierExpression} AS trend_tier,
                     g.quality_score,
                     {surgeRankScoreExpression} AS surge_rank_score,
@@ -1369,7 +1374,7 @@ public class DbService
                   {normalizedModeCondition}
             ),
             limited_ids AS (
-                SELECT song_id, view_growth, growth_rate, surge_rate, trend_tier, quality_score, surge_rank_score, quality_reasons, rank
+                SELECT song_id, view_growth, growth_rate, surge_rate, current_window_days, trend_tier, quality_score, surge_rank_score, quality_reasons, rank
                 FROM ranked_ids
                 WHERE rank > $2
                 ORDER BY rank
