@@ -1,3 +1,36 @@
+x-api-environment: &api-environment
+  ConnectionStrings__Postgres: "Host=postgres;Port=5432;Database=vocadb_recommender;Username=vocadb;Password=vocadb_secret;Maximum Pool Size=16;Timeout=5;Application Name=diva-api"
+  Recommender__QdrantEndpoint: "http://qdrant:6334"
+  Recommender__YouTubeApiKey: "${YOUTUBE_API_KEY:-}"
+  Recommender__PagesProxyKey: "${PAGES_PROXY_KEY:-}"
+  Recommender__YouTubePlaylistCacheHours: "6"
+  ASPNETCORE_URLS: "http://+:5000"
+  ASPNETCORE_ENVIRONMENT: "Production"
+
+x-api-common: &api-common
+  image: diva-player-api:local
+  build:
+    context: ./api
+    dockerfile: Dockerfile
+  environment: *api-environment
+  expose:
+    - "5000"
+  depends_on:
+    postgres:
+      condition: service_healthy
+    migrate:
+      condition: service_completed_successfully
+    qdrant:
+      condition: service_started
+  healthcheck:
+    test: ["CMD", "curl", "-fsS", "--max-time", "5", "http://127.0.0.1:5000/api/ready"]
+    interval: 5s
+    timeout: 6s
+    retries: 12
+    start_period: 10s
+  stop_grace_period: 30s
+  restart: unless-stopped
+
 services:
   postgres:
     image: pgvector/pgvector:pg16
@@ -49,30 +82,40 @@ services:
         condition: service_healthy
     restart: "no"
 
-  api:
-    build:
-      context: ./api
-      dockerfile: Dockerfile
-    container_name: vocadb_api
+  api_a:
+    <<: *api-common
+    container_name: vocadb_api_a
     environment:
-      # Keep API pooling bounded so scheduled/import jobs can still obtain a
-      # connection when the PostgreSQL server is under load.
-      ConnectionStrings__Postgres: "Host=postgres;Port=5432;Database=vocadb_recommender;Username=vocadb;Password=vocadb_secret;Maximum Pool Size=24;Timeout=5;Application Name=diva-api"
-      Recommender__QdrantEndpoint: "http://qdrant:6334"
-      Recommender__YouTubeApiKey: "${YOUTUBE_API_KEY:-}"
-      Recommender__PagesProxyKey: "${PAGES_PROXY_KEY:-}"
-      Recommender__YouTubePlaylistCacheHours: "6"
-      ASPNETCORE_URLS: "http://+:5000"
-      ASPNETCORE_ENVIRONMENT: "Production"
+      <<: *api-environment
+      ConnectionStrings__Postgres: "Host=postgres;Port=5432;Database=vocadb_recommender;Username=vocadb;Password=vocadb_secret;Maximum Pool Size=16;Timeout=5;Application Name=diva-api-a"
+
+  api_b:
+    <<: *api-common
+    container_name: vocadb_api_b
+    environment:
+      <<: *api-environment
+      ConnectionStrings__Postgres: "Host=postgres;Port=5432;Database=vocadb_recommender;Username=vocadb;Password=vocadb_secret;Maximum Pool Size=16;Timeout=5;Application Name=diva-api-b"
+
+  api_gateway:
+    build:
+      context: ./api-gateway
+      dockerfile: Dockerfile
+    container_name: vocadb_api_gateway
+    environment:
+      GATEWAY_PROXY_KEY: "${PAGES_PROXY_KEY:-}"
     ports:
       - "5000:5000"
     depends_on:
-      postgres:
+      api_a:
         condition: service_healthy
-      migrate:
-        condition: service_completed_successfully
-      qdrant:
-        condition: service_started
+      api_b:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "--max-time", "5", "http://127.0.0.1:5000/api/ready"]
+      interval: 5s
+      timeout: 6s
+      retries: 12
+      start_period: 5s
     restart: unless-stopped
 
   web:
@@ -83,7 +126,7 @@ services:
     ports:
       - "8080:80"
     depends_on:
-      - api
+      - api_gateway
     restart: unless-stopped
 
 volumes:

@@ -98,6 +98,11 @@ builder.Services.AddRateLimiter(options =>
         var suppliedClientKey = httpContext.Request.Headers["X-Diva-Client-Key"].ToString();
         var suppliedProxyKey = httpContext.Request.Headers["X-Diva-Pages-Proxy-Key"].ToString();
         var proxyMarker = httpContext.Request.Headers["X-Diva-Pages-Proxy"].ToString();
+        var suppliedGatewayKey = httpContext.Request.Headers["X-Diva-Gateway-Proxy-Key"].ToString();
+        var gatewayMarker = httpContext.Request.Headers["X-Diva-Gateway-Proxy"].ToString();
+        var forwardedClientIp = httpContext.Request.Headers["X-Forwarded-For"].ToString()
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .FirstOrDefault() ?? string.Empty;
         // Only a Pages Function that knows the deployment secret may select the
         // Cloudflare client identity. Without the secret, fall back to the
         // transport peer so direct callers cannot spoof arbitrary partitions.
@@ -107,7 +112,16 @@ builder.Services.AddRateLimiter(options =>
             && !string.IsNullOrWhiteSpace(cloudflareIp)
             && suppliedClientKey == cloudflareIp
             && validProxyKey;
-        var clientKey = isTrustedPagesProxy ? cloudflareIp : remoteIp;
+        // HAProxy owns the public/LAN API port and overwrites both this marker
+        // and X-Forwarded-For. The shared secret prevents another container or
+        // direct caller from selecting arbitrary rate-limit partitions.
+        var isTrustedGatewayProxy = gatewayMarker == "1"
+            && !string.IsNullOrWhiteSpace(forwardedClientIp)
+            && !string.IsNullOrEmpty(pagesProxyKey)
+            && FixedTimeEquals(suppliedGatewayKey, pagesProxyKey);
+        var clientKey = isTrustedPagesProxy
+            ? cloudflareIp
+            : isTrustedGatewayProxy ? forwardedClientIp : remoteIp;
         var partitionKey = $"{scope}:{clientKey}";
 
         return RateLimitPartition.GetFixedWindowLimiter(partitionKey, _ => new FixedWindowRateLimiterOptions
@@ -143,6 +157,31 @@ const int maxSearchResults = 200;
 const int maxSearchQueryLength = 200;
 const int maxSearchArtistIds = 100;
 const int maxSearchArtistGroups = 20;
+
+// Lightweight dependency readiness for the rolling proxy. Unlike /api/health,
+// this intentionally skips reporting aggregates that can take several seconds.
+app.MapGet("/api/ready", async (
+    DbService db,
+    QdrantService qdrant,
+    CancellationToken cancellationToken) =>
+{
+    var postgresTask = db.CheckHealthAsync(cancellationToken);
+    var qdrantTask = qdrant.CheckHealthAsync(cancellationToken);
+    await Task.WhenAll(postgresTask, qdrantTask);
+    var postgres = await postgresTask;
+    var qdrantStatus = await qdrantTask;
+    var ready = postgres.Ok && qdrantStatus.Ok;
+
+    return Results.Json(
+        new
+        {
+            status = ready ? "ready" : "degraded",
+            dependencies = new { postgres, qdrant = qdrantStatus },
+        },
+        statusCode: ready
+            ? StatusCodes.Status200OK
+            : StatusCodes.Status503ServiceUnavailable);
+}).DisableRateLimiting();
 
 app.MapGet("/api/youtube/playlists/{playlistId}/songs", async (
     string playlistId,
