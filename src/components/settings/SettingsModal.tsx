@@ -20,6 +20,7 @@ import {
   SONG_TYPE_LABELS,
 } from '../../utils/globalFilters';
 import BackupModal from './BackupModal';
+import { Link } from 'react-router';
 
 /* ─── 共通UIパーツ ─── */
 
@@ -353,15 +354,24 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                     <path d="M12 3v12" /><path d="m7 10 5 5 5-5" /><path d="M5 21h14a2 2 0 0 0 2-2v-4" /><path d="M3 15v4a2 2 0 0 0 2 2" />
                   </svg>
                 </div>
-                <span className="backup-version-badge">完全バックアップ v5</span>
+                <span className="backup-version-badge">完全バックアップ v6</span>
                 <h3>大切なデータをまとめて管理</h3>
-                <p>履歴、評価、プレイリスト、お気に入りP、表示設定をひとつのJSONファイルとして保存・復元できます。</p>
+                <p>履歴、評価、プレイリスト、お気に入りP、表示しない曲、表示設定をひとつのJSONファイルとして保存・復元できます。</p>
                 <div className="settings-data-items" aria-label="バックアップ対象">
-                  {['履歴', '評価', 'プレイリスト', 'お気に入りP', '表示設定'].map(item => <span key={item}>{item}</span>)}
+                  {['履歴', '評価', 'プレイリスト', 'お気に入りP', '表示しない曲', '表示設定'].map(item => <span key={item}>{item}</span>)}
                 </div>
                 <button type="button" className="btn-primary w-full" onClick={() => setBackupOpen(true)}>
                   データとバックアップを開く
                 </button>
+              </div>
+
+              <div className="settings-section">
+                <div className="settings-section-title">好みの管理</div>
+                <p className="setting-row-desc mb-3">「表示しない」にした曲の確認と解除は、専用ページから行えます。</p>
+                <Link to="/settings/hidden-songs" className="btn-secondary flex w-full items-center justify-between px-4 py-3" onClick={onClose}>
+                  <span>表示しない曲を管理</span>
+                  <span aria-hidden="true">→</span>
+                </Link>
               </div>
 
               <div className="settings-section">

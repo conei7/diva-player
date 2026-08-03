@@ -33,6 +33,7 @@ import {
   requiresExternalViewCounts,
   type DiscoveryFilterResult,
 } from '../utils/globalFilters';
+import { useHiddenSongStore } from '../stores/hiddenSongStore';
 
 interface UseAutoQueueArgs {
   currentSong: Song | null;
@@ -206,6 +207,7 @@ export function useAutoQueue({
     excludeRatedFromDiscovery: state.excludeRatedFromDiscovery,
   })));
   const favoriteProducers = useFavoriteProducerStore(state => state.producers);
+  const hiddenSongs = useHiddenSongStore(state => state.hiddenSongs);
   const requestGenerationRef = useRef(0);
   const { autoCompletedCount, autoSkippedCount, consecutiveSkips } = adaptation;
 
@@ -236,7 +238,10 @@ export function useAutoQueue({
 
     const generation = ++requestGenerationRef.current;
     const controller = new AbortController();
-    const existingIds = new Set(queue.map(song => song.id));
+    const existingIds = new Set([
+      ...queue.map(song => song.id),
+      ...Object.keys(hiddenSongs).map(Number),
+    ]);
     const playlistSongIds = buildPlaylistSongSet(playlists);
     const playlistSongs = getPlaylistSongs(playlists);
     const tasteProfile = buildUserTasteProfile(historyEntries, playlists, ratings, implicitFeedback);
@@ -381,6 +386,7 @@ export function useAutoQueue({
     rootSeed,
     globalFilterSettings,
     favoriteProducers,
+    hiddenSongs,
   ]);
 
   return status;

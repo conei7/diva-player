@@ -11,6 +11,7 @@ import SongCardBadges from './SongCardBadges';
 import { formatDistinctArtistNames } from '../../utils/artistNames';
 import { isPlayablePV } from '../../utils/playablePV';
 import RecommendationHint from '../recommendation/RecommendationHint';
+import { useHiddenSongStore } from '../../stores/hiddenSongStore';
 
 interface SongCardProps {
   song: Song;
@@ -36,6 +37,8 @@ export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect, 
   const playablePV = getPlayablePV(song);
   const hasPlayablePV = !!playablePV;
   const isWatchLater = isSongIn(WATCH_LATER_ID, song.id);
+  const isHidden = useHiddenSongStore(state => Boolean(state.hiddenSongs[String(song.id)]));
+  const hideSong = useHiddenSongStore(state => state.hideSong);
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuPos, setMenuPos] = useState<{ top: number; right: number } | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -248,6 +251,13 @@ export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect, 
     navigator.clipboard.writeText(url).catch(() => {});
   }, [song.id]);
 
+  const handleHide = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    setMenuOpen(false);
+    setMenuPos(null);
+    hideSong(song);
+  }, [hideSong, song]);
+
   const handleMenuToggle = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
     if (menuOpen) {
@@ -257,7 +267,7 @@ export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect, 
     }
     const rect = btnRef.current?.getBoundingClientRect();
     if (!rect) return;
-    const menuHeight = 190;
+    const menuHeight = 230;
     const fitsBelow = rect.bottom + 4 + menuHeight <= window.innerHeight;
     setMenuPos({
       top: Math.max(8, fitsBelow ? rect.bottom + 4 : rect.top - menuHeight - 4),
@@ -265,6 +275,8 @@ export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect, 
     });
     setMenuOpen(true);
   }, [menuOpen]);
+
+  if (isHidden) return null;
 
   return (
     <div
@@ -426,6 +438,7 @@ export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect, 
               onWatchLater={handleWatchLater}
               onSaveToPlaylist={handleSaveToPlaylist}
               onShare={handleShare}
+              onHide={handleHide}
               onClose={() => { setMenuOpen(false); setMenuPos(null); }}
             />
           )}

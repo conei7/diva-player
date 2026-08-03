@@ -23,6 +23,7 @@ const countItems = [
   ['playlistSongCount', '登録曲'],
   ['folderCount', 'フォルダ'],
   ['favoriteProducerCount', 'お気に入りP'],
+  ['hiddenSongCount', '表示しない曲'],
 ] as const;
 
 function BackupCounts({ counts, prefix }: { counts: FullBackupCounts; prefix: string }) {
@@ -46,6 +47,7 @@ function previewCounts(preview: FullBackupPreview): FullBackupCounts {
     playlistSongCount: preview.playlistSongCount,
     folderCount: preview.folderCount,
     favoriteProducerCount: preview.favoriteProducerCount,
+    hiddenSongCount: preview.hiddenSongCount,
   };
 }
 
@@ -120,7 +122,7 @@ export default function BackupModal({ isOpen, onBack, onClose }: BackupModalProp
 
   const importBackup = async () => {
     if (!preview) return;
-    if (mode === 'replace' && !window.confirm('現在の履歴・評価・プレイリストをバックアップの内容へ置き換えます。続行しますか？')) return;
+    if (mode === 'replace' && !window.confirm('現在の履歴・評価・プレイリスト・表示しない曲をバックアップの内容へ置き換えます。続行しますか？')) return;
     setBusy(true);
     setMessage('復元中…');
     try {
@@ -158,9 +160,9 @@ export default function BackupModal({ isOpen, onBack, onClose }: BackupModalProp
 
         <div className="backup-modal-content">
           <div className="backup-intro">
-            <span className="backup-version-badge">完全バックアップ v5</span>
+            <span className="backup-version-badge">完全バックアップ v6</span>
             <h3>履歴から設定まで、ひとつのファイルに保存</h3>
-            <p>履歴・評価・プレイリスト・フォルダ・お気に入りP・表示設定をJSONにまとめます。音声や動画ファイルは含みません。</p>
+            <p>履歴・評価・プレイリスト・フォルダ・お気に入りP・表示しない曲・表示設定をJSONにまとめます。音声や動画ファイルは含みません。</p>
           </div>
 
           <div className="backup-flow-grid">

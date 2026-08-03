@@ -27,6 +27,7 @@
     "test:e2e:youtube-playlist-sync": "node scripts/test-youtube-playlist-sync-e2e.mjs",
     "test:e2e:background-playback": "node scripts/test-background-playback-e2e.mjs",
     "test:e2e:multi-tab-player": "node scripts/test-multi-tab-player-e2e.mjs",
+    "test:e2e:hidden-songs": "node scripts/test-hidden-songs-e2e.mjs",
     "test:deployment-topology": "node scripts/test-deployment-topology.mjs",
     "test:api-availability": "node scripts/test-api-availability.mjs",
     "test:e2e:mobile": "node scripts/test-mobile-e2e.mjs",

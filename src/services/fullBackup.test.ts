@@ -164,4 +164,34 @@ describe('parseFullBackup', () => {
     expect(mismatch?.canRestore).toBe(false);
     expect(mismatch?.validationMessages).toContain('manifestと実データの件数が一致しません。');
   });
+
+  it('validates and counts hidden songs in v6 backups', () => {
+    const preview = parseFullBackup({
+      kind: 'diva-player-full-backup',
+      version: 6,
+      exportedAt: '2026-08-04T00:00:00.000Z',
+      manifest: {
+        schemaVersion: 6,
+        historyEvents: 0,
+        ratingCount: 0,
+        playlistCount: 0,
+        playlistSongCount: 0,
+        folderCount: 0,
+        favoriteProducerCount: 0,
+        hiddenSongCount: 1,
+      },
+      sections: {
+        history: { events: [] },
+        ratings: {},
+        playlists: { folders: [], playlists: [] },
+        hiddenSongs: {
+          '42': { song: { id: 42, name: '表示しない曲' }, hiddenAt: 123 },
+        },
+      },
+    });
+
+    expect(preview?.canRestore).toBe(true);
+    expect(preview?.hiddenSongCount).toBe(1);
+    expect(preview?.parsed.sections.hiddenSongs['42'].song.name).toBe('表示しない曲');
+  });
 });

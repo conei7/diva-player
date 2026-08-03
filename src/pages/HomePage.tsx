@@ -39,6 +39,7 @@ import { interleaveUniqueSongs, selectRecentProducerIds } from '../utils/recentP
 import { resolveWithin } from '../utils/timeBudget';
 import { isDeterministicHomeRankingCategory } from '../utils/homeRanking';
 import { formatTrendingReason } from '../utils/trendingReason';
+import { excludeHiddenSongs, useHiddenSongStore } from '../stores/hiddenSongStore';
 
 type HomeCategoryId =
   | 'recommended'
@@ -104,6 +105,7 @@ export default function HomePage() {
   const { playlists } = usePlaylistStore();
   const implicitFeedback = useImplicitFeedbackStore(state => state.feedback);
   const favoriteProducers = useFavoriteProducerStore(state => state.producers);
+  const hiddenSongs = useHiddenSongStore(state => state.hiddenSongs);
   const globalFilterSettings = useGlobalFilterStore(useShallow(state => ({
     enabled: state.enabled,
     minYoutubeViews: state.minYoutubeViews,
@@ -517,9 +519,14 @@ export default function HomePage() {
     ratings,
     lastPlayedAtBySongId: discoveryLastPlayed,
   }), [discoveryLastPlayed, globalFilterSettings, ratings]);
+  const unhiddenSongs = useMemo(() => excludeHiddenSongs(songs, hiddenSongs), [hiddenSongs, songs]);
+  const unhiddenSearchResults = useMemo(
+    () => excludeHiddenSongs(searchResults, hiddenSongs),
+    [hiddenSongs, searchResults],
+  );
   const strictDiscoverySongs = useMemo(
-    () => applyDiscoveryFilter(songs, discoveryContext),
-    [discoveryContext, songs],
+    () => applyDiscoveryFilter(unhiddenSongs, discoveryContext),
+    [discoveryContext, unhiddenSongs],
   );
   const shouldRelaxDiscovery = !hasSearched
     && !loading
@@ -527,15 +534,15 @@ export default function HomePage() {
     && !hasMore;
   const discoveryResult = useMemo(
     () => shouldRelaxDiscovery
-      ? applyDiscoveryFilterWithRelaxation(songs, discoveryContext, PAGE_SIZE)
+      ? applyDiscoveryFilterWithRelaxation(unhiddenSongs, discoveryContext, PAGE_SIZE)
       : { items: strictDiscoverySongs, relaxedConditions: [] },
-    [discoveryContext, shouldRelaxDiscovery, songs, strictDiscoverySongs],
+    [discoveryContext, shouldRelaxDiscovery, strictDiscoverySongs, unhiddenSongs],
   );
   const displaySongs = useMemo(
     () => hasSearched
-      ? applyGlobalSongFilter(searchResults, globalFilterSettings)
+      ? applyGlobalSongFilter(unhiddenSearchResults, globalFilterSettings)
       : discoveryResult.items,
-    [discoveryResult.items, globalFilterSettings, hasSearched, searchResults],
+    [discoveryResult.items, globalFilterSettings, hasSearched, unhiddenSearchResults],
   );
   const relaxationMessage = hasSearched
     ? null

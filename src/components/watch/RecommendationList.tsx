@@ -11,6 +11,8 @@ import { formatJapaneseViews } from '../../utils/formatViews';
 import { useRecommendationExposureStore, type ExposureSurface } from '../../stores/recommendationExposureStore';
 import { useRecommendationDisplayStore } from '../../stores/recommendationDisplayStore';
 import RecommendationHint from '../recommendation/RecommendationHint';
+import { excludeHiddenSongs, useHiddenSongStore } from '../../stores/hiddenSongStore';
+import { useMemo } from 'react';
 
 /**
  * RecommendationList - 推薦動画リスト
@@ -65,6 +67,7 @@ function RecItemRow({
   const toggleSongInPlaylist = usePlaylistStore(s => s.toggleSongInPlaylist);
   const isSongIn   = usePlaylistStore(s => s.isSongInPlaylist);
   const isWatchLater = isSongIn(WATCH_LATER_ID, song.id);
+  const hideSong = useHiddenSongStore(s => s.hideSong);
 
   const isSelectionMode = useSelectionStore(s => s.isSelectionMode);
   const selectedSongIds = useSelectionStore(s => s.selectedSongIds);
@@ -112,7 +115,7 @@ function RecItemRow({
     if (menuOpen) { setMenuOpen(false); setMenuPos(null); return; }
     const rect = btnRef.current?.getBoundingClientRect();
     if (!rect) return;
-    const menuHeight = 130;
+    const menuHeight = 175;
     const fitsBelow = rect.bottom + 4 + menuHeight <= window.innerHeight;
     setMenuPos({
       top: fitsBelow ? rect.bottom + 4 : rect.top - menuHeight - 4,
@@ -138,6 +141,12 @@ function RecItemRow({
     setMenuOpen(false); setMenuPos(null);
     navigator.clipboard.writeText(`https://vocadb.net/S/${song.id}`).catch(() => {});
   }, [song.id]);
+
+  const handleHide = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    setMenuOpen(false); setMenuPos(null);
+    hideSong(song);
+  }, [hideSong, song]);
 
   const thumbUrl = getThumbUrl(song);
   const duration = formatDuration(song.lengthSeconds);
@@ -386,6 +395,13 @@ function RecItemRow({
         </button>
         <div className="border-t" style={{ borderColor: 'var(--color-border)' }} />
         <button className="w-full flex items-center gap-3 px-4 py-2.5 text-sm hover:bg-white/5 transition-colors text-left"
+                style={{ color: '#fb7185' }}
+                onClick={handleHide}>
+          <span aria-hidden="true">⊘</span>
+          今後表示しない
+        </button>
+        <div className="border-t" style={{ borderColor: 'var(--color-border)' }} />
+        <button className="w-full flex items-center gap-3 px-4 py-2.5 text-sm hover:bg-white/5 transition-colors text-left"
                 style={{ color: 'var(--color-text-primary)' }}
                 onClick={handleShare}>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="flex-shrink-0">
@@ -423,8 +439,10 @@ export default function RecommendationList({
   const recordVisible = useRecommendationExposureStore(s => s.recordVisible);
   const recordClicked = useRecommendationExposureStore(s => s.recordClicked);
   const showRecommendationHints = useRecommendationDisplayStore(s => s.showHints);
+  const hiddenSongs = useHiddenSongStore(s => s.hiddenSongs);
+  const visibleSongs = useMemo(() => excludeHiddenSongs(songs, hiddenSongs), [hiddenSongs, songs]);
 
-  if (loading && songs.length === 0) {
+  if (loading && visibleSongs.length === 0) {
     return (
       <div className="space-y-2">
         {Array.from({ length: 8 }).map((_, i) => (
@@ -434,7 +452,7 @@ export default function RecommendationList({
     );
   }
 
-  if (!loading && songs.length === 0) {
+  if (!loading && visibleSongs.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-12 gap-3">
         <svg width="32" height="32" viewBox="0 0 24 24" fill="currentColor" style={{ color: 'var(--color-text-muted)', opacity: 0.3 }}>
@@ -447,7 +465,7 @@ export default function RecommendationList({
 
   return (
     <div className="space-y-1">
-      {songs.map((song, index) => (
+      {visibleSongs.map((song, index) => (
         <div key={song.id} className="animate-fade-in" style={{ animationDelay: `${(index % 20) * 30}ms` }}>
           <RecItemRow
             song={song}

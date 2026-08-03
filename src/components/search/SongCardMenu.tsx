@@ -22,6 +22,7 @@ interface SongCardMenuProps {
   onWatchLater: (event: MouseEvent<HTMLButtonElement>) => void;
   onSaveToPlaylist: (event: MouseEvent<HTMLButtonElement>) => void;
   onShare: (event: MouseEvent<HTMLButtonElement>) => void;
+  onHide: (event: MouseEvent<HTMLButtonElement>) => void;
   onClose: () => void;
 }
 
@@ -41,6 +42,7 @@ export default function SongCardMenu({
   onWatchLater,
   onSaveToPlaylist,
   onShare,
+  onHide,
   onClose,
 }: SongCardMenuProps) {
   useEffect(() => {
@@ -136,6 +138,16 @@ export default function SongCardMenu({
           >
             <span aria-hidden="true">↗</span>
             共有
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            className={menuItemClass}
+            style={{ color: '#fb7185' }}
+            onClick={(event) => { onHide(event); onClose(); }}
+          >
+            <span aria-hidden="true">⊘</span>
+            今後表示しない
           </button>
         </div>,
         document.body,

@@ -43,6 +43,8 @@ jobs:
           exit 1
       - name: Player controls E2E
         run: npm run test:e2e:player-controls -- http://127.0.0.1:4173/diva-player/
+      - name: Hidden songs E2E
+        run: npm run test:e2e:hidden-songs -- http://127.0.0.1:4173/diva-player/
       - name: External players E2E
         run: npm run test:e2e:external-players -- http://127.0.0.1:4173/diva-player/
       - name: Mobile player gestures E2E

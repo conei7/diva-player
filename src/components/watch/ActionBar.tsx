@@ -4,6 +4,8 @@ import { useRatingStore } from '../../stores/ratingStore';
 import { useUiStore } from '../../stores/uiStore';
 import { usePlaylistStore, WATCH_LATER_ID } from '../../stores/playlistStore';
 import type { Song } from '../../types/vocadb';
+import { useHiddenSongStore } from '../../stores/hiddenSongStore';
+import { usePlayerStore } from '../../stores/playerStore';
 
 /**
  * ActionBar - YouTube風アクションバー
@@ -22,6 +24,10 @@ export default function ActionBar({ song }: ActionBarProps) {
   const toggleSongInPlaylist = usePlaylistStore(state => state.toggleSongInPlaylist);
   const getOrCreateWatchLater = usePlaylistStore(state => state.getOrCreateWatchLater);
   const isSongInPlaylist = usePlaylistStore(state => state.isSongInPlaylist);
+  const hidden = useHiddenSongStore(state => Boolean(state.hiddenSongs[String(song.id)]));
+  const hideSong = useHiddenSongStore(state => state.hideSong);
+  const restoreSong = useHiddenSongStore(state => state.restoreSong);
+  const { currentSong, queue, queueIndex, removeFromQueue, closePlayer } = usePlayerStore();
   const rating = getRating(song.id);
   const isWatchLater = isSongInPlaylist(WATCH_LATER_ID, song.id);
   const [shareToast, setShareToast] = useState(false);
@@ -54,6 +60,17 @@ export default function ActionBar({ song }: ActionBarProps) {
     // even if the user clicks immediately after opening a watch page.
     getOrCreateWatchLater();
     toggleSongInPlaylist(WATCH_LATER_ID, song);
+  };
+
+  const handleHidden = () => {
+    if (hidden) {
+      restoreSong(song.id);
+      return;
+    }
+    hideSong(song);
+    if (currentSong?.id !== song.id) return;
+    if (queueIndex >= 0 && queue[queueIndex]?.id === song.id) removeFromQueue(queueIndex);
+    else closePlayer();
   };
 
 
@@ -113,6 +130,25 @@ export default function ActionBar({ song }: ActionBarProps) {
             <polyline points="12 7 12 12 15.5 14" />
           </svg>
           <span className="hidden sm:inline">後で聴く</span>
+        </button>
+      </div>
+
+      {/* 明示的な否定フィードバック。星1とは別に、今後の候補から除外する。 */}
+      <div className="relative">
+        <button
+          type="button"
+          className="yt-action-btn"
+          onClick={handleHidden}
+          title={hidden ? '表示しない設定を解除' : '好みではない・今後表示しない'}
+          aria-label={hidden ? '表示しない設定を解除' : '好みではない・今後表示しない'}
+          aria-pressed={hidden}
+          style={hidden ? { color: '#fb7185', background: 'rgba(244, 63, 94, 0.12)' } : undefined}
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill={hidden ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M17 3H6.7a2 2 0 0 0-1.9 1.4L3 10v2h5.5L7 18.2A2.3 2.3 0 0 0 9.2 21L15 13V5a2 2 0 0 1 2-2Z" />
+            <path d="M17 3h4v10h-6" />
+          </svg>
+          <span className="hidden sm:inline">{hidden ? '再表示' : '表示しない'}</span>
         </button>
       </div>
 

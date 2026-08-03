@@ -5,6 +5,8 @@ import SongCard from '../search/SongCard';
 import { useSelectionStore } from '../../stores/selectionStore';
 import { useRecommendationExposureStore, type ExposureSurface } from '../../stores/recommendationExposureStore';
 import { useRecommendationDisplayStore } from '../../stores/recommendationDisplayStore';
+import { excludeHiddenSongs, useHiddenSongStore } from '../../stores/hiddenSongStore';
+import { useMemo } from 'react';
 
 /**
  * VideoGrid - YouTube風のレスポンシブ動画グリッド
@@ -37,16 +39,18 @@ export default function VideoGrid({ songs, loading, recommendationReasons, expos
   const recordVisible = useRecommendationExposureStore(s => s.recordVisible);
   const recordClicked = useRecommendationExposureStore(s => s.recordClicked);
   const showRecommendationHints = useRecommendationDisplayStore(s => s.showHints);
+  const hiddenSongs = useHiddenSongStore(s => s.hiddenSongs);
+  const visibleSongs = useMemo(() => excludeHiddenSongs(songs, hiddenSongs), [hiddenSongs, songs]);
 
   // 表示中の曲リストをselectionStoreに登録（FABの全選択・フィルター用）
   useEffect(() => {
-    setVisibleSongs(songs);
-  }, [songs, setVisibleSongs]);
+    setVisibleSongs(visibleSongs);
+  }, [visibleSongs, setVisibleSongs]);
 
   const handlePlay = (song: Song) => {
     navigate(`/watch?v=${song.id}`);
   };
-  if (loading && songs.length === 0) {
+  if (loading && visibleSongs.length === 0) {
     return (
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-3">
         {Array.from({ length: 12 }).map((_, i) => (
@@ -56,7 +60,7 @@ export default function VideoGrid({ songs, loading, recommendationReasons, expos
     );
   }
 
-  if (!loading && songs.length === 0) {
+  if (!loading && visibleSongs.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-20 gap-4">
         <svg width="64" height="64" viewBox="0 0 24 24" fill="currentColor" style={{ color: 'var(--color-text-muted)', opacity: 0.2 }}>
@@ -71,7 +75,7 @@ export default function VideoGrid({ songs, loading, recommendationReasons, expos
 
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-3">
-      {songs.map((song, index) => (
+      {visibleSongs.map((song, index) => (
         <SongCard
           key={song.id}
           song={song}
@@ -83,7 +87,7 @@ export default function VideoGrid({ songs, loading, recommendationReasons, expos
         />
       ))}
       {/* 追加ローディング */}
-      {loading && songs.length > 0 &&
+      {loading && visibleSongs.length > 0 &&
         Array.from({ length: 4 }).map((_, i) => (
           <SkeletonCard key={`skel-${i}`} />
         ))

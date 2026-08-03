@@ -16,10 +16,11 @@ import {
 } from '../stores/globalFilterStore';
 import { normalizeFavoriteProducers, useFavoriteProducerStore, type FavoriteProducer } from '../stores/favoriteProducerStore';
 import { createStableId } from '../utils/id';
+import { normalizeHiddenSongs, useHiddenSongStore, type HiddenSongRecord } from '../stores/hiddenSongStore';
 
 const BACKUP_KIND = 'diva-player-full-backup';
-const BACKUP_VERSION = 5 as const;
-type SupportedBackupVersion = 1 | 2 | 3 | 4 | 5;
+const BACKUP_VERSION = 6 as const;
+type SupportedBackupVersion = 1 | 2 | 3 | 4 | 5 | 6;
 const MAX_HISTORY_EVENTS = 1_000_000;
 const MAX_PLAYLISTS = 10_000;
 
@@ -32,6 +33,7 @@ export interface FullBackupPayload {
     history: { events: ListeningPlayEvent[] };
     ratings: Record<string, number>;
     playlists: { folders: PlaylistFolder[]; playlists: Playlist[] };
+    hiddenSongs: Record<string, HiddenSongRecord>;
     preferences?: { globalFilters: GlobalFilterSettings; favoriteProducers?: FavoriteProducer[] };
   };
 }
@@ -43,10 +45,11 @@ export interface FullBackupCounts {
   playlistSongCount: number;
   folderCount: number;
   favoriteProducerCount: number;
+  hiddenSongCount: number;
 }
 
 export interface FullBackupManifest extends FullBackupCounts {
-  schemaVersion: 4 | 5;
+  schemaVersion: 4 | 5 | 6;
 }
 
 export interface FullBackupPreview {
@@ -56,6 +59,7 @@ export interface FullBackupPreview {
   playlistSongCount: number;
   folderCount: number;
   favoriteProducerCount: number;
+  hiddenSongCount: number;
   invalidItems: number;
   preferencesIncluded: boolean;
   manifestValid: boolean;
@@ -181,6 +185,25 @@ function copyRatings(value: unknown, onInvalid: () => void): Record<string, numb
   return ratings;
 }
 
+function copyHiddenSongs(value: unknown, onInvalid: () => void): Record<string, HiddenSongRecord> {
+  if (!isRecord(value)) return {};
+  const hiddenSongs: Record<string, HiddenSongRecord> = {};
+  for (const [key, raw] of Object.entries(value)) {
+    if (!/^\d+$/.test(key) || !isRecord(raw)) {
+      onInvalid();
+      continue;
+    }
+    const song = parseSong(raw.song);
+    const hiddenAt = finiteInteger(raw.hiddenAt);
+    if (!song || song.id !== Number(key) || hiddenAt === undefined) {
+      onInvalid();
+      continue;
+    }
+    hiddenSongs[key] = { song, hiddenAt };
+  }
+  return hiddenSongs;
+}
+
 function getCountsFromSections(sections: FullBackupPayload['sections']): FullBackupCounts {
   return {
     historyEvents: sections.history.events.length,
@@ -189,6 +212,7 @@ function getCountsFromSections(sections: FullBackupPayload['sections']): FullBac
     playlistSongCount: sections.playlists.playlists.reduce((total, playlist) => total + playlist.songs.length, 0),
     folderCount: sections.playlists.folders.length,
     favoriteProducerCount: sections.preferences?.favoriteProducers?.length ?? 0,
+    hiddenSongCount: Object.keys(sections.hiddenSongs).length,
   };
 }
 
@@ -196,9 +220,10 @@ function createManifest(sections: FullBackupPayload['sections']): FullBackupMani
   return { schemaVersion: BACKUP_VERSION, ...getCountsFromSections(sections) };
 }
 
-function manifestMatches(manifest: unknown, counts: FullBackupCounts, schemaVersion: 4 | 5): boolean {
+function manifestMatches(manifest: unknown, counts: FullBackupCounts, schemaVersion: 4 | 5 | 6): boolean {
   if (!isRecord(manifest) || manifest.schemaVersion !== schemaVersion) return false;
-  return Object.keys(counts).every(key => manifest[key] === counts[key as keyof FullBackupCounts]);
+  const keys = Object.keys(counts).filter(key => schemaVersion >= 6 || key !== 'hiddenSongCount');
+  return keys.every(key => manifest[key] === counts[key as keyof FullBackupCounts]);
 }
 
 export function getCurrentBackupCounts(payload: FullBackupPayload): FullBackupCounts {
@@ -235,6 +260,7 @@ export async function createFullBackup(): Promise<FullBackupPayload> {
       folders: folders.map(folder => ({ ...folder })),
       playlists: playlists.map(playlist => ({ ...playlist, songs: playlist.songs.map(song => ({ ...song })) })),
     },
+    hiddenSongs: normalizeHiddenSongs(useHiddenSongStore.getState().hiddenSongs),
     preferences: {
       globalFilters: getGlobalFilterSettings(),
       favoriteProducers: useFavoriteProducerStore.getState().producers.map(producer => ({ ...producer })),
@@ -258,7 +284,8 @@ export function downloadFullBackup(payload: FullBackupPayload): void {
 }
 
 export function parseFullBackup(data: unknown): FullBackupPreview | null {
-  if (!isRecord(data) || data.kind !== BACKUP_KIND || (data.version !== 1 && data.version !== 2 && data.version !== 3 && data.version !== 4 && data.version !== BACKUP_VERSION) || !isRecord(data.sections)) return null;
+  if (!isRecord(data) || data.kind !== BACKUP_KIND || ![1, 2, 3, 4, 5, BACKUP_VERSION].includes(data.version as number) || !isRecord(data.sections)) return null;
+  const version = data.version as SupportedBackupVersion;
   let invalidItems = 0;
   const validationMessages: string[] = [];
   const rawHistory = isRecord(data.sections.history) && Array.isArray(data.sections.history.events) ? data.sections.history.events : [];
@@ -280,6 +307,9 @@ export function parseFullBackup(data: unknown): FullBackupPreview | null {
     if (!playlist) invalidItems += 1;
     return playlist !== null;
   });
+  const hiddenSongs = version >= 6
+    ? copyHiddenSongs(data.sections.hiddenSongs, () => { invalidItems += 1; })
+    : {};
   const rawPreferences = isRecord(data.sections.preferences) ? data.sections.preferences : undefined;
   const rawGlobalFilters = rawPreferences && isRecord(rawPreferences.globalFilters)
     ? rawPreferences.globalFilters
@@ -290,13 +320,14 @@ export function parseFullBackup(data: unknown): FullBackupPreview | null {
     : undefined;
   const parsed: FullBackupPayload = {
     kind: BACKUP_KIND,
-    version: data.version as SupportedBackupVersion,
+    version,
     exportedAt: typeof data.exportedAt === 'string' ? data.exportedAt : new Date().toISOString(),
-    ...(data.version >= 4 && isRecord(data.manifest) ? { manifest: data.manifest as unknown as FullBackupManifest } : {}),
+    ...(version >= 4 && isRecord(data.manifest) ? { manifest: data.manifest as unknown as FullBackupManifest } : {}),
     sections: {
       history: { events },
       ratings,
       playlists: { folders, playlists },
+      hiddenSongs,
       ...(rawGlobalFilters ? {
         preferences: {
           globalFilters: normalizeGlobalFilterSettings(rawGlobalFilters),
@@ -306,10 +337,10 @@ export function parseFullBackup(data: unknown): FullBackupPreview | null {
     },
   };
   const counts = getCountsFromSections(parsed.sections);
-  const legacyFormat = data.version < 4;
-  const manifestValid = legacyFormat || manifestMatches(data.manifest, counts, data.version === 4 ? 4 : 5);
+  const legacyFormat = version < 4;
+  const manifestValid = legacyFormat || manifestMatches(data.manifest, counts, version as 4 | 5 | 6);
   if (legacyFormat) validationMessages.push('旧形式のバックアップです。内容の件数検証は行われません。');
-  if (data.version >= 4 && !manifestValid) validationMessages.push('manifestと実データの件数が一致しません。');
+  if (version >= 4 && !manifestValid) validationMessages.push('manifestと実データの件数が一致しません。');
   if (invalidItems > 0) validationMessages.push(`${invalidItems}件の無効な項目があります。`);
   const canRestore = manifestValid && invalidItems === 0;
   return {
@@ -319,6 +350,7 @@ export function parseFullBackup(data: unknown): FullBackupPreview | null {
     playlistSongCount: counts.playlistSongCount,
     folderCount: folders.length,
     favoriteProducerCount: counts.favoriteProducerCount,
+    hiddenSongCount: counts.hiddenSongCount,
     invalidItems,
     preferencesIncluded: rawGlobalFilters !== undefined,
     manifestValid,
@@ -412,6 +444,7 @@ export async function executeFullBackupImport(preview: FullBackupPreview, option
   const currentFolders = usePlaylistStore.getState().folders.map(folder => ({ ...folder }));
   const currentGlobalFilters = getGlobalFilterSettings();
   const currentFavoriteProducers = useFavoriteProducerStore.getState().producers.map(producer => ({ ...producer }));
+  const currentHiddenSongs = normalizeHiddenSongs(useHiddenSongStore.getState().hiddenSongs);
   const currentHistory = await readAllHistoryEvents();
   try {
     const incoming = preview.parsed.sections;
@@ -433,6 +466,10 @@ export async function executeFullBackupImport(preview: FullBackupPreview, option
       ? { ...incoming.ratings }
       : options.ratingPriority === 'backup' ? { ...currentRatings, ...incoming.ratings } : { ...incoming.ratings, ...currentRatings };
     useRatingStore.setState({ ratings: nextRatings });
+    const nextHiddenSongs = options.mode === 'replace'
+      ? incoming.hiddenSongs
+      : { ...currentHiddenSongs, ...incoming.hiddenSongs };
+    useHiddenSongStore.getState().replaceHiddenSongs(nextHiddenSongs);
     if (options.mode === 'replace' && incoming.preferences?.globalFilters) {
       useGlobalFilterStore.getState().setSettings(incoming.preferences.globalFilters);
     }
@@ -451,6 +488,7 @@ export async function executeFullBackupImport(preview: FullBackupPreview, option
         history: { events: currentHistory },
         ratings: currentRatings,
         playlists: { folders: currentFolders, playlists: currentPlaylists },
+        hiddenSongs: currentHiddenSongs,
         preferences: { globalFilters: currentGlobalFilters, favoriteProducers: currentFavoriteProducers },
       }),
       after: await readCurrentBackupCounts(),
@@ -461,6 +499,7 @@ export async function executeFullBackupImport(preview: FullBackupPreview, option
     storage.set('playlistFolders', currentFolders);
     usePlaylistStore.getState().loadPlaylists();
     useRatingStore.setState({ ratings: currentRatings });
+    useHiddenSongStore.getState().replaceHiddenSongs(currentHiddenSongs);
     useGlobalFilterStore.getState().setSettings(currentGlobalFilters);
     useFavoriteProducerStore.setState({ producers: currentFavoriteProducers });
     try {

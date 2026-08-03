@@ -37,6 +37,7 @@ import {
   requiresExternalViewCounts,
   type DiscoveryRelaxedCondition,
 } from '../utils/globalFilters';
+import { excludeHiddenSongs, useHiddenSongStore } from '../stores/hiddenSongStore';
 
 function WatchQueue() {
   const queue = usePlayerStore(s => s.queue);
@@ -139,6 +140,7 @@ export default function WatchPage() {
   const { playlists } = usePlaylistStore();
   const implicitFeedback = useImplicitFeedbackStore(state => state.feedback);
   const favoriteProducers = useFavoriteProducerStore(state => state.producers);
+  const hiddenSongs = useHiddenSongStore(state => state.hiddenSongs);
   const globalFilterSettings = useGlobalFilterStore(useShallow(state => ({
     enabled: state.enabled,
     minYoutubeViews: state.minYoutubeViews,
@@ -147,11 +149,11 @@ export default function WatchPage() {
     cooldownHours: state.cooldownHours,
     excludeRatedFromDiscovery: state.excludeRatedFromDiscovery,
   })));
-  const filterDiscoverySongs = useCallback((items: Song[], minimumCount = PAGE_SIZE) => applyDiscoveryFilterWithRelaxation(items, {
+  const filterDiscoverySongs = useCallback((items: Song[], minimumCount = PAGE_SIZE) => applyDiscoveryFilterWithRelaxation(excludeHiddenSongs(items, hiddenSongs), {
     settings: globalFilterSettings,
     ratings,
     lastPlayedAtBySongId: new Map(entries.map(entry => [entry.song.id, entry.playedAt] as const)),
-  }, minimumCount), [entries, globalFilterSettings, ratings]);
+  }, minimumCount), [entries, globalFilterSettings, hiddenSongs, ratings]);
 
   const [song, setSong] = useState<Song | null>(null);
   const [loadingSong, setLoadingSong] = useState(true);
