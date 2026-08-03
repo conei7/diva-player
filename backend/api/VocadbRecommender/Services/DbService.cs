@@ -1179,9 +1179,25 @@ public class DbService
                        COALESCE(h.nico_views, 0) AS nico_views,
                        {latestTotalViewsSql} AS total_views
                 FROM view_history h
+                JOIN songs latest_song ON latest_song.id = h.song_id
+                JOIN song_discovery_quality latest_quality
+                  ON latest_quality.song_id = h.song_id
+                 AND latest_quality.discovery_eligible = TRUE
                 CROSS JOIN latest_watermark watermark
                 WHERE watermark.observed_at IS NOT NULL
                   AND h.recorded_at >= watermark.observed_at - interval '2 days'
+                  AND EXISTS (
+                      SELECT 1
+                      FROM song_artists latest_song_artist
+                      JOIN artists latest_artist ON latest_artist.id = latest_song_artist.artist_id
+                      WHERE latest_song_artist.song_id = latest_song.id
+                        AND latest_song_artist.is_vocalist = TRUE
+                        AND latest_artist.artist_type IN ({VoiceSynthArtistTypesSql})
+                  )
+                  AND EXISTS (
+                      SELECT 1 FROM pvs latest_pv
+                      WHERE latest_pv.song_id = latest_song.id AND latest_pv.disabled = FALSE
+                  )
                 ORDER BY h.song_id, h.recorded_at DESC
             ),
             baseline AS (
