@@ -1185,7 +1185,7 @@ public class DbService
                  AND latest_quality.discovery_eligible = TRUE
                 CROSS JOIN latest_watermark watermark
                 WHERE watermark.observed_at IS NOT NULL
-                  AND h.recorded_at >= watermark.observed_at - interval '2 days'
+                  AND h.recorded_at >= watermark.observed_at - interval '36 hours'
                   AND EXISTS (
                       SELECT 1
                       FROM song_artists latest_song_artist
