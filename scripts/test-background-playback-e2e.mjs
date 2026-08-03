@@ -54,7 +54,23 @@ try {
 
   await playerPage.setRequestInterception(true);
   playerPage.on('request', async (request) => {
-    if (request.url() !== 'https://www.youtube.com/iframe_api') {
+    const requestUrl = request.url();
+    if (requestUrl.startsWith('https://vocadb.net/api/songs/900001?')) {
+      await request.respond({
+        contentType: 'application/json',
+        headers: { 'access-control-allow-origin': '*' },
+        body: JSON.stringify(songs[0]),
+      });
+      return;
+    }
+    if (requestUrl.includes('/backend-api/api/songs/views?ids=900001')) {
+      await request.respond({
+        contentType: 'application/json',
+        body: JSON.stringify({ 900001: { youtubeViews: 0, nicoViews: 0 } }),
+      });
+      return;
+    }
+    if (requestUrl !== 'https://www.youtube.com/iframe_api') {
       await request.continue();
       return;
     }
@@ -76,6 +92,10 @@ try {
             player.unMute = () => {};
             player.seekTo = (seconds) => { elapsed = seconds; startedAt = Date.now(); };
             player.playVideo = () => {
+              if (document.hidden && state === 2 && !window.__backgroundRetryIgnored) {
+                window.__backgroundRetryIgnored = true;
+                return;
+              }
               if (state !== 1) startedAt = Date.now();
               state = 1;
               window.__backgroundPlaybackStarted = true;
@@ -100,13 +120,13 @@ try {
     });
   });
 
-  await playerPage.goto(baseUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+  await playerPage.goto(new URL('watch?v=900001', baseUrl), { waitUntil: 'domcontentloaded', timeout: 60_000 });
   await playerPage.waitForFunction(() => {
     const queue = JSON.parse(localStorage.getItem('diva_playerQueue') || 'null');
     return queue?.currentSongId === 900001 && document.querySelector('#yt-player-embed');
   });
-  await playerPage.keyboard.press('Space');
   await playerPage.waitForFunction(() => window.__backgroundPlaybackStarted === true);
+  console.log('PASS same-song page click resumes YouTube playback');
   await playerPage.waitForFunction(() => {
     const queue = JSON.parse(localStorage.getItem('diva_playerQueue') || 'null');
     return queue?.currentSongId === 900001;
@@ -115,18 +135,22 @@ try {
   const otherPage = await browser.newPage();
   await otherPage.goto('about:blank');
   await otherPage.bringToFront();
-  await new Promise((resolve) => setTimeout(resolve, 6_000));
+  await new Promise((resolve) => setTimeout(resolve, 9_000));
 
   const result = await playerPage.evaluate(() => {
     const queue = JSON.parse(localStorage.getItem('diva_playerQueue') || 'null');
     return {
       backgroundPauseCount: window.__backgroundPauseCount || 0,
+      backgroundRetryIgnored: window.__backgroundRetryIgnored || false,
       currentSongId: queue?.currentSongId,
       visibilityState: document.visibilityState,
     };
   });
   if (result.backgroundPauseCount < 1) {
     throw new Error(`The fixture did not reproduce a background pause: ${JSON.stringify(result)}`);
+  }
+  if (!result.backgroundRetryIgnored) {
+    throw new Error(`The fixture did not exercise the retry path: ${JSON.stringify(result)}`);
   }
   if (result.currentSongId !== 900002) {
     throw new Error(`Background end recovery did not advance the queue: ${JSON.stringify(result)}`);

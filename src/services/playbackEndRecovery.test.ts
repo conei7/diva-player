@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   getPlaybackEndCheckDelayMs,
+  getPlaybackRecoveryCheckDelayMs,
   hasReachedPlaybackEnd,
   MAX_PLAYBACK_END_CHECK_DELAY_MS,
 } from './playbackEndRecovery';
@@ -16,5 +17,10 @@ describe('background playback end recovery', () => {
     expect(getPlaybackEndCheckDelayMs(119, 120)).toBe(1500);
     expect(getPlaybackEndCheckDelayMs(0, 300)).toBe(MAX_PLAYBACK_END_CHECK_DELAY_MS);
     expect(getPlaybackEndCheckDelayMs(Number.NaN, 300)).toBe(MAX_PLAYBACK_END_CHECK_DELAY_MS);
+  });
+
+  it('retries a paused background player before the expected end time', () => {
+    expect(getPlaybackRecoveryCheckDelayMs(true, 10, 300)).toBe(2_000);
+    expect(getPlaybackRecoveryCheckDelayMs(false, 10, 300)).toBe(30_000);
   });
 });

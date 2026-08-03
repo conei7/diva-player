@@ -1,5 +1,6 @@
 export const PLAYBACK_END_TOLERANCE_SECONDS = 0.75;
 export const MAX_PLAYBACK_END_CHECK_DELAY_MS = 30_000;
+export const PLAYBACK_RETRY_DELAY_MS = 2_000;
 
 export function hasReachedPlaybackEnd(currentTime: number, duration: number): boolean {
   return Number.isFinite(currentTime)
@@ -15,4 +16,14 @@ export function getPlaybackEndCheckDelayMs(currentTime: number, duration: number
   }
   const remainingMs = Math.max(0, duration - currentTime) * 1000 + 500;
   return Math.max(500, Math.min(MAX_PLAYBACK_END_CHECK_DELAY_MS, remainingMs));
+}
+
+export function getPlaybackRecoveryCheckDelayMs(
+  playerNeedsRestart: boolean,
+  currentTime: number,
+  duration: number,
+): number {
+  return playerNeedsRestart
+    ? PLAYBACK_RETRY_DELAY_MS
+    : getPlaybackEndCheckDelayMs(currentTime, duration);
 }

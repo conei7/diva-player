@@ -12,7 +12,7 @@ import {
   createNicoVolumeMessage,
   parseNicoPlayerMessage,
 } from '../../services/nicoPlayerSync';
-import { getPlaybackEndCheckDelayMs, hasReachedPlaybackEnd } from '../../services/playbackEndRecovery';
+import { getPlaybackRecoveryCheckDelayMs, hasReachedPlaybackEnd } from '../../services/playbackEndRecovery';
 import SoundCloudEmbed from './SoundCloudEmbed';
 import BilibiliEmbed from './BilibiliEmbed';
 
@@ -454,10 +454,13 @@ export default function PlayerEmbed() {
           return;
         }
         if (!usePlayerStore.getState().isPlaying) return;
-        if (playerState === window.YT.PlayerState.PAUSED) player.playVideo?.();
+        const playerNeedsRestart = playerState === window.YT.PlayerState.PAUSED
+          || playerState === window.YT.PlayerState.UNSTARTED
+          || playerState === window.YT.PlayerState.CUED;
+        if (playerNeedsRestart) player.playVideo?.();
         endRecoveryTimerRef.current = window.setTimeout(
           check,
-          getPlaybackEndCheckDelayMs(currentTime, duration),
+          getPlaybackRecoveryCheckDelayMs(playerNeedsRestart, currentTime, duration),
         );
       } catch {
         // Player destruction can race with a scheduled check.
@@ -473,7 +476,7 @@ export default function PlayerEmbed() {
     }
     endRecoveryTimerRef.current = window.setTimeout(
       check,
-      getPlaybackEndCheckDelayMs(currentTime, duration),
+      getPlaybackRecoveryCheckDelayMs(false, currentTime, duration),
     );
   }, [advanceOnce, clearEndRecoveryTimer]);
 
@@ -498,6 +501,8 @@ export default function PlayerEmbed() {
     }
 
     const pvId = currentPV.pvId;
+    const shouldAutoplayOnCreate = usePlayerStore.getState().isPlaying;
+    initialAutoplayRef.current = shouldAutoplayOnCreate;
     let player: YT.Player | null = null;
     const attempt = attemptController.start(pvId, () => {
       handleFailure('YouTube動画の準備がタイムアウトしました');
@@ -534,9 +539,9 @@ export default function PlayerEmbed() {
           width: '100%',
           height: '100%',
           playerVars: {
-            autoplay: initialAutoplayRef.current ? 1 : 0,
+            autoplay: shouldAutoplayOnCreate ? 1 : 0,
             // mute: 1 でミュート自動再生を許可し、onReady でアンミュートする。
-            mute: 1,
+            mute: shouldAutoplayOnCreate ? 1 : 0,
             controls: 1,
             origin: window.location.origin,
           },
@@ -545,10 +550,14 @@ export default function PlayerEmbed() {
               if (!attemptController.isCurrent(attempt)) return;
               attemptController.complete(attempt);
               markPVHealthy(currentPV);
-              event.target.unMute();
               event.target.setVolume(volumeRef.current);
               startVolumeSync(event.target);
-              if (usePlayerStore.getState().isPlaying) event.target.playVideo();
+              if (usePlayerStore.getState().isPlaying) {
+                event.target.playVideo();
+                if (!navigator.userActivation || navigator.userActivation.hasBeenActive) {
+                  event.target.unMute();
+                }
+              }
               const dur = event.target.getDuration();
               if (dur > 0) setDuration(dur);
               startProgressTimer();

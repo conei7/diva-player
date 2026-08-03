@@ -132,7 +132,7 @@ export default function WatchPage() {
   const songId = songIdStr ? Number(songIdStr) : null;
   const shouldAutoplay = searchParams.get('autoplay') !== '0';
 
-  const { currentSong, setQueue, setRootSeed } = usePlayerStore();
+  const { currentSong, setQueue, setRootSeed, resume } = usePlayerStore();
   const currentSongId = currentSong?.id;
   const { ratings } = useRatingStore();
   const { entries } = useHistoryStore();
@@ -217,6 +217,8 @@ export default function WatchPage() {
         if (currentSong?.id !== loadedSong.id) {
           setRootSeed(loadedSong); // ユーザーが能動的に選んだ曲をRoot Seedに
           setQueue([loadedSong], 0, shouldAutoplay);
+        } else if (shouldAutoplay) {
+          resume();
         }
 
         // 推薦データの取得
