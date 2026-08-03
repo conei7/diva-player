@@ -423,11 +423,11 @@ public class DbService
         var cacheKey = "song-search:v1:" + JsonSerializer.Serialize(new
         {
             query = query?.Trim().ToLowerInvariant(),
-            artistIds,
-            anyArtistIds,
-            artistIdGroups,
+            artistIds = artistIds is { Count: > 0 } ? artistIds : null,
+            anyArtistIds = anyArtistIds is { Count: > 0 } ? anyArtistIds : null,
+            artistIdGroups = artistIdGroups is { Count: > 0 } ? artistIdGroups : null,
             artistRole,
-            songTypes,
+            songTypes = songTypes is { Count: > 0 } ? songTypes : null,
             sort,
             order,
             start,
@@ -441,7 +441,7 @@ public class DbService
             minYoutubeViews,
             minNicoViews,
             onlyWithPVs,
-            excludedSongTypes,
+            excludedSongTypes = excludedSongTypes is { Count: > 0 } ? excludedSongTypes : null,
             voiceSynthOnly,
             discoveryOnly,
         });
