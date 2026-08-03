@@ -89,6 +89,9 @@ CREATE TABLE IF NOT EXISTS view_history (
 
 CREATE INDEX IF NOT EXISTS view_history_song_date_idx
     ON view_history (song_id, recorded_at ASC);
+CREATE INDEX IF NOT EXISTS view_history_song_recorded_cover_idx
+    ON view_history (song_id, recorded_at DESC)
+    INCLUDE (youtube_views, nico_views);
 
 -- Supports the time-window baseline used by the trending ranking.
 CREATE INDEX IF NOT EXISTS view_history_recorded_song_idx
