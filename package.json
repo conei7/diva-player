@@ -34,6 +34,7 @@
     "test:e2e:mobile": "node scripts/test-mobile-e2e.mjs",
     "test:e2e:settings": "node scripts/test-settings-e2e.mjs",
     "test:e2e:auto-search": "node scripts/test-auto-search-e2e.mjs",
+    "test:e2e:advanced-search": "node scripts/test-advanced-search-e2e.mjs",
     "analyze:surge-quality": "node scripts/analyze-surge-quality.mjs",
     "audit:custom-producers": "node scripts/audit-custom-producer-shape.mjs",
     "preview": "vite preview"

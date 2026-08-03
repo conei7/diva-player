@@ -5,9 +5,10 @@ import {
   sanitizeAdvancedIntegerInput,
   type AdvancedSearchFilters,
 } from '../../stores/searchStore';
-import type { VocalistMatchMode } from '../../types/vocadb';
-import { searchVocalistsByName, selectVocalistVariants } from '../../api/vocadb';
+import type { SongType, VocalistMatchMode } from '../../types/vocadb';
+import { searchCreditArtistsByName, searchVocalistsByName, selectVocalistVariants } from '../../api/vocadb';
 import type { Artist } from '../../types/vocadb';
+import { searchTagFacets, type SearchTagFacet } from '../../api/searchFacets';
 import { VOICE_SYNTH_ARTIST_TYPES, VOICE_SYNTH_TYPE_LABELS } from '../../config/voiceSynthTypes';
 
 // hall_of_fame_singers.json の型定義
@@ -27,6 +28,66 @@ const MATCH_MODES: { value: VocalistMatchMode; label: string }[] = [
   { value: 'Any',   label: 'いずれか' },
   { value: 'Exact', label: '完全一致' },
 ];
+
+const SONG_TYPE_OPTIONS: { value: SongType; label: string }[] = [
+  { value: 'Original', label: 'オリジナル' }, { value: 'Remaster', label: 'リマスター' },
+  { value: 'Remix', label: 'リミックス' }, { value: 'Cover', label: 'カバー' },
+  { value: 'Arrangement', label: 'アレンジ' }, { value: 'Instrumental', label: 'インスト' },
+  { value: 'Mashup', label: 'マッシュアップ' }, { value: 'MusicPV', label: '音楽PV' },
+];
+
+const CREDIT_ROLES = [
+  ['', '役割を指定しない'], ['Composer', '作曲'], ['Lyricist', '作詞'], ['Arranger', '編曲'],
+  ['Illustrator', 'イラスト'], ['Animator', '動画'], ['Instrumentalist', '演奏'], ['Mixer', 'ミックス'],
+  ['Mastering', 'マスタリング'], ['VoiceManipulator', '調声'],
+] as const;
+
+const TAG_PRESETS = [
+  { id: 481, name: 'ロック' }, { id: 337, name: 'ピアノ' }, { id: 29, name: 'バラード' },
+  { id: 341, name: 'ポップ' }, { id: 1552, name: 'EDM' }, { id: 262, name: 'メタル' },
+  { id: 1580, name: 'エレクトロニカ' }, { id: 1698, name: 'テクノポップ' },
+  { id: 81, name: '可愛い' }, { id: 384, name: '切ない' }, { id: 369, name: '爽やか' },
+];
+
+function RangeInputs({ label, from, to, fromPlaceholder, toPlaceholder, min, max, onFrom, onTo }: {
+  label: string;
+  from: string;
+  to: string;
+  fromPlaceholder: string;
+  toPlaceholder: string;
+  min: number;
+  max: number;
+  onFrom: (value: string) => void;
+  onTo: (value: string) => void;
+}) {
+  return (
+    <label className="flex flex-col gap-1.5 text-[11px] text-neutral-500">
+      {label}
+      <span className="flex items-center gap-1.5">
+        <input type="number" inputMode="numeric" min={min} max={max} value={from} onChange={event => onFrom(event.target.value)} placeholder={fromPlaceholder} className="ui-number-input min-w-0" />
+        <span>〜</span>
+        <input type="number" inputMode="numeric" min={min} max={max} value={to} onChange={event => onTo(event.target.value)} placeholder={toPlaceholder} className="ui-number-input min-w-0" />
+      </span>
+    </label>
+  );
+}
+
+function SuggestionList({ items, onSelect }: {
+  items: { id: number; label: string; detail?: string }[];
+  onSelect: (item: { id: number; label: string; detail?: string }) => void;
+}) {
+  return (
+    <ul className="absolute left-0 right-0 top-full z-30 mt-1 max-h-56 overflow-y-auto rounded-xl border border-white/10 bg-[var(--color-surface-elevated)] shadow-xl">
+      {items.map(item => (
+        <li key={item.id}>
+          <button type="button" className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm hover:bg-white/5" onMouseDown={event => { event.preventDefault(); onSelect(item); }}>
+            <span className="truncate">{item.label}</span><span className="shrink-0 text-xs text-neutral-500">{item.detail}</span>
+          </button>
+        </li>
+      ))}
+    </ul>
+  );
+}
 
 interface PresetVocalist { id: number; name: string; }
 
@@ -134,7 +195,7 @@ export default function SearchFilters() {
     vocalistFilters, vocalistMatchMode,
     addVocalistFilter, removeVocalistFilter, setVocalistFilters, setVocalistMatchMode,
     songTypeFilter, setSongTypeFilter,
-    advancedFilters, setAdvancedFilters, resetAdvancedFilters,
+    advancedFilters, setAdvancedFilters, resetAdvancedFilters, totalCount, hasSearched,
   } = useSearchStore();
 
   const [vocalistQuery, setVocalistQuery] = useState('');
@@ -142,6 +203,10 @@ export default function SearchFilters() {
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
   const [isAdvancedExpanded, setIsAdvancedExpanded] = useState(false);
+  const [tagQuery, setTagQuery] = useState('');
+  const [tagSuggestions, setTagSuggestions] = useState<SearchTagFacet[]>([]);
+  const [creditQuery, setCreditQuery] = useState('');
+  const [creditSuggestions, setCreditSuggestions] = useState<Artist[]>([]);
   const suggestRef = useRef<HTMLDivElement>(null);
 
   // hall_of_fame_singers.json を非同期で取得 (失敗時はハードコードにフォールバック)
@@ -183,6 +248,23 @@ export default function SearchFilters() {
     }, 300);
     return () => clearTimeout(timer);
   }, [vocalistQuery]);
+
+  useEffect(() => {
+    if (!tagQuery.trim()) { setTagSuggestions([]); return; }
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      void searchTagFacets(tagQuery, controller.signal).then(setTagSuggestions);
+    }, 250);
+    return () => { window.clearTimeout(timer); controller.abort(); };
+  }, [tagQuery]);
+
+  useEffect(() => {
+    if (!creditQuery.trim()) { setCreditSuggestions([]); return; }
+    const timer = window.setTimeout(() => {
+      void searchCreditArtistsByName(creditQuery).then(setCreditSuggestions);
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [creditQuery]);
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -250,13 +332,44 @@ export default function SearchFilters() {
   };
 
   const updateBoundedInteger = (
-    key: keyof Pick<AdvancedSearchFilters, 'publishYearFrom' | 'publishYearTo' | 'lengthMinSeconds' | 'lengthMaxSeconds'>,
+    key: keyof Pick<AdvancedSearchFilters,
+      'publishYearFrom' | 'publishYearTo' | 'lengthMinSeconds' | 'lengthMaxSeconds'
+      | 'minYoutubeViews' | 'maxYoutubeViews' | 'minNicoViews' | 'maxNicoViews'
+      | 'minFavoritedTimes' | 'maxFavoritedTimes'>,
     value: string,
     min: number,
     max: number,
   ) => {
     setAdvancedFilters({ [key]: sanitizeAdvancedIntegerInput(value, min, max) });
   };
+
+  const toggleSongType = (songType: SongType) => setAdvancedFilters({
+    includedSongTypes: advancedFilters.includedSongTypes.includes(songType)
+      ? advancedFilters.includedSongTypes.filter(type => type !== songType)
+      : [...advancedFilters.includedSongTypes, songType],
+  });
+
+  const toggleTag = (tag: { id: number; name: string }) => setAdvancedFilters({
+    tagFilters: advancedFilters.tagFilters.some(item => item.id === tag.id)
+      ? advancedFilters.tagFilters.filter(item => item.id !== tag.id)
+      : [...advancedFilters.tagFilters, tag].slice(0, 20),
+  });
+
+  const rangeText = (from: string, to: string, suffix = '') => from && to
+    ? `${Number(from).toLocaleString()}〜${Number(to).toLocaleString()}${suffix}`
+    : from ? `${Number(from).toLocaleString()}${suffix}以上` : `${Number(to).toLocaleString()}${suffix}以下`;
+
+  const advancedChips: { key: string; label: string; clear: () => void }[] = [];
+  if (advancedFilters.publishYearFrom || advancedFilters.publishYearTo) advancedChips.push({ key: 'year', label: `投稿年 ${rangeText(advancedFilters.publishYearFrom, advancedFilters.publishYearTo)}`, clear: () => setAdvancedFilters({ publishYearFrom: '', publishYearTo: '' }) });
+  if (advancedFilters.lengthMinSeconds || advancedFilters.lengthMaxSeconds) advancedChips.push({ key: 'length', label: `長さ ${rangeText(advancedFilters.lengthMinSeconds, advancedFilters.lengthMaxSeconds, '秒')}`, clear: () => setAdvancedFilters({ lengthMinSeconds: '', lengthMaxSeconds: '' }) });
+  if (advancedFilters.minYoutubeViews || advancedFilters.maxYoutubeViews) advancedChips.push({ key: 'youtube', label: `YouTube ${rangeText(advancedFilters.minYoutubeViews, advancedFilters.maxYoutubeViews)}`, clear: () => setAdvancedFilters({ minYoutubeViews: '', maxYoutubeViews: '' }) });
+  if (advancedFilters.minNicoViews || advancedFilters.maxNicoViews) advancedChips.push({ key: 'nico', label: `ニコニコ ${rangeText(advancedFilters.minNicoViews, advancedFilters.maxNicoViews)}`, clear: () => setAdvancedFilters({ minNicoViews: '', maxNicoViews: '' }) });
+  if (advancedFilters.minFavoritedTimes || advancedFilters.maxFavoritedTimes) advancedChips.push({ key: 'favorites', label: `VocaDB支持 ${rangeText(advancedFilters.minFavoritedTimes, advancedFilters.maxFavoritedTimes)}`, clear: () => setAdvancedFilters({ minFavoritedTimes: '', maxFavoritedTimes: '' }) });
+  advancedFilters.includedSongTypes.forEach(type => advancedChips.push({ key: `type-${type}`, label: SONG_TYPE_OPTIONS.find(option => option.value === type)?.label ?? type, clear: () => toggleSongType(type) }));
+  advancedFilters.tagFilters.forEach(tag => advancedChips.push({ key: `tag-${tag.id}`, label: `# ${tag.name}`, clear: () => toggleTag(tag) }));
+  if (advancedFilters.creditArtist) advancedChips.push({ key: 'credit', label: `${CREDIT_ROLES.find(([value]) => value === advancedFilters.creditRole)?.[1] ?? '参加'}: ${advancedFilters.creditArtist.name}`, clear: () => setAdvancedFilters({ creditArtist: null }) });
+  if (advancedFilters.pvService !== 'any') advancedChips.push({ key: 'pv', label: `PV: ${advancedFilters.pvService === 'both' ? 'YouTube＋ニコニコ' : advancedFilters.pvService}`, clear: () => setAdvancedFilters({ pvService: 'any' }) });
+  if (advancedFilters.audioComputed !== 'any') advancedChips.push({ key: 'audio', label: `音響解析: ${advancedFilters.audioComputed === 'yes' ? 'あり' : 'なし'}`, clear: () => setAdvancedFilters({ audioComputed: 'any' }) });
 
   /* ---------- 選択チップ（共通） ---------- */
   const vocalistChips = visibleVocalistFilters.length > 0 && (
@@ -295,8 +408,9 @@ export default function SearchFilters() {
           <button
             type="button"
             className="ui-chip-toggle"
-            data-active={songTypeFilter === 'Original'}
+            data-active={songTypeFilter === 'Original' || (advancedFilters.includedSongTypes.length === 1 && advancedFilters.includedSongTypes[0] === 'Original')}
             onClick={() => {
+              setAdvancedFilters({ includedSongTypes: [] });
               setSongTypeFilter(songTypeFilter === 'Original' ? 'All' : 'Original');
               search();
             }}
@@ -443,88 +557,83 @@ export default function SearchFilters() {
             <path d="M3 17v2h6v-2H3zM3 5v2h10V5H3zm10 16v-2h8v-2h-8v-2h-2v6h2zM7 9v2H3v2h4v2h2V9H7zm14 4v-2H11v2h10zm-6-4h2V7h4V5h-4V3h-2v6z"/>
           </svg>
           <span>絞り込み条件</span>
+          {advancedChips.length > 0 && (
+            <span className="rounded-full bg-cyan-400 px-1.5 py-0.5 text-[10px] font-bold text-black">{advancedChips.length}</span>
+          )}
+          <div className="flex-1" />
+          {hasSearched && <span className="text-[11px] text-neutral-500">{totalCount.toLocaleString()}件</span>}
         </div>
 
+        {advancedChips.length > 0 && (
+          <div className="flex flex-wrap gap-1.5 pb-2 pt-1">
+            {advancedChips.map(chip => (
+              <span key={chip.key} className="inline-flex items-center gap-1 rounded-full border border-cyan-300/20 bg-cyan-300/10 px-2.5 py-1 text-xs text-cyan-100">
+                {chip.label}
+                <button type="button" className="text-cyan-200/60 hover:text-white" aria-label={`${chip.label}を解除`} onClick={() => { chip.clear(); queueMicrotask(() => void search()); }}>×</button>
+              </span>
+            ))}
+          </div>
+        )}
+
         {isAdvancedExpanded && (
-          <div className="pb-3 animate-fade-in">
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
-              {/* 投稿年 */}
-              <div className="flex flex-col gap-1.5">
-                <span className="text-[11px]" style={{ color: 'var(--color-text-muted)' }}>投稿年</span>
-                <div className="flex items-center gap-1.5">
-                  <input
-                    type="number" inputMode="numeric"
-                    min={ADVANCED_SEARCH_LIMITS.publishYearMin} max={ADVANCED_SEARCH_LIMITS.publishYearMax} step={1}
-                    value={advancedFilters.publishYearFrom}
-                    onChange={e => updateBoundedInteger('publishYearFrom', e.target.value, ADVANCED_SEARCH_LIMITS.publishYearMin, ADVANCED_SEARCH_LIMITS.publishYearMax)}
-                    placeholder="2007" className="ui-number-input"
-                  />
-                  <span className="text-xs flex-shrink-0" style={{ color: 'var(--color-text-muted)' }}>〜</span>
-                  <input
-                    type="number" inputMode="numeric"
-                    min={ADVANCED_SEARCH_LIMITS.publishYearMin} max={ADVANCED_SEARCH_LIMITS.publishYearMax} step={1}
-                    value={advancedFilters.publishYearTo}
-                    onChange={e => updateBoundedInteger('publishYearTo', e.target.value, ADVANCED_SEARCH_LIMITS.publishYearMin, ADVANCED_SEARCH_LIMITS.publishYearMax)}
-                    placeholder="2026" className="ui-number-input"
-                  />
-                </div>
-              </div>
+          <div className="space-y-4 pb-3 animate-fade-in">
+            <div className="flex flex-wrap gap-1.5">
+              <span className="mr-1 self-center text-[10px] font-semibold uppercase tracking-wider text-neutral-500">かんたん設定</span>
+              <button type="button" className="ui-chip-toggle" onClick={() => setAdvancedFilters({ publishYearFrom: '2007', publishYearTo: '2012' })}>初期ボカロ</button>
+              <button type="button" className="ui-chip-toggle" onClick={() => setAdvancedFilters({ publishYearFrom: '2024', publishYearTo: '' })}>2024年以降</button>
+              <button type="button" className="ui-chip-toggle" onClick={() => setAdvancedFilters({ lengthMinSeconds: '', lengthMaxSeconds: '180' })}>3分以内</button>
+              <button type="button" className="ui-chip-toggle" onClick={() => setAdvancedFilters({ lengthMinSeconds: '360', lengthMaxSeconds: '' })}>6分以上</button>
+              <button type="button" className="ui-chip-toggle" onClick={() => setAdvancedFilters({ minYoutubeViews: '1000000' })}>YouTube 100万+</button>
+              <button type="button" className="ui-chip-toggle" onClick={() => setAdvancedFilters({ minNicoViews: '100000' })}>ニコニコ 10万+</button>
+            </div>
 
-              {/* 曲の長さ */}
-              <div className="flex flex-col gap-1.5">
-                <span className="text-[11px]" style={{ color: 'var(--color-text-muted)' }}>曲の長さ（秒）</span>
-                <div className="flex items-center gap-1.5">
-                  <input
-                    type="number" inputMode="numeric"
-                    min={ADVANCED_SEARCH_LIMITS.lengthMinSeconds} max={ADVANCED_SEARCH_LIMITS.lengthMaxSeconds} step={1}
-                    value={advancedFilters.lengthMinSeconds}
-                    onChange={e => updateBoundedInteger('lengthMinSeconds', e.target.value, ADVANCED_SEARCH_LIMITS.lengthMinSeconds, ADVANCED_SEARCH_LIMITS.lengthMaxSeconds)}
-                    placeholder="60" className="ui-number-input"
-                  />
-                  <span className="text-xs flex-shrink-0" style={{ color: 'var(--color-text-muted)' }}>〜</span>
-                  <input
-                    type="number" inputMode="numeric"
-                    min={ADVANCED_SEARCH_LIMITS.lengthMinSeconds} max={ADVANCED_SEARCH_LIMITS.lengthMaxSeconds} step={1}
-                    value={advancedFilters.lengthMaxSeconds}
-                    onChange={e => updateBoundedInteger('lengthMaxSeconds', e.target.value, ADVANCED_SEARCH_LIMITS.lengthMinSeconds, ADVANCED_SEARCH_LIMITS.lengthMaxSeconds)}
-                    placeholder="360" className="ui-number-input"
-                  />
-                </div>
+            <div className="rounded-xl border border-white/[0.06] p-3">
+              <p className="mb-2 text-xs font-semibold text-neutral-300">基本情報</p>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <RangeInputs label="投稿年" from={advancedFilters.publishYearFrom} to={advancedFilters.publishYearTo} fromPlaceholder="2007" toPlaceholder="2026" min={ADVANCED_SEARCH_LIMITS.publishYearMin} max={ADVANCED_SEARCH_LIMITS.publishYearMax} onFrom={value => updateBoundedInteger('publishYearFrom', value, ADVANCED_SEARCH_LIMITS.publishYearMin, ADVANCED_SEARCH_LIMITS.publishYearMax)} onTo={value => updateBoundedInteger('publishYearTo', value, ADVANCED_SEARCH_LIMITS.publishYearMin, ADVANCED_SEARCH_LIMITS.publishYearMax)} />
+                <RangeInputs label="曲の長さ（秒）" from={advancedFilters.lengthMinSeconds} to={advancedFilters.lengthMaxSeconds} fromPlaceholder="60" toPlaceholder="360" min={ADVANCED_SEARCH_LIMITS.lengthMinSeconds} max={ADVANCED_SEARCH_LIMITS.lengthMaxSeconds} onFrom={value => updateBoundedInteger('lengthMinSeconds', value, ADVANCED_SEARCH_LIMITS.lengthMinSeconds, ADVANCED_SEARCH_LIMITS.lengthMaxSeconds)} onTo={value => updateBoundedInteger('lengthMaxSeconds', value, ADVANCED_SEARCH_LIMITS.lengthMinSeconds, ADVANCED_SEARCH_LIMITS.lengthMaxSeconds)} />
               </div>
-
-              {/* PV */}
-              <div className="flex flex-col gap-1.5">
-                <span className="text-[11px]" style={{ color: 'var(--color-text-muted)' }}>PV</span>
-                <select
-                  id="pv-service-filter"
-                  value={advancedFilters.pvService}
-                  onChange={e => setAdvancedFilters({ pvService: e.target.value as typeof advancedFilters.pvService })}
-                  className="ui-select w-full"
-                >
-                  <option value="any">指定なし</option>
-                  <option value="youtube">YouTubeあり</option>
-                  <option value="niconico">ニコニコあり</option>
-                  <option value="both">両方あり</option>
-                </select>
-              </div>
-
-              {/* 音声特徴量 */}
-              <div className="flex flex-col gap-1.5">
-                <span className="text-[11px]" style={{ color: 'var(--color-text-muted)' }}>音声特徴量</span>
-                <select
-                  id="audio-computed-filter"
-                  value={advancedFilters.audioComputed}
-                  onChange={e => setAdvancedFilters({ audioComputed: e.target.value as typeof advancedFilters.audioComputed })}
-                  className="ui-select w-full"
-                >
-                  <option value="any">指定なし</option>
-                  <option value="yes">あり</option>
-                  <option value="no">なし</option>
-                </select>
+              <div className="mt-3 flex flex-wrap gap-1.5">
+                {SONG_TYPE_OPTIONS.map(option => <button key={option.value} type="button" className="ui-chip-toggle" data-active={advancedFilters.includedSongTypes.includes(option.value)} onClick={() => toggleSongType(option.value)}>{option.label}</button>)}
               </div>
             </div>
 
-            <div className="flex items-center justify-end gap-2 mt-3">
+            <div className="rounded-xl border border-white/[0.06] p-3">
+              <p className="mb-2 text-xs font-semibold text-neutral-300">人気・再生数</p>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                <RangeInputs label="YouTube再生数" from={advancedFilters.minYoutubeViews} to={advancedFilters.maxYoutubeViews} fromPlaceholder="0" toPlaceholder="上限なし" min={0} max={ADVANCED_SEARCH_LIMITS.viewCountMax} onFrom={value => updateBoundedInteger('minYoutubeViews', value, 0, ADVANCED_SEARCH_LIMITS.viewCountMax)} onTo={value => updateBoundedInteger('maxYoutubeViews', value, 0, ADVANCED_SEARCH_LIMITS.viewCountMax)} />
+                <RangeInputs label="ニコニコ再生数" from={advancedFilters.minNicoViews} to={advancedFilters.maxNicoViews} fromPlaceholder="0" toPlaceholder="上限なし" min={0} max={ADVANCED_SEARCH_LIMITS.viewCountMax} onFrom={value => updateBoundedInteger('minNicoViews', value, 0, ADVANCED_SEARCH_LIMITS.viewCountMax)} onTo={value => updateBoundedInteger('maxNicoViews', value, 0, ADVANCED_SEARCH_LIMITS.viewCountMax)} />
+                <RangeInputs label="VocaDB支持数" from={advancedFilters.minFavoritedTimes} to={advancedFilters.maxFavoritedTimes} fromPlaceholder="0" toPlaceholder="上限なし" min={0} max={ADVANCED_SEARCH_LIMITS.favoriteCountMax} onFrom={value => updateBoundedInteger('minFavoritedTimes', value, 0, ADVANCED_SEARCH_LIMITS.favoriteCountMax)} onTo={value => updateBoundedInteger('maxFavoritedTimes', value, 0, ADVANCED_SEARCH_LIMITS.favoriteCountMax)} />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
+              <div className="rounded-xl border border-white/[0.06] p-3">
+                <div className="mb-2 flex items-center gap-2"><p className="text-xs font-semibold text-neutral-300">ジャンル・楽器・雰囲気</p><div className="ui-segmented ml-auto">{(['all', 'any'] as const).map(mode => <button key={mode} type="button" data-active={advancedFilters.tagMatchMode === mode} onClick={() => setAdvancedFilters({ tagMatchMode: mode })}>{mode === 'all' ? 'すべて含む' : 'いずれか'}</button>)}</div></div>
+                <div className="flex flex-wrap gap-1.5">{TAG_PRESETS.map(tag => <button key={tag.id} type="button" className="ui-chip-toggle" data-active={advancedFilters.tagFilters.some(item => item.id === tag.id)} onClick={() => toggleTag(tag)}>{tag.name}</button>)}</div>
+                <div className="relative mt-3">
+                  <input className="ui-number-input w-full" value={tagQuery} onChange={event => setTagQuery(event.target.value)} placeholder="ほかのタグを検索（例: ギター、和風）" />
+                  {tagSuggestions.length > 0 && <SuggestionList items={tagSuggestions.map(tag => ({ id: tag.id, label: tag.name, detail: `${tag.songCount.toLocaleString()}曲` }))} onSelect={item => { const tag = tagSuggestions.find(candidate => candidate.id === item.id); if (tag) toggleTag(tag); setTagQuery(''); setTagSuggestions([]); }} />}
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-white/[0.06] p-3">
+                <p className="mb-2 text-xs font-semibold text-neutral-300">参加者・役割</p>
+                <div className="grid grid-cols-[minmax(0,1fr)_minmax(120px,0.65fr)] gap-2">
+                  <div className="relative"><input className="ui-number-input w-full" value={creditQuery} onChange={event => setCreditQuery(event.target.value)} placeholder="P、絵師、動画師、演奏者…" />{creditSuggestions.length > 0 && <SuggestionList items={creditSuggestions.map(artist => ({ id: artist.id, label: artist.name, detail: artist.artistType }))} onSelect={item => { setAdvancedFilters({ creditArtist: { id: item.id, name: item.label } }); setCreditQuery(''); setCreditSuggestions([]); }} />}</div>
+                  <select className="ui-select w-full" value={advancedFilters.creditRole} onChange={event => setAdvancedFilters({ creditRole: event.target.value })}>{CREDIT_ROLES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
+                </div>
+                {advancedFilters.creditArtist && <p className="mt-2 text-xs text-cyan-200">選択中: {advancedFilters.creditArtist.name}</p>}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <label className="flex flex-col gap-1.5 text-[11px] text-neutral-500">PV<select id="pv-service-filter" value={advancedFilters.pvService} onChange={e => setAdvancedFilters({ pvService: e.target.value as typeof advancedFilters.pvService })} className="ui-select w-full"><option value="any">指定なし</option><option value="youtube">YouTubeあり</option><option value="niconico">ニコニコあり</option><option value="both">両方あり</option></select></label>
+              <label className="flex flex-col gap-1.5 text-[11px] text-neutral-500">音声特徴量<select id="audio-computed-filter" value={advancedFilters.audioComputed} onChange={e => setAdvancedFilters({ audioComputed: e.target.value as typeof advancedFilters.audioComputed })} className="ui-select w-full"><option value="any">指定なし</option><option value="yes">あり</option><option value="no">なし</option></select></label>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 border-t border-white/[0.06] pt-3">
+              {hasSearched && <span className="mr-auto text-xs text-neutral-500"><strong className="text-white">{totalCount.toLocaleString()}</strong> 曲が該当</span>}
               <button
                 type="button"
                 className="text-xs px-3 py-1.5 rounded-lg transition-colors"
@@ -539,7 +648,7 @@ export default function SearchFilters() {
                 style={{ background: 'var(--color-accent-purple)', color: '#fff' }}
                 onClick={() => search()}
               >
-                適用
+                この条件で検索
               </button>
             </div>
           </div>

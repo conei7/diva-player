@@ -584,6 +584,28 @@ export async function searchProducersByName(query: string, maxResults = 8): Prom
   return searchArtistsByName(query, PRODUCER_ARTIST_TYPES, maxResults, 'producer');
 }
 
+/** 作曲・作詞・絵・動画・演奏など、役割を問わず参加者候補を検索する。 */
+export async function searchCreditArtistsByName(query: string, maxResults = 12): Promise<Artist[]> {
+  const trimmed = query.trim();
+  if (!trimmed) return [];
+  const queryParams = buildSearchParams({
+    query: trimmed,
+    maxResults,
+    nameMatchMode: 'StartsWith',
+    lang: DEFAULT_LANG,
+  });
+  const url = `${BASE_URL}/artists?${queryParams}&sort=SongCount`;
+  const cacheKey = `credit-artist:${url}`;
+  const cached = getCached<ArtistSearchResult>(cacheKey);
+  const data = cached ?? await (async () => {
+    const response = await fetchWithRetry(url);
+    const result: ArtistSearchResult = await response.json();
+    setCache(cacheKey, result);
+    return result;
+  })();
+  return rankArtistsByName(data.items, trimmed);
+}
+
 /**
  * Resolve a producer entered in the dedicated producer-search mode.
  *

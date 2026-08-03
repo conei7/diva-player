@@ -111,6 +111,53 @@ describe('backend artist union search', () => {
     expect(url.searchParams.get('artistRole')).toBe('Illustrator');
   });
 
+  it('encodes price-comparison style facets and stable random ordering', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      headers: { get: () => null },
+      json: async () => ({ items: [], totalCount: 321 }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    useSearchStore.getState().setSort('Random');
+
+    await searchSongsBackend({
+      query: 'advanced-facet-contract',
+      songTypes: ['Original', 'Remix'],
+      sort: 'Random',
+      sortOrder: 'desc',
+      start: 0,
+      maxResults: 24,
+      filters: {
+        ...DEFAULT_ADVANCED_FILTERS,
+        minYoutubeViews: '1000',
+        maxYoutubeViews: '9000',
+        minNicoViews: '100',
+        maxNicoViews: '900',
+        minFavoritedTimes: '5',
+        maxFavoritedTimes: '50',
+        tagFilters: [{ id: 337, name: 'ピアノ' }, { id: 481, name: 'ロック' }],
+        tagMatchMode: 'all',
+        creditArtist: { id: 777, name: '絵師' },
+        creditRole: 'Illustrator',
+      },
+    });
+
+    const url = new URL(String(fetchMock.mock.calls[0]?.[0]), 'https://example.test');
+    expect(url.searchParams.get('songTypes')).toBe('Original,Remix');
+    expect(url.searchParams.get('minYoutubeViews')).toBe('1000');
+    expect(url.searchParams.get('maxYoutubeViews')).toBe('9000');
+    expect(url.searchParams.get('minNicoViews')).toBe('100');
+    expect(url.searchParams.get('maxNicoViews')).toBe('900');
+    expect(url.searchParams.get('minFavoritedTimes')).toBe('5');
+    expect(url.searchParams.get('maxFavoritedTimes')).toBe('50');
+    expect(url.searchParams.get('tagIds')).toBe('337,481');
+    expect(url.searchParams.get('tagMatchMode')).toBe('all');
+    expect(url.searchParams.get('creditArtistId')).toBe('777');
+    expect(url.searchParams.get('creditArtistRole')).toBe('Illustrator');
+    expect(Number(url.searchParams.get('randomSeed'))).toBeGreaterThanOrEqual(0);
+    useSearchStore.getState().reset();
+  });
+
   it('sends singer variants as anyArtistIds while keeping required artists separate', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,

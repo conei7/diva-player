@@ -57,6 +57,8 @@ jobs:
         run: npm run test:e2e:youtube-playlist-sync -- http://127.0.0.1:4173/diva-player/
       - name: NicoNico playlist sync E2E
         run: npm run test:e2e:nico-playlist-sync -- http://127.0.0.1:4173/diva-player/
+      - name: Advanced search E2E
+        run: npm run test:e2e:advanced-search -- http://127.0.0.1:4173/diva-player/
       - name: Background playback E2E
         run: npm run test:e2e:background-playback -- http://127.0.0.1:4173/diva-player/
       - name: Cloudflare proxy contract test

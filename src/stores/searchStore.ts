@@ -13,10 +13,11 @@ const BACKEND_SEARCH_CACHE_TTL = 60_000;
 const backendSearchCache = new AsyncTtlCache(BACKEND_SEARCH_CACHE_TTL, 100);
 
 // VocaDB APIに存在しないローカルソート種別
-export type LocalSortRule = 'YoutubeViews' | 'NicoViews' | 'TotalViews';
+export type LocalSortRule = 'YoutubeViews' | 'NicoViews' | 'TotalViews' | 'Random';
 export type ExtendedSortRule = SongSortRule | LocalSortRule;
 
-export const LOCAL_SORT_RULES = new Set<ExtendedSortRule>(['YoutubeViews', 'NicoViews', 'TotalViews']);
+export const LOCAL_SORT_RULES = new Set<ExtendedSortRule>(['YoutubeViews', 'NicoViews', 'TotalViews', 'Random']);
+let searchRandomSeed = Math.floor(Math.random() * 2_147_483_647);
 export type SortOrder = 'desc' | 'asc';
 
 /** ローカルソートを適用する */
@@ -64,6 +65,17 @@ export interface AdvancedSearchFilters {
   lengthMaxSeconds: string;
   pvService: 'any' | 'youtube' | 'niconico' | 'both';
   audioComputed: 'any' | 'yes' | 'no';
+  minYoutubeViews: string;
+  maxYoutubeViews: string;
+  minNicoViews: string;
+  maxNicoViews: string;
+  minFavoritedTimes: string;
+  maxFavoritedTimes: string;
+  includedSongTypes: SongType[];
+  tagFilters: { id: number; name: string }[];
+  tagMatchMode: 'all' | 'any';
+  creditArtist: { id: number; name: string } | null;
+  creditRole: string;
 }
 
 // PostgreSQLのdate型が扱える上限と、DBのlength_seconds(int)に合わせる。
@@ -72,6 +84,10 @@ export const ADVANCED_SEARCH_LIMITS = {
   publishYearMax: 5_874_896,
   lengthMinSeconds: 0,
   lengthMaxSeconds: 2_147_483_647,
+  viewCountMin: 0,
+  viewCountMax: Number.MAX_SAFE_INTEGER,
+  favoriteCountMin: 0,
+  favoriteCountMax: 2_147_483_647,
 } as const;
 
 export const DEFAULT_ADVANCED_FILTERS: AdvancedSearchFilters = {
@@ -81,6 +97,17 @@ export const DEFAULT_ADVANCED_FILTERS: AdvancedSearchFilters = {
   lengthMaxSeconds: '',
   pvService: 'any',
   audioComputed: 'any',
+  minYoutubeViews: '',
+  maxYoutubeViews: '',
+  minNicoViews: '',
+  maxNicoViews: '',
+  minFavoritedTimes: '',
+  maxFavoritedTimes: '',
+  includedSongTypes: [],
+  tagFilters: [],
+  tagMatchMode: 'all',
+  creditArtist: null,
+  creditRole: '',
 };
 
 export function sanitizeAdvancedIntegerInput(value: string, min: number, max: number): string {
@@ -132,6 +159,17 @@ export function validateAdvancedSearchFilters(filters: AdvancedSearchFilters): s
     ADVANCED_SEARCH_LIMITS.lengthMaxSeconds,
   );
   if (lengthToError) return lengthToError;
+  for (const [value, label, max] of [
+    [filters.minYoutubeViews, 'YouTube再生数', ADVANCED_SEARCH_LIMITS.viewCountMax],
+    [filters.maxYoutubeViews, 'YouTube再生数', ADVANCED_SEARCH_LIMITS.viewCountMax],
+    [filters.minNicoViews, 'ニコニコ再生数', ADVANCED_SEARCH_LIMITS.viewCountMax],
+    [filters.maxNicoViews, 'ニコニコ再生数', ADVANCED_SEARCH_LIMITS.viewCountMax],
+    [filters.minFavoritedTimes, 'VocaDB支持数', ADVANCED_SEARCH_LIMITS.favoriteCountMax],
+    [filters.maxFavoritedTimes, 'VocaDB支持数', ADVANCED_SEARCH_LIMITS.favoriteCountMax],
+  ] as const) {
+    const error = validateAdvancedInteger(value, label, 0, max);
+    if (error) return error;
+  }
 
   const yearFrom = filters.publishYearFrom.trim() ? Number(filters.publishYearFrom) : null;
   const yearTo = filters.publishYearTo.trim() ? Number(filters.publishYearTo) : null;
@@ -139,6 +177,14 @@ export function validateAdvancedSearchFilters(filters: AdvancedSearchFilters): s
   const lengthFrom = filters.lengthMinSeconds.trim() ? Number(filters.lengthMinSeconds) : null;
   const lengthTo = filters.lengthMaxSeconds.trim() ? Number(filters.lengthMaxSeconds) : null;
   if (lengthFrom !== null && lengthTo !== null && lengthFrom > lengthTo) return '曲の長さの開始値は終了値以下にしてください。';
+  const ranges: [string, string, string][] = [
+    [filters.minYoutubeViews, filters.maxYoutubeViews, 'YouTube再生数'],
+    [filters.minNicoViews, filters.maxNicoViews, 'ニコニコ再生数'],
+    [filters.minFavoritedTimes, filters.maxFavoritedTimes, 'VocaDB支持数'],
+  ];
+  for (const [from, to, label] of ranges) {
+    if (from && to && Number(from) > Number(to)) return `${label}の開始値は終了値以下にしてください。`;
+  }
   return null;
 }
 
@@ -148,7 +194,21 @@ function hasAdvancedFilters(filters: AdvancedSearchFilters): boolean {
     || filters.lengthMinSeconds.trim() !== ''
     || filters.lengthMaxSeconds.trim() !== ''
     || filters.pvService !== 'any'
-    || filters.audioComputed !== 'any';
+    || filters.audioComputed !== 'any'
+    || filters.minYoutubeViews !== ''
+    || filters.maxYoutubeViews !== ''
+    || filters.minNicoViews !== ''
+    || filters.maxNicoViews !== ''
+    || filters.minFavoritedTimes !== ''
+    || filters.maxFavoritedTimes !== ''
+    || filters.includedSongTypes.length > 0
+    || filters.tagFilters.length > 0
+    || filters.creditArtist !== null;
+}
+
+function requestedSongTypes(songTypeFilter: 'All' | 'Original', filters: AdvancedSearchFilters): SongType[] | undefined {
+  if (filters.includedSongTypes.length > 0) return filters.includedSongTypes;
+  return songTypeFilter === 'Original' ? ['Original'] : undefined;
 }
 
 export function hasGlobalSongFilters(settings: GlobalFilterSettings): boolean {
@@ -270,12 +330,35 @@ export async function searchSongsBackend(params: {
     if (f.lengthMaxSeconds.trim()) qs.set('lengthMaxSeconds', f.lengthMaxSeconds.trim());
     if (f.pvService !== 'any') qs.set('pvService', f.pvService);
     if (f.audioComputed !== 'any') qs.set('audioComputed', f.audioComputed);
+    if (f.minYoutubeViews) qs.set('minYoutubeViews', f.minYoutubeViews);
+    if (f.maxYoutubeViews) qs.set('maxYoutubeViews', f.maxYoutubeViews);
+    if (f.minNicoViews) qs.set('minNicoViews', f.minNicoViews);
+    if (f.maxNicoViews) qs.set('maxNicoViews', f.maxNicoViews);
+    if (f.minFavoritedTimes) qs.set('minFavoritedTimes', f.minFavoritedTimes);
+    if (f.maxFavoritedTimes) qs.set('maxFavoritedTimes', f.maxFavoritedTimes);
+    if (f.tagFilters.length > 0) {
+      qs.set('tagIds', f.tagFilters.map(tag => tag.id).join(','));
+      qs.set('tagMatchMode', f.tagMatchMode);
+    }
+    if (f.creditArtist) {
+      qs.set('creditArtistId', f.creditArtist.id.toString());
+      if (f.creditRole) qs.set('creditArtistRole', f.creditRole);
+    }
   }
+  if (params.sort === 'Random') qs.set('randomSeed', searchRandomSeed.toString());
   if (params.globalFilters && hasGlobalSongFilters(params.globalFilters)) {
     const f = params.globalFilters;
-    if (f.minYoutubeViews > 0) qs.set('minYoutubeViews', f.minYoutubeViews.toString());
-    if (f.minNicoViews > 0) qs.set('minNicoViews', f.minNicoViews.toString());
+    if (f.minYoutubeViews > 0) qs.set('minYoutubeViews', Math.max(Number(qs.get('minYoutubeViews') || 0), f.minYoutubeViews).toString());
+    if (f.minNicoViews > 0) qs.set('minNicoViews', Math.max(Number(qs.get('minNicoViews') || 0), f.minNicoViews).toString());
     if (f.excludedSongTypes.length > 0) qs.set('excludeSongTypes', f.excludedSongTypes.join(','));
+  }
+  for (const [minimumKey, maximumKey] of [
+    ['minYoutubeViews', 'maxYoutubeViews'],
+    ['minNicoViews', 'maxNicoViews'],
+  ] as const) {
+    const minimum = Number(qs.get(minimumKey) || 0);
+    const maximumText = qs.get(maximumKey);
+    if (maximumText && minimum > Number(maximumText)) return { items: [], totalCount: 0 };
   }
 
   const url = `${RECOMMENDER_API}/api/songs/search?${qs.toString()}`;
@@ -547,7 +630,10 @@ export const useSearchStore = create<SearchState>((set, get) => ({
   // next submit would keep searching the previously resolved artist.
   setQuery: (query: string) => set({ query, resolvedArtistId: null, artistRole: null }),
 
-  setSort: (sort: ExtendedSortRule) => set({ sort }),
+  setSort: (sort: ExtendedSortRule) => {
+    if (sort === 'Random') searchRandomSeed = Math.floor(Math.random() * 2_147_483_647);
+    set({ sort });
+  },
   setSortOrder: (order: SortOrder) => set({ sortOrder: order }),
 
   setResolvedArtistId: (id: number | null) => set({ resolvedArtistId: id }),
@@ -591,7 +677,7 @@ export const useSearchStore = create<SearchState>((set, get) => ({
       vocalistFilters: [],
       exactApiOffset: 0,
     });
-    const songTypes = songTypeFilter === 'Original' ? ['Original' as const] : undefined;
+    const songTypes = requestedSongTypes(songTypeFilter, advancedFilters);
     const useBackend = LOCAL_SORT_RULES.has(sort)
       || hasAdvancedFilters(advancedFilters)
       || hasGlobalSongFilters(globalFilters);
@@ -641,7 +727,7 @@ export const useSearchStore = create<SearchState>((set, get) => ({
       vocalistFilters: [],
       exactApiOffset: 0,
     });
-    const songTypes = songTypeFilter === 'Original' ? ['Original' as const] : undefined;
+    const songTypes = requestedSongTypes(songTypeFilter, advancedFilters);
     const useBackend = !!artistRole
       || LOCAL_SORT_RULES.has(sort)
       || hasAdvancedFilters(advancedFilters)
@@ -688,7 +774,7 @@ export const useSearchStore = create<SearchState>((set, get) => ({
       hasSearched: true,
       resolvedArtistId,
     });
-    const songTypes = songTypeFilter === 'Original' ? ['Original' as const] : undefined;
+    const songTypes = requestedSongTypes(songTypeFilter, advancedFilters);
     const requiresBackend = !!artistRole
       || LOCAL_SORT_RULES.has(sort)
       || hasAdvancedFilters(advancedFilters)
@@ -821,7 +907,7 @@ export const useSearchStore = create<SearchState>((set, get) => ({
     if (isLoading || results.length >= totalCount) return;
 
     const nextPage = currentPage + 1;
-    const songTypes = songTypeFilter === 'Original' ? ['Original' as const] : undefined;
+    const songTypes = requestedSongTypes(songTypeFilter, advancedFilters);
     set({ isLoading: true });
 
     try {

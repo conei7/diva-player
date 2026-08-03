@@ -28,6 +28,8 @@ public sealed record SongSearchExecution(
     long TotalMs,
     bool CacheHit);
 
+public sealed record SearchTagItem(int Id, string Name, string? Category, int SongCount);
+
 /// <summary>PostgreSQL アクセスサービス</summary>
 public class DbService
 {
@@ -488,6 +490,15 @@ public class DbService
         List<string>? excludedSongTypes = null,
         bool voiceSynthOnly = false,
         bool discoveryOnly = false,
+        long? maxYoutubeViews = null,
+        long? maxNicoViews = null,
+        int? minFavoritedTimes = null,
+        int? maxFavoritedTimes = null,
+        List<int>? tagIds = null,
+        string tagMatchMode = "all",
+        int? creditArtistId = null,
+        string? creditArtistRole = null,
+        int randomSeed = 0,
         bool forceRefresh = false)
     {
         var totalStopwatch = Stopwatch.StartNew();
@@ -511,6 +522,15 @@ public class DbService
             audioComputed,
             minYoutubeViews,
             minNicoViews,
+            maxYoutubeViews,
+            maxNicoViews,
+            minFavoritedTimes,
+            maxFavoritedTimes,
+            tagIds = tagIds is { Count: > 0 } ? tagIds : null,
+            tagMatchMode,
+            creditArtistId,
+            creditArtistRole,
+            randomSeed,
             onlyWithPVs,
             excludedSongTypes = excludedSongTypes is { Count: > 0 } ? excludedSongTypes : null,
             voiceSynthOnly,
@@ -530,6 +550,8 @@ public class DbService
                             publishYearFrom, publishYearTo, lengthMinSeconds, lengthMaxSeconds,
                             pvService, audioComputed, minYoutubeViews, minNicoViews,
                             onlyWithPVs, excludedSongTypes, voiceSynthOnly, discoveryOnly,
+                            maxYoutubeViews, maxNicoViews, minFavoritedTimes, maxFavoritedTimes,
+                            tagIds, tagMatchMode, creditArtistId, creditArtistRole, randomSeed,
                             forceRefresh: true);
                     }
                     catch (Exception exception)
@@ -671,6 +693,68 @@ public class DbService
             paramIndex++;
         }
 
+        if (maxYoutubeViews.HasValue)
+        {
+            conditions.Add($"youtube_views <= ${paramIndex}");
+            paramValues.Add(maxYoutubeViews.Value);
+            paramIndex++;
+        }
+
+        if (maxNicoViews.HasValue)
+        {
+            conditions.Add($"nico_views <= ${paramIndex}");
+            paramValues.Add(maxNicoViews.Value);
+            paramIndex++;
+        }
+
+        if (minFavoritedTimes.HasValue)
+        {
+            conditions.Add($"favorited_times >= ${paramIndex}");
+            paramValues.Add(minFavoritedTimes.Value);
+            paramIndex++;
+        }
+
+        if (maxFavoritedTimes.HasValue)
+        {
+            conditions.Add($"favorited_times <= ${paramIndex}");
+            paramValues.Add(maxFavoritedTimes.Value);
+            paramIndex++;
+        }
+
+        if (tagIds is { Count: > 0 })
+        {
+            if (tagMatchMode == "any")
+            {
+                conditions.Add($"EXISTS (SELECT 1 FROM song_tags st WHERE st.song_id = songs.id AND st.tag_id = ANY(${paramIndex}))");
+                paramValues.Add(tagIds.Distinct().ToArray());
+                paramIndex++;
+            }
+            else
+            {
+                foreach (var tagId in tagIds.Distinct())
+                {
+                    conditions.Add($"EXISTS (SELECT 1 FROM song_tags st WHERE st.song_id = songs.id AND st.tag_id = ${paramIndex})");
+                    paramValues.Add(tagId);
+                    paramIndex++;
+                }
+            }
+        }
+
+        if (creditArtistId.HasValue)
+        {
+            var roleCondition = string.IsNullOrWhiteSpace(creditArtistRole)
+                ? string.Empty
+                : $" AND sa.roles @> ARRAY[${paramIndex + 1}]::text[]";
+            conditions.Add($"EXISTS (SELECT 1 FROM song_artists sa WHERE sa.song_id = songs.id AND sa.artist_id = ${paramIndex}{roleCondition})");
+            paramValues.Add(creditArtistId.Value);
+            paramIndex++;
+            if (!string.IsNullOrWhiteSpace(creditArtistRole))
+            {
+                paramValues.Add(creditArtistRole);
+                paramIndex++;
+            }
+        }
+
         if (onlyWithPVs)
         {
             conditions.Add("EXISTS (SELECT 1 FROM pvs p WHERE p.song_id = songs.id AND p.disabled = FALSE)");
@@ -732,6 +816,7 @@ public class DbService
             "PublishDate" => "publish_date",
             "AdditionDate" => "id",
             "Name" => "name",
+            "Random" => $"hashint4(id # {randomSeed})",
             _ => "favorited_times"
         };
         string orderDir = (order.ToLower() == "asc") ? "ASC" : "DESC";
@@ -816,6 +901,30 @@ public class DbService
             dataStopwatch.ElapsedMilliseconds,
             totalStopwatch.ElapsedMilliseconds,
             false);
+    }
+
+    public async Task<IReadOnlyList<SearchTagItem>> SearchTagsAsync(
+        string query,
+        int maxResults,
+        CancellationToken cancellationToken)
+    {
+        await using var conn = await OpenAsync();
+        await using var cmd = new NpgsqlCommand(@"
+            SELECT t.id, t.name, t.category, COUNT(st.song_id)::int AS song_count
+            FROM tags t
+            JOIN song_tags st ON st.tag_id = t.id
+            WHERE t.name ILIKE $1
+            GROUP BY t.id, t.name, t.category
+            ORDER BY similarity(lower(t.name), lower($2)) DESC, song_count DESC, t.name
+            LIMIT $3", conn);
+        cmd.Parameters.AddWithValue($"%{query}%");
+        cmd.Parameters.AddWithValue(query);
+        cmd.Parameters.AddWithValue(maxResults);
+        var items = new List<SearchTagItem>();
+        await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+            items.Add(new SearchTagItem(reader.GetInt32(0), reader.GetString(1), reader.IsDBNull(2) ? null : reader.GetString(2), reader.GetInt32(3)));
+        return items;
     }
 
     /// <summary>

@@ -702,6 +702,15 @@ app.MapGet("/api/songs/search", async (
     string? audioComputed,
     long? minYoutubeViews,
     long? minNicoViews,
+    long? maxYoutubeViews,
+    long? maxNicoViews,
+    int? minFavoritedTimes,
+    int? maxFavoritedTimes,
+    string? tagIds,
+    string? tagMatchMode,
+    int? creditArtistId,
+    string? creditArtistRole,
+    int? randomSeed,
     bool? onlyWithPVs,
     string? excludeSongTypes,
     bool? voiceSynthOnly,
@@ -719,6 +728,7 @@ app.MapGet("/api/songs/search", async (
         || anyArtistIds is { Length: > maxFilterStringLength }
         || artistIdGroups is { Length: > maxFilterStringLength }
         || songTypes is { Length: > maxFilterStringLength }
+        || tagIds is { Length: > maxFilterStringLength }
         || excludeSongTypes is { Length: > maxFilterStringLength })
         return Results.BadRequest(new { error = "search filters are too long" });
     if (start is < 0 or > maxSearchStart)
@@ -733,8 +743,16 @@ app.MapGet("/api/songs/search", async (
         return Results.BadRequest(new { error = "publish year range is invalid" });
     if (lengthMinSeconds.HasValue && lengthMaxSeconds.HasValue && lengthMinSeconds > lengthMaxSeconds)
         return Results.BadRequest(new { error = "length range is invalid" });
-    if (minYoutubeViews is < 0 || minNicoViews is < 0)
+    if (minYoutubeViews is < 0 || minNicoViews is < 0 || maxYoutubeViews is < 0 || maxNicoViews is < 0)
         return Results.BadRequest(new { error = "view thresholds must be non-negative" });
+    if (minFavoritedTimes is < 0 || maxFavoritedTimes is < 0)
+        return Results.BadRequest(new { error = "favorite thresholds must be non-negative" });
+    if (minYoutubeViews.HasValue && maxYoutubeViews.HasValue && minYoutubeViews > maxYoutubeViews
+        || minNicoViews.HasValue && maxNicoViews.HasValue && minNicoViews > maxNicoViews
+        || minFavoritedTimes.HasValue && maxFavoritedTimes.HasValue && minFavoritedTimes > maxFavoritedTimes)
+        return Results.BadRequest(new { error = "numeric range is invalid" });
+    if (creditArtistId is <= 0)
+        return Results.BadRequest(new { error = "credit artist id must be positive" });
 
     if (!TryParseIntegerList(artistIds, out var aIds))
         return Results.BadRequest(new { error = "artistIds must be comma-separated integers" });
@@ -742,10 +760,15 @@ app.MapGet("/api/songs/search", async (
         return Results.BadRequest(new { error = "anyArtistIds must be comma-separated integers" });
     if (!TryParseIntegerGroups(artistIdGroups, out var aIdGroups))
         return Results.BadRequest(new { error = "artistIdGroups must contain pipe-separated integer lists" });
+    if (!TryParseIntegerList(tagIds, out var parsedTagIds))
+        return Results.BadRequest(new { error = "tagIds must be comma-separated integers" });
     if (aIds.Count > maxSearchArtistIds || anyAIds.Count > maxSearchArtistIds)
         return Results.BadRequest(new { error = "artist id filters are too large" });
     if (aIdGroups.Count > maxSearchArtistGroups || aIdGroups.Any(group => group.Count > maxSearchArtistIds))
         return Results.BadRequest(new { error = "artist id groups are too large" });
+    if (parsedTagIds.Count > 20 || parsedTagIds.Any(id => id <= 0))
+        return Results.BadRequest(new { error = "tag filters are invalid or too large" });
+    var normalizedTagMatchMode = string.Equals(tagMatchMode, "any", StringComparison.OrdinalIgnoreCase) ? "any" : "all";
 
     var validArtistRoles = new HashSet<string>(StringComparer.Ordinal)
     {
@@ -755,6 +778,8 @@ app.MapGet("/api/songs/search", async (
     };
     if (!string.IsNullOrWhiteSpace(artistRole) && !validArtistRoles.Contains(artistRole))
         return Results.BadRequest(new { error = "unknown artist role" });
+    if (!string.IsNullOrWhiteSpace(creditArtistRole) && !validArtistRoles.Contains(creditArtistRole))
+        return Results.BadRequest(new { error = "unknown credit artist role" });
 
     var sTypes = ParseCsv(songTypes);
     var excludedTypes = ParseCsv(excludeSongTypes);
@@ -790,7 +815,16 @@ app.MapGet("/api/songs/search", async (
         onlyWithPVs ?? false,
         excludedTypes,
         voiceSynthOnly ?? false,
-        discoveryOnly ?? false
+        discoveryOnly ?? false,
+        maxYoutubeViews,
+        maxNicoViews,
+        minFavoritedTimes,
+        maxFavoritedTimes,
+        parsedTagIds,
+        normalizedTagMatchMode,
+        creditArtistId,
+        creditArtistRole,
+        randomSeed ?? 0
     );
     requestStopwatch.Stop();
     static string Duration(long milliseconds) => milliseconds.ToString(CultureInfo.InvariantCulture);
@@ -812,6 +846,18 @@ app.MapGet("/api/songs/search", async (
     """;
 
     return Results.Content(json, "application/json");
+});
+
+app.MapGet("/api/search/tags", async (
+    string? query,
+    int? maxResults,
+    DbService db,
+    CancellationToken cancellationToken) =>
+{
+    var normalized = query?.Trim() ?? string.Empty;
+    if (normalized.Length is < 1 or > 100) return Results.BadRequest(new { error = "query length must be between 1 and 100" });
+    var take = Math.Clamp(maxResults ?? 12, 1, 30);
+    return Results.Ok(new { items = await db.SearchTagsAsync(normalized, take, cancellationToken) });
 });
 
 static List<string> ParseCsv(string? value) => string.IsNullOrWhiteSpace(value)

@@ -9,6 +9,7 @@ const SORT_OPTIONS: { value: ExtendedSortRule; label: string }[] = [
   { value: 'PublishDate', label: '公開日' },
   { value: 'AdditionDate', label: '登録日' },
   { value: 'Name', label: '名前順' },
+  { value: 'Random', label: 'ランダム' },
 ];
 
 export default function SearchSortControls() {
@@ -36,11 +37,12 @@ export default function SearchSortControls() {
         id="sort-order-toggle"
         type="button"
         onClick={() => {
-          setSortOrder(sortOrder === 'desc' ? 'asc' : 'desc');
+          if (sort === 'Random') setSort('Random');
+          else setSortOrder(sortOrder === 'desc' ? 'asc' : 'desc');
           search();
         }}
-        title={sortOrder === 'desc' ? '降順から昇順へ' : '昇順から降順へ'}
-        aria-label={sortOrder === 'desc' ? '現在は降順。昇順に変更' : '現在は昇順。降順に変更'}
+        title={sort === 'Random' ? 'ランダムに並べ直す' : sortOrder === 'desc' ? '降順から昇順へ' : '昇順から降順へ'}
+        aria-label={sort === 'Random' ? 'ランダムに並べ直す' : sortOrder === 'desc' ? '現在は降順。昇順に変更' : '現在は昇順。降順に変更'}
         className="flex items-center justify-center rounded-lg transition-all"
         style={{
           width: '32px', height: '32px',
@@ -50,7 +52,9 @@ export default function SearchSortControls() {
           flexShrink: 0,
         }}
       >
-        {sortOrder === 'desc'
+        {sort === 'Random'
+          ? <span aria-hidden="true">↻</span>
+          : sortOrder === 'desc'
           ? <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 14l5-5 5 5z" transform="rotate(180 12 12)"/><path d="M7 10l5 5 5-5z"/></svg>
           : <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 14l5-5 5 5z"/><path d="M7 10l5 5 5-5z" transform="rotate(180 12 12)"/></svg>
         }
