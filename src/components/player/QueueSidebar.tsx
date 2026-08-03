@@ -7,6 +7,8 @@ import { useImplicitFeedbackStore } from '../../stores/implicitFeedbackStore';
 import { useQueueRecommendationStore } from '../../stores/queueRecommendationStore';
 import { useAutoQueueStatusStore } from '../../stores/autoQueueStatusStore';
 import { useUiStore } from '../../stores/uiStore';
+import { useRecommendationDisplayStore } from '../../stores/recommendationDisplayStore';
+import RecommendationHint from '../recommendation/RecommendationHint';
 
 function getThumbUrl(song: Song): string | null {
   if (song.thumbUrl) return song.thumbUrl;
@@ -32,6 +34,7 @@ export default function QueueSidebar({ hideHeader }: QueueSidebarProps = {}) {
   const recommendations = useQueueRecommendationStore(s => s.recommendations);
   const autoQueueStatus = useAutoQueueStatusStore(s => s.status);
   const openSaveToPlaylist = useUiStore(s => s.openSaveToPlaylist);
+  const showRecommendationHints = useRecommendationDisplayStore(s => s.showHints);
   const currentRef = useRef<HTMLLIElement>(null);
   const removalTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [removedItem, setRemovedItem] = useState<ReturnType<typeof removeFromQueue>>(null);
@@ -197,10 +200,8 @@ export default function QueueSidebar({ hideHeader }: QueueSidebarProps = {}) {
                         {producer}
                       </p>
                     )}
-                    {recommendation && (
-                      <p className="text-[9px] truncate mt-0.5" style={{ color: 'var(--color-accent-cyan)' }} title={recommendation.reasonText}>
-                        {recommendation.reasonText}
-                      </p>
+                    {showRecommendationHints && recommendation && (
+                      <RecommendationHint reason={recommendation.reasonText} className="mt-0.5" />
                     )}
                   </div>
 

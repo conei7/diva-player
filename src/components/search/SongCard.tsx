@@ -10,6 +10,7 @@ import SongCardMenu from './SongCardMenu';
 import SongCardBadges from './SongCardBadges';
 import { formatDistinctArtistNames } from '../../utils/artistNames';
 import { isPlayablePV } from '../../utils/playablePV';
+import RecommendationHint from '../recommendation/RecommendationHint';
 
 interface SongCardProps {
   song: Song;
@@ -405,9 +406,7 @@ export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect, 
               {producerName || song.artistString}
             </p>
             {recommendationReason && (
-              <p className="text-[10px] mt-1 truncate" style={{ color: 'var(--color-accent-cyan)' }} title={recommendationReason}>
-                {recommendationReason}
-              </p>
+              <RecommendationHint reason={recommendationReason} className="mt-1" />
             )}
           </div>
 

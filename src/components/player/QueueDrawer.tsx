@@ -5,6 +5,8 @@ import StarRating from './StarRating';
 import type { Song } from '../../types/vocadb';
 import { useQueueRecommendationStore } from '../../stores/queueRecommendationStore';
 import { useAutoQueueStatusStore } from '../../stores/autoQueueStatusStore';
+import { useRecommendationDisplayStore } from '../../stores/recommendationDisplayStore';
+import RecommendationHint from '../recommendation/RecommendationHint';
 
 /** YoutubePVからサムネイルURLを生成 */
 function getThumbUrl(song: Song): string | null {
@@ -31,6 +33,7 @@ export default function QueueDrawer() {
   const openSaveToPlaylist = useUiStore(s => s.openSaveToPlaylist);
   const recommendations = useQueueRecommendationStore(s => s.recommendations);
   const autoQueueStatus = useAutoQueueStatusStore(s => s.status);
+  const showRecommendationHints = useRecommendationDisplayStore(s => s.showHints);
   const duplicateCount = queue.length - new Set(queue.map(song => song.id)).size;
 
   return (
@@ -234,10 +237,8 @@ export default function QueueDrawer() {
                             {producer}
                           </p>
                         )}
-                        {recommendation && (
-                          <p className="text-[10px] truncate mt-0.5" style={{ color: 'var(--color-accent-cyan)' }} title={recommendation.reasonText}>
-                            {recommendation.reasonText}
-                          </p>
+                        {showRecommendationHints && recommendation && (
+                          <RecommendationHint reason={recommendation.reasonText} className="mt-0.5" />
                         )}
                       </div>
 

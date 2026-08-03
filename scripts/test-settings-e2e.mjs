@@ -50,6 +50,27 @@ async function runViewport(page, baseUrl, width, height) {
     `${label} settings tabs are invalid: ${JSON.stringify(tabs)}`);
   await assertDialogFits(page, `${label} settings dialog`, '[role="dialog"][aria-label="設定"]');
 
+  const initialHintState = await page.$$eval('.setting-row', rows => {
+    const row = rows.find(element => element.textContent?.includes('選曲ヒント'));
+    return row?.querySelector('input[type="checkbox"]')?.checked ?? null;
+  });
+  assert(initialHintState === false, `${label} recommendation hints should be hidden by default`);
+  const enabledHintState = await page.$$eval('.setting-row', rows => {
+    const row = rows.find(element => element.textContent?.includes('選曲ヒント'));
+    const input = row?.querySelector('input[type="checkbox"]');
+    if (!(input instanceof HTMLInputElement)) return null;
+    input.click();
+    return input.checked;
+  });
+  assert(enabledHintState === true, `${label} recommendation hints could not be enabled`);
+  assert(await page.evaluate(() => localStorage.getItem('diva-player-recommendation-hints')) === '1',
+    `${label} recommendation hint preference was not persisted`);
+  await page.$$eval('.setting-row', rows => {
+    const row = rows.find(element => element.textContent?.includes('選曲ヒント'));
+    const input = row?.querySelector('input[type="checkbox"]');
+    if (input instanceof HTMLInputElement) input.click();
+  });
+
   await page.click('[role="tab"][aria-controls="settings-panel-data"]');
   await page.waitForSelector('#settings-panel-data');
   const openButtonFound = await page.evaluate(() => [...document.querySelectorAll('button')]

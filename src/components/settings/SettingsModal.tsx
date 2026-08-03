@@ -10,6 +10,7 @@ import { useSearchStore } from '../../stores/searchStore';
 import { usePlayerStore } from '../../stores/playerStore';
 import { useSelectionStore } from '../../stores/selectionStore';
 import { usePlayerInteractionStore } from '../../stores/playerInteractionStore';
+import { useRecommendationDisplayStore } from '../../stores/recommendationDisplayStore';
 import type { PVPreference, SongType } from '../../types/vocadb';
 import {
   areGlobalFilterSettingsEqual,
@@ -54,6 +55,8 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
   const setLongPressSelectionEnabled = useSelectionStore(state => state.setLongPressSelectionEnabled);
   const swipeGestureEnabled = usePlayerInteractionStore(state => state.swipeGestureEnabled);
   const setSwipeGestureEnabled = usePlayerInteractionStore(state => state.setSwipeGestureEnabled);
+  const showRecommendationHints = useRecommendationDisplayStore(state => state.showHints);
+  const setShowRecommendationHints = useRecommendationDisplayStore(state => state.setShowHints);
 
   useEffect(() => {
     if (!isOpen) {
@@ -271,6 +274,13 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                     <span className="setting-row-desc">すでに評価した曲をおすすめに出さない</span>
                   </div>
                   <ToggleSwitch checked={draftFilters.excludeRatedFromDiscovery} onChange={v => updateDraft('excludeRatedFromDiscovery', v)} />
+                </div>
+                <div className="setting-row" style={{ paddingBottom: 0 }}>
+                  <div className="setting-row-info">
+                    <span className="setting-row-title">選曲ヒント</span>
+                    <span className="setting-row-desc">カードに「音が近い」などの短いヒントを表示</span>
+                  </div>
+                  <ToggleSwitch checked={showRecommendationHints} onChange={setShowRecommendationHints} />
                 </div>
               </div>
 

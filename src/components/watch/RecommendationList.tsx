@@ -9,6 +9,8 @@ import { useSelectionStore } from '../../stores/selectionStore';
 import { formatSongRelativeDate } from '../../utils/relativeDate';
 import { formatJapaneseViews } from '../../utils/formatViews';
 import { useRecommendationExposureStore, type ExposureSurface } from '../../stores/recommendationExposureStore';
+import { useRecommendationDisplayStore } from '../../stores/recommendationDisplayStore';
+import RecommendationHint from '../recommendation/RecommendationHint';
 
 /**
  * RecommendationList - 推薦動画リスト
@@ -291,9 +293,7 @@ function RecItemRow({
             {producerName || song.artistString}
           </p>
           {recommendationReason && (
-            <p className="text-[10px] mt-1 truncate" style={{ color: 'var(--color-accent)' }}>
-              {recommendationReason}
-            </p>
+            <RecommendationHint reason={recommendationReason} className="mt-1" />
           )}
 
           <div className="flex items-center gap-2 mt-1 flex-wrap">
@@ -422,6 +422,7 @@ export default function RecommendationList({
   const { currentSong, isPlaying, hiddenMode } = usePlayerStore();
   const recordVisible = useRecommendationExposureStore(s => s.recordVisible);
   const recordClicked = useRecommendationExposureStore(s => s.recordClicked);
+  const showRecommendationHints = useRecommendationDisplayStore(s => s.showHints);
 
   if (loading && songs.length === 0) {
     return (
@@ -453,7 +454,7 @@ export default function RecommendationList({
             isActive={currentSong?.id === song.id}
             hiddenMode={hiddenMode}
             isPlaying={isPlaying}
-            recommendationReason={recommendationReasons?.[song.id]}
+            recommendationReason={showRecommendationHints ? recommendationReasons?.[song.id] : undefined}
             onVisible={exposureSurface ? () => recordVisible(song.id, exposureSurface, index + 1) : undefined}
             onExposureClick={exposureSurface ? () => recordClicked(song.id) : undefined}
           />
