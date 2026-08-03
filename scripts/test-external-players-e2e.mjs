@@ -34,6 +34,14 @@ const bilibiliSong = song(
 async function preparePage(fixtureSong) {
   const page = await browser.newPage();
   await page.evaluateOnNewDocument(currentSong => {
+    const tabId = `external-player-fixture-${currentSong.id}`;
+    sessionStorage.setItem('diva-playback-tab-v1', tabId);
+    localStorage.setItem('diva-playback-owner-v1', JSON.stringify({
+      type: 'claim',
+      tabId,
+      songId: currentSong.id,
+      claimedAt: Date.now(),
+    }));
     localStorage.setItem('diva_volume', JSON.stringify(23));
     localStorage.setItem('diva_playerQueue', JSON.stringify({
       queue: [currentSong],
@@ -114,7 +122,7 @@ try {
     throw new Error(`Unexpected SoundCloud target: ${soundCloudSrc}`);
   }
   await soundCloudPage.waitForFunction(() => window.__soundCloudReady === true);
-  await soundCloudPage.click('button[title="再生"]');
+  await soundCloudPage.$eval('button[title="再生"]', button => button.click());
   await soundCloudPage.waitForFunction(() => window.__soundCloudPlayCalls > 0);
   await soundCloudPage.waitForSelector('button[title="一時停止"]');
   await new Promise(resolve => setTimeout(resolve, 500));
@@ -126,7 +134,7 @@ try {
   if (soundCloudState.playCalls !== 1 || soundCloudState.pauseCalls !== 0 || soundCloudState.volume !== 23) {
     throw new Error(`Unstable SoundCloud state: ${JSON.stringify(soundCloudState)}`);
   }
-  await soundCloudPage.click('button[title="一時停止"]');
+  await soundCloudPage.$eval('button[title="一時停止"]', button => button.click());
   await soundCloudPage.waitForFunction(() => window.__soundCloudPauseCalls > 0);
   await soundCloudPage.waitForSelector('button[title="再生"]');
   console.log('PASS SoundCloud stable playback and inherited volume');

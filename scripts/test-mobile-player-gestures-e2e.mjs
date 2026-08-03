@@ -52,6 +52,14 @@ try {
   await page.setViewport({ width: 390, height: 844, deviceScaleFactor: 1, isMobile: true, hasTouch: true });
   await page.goto(baseUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
   await page.evaluate(currentSongs => {
+    const tabId = 'mobile-gesture-fixture-tab';
+    sessionStorage.setItem('diva-playback-tab-v1', tabId);
+    localStorage.setItem('diva-playback-owner-v1', JSON.stringify({
+      type: 'claim',
+      tabId,
+      songId: currentSongs[1].id,
+      claimedAt: Date.now(),
+    }));
     localStorage.setItem('diva_playerQueue', JSON.stringify({
       queue: currentSongs,
       queueIndex: 1,
