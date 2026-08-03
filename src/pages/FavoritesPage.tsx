@@ -1,26 +1,38 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router';
 import { useHistoryStore } from '../stores/historyStore';
 import { useRatingStore } from '../stores/ratingStore';
 import VideoGrid from '../components/home/VideoGrid';
 import type { Song } from '../types/vocadb';
 import { getSongById } from '../api/vocadb';
+import {
+  getRatingCounts,
+  getSongIdsForRating,
+  isRatingValue,
+  RATING_VALUES,
+  type RatingValue,
+} from '../utils/ratedSongs';
 
-type FavoriteSortMode = 'recent' | 'rating' | 'name' | 'artist';
+type FavoriteSortMode = 'recent' | 'name' | 'artist';
 
 /**
- * FavoritesPage - 高評価した曲 (星4・5) ページ
+ * FavoritesPage - 星1〜5の評価別ライブラリ
  */
 export default function FavoritesPage() {
   const { ratings } = useRatingStore();
   const { entries } = useHistoryStore();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [filterText, setFilterText] = useState('');
   const [sortMode, setSortMode] = useState<FavoriteSortMode>('recent');
   const [loadedSongs, setLoadedSongs] = useState<Record<string, Song>>({});
 
-  const highRatedIds = useMemo(() => Object.entries(ratings)
-    .filter(([, rating]) => rating >= 4)
-    .map(([id]) => Number(id))
-    .filter(Number.isInteger), [ratings]);
+  const ratingParam = Number(searchParams.get('rating'));
+  const selectedRating: RatingValue = isRatingValue(ratingParam) ? ratingParam : 5;
+  const ratingCounts = useMemo(() => getRatingCounts(ratings), [ratings]);
+  const selectedRatedIds = useMemo(
+    () => getSongIdsForRating(ratings, selectedRating),
+    [ratings, selectedRating],
+  );
 
   const songsById = useMemo(() => {
     const map = new Map<number, Song>(Object.values(loadedSongs).map(song => [song.id, song]));
@@ -29,8 +41,8 @@ export default function FavoritesPage() {
   }, [entries, loadedSongs]);
 
   const missingIds = useMemo(
-    () => highRatedIds.filter(id => !songsById.has(id)),
-    [highRatedIds, songsById],
+    () => selectedRatedIds.filter(id => !songsById.has(id)),
+    [selectedRatedIds, songsById],
   );
 
   useEffect(() => {
@@ -54,11 +66,11 @@ export default function FavoritesPage() {
     return () => { cancelled = true; };
   }, [missingIds]);
 
-  // 星4・5の曲を履歴または補完済み曲情報から取得（重複排除）
+  // 選択した評価の曲を履歴または補完済み曲情報から取得（重複排除）
   const favoriteSongs: Song[] = useMemo(() => {
     const seen = new Set<number>();
     const result: Song[] = [];
-    for (const id of highRatedIds) {
+    for (const id of selectedRatedIds) {
       const song = songsById.get(id);
       if (song && !seen.has(song.id)) {
         seen.add(song.id);
@@ -66,7 +78,7 @@ export default function FavoritesPage() {
       }
     }
     return result;
-  }, [highRatedIds, songsById]);
+  }, [selectedRatedIds, songsById]);
 
   const visibleSongs = useMemo(() => {
     const normalizedFilter = filterText.trim().toLowerCase();
@@ -77,9 +89,6 @@ export default function FavoritesPage() {
         )
       : favoriteSongs;
 
-    if (sortMode === 'rating') {
-      return [...filtered].sort((a, b) => (ratings[String(b.id)] ?? 0) - (ratings[String(a.id)] ?? 0));
-    }
     if (sortMode === 'name') {
       return [...filtered].sort((a, b) => a.name.localeCompare(b.name, 'ja'));
     }
@@ -87,17 +96,51 @@ export default function FavoritesPage() {
       return [...filtered].sort((a, b) => (a.artistString ?? '').localeCompare(b.artistString ?? '', 'ja'));
     }
     return filtered;
-  }, [favoriteSongs, filterText, ratings, sortMode]);
+  }, [favoriteSongs, filterText, sortMode]);
+
+  const selectRating = (rating: RatingValue) => {
+    setFilterText('');
+    setSearchParams({ rating: String(rating) }, { replace: true });
+  };
 
   return (
     <div className="w-full px-4 sm:px-6 lg:px-8 py-4">
       <div className="mb-6">
         <h1 className="text-xl font-bold" style={{ color: 'var(--color-text-primary)' }}>
-          高く評価した曲
+          評価した曲
         </h1>
         <p className="text-sm mt-1" style={{ color: 'var(--color-text-muted)' }}>
-          ★4 以上の評価をつけた {favoriteSongs.length} 曲
+          ★{selectedRating} · {ratingCounts[selectedRating]} 曲
         </p>
+      </div>
+
+      <div
+        className="mb-6 grid max-w-2xl grid-cols-5 gap-1 rounded-xl border p-1"
+        style={{ background: 'var(--color-surface)', borderColor: 'var(--color-border)' }}
+        role="tablist"
+        aria-label="評価で絞り込む"
+      >
+        {RATING_VALUES.map(rating => {
+          const active = rating === selectedRating;
+          return (
+            <button
+              key={rating}
+              type="button"
+              role="tab"
+              aria-selected={active}
+              onClick={() => selectRating(rating)}
+              className="rounded-lg px-1 py-2 text-sm transition-colors"
+              style={{
+                background: active ? 'var(--color-accent-cyan)' : 'transparent',
+                color: active ? '#07151a' : 'var(--color-text-secondary)',
+                fontWeight: active ? 700 : 500,
+              }}
+            >
+              <span className="block">★{rating}</span>
+              <span className="block text-[10px] opacity-70">{ratingCounts[rating]}</span>
+            </button>
+          );
+        })}
       </div>
 
       {favoriteSongs.length === 0 ? (
@@ -106,10 +149,10 @@ export default function FavoritesPage() {
             <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z" />
           </svg>
           <p className="text-base" style={{ color: 'var(--color-text-muted)' }}>
-            まだ高評価をつけた曲がありません
+            ★{selectedRating} の曲はまだありません
           </p>
           <p className="text-sm" style={{ color: 'var(--color-text-muted)' }}>
-            楽曲を再生して★4以上の評価をつけましょう
+            再生画面の星から評価できます
           </p>
         </div>
       ) : (
@@ -120,7 +163,7 @@ export default function FavoritesPage() {
                 type="search"
                 value={filterText}
                 onChange={(event) => setFilterText(event.target.value)}
-                placeholder="お気に入りを検索"
+                placeholder="曲名・アーティスト"
                 className="w-full rounded-lg border px-3 py-2 text-sm outline-none"
                 style={{
                   background: 'var(--color-surface)',
@@ -139,7 +182,6 @@ export default function FavoritesPage() {
                 }}
               >
                 <option value="recent">履歴順</option>
-                <option value="rating">評価順</option>
                 <option value="name">曲名</option>
                 <option value="artist">アーティスト</option>
               </select>
