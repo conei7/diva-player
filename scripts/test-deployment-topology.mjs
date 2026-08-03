@@ -17,7 +17,7 @@ assert.match(compose, /Maximum Pool Size=16/);
 assert.match(compose, /http:\/\/127\.0\.0\.1:5000\/api\/ready/);
 assert.match(gateway, /server api_a api_a:5000 check/);
 assert.match(gateway, /server api_b api_b:5000 check/);
-assert.match(gateway, /stats socket \/var\/run\/haproxy\/admin\.sock/);
+assert.match(gateway, /stats socket \/tmp\/haproxy-admin\.sock/);
 assert.match(gateway, /balance hdr\(X-Diva-Balance-Key\)/);
 assert.match(gateway, /X-Diva-Api-Slot/);
 assert.match(nginx, /proxy_pass http:\/\/api_gateway:5000\//);

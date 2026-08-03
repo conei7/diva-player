@@ -34,7 +34,7 @@ gateway_running() {
 
 gateway_command() {
     command="$1"
-    printf '%s\n' "$command" | docker exec -i "$GATEWAY_CONTAINER" socat - UNIX-CONNECT:/var/run/haproxy/admin.sock
+    printf '%s\n' "$command" | docker exec -i "$GATEWAY_CONTAINER" socat - UNIX-CONNECT:/tmp/haproxy-admin.sock
 }
 
 wait_slot_sessions() {
