@@ -24,6 +24,7 @@ assert.match(nginx, /proxy_pass http:\/\/api_gateway:5000\//);
 assert.match(deploy, /disable server api_nodes\/\$slot/);
 assert.match(deploy, /wait_slot_sessions "\$slot"/);
 assert.match(deploy, /enable server api_nodes\/\$slot/);
+assert.match(deploy, /--force-recreate "\$slot"/);
 assert.match(deploy, /haproxy -c -f \/usr\/local\/etc\/haproxy\/haproxy\.cfg/);
 assert.match(program, /MapGet\("\/api\/ready"/);
 assert.match(program, /DisableRateLimiting\(\)/);

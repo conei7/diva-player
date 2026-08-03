@@ -73,7 +73,7 @@ update_slot() {
         wait_slot_sessions "$slot"
     fi
 
-    compose up -d --no-deps "$slot"
+    compose up -d --no-deps --force-recreate "$slot"
     wait_healthy "$container"
 
     if gateway_running; then
