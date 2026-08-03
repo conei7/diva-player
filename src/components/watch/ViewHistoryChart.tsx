@@ -2,7 +2,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   aggregateViewHistory,
   bucketForViewHistoryRange,
+  formatExactViewCount,
   getViewHistoryYAxisRange,
+  getObservedViewHistory,
   normalizeViewHistory,
   toGrowthViewHistory,
   type ViewHistoryData,
@@ -70,7 +72,7 @@ export default function ViewHistoryChart({ songId }: { songId: number }) {
     data: [],
     status: 'loading',
   }));
-  const [range, setRange] = useState<ViewHistoryRange>('30d');
+  const [range, setRange] = useState<ViewHistoryRange>('all');
   const [metric, setMetric] = useState<ViewHistoryMetric>('cumulative');
   const [visibleSeries, setVisibleSeries] = useState({ youtube: true, nico: true });
   const [retryToken, setRetryToken] = useState(0);
@@ -213,32 +215,17 @@ export default function ViewHistoryChart({ songId }: { songId: number }) {
     const getY = (value: number) => 100 - ((value - yMin) / Math.max(yMax - yMin, 1)) * 100;
 
     const buildSeries = (service: 'youtube' | 'nico') => {
-      const points: ChartPoint[] = [];
-      const segments: ChartSegment[] = [];
-      let segment: ChartSegment = [];
-      data.forEach((item, index) => {
-        const value = item[service];
-        if (value === null) {
-          if (segment.length > 0) segments.push(segment);
-          segment = [];
-          return;
-        }
-        const point = {
+      const points: ChartPoint[] = getObservedViewHistory(data, service).map(item => {
+        const value = item[service] as number;
+        return {
           x: getX(item.date),
           y: getY(value),
           value,
           date: item.date,
           corrected: service === 'youtube' ? item.correctedYoutube : item.correctedNico,
         };
-        if (index > 0 && data[index - 1][service] === null && segment.length > 0) {
-          segments.push(segment);
-          segment = [];
-        }
-        segment.push(point);
-        points.push(point);
       });
-      if (segment.length > 0) segments.push(segment);
-      return { points, segments };
+      return { points, segments: points.length > 0 ? [points] : [] };
     };
 
     const youtube = buildSeries('youtube');
@@ -454,7 +441,7 @@ export default function ViewHistoryChart({ songId }: { songId: number }) {
               className="view-history-point absolute w-6 h-6 p-1 rounded-full -translate-x-1/2 -translate-y-1/2 border-2 cursor-pointer transition-transform hover:scale-125"
               role="button"
               tabIndex={0}
-              aria-label={`${SERIES.youtube.label} ${point.date} ${formatChartValue(point.value)}`}
+              aria-label={`${SERIES.youtube.label} ${point.date} ${formatExactViewCount(point.value)}`}
               style={{
                 left: `${point.x}%`,
                 top: `${point.y}%`,
@@ -480,7 +467,7 @@ export default function ViewHistoryChart({ songId }: { songId: number }) {
               className="view-history-point absolute w-6 h-6 p-1 rounded-full -translate-x-1/2 -translate-y-1/2 border-2 cursor-pointer transition-transform hover:scale-125"
               role="button"
               tabIndex={0}
-              aria-label={`${SERIES.nico.label} ${point.date} ${formatChartValue(point.value)}`}
+              aria-label={`${SERIES.nico.label} ${point.date} ${formatExactViewCount(point.value)}`}
               style={{
                 left: `${point.x}%`,
                 top: `${point.y}%`,
@@ -516,7 +503,7 @@ export default function ViewHistoryChart({ songId }: { songId: number }) {
               <div className="flex items-center gap-1.5 mt-0.5">
                 <span className="w-2 h-2 rounded-full" style={{ background: hoveredPoint.color }}></span>
                 <span>{hoveredPoint.label}:</span>
-                <span className="font-bold text-sm ml-1">{formatChartValue(hoveredPoint.value)}</span>
+                <span className="font-bold text-sm ml-1 tabular-nums">{formatExactViewCount(hoveredPoint.value)}</span>
               </div>
               {hoveredPoint.corrected && <div className="text-amber-300">異常値を補正</div>}
             </div>

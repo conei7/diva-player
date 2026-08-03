@@ -16,6 +16,18 @@ export interface ViewHistoryYAxisRange {
   yMax: number;
 }
 
+export function formatExactViewCount(value: number): string {
+  return Math.round(value).toLocaleString('ja-JP');
+}
+
+/** Returns measured points only; cumulative charts connect across temporary collection gaps. */
+export function getObservedViewHistory(
+  history: readonly ViewHistoryData[],
+  service: 'youtube' | 'nico',
+): ViewHistoryData[] {
+  return history.filter(item => item[service] !== null);
+}
+
 export function getViewHistoryYAxisRange(
   history: ViewHistoryData[],
   metric: ViewHistoryMetric,

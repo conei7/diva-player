@@ -3,7 +3,9 @@ import {
   aggregateViewHistory,
   bucketForViewHistoryRange,
   filterViewHistoryByRange,
+  formatExactViewCount,
   getViewHistoryYAxisRange,
+  getObservedViewHistory,
   normalizeViewHistory,
   toGrowthViewHistory,
 } from '../../utils/viewHistory';
@@ -71,6 +73,11 @@ describe('filterViewHistoryByRange', () => {
 });
 
 describe('view history display transforms', () => {
+  it('formats tooltip values as exact integers instead of compact units', () => {
+    expect(formatExactViewCount(62114)).toBe('62,114');
+    expect(formatExactViewCount(100918518)).toBe('100,918,518');
+  });
+
   it('selects a display bucket from the requested range', () => {
     expect(bucketForViewHistoryRange('7d')).toBe('day');
     expect(bucketForViewHistoryRange('90d')).toBe('week');
@@ -127,6 +134,20 @@ describe('view history display transforms', () => {
       '2026-01-01',
       '2026-01-03',
       '2026-01-06',
+    ]);
+  });
+
+  it('connects measured cumulative points across temporary service gaps', () => {
+    const history = normalizeViewHistory([
+      { date: '2026-07-24', youtube: 80920, nico: 61967 },
+      { date: '2026-07-29', youtube: 81004, nico: null },
+      { date: '2026-07-31', youtube: 81017, nico: null },
+      { date: '2026-08-01', youtube: 81030, nico: 62114 },
+    ]);
+
+    expect(getObservedViewHistory(history, 'nico').map(item => [item.date, item.nico])).toEqual([
+      ['2026-07-24', 61967],
+      ['2026-08-01', 62114],
     ]);
   });
 
