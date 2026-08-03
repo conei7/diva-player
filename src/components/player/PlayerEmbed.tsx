@@ -2,7 +2,7 @@
 import { useEffect, useRef, useCallback } from 'react';
 import { usePlayerStore } from '../../stores/playerStore';
 import { useProgressStore } from '../../stores/progressStore';
-import { createPlaybackOwnership } from '../../services/playbackOwnership';
+import { getPlaybackOwnership } from '../../services/playbackOwnership';
 import { createPlaybackAttemptController, type PlaybackAttemptToken } from '../../services/playbackAttempt';
 import {
   buildNicoEmbedUrl,
@@ -349,7 +349,7 @@ export default function PlayerEmbed() {
   const attemptControllerRef = useRef(createPlaybackAttemptController());
   const volumeRef = useRef(volume);
   const initialAutoplayRef = useRef(isPlaying);
-  const ownershipRef = useRef<ReturnType<typeof createPlaybackOwnership> | null>(null);
+  const ownershipRef = useRef<ReturnType<typeof getPlaybackOwnership> | null>(null);
 
   useEffect(() => {
     volumeRef.current = volume;
@@ -382,7 +382,7 @@ export default function PlayerEmbed() {
   }, [setVolume, stopVolumeSync]);
 
   useEffect(() => {
-    const ownership = createPlaybackOwnership();
+    const ownership = getPlaybackOwnership();
     ownershipRef.current = ownership;
     const unsubscribe = ownership.onRemoteClaim(() => {
       const state = usePlayerStore.getState();
@@ -394,7 +394,6 @@ export default function PlayerEmbed() {
       unsubscribe();
       window.removeEventListener('pagehide', release);
       ownership.release();
-      ownership.destroy();
       ownershipRef.current = null;
     };
   }, []);

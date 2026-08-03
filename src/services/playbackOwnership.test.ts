@@ -36,9 +36,34 @@ describe('playback ownership', () => {
     owner.claim(42);
 
     expect(channel.posted[0]).toEqual({ type: 'claim', tabId: 'owner', songId: 42, claimedAt: 123 });
+    expect(owner.getState()).toBe('local');
+    expect(observer.getState()).toBe('remote');
     expect(takeover).toHaveBeenCalledOnce();
     owner.destroy();
     observer.destroy();
+  });
+
+  it('tracks takeover state and only lets the current owner release', () => {
+    const channel = fakeChannel();
+    const first = createPlaybackOwnership({ tabId: 'first', channel, storage: null, now: () => 10 });
+    const second = createPlaybackOwnership({ tabId: 'second', channel, storage: null, now: () => 20 });
+    const firstStateChange = vi.fn();
+    first.subscribe(firstStateChange);
+
+    first.claim(1);
+    second.release();
+    expect(channel.posted).toHaveLength(1);
+
+    second.claim(2);
+    expect(first.getState()).toBe('remote');
+    expect(second.getState()).toBe('local');
+    expect(firstStateChange).toHaveBeenCalledTimes(2);
+
+    second.release();
+    expect(first.getState()).toBe('none');
+    expect(second.getState()).toBe('none');
+    first.destroy();
+    second.destroy();
   });
 
   it('stops notifying after destroy', () => {

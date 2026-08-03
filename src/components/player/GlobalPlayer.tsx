@@ -1,9 +1,10 @@
-import { useCallback } from 'react';
+import { useCallback, useSyncExternalStore } from 'react';
 import { useLocation, useNavigate } from 'react-router';
 import { usePlayerStore } from '../../stores/playerStore';
 import { usePlayerInteractionStore } from '../../stores/playerInteractionStore';
 import { usePlayerSwipeGesture } from '../../hooks/usePlayerSwipeGesture';
 import PlayerEmbed from '../player/PlayerEmbed';
+import { getPlaybackOwnership } from '../../services/playbackOwnership';
 
 /**
  * GlobalPlayer - 永続化されたプレイヤーコンポーネント
@@ -27,10 +28,16 @@ export default function GlobalPlayer() {
     queue, queueDrawerOpen, toggleQueueDrawer,
   } = usePlayerStore();
   const swipeGestureEnabled = usePlayerInteractionStore(state => state.swipeGestureEnabled);
+  const playbackOwnership = getPlaybackOwnership();
+  const ownershipState = useSyncExternalStore(
+    playbackOwnership.subscribe,
+    playbackOwnership.getState,
+    playbackOwnership.getState,
+  );
 
   const isWatchPage = location.pathname === '/watch';
   // WatchPage 以外で曲が選択されていればミニプレイヤーを表示
-  const showMiniPlayer = !isWatchPage && !!currentSong;
+  const showMiniPlayer = !isWatchPage && !!currentSong && ownershipState === 'local';
   const canShuffle = queue.length > 1;
   const handleSwipe = useCallback((direction: 'left' | 'right' | 'up') => {
     if (direction === 'left') next();
