@@ -1057,7 +1057,7 @@ public class DbService
 
         var modeCondition = normalizedMode switch
         {
-            "surge" when normalizedRanking == "quality" => "AND g.previous_views IS NOT NULL AND g.baseline_views > g.previous_views AND g.prior_window_days >= 3 AND g.view_growth >= 1000 AND g.surge_rate >= 1.5 AND s.song_type IN ('Original', 'Cover', 'Remix', 'Remaster', 'Arrangement', 'Mashup', 'MusicPV') AND NOT (g.quality_score < 0.30 AND g.duration_score < 0.50 AND g.support_score < 0.30) AND NOT (g.quality_score < 0.35 AND g.support_score < 0.30 AND EXISTS (SELECT 1 FROM unnest(g.quality_reasons) reason WHERE reason LIKE 'negative_tag:%'))",
+            "surge" when normalizedRanking == "quality" => "AND g.previous_views IS NOT NULL AND g.baseline_views > g.previous_views AND g.prior_window_days >= 3 AND g.view_growth >= 750 AND g.surge_rate >= 1.25 AND s.song_type IN ('Original', 'Cover', 'Remix', 'Remaster', 'Arrangement', 'Mashup', 'MusicPV') AND g.quality_score >= 0.45 AND NOT (g.quality_score < 0.60 AND EXISTS (SELECT 1 FROM unnest(g.quality_reasons) reason WHERE reason LIKE 'negative_tag:%')) AND (s.publish_date >= CURRENT_DATE - interval '180 days' OR g.support_score >= 0.30 OR g.growth_rate >= 0.01)",
             "surge" => $"AND g.previous_views IS NOT NULL AND g.baseline_views > g.previous_views AND g.prior_window_days >= 3 AND g.view_growth >= 1000 AND g.surge_rate >= 1.5 AND {songTypeExpression} IN ('Original', 'Cover', 'Remix', 'Remaster', 'MusicPV')",
             "recent" => "AND s.publish_date >= CURRENT_DATE - interval '30 days'",
             "deep" => "AND g.baseline_views BETWEEN 100 AND 150000",
@@ -1070,7 +1070,7 @@ public class DbService
             // independent of the optional exploration seed and break ties by
             // song ID so repeated requests produce the same list.
             "surge" when normalizedRanking == "legacy" => "g.surge_rate DESC, g.view_growth DESC, s.favorited_times DESC NULLS LAST, s.id ASC",
-            "surge" => "g.surge_rank_score DESC, g.view_growth DESC, g.quality_score DESC, s.favorited_times DESC NULLS LAST, s.id ASC",
+            "surge" => "g.trend_tier DESC, g.surge_rank_score DESC, g.view_growth DESC, g.quality_score DESC, s.favorited_times DESC NULLS LAST, s.id ASC",
             "recent" => "g.recent_score DESC, g.view_growth DESC, s.publish_date DESC, s.id ASC",
             "alltime" => "g.popular_score DESC, g.view_growth DESC, s.favorited_times DESC NULLS LAST, s.id ASC",
             "pace" => "g.recent_score DESC, g.view_growth DESC, s.publish_date DESC, s.id ASC",
@@ -1086,6 +1086,9 @@ public class DbService
         var surgeRankScoreExpression = sourceTable == "growth"
             ? "0::double precision"
             : "g.surge_rank_score";
+        var trendTierExpression = sourceTable == "surge_ranked"
+            ? "g.trend_tier"
+            : "0";
         // Recent songs are intentionally allowed to have zero recorded views;
         // requiring view_growth > 0 made a freshly published song disappear
         // until the first analytics snapshot arrived.
@@ -1099,6 +1102,9 @@ public class DbService
         };
         var debugFields = debug && normalizedMode == "surge"
             ? ", 'qualityScore', ranked.quality_score, 'surgeRankScore', ranked.surge_rank_score, 'qualityReasons', to_jsonb(ranked.quality_reasons)"
+            : string.Empty;
+        var trendFields = normalizedMode == "surge"
+            ? ", 'surgeRate', ranked.surge_rate, 'trendTier', ranked.trend_tier, 'trendWindowDays', $1"
             : string.Empty;
         var filterConditions = new List<string>();
         var nextFilterParameter = 5;
@@ -1274,10 +1280,16 @@ public class DbService
                     g.*,
                     PERCENT_RANK() OVER (ORDER BY g.view_growth) AS growth_percentile,
                     PERCENT_RANK() OVER (ORDER BY g.surge_rate) AS acceleration_percentile,
+                    PERCENT_RANK() OVER (ORDER BY g.growth_rate) AS relative_growth_percentile,
+                    CASE
+                        WHEN g.view_growth >= 1000 AND g.surge_rate >= 1.5 THEN 2
+                        ELSE 1
+                    END AS trend_tier,
                     (
-                        0.45 * PERCENT_RANK() OVER (ORDER BY g.view_growth)
-                        + 0.30 * PERCENT_RANK() OVER (ORDER BY g.surge_rate)
-                        + 0.25 * g.quality_score
+                        0.30 * PERCENT_RANK() OVER (ORDER BY g.view_growth)
+                        + 0.25 * PERCENT_RANK() OVER (ORDER BY g.surge_rate)
+                        + 0.25 * PERCENT_RANK() OVER (ORDER BY g.growth_rate)
+                        + 0.20 * g.quality_score
                     ) AS surge_rank_score
                 FROM growth g
             ),
@@ -1331,6 +1343,8 @@ public class DbService
                     s.id AS song_id,
                     g.view_growth,
                     g.growth_rate,
+                    g.surge_rate,
+                    {trendTierExpression} AS trend_tier,
                     g.quality_score,
                     {surgeRankScoreExpression} AS surge_rank_score,
                     g.quality_reasons,
@@ -1355,7 +1369,7 @@ public class DbService
                   {normalizedModeCondition}
             ),
             limited_ids AS (
-                SELECT song_id, view_growth, growth_rate, quality_score, surge_rank_score, quality_reasons, rank
+                SELECT song_id, view_growth, growth_rate, surge_rate, trend_tier, quality_score, surge_rank_score, quality_reasons, rank
                 FROM ranked_ids
                 WHERE rank > $2
                 ORDER BY rank
@@ -1370,7 +1384,7 @@ public class DbService
                     SELECT 1 FROM song_features sf
                     WHERE sf.song_id = s.id AND sf.audio_computed IS TRUE
                 ),
-                'thumbUrl', COALESCE(s.raw_json->>'thumbUrl', s.raw_json->'pvs'->0->>'thumbUrl'){debugFields}
+                'thumbUrl', COALESCE(s.raw_json->>'thumbUrl', s.raw_json->'pvs'->0->>'thumbUrl'){trendFields}{debugFields}
             )))::text
             FROM limited_ids ranked
             JOIN songs s ON s.id = ranked.song_id

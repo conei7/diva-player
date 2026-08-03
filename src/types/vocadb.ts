@@ -87,6 +87,9 @@ export interface Song {
   nicoViews?: number;
   viewGrowth?: number;
   growthRate?: number;
+  surgeRate?: number;
+  trendTier?: number;
+  trendWindowDays?: number;
   audioComputed?: boolean;
 }
 

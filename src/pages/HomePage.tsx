@@ -38,6 +38,7 @@ import { selectRotatingWindow } from '../utils/pageWindow';
 import { interleaveUniqueSongs, selectRecentProducerIds } from '../utils/recentProducers';
 import { resolveWithin } from '../utils/timeBudget';
 import { isDeterministicHomeRankingCategory } from '../utils/homeRanking';
+import { formatTrendingReason } from '../utils/trendingReason';
 
 type HomeCategoryId =
   | 'recommended'
@@ -394,15 +395,27 @@ export default function HomePage() {
       result = filterVoiceSynthSongs(result);
       segments.push({ name: 'voiceFilter', durationMs: performanceNow() - filterStartedAt });
 
+      const trendingReasons = category === 'trending'
+        ? result.reduce<Record<number, string>>((reasons, song) => {
+            const reason = formatTrendingReason(song);
+            if (reason) reasons[song.id] = reason;
+            return reasons;
+          }, {})
+        : {};
+
       if (pageNum === 0) {
         setSongs(result);
-        if (category !== 'recommended') setRecommendationReasons({});
+        if (category === 'trending') setRecommendationReasons(trendingReasons);
+        else if (category !== 'recommended') setRecommendationReasons({});
       } else {
         setSongs(prev => {
           const existingIds = new Set(prev.map(song => song.id));
           const newSongs = result.filter(song => !existingIds.has(song.id));
           return [...prev, ...newSongs];
         });
+        if (category === 'trending') {
+          setRecommendationReasons(previous => ({ ...previous, ...trendingReasons }));
+        }
       }
       // A filtered page may contain no visible songs even though the source
       // still has more candidates. Continue until the source is exhausted or
@@ -647,6 +660,12 @@ export default function HomePage() {
         </div>
       )}
 
+      {!isSearchMode && !isArtistMode && !hasSearched && activeCategory === 'trending' && (
+        <p className="mb-4 text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+          直近7日間の再生増加が平常時より加速している曲。強い加速を優先し、相対的な伸びと楽曲情報の信頼性も加味します。
+        </p>
+      )}
+
       {hasSearched && searchError && (
         <p className="mb-4 text-sm" role="alert" style={{ color: 'var(--color-error)' }}>
           {searchError}
@@ -666,7 +685,7 @@ export default function HomePage() {
       <VideoGrid
         songs={displaySongs}
         loading={hasSearched ? searchLoading : loading}
-        recommendationReasons={!isSearchMode && !isArtistMode && !hasSearched && activeCategory === 'recommended'
+        recommendationReasons={!isSearchMode && !isArtistMode && !hasSearched && (activeCategory === 'recommended' || activeCategory === 'trending')
           ? recommendationReasons
           : undefined}
         exposureSurface={!isSearchMode && !isArtistMode && !hasSearched
