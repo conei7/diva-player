@@ -1057,7 +1057,7 @@ public class DbService
 
         var modeCondition = normalizedMode switch
         {
-            "surge" when normalizedRanking == "quality" => "AND g.previous_views IS NOT NULL AND g.baseline_views > g.previous_views AND g.prior_window_days >= 3 AND g.view_growth >= 750 AND g.surge_rate >= 1.25 AND s.song_type IN ('Original', 'Cover', 'Remix', 'Remaster', 'Arrangement', 'Mashup', 'MusicPV') AND g.quality_score >= 0.45 AND NOT (g.quality_score < 0.60 AND EXISTS (SELECT 1 FROM unnest(g.quality_reasons) reason WHERE reason LIKE 'negative_tag:%')) AND (s.publish_date >= CURRENT_DATE - interval '180 days' OR g.support_score >= 0.30 OR g.growth_rate >= 0.01)",
+            "surge" when normalizedRanking == "quality" => "AND g.previous_views IS NOT NULL AND g.baseline_views > g.previous_views AND g.prior_window_days >= 3 AND g.view_growth >= 750 AND g.surge_rate >= 1.25 AND s.song_type IN ('Original', 'Cover', 'Remix', 'Remaster', 'Arrangement', 'Mashup', 'MusicPV') AND g.quality_score >= 0.45 AND NOT (g.quality_score < 0.60 AND EXISTS (SELECT 1 FROM unnest(g.quality_reasons) reason WHERE reason LIKE 'negative_tag:%')) AND (s.publish_date >= CURRENT_DATE - interval '180 days' OR g.support_score >= 0.10 OR g.growth_rate >= 0.01)",
             "surge" => $"AND g.previous_views IS NOT NULL AND g.baseline_views > g.previous_views AND g.prior_window_days >= 3 AND g.view_growth >= 1000 AND g.surge_rate >= 1.5 AND {songTypeExpression} IN ('Original', 'Cover', 'Remix', 'Remaster', 'MusicPV')",
             "recent" => "AND s.publish_date >= CURRENT_DATE - interval '30 days'",
             "deep" => "AND g.baseline_views BETWEEN 100 AND 150000",
