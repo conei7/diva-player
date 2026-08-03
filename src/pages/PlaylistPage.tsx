@@ -40,6 +40,7 @@ import {
   toSafeFileName,
 } from '../utils/playlistBackup';
 import YouTubeImportModal from '../components/playlist/YouTubeImportModal';
+import NicoImportModal from '../components/playlist/NicoImportModal';
 import { createPlaylistShareUrl, decodePlaylistShare } from '../utils/playlistShare';
 import { searchSmartPlaylistSongs } from '../api/vocadb';
 import { filterSmartPlaylistSongs, normalizeSmartPlaylistRule } from '../utils/smartPlaylist';
@@ -69,6 +70,8 @@ import PlaylistHealthModal from '../components/playlist/PlaylistHealthModal';
 import { analyzePlaylistHealth } from '../utils/playlistHealth';
 import { normalizeYouTubePlaylistUrl, type YouTubePlaylistSongsResponse } from '../api/youtubePlaylist';
 import { syncYouTubePlaylist } from '../services/youtubePlaylistSync';
+import { normalizeNicoPlaylistUrl, type NicoPlaylistSongsResponse } from '../api/nicoPlaylist';
+import { syncNicoPlaylist } from '../services/nicoPlaylistSync';
 
 const PLAYLIST_LIST_PREFERENCES_KEY = 'playlistListPreferences';
 
@@ -153,7 +156,8 @@ export default function PlaylistPage() {
     playlists, folders,
     loadPlaylists,
     createPlaylist, deletePlaylist, restoreDeletedPlaylist, updatePlaylist,
-    createSmartPlaylist, createYouTubeLinkedPlaylist, unlinkYouTubeSync, replacePlaylistSongs,
+    createSmartPlaylist, createYouTubeLinkedPlaylist, unlinkYouTubeSync,
+    createNicoLinkedPlaylist, unlinkNicoSync, replacePlaylistSongs,
     createFolder, deleteFolder,
     addSongs, removeSong, removeSongs, restoreRemovedSongs, reorderSongs, removeDuplicateSongsWithUndo,
   } = usePlaylistStore();
@@ -184,6 +188,7 @@ export default function PlaylistPage() {
   const [editFolderId, setEditFolderId] = useState<string>('');
 
   const [showYTImport, setShowYTImport] = useState(false);
+  const [showNicoImport, setShowNicoImport] = useState(false);
   const [showHealthModal, setShowHealthModal] = useState(false);
   const [showSmartBuilder, setShowSmartBuilder] = useState(false);
   const [smartEditingPlaylist, setSmartEditingPlaylist] = useState<Playlist | null>(null);
@@ -239,6 +244,8 @@ export default function PlaylistPage() {
 
   const selectedPlaylist = playlists.find(p => p.id === selectedPlaylistId) ?? null;
   const isYouTubeLinked = selectedPlaylist?.youtubeSync?.enabled === true;
+  const isNicoLinked = selectedPlaylist?.nicoSync?.enabled === true;
+  const isExternalLinked = isYouTubeLinked || isNicoLinked;
 
   const refreshSmartPlaylist = useCallback(async (playlist: Playlist) => {
     if (!playlist.smartRule) return;
@@ -509,6 +516,38 @@ export default function PlaylistPage() {
       result === 'error' ? 'YouTubeプレイリストの同期に失敗しました'
         : result === 'partial' ? '同期しました（一部の動画はVocaDB未登録です）'
           : 'YouTubeプレイリストを同期しました',
+      result === 'error' ? 'warning' : 'success',
+    );
+  }, [selectedPlaylist, showToast]);
+
+  const handleNicoLink = useCallback((response: NicoPlaylistSongsResponse) => {
+    const now = Date.now();
+    const sync = {
+      sourceKind: response.sourceKind,
+      sourceId: response.sourceId,
+      sourceUrl: normalizeNicoPlaylistUrl({ kind: response.sourceKind, id: response.sourceId }),
+      enabled: true,
+      intervalHours: 24,
+      lastAttemptAt: now,
+      lastSuccessfulAt: now,
+      nextSyncAt: now + 24 * 60 * 60 * 1000,
+      lastStatus: response.unmatchedVideoIds.length > 0 || response.truncated ? 'partial' as const : 'success' as const,
+      lastVideoCount: response.videoCount,
+      lastMatchedCount: response.matchedCount,
+      lastUnmatchedCount: response.unmatchedVideoIds.length,
+    };
+    const linked = createNicoLinkedPlaylist(response.title, response.songs, sync, selectedFolderId ?? undefined);
+    setSelectedPlaylistId(linked.id);
+    showToast(`「${response.title}」をニコニコ自動同期プレイリストとして追加しました`, 'success');
+  }, [createNicoLinkedPlaylist, selectedFolderId, showToast]);
+
+  const refreshNicoPlaylist = useCallback(async () => {
+    if (!selectedPlaylist) return;
+    const result = await syncNicoPlaylist(selectedPlaylist, { refresh: true });
+    showToast(
+      result === 'error' ? 'ニコニコプレイリストの同期に失敗しました'
+        : result === 'partial' ? '同期しました（一部の動画はVocaDB未登録です）'
+          : 'ニコニコプレイリストを同期しました',
       result === 'error' ? 'warning' : 'success',
     );
   }, [selectedPlaylist, showToast]);
@@ -1030,6 +1069,23 @@ export default function PlaylistPage() {
                         </button>
                       </div>
                     )}
+                    {selectedPlaylist.nicoSync && (
+                      <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl border border-cyan-300/15 bg-cyan-300/[0.04] p-3 text-xs text-cyan-100/80">
+                        <span className="font-semibold text-cyan-200">ニコニコ自動同期</span>
+                        <span>
+                          {selectedPlaylist.nicoSync.lastStatus === 'error'
+                            ? '前回の同期に失敗しました'
+                            : selectedPlaylist.nicoSync.lastStatus === 'partial'
+                              ? `未マッチ ${selectedPlaylist.nicoSync.lastUnmatchedCount ?? 0}件`
+                              : `${selectedPlaylist.nicoSync.sourceKind === 'mylist' ? 'マイリスト' : 'シリーズ'}の順序をミラー表示中`}
+                        </span>
+                        {selectedPlaylist.nicoSync.lastSuccessfulAt && (
+                          <span className="text-neutral-500">最終同期 {new Date(selectedPlaylist.nicoSync.lastSuccessfulAt).toLocaleString('ja-JP')}</span>
+                        )}
+                        <a href={selectedPlaylist.nicoSync.sourceUrl} target="_blank" rel="noopener noreferrer" className="ml-auto text-cyan-200 underline underline-offset-2">ニコニコで開く</a>
+                        <button type="button" onClick={() => void refreshNicoPlaylist()} className="rounded-lg border border-cyan-200/20 px-2 py-1 text-cyan-100 transition-colors hover:bg-cyan-200/10">今すぐ同期</button>
+                      </div>
+                    )}
                     <p className="mt-3 text-sm font-medium text-neutral-400">
                       <span className="text-white">{selectedPlaylist.songs.length}曲</span>
                       {selectedPlaylist.songs.length > 0 && (
@@ -1072,7 +1128,7 @@ export default function PlaylistPage() {
                       </button>
                     )}
                     {/* 編集・削除（テキスト付き） */}
-                    {!selectedPlaylist.isPinned && !isYouTubeLinked && (
+                    {!selectedPlaylist.isPinned && !isExternalLinked && (
                       <>
                         <button
                           onClick={() => openEdit(selectedPlaylist)}
@@ -1110,6 +1166,17 @@ export default function PlaylistPage() {
                         同期を解除
                       </button>
                     )}
+                    {isNicoLinked && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (unlinkNicoSync(selectedPlaylist.id)) showToast('同期を解除しました。現在の曲一覧は保持されます', 'info');
+                        }}
+                        className="flex h-10 items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.04] px-4 text-sm text-neutral-300 transition-colors hover:bg-white/10 hover:text-white"
+                      >
+                        同期を解除
+                      </button>
+                    )}
 
                     {/* ⋯ メニュー（エクスポート・共有・YouTubeインポート） */}
                     <PopoverMenu
@@ -1126,6 +1193,10 @@ export default function PlaylistPage() {
                           <path d="M23.5 6.19a3.02 3.02 0 0 0-2.12-2.14C19.51 3.5 12 3.5 12 3.5s-7.51 0-9.38.55A3.02 3.02 0 0 0 .5 6.19C0 8.07 0 12 0 12s0 3.93.5 5.81a3.02 3.02 0 0 0 2.12 2.14C4.49 20.5 12 20.5 12 20.5s7.51 0 9.38-.55a3.02 3.02 0 0 0 2.12-2.14C24 15.93 24 12 24 12s0-3.93-.5-5.81zM9.75 15.52V8.48L15.5 12l-5.75 3.52z"/>
                         </svg>
                         <span>YouTubeからインポート</span>
+                      </button>
+                      <button className="context-menu-item" onClick={() => setShowNicoImport(true)}>
+                        <svg className="h-4 w-4 text-cyan-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m8 2 4 3 4-3M8 11v3m8-3v3"/></svg>
+                        <span>ニコニコからインポート</span>
                       </button>
                       <button className="context-menu-item" onClick={() => exportPlaylist(selectedPlaylist)}>
                         <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -1170,7 +1241,7 @@ export default function PlaylistPage() {
 
                 <span className="hidden text-xs text-neutral-500 lg:inline">並べ替え</span>
                 {(['addedOrder', 'name', 'artist', 'publishDate'] as SortKey[]).map(key => (
-                  <button key={key} onClick={() => setSongSortKey(key)} aria-pressed={songSortKey === key} disabled={isYouTubeLinked}
+                  <button key={key} onClick={() => setSongSortKey(key)} aria-pressed={songSortKey === key} disabled={isExternalLinked}
                     className="rounded-lg border px-2.5 py-1.5 text-xs transition-colors hover:bg-white/5"
                     style={{
                       borderColor: songSortKey === key ? 'rgba(255,255,255,.35)' : 'var(--color-border)',
@@ -1183,7 +1254,7 @@ export default function PlaylistPage() {
                 ))}
                 {selectedPlaylistDuplicateCount > 0 && (
                   <button
-                    disabled={isYouTubeLinked}
+                    disabled={isExternalLinked}
                     onClick={removeDuplicatesFromSelectedPlaylist}
                     className="text-xs px-2 py-1 rounded-lg border transition-colors hover:bg-white/5"
                     style={{ borderColor: 'rgba(251,191,36,0.45)', color: '#fbbf24' }}
@@ -1416,6 +1487,9 @@ export default function PlaylistPage() {
       {/* ─── YouTube インポートモーダル ──────────────────────────────── */}
       {showYTImport && selectedPlaylist && (
         <YouTubeImportModal onClose={() => setShowYTImport(false)} onImport={handleYTImport} onLink={handleYTLink} />
+      )}
+      {showNicoImport && selectedPlaylist && (
+        <NicoImportModal onClose={() => setShowNicoImport(false)} onImport={handleYTImport} onLink={handleNicoLink} />
       )}
     </div>
   );

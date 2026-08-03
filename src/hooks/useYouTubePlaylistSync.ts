@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { syncDueYouTubePlaylists } from '../services/youtubePlaylistSync';
+import { syncDueNicoPlaylists } from '../services/nicoPlaylistSync';
 import { usePlaylistStore } from '../stores/playlistStore';
 
 const CHECK_INTERVAL_MS = 15 * 60 * 1000;
@@ -15,6 +16,7 @@ export function useYouTubePlaylistSync(): void {
       running = true;
       try {
         await syncDueYouTubePlaylists();
+        await syncDueNicoPlaylists();
       } finally {
         running = false;
       }

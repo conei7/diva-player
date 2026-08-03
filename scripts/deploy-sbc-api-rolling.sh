@@ -84,6 +84,7 @@ update_slot() {
 
 compose build api_a api_gateway
 compose run --rm --no-deps api_gateway haproxy -c -f /usr/local/etc/haproxy/haproxy.cfg
+compose run --rm migrate
 
 if gateway_running; then
     update_slot api_a

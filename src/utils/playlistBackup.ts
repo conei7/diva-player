@@ -14,6 +14,7 @@ export type PlaylistBackupItem = {
   folderId?: string;
   smartRule?: Playlist['smartRule'];
   youtubeSync?: Playlist['youtubeSync'];
+  nicoSync?: Playlist['nicoSync'];
   songs: Song[];
 };
 
@@ -63,6 +64,39 @@ export function parseYouTubePlaylistSync(value: unknown): Playlist['youtubeSync'
     typeof item === 'number' && Number.isInteger(item) && item >= 0 ? item : undefined;
   return {
     playlistId: value.playlistId,
+    sourceUrl: value.sourceUrl,
+    enabled: value.enabled,
+    intervalHours: value.intervalHours,
+    lastAttemptAt: nonNegativeInteger(value.lastAttemptAt),
+    lastSuccessfulAt: nonNegativeInteger(value.lastSuccessfulAt),
+    nextSyncAt: nonNegativeInteger(value.nextSyncAt),
+    lastStatus: typeof value.lastStatus === 'string' && statuses.includes(value.lastStatus as typeof statuses[number])
+      ? value.lastStatus as typeof statuses[number]
+      : undefined,
+    lastVideoCount: nonNegativeInteger(value.lastVideoCount),
+    lastMatchedCount: nonNegativeInteger(value.lastMatchedCount),
+    lastUnmatchedCount: nonNegativeInteger(value.lastUnmatchedCount),
+    lastError: typeof value.lastError === 'string' ? value.lastError.slice(0, 500) : undefined,
+  };
+}
+
+export function parseNicoPlaylistSync(value: unknown): Playlist['nicoSync'] | undefined {
+  if (!isRecord(value)
+    || (value.sourceKind !== 'mylist' && value.sourceKind !== 'series')
+    || typeof value.sourceId !== 'string'
+    || !/^\d{1,20}$/.test(value.sourceId)
+    || typeof value.sourceUrl !== 'string'
+    || typeof value.enabled !== 'boolean'
+    || typeof value.intervalHours !== 'number'
+    || !Number.isInteger(value.intervalHours)
+    || value.intervalHours < 1
+    || value.intervalHours > 168) return undefined;
+  const statuses = ['never', 'success', 'partial', 'error'] as const;
+  const nonNegativeInteger = (item: unknown): number | undefined =>
+    typeof item === 'number' && Number.isInteger(item) && item >= 0 ? item : undefined;
+  return {
+    sourceKind: value.sourceKind,
+    sourceId: value.sourceId,
     sourceUrl: value.sourceUrl,
     enabled: value.enabled,
     intervalHours: value.intervalHours,
@@ -165,6 +199,7 @@ export function parsePlaylistBackup(data: unknown): { folders: PlaylistBackupFol
       folderId: typeof playlist.folderId === 'string' ? playlist.folderId : undefined,
       smartRule: parseSmartRule(playlist.smartRule),
       youtubeSync: parseYouTubePlaylistSync(playlist.youtubeSync),
+      nicoSync: parseNicoPlaylistSync(playlist.nicoSync),
       songs: (playlist.songs as unknown[]).map(parseImportedSong).filter((song): song is Song => song !== null),
     }));
 
@@ -225,6 +260,7 @@ export function createAllPlaylistsBackupPayload(
       folderId: playlist.folderId,
       smartRule: playlist.smartRule,
       youtubeSync: playlist.youtubeSync,
+      nicoSync: playlist.nicoSync,
       isPinned: playlist.isPinned,
       createdAt: playlist.createdAt,
       updatedAt: playlist.updatedAt,

@@ -161,6 +161,22 @@ export interface YouTubePlaylistSync {
   lastError?: string;
 }
 
+export interface NicoPlaylistSync {
+  sourceKind: 'mylist' | 'series';
+  sourceId: string;
+  sourceUrl: string;
+  enabled: boolean;
+  intervalHours: number;
+  lastAttemptAt?: number;
+  lastSuccessfulAt?: number;
+  nextSyncAt?: number;
+  lastStatus?: 'never' | 'success' | 'partial' | 'error';
+  lastVideoCount?: number;
+  lastMatchedCount?: number;
+  lastUnmatchedCount?: number;
+  lastError?: string;
+}
+
 export interface Playlist {
   id: string;
   name: string;
@@ -176,6 +192,8 @@ export interface Playlist {
   smartRule?: SmartPlaylistRule;
   /** YouTube公開プレイリストとの一方向ミラー設定。 */
   youtubeSync?: YouTubePlaylistSync;
+  /** ニコニコの公開マイリスト／シリーズとの一方向ミラー設定。 */
+  nicoSync?: NicoPlaylistSync;
 }
 
 export interface SmartPlaylistRule {

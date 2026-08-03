@@ -35,6 +35,14 @@ builder.Services.AddHttpClient<YouTubePlaylistService>(client =>
     client.Timeout = TimeSpan.FromSeconds(30);
     client.DefaultRequestHeaders.UserAgent.ParseAdd("DIVA-Player/1.0");
 });
+builder.Services.AddHttpClient<NicoPlaylistService>(client =>
+{
+    client.BaseAddress = new Uri("https://nvapi.nicovideo.jp/");
+    client.Timeout = TimeSpan.FromSeconds(30);
+    client.DefaultRequestHeaders.UserAgent.ParseAdd("DIVA-Player/1.0");
+    client.DefaultRequestHeaders.Add("X-Frontend-Id", "6");
+    client.DefaultRequestHeaders.Add("X-Frontend-Version", "0");
+});
 
 var pagesProxyKey = builder.Configuration["Recommender:PagesProxyKey"]?.Trim() ?? string.Empty;
 
@@ -71,18 +79,19 @@ builder.Services.AddRateLimiter(options =>
         var path = context.HttpContext.Request.Path;
         var isHealth = path.Equals("/api/health", StringComparison.OrdinalIgnoreCase);
         var isExternalViews = path.Equals("/api/songs/views", StringComparison.OrdinalIgnoreCase);
-        var isYouTubePlaylist = path.StartsWithSegments("/api/youtube/playlists");
+        var isPlaylistImport = path.StartsWithSegments("/api/youtube/playlists")
+            || path.StartsWithSegments("/api/nico/playlists");
         context.HttpContext.Response.Headers.RetryAfter = "60";
         context.HttpContext.Response.Headers["X-Diva-Rate-Limit"] = isExternalViews
             ? "views;600/min"
             : isHealth ? $"health;{healthPermitLimit}/min"
-            : isYouTubePlaylist ? "youtube;20/min" : "default;120/min";
+            : isPlaylistImport ? "playlist;20/min" : "default;120/min";
         var logger = context.HttpContext.RequestServices.GetRequiredService<ILoggerFactory>()
             .CreateLogger("DivaRateLimit");
         logger.LogWarning(
             "rate_limit_rejected path={Path} scope={Scope} traceId={TraceId}",
             path.Value,
-            isExternalViews ? "views" : isHealth ? "health" : isYouTubePlaylist ? "youtube" : "default",
+            isExternalViews ? "views" : isHealth ? "health" : isPlaylistImport ? "playlist" : "default",
             context.HttpContext.TraceIdentifier);
         return ValueTask.CompletedTask;
     };
@@ -92,8 +101,9 @@ builder.Services.AddRateLimiter(options =>
         var isExternalViews = httpContext.Request.Path.Equals(
             "/api/songs/views",
             StringComparison.OrdinalIgnoreCase);
-        var isYouTubePlaylist = httpContext.Request.Path.StartsWithSegments("/api/youtube/playlists");
-        var scope = isHealth ? "health" : isExternalViews ? "views" : isYouTubePlaylist ? "youtube" : "default";
+        var isPlaylistImport = httpContext.Request.Path.StartsWithSegments("/api/youtube/playlists")
+            || httpContext.Request.Path.StartsWithSegments("/api/nico/playlists");
+        var scope = isHealth ? "health" : isExternalViews ? "views" : isPlaylistImport ? "playlist" : "default";
 
         var remoteIp = httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
         var cloudflareIp = httpContext.Request.Headers["CF-Connecting-IP"].ToString();
@@ -131,7 +141,7 @@ builder.Services.AddRateLimiter(options =>
             // External view counts are a cheap batch lookup and are loaded by
             // several independent UI sections. Keep them from exhausting the
             // recommendation/search budget while retaining abuse protection.
-            PermitLimit = isHealth ? healthPermitLimit : isExternalViews ? 600 : isYouTubePlaylist ? 20 : 120,
+            PermitLimit = isHealth ? healthPermitLimit : isExternalViews ? 600 : isPlaylistImport ? 20 : 120,
             Window = TimeSpan.FromMinutes(1),
             QueueLimit = 0,
             AutoReplenishment = true,
@@ -221,6 +231,39 @@ app.MapGet("/api/youtube/playlists/{playlistId}/songs", async (
         });
     }
     catch (YouTubePlaylistException exception)
+    {
+        return Results.Problem(exception.Message, statusCode: exception.StatusCode);
+    }
+});
+
+app.MapGet("/api/nico/playlists/{sourceKind}/{sourceId}/songs", async (
+    string sourceKind,
+    string sourceId,
+    bool? refresh,
+    NicoPlaylistService service,
+    CancellationToken cancellationToken) =>
+{
+    sourceKind = sourceKind.ToLowerInvariant();
+    if (sourceKind is not ("mylist" or "series") || !Regex.IsMatch(sourceId, "^[0-9]{1,20}$"))
+        return Results.BadRequest("invalid NicoNico playlist source");
+    try
+    {
+        var response = await service.GetAsync(sourceKind, sourceId, refresh == true, cancellationToken);
+        return Results.Ok(new
+        {
+            response.SourceKind,
+            response.SourceId,
+            response.Title,
+            response.VideoCount,
+            response.MatchedCount,
+            response.UnmatchedVideoIds,
+            songs = response.SongsJson.Select(json => JsonSerializer.Deserialize<JsonElement>(json)).ToArray(),
+            response.SourceFetchedAt,
+            response.Stale,
+            response.Truncated,
+        });
+    }
+    catch (NicoPlaylistException exception)
     {
         return Results.Problem(exception.Message, statusCode: exception.StatusCode);
     }

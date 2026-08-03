@@ -280,6 +280,77 @@ public class DbService
         return result;
     }
 
+    public async Task<NicoPlaylistCache?> GetNicoPlaylistCacheAsync(
+        string sourceKind,
+        string sourceId,
+        CancellationToken cancellationToken)
+    {
+        await using var conn = await OpenAsync();
+        await using var cmd = new NpgsqlCommand(@"
+            SELECT title, video_ids::text, truncated, fetched_at
+            FROM nico_playlist_cache
+            WHERE source_kind = $1 AND source_id = $2", conn);
+        cmd.Parameters.AddWithValue(sourceKind);
+        cmd.Parameters.AddWithValue(sourceId);
+        await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken)) return null;
+        return new NicoPlaylistCache(
+            sourceKind,
+            sourceId,
+            reader.GetString(0),
+            JsonSerializer.Deserialize<string[]>(reader.GetString(1)) ?? [],
+            reader.GetFieldValue<DateTimeOffset>(3))
+        {
+            Truncated = reader.GetBoolean(2),
+        };
+    }
+
+    public async Task UpsertNicoPlaylistCacheAsync(NicoPlaylistCache cache, CancellationToken cancellationToken)
+    {
+        await using var conn = await OpenAsync();
+        await using var cmd = new NpgsqlCommand(@"
+            INSERT INTO nico_playlist_cache (source_kind, source_id, title, video_ids, truncated, fetched_at, updated_at)
+            VALUES ($1, $2, $3, $4::jsonb, $5, $6, now())
+            ON CONFLICT (source_kind, source_id) DO UPDATE SET
+                title = EXCLUDED.title,
+                video_ids = EXCLUDED.video_ids,
+                truncated = EXCLUDED.truncated,
+                fetched_at = EXCLUDED.fetched_at,
+                updated_at = now()", conn);
+        cmd.Parameters.AddWithValue(cache.SourceKind);
+        cmd.Parameters.AddWithValue(cache.SourceId);
+        cmd.Parameters.AddWithValue(cache.Title);
+        cmd.Parameters.AddWithValue(JsonSerializer.Serialize(cache.VideoIds));
+        cmd.Parameters.AddWithValue(cache.Truncated);
+        cmd.Parameters.AddWithValue(cache.FetchedAt);
+        await cmd.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    public async Task<Dictionary<string, string>> GetSongsByNicoVideoIdsAsync(
+        IReadOnlyCollection<string> videoIds,
+        CancellationToken cancellationToken)
+    {
+        if (videoIds.Count == 0) return [];
+        await using var conn = await OpenAsync();
+        await using var cmd = new NpgsqlCommand(@"
+            SELECT p.pv_id, (s.raw_json || jsonb_strip_nulls(jsonb_build_object(
+                'youtubeViews', s.youtube_views,
+                'nicoViews', s.nico_views,
+                'thumbUrl', COALESCE(s.raw_json->>'thumbUrl', s.raw_json->'pvs'->0->>'thumbUrl')
+            )))::text
+            FROM pvs p
+            JOIN songs s ON s.id = p.song_id
+            WHERE p.service = 'NicoNicoDouga'
+              AND p.disabled = FALSE
+              AND p.pv_id = ANY($1)", conn);
+        cmd.Parameters.Add(new NpgsqlParameter { Value = videoIds.ToArray(), NpgsqlDbType = NpgsqlDbType.Array | NpgsqlDbType.Text });
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+            result.TryAdd(reader.GetString(0), reader.GetString(1));
+        return result;
+    }
+
     public async Task<AudioFeatureHealth> CheckAudioFeatureHealthAsync(CancellationToken cancellationToken)
     {
         var stopwatch = Stopwatch.StartNew();

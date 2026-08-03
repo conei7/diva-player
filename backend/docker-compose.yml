@@ -4,6 +4,7 @@ x-api-environment: &api-environment
   Recommender__YouTubeApiKey: "${YOUTUBE_API_KEY:-}"
   Recommender__PagesProxyKey: "${PAGES_PROXY_KEY:-}"
   Recommender__YouTubePlaylistCacheHours: "6"
+  Recommender__NicoPlaylistCacheHours: "6"
   ASPNETCORE_URLS: "http://+:5000"
   ASPNETCORE_ENVIRONMENT: "Production"
 

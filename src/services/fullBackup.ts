@@ -7,7 +7,7 @@ import { useRatingStore } from '../stores/ratingStore';
 import { storage } from '../utils/storage';
 import { HISTORY_STORES, openHistoryDb } from './historyDatabase';
 import { normalizeImportedEvent, playEventFingerprint } from './historyBackup';
-import { downloadJson, parseYouTubePlaylistSync } from '../utils/playlistBackup';
+import { downloadJson, parseNicoPlaylistSync, parseYouTubePlaylistSync } from '../utils/playlistBackup';
 import {
   getGlobalFilterSettings,
   normalizeGlobalFilterSettings,
@@ -145,6 +145,7 @@ function parsePlaylist(value: unknown): Playlist | null {
     isPinned: value.isPinned === true,
     smartRule: parseSmartRule(value.smartRule),
     youtubeSync: parseYouTubePlaylistSync(value.youtubeSync),
+    nicoSync: parseNicoPlaylistSync(value.nicoSync),
   };
 }
 

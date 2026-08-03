@@ -70,4 +70,32 @@ describe('smart playlist backup compatibility', () => {
     expect(parsed?.playlists[0].youtubeSync?.playlistId).toBe('PL1234567890');
     expect(parsed?.playlists[1].youtubeSync).toBeUndefined();
   });
+
+  it('preserves valid NicoNico sync metadata while ignoring malformed links', () => {
+    const parsed = parsePlaylistBackup({
+      folders: [],
+      playlists: [
+        {
+          name: 'nico linked',
+          songs: [{ id: 1, name: 'song' }],
+          nicoSync: {
+            sourceKind: 'series',
+            sourceId: '359827',
+            sourceUrl: 'https://www.nicovideo.jp/series/359827',
+            enabled: true,
+            intervalHours: 24,
+            lastStatus: 'partial',
+          },
+        },
+        {
+          name: 'invalid',
+          songs: [{ id: 2, name: 'song' }],
+          nicoSync: { sourceKind: 'video', sourceId: 'sm9', sourceUrl: '', enabled: true, intervalHours: 24 },
+        },
+      ],
+    });
+
+    expect(parsed?.playlists[0].nicoSync).toMatchObject({ sourceKind: 'series', sourceId: '359827' });
+    expect(parsed?.playlists[1].nicoSync).toBeUndefined();
+  });
 });

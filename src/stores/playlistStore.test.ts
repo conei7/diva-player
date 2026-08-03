@@ -141,6 +141,34 @@ describe('YouTube linked playlists', () => {
   });
 });
 
+describe('NicoNico linked playlists', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    usePlaylistStore.setState({ playlists: [], folders: [] });
+  });
+
+  it('keeps linked playlists read-only, mirrors order, and preserves songs when unlinked', () => {
+    vi.stubGlobal('localStorage', createLocalStorage());
+    vi.stubGlobal('crypto', undefined);
+    const sync = {
+      sourceKind: 'mylist' as const,
+      sourceId: '26375614',
+      sourceUrl: 'https://www.nicovideo.jp/mylist/26375614',
+      enabled: true,
+      intervalHours: 24,
+      lastStatus: 'success' as const,
+    };
+    const linked = usePlaylistStore.getState().createNicoLinkedPlaylist('linked', [song(1)], sync);
+    expect(usePlaylistStore.getState().addSong(linked.id, song(2))).toEqual({ success: false, isDuplicate: false });
+    expect(usePlaylistStore.getState().removeSong(linked.id, 0)).toBeNull();
+    expect(usePlaylistStore.getState().applyNicoSync(linked.id, [song(3)], { ...sync, lastStatus: 'partial' })).toBe(true);
+    expect(usePlaylistStore.getState().playlists.find(item => item.id === linked.id)?.songs.map(item => item.id)).toEqual([3]);
+    expect(usePlaylistStore.getState().unlinkNicoSync(linked.id)).toBe(true);
+    expect(usePlaylistStore.getState().playlists.find(item => item.id === linked.id)?.nicoSync).toBeUndefined();
+    expect(usePlaylistStore.getState().playlists.find(item => item.id === linked.id)?.songs.map(item => item.id)).toEqual([3]);
+  });
+});
+
 describe('legacy generated playlist migration', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
