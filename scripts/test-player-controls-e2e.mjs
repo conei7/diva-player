@@ -23,6 +23,14 @@ const fixtureSong = {
 try {
   const first = await browser.newPage();
   await first.evaluateOnNewDocument((song) => {
+    const tabId = 'player-controls-fixture-tab';
+    sessionStorage.setItem('diva-playback-tab-v1', tabId);
+    localStorage.setItem('diva-playback-owner-v1', JSON.stringify({
+      type: 'claim',
+      tabId,
+      songId: song.id,
+      claimedAt: Date.now(),
+    }));
     localStorage.setItem('diva_playerQueue', JSON.stringify({
       queue: [song],
       queueIndex: 0,
@@ -37,7 +45,7 @@ try {
   await first.waitForFunction(() => document.title === 'Player controls fixture — Fixture producer | DIVA Player');
   console.log('PASS dynamic browser tab title');
 
-  await first.click('[data-testid="mini-player-close"]');
+  await first.$eval('[data-testid="mini-player-close"]', (button) => button.click());
   await first.waitForFunction(() => !document.querySelector('[data-testid="mini-player-close"]'));
   await first.waitForFunction(() => document.title === 'DIVA Player — ボカロミュージックプレイヤー');
   const queueCleared = await first.evaluate(() => localStorage.getItem('diva_playerQueue') === null);
