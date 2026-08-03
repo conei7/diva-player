@@ -3,11 +3,18 @@ import {
   ADVANCED_SEARCH_LIMITS,
   DEFAULT_ADVANCED_FILTERS,
   applyLocalSort,
+  hasExactSongTitleMatch,
   sanitizeAdvancedIntegerInput,
   useSearchStore,
   searchSongsBackend,
   validateAdvancedSearchFilters,
 } from './searchStore';
+
+const titleSong = (name: string, defaultName = name) => ({
+  id: 1,
+  name,
+  defaultName,
+} as Parameters<typeof hasExactSongTitleMatch>[0][number]);
 
 describe('search result sorting', () => {
   it('defaults to weighted total views', () => {
@@ -22,6 +29,22 @@ describe('search result sorting', () => {
     ] as Parameters<typeof applyLocalSort>[0];
 
     expect(applyLocalSort(songs, 'TotalViews', 'desc').map(song => song.id)).toEqual([1, 2]);
+  });
+});
+
+describe('automatic song-or-producer resolution', () => {
+  it('prefers a normalized exact song title over an inferred producer', () => {
+    expect(hasExactSongTitleMatch([titleSong('シャルル')], ' シャルル ')).toBe(true);
+    expect(hasExactSongTitleMatch([titleSong('ＳＴＡＲ')], 'STAR')).toBe(true);
+  });
+
+  it('keeps producer resolution when title results are only partial matches', () => {
+    expect(hasExactSongTitleMatch([titleSong('シャルル -jazz arrange-')], 'シャルル')).toBe(false);
+    expect(hasExactSongTitleMatch([titleSong('ENDLESS PARADE')], 'シャルル')).toBe(false);
+  });
+
+  it('also recognizes the canonical default title', () => {
+    expect(hasExactSongTitleMatch([titleSong('Charles', 'シャルル')], 'シャルル')).toBe(true);
   });
 });
 

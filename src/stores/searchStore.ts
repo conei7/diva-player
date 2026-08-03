@@ -39,6 +39,18 @@ export function applyLocalSort(songs: Song[], sort: ExtendedSortRule, order: Sor
   return songs;
 }
 
+function normalizeExactSearchText(value: string): string {
+  return value.normalize('NFKC').trim().replace(/\s+/g, ' ').toLocaleLowerCase('ja-JP');
+}
+
+/** 自動検索で、推測したP名より優先すべき完全一致の曲名があるかを判定する。 */
+export function hasExactSongTitleMatch(songs: readonly Song[], query: string): boolean {
+  const normalizedQuery = normalizeExactSearchText(query);
+  if (!normalizedQuery) return false;
+  return songs.some(song => [song.name, song.defaultName]
+    .some(title => normalizeExactSearchText(title) === normalizedQuery));
+}
+
 export interface VocalistFilter {
   id: number;
   name: string;
@@ -729,6 +741,7 @@ export const useSearchStore = create<SearchState>((set, get) => ({
       // vocalist filters are added; name resolution is producer-only and can
       // otherwise drop a singer constraint.
       const producerArtistId = resolvedArtistId ?? artist?.id;
+      const titleHasExactMatch = hasExactSongTitleMatch(titleResult.items, query);
 
       if (vocalistFilters.length > 0) {
         const { items, totalCount, nextApiStart } = await fetchByArtistIds(
@@ -751,7 +764,7 @@ export const useSearchStore = create<SearchState>((set, get) => ({
           exactApiOffset: nextApiStart ?? 0,
           isLoading: false,
         });
-      } else if (producerArtistId) {
+      } else if (producerArtistId && !titleHasExactMatch) {
         const artistResult = isLocal
           ? await searchSongsBackend({ artistIds: [producerArtistId], artistRole: artistRole || undefined, sort, sortOrder, start: 0, maxResults: PAGE_SIZE, songTypes, filters: advancedFilters, globalFilters })
           : await searchSongsPreferBackend({
@@ -776,6 +789,9 @@ export const useSearchStore = create<SearchState>((set, get) => ({
           isLoading: false,
         });
       } else {
+        // Auto mode is ambiguous when a query is both a song title and a
+        // producer alias (for example シャルル / シャルルP). An exact song
+        // title wins; users can still force the producer through P mode.
         if (generation !== searchGeneration) return;
         set({
           results: titleResult.items,
