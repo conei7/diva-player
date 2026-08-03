@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Caching.Memory;
 using Npgsql;
 using NpgsqlTypes;
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json;
@@ -79,7 +80,11 @@ public class DbService
 
     private readonly string _connStr;
     private readonly IMemoryCache _cache;
-    private sealed record CachedSongSearch(string ItemsJson, int TotalCount);
+    private readonly ILogger<DbService> _logger;
+    private readonly ConcurrentDictionary<string, byte> _searchRefreshes = new();
+    private readonly ConcurrentDictionary<string, byte> _trendingRefreshes = new();
+    private sealed record CachedSongSearch(string ItemsJson, int TotalCount, DateTimeOffset FreshUntil);
+    private sealed record CachedTrending(string ItemsJson, DateTimeOffset FreshUntil);
 
     private async Task<ViewWeightProfile?> LoadViewWeightProfileAsync(NpgsqlConnection conn)
     {
@@ -120,11 +125,12 @@ public class DbService
         }
     }
 
-    public DbService(IConfiguration cfg, IMemoryCache cache)
+    public DbService(IConfiguration cfg, IMemoryCache cache, ILogger<DbService> logger)
     {
         _connStr = cfg.GetConnectionString("Postgres")
             ?? throw new InvalidOperationException("ConnectionStrings:Postgres is not configured");
         _cache = cache;
+        _logger = logger;
     }
 
     private NpgsqlConnection Open()
@@ -410,7 +416,8 @@ public class DbService
         bool onlyWithPVs = false,
         List<string>? excludedSongTypes = null,
         bool voiceSynthOnly = false,
-        bool discoveryOnly = false)
+        bool discoveryOnly = false,
+        bool forceRefresh = false)
     {
         var totalStopwatch = Stopwatch.StartNew();
         var cacheKey = "song-search:v1:" + JsonSerializer.Serialize(new
@@ -438,8 +445,35 @@ public class DbService
             voiceSynthOnly,
             discoveryOnly,
         });
-        if (_cache.TryGetValue(cacheKey, out CachedSongSearch? cached) && cached is not null)
+        if (!forceRefresh && _cache.TryGetValue(cacheKey, out CachedSongSearch? cached) && cached is not null)
         {
+            if (cached.FreshUntil <= DateTimeOffset.UtcNow && _searchRefreshes.TryAdd(cacheKey, 0))
+            {
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await SearchSongsAsync(
+                            query, artistIds, anyArtistIds, artistIdGroups, artistRole,
+                            songTypes, sort, order, start, maxResults,
+                            publishYearFrom, publishYearTo, lengthMinSeconds, lengthMaxSeconds,
+                            pvService, audioComputed, minYoutubeViews, minNicoViews,
+                            onlyWithPVs, excludedSongTypes, voiceSynthOnly, discoveryOnly,
+                            forceRefresh: true);
+                    }
+                    catch (Exception exception)
+                    {
+                        _logger.LogWarning(
+                            exception,
+                            "song_search_cache_refresh_failed key={CacheKey}",
+                            cacheKey);
+                    }
+                    finally
+                    {
+                        _searchRefreshes.TryRemove(cacheKey, out _);
+                    }
+                });
+            }
             return new SongSearchExecution(
                 cached.ItemsJson,
                 cached.TotalCount,
@@ -650,8 +684,11 @@ public class DbService
             if (totalCount == 0)
             {
                 countStopwatch.Stop();
-                var emptyResult = new CachedSongSearch("[]", 0);
-                _cache.Set(cacheKey, emptyResult, TimeSpan.FromMinutes(1));
+                var emptyResult = new CachedSongSearch(
+                    "[]",
+                    0,
+                    DateTimeOffset.UtcNow.AddMinutes(1));
+                _cache.Set(cacheKey, emptyResult, TimeSpan.FromHours(6));
                 return new SongSearchExecution(
                     emptyResult.ItemsJson,
                     emptyResult.TotalCount,
@@ -695,8 +732,11 @@ public class DbService
 
         var itemsJson = items.Count > 0 ? "[" + string.Join(",", items) + "]" : "[]";
         dataStopwatch.Stop();
-        var result = new CachedSongSearch(itemsJson, totalCount);
-        _cache.Set(cacheKey, result, TimeSpan.FromMinutes(1));
+        var result = new CachedSongSearch(
+            itemsJson,
+            totalCount,
+            DateTimeOffset.UtcNow.AddMinutes(1));
+        _cache.Set(cacheKey, result, TimeSpan.FromHours(6));
         return new SongSearchExecution(
             result.ItemsJson,
             result.TotalCount,
@@ -1031,7 +1071,7 @@ public class DbService
         return new ViewHistoryResponse(points, baselinePoint, normalizedBucket);
     }
 
-    public async Task<string> GetTrendingSongsJsonAsync(int days, int start, int maxResults, string? mode = null, string? ranking = null, int seed = 0, bool debug = false, long? minYoutubeViews = null, long? minNicoViews = null, IReadOnlyCollection<string>? excludedSongTypes = null)
+    public async Task<string> GetTrendingSongsJsonAsync(int days, int start, int maxResults, string? mode = null, string? ranking = null, int seed = 0, bool debug = false, long? minYoutubeViews = null, long? minNicoViews = null, IReadOnlyCollection<string>? excludedSongTypes = null, bool forceRefresh = false)
     {
         var clampedDays = Math.Clamp(days, 1, 365);
         var normalizedStart = Math.Max(0, start);
@@ -1052,8 +1092,34 @@ public class DbService
         var normalizedMinNico = minNicoViews is > 0 ? minNicoViews.Value : 0;
         const string songTypeExpression = "COALESCE(NULLIF(s.raw_json->>'songType', ''), s.song_type, 'Unspecified')";
         var cacheKey = $"trending:{normalizedMode}:{normalizedRanking}:{normalizedSeed}:{debug}:{clampedDays}:{normalizedStart}:{clampedMaxResults}:{normalizedMinYoutube}:{normalizedMinNico}:{string.Join(',', normalizedExcludedTypes)}";
-        if (_cache.TryGetValue(cacheKey, out string? cached))
-            return cached!;
+        if (!forceRefresh && _cache.TryGetValue(cacheKey, out CachedTrending? cached) && cached is not null)
+        {
+            if (cached.FreshUntil <= DateTimeOffset.UtcNow && _trendingRefreshes.TryAdd(cacheKey, 0))
+            {
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await GetTrendingSongsJsonAsync(
+                            days, start, maxResults, mode, ranking, seed, debug,
+                            minYoutubeViews, minNicoViews, excludedSongTypes,
+                            forceRefresh: true);
+                    }
+                    catch (Exception exception)
+                    {
+                        _logger.LogWarning(
+                            exception,
+                            "trending_cache_refresh_failed key={CacheKey}",
+                            cacheKey);
+                    }
+                    finally
+                    {
+                        _trendingRefreshes.TryRemove(cacheKey, out _);
+                    }
+                });
+            }
+            return cached.ItemsJson;
+        }
 
         var modeCondition = normalizedMode switch
         {
@@ -1426,7 +1492,10 @@ public class DbService
         }
 
         var json = items.Count > 0 ? "[" + string.Join(",", items) + "]" : "[]";
-        _cache.Set(cacheKey, json, TimeSpan.FromMinutes(5));
+        _cache.Set(
+            cacheKey,
+            new CachedTrending(json, DateTimeOffset.UtcNow.AddMinutes(5)),
+            TimeSpan.FromHours(6));
         return json;
     }
 

@@ -24,6 +24,8 @@ builder.Services.AddResponseCompression(options =>
 });
 builder.Services.AddSingleton<DbService>();
 builder.Services.AddSingleton<QdrantService>();
+builder.Services.AddSingleton<ApiWarmupState>();
+builder.Services.AddHostedService<ApiWarmupService>();
 builder.Services.AddSingleton<MarkovService>();
 builder.Services.AddScoped<RecommendService>();
 builder.Services.AddScoped<DigDiscoveryService>();
@@ -163,8 +165,16 @@ const int maxSearchArtistGroups = 20;
 app.MapGet("/api/ready", async (
     DbService db,
     QdrantService qdrant,
+    ApiWarmupState warmup,
     CancellationToken cancellationToken) =>
 {
+    if (!warmup.Completed)
+    {
+        return Results.Json(
+            new { status = "warming", warmup = warmup.Snapshot },
+            statusCode: StatusCodes.Status503ServiceUnavailable);
+    }
+
     var postgresTask = db.CheckHealthAsync(cancellationToken);
     var qdrantTask = qdrant.CheckHealthAsync(cancellationToken);
     await Task.WhenAll(postgresTask, qdrantTask);
@@ -177,6 +187,7 @@ app.MapGet("/api/ready", async (
         {
             status = ready ? "ready" : "degraded",
             dependencies = new { postgres, qdrant = qdrantStatus },
+            warmup = warmup.Snapshot,
         },
         statusCode: ready
             ? StatusCodes.Status200OK

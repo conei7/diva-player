@@ -116,8 +116,8 @@ async function installApiFixtures(page) {
     }
 
     let response = null;
-    if (path.endsWith('/api/health')) {
-      response = fixtureResponse({ status: 'ok', postgres: true, qdrant: true });
+    if (path.endsWith('/api/health') || path.endsWith('/api/ready')) {
+      response = fixtureResponse({ status: path.endsWith('/api/ready') ? 'ready' : 'ok', postgres: true, qdrant: true });
     } else if (path.endsWith('/api/songs/views')) {
       const ids = (url.searchParams.get('ids') ?? '').split(',').filter(Boolean);
       response = fixtureResponse(Object.fromEntries(ids.map(id => [id, { youtubeViews: 1234, nicoViews: 567 }])));

@@ -95,8 +95,8 @@ async function installApiFixtures(page) {
     }
 
     let body = null;
-    if (path.endsWith('/api/health')) {
-      body = { status: 'ok', postgres: true, qdrant: true };
+    if (path.endsWith('/api/health') || path.endsWith('/api/ready')) {
+      body = { status: path.endsWith('/api/ready') ? 'ready' : 'ok', postgres: true, qdrant: true };
     } else if (path.includes('/api/songs/search')) {
       body = { items: [fixtureSong], totalCount: 1 };
     } else if (path.includes('/api/recommend')) {

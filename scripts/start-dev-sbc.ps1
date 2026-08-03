@@ -30,7 +30,7 @@ function Test-CloudflareHealth {
     }
 
     try {
-        $health = Invoke-WebRequest -Uri "$CloudflareUrl/backend-api/api/health" -UseBasicParsing -TimeoutSec 20
+        $health = Invoke-WebRequest -Uri "$CloudflareUrl/backend-api/api/ready" -UseBasicParsing -TimeoutSec 10
         return $health.StatusCode -eq 200
     } catch {
         return $false
@@ -45,7 +45,7 @@ try {
     }
 
     Write-Host "[start-dev-sbc] Checking SBC web/API on localhost:$RemoteWebPort..."
-    Invoke-Sbc "curl -fsS --max-time 20 http://localhost:$RemoteWebPort/backend-api/api/health >/dev/null"
+    Invoke-Sbc "curl -fsS --max-time 10 http://localhost:$RemoteWebPort/backend-api/api/ready >/dev/null"
 
     $cloudflareUrl = Get-CloudflareUrl
     $cloudflareOk = Test-CloudflareHealth $cloudflareUrl
@@ -64,7 +64,7 @@ try {
         }
 
         if (!$cloudflareOk) {
-            throw "Cloudflare Tunnel did not return HTTP 200 from /backend-api/api/health. See ~/cloudflared-8080.log on $SshHost."
+            throw "Cloudflare Tunnel did not return HTTP 200 from /backend-api/api/ready. See ~/cloudflared-8080.log on $SshHost."
         }
     }
 

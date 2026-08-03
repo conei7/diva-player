@@ -7,6 +7,7 @@ describe('checkBackendHealth', () => {
 
     await expect(checkBackendHealth({ fetchImpl, retryDelayMs: 0 })).resolves.toBe(true);
     expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(fetchImpl).toHaveBeenCalledWith('/backend-api/api/ready', expect.any(Object));
   });
 
   it('retries a transient failure', async () => {
