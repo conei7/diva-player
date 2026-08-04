@@ -74,6 +74,8 @@ export interface Song {
   lengthSeconds: number;
   name: string;
   originalVersionId?: number;
+  isSelfCover?: boolean;
+  hasLyrics?: boolean;
   publishDate?: string;
   pvs?: PV[];
   pvServices: string;
@@ -97,6 +99,9 @@ export interface Song {
   musicalKey?: string;
   keyMode?: 'major' | 'minor';
   keyConfidence?: number;
+  chorusStartSeconds?: number;
+  chorusEndSeconds?: number;
+  chorusConfidence?: number;
   audioInstruments?: { key: string; score: number }[];
 }
 

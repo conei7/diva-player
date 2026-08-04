@@ -547,6 +547,7 @@ app.MapGet("/api/songs/trending", async (
 // GET /api/songs/search?query=...&artistIds=1,2&anyArtistIds=3,4&artistIdGroups=5,6|7,8&songTypes=Original&sort=YoutubeViews&order=desc&start=0&maxResults=24&voiceSynthOnly=true&discoveryOnly=true
 app.MapGet("/api/songs/search", async (
     string? query,
+    string? lyricsQuery,
     string? artistIds,
     string? anyArtistIds,
     string? artistIdGroups,
@@ -582,6 +583,8 @@ app.MapGet("/api/songs/search", async (
     string? excludeSongTypes,
     bool? voiceSynthOnly,
     bool? discoveryOnly,
+    bool? selfCover,
+    bool? chorusOnly,
     HttpContext http,
     DbService db) =>
 {
@@ -591,6 +594,8 @@ app.MapGet("/api/songs/search", async (
     const int maxFilterStringLength = 16_384;
     if (query is { Length: > maxSearchQueryLength })
         return Results.BadRequest(new { error = "query is too long" });
+    if (lyricsQuery is { Length: > maxSearchQueryLength })
+        return Results.BadRequest(new { error = "lyricsQuery is too long" });
     if (artistIds is { Length: > maxFilterStringLength }
         || anyArtistIds is { Length: > maxFilterStringLength }
         || artistIdGroups is { Length: > maxFilterStringLength }
@@ -722,7 +727,10 @@ app.MapGet("/api/songs/search", async (
         creditArtistId,
         creditArtistRole,
         randomSeed ?? 0,
-        exactVIds
+        exactVIds,
+        lyricsQuery,
+        selfCover ?? false,
+        chorusOnly ?? false
     );
     requestStopwatch.Stop();
     static string Duration(long milliseconds) => milliseconds.ToString(CultureInfo.InvariantCulture);

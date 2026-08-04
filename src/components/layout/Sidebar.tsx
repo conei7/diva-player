@@ -26,6 +26,15 @@ const menuItems: MenuItem[] = [
     ),
   },
   {
+    path: '/chorus-highlights',
+    label: 'サビ発掘',
+    icon: (
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+        <path d="M4 18h2V8H4v10zm4 3h2V3H8v18zm4-5h2V6h-2v10zm4 4h2V4h-2v16zm4-5h2V9h-2v6z" />
+      </svg>
+    ),
+  },
+  {
     path: '/history',
     label: '履歴',
     icon: (

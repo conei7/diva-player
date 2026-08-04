@@ -187,8 +187,17 @@ export default function SongDetailsModal() {
               )}
               <dt style={{ color: 'var(--color-text-muted)' }}>曲タイプ</dt>
               <dd style={{ color: 'var(--color-text-primary)' }}>
-                {SONG_TYPE_JA[song.songType] ?? song.songType}
+                {song.isSelfCover ? 'Self Cover' : (SONG_TYPE_JA[song.songType] ?? song.songType)}
               </dd>
+              {song.chorusStartSeconds != null && (
+                <>
+                  <dt style={{ color: 'var(--color-text-muted)' }}>サビ候補</dt>
+                  <dd style={{ color: 'var(--color-text-primary)' }}>
+                    {formatDuration(song.chorusStartSeconds)}〜{formatDuration(song.chorusEndSeconds ?? song.chorusStartSeconds + 15)}
+                    <span className="ml-1 text-xs text-neutral-500">（自動推定）</span>
+                  </dd>
+                </>
+              )}
               {song.publishDate && (
                 <>
                   <dt style={{ color: 'var(--color-text-muted)' }}>投稿日</dt>

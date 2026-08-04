@@ -29,6 +29,12 @@ export default function PlayerBar() {
   const { getRating, setRating } = useRatingStore();
 
   const progressPct = duration > 0 ? Math.min(100, (progress / duration) * 100) : 0;
+  const chorusStartPct = currentSong?.chorusStartSeconds != null && duration > 0
+    ? Math.max(0, Math.min(100, currentSong.chorusStartSeconds / duration * 100))
+    : null;
+  const chorusWidthPct = chorusStartPct != null && currentSong
+    ? Math.max(0.8, Math.min(100 - chorusStartPct, ((currentSong.chorusEndSeconds ?? currentSong.chorusStartSeconds! + 15) - currentSong.chorusStartSeconds!) / duration * 100))
+    : 0;
   const canShuffle = queue.length > 1;
 
   const formatTime = (s: number) => {
@@ -158,17 +164,26 @@ export default function PlayerBar() {
             >
               {formatTime(progress)}
             </span>
-            <input
-              type="range"
-              min="0"
-              max="100"
-              step="0.1"
-              value={progressPct}
-              onChange={handleSeek}
-              disabled={!currentSong || !duration}
-              className="flex-1 progress-slider"
-              title="シーク"
-            />
+            <div className="relative flex-1">
+              {chorusStartPct != null && (
+                <span
+                  className="pointer-events-none absolute top-1/2 z-20 h-1.5 -translate-y-1/2 rounded-full bg-fuchsia-400/55"
+                  style={{ left: `${chorusStartPct}%`, width: `${chorusWidthPct}%` }}
+                  title="自動推定したサビ候補"
+                />
+              )}
+              <input
+                type="range"
+                min="0"
+                max="100"
+                step="0.1"
+                value={progressPct}
+                onChange={handleSeek}
+                disabled={!currentSong || !duration}
+                className="relative z-10 w-full progress-slider"
+                title="シーク（紫色はサビ候補）"
+              />
+            </div>
             <span
               className="text-[11px] w-8 flex-shrink-0 tabular-nums"
               style={{ color: 'var(--color-text-muted)' }}

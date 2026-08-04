@@ -25,6 +25,8 @@ export interface AdvancedSearchFilters {
   lengthMaxSeconds: string;
   pvService: 'any' | 'youtube' | 'niconico' | 'both';
   audioComputed: 'any' | 'yes' | 'no';
+  lyricsQuery: string;
+  selfCoverOnly: boolean;
   bpmFrom: string;
   bpmTo: string;
   instrumentKeys: string[];
@@ -62,6 +64,8 @@ export const DEFAULT_ADVANCED_FILTERS: AdvancedSearchFilters = {
   lengthMaxSeconds: '',
   pvService: 'any',
   audioComputed: 'any',
+  lyricsQuery: '',
+  selfCoverOnly: false,
   bpmFrom: '',
   bpmTo: '',
   instrumentKeys: [],
@@ -176,6 +180,8 @@ export function hasAdvancedFilters(filters: AdvancedSearchFilters): boolean {
     || filters.lengthMaxSeconds.trim() !== ''
     || filters.pvService !== 'any'
     || filters.audioComputed !== 'any'
+    || filters.lyricsQuery.trim() !== ''
+    || filters.selfCoverOnly
     || filters.bpmFrom.trim() !== ''
     || filters.bpmTo.trim() !== ''
     || filters.instrumentKeys.length > 0

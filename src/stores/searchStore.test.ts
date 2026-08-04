@@ -148,6 +148,8 @@ describe('backend artist union search', () => {
         tagMatchMode: 'all',
         creditArtist: { id: 777, name: '絵師' },
         creditRole: 'Illustrator',
+        lyricsQuery: '君の  声を',
+        selfCoverOnly: true,
       },
     });
 
@@ -167,8 +169,27 @@ describe('backend artist union search', () => {
     expect(url.searchParams.get('tagMatchMode')).toBe('all');
     expect(url.searchParams.get('creditArtistId')).toBe('777');
     expect(url.searchParams.get('creditArtistRole')).toBe('Illustrator');
+    expect(url.searchParams.get('lyricsQuery')).toBe('君の  声を');
+    expect(url.searchParams.get('selfCover')).toBe('true');
     expect(Number(url.searchParams.get('randomSeed'))).toBeGreaterThanOrEqual(0);
     useSearchStore.getState().reset();
+  });
+
+  it('requests chorus-analyzed discovery candidates for highlights', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      headers: { get: () => null },
+      json: async () => ({ items: [], totalCount: 0 }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    await searchSongsBackend({
+      sort: 'Random', sortOrder: 'desc', start: 0, maxResults: 60,
+      discoveryOnly: true,
+      chorusOnly: true,
+    });
+    const url = new URL(String(fetchMock.mock.calls[0]?.[0]), 'https://example.test');
+    expect(url.searchParams.get('chorusOnly')).toBe('true');
+    expect(url.searchParams.get('discoveryOnly')).toBe('true');
   });
 
   it('sends singer variants as anyArtistIds while keeping required artists separate', async () => {

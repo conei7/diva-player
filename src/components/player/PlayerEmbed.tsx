@@ -10,6 +10,7 @@ import {
   createNicoMuteMessage,
   createNicoPlaybackMessage,
   createNicoProgressTracker,
+  createNicoSeekMessage,
   createNicoVolumeMessage,
   parseNicoPlayerMessage,
 } from '../../services/nicoPlayerSync';
@@ -53,7 +54,10 @@ function NicoEmbed({ pvId, name, duration: songDuration, isPlaying }: { pvId: st
   }, [markPVHealthy]);
   const setProgress = useProgressStore(s => s.setProgress);
   const setDuration = useProgressStore(s => s.setDuration);
+  const seekTarget = usePlayerStore(s => s.seekTarget);
+  const clearSeekTarget = usePlayerStore(s => s.clearSeekTarget);
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  const iframeReadyRef = useRef(false);
   const initialAutoplayRef = useRef(isPlaying);
   const playerIdRef = useRef(`diva-player-${pvId}-${Date.now().toString(36)}`);
   const requestedPlayingRef = useRef(isPlaying);
@@ -69,6 +73,18 @@ function NicoEmbed({ pvId, name, duration: songDuration, isPlaying }: { pvId: st
   const trackerRef = useRef(createNicoProgressTracker());
   const durationRef = useRef(songDuration);
   const advancedRef = useRef(false);
+
+  const applySeek = useCallback((target: number) => {
+    if (!iframeReadyRef.current || !iframeRef.current?.contentWindow) return false;
+    iframeRef.current.contentWindow.postMessage(
+      createNicoSeekMessage(playerIdRef.current, target),
+      NICO_ORIGIN,
+    );
+    trackerRef.current.confirm(target);
+    setProgress(target);
+    clearSeekTarget();
+    return true;
+  }, [clearSeekTarget, setProgress]);
 
   const sendVolume = useCallback(() => {
     iframeRef.current?.contentWindow?.postMessage(
@@ -157,6 +173,7 @@ function NicoEmbed({ pvId, name, duration: songDuration, isPlaying }: { pvId: st
     if (songDuration && songDuration > 0) setDuration(songDuration);
     ensurePlaybackAttempt();
     return () => {
+      iframeReadyRef.current = false;
       stopTimer();
       cancelPlaybackAttempt();
       if (volumeRetryRef.current !== null) window.clearTimeout(volumeRetryRef.current);
@@ -170,6 +187,7 @@ function NicoEmbed({ pvId, name, duration: songDuration, isPlaying }: { pvId: st
   // iframeロード後に現在のconnector protocolで再生状態を同期する。
   // loadCompleteが後から届く場合にもmessage handler側で再送する。
   const handleIframeLoad = useCallback(() => {
+    iframeReadyRef.current = true;
     if (songDuration && songDuration > 0) setDuration(songDuration);
     scheduleVolumeSync();
     prepareAndSendPlaybackState(requestedPlayingRef.current);
@@ -179,7 +197,9 @@ function NicoEmbed({ pvId, name, duration: songDuration, isPlaying }: { pvId: st
       playTimerRef.current = null;
       prepareAndSendPlaybackState(requestedPlayingRef.current);
     }, 750);
-  }, [ensurePlaybackAttempt, prepareAndSendPlaybackState, scheduleVolumeSync, setDuration, songDuration]);
+    const pendingSeek = usePlayerStore.getState().seekTarget;
+    if (pendingSeek !== null) applySeek(pendingSeek);
+  }, [applySeek, ensurePlaybackAttempt, prepareAndSendPlaybackState, scheduleVolumeSync, setDuration, songDuration]);
 
   useEffect(() => {
     requestedPlayingRef.current = isPlaying;
@@ -187,6 +207,10 @@ function NicoEmbed({ pvId, name, duration: songDuration, isPlaying }: { pvId: st
     if (isPlaying) ensurePlaybackAttempt();
     else cancelPlaybackAttempt();
   }, [cancelPlaybackAttempt, ensurePlaybackAttempt, isPlaying, sendPlaybackState]);
+
+  useEffect(() => {
+    if (seekTarget !== null) applySeek(seekTarget);
+  }, [applySeek, seekTarget]);
 
   // ニコニコからのpostMessageを受信
   useEffect(() => {

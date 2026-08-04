@@ -4,6 +4,7 @@ using NpgsqlTypes;
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Globalization;
+using System.Text;
 using System.Text.Json;
 
 namespace VocadbRecommender.Services;
@@ -264,9 +265,13 @@ public class DbService
         if (videoIds.Count == 0) return [];
         await using var conn = await OpenAsync();
         await using var cmd = new NpgsqlCommand(@"
-            SELECT p.pv_id, (s.raw_json || jsonb_strip_nulls(jsonb_build_object(
+            SELECT p.pv_id, ((s.raw_json - 'lyrics') || jsonb_strip_nulls(jsonb_build_object(
                 'youtubeViews', s.youtube_views,
                 'nicoViews', s.nico_views,
+                'isSelfCover', s.is_self_cover,
+                'chorusStartSeconds', (SELECT aa.chorus_start_seconds FROM song_audio_analysis aa WHERE aa.song_id = s.id),
+                'chorusEndSeconds', (SELECT aa.chorus_end_seconds FROM song_audio_analysis aa WHERE aa.song_id = s.id),
+                'chorusConfidence', (SELECT aa.chorus_confidence FROM song_audio_analysis aa WHERE aa.song_id = s.id),
                 'thumbUrl', COALESCE(s.raw_json->>'thumbUrl', s.raw_json->'pvs'->0->>'thumbUrl')
             )))::text
             FROM pvs p
@@ -335,9 +340,13 @@ public class DbService
         if (videoIds.Count == 0) return [];
         await using var conn = await OpenAsync();
         await using var cmd = new NpgsqlCommand(@"
-            SELECT p.pv_id, (s.raw_json || jsonb_strip_nulls(jsonb_build_object(
+            SELECT p.pv_id, ((s.raw_json - 'lyrics') || jsonb_strip_nulls(jsonb_build_object(
                 'youtubeViews', s.youtube_views,
                 'nicoViews', s.nico_views,
+                'isSelfCover', s.is_self_cover,
+                'chorusStartSeconds', (SELECT aa.chorus_start_seconds FROM song_audio_analysis aa WHERE aa.song_id = s.id),
+                'chorusEndSeconds', (SELECT aa.chorus_end_seconds FROM song_audio_analysis aa WHERE aa.song_id = s.id),
+                'chorusConfidence', (SELECT aa.chorus_confidence FROM song_audio_analysis aa WHERE aa.song_id = s.id),
                 'thumbUrl', COALESCE(s.raw_json->>'thumbUrl', s.raw_json->'pvs'->0->>'thumbUrl')
             )))::text
             FROM pvs p
@@ -504,6 +513,9 @@ public class DbService
         string? creditArtistRole = null,
         int randomSeed = 0,
         List<int>? exactVocalistIds = null,
+        string? lyricsQuery = null,
+        bool selfCoverOnly = false,
+        bool chorusOnly = false,
         bool forceRefresh = false)
     {
         var totalStopwatch = Stopwatch.StartNew();
@@ -541,6 +553,9 @@ public class DbService
             creditArtistRole,
             randomSeed,
             exactVocalistIds = exactVocalistIds is { Count: > 0 } ? exactVocalistIds : null,
+            lyricsQuery = NormalizeLyricsQuery(lyricsQuery),
+            selfCoverOnly,
+            chorusOnly,
             onlyWithPVs,
             excludedSongTypes = excludedSongTypes is { Count: > 0 } ? excludedSongTypes : null,
             voiceSynthOnly,
@@ -563,7 +578,7 @@ public class DbService
                             onlyWithPVs, excludedSongTypes, voiceSynthOnly, discoveryOnly,
                             maxYoutubeViews, maxNicoViews, minFavoritedTimes, maxFavoritedTimes,
                             tagIds, tagMatchMode, creditArtistId, creditArtistRole, randomSeed,
-                            exactVocalistIds,
+                            exactVocalistIds, lyricsQuery, selfCoverOnly, chorusOnly,
                             forceRefresh: true);
                     }
                     catch (Exception exception)
@@ -637,6 +652,34 @@ public class DbService
                 paramValues.Add(aId);
                 paramIndex++;
             }
+        }
+
+        var normalizedLyricsQuery = NormalizeLyricsQuery(lyricsQuery);
+        if (!string.IsNullOrWhiteSpace(normalizedLyricsQuery))
+        {
+            conditions.Add($@"EXISTS (
+                SELECT 1 FROM song_lyrics sl
+                WHERE sl.song_id = songs.id
+                  AND (sl.search_text ILIKE ${paramIndex} OR ${paramIndex + 1} <% sl.search_text)
+            )");
+            paramValues.Add($"%{normalizedLyricsQuery}%");
+            paramValues.Add(normalizedLyricsQuery);
+            paramIndex += 2;
+        }
+
+        if (selfCoverOnly)
+        {
+            conditions.Add("songs.is_self_cover = TRUE");
+        }
+
+        if (chorusOnly)
+        {
+            conditions.Add(@"EXISTS (
+                SELECT 1 FROM song_audio_analysis chorus_analysis
+                WHERE chorus_analysis.song_id = songs.id
+                  AND chorus_analysis.chorus_start_seconds IS NOT NULL
+                  AND chorus_analysis.chorus_confidence >= 0.18
+            )");
         }
 
         if (!string.IsNullOrWhiteSpace(artistRole))
@@ -920,9 +963,11 @@ public class DbService
         // --- 4. データ取得 (行単位で読み取り、C#側でJSON配列構築) ---
         var dataStopwatch = Stopwatch.StartNew();
         string dataSql = $@"
-            SELECT raw_json || jsonb_strip_nulls(jsonb_build_object(
+            SELECT (raw_json - 'lyrics') || jsonb_strip_nulls(jsonb_build_object(
                 'youtubeViews', youtube_views,
                 'nicoViews', nico_views,
+                'isSelfCover', is_self_cover,
+                'hasLyrics', EXISTS (SELECT 1 FROM song_lyrics sl WHERE sl.song_id = songs.id),
                 'audioComputed', EXISTS (
                     SELECT 1 FROM song_features sf
                     WHERE sf.song_id = songs.id AND sf.audio_computed IS TRUE
@@ -933,6 +978,9 @@ public class DbService
                 'musicalKey', (SELECT aa.musical_key FROM song_audio_analysis aa WHERE aa.song_id = songs.id),
                 'keyMode', (SELECT aa.key_mode FROM song_audio_analysis aa WHERE aa.song_id = songs.id),
                 'keyConfidence', (SELECT aa.key_confidence FROM song_audio_analysis aa WHERE aa.song_id = songs.id),
+                'chorusStartSeconds', (SELECT aa.chorus_start_seconds FROM song_audio_analysis aa WHERE aa.song_id = songs.id),
+                'chorusEndSeconds', (SELECT aa.chorus_end_seconds FROM song_audio_analysis aa WHERE aa.song_id = songs.id),
+                'chorusConfidence', (SELECT aa.chorus_confidence FROM song_audio_analysis aa WHERE aa.song_id = songs.id),
                 'audioInstruments', COALESCE((
                     SELECT jsonb_agg(
                         jsonb_build_object('key', sai.instrument_key, 'score', sai.score)
@@ -977,6 +1025,13 @@ public class DbService
             false);
     }
 
+    private static string? NormalizeLyricsQuery(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        var normalized = value.Normalize(NormalizationForm.FormKC).ToLowerInvariant();
+        return string.Join(' ', normalized.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+    }
+
     public async Task<IReadOnlyList<SearchTagItem>> SearchTagsAsync(
         string query,
         int maxResults,
@@ -1013,13 +1068,18 @@ public class DbService
         await using var conn = await OpenAsync();
         await using var cmd = new NpgsqlCommand(@"
             SELECT id,
-                   (COALESCE(raw_json, '{}'::jsonb) || jsonb_strip_nulls(jsonb_build_object(
+                   ((COALESCE(raw_json, '{}'::jsonb) - 'lyrics') || jsonb_strip_nulls(jsonb_build_object(
                        'youtubeViews', youtube_views,
                        'nicoViews', nico_views,
+                       'isSelfCover', is_self_cover,
+                       'hasLyrics', EXISTS (SELECT 1 FROM song_lyrics sl WHERE sl.song_id = songs.id),
                        'audioComputed', EXISTS (
                            SELECT 1 FROM song_features sf
                            WHERE sf.song_id = songs.id AND sf.audio_computed IS TRUE
                        ),
+                       'chorusStartSeconds', (SELECT aa.chorus_start_seconds FROM song_audio_analysis aa WHERE aa.song_id = songs.id),
+                       'chorusEndSeconds', (SELECT aa.chorus_end_seconds FROM song_audio_analysis aa WHERE aa.song_id = songs.id),
+                       'chorusConfidence', (SELECT aa.chorus_confidence FROM song_audio_analysis aa WHERE aa.song_id = songs.id),
                        'thumbUrl', COALESCE(raw_json->>'thumbUrl', raw_json->'pvs'->0->>'thumbUrl')
                    )))::text
             FROM songs
@@ -1064,10 +1124,15 @@ public class DbService
                        'pvServices', COALESCE(s.raw_json->'pvServices', '""""'::jsonb),
                        'youtubeViews', s.youtube_views,
                        'nicoViews', s.nico_views,
+                       'isSelfCover', s.is_self_cover,
+                       'hasLyrics', EXISTS (SELECT 1 FROM song_lyrics sl WHERE sl.song_id = s.id),
                        'audioComputed', EXISTS (
                            SELECT 1 FROM song_features sf
                            WHERE sf.song_id = s.id AND sf.audio_computed IS TRUE
                        ),
+                       'chorusStartSeconds', (SELECT aa.chorus_start_seconds FROM song_audio_analysis aa WHERE aa.song_id = s.id),
+                       'chorusEndSeconds', (SELECT aa.chorus_end_seconds FROM song_audio_analysis aa WHERE aa.song_id = s.id),
+                       'chorusConfidence', (SELECT aa.chorus_confidence FROM song_audio_analysis aa WHERE aa.song_id = s.id),
                        'thumbUrl', COALESCE(s.raw_json->'thumbUrl', s.raw_json->'pvs'->0->'thumbUrl'),
                        'artists', COALESCE((
                            SELECT jsonb_agg(jsonb_strip_nulls(jsonb_build_object(
@@ -1886,15 +1951,20 @@ public class DbService
                 ORDER BY rank
                 LIMIT $3
             )
-            SELECT (s.raw_json || jsonb_strip_nulls(jsonb_build_object(
+            SELECT ((s.raw_json - 'lyrics') || jsonb_strip_nulls(jsonb_build_object(
                 'youtubeViews', s.youtube_views,
                 'nicoViews', s.nico_views,
+                'isSelfCover', s.is_self_cover,
+                'hasLyrics', EXISTS (SELECT 1 FROM song_lyrics sl WHERE sl.song_id = s.id),
                 'viewGrowth', ranked.view_growth,
                 'growthRate', ranked.growth_rate,
                 'audioComputed', EXISTS (
                     SELECT 1 FROM song_features sf
                     WHERE sf.song_id = s.id AND sf.audio_computed IS TRUE
                 ),
+                'chorusStartSeconds', (SELECT aa.chorus_start_seconds FROM song_audio_analysis aa WHERE aa.song_id = s.id),
+                'chorusEndSeconds', (SELECT aa.chorus_end_seconds FROM song_audio_analysis aa WHERE aa.song_id = s.id),
+                'chorusConfidence', (SELECT aa.chorus_confidence FROM song_audio_analysis aa WHERE aa.song_id = s.id),
                 'thumbUrl', COALESCE(s.raw_json->>'thumbUrl', s.raw_json->'pvs'->0->>'thumbUrl'){trendFields}{debugFields}
             )))::text
             FROM limited_ids ranked

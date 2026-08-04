@@ -377,6 +377,8 @@ export default function SearchFilters() {
   if (advancedFilters.creditArtist) advancedChips.push({ key: 'credit', label: `${CREDIT_ROLES.find(([value]) => value === advancedFilters.creditRole)?.[1] ?? '参加'}: ${advancedFilters.creditArtist.name}`, clear: () => setAdvancedFilters({ creditArtist: null }) });
   if (advancedFilters.pvService !== 'any') advancedChips.push({ key: 'pv', label: `PV: ${advancedFilters.pvService === 'both' ? 'YouTube＋ニコニコ' : advancedFilters.pvService}`, clear: () => setAdvancedFilters({ pvService: 'any' }) });
   if (advancedFilters.audioComputed !== 'any') advancedChips.push({ key: 'audio', label: `音響解析: ${advancedFilters.audioComputed === 'yes' ? 'あり' : 'なし'}`, clear: () => setAdvancedFilters({ audioComputed: 'any' }) });
+  if (advancedFilters.lyricsQuery.trim()) advancedChips.push({ key: 'lyrics', label: `歌詞: ${advancedFilters.lyricsQuery.trim()}`, clear: () => setAdvancedFilters({ lyricsQuery: '' }) });
+  if (advancedFilters.selfCoverOnly) advancedChips.push({ key: 'self-cover', label: 'Self Cover', clear: () => setAdvancedFilters({ selfCoverOnly: false }) });
   if (advancedFilters.bpmFrom || advancedFilters.bpmTo) advancedChips.push({ key: 'bpm', label: `推定BPM ${rangeText(advancedFilters.bpmFrom, advancedFilters.bpmTo)}`, clear: () => setAdvancedFilters({ bpmFrom: '', bpmTo: '' }) });
   advancedFilters.instrumentKeys.forEach(key => advancedChips.push({ key: `instrument-${key}`, label: `推定: ${AUDIO_INSTRUMENT_LABELS.get(key) ?? key}`, clear: () => toggleInstrument(key) }));
 
@@ -598,6 +600,27 @@ export default function SearchFilters() {
 
             <div className="rounded-xl border border-white/[0.06] p-3">
               <p className="mb-2 text-xs font-semibold text-neutral-300">基本情報</p>
+              <div className="mb-3 grid grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_auto]">
+                <label className="flex flex-col gap-1.5 text-[11px] text-neutral-500">
+                  歌詞から逆引き
+                  <input
+                    className="ui-number-input w-full"
+                    value={advancedFilters.lyricsQuery}
+                    maxLength={100}
+                    onChange={event => setAdvancedFilters({ lyricsQuery: event.target.value })}
+                    onKeyDown={event => { if (event.key === 'Enter') void search(); }}
+                    placeholder="うろ覚えのフレーズを入力"
+                  />
+                </label>
+                <button
+                  type="button"
+                  className="ui-chip-toggle self-end"
+                  data-active={advancedFilters.selfCoverOnly}
+                  onClick={() => setAdvancedFilters({ selfCoverOnly: !advancedFilters.selfCoverOnly })}
+                >
+                  Self Coverのみ
+                </button>
+              </div>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <RangeInputs label="投稿年" from={advancedFilters.publishYearFrom} to={advancedFilters.publishYearTo} fromPlaceholder="2007" toPlaceholder="2026" min={ADVANCED_SEARCH_LIMITS.publishYearMin} max={ADVANCED_SEARCH_LIMITS.publishYearMax} onFrom={value => updateBoundedInteger('publishYearFrom', value, ADVANCED_SEARCH_LIMITS.publishYearMin, ADVANCED_SEARCH_LIMITS.publishYearMax)} onTo={value => updateBoundedInteger('publishYearTo', value, ADVANCED_SEARCH_LIMITS.publishYearMin, ADVANCED_SEARCH_LIMITS.publishYearMax)} />
                 <RangeInputs label="曲の長さ（秒）" from={advancedFilters.lengthMinSeconds} to={advancedFilters.lengthMaxSeconds} fromPlaceholder="60" toPlaceholder="360" min={ADVANCED_SEARCH_LIMITS.lengthMinSeconds} max={ADVANCED_SEARCH_LIMITS.lengthMaxSeconds} onFrom={value => updateBoundedInteger('lengthMinSeconds', value, ADVANCED_SEARCH_LIMITS.lengthMinSeconds, ADVANCED_SEARCH_LIMITS.lengthMaxSeconds)} onTo={value => updateBoundedInteger('lengthMaxSeconds', value, ADVANCED_SEARCH_LIMITS.lengthMinSeconds, ADVANCED_SEARCH_LIMITS.lengthMaxSeconds)} />

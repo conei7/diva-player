@@ -42,6 +42,7 @@ export interface BackendSearchParams {
   filters?: AdvancedSearchFilters;
   globalFilters?: GlobalFilterSettings;
   discoveryOnly?: boolean;
+  chorusOnly?: boolean;
 }
 
 function buildSearchQuery(params: BackendSearchParams): URLSearchParams {
@@ -74,6 +75,7 @@ function buildSearchQuery(params: BackendSearchParams): URLSearchParams {
   query.set('maxResults', params.maxResults.toString());
   query.set('onlyWithPVs', 'true');
   if (params.discoveryOnly) query.set('discoveryOnly', 'true');
+  if (params.chorusOnly) query.set('chorusOnly', 'true');
 
   if (params.filters) {
     const filters = params.filters;
@@ -95,6 +97,8 @@ function buildSearchQuery(params: BackendSearchParams): URLSearchParams {
     }
     if (filters.pvService !== 'any') query.set('pvService', filters.pvService);
     if (filters.audioComputed !== 'any') query.set('audioComputed', filters.audioComputed);
+    if (filters.lyricsQuery.trim()) query.set('lyricsQuery', filters.lyricsQuery.trim());
+    if (filters.selfCoverOnly) query.set('selfCover', 'true');
     if (filters.instrumentKeys.length > 0) {
       query.set('instrumentKeys', filters.instrumentKeys.join(','));
       query.set('instrumentMatchMode', filters.instrumentMatchMode);

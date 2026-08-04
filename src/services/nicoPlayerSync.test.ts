@@ -4,6 +4,7 @@ import {
   createNicoMuteMessage,
   createNicoPlaybackMessage,
   createNicoProgressTracker,
+  createNicoSeekMessage,
   createNicoVolumeMessage,
   normalizeNicoProgress,
   normalizeNicoVolume,
@@ -81,6 +82,12 @@ describe('nico player synchronization', () => {
       playerId: 'diva-player-1',
       eventName: 'mute',
       data: { mute: true },
+    });
+    expect(createNicoSeekMessage('diva-player-1', 12.5)).toEqual({
+      sourceConnectorType: 1,
+      playerId: 'diva-player-1',
+      eventName: 'seek',
+      data: { time: 12500 },
     });
   });
 });

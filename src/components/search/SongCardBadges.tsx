@@ -100,9 +100,15 @@ export default function SongCardBadges({
         </span>
       ))}
 
+      {song.isSelfCover && (
+        <span className="rounded bg-fuchsia-400/15 px-1.5 py-0.5 text-[10px] font-semibold text-fuchsia-200" title="原曲と同じプロデューサーによるカバー">
+          Self Cover
+        </span>
+      )}
+
       <div className="flex-1" />
 
-      {song.songType !== 'Original' && song.songType !== 'Unspecified' && (
+      {!song.isSelfCover && song.songType !== 'Original' && song.songType !== 'Unspecified' && (
         <span
           className="text-[10px] px-1.5 py-0.5 rounded font-medium leading-none"
           style={{ background: 'rgba(139, 92, 246, 0.12)', color: 'var(--color-accent-purple)' }}

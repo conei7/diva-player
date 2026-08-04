@@ -22,6 +22,8 @@ CREATE TABLE IF NOT EXISTS songs (
     rating_count    INTEGER DEFAULT 0,
     favorited_times INTEGER DEFAULT 0,
     bpm             REAL,
+    original_version_id INTEGER,
+    is_self_cover   BOOLEAN NOT NULL DEFAULT FALSE,
     raw_json        JSONB,
     synced_at       TIMESTAMPTZ DEFAULT now(),
     CONSTRAINT songs_song_type_check CHECK (song_type IN ('Original','Cover','Remix','Remaster','Arrangement','Mashup','MusicPV','DramaPV','Instrumental','Other','Unspecified'))
@@ -48,6 +50,12 @@ CREATE INDEX IF NOT EXISTS songs_name_en_trgm_idx
     ON songs USING gin (name_en gin_trgm_ops);
 CREATE INDEX IF NOT EXISTS songs_artist_string_trgm_idx
     ON songs USING gin (artist_string gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS songs_original_version_idx
+    ON songs (original_version_id)
+    WHERE original_version_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS songs_self_cover_idx
+    ON songs (id)
+    WHERE is_self_cover = TRUE;
 
 -- Heuristic discovery quality signals are refreshed by diva-data-pipeline.
 CREATE TABLE IF NOT EXISTS song_discovery_quality (
@@ -179,6 +187,23 @@ CREATE TABLE IF NOT EXISTS song_tags (
 CREATE INDEX IF NOT EXISTS st_tag_idx  ON song_tags (tag_id);
 CREATE INDEX IF NOT EXISTS st_song_idx ON song_tags (song_id);
 
+-- Search-only lyric index. Full lyrics are not returned by the public API.
+CREATE TABLE IF NOT EXISTS song_lyrics (
+    lyric_id          INTEGER PRIMARY KEY,
+    song_id           INTEGER NOT NULL REFERENCES songs(id) ON DELETE CASCADE,
+    culture_codes     TEXT[] NOT NULL DEFAULT '{}',
+    translation_type  TEXT,
+    source             TEXT,
+    source_url         TEXT,
+    value              TEXT NOT NULL,
+    search_text        TEXT NOT NULL,
+    synced_at          TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS song_lyrics_song_idx ON song_lyrics (song_id);
+CREATE INDEX IF NOT EXISTS song_lyrics_search_trgm_idx
+    ON song_lyrics USING gin (search_text gin_trgm_ops);
+
 -- ============================================================
 -- PVテーブル
 -- ============================================================
@@ -267,6 +292,10 @@ CREATE TABLE IF NOT EXISTS song_audio_analysis (
     energy                      REAL,
     brightness                  REAL,
     percussiveness              REAL,
+    chorus_start_seconds        REAL,
+    chorus_end_seconds          REAL,
+    chorus_confidence           REAL NOT NULL DEFAULT 0,
+    chorus_method               TEXT,
     analyzed_duration_seconds   REAL NOT NULL,
     model_versions              JSONB NOT NULL DEFAULT '{}'::jsonb,
     computed_at                 TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -278,7 +307,18 @@ CREATE TABLE IF NOT EXISTS song_audio_analysis (
     CONSTRAINT song_audio_analysis_key_confidence_check CHECK (key_confidence BETWEEN 0 AND 1),
     CONSTRAINT song_audio_analysis_energy_check CHECK (energy IS NULL OR energy BETWEEN 0 AND 1),
     CONSTRAINT song_audio_analysis_brightness_check CHECK (brightness IS NULL OR brightness BETWEEN 0 AND 1),
-    CONSTRAINT song_audio_analysis_percussiveness_check CHECK (percussiveness IS NULL OR percussiveness BETWEEN 0 AND 1)
+    CONSTRAINT song_audio_analysis_percussiveness_check CHECK (percussiveness IS NULL OR percussiveness BETWEEN 0 AND 1),
+    CONSTRAINT song_audio_analysis_chorus_range_check CHECK (
+        (chorus_start_seconds IS NULL AND chorus_end_seconds IS NULL)
+        OR (
+            chorus_start_seconds IS NOT NULL
+            AND chorus_end_seconds IS NOT NULL
+            AND chorus_start_seconds >= 0
+            AND chorus_end_seconds > chorus_start_seconds
+            AND chorus_end_seconds <= analyzed_duration_seconds + 1
+        )
+    ),
+    CONSTRAINT song_audio_analysis_chorus_confidence_check CHECK (chorus_confidence BETWEEN 0 AND 1)
 );
 
 CREATE INDEX IF NOT EXISTS song_audio_analysis_bpm_idx
@@ -289,6 +329,9 @@ CREATE INDEX IF NOT EXISTS song_audio_analysis_bpm_alternative_idx
     WHERE bpm_alternative IS NOT NULL;
 CREATE INDEX IF NOT EXISTS song_audio_analysis_version_idx
     ON song_audio_analysis (analysis_version, computed_at);
+CREATE INDEX IF NOT EXISTS song_audio_analysis_chorus_idx
+    ON song_audio_analysis (chorus_confidence DESC, song_id)
+    WHERE chorus_start_seconds IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS song_audio_instruments (
     song_id          INTEGER NOT NULL REFERENCES songs(id) ON DELETE CASCADE,
