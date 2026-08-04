@@ -184,9 +184,9 @@ async function getRepresentativeSeeds(baseUrl) {
       path: '/api/songs/search?sort=FavoritedTimes&order=desc&start=0&maxResults=16&audioComputed=true&discoveryOnly=true&onlyWithPVs=true',
     },
     {
-      group: 'broad',
+      group: 'mid-tail',
       count: 3,
-      path: '/api/songs/search?sort=Random&order=desc&randomSeed=20260804&start=0&maxResults=16&audioComputed=true&discoveryOnly=true&onlyWithPVs=true',
+      path: '/api/songs/search?sort=FavoritedTimes&order=desc&start=0&maxResults=16&audioComputed=true&discoveryOnly=true&onlyWithPVs=true&minYoutubeViews=10000&maxYoutubeViews=500000',
     },
     {
       group: 'recent',

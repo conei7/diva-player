@@ -57,8 +57,11 @@ public class RecommendService
         }
 
         // --- 2. 知識グラフ バイアス付きランダムウォーク ---
-        var graphCandidates = await KnowledgeGraphWalkAsync(
-            seedSong, playedSet, _opts.GraphWalkSteps);
+        var graphTask = KnowledgeGraphWalkAsync(seedSong, playedSet, _opts.GraphWalkSteps);
+        var relationshipTask = _db.GetMetadataRelationshipCandidateIdsAsync(seedSongId, 300);
+        await Task.WhenAll(graphTask, relationshipTask);
+        var graphCandidates = await graphTask;
+        var relationshipCandidates = await relationshipTask;
 
         // ANN + Graph の候補を統合 (ANN スコアを基準にグラフ候補を加点)
         var candidateScores = new Dictionary<int, double>();
@@ -75,6 +78,18 @@ public class RecommendService
                 candidateScores[id] = existing + graphSignal * _opts.GraphScoreWeight;
             else
                 candidateScores[id] = graphSignal * _opts.GraphScoreWeight * 0.75;
+        }
+
+        // Non-vocalist tag relationships widen a catalog-heavy ANN/graph pool.
+        // Reciprocal-rank decay keeps this a fallback signal instead of a quota.
+        foreach (var (id, index) in relationshipCandidates.Select((id, index) => (id, index)))
+        {
+            if (playedSet.Contains(id)) continue;
+            var relationshipSignal = _opts.RelationshipScoreWeight / Math.Sqrt(index + 1.0);
+            if (candidateScores.TryGetValue(id, out var existing))
+                candidateScores[id] = existing + relationshipSignal;
+            else
+                candidateScores[id] = relationshipSignal;
         }
 
         var mergedCandidates = candidateScores

@@ -41,7 +41,15 @@ public static class MetadataRelationshipRanking
                 var redundancy = redundancies.Length == 0
                     ? 0
                     : redundancies[0] * 0.07 + redundancies.Average() * 0.04;
-                var adjustedScore = candidate.Score - redundancy;
+                var selectedInfos = selected.Select(item => infoMap[item.SongId]).ToArray();
+                var info = infoMap[candidate.SongId];
+                var producerRepeats = info.ProducerIds.Length == 0 ? 0 : info.ProducerIds
+                    .Max(id => selectedInfos.Count(item => item.ProducerIds.Contains(id)));
+                var vocalistRepeats = info.VocalistIds.Length == 0 ? 0 : info.VocalistIds
+                    .Max(id => selectedInfos.Count(item => item.VocalistIds.Contains(id)));
+                var diversityPenalty = 0.42 * (1.0 - Math.Exp(-0.8 * producerRepeats))
+                    + 0.16 * (1.0 - Math.Exp(-0.45 * vocalistRepeats));
+                var adjustedScore = candidate.Score - redundancy - diversityPenalty;
                 if (adjustedScore <= bestScore) continue;
 
                 bestIndex = index;
