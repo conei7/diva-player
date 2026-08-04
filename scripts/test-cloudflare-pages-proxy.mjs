@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import { onRequest as proxyBackend } from '../functions/backend-api/[[path]].js';
 import { onRequest as proxyInvidious } from '../functions/invidious-api/[[path]].js';
 import { onRequest as updateTunnel } from '../functions/tunnel-admin/update.js';
@@ -14,6 +15,9 @@ globalThis.fetch = async (target, init) => {
 };
 
 try {
+  const pagesRoutes = JSON.parse(await readFile(new URL('../public/_routes.json', import.meta.url), 'utf8'));
+  assert(pagesRoutes.include.includes('/chorus-highlights'), 'Chorus highlights must use the Pages SPA fallback.');
+
   const env = {
     PAGES_PROXY_KEY: 'test-proxy-key',
     TUNNEL_CONFIG: {
