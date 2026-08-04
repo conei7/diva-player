@@ -103,7 +103,7 @@ public class RecommendService
         if (MetadataRelationshipRanking.NeedsDiverseProducerFallback(candidateInfos))
         {
             var maximumScore = Math.Max(1e-9, mergedCandidates.Max(candidate => candidate.Value));
-            var fallbackIds = await _db.GetDiverseFallbackCandidateIdsAsync(seedSongId, 160);
+            var fallbackIds = await _db.GetDiverseFallbackCandidateIdsAsync(seedSongId, 80);
             foreach (var (id, index) in fallbackIds.Select((id, index) => (id, index)))
             {
                 if (playedSet.Contains(id) || candidateScores.ContainsKey(id)) continue;

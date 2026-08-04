@@ -436,7 +436,7 @@ app.MapGet("/api/recommend/metadata", async (
     var infos = await db.GetSongInfoBatchAsync(results.Select(r => r.SongId));
     if (MetadataRelationshipRanking.NeedsDiverseProducerFallback(infos))
     {
-        foreach (var candidateId in await db.GetDiverseFallbackCandidateIdsAsync(songId, 200))
+        foreach (var candidateId in await db.GetDiverseFallbackCandidateIdsAsync(songId, 100))
             candidateScores.TryAdd(candidateId, -1);
         results = candidateScores
             .Select(candidate => (SongId: candidate.Key, Score: candidate.Value))
