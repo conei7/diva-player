@@ -95,6 +95,16 @@ async function main() {
   console.log('PASS global search filter parameters');
 
   const seedId = search.items[0].id;
+  const batchIds = search.items.slice(0, 3).map(item => item.id);
+  const compactBatch = await getJson(baseUrl, `/api/songs/batch?ids=${batchIds.join(',')}`);
+  assert(Array.isArray(compactBatch.items) && compactBatch.items.length === batchIds.length, 'Compact song batch omitted requested songs.');
+  assert(JSON.stringify(compactBatch.items.map(item => item.id)) === JSON.stringify(batchIds), 'Compact song batch changed request order.');
+  assert(compactBatch.items.every(item => Array.isArray(item.artists) && Array.isArray(item.pvs) && Array.isArray(item.tags)), 'Compact song batch omitted playback or ranking fields.');
+  assert(compactBatch.items.every(item => item.webLinks === undefined), 'Compact song batch retained heavy webLinks metadata.');
+  assert(compactBatch.items.every(item => item.tags.every(tag => tag.tag?.name && tag.tag.additionalNames === undefined)), 'Compact song batch retained heavy tag metadata.');
+  assert(compactBatch.items.every(item => item.pvs.every(pv => pv.description === undefined)), 'Compact song batch retained PV descriptions.');
+  console.log(`PASS compact song batch (${compactBatch.items.length} ordered songs)`);
+
   const views = await getJson(baseUrl, `/api/songs/views?ids=${seedId}`);
   assert(views[String(seedId)] || views[seedId], 'PostgreSQL views endpoint did not return the requested song.');
   console.log('PASS PostgreSQL view data');

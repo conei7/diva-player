@@ -969,6 +969,95 @@ public class DbService
         return result;
     }
 
+    /// <summary>
+    /// Returns the compact playback/card payload needed after recommendation
+    /// ranking. Large VocaDB-only fields are omitted and tags/artists are reduced
+    /// to the fields consumed by the browser.
+    /// </summary>
+    public async Task<Dictionary<int, string>> GetSongsCardJsonByIdsAsync(IEnumerable<int> songIds)
+    {
+        var ids = songIds.Where(id => id > 0).Distinct().Take(100).ToArray();
+        if (ids.Length == 0) return [];
+
+        await using var conn = await OpenAsync();
+        await using var cmd = new NpgsqlCommand(@"
+            SELECT s.id,
+                   jsonb_strip_nulls(jsonb_build_object(
+                       'id', s.id,
+                       'name', COALESCE(s.raw_json->'name', to_jsonb(s.name)),
+                       'defaultName', COALESCE(s.raw_json->'defaultName', to_jsonb(s.name)),
+                       'defaultNameLanguage', COALESCE(s.raw_json->'defaultNameLanguage', '""Default""'::jsonb),
+                       'artistString', to_jsonb(COALESCE(s.artist_string, '')),
+                       'createDate', COALESCE(s.raw_json->'createDate', '""""'::jsonb),
+                       'publishDate', COALESCE(s.raw_json->'publishDate', to_jsonb(s.publish_date)),
+                       'favoritedTimes', COALESCE(to_jsonb(s.favorited_times), '0'::jsonb),
+                       'lengthSeconds', COALESCE(to_jsonb(s.length_seconds), '0'::jsonb),
+                       'ratingScore', COALESCE(s.raw_json->'ratingScore', '0'::jsonb),
+                       'songType', COALESCE(s.raw_json->'songType', to_jsonb(COALESCE(s.song_type, 'Unspecified'))),
+                       'status', COALESCE(s.raw_json->'status', '""Finished""'::jsonb),
+                       'version', COALESCE(s.raw_json->'version', '0'::jsonb),
+                       'originalVersionId', s.raw_json->'originalVersionId',
+                       'pvServices', COALESCE(s.raw_json->'pvServices', '""""'::jsonb),
+                       'youtubeViews', s.youtube_views,
+                       'nicoViews', s.nico_views,
+                       'audioComputed', EXISTS (
+                           SELECT 1 FROM song_features sf
+                           WHERE sf.song_id = s.id AND sf.audio_computed IS TRUE
+                       ),
+                       'thumbUrl', COALESCE(s.raw_json->'thumbUrl', s.raw_json->'pvs'->0->'thumbUrl'),
+                       'artists', COALESCE((
+                           SELECT jsonb_agg(jsonb_strip_nulls(jsonb_build_object(
+                               'id', credit->'id',
+                               'name', credit->'name',
+                               'roles', credit->'roles',
+                               'effectiveRoles', credit->'effectiveRoles',
+                               'categories', credit->'categories',
+                               'isCustomName', credit->'isCustomName',
+                               'isSupport', credit->'isSupport',
+                               'artist', CASE
+                                   WHEN jsonb_typeof(credit->'artist') = 'object' THEN
+                                       jsonb_strip_nulls(jsonb_build_object(
+                                           'id', credit->'artist'->'id',
+                                           'name', credit->'artist'->'name',
+                                           'artistType', credit->'artist'->'artistType'
+                                       ))
+                                   ELSE NULL
+                               END
+                           )))
+                           FROM jsonb_array_elements(
+                               CASE WHEN jsonb_typeof(s.raw_json->'artists') = 'array'
+                                   THEN s.raw_json->'artists' ELSE '[]'::jsonb END
+                           ) credit
+                       ), '[]'::jsonb),
+                       'pvs', COALESCE((
+                           SELECT jsonb_agg(pv - 'description')
+                           FROM jsonb_array_elements(
+                               CASE WHEN jsonb_typeof(s.raw_json->'pvs') = 'array'
+                                   THEN s.raw_json->'pvs' ELSE '[]'::jsonb END
+                           ) pv
+                       ), '[]'::jsonb),
+                       'tags', COALESCE((
+                           SELECT jsonb_agg(jsonb_build_object(
+                               'tag', jsonb_build_object('name', tag_entry->'tag'->'name')
+                           ))
+                           FROM jsonb_array_elements(
+                               CASE WHEN jsonb_typeof(s.raw_json->'tags') = 'array'
+                                   THEN s.raw_json->'tags' ELSE '[]'::jsonb END
+                           ) tag_entry
+                           WHERE tag_entry->'tag'->>'name' IS NOT NULL
+                       ), '[]'::jsonb)
+                   ))::text
+            FROM songs s
+            WHERE s.id = ANY($1)", conn);
+        cmd.Parameters.Add(new NpgsqlParameter { Value = ids, NpgsqlDbType = NpgsqlDbType.Array | NpgsqlDbType.Integer });
+
+        var result = new Dictionary<int, string>();
+        await using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+            result[reader.GetInt32(0)] = reader.GetString(1);
+        return result;
+    }
+
     // ---- 楽曲情報 -------------------------------------------------
 
     public async Task<SongInfo?> GetSongInfoAsync(int songId)

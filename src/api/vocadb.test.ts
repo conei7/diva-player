@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Artist, Song } from '../types/vocadb';
-import { attachExternalViews, buildDigRecommendationRequest, getTopSongs, getTrendingSongs, rankArtistsByName, resolveProducerByName, searchVocalistsByName, selectVocalistVariants } from './vocadb';
+import { attachExternalViews, buildDigRecommendationRequest, getSongsByIds, getTopSongs, getTrendingSongs, rankArtistsByName, resolveProducerByName, searchVocalistsByName, selectVocalistVariants } from './vocadb';
 import { DEFAULT_GLOBAL_FILTER_SETTINGS } from '../stores/globalFilterStore';
 import { VOCALIST_SEARCH_ARTIST_TYPES } from '../config/voiceSynthTypes';
 
@@ -172,6 +172,62 @@ describe('attachExternalViews', () => {
       { youtubeViews: 100, nicoViews: 200 },
       { youtubeViews: 300, nicoViews: 400 },
     ]);
+  });
+});
+
+describe('recommendation song detail batching', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('coalesces concurrent recommendation details into one ordered SBC request', async () => {
+    const songs = [
+      { id: 92001, name: 'one', youtubeViews: 1, nicoViews: 2 },
+      { id: 92002, name: 'two', youtubeViews: 3, nicoViews: 4 },
+      { id: 92003, name: 'three', youtubeViews: 5, nicoViews: 6 },
+    ] as Song[];
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ items: songs }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const [first, second] = await Promise.all([
+      getSongsByIds([92002, 92001]),
+      getSongsByIds([92003, 92002]),
+    ]);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain('/api/songs/batch?ids=92001,92002,92003');
+    expect(first.map(song => song.id)).toEqual([92002, 92001]);
+    expect(second.map(song => song.id)).toEqual([92003, 92002]);
+  });
+
+  it('falls back to VocaDB song details when the SBC batch route is unavailable', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        statusText: 'Not Found',
+        headers: new Headers(),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          id: 92004,
+          name: 'fallback',
+          youtubeViews: 7,
+          nicoViews: 8,
+        }),
+      });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const songs = await getSongsByIds([92004]);
+
+    expect(songs.map(song => song.id)).toEqual([92004]);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain('/api/songs/batch?ids=92004');
+    expect(String(fetchMock.mock.calls[1]?.[0])).toContain('/api/songs/92004?');
   });
 });
 

@@ -23,6 +23,8 @@ const CACHE_TTL = 5 * 60 * 1000; // 5分
 const MAX_RETRIES = 3;
 const EXTERNAL_VIEWS_BATCH_DELAY_MS = 20;
 const EXTERNAL_VIEWS_BATCH_SIZE = 200;
+const SONG_DETAILS_BATCH_DELAY_MS = 20;
+const SONG_DETAILS_BATCH_SIZE = 100;
 
 interface ExternalViewCounts {
   youtubeViews: number;
@@ -34,10 +36,17 @@ interface ExternalViewRequest {
   reject: (reason?: unknown) => void;
 }
 
+interface SongDetailRequest {
+  resolve: (value: Song | undefined) => void;
+  reject: (reason?: unknown) => void;
+}
+
 // 上限付きメモリキャッシュ。検索の同時実行は同じPromiseへまとめる。
 const cache = new AsyncTtlCache(CACHE_TTL, 250);
 let pendingExternalViewRequests = new Map<number, ExternalViewRequest[]>();
 let externalViewsBatchTimer: ReturnType<typeof setTimeout> | null = null;
+let pendingSongDetailRequests = new Map<number, SongDetailRequest[]>();
+let songDetailsBatchTimer: ReturnType<typeof setTimeout> | null = null;
 
 function getCached<T>(key: string): T | null {
   return cache.peek<T>(key);
@@ -85,6 +94,74 @@ function requestExternalViews(id: number): Promise<ExternalViewCounts | undefine
       }, EXTERNAL_VIEWS_BATCH_DELAY_MS);
     }
   });
+}
+
+async function flushSongDetailRequests(): Promise<void> {
+  const requests = pendingSongDetailRequests;
+  pendingSongDetailRequests = new Map();
+  songDetailsBatchTimer = null;
+  const ids = [...requests.keys()].sort((a, b) => a - b);
+
+  try {
+    const chunks: number[][] = [];
+    for (let index = 0; index < ids.length; index += SONG_DETAILS_BATCH_SIZE) {
+      chunks.push(ids.slice(index, index + SONG_DETAILS_BATCH_SIZE));
+    }
+    const responses = await Promise.all(chunks.map(async chunk => {
+      const res = await fetchWithRetry(`${RECOMMENDER_API}/api/songs/batch?ids=${chunk.join(',')}`);
+      if (!res.ok) throw new Error(`Song batch request failed: ${res.status}`);
+      return res.json() as Promise<{ items: Song[] }>;
+    }));
+    const songsById = new Map(responses.flatMap(response => response.items).map(song => [song.id, song]));
+    requests.forEach((waiters, id) => {
+      waiters.forEach(({ resolve }) => resolve(songsById.get(id)));
+    });
+  } catch (error) {
+    requests.forEach(waiters => {
+      waiters.forEach(({ reject }) => reject(error));
+    });
+  }
+}
+
+function requestSongDetail(id: number): Promise<Song | undefined> {
+  return new Promise((resolve, reject) => {
+    const waiters = pendingSongDetailRequests.get(id) ?? [];
+    waiters.push({ resolve, reject });
+    pendingSongDetailRequests.set(id, waiters);
+    if (songDetailsBatchTimer === null) {
+      songDetailsBatchTimer = setTimeout(() => {
+        void flushSongDetailRequests();
+      }, SONG_DETAILS_BATCH_DELAY_MS);
+    }
+  });
+}
+
+/** Fetches compact song cards from the SBC in one coalesced request. */
+export async function getSongsByIds(ids: number[]): Promise<Song[]> {
+  const normalizedIds = [...new Set(ids.filter(id => Number.isInteger(id) && id > 0))];
+  if (normalizedIds.length === 0) return [];
+
+  try {
+    const songs = await Promise.all(normalizedIds.map(async id => {
+      const { value } = await cache.get<Song | undefined>(
+        `song-detail:${id}`,
+        () => requestSongDetail(id),
+      );
+      return value;
+    }));
+    const missingIds = normalizedIds.filter((_, index) => !songs[index]);
+    if (missingIds.length === 0) return songs as Song[];
+
+    const fallbackSongs = new Map((await Promise.all(missingIds.map(id =>
+      getSongById(id).catch(() => null)
+    ))).filter((song): song is Song => song !== null).map(song => [song.id, song]));
+    return normalizedIds
+      .map((id, index) => songs[index] ?? fallbackSongs.get(id))
+      .filter((song): song is Song => song !== undefined);
+  } catch {
+    const songs = await Promise.all(normalizedIds.map(id => getSongById(id).catch(() => null)));
+    return songs.filter((song): song is Song => song !== null);
+  }
 }
 
 /**
@@ -250,7 +327,7 @@ export async function getSongById(id: number): Promise<Song> {
   const url = `${BASE_URL}/songs/${id}?fields=${DEFAULT_FIELDS},Tags&lang=${DEFAULT_LANG}`;
   const cacheKey = url;
   
-  const cached = getCached<Song>(cacheKey);
+  const cached = getCached<Song>(`song-detail:${id}`) ?? getCached<Song>(cacheKey);
   if (cached) return cached;
 
   const response = await fetchWithRetry(url);
@@ -260,6 +337,7 @@ export async function getSongById(id: number): Promise<Song> {
   data = enriched[0];
   
   setCache(cacheKey, data);
+  setCache(`song-detail:${id}`, data);
   return data;
 }
 
@@ -844,8 +922,7 @@ export async function getDigRecommendedSongs(
             .filter(item => typeof item === 'object' && item !== null && typeof (item as { songId?: unknown }).songId === 'number')
             .map(item => (item as { songId: number }).songId);
           if (ids.length > 0) {
-            const songs = await Promise.all(ids.map(id => getSongById(id).catch(() => null)));
-            return songs.filter((song): song is Song => song !== null);
+            return getSongsByIds(ids);
           }
         }
         return [];
@@ -883,10 +960,9 @@ export async function getRecommendedSongs(
       if (res.ok) {
         const data: RecommendResponse = await res.json();
         if (!data.error && data.items.length > 0) {
-          // バックエンドは曲情報の概要のみ返すので VocaDB から詳細を補完
+          // 推薦IDをSBCの軽量バッチAPIでカード情報へ解決する（未対応時はVocaDBへフォールバック）
           const ids = data.items.map(i => i.songId);
-          const songs = await Promise.all(ids.map(id => getSongById(id).catch(() => null)));
-          return songs.filter((s): s is Song => s !== null);
+          return getSongsByIds(ids);
         }
       }
     } catch {
@@ -930,8 +1006,7 @@ export async function getMultiRecommendedSongs(
       if (res.ok) {
         const data: RecommendResponse = await res.json();
         if (!data.error && data.items.length > 0) {
-          const songs = await Promise.all(data.items.map(item => getSongById(item.songId).catch(() => null)));
-          return songs.filter((song): song is Song => song !== null);
+          return getSongsByIds(data.items.map(item => item.songId));
         }
       }
     } catch {
@@ -985,8 +1060,7 @@ export async function getSongsByProducerFromBackend(
       if (res.ok) {
         const data: ProducerSongResponse = await res.json();
         if (data.items.length > 0) {
-          const songs = await Promise.all(data.items.map(i => getSongById(i.songId).catch(() => null)));
-          return songs.filter((s): s is Song => s !== null);
+          return getSongsByIds(data.items.map(item => item.songId));
         }
       }
     } catch {
@@ -1097,8 +1171,7 @@ export async function getSimilarSongs(
       if (res.ok) {
         const data: SimilarResponse = await res.json();
         if (data.items.length > 0) {
-          const songs = await Promise.all(data.items.map(i => getSongById(i.songId).catch(() => null)));
-          return songs.filter((s): s is Song => s !== null);
+          return getSongsByIds(data.items.map(item => item.songId));
         }
       }
     } catch {
@@ -1132,8 +1205,7 @@ export async function getMetadataSimilarSongs(
       if (res.ok) {
         const data: SimilarResponse = await res.json();
         if (data.items.length > 0) {
-          const songs = await Promise.all(data.items.map(i => getSongById(i.songId).catch(() => null)));
-          return songs.filter((s): s is Song => s !== null);
+          return getSongsByIds(data.items.map(item => item.songId));
         }
       }
     } catch {
@@ -1165,8 +1237,7 @@ export async function getAudioSimilarSongs(
       if (res.ok) {
         const data: SimilarResponse = await res.json();
         if (data.items.length > 0) {
-          const songs = await Promise.all(data.items.map(i => getSongById(i.songId).catch(() => null)));
-          return songs.filter((s): s is Song => s !== null);
+          return getSongsByIds(data.items.map(item => item.songId));
         }
       }
     } catch {
