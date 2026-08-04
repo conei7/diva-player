@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Artist, Song } from '../types/vocadb';
-import { attachExternalViews, buildDigRecommendationRequest, getSongsByIds, getTopSongs, getTrendingSongs, rankArtistsByName, resolveProducerByName, searchVocalistsByName, selectVocalistVariants } from './vocadb';
+import { attachExternalViews, buildDigRecommendationRequest, getSongById, getSongsByIds, getTopSongs, getTrendingSongs, rankArtistsByName, resolveProducerByName, searchVocalistsByName, selectVocalistVariants } from './vocadb';
 import { DEFAULT_GLOBAL_FILTER_SETTINGS } from '../stores/globalFilterStore';
 import { VOCALIST_SEARCH_ARTIST_TYPES } from '../config/voiceSynthTypes';
 
@@ -212,6 +212,12 @@ describe('recommendation song detail batching', () => {
         headers: new Headers(),
       })
       .mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        statusText: 'Not Found',
+        headers: new Headers(),
+      })
+      .mockResolvedValueOnce({
         ok: true,
         json: async () => ({
           id: 92004,
@@ -225,9 +231,45 @@ describe('recommendation song detail batching', () => {
     const songs = await getSongsByIds([92004]);
 
     expect(songs.map(song => song.id)).toEqual([92004]);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
     expect(String(fetchMock.mock.calls[0]?.[0])).toContain('/api/songs/batch?ids=92004');
-    expect(String(fetchMock.mock.calls[1]?.[0])).toContain('/api/songs/92004?');
+    expect(String(fetchMock.mock.calls[1]?.[0])).toContain('/api/songs/details?ids=92004');
+    expect(String(fetchMock.mock.calls[2]?.[0])).toContain('/api/songs/92004?');
+  });
+
+  it('keeps compact cards separate from full watch-page details', async () => {
+    const compact = { id: 92005, name: 'compact', pvs: [{ id: 1, pvId: 'x', service: 'Youtube' }] } as Song;
+    const full = { id: 92005, name: 'full', pvs: [{ id: 1, pvId: 'x', service: 'Youtube', description: 'full description' }] } as Song;
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ items: [compact] }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ items: [full] }) });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const cards = await getSongsByIds([92005]);
+    const details = await getSongById(92005);
+
+    expect(cards[0]?.pvs?.[0]?.description).toBeUndefined();
+    expect(details.pvs?.[0]?.description).toBe('full description');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[1]?.[0])).toContain('/api/songs/details?ids=92005');
+  });
+
+  it('coalesces concurrent full song details into one SBC request', async () => {
+    const songs = [
+      { id: 92006, name: 'full-one' },
+      { id: 92007, name: 'full-two' },
+    ] as Song[];
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ items: songs }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const details = await Promise.all([getSongById(92007), getSongById(92006)]);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain('/api/songs/details?ids=92006,92007');
+    expect(details.map(song => song.id)).toEqual([92007, 92006]);
   });
 });
 

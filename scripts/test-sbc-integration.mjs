@@ -105,6 +105,13 @@ async function main() {
   assert(compactBatch.items.every(item => item.pvs.every(pv => pv.description === undefined)), 'Compact song batch retained PV descriptions.');
   console.log(`PASS compact song batch (${compactBatch.items.length} ordered songs)`);
 
+  const fullBatch = await getJson(baseUrl, `/api/songs/details?ids=${batchIds.join(',')}`);
+  assert(Array.isArray(fullBatch.items) && fullBatch.items.length === batchIds.length, 'Full song batch omitted requested songs.');
+  assert(JSON.stringify(fullBatch.items.map(item => item.id)) === JSON.stringify(batchIds), 'Full song batch changed request order.');
+  assert(fullBatch.items.every(item => item.name && Array.isArray(item.artists) && Array.isArray(item.pvs)), 'Full song batch omitted watch-page fields.');
+  assert(JSON.stringify(fullBatch).length > JSON.stringify(compactBatch).length, 'Full song batch did not retain more metadata than compact cards.');
+  console.log(`PASS full song batch (${fullBatch.items.length} ordered songs)`);
+
   const views = await getJson(baseUrl, `/api/songs/views?ids=${seedId}`);
   assert(views[String(seedId)] || views[seedId], 'PostgreSQL views endpoint did not return the requested song.');
   console.log('PASS PostgreSQL view data');

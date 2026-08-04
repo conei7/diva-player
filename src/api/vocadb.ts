@@ -36,7 +36,7 @@ interface ExternalViewRequest {
   reject: (reason?: unknown) => void;
 }
 
-interface SongDetailRequest {
+interface SongBatchRequest {
   resolve: (value: Song | undefined) => void;
   reject: (reason?: unknown) => void;
 }
@@ -45,8 +45,10 @@ interface SongDetailRequest {
 const cache = new AsyncTtlCache(CACHE_TTL, 250);
 let pendingExternalViewRequests = new Map<number, ExternalViewRequest[]>();
 let externalViewsBatchTimer: ReturnType<typeof setTimeout> | null = null;
-let pendingSongDetailRequests = new Map<number, SongDetailRequest[]>();
-let songDetailsBatchTimer: ReturnType<typeof setTimeout> | null = null;
+let pendingSongCardRequests = new Map<number, SongBatchRequest[]>();
+let songCardsBatchTimer: ReturnType<typeof setTimeout> | null = null;
+let pendingFullSongRequests = new Map<number, SongBatchRequest[]>();
+let fullSongsBatchTimer: ReturnType<typeof setTimeout> | null = null;
 
 function getCached<T>(key: string): T | null {
   return cache.peek<T>(key);
@@ -96,10 +98,10 @@ function requestExternalViews(id: number): Promise<ExternalViewCounts | undefine
   });
 }
 
-async function flushSongDetailRequests(): Promise<void> {
-  const requests = pendingSongDetailRequests;
-  pendingSongDetailRequests = new Map();
-  songDetailsBatchTimer = null;
+async function flushSongCardRequests(): Promise<void> {
+  const requests = pendingSongCardRequests;
+  pendingSongCardRequests = new Map();
+  songCardsBatchTimer = null;
   const ids = [...requests.keys()].sort((a, b) => a - b);
 
   try {
@@ -123,14 +125,54 @@ async function flushSongDetailRequests(): Promise<void> {
   }
 }
 
-function requestSongDetail(id: number): Promise<Song | undefined> {
+function requestSongCard(id: number): Promise<Song | undefined> {
   return new Promise((resolve, reject) => {
-    const waiters = pendingSongDetailRequests.get(id) ?? [];
+    const waiters = pendingSongCardRequests.get(id) ?? [];
     waiters.push({ resolve, reject });
-    pendingSongDetailRequests.set(id, waiters);
-    if (songDetailsBatchTimer === null) {
-      songDetailsBatchTimer = setTimeout(() => {
-        void flushSongDetailRequests();
+    pendingSongCardRequests.set(id, waiters);
+    if (songCardsBatchTimer === null) {
+      songCardsBatchTimer = setTimeout(() => {
+        void flushSongCardRequests();
+      }, SONG_DETAILS_BATCH_DELAY_MS);
+    }
+  });
+}
+
+async function flushFullSongRequests(): Promise<void> {
+  const requests = pendingFullSongRequests;
+  pendingFullSongRequests = new Map();
+  fullSongsBatchTimer = null;
+  const ids = [...requests.keys()].sort((a, b) => a - b);
+
+  try {
+    const chunks: number[][] = [];
+    for (let index = 0; index < ids.length; index += SONG_DETAILS_BATCH_SIZE) {
+      chunks.push(ids.slice(index, index + SONG_DETAILS_BATCH_SIZE));
+    }
+    const responses = await Promise.all(chunks.map(async chunk => {
+      const res = await fetchWithRetry(`${RECOMMENDER_API}/api/songs/details?ids=${chunk.join(',')}`);
+      if (!res.ok) throw new Error(`Full song batch request failed: ${res.status}`);
+      return res.json() as Promise<{ items: Song[] }>;
+    }));
+    const songsById = new Map(responses.flatMap(response => response.items).map(song => [song.id, song]));
+    requests.forEach((waiters, id) => {
+      waiters.forEach(({ resolve }) => resolve(songsById.get(id)));
+    });
+  } catch (error) {
+    requests.forEach(waiters => {
+      waiters.forEach(({ reject }) => reject(error));
+    });
+  }
+}
+
+function requestFullSong(id: number): Promise<Song | undefined> {
+  return new Promise((resolve, reject) => {
+    const waiters = pendingFullSongRequests.get(id) ?? [];
+    waiters.push({ resolve, reject });
+    pendingFullSongRequests.set(id, waiters);
+    if (fullSongsBatchTimer === null) {
+      fullSongsBatchTimer = setTimeout(() => {
+        void flushFullSongRequests();
       }, SONG_DETAILS_BATCH_DELAY_MS);
     }
   });
@@ -143,9 +185,11 @@ export async function getSongsByIds(ids: number[]): Promise<Song[]> {
 
   try {
     const songs = await Promise.all(normalizedIds.map(async id => {
+      const fullSong = getCached<Song>(`song-detail:${id}`);
+      if (fullSong) return fullSong;
       const { value } = await cache.get<Song | undefined>(
-        `song-detail:${id}`,
-        () => requestSongDetail(id),
+        `song-card:${id}`,
+        () => requestSongCard(id),
       );
       return value;
     }));
@@ -326,19 +370,30 @@ export async function searchSongs(params: SongSearchParams): Promise<SongSearchR
 export async function getSongById(id: number): Promise<Song> {
   const url = `${BASE_URL}/songs/${id}?fields=${DEFAULT_FIELDS},Tags&lang=${DEFAULT_LANG}`;
   const cacheKey = url;
-  
-  const cached = getCached<Song>(`song-detail:${id}`) ?? getCached<Song>(cacheKey);
+
+  const detailCacheKey = `song-detail:${id}`;
+  const cached = getCached<Song>(detailCacheKey) ?? getCached<Song>(cacheKey);
   if (cached) return cached;
 
-  const response = await fetchWithRetry(url);
-  let data: Song = await response.json();
-  
-  const enriched = await attachExternalViews([data]);
-  data = enriched[0];
-  
-  setCache(cacheKey, data);
-  setCache(`song-detail:${id}`, data);
-  return data;
+  const { value } = await cache.get<Song>(detailCacheKey, async () => {
+    try {
+      const fromSbc = await requestFullSong(id);
+      if (fromSbc) {
+        setCache(cacheKey, fromSbc);
+        return fromSbc;
+      }
+    } catch {
+      // Older SBC versions do not expose the full-detail batch route.
+    }
+
+    const response = await fetchWithRetry(url);
+    let data: Song = await response.json();
+    const enriched = await attachExternalViews([data]);
+    data = enriched[0];
+    setCache(cacheKey, data);
+    return data;
+  });
+  return value;
 }
 
 /**

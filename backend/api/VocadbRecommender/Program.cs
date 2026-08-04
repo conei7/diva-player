@@ -678,6 +678,33 @@ app.MapGet("/api/songs/batch", async (string ids, DbService db) =>
     return Results.Ok(new { items });
 });
 
+// GET /api/songs/details?ids=1,2,3
+// Full, ordered song payloads for watch pages, history, and saved libraries.
+app.MapGet("/api/songs/details", async (string ids, DbService db) =>
+{
+    if (string.IsNullOrWhiteSpace(ids))
+        return Results.Ok(new { items = Array.Empty<object>() });
+
+    var rawIds = ids.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+    if (rawIds.Length > 100)
+        return Results.BadRequest(new { error = "ids must contain at most 100 items" });
+
+    var orderedIds = rawIds
+        .Select(value => int.TryParse(value, out var id) ? id : 0)
+        .Where(id => id > 0)
+        .Distinct()
+        .ToArray();
+    if (orderedIds.Length == 0)
+        return Results.Ok(new { items = Array.Empty<object>() });
+
+    var songsById = await db.GetSongsJsonByIdsAsync(orderedIds);
+    var items = orderedIds
+        .Where(songsById.ContainsKey)
+        .Select(id => JsonSerializer.Deserialize<JsonElement>(songsById[id]))
+        .ToArray();
+    return Results.Ok(new { items });
+});
+
 // GET /api/songs/views?ids=1,2,3
 app.MapGet("/api/songs/views", async (string ids, DbService db) =>
 {
