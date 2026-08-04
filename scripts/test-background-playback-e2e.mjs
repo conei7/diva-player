@@ -98,6 +98,10 @@ try {
               }
               if (state !== 1) startedAt = Date.now();
               state = 1;
+              if (window.__wakeRecoveryPending) {
+                window.__wakeRecoveryPending = false;
+                window.__wakeRecoveryPlayCount = (window.__wakeRecoveryPlayCount || 0) + 1;
+              }
               window.__backgroundPlaybackStarted = true;
               options.events.onStateChange({ data: state, target: player });
             };
@@ -111,6 +115,12 @@ try {
               options.events.onStateChange({ data: state, target: player });
             };
             document.addEventListener('visibilitychange', pauseForBackground);
+            window.__simulateDeviceWake = () => {
+              elapsed = player.getCurrentTime();
+              state = 2;
+              window.__wakeRecoveryPending = true;
+              document.dispatchEvent(new Event('resume'));
+            };
             player.destroy = () => document.removeEventListener('visibilitychange', pauseForBackground);
             setTimeout(() => options.events.onReady({ target: player }), 0);
           },
@@ -156,6 +166,19 @@ try {
     throw new Error(`Background end recovery did not advance the queue: ${JSON.stringify(result)}`);
   }
   console.log(`PASS background playback recovery (${result.visibilityState})`);
+
+  await playerPage.bringToFront();
+  await playerPage.waitForFunction(() => typeof window.__simulateDeviceWake === 'function');
+  await playerPage.evaluate(() => window.__simulateDeviceWake());
+  await playerPage.waitForFunction(() => (window.__wakeRecoveryPlayCount || 0) >= 1);
+  const wakeResult = await playerPage.evaluate(() => ({
+    currentSongId: JSON.parse(localStorage.getItem('diva_playerQueue') || 'null')?.currentSongId,
+    wakeRecoveryPlayCount: window.__wakeRecoveryPlayCount || 0,
+  }));
+  if (wakeResult.currentSongId !== 900002) {
+    throw new Error(`Device wake recovery changed the active queue item: ${JSON.stringify(wakeResult)}`);
+  }
+  console.log('PASS device sleep lifecycle recovery resumes the owned queue item');
 } finally {
   await browser.close();
 }

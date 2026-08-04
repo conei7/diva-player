@@ -3,6 +3,9 @@ import type { PV } from '../../types/vocadb';
 import { usePlayerStore } from '../../stores/playerStore';
 import { useProgressStore } from '../../stores/progressStore';
 import { buildSoundCloudEmbedUrl } from '../../utils/playablePV';
+import { getPlaybackOwnership } from '../../services/playbackOwnership';
+import { hasReachedPlaybackEnd } from '../../services/playbackEndRecovery';
+import { usePlaybackWakeRecovery } from '../../hooks/usePlaybackWakeRecovery';
 
 interface SoundCloudProgressEvent {
   currentPosition?: number;
@@ -16,6 +19,7 @@ interface SoundCloudWidget {
   seekTo(milliseconds: number): void;
   setVolume(volume: number): void;
   getDuration(callback: (milliseconds: number) => void): void;
+  getPosition?(callback: (milliseconds: number) => void): void;
   isPaused(callback: (paused: boolean) => void): void;
 }
 
@@ -224,6 +228,28 @@ export default function SoundCloudEmbed({ pv, isPlaying }: SoundCloudEmbedProps)
     if (!widget) return;
     syncWidgetPlayback(widget, isPlaying);
   }, [isPlaying, syncWidgetPlayback]);
+
+  const recoverPlayback = useCallback(() => {
+    const widget = widgetRef.current;
+    const state = usePlayerStore.getState();
+    if (!widget || !state.isPlaying || getPlaybackOwnership().getState() !== 'local') return;
+    requestedPlayingRef.current = true;
+    const resume = (milliseconds?: number) => {
+      if (widgetRef.current !== widget) return;
+      const seconds = typeof milliseconds === 'number' && Number.isFinite(milliseconds)
+        ? milliseconds / 1000
+        : useProgressStore.getState().progress;
+      if (typeof milliseconds === 'number') setProgress(seconds);
+      if (hasReachedPlaybackEnd(seconds, useProgressStore.getState().duration)) {
+        next();
+        return;
+      }
+      syncWidgetPlayback(widget, true);
+    };
+    if (widget.getPosition) widget.getPosition(resume);
+    else resume();
+  }, [next, setProgress, syncWidgetPlayback]);
+  usePlaybackWakeRecovery(recoverPlayback);
 
   useEffect(() => {
     widgetRef.current?.setVolume(volume);

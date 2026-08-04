@@ -4,6 +4,7 @@ import { usePlayerStore } from '../../stores/playerStore';
 import { useProgressStore } from '../../stores/progressStore';
 import { getPlaybackOwnership } from '../../services/playbackOwnership';
 import { createPlaybackAttemptController, type PlaybackAttemptToken } from '../../services/playbackAttempt';
+import { usePlaybackWakeRecovery } from '../../hooks/usePlaybackWakeRecovery';
 import {
   buildNicoEmbedUrl,
   createNicoMuteMessage,
@@ -13,6 +14,7 @@ import {
   parseNicoPlayerMessage,
 } from '../../services/nicoPlayerSync';
 import { getPlaybackRecoveryCheckDelayMs, hasReachedPlaybackEnd } from '../../services/playbackEndRecovery';
+import { getSafeWakePosition } from '../../services/playbackWakeRecovery';
 import SoundCloudEmbed from './SoundCloudEmbed';
 import BilibiliEmbed from './BilibiliEmbed';
 
@@ -271,19 +273,23 @@ function NicoEmbed({ pvId, name, duration: songDuration, isPlaying }: { pvId: st
     };
   }, [scheduleVolumeSync, sendMuted]);
 
-  useEffect(() => {
-    const recoverPlayback = () => {
-      if (!usePlayerStore.getState().isPlaying) return;
-      requestedPlayingRef.current = true;
-      sendPlaybackState(true);
-    };
-    document.addEventListener('visibilitychange', recoverPlayback);
-    window.addEventListener('pageshow', recoverPlayback);
-    return () => {
-      document.removeEventListener('visibilitychange', recoverPlayback);
-      window.removeEventListener('pageshow', recoverPlayback);
-    };
-  }, [sendPlaybackState]);
+  const recoverNicoPlayback = useCallback(() => {
+    const state = usePlayerStore.getState();
+    if (!state.isPlaying || getPlaybackOwnership().getState() !== 'local') return;
+    // The tracker uses wall time between confirmed Nico events. A suspended
+    // browser must not count that gap as listened playback, so anchor it to the
+    // last UI-confirmed position before asking the iframe to resume.
+    const rememberedProgress = useProgressStore.getState().progress;
+    trackerRef.current.confirm(rememberedProgress);
+    if (hasReachedPlaybackEnd(rememberedProgress, durationRef.current ?? 0)) {
+      advanceOnce();
+      return;
+    }
+    requestedPlayingRef.current = true;
+    sendPlaybackState(true);
+    startTimer();
+  }, [advanceOnce, sendPlaybackState, startTimer]);
+  usePlaybackWakeRecovery(recoverNicoPlayback);
 
   // ボリューム同期。iframeロード前に送ったメッセージを補うため遅延再送する。
   useEffect(() => {
@@ -388,11 +394,22 @@ export default function PlayerEmbed() {
       const state = usePlayerStore.getState();
       if (state.isPlaying) state.pause();
     });
-    const release = () => ownership.release();
+    const release = (event: PageTransitionEvent) => {
+      // A bfcache transition is a temporary suspension, not ownership loss.
+      if (!event.persisted) ownership.release();
+    };
+    const reclaim = () => {
+      const state = usePlayerStore.getState();
+      if (state.isPlaying && ownership.getState() !== 'remote') {
+        ownership.claim(state.currentSong?.id ?? null);
+      }
+    };
     window.addEventListener('pagehide', release);
+    window.addEventListener('pageshow', reclaim);
     return () => {
       unsubscribe();
       window.removeEventListener('pagehide', release);
+      window.removeEventListener('pageshow', reclaim);
       ownership.release();
       ownershipRef.current = null;
     };
@@ -615,31 +632,35 @@ export default function PlayerEmbed() {
     };
   }, [advanceOnce, clearEndRecoveryTimer, currentPV, currentSong?.id, markPVHealthy, playbackSequence, scheduleEndRecovery, setDuration, setIsPlaying, setError, tryNextPV, startProgressTimer, stopProgressTimer, startVolumeSync, stopVolumeSync]);
 
-  useEffect(() => {
-    const recoverPlayback = () => {
-      const player = ytPlayerRef.current;
-      if (!player || currentPV?.service !== 'Youtube' || !usePlayerStore.getState().isPlaying) return;
-      try {
-        const currentTime = player.getCurrentTime?.() ?? 0;
-        const duration = player.getDuration?.() ?? 0;
-        const playerState = player.getPlayerState?.();
-        if (playerState === window.YT.PlayerState.ENDED || hasReachedPlaybackEnd(currentTime, duration)) {
-          advanceOnce();
-          return;
-        }
-        if (playerState === window.YT.PlayerState.PAUSED) player.playVideo?.();
-        scheduleEndRecovery(player);
-      } catch {
-        // The iframe may be between player generations.
+  const recoverYouTubePlayback = useCallback(() => {
+    const player = ytPlayerRef.current;
+    const state = usePlayerStore.getState();
+    if (!player || currentPV?.service !== 'Youtube' || !state.isPlaying) return;
+    if (ownershipRef.current?.getState() !== 'local') return;
+    try {
+      const currentTime = player.getCurrentTime?.() ?? 0;
+      const duration = player.getDuration?.() ?? useProgressStore.getState().duration;
+      const playerState = player.getPlayerState?.();
+      if (playerState === window.YT.PlayerState.ENDED || hasReachedPlaybackEnd(currentTime, duration)) {
+        advanceOnce();
+        return;
       }
-    };
-    document.addEventListener('visibilitychange', recoverPlayback);
-    window.addEventListener('pageshow', recoverPlayback);
-    return () => {
-      document.removeEventListener('visibilitychange', recoverPlayback);
-      window.removeEventListener('pageshow', recoverPlayback);
-    };
-  }, [advanceOnce, currentPV, scheduleEndRecovery]);
+      const rememberedProgress = useProgressStore.getState().progress;
+      const safePosition = getSafeWakePosition(currentTime, rememberedProgress, duration);
+      if (safePosition > currentTime + 1) {
+        player.seekTo?.(safePosition, true);
+        setProgress(safePosition);
+      }
+      const playerNeedsRestart = playerState === window.YT.PlayerState.PAUSED
+        || playerState === window.YT.PlayerState.UNSTARTED
+        || playerState === window.YT.PlayerState.CUED;
+      if (playerNeedsRestart) player.playVideo?.();
+      scheduleEndRecovery(player);
+    } catch {
+      // The iframe may be between player generations.
+    }
+  }, [advanceOnce, currentPV, scheduleEndRecovery, setProgress]);
+  usePlaybackWakeRecovery(recoverYouTubePlayback, currentPV?.service === 'Youtube');
 
   // 再生/一時停止の同期
   useEffect(() => {
