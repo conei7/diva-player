@@ -14,6 +14,7 @@ const DEFAULT_MIN_HYBRID_MINOR_SHARE = 0.20;
 const DEFAULT_MAX_HYBRID_MINOR_SHARE = 0.80;
 const DEFAULT_MAX_SEED_PRODUCER_SHARE = 0.40;
 const SAMPLE_SIZE = 10;
+const MIN_CONCENTRATION_SAMPLE_SIZE = 8;
 
 function getBaseUrl() {
   const argumentIndex = process.argv.indexOf('--base-url');
@@ -331,14 +332,16 @@ async function main() {
   const endpointQuality = endpoints.map(endpoint => {
     const lists = itemsByEndpoint.get(endpoint);
     const flattened = lists.flat();
+    const concentrationLists = lists.filter(items => items.length >= MIN_CONCENTRATION_SAMPLE_SIZE);
     const uniqueRatio = flattened.length === 0
       ? 0
       : new Set(flattened.map(item => item.songId)).size / flattened.length;
     return {
       endpoint,
-      maxArtistShare: Math.max(0, ...lists.map(getMaxArtistShare)),
-      maxProducerShare: Math.max(0, ...lists.map(items => getMaxIdShare(items, 'producerIds'))),
-      maxVocalistShare: Math.max(0, ...lists.map(items => getMaxIdShare(items, 'vocalistIds'))),
+      concentrationSampleCount: concentrationLists.length,
+      maxArtistShare: Math.max(0, ...concentrationLists.map(getMaxArtistShare)),
+      maxProducerShare: Math.max(0, ...concentrationLists.map(items => getMaxIdShare(items, 'producerIds'))),
+      maxVocalistShare: Math.max(0, ...concentrationLists.map(items => getMaxIdShare(items, 'vocalistIds'))),
       maxSeedOverlap: maxPairwiseOverlap(lists),
       uniqueRatio,
       ...getPopularitySummary(flattened),
@@ -350,9 +353,13 @@ async function main() {
 
   let observedMaxModeOverlap = 0;
   for (const endpointMap of itemsBySeed.values()) {
+    const comparableModes = endpoints
+      .map(endpoint => endpointMap.get(endpoint) ?? [])
+      .filter(items => items.length >= MIN_CONCENTRATION_SAMPLE_SIZE);
+    if (comparableModes.length < 2) continue;
     observedMaxModeOverlap = Math.max(
       observedMaxModeOverlap,
-      maxPairwiseOverlap(endpoints.map(endpoint => endpointMap.get(endpoint) ?? [])),
+      maxPairwiseOverlap(comparableModes),
     );
   }
 
