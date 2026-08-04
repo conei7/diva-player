@@ -638,7 +638,7 @@ export default function SearchFilters() {
             </div>
 
             <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
-              <div className="rounded-xl border border-white/[0.06] p-3">
+              <div data-testid="vocadb-tag-filters" className="rounded-xl border border-white/[0.06] p-3">
                 <div className="mb-2 flex items-center gap-2"><p className="text-xs font-semibold text-neutral-300">VocaDBタグ</p><div className="ui-segmented ml-auto">{(['all', 'any'] as const).map(mode => <button key={mode} type="button" data-active={advancedFilters.tagMatchMode === mode} onClick={() => setAdvancedFilters({ tagMatchMode: mode })}>{mode === 'all' ? 'すべて含む' : 'いずれか'}</button>)}</div></div>
                 <div className="flex flex-wrap gap-1.5">{TAG_PRESETS.map(tag => <button key={tag.id} type="button" className="ui-chip-toggle" data-active={advancedFilters.tagFilters.some(item => item.id === tag.id)} onClick={() => toggleTag(tag)}>{tag.name}</button>)}</div>
                 <div className="relative mt-3">

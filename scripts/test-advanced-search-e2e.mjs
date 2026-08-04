@@ -32,7 +32,21 @@ try {
   await page.evaluate(() => [...document.querySelectorAll('.search-section-header')].find(element => element.textContent?.includes('絞り込み条件'))?.click());
   await page.waitForFunction(() => document.body.textContent?.includes('人気・再生数') && document.body.textContent?.includes('参加者・役割'));
 
-  await page.evaluate(() => [...document.querySelectorAll('button')].find(button => button.textContent?.trim() === 'ピアノ')?.click());
+  await page.evaluate(() => {
+    const tagFilters = document.querySelector('[data-testid="vocadb-tag-filters"]');
+    const tagButton = [...(tagFilters?.querySelectorAll('button') ?? [])].find(button => button.textContent?.trim() === 'ピアノ');
+    if (!tagButton) throw new Error('VocaDB tag button not found');
+    tagButton.click();
+
+    const audioFilters = document.querySelector('[data-testid="audio-analysis-filters"]');
+    const bpmInput = audioFilters?.querySelector('input[placeholder="80"]');
+    const instrumentButton = [...(audioFilters?.querySelectorAll('button') ?? [])].find(button => button.textContent?.trim() === 'ピアノ');
+    if (!(bpmInput instanceof HTMLInputElement)) throw new Error('BPM input not found');
+    if (!instrumentButton) throw new Error('instrument button not found');
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(bpmInput, '90');
+    bpmInput.dispatchEvent(new Event('input', { bubbles: true }));
+    instrumentButton.click();
+  });
   await page.type('input[placeholder="P、絵師、動画師、演奏者…"]', 'Fixture');
   await page.waitForFunction(() => document.body.textContent?.includes('Fixture illustrator'));
   await page.evaluate(() => [...document.querySelectorAll('button')].find(button => button.textContent?.includes('Fixture illustrator'))?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })));
@@ -54,6 +68,8 @@ try {
   if (!requestUrl) throw new Error('advanced search request not captured');
   const parsed = new URL(requestUrl);
   if (parsed.searchParams.get('tagIds') !== '337') throw new Error(`tag filter missing: ${requestUrl}`);
+  if (parsed.searchParams.get('bpmFrom') !== '90') throw new Error(`BPM filter missing: ${requestUrl}`);
+  if (parsed.searchParams.get('instrumentKeys') !== 'piano' || parsed.searchParams.get('instrumentMatchMode') !== 'all') throw new Error(`instrument filter missing: ${requestUrl}`);
   if (parsed.searchParams.get('creditArtistId') !== '777' || parsed.searchParams.get('creditArtistRole') !== 'Illustrator') throw new Error(`credit filter missing: ${requestUrl}`);
   if (parsed.searchParams.get('minYoutubeViews') !== '1000000') throw new Error(`view range missing: ${requestUrl}`);
 
