@@ -26,7 +26,7 @@ async function main() {
   try {
     await page.goto(debugUrl.toString(), { waitUntil: 'domcontentloaded' });
     await page.waitForSelector('input[placeholder="ボカロP名や曲名で検索"]');
-    await page.waitForSelector('h3');
+    await page.waitForSelector('a[href*="/watch?v="]');
     await page.waitForSelector('button', { timeout: TIMEOUT_MS });
     const debugButton = await page.evaluate(() => [...document.querySelectorAll('button')]
       .find(button => button.textContent?.includes('推薦デバッグ'))?.textContent ?? null);
