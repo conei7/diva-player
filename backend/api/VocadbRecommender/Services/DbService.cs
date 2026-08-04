@@ -1161,70 +1161,54 @@ public class DbService
                 SELECT artist_id
                 FROM song_artists
                 WHERE song_id = $1 AND is_producer = TRUE
-            ),
-            candidate_pool AS (
-                SELECT
-                    candidate.id,
-                    MIN(credit.artist_id) FILTER (WHERE credit.is_producer = TRUE) AS primary_producer,
-                    CASE
-                        WHEN seed.state_cluster IS NOT NULL
-                         AND features.state_cluster = seed.state_cluster THEN 0
-                        ELSE 1
-                    END AS cluster_distance,
-                    CASE WHEN candidate.song_type = seed.song_type THEN 0 ELSE 1 END AS type_distance,
-                    CASE
-                        WHEN seed.publish_date IS NULL OR candidate.publish_date IS NULL THEN 100000
-                        ELSE ABS(candidate.publish_date - seed.publish_date)
-                    END AS publish_distance,
-                    quality.quality_score
-                FROM songs candidate
-                CROSS JOIN seed
-                JOIN song_discovery_quality quality
-                  ON quality.song_id = candidate.id
-                 AND quality.discovery_eligible = TRUE
-                LEFT JOIN song_features features ON features.song_id = candidate.id
-                LEFT JOIN song_artists credit ON credit.song_id = candidate.id
-                WHERE candidate.id <> $1
-                  AND EXISTS (
-                      SELECT 1
-                      FROM pvs playable
-                      WHERE playable.song_id = candidate.id AND playable.disabled = FALSE
-                  )
-                  AND EXISTS (
-                      SELECT 1
-                      FROM song_artists vocalist_credit
-                      JOIN artists vocalist ON vocalist.id = vocalist_credit.artist_id
-                      WHERE vocalist_credit.song_id = candidate.id
-                        AND vocalist_credit.is_vocalist = TRUE
-                        AND vocalist.artist_type IN ({VoiceSynthArtistTypesSql})
-                  )
-                  AND NOT EXISTS (
-                      SELECT 1
-                      FROM song_artists candidate_producer
-                      JOIN seed_producers seed_producer
-                        ON seed_producer.artist_id = candidate_producer.artist_id
-                      WHERE candidate_producer.song_id = candidate.id
-                        AND candidate_producer.is_producer = TRUE
-                  )
-                GROUP BY candidate.id, seed.song_type, seed.publish_date, seed.state_cluster,
-                         features.state_cluster, quality.quality_score
-                ORDER BY cluster_distance, type_distance, publish_distance,
-                         quality.quality_score DESC, candidate.id
-                LIMIT 2000
-            ),
-            producer_ranked AS (
-                SELECT candidate_pool.*,
-                       ROW_NUMBER() OVER (
-                           PARTITION BY COALESCE(primary_producer, -id)
-                           ORDER BY cluster_distance, type_distance, publish_distance,
-                                    quality_score DESC, id
-                       ) AS producer_rank
-                FROM candidate_pool
             )
-            SELECT id
-            FROM producer_ranked
-            ORDER BY producer_rank, cluster_distance, type_distance, publish_distance,
-                     quality_score DESC, id
+            SELECT candidate.id
+            FROM songs candidate
+            CROSS JOIN seed
+            JOIN song_discovery_quality quality
+              ON quality.song_id = candidate.id
+             AND quality.discovery_eligible = TRUE
+            LEFT JOIN song_features features ON features.song_id = candidate.id
+            WHERE candidate.id <> $1
+              AND (
+                  seed.publish_date IS NULL
+                  OR candidate.publish_date BETWEEN seed.publish_date - 730 AND seed.publish_date + 730
+              )
+              AND EXISTS (
+                  SELECT 1
+                  FROM pvs playable
+                  WHERE playable.song_id = candidate.id AND playable.disabled = FALSE
+              )
+              AND EXISTS (
+                  SELECT 1
+                  FROM song_artists vocalist_credit
+                  JOIN artists vocalist ON vocalist.id = vocalist_credit.artist_id
+                  WHERE vocalist_credit.song_id = candidate.id
+                    AND vocalist_credit.is_vocalist = TRUE
+                    AND vocalist.artist_type IN ({VoiceSynthArtistTypesSql})
+              )
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM song_artists candidate_producer
+                  JOIN seed_producers seed_producer
+                    ON seed_producer.artist_id = candidate_producer.artist_id
+                  WHERE candidate_producer.song_id = candidate.id
+                    AND candidate_producer.is_producer = TRUE
+              )
+            ORDER BY
+                CASE WHEN candidate.song_type = seed.song_type THEN 0 ELSE 1 END,
+                CASE
+                    WHEN seed.state_cluster IS NOT NULL
+                     AND features.state_cluster = seed.state_cluster THEN 0
+                    ELSE 1
+                END,
+                CASE
+                    WHEN seed.publish_date IS NULL OR candidate.publish_date IS NULL THEN 100000
+                    ELSE ABS(candidate.publish_date - seed.publish_date)
+                END,
+                quality.quality_score DESC,
+                mod(abs(hashtext(candidate.id::text || ':' || seed.id::text))::bigint, 100000),
+                candidate.id
             LIMIT $2", conn);
         cmd.Parameters.AddWithValue(seedSongId);
         cmd.Parameters.AddWithValue(normalizedLimit);
