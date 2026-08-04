@@ -1,12 +1,14 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
-const [compose, gateway, nginx, deploy, program, warmup, dbService] = await Promise.all([
+const [compose, gateway, nginx, deploy, program, healthEndpoints, serviceRegistration, warmup, dbService] = await Promise.all([
   readFile(new URL('../backend/docker-compose.yml', import.meta.url), 'utf8'),
   readFile(new URL('../backend/api-gateway/haproxy.cfg', import.meta.url), 'utf8'),
   readFile(new URL('../nginx.conf', import.meta.url), 'utf8'),
   readFile(new URL('./deploy-sbc-api-rolling.sh', import.meta.url), 'utf8'),
   readFile(new URL('../backend/api/VocadbRecommender/Program.cs', import.meta.url), 'utf8'),
+  readFile(new URL('../backend/api/VocadbRecommender/Endpoints/HealthEndpoints.cs', import.meta.url), 'utf8'),
+  readFile(new URL('../backend/api/VocadbRecommender/ApiServiceRegistration.cs', import.meta.url), 'utf8'),
   readFile(new URL('../backend/api/VocadbRecommender/Services/ApiWarmupService.cs', import.meta.url), 'utf8'),
   readFile(new URL('../backend/api/VocadbRecommender/Services/DbService.cs', import.meta.url), 'utf8'),
 ]);
@@ -28,10 +30,11 @@ assert.match(deploy, /wait_slot_sessions "\$slot"/);
 assert.match(deploy, /enable server api_nodes\/\$slot/);
 assert.match(deploy, /--force-recreate "\$slot"/);
 assert.match(deploy, /haproxy -c -f \/usr\/local\/etc\/haproxy\/haproxy\.cfg/);
-assert.match(program, /MapGet\("\/api\/ready"/);
-assert.match(program, /DisableRateLimiting\(\)/);
+assert.match(program, /MapHealthEndpoints\(\)/);
+assert.match(healthEndpoints, /MapGet\("\/api\/ready"/);
+assert.match(healthEndpoints, /DisableRateLimiting\(\)/);
 assert.match(program, /isTrustedGatewayProxy/);
-assert.match(program, /AddHostedService<ApiWarmupService>/);
+assert.match(serviceRegistration, /AddHostedService<ApiWarmupService>/);
 assert.match(warmup, /home-surge/);
 assert.match(dbService, /CachedTrending/);
 assert.match(dbService, /trending_cache_refresh_failed/);

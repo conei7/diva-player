@@ -1,30 +1,9 @@
 import { fetchNicoPlaylistSongs } from '../api/nicoPlaylist';
 import { usePlaylistStore } from '../stores/playlistStore';
 import type { NicoPlaylistSync, Playlist } from '../types/vocadb';
+import { withCrossTabLock } from '../utils/crossTabLock';
 
 const LOCK_KEY = 'diva-nico-playlist-sync-lock';
-const LOCK_TTL_MS = 30_000;
-
-async function withSyncLock<T>(task: () => Promise<T>): Promise<T | null> {
-  if (navigator.locks?.request) {
-    return navigator.locks.request('diva-nico-playlist-sync', { ifAvailable: true }, async lock => lock ? task() : null);
-  }
-  const owner = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  try {
-    const now = Date.now();
-    const current = JSON.parse(localStorage.getItem(LOCK_KEY) || 'null') as { owner: string; expiresAt: number } | null;
-    if (current && current.expiresAt > now && current.owner !== owner) return null;
-    localStorage.setItem(LOCK_KEY, JSON.stringify({ owner, expiresAt: now + LOCK_TTL_MS }));
-    const confirmed = JSON.parse(localStorage.getItem(LOCK_KEY) || 'null') as { owner: string } | null;
-    if (confirmed?.owner !== owner) return null;
-    return await task();
-  } finally {
-    try {
-      const current = JSON.parse(localStorage.getItem(LOCK_KEY) || 'null') as { owner: string } | null;
-      if (current?.owner === owner) localStorage.removeItem(LOCK_KEY);
-    } catch { /* stale locks expire */ }
-  }
-}
 
 export async function syncNicoPlaylist(
   playlist: Playlist,
@@ -34,7 +13,10 @@ export async function syncNicoPlaylist(
   if (!sync?.enabled) return 'skipped';
   const now = Date.now();
   if (!options.refresh && sync.nextSyncAt && sync.nextSyncAt > now) return 'skipped';
-  const result = await withSyncLock(async () => {
+  const result = await withCrossTabLock({
+    name: 'diva-nico-playlist-sync',
+    fallbackKey: LOCK_KEY,
+  }, async () => {
     try {
       const response = await fetchNicoPlaylistSongs({ kind: sync.sourceKind, id: sync.sourceId }, { refresh: options.refresh });
       const next: NicoPlaylistSync = {

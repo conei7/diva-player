@@ -1,55 +1,9 @@
 import { fetchYouTubePlaylistSongs } from '../api/youtubePlaylist';
 import type { Playlist, YouTubePlaylistSync } from '../types/vocadb';
 import { usePlaylistStore } from '../stores/playlistStore';
+import { withCrossTabLock } from '../utils/crossTabLock';
 
 const SYNC_LOCK_KEY = 'diva-youtube-playlist-sync-lock';
-const LOCK_TTL_MS = 30_000;
-
-interface SyncLock {
-  owner: string;
-  expiresAt: number;
-}
-
-function createOwnerId(): string {
-  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-}
-
-function acquireFallbackLock(owner: string): boolean {
-  try {
-    const now = Date.now();
-    const existing = JSON.parse(localStorage.getItem(SYNC_LOCK_KEY) || 'null') as SyncLock | null;
-    if (existing && existing.expiresAt > now && existing.owner !== owner) return false;
-    localStorage.setItem(SYNC_LOCK_KEY, JSON.stringify({ owner, expiresAt: now + LOCK_TTL_MS }));
-    const confirmed = JSON.parse(localStorage.getItem(SYNC_LOCK_KEY) || 'null') as SyncLock | null;
-    return confirmed?.owner === owner;
-  } catch {
-    return true;
-  }
-}
-
-function releaseFallbackLock(owner: string): void {
-  try {
-    const current = JSON.parse(localStorage.getItem(SYNC_LOCK_KEY) || 'null') as SyncLock | null;
-    if (current?.owner === owner) localStorage.removeItem(SYNC_LOCK_KEY);
-  } catch {
-    // A stale lock expires on its own.
-  }
-}
-
-async function withSyncLock<T>(task: () => Promise<T>): Promise<T | null> {
-  const owner = createOwnerId();
-  if (navigator.locks?.request) {
-    return navigator.locks.request('diva-youtube-playlist-sync', { ifAvailable: true }, async lock => (
-      lock ? task() : null
-    ));
-  }
-  if (!acquireFallbackLock(owner)) return null;
-  try {
-    return await task();
-  } finally {
-    releaseFallbackLock(owner);
-  }
-}
 
 function buildSyncState(
   current: YouTubePlaylistSync,
@@ -78,7 +32,10 @@ export async function syncYouTubePlaylist(
   const now = Date.now();
   if (!options.refresh && sync.nextSyncAt && sync.nextSyncAt > now) return 'skipped';
 
-  const result = await withSyncLock(async () => {
+  const result = await withCrossTabLock({
+    name: 'diva-youtube-playlist-sync',
+    fallbackKey: SYNC_LOCK_KEY,
+  }, async () => {
     try {
       const response = await fetchYouTubePlaylistSongs(sync.playlistId, { refresh: options.refresh });
       const nextSync = buildSyncState(sync, response, Date.now());

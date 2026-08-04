@@ -6,43 +6,14 @@ using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using System.Text.RegularExpressions;
 using System.Threading.RateLimiting;
 
 var builder = WebApplication.CreateBuilder(args);
 
 // --- 設定 ---
-builder.Services.Configure<RecommenderOptions>(
-    builder.Configuration.GetSection("Recommender"));
+builder.Services.AddDivaApiServices(builder.Configuration);
 
 // --- サービス登録 ---
-builder.Services.AddMemoryCache();
-builder.Services.AddResponseCompression(options =>
-{
-    options.EnableForHttps = true;
-    options.MimeTypes = ResponseCompressionDefaults.MimeTypes.Concat(["application/json"]);
-});
-builder.Services.AddSingleton<DbService>();
-builder.Services.AddSingleton<QdrantService>();
-builder.Services.AddSingleton<ApiWarmupState>();
-builder.Services.AddHostedService<ApiWarmupService>();
-builder.Services.AddSingleton<MarkovService>();
-builder.Services.AddScoped<RecommendService>();
-builder.Services.AddScoped<DigDiscoveryService>();
-builder.Services.AddHttpClient<YouTubePlaylistService>(client =>
-{
-    client.BaseAddress = new Uri("https://www.googleapis.com/youtube/v3/");
-    client.Timeout = TimeSpan.FromSeconds(30);
-    client.DefaultRequestHeaders.UserAgent.ParseAdd("DIVA-Player/1.0");
-});
-builder.Services.AddHttpClient<NicoPlaylistService>(client =>
-{
-    client.BaseAddress = new Uri("https://nvapi.nicovideo.jp/");
-    client.Timeout = TimeSpan.FromSeconds(30);
-    client.DefaultRequestHeaders.UserAgent.ParseAdd("DIVA-Player/1.0");
-    client.DefaultRequestHeaders.Add("X-Frontend-Id", "6");
-    client.DefaultRequestHeaders.Add("X-Frontend-Version", "0");
-});
 
 var pagesProxyKey = builder.Configuration["Recommender:PagesProxyKey"]?.Trim() ?? string.Empty;
 
@@ -162,112 +133,16 @@ app.UseResponseCompression();
 app.UseCors("AllowFrontend");
 app.UseRateLimiter();
 
-var healthGate = new SemaphoreSlim(1, 1);
-HealthSnapshot? healthSnapshot = null;
 const int maxSearchStart = 100_000;
 const int maxSearchResults = 200;
 const int maxSearchQueryLength = 200;
 const int maxSearchArtistIds = 100;
 const int maxSearchArtistGroups = 20;
 
-// Lightweight dependency readiness for the rolling proxy. Unlike /api/health,
-// this intentionally skips reporting aggregates that can take several seconds.
-app.MapGet("/api/ready", async (
-    DbService db,
-    QdrantService qdrant,
-    ApiWarmupState warmup,
-    CancellationToken cancellationToken) =>
-{
-    if (!warmup.Completed)
-    {
-        return Results.Json(
-            new { status = "warming", warmup = warmup.Snapshot },
-            statusCode: StatusCodes.Status503ServiceUnavailable);
-    }
+app.MapHealthEndpoints();
+app.MapSongReadEndpoints();
 
-    var postgresTask = db.CheckHealthAsync(cancellationToken);
-    var qdrantTask = qdrant.CheckHealthAsync(cancellationToken);
-    await Task.WhenAll(postgresTask, qdrantTask);
-    var postgres = await postgresTask;
-    var qdrantStatus = await qdrantTask;
-    var ready = postgres.Ok && qdrantStatus.Ok;
-
-    return Results.Json(
-        new
-        {
-            status = ready ? "ready" : "degraded",
-            dependencies = new { postgres, qdrant = qdrantStatus },
-            warmup = warmup.Snapshot,
-        },
-        statusCode: ready
-            ? StatusCodes.Status200OK
-            : StatusCodes.Status503ServiceUnavailable);
-}).DisableRateLimiting();
-
-app.MapGet("/api/youtube/playlists/{playlistId}/songs", async (
-    string playlistId,
-    bool? refresh,
-    YouTubePlaylistService service,
-    CancellationToken cancellationToken) =>
-{
-    if (!Regex.IsMatch(playlistId, "^[A-Za-z0-9_-]{8,100}$"))
-        return Results.BadRequest("invalid playlist id");
-    try
-    {
-        var response = await service.GetAsync(playlistId, refresh == true, cancellationToken);
-        return Results.Ok(new
-        {
-            response.PlaylistId,
-            response.Title,
-            response.VideoCount,
-            response.MatchedCount,
-            response.UnmatchedVideoIds,
-            songs = response.SongsJson
-                .Select(json => JsonSerializer.Deserialize<JsonElement>(json))
-                .ToArray(),
-            response.SourceFetchedAt,
-            response.Stale,
-            response.Truncated,
-        });
-    }
-    catch (YouTubePlaylistException exception)
-    {
-        return Results.Problem(exception.Message, statusCode: exception.StatusCode);
-    }
-});
-
-app.MapGet("/api/nico/playlists/{sourceKind}/{sourceId}/songs", async (
-    string sourceKind,
-    string sourceId,
-    bool? refresh,
-    NicoPlaylistService service,
-    CancellationToken cancellationToken) =>
-{
-    sourceKind = sourceKind.ToLowerInvariant();
-    if (sourceKind is not ("mylist" or "series") || !Regex.IsMatch(sourceId, "^[0-9]{1,20}$"))
-        return Results.BadRequest("invalid NicoNico playlist source");
-    try
-    {
-        var response = await service.GetAsync(sourceKind, sourceId, refresh == true, cancellationToken);
-        return Results.Ok(new
-        {
-            response.SourceKind,
-            response.SourceId,
-            response.Title,
-            response.VideoCount,
-            response.MatchedCount,
-            response.UnmatchedVideoIds,
-            songs = response.SongsJson.Select(json => JsonSerializer.Deserialize<JsonElement>(json)).ToArray(),
-            response.SourceFetchedAt,
-            response.Stale,
-            response.Truncated,
-        });
-    }
-    catch (NicoPlaylistException exception)
-    {
-        return Results.Problem(exception.Message, statusCode: exception.StatusCode);
-    }
-});
+app.MapPlaylistImportEndpoints();
 
 app.MapGet("/api/recommend", async (
     int songId,
@@ -521,43 +396,6 @@ app.MapGet("/api/recommend/audio", async (
     return Results.Ok(new { items });
 });
 
-// GET /api/health
-app.MapGet("/api/health", async (DbService db, QdrantService qdrant, CancellationToken cancellationToken) =>
-{
-    await healthGate.WaitAsync(cancellationToken);
-    try
-    {
-        if (healthSnapshot is not null && healthSnapshot.ExpiresAt > DateTimeOffset.UtcNow)
-            return Results.Json(healthSnapshot.Payload, statusCode: healthSnapshot.StatusCode);
-
-        var postgresTask = db.CheckHealthAsync(cancellationToken);
-        var qdrantTask = qdrant.CheckHealthAsync(cancellationToken);
-        var discoveryTask = db.CheckDiscoveryQualityAsync(cancellationToken);
-        var audioFeatureTask = db.CheckAudioFeatureHealthAsync(cancellationToken);
-        await Task.WhenAll(postgresTask, qdrantTask, discoveryTask, audioFeatureTask);
-        var postgres = await postgresTask;
-        var qdrantStatus = await qdrantTask;
-        var discoveryQuality = await discoveryTask;
-        var audioFeatures = await audioFeatureTask;
-        var ready = postgres.Ok && qdrantStatus.Ok;
-        var payload = new HealthPayload(
-            ready ? "ok" : "degraded",
-            new { postgres, qdrant = qdrantStatus },
-            discoveryQuality,
-            audioFeatures);
-        healthSnapshot = new HealthSnapshot(
-            payload,
-            ready ? StatusCodes.Status200OK : StatusCodes.Status503ServiceUnavailable,
-            DateTimeOffset.UtcNow.AddSeconds(30));
-
-        return Results.Json(payload, statusCode: healthSnapshot.StatusCode);
-    }
-    finally
-    {
-        healthGate.Release();
-    }
-});
-
 app.MapPost("/api/recommend/multi", async (
     MultiRecommendRequest request,
     RecommendService svc) =>
@@ -649,87 +487,6 @@ app.MapPost("/api/recommend/dig", async (
         .Select(id => JsonSerializer.Deserialize<JsonElement>(songsById[id]))
         .ToArray();
     return Results.Ok(new { items, totalCount = discovery.TotalCount });
-});
-
-// GET /api/songs/batch?ids=1,2,3
-// Compact, ordered song payloads for recommendation cards and playback.
-app.MapGet("/api/songs/batch", async (string ids, DbService db) =>
-{
-    if (string.IsNullOrWhiteSpace(ids))
-        return Results.Ok(new { items = Array.Empty<object>() });
-
-    var rawIds = ids.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-    if (rawIds.Length > 100)
-        return Results.BadRequest(new { error = "ids must contain at most 100 items" });
-
-    var orderedIds = rawIds
-        .Select(value => int.TryParse(value, out var id) ? id : 0)
-        .Where(id => id > 0)
-        .Distinct()
-        .ToArray();
-    if (orderedIds.Length == 0)
-        return Results.Ok(new { items = Array.Empty<object>() });
-
-    var songsById = await db.GetSongsCardJsonByIdsAsync(orderedIds);
-    var items = orderedIds
-        .Where(songsById.ContainsKey)
-        .Select(id => JsonSerializer.Deserialize<JsonElement>(songsById[id]))
-        .ToArray();
-    return Results.Ok(new { items });
-});
-
-// GET /api/songs/details?ids=1,2,3
-// Full, ordered song payloads for watch pages, history, and saved libraries.
-app.MapGet("/api/songs/details", async (string ids, DbService db) =>
-{
-    if (string.IsNullOrWhiteSpace(ids))
-        return Results.Ok(new { items = Array.Empty<object>() });
-
-    var rawIds = ids.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-    if (rawIds.Length > 100)
-        return Results.BadRequest(new { error = "ids must contain at most 100 items" });
-
-    var orderedIds = rawIds
-        .Select(value => int.TryParse(value, out var id) ? id : 0)
-        .Where(id => id > 0)
-        .Distinct()
-        .ToArray();
-    if (orderedIds.Length == 0)
-        return Results.Ok(new { items = Array.Empty<object>() });
-
-    var songsById = await db.GetSongsJsonByIdsAsync(orderedIds);
-    var items = orderedIds
-        .Where(songsById.ContainsKey)
-        .Select(id => JsonSerializer.Deserialize<JsonElement>(songsById[id]))
-        .ToArray();
-    return Results.Ok(new { items });
-});
-
-// GET /api/songs/views?ids=1,2,3
-app.MapGet("/api/songs/views", async (string ids, DbService db) =>
-{
-    if (string.IsNullOrWhiteSpace(ids)) return Results.Ok(new Dictionary<int, object>());
-
-    var rawIds = ids.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-    if (rawIds.Length > 500)
-        return Results.BadRequest(new { error = "ids must contain at most 500 items" });
-
-    var idList = rawIds
-        .Where(x => int.TryParse(x, out _))
-        .Select(int.Parse)
-        .Distinct()
-        .ToList();
-
-    if (idList.Count == 0) return Results.Ok(new Dictionary<int, object>());
-
-    var infos = await db.GetSongInfoBatchAsync(idList);
-    var result = infos.ToDictionary(i => i.Id, i => new
-    {
-        youtubeViews = i.YoutubeViews,
-        nicoViews = i.NicoViews
-    });
-
-    return Results.Ok(result);
 });
 
 // GET /api/songs/trending?days=30&start=0&maxResults=24
@@ -998,28 +755,6 @@ static bool TryParseIntegerGroups(string? value, out List<List<int>> result)
     return true;
 }
 
-// GET /api/songs/{id}/history
-app.MapGet("/api/songs/{id}/history", async (int id, string? range, string? bucket, DbService db) =>
-{
-    if (!string.IsNullOrWhiteSpace(range))
-    {
-        var normalizedRange = range is "7d" or "30d" or "90d" or "all" ? range : "30d";
-        var normalizedBucket = bucket is "day" or "week" or "month"
-            ? bucket
-            : normalizedRange switch
-            {
-                "90d" => "week",
-                "all" => "month",
-                _ => "day",
-            };
-        var windowed = await db.GetViewHistoryWindowAsync(id, normalizedRange, normalizedBucket);
-        return Results.Ok(windowed);
-    }
-
-    var history = await db.GetViewHistoryAsync(id);
-    return Results.Ok(history);
-});
-
 app.Run();
 
 public record MultiRecommendRequest(
@@ -1047,14 +782,3 @@ public record DigRecommendRequest(
 );
 
 public record DigVocalistFilter(int Id, string? VariantGroup = null);
-
-public record HealthPayload(
-    string status,
-    object dependencies,
-    DiscoveryQualityHealth discoveryQuality,
-    AudioFeatureHealth audioFeatures);
-
-public record HealthSnapshot(
-    HealthPayload Payload,
-    int StatusCode,
-    DateTimeOffset ExpiresAt);

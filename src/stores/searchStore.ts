@@ -6,246 +6,39 @@ import { create } from 'zustand';
 import type { Song, SongSortRule, SongType, VocalistMatchMode } from '../types/vocadb';
 import { findArtistByName, searchSongs } from '../api/vocadb';
 import { getGlobalFilterSettings, type GlobalFilterSettings } from './globalFilterStore';
-import { AsyncTtlCache } from '../utils/asyncTtlCache';
-import { parseServerTiming, performanceNow, recordPerformanceMetric, type PerformanceSegment } from '../utils/performanceMetrics';
-const RECOMMENDER_API = import.meta.env.VITE_RECOMMENDER_API || '/backend-api';
-const BACKEND_SEARCH_CACHE_TTL = 60_000;
-const backendSearchCache = new AsyncTtlCache(BACKEND_SEARCH_CACHE_TTL, 100);
-
-// VocaDB APIに存在しないローカルソート種別
-export type LocalSortRule = 'YoutubeViews' | 'NicoViews' | 'TotalViews' | 'Random';
-export type ExtendedSortRule = SongSortRule | LocalSortRule;
-
-export const LOCAL_SORT_RULES = new Set<ExtendedSortRule>(['YoutubeViews', 'NicoViews', 'TotalViews', 'Random']);
-let searchRandomSeed = Math.floor(Math.random() * 2_147_483_647);
-export type SortOrder = 'desc' | 'asc';
-
-/** ローカルソートを適用する */
-export function applyLocalSort(songs: Song[], sort: ExtendedSortRule, order: SortOrder = 'desc'): Song[] {
-  const dir = order === 'asc' ? 1 : -1;
-  if (sort === 'TotalViews') {
-    // 月次学習したYouTube↔ニコニコ換算係数はAPI側だけが正本。
-    // APIが返した重み付き合計順をブラウザで単純加算して上書きしない。
-    return songs;
-  }
-  if (sort === 'YoutubeViews' || sort === 'NicoViews') {
-    return [...songs].sort((a, b) => {
-      if (sort === 'YoutubeViews') return dir * ((a.youtubeViews ?? 0) - (b.youtubeViews ?? 0));
-      if (sort === 'NicoViews')   return dir * ((a.nicoViews ?? 0) - (b.nicoViews ?? 0));
-      return 0;
-    });
-  }
-  // VocaDB APIソート: APIは常に降順なので昇順の場合は配列を反転
-  if (order === 'asc') return [...songs].reverse();
-  return songs;
-}
-
-function normalizeExactSearchText(value: string): string {
-  return value.normalize('NFKC').trim().replace(/\s+/g, ' ').toLocaleLowerCase('ja-JP');
-}
-
-/** 自動検索で、推測したP名より優先すべき完全一致の曲名があるかを判定する。 */
-export function hasExactSongTitleMatch(songs: readonly Song[], query: string): boolean {
-  const normalizedQuery = normalizeExactSearchText(query);
-  if (!normalizedQuery) return false;
-  return songs.some(song => [song.name, song.defaultName]
-    .some(title => normalizeExactSearchText(title) === normalizedQuery));
-}
-
-export interface VocalistFilter {
-  id: number;
-  name: string;
-  variantGroup?: string;
-}
-
-export interface AdvancedSearchFilters {
-  publishYearFrom: string;
-  publishYearTo: string;
-  lengthMinSeconds: string;
-  lengthMaxSeconds: string;
-  pvService: 'any' | 'youtube' | 'niconico' | 'both';
-  audioComputed: 'any' | 'yes' | 'no';
-  minYoutubeViews: string;
-  maxYoutubeViews: string;
-  minNicoViews: string;
-  maxNicoViews: string;
-  minFavoritedTimes: string;
-  maxFavoritedTimes: string;
-  includedSongTypes: SongType[];
-  tagFilters: { id: number; name: string }[];
-  tagMatchMode: 'all' | 'any';
-  creditArtist: { id: number; name: string } | null;
-  creditRole: string;
-}
-
-// PostgreSQLのdate型が扱える上限と、DBのlength_seconds(int)に合わせる。
-export const ADVANCED_SEARCH_LIMITS = {
-  publishYearMin: 1,
-  publishYearMax: 5_874_896,
-  lengthMinSeconds: 0,
-  lengthMaxSeconds: 2_147_483_647,
-  viewCountMin: 0,
-  viewCountMax: Number.MAX_SAFE_INTEGER,
-  favoriteCountMin: 0,
-  favoriteCountMax: 2_147_483_647,
-} as const;
-
-export const DEFAULT_ADVANCED_FILTERS: AdvancedSearchFilters = {
-  publishYearFrom: '',
-  publishYearTo: '',
-  lengthMinSeconds: '',
-  lengthMaxSeconds: '',
-  pvService: 'any',
-  audioComputed: 'any',
-  minYoutubeViews: '',
-  maxYoutubeViews: '',
-  minNicoViews: '',
-  maxNicoViews: '',
-  minFavoritedTimes: '',
-  maxFavoritedTimes: '',
-  includedSongTypes: [],
-  tagFilters: [],
-  tagMatchMode: 'all',
-  creditArtist: null,
-  creditRole: '',
-};
-
-export function sanitizeAdvancedIntegerInput(value: string, min: number, max: number): string {
-  const trimmed = value.trim();
-  if (trimmed === '') return '';
-  if (!/^\d+$/.test(trimmed)) return '';
-  const numeric = Number(trimmed);
-  if (!Number.isSafeInteger(numeric)) return String(max);
-  return String(Math.min(max, Math.max(min, numeric)));
-}
-
-function validateAdvancedInteger(value: string, label: string, min: number, max: number): string | null {
-  const trimmed = value.trim();
-  if (trimmed === '') return null;
-  if (!/^\d+$/.test(trimmed)) return `${label}は${min}以上${max.toLocaleString()}以下の整数で指定してください。`;
-  const numeric = Number(trimmed);
-  if (!Number.isSafeInteger(numeric) || numeric < min || numeric > max) {
-    return `${label}は${min}以上${max.toLocaleString()}以下の整数で指定してください。`;
-  }
-  return null;
-}
-
-export function validateAdvancedSearchFilters(filters: AdvancedSearchFilters): string | null {
-  const yearFromError = validateAdvancedInteger(
-    filters.publishYearFrom,
-    '投稿年',
-    ADVANCED_SEARCH_LIMITS.publishYearMin,
-    ADVANCED_SEARCH_LIMITS.publishYearMax,
-  );
-  if (yearFromError) return yearFromError;
-  const yearToError = validateAdvancedInteger(
-    filters.publishYearTo,
-    '投稿年',
-    ADVANCED_SEARCH_LIMITS.publishYearMin,
-    ADVANCED_SEARCH_LIMITS.publishYearMax,
-  );
-  if (yearToError) return yearToError;
-  const lengthFromError = validateAdvancedInteger(
-    filters.lengthMinSeconds,
-    '曲の長さ',
-    ADVANCED_SEARCH_LIMITS.lengthMinSeconds,
-    ADVANCED_SEARCH_LIMITS.lengthMaxSeconds,
-  );
-  if (lengthFromError) return lengthFromError;
-  const lengthToError = validateAdvancedInteger(
-    filters.lengthMaxSeconds,
-    '曲の長さ',
-    ADVANCED_SEARCH_LIMITS.lengthMinSeconds,
-    ADVANCED_SEARCH_LIMITS.lengthMaxSeconds,
-  );
-  if (lengthToError) return lengthToError;
-  for (const [value, label, max] of [
-    [filters.minYoutubeViews, 'YouTube再生数', ADVANCED_SEARCH_LIMITS.viewCountMax],
-    [filters.maxYoutubeViews, 'YouTube再生数', ADVANCED_SEARCH_LIMITS.viewCountMax],
-    [filters.minNicoViews, 'ニコニコ再生数', ADVANCED_SEARCH_LIMITS.viewCountMax],
-    [filters.maxNicoViews, 'ニコニコ再生数', ADVANCED_SEARCH_LIMITS.viewCountMax],
-    [filters.minFavoritedTimes, 'VocaDB支持数', ADVANCED_SEARCH_LIMITS.favoriteCountMax],
-    [filters.maxFavoritedTimes, 'VocaDB支持数', ADVANCED_SEARCH_LIMITS.favoriteCountMax],
-  ] as const) {
-    const error = validateAdvancedInteger(value, label, 0, max);
-    if (error) return error;
-  }
-
-  const yearFrom = filters.publishYearFrom.trim() ? Number(filters.publishYearFrom) : null;
-  const yearTo = filters.publishYearTo.trim() ? Number(filters.publishYearTo) : null;
-  if (yearFrom !== null && yearTo !== null && yearFrom > yearTo) return '投稿年の開始値は終了値以下にしてください。';
-  const lengthFrom = filters.lengthMinSeconds.trim() ? Number(filters.lengthMinSeconds) : null;
-  const lengthTo = filters.lengthMaxSeconds.trim() ? Number(filters.lengthMaxSeconds) : null;
-  if (lengthFrom !== null && lengthTo !== null && lengthFrom > lengthTo) return '曲の長さの開始値は終了値以下にしてください。';
-  const ranges: [string, string, string][] = [
-    [filters.minYoutubeViews, filters.maxYoutubeViews, 'YouTube再生数'],
-    [filters.minNicoViews, filters.maxNicoViews, 'ニコニコ再生数'],
-    [filters.minFavoritedTimes, filters.maxFavoritedTimes, 'VocaDB支持数'],
-  ];
-  for (const [from, to, label] of ranges) {
-    if (from && to && Number(from) > Number(to)) return `${label}の開始値は終了値以下にしてください。`;
-  }
-  return null;
-}
-
-function hasAdvancedFilters(filters: AdvancedSearchFilters): boolean {
-  return filters.publishYearFrom.trim() !== ''
-    || filters.publishYearTo.trim() !== ''
-    || filters.lengthMinSeconds.trim() !== ''
-    || filters.lengthMaxSeconds.trim() !== ''
-    || filters.pvService !== 'any'
-    || filters.audioComputed !== 'any'
-    || filters.minYoutubeViews !== ''
-    || filters.maxYoutubeViews !== ''
-    || filters.minNicoViews !== ''
-    || filters.maxNicoViews !== ''
-    || filters.minFavoritedTimes !== ''
-    || filters.maxFavoritedTimes !== ''
-    || filters.includedSongTypes.length > 0
-    || filters.tagFilters.length > 0
-    || filters.creditArtist !== null;
-}
-
-function requestedSongTypes(songTypeFilter: 'All' | 'Original', filters: AdvancedSearchFilters): SongType[] | undefined {
-  if (filters.includedSongTypes.length > 0) return filters.includedSongTypes;
-  return songTypeFilter === 'Original' ? ['Original'] : undefined;
-}
-
-export function hasGlobalSongFilters(settings: GlobalFilterSettings): boolean {
-  return settings.enabled
-    && (settings.minYoutubeViews > 0
-      || settings.minNicoViews > 0
-      || settings.excludedSongTypes.length > 0
-      || settings.vocalistFilters.length > 0);
-}
-
-function getGlobalVocalistGroups(settings: GlobalFilterSettings): number[][] {
-  if (!settings.enabled || settings.vocalistFilters.length === 0) return [];
-  if (settings.vocalistMatchMode === 'Any') {
-    return [[...new Set(settings.vocalistFilters.map(filter => filter.id))]];
-  }
-  const groups: number[][] = [];
-  const variants = new Map<string, number[]>();
-  for (const filter of settings.vocalistFilters) {
-    if (!filter.variantGroup) {
-      groups.push([filter.id]);
-      continue;
-    }
-    const group = variants.get(filter.variantGroup) ?? [];
-    group.push(filter.id);
-    variants.set(filter.variantGroup, group);
-  }
-  groups.push(...variants.values());
-  return groups;
-}
-
-function getSearchErrorMessage(error: unknown, requiresBackend: boolean): string {
-  if (error instanceof Error && (error.message.includes('指定してください') || error.message.includes('以下にしてください'))) return error.message;
-  if (requiresBackend) {
-    return 'SBCのデータサービスに接続できないため、詳細検索と外部再生数順は現在利用できません。';
-  }
-  return error instanceof Error ? error.message : '検索中にエラーが発生しました';
-}
+import { refreshSearchRandomSeed, searchSongsBackend } from '../search/searchBackendClient';
+import {
+  DEFAULT_ADVANCED_FILTERS,
+  LOCAL_SORT_RULES,
+  applyLocalSort,
+  getSearchErrorMessage,
+  hasAdvancedFilters,
+  hasExactSongTitleMatch,
+  hasGlobalSongFilters,
+  requestedSongTypes,
+  type AdvancedSearchFilters,
+  type ExtendedSortRule,
+  type SortOrder,
+  type VocalistFilter,
+} from '../search/searchModel';
+export {
+  ADVANCED_SEARCH_LIMITS,
+  DEFAULT_ADVANCED_FILTERS,
+  LOCAL_SORT_RULES,
+  applyLocalSort,
+  hasExactSongTitleMatch,
+  hasGlobalSongFilters,
+  sanitizeAdvancedIntegerInput,
+  validateAdvancedSearchFilters,
+} from '../search/searchModel';
+export type {
+  AdvancedSearchFilters,
+  ExtendedSortRule,
+  LocalSortRule,
+  SortOrder,
+  VocalistFilter,
+} from '../search/searchModel';
+export { searchSongsBackend } from '../search/searchBackendClient';
 
 interface SearchState {
   // 検索パラメータ
@@ -307,127 +100,6 @@ let searchGeneration = 0;
 function toApiSort(sort: ExtendedSortRule): SongSortRule {
   if (LOCAL_SORT_RULES.has(sort)) return 'FavoritedTimes';
   return sort as SongSortRule;
-}
-
-/** バックエンドのカスタム検索APIを呼び出す */
-export async function searchSongsBackend(params: {
-  query?: string;
-  artistIds?: number[];
-  artistRole?: string;
-  anyArtistIds?: number[];
-  artistIdGroups?: number[][];
-  songTypes?: SongType[];
-  sort: ExtendedSortRule;
-  sortOrder: SortOrder;
-  start: number;
-  maxResults: number;
-  filters?: AdvancedSearchFilters;
-  globalFilters?: GlobalFilterSettings;
-  discoveryOnly?: boolean;
-}): Promise<{ items: Song[]; totalCount: number }> {
-  const startedAt = performanceNow();
-  const validationError = params.filters ? validateAdvancedSearchFilters(params.filters) : null;
-  if (validationError) throw new Error(validationError);
-  const qs = new URLSearchParams();
-  if (params.query) qs.set('query', params.query);
-  if (params.artistIds && params.artistIds.length > 0) qs.set('artistIds', params.artistIds.join(','));
-  if (params.artistRole) qs.set('artistRole', params.artistRole);
-  if (params.anyArtistIds && params.anyArtistIds.length > 0) qs.set('anyArtistIds', params.anyArtistIds.join(','));
-  const artistIdGroups = [
-    ...(params.artistIdGroups ?? []),
-    ...(params.globalFilters ? getGlobalVocalistGroups(params.globalFilters) : []),
-  ];
-  if (artistIdGroups.length > 0) {
-    qs.set('artistIdGroups', artistIdGroups.map(group => group.join(',')).join('|'));
-  }
-  if (params.globalFilters?.enabled
-    && params.globalFilters.vocalistMatchMode === 'Exact'
-    && params.globalFilters.vocalistFilters.length > 0) {
-    qs.set('exactVocalistIds', [...new Set(params.globalFilters.vocalistFilters.map(filter => filter.id))].join(','));
-  }
-  if (params.songTypes && params.songTypes.length > 0) qs.set('songTypes', params.songTypes.join(','));
-  qs.set('sort', params.sort);
-  qs.set('order', params.sortOrder);
-  qs.set('start', params.start.toString());
-  qs.set('maxResults', params.maxResults.toString());
-  qs.set('onlyWithPVs', 'true');
-  if (params.discoveryOnly) qs.set('discoveryOnly', 'true');
-  if (params.filters) {
-    const f = params.filters;
-    if (f.publishYearFrom.trim()) qs.set('publishYearFrom', f.publishYearFrom.trim());
-    if (f.publishYearTo.trim()) qs.set('publishYearTo', f.publishYearTo.trim());
-    if (f.lengthMinSeconds.trim()) qs.set('lengthMinSeconds', f.lengthMinSeconds.trim());
-    if (f.lengthMaxSeconds.trim()) qs.set('lengthMaxSeconds', f.lengthMaxSeconds.trim());
-    if (f.pvService !== 'any') qs.set('pvService', f.pvService);
-    if (f.audioComputed !== 'any') qs.set('audioComputed', f.audioComputed);
-    if (f.minYoutubeViews) qs.set('minYoutubeViews', f.minYoutubeViews);
-    if (f.maxYoutubeViews) qs.set('maxYoutubeViews', f.maxYoutubeViews);
-    if (f.minNicoViews) qs.set('minNicoViews', f.minNicoViews);
-    if (f.maxNicoViews) qs.set('maxNicoViews', f.maxNicoViews);
-    if (f.minFavoritedTimes) qs.set('minFavoritedTimes', f.minFavoritedTimes);
-    if (f.maxFavoritedTimes) qs.set('maxFavoritedTimes', f.maxFavoritedTimes);
-    if (f.tagFilters.length > 0) {
-      qs.set('tagIds', f.tagFilters.map(tag => tag.id).join(','));
-      qs.set('tagMatchMode', f.tagMatchMode);
-    }
-    if (f.creditArtist) {
-      qs.set('creditArtistId', f.creditArtist.id.toString());
-      if (f.creditRole) qs.set('creditArtistRole', f.creditRole);
-    }
-  }
-  if (params.sort === 'Random') qs.set('randomSeed', searchRandomSeed.toString());
-  if (params.globalFilters && hasGlobalSongFilters(params.globalFilters)) {
-    const f = params.globalFilters;
-    if (f.minYoutubeViews > 0) qs.set('minYoutubeViews', Math.max(Number(qs.get('minYoutubeViews') || 0), f.minYoutubeViews).toString());
-    if (f.minNicoViews > 0) qs.set('minNicoViews', Math.max(Number(qs.get('minNicoViews') || 0), f.minNicoViews).toString());
-    if (f.excludedSongTypes.length > 0) qs.set('excludeSongTypes', f.excludedSongTypes.join(','));
-  }
-  for (const [minimumKey, maximumKey] of [
-    ['minYoutubeViews', 'maxYoutubeViews'],
-    ['minNicoViews', 'maxNicoViews'],
-  ] as const) {
-    const minimum = Number(qs.get(minimumKey) || 0);
-    const maximumText = qs.get(maximumKey);
-    if (maximumText && minimum > Number(maximumText)) return { items: [], totalCount: 0 };
-  }
-
-  const url = `${RECOMMENDER_API}/api/songs/search?${qs.toString()}`;
-  const segments: PerformanceSegment[] = [];
-  const { value, status } = await backendSearchCache.get<{
-    data: { items: Song[]; totalCount: number };
-    serverTiming: PerformanceSegment[];
-    serverCache?: string;
-  }>(url, async () => {
-    const fetchStartedAt = performanceNow();
-    const res = await fetch(url);
-    const responseAt = performanceNow();
-    if (!res.ok) throw new Error('Search failed');
-    const data: { items: Song[]; totalCount: number } = await res.json();
-    const parsedAt = performanceNow();
-    segments.push(
-      { name: 'network', durationMs: responseAt - fetchStartedAt },
-      { name: 'parse', durationMs: parsedAt - responseAt },
-    );
-    return {
-      data,
-      serverTiming: parseServerTiming(res.headers?.get?.('Server-Timing') ?? null),
-      serverCache: res.headers?.get?.('X-Diva-Search-Cache') ?? undefined,
-    };
-  });
-  recordPerformanceMetric({
-    name: 'search.backend',
-    startedAt,
-    segments: [...segments, ...value.serverTiming],
-    detail: {
-      cache: status,
-      serverCache: value.serverCache,
-      query: params.query || '',
-      start: params.start,
-      count: value.data.items.length,
-      totalCount: value.data.totalCount,
-    },
-  });
-  return value.data;
 }
 
 async function searchSongsPreferBackend(params: {
@@ -661,7 +333,7 @@ export const useSearchStore = create<SearchState>((set, get) => ({
   setQuery: (query: string) => set({ query, resolvedArtistId: null, artistRole: null }),
 
   setSort: (sort: ExtendedSortRule) => {
-    if (sort === 'Random') searchRandomSeed = Math.floor(Math.random() * 2_147_483_647);
+    if (sort === 'Random') refreshSearchRandomSeed();
     set({ sort });
   },
   setSortOrder: (order: SortOrder) => set({ sortOrder: order }),
