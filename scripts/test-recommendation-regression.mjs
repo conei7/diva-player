@@ -376,6 +376,7 @@ async function main() {
     const counts = endpointCounts.get(endpoint);
     return `${endpoint} n=${counts.length} nonEmpty=${nonEmptyByEndpoint.get(endpoint)} avg=${Math.round(counts.reduce((sum, count) => sum + count, 0) / counts.length)}`;
   });
+  console.log(`PASS representative seeds (${seeds.map(seed => `${seed.group}:${seed.id}`).join(', ')})`);
   console.log(`PASS recommendation regression (${summary.join('; ')})`);
   console.log(`PASS recommendation latency (p95=${p95}ms, max=${maxLatencyMs}ms)`);
   console.log(`PASS Dig discovery (${digItems.length} candidates, latency=${digResult.elapsedMs}ms, generationOverlap=${digGenerationOverlap.toFixed(2)}, producerShare=${digMaxProducerShare.toFixed(2)})`);
