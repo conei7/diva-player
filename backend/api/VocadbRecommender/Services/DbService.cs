@@ -1150,7 +1150,7 @@ public class DbService
             return cached;
 
         await using var conn = await OpenAsync();
-        await using var cmd = new NpgsqlCommand(@"
+        await using var cmd = new NpgsqlCommand($@"
             WITH seed AS (
                 SELECT s.id, s.song_type, s.publish_date, sf.state_cluster
                 FROM songs s
