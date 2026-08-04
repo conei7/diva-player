@@ -50,6 +50,13 @@ async function runViewport(page, baseUrl, width, height) {
     `${label} settings tabs are invalid: ${JSON.stringify(tabs)}`);
   await assertDialogFits(page, `${label} settings dialog`, '[role="dialog"][aria-label="設定"]');
 
+  const vocalistFilterUi = await page.$eval('[role="dialog"][aria-label="設定"]', dialog => ({
+    hasTitle: dialog.textContent?.includes('グローバル表示フィルター') ?? false,
+    hasSearch: dialog.querySelector('input[aria-label="グローバル歌手フィルターを検索"]') !== null,
+  }));
+  assert(vocalistFilterUi.hasTitle && vocalistFilterUi.hasSearch,
+    `${label} global vocalist filter UI is incomplete: ${JSON.stringify(vocalistFilterUi)}`);
+
   const initialHintState = await page.$$eval('.setting-row', rows => {
     const row = rows.find(element => element.textContent?.includes('選曲ヒント'));
     return row?.querySelector('input[type="checkbox"]')?.checked ?? null;

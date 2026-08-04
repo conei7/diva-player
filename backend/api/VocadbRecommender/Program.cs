@@ -576,6 +576,14 @@ app.MapPost("/api/recommend/dig", async (
         return Results.BadRequest("offset must be between 0 and 10000");
     if (request.ExcludeSongIds?.Count > 500)
         return Results.BadRequest("excludeSongIds must contain at most 500 items");
+    if (request.MinYoutubeViews < 0 || request.MinNicoViews < 0)
+        return Results.BadRequest("view thresholds must be non-negative");
+    if (request.ExcludedSongTypes?.Count > 20 || request.VocalistFilters?.Count > 50)
+        return Results.BadRequest("global filters are too large");
+    if (request.VocalistFilters?.Any(filter => filter.Id <= 0) == true)
+        return Results.BadRequest("vocalist ids must be positive");
+    if (request.VocalistMatchMode is not ("Any" or "All" or "Exact"))
+        return Results.BadRequest("unknown vocalist match mode");
 
     var excluded = request.ExcludeSongIds?.Where(id => id > 0).ToHashSet() ?? [];
     var validSeeds = (request.Seeds ?? [])
@@ -583,6 +591,27 @@ app.MapPost("/api/recommend/dig", async (
         .GroupBy(seed => seed.SongId)
         .Select(group => new RecommendSeed(group.Key, Math.Min(1.0, group.Max(seed => seed.Weight))))
         .ToList();
+    var validSongTypes = new HashSet<string>(StringComparer.Ordinal)
+    {
+        "Original", "Remaster", "Remix", "Cover", "Arrangement", "Instrumental",
+        "Mashup", "MusicPV", "DramaPV", "Other", "Unspecified"
+    };
+    var excludedSongTypes = (request.ExcludedSongTypes ?? [])
+        .Where(validSongTypes.Contains)
+        .ToHashSet(StringComparer.Ordinal);
+    var vocalistFilters = request.VocalistFilters ?? [];
+    var vocalistGroups = request.VocalistMatchMode == "Any"
+        ? (vocalistFilters.Count > 0 ? new[] { vocalistFilters.Select(filter => filter.Id).Distinct().ToArray() } : [])
+        : vocalistFilters
+            .GroupBy(filter => string.IsNullOrWhiteSpace(filter.VariantGroup) ? $"id:{filter.Id}" : $"group:{filter.VariantGroup}")
+            .Select(group => group.Select(filter => filter.Id).Distinct().ToArray())
+            .ToArray();
+    var globalFilters = new DigGlobalFilterSettings(
+        request.MinYoutubeViews,
+        request.MinNicoViews,
+        excludedSongTypes,
+        vocalistGroups,
+        request.VocalistMatchMode);
     // FavoriteProducerIds remains accepted for wire compatibility with older
     // clients, but Dig deliberately uses no producer/catalog candidate source.
     var discovery = await dig.DiscoverAsync(
@@ -590,7 +619,8 @@ app.MapPost("/api/recommend/dig", async (
         excluded,
         request.GenerationSeed,
         request.Count,
-        request.Offset);
+        request.Offset,
+        globalFilters);
     var orderedIds = discovery.SongIds;
     var songsById = await db.GetSongsJsonByIdsAsync(orderedIds);
     var items = orderedIds
@@ -688,6 +718,7 @@ app.MapGet("/api/songs/search", async (
     string? artistIds,
     string? anyArtistIds,
     string? artistIdGroups,
+    string? exactVocalistIds,
     string? artistRole,
     string? songTypes,
     string sort,
@@ -727,6 +758,7 @@ app.MapGet("/api/songs/search", async (
     if (artistIds is { Length: > maxFilterStringLength }
         || anyArtistIds is { Length: > maxFilterStringLength }
         || artistIdGroups is { Length: > maxFilterStringLength }
+        || exactVocalistIds is { Length: > maxFilterStringLength }
         || songTypes is { Length: > maxFilterStringLength }
         || tagIds is { Length: > maxFilterStringLength }
         || excludeSongTypes is { Length: > maxFilterStringLength })
@@ -760,9 +792,11 @@ app.MapGet("/api/songs/search", async (
         return Results.BadRequest(new { error = "anyArtistIds must be comma-separated integers" });
     if (!TryParseIntegerGroups(artistIdGroups, out var aIdGroups))
         return Results.BadRequest(new { error = "artistIdGroups must contain pipe-separated integer lists" });
+    if (!TryParseIntegerList(exactVocalistIds, out var exactVIds))
+        return Results.BadRequest(new { error = "exactVocalistIds must be comma-separated integers" });
     if (!TryParseIntegerList(tagIds, out var parsedTagIds))
         return Results.BadRequest(new { error = "tagIds must be comma-separated integers" });
-    if (aIds.Count > maxSearchArtistIds || anyAIds.Count > maxSearchArtistIds)
+    if (aIds.Count > maxSearchArtistIds || anyAIds.Count > maxSearchArtistIds || exactVIds.Count > maxSearchArtistIds)
         return Results.BadRequest(new { error = "artist id filters are too large" });
     if (aIdGroups.Count > maxSearchArtistGroups || aIdGroups.Any(group => group.Count > maxSearchArtistIds))
         return Results.BadRequest(new { error = "artist id groups are too large" });
@@ -824,7 +858,8 @@ app.MapGet("/api/songs/search", async (
         normalizedTagMatchMode,
         creditArtistId,
         creditArtistRole,
-        randomSeed ?? 0
+        randomSeed ?? 0,
+        exactVIds
     );
     requestStopwatch.Stop();
     static string Duration(long milliseconds) => milliseconds.ToString(CultureInfo.InvariantCulture);
@@ -928,8 +963,15 @@ public record DigRecommendRequest(
     int Count = 100,
     int Offset = 0,
     int GenerationSeed = 0,
-    List<int>? ExcludeSongIds = null
+    List<int>? ExcludeSongIds = null,
+    long MinYoutubeViews = 0,
+    long MinNicoViews = 0,
+    List<string>? ExcludedSongTypes = null,
+    List<DigVocalistFilter>? VocalistFilters = null,
+    string VocalistMatchMode = "Any"
 );
+
+public record DigVocalistFilter(int Id, string? VariantGroup = null);
 
 public record HealthPayload(
     string status,

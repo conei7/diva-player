@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
-import type { SongType } from '../types/vocadb';
+import type { SongType, VocalistMatchMode } from '../types/vocadb';
 
 export const SONG_TYPES: SongType[] = [
   'Original',
@@ -21,8 +21,16 @@ export interface GlobalFilterSettings {
   minYoutubeViews: number;
   minNicoViews: number;
   excludedSongTypes: SongType[];
+  vocalistFilters: GlobalVocalistFilter[];
+  vocalistMatchMode: VocalistMatchMode;
   cooldownHours: number;
   excludeRatedFromDiscovery: boolean;
+}
+
+export interface GlobalVocalistFilter {
+  id: number;
+  name: string;
+  variantGroup?: string;
 }
 
 export interface GlobalFilterState extends GlobalFilterSettings {
@@ -35,11 +43,13 @@ export const DEFAULT_GLOBAL_FILTER_SETTINGS: GlobalFilterSettings = {
   minYoutubeViews: 0,
   minNicoViews: 0,
   excludedSongTypes: [],
+  vocalistFilters: [],
+  vocalistMatchMode: 'Any',
   cooldownHours: 0,
   excludeRatedFromDiscovery: false,
 };
 
-const STORAGE_VERSION = 1;
+const STORAGE_VERSION = 2;
 
 const memoryStorage = new Map<string, string>();
 const safeStorage: Storage = {
@@ -63,6 +73,29 @@ function normalizeNonNegativeInteger(value: unknown, fallback: number): number {
     : fallback;
 }
 
+function normalizeVocalistFilters(value: unknown): GlobalVocalistFilter[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<number>();
+  const normalized: GlobalVocalistFilter[] = [];
+  for (const item of value) {
+    if (typeof item !== 'object' || item === null) continue;
+    const candidate = item as Partial<GlobalVocalistFilter>;
+    if (!Number.isSafeInteger(candidate.id) || (candidate.id ?? 0) <= 0 || typeof candidate.name !== 'string') continue;
+    const id = candidate.id as number;
+    const name = candidate.name.trim();
+    if (!name || seen.has(id)) continue;
+    seen.add(id);
+    normalized.push({
+      id,
+      name,
+      ...(typeof candidate.variantGroup === 'string' && candidate.variantGroup.trim()
+        ? { variantGroup: candidate.variantGroup.trim() }
+        : {}),
+    });
+  }
+  return normalized.slice(0, 50);
+}
+
 export function normalizeGlobalFilterSettings(value: unknown): GlobalFilterSettings {
   const source = typeof value === 'object' && value !== null ? value as Partial<GlobalFilterSettings> : {};
   const excludedSongTypes = Array.isArray(source.excludedSongTypes)
@@ -73,6 +106,10 @@ export function normalizeGlobalFilterSettings(value: unknown): GlobalFilterSetti
     minYoutubeViews: normalizeNonNegativeInteger(source.minYoutubeViews, 0),
     minNicoViews: normalizeNonNegativeInteger(source.minNicoViews, 0),
     excludedSongTypes,
+    vocalistFilters: normalizeVocalistFilters(source.vocalistFilters),
+    vocalistMatchMode: source.vocalistMatchMode === 'All' || source.vocalistMatchMode === 'Exact'
+      ? source.vocalistMatchMode
+      : 'Any',
     cooldownHours: normalizeNonNegativeInteger(source.cooldownHours, 0),
     excludeRatedFromDiscovery: source.excludeRatedFromDiscovery === true,
   };
@@ -99,6 +136,8 @@ export const useGlobalFilterStore = create<GlobalFilterState>()(
         minYoutubeViews: state.minYoutubeViews,
         minNicoViews: state.minNicoViews,
         excludedSongTypes: state.excludedSongTypes,
+        vocalistFilters: state.vocalistFilters,
+        vocalistMatchMode: state.vocalistMatchMode,
         cooldownHours: state.cooldownHours,
         excludeRatedFromDiscovery: state.excludeRatedFromDiscovery,
       }),
@@ -107,6 +146,12 @@ export const useGlobalFilterStore = create<GlobalFilterState>()(
 );
 
 export function getGlobalFilterSettings(): GlobalFilterSettings {
-  const { enabled, minYoutubeViews, minNicoViews, excludedSongTypes, cooldownHours, excludeRatedFromDiscovery } = useGlobalFilterStore.getState();
-  return { enabled, minYoutubeViews, minNicoViews, excludedSongTypes, cooldownHours, excludeRatedFromDiscovery };
+  const {
+    enabled, minYoutubeViews, minNicoViews, excludedSongTypes,
+    vocalistFilters, vocalistMatchMode, cooldownHours, excludeRatedFromDiscovery,
+  } = useGlobalFilterStore.getState();
+  return {
+    enabled, minYoutubeViews, minNicoViews, excludedSongTypes,
+    vocalistFilters, vocalistMatchMode, cooldownHours, excludeRatedFromDiscovery,
+  };
 }

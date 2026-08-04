@@ -164,6 +164,7 @@ export async function generateDigPlaylist(
       serverExclusions,
       page * DIG_PAGE_SIZE,
       generationSeed,
+      input.globalFilters,
     );
     if (pageSongs.length === 0) break;
     const filtered = filterDigCandidates(pageSongs, knownIds, input.globalFilters)

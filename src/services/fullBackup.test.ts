@@ -99,6 +99,11 @@ describe('parseFullBackup', () => {
             minYoutubeViews: 10_000,
             minNicoViews: 0,
             excludedSongTypes: ['Remix'],
+            vocalistFilters: [
+              { id: 1, name: '初音ミク', variantGroup: 'miku' },
+              { id: 2, name: '初音ミク Append', variantGroup: 'miku' },
+            ],
+            vocalistMatchMode: 'Exact',
             cooldownHours: 24,
             excludeRatedFromDiscovery: true,
           },
@@ -108,6 +113,11 @@ describe('parseFullBackup', () => {
 
     expect(preview?.preferencesIncluded).toBe(true);
     expect(preview?.parsed.sections.preferences?.globalFilters.minYoutubeViews).toBe(10_000);
+    expect(preview?.parsed.sections.preferences?.globalFilters.vocalistFilters).toEqual([
+      { id: 1, name: '初音ミク', variantGroup: 'miku' },
+      { id: 2, name: '初音ミク Append', variantGroup: 'miku' },
+    ]);
+    expect(preview?.parsed.sections.preferences?.globalFilters.vocalistMatchMode).toBe('Exact');
   });
 
   it('accepts v3 favorite producer preferences', () => {

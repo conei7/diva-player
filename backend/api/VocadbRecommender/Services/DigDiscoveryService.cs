@@ -29,7 +29,8 @@ public sealed class DigDiscoveryService
         IReadOnlySet<int> excludedSongIds,
         int generationSeed,
         int count,
-        int offset)
+        int offset,
+        DigGlobalFilterSettings? globalFilters = null)
     {
         var selectedSeeds = await SelectSeedsAsync(rawSeeds, generationSeed);
         var scores = new Dictionary<int, double>();
@@ -70,7 +71,9 @@ public sealed class DigDiscoveryService
 
         var infos = await _db.GetSongInfoBatchAsync(scores.Keys);
         var eligibleInfos = infos
-            .Where(info => DiscoveryEligibility.IsEligible(info) && info.HasAudioFeatures)
+            .Where(info => DiscoveryEligibility.IsEligible(info)
+                && info.HasAudioFeatures
+                && MatchesGlobalFilters(info, globalFilters))
             .ToDictionary(info => info.Id);
         var eligibleScores = scores
             .Where(entry => eligibleInfos.ContainsKey(entry.Key))
@@ -214,6 +217,25 @@ public sealed class DigDiscoveryService
         return 0.90 + normalized * 0.20;
     }
 
+    private static bool MatchesGlobalFilters(SongInfo info, DigGlobalFilterSettings? settings)
+    {
+        if (settings is null) return true;
+        if (settings.MinYoutubeViews > 0 && info.YoutubeViews < settings.MinYoutubeViews) return false;
+        if (settings.MinNicoViews > 0 && info.NicoViews < settings.MinNicoViews) return false;
+        if (settings.ExcludedSongTypes.Contains(info.SongType)) return false;
+        if (settings.VocalistGroups.Count == 0) return true;
+
+        var vocalistIds = info.VocalistIds.ToHashSet();
+        var matches = settings.VocalistGroups
+            .Select(group => group.Any(vocalistIds.Contains))
+            .ToArray();
+        if (settings.VocalistMatchMode == "Any") return matches.Any(match => match);
+        if (matches.Any(match => !match)) return false;
+        if (settings.VocalistMatchMode != "Exact") return true;
+        var allowedIds = settings.VocalistGroups.SelectMany(group => group).ToHashSet();
+        return vocalistIds.All(allowedIds.Contains);
+    }
+
     private static double WeightedRandomKey(int seed, int id, double weight) =>
         -Math.Log(Math.Max(1e-12, SeededUnit(seed ^ 0x51ed270b, id))) / Math.Max(0.05, weight);
 
@@ -231,3 +253,10 @@ public sealed class DigDiscoveryService
 }
 
 public sealed record DigDiscoveryResult(int[] SongIds, int TotalCount);
+
+public sealed record DigGlobalFilterSettings(
+    long MinYoutubeViews,
+    long MinNicoViews,
+    IReadOnlySet<string> ExcludedSongTypes,
+    IReadOnlyList<int[]> VocalistGroups,
+    string VocalistMatchMode);

@@ -30,6 +30,8 @@ import {
   applyDiscoveryFilterWithRelaxation,
   applyGlobalSongFilter,
   getDiscoveryRelaxationMessage,
+  isDiscoveryFilterActive,
+  isGlobalSongFilterActive,
   requiresExternalViewCounts,
 } from '../utils/globalFilters';
 import { useFavoriteProducerStore } from '../stores/favoriteProducerStore';
@@ -111,6 +113,8 @@ export default function HomePage() {
     minYoutubeViews: state.minYoutubeViews,
     minNicoViews: state.minNicoViews,
     excludedSongTypes: state.excludedSongTypes,
+    vocalistFilters: state.vocalistFilters,
+    vocalistMatchMode: state.vocalistMatchMode,
     cooldownHours: state.cooldownHours,
     excludeRatedFromDiscovery: state.excludeRatedFromDiscovery,
   })));
@@ -692,6 +696,11 @@ export default function HomePage() {
       <VideoGrid
         songs={displaySongs}
         loading={hasSearched ? searchLoading : loading}
+        emptyMessage={(hasSearched
+          ? isGlobalSongFilterActive(globalFilterSettings)
+          : isDiscoveryFilterActive(globalFilterSettings))
+          ? '現在の表示フィルターに一致する曲がありません。設定の「表示・発見」で条件を調整してください。'
+          : undefined}
         recommendationReasons={!isSearchMode && !isArtistMode && !hasSearched && (activeCategory === 'recommended' || activeCategory === 'trending')
           ? recommendationReasons
           : undefined}

@@ -790,6 +790,33 @@ function isSongPayload(value: unknown): value is Song {
     && typeof (value as { name?: unknown }).name === 'string';
 }
 
+export function buildDigRecommendationRequest(
+  seeds: DigRecommendationSeed[],
+  count: number,
+  excludeSongIds: number[],
+  offset: number,
+  generationSeed: number,
+  globalFilters?: GlobalFilterSettings,
+) {
+  const normalizedSeeds = seeds
+    .filter(seed => Number.isInteger(seed.songId) && seed.songId > 0 && Number.isFinite(seed.weight) && seed.weight > 0)
+    .slice(0, 24);
+  return {
+    seeds: normalizedSeeds,
+    count: Math.min(100, Math.max(1, count)),
+    offset: Math.max(0, offset),
+    generationSeed,
+    excludeSongIds: excludeSongIds.slice(0, 500),
+    minYoutubeViews: globalFilters?.enabled ? globalFilters.minYoutubeViews : 0,
+    minNicoViews: globalFilters?.enabled ? globalFilters.minNicoViews : 0,
+    excludedSongTypes: globalFilters?.enabled ? globalFilters.excludedSongTypes : [],
+    vocalistFilters: globalFilters?.enabled
+      ? globalFilters.vocalistFilters.map(filter => ({ id: filter.id, variantGroup: filter.variantGroup }))
+      : [],
+    vocalistMatchMode: globalFilters?.vocalistMatchMode ?? 'Any',
+  };
+}
+
 /** Fetches a privacy-preserving, quality-filtered discovery page for Dig. */
 export async function getDigRecommendedSongs(
   seeds: DigRecommendationSeed[],
@@ -797,22 +824,16 @@ export async function getDigRecommendedSongs(
   excludeSongIds: number[] = [],
   offset = 0,
   generationSeed = 0,
+  globalFilters?: GlobalFilterSettings,
 ): Promise<Song[]> {
-  const normalizedSeeds = seeds
-    .filter(seed => Number.isInteger(seed.songId) && seed.songId > 0 && Number.isFinite(seed.weight) && seed.weight > 0)
-    .slice(0, 24);
   if (await isRecommenderAvailable()) {
     try {
       const res = await fetch(`${RECOMMENDER_API}/api/recommend/dig`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          seeds: normalizedSeeds,
-          count: Math.min(100, Math.max(1, count)),
-          offset: Math.max(0, offset),
-          generationSeed,
-          excludeSongIds: excludeSongIds.slice(0, 500),
-        }),
+        body: JSON.stringify(buildDigRecommendationRequest(
+          seeds, count, excludeSongIds, offset, generationSeed, globalFilters,
+        )),
       });
       if (res.ok) {
         const data: DigRecommendationResponse = await res.json();

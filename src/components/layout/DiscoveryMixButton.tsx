@@ -55,7 +55,7 @@ export default function DiscoveryMixButton({
       ? `${status.count}曲を再生中`
       : '発掘ミックス';
   const detail = status.state === 'empty'
-    ? '未聴の候補が見つかりませんでした'
+    ? '未聴の候補が見つかりませんでした。表示フィルターも確認してください'
     : status.state === 'error'
       ? '生成に失敗しました'
       : '音響が近い未聴曲を直接再生';

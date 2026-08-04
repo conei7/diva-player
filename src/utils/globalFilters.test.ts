@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Song } from '../types/vocadb';
-import { DEFAULT_GLOBAL_FILTER_SETTINGS, type GlobalFilterSettings } from '../stores/globalFilterStore';
+import { DEFAULT_GLOBAL_FILTER_SETTINGS, normalizeGlobalFilterSettings, type GlobalFilterSettings } from '../stores/globalFilterStore';
 import {
   applyDiscoveryFilter,
   applyDiscoveryFilterWithRelaxation,
@@ -9,7 +9,9 @@ import {
   getGlobalFilterSummary,
   getDiscoveryRelaxationMessage,
   getGlobalSongFilterDecision,
+  filterDiscoverySourcePage,
   hasConfiguredSongFilters,
+  isDiscoveryFilterActive,
   isGlobalSongFilterActive,
   isSongType,
   matchesGlobalSongFilter,
@@ -35,7 +37,41 @@ function song(overrides: Partial<Song> = {}): Song {
   };
 }
 
+function vocalist(id: number, name = `vocalist-${id}`): NonNullable<Song['artists']>[number] {
+  return {
+    id,
+    name,
+    categories: 'Vocalist',
+    effectiveRoles: 'Default',
+    isCustomName: false,
+    isSupport: false,
+    roles: 'Default',
+    artist: {
+      id,
+      name,
+      additionalNames: '',
+      artistType: 'Vocaloid',
+      deleted: false,
+      status: 'Finished',
+      version: 1,
+    },
+  };
+}
+
 describe('global filters', () => {
+  it('migrates legacy settings and rejects invalid vocalist entries', () => {
+    expect(normalizeGlobalFilterSettings({ enabled: true, minYoutubeViews: 100 })).toMatchObject({
+      enabled: true,
+      minYoutubeViews: 100,
+      vocalistFilters: [],
+      vocalistMatchMode: 'Any',
+    });
+    expect(normalizeGlobalFilterSettings({
+      vocalistFilters: [{ id: 39, name: '初音ミク' }, { id: -1, name: 'invalid' }, { id: 39, name: 'duplicate' }],
+      vocalistMatchMode: 'Exact',
+    }).vocalistFilters).toEqual([{ id: 39, name: '初音ミク' }]);
+  });
+
   it('keeps all songs while disabled', () => {
     expect(applyGlobalSongFilter([song(), song({ id: 2, songType: 'Cover' })], DEFAULT_GLOBAL_FILTER_SETTINGS)).toHaveLength(2);
   });
@@ -53,12 +89,27 @@ describe('global filters', () => {
     expect(matchesGlobalSongFilter(song({ songType: 'Original' }), settings)).toBe(true);
   });
 
+  it('applies global vocalist Any, All, grouped variants, and Exact matching', () => {
+    const filters = [
+      { id: 10, name: 'Miku V2', variantGroup: '初音ミク' },
+      { id: 11, name: 'Miku NT', variantGroup: '初音ミク' },
+      { id: 20, name: 'Teto' },
+    ];
+    const base = { ...DEFAULT_GLOBAL_FILTER_SETTINGS, enabled: true, vocalistFilters: filters };
+    expect(matchesGlobalSongFilter(song({ artists: [vocalist(11)] }), { ...base, vocalistMatchMode: 'Any' })).toBe(true);
+    expect(matchesGlobalSongFilter(song({ artists: [vocalist(11)] }), { ...base, vocalistMatchMode: 'All' })).toBe(false);
+    expect(matchesGlobalSongFilter(song({ artists: [vocalist(11), vocalist(20)] }), { ...base, vocalistMatchMode: 'All' })).toBe(true);
+    expect(matchesGlobalSongFilter(song({ artists: [vocalist(11), vocalist(20), vocalist(30)] }), { ...base, vocalistMatchMode: 'Exact' })).toBe(false);
+    expect(getGlobalSongFilterDecision(song({ artists: [vocalist(30)] }), base)).toEqual({ accepted: false, reason: 'excluded-vocalist' });
+  });
+
   it('reports configured and active states separately', () => {
     const configured = { ...DEFAULT_GLOBAL_FILTER_SETTINGS, excludedSongTypes: ['Cover' as const] };
     expect(hasConfiguredSongFilters(configured)).toBe(true);
     expect(isGlobalSongFilterActive(configured)).toBe(false);
     expect(isGlobalSongFilterActive({ ...configured, enabled: true })).toBe(true);
     expect(getGlobalFilterSummary({ ...configured, enabled: true })).toEqual(['カバーを除外']);
+    expect(isDiscoveryFilterActive({ ...DEFAULT_GLOBAL_FILTER_SETTINGS, cooldownHours: 24 })).toBe(true);
   });
 
   it('compares saved and draft settings without depending on song type order', () => {
@@ -186,5 +237,17 @@ describe('global filters', () => {
       },
     }, 1);
     expect(result).toEqual({ items: [], relaxedConditions: [] });
+  });
+
+  it('does not relax a full source page while later pages may still contain strict matches', () => {
+    const context = {
+      settings: { ...DEFAULT_GLOBAL_FILTER_SETTINGS, enabled: true, minYoutubeViews: 1_000 },
+    };
+    const candidates = [song({ id: 1, youtubeViews: 100 }), song({ id: 2, youtubeViews: 1_000 })];
+    expect(filterDiscoverySourcePage(candidates, context, 2, false)).toEqual({
+      items: [candidates[1]],
+      relaxedConditions: [],
+    });
+    expect(filterDiscoverySourcePage(candidates, context, 2, true).items).toHaveLength(2);
   });
 });

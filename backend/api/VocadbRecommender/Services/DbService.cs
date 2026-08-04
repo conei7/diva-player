@@ -499,6 +499,7 @@ public class DbService
         int? creditArtistId = null,
         string? creditArtistRole = null,
         int randomSeed = 0,
+        List<int>? exactVocalistIds = null,
         bool forceRefresh = false)
     {
         var totalStopwatch = Stopwatch.StartNew();
@@ -531,6 +532,7 @@ public class DbService
             creditArtistId,
             creditArtistRole,
             randomSeed,
+            exactVocalistIds = exactVocalistIds is { Count: > 0 } ? exactVocalistIds : null,
             onlyWithPVs,
             excludedSongTypes = excludedSongTypes is { Count: > 0 } ? excludedSongTypes : null,
             voiceSynthOnly,
@@ -552,6 +554,7 @@ public class DbService
                             onlyWithPVs, excludedSongTypes, voiceSynthOnly, discoveryOnly,
                             maxYoutubeViews, maxNicoViews, minFavoritedTimes, maxFavoritedTimes,
                             tagIds, tagMatchMode, creditArtistId, creditArtistRole, randomSeed,
+                            exactVocalistIds,
                             forceRefresh: true);
                     }
                     catch (Exception exception)
@@ -649,6 +652,13 @@ public class DbService
                 paramValues.Add(artistIdGroup.Distinct().ToArray());
                 paramIndex++;
             }
+        }
+
+        if (exactVocalistIds != null && exactVocalistIds.Count > 0)
+        {
+            conditions.Add($"NOT EXISTS (SELECT 1 FROM song_artists sa WHERE sa.song_id = songs.id AND sa.is_vocalist AND (sa.artist_id IS NULL OR NOT (sa.artist_id = ANY(${paramIndex}))))");
+            paramValues.Add(exactVocalistIds.Distinct().ToArray());
+            paramIndex++;
         }
 
         if (publishYearFrom.HasValue)

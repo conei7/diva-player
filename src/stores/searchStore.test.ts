@@ -9,6 +9,7 @@ import {
   searchSongsBackend,
   validateAdvancedSearchFilters,
 } from './searchStore';
+import { DEFAULT_GLOBAL_FILTER_SETTINGS } from './globalFilterStore';
 
 const titleSong = (name: string, defaultName = name) => ({
   id: 1,
@@ -183,6 +184,60 @@ describe('backend artist union search', () => {
     expect(url.searchParams.get('onlyWithPVs')).toBe('true');
     expect(url.searchParams.get('discoveryOnly')).toBeNull();
     expect(result.totalCount).toBe(1608);
+  });
+
+  it('adds global vocalist groups without replacing search-specific singer constraints', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      headers: { get: () => null },
+      json: async () => ({ items: [], totalCount: 0 }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await searchSongsBackend({
+      anyArtistIds: [700, 701],
+      artistIdGroups: [[800, 801]],
+      sort: 'FavoritedTimes',
+      sortOrder: 'desc',
+      start: 0,
+      maxResults: 24,
+      globalFilters: {
+        ...DEFAULT_GLOBAL_FILTER_SETTINGS,
+        enabled: true,
+        vocalistFilters: [
+          { id: 39, name: 'Miku V2', variantGroup: '初音ミク' },
+          { id: 40, name: 'Miku NT', variantGroup: '初音ミク' },
+          { id: 50, name: '重音テト' },
+        ],
+        vocalistMatchMode: 'All',
+      },
+    });
+
+    const url = new URL(String(fetchMock.mock.calls[0]?.[0]), 'https://example.test');
+    expect(url.searchParams.get('anyArtistIds')).toBe('700,701');
+    expect(url.searchParams.get('artistIdGroups')).toBe('800,801|50|39,40');
+    expect(url.searchParams.get('exactVocalistIds')).toBeNull();
+  });
+
+  it('requests an exact backend vocalist set for global Exact matching', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      headers: { get: () => null },
+      json: async () => ({ items: [], totalCount: 0 }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    await searchSongsBackend({
+      sort: 'FavoritedTimes', sortOrder: 'desc', start: 0, maxResults: 24,
+      globalFilters: {
+        ...DEFAULT_GLOBAL_FILTER_SETTINGS,
+        enabled: true,
+        vocalistFilters: [{ id: 39, name: 'Miku' }, { id: 40, name: 'Teto' }],
+        vocalistMatchMode: 'Exact',
+      },
+    });
+    const url = new URL(String(fetchMock.mock.calls[0]?.[0]), 'https://example.test');
+    expect(url.searchParams.get('artistIdGroups')).toBe('39|40');
+    expect(url.searchParams.get('exactVocalistIds')).toBe('39,40');
   });
 
   it('encodes each logical singer group as an independent OR condition', async () => {

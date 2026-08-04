@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   DEFAULT_GLOBAL_FILTER_SETTINGS,
   SONG_TYPES,
@@ -11,16 +12,17 @@ import { usePlayerStore } from '../../stores/playerStore';
 import { useSelectionStore } from '../../stores/selectionStore';
 import { usePlayerInteractionStore } from '../../stores/playerInteractionStore';
 import { useRecommendationDisplayStore } from '../../stores/recommendationDisplayStore';
-import type { PVPreference, SongType } from '../../types/vocadb';
+import type { Artist, PVPreference, SongType } from '../../types/vocadb';
 import {
   areGlobalFilterSettingsEqual,
   getGlobalFilterSummary,
   hasConfiguredSongFilters,
-  isGlobalSongFilterActive,
+  isDiscoveryFilterActive,
   SONG_TYPE_LABELS,
 } from '../../utils/globalFilters';
 import BackupModal from './BackupModal';
 import { Link } from 'react-router';
+import { searchVocalistsByName, selectVocalistVariants } from '../../api/vocadb';
 
 /* ─── 共通UIパーツ ─── */
 
@@ -45,6 +47,10 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
   const [draftFilters, setDraftFilters] = useState<GlobalFilterSettings>(DEFAULT_GLOBAL_FILTER_SETTINGS);
   const [activeTab, setActiveTab] = useState<'filter' | 'playback' | 'data'>('filter');
   const [backupOpen, setBackupOpen] = useState(false);
+  const [vocalistQuery, setVocalistQuery] = useState('');
+  const [vocalistSuggestions, setVocalistSuggestions] = useState<Artist[]>([]);
+  const [vocalistLoading, setVocalistLoading] = useState(false);
+  const vocalistRequestRef = useRef(0);
   const globalFilterState = useGlobalFilterStore();
   const setGlobalFilterSettings = useGlobalFilterStore(state => state.setSettings);
   const resetGlobalFilterSettings = useGlobalFilterStore(state => state.resetSettings);
@@ -63,6 +69,8 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     if (!isOpen) {
       setMessage('');
       setBackupOpen(false);
+      setVocalistQuery('');
+      setVocalistSuggestions([]);
     } else {
       setDraftFilters(getGlobalFilterSettings());
     }
@@ -77,10 +85,38 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [backupOpen, isOpen, onClose]);
 
+  useEffect(() => {
+    if (!isOpen || activeTab !== 'filter') return;
+    const query = vocalistQuery.trim();
+    if (query.length < 2) {
+      setVocalistSuggestions([]);
+      setVocalistLoading(false);
+      return;
+    }
+    const requestId = ++vocalistRequestRef.current;
+    setVocalistLoading(true);
+    const timer = window.setTimeout(() => {
+      void searchVocalistsByName(query, 20)
+        .then(items => {
+          if (requestId === vocalistRequestRef.current) setVocalistSuggestions(items);
+        })
+        .catch(() => {
+          if (requestId === vocalistRequestRef.current) setVocalistSuggestions([]);
+        })
+        .finally(() => {
+          if (requestId === vocalistRequestRef.current) setVocalistLoading(false);
+        });
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [activeTab, isOpen, vocalistQuery]);
+
   if (!isOpen) return null;
 
   if (backupOpen) {
-    return <BackupModal isOpen onBack={() => setBackupOpen(false)} onClose={onClose} />;
+    return createPortal(
+      <BackupModal isOpen onBack={() => setBackupOpen(false)} onClose={onClose} />,
+      document.body,
+    );
   }
 
   const savedFilters: GlobalFilterSettings = {
@@ -88,6 +124,8 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     minYoutubeViews: globalFilterState.minYoutubeViews,
     minNicoViews: globalFilterState.minNicoViews,
     excludedSongTypes: globalFilterState.excludedSongTypes,
+    vocalistFilters: globalFilterState.vocalistFilters,
+    vocalistMatchMode: globalFilterState.vocalistMatchMode,
     cooldownHours: globalFilterState.cooldownHours,
     excludeRatedFromDiscovery: globalFilterState.excludeRatedFromDiscovery,
   };
@@ -96,7 +134,7 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
   const updateDraft = <K extends keyof GlobalFilterSettings>(key: K, value: GlobalFilterSettings[K]) => {
     setDraftFilters(current => {
       const next = { ...current, [key]: value };
-      if ((key === 'minYoutubeViews' || key === 'minNicoViews' || key === 'excludedSongTypes')
+      if ((key === 'minYoutubeViews' || key === 'minNicoViews' || key === 'excludedSongTypes' || key === 'vocalistFilters')
         && hasConfiguredSongFilters(next)) {
         next.enabled = true;
       }
@@ -127,7 +165,33 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
         : [...draftFilters.excludedSongTypes, songType]);
   };
 
-  return (
+  const addGlobalVocalist = async (artist: Artist) => {
+    const query = vocalistQuery.trim() || artist.name;
+    const matches = selectVocalistVariants(
+      await searchVocalistsByName(query, 50).catch(() => [artist]),
+      query,
+    );
+    const selected = matches.length > 0 ? matches : [artist];
+    const newIds = new Set(selected.map(item => item.id));
+    updateDraft('vocalistFilters', [
+      ...draftFilters.vocalistFilters.filter(item => !newIds.has(item.id)),
+      ...selected.map(item => ({
+        id: item.id,
+        name: item.name,
+        ...(selected.length > 1 ? { variantGroup: query } : {}),
+      })),
+    ]);
+    setVocalistQuery('');
+    setVocalistSuggestions([]);
+  };
+
+  const removeGlobalVocalist = (id: number, variantGroup?: string) => {
+    updateDraft('vocalistFilters', draftFilters.vocalistFilters.filter(item => (
+      variantGroup ? item.variantGroup !== variantGroup : item.id !== id
+    )));
+  };
+
+  return createPortal(
     <div className="fixed inset-0 z-[70] flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-label="設定">
       <button type="button" className="absolute inset-0 bg-black/70 backdrop-blur-sm" aria-label="閉じる" onClick={onClose} />
 
@@ -175,16 +239,16 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
 
                 <div className="setting-row">
                   <div className="setting-row-info">
-                    <span className="setting-row-title">再生数・楽曲種別フィルター</span>
+                    <span className="setting-row-title">グローバル表示フィルター</span>
                     <span className="setting-row-desc">
-                      指定値以上の曲だけを検索・おすすめに表示
+                      再生数・楽曲種別・歌手条件を検索とおすすめへ共通適用
                       {!draftFilters.enabled && hasConfiguredSongFilters(draftFilters) && '（停止中）'}
                     </span>
                   </div>
                   <ToggleSwitch checked={draftFilters.enabled} onChange={v => updateDraft('enabled', v)} />
                 </div>
 
-                {isGlobalSongFilterActive(savedFilters) && (
+                {isDiscoveryFilterActive(savedFilters) && (
                   <p className="rounded-lg px-2.5 py-1.5 text-[11px] mt-1" style={{ background: 'rgba(6, 214, 160, 0.08)', color: 'var(--color-accent-cyan)' }}>
                     適用中: {getGlobalFilterSummary(savedFilters).join(' / ')}
                   </p>
@@ -251,6 +315,67 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                     </button>
                   ))}
                 </div>
+              </div>
+
+              <div className="settings-section" style={draftFilters.enabled ? undefined : { opacity: 0.45 }}>
+                <div className="settings-section-title">歌手フィルター</div>
+                <p className="mb-2 text-[11px]" style={{ color: 'var(--color-text-muted)' }}>
+                  選んだ歌手・音声ライブラリの曲だけを検索、おすすめ、自動再生、発掘ミックスに表示
+                </p>
+                {draftFilters.vocalistFilters.length > 0 && (
+                  <div className="mb-2 flex flex-wrap gap-1.5">
+                    {draftFilters.vocalistFilters
+                      .filter((item, index, all) => !item.variantGroup || all.findIndex(candidate => candidate.variantGroup === item.variantGroup) === index)
+                      .map(item => (
+                        <button
+                          key={item.variantGroup ?? item.id}
+                          type="button"
+                          className="ui-chip-toggle"
+                          data-active="true"
+                          onClick={() => removeGlobalVocalist(item.id, item.variantGroup)}
+                          title="クリックして解除"
+                        >
+                          {item.variantGroup ?? item.name} ×
+                        </button>
+                      ))}
+                  </div>
+                )}
+                <div className="relative">
+                  <input
+                    className="ui-number-input w-full"
+                    value={vocalistQuery}
+                    onChange={event => setVocalistQuery(event.target.value)}
+                    placeholder="初音ミク、重音テト…"
+                    aria-label="グローバル歌手フィルターを検索"
+                  />
+                  {(vocalistLoading || vocalistSuggestions.length > 0) && (
+                    <div className="absolute left-0 right-0 top-full z-30 mt-1 max-h-52 overflow-y-auto rounded-xl border border-white/10 bg-[var(--color-surface-elevated)] shadow-xl">
+                      {vocalistLoading && <p className="px-3 py-2 text-xs text-neutral-400">検索中…</p>}
+                      {!vocalistLoading && vocalistSuggestions.map(artist => (
+                        <button
+                          key={artist.id}
+                          type="button"
+                          className="block w-full px-3 py-2 text-left text-sm hover:bg-white/10"
+                          onClick={() => void addGlobalVocalist(artist)}
+                        >
+                          <span className="block text-neutral-100">{artist.name}</span>
+                          <span className="text-[10px] text-neutral-500">{artist.artistType}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                {draftFilters.vocalistFilters.length > 1 && (
+                  <select
+                    className="ui-select mt-2 w-full"
+                    value={draftFilters.vocalistMatchMode}
+                    onChange={event => updateDraft('vocalistMatchMode', event.target.value as GlobalFilterSettings['vocalistMatchMode'])}
+                  >
+                    <option value="Any">いずれかの歌手を含む</option>
+                    <option value="All">すべての歌手を含む</option>
+                    <option value="Exact">選択した歌手だけ（完全一致）</option>
+                  </select>
+                )}
               </div>
 
               {/* その他のフィルター */}
@@ -389,6 +514,7 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
           )}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

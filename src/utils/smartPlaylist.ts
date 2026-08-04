@@ -140,6 +140,8 @@ export function filterSmartPlaylistSongs(songs: Song[], rule: SmartPlaylistRule)
     minYoutubeViews: normalized.minYoutubeViews,
     minNicoViews: normalized.minNicoViews,
     excludedSongTypes: normalized.excludedSongTypes,
+    vocalistFilters: [],
+    vocalistMatchMode: 'Any',
     cooldownHours: 0,
     excludeRatedFromDiscovery: false,
   });

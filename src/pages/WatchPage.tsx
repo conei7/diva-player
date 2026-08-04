@@ -32,8 +32,9 @@ import { useGlobalFilterStore } from '../stores/globalFilterStore';
 import { useFavoriteProducerStore } from '../stores/favoriteProducerStore';
 import { useUiStore } from '../stores/uiStore';
 import {
-  applyDiscoveryFilterWithRelaxation,
+  filterDiscoverySourcePage,
   getDiscoveryRelaxationMessage,
+  isDiscoveryFilterActive,
   requiresExternalViewCounts,
   type DiscoveryRelaxedCondition,
 } from '../utils/globalFilters';
@@ -146,14 +147,20 @@ export default function WatchPage() {
     minYoutubeViews: state.minYoutubeViews,
     minNicoViews: state.minNicoViews,
     excludedSongTypes: state.excludedSongTypes,
+    vocalistFilters: state.vocalistFilters,
+    vocalistMatchMode: state.vocalistMatchMode,
     cooldownHours: state.cooldownHours,
     excludeRatedFromDiscovery: state.excludeRatedFromDiscovery,
   })));
-  const filterDiscoverySongs = useCallback((items: Song[], minimumCount = PAGE_SIZE) => applyDiscoveryFilterWithRelaxation(excludeHiddenSongs(items, hiddenSongs), {
-    settings: globalFilterSettings,
-    ratings,
-    lastPlayedAtBySongId: new Map(entries.map(entry => [entry.song.id, entry.playedAt] as const)),
-  }, minimumCount), [entries, globalFilterSettings, hiddenSongs, ratings]);
+  const filterDiscoverySongs = useCallback((items: Song[], minimumCount = PAGE_SIZE, allowRelaxation = true) => {
+    const candidates = excludeHiddenSongs(items, hiddenSongs);
+    const context = {
+      settings: globalFilterSettings,
+      ratings,
+      lastPlayedAtBySongId: new Map(entries.map(entry => [entry.song.id, entry.playedAt] as const)),
+    };
+    return filterDiscoverySourcePage(candidates, context, minimumCount, allowRelaxation);
+  }, [entries, globalFilterSettings, hiddenSongs, ratings]);
 
   const [song, setSong] = useState<Song | null>(null);
   const [loadingSong, setLoadingSong] = useState(true);
@@ -273,6 +280,8 @@ export default function WatchPage() {
       const producerSongs = await getSongsByProducerFromBackend(s.id, producerIds, PAGE_SIZE, page * PAGE_SIZE);
       const filtered = filterDiscoverySongs(
         requiresExternalViewCounts(globalFilterSettings) ? await attachExternalViews(producerSongs) : producerSongs,
+        PAGE_SIZE,
+        producerSongs.length < PAGE_SIZE,
       );
       const items = rerankDisplayedSongs(
         filtered.items,
@@ -309,6 +318,8 @@ export default function WatchPage() {
       const relatedSongs = mergeUniqueSongs(relatedPages);
       const filtered = filterDiscoverySongs(
         requiresExternalViewCounts(globalFilterSettings) ? await attachExternalViews(relatedSongs) : relatedSongs,
+        PAGE_SIZE,
+        relatedPages[relatedPages.length - 1].length < PAGE_SIZE * 2,
       );
       const items = rerankDisplayedSongs(
         filtered.items.slice(0, PAGE_SIZE),
@@ -358,8 +369,12 @@ export default function WatchPage() {
       const [hybrid, audio, favorite] = requiresExternalViewCounts(globalFilterSettings)
         ? await Promise.all([attachExternalViews(hybridRaw), attachExternalViews(audioRaw), attachExternalViews(favoriteRaw)])
         : [hybridRaw, audioRaw, favoriteRaw];
-      const hybridFiltered = filterDiscoverySongs([...favorite, ...hybrid], PAGE_SIZE);
-      const audioFiltered = filterDiscoverySongs(audio, 4);
+      const lastPage = pageResults[pageResults.length - 1];
+      const sourceExhausted = lastPage[0].length < PAGE_SIZE * 2
+        && lastPage[1].length < PAGE_SIZE
+        && lastPage[2].length < PAGE_SIZE;
+      const hybridFiltered = filterDiscoverySongs([...favorite, ...hybrid], PAGE_SIZE, sourceExhausted);
+      const audioFiltered = filterDiscoverySongs(audio, 4, sourceExhausted);
       const relaxedConditions = [...new Set([
         ...hybridFiltered.relaxedConditions,
         ...audioFiltered.relaxedConditions,
@@ -426,6 +441,8 @@ export default function WatchPage() {
       const deepSongs = await getAudioSimilarSongs(s.id, PAGE_SIZE, page * PAGE_SIZE);
       const filtered = filterDiscoverySongs(
         requiresExternalViewCounts(globalFilterSettings) ? await attachExternalViews(deepSongs) : deepSongs,
+        PAGE_SIZE,
+        deepSongs.length < PAGE_SIZE,
       );
       const items = rerankDisplayedSongs(
         filtered.items,
@@ -595,6 +612,9 @@ export default function WatchPage() {
               hasMore={currentTab.hasMore}
               recommendationReasons={activeTab === 'recommended' ? currentTab.reasons : undefined}
               exposureSurface={activeTab === 'producer' ? 'watch-producer' : activeTab === 'related' ? 'watch-related' : activeTab === 'recommended' ? 'watch-recommended' : 'watch-deep'}
+              emptyMessage={isDiscoveryFilterActive(globalFilterSettings)
+                ? '現在の表示・発見フィルターに一致する候補がありません。設定から条件を調整してください。'
+                : undefined}
             />
 
             {/* 無限スクロールセンチネル */}

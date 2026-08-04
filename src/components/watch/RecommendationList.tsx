@@ -26,6 +26,7 @@ interface RecommendationListProps {
   hasMore: boolean;
   recommendationReasons?: Record<number, string>;
   exposureSurface?: ExposureSurface;
+  emptyMessage?: string;
 }
 
 /** サムネイルURLを解決 */
@@ -434,6 +435,7 @@ export default function RecommendationList({
   loading,
   recommendationReasons,
   exposureSurface,
+  emptyMessage = '曲が見つかりません',
 }: RecommendationListProps) {
   const { currentSong, isPlaying, hiddenMode } = usePlayerStore();
   const recordVisible = useRecommendationExposureStore(s => s.recordVisible);
@@ -458,7 +460,7 @@ export default function RecommendationList({
         <svg width="32" height="32" viewBox="0 0 24 24" fill="currentColor" style={{ color: 'var(--color-text-muted)', opacity: 0.3 }}>
           <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z" />
         </svg>
-        <p className="text-sm" style={{ color: 'var(--color-text-muted)' }}>曲が見つかりません</p>
+        <p className="max-w-xs text-center text-sm" style={{ color: 'var(--color-text-muted)' }}>{emptyMessage}</p>
       </div>
     );
   }

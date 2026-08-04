@@ -203,6 +203,8 @@ export function useAutoQueue({
     minYoutubeViews: state.minYoutubeViews,
     minNicoViews: state.minNicoViews,
     excludedSongTypes: state.excludedSongTypes,
+    vocalistFilters: state.vocalistFilters,
+    vocalistMatchMode: state.vocalistMatchMode,
     cooldownHours: state.cooldownHours,
     excludeRatedFromDiscovery: state.excludeRatedFromDiscovery,
   })));

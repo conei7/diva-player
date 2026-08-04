@@ -123,7 +123,7 @@ describe('Dig playlist candidate preparation', () => {
     const result = filterDigCandidates(
       [song(1), song(2), song(1), nonVoice],
       new Set([2]),
-      { enabled: true, minYoutubeViews: 10, minNicoViews: 0, excludedSongTypes: [], cooldownHours: 0, excludeRatedFromDiscovery: false },
+      { enabled: true, minYoutubeViews: 10, minNicoViews: 0, excludedSongTypes: [], vocalistFilters: [], vocalistMatchMode: 'Any', cooldownHours: 0, excludeRatedFromDiscovery: false },
     );
     expect(result.map(item => item.id)).toEqual([]);
   });

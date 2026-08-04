@@ -11,6 +11,7 @@ export interface DiscoveryFilterContext {
 export type SongFilterRejectionReason =
   | 'disabled'
   | 'excluded-song-type'
+  | 'excluded-vocalist'
   | 'youtube-views-missing'
   | 'youtube-views-below-minimum'
   | 'nico-views-missing'
@@ -52,12 +53,19 @@ export const SONG_TYPE_LABELS: Record<SongType, string> = {
 export function hasConfiguredSongFilters(settings: GlobalFilterSettings): boolean {
   return settings.minYoutubeViews > 0
     || settings.minNicoViews > 0
-    || settings.excludedSongTypes.length > 0;
+    || settings.excludedSongTypes.length > 0
+    || settings.vocalistFilters.length > 0;
 }
 
 /** 現在、再生数・曲種フィルターが実際に表示結果へ適用されているか。 */
 export function isGlobalSongFilterActive(settings: GlobalFilterSettings): boolean {
   return settings.enabled && hasConfiguredSongFilters(settings);
+}
+
+export function isDiscoveryFilterActive(settings: GlobalFilterSettings): boolean {
+  return isGlobalSongFilterActive(settings)
+    || settings.cooldownHours > 0
+    || settings.excludeRatedFromDiscovery;
 }
 
 /** 設定画面のドラフトと保存済み設定を、曲種の並び順に依存せず比較する。 */
@@ -70,23 +78,69 @@ export function areGlobalFilterSettingsEqual(
     || first.minNicoViews !== second.minNicoViews
     || first.cooldownHours !== second.cooldownHours
     || first.excludeRatedFromDiscovery !== second.excludeRatedFromDiscovery
+    || first.vocalistMatchMode !== second.vocalistMatchMode
+    || first.vocalistFilters.length !== second.vocalistFilters.length
     || first.excludedSongTypes.length !== second.excludedSongTypes.length) {
     return false;
   }
 
   const secondTypes = new Set(second.excludedSongTypes);
-  return first.excludedSongTypes.every(songType => secondTypes.has(songType));
+  if (!first.excludedSongTypes.every(songType => secondTypes.has(songType))) return false;
+  const secondVocalists = new Map(second.vocalistFilters.map(filter => [filter.id, filter]));
+  return first.vocalistFilters.every(filter => {
+    const other = secondVocalists.get(filter.id);
+    return other?.name === filter.name && other.variantGroup === filter.variantGroup;
+  });
 }
 
 export function getGlobalFilterSummary(settings: GlobalFilterSettings): string[] {
-  if (!isGlobalSongFilterActive(settings)) return [];
   const summary: string[] = [];
-  if (settings.minYoutubeViews > 0) summary.push(`YouTube ${settings.minYoutubeViews.toLocaleString()}以上`);
-  if (settings.minNicoViews > 0) summary.push(`ニコニコ ${settings.minNicoViews.toLocaleString()}以上`);
-  if (settings.excludedSongTypes.length > 0) {
+  if (settings.enabled && settings.minYoutubeViews > 0) summary.push(`YouTube ${settings.minYoutubeViews.toLocaleString()}以上`);
+  if (settings.enabled && settings.minNicoViews > 0) summary.push(`ニコニコ ${settings.minNicoViews.toLocaleString()}以上`);
+  if (settings.enabled && settings.excludedSongTypes.length > 0) {
     summary.push(`${settings.excludedSongTypes.map(type => SONG_TYPE_LABELS[type]).join('・')}を除外`);
   }
+  if (settings.enabled && settings.vocalistFilters.length > 0) {
+    const visible = settings.vocalistFilters.filter((filter, index, all) => (
+      !filter.variantGroup
+      || all.findIndex(candidate => candidate.variantGroup === filter.variantGroup) === index
+    ));
+    const mode = settings.vocalistMatchMode === 'Any'
+      ? 'いずれか'
+      : settings.vocalistMatchMode === 'All' ? 'すべて' : '完全一致';
+    summary.push(`歌手: ${visible.map(filter => filter.variantGroup ?? filter.name).join('・')}（${mode}）`);
+  }
+  if (settings.cooldownHours > 0) summary.push(`再生クールダウン ${settings.cooldownHours}時間`);
+  if (settings.excludeRatedFromDiscovery) summary.push('評価済みを発見候補から除外');
   return summary;
+}
+
+function matchesVocalistFilter(song: Song, settings: GlobalFilterSettings): boolean {
+  if (settings.vocalistFilters.length === 0) return true;
+  const vocalistIds = new Set((song.artists ?? [])
+    .filter(artist => artist.categories?.includes('Vocalist'))
+    .map(artist => artist.artist?.id)
+    .filter((id): id is number => id !== undefined));
+  if (vocalistIds.size === 0) return false;
+
+  const variantGroups = new Map<string, number[]>();
+  const logicalGroups: number[][] = [];
+  for (const filter of settings.vocalistFilters) {
+    if (!filter.variantGroup) {
+      logicalGroups.push([filter.id]);
+      continue;
+    }
+    const group = variantGroups.get(filter.variantGroup) ?? [];
+    group.push(filter.id);
+    variantGroups.set(filter.variantGroup, group);
+  }
+  logicalGroups.push(...variantGroups.values());
+  const groupMatches = logicalGroups.map(group => group.some(id => vocalistIds.has(id)));
+  if (settings.vocalistMatchMode === 'Any') return groupMatches.some(Boolean);
+  if (!groupMatches.every(Boolean)) return false;
+  if (settings.vocalistMatchMode !== 'Exact') return true;
+  const allowedIds = new Set(settings.vocalistFilters.map(filter => filter.id));
+  return [...vocalistIds].every(id => allowedIds.has(id));
 }
 
 function meetsMinimumViews(
@@ -105,6 +159,9 @@ export function getGlobalSongFilterDecision(song: Song, settings: GlobalFilterSe
   if (!settings.enabled) return { accepted: true };
   if (settings.excludedSongTypes.includes(song.songType)) {
     return { accepted: false, reason: 'excluded-song-type' };
+  }
+  if (!matchesVocalistFilter(song, settings)) {
+    return { accepted: false, reason: 'excluded-vocalist' };
   }
   const youtubeReason = meetsMinimumViews(
     settings.minYoutubeViews,
@@ -215,6 +272,17 @@ export function applyDiscoveryFilterWithRelaxation(
   return best;
 }
 
+export function filterDiscoverySourcePage(
+  songs: Song[],
+  context: DiscoveryFilterContext,
+  minimumCount: number,
+  sourceExhausted: boolean,
+): DiscoveryFilterResult {
+  return sourceExhausted
+    ? applyDiscoveryFilterWithRelaxation(songs, context, minimumCount)
+    : { items: applyDiscoveryFilter(songs, context), relaxedConditions: [] };
+}
+
 export function getDiscoveryRelaxationMessage(conditions: DiscoveryRelaxedCondition[]): string | null {
   if (conditions.length === 0) return null;
   const labels: string[] = [];
@@ -222,7 +290,7 @@ export function getDiscoveryRelaxationMessage(conditions: DiscoveryRelaxedCondit
   if (conditions.includes('rated-songs')) labels.push('評価済みの曲を含める');
   if (conditions.includes('view-thresholds-reduced')) labels.push('再生数条件を半分にする');
   if (conditions.includes('view-thresholds-removed')) labels.push('再生数条件を一時解除する');
-  return `候補不足のため、${labels.join('・')}調整を適用しています。曲種の除外設定は維持されます。`;
+  return `候補不足のため、${labels.join('・')}調整を適用しています。曲種と歌手の条件は維持されます。`;
 }
 
 export function requiresExternalViewCounts(settings: GlobalFilterSettings): boolean {

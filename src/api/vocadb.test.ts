@@ -1,11 +1,37 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Artist, Song } from '../types/vocadb';
-import { attachExternalViews, getTopSongs, getTrendingSongs, rankArtistsByName, resolveProducerByName, searchVocalistsByName, selectVocalistVariants } from './vocadb';
+import { attachExternalViews, buildDigRecommendationRequest, getTopSongs, getTrendingSongs, rankArtistsByName, resolveProducerByName, searchVocalistsByName, selectVocalistVariants } from './vocadb';
+import { DEFAULT_GLOBAL_FILTER_SETTINGS } from '../stores/globalFilterStore';
 import { VOCALIST_SEARCH_ARTIST_TYPES } from '../config/voiceSynthTypes';
 
 function artist(id: number, name: string): Artist {
   return { id, name, artistType: 'Producer' };
 }
+
+describe('Dig global filters', () => {
+  it('sends the same view, song type, and vocalist constraints to the backend', () => {
+    expect(buildDigRecommendationRequest(
+      [{ songId: 1, weight: 0.8 }],
+      50,
+      [2],
+      0,
+      123,
+      {
+        ...DEFAULT_GLOBAL_FILTER_SETTINGS,
+        enabled: true,
+        minYoutubeViews: 10_000,
+        excludedSongTypes: ['Cover'],
+        vocalistFilters: [{ id: 39, name: '初音ミク', variantGroup: '初音ミク' }],
+        vocalistMatchMode: 'Exact',
+      },
+    )).toMatchObject({
+      minYoutubeViews: 10_000,
+      excludedSongTypes: ['Cover'],
+      vocalistFilters: [{ id: 39, variantGroup: '初音ミク' }],
+      vocalistMatchMode: 'Exact',
+    });
+  });
+});
 
 describe('rankArtistsByName', () => {
   it('prefers an exact artist name over API song-count ordering', () => {

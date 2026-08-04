@@ -215,7 +215,28 @@ export function hasGlobalSongFilters(settings: GlobalFilterSettings): boolean {
   return settings.enabled
     && (settings.minYoutubeViews > 0
       || settings.minNicoViews > 0
-      || settings.excludedSongTypes.length > 0);
+      || settings.excludedSongTypes.length > 0
+      || settings.vocalistFilters.length > 0);
+}
+
+function getGlobalVocalistGroups(settings: GlobalFilterSettings): number[][] {
+  if (!settings.enabled || settings.vocalistFilters.length === 0) return [];
+  if (settings.vocalistMatchMode === 'Any') {
+    return [[...new Set(settings.vocalistFilters.map(filter => filter.id))]];
+  }
+  const groups: number[][] = [];
+  const variants = new Map<string, number[]>();
+  for (const filter of settings.vocalistFilters) {
+    if (!filter.variantGroup) {
+      groups.push([filter.id]);
+      continue;
+    }
+    const group = variants.get(filter.variantGroup) ?? [];
+    group.push(filter.id);
+    variants.set(filter.variantGroup, group);
+  }
+  groups.push(...variants.values());
+  return groups;
 }
 
 function getSearchErrorMessage(error: unknown, requiresBackend: boolean): string {
@@ -312,8 +333,17 @@ export async function searchSongsBackend(params: {
   if (params.artistIds && params.artistIds.length > 0) qs.set('artistIds', params.artistIds.join(','));
   if (params.artistRole) qs.set('artistRole', params.artistRole);
   if (params.anyArtistIds && params.anyArtistIds.length > 0) qs.set('anyArtistIds', params.anyArtistIds.join(','));
-  if (params.artistIdGroups && params.artistIdGroups.length > 0) {
-    qs.set('artistIdGroups', params.artistIdGroups.map(group => group.join(',')).join('|'));
+  const artistIdGroups = [
+    ...(params.artistIdGroups ?? []),
+    ...(params.globalFilters ? getGlobalVocalistGroups(params.globalFilters) : []),
+  ];
+  if (artistIdGroups.length > 0) {
+    qs.set('artistIdGroups', artistIdGroups.map(group => group.join(',')).join('|'));
+  }
+  if (params.globalFilters?.enabled
+    && params.globalFilters.vocalistMatchMode === 'Exact'
+    && params.globalFilters.vocalistFilters.length > 0) {
+    qs.set('exactVocalistIds', [...new Set(params.globalFilters.vocalistFilters.map(filter => filter.id))].join(','));
   }
   if (params.songTypes && params.songTypes.length > 0) qs.set('songTypes', params.songTypes.join(','));
   qs.set('sort', params.sort);
