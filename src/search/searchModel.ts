@@ -25,6 +25,10 @@ export interface AdvancedSearchFilters {
   lengthMaxSeconds: string;
   pvService: 'any' | 'youtube' | 'niconico' | 'both';
   audioComputed: 'any' | 'yes' | 'no';
+  bpmFrom: string;
+  bpmTo: string;
+  instrumentKeys: string[];
+  instrumentMatchMode: 'all' | 'any';
   minYoutubeViews: string;
   maxYoutubeViews: string;
   minNicoViews: string;
@@ -47,6 +51,8 @@ export const ADVANCED_SEARCH_LIMITS = {
   viewCountMax: Number.MAX_SAFE_INTEGER,
   favoriteCountMin: 0,
   favoriteCountMax: 2_147_483_647,
+  bpmMin: 20,
+  bpmMax: 400,
 } as const;
 
 export const DEFAULT_ADVANCED_FILTERS: AdvancedSearchFilters = {
@@ -56,6 +62,10 @@ export const DEFAULT_ADVANCED_FILTERS: AdvancedSearchFilters = {
   lengthMaxSeconds: '',
   pvService: 'any',
   audioComputed: 'any',
+  bpmFrom: '',
+  bpmTo: '',
+  instrumentKeys: [],
+  instrumentMatchMode: 'all',
   minYoutubeViews: '',
   maxYoutubeViews: '',
   minNicoViews: '',
@@ -135,6 +145,8 @@ export function validateAdvancedSearchFilters(filters: AdvancedSearchFilters): s
     [filters.maxNicoViews, 'ニコニコ再生数', 0, ADVANCED_SEARCH_LIMITS.viewCountMax],
     [filters.minFavoritedTimes, 'VocaDB支持数', 0, ADVANCED_SEARCH_LIMITS.favoriteCountMax],
     [filters.maxFavoritedTimes, 'VocaDB支持数', 0, ADVANCED_SEARCH_LIMITS.favoriteCountMax],
+    [filters.bpmFrom, 'BPM', ADVANCED_SEARCH_LIMITS.bpmMin, ADVANCED_SEARCH_LIMITS.bpmMax],
+    [filters.bpmTo, 'BPM', ADVANCED_SEARCH_LIMITS.bpmMin, ADVANCED_SEARCH_LIMITS.bpmMax],
   ] as const;
   for (const [value, label, min, max] of boundedValues) {
     const error = validateAdvancedInteger(value, label, min, max);
@@ -147,6 +159,7 @@ export function validateAdvancedSearchFilters(filters: AdvancedSearchFilters): s
     [filters.minYoutubeViews, filters.maxYoutubeViews, 'YouTube再生数'],
     [filters.minNicoViews, filters.maxNicoViews, 'ニコニコ再生数'],
     [filters.minFavoritedTimes, filters.maxFavoritedTimes, 'VocaDB支持数'],
+    [filters.bpmFrom, filters.bpmTo, 'BPM'],
   ] as const;
   for (const [from, to, label] of ranges) {
     if (from.trim() && to.trim() && Number(from) > Number(to)) {
@@ -163,6 +176,9 @@ export function hasAdvancedFilters(filters: AdvancedSearchFilters): boolean {
     || filters.lengthMaxSeconds.trim() !== ''
     || filters.pvService !== 'any'
     || filters.audioComputed !== 'any'
+    || filters.bpmFrom.trim() !== ''
+    || filters.bpmTo.trim() !== ''
+    || filters.instrumentKeys.length > 0
     || filters.minYoutubeViews !== ''
     || filters.maxYoutubeViews !== ''
     || filters.minNicoViews !== ''

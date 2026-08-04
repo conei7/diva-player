@@ -88,11 +88,17 @@ function buildSearchQuery(params: BackendSearchParams): URLSearchParams {
       ['maxNicoViews', filters.maxNicoViews],
       ['minFavoritedTimes', filters.minFavoritedTimes],
       ['maxFavoritedTimes', filters.maxFavoritedTimes],
+      ['bpmFrom', filters.bpmFrom.trim()],
+      ['bpmTo', filters.bpmTo.trim()],
     ] as const) {
       if (value) query.set(key, value);
     }
     if (filters.pvService !== 'any') query.set('pvService', filters.pvService);
     if (filters.audioComputed !== 'any') query.set('audioComputed', filters.audioComputed);
+    if (filters.instrumentKeys.length > 0) {
+      query.set('instrumentKeys', filters.instrumentKeys.join(','));
+      query.set('instrumentMatchMode', filters.instrumentMatchMode);
+    }
     if (filters.tagFilters.length > 0) {
       query.set('tagIds', filters.tagFilters.map(tag => tag.id).join(','));
       query.set('tagMatchMode', filters.tagMatchMode);

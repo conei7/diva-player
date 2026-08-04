@@ -10,6 +10,7 @@ import { searchCreditArtistsByName, searchVocalistsByName, selectVocalistVariant
 import type { Artist } from '../../types/vocadb';
 import { searchTagFacets, type SearchTagFacet } from '../../api/searchFacets';
 import { VOICE_SYNTH_ARTIST_TYPES, VOICE_SYNTH_TYPE_LABELS } from '../../config/voiceSynthTypes';
+import { AUDIO_INSTRUMENT_LABELS, AUDIO_INSTRUMENT_OPTIONS } from '../../config/audioInstruments';
 
 // hall_of_fame_singers.json の型定義
 interface HallOfFameSinger { id: number; name: string; artist_type: string; }
@@ -335,7 +336,7 @@ export default function SearchFilters() {
     key: keyof Pick<AdvancedSearchFilters,
       'publishYearFrom' | 'publishYearTo' | 'lengthMinSeconds' | 'lengthMaxSeconds'
       | 'minYoutubeViews' | 'maxYoutubeViews' | 'minNicoViews' | 'maxNicoViews'
-      | 'minFavoritedTimes' | 'maxFavoritedTimes'>,
+      | 'minFavoritedTimes' | 'maxFavoritedTimes' | 'bpmFrom' | 'bpmTo'>,
     value: string,
     min: number,
     max: number,
@@ -355,6 +356,12 @@ export default function SearchFilters() {
       : [...advancedFilters.tagFilters, tag].slice(0, 20),
   });
 
+  const toggleInstrument = (instrumentKey: string) => setAdvancedFilters({
+    instrumentKeys: advancedFilters.instrumentKeys.includes(instrumentKey)
+      ? advancedFilters.instrumentKeys.filter(key => key !== instrumentKey)
+      : [...advancedFilters.instrumentKeys, instrumentKey].slice(0, 12),
+  });
+
   const rangeText = (from: string, to: string, suffix = '') => from && to
     ? `${Number(from).toLocaleString()}〜${Number(to).toLocaleString()}${suffix}`
     : from ? `${Number(from).toLocaleString()}${suffix}以上` : `${Number(to).toLocaleString()}${suffix}以下`;
@@ -370,6 +377,8 @@ export default function SearchFilters() {
   if (advancedFilters.creditArtist) advancedChips.push({ key: 'credit', label: `${CREDIT_ROLES.find(([value]) => value === advancedFilters.creditRole)?.[1] ?? '参加'}: ${advancedFilters.creditArtist.name}`, clear: () => setAdvancedFilters({ creditArtist: null }) });
   if (advancedFilters.pvService !== 'any') advancedChips.push({ key: 'pv', label: `PV: ${advancedFilters.pvService === 'both' ? 'YouTube＋ニコニコ' : advancedFilters.pvService}`, clear: () => setAdvancedFilters({ pvService: 'any' }) });
   if (advancedFilters.audioComputed !== 'any') advancedChips.push({ key: 'audio', label: `音響解析: ${advancedFilters.audioComputed === 'yes' ? 'あり' : 'なし'}`, clear: () => setAdvancedFilters({ audioComputed: 'any' }) });
+  if (advancedFilters.bpmFrom || advancedFilters.bpmTo) advancedChips.push({ key: 'bpm', label: `推定BPM ${rangeText(advancedFilters.bpmFrom, advancedFilters.bpmTo)}`, clear: () => setAdvancedFilters({ bpmFrom: '', bpmTo: '' }) });
+  advancedFilters.instrumentKeys.forEach(key => advancedChips.push({ key: `instrument-${key}`, label: `推定: ${AUDIO_INSTRUMENT_LABELS.get(key) ?? key}`, clear: () => toggleInstrument(key) }));
 
   /* ---------- 選択チップ（共通） ---------- */
   const vocalistChips = visibleVocalistFilters.length > 0 && (
@@ -607,9 +616,30 @@ export default function SearchFilters() {
               </div>
             </div>
 
+            <div data-testid="audio-analysis-filters" className="rounded-xl border border-cyan-300/10 bg-cyan-300/[0.025] p-3">
+              <div className="mb-2 flex flex-wrap items-center gap-2">
+                <p className="text-xs font-semibold text-neutral-300">音源からの推定</p>
+                <span className="text-[10px] text-neutral-500">解析済みの曲のみ・誤判定を含む場合があります</span>
+              </div>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-[minmax(220px,0.7fr)_minmax(0,1.8fr)]">
+                <RangeInputs label="BPM（半分／倍テンポ候補も検索）" from={advancedFilters.bpmFrom} to={advancedFilters.bpmTo} fromPlaceholder="80" toPlaceholder="180" min={ADVANCED_SEARCH_LIMITS.bpmMin} max={ADVANCED_SEARCH_LIMITS.bpmMax} onFrom={value => updateBoundedInteger('bpmFrom', value, ADVANCED_SEARCH_LIMITS.bpmMin, ADVANCED_SEARCH_LIMITS.bpmMax)} onTo={value => updateBoundedInteger('bpmTo', value, ADVANCED_SEARCH_LIMITS.bpmMin, ADVANCED_SEARCH_LIMITS.bpmMax)} />
+                <div>
+                  <div className="mb-2 flex items-center gap-2">
+                    <span className="text-[11px] text-neutral-500">楽器</span>
+                    <div className="ui-segmented ml-auto">
+                      {(['all', 'any'] as const).map(mode => <button key={mode} type="button" data-active={advancedFilters.instrumentMatchMode === mode} onClick={() => setAdvancedFilters({ instrumentMatchMode: mode })}>{mode === 'all' ? 'すべて含む' : 'いずれか'}</button>)}
+                    </div>
+                  </div>
+                  <div className="flex max-h-36 flex-wrap gap-1.5 overflow-y-auto pr-1">
+                    {AUDIO_INSTRUMENT_OPTIONS.map(option => <button key={option.key} type="button" className="ui-chip-toggle" data-active={advancedFilters.instrumentKeys.includes(option.key)} onClick={() => toggleInstrument(option.key)}>{option.label}</button>)}
+                  </div>
+                </div>
+              </div>
+            </div>
+
             <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
               <div className="rounded-xl border border-white/[0.06] p-3">
-                <div className="mb-2 flex items-center gap-2"><p className="text-xs font-semibold text-neutral-300">ジャンル・楽器・雰囲気</p><div className="ui-segmented ml-auto">{(['all', 'any'] as const).map(mode => <button key={mode} type="button" data-active={advancedFilters.tagMatchMode === mode} onClick={() => setAdvancedFilters({ tagMatchMode: mode })}>{mode === 'all' ? 'すべて含む' : 'いずれか'}</button>)}</div></div>
+                <div className="mb-2 flex items-center gap-2"><p className="text-xs font-semibold text-neutral-300">VocaDBタグ</p><div className="ui-segmented ml-auto">{(['all', 'any'] as const).map(mode => <button key={mode} type="button" data-active={advancedFilters.tagMatchMode === mode} onClick={() => setAdvancedFilters({ tagMatchMode: mode })}>{mode === 'all' ? 'すべて含む' : 'いずれか'}</button>)}</div></div>
                 <div className="flex flex-wrap gap-1.5">{TAG_PRESETS.map(tag => <button key={tag.id} type="button" className="ui-chip-toggle" data-active={advancedFilters.tagFilters.some(item => item.id === tag.id)} onClick={() => toggleTag(tag)}>{tag.name}</button>)}</div>
                 <div className="relative mt-3">
                   <input className="ui-number-input w-full" value={tagQuery} onChange={event => setTagQuery(event.target.value)} placeholder="ほかのタグを検索（例: ギター、和風）" />

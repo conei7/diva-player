@@ -91,6 +91,13 @@ export interface Song {
   trendTier?: number;
   trendWindowDays?: number;
   audioComputed?: boolean;
+  bpm?: number;
+  bpmAlternative?: number;
+  bpmConfidence?: number;
+  musicalKey?: string;
+  keyMode?: 'major' | 'minor';
+  keyConfidence?: number;
+  audioInstruments?: { key: string; score: number }[];
 }
 
 export interface AlbumSummary {

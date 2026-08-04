@@ -67,6 +67,10 @@ describe('advanced search input limits', () => {
       ...DEFAULT_ADVANCED_FILTERS,
       lengthMaxSeconds: '2147483648',
     })).toContain('曲の長さ');
+    expect(validateAdvancedSearchFilters({
+      ...DEFAULT_ADVANCED_FILTERS,
+      bpmFrom: '19',
+    })).toContain('BPM');
   });
 
   it('accepts the inclusive boundary values', () => {
@@ -136,6 +140,10 @@ describe('backend artist union search', () => {
         maxNicoViews: '900',
         minFavoritedTimes: '5',
         maxFavoritedTimes: '50',
+        bpmFrom: '90',
+        bpmTo: '180',
+        instrumentKeys: ['piano', 'electric_guitar'],
+        instrumentMatchMode: 'any',
         tagFilters: [{ id: 337, name: 'ピアノ' }, { id: 481, name: 'ロック' }],
         tagMatchMode: 'all',
         creditArtist: { id: 777, name: '絵師' },
@@ -151,6 +159,10 @@ describe('backend artist union search', () => {
     expect(url.searchParams.get('maxNicoViews')).toBe('900');
     expect(url.searchParams.get('minFavoritedTimes')).toBe('5');
     expect(url.searchParams.get('maxFavoritedTimes')).toBe('50');
+    expect(url.searchParams.get('bpmFrom')).toBe('90');
+    expect(url.searchParams.get('bpmTo')).toBe('180');
+    expect(url.searchParams.get('instrumentKeys')).toBe('piano,electric_guitar');
+    expect(url.searchParams.get('instrumentMatchMode')).toBe('any');
     expect(url.searchParams.get('tagIds')).toBe('337,481');
     expect(url.searchParams.get('tagMatchMode')).toBe('all');
     expect(url.searchParams.get('creditArtistId')).toBe('777');

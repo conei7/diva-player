@@ -1,6 +1,7 @@
 import type { Song } from '../../types/vocadb';
 import { formatJapaneseViews } from '../../utils/formatViews';
 import { getPVBadgeStyle, isUnofficialOnly } from '../../utils/pvBadge';
+import { AUDIO_INSTRUMENT_LABELS } from '../../config/audioInstruments';
 
 interface SongCardBadgesProps {
   song: Song;
@@ -86,6 +87,18 @@ export default function SongCardBadges({
           {relativeDate}
         </span>
       )}
+
+      {song.bpm != null && (song.bpmConfidence ?? 0) >= 0.35 && (
+        <span className="rounded bg-cyan-300/10 px-1.5 py-0.5 text-[10px] font-medium text-cyan-100" title="音源解析による推定値">
+          ≈ {Math.round(song.bpm)} BPM
+        </span>
+      )}
+
+      {song.audioInstruments?.slice(0, 2).map(instrument => (
+        <span key={instrument.key} className="rounded bg-white/[0.05] px-1.5 py-0.5 text-[10px] text-neutral-400" title={`音源解析による推定（信頼度 ${Math.round(instrument.score * 100)}%）`}>
+          {AUDIO_INSTRUMENT_LABELS.get(instrument.key) ?? instrument.key}
+        </span>
+      ))}
 
       <div className="flex-1" />
 

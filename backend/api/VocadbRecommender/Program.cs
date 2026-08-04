@@ -563,6 +563,10 @@ app.MapGet("/api/songs/search", async (
     long? lengthMaxSeconds,
     string? pvService,
     string? audioComputed,
+    double? bpmFrom,
+    double? bpmTo,
+    string? instrumentKeys,
+    string? instrumentMatchMode,
     long? minYoutubeViews,
     long? minNicoViews,
     long? maxYoutubeViews,
@@ -593,6 +597,7 @@ app.MapGet("/api/songs/search", async (
         || exactVocalistIds is { Length: > maxFilterStringLength }
         || songTypes is { Length: > maxFilterStringLength }
         || tagIds is { Length: > maxFilterStringLength }
+        || instrumentKeys is { Length: > maxFilterStringLength }
         || excludeSongTypes is { Length: > maxFilterStringLength })
         return Results.BadRequest(new { error = "search filters are too long" });
     if (start is < 0 or > maxSearchStart)
@@ -607,6 +612,10 @@ app.MapGet("/api/songs/search", async (
         return Results.BadRequest(new { error = "publish year range is invalid" });
     if (lengthMinSeconds.HasValue && lengthMaxSeconds.HasValue && lengthMinSeconds > lengthMaxSeconds)
         return Results.BadRequest(new { error = "length range is invalid" });
+    if (bpmFrom is < 20 or > 400 || bpmTo is < 20 or > 400)
+        return Results.BadRequest(new { error = "BPM must be between 20 and 400" });
+    if (bpmFrom.HasValue && bpmTo.HasValue && bpmFrom > bpmTo)
+        return Results.BadRequest(new { error = "BPM range is invalid" });
     if (minYoutubeViews is < 0 || minNicoViews is < 0 || maxYoutubeViews is < 0 || maxNicoViews is < 0)
         return Results.BadRequest(new { error = "view thresholds must be non-negative" });
     if (minFavoritedTimes is < 0 || maxFavoritedTimes is < 0)
@@ -635,6 +644,24 @@ app.MapGet("/api/songs/search", async (
     if (parsedTagIds.Count > 20 || parsedTagIds.Any(id => id <= 0))
         return Results.BadRequest(new { error = "tag filters are invalid or too large" });
     var normalizedTagMatchMode = string.Equals(tagMatchMode, "any", StringComparison.OrdinalIgnoreCase) ? "any" : "all";
+    var parsedInstrumentKeys = ParseCsv(instrumentKeys);
+    if (parsedInstrumentKeys.Count > 12)
+        return Results.BadRequest(new { error = "too many instrument filters" });
+    var validInstrumentKeys = new HashSet<string>(StringComparer.Ordinal)
+    {
+        "piano", "electric_piano", "organ", "harpsichord", "guitar", "acoustic_guitar",
+        "electric_guitar", "bass_guitar", "steel_guitar", "ukulele", "banjo", "mandolin",
+        "zither", "violin", "viola", "cello", "double_bass", "string_section", "bowed_strings",
+        "harp", "flute", "clarinet", "saxophone", "oboe", "bassoon", "recorder", "trumpet",
+        "trombone", "brass", "french_horn", "accordion", "harmonica", "bagpipes", "didgeridoo",
+        "shofar", "theremin", "drum_kit", "drums", "snare_drum", "bass_drum", "timpani",
+        "tabla", "percussion", "cymbal", "hi_hat", "tambourine", "maraca", "gong",
+        "mallet_percussion", "marimba_xylophone", "glockenspiel", "vibraphone", "steelpan",
+        "synthesizer", "drum_machine", "sampler", "orchestra",
+    };
+    if (parsedInstrumentKeys.Any(key => !validInstrumentKeys.Contains(key)))
+        return Results.BadRequest(new { error = "unknown instrument key" });
+    var normalizedInstrumentMatchMode = string.Equals(instrumentMatchMode, "any", StringComparison.OrdinalIgnoreCase) ? "any" : "all";
 
     var validArtistRoles = new HashSet<string>(StringComparer.Ordinal)
     {
@@ -676,6 +703,10 @@ app.MapGet("/api/songs/search", async (
         (int?)lengthMaxSeconds,
         pvService,
         audioComputed,
+        bpmFrom,
+        bpmTo,
+        parsedInstrumentKeys,
+        normalizedInstrumentMatchMode,
         minYoutubeViews,
         minNicoViews,
         onlyWithPVs ?? false,

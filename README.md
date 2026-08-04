@@ -78,3 +78,13 @@ src/
 セットアップと公開仕様はこのREADMEを参照してください。稼働状況、内部仕様、運用手順、ロードマップは、privateの
 `diva-data-pipeline/docs/diva-player/ACTIVE`を正本とします。このリポジトリには重複する`docs/`を置きません。
 
+## 音響解析と第三者ライセンス
+
+非公開pipelineの音響解析は、元音源・波形・スペクトログラム・音声断片を公開APIやこのリポジトリへ保存せず、BPM、キー、低次元の数値、楽器候補だけを派生値として扱います。
+
+- [YAMNet / TensorFlow Models](https://github.com/tensorflow/models/tree/master/research/audioset/yamnet): Apache License 2.0
+- [librosa](https://github.com/librosa/librosa/blob/main/LICENSE.md): ISC License
+- [AudioSet](https://research.google.com/audioset/download.html): datasetはCC BY 4.0、ontologyはCC BY-SA 4.0
+
+`src/config/audioInstruments.ts`の楽器分類語彙はAudioSet ontologyを基にした日本語対応表を含み、CC BY-SA 4.0として扱います。解析対象音源の権利や取得元サービスの利用条件は、これらソフトウェア／データライセンスとは別に確認が必要です。
+

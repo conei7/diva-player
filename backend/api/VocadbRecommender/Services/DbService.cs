@@ -484,6 +484,10 @@ public class DbService
         int? lengthMaxSeconds = null,
         string? pvService = null,
         string? audioComputed = null,
+        double? bpmFrom = null,
+        double? bpmTo = null,
+        List<string>? instrumentKeys = null,
+        string instrumentMatchMode = "all",
         long? minYoutubeViews = null,
         long? minNicoViews = null,
         bool onlyWithPVs = false,
@@ -503,7 +507,7 @@ public class DbService
         bool forceRefresh = false)
     {
         var totalStopwatch = Stopwatch.StartNew();
-        var cacheKey = "song-search:v1:" + JsonSerializer.Serialize(new
+        var cacheKey = "song-search:v2:" + JsonSerializer.Serialize(new
         {
             query = query?.Trim().ToLowerInvariant(),
             artistIds = artistIds is { Count: > 0 } ? artistIds : null,
@@ -521,6 +525,10 @@ public class DbService
             lengthMaxSeconds,
             pvService,
             audioComputed,
+            bpmFrom,
+            bpmTo,
+            instrumentKeys = instrumentKeys is { Count: > 0 } ? instrumentKeys : null,
+            instrumentMatchMode,
             minYoutubeViews,
             minNicoViews,
             maxYoutubeViews,
@@ -550,7 +558,8 @@ public class DbService
                             query, artistIds, anyArtistIds, artistIdGroups, artistRole,
                             songTypes, sort, order, start, maxResults,
                             publishYearFrom, publishYearTo, lengthMinSeconds, lengthMaxSeconds,
-                            pvService, audioComputed, minYoutubeViews, minNicoViews,
+                            pvService, audioComputed, bpmFrom, bpmTo, instrumentKeys, instrumentMatchMode,
+                            minYoutubeViews, minNicoViews,
                             onlyWithPVs, excludedSongTypes, voiceSynthOnly, discoveryOnly,
                             maxYoutubeViews, maxNicoViews, minFavoritedTimes, maxFavoritedTimes,
                             tagIds, tagMatchMode, creditArtistId, creditArtistRole, randomSeed,
@@ -809,6 +818,47 @@ public class DbService
             }
         }
 
+        if (bpmFrom.HasValue || bpmTo.HasValue)
+        {
+            var primaryRange = new List<string>();
+            var alternativeRange = new List<string>();
+            if (bpmFrom.HasValue)
+            {
+                primaryRange.Add($"aa.bpm >= ${paramIndex}");
+                alternativeRange.Add($"aa.bpm_alternative >= ${paramIndex}");
+                paramValues.Add((float)bpmFrom.Value);
+                paramIndex++;
+            }
+            if (bpmTo.HasValue)
+            {
+                primaryRange.Add($"aa.bpm <= ${paramIndex}");
+                alternativeRange.Add($"aa.bpm_alternative <= ${paramIndex}");
+                paramValues.Add((float)bpmTo.Value);
+                paramIndex++;
+            }
+            var tempoRange = $"(({string.Join(" AND ", primaryRange)}) OR ({string.Join(" AND ", alternativeRange)}))";
+            conditions.Add($"EXISTS (SELECT 1 FROM song_audio_analysis aa WHERE aa.song_id = songs.id AND aa.bpm_confidence >= 0.35 AND {tempoRange})");
+        }
+
+        if (instrumentKeys is { Count: > 0 })
+        {
+            if (instrumentMatchMode == "any")
+            {
+                conditions.Add($"EXISTS (SELECT 1 FROM song_audio_instruments sai WHERE sai.song_id = songs.id AND sai.instrument_key = ANY(${paramIndex}) AND sai.score >= 0.08)");
+                paramValues.Add(instrumentKeys.Distinct().ToArray());
+                paramIndex++;
+            }
+            else
+            {
+                foreach (var instrumentKey in instrumentKeys.Distinct())
+                {
+                    conditions.Add($"EXISTS (SELECT 1 FROM song_audio_instruments sai WHERE sai.song_id = songs.id AND sai.instrument_key = ${paramIndex} AND sai.score >= 0.08)");
+                    paramValues.Add(instrumentKey);
+                    paramIndex++;
+                }
+            }
+        }
+
         string whereClause = conditions.Count > 0 ? "WHERE " + string.Join(" AND ", conditions) : "";
         bool hasFilter = conditions.Count > 0;
 
@@ -877,6 +927,20 @@ public class DbService
                     SELECT 1 FROM song_features sf
                     WHERE sf.song_id = songs.id AND sf.audio_computed IS TRUE
                 ),
+                'bpm', (SELECT aa.bpm FROM song_audio_analysis aa WHERE aa.song_id = songs.id),
+                'bpmAlternative', (SELECT aa.bpm_alternative FROM song_audio_analysis aa WHERE aa.song_id = songs.id),
+                'bpmConfidence', (SELECT aa.bpm_confidence FROM song_audio_analysis aa WHERE aa.song_id = songs.id),
+                'musicalKey', (SELECT aa.musical_key FROM song_audio_analysis aa WHERE aa.song_id = songs.id),
+                'keyMode', (SELECT aa.key_mode FROM song_audio_analysis aa WHERE aa.song_id = songs.id),
+                'keyConfidence', (SELECT aa.key_confidence FROM song_audio_analysis aa WHERE aa.song_id = songs.id),
+                'audioInstruments', COALESCE((
+                    SELECT jsonb_agg(
+                        jsonb_build_object('key', sai.instrument_key, 'score', sai.score)
+                        ORDER BY sai.rank
+                    )
+                    FROM song_audio_instruments sai
+                    WHERE sai.song_id = songs.id AND sai.score >= 0.08
+                ), '[]'::jsonb),
                 'thumbUrl', COALESCE(raw_json->>'thumbUrl', raw_json->'pvs'->0->>'thumbUrl')
             ))
             FROM songs
