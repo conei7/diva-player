@@ -34,12 +34,14 @@ public static class MetadataRelationshipRanking
             for (var index = 0; index < remaining.Count; index++)
             {
                 var candidate = remaining[index];
-                var redundancy = selected.Count == 0
+                var redundancies = selected
+                    .Select(item => ContextRedundancy(infoMap[candidate.SongId], infoMap[item.SongId]))
+                    .OrderByDescending(value => value)
+                    .ToArray();
+                var redundancy = redundancies.Length == 0
                     ? 0
-                    : selected.Max(item => ContextRedundancy(
-                        infoMap[candidate.SongId],
-                        infoMap[item.SongId]));
-                var adjustedScore = candidate.Score - redundancy * 0.08;
+                    : redundancies[0] * 0.07 + redundancies.Average() * 0.04;
+                var adjustedScore = candidate.Score - redundancy;
                 if (adjustedScore <= bestScore) continue;
 
                 bestIndex = index;
@@ -86,7 +88,7 @@ public static class MetadataRelationshipRanking
     {
         var values = new List<(double Value, double Weight)>();
         if (vectorScore >= 0)
-            values.Add((Math.Clamp(vectorScore, 0, 1), 0.08));
+            values.Add((Math.Clamp(vectorScore, 0, 1), 0.18));
 
         AddIfAvailable(values, TagSimilarity(seed, candidate), 0.34);
         AddIfAvailable(values, AlbumSimilarity(seed, candidate), 0.24);

@@ -5,10 +5,12 @@ import { writeFile } from 'node:fs/promises';
 const DEFAULT_TIMEOUT_MS = 20_000;
 const DEFAULT_MAX_LATENCY_MS = 15_000;
 const DEFAULT_MAX_ARTIST_SHARE = 0.75;
+const DEFAULT_MAX_PRODUCER_SHARE = 0.70;
+const DEFAULT_MAX_VOCALIST_SHARE = 0.85;
 const DEFAULT_MAX_SEED_OVERLAP = 0.85;
 const DEFAULT_MAX_MODE_OVERLAP = 0.95;
 const DEFAULT_MIN_UNIQUE_RATIO = 0.35;
-const SAMPLE_SIZE = 5;
+const SAMPLE_SIZE = 8;
 
 function getBaseUrl() {
   const argumentIndex = process.argv.indexOf('--base-url');
@@ -126,6 +128,29 @@ function getMaxArtistShare(items) {
   return Math.max(0, ...counts.values()) / items.length;
 }
 
+function getMaxIdShare(items, field) {
+  if (items.length === 0) return 0;
+  const counts = new Map();
+  for (const item of items) {
+    for (const id of new Set(Array.isArray(item[field]) ? item[field] : [])) {
+      counts.set(id, (counts.get(id) ?? 0) + 1);
+    }
+  }
+  return Math.max(0, ...counts.values()) / items.length;
+}
+
+function getPopularitySummary(items) {
+  const totals = items
+    .map(item => Math.max(0, Number(item.youtubeViews) || 0) + Math.max(0, Number(item.nicoViews) || 0))
+    .filter(Number.isFinite)
+    .sort((left, right) => left - right);
+  if (totals.length === 0) return { medianViews: 0, minorShare: 0 };
+  return {
+    medianViews: totals[Math.floor(totals.length / 2)],
+    minorShare: totals.filter(value => value <= 150_000).length / totals.length,
+  };
+}
+
 function jaccard(itemsA, itemsB) {
   const a = new Set(itemsA.map(item => item.songId));
   const b = new Set(itemsB.map(item => item.songId));
@@ -151,10 +176,55 @@ function percentile(values, fraction) {
   return sorted[Math.min(sorted.length - 1, Math.floor((sorted.length - 1) * fraction))] ?? 0;
 }
 
+async function getRepresentativeSeeds(baseUrl) {
+  const definitions = [
+    {
+      group: 'popular',
+      count: 3,
+      path: '/api/songs/search?sort=FavoritedTimes&order=desc&start=0&maxResults=16&audioComputed=true&discoveryOnly=true&onlyWithPVs=true',
+    },
+    {
+      group: 'broad',
+      count: 3,
+      path: '/api/songs/search?sort=Random&order=desc&randomSeed=20260804&start=0&maxResults=16&audioComputed=true&discoveryOnly=true&onlyWithPVs=true',
+    },
+    {
+      group: 'recent',
+      count: 2,
+      path: '/api/songs/search?sort=PublishDate&order=desc&start=0&maxResults=16&audioComputed=true&discoveryOnly=true&onlyWithPVs=true',
+    },
+  ];
+  const responses = await Promise.all(definitions.map(async definition => ({
+    ...definition,
+    items: (await getJson(baseUrl, definition.path)).data.items ?? [],
+  })));
+  const selected = [];
+  const seen = new Set();
+  for (const response of responses) {
+    for (const item of response.items) {
+      if (selected.filter(seed => seed.group === response.group).length >= response.count) break;
+      if (!Number.isInteger(item.id) || seen.has(item.id)) continue;
+      seen.add(item.id);
+      selected.push({ ...item, group: response.group });
+    }
+  }
+  for (const response of responses) {
+    for (const item of response.items) {
+      if (selected.length >= SAMPLE_SIZE) break;
+      if (!Number.isInteger(item.id) || seen.has(item.id)) continue;
+      seen.add(item.id);
+      selected.push({ ...item, group: response.group });
+    }
+  }
+  return selected.slice(0, SAMPLE_SIZE);
+}
+
 async function main() {
   const baseUrl = getBaseUrl();
   const maxLatencyMs = getMaxLatency();
   const maxArtistShare = getRatioOption('--max-artist-share', DEFAULT_MAX_ARTIST_SHARE);
+  const maxProducerShare = getRatioOption('--max-producer-share', DEFAULT_MAX_PRODUCER_SHARE);
+  const maxVocalistShare = getRatioOption('--max-vocalist-share', DEFAULT_MAX_VOCALIST_SHARE);
   const maxSeedOverlap = getRatioOption('--max-seed-overlap', DEFAULT_MAX_SEED_OVERLAP);
   const maxModeOverlap = getRatioOption('--max-mode-overlap', DEFAULT_MAX_MODE_OVERLAP);
   const minUniqueRatio = getRatioOption('--min-unique-ratio', DEFAULT_MIN_UNIQUE_RATIO);
@@ -175,12 +245,8 @@ async function main() {
   assert(audioFeatures.ok !== false, `Audio feature backlog is unhealthy: ${audioFeatures.error ?? 'unknown'}.`);
   console.log(`PASS audio feature health (${audioFeatures.computedCount}/${audioFeatures.targetCount} computed, pending ${audioFeatures.pendingCount}; actionable ${audioFeatures.actionablePendingCount}/${audioFeatures.actionableTargetCount} pending)`);
 
-  const search = await getJson(
-    baseUrl,
-    '/api/songs/search?sort=FavoritedTimes&order=desc&start=0&maxResults=24&audioComputed=true',
-  );
-  assert(search.data.items?.length > 0, 'No audio-computed seed songs were returned.');
-  const seeds = search.data.items.slice(0, SAMPLE_SIZE);
+  const seeds = await getRepresentativeSeeds(baseUrl);
+  assert(seeds.length === SAMPLE_SIZE, `Only ${seeds.length}/${SAMPLE_SIZE} representative seed songs were returned.`);
   const endpoints = ['/api/recommend', '/api/recommend/metadata', '/api/recommend/audio'];
   const nonEmptyByEndpoint = new Map(endpoints.map(endpoint => [endpoint, 0]));
   const itemsByEndpoint = new Map(endpoints.map(endpoint => [endpoint, []]));
@@ -235,8 +301,14 @@ async function main() {
     return {
       endpoint,
       maxArtistShare: Math.max(0, ...lists.map(getMaxArtistShare)),
+      maxProducerShare: Math.max(0, ...lists.map(items => getMaxIdShare(items, 'producerIds'))),
+      maxVocalistShare: Math.max(0, ...lists.map(items => getMaxIdShare(items, 'vocalistIds'))),
       maxSeedOverlap: maxPairwiseOverlap(lists),
       uniqueRatio,
+      ...getPopularitySummary(flattened),
+      groupMetadataCoverage: flattened.length === 0
+        ? 0
+        : flattened.filter(item => Array.isArray(item.producerIds) && Array.isArray(item.vocalistIds)).length / flattened.length,
     };
   });
 
@@ -253,6 +325,15 @@ async function main() {
     baseUrl,
     sampleSize: seeds.length,
     seedIds: seeds.map(seed => seed.id),
+    seedGroups: Object.fromEntries(seeds.map(seed => [seed.id, seed.group])),
+    seedResults: seeds.map(seed => ({
+      id: seed.id,
+      group: seed.group,
+      counts: Object.fromEntries(endpoints.map(endpoint => [
+        endpoint,
+        itemsBySeed.get(seed.id).get(endpoint)?.length ?? 0,
+      ])),
+    })),
     health: {
       discoveryQuality: health.data.discoveryQuality,
       audioFeatures,
@@ -268,17 +349,24 @@ async function main() {
     quality: {
       endpoints: endpointQuality,
       maxModeOverlap: observedMaxModeOverlap,
-      thresholds: { maxArtistShare, maxSeedOverlap, maxModeOverlap, minUniqueRatio },
+      thresholds: {
+        maxArtistShare, maxProducerShare, maxVocalistShare,
+        maxSeedOverlap, maxModeOverlap, minUniqueRatio,
+      },
     },
   };
   if (reportFile) await writeFile(reportFile, `${JSON.stringify(report, null, 2)}\n`, 'utf8');
 
   for (const endpoint of endpoints) {
-    assert(nonEmptyByEndpoint.get(endpoint) >= 3, `${endpoint} returned no candidates for most representative seeds.`);
+    assert(nonEmptyByEndpoint.get(endpoint) >= 3, `${endpoint} returned candidates for fewer than three representative seeds.`);
   }
   assert(p95 <= maxLatencyMs, `Recommendation p95 latency ${p95}ms exceeded ${maxLatencyMs}ms.`);
   for (const quality of endpointQuality) {
     assert(quality.maxArtistShare <= maxArtistShare, `${quality.endpoint} artist share ${quality.maxArtistShare.toFixed(3)} exceeded ${maxArtistShare}.`);
+    if (quality.groupMetadataCoverage >= 0.8) {
+      assert(quality.maxProducerShare <= maxProducerShare, `${quality.endpoint} producer share ${quality.maxProducerShare.toFixed(3)} exceeded ${maxProducerShare}.`);
+      assert(quality.maxVocalistShare <= maxVocalistShare, `${quality.endpoint} vocalist share ${quality.maxVocalistShare.toFixed(3)} exceeded ${maxVocalistShare}.`);
+    }
     assert(quality.maxSeedOverlap <= maxSeedOverlap, `${quality.endpoint} seed overlap ${quality.maxSeedOverlap.toFixed(3)} exceeded ${maxSeedOverlap}.`);
     assert(quality.uniqueRatio >= minUniqueRatio, `${quality.endpoint} unique ratio ${quality.uniqueRatio.toFixed(3)} fell below ${minUniqueRatio}.`);
   }
@@ -291,7 +379,7 @@ async function main() {
   console.log(`PASS recommendation regression (${summary.join('; ')})`);
   console.log(`PASS recommendation latency (p95=${p95}ms, max=${maxLatencyMs}ms)`);
   console.log(`PASS Dig discovery (${digItems.length} candidates, latency=${digResult.elapsedMs}ms, generationOverlap=${digGenerationOverlap.toFixed(2)}, producerShare=${digMaxProducerShare.toFixed(2)})`);
-  console.log(`PASS recommendation diversity (${endpointQuality.map(quality => `${quality.endpoint} artist=${quality.maxArtistShare.toFixed(2)} seedOverlap=${quality.maxSeedOverlap.toFixed(2)} unique=${quality.uniqueRatio.toFixed(2)}`).join('; ')}; modeOverlap=${observedMaxModeOverlap.toFixed(2)})`);
+  console.log(`PASS recommendation diversity (${endpointQuality.map(quality => `${quality.endpoint} artist=${quality.maxArtistShare.toFixed(2)} producer=${quality.maxProducerShare.toFixed(2)} vocalist=${quality.maxVocalistShare.toFixed(2)} seedOverlap=${quality.maxSeedOverlap.toFixed(2)} unique=${quality.uniqueRatio.toFixed(2)} minor=${quality.minorShare.toFixed(2)} metadata=${quality.groupMetadataCoverage.toFixed(2)}`).join('; ')}; modeOverlap=${observedMaxModeOverlap.toFixed(2)})`);
 }
 
 main().catch(error => {

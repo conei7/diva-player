@@ -136,6 +136,7 @@ function SnapshotSection({
               <th className="px-2 py-1">候補源</th>
               <th className="px-2 py-1">Evidence</th>
               <th className="px-2 py-1">好み</th>
+              <th className="px-2 py-1">属性好み</th>
               <th className="px-2 py-1">既知調整</th>
               <th className="px-2 py-1">P減点</th>
               <th className="px-2 py-1">歌声減点</th>
@@ -161,6 +162,7 @@ function SnapshotSection({
                 <td className="px-2 py-2">{item.sources.map(source => `${source.source}#${source.sourceRank}`).join(', ')}</td>
                 <td className="px-2 py-2">{item.evidence.toFixed(3)}</td>
                 <td className="px-2 py-2">{item.preference?.finalScore.toFixed(3) ?? '-'}</td>
+                <td className="px-2 py-2">{item.tasteAffinityAdjustment.toFixed(3)}</td>
                 <td className="px-2 py-2">{item.familiarityAdjustment.toFixed(3)}</td>
                 <td className="px-2 py-2">-{item.producerPenalty.toFixed(3)}</td>
                 <td className="px-2 py-2">-{item.vocalistPenalty.toFixed(3)}</td>
@@ -171,7 +173,7 @@ function SnapshotSection({
               </tr>
               {expandedSongId === item.songId && (
                 <tr style={{ borderColor: 'var(--color-border)' }}>
-                  <td colSpan={12} className="px-3 py-3">
+                  <td colSpan={13} className="px-3 py-3">
                     <div className="grid gap-3 md:grid-cols-2">
                       <div>
                         <h4 className="mb-1 font-semibold">候補源の内訳</h4>
@@ -189,6 +191,7 @@ function SnapshotSection({
                         <div className="text-xs">評価: ×{item.preference?.ratingMultiplier.toFixed(3) ?? '-'}</div>
                         <div className="text-xs">暗黙フィードバック: ×{item.preference?.implicitFeedback.multiplier.toFixed(3) ?? '-'}</div>
                         <div className="text-xs">VocaDB人気: ×{item.preference?.popularityMultiplier.toFixed(3) ?? '-'}</div>
+                        <div className="mt-1 text-xs">属性好み: {item.tasteAffinityAdjustment.toFixed(3)}（P {item.tasteAffinity?.producer.toFixed(2) ?? '-'} / 歌声 {item.tasteAffinity?.vocalist.toFixed(2) ?? '-'} / タグ {item.tasteAffinity?.tags.toFixed(2) ?? '-'}）</div>
                       </div>
                     </div>
                   </td>

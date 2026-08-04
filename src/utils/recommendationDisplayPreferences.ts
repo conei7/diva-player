@@ -30,6 +30,7 @@ const COMPACT_HINTS: Readonly<Record<string, string>> = {
   '長期・最近の好みに近い新規開拓曲': '新しい発見',
   'プレイリストにある、聴き慣れた曲': 'プレイリストから',
   '履歴・評価をもとにした既知のおすすめ': '好みから',
+  '評価・保存した曲の特徴に近いおすすめ': '好みの特徴',
 };
 
 export function compactRecommendationHint(reason: string): string {

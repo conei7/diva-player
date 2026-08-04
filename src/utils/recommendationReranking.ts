@@ -2,9 +2,12 @@ import type { Song } from '../types/vocadb';
 import type { HistoryLikeEntry, ImplicitSongFeedbackLike } from './recommendationScoring';
 import {
   buildPlaylistSongSet,
+  buildTasteAffinityProfile,
+  explainTasteAffinity,
   getArtistBucket,
   getVocalistIds,
   scoreQueueCandidates,
+  type TasteAffinityBreakdown,
   type QueueCandidateScoreBreakdown,
 } from './recommendationScoring';
 import { filterVoiceSynthSongs } from './voiceSynthSongs';
@@ -36,11 +39,13 @@ export interface RecommendationCandidateTrace {
   sources: RecommendationSourceTrace[];
   evidence: number;
   preference?: QueueCandidateScoreBreakdown;
+  tasteAffinity?: TasteAffinityBreakdown;
   known: boolean;
   familiarityAdjustment: number;
   explorationAdjustment: number;
   baseScore: number | null;
   exposurePenalty: number;
+  tasteAffinityAdjustment: number;
   producerPenalty: number;
   vocalistPenalty: number;
   favoriteProducer: boolean;
@@ -84,8 +89,14 @@ const SOURCE_WEIGHT: Record<RecommendationSource, number> = {
   popular: 0.55,
 };
 
-function sourceReason(sources: Set<RecommendationSource>, known: boolean, favoriteProducer: boolean): string {
+function sourceReason(
+  sources: Set<RecommendationSource>,
+  known: boolean,
+  favoriteProducer: boolean,
+  tasteAffinityAdjustment: number,
+): string {
   if (favoriteProducer) return 'お気に入りPの楽曲を優先したおすすめ';
+  if (tasteAffinityAdjustment >= 0.08) return '評価・保存した曲の特徴に近いおすすめ';
   if (sources.has('audio') && sources.has('hybrid')) return '音響・タグ・アーティスト情報が重なるおすすめ';
   if (sources.has('audio')) return '音響的に近いおすすめ';
   if (sources.has('hybrid')) return 'タグ・アーティスト情報も近いおすすめ';
@@ -164,6 +175,7 @@ export function rerankRecommendationCandidatesDetailed(
     explorationAdjustment: number;
     baseScore: number | null;
     exposurePenalty: number;
+    tasteAffinityAdjustment: number;
   }>();
   (Object.entries(pools) as Array<[RecommendationSource, Song[] | undefined]>).forEach(([source, songs]) => {
     filterVoiceSynthSongs(songs ?? []).forEach((song, index) => {
@@ -184,6 +196,7 @@ export function rerankRecommendationCandidatesDetailed(
         explorationAdjustment: 0,
         baseScore: null,
         exposurePenalty: 0,
+        tasteAffinityAdjustment: 0,
       };
       current.evidence += sourceWeight * rankSignal;
       current.sources.add(source);
@@ -209,6 +222,7 @@ export function rerankRecommendationCandidatesDetailed(
   );
   const scoredPreferenceMap = new Map(scoredPreferences.map(item => [item.song.id, item]));
   const preferenceScores = new Map(scoredPreferences.map(item => [item.song.id, item.score]));
+  const tasteAffinityProfile = buildTasteAffinityProfile(historyEntries, playlists, ratings, implicitFeedback);
   const knownIds = new Set<number>([
     ...historyEntries.map(entry => entry.song.id),
     ...playlistSongIds,
@@ -254,8 +268,10 @@ export function rerankRecommendationCandidatesDetailed(
         .reduce((sum, vocalistId) => sum + (vocalistCounts.get(vocalistId) ?? 0), 0) * 0.03;
       const familiarityAdjustment = (known ? 1 : -1) * familiarityBias * 0.2;
       const exposurePenalty = calculateExposurePenalty(exposureEntries[String(entry.song.id)], exposureNow);
+      const tasteAffinity = explainTasteAffinity(entry.song, tasteAffinityProfile);
       const baseScore = entry.evidence * 0.9 + Math.sqrt(Math.max(0, preference)) * 0.8
-        + familiarityAdjustment - producerPenalty - vocalistPenalty - exposurePenalty;
+        + familiarityAdjustment + tasteAffinity.adjustment
+        - producerPenalty - vocalistPenalty - exposurePenalty;
       const favoriteProducerAdjustment = favoriteProducer ? 0.45 : 0;
       // The perturbation is deliberately small and deterministic. Hard filters,
       // user feedback, and diversity penalties are all applied before it.
@@ -267,6 +283,7 @@ export function rerankRecommendationCandidatesDetailed(
       entry.baseScore = baseScore;
       entry.explorationAdjustment = explorationAdjustment;
       entry.exposurePenalty = exposurePenalty;
+      entry.tasteAffinityAdjustment = tasteAffinity.adjustment;
       entry.producerPenalty = producerPenalty;
       entry.vocalistPenalty = vocalistPenalty;
       entry.familiarityAdjustment = familiarityAdjustment;
@@ -281,7 +298,11 @@ export function rerankRecommendationCandidatesDetailed(
     const known = knownIds.has(selected.song.id);
     if (selected.favoriteProducer) favoriteCount++;
     const primarySource = [...selected.sources].sort((a, b) => SOURCE_WEIGHT[b] - SOURCE_WEIGHT[a])[0];
-    result.push({ song: selected.song, source: primarySource, reason: sourceReason(selected.sources, known, selected.favoriteProducer) });
+    result.push({
+      song: selected.song,
+      source: primarySource,
+      reason: sourceReason(selected.sources, known, selected.favoriteProducer, selected.tasteAffinityAdjustment),
+    });
     addDiversity(selected.song);
   }
   const rankedIds = new Map(result.map((item, index) => [item.song.id, index + 1]));
@@ -294,11 +315,13 @@ export function rerankRecommendationCandidatesDetailed(
       sources: entry.sourceTraces,
       evidence: entry.evidence,
       ...(preferenceBreakdown ? { preference: preferenceBreakdown } : {}),
+      tasteAffinity: explainTasteAffinity(entry.song, tasteAffinityProfile),
       known,
       familiarityAdjustment: entry.familiarityAdjustment,
       explorationAdjustment: entry.explorationAdjustment,
       baseScore: entry.baseScore,
       exposurePenalty: entry.exposurePenalty,
+      tasteAffinityAdjustment: entry.tasteAffinityAdjustment,
       producerPenalty: entry.producerPenalty,
       vocalistPenalty: entry.vocalistPenalty,
       favoriteProducer: entry.favoriteProducer,
@@ -306,7 +329,7 @@ export function rerankRecommendationCandidatesDetailed(
       finalScore: entry.finalScore,
       selectedRank: rankedIds.get(entry.song.id) ?? null,
       status: rankedIds.has(entry.song.id) ? 'selected' as const : 'not_selected' as const,
-      reason: sourceReason(entry.sources, known, entry.favoriteProducer),
+      reason: sourceReason(entry.sources, known, entry.favoriteProducer, entry.tasteAffinityAdjustment),
     };
   });
   return { ranked: result, trace };

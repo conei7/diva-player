@@ -67,10 +67,14 @@ public class RecommendService
 
         foreach (var (id, score) in graphCandidates)
         {
+            // Repeated graph visits used to grow without a bound and could
+            // overwhelm ANN relevance. Saturation keeps producer context useful
+            // without turning the graph walk into a same-catalog shortcut.
+            var graphSignal = 1.0 - Math.Exp(-Math.Max(0, score));
             if (candidateScores.TryGetValue(id, out var existing))
-                candidateScores[id] = existing + score * _opts.GraphBias;
+                candidateScores[id] = existing + graphSignal * _opts.GraphScoreWeight;
             else
-                candidateScores[id] = score * _opts.GraphBias * 0.7;
+                candidateScores[id] = graphSignal * _opts.GraphScoreWeight * 0.75;
         }
 
         var mergedCandidates = candidateScores
@@ -101,7 +105,13 @@ public class RecommendService
             seedSong, mergedCandidates, candidateInfos);
 
         double lambda = Math.Max(0.2, _opts.BaseDiversity - sessionProgress * 0.3);
-        var reranked  = MmrRerank(filtered, candidateInfos, count, lambda);
+        var reranked  = MmrRerank(
+            filtered,
+            candidateInfos,
+            count,
+            lambda,
+            _opts.ProducerDiversityWeight,
+            _opts.VocalistDiversityWeight);
 
         var resultInfos = (await _db.GetSongInfoBatchAsync(reranked.Select(r => r.SongId)))
             .Where(DiscoveryEligibility.IsEligible)
@@ -115,7 +125,11 @@ public class RecommendService
                 Name:      infoMap[r.SongId].Name,
                 Artist:    infoMap[r.SongId].ArtistString,
                 Score:     r.Score,
-                Reason:    r.Reason))
+                Reason:    r.Reason,
+                ProducerIds: infoMap[r.SongId].ProducerIds,
+                VocalistIds: infoMap[r.SongId].VocalistIds,
+                YoutubeViews: infoMap[r.SongId].YoutubeViews,
+                NicoViews: infoMap[r.SongId].NicoViews))
             .ToList();
 
         return new RecommendResponse(items, null);
@@ -268,12 +282,16 @@ public class RecommendService
         List<(int SongId, double Score)> candidates,
         SongInfo[] infos,
         int count,
-        double lambda)
+        double lambda,
+        double producerDiversityWeight,
+        double vocalistDiversityWeight)
     {
-        // 簡易的な MMR: プロデューサー・ボーカリスト重複ペナルティ
         var infoMap = infos.ToDictionary(i => i.Id);
         var selected = new List<(int SongId, double Score, string Reason)>();
         var remaining = new List<(int SongId, double Score)>(candidates);
+        var maximumRelevance = Math.Max(1e-9, remaining.Count == 0 ? 0 : remaining.Max(item => Math.Max(0, item.Score)));
+        producerDiversityWeight = Math.Clamp(producerDiversityWeight, 0, 1);
+        vocalistDiversityWeight = Math.Clamp(vocalistDiversityWeight, 0, 1);
 
         while (selected.Count < count && remaining.Count > 0)
         {
@@ -282,22 +300,27 @@ public class RecommendService
 
             foreach (var (sid, relevance) in remaining)
             {
-                // MMR スコア = λ × 関連度 - (1-λ) × max(similarity to selected)
-                double sim = 0;
+                var normalizedRelevance = Math.Clamp(relevance / maximumRelevance, 0, 1);
+                double redundancy = 0;
                 if (selected.Count > 0 && infoMap.TryGetValue(sid, out var info))
                 {
-                    foreach (var (selId, _, _) in selected)
-                    {
-                        if (!infoMap.TryGetValue(selId, out var selInfo)) continue;
-                        // プロデューサー/ボーカリスト重複 → 類似度高
-                        var sharedProducers = info.ProducerIds.Intersect(selInfo.ProducerIds).Count();
-                        var sharedVocalists = info.VocalistIds.Intersect(selInfo.VocalistIds).Count();
-                        var overlap = (sharedProducers * 0.6 + sharedVocalists * 0.3);
-                        sim = Math.Max(sim, Math.Min(overlap, 1.0));
-                    }
+                    var selectedInfos = selected
+                        .Select(item => infoMap.GetValueOrDefault(item.SongId))
+                        .Where(item => item is not null)
+                        .Cast<SongInfo>()
+                        .ToArray();
+                    var producerRepeats = info.ProducerIds.Length == 0 ? 0 : info.ProducerIds
+                        .Max(id => selectedInfos.Count(item => item.ProducerIds.Contains(id)));
+                    var vocalistRepeats = info.VocalistIds.Length == 0 ? 0 : info.VocalistIds
+                        .Max(id => selectedInfos.Count(item => item.VocalistIds.Contains(id)));
+                    var producerRedundancy = 1.0 - Math.Exp(-0.9 * producerRepeats);
+                    var vocalistRedundancy = 1.0 - Math.Exp(-0.55 * vocalistRepeats);
+                    redundancy = Math.Min(1.0,
+                        producerDiversityWeight * producerRedundancy
+                        + vocalistDiversityWeight * vocalistRedundancy);
                 }
 
-                var mmr = lambda * relevance - (1.0 - lambda) * sim;
+                var mmr = lambda * normalizedRelevance - (1.0 - lambda) * redundancy;
                 if (mmr > bestMmr)
                 {
                     bestMmr = mmr;
@@ -339,7 +362,11 @@ public record RecommendItem(
     string Name,
     string Artist,
     double Score,
-    string Reason   // "similar" | "same_producer" | "same_vocalist"
+    string Reason,   // "similar" | "same_producer" | "same_vocalist"
+    int[] ProducerIds,
+    int[] VocalistIds,
+    long YoutubeViews,
+    long NicoViews
 );
 
 public record RecommendResponse(

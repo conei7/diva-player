@@ -29,6 +29,9 @@ function assertSongItems(data, endpoint) {
   for (const item of data.items) {
     assert(Number.isInteger(item.songId), `${endpoint} returned an invalid songId.`);
     assert(typeof item.name === 'string', `${endpoint} returned an invalid song name.`);
+    assert(Array.isArray(item.producerIds), `${endpoint} omitted producer IDs.`);
+    assert(Array.isArray(item.vocalistIds), `${endpoint} omitted vocalist IDs.`);
+    assert(Number.isFinite(item.youtubeViews) && Number.isFinite(item.nicoViews), `${endpoint} omitted view counts.`);
   }
 }
 

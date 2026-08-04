@@ -46,6 +46,21 @@ export interface ImplicitSongFeedbackLike {
   lastRemovedAt?: number;
 }
 
+export interface TasteAffinityProfile {
+  producers: Record<string, number>;
+  vocalists: Record<string, number>;
+  tags: Record<string, number>;
+  signalSongCount: number;
+}
+
+export interface TasteAffinityBreakdown {
+  producer: number;
+  vocalist: number;
+  tags: number;
+  confidence: number;
+  adjustment: number;
+}
+
 const ONE_HOUR = 60 * 60 * 1000;
 const ONE_DAY = 24 * ONE_HOUR;
 
@@ -135,6 +150,116 @@ export function getVocalistIds(song: Song): number[] {
     .filter(artist => artist.categories?.includes('Vocalist'))
     .map(artist => artist.artist?.id)
     .filter((id): id is number => id !== undefined);
+}
+
+function getProducerIds(song: Song): number[] {
+  return (song.artists ?? [])
+    .filter(artist => String(artist.categories ?? '').split(',').map(value => value.trim())
+      .some(category => category === 'Producer' || category === 'Band' || category === 'Circle'))
+    .map(artist => artist.artist?.id)
+    .filter((id): id is number => id !== undefined);
+}
+
+function getTasteTagKeys(song: Song): string[] {
+  return [...new Set((song.tags ?? [])
+    .map(item => item.tag?.name.normalize('NFKC').trim().toLocaleLowerCase('ja-JP'))
+    .filter((name): name is string => Boolean(name)))]
+    .slice(0, 12);
+}
+
+function addAffinity(target: Map<string, number>, keys: Array<string | number>, signal: number, weight = 1): void {
+  const uniqueKeys = [...new Set(keys.map(String))];
+  if (uniqueKeys.length === 0) return;
+  const contribution = signal * weight / Math.sqrt(uniqueKeys.length);
+  for (const key of uniqueKeys) target.set(key, (target.get(key) ?? 0) + contribution);
+}
+
+function normalizeAffinityMap(source: Map<string, number>): Record<string, number> {
+  return Object.fromEntries([...source.entries()].map(([key, value]) => [
+    key,
+    Math.tanh(value / 3),
+  ]));
+}
+
+/**
+ * Builds a browser-local preference profile from intentional signals only.
+ * Ordinary history and discovery completions never become positive evidence.
+ */
+export function buildTasteAffinityProfile(
+  historyEntries: HistoryLikeEntry[],
+  playlists: { songs: Song[] }[],
+  ratings: Record<string, number>,
+  implicitFeedback: Record<string, ImplicitSongFeedbackLike>,
+): TasteAffinityProfile {
+  const songs = new Map<number, Song>();
+  for (const entry of historyEntries) songs.set(entry.song.id, entry.song);
+  const playlistSongIds = new Set<number>();
+  for (const playlist of playlists) {
+    for (const song of playlist.songs) {
+      songs.set(song.id, song);
+      playlistSongIds.add(song.id);
+    }
+  }
+
+  const producers = new Map<string, number>();
+  const vocalists = new Map<string, number>();
+  const tags = new Map<string, number>();
+  let signalSongCount = 0;
+
+  for (const song of songs.values()) {
+    const rating = ratings[String(song.id)] ?? 0;
+    const feedback = implicitFeedback[String(song.id)];
+    let signal = playlistSongIds.has(song.id) ? 1.4 : 0;
+    signal += rating === 5 ? 2.4 : rating === 4 ? 1.5 : rating === 3 ? 0.4 : rating === 2 ? -0.7 : rating === 1 ? -1.4 : 0;
+    signal += Math.min(3, feedback?.manualCompleteCount ?? 0) * 0.45;
+    signal += Math.min(2, feedback?.autoCompleteCount ?? 0) * 0.05;
+    signal -= Math.min(3, feedback?.skipCount ?? 0) * 0.3;
+    signal -= Math.min(2, feedback?.removeCount ?? 0) * 0.6;
+    if (Math.abs(signal) < 0.2) continue;
+
+    signalSongCount++;
+    addAffinity(producers, getProducerIds(song), signal, 1);
+    addAffinity(vocalists, getVocalistIds(song), signal, 0.7);
+    addAffinity(tags, getTasteTagKeys(song), signal, 0.45);
+  }
+
+  return {
+    producers: normalizeAffinityMap(producers),
+    vocalists: normalizeAffinityMap(vocalists),
+    tags: normalizeAffinityMap(tags),
+    signalSongCount,
+  };
+}
+
+function strongestAverage(keys: Array<string | number>, affinities: Record<string, number>, maximum: number): number {
+  const values = [...new Set(keys.map(String))]
+    .map(key => affinities[key] ?? 0)
+    .filter(value => value !== 0)
+    .sort((left, right) => Math.abs(right) - Math.abs(left))
+    .slice(0, maximum);
+  return values.length === 0 ? 0 : values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+export function explainTasteAffinity(song: Song, profile: TasteAffinityProfile): TasteAffinityBreakdown {
+  const producer = strongestAverage(getProducerIds(song), profile.producers, 2);
+  const vocalist = strongestAverage(getVocalistIds(song), profile.vocalists, 2);
+  const tags = strongestAverage(getTasteTagKeys(song), profile.tags, 3);
+  const available: Array<{ value: number; weight: number }> = [];
+  if (producer !== 0) available.push({ value: producer, weight: 0.45 });
+  if (vocalist !== 0) available.push({ value: vocalist, weight: 0.20 });
+  if (tags !== 0) available.push({ value: tags, weight: 0.35 });
+  const totalWeight = available.reduce((sum, item) => sum + item.weight, 0);
+  const affinity = totalWeight === 0
+    ? 0
+    : available.reduce((sum, item) => sum + item.value * item.weight, 0) / totalWeight;
+  const confidence = Math.min(1, profile.signalSongCount / 4);
+  return {
+    producer,
+    vocalist,
+    tags,
+    confidence,
+    adjustment: Math.max(-0.28, Math.min(0.28, affinity * confidence * 0.28)),
+  };
 }
 
 export interface QueueDiversityOptions {

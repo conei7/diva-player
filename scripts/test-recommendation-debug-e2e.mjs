@@ -42,6 +42,7 @@ async function main() {
     }));
     assert(dialog.rows > 0, 'The recommendation debug dialog had no candidate rows.');
     assert(dialog.text.includes('Evidence'), `The recommendation debug table did not show score columns: ${dialog.text.slice(0, 500)}`);
+    assert(dialog.text.includes('属性好み'), `The recommendation debug table did not show local taste affinity: ${dialog.text.slice(0, 500)}`);
     console.log(`PASS recommendation debug home (${dialog.rows} trace rows)`);
 
     await page.goto(new URL('watch?v=1501', baseUrl).toString(), { waitUntil: 'domcontentloaded' });

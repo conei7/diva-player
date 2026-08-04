@@ -124,4 +124,23 @@ describe('rerankRecommendationCandidates', () => {
 
     expect(result.map(item => item.song.id)).toEqual([1, 2]);
   });
+
+  it('uses intentional producer affinity as a soft cross-song signal', () => {
+    const likedSongs = [101, 102, 103, 104].map(id => song(id, 10));
+    const neutral = song(1, 20);
+    const matching = song(2, 10);
+    const result = rerankRecommendationCandidatesDetailed({
+      hybrid: [neutral],
+      audio: [matching],
+    }, {
+      ...baseOptions,
+      total: 2,
+      historyEntries: likedSongs.map((item, index) => ({ song: item, playedAt: index + 1 })),
+      ratings: Object.fromEntries(likedSongs.map(item => [String(item.id), 5])),
+    });
+
+    expect(result.ranked[0].song.id).toBe(2);
+    expect(result.trace.find(item => item.songId === 2)?.tasteAffinityAdjustment).toBeGreaterThan(0);
+    expect(result.ranked[0].reason).toContain('特徴');
+  });
 });

@@ -380,6 +380,10 @@ app.MapGet("/api/recommend/similar", async (
             name   = infoMap[r.SongId].Name,
             artist = infoMap[r.SongId].ArtistString,
             score  = r.Score,
+            producerIds = infoMap[r.SongId].ProducerIds,
+            vocalistIds = infoMap[r.SongId].VocalistIds,
+            youtubeViews = infoMap[r.SongId].YoutubeViews,
+            nicoViews = infoMap[r.SongId].NicoViews,
         })
         .ToList();
 
@@ -450,6 +454,10 @@ app.MapGet("/api/recommend/metadata", async (
             name   = infoMap[r.SongId].Name,
             artist = infoMap[r.SongId].ArtistString,
             score  = r.Score,
+            producerIds = infoMap[r.SongId].ProducerIds,
+            vocalistIds = infoMap[r.SongId].VocalistIds,
+            youtubeViews = infoMap[r.SongId].YoutubeViews,
+            nicoViews = infoMap[r.SongId].NicoViews,
         })
         .ToList();
 
@@ -494,6 +502,10 @@ app.MapGet("/api/recommend/audio", async (
             name   = infoMap[r.SongId].Name,
             artist = infoMap[r.SongId].ArtistString,
             score  = r.Score,
+            producerIds = infoMap[r.SongId].ProducerIds,
+            vocalistIds = infoMap[r.SongId].VocalistIds,
+            youtubeViews = infoMap[r.SongId].YoutubeViews,
+            nicoViews = infoMap[r.SongId].NicoViews,
         })
         .ToList();
 
