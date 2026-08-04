@@ -215,7 +215,7 @@ public class DbService
     public async Task<YouTubePlaylistCache?> GetYouTubePlaylistCacheAsync(string playlistId, CancellationToken cancellationToken)
     {
         await using var conn = await OpenAsync();
-        await using var cmd = new NpgsqlCommand(@"
+        await using var cmd = new NpgsqlCommand($@"
             SELECT title, video_ids::text, etag, truncated, fetched_at
             FROM youtube_playlist_cache
             WHERE playlist_id = $1", conn);
@@ -1128,6 +1128,103 @@ public class DbService
                 ) DESC,
                 COUNT(*) DESC,
                 candidate_tag.song_id
+            LIMIT $2", conn);
+        cmd.Parameters.AddWithValue(seedSongId);
+        cmd.Parameters.AddWithValue(normalizedLimit);
+
+        var result = new List<int>(normalizedLimit);
+        await using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+            result.Add(reader.GetInt32(0));
+
+        var ids = result.ToArray();
+        _cache.Set(cacheKey, ids, TimeSpan.FromMinutes(15));
+        return ids;
+    }
+
+    public async Task<int[]> GetDiverseFallbackCandidateIdsAsync(int seedSongId, int limit)
+    {
+        var normalizedLimit = Math.Clamp(limit, 1, 500);
+        var cacheKey = $"diverse-fallback:{seedSongId}:{normalizedLimit}";
+        if (_cache.TryGetValue(cacheKey, out int[]? cached) && cached is not null)
+            return cached;
+
+        await using var conn = await OpenAsync();
+        await using var cmd = new NpgsqlCommand(@"
+            WITH seed AS (
+                SELECT s.id, s.song_type, s.publish_date, sf.state_cluster
+                FROM songs s
+                LEFT JOIN song_features sf ON sf.song_id = s.id
+                WHERE s.id = $1
+            ),
+            seed_producers AS (
+                SELECT artist_id
+                FROM song_artists
+                WHERE song_id = $1 AND is_producer = TRUE
+            ),
+            candidate_pool AS (
+                SELECT
+                    candidate.id,
+                    MIN(credit.artist_id) FILTER (WHERE credit.is_producer = TRUE) AS primary_producer,
+                    CASE
+                        WHEN seed.state_cluster IS NOT NULL
+                         AND features.state_cluster = seed.state_cluster THEN 0
+                        ELSE 1
+                    END AS cluster_distance,
+                    CASE WHEN candidate.song_type = seed.song_type THEN 0 ELSE 1 END AS type_distance,
+                    CASE
+                        WHEN seed.publish_date IS NULL OR candidate.publish_date IS NULL THEN 100000
+                        ELSE ABS(candidate.publish_date - seed.publish_date)
+                    END AS publish_distance,
+                    quality.quality_score
+                FROM songs candidate
+                CROSS JOIN seed
+                JOIN song_discovery_quality quality
+                  ON quality.song_id = candidate.id
+                 AND quality.discovery_eligible = TRUE
+                LEFT JOIN song_features features ON features.song_id = candidate.id
+                LEFT JOIN song_artists credit ON credit.song_id = candidate.id
+                WHERE candidate.id <> $1
+                  AND EXISTS (
+                      SELECT 1
+                      FROM pvs playable
+                      WHERE playable.song_id = candidate.id AND playable.disabled = FALSE
+                  )
+                  AND EXISTS (
+                      SELECT 1
+                      FROM song_artists vocalist_credit
+                      JOIN artists vocalist ON vocalist.id = vocalist_credit.artist_id
+                      WHERE vocalist_credit.song_id = candidate.id
+                        AND vocalist_credit.is_vocalist = TRUE
+                        AND vocalist.artist_type IN ({VoiceSynthArtistTypesSql})
+                  )
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM song_artists candidate_producer
+                      JOIN seed_producers seed_producer
+                        ON seed_producer.artist_id = candidate_producer.artist_id
+                      WHERE candidate_producer.song_id = candidate.id
+                        AND candidate_producer.is_producer = TRUE
+                  )
+                GROUP BY candidate.id, seed.song_type, seed.publish_date, seed.state_cluster,
+                         features.state_cluster, quality.quality_score
+                ORDER BY cluster_distance, type_distance, publish_distance,
+                         quality.quality_score DESC, candidate.id
+                LIMIT 2000
+            ),
+            producer_ranked AS (
+                SELECT candidate_pool.*,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY COALESCE(primary_producer, -id)
+                           ORDER BY cluster_distance, type_distance, publish_distance,
+                                    quality_score DESC, id
+                       ) AS producer_rank
+                FROM candidate_pool
+            )
+            SELECT id
+            FROM producer_ranked
+            ORDER BY producer_rank, cluster_distance, type_distance, publish_distance,
+                     quality_score DESC, id
             LIMIT $2", conn);
         cmd.Parameters.AddWithValue(seedSongId);
         cmd.Parameters.AddWithValue(normalizedLimit);

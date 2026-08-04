@@ -434,6 +434,15 @@ app.MapGet("/api/recommend/metadata", async (
         return Results.Ok(new { items = Array.Empty<object>() });
 
     var infos = await db.GetSongInfoBatchAsync(results.Select(r => r.SongId));
+    if (MetadataRelationshipRanking.NeedsDiverseProducerFallback(infos))
+    {
+        foreach (var candidateId in await db.GetDiverseFallbackCandidateIdsAsync(songId, 200))
+            candidateScores.TryAdd(candidateId, -1);
+        results = candidateScores
+            .Select(candidate => (SongId: candidate.Key, Score: candidate.Value))
+            .ToList();
+        infos = await db.GetSongInfoBatchAsync(results.Select(result => result.SongId));
+    }
     var infoMap = infos.ToDictionary(i => i.Id);
     results = results
         .Where(result => infoMap.TryGetValue(result.SongId, out var info) && DiscoveryEligibility.IsEligible(info))

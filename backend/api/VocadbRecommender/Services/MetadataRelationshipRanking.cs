@@ -7,6 +7,24 @@ namespace VocadbRecommender.Services;
 /// </summary>
 public static class MetadataRelationshipRanking
 {
+    public static bool NeedsDiverseProducerFallback(IEnumerable<SongInfo> candidateInfos)
+    {
+        var infos = candidateInfos
+            .Where(DiscoveryEligibility.IsEligible)
+            .Where(info => info.ProducerIds.Length > 0)
+            .ToArray();
+        if (infos.Length < 20) return false;
+
+        var dominantShare = infos
+            .SelectMany(info => info.ProducerIds.Distinct())
+            .GroupBy(id => id)
+            .Select(group => (double)group.Count() / infos.Length)
+            .DefaultIfEmpty(0)
+            .Max();
+        var distinctProducers = infos.SelectMany(info => info.ProducerIds).Distinct().Count();
+        return dominantShare >= 0.65 || distinctProducers < 8;
+    }
+
     public static List<(int SongId, double Score)> RerankRelated(
         IEnumerable<(int SongId, double Score)> candidates,
         SongInfo seed,
