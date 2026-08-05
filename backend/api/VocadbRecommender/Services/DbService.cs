@@ -104,6 +104,7 @@ public class DbService
     private readonly ILogger<DbService> _logger;
     private readonly ConcurrentDictionary<string, byte> _searchRefreshes = new();
     private readonly ConcurrentDictionary<string, byte> _trendingRefreshes = new();
+    private readonly SemaphoreSlim _knowledgeMapCatalogLock = new(1, 1);
     private sealed record CachedSongSearch(string ItemsJson, int TotalCount, DateTimeOffset FreshUntil);
     private sealed record CachedTrending(string ItemsJson, DateTimeOffset FreshUntil);
 
@@ -237,82 +238,97 @@ public class DbService
         if (_cache.TryGetValue(cacheKey, out KnowledgeMapCatalog? cached) && cached is not null)
             return cached;
 
-        await using var conn = await OpenAsync();
-        await using var aggregateCommand = new NpgsqlCommand(@"
-            SELECT COUNT(*)::bigint,
-                   COUNT(*) FILTER (WHERE s.youtube_views > 0)::bigint,
-                   COALESCE(SUM(GREATEST(0, s.youtube_views)), 0)::bigint,
-                   COUNT(*) FILTER (WHERE s.nico_views > 0)::bigint,
-                   COALESCE(SUM(GREATEST(0, s.nico_views)), 0)::bigint
-            FROM songs s
-            JOIN song_discovery_quality quality ON quality.song_id = s.id
-            WHERE quality.discovery_eligible = TRUE", conn)
+        await _knowledgeMapCatalogLock.WaitAsync(cancellationToken);
+        try
         {
-            CommandTimeout = 15,
-        };
+            if (_cache.TryGetValue(cacheKey, out cached) && cached is not null)
+                return cached;
 
-        long eligibleSongCount;
-        long youtubeSongCount;
-        long youtubeViews;
-        long nicoSongCount;
-        long nicoViews;
-        await using (var reader = await aggregateCommand.ExecuteReaderAsync(cancellationToken))
-        {
-            if (!await reader.ReadAsync(cancellationToken))
-                throw new InvalidOperationException("Knowledge map catalog query returned no result.");
-            eligibleSongCount = reader.GetInt64(0);
-            youtubeSongCount = reader.GetInt64(1);
-            youtubeViews = reader.GetInt64(2);
-            nicoSongCount = reader.GetInt64(3);
-            nicoViews = reader.GetInt64(4);
-        }
-
-        async Task<IReadOnlyList<KnowledgeMapSong>> LoadTopSongsAsync(string viewColumn)
-        {
-            await using var command = new NpgsqlCommand($@"
-                SELECT s.id,
-                       s.name,
-                       COALESCE(s.artist_string, ''),
-                       GREATEST(0, s.youtube_views),
-                       GREATEST(0, s.nico_views),
-                       s.raw_json->>'thumbUrl'
-                FROM songs s
-                JOIN song_discovery_quality quality ON quality.song_id = s.id
-                WHERE quality.discovery_eligible = TRUE
-                  AND s.{viewColumn} > 0
-                ORDER BY s.{viewColumn} DESC, s.id
-                LIMIT 120", conn)
+            async Task<(long EligibleSongCount, long YoutubeSongCount, long YoutubeViews, long NicoSongCount, long NicoViews)> LoadAggregateAsync()
             {
-                CommandTimeout = 15,
-            };
-            var songs = new List<KnowledgeMapSong>();
-            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-            while (await reader.ReadAsync(cancellationToken))
-            {
-                songs.Add(new KnowledgeMapSong(
-                    reader.GetInt32(0),
-                    reader.GetString(1),
-                    reader.GetString(2),
+                await using var conn = await OpenAsync();
+                await using var command = new NpgsqlCommand(@"
+                    SELECT COUNT(*)::bigint,
+                           COUNT(*) FILTER (WHERE s.youtube_views > 0)::bigint,
+                           COALESCE(SUM(GREATEST(0, s.youtube_views)), 0)::bigint,
+                           COUNT(*) FILTER (WHERE s.nico_views > 0)::bigint,
+                           COALESCE(SUM(GREATEST(0, s.nico_views)), 0)::bigint
+                    FROM songs s
+                    JOIN song_discovery_quality quality ON quality.song_id = s.id
+                    WHERE quality.discovery_eligible = TRUE", conn)
+                {
+                    CommandTimeout = 15,
+                };
+                await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+                if (!await reader.ReadAsync(cancellationToken))
+                    throw new InvalidOperationException("Knowledge map catalog query returned no result.");
+                return (
+                    reader.GetInt64(0),
+                    reader.GetInt64(1),
+                    reader.GetInt64(2),
                     reader.GetInt64(3),
-                    reader.GetInt64(4),
-                    reader.IsDBNull(5) ? null : reader.GetString(5)));
+                    reader.GetInt64(4));
             }
-            return songs;
-        }
 
-        var youtubeTopSongs = await LoadTopSongsAsync("youtube_views");
-        var nicoTopSongs = await LoadTopSongsAsync("nico_views");
-        var catalog = new KnowledgeMapCatalog(
-            DateTimeOffset.UtcNow,
-            eligibleSongCount,
-            youtubeSongCount,
-            youtubeViews,
-            nicoSongCount,
-            nicoViews,
-            youtubeTopSongs,
-            nicoTopSongs);
-        _cache.Set(cacheKey, catalog, TimeSpan.FromMinutes(15));
-        return catalog;
+            async Task<IReadOnlyList<KnowledgeMapSong>> LoadTopSongsAsync(string viewColumn)
+            {
+                await using var conn = await OpenAsync();
+                await using var command = new NpgsqlCommand($@"
+                    SELECT s.id,
+                           s.name,
+                           COALESCE(s.artist_string, ''),
+                           GREATEST(0, s.youtube_views),
+                           GREATEST(0, s.nico_views),
+                           s.raw_json->>'thumbUrl'
+                    FROM songs s
+                    WHERE s.{viewColumn} > 0
+                      AND EXISTS (
+                          SELECT 1
+                          FROM song_discovery_quality quality
+                          WHERE quality.song_id = s.id
+                            AND quality.discovery_eligible = TRUE
+                      )
+                    ORDER BY s.{viewColumn} DESC, s.id
+                    LIMIT 120", conn)
+                {
+                    CommandTimeout = 15,
+                };
+                var songs = new List<KnowledgeMapSong>();
+                await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+                while (await reader.ReadAsync(cancellationToken))
+                {
+                    songs.Add(new KnowledgeMapSong(
+                        reader.GetInt32(0),
+                        reader.GetString(1),
+                        reader.GetString(2),
+                        reader.GetInt64(3),
+                        reader.GetInt64(4),
+                        reader.IsDBNull(5) ? null : reader.GetString(5)));
+                }
+                return songs;
+            }
+
+            var aggregateTask = LoadAggregateAsync();
+            var youtubeTopSongsTask = LoadTopSongsAsync("youtube_views");
+            var nicoTopSongsTask = LoadTopSongsAsync("nico_views");
+            await Task.WhenAll(aggregateTask, youtubeTopSongsTask, nicoTopSongsTask);
+            var aggregate = await aggregateTask;
+            var catalog = new KnowledgeMapCatalog(
+                DateTimeOffset.UtcNow,
+                aggregate.EligibleSongCount,
+                aggregate.YoutubeSongCount,
+                aggregate.YoutubeViews,
+                aggregate.NicoSongCount,
+                aggregate.NicoViews,
+                await youtubeTopSongsTask,
+                await nicoTopSongsTask);
+            _cache.Set(cacheKey, catalog, TimeSpan.FromMinutes(15));
+            return catalog;
+        }
+        finally
+        {
+            _knowledgeMapCatalogLock.Release();
+        }
     }
 
     public async Task<IReadOnlyList<KnowledgeMapSong>> GetKnowledgeMapSongsAsync(
