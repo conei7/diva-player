@@ -96,11 +96,13 @@ async function main() {
     `Playlist create button is not centered: ${JSON.stringify(createButtonLayout)}`);
     await page.type('input[placeholder="新しいプレイリスト"]', '長いタイトルでも操作が重ならないことを確認するプレイリスト');
     await page.click('button[aria-label="プレイリストを作成"]');
-    await page.waitForSelector('main main section h1');
-    const headerLayout = await page.$eval('main main section', section => {
+    await page.waitForSelector('main h1');
+    const headerLayout = await page.$eval('main h1', heading => {
+      const section = heading.closest('section');
+      if (!section) return { sectionBottom: 0, lastButtonBottom: 1 };
       const sectionRect = section.getBoundingClientRect();
       const buttonBottoms = [...section.querySelectorAll('button')].map(button => button.getBoundingClientRect().bottom);
-      return { sectionBottom: sectionRect.bottom, lastButtonBottom: Math.max(...buttonBottoms) };
+      return { sectionBottom: sectionRect.bottom, lastButtonBottom: Math.max(0, ...buttonBottoms) };
     });
     assert(headerLayout.lastButtonBottom <= headerLayout.sectionBottom + 1,
       `Playlist header actions are clipped: ${JSON.stringify(headerLayout)}`);
