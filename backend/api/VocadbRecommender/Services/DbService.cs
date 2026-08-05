@@ -1784,7 +1784,16 @@ public class DbService
             previous_baseline AS (
                 SELECT baseline.song_id,
                        h.recorded_at AS observed_at,
-                       {baselineTotalViewsSql} AS total_views
+                       -- Preserve the absence of a preceding window. The
+                       -- weighted expression coalesces missing counters to
+                       -- zero, which would otherwise turn a missing lateral
+                       -- row into previous_views = 0 and reject every
+                       -- bootstrap candidate because prior_window_days is
+                       -- still NULL.
+                       CASE WHEN h.recorded_at IS NULL
+                           THEN NULL::double precision
+                           ELSE {baselineTotalViewsSql}
+                       END AS total_views
                 FROM baseline
                 LEFT JOIN LATERAL (
                     SELECT history.*
@@ -1986,9 +1995,6 @@ public class DbService
         if (normalizedMinYoutube > 0) cmd.Parameters.AddWithValue(normalizedMinYoutube);
         if (normalizedMinNico > 0) cmd.Parameters.AddWithValue(normalizedMinNico);
         if (normalizedExcludedTypes.Length > 0) cmd.Parameters.Add(new NpgsqlParameter { Value = normalizedExcludedTypes, NpgsqlDbType = NpgsqlDbType.Array | NpgsqlDbType.Text });
-
-        if (debug && normalizedMode == "surge")
-            _logger.LogInformation("surge_debug_sql {Sql}", cmd.CommandText);
 
         var items = new List<string>();
         await using var reader = await cmd.ExecuteReaderAsync();

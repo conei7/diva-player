@@ -38,5 +38,7 @@ assert.match(serviceRegistration, /AddHostedService<ApiWarmupService>/);
 assert.match(warmup, /home-surge/);
 assert.match(dbService, /CachedTrending/);
 assert.match(dbService, /trending_cache_refresh_failed/);
+assert.match(dbService, /CASE WHEN h\.recorded_at IS NULL\s+THEN NULL::double precision/);
+assert.doesNotMatch(dbService, /surge_debug_sql/);
 
 console.log('PASS rolling deployment topology contract');
