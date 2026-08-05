@@ -1,6 +1,6 @@
 // Representative recommendation regression check for the deployed API.
 // It is intentionally independent from browser state so it can run from CI.
-import { writeFile } from 'node:fs/promises';
+import { appendFile, writeFile } from 'node:fs/promises';
 
 const DEFAULT_TIMEOUT_MS = 20_000;
 const DEFAULT_MAX_LATENCY_MS = 15_000;
@@ -39,12 +39,12 @@ function getRatioOption(name, defaultValue) {
   return provided;
 }
 
-function getReportFile() {
-  const argumentIndex = process.argv.indexOf('--report-file');
+function getPathOption(name) {
+  const argumentIndex = process.argv.indexOf(name);
   if (argumentIndex < 0) return undefined;
-  const reportFile = process.argv[argumentIndex + 1];
-  if (!reportFile || reportFile.startsWith('--')) throw new Error('--report-file requires a path.');
-  return reportFile;
+  const path = process.argv[argumentIndex + 1];
+  if (!path || path.startsWith('--')) throw new Error(`${name} requires a path.`);
+  return path;
 }
 
 function assert(condition, message) {
@@ -259,7 +259,8 @@ async function main() {
   const minHybridMinorShare = getRatioOption('--min-hybrid-minor-share', DEFAULT_MIN_HYBRID_MINOR_SHARE);
   const maxHybridMinorShare = getRatioOption('--max-hybrid-minor-share', DEFAULT_MAX_HYBRID_MINOR_SHARE);
   const maxSeedProducerShare = getRatioOption('--max-seed-producer-share', DEFAULT_MAX_SEED_PRODUCER_SHARE);
-  const reportFile = getReportFile();
+  const reportFile = getPathOption('--report-file');
+  const historyFile = getPathOption('--history-file');
   const latencySamples = [];
   const latencyByEndpoint = new Map();
   const endpointCounts = new Map();
@@ -402,6 +403,7 @@ async function main() {
     },
   };
   if (reportFile) await writeFile(reportFile, `${JSON.stringify(report, null, 2)}\n`, 'utf8');
+  if (historyFile) await appendFile(historyFile, `${JSON.stringify(report)}\n`, 'utf8');
 
   for (const endpoint of endpoints) {
     const required = endpoint === '/api/recommend/audio'
