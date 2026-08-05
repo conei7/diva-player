@@ -274,22 +274,32 @@ public class DbService
             {
                 await using var conn = await OpenAsync();
                 await using var command = new NpgsqlCommand($@"
-                    SELECT s.id,
-                           s.name,
-                           COALESCE(s.artist_string, ''),
-                           GREATEST(0, s.youtube_views),
-                           GREATEST(0, s.nico_views),
-                           s.raw_json->>'thumbUrl'
-                    FROM songs s
-                    WHERE s.{viewColumn} > 0
-                      AND EXISTS (
-                          SELECT 1
-                          FROM song_discovery_quality quality
-                          WHERE quality.song_id = s.id
-                            AND quality.discovery_eligible = TRUE
-                      )
-                    ORDER BY s.{viewColumn} DESC, s.id
-                    LIMIT 120", conn)
+                    WITH top_songs AS MATERIALIZED (
+                        SELECT s.id,
+                               s.name,
+                               COALESCE(s.artist_string, '') AS artist_string,
+                               GREATEST(0, s.youtube_views) AS youtube_views,
+                               GREATEST(0, s.nico_views) AS nico_views
+                        FROM songs s
+                        WHERE s.{viewColumn} > 0
+                          AND EXISTS (
+                              SELECT 1
+                              FROM song_discovery_quality quality
+                              WHERE quality.song_id = s.id
+                                AND quality.discovery_eligible = TRUE
+                          )
+                        ORDER BY s.{viewColumn} DESC, s.id
+                        LIMIT 120
+                    )
+                    SELECT top_songs.id,
+                           top_songs.name,
+                           top_songs.artist_string,
+                           top_songs.youtube_views,
+                           top_songs.nico_views,
+                           songs.raw_json->>'thumbUrl'
+                    FROM top_songs
+                    JOIN songs ON songs.id = top_songs.id
+                    ORDER BY top_songs.{viewColumn} DESC, top_songs.id", conn)
                 {
                     CommandTimeout = 15,
                 };
