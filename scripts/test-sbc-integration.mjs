@@ -128,7 +128,7 @@ async function main() {
       assert(rankedA.items.length === 24, `Surge ranking returned only ${rankedA.items.length}/24 songs.`);
       assert(rankedA.items.every(item => Number(item.viewGrowth) > 0), 'Surge ranking omitted recent growth evidence.');
       assert(rankedA.items.every(item => Number(item.surgeRate) >= 1.25), 'Surge ranking included a song below the acceleration boundary.');
-      assert(rankedA.items.every(item => Number(item.trendWindowDays) >= 7 && Number(item.trendWindowDays) <= 10), 'Surge ranking returned an incorrect trend window.');
+      assert(rankedA.items.every(item => Number(item.trendWindowDays) >= 3 && Number(item.trendWindowDays) <= 10), 'Surge ranking returned an incorrect trend window.');
     }
     console.log(`PASS deterministic ${mode} ranking (${rankedA.items.length} items)`);
   }

@@ -1612,7 +1612,7 @@ public class DbService
 
         var modeCondition = normalizedMode switch
         {
-            "surge" when normalizedRanking == "quality" => "AND g.previous_views IS NOT NULL AND g.baseline_views > g.previous_views AND g.prior_window_days >= 3 AND g.view_growth >= 750 AND g.surge_rate >= 1.25 AND s.song_type IN ('Original', 'Cover', 'Remix', 'Remaster', 'Arrangement', 'Mashup', 'MusicPV') AND g.quality_score >= 0.45 AND NOT (g.quality_score < 0.60 AND EXISTS (SELECT 1 FROM unnest(g.quality_reasons) reason WHERE reason LIKE 'negative_tag:%')) AND (s.publish_date >= CURRENT_DATE - interval '180 days' OR g.support_score >= 0.10 OR g.growth_rate >= 0.01)",
+            "surge" when normalizedRanking == "quality" => "AND g.current_window_days >= 3 AND (g.previous_views IS NULL OR (g.baseline_views > g.previous_views AND g.prior_window_days >= 3)) AND g.view_growth >= 750 AND g.surge_rate >= 1.25 AND s.song_type IN ('Original', 'Cover', 'Remix', 'Remaster', 'Arrangement', 'Mashup', 'MusicPV') AND g.quality_score >= 0.45 AND NOT (g.quality_score < 0.60 AND EXISTS (SELECT 1 FROM unnest(g.quality_reasons) reason WHERE reason LIKE 'negative_tag:%')) AND (s.publish_date >= CURRENT_DATE - interval '180 days' OR g.support_score >= 0.10 OR g.growth_rate >= 0.01)",
             "surge" => $"AND g.previous_views IS NOT NULL AND g.baseline_views > g.previous_views AND g.prior_window_days >= 3 AND g.view_growth >= 1000 AND g.surge_rate >= 1.5 AND {songTypeExpression} IN ('Original', 'Cover', 'Remix', 'Remaster', 'MusicPV')",
             "recent" => "AND s.publish_date >= CURRENT_DATE - interval '30 days'",
             "deep" => "AND g.baseline_views BETWEEN 100 AND 150000",
@@ -1625,7 +1625,7 @@ public class DbService
             // independent of the optional exploration seed and break ties by
             // song ID so repeated requests produce the same list.
             "surge" when normalizedRanking == "legacy" => "g.surge_rate DESC, g.view_growth DESC, s.favorited_times DESC NULLS LAST, s.id ASC",
-            "surge" => "g.trend_tier DESC, g.surge_rank_score DESC, g.view_growth DESC, g.quality_score DESC, s.favorited_times DESC NULLS LAST, s.id ASC",
+            "surge" => "CASE WHEN g.current_window_days >= 7 AND g.previous_views IS NOT NULL AND g.prior_window_days >= 3 THEN 1 ELSE 0 END DESC, g.trend_tier DESC, g.surge_rank_score DESC, g.view_growth DESC, g.quality_score DESC, s.favorited_times DESC NULLS LAST, s.id ASC",
             "recent" => "g.recent_score DESC, g.view_growth DESC, s.publish_date DESC, s.id ASC",
             "alltime" => "g.popular_score DESC, g.view_growth DESC, s.favorited_times DESC NULLS LAST, s.id ASC",
             "pace" => "g.recent_score DESC, g.view_growth DESC, s.publish_date DESC, s.id ASC",
@@ -1720,6 +1720,13 @@ public class DbService
                 """,
             _ => "SELECT id FROM songs WHERE FALSE",
         };
+        // A newly initialized daily history cannot provide both a seven-day
+        // baseline and the preceding comparison window. During that bootstrap
+        // period, surge ranking may use an actual three-to-ten-day window and
+        // the existing conservative 100 views/day acceleration floor. Once a
+        // song has the complete history, the ORDER BY above always prioritizes
+        // the normal seven-day + prior-window evidence.
+        var baselineMinimumDays = normalizedMode == "surge" ? 3 : clampedDays;
 
         await using var cmd = new NpgsqlCommand($@"
             WITH latest_watermark AS (
@@ -1766,9 +1773,11 @@ public class DbService
                     SELECT history.*
                     FROM view_history history
                     WHERE history.song_id = latest.song_id
-                      AND history.recorded_at <= latest.observed_at - ($1::int * interval '1 day')
+                      AND history.recorded_at <= latest.observed_at - ({baselineMinimumDays}::int * interval '1 day')
                       AND history.recorded_at >= latest.observed_at - (($1::int + 3) * interval '1 day')
-                    ORDER BY history.recorded_at DESC
+                    ORDER BY
+                      CASE WHEN history.recorded_at <= latest.observed_at - ($1::int * interval '1 day') THEN 0 ELSE 1 END,
+                      history.recorded_at DESC
                     LIMIT 1
                 ) h ON TRUE
             ),
@@ -1777,7 +1786,7 @@ public class DbService
                        h.recorded_at AS observed_at,
                        {baselineTotalViewsSql} AS total_views
                 FROM baseline
-                JOIN LATERAL (
+                LEFT JOIN LATERAL (
                     SELECT history.*
                     FROM view_history history
                     WHERE history.song_id = baseline.song_id
