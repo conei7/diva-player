@@ -1987,6 +1987,9 @@ public class DbService
         if (normalizedMinNico > 0) cmd.Parameters.AddWithValue(normalizedMinNico);
         if (normalizedExcludedTypes.Length > 0) cmd.Parameters.Add(new NpgsqlParameter { Value = normalizedExcludedTypes, NpgsqlDbType = NpgsqlDbType.Array | NpgsqlDbType.Text });
 
+        if (debug && normalizedMode == "surge")
+            _logger.LogInformation("surge_debug_sql {Sql}", cmd.CommandText);
+
         var items = new List<string>();
         await using var reader = await cmd.ExecuteReaderAsync();
         while (await reader.ReadAsync())
