@@ -70,6 +70,7 @@ async function main() {
       ['', 'a[href*="/watch?v="]', 'home'],
       ['history', 'h1', 'history'],
       ['reports', 'h1', 'reports'],
+      ['knowledge-map', '[data-testid="knowledge-map-page"]', 'knowledge map'],
       ['favorites', 'h1', 'favorites'],
       ['favorite-producers', 'h1', 'favorite producers'],
       ['playlists', 'input[placeholder="新しいプレイリスト"]', 'playlists'],

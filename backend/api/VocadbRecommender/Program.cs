@@ -141,6 +141,7 @@ const int maxSearchArtistGroups = 20;
 
 app.MapHealthEndpoints();
 app.MapSongReadEndpoints();
+app.MapKnowledgeMapEndpoints();
 
 app.MapPlaylistImportEndpoints();
 

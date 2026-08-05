@@ -31,6 +31,24 @@ public sealed record SongSearchExecution(
 
 public sealed record SearchTagItem(int Id, string Name, string? Category, int SongCount);
 
+public sealed record KnowledgeMapSong(
+    int SongId,
+    string Name,
+    string ArtistString,
+    long YoutubeViews,
+    long NicoViews,
+    string? ThumbUrl);
+
+public sealed record KnowledgeMapCatalog(
+    DateTimeOffset GeneratedAt,
+    long EligibleSongCount,
+    long YoutubeSongCount,
+    long YoutubeViews,
+    long NicoSongCount,
+    long NicoViews,
+    IReadOnlyList<KnowledgeMapSong> YoutubeTopSongs,
+    IReadOnlyList<KnowledgeMapSong> NicoTopSongs);
+
 /// <summary>PostgreSQL アクセスサービス</summary>
 public class DbService
 {
@@ -211,6 +229,128 @@ public class DbService
         {
             return new DiscoveryQualityHealth(false, stopwatch.ElapsedMilliseconds, 0, 0, 0, 0, 0, null, exception.GetType().Name);
         }
+    }
+
+    public async Task<KnowledgeMapCatalog> GetKnowledgeMapCatalogAsync(CancellationToken cancellationToken)
+    {
+        const string cacheKey = "knowledge_map_catalog_v1";
+        if (_cache.TryGetValue(cacheKey, out KnowledgeMapCatalog? cached) && cached is not null)
+            return cached;
+
+        await using var conn = await OpenAsync();
+        await using var aggregateCommand = new NpgsqlCommand(@"
+            SELECT COUNT(*)::bigint,
+                   COUNT(*) FILTER (WHERE s.youtube_views > 0)::bigint,
+                   COALESCE(SUM(GREATEST(0, s.youtube_views)), 0)::bigint,
+                   COUNT(*) FILTER (WHERE s.nico_views > 0)::bigint,
+                   COALESCE(SUM(GREATEST(0, s.nico_views)), 0)::bigint
+            FROM songs s
+            JOIN song_discovery_quality quality ON quality.song_id = s.id
+            WHERE quality.discovery_eligible = TRUE", conn)
+        {
+            CommandTimeout = 15,
+        };
+
+        long eligibleSongCount;
+        long youtubeSongCount;
+        long youtubeViews;
+        long nicoSongCount;
+        long nicoViews;
+        await using (var reader = await aggregateCommand.ExecuteReaderAsync(cancellationToken))
+        {
+            if (!await reader.ReadAsync(cancellationToken))
+                throw new InvalidOperationException("Knowledge map catalog query returned no result.");
+            eligibleSongCount = reader.GetInt64(0);
+            youtubeSongCount = reader.GetInt64(1);
+            youtubeViews = reader.GetInt64(2);
+            nicoSongCount = reader.GetInt64(3);
+            nicoViews = reader.GetInt64(4);
+        }
+
+        async Task<IReadOnlyList<KnowledgeMapSong>> LoadTopSongsAsync(string viewColumn)
+        {
+            await using var command = new NpgsqlCommand($@"
+                SELECT s.id,
+                       s.name,
+                       COALESCE(s.artist_string, ''),
+                       GREATEST(0, s.youtube_views),
+                       GREATEST(0, s.nico_views),
+                       s.raw_json->>'thumbUrl'
+                FROM songs s
+                JOIN song_discovery_quality quality ON quality.song_id = s.id
+                WHERE quality.discovery_eligible = TRUE
+                  AND s.{viewColumn} > 0
+                ORDER BY s.{viewColumn} DESC, s.id
+                LIMIT 120", conn)
+            {
+                CommandTimeout = 15,
+            };
+            var songs = new List<KnowledgeMapSong>();
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                songs.Add(new KnowledgeMapSong(
+                    reader.GetInt32(0),
+                    reader.GetString(1),
+                    reader.GetString(2),
+                    reader.GetInt64(3),
+                    reader.GetInt64(4),
+                    reader.IsDBNull(5) ? null : reader.GetString(5)));
+            }
+            return songs;
+        }
+
+        var youtubeTopSongs = await LoadTopSongsAsync("youtube_views");
+        var nicoTopSongs = await LoadTopSongsAsync("nico_views");
+        var catalog = new KnowledgeMapCatalog(
+            DateTimeOffset.UtcNow,
+            eligibleSongCount,
+            youtubeSongCount,
+            youtubeViews,
+            nicoSongCount,
+            nicoViews,
+            youtubeTopSongs,
+            nicoTopSongs);
+        _cache.Set(cacheKey, catalog, TimeSpan.FromMinutes(15));
+        return catalog;
+    }
+
+    public async Task<IReadOnlyList<KnowledgeMapSong>> GetKnowledgeMapSongsAsync(
+        int[] songIds,
+        CancellationToken cancellationToken)
+    {
+        if (songIds.Length == 0) return [];
+
+        await using var conn = await OpenAsync();
+        await using var command = new NpgsqlCommand(@"
+            SELECT s.id,
+                   s.name,
+                   COALESCE(s.artist_string, ''),
+                   GREATEST(0, s.youtube_views),
+                   GREATEST(0, s.nico_views),
+                   s.raw_json->>'thumbUrl'
+            FROM songs s
+            JOIN song_discovery_quality quality ON quality.song_id = s.id
+            WHERE s.id = ANY($1)
+              AND quality.discovery_eligible = TRUE", conn)
+        {
+            CommandTimeout = 15,
+        };
+        command.Parameters.Add(new NpgsqlParameter<int[]> { TypedValue = songIds });
+
+        var songs = new List<KnowledgeMapSong>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            songs.Add(new KnowledgeMapSong(
+                reader.GetInt32(0),
+                reader.GetString(1),
+                reader.GetString(2),
+                reader.GetInt64(3),
+                reader.GetInt64(4),
+                reader.IsDBNull(5) ? null : reader.GetString(5)));
+        }
+        return songs;
     }
 
     public async Task<YouTubePlaylistCache?> GetYouTubePlaylistCacheAsync(string playlistId, CancellationToken cancellationToken)

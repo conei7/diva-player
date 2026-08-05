@@ -28,6 +28,7 @@
     "test:e2e:youtube-playlist-sync": "node scripts/test-youtube-playlist-sync-e2e.mjs",
     "test:e2e:nico-playlist-sync": "node scripts/test-nico-playlist-sync-e2e.mjs",
     "test:e2e:playlists": "node scripts/test-playlist-management-e2e.mjs",
+    "test:e2e:knowledge-map": "node scripts/test-knowledge-map-e2e.mjs",
     "test:e2e:background-playback": "node scripts/test-background-playback-e2e.mjs",
     "test:e2e:multi-tab-player": "node scripts/test-multi-tab-player-e2e.mjs",
     "test:e2e:hidden-songs": "node scripts/test-hidden-songs-e2e.mjs",

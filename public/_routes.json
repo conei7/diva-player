@@ -11,7 +11,8 @@
     "/favorites",
     "/favorite-producers",
     "/playlists",
-    "/reports"
+    "/reports",
+    "/knowledge-map"
   ],
   "exclude": []
 }

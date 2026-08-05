@@ -66,14 +66,20 @@ export async function getPlayedSongIds(): Promise<Set<number>> {
   return new Promise((resolve, reject) => {
     const tx = db.transaction(HISTORY_STORES.plays, 'readonly');
     const index = tx.objectStore(HISTORY_STORES.plays).index('songId');
-    const request = index.getAllKeys();
+    // IDBIndex#getAllKeys returns the object-store primary keys (history event
+    // ids), not the index keys. A unique key cursor yields the actual song ids
+    // without loading every history event into memory.
+    const request = index.openKeyCursor(null, 'nextunique');
+    const ids = new Set<number>();
     request.onsuccess = () => {
-      const ids = new Set<number>();
-      for (const key of request.result) {
-        const id = typeof key === 'number' ? key : Number(key);
-        if (Number.isInteger(id) && id > 0) ids.add(id);
+      const cursor = request.result;
+      if (!cursor) {
+        resolve(ids);
+        return;
       }
-      resolve(ids);
+      const id = typeof cursor.key === 'number' ? cursor.key : Number(cursor.key);
+      if (Number.isInteger(id) && id > 0) ids.add(id);
+      cursor.continue();
     };
     request.onerror = () => reject(request.error);
     tx.onerror = () => reject(tx.error);

@@ -71,6 +71,15 @@ const menuItems: MenuItem[] = [
     ),
   },
   {
+    path: '/knowledge-map',
+    label: '知ってる度',
+    icon: (
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+        <path d="M3 3h8v8H3V3zm10 0h8v5h-8V3zm0 7h8v11h-8V10zM3 13h8v8H3v-8z" />
+      </svg>
+    ),
+  },
+  {
     path: '/favorite-producers',
     label: 'お気に入りP',
     icon: (
