@@ -16,6 +16,15 @@ export function getSongIdsForRating(
     .filter(Number.isInteger);
 }
 
+export function getRatedSongIds(
+  ratings: Readonly<Record<string, number>>,
+): number[] {
+  return Object.entries(ratings)
+    .filter(([, rating]) => isRatingValue(rating))
+    .map(([id]) => Number(id))
+    .filter(id => Number.isInteger(id) && id > 0);
+}
+
 export function getRatingCounts(
   ratings: Readonly<Record<string, number>>,
 ): Record<RatingValue, number> {

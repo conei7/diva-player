@@ -7,7 +7,9 @@ import {
   type PlatformKnowledgeMap,
 } from '../api/knowledgeMap';
 import { getPlayedSongIds } from '../services/historyDatabase';
+import { useRatingStore } from '../stores/ratingStore';
 import { buildKnowledgeMapItems, layoutKnowledgeMap, type KnowledgeMapRect } from '../utils/knowledgeMap';
+import { getRatedSongIds } from '../utils/ratedSongs';
 
 const compactNumber = new Intl.NumberFormat('ja-JP', { notation: 'compact', maximumFractionDigits: 1 });
 
@@ -36,11 +38,13 @@ function tileBackground(rect: KnowledgeMapRect, platform: KnowledgeMapPlatform, 
 }
 
 export default function KnowledgeMapPage() {
+  const ratings = useRatingStore(state => state.ratings);
   const [result, setResult] = useState<KnowledgeMapResponse | null>(null);
   const [platform, setPlatform] = useState<KnowledgeMapPlatform>('youtube');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [reloadKey, setReloadKey] = useState(0);
+  const ratedSongIds = useMemo(() => getRatedSongIds(ratings), [ratings]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -48,7 +52,13 @@ export default function KnowledgeMapPage() {
     setLoading(true);
     setError('');
     getPlayedSongIds()
-      .then(ids => fetchKnowledgeMap(ids, controller.signal))
+      .then(playedSongIds => {
+        // Explicit ratings stay inside the API's 50,000-id limit even for an
+        // unusually large playback history; overlapping IDs still count once.
+        const knownSongIds = new Set(ratedSongIds);
+        playedSongIds.forEach(id => knownSongIds.add(id));
+        return fetchKnowledgeMap(knownSongIds, controller.signal);
+      })
       .then(next => { if (active) setResult(next); })
       .catch(requestError => {
         if (active && requestError instanceof Error && requestError.name !== 'AbortError') {
@@ -60,7 +70,7 @@ export default function KnowledgeMapPage() {
       active = false;
       controller.abort();
     };
-  }, [reloadKey]);
+  }, [ratedSongIds, reloadKey]);
 
   const data = result?.[platform] ?? null;
   const rectangles = useMemo(
@@ -83,7 +93,7 @@ export default function KnowledgeMapPage() {
         <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-300">Your Vocal Synth Map</p>
         <h1 className="mt-1 text-2xl font-bold text-white sm:text-3xl">知ってる度マップ</h1>
         <p className="mt-2 text-sm leading-6 text-neutral-400">
-          ボカロ曲全体の再生規模に対して、端末の履歴にある曲が占める面積を表示します。YouTubeとニコニコは換算・合算せず、それぞれの再生数で集計します。
+          ボカロ曲全体の再生規模に対して、端末の再生履歴にある曲、または星1〜5で評価した曲が占める面積を表示します。YouTubeとニコニコは換算・合算せず、それぞれの再生数で集計します。
         </p>
       </div>
 
@@ -102,7 +112,7 @@ export default function KnowledgeMapPage() {
       </div>
 
       {loading ? (
-        <div className="rounded-3xl border border-white/[0.06] bg-white/[0.03] py-24 text-center text-neutral-400" aria-busy="true">再生履歴と曲全体を集計しています…</div>
+        <div className="rounded-3xl border border-white/[0.06] bg-white/[0.03] py-24 text-center text-neutral-400" aria-busy="true">再生履歴・評価と曲全体を集計しています…</div>
       ) : error ? (
         <div className="rounded-2xl border border-red-400/20 bg-red-400/10 p-6 text-red-100" role="alert">
           <p>{error}</p>
@@ -143,7 +153,7 @@ function KnowledgeMapContent({
         <Metric label="知ってる度" value={formatPercent(data.coverageRatio)} accent />
         <Metric label="知っている曲の再生規模" value={formatViews(data.knownViews)} />
         <Metric label={`${platformLabel(platform)}再生数の総量`} value={formatViews(data.totalViews)} />
-        <Metric label="再生履歴にある曲" value={`${data.knownSongCount.toLocaleString()} / ${data.totalSongCount.toLocaleString()}曲`} />
+        <Metric label="知っている曲" value={`${data.knownSongCount.toLocaleString()} / ${data.totalSongCount.toLocaleString()}曲`} />
       </section>
 
       <section className="overflow-hidden rounded-3xl border border-white/[0.08] bg-neutral-950 p-2 shadow-2xl sm:p-3">
@@ -171,7 +181,7 @@ function KnowledgeMapContent({
                 )}
               </>
             );
-            const title = `${rect.known ? '再生済み' : '未再生'}: ${rect.label} — ${formatViews(rect.views)}`;
+            const title = `${rect.known ? '知っている' : 'まだ知らない'}: ${rect.label} — ${formatViews(rect.views)}`;
             return rect.songId ? (
               <Link key={rect.id} to={`/watch?v=${rect.songId}`} className="absolute overflow-hidden outline-none ring-inset focus-visible:ring-2 focus-visible:ring-white" style={style} title={title} aria-label={title}>
                 {content}
@@ -184,19 +194,19 @@ function KnowledgeMapContent({
           })}
         </div>
         <div className="flex flex-wrap items-center gap-x-5 gap-y-2 px-2 pb-1 pt-3 text-xs text-neutral-400">
-          <span className="inline-flex items-center gap-2"><span className={`h-3 w-3 rounded-sm ${platform === 'youtube' ? 'bg-rose-500' : 'bg-teal-400'}`} />再生履歴にある曲</span>
-          <span className="inline-flex items-center gap-2"><span className="h-3 w-3 rounded-sm bg-neutral-600" />未再生の曲</span>
+          <span className="inline-flex items-center gap-2"><span className={`h-3 w-3 rounded-sm ${platform === 'youtube' ? 'bg-rose-500' : 'bg-teal-400'}`} />履歴または星評価がある曲</span>
+          <span className="inline-flex items-center gap-2"><span className="h-3 w-3 rounded-sm bg-neutral-600" />履歴・星評価がない曲</span>
           <span>長方形の面積＝{platformLabel(platform)}再生数</span>
         </div>
       </section>
 
       <section className="mt-6 grid gap-4 lg:grid-cols-2">
-        <SongRanking title="知っている曲の上位" songs={topKnown} empty="このサービスで再生数を取得できた履歴曲はありません。" />
-        <SongRanking title="まだ聴いていない上位曲" songs={topUnknown} empty="表示対象の上位曲はすべて再生済みです。" />
+        <SongRanking title="知っている曲の上位" songs={topKnown} empty="このサービスで再生数を取得できた履歴・評価済み曲はありません。" />
+        <SongRanking title="まだ知らない上位曲" songs={topUnknown} empty="表示対象の上位曲はすべて履歴または星評価に含まれています。" />
       </section>
 
       <p className="mt-5 text-xs leading-5 text-neutral-500">
-        対象は発見品質条件を満たす{result.eligibleSongCount.toLocaleString()}曲です。履歴{result.historySongCount.toLocaleString()}曲のうち{result.matchedHistorySongCount.toLocaleString()}曲が対象に一致しました。曲ごとの上位表示に入りきらない分も「その他」として面積へ含めています。履歴は端末内に保持され、重複除去した曲IDはこの集計時だけ送信し保存しません。
+        対象は発見品質条件を満たす{result.eligibleSongCount.toLocaleString()}曲です。履歴・評価から抽出した既知曲{result.historySongCount.toLocaleString()}曲のうち{result.matchedHistorySongCount.toLocaleString()}曲が対象に一致しました。曲ごとの上位表示に入りきらない分も「その他」として面積へ含めています。履歴と評価は端末内に保持され、重複除去した曲IDだけをこの集計時に送信し保存しません。星の数は送信しません。
       </p>
     </>
   );

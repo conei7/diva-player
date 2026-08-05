@@ -6,21 +6,21 @@ let submittedKnownSongIds = null;
 
 const fixture = {
   generatedAt: '2026-08-05T00:00:00Z',
-  historySongCount: 1,
-  matchedHistorySongCount: 1,
+  historySongCount: 2,
+  matchedHistorySongCount: 2,
   eligibleSongCount: 1_000,
   youtube: {
     platform: 'youtube',
     totalViews: 1_000,
-    knownViews: 250,
-    coverageRatio: 0.25,
+    knownViews: 550,
+    coverageRatio: 0.55,
     totalSongCount: 900,
-    knownSongCount: 1,
+    knownSongCount: 2,
     knownRemainderViews: 0,
     unknownRemainderViews: 450,
     tiles: [
       { songId: 1501, name: 'Known YouTube Song', artistString: 'DIVA P', views: 250, known: true },
-      { songId: 1502, name: 'Unknown YouTube Song', artistString: 'DIVA Q', views: 300, known: false },
+      { songId: 1502, name: 'Rated YouTube Song', artistString: 'DIVA Q', views: 300, known: true },
     ],
   },
   nico: {
@@ -61,6 +61,15 @@ async function seedHistory(page) {
   }));
 }
 
+async function seedRatings(page) {
+  await page.evaluate(() => {
+    localStorage.setItem('diva-ratings', JSON.stringify({
+      state: { ratings: { 1501: 5, 1502: 1, 1504: 0 } },
+      version: 0,
+    }));
+  });
+}
+
 try {
   const page = await browser.newPage();
   page.setDefaultTimeout(60_000);
@@ -87,13 +96,18 @@ try {
   await page.goto(baseUrl, { waitUntil: 'domcontentloaded' });
   await page.waitForSelector('input[placeholder="ボカロP名や曲名で検索"]');
   await seedHistory(page);
+  await seedRatings(page);
   await page.goto(new URL('knowledge-map', baseUrl), { waitUntil: 'domcontentloaded' });
   await page.waitForSelector('[data-testid="youtube-knowledge-treemap"]');
-  if (!Array.isArray(submittedKnownSongIds) || !submittedKnownSongIds.includes(1501)) {
-    throw new Error(`Knowledge map did not submit the distinct local history ids: ${JSON.stringify(submittedKnownSongIds)}`);
+  if (!Array.isArray(submittedKnownSongIds)
+    || !submittedKnownSongIds.includes(1501)
+    || !submittedKnownSongIds.includes(1502)
+    || submittedKnownSongIds.includes(1504)
+    || submittedKnownSongIds.filter(id => id === 1501).length !== 1) {
+    throw new Error(`Knowledge map did not submit the distinct local history/rating ids: ${JSON.stringify(submittedKnownSongIds)}`);
   }
   const youtubeText = await page.$eval('[data-testid="knowledge-map-page"]', element => element.textContent ?? '');
-  if (!youtubeText.includes('25.0%') || !youtubeText.includes('Known YouTube Song')) {
+  if (!youtubeText.includes('55.0%') || !youtubeText.includes('Known YouTube Song') || !youtubeText.includes('Rated YouTube Song')) {
     throw new Error('YouTube knowledge map summary or tiles are missing.');
   }
 
@@ -118,7 +132,7 @@ try {
   if (width.document > width.viewport + 1 || width.body > width.viewport + 1) {
     throw new Error(`Knowledge map has horizontal overflow: ${JSON.stringify(width)}`);
   }
-  console.log('PASS YouTube/NicoNico knowledge map, local-history join, and 390px layout');
+  console.log('PASS YouTube/NicoNico knowledge map, local history/rating join, and 390px layout');
 } finally {
   await browser.close();
 }

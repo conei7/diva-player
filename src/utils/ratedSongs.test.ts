@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { getRatingCounts, getSongIdsForRating, isRatingValue } from './ratedSongs';
+import { getRatedSongIds, getRatingCounts, getSongIdsForRating, isRatingValue } from './ratedSongs';
 
 const ratings = {
   10: 5,
@@ -20,6 +20,10 @@ describe('rated songs', () => {
 
   it('counts valid song ids separately for all five ratings', () => {
     expect(getRatingCounts(ratings)).toEqual({ 1: 1, 2: 0, 3: 0, 4: 1, 5: 2 });
+  });
+
+  it('returns every positively identified song rated from one to five', () => {
+    expect(getRatedSongIds({ ...ratings, '-1': 2, 0: 3, 70: 2, 80: 3 })).toEqual([10, 20, 30, 40, 70, 80]);
   });
 
   it('accepts only the five supported rating values', () => {

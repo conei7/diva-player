@@ -25,7 +25,9 @@ export interface PlatformKnowledgeMap {
 
 export interface KnowledgeMapResponse {
   generatedAt: string;
+  /** Legacy wire name: count of IDs in the playback-history/rating union. */
   historySongCount: number;
+  /** Legacy wire name: union IDs matched to discovery-eligible songs. */
   matchedHistorySongCount: number;
   eligibleSongCount: number;
   youtube: PlatformKnowledgeMap;
