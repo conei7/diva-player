@@ -100,9 +100,11 @@ public class RecommendService
         // --- 3. 候補多様性フィルタ: 同一プロデューサーを上位 N 件に制限 ---
         var candidateInfos = await _db.GetSongInfoBatchAsync(
             mergedCandidates.Select(c => c.Key));
-        if (MetadataRelationshipRanking.NeedsDiverseProducerFallback(candidateInfos))
+        if (MetadataRelationshipRanking.NeedsDiverseFallback(candidateInfos))
         {
-            var maximumScore = Math.Max(1e-9, mergedCandidates.Max(candidate => candidate.Value));
+            var maximumScore = mergedCandidates.Count == 0
+                ? 1.0
+                : Math.Max(1e-9, mergedCandidates.Max(candidate => candidate.Value));
             var fallbackIds = await _db.GetDiverseFallbackCandidateIdsAsync(seedSongId, 80);
             foreach (var (id, index) in fallbackIds.Select((id, index) => (id, index)))
             {

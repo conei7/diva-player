@@ -7,13 +7,17 @@ namespace VocadbRecommender.Services;
 /// </summary>
 public static class MetadataRelationshipRanking
 {
-    public static bool NeedsDiverseProducerFallback(IEnumerable<SongInfo> candidateInfos)
+    public static bool NeedsDiverseFallback(IEnumerable<SongInfo> candidateInfos)
     {
         var infos = candidateInfos
             .Where(DiscoveryEligibility.IsEligible)
             .Where(info => info.ProducerIds.Length > 0)
             .ToArray();
-        if (infos.Length < 20) return false;
+        // Newly ingested songs may not have a vector, tags, or another song by
+        // the same producer yet. A sparse pool needs the same catalog fallback
+        // as a producer-concentrated pool so these valid seeds do not return an
+        // empty recommendation list.
+        if (infos.Length < 20) return true;
 
         var dominantShare = infos
             .SelectMany(info => info.ProducerIds.Distinct())

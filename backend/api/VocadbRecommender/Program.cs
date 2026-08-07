@@ -306,11 +306,9 @@ app.MapGet("/api/recommend/metadata", async (
     var results = candidateScores
         .Select(candidate => (SongId: candidate.Key, Score: candidate.Value))
         .ToList();
-    if (results.Count == 0)
-        return Results.Ok(new { items = Array.Empty<object>() });
 
     var infos = await db.GetSongInfoBatchAsync(results.Select(r => r.SongId));
-    if (MetadataRelationshipRanking.NeedsDiverseProducerFallback(infos))
+    if (MetadataRelationshipRanking.NeedsDiverseFallback(infos))
     {
         foreach (var candidateId in await db.GetDiverseFallbackCandidateIdsAsync(songId, 100))
             candidateScores.TryAdd(candidateId, -1);
@@ -319,6 +317,8 @@ app.MapGet("/api/recommend/metadata", async (
             .ToList();
         infos = await db.GetSongInfoBatchAsync(results.Select(result => result.SongId));
     }
+    if (results.Count == 0)
+        return Results.Ok(new { items = Array.Empty<object>() });
     var infoMap = infos.ToDictionary(i => i.Id);
     results = results
         .Where(result => infoMap.TryGetValue(result.SongId, out var info) && DiscoveryEligibility.IsEligible(info))
