@@ -64,7 +64,7 @@ internal static class HealthEndpoints
             var qdrantStatus = await qdrantTask;
             var discoveryQuality = await discoveryTask;
             var audioFeatures = await audioFeatureTask;
-            var ready = postgres.Ok && qdrantStatus.Ok;
+            var ready = postgres.Ok && qdrantStatus.Ok && discoveryQuality.Ok;
             var payload = new HealthPayload(
                 ready ? "ok" : "degraded",
                 new { postgres, qdrant = qdrantStatus },

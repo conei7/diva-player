@@ -192,16 +192,29 @@ public class DbService
         {
             await using var conn = await OpenAsync();
             await using var cmd = new NpgsqlCommand(@"
-                SELECT COUNT(*)::bigint,
-                       COALESCE(AVG(quality_score), 0),
-                       COALESCE(AVG(CASE WHEN duration_score < 0.5 THEN 1.0 ELSE 0.0 END), 0),
-                       COALESCE(AVG(CASE WHEN nico_presence_score > 0 THEN 1.0 ELSE 0.0 END), 0),
-                       COALESCE(AVG(CASE WHEN discovery_eligible THEN 1.0 ELSE 0.0 END), 0),
-                       MAX(computed_at)
-                FROM song_discovery_quality", conn) { CommandTimeout = 3 };
+                WITH version_counts AS (
+                    SELECT model_version, COUNT(*)::bigint AS song_count
+                    FROM song_discovery_quality
+                    GROUP BY model_version
+                )
+                SELECT COUNT(quality.song_id)::bigint,
+                       COALESCE(AVG(quality.quality_score), 0),
+                       COALESCE(AVG(CASE WHEN quality.duration_score < 0.5 THEN 1.0 ELSE 0.0 END), 0),
+                       COALESCE(AVG(CASE WHEN quality.nico_presence_score > 0 THEN 1.0 ELSE 0.0 END), 0),
+                       COALESCE(AVG(CASE WHEN quality.discovery_eligible THEN 1.0 ELSE 0.0 END), 0),
+                       MAX(quality.computed_at),
+                       policy.expected_model_version,
+                       COALESCE((
+                           SELECT jsonb_object_agg(model_version, song_count)
+                           FROM version_counts
+                       ), '{}'::jsonb)::text
+                FROM discovery_quality_model_policy policy
+                LEFT JOIN song_discovery_quality quality ON TRUE
+                WHERE policy.singleton = TRUE
+                GROUP BY policy.expected_model_version", conn) { CommandTimeout = 3 };
             await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
             if (!await reader.ReadAsync(cancellationToken))
-                return new DiscoveryQualityHealth(false, stopwatch.ElapsedMilliseconds, 0, 0, 0, 0, 0, null, "no result");
+                return new DiscoveryQualityHealth(false, stopwatch.ElapsedMilliseconds, 0, 0, 0, 0, 0, null, new Dictionary<string, long>(), 0, null, "model_policy_missing");
 
             var total = reader.GetInt64(0);
             var averageQuality = reader.GetDouble(1);
@@ -209,12 +222,19 @@ public class DbService
             var nicoRatio = reader.GetDouble(3);
             var eligibleRatio = reader.GetDouble(4);
             DateTimeOffset? latest = reader.IsDBNull(5) ? null : reader.GetFieldValue<DateTimeOffset>(5);
+            var expectedModelVersion = reader.GetString(6);
+            var modelVersionCounts = JsonSerializer.Deserialize<Dictionary<string, long>>(reader.GetString(7))
+                ?? new Dictionary<string, long>();
+            var unexpectedModelVersionCount = modelVersionCounts
+                .Where(entry => !string.Equals(entry.Key, expectedModelVersion, StringComparison.Ordinal))
+                .Sum(entry => entry.Value);
             var warnings = new List<string>();
             if (total == 0) warnings.Add("empty");
             if (latest is null || DateTimeOffset.UtcNow - latest.Value > TimeSpan.FromHours(48)) warnings.Add("stale");
             if (nicoRatio == 0) warnings.Add("nico_presence_zero");
             if (shortRatio > 0.08) warnings.Add("short_ratio_high");
             if (eligibleRatio < 0.85) warnings.Add("discovery_eligible_ratio_low");
+            if (unexpectedModelVersionCount > 0) warnings.Add("unexpected_model_version");
             return new DiscoveryQualityHealth(
                 warnings.Count == 0,
                 stopwatch.ElapsedMilliseconds,
@@ -223,12 +243,15 @@ public class DbService
                 shortRatio,
                 nicoRatio,
                 eligibleRatio,
+                expectedModelVersion,
+                modelVersionCounts,
+                unexpectedModelVersionCount,
                 latest,
                 warnings.Count == 0 ? null : string.Join(',', warnings));
         }
         catch (Exception exception)
         {
-            return new DiscoveryQualityHealth(false, stopwatch.ElapsedMilliseconds, 0, 0, 0, 0, 0, null, exception.GetType().Name);
+            return new DiscoveryQualityHealth(false, stopwatch.ElapsedMilliseconds, 0, 0, 0, 0, 0, null, new Dictionary<string, long>(), 0, null, exception.GetType().Name);
         }
     }
 

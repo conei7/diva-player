@@ -15,18 +15,46 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: vocadb
+          POSTGRES_PASSWORD: diva-ci-password
+          POSTGRES_DB: vocadb_recommender
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U vocadb -d vocadb_recommender"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22.22.0'
           cache: 'npm'
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
       - name: Install dependencies
         run: npm ci
       - name: Lint
         run: npm run lint
       - name: Test
         run: npm run test
+      - name: Build API
+        run: dotnet build diva-player.sln --configuration Release
+      - name: Deployment topology contract
+        run: npm run test:deployment-topology
+      - name: Database schema and model guard contract
+        env:
+          PGPASSWORD: diva-ci-password
+        run: |
+          psql -v ON_ERROR_STOP=1 -h 127.0.0.1 -U vocadb -d vocadb_recommender -f backend/database/schema.sql
+          psql -v ON_ERROR_STOP=1 -h 127.0.0.1 -U vocadb -d vocadb_recommender -f backend/database/migrations/0017_discovery_quality_model_guard.sql
+          psql -v ON_ERROR_STOP=1 -h 127.0.0.1 -U vocadb -d vocadb_recommender -f scripts/test-discovery-quality-model-guard.sql
       - name: Build
         run: npm run build
       - name: Start preview server for E2E

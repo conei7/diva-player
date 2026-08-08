@@ -29,6 +29,13 @@ CREATE TABLE IF NOT EXISTS songs (
     CONSTRAINT songs_song_type_check CHECK (song_type IN ('Original','Cover','Remix','Remaster','Arrangement','Mashup','MusicPV','DramaPV','Instrumental','Other','Unspecified'))
 );
 
+-- External view counts are maintained by diva-data-pipeline.  Keep these
+-- columns ahead of the indexes below so a brand-new PostgreSQL volume can
+-- apply this schema without referencing columns that do not exist yet.
+ALTER TABLE songs
+    ADD COLUMN IF NOT EXISTS youtube_views BIGINT NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS nico_views BIGINT NOT NULL DEFAULT 0;
+
 CREATE INDEX IF NOT EXISTS songs_publish_date_idx ON songs (publish_date);
 CREATE INDEX IF NOT EXISTS songs_favorited_idx    ON songs (favorited_times DESC);
 CREATE INDEX IF NOT EXISTS songs_type_idx         ON songs (song_type);
@@ -71,20 +78,119 @@ CREATE TABLE IF NOT EXISTS song_discovery_quality (
     reason_codes        TEXT[] NOT NULL DEFAULT '{}',
     discovery_eligible  BOOLEAN NOT NULL DEFAULT TRUE,
     eligibility_reason_codes TEXT[] NOT NULL DEFAULT ARRAY['legacy_unclassified']::text[],
-    model_version       TEXT NOT NULL DEFAULT 'heuristic-v1',
+    model_version       TEXT NOT NULL DEFAULT 'heuristic-v3',
     computed_at         TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Only the explicitly promoted discovery-quality model may write rows.  This
+-- protects current classifications from scheduled jobs running an old
+-- checkout.  A new model revision must first be promoted by a DB migration;
+-- reverting logic should use a new revision rather than lowering this value.
+CREATE TABLE IF NOT EXISTS discovery_quality_model_policy (
+    singleton              BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton),
+    expected_model_version TEXT NOT NULL,
+    expected_revision      INTEGER NOT NULL CHECK (expected_revision > 0),
+    updated_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT discovery_quality_model_policy_version_check
+        CHECK (expected_model_version = 'heuristic-v' || expected_revision::text)
+);
+
+CREATE OR REPLACE FUNCTION enforce_discovery_quality_policy_revision()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF NEW.expected_revision < OLD.expected_revision THEN
+        RAISE EXCEPTION
+            'discovery quality model policy cannot move backward from revision % to %',
+            OLD.expected_revision,
+            NEW.expected_revision
+            USING ERRCODE = '23514',
+                  HINT = 'Promote a new revision even when restoring earlier scoring logic.';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS discovery_quality_policy_revision_guard
+    ON discovery_quality_model_policy;
+CREATE TRIGGER discovery_quality_policy_revision_guard
+BEFORE UPDATE ON discovery_quality_model_policy
+FOR EACH ROW
+EXECUTE FUNCTION enforce_discovery_quality_policy_revision();
+
+INSERT INTO discovery_quality_model_policy (
+    singleton,
+    expected_model_version,
+    expected_revision
+)
+VALUES (TRUE, 'heuristic-v3', 3)
+ON CONFLICT (singleton) DO UPDATE
+SET expected_model_version = EXCLUDED.expected_model_version,
+    expected_revision = EXCLUDED.expected_revision,
+    updated_at = now()
+WHERE discovery_quality_model_policy.expected_revision < EXCLUDED.expected_revision;
+
+CREATE OR REPLACE FUNCTION enforce_discovery_quality_model_version()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    expected_version TEXT;
+    unexpected_version TEXT;
+BEGIN
+    SELECT expected_model_version
+    INTO expected_version
+    FROM discovery_quality_model_policy
+    WHERE singleton = TRUE
+    FOR SHARE;
+
+    IF expected_version IS NULL THEN
+        RAISE EXCEPTION 'discovery quality model policy is missing'
+            USING ERRCODE = '55000';
+    END IF;
+
+    SELECT model_version
+    INTO unexpected_version
+    FROM new_quality_rows
+    WHERE model_version IS DISTINCT FROM expected_version
+    LIMIT 1;
+
+    IF unexpected_version IS NOT NULL THEN
+        RAISE EXCEPTION
+            'discovery quality model version % is not allowed; expected %',
+            unexpected_version,
+            expected_version
+            USING ERRCODE = '23514',
+                  HINT = 'Deploy the matching pipeline checkout or promote a newer model with a DB migration.';
+    END IF;
+
+    RETURN NULL;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS song_discovery_quality_model_version_guard
+    ON song_discovery_quality;
+DROP TRIGGER IF EXISTS song_discovery_quality_model_version_insert_guard
+    ON song_discovery_quality;
+DROP TRIGGER IF EXISTS song_discovery_quality_model_version_update_guard
+    ON song_discovery_quality;
+CREATE TRIGGER song_discovery_quality_model_version_insert_guard
+AFTER INSERT ON song_discovery_quality
+REFERENCING NEW TABLE AS new_quality_rows
+FOR EACH STATEMENT
+EXECUTE FUNCTION enforce_discovery_quality_model_version();
+CREATE TRIGGER song_discovery_quality_model_version_update_guard
+AFTER UPDATE ON song_discovery_quality
+REFERENCING NEW TABLE AS new_quality_rows
+FOR EACH STATEMENT
+EXECUTE FUNCTION enforce_discovery_quality_model_version();
 
 CREATE INDEX IF NOT EXISTS song_discovery_quality_score_idx
     ON song_discovery_quality (quality_score DESC);
 CREATE INDEX IF NOT EXISTS song_discovery_eligible_score_idx
     ON song_discovery_quality (quality_score DESC, song_id)
     WHERE discovery_eligible = TRUE;
-
--- External view counts are maintained by diva-data-pipeline.
-ALTER TABLE songs
-    ADD COLUMN IF NOT EXISTS youtube_views BIGINT NOT NULL DEFAULT 0,
-    ADD COLUMN IF NOT EXISTS nico_views BIGINT NOT NULL DEFAULT 0;
 
 CREATE TABLE IF NOT EXISTS view_history (
     id              BIGSERIAL PRIMARY KEY,

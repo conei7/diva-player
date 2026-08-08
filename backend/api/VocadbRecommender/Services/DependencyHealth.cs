@@ -10,6 +10,9 @@ public sealed record DiscoveryQualityHealth(
     double ShortRatio,
     double NicoRatio,
     double DiscoveryEligibleRatio,
+    string? ExpectedModelVersion,
+    IReadOnlyDictionary<string, long> ModelVersionCounts,
+    long UnexpectedModelVersionCount,
     DateTimeOffset? LatestComputedAt,
     string? Error = null);
 
