@@ -12,6 +12,12 @@ const [
   serviceRegistration,
   warmup,
   dbService,
+  recommenderOptions,
+  searchRequest,
+  searchResponseCache,
+  appsettings,
+  workflow,
+  apiTestsProject,
   schema,
   modelGuardMigration,
   modelGuardIntegration,
@@ -26,6 +32,12 @@ const [
   readFile(new URL('../backend/api/VocadbRecommender/ApiServiceRegistration.cs', import.meta.url), 'utf8'),
   readFile(new URL('../backend/api/VocadbRecommender/Services/ApiWarmupService.cs', import.meta.url), 'utf8'),
   readFile(new URL('../backend/api/VocadbRecommender/Services/DbService.cs', import.meta.url), 'utf8'),
+  readFile(new URL('../backend/api/VocadbRecommender/Services/RecommenderOptions.cs', import.meta.url), 'utf8'),
+  readFile(new URL('../backend/api/VocadbRecommender/Services/SongSearchRequest.cs', import.meta.url), 'utf8'),
+  readFile(new URL('../backend/api/VocadbRecommender/Services/SearchResponseCache.cs', import.meta.url), 'utf8'),
+  readFile(new URL('../backend/api/VocadbRecommender/appsettings.json', import.meta.url), 'utf8'),
+  readFile(new URL('../.github/workflows/deploy.yml', import.meta.url), 'utf8'),
+  readFile(new URL('../backend/api/VocadbRecommender.Tests/VocadbRecommender.Tests.csproj', import.meta.url), 'utf8'),
   readFile(new URL('../backend/database/schema.sql', import.meta.url), 'utf8'),
   readFile(new URL('../backend/database/migrations/0017_discovery_quality_model_guard.sql', import.meta.url), 'utf8'),
   readFile(new URL('./test-discovery-quality-model-guard.sql', import.meta.url), 'utf8'),
@@ -51,9 +63,39 @@ assert.match(deploy, /haproxy -c -f \/usr\/local\/etc\/haproxy\/haproxy\.cfg/);
 assert.match(program, /MapHealthEndpoints\(\)/);
 assert.match(healthEndpoints, /MapGet\("\/api\/ready"/);
 assert.match(healthEndpoints, /DisableRateLimiting\(\)/);
+assert.match(healthEndpoints, /warmupSnapshot\.Failures\.Count == 0/);
 assert.match(program, /isTrustedGatewayProxy/);
 assert.match(serviceRegistration, /AddHostedService<ApiWarmupService>/);
 assert.match(warmup, /home-surge/);
+assert.match(compose, /Recommender__SearchCacheSizeMiB: "64"/);
+assert.match(compose, /Recommender__SearchCacheEntrySizeMiB: "8"/);
+assert.match(appsettings, /"SearchCacheSizeMiB": 64/);
+assert.match(appsettings, /"SearchCacheEntrySizeMiB": 8/);
+assert.match(recommenderOptions, /SearchCacheSizeMiB \{ get; set; \} = 64/);
+assert.match(recommenderOptions, /SearchCacheEntrySizeMiB \{ get; set; \} = 8/);
+assert.match(serviceRegistration, /AddSingleton<SearchResponseCache>/);
+assert.match(serviceRegistration, /SearchCacheEntrySizeMiB <= options\.SearchCacheSizeMiB/);
+assert.match(searchRequest, /SHA256\.HashData\(canonicalJson\)/);
+assert.match(searchRequest, /string\.IsNullOrWhiteSpace\(query\) \? null : query/);
+assert.doesNotMatch(searchRequest, /\n            Query:.*(?:Trim|ToLower|Normalize)/);
+assert.match(searchRequest, /normalizedInstrumentKeys is not null && instrumentMatchMode == "any"/);
+assert.match(searchRequest, /normalizedTagIds is not null && tagMatchMode == "any"/);
+assert.match(searchResponseCache, /MinimumEntryChargeBytes = 4 \* 1024/);
+assert.match(searchResponseCache, /SizeLimit = sizeLimitBytes/);
+assert.match(searchResponseCache, /FreshLifetime = TimeSpan\.FromMinutes\(1\)/);
+assert.match(searchResponseCache, /StaleLifetime = TimeSpan\.FromHours\(6\)/);
+assert.match(searchResponseCache, /RefreshFailureBackoff = TimeSpan\.FromSeconds\(30\)/);
+assert.match(searchResponseCache, /AbsoluteExpirationRelativeToNow = StaleLifetime/);
+assert.match(searchResponseCache, /chargeBytes > _maxEntryBytes/);
+assert.match(searchResponseCache, /chargeBytes > _maxEntryBytes\)\s*\{\s*_cache\.Remove\(key\)/);
+assert.match(searchResponseCache, /stale\.RefreshRetryAfterUtcTicks/);
+assert.match(searchResponseCache, /LoadAfterCacheRecheckAsync/);
+assert.match(dbService, /_searchCache\.GetOrCreateAsync/);
+assert.doesNotMatch(dbService, /CachedSongSearch|song-search:v2|_searchRefreshes/);
+assert.match(program, /!double\.IsFinite\(bpmFrom\.Value\)/);
+assert.match(program, /!double\.IsFinite\(bpmTo\.Value\)/);
+assert.match(apiTestsProject, /PackageReference Include="xunit"/);
+assert.match(workflow, /dotnet test backend\/api\/VocadbRecommender\.Tests\/VocadbRecommender\.Tests\.csproj --configuration Release/);
 const externalViewsEndpoint = songReadEndpoints.match(
   /private static async Task<IResult> GetExternalViewsAsync\([\s\S]*?\n    }\n\n    private static async Task<IResult> GetViewHistoryAsync/,
 )?.[0];

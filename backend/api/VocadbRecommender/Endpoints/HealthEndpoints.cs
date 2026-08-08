@@ -18,10 +18,11 @@ internal static class HealthEndpoints
         ApiWarmupState warmup,
         CancellationToken cancellationToken)
     {
-        if (!warmup.Completed)
+        var warmupSnapshot = warmup.Snapshot;
+        if (!warmupSnapshot.Completed)
         {
             return Results.Json(
-                new { status = "warming", warmup = warmup.Snapshot },
+                new { status = "warming", warmup = warmupSnapshot },
                 statusCode: StatusCodes.Status503ServiceUnavailable);
         }
 
@@ -30,14 +31,16 @@ internal static class HealthEndpoints
         await Task.WhenAll(postgresTask, qdrantTask);
         var postgres = await postgresTask;
         var qdrantStatus = await qdrantTask;
-        var ready = postgres.Ok && qdrantStatus.Ok;
+        var ready = postgres.Ok
+            && qdrantStatus.Ok
+            && warmupSnapshot.Failures.Count == 0;
 
         return Results.Json(
             new
             {
                 status = ready ? "ready" : "degraded",
                 dependencies = new { postgres, qdrant = qdrantStatus },
-                warmup = warmup.Snapshot,
+                warmup = warmupSnapshot,
             },
             statusCode: ready
                 ? StatusCodes.Status200OK

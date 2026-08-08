@@ -10,14 +10,18 @@ function getBaseUrl() {
   return new URL(provided).toString().replace(/\/$/, '');
 }
 
-async function getJson(baseUrl, path) {
+async function getJsonResponse(baseUrl, path) {
   const response = await fetch(`${baseUrl}${path}`, {
     signal: AbortSignal.timeout(DEFAULT_TIMEOUT_MS),
   });
   if (!response.ok) {
     throw new Error(`${path} returned HTTP ${response.status}.`);
   }
-  return response.json();
+  return { response, data: await response.json() };
+}
+
+async function getJson(baseUrl, path) {
+  return (await getJsonResponse(baseUrl, path)).data;
 }
 
 function assert(condition, message) {
@@ -93,6 +97,32 @@ async function main() {
   assert(Array.isArray(search.items) && search.items.length > 0, 'PostgreSQL search returned no results.');
   assert(Number.isInteger(search.items[0].id), 'PostgreSQL search returned an invalid song ID.');
   console.log(`PASS PostgreSQL search (${search.items.length} songs)`);
+
+  const canonicalSeed = Date.now() % 2_147_483_647;
+  const canonicalSearchA = await getJsonResponse(
+    baseUrl,
+    `/api/songs/search?sort=Random&order=desc&start=0&maxResults=4&randomSeed=${canonicalSeed}&songTypes=Original,Cover&excludeSongTypes=DramaPV`,
+  );
+  const canonicalSearchB = await getJsonResponse(
+    baseUrl,
+    `/api/songs/search?sort=Random&order=DESC&start=0&maxResults=4&randomSeed=${canonicalSeed}&songTypes=Cover,Original,Original&excludeSongTypes=DramaPV,DramaPV`,
+  );
+  assert(
+    JSON.stringify(canonicalSearchA.data) === JSON.stringify(canonicalSearchB.data),
+    'Canonical search filters changed the public JSON response.',
+  );
+  assert(
+    canonicalSearchB.response.headers.get('x-diva-search-cache') === 'hit',
+    'Equivalent search filters did not share a fresh cache entry.',
+  );
+  for (const invalidBpm of ['NaN', 'Infinity', '-Infinity']) {
+    const response = await fetch(
+      `${baseUrl}/api/songs/search?sort=FavoritedTimes&order=desc&bpmFrom=${encodeURIComponent(invalidBpm)}`,
+      { signal: AbortSignal.timeout(DEFAULT_TIMEOUT_MS) },
+    );
+    assert(response.status === 400, `Non-finite BPM ${invalidBpm} was not rejected.`);
+  }
+  console.log('PASS canonical bounded search cache contract and finite BPM validation');
 
   const globalFilterSearch = await getJson(
     baseUrl,

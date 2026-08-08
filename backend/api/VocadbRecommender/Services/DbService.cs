@@ -4,7 +4,6 @@ using NpgsqlTypes;
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Globalization;
-using System.Text;
 using System.Text.Json;
 
 namespace VocadbRecommender.Services;
@@ -101,11 +100,10 @@ public class DbService
 
     private readonly string _connStr;
     private readonly IMemoryCache _cache;
+    private readonly SearchResponseCache _searchCache;
     private readonly ILogger<DbService> _logger;
-    private readonly ConcurrentDictionary<string, byte> _searchRefreshes = new();
     private readonly ConcurrentDictionary<string, byte> _trendingRefreshes = new();
     private readonly SemaphoreSlim _knowledgeMapCatalogLock = new(1, 1);
-    private sealed record CachedSongSearch(string ItemsJson, int TotalCount, DateTimeOffset FreshUntil);
     private sealed record CachedTrending(string ItemsJson, DateTimeOffset FreshUntil);
 
     private async Task<ViewWeightProfile?> LoadViewWeightProfileAsync(NpgsqlConnection conn)
@@ -147,11 +145,16 @@ public class DbService
         }
     }
 
-    public DbService(IConfiguration cfg, IMemoryCache cache, ILogger<DbService> logger)
+    public DbService(
+        IConfiguration cfg,
+        IMemoryCache cache,
+        SearchResponseCache searchCache,
+        ILogger<DbService> logger)
     {
         _connStr = cfg.GetConnectionString("Postgres")
             ?? throw new InvalidOperationException("ConnectionStrings:Postgres is not configured");
         _cache = cache;
+        _searchCache = searchCache;
         _logger = logger;
     }
 
@@ -665,7 +668,7 @@ public class DbService
         }
     }
 
-    public async Task<SongSearchExecution> SearchSongsAsync(
+    public Task<SongSearchExecution> SearchSongsAsync(
         string? query,
         List<int>? artistIds,
         List<int>? anyArtistIds,
@@ -707,15 +710,13 @@ public class DbService
         bool chorusOnly = false,
         bool forceRefresh = false)
     {
-        var totalStopwatch = Stopwatch.StartNew();
-        var cacheKey = "song-search:v2:" + JsonSerializer.Serialize(new
-        {
-            query = query?.Trim().ToLowerInvariant(),
-            artistIds = artistIds is { Count: > 0 } ? artistIds : null,
-            anyArtistIds = anyArtistIds is { Count: > 0 } ? anyArtistIds : null,
-            artistIdGroups = artistIdGroups is { Count: > 0 } ? artistIdGroups : null,
+        var request = SongSearchRequest.Create(
+            query,
+            artistIds,
+            anyArtistIds,
+            artistIdGroups,
             artistRole,
-            songTypes = songTypes is { Count: > 0 } ? songTypes : null,
+            songTypes,
             sort,
             order,
             start,
@@ -728,70 +729,75 @@ public class DbService
             audioComputed,
             bpmFrom,
             bpmTo,
-            instrumentKeys = instrumentKeys is { Count: > 0 } ? instrumentKeys : null,
+            instrumentKeys,
             instrumentMatchMode,
             minYoutubeViews,
             minNicoViews,
+            onlyWithPVs,
+            excludedSongTypes,
+            voiceSynthOnly,
+            discoveryOnly,
             maxYoutubeViews,
             maxNicoViews,
             minFavoritedTimes,
             maxFavoritedTimes,
-            tagIds = tagIds is { Count: > 0 } ? tagIds : null,
+            tagIds,
             tagMatchMode,
             creditArtistId,
             creditArtistRole,
             randomSeed,
-            exactVocalistIds = exactVocalistIds is { Count: > 0 } ? exactVocalistIds : null,
-            lyricsQuery = NormalizeLyricsQuery(lyricsQuery),
+            exactVocalistIds,
+            lyricsQuery,
             selfCoverOnly,
-            chorusOnly,
-            onlyWithPVs,
-            excludedSongTypes = excludedSongTypes is { Count: > 0 } ? excludedSongTypes : null,
-            voiceSynthOnly,
-            discoveryOnly,
-        });
-        if (!forceRefresh && _cache.TryGetValue(cacheKey, out CachedSongSearch? cached) && cached is not null)
-        {
-            if (cached.FreshUntil <= DateTimeOffset.UtcNow && _searchRefreshes.TryAdd(cacheKey, 0))
-            {
-                _ = Task.Run(async () =>
-                {
-                    try
-                    {
-                        await SearchSongsAsync(
-                            query, artistIds, anyArtistIds, artistIdGroups, artistRole,
-                            songTypes, sort, order, start, maxResults,
-                            publishYearFrom, publishYearTo, lengthMinSeconds, lengthMaxSeconds,
-                            pvService, audioComputed, bpmFrom, bpmTo, instrumentKeys, instrumentMatchMode,
-                            minYoutubeViews, minNicoViews,
-                            onlyWithPVs, excludedSongTypes, voiceSynthOnly, discoveryOnly,
-                            maxYoutubeViews, maxNicoViews, minFavoritedTimes, maxFavoritedTimes,
-                            tagIds, tagMatchMode, creditArtistId, creditArtistRole, randomSeed,
-                            exactVocalistIds, lyricsQuery, selfCoverOnly, chorusOnly,
-                            forceRefresh: true);
-                    }
-                    catch (Exception exception)
-                    {
-                        _logger.LogWarning(
-                            exception,
-                            "song_search_cache_refresh_failed key={CacheKey}",
-                            cacheKey);
-                    }
-                    finally
-                    {
-                        _searchRefreshes.TryRemove(cacheKey, out _);
-                    }
-                });
-            }
-            return new SongSearchExecution(
-                cached.ItemsJson,
-                cached.TotalCount,
-                0,
-                0,
-                0,
-                totalStopwatch.ElapsedMilliseconds,
-                true);
-        }
+            chorusOnly);
+        return _searchCache.GetOrCreateAsync(
+            request.CacheKey,
+            () => ExecuteSongSearchAsync(request),
+            forceRefresh);
+    }
+
+    private async Task<SongSearchExecution> ExecuteSongSearchAsync(SongSearchRequest request)
+    {
+        var totalStopwatch = Stopwatch.StartNew();
+        var query = request.Query;
+        IReadOnlyList<int>? artistIds = request.ArtistIds;
+        IReadOnlyList<int>? anyArtistIds = request.AnyArtistIds;
+        IReadOnlyList<IReadOnlyList<int>>? artistIdGroups = request.ArtistIdGroups;
+        var artistRole = request.ArtistRole;
+        IReadOnlyList<string>? songTypes = request.SongTypes;
+        var sort = request.Sort;
+        var order = request.Order;
+        var start = request.Start;
+        var maxResults = request.MaxResults;
+        var publishYearFrom = request.PublishYearFrom;
+        var publishYearTo = request.PublishYearTo;
+        var lengthMinSeconds = request.LengthMinSeconds;
+        var lengthMaxSeconds = request.LengthMaxSeconds;
+        var pvService = request.PvService;
+        var audioComputed = request.AudioComputed;
+        var bpmFrom = request.BpmFrom;
+        var bpmTo = request.BpmTo;
+        IReadOnlyList<string>? instrumentKeys = request.InstrumentKeys;
+        var instrumentMatchMode = request.InstrumentMatchMode;
+        var minYoutubeViews = request.MinYoutubeViews;
+        var minNicoViews = request.MinNicoViews;
+        var onlyWithPVs = request.OnlyWithPVs;
+        IReadOnlyList<string>? excludedSongTypes = request.ExcludedSongTypes;
+        var voiceSynthOnly = request.VoiceSynthOnly;
+        var discoveryOnly = request.DiscoveryOnly;
+        var maxYoutubeViews = request.MaxYoutubeViews;
+        var maxNicoViews = request.MaxNicoViews;
+        var minFavoritedTimes = request.MinFavoritedTimes;
+        var maxFavoritedTimes = request.MaxFavoritedTimes;
+        IReadOnlyList<int>? tagIds = request.TagIds;
+        var tagMatchMode = request.TagMatchMode;
+        var creditArtistId = request.CreditArtistId;
+        var creditArtistRole = request.CreditArtistRole;
+        var randomSeed = request.RandomSeed;
+        IReadOnlyList<int>? exactVocalistIds = request.ExactVocalistIds;
+        var normalizedLyricsQuery = request.LyricsQuery;
+        var selfCoverOnly = request.SelfCoverOnly;
+        var chorusOnly = request.ChorusOnly;
 
         var connectionStopwatch = Stopwatch.StartNew();
         using var conn = Open();
@@ -843,7 +849,6 @@ public class DbService
             }
         }
 
-        var normalizedLyricsQuery = NormalizeLyricsQuery(lyricsQuery);
         if (!string.IsNullOrWhiteSpace(normalizedLyricsQuery))
         {
             conditions.Add($@"EXISTS (
@@ -1132,14 +1137,9 @@ public class DbService
             if (totalCount == 0)
             {
                 countStopwatch.Stop();
-                var emptyResult = new CachedSongSearch(
+                return new SongSearchExecution(
                     "[]",
                     0,
-                    DateTimeOffset.UtcNow.AddMinutes(1));
-                _cache.Set(cacheKey, emptyResult, TimeSpan.FromHours(6));
-                return new SongSearchExecution(
-                    emptyResult.ItemsJson,
-                    emptyResult.TotalCount,
                     connectionStopwatch.ElapsedMilliseconds,
                     countStopwatch.ElapsedMilliseconds,
                     0,
@@ -1199,26 +1199,14 @@ public class DbService
 
         var itemsJson = items.Count > 0 ? "[" + string.Join(",", items) + "]" : "[]";
         dataStopwatch.Stop();
-        var result = new CachedSongSearch(
+        return new SongSearchExecution(
             itemsJson,
             totalCount,
-            DateTimeOffset.UtcNow.AddMinutes(1));
-        _cache.Set(cacheKey, result, TimeSpan.FromHours(6));
-        return new SongSearchExecution(
-            result.ItemsJson,
-            result.TotalCount,
             connectionStopwatch.ElapsedMilliseconds,
             countStopwatch.ElapsedMilliseconds,
             dataStopwatch.ElapsedMilliseconds,
             totalStopwatch.ElapsedMilliseconds,
             false);
-    }
-
-    private static string? NormalizeLyricsQuery(string? value)
-    {
-        if (string.IsNullOrWhiteSpace(value)) return null;
-        var normalized = value.Normalize(NormalizationForm.FormKC).ToLowerInvariant();
-        return string.Join(' ', normalized.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
     }
 
     public async Task<IReadOnlyList<SearchTagItem>> SearchTagsAsync(

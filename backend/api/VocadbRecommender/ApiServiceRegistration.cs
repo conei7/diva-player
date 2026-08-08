@@ -7,13 +7,23 @@ internal static class ApiServiceRegistration
         this IServiceCollection services,
         IConfiguration configuration)
     {
-        services.Configure<RecommenderOptions>(configuration.GetSection("Recommender"));
+        services.AddOptions<RecommenderOptions>()
+            .Bind(configuration.GetSection("Recommender"))
+            .Validate(
+                options => options.SearchCacheSizeMiB > 0,
+                "Recommender:SearchCacheSizeMiB must be positive")
+            .Validate(
+                options => options.SearchCacheEntrySizeMiB > 0
+                    && options.SearchCacheEntrySizeMiB <= options.SearchCacheSizeMiB,
+                "Recommender:SearchCacheEntrySizeMiB must be positive and no larger than SearchCacheSizeMiB")
+            .ValidateOnStart();
         services.AddMemoryCache();
         services.AddResponseCompression(options =>
         {
             options.EnableForHttps = true;
             options.MimeTypes = ResponseCompressionDefaults.MimeTypes.Concat(["application/json"]);
         });
+        services.AddSingleton<SearchResponseCache>();
         services.AddSingleton<DbService>();
         services.AddSingleton<QdrantService>();
         services.AddSingleton<ApiWarmupState>();

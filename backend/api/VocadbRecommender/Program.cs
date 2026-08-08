@@ -618,7 +618,10 @@ app.MapGet("/api/songs/search", async (
         return Results.BadRequest(new { error = "publish year range is invalid" });
     if (lengthMinSeconds.HasValue && lengthMaxSeconds.HasValue && lengthMinSeconds > lengthMaxSeconds)
         return Results.BadRequest(new { error = "length range is invalid" });
-    if (bpmFrom is < 20 or > 400 || bpmTo is < 20 or > 400)
+    if (bpmFrom.HasValue && !double.IsFinite(bpmFrom.Value)
+        || bpmTo.HasValue && !double.IsFinite(bpmTo.Value)
+        || bpmFrom is < 20 or > 400
+        || bpmTo is < 20 or > 400)
         return Results.BadRequest(new { error = "BPM must be between 20 and 400" });
     if (bpmFrom.HasValue && bpmTo.HasValue && bpmFrom > bpmTo)
         return Results.BadRequest(new { error = "BPM range is invalid" });
