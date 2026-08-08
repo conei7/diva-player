@@ -45,7 +45,7 @@ jobs:
       - name: Test
         run: npm run test
       - name: Build API
-        run: dotnet build diva-player.sln --configuration Release
+        run: dotnet build backend/api/VocadbRecommender/VocadbRecommender.csproj --configuration Release
       - name: Deployment topology contract
         run: npm run test:deployment-topology
       - name: Database schema and model guard contract
