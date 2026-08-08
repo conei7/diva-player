@@ -119,9 +119,26 @@ async function main() {
   assert(JSON.stringify(fullBatch).length > JSON.stringify(compactBatch).length, 'Full song batch did not retain more metadata than compact cards.');
   console.log(`PASS full song batch (${fullBatch.items.length} ordered songs)`);
 
-  const views = await getJson(baseUrl, `/api/songs/views?ids=${seedId}`);
-  assert(views[String(seedId)] || views[seedId], 'PostgreSQL views endpoint did not return the requested song.');
-  console.log('PASS PostgreSQL view data');
+  const expectedViewIds = [...new Set(batchIds)];
+  const viewRequestIds = [...expectedViewIds, expectedViewIds[0], -1];
+  const views = await getJson(baseUrl, `/api/songs/views?ids=${viewRequestIds.join(',')}`);
+  assert(Object.keys(views).length === expectedViewIds.length, 'PostgreSQL views endpoint did not deduplicate IDs or omit missing songs.');
+  for (const id of expectedViewIds) {
+    const counts = views[String(id)];
+    assert(counts && Number.isFinite(counts.youtubeViews) && Number.isFinite(counts.nicoViews), `PostgreSQL views endpoint returned invalid counts for ${id}.`);
+    assert(counts.youtubeViews >= 0 && counts.nicoViews >= 0, `PostgreSQL views endpoint returned negative counts for ${id}.`);
+  }
+  assert(!Object.hasOwn(views, '-1'), 'PostgreSQL views endpoint returned a missing negative song ID.');
+
+  const maximumViewIds = Array.from({ length: 500 }, () => seedId).join(',');
+  const maximumViews = await getJson(baseUrl, `/api/songs/views?ids=${maximumViewIds}`);
+  assert(Object.hasOwn(maximumViews, String(seedId)), 'PostgreSQL views endpoint rejected the supported 500-ID boundary.');
+  const tooManyViewIdsResponse = await fetch(
+    `${baseUrl}/api/songs/views?ids=${Array.from({ length: 501 }, () => seedId).join(',')}`,
+    { signal: AbortSignal.timeout(DEFAULT_TIMEOUT_MS) },
+  );
+  assert(tooManyViewIdsResponse.status === 400, 'PostgreSQL views endpoint no longer rejects more than 500 raw IDs.');
+  console.log(`PASS lightweight PostgreSQL view data (${expectedViewIds.length} songs, 500-ID boundary)`);
 
   const trending = await getJson(baseUrl, '/api/songs/trending?days=30&start=0&maxResults=8');
   assert(Array.isArray(trending.items), 'Trending endpoint did not return an items array.');

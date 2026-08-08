@@ -162,10 +162,10 @@ public class DbService
         return conn;
     }
 
-    private async Task<NpgsqlConnection> OpenAsync()
+    private async Task<NpgsqlConnection> OpenAsync(CancellationToken cancellationToken = default)
     {
         var conn = new NpgsqlConnection(_connStr);
-        await conn.OpenAsync();
+        await conn.OpenAsync(cancellationToken);
         return conn;
     }
 
@@ -1378,6 +1378,31 @@ public class DbService
 
     // ---- 楽曲情報 -------------------------------------------------
 
+    public async Task<Dictionary<int, ExternalViewCounts>> GetExternalViewCountsAsync(
+        IEnumerable<int> songIds,
+        CancellationToken cancellationToken)
+    {
+        var ids = songIds.Distinct().ToArray();
+        if (ids.Length == 0) return [];
+
+        await using var conn = await OpenAsync(cancellationToken);
+        await using var cmd = new NpgsqlCommand(@"
+            SELECT id, youtube_views, nico_views
+            FROM songs
+            WHERE id = ANY($1)", conn);
+        cmd.Parameters.AddWithValue(ids);
+
+        var result = new Dictionary<int, ExternalViewCounts>(ids.Length);
+        await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            result[reader.GetInt32(0)] = new ExternalViewCounts(
+                reader.IsDBNull(1) ? 0 : reader.GetInt64(1),
+                reader.IsDBNull(2) ? 0 : reader.GetInt64(2));
+        }
+        return result;
+    }
+
     public async Task<SongInfo?> GetSongInfoAsync(int songId)
     {
         var infos = await GetSongInfoBatchAsync([songId]);
@@ -2321,6 +2346,8 @@ public class DbService
         return result;
     }
 }
+
+public readonly record struct ExternalViewCounts(long YoutubeViews, long NicoViews);
 
 public record SongInfo(
     int     Id,

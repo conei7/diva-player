@@ -43,7 +43,10 @@ internal static class SongReadEndpoints
         return Results.Ok(new { items });
     }
 
-    private static async Task<IResult> GetExternalViewsAsync(string ids, DbService db)
+    private static async Task<IResult> GetExternalViewsAsync(
+        string ids,
+        DbService db,
+        CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(ids))
             return Results.Ok(new Dictionary<int, object>());
@@ -60,11 +63,11 @@ internal static class SongReadEndpoints
         if (idList.Count == 0)
             return Results.Ok(new Dictionary<int, object>());
 
-        var infos = await db.GetSongInfoBatchAsync(idList);
-        return Results.Ok(infos.ToDictionary(info => info.Id, info => new
+        var viewCounts = await db.GetExternalViewCountsAsync(idList, cancellationToken);
+        return Results.Ok(viewCounts.ToDictionary(entry => entry.Key, entry => new
         {
-            youtubeViews = info.YoutubeViews,
-            nicoViews = info.NicoViews,
+            youtubeViews = entry.Value.YoutubeViews,
+            nicoViews = entry.Value.NicoViews,
         }));
     }
 

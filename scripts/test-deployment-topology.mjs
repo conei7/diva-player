@@ -8,6 +8,7 @@ const [
   deploy,
   program,
   healthEndpoints,
+  songReadEndpoints,
   serviceRegistration,
   warmup,
   dbService,
@@ -21,6 +22,7 @@ const [
   readFile(new URL('./deploy-sbc-api-rolling.sh', import.meta.url), 'utf8'),
   readFile(new URL('../backend/api/VocadbRecommender/Program.cs', import.meta.url), 'utf8'),
   readFile(new URL('../backend/api/VocadbRecommender/Endpoints/HealthEndpoints.cs', import.meta.url), 'utf8'),
+  readFile(new URL('../backend/api/VocadbRecommender/Endpoints/SongReadEndpoints.cs', import.meta.url), 'utf8'),
   readFile(new URL('../backend/api/VocadbRecommender/ApiServiceRegistration.cs', import.meta.url), 'utf8'),
   readFile(new URL('../backend/api/VocadbRecommender/Services/ApiWarmupService.cs', import.meta.url), 'utf8'),
   readFile(new URL('../backend/api/VocadbRecommender/Services/DbService.cs', import.meta.url), 'utf8'),
@@ -52,6 +54,22 @@ assert.match(healthEndpoints, /DisableRateLimiting\(\)/);
 assert.match(program, /isTrustedGatewayProxy/);
 assert.match(serviceRegistration, /AddHostedService<ApiWarmupService>/);
 assert.match(warmup, /home-surge/);
+const externalViewsEndpoint = songReadEndpoints.match(
+  /private static async Task<IResult> GetExternalViewsAsync\([\s\S]*?\n    }\n\n    private static async Task<IResult> GetViewHistoryAsync/,
+)?.[0];
+assert.ok(externalViewsEndpoint, 'external views endpoint contract was not found');
+assert.match(externalViewsEndpoint, /rawIds\.Length > 500/);
+assert.match(externalViewsEndpoint, /CancellationToken cancellationToken/);
+assert.match(externalViewsEndpoint, /GetExternalViewCountsAsync\(idList, cancellationToken\)/);
+assert.doesNotMatch(externalViewsEndpoint, /GetSongInfoBatchAsync/);
+const externalViewsQuery = dbService.match(
+  /public async Task<Dictionary<int, ExternalViewCounts>> GetExternalViewCountsAsync\([\s\S]*?\n    }\n\n    public async Task<SongInfo\?>/,
+)?.[0];
+assert.ok(externalViewsQuery, 'lightweight external views query contract was not found');
+assert.match(externalViewsQuery, /SELECT id, youtube_views, nico_views\s+FROM songs\s+WHERE id = ANY\(\$1\)/);
+assert.match(externalViewsQuery, /OpenAsync\(cancellationToken\)/);
+assert.match(externalViewsQuery, /ExecuteReaderAsync\(cancellationToken\)/);
+assert.match(externalViewsQuery, /ReadAsync\(cancellationToken\)/);
 assert.match(dbService, /CachedTrending/);
 assert.match(dbService, /trending_cache_refresh_failed/);
 assert.match(dbService, /CASE WHEN h\.recorded_at IS NULL\s+THEN NULL::double precision/);
