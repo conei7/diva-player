@@ -1,6 +1,6 @@
 import type { ListeningPlayEvent } from '../stores/historyStore';
 import { HISTORY_STORES, openHistoryDb } from './historyDatabase';
-import { getSongById } from '../api/vocadb';
+import { getSongsByIds } from '../api/vocadb';
 import { serializeCsv } from '../utils/csv';
 
 const STATS_VERSION = 2;
@@ -389,41 +389,34 @@ function addEventToBucket(bucket: ReportBucket, event: ListeningPlayEvent): void
   bucket.listenedSeconds += Math.max(0, Math.round(event.p ?? 0));
 }
 
-async function enrichTopSongs(stats: HistorySongStats[]): Promise<HistoryReport['topSongsWithMeta']> {
-  const result: HistoryReport['topSongsWithMeta'] = [];
-  const queue = [...stats];
-  const worker = async () => {
-    while (queue.length > 0) {
-      const stat = queue.shift();
-      if (!stat) return;
-      try {
-        const song = await getSongById(stat.songId);
-        result.push({ ...stat, songName: song.name, artistString: song.artistString, thumbUrl: song.thumbUrl });
-      } catch {
-        result.push({ ...stat, songName: `曲ID ${stat.songId}`, artistString: '' });
-      }
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(5, stats.length) }, () => worker()));
-  return result.sort(compareHistoryStats);
+export async function enrichTopSongs(
+  stats: HistorySongStats[],
+  loadSongs: typeof getSongsByIds = getSongsByIds,
+): Promise<HistoryReport['topSongsWithMeta']> {
+  const songs = await loadSongs(stats.map(stat => stat.songId)).catch(() => []);
+  const songsById = new Map(songs.map(song => [song.id, song]));
+  return stats.map(stat => {
+    const song = songsById.get(stat.songId);
+    return song
+      ? { ...stat, songName: song.name, artistString: song.artistString, thumbUrl: song.thumbUrl }
+      : { ...stat, songName: `曲ID ${stat.songId}`, artistString: '' };
+  }).sort(compareHistoryStats);
 }
 
-async function enrichSongMetadata(songIds: readonly number[]): Promise<Map<number, HistorySongCsvMeta>> {
+export async function enrichSongMetadata(
+  songIds: readonly number[],
+  loadSongs: typeof getSongsByIds = getSongsByIds,
+): Promise<Map<number, HistorySongCsvMeta>> {
+  const uniqueIds = [...new Set(songIds)];
+  const songs = await loadSongs(uniqueIds).catch(() => []);
+  const songsById = new Map(songs.map(song => [song.id, song]));
   const result = new Map<number, HistorySongCsvMeta>();
-  const queue = [...new Set(songIds)];
-  const worker = async () => {
-    while (queue.length > 0) {
-      const songId = queue.shift();
-      if (songId === undefined) return;
-      try {
-        const song = await getSongById(songId);
-        result.set(songId, { songName: song.name, artistString: song.artistString });
-      } catch {
-        result.set(songId, { songName: `曲ID ${songId}`, artistString: '' });
-      }
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(5, queue.length) }, () => worker()));
+  for (const songId of uniqueIds) {
+    const song = songsById.get(songId);
+    result.set(songId, song
+      ? { songName: song.name, artistString: song.artistString }
+      : { songName: `曲ID ${songId}`, artistString: '' });
+  }
   return result;
 }
 

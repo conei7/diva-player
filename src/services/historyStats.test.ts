@@ -1,14 +1,17 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   applyHistoryEventToStats,
   buildHistoryCsv,
   buildHistoryReportCsv,
   compareHistoryStats,
   emptyHistorySongStats,
+  enrichSongMetadata,
+  enrichTopSongs,
   isFinalizedPlayEvent,
   isQualifiedPlay,
 } from './historyStats';
 import type { ListeningPlayEvent } from '../stores/historyStore';
+import type { Song } from '../types/vocadb';
 
 const event = (overrides: Partial<ListeningPlayEvent> = {}): ListeningPlayEvent => ({
   s: 42,
@@ -137,5 +140,40 @@ describe('history statistics', () => {
 
     expect(csv).toContain('推移,year,2026-01');
     expect(csv).toContain('上位曲,year,2026,42,曲名,作者');
+  });
+
+  it('enriches report songs with one compact batch and keeps missing-song placeholders', async () => {
+    const first = { ...emptyHistorySongStats(1), qualifiedPlayCount: 2 };
+    const second = { ...emptyHistorySongStats(2), qualifiedPlayCount: 1 };
+    const loadSongs = vi.fn(async () => ([{
+      id: 2,
+      name: '軽量曲',
+      artistString: '作者',
+      thumbUrl: 'thumb.jpg',
+    }] as Song[]));
+
+    const enriched = await enrichTopSongs([first, second], loadSongs);
+
+    expect(loadSongs).toHaveBeenCalledOnce();
+    expect(loadSongs).toHaveBeenCalledWith([1, 2]);
+    expect(enriched).toMatchObject([
+      { songId: 1, songName: '曲ID 1', artistString: '' },
+      { songId: 2, songName: '軽量曲', artistString: '作者', thumbUrl: 'thumb.jpg' },
+    ]);
+  });
+
+  it('deduplicates CSV metadata ids into one compact batch', async () => {
+    const loadSongs = vi.fn(async () => ([{
+      id: 4,
+      name: 'CSV曲',
+      artistString: 'CSV作者',
+    }] as Song[]));
+
+    const metadata = await enrichSongMetadata([3, 4, 3], loadSongs);
+
+    expect(loadSongs).toHaveBeenCalledOnce();
+    expect(loadSongs).toHaveBeenCalledWith([3, 4]);
+    expect(metadata.get(3)).toEqual({ songName: '曲ID 3', artistString: '' });
+    expect(metadata.get(4)).toEqual({ songName: 'CSV曲', artistString: 'CSV作者' });
   });
 });
