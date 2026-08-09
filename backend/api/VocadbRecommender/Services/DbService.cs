@@ -121,7 +121,9 @@ public class DbService
     private static long EstimateMarkovMatrixBytes(Dictionary<int, Dictionary<int, double>> matrix) =>
         256L + matrix.Sum(static row => 192L + row.Value.Count * 64L);
 
-    private async Task<ViewWeightProfile?> LoadViewWeightProfileAsync(NpgsqlConnection conn)
+    private async Task<ViewWeightProfile?> LoadViewWeightProfileAsync(
+        NpgsqlConnection conn,
+        CancellationToken cancellationToken)
     {
         const string cacheKey = "platform_view_weight_profile";
         if (_objectCache.TryGetValue(cacheKey, out ViewWeightProfile? cached))
@@ -138,8 +140,8 @@ public class DbService
             var bands = new List<ViewWeightBand>();
             double? fallback = null;
             double maxWeight = 25.0;
-            await using var reader = await cmd.ExecuteReaderAsync();
-            while (await reader.ReadAsync())
+            await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
             {
                 fallback ??= reader.GetDouble(0);
                 maxWeight = reader.GetDouble(1);
@@ -157,7 +159,7 @@ public class DbService
                 EstimateViewWeightProfileBytes(profile));
             return profile;
         }
-        catch (PostgresException)
+        catch (PostgresException) when (!cancellationToken.IsCancellationRequested)
         {
             // The API remains compatible while an older database is being migrated.
             return null;
@@ -175,14 +177,7 @@ public class DbService
         _searchCache = searchCache;
     }
 
-    private NpgsqlConnection Open()
-    {
-        var conn = new NpgsqlConnection(_connStr);
-        conn.Open();
-        return conn;
-    }
-
-    private async Task<NpgsqlConnection> OpenAsync(CancellationToken cancellationToken = default)
+    private async Task<NpgsqlConnection> OpenAsync(CancellationToken cancellationToken)
     {
         var conn = new NpgsqlConnection(_connStr);
         await conn.OpenAsync(cancellationToken);
@@ -191,26 +186,33 @@ public class DbService
 
     public async Task<DependencyHealth> CheckHealthAsync(CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var stopwatch = Stopwatch.StartNew();
         try
         {
-            await using var conn = await OpenAsync();
+            await using var conn = await OpenAsync(cancellationToken);
             await using var cmd = new NpgsqlCommand("SELECT 1", conn) { CommandTimeout = 3 };
             await cmd.ExecuteScalarAsync(cancellationToken);
             return new DependencyHealth(true, stopwatch.ElapsedMilliseconds);
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
         catch (Exception exception)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             return new DependencyHealth(false, stopwatch.ElapsedMilliseconds, exception.GetType().Name);
         }
     }
 
     public async Task<DiscoveryQualityHealth> CheckDiscoveryQualityAsync(CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var stopwatch = Stopwatch.StartNew();
         try
         {
-            await using var conn = await OpenAsync();
+            await using var conn = await OpenAsync(cancellationToken);
             await using var cmd = new NpgsqlCommand(@"
                 WITH version_counts AS (
                     SELECT model_version, COUNT(*)::bigint AS song_count
@@ -269,8 +271,13 @@ public class DbService
                 latest,
                 warnings.Count == 0 ? null : string.Join(',', warnings));
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
         catch (Exception exception)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             return new DiscoveryQualityHealth(false, stopwatch.ElapsedMilliseconds, 0, 0, 0, 0, 0, null, new Dictionary<string, long>(), 0, null, exception.GetType().Name);
         }
     }
@@ -289,7 +296,7 @@ public class DbService
 
             async Task<(long EligibleSongCount, long YoutubeSongCount, long YoutubeViews, long NicoSongCount, long NicoViews)> LoadAggregateAsync()
             {
-                await using var conn = await OpenAsync();
+                await using var conn = await OpenAsync(cancellationToken);
                 await using var command = new NpgsqlCommand(@"
                     SELECT COUNT(*)::bigint,
                            COUNT(*) FILTER (WHERE s.youtube_views > 0)::bigint,
@@ -315,7 +322,7 @@ public class DbService
 
             async Task<IReadOnlyList<KnowledgeMapSong>> LoadTopSongsAsync(string viewColumn)
             {
-                await using var conn = await OpenAsync();
+                await using var conn = await OpenAsync(cancellationToken);
                 await using var command = new NpgsqlCommand($@"
                     WITH top_songs AS MATERIALIZED (
                         SELECT s.id,
@@ -394,7 +401,7 @@ public class DbService
     {
         if (songIds.Length == 0) return [];
 
-        await using var conn = await OpenAsync();
+        await using var conn = await OpenAsync(cancellationToken);
         await using var command = new NpgsqlCommand(@"
             SELECT s.id,
                    s.name,
@@ -428,7 +435,7 @@ public class DbService
 
     public async Task<YouTubePlaylistCache?> GetYouTubePlaylistCacheAsync(string playlistId, CancellationToken cancellationToken)
     {
-        await using var conn = await OpenAsync();
+        await using var conn = await OpenAsync(cancellationToken);
         await using var cmd = new NpgsqlCommand($@"
             SELECT title, video_ids::text, etag, truncated, fetched_at
             FROM youtube_playlist_cache
@@ -451,7 +458,7 @@ public class DbService
 
     public async Task UpsertYouTubePlaylistCacheAsync(YouTubePlaylistCache cache, CancellationToken cancellationToken)
     {
-        await using var conn = await OpenAsync();
+        await using var conn = await OpenAsync(cancellationToken);
         await using var cmd = new NpgsqlCommand(@"
             INSERT INTO youtube_playlist_cache (playlist_id, title, video_ids, etag, truncated, fetched_at, updated_at)
             VALUES ($1, $2, $3::jsonb, $4, $5, $6, now())
@@ -476,7 +483,7 @@ public class DbService
         CancellationToken cancellationToken)
     {
         if (videoIds.Count == 0) return [];
-        await using var conn = await OpenAsync();
+        await using var conn = await OpenAsync(cancellationToken);
         await using var cmd = new NpgsqlCommand(@"
             SELECT p.pv_id, ((s.raw_json - 'lyrics') || jsonb_strip_nulls(jsonb_build_object(
                 'youtubeViews', s.youtube_views,
@@ -505,7 +512,7 @@ public class DbService
         string sourceId,
         CancellationToken cancellationToken)
     {
-        await using var conn = await OpenAsync();
+        await using var conn = await OpenAsync(cancellationToken);
         await using var cmd = new NpgsqlCommand(@"
             SELECT title, video_ids::text, truncated, fetched_at
             FROM nico_playlist_cache
@@ -527,7 +534,7 @@ public class DbService
 
     public async Task UpsertNicoPlaylistCacheAsync(NicoPlaylistCache cache, CancellationToken cancellationToken)
     {
-        await using var conn = await OpenAsync();
+        await using var conn = await OpenAsync(cancellationToken);
         await using var cmd = new NpgsqlCommand(@"
             INSERT INTO nico_playlist_cache (source_kind, source_id, title, video_ids, truncated, fetched_at, updated_at)
             VALUES ($1, $2, $3, $4::jsonb, $5, $6, now())
@@ -551,7 +558,7 @@ public class DbService
         CancellationToken cancellationToken)
     {
         if (videoIds.Count == 0) return [];
-        await using var conn = await OpenAsync();
+        await using var conn = await OpenAsync(cancellationToken);
         await using var cmd = new NpgsqlCommand(@"
             SELECT p.pv_id, ((s.raw_json - 'lyrics') || jsonb_strip_nulls(jsonb_build_object(
                 'youtubeViews', s.youtube_views,
@@ -577,10 +584,11 @@ public class DbService
 
     public async Task<AudioFeatureHealth> CheckAudioFeatureHealthAsync(CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var stopwatch = Stopwatch.StartNew();
         try
         {
-            await using var conn = await OpenAsync();
+            await using var conn = await OpenAsync(cancellationToken);
             await using var cmd = new NpgsqlCommand(@"
                 WITH high_view_pool AS MATERIALIZED (
                     SELECT s.id,
@@ -683,8 +691,13 @@ public class DbService
                 latestAgeHours,
                 warnings.Count == 0 ? null : string.Join(',', warnings));
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
         catch (Exception exception)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             return new AudioFeatureHealth(false, stopwatch.ElapsedMilliseconds, 0, 0, 0, 0, 0, 0, 0, 0, null, null, exception.GetType().Name);
         }
     }
@@ -729,7 +742,8 @@ public class DbService
         string? lyricsQuery = null,
         bool selfCoverOnly = false,
         bool chorusOnly = false,
-        bool forceRefresh = false)
+        bool forceRefresh = false,
+        CancellationToken cancellationToken = default)
     {
         var request = SongSearchRequest.Create(
             query,
@@ -773,11 +787,14 @@ public class DbService
             chorusOnly);
         return _searchCache.GetOrCreateAsync(
             request.CacheKey,
-            () => ExecuteSongSearchAsync(request),
-            forceRefresh);
+            () => ExecuteSongSearchAsync(request, CancellationToken.None),
+            forceRefresh,
+            cancellationToken);
     }
 
-    private async Task<SongSearchExecution> ExecuteSongSearchAsync(SongSearchRequest request)
+    private async Task<SongSearchExecution> ExecuteSongSearchAsync(
+        SongSearchRequest request,
+        CancellationToken cacheLoadCancellationToken)
     {
         var totalStopwatch = Stopwatch.StartNew();
         var query = request.Query;
@@ -821,7 +838,7 @@ public class DbService
         var chorusOnly = request.ChorusOnly;
 
         var connectionStopwatch = Stopwatch.StartNew();
-        using var conn = Open();
+        await using var conn = await OpenAsync(cacheLoadCancellationToken);
         connectionStopwatch.Stop();
         
         // --- 1. WHERE 句の構築 ---
@@ -1122,7 +1139,7 @@ public class DbService
 
         // --- 2. ORDER BY 句の構築 ---
         var viewWeightProfile = sort == "TotalViews"
-            ? await LoadViewWeightProfileAsync(conn)
+            ? await LoadViewWeightProfileAsync(conn, cacheLoadCancellationToken)
             : null;
         string orderBy = sort switch
         {
@@ -1146,7 +1163,7 @@ public class DbService
         {
             await using var estCmd = new NpgsqlCommand(
                 "SELECT COALESCE(reltuples, 0)::int FROM pg_class WHERE relname = 'songs'", conn);
-            totalCount = Convert.ToInt32(await estCmd.ExecuteScalarAsync() ?? 0);
+            totalCount = Convert.ToInt32(await estCmd.ExecuteScalarAsync(cacheLoadCancellationToken) ?? 0);
             if (totalCount == 0) totalCount = 1; // 推定値0の場合は1にして処理続行
         }
         else
@@ -1154,7 +1171,7 @@ public class DbService
             string countSql = $"SELECT COUNT(*) FROM songs {whereClause}";
             await using var countCmd = new NpgsqlCommand(countSql, conn);
             foreach (var v in paramValues) countCmd.Parameters.AddWithValue(v);
-            totalCount = Convert.ToInt32(await countCmd.ExecuteScalarAsync() ?? 0);
+            totalCount = Convert.ToInt32(await countCmd.ExecuteScalarAsync(cacheLoadCancellationToken) ?? 0);
             if (totalCount == 0)
             {
                 countStopwatch.Stop();
@@ -1212,8 +1229,8 @@ public class DbService
         dataCmd.Parameters.AddWithValue(maxResults);
 
         var items = new List<string>();
-        await using var reader = await dataCmd.ExecuteReaderAsync();
-        while (await reader.ReadAsync())
+        await using var reader = await dataCmd.ExecuteReaderAsync(cacheLoadCancellationToken);
+        while (await reader.ReadAsync(cacheLoadCancellationToken))
         {
             items.Add(reader.GetString(0));
         }
@@ -1235,7 +1252,7 @@ public class DbService
         int maxResults,
         CancellationToken cancellationToken)
     {
-        await using var conn = await OpenAsync();
+        await using var conn = await OpenAsync(cancellationToken);
         await using var cmd = new NpgsqlCommand(@"
             SELECT t.id, t.name, t.category, COUNT(st.song_id)::int AS song_count
             FROM tags t
@@ -1258,12 +1275,15 @@ public class DbService
     /// Returns the full cached VocaDB payload for a ranked ID list. This keeps
     /// generated playlists from issuing one external request per candidate.
     /// </summary>
-    public async Task<Dictionary<int, string>> GetSongsJsonByIdsAsync(IEnumerable<int> songIds)
+    public async Task<Dictionary<int, string>> GetSongsJsonByIdsAsync(
+        IEnumerable<int> songIds,
+        CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var ids = songIds.Where(id => id > 0).Distinct().ToArray();
         if (ids.Length == 0) return [];
 
-        await using var conn = await OpenAsync();
+        await using var conn = await OpenAsync(cancellationToken);
         await using var cmd = new NpgsqlCommand(@"
             SELECT id,
                    ((COALESCE(raw_json, '{}'::jsonb) - 'lyrics') || jsonb_strip_nulls(jsonb_build_object(
@@ -1285,8 +1305,8 @@ public class DbService
         cmd.Parameters.Add(new NpgsqlParameter { Value = ids, NpgsqlDbType = NpgsqlDbType.Array | NpgsqlDbType.Integer });
 
         var result = new Dictionary<int, string>();
-        await using var reader = await cmd.ExecuteReaderAsync();
-        while (await reader.ReadAsync())
+        await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
             result[reader.GetInt32(0)] = reader.GetString(1);
         return result;
     }
@@ -1296,12 +1316,15 @@ public class DbService
     /// ranking. Large VocaDB-only fields are omitted and tags/artists are reduced
     /// to the fields consumed by the browser.
     /// </summary>
-    public async Task<Dictionary<int, string>> GetSongsCardJsonByIdsAsync(IEnumerable<int> songIds)
+    public async Task<Dictionary<int, string>> GetSongsCardJsonByIdsAsync(
+        IEnumerable<int> songIds,
+        CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var ids = songIds.Where(id => id > 0).Distinct().Take(100).ToArray();
         if (ids.Length == 0) return [];
 
-        await using var conn = await OpenAsync();
+        await using var conn = await OpenAsync(cancellationToken);
         await using var cmd = new NpgsqlCommand(@"
             SELECT s.id,
                    jsonb_strip_nulls(jsonb_build_object(
@@ -1379,8 +1402,8 @@ public class DbService
         cmd.Parameters.Add(new NpgsqlParameter { Value = ids, NpgsqlDbType = NpgsqlDbType.Array | NpgsqlDbType.Integer });
 
         var result = new Dictionary<int, string>();
-        await using var reader = await cmd.ExecuteReaderAsync();
-        while (await reader.ReadAsync())
+        await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
             result[reader.GetInt32(0)] = reader.GetString(1);
         return result;
     }
@@ -1412,14 +1435,19 @@ public class DbService
         return result;
     }
 
-    public async Task<SongInfo?> GetSongInfoAsync(int songId)
+    public async Task<SongInfo?> GetSongInfoAsync(
+        int songId,
+        CancellationToken cancellationToken)
     {
-        var infos = await GetSongInfoBatchAsync([songId]);
+        var infos = await GetSongInfoBatchAsync([songId], cancellationToken);
         return infos.FirstOrDefault();
     }
 
-    public async Task<SongInfo[]> GetSongInfoBatchAsync(IEnumerable<int> songIds)
+    public async Task<SongInfo[]> GetSongInfoBatchAsync(
+        IEnumerable<int> songIds,
+        CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var ids = songIds.Distinct().ToArray();
         if (ids.Length == 0) return [];
 
@@ -1436,7 +1464,7 @@ public class DbService
         if (missingIds.Count == 0)
             return [.. result];
 
-        await using var conn = await OpenAsync();
+        await using var conn = await OpenAsync(cancellationToken);
         await using var cmd = new NpgsqlCommand($@"
             SELECT s.id, s.name, s.artist_string, s.length_seconds,
                    s.song_type, s.favorited_times,
@@ -1498,8 +1526,8 @@ public class DbService
             WHERE s.id = ANY($1)", conn);
         cmd.Parameters.AddWithValue(missingIds.ToArray());
 
-        await using var reader = await cmd.ExecuteReaderAsync();
-        while (await reader.ReadAsync())
+        await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
         {
             var info = new SongInfo(
                 Id:             reader.GetInt32(0),
@@ -1535,14 +1563,18 @@ public class DbService
         return [.. result];
     }
 
-    public async Task<int[]> GetMetadataRelationshipCandidateIdsAsync(int seedSongId, int limit)
+    public async Task<int[]> GetMetadataRelationshipCandidateIdsAsync(
+        int seedSongId,
+        int limit,
+        CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var normalizedLimit = Math.Clamp(limit, 1, 1000);
         var cacheKey = $"metadata-relationship:{seedSongId}:{normalizedLimit}";
         if (_objectCache.TryGetValue(cacheKey, out int[]? cached) && cached is not null)
             return cached;
 
-        await using var conn = await OpenAsync();
+        await using var conn = await OpenAsync(cancellationToken);
         await using var cmd = new NpgsqlCommand(@"
             WITH seed_tags AS (
                 SELECT st.tag_id
@@ -1578,8 +1610,8 @@ public class DbService
         cmd.Parameters.AddWithValue(normalizedLimit);
 
         var result = new List<int>(normalizedLimit);
-        await using var reader = await cmd.ExecuteReaderAsync();
-        while (await reader.ReadAsync())
+        await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
             result.Add(reader.GetInt32(0));
 
         var ids = result.ToArray();
@@ -1587,14 +1619,18 @@ public class DbService
         return ids;
     }
 
-    public async Task<int[]> GetDiverseFallbackCandidateIdsAsync(int seedSongId, int limit)
+    public async Task<int[]> GetDiverseFallbackCandidateIdsAsync(
+        int seedSongId,
+        int limit,
+        CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var normalizedLimit = Math.Clamp(limit, 1, 500);
         var cacheKey = $"diverse-fallback:{seedSongId}:{normalizedLimit}";
         if (_objectCache.TryGetValue(cacheKey, out int[]? cached) && cached is not null)
             return cached;
 
-        await using var conn = await OpenAsync();
+        await using var conn = await OpenAsync(cancellationToken);
         await using var cmd = new NpgsqlCommand($@"
             WITH seed AS (
                 SELECT s.id, s.song_type, s.publish_date, sf.state_cluster
@@ -1659,8 +1695,8 @@ public class DbService
         cmd.Parameters.AddWithValue(normalizedLimit);
 
         var result = new List<int>(normalizedLimit);
-        await using var reader = await cmd.ExecuteReaderAsync();
-        while (await reader.ReadAsync())
+        await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
             result.Add(reader.GetInt32(0));
 
         var ids = result.ToArray();
@@ -1668,9 +1704,12 @@ public class DbService
         return ids;
     }
 
-    public async Task<List<object>> GetViewHistoryAsync(int songId)
+    public async Task<List<object>> GetViewHistoryAsync(
+        int songId,
+        CancellationToken cancellationToken = default)
     {
-        using var conn = Open();
+        cancellationToken.ThrowIfCancellationRequested();
+        await using var conn = await OpenAsync(cancellationToken);
         await using var cmd = new NpgsqlCommand(@"
             SELECT recorded_at, youtube_views, nico_views
             FROM view_history
@@ -1679,8 +1718,8 @@ public class DbService
         cmd.Parameters.AddWithValue(songId);
 
         var result = new List<object>();
-        await using var reader = await cmd.ExecuteReaderAsync();
-        while (await reader.ReadAsync())
+        await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
         {
             result.Add(new
             {
@@ -1692,8 +1731,13 @@ public class DbService
         return result;
     }
 
-    public async Task<ViewHistoryResponse> GetViewHistoryWindowAsync(int songId, string range, string bucket)
+    public async Task<ViewHistoryResponse> GetViewHistoryWindowAsync(
+        int songId,
+        string range,
+        string bucket,
+        CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var days = range switch
         {
             "7d" => 7,
@@ -1710,7 +1754,7 @@ public class DbService
             _ => "(h.recorded_at AT TIME ZONE 'UTC')::date",
         };
 
-        using var conn = Open();
+        await using var conn = await OpenAsync(cancellationToken);
         await using var cmd = new NpgsqlCommand($@"
             WITH latest AS (
                 SELECT MAX(recorded_at) AS latest_at
@@ -1772,8 +1816,8 @@ public class DbService
 
         var points = new List<ViewHistoryPoint>();
         ViewHistoryPoint? baselinePoint = null;
-        await using var reader = await cmd.ExecuteReaderAsync();
-        while (await reader.ReadAsync())
+        await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
         {
             var point = new ViewHistoryPoint(
                 reader.GetDateTime(0).ToString("yyyy-MM-dd"),
@@ -1787,7 +1831,19 @@ public class DbService
         return new ViewHistoryResponse(points, baselinePoint, normalizedBucket);
     }
 
-    public Task<string> GetTrendingSongsJsonAsync(int days, int start, int maxResults, string? mode = null, string? ranking = null, int seed = 0, bool debug = false, long? minYoutubeViews = null, long? minNicoViews = null, IReadOnlyCollection<string>? excludedSongTypes = null, bool forceRefresh = false)
+    public Task<string> GetTrendingSongsJsonAsync(
+        int days,
+        int start,
+        int maxResults,
+        string? mode = null,
+        string? ranking = null,
+        int seed = 0,
+        bool debug = false,
+        long? minYoutubeViews = null,
+        long? minNicoViews = null,
+        IReadOnlyCollection<string>? excludedSongTypes = null,
+        bool forceRefresh = false,
+        CancellationToken cancellationToken = default)
     {
         var request = RankingRequest.Create(
             days,
@@ -1802,11 +1858,14 @@ public class DbService
             excludedSongTypes);
         return _searchCache.GetOrCreateRankingAsync(
             request.CacheKey,
-            () => ExecuteTrendingSongsJsonAsync(request),
-            forceRefresh);
+            () => ExecuteTrendingSongsJsonAsync(request, CancellationToken.None),
+            forceRefresh,
+            cancellationToken);
     }
 
-    private async Task<string> ExecuteTrendingSongsJsonAsync(RankingRequest request)
+    private async Task<string> ExecuteTrendingSongsJsonAsync(
+        RankingRequest request,
+        CancellationToken cacheLoadCancellationToken)
     {
         var clampedDays = request.Days;
         var normalizedStart = request.Start;
@@ -1877,8 +1936,8 @@ public class DbService
         if (normalizedMinNico > 0) filterConditions.Add($"COALESCE(s.nico_views, 0) >= ${nextFilterParameter++}");
         if (normalizedExcludedTypes.Length > 0) filterConditions.Add($"{songTypeExpression} <> ALL(${nextFilterParameter})");
         var globalFilterCondition = filterConditions.Count > 0 ? "AND " + string.Join(" AND ", filterConditions) : string.Empty;
-        using var conn = Open();
-        var viewWeightProfile = await LoadViewWeightProfileAsync(conn);
+        await using var conn = await OpenAsync(cacheLoadCancellationToken);
+        var viewWeightProfile = await LoadViewWeightProfileAsync(conn, cacheLoadCancellationToken);
         var latestTotalViewsSql = WeightedViewsSql("h.youtube_views", "h.nico_views", viewWeightProfile);
         var baselineTotalViewsSql = WeightedViewsSql("h.youtube_views", "h.nico_views", viewWeightProfile);
         var currentSongTotalViewsSql = WeightedViewsSql("s.youtube_views", "s.nico_views", viewWeightProfile);
@@ -2207,8 +2266,8 @@ public class DbService
         if (normalizedExcludedTypes.Length > 0) cmd.Parameters.Add(new NpgsqlParameter { Value = normalizedExcludedTypes, NpgsqlDbType = NpgsqlDbType.Array | NpgsqlDbType.Text });
 
         var items = new List<string>();
-        await using var reader = await cmd.ExecuteReaderAsync();
-        while (await reader.ReadAsync())
+        await using var reader = await cmd.ExecuteReaderAsync(cacheLoadCancellationToken);
+        while (await reader.ReadAsync(cacheLoadCancellationToken))
         {
             items.Add(reader.GetString(0));
         }
@@ -2219,19 +2278,21 @@ public class DbService
 
     // ---- マルコフ遷移確率 -----------------------------------------
 
-    public async Task<Dictionary<int, Dictionary<int, double>>> LoadMarkovMatrixAsync()
+    public async Task<Dictionary<int, Dictionary<int, double>>> LoadMarkovMatrixAsync(
+        CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         const string cacheKey = "markov_matrix";
         if (_objectCache.TryGetValue(cacheKey, out Dictionary<int, Dictionary<int, double>>? m))
             return m!;
 
-        using var conn = Open();
+        await using var conn = await OpenAsync(cancellationToken);
         await using var cmd = new NpgsqlCommand(
             "SELECT from_state, to_state, probability FROM markov_transitions", conn);
-        await using var reader = await cmd.ExecuteReaderAsync();
+        await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
 
         var matrix = new Dictionary<int, Dictionary<int, double>>();
-        while (await reader.ReadAsync())
+        while (await reader.ReadAsync(cancellationToken))
         {
             var from = reader.GetInt32(0);
             var to   = reader.GetInt32(1);
@@ -2247,10 +2308,15 @@ public class DbService
 
     // ---- プロデューサー関連曲 (知識グラフ) ------------------------
 
-    public async Task<int[]> GetSongsByProducersAsync(int[] producerIds, int excludeSongId, int limit)
+    public async Task<int[]> GetSongsByProducersAsync(
+        int[] producerIds,
+        int excludeSongId,
+        int limit,
+        CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (producerIds.Length == 0) return [];
-        using var conn = Open();
+        await using var conn = await OpenAsync(cancellationToken);
         await using var cmd = new NpgsqlCommand($@"
             SELECT DISTINCT sa.song_id
             FROM song_artists sa
@@ -2284,8 +2350,8 @@ public class DbService
         cmd.Parameters.AddWithValue(limit);
 
         var result = new List<int>();
-        await using var reader = await cmd.ExecuteReaderAsync();
-        while (await reader.ReadAsync())
+        await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
             result.Add(reader.GetInt32(0));
         return [..result];
     }
@@ -2294,9 +2360,12 @@ public class DbService
     /// 同一プロデューサーの楽曲を人気順で取得する。
     /// </summary>
     public async Task<List<(int SongId, string Name, string ArtistString)>> GetSongsByProducerAsync(
-        int seedSongId, int limit)
+        int seedSongId,
+        int limit,
+        CancellationToken cancellationToken)
     {
-        using var conn = Open();
+        cancellationToken.ThrowIfCancellationRequested();
+        await using var conn = await OpenAsync(cancellationToken);
         await using var cmd = new NpgsqlCommand($@"
             SELECT s.id, s.name, s.artist_string
             FROM songs s
@@ -2332,8 +2401,8 @@ public class DbService
         cmd.Parameters.AddWithValue(limit);
 
         var result = new List<(int, string, string)>();
-        await using var reader = await cmd.ExecuteReaderAsync();
-        while (await reader.ReadAsync())
+        await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
             result.Add((reader.GetInt32(0), reader.GetString(1), reader.GetString(2)));
         return result;
     }

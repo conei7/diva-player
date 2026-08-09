@@ -17,6 +17,12 @@ const [
   rankingRequest,
   searchResponseCache,
   recommendationObjectCache,
+  qdrantService,
+  recommendService,
+  digDiscoveryService,
+  markovService,
+  youtubePlaylistService,
+  nicoPlaylistService,
   appsettings,
   workflow,
   apiTestsProject,
@@ -39,6 +45,12 @@ const [
   readFile(new URL('../backend/api/VocadbRecommender/Services/RankingRequest.cs', import.meta.url), 'utf8'),
   readFile(new URL('../backend/api/VocadbRecommender/Services/SearchResponseCache.cs', import.meta.url), 'utf8'),
   readFile(new URL('../backend/api/VocadbRecommender/Services/RecommendationObjectCache.cs', import.meta.url), 'utf8'),
+  readFile(new URL('../backend/api/VocadbRecommender/Services/QdrantService.cs', import.meta.url), 'utf8'),
+  readFile(new URL('../backend/api/VocadbRecommender/Services/RecommendService.cs', import.meta.url), 'utf8'),
+  readFile(new URL('../backend/api/VocadbRecommender/Services/DigDiscoveryService.cs', import.meta.url), 'utf8'),
+  readFile(new URL('../backend/api/VocadbRecommender/Services/MarkovService.cs', import.meta.url), 'utf8'),
+  readFile(new URL('../backend/api/VocadbRecommender/Services/YouTubePlaylistService.cs', import.meta.url), 'utf8'),
+  readFile(new URL('../backend/api/VocadbRecommender/Services/NicoPlaylistService.cs', import.meta.url), 'utf8'),
   readFile(new URL('../backend/api/VocadbRecommender/appsettings.json', import.meta.url), 'utf8'),
   readFile(new URL('../.github/workflows/deploy.yml', import.meta.url), 'utf8'),
   readFile(new URL('../backend/api/VocadbRecommender.Tests/VocadbRecommender.Tests.csproj', import.meta.url), 'utf8'),
@@ -109,10 +121,18 @@ assert.match(searchResponseCache, /stale\.RefreshRetryAfterUtcTicks/);
 assert.match(searchResponseCache, /LoadAfterCacheRecheckAsync/);
 assert.match(searchResponseCache, /GetOrCreateRankingAsync/);
 assert.match(searchResponseCache, /trending_cache_refresh_failed/);
+assert.match(searchResponseCache, /sharedTask\.WaitAsync\(cancellationToken\)/);
+assert.match(searchResponseCache, /ObserveColdLoadCompletionAsync/);
+assert.match(searchResponseCache, /ObserveRankingColdLoadCompletionAsync/);
 assert.match(recommendationObjectCache, /SizeLimit = sizeLimitBytes/);
 assert.match(recommendationObjectCache, /MinimumEntryChargeBytes = 4 \* 1024/);
 assert.match(dbService, /_searchCache\.GetOrCreateAsync/);
 assert.match(dbService, /_searchCache\.GetOrCreateRankingAsync/);
+assert.match(dbService, /ExecuteSongSearchAsync\(request, CancellationToken\.None\)/);
+assert.match(dbService, /ExecuteTrendingSongsJsonAsync\(request, CancellationToken\.None\)/);
+assert.doesNotMatch(dbService, /\bOpen(?:Async)?\(\)/);
+assert.doesNotMatch(dbService, /\bExecute(?:Reader|Scalar|NonQuery)Async\(\)/);
+assert.doesNotMatch(dbService, /\bReadAsync\(\)/);
 assert.match(dbService, /RecommendationObjectCache _objectCache/);
 assert.match(dbService, /platform_view_weight_profile/);
 assert.match(dbService, /knowledge_map_catalog_v1/);
@@ -130,6 +150,53 @@ assert.match(program, /!double\.IsFinite\(bpmFrom\.Value\)/);
 assert.match(program, /!double\.IsFinite\(bpmTo\.Value\)/);
 assert.match(apiTestsProject, /PackageReference Include="xunit"/);
 assert.match(workflow, /dotnet test backend\/api\/VocadbRecommender\.Tests\/VocadbRecommender\.Tests\.csproj --configuration Release/);
+for (const route of [
+  '/api/recommend',
+  '/api/recommend/producer',
+  '/api/recommend/similar',
+  '/api/recommend/metadata',
+  '/api/recommend/audio',
+  '/api/recommend/multi',
+  '/api/recommend/dig',
+  '/api/songs/trending',
+  '/api/songs/search',
+]) {
+  const start = program.indexOf(`"${route}"`);
+  assert.notEqual(start, -1, `${route} endpoint was not found`);
+  const nextEndpoint = program.indexOf('\napp.Map', start + route.length + 2);
+  const endpoint = program.slice(start, nextEndpoint === -1 ? program.length : nextEndpoint);
+  assert.match(endpoint, /CancellationToken cancellationToken/, `${route} must bind RequestAborted`);
+  assert.ok(
+    (endpoint.match(/\bcancellationToken\b/g) ?? []).length >= 2,
+    `${route} must pass RequestAborted to its service call`,
+  );
+}
+for (const endpointName of ['GetSongsByIdsAsync', 'GetExternalViewsAsync', 'GetViewHistoryAsync']) {
+  const marker = `private static async Task<IResult> ${endpointName}`;
+  const start = songReadEndpoints.indexOf(marker);
+  assert.notEqual(start, -1, `${endpointName} was not found`);
+  const nextEndpoint = songReadEndpoints.indexOf('\n    private static async Task<IResult>', start + marker.length);
+  const endpoint = songReadEndpoints.slice(
+    start,
+    nextEndpoint === -1 ? songReadEndpoints.length : nextEndpoint,
+  );
+  assert.match(endpoint, /CancellationToken cancellationToken/);
+  assert.ok((endpoint.match(/\bcancellationToken\b/g) ?? []).length >= 2);
+}
+const qdrantCalls = qdrantService.match(/_client\.(?:Retrieve|Search)Async\([\s\S]*?\);/g) ?? [];
+assert.ok(qdrantCalls.length > 0, 'Qdrant calls were not found');
+for (const call of qdrantCalls)
+  assert.match(call, /cancellationToken: cancellationToken/);
+assert.match(qdrantService, /catch when \(!cancellationToken\.IsCancellationRequested\)/);
+assert.match(recommendService, /RecommendAsync\([\s\S]*?CancellationToken cancellationToken\)/);
+assert.match(digDiscoveryService, /DiscoverAsync\([\s\S]*?CancellationToken cancellationToken/);
+assert.match(markovService, /FilterAsync\([\s\S]*?CancellationToken cancellationToken\)/);
+for (const playlistService of [youtubePlaylistService, nicoPlaylistService]) {
+  assert.match(playlistService, /catch \(OperationCanceledException\) when \(cancellationToken\.IsCancellationRequested\)/);
+  assert.match(playlistService, /!cancellationToken\.IsCancellationRequested[\s\S]*TaskCanceledException/);
+}
+assert.match(warmup, /cancellationToken: stoppingToken/);
+assert.match(warmup, /catch \(OperationCanceledException\) when \(stoppingToken\.IsCancellationRequested\)/);
 const rankingEndpoint = program.match(
   /app\.MapGet\("\/api\/songs\/trending"[\s\S]*?app\.MapGet\("\/api\/songs\/search"/,
 )?.[0];

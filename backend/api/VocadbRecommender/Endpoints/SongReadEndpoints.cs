@@ -7,16 +7,24 @@ internal static class SongReadEndpoints
     {
         endpoints.MapGet("/api/songs/batch", (
             string ids,
-            DbService db) => GetSongsByIdsAsync(ids, db, compact: true));
+            DbService db,
+            CancellationToken cancellationToken) =>
+            GetSongsByIdsAsync(ids, db, compact: true, cancellationToken));
         endpoints.MapGet("/api/songs/details", (
             string ids,
-            DbService db) => GetSongsByIdsAsync(ids, db, compact: false));
+            DbService db,
+            CancellationToken cancellationToken) =>
+            GetSongsByIdsAsync(ids, db, compact: false, cancellationToken));
         endpoints.MapGet("/api/songs/views", GetExternalViewsAsync);
         endpoints.MapGet("/api/songs/{id}/history", GetViewHistoryAsync);
         return endpoints;
     }
 
-    private static async Task<IResult> GetSongsByIdsAsync(string ids, DbService db, bool compact)
+    private static async Task<IResult> GetSongsByIdsAsync(
+        string ids,
+        DbService db,
+        bool compact,
+        CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(ids))
             return Results.Ok(new { items = Array.Empty<object>() });
@@ -34,8 +42,8 @@ internal static class SongReadEndpoints
             return Results.Ok(new { items = Array.Empty<object>() });
 
         var songsById = compact
-            ? await db.GetSongsCardJsonByIdsAsync(orderedIds)
-            : await db.GetSongsJsonByIdsAsync(orderedIds);
+            ? await db.GetSongsCardJsonByIdsAsync(orderedIds, cancellationToken)
+            : await db.GetSongsJsonByIdsAsync(orderedIds, cancellationToken);
         var items = orderedIds
             .Where(songsById.ContainsKey)
             .Select(id => JsonSerializer.Deserialize<JsonElement>(songsById[id]))
@@ -75,7 +83,8 @@ internal static class SongReadEndpoints
         int id,
         string? range,
         string? bucket,
-        DbService db)
+        DbService db,
+        CancellationToken cancellationToken)
     {
         if (!string.IsNullOrWhiteSpace(range))
         {
@@ -88,9 +97,13 @@ internal static class SongReadEndpoints
                     "all" => "month",
                     _ => "day",
                 };
-            return Results.Ok(await db.GetViewHistoryWindowAsync(id, normalizedRange, normalizedBucket));
+            return Results.Ok(await db.GetViewHistoryWindowAsync(
+                id,
+                normalizedRange,
+                normalizedBucket,
+                cancellationToken));
         }
 
-        return Results.Ok(await db.GetViewHistoryAsync(id));
+        return Results.Ok(await db.GetViewHistoryAsync(id, cancellationToken));
     }
 }

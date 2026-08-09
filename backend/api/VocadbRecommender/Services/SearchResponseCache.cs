@@ -88,10 +88,12 @@ public sealed class SearchResponseCache : IDisposable
     public async Task<SongSearchExecution> GetOrCreateAsync(
         string key,
         Func<Task<SongSearchExecution>> loader,
-        bool forceRefresh = false)
+        bool forceRefresh = false,
+        CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(key);
         ArgumentNullException.ThrowIfNull(loader);
+        cancellationToken.ThrowIfCancellationRequested();
 
         var stopwatch = Stopwatch.StartNew();
         if (!forceRefresh && TryGetCached(key, out var cached))
@@ -111,17 +113,19 @@ public sealed class SearchResponseCache : IDisposable
         }
 
         if (!forceRefresh && _beforeColdLoadRegistration is not null)
-            await _beforeColdLoadRegistration();
-        return await LoadSingleFlightAsync(key, loader, forceRefresh);
+            await _beforeColdLoadRegistration().WaitAsync(cancellationToken);
+        return await LoadSingleFlightAsync(key, loader, forceRefresh, cancellationToken);
     }
 
     public async Task<string> GetOrCreateRankingAsync(
         string key,
         Func<Task<string>> loader,
-        bool forceRefresh = false)
+        bool forceRefresh = false,
+        CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(key);
         ArgumentNullException.ThrowIfNull(loader);
+        cancellationToken.ThrowIfCancellationRequested();
 
         if (!forceRefresh && TryGetCachedRanking(key, out var cached))
         {
@@ -131,8 +135,8 @@ public sealed class SearchResponseCache : IDisposable
         }
 
         if (!forceRefresh && _beforeColdLoadRegistration is not null)
-            await _beforeColdLoadRegistration();
-        return await LoadRankingSingleFlightAsync(key, loader, forceRefresh);
+            await _beforeColdLoadRegistration().WaitAsync(cancellationToken);
+        return await LoadRankingSingleFlightAsync(key, loader, forceRefresh, cancellationToken);
     }
 
     internal static long EstimateEntryChargeBytes(string key, string itemsJson)
@@ -149,16 +153,42 @@ public sealed class SearchResponseCache : IDisposable
     private async Task<SongSearchExecution> LoadSingleFlightAsync(
         string key,
         Func<Task<SongSearchExecution>> loader,
-        bool forceRefresh)
+        bool forceRefresh,
+        CancellationToken cancellationToken)
     {
-        var lazy = _loads.GetOrAdd(
-            key,
-            _ => new Lazy<Task<SongSearchExecution>>(
-                () => LoadAfterCacheRecheckAsync(key, loader, forceRefresh),
-                LazyThreadSafetyMode.ExecutionAndPublication));
+        var candidate = new Lazy<Task<SongSearchExecution>>(
+            () => LoadAfterCacheRecheckAsync(key, loader, forceRefresh),
+            LazyThreadSafetyMode.ExecutionAndPublication);
+        var lazy = _loads.GetOrAdd(key, candidate);
+        var ownsFlight = ReferenceEquals(lazy, candidate);
+        Task<SongSearchExecution> sharedTask;
         try
         {
-            return await lazy.Value;
+            sharedTask = lazy.Value;
+        }
+        catch
+        {
+            if (ownsFlight) RemoveLoad(key, lazy);
+            throw;
+        }
+        if (ownsFlight)
+            _ = ObserveColdLoadCompletionAsync(key, lazy, sharedTask);
+        return await sharedTask.WaitAsync(cancellationToken);
+    }
+
+    private async Task ObserveColdLoadCompletionAsync(
+        string key,
+        Lazy<Task<SongSearchExecution>> lazy,
+        Task<SongSearchExecution> sharedTask)
+    {
+        try
+        {
+            await sharedTask;
+        }
+        catch
+        {
+            // The request waiter observes the load failure. This observer owns
+            // only lifetime cleanup when every waiter has already disconnected.
         }
         finally
         {
@@ -263,16 +293,42 @@ public sealed class SearchResponseCache : IDisposable
     private async Task<string> LoadRankingSingleFlightAsync(
         string key,
         Func<Task<string>> loader,
-        bool forceRefresh)
+        bool forceRefresh,
+        CancellationToken cancellationToken)
     {
-        var lazy = _rankingLoads.GetOrAdd(
-            key,
-            _ => new Lazy<Task<string>>(
-                () => LoadRankingAfterCacheRecheckAsync(key, loader, forceRefresh),
-                LazyThreadSafetyMode.ExecutionAndPublication));
+        var candidate = new Lazy<Task<string>>(
+            () => LoadRankingAfterCacheRecheckAsync(key, loader, forceRefresh),
+            LazyThreadSafetyMode.ExecutionAndPublication);
+        var lazy = _rankingLoads.GetOrAdd(key, candidate);
+        var ownsFlight = ReferenceEquals(lazy, candidate);
+        Task<string> sharedTask;
         try
         {
-            return await lazy.Value;
+            sharedTask = lazy.Value;
+        }
+        catch
+        {
+            if (ownsFlight) RemoveRankingLoad(key, lazy);
+            throw;
+        }
+        if (ownsFlight)
+            _ = ObserveRankingColdLoadCompletionAsync(key, lazy, sharedTask);
+        return await sharedTask.WaitAsync(cancellationToken);
+    }
+
+    private async Task ObserveRankingColdLoadCompletionAsync(
+        string key,
+        Lazy<Task<string>> lazy,
+        Task<string> sharedTask)
+    {
+        try
+        {
+            await sharedTask;
+        }
+        catch
+        {
+            // See ObserveColdLoadCompletionAsync. A canceled caller must never
+            // own cleanup of work that remains useful to other callers.
         }
         finally
         {

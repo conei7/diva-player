@@ -31,10 +31,11 @@ public class RecommendService
     public async Task<RecommendResponse> RecommendAsync(
         int    seedSongId,
         int    count,
-        double sessionProgress)
+        double sessionProgress,
+        CancellationToken cancellationToken)
     {
         // --- シード曲情報取得 ---
-        var seedSong = await _db.GetSongInfoAsync(seedSongId);
+        var seedSong = await _db.GetSongInfoAsync(seedSongId, cancellationToken);
         if (seedSong is null)
             return new RecommendResponse([], "seed song not found");
 
@@ -45,6 +46,7 @@ public class RecommendService
         var annCandidates = await _qdrant.SearchSimilarAsync(
             seedSongId,
             _opts.AnnCandidates,
+            cancellationToken,
             playedSet);
 
         // ハイブリッドコレクションがない場合のフォールバック
@@ -53,12 +55,20 @@ public class RecommendService
             annCandidates = await _qdrant.SearchMetadataSimilarAsync(
                 seedSongId,
                 _opts.AnnCandidates,
+                cancellationToken,
                 playedSet);
         }
 
         // --- 2. 知識グラフ バイアス付きランダムウォーク ---
-        var graphTask = KnowledgeGraphWalkAsync(seedSong, playedSet, _opts.GraphWalkSteps);
-        var relationshipTask = _db.GetMetadataRelationshipCandidateIdsAsync(seedSongId, 300);
+        var graphTask = KnowledgeGraphWalkAsync(
+            seedSong,
+            playedSet,
+            _opts.GraphWalkSteps,
+            cancellationToken);
+        var relationshipTask = _db.GetMetadataRelationshipCandidateIdsAsync(
+            seedSongId,
+            300,
+            cancellationToken);
         await Task.WhenAll(graphTask, relationshipTask);
         var graphCandidates = await graphTask;
         var relationshipCandidates = await relationshipTask;
@@ -99,13 +109,17 @@ public class RecommendService
 
         // --- 3. 候補多様性フィルタ: 同一プロデューサーを上位 N 件に制限 ---
         var candidateInfos = await _db.GetSongInfoBatchAsync(
-            mergedCandidates.Select(c => c.Key));
+            mergedCandidates.Select(c => c.Key),
+            cancellationToken);
         if (MetadataRelationshipRanking.NeedsDiverseFallback(candidateInfos))
         {
             var maximumScore = mergedCandidates.Count == 0
                 ? 1.0
                 : Math.Max(1e-9, mergedCandidates.Max(candidate => candidate.Value));
-            var fallbackIds = await _db.GetDiverseFallbackCandidateIdsAsync(seedSongId, 80);
+            var fallbackIds = await _db.GetDiverseFallbackCandidateIdsAsync(
+                seedSongId,
+                80,
+                cancellationToken);
             foreach (var (id, index) in fallbackIds.Select((id, index) => (id, index)))
             {
                 if (playedSet.Contains(id) || candidateScores.ContainsKey(id)) continue;
@@ -118,7 +132,8 @@ public class RecommendService
                 .Select(candidate => (candidate.Key, candidate.Value))
                 .ToList();
             candidateInfos = await _db.GetSongInfoBatchAsync(
-                mergedCandidates.Select(candidate => candidate.Key));
+                mergedCandidates.Select(candidate => candidate.Key),
+                cancellationToken);
         }
         var eligibleIds = candidateInfos
             .Where(DiscoveryEligibility.IsEligible)
@@ -137,7 +152,10 @@ public class RecommendService
             mergedCandidates,
             candidateInfos);
         var filtered = await _markov.FilterAsync(
-            seedSong, mergedCandidates, candidateInfos);
+            seedSong,
+            mergedCandidates,
+            candidateInfos,
+            cancellationToken);
 
         double lambda = Math.Max(0.2, _opts.BaseDiversity - sessionProgress * 0.3);
         var reranked  = MmrRerank(
@@ -148,7 +166,9 @@ public class RecommendService
             _opts.ProducerDiversityWeight,
             _opts.VocalistDiversityWeight);
 
-        var resultInfos = (await _db.GetSongInfoBatchAsync(reranked.Select(r => r.SongId)))
+        var resultInfos = (await _db.GetSongInfoBatchAsync(
+                reranked.Select(r => r.SongId),
+                cancellationToken))
             .Where(DiscoveryEligibility.IsEligible)
             .ToArray();
         var infoMap     = resultInfos.ToDictionary(i => i.Id);
@@ -179,6 +199,7 @@ public class RecommendService
         IReadOnlyList<RecommendSeed> seeds,
         int count,
         double sessionProgress,
+        CancellationToken cancellationToken,
         IReadOnlySet<int>? excludedSongIds = null,
         int offset = 0)
     {
@@ -196,7 +217,11 @@ public class RecommendService
         var results = await Task.WhenAll(normalizedSeeds.Select(async seed => new
         {
             Seed = seed,
-            Response = await RecommendAsync(seed.SongId, perSeedCount, sessionProgress),
+            Response = await RecommendAsync(
+                seed.SongId,
+                perSeedCount,
+                sessionProgress,
+                cancellationToken),
         }));
         var excluded = excludedSongIds is null
             ? new HashSet<int>()
@@ -268,7 +293,8 @@ public class RecommendService
     private async Task<List<(int SongId, double Score)>> KnowledgeGraphWalkAsync(
         SongInfo seed,
         HashSet<int> excludeIds,
-        int steps)
+        int steps,
+        CancellationToken cancellationToken)
     {
         var scores = new Dictionary<int, double>();
         // Use a stable walk so offset-based requests share the same ranking.
@@ -286,7 +312,10 @@ public class RecommendService
                 .ToArray();
 
             var songsByProducer = await _db.GetSongsByProducersAsync(
-                producerBatch, seed.Id, 20);
+                producerBatch,
+                seed.Id,
+                20,
+                cancellationToken);
 
             foreach (var sid in songsByProducer)
             {
@@ -299,7 +328,8 @@ public class RecommendService
             if (songsByProducer.Length > 0 && rand.NextDouble() > _opts.GraphBias)
             {
                 var nextSong = await _db.GetSongInfoAsync(
-                    songsByProducer[rand.Next(songsByProducer.Length)]);
+                    songsByProducer[rand.Next(songsByProducer.Length)],
+                    cancellationToken);
                 if (nextSong is not null)
                     currentProducers = nextSong.ProducerIds.ToList();
             }

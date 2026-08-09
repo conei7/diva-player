@@ -28,5 +28,6 @@ export async function onRequest({ request, env }) {
     headers,
     body: request.method === 'GET' || request.method === 'HEAD' ? undefined : request.body,
     redirect: 'manual',
+    signal: request.signal,
   });
 }

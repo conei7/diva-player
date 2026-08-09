@@ -25,6 +25,7 @@ public class QdrantService
 
     public async Task<DependencyHealth> CheckHealthAsync(CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var stopwatch = Stopwatch.StartNew();
         try
         {
@@ -33,8 +34,13 @@ public class QdrantService
                 ? new DependencyHealth(true, stopwatch.ElapsedMilliseconds)
                 : new DependencyHealth(false, stopwatch.ElapsedMilliseconds, $"HTTP {(int)response.StatusCode}");
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
         catch (Exception exception)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             return new DependencyHealth(false, stopwatch.ElapsedMilliseconds, exception.GetType().Name);
         }
     }
@@ -47,9 +53,11 @@ public class QdrantService
     public async Task<List<(int SongId, double Score)>> SearchNamedVectorsAsync(
         int seedSongId,
         int topK,
+        CancellationToken cancellationToken,
         IEnumerable<int>? excludeIds = null,
         int offset = 0)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var excludeSet = excludeIds?.ToHashSet() ?? [];
         excludeSet.Add(seedSongId);
 
@@ -58,7 +66,8 @@ public class QdrantService
             collectionName: _opts.CollectionNamed,
             ids: new[] { new PointId { Num = (ulong)seedSongId } },
             withPayload: false,
-            withVectors: true);
+            withVectors: true,
+            cancellationToken: cancellationToken);
 
         var seedPoint = retrieveResult.FirstOrDefault();
         if (seedPoint is null || seedPoint.Vectors is null)
@@ -84,7 +93,8 @@ public class QdrantService
                 collectionName: _opts.CollectionNamed,
                 vector: audioVec,
                 vectorName: "audio",
-                limit: (ulong)fetch);
+                limit: (ulong)fetch,
+                cancellationToken: cancellationToken);
             foreach (var r in res)
                 audioResults[r.Id.Num] = r.Score;
         }
@@ -95,7 +105,8 @@ public class QdrantService
                 collectionName: _opts.CollectionNamed,
                 vector: metaVec,
                 vectorName: "meta",
-                limit: (ulong)fetch);
+                limit: (ulong)fetch,
+                cancellationToken: cancellationToken);
             foreach (var r in res)
                 metaResults[r.Id.Num] = r.Score;
         }
@@ -130,17 +141,24 @@ public class QdrantService
     public async Task<List<(int SongId, double Score)>> SearchSimilarAsync(
         int seedSongId,
         int topK,
+        CancellationToken cancellationToken,
         IEnumerable<int>? excludeIds = null,
         int offset = 0)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         // Named Vectors コレクションが利用可能な場合はそちらを優先
         try
         {
-            var namedResult = await SearchNamedVectorsAsync(seedSongId, topK, excludeIds, offset);
+            var namedResult = await SearchNamedVectorsAsync(
+                seedSongId,
+                topK,
+                cancellationToken,
+                excludeIds,
+                offset);
             if (namedResult.Count > 0)
                 return namedResult;
         }
-        catch { /* フォールバック */ }
+        catch when (!cancellationToken.IsCancellationRequested) { /* フォールバック */ }
 
         var excludeSet = excludeIds?.ToHashSet() ?? [];
         excludeSet.Add(seedSongId);
@@ -150,7 +168,8 @@ public class QdrantService
             collectionName: _opts.CollectionHybrid,
             ids: new[] { new PointId { Num = (ulong)seedSongId } },
             withPayload: false,
-            withVectors: true);
+            withVectors: true,
+            cancellationToken: cancellationToken);
 
         var getResult = retrieveResult.FirstOrDefault();
         if (getResult is null || getResult.Vectors is null)
@@ -161,7 +180,8 @@ public class QdrantService
         var searchResult = await _client.SearchAsync(
             collectionName: _opts.CollectionHybrid,
             vector: seedVector,
-            limit: (ulong)(offset + topK + excludeSet.Count + 10));
+            limit: (ulong)(offset + topK + excludeSet.Count + 10),
+            cancellationToken: cancellationToken);
 
         return searchResult
             .Where(r => !excludeSet.Contains((int)r.Id.Num))
@@ -177,9 +197,11 @@ public class QdrantService
     public async Task<List<(int SongId, double Score)>> SearchAudioOnlyAsync(
         int seedSongId,
         int topK,
+        CancellationToken cancellationToken,
         IEnumerable<int>? excludeIds = null,
         int offset = 0)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var excludeSet = excludeIds?.ToHashSet() ?? [];
         excludeSet.Add(seedSongId);
 
@@ -187,7 +209,8 @@ public class QdrantService
             collectionName: _opts.CollectionNamed,
             ids: new[] { new PointId { Num = (ulong)seedSongId } },
             withPayload: false,
-            withVectors: true);
+            withVectors: true,
+            cancellationToken: cancellationToken);
 
         var seedPoint = retrieveResult.FirstOrDefault();
         if (seedPoint is null || seedPoint.Vectors is null)
@@ -206,7 +229,8 @@ public class QdrantService
             collectionName: _opts.CollectionNamed,
             vector: audioVec,
             vectorName: "audio",
-            limit: (ulong)fetch);
+            limit: (ulong)fetch,
+            cancellationToken: cancellationToken);
 
         return res
             .Where(r => !excludeSet.Contains((int)r.Id.Num))
@@ -222,9 +246,11 @@ public class QdrantService
     public async Task<List<(int SongId, double Score)>> SearchMetadataSimilarAsync(
         int seedSongId,
         int topK,
+        CancellationToken cancellationToken,
         IEnumerable<int>? excludeIds = null,
         int offset = 0)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var excludeSet = excludeIds?.ToHashSet() ?? [];
         excludeSet.Add(seedSongId);
 
@@ -232,7 +258,8 @@ public class QdrantService
             collectionName: _opts.CollectionMetadata,
             ids: new[] { new PointId { Num = (ulong)seedSongId } },
             withPayload: false,
-            withVectors: true);
+            withVectors: true,
+            cancellationToken: cancellationToken);
 
         var getResult = retrieveResult.FirstOrDefault();
         if (getResult is null || getResult.Vectors is null)
@@ -243,7 +270,8 @@ public class QdrantService
         var searchResult = await _client.SearchAsync(
             collectionName: _opts.CollectionMetadata,
             vector: seedVector,
-            limit: (ulong)(offset + topK + excludeSet.Count + 10));
+            limit: (ulong)(offset + topK + excludeSet.Count + 10),
+            cancellationToken: cancellationToken);
 
         return searchResult
             .Where(r => !excludeSet.Contains((int)r.Id.Num))

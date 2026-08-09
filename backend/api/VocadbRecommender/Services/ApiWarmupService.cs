@@ -35,12 +35,17 @@ public sealed class ApiWarmupService(
                     null, null, null, null, null, null,
                     "FavoritedTimes", "desc", 0, 12,
                     onlyWithPVs: true,
-                    discoveryOnly: true);
+                    discoveryOnly: true,
+                    cancellationToken: stoppingToken);
             }),
-            ("home-popular", () => db.GetTrendingSongsJsonAsync(30, 0, 24, "alltime")),
-            ("home-pace", () => db.GetTrendingSongsJsonAsync(30, 0, 24, "pace")),
-            ("home-surge", () => db.GetTrendingSongsJsonAsync(7, 0, 24, "surge")),
-            ("home-recent", () => db.GetTrendingSongsJsonAsync(30, 0, 24, "recent")),
+            ("home-popular", () => db.GetTrendingSongsJsonAsync(
+                30, 0, 24, "alltime", cancellationToken: stoppingToken)),
+            ("home-pace", () => db.GetTrendingSongsJsonAsync(
+                30, 0, 24, "pace", cancellationToken: stoppingToken)),
+            ("home-surge", () => db.GetTrendingSongsJsonAsync(
+                7, 0, 24, "surge", cancellationToken: stoppingToken)),
+            ("home-recent", () => db.GetTrendingSongsJsonAsync(
+                30, 0, 24, "recent", cancellationToken: stoppingToken)),
         };
 
         foreach (var job in jobs)
@@ -49,6 +54,10 @@ public sealed class ApiWarmupService(
             try
             {
                 await job.Run();
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                break;
             }
             catch (Exception exception)
             {

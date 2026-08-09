@@ -66,12 +66,19 @@ public sealed class NicoPlaylistService
             await _db.UpsertNicoPlaylistCacheAsync(fetched, cancellationToken);
             return await ResolveAsync(fetched, stale: false, cancellationToken);
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
         catch (NicoPlaylistException)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (cached is not null) return await ResolveAsync(cached, stale: true, cancellationToken);
             throw;
         }
-        catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or JsonException)
+        catch (Exception exception) when (
+            !cancellationToken.IsCancellationRequested
+            && exception is HttpRequestException or TaskCanceledException or JsonException)
         {
             if (cached is not null) return await ResolveAsync(cached, stale: true, cancellationToken);
             throw new NicoPlaylistException($"NicoNico playlist request failed: {exception.Message}");

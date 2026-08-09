@@ -150,7 +150,8 @@ app.MapGet("/api/recommend", async (
     int count,
     int? offset,
     double sessionProgress,
-    RecommendService svc) =>
+    RecommendService svc,
+    CancellationToken cancellationToken) =>
 {
     if (count is < 1 or > 100)
         return Results.BadRequest("count must be between 1 and 100");
@@ -169,7 +170,11 @@ app.MapGet("/api/recommend", async (
         return Results.Ok(new RecommendResponse([], null));
 
     int total = (int)Math.Min(requestedTotal, maxRecommendationWindow);
-    var result = await svc.RecommendAsync(songId, total, sessionProgress);
+    var result = await svc.RecommendAsync(
+        songId,
+        total,
+        sessionProgress,
+        cancellationToken);
 
     // offset 適用
     var pagedItems = result.Items.Skip(skip).Take(take).ToList();
@@ -183,7 +188,8 @@ app.MapGet("/api/recommend/producer", async (
     int songId,
     int count,
     int? offset,
-    DbService db) =>
+    DbService db,
+    CancellationToken cancellationToken) =>
 {
     if (count is < 1 or > 100)
         return Results.BadRequest("count must be between 1 and 100");
@@ -191,7 +197,10 @@ app.MapGet("/api/recommend/producer", async (
         return Results.BadRequest("offset must be between 0 and 10000");
 
     int skip = offset ?? 0;
-    var songs = await db.GetSongsByProducerAsync(songId, count + skip);
+    var songs = await db.GetSongsByProducerAsync(
+        songId,
+        count + skip,
+        cancellationToken);
     var paged = songs
         .Skip(skip)
         .Take(count)
@@ -213,7 +222,8 @@ app.MapGet("/api/recommend/similar", async (
     int count,
     int? offset,
     QdrantService qdrant,
-    DbService db) =>
+    DbService db,
+    CancellationToken cancellationToken) =>
 {
     if (count is < 1 or > 100)
         return Results.BadRequest("count must be between 1 and 100");
@@ -224,15 +234,27 @@ app.MapGet("/api/recommend/similar", async (
 
     // ハイブリッドコレクション優先、なければメタデータコレクション
     const int fetchCount = 400;
-    var results = await qdrant.SearchSimilarAsync(songId, fetchCount, null, 0);
+    var results = await qdrant.SearchSimilarAsync(
+        songId,
+        fetchCount,
+        cancellationToken,
+        null,
+        0);
     if (results.Count == 0)
-        results = await qdrant.SearchMetadataSimilarAsync(songId, fetchCount, null, 0);
+        results = await qdrant.SearchMetadataSimilarAsync(
+            songId,
+            fetchCount,
+            cancellationToken,
+            null,
+            0);
 
     if (results.Count == 0)
         return Results.Ok(new { items = Array.Empty<object>() });
 
-    var seed = await db.GetSongInfoAsync(songId);
-    var infos = await db.GetSongInfoBatchAsync(results.Select(r => r.SongId));
+    var seed = await db.GetSongInfoAsync(songId, cancellationToken);
+    var infos = await db.GetSongInfoBatchAsync(
+        results.Select(r => r.SongId),
+        cancellationToken);
     var infoMap = infos.ToDictionary(i => i.Id);
     results = results
         .Where(result => infoMap.TryGetValue(result.SongId, out var info) && DiscoveryEligibility.IsEligible(info))
@@ -273,7 +295,8 @@ app.MapGet("/api/recommend/metadata", async (
     int count,
     int? offset,
     QdrantService qdrant,
-    DbService db) =>
+    DbService db,
+    CancellationToken cancellationToken) =>
 {
     if (count is < 1 or > 100)
         return Results.BadRequest("count must be between 1 and 100");
@@ -284,9 +307,17 @@ app.MapGet("/api/recommend/metadata", async (
     int skip = offset ?? 0;
     const int vectorCandidateCount = 400;
     const int tagCandidateCount = 600;
-    var vectorTask = qdrant.SearchMetadataSimilarAsync(songId, vectorCandidateCount, null, 0);
-    var tagTask = db.GetMetadataRelationshipCandidateIdsAsync(songId, tagCandidateCount);
-    var seedTask = db.GetSongInfoAsync(songId);
+    var vectorTask = qdrant.SearchMetadataSimilarAsync(
+        songId,
+        vectorCandidateCount,
+        cancellationToken,
+        null,
+        0);
+    var tagTask = db.GetMetadataRelationshipCandidateIdsAsync(
+        songId,
+        tagCandidateCount,
+        cancellationToken);
+    var seedTask = db.GetSongInfoAsync(songId, cancellationToken);
     await Task.WhenAll(vectorTask, tagTask, seedTask);
 
     var seed = await seedTask;
@@ -300,22 +331,30 @@ app.MapGet("/api/recommend/metadata", async (
     foreach (var candidateId in await db.GetSongsByProducersAsync(
         seed.ProducerIds,
         seed.Id,
-        100))
+        100,
+        cancellationToken))
         candidateScores.TryAdd(candidateId, -1);
 
     var results = candidateScores
         .Select(candidate => (SongId: candidate.Key, Score: candidate.Value))
         .ToList();
 
-    var infos = await db.GetSongInfoBatchAsync(results.Select(r => r.SongId));
+    var infos = await db.GetSongInfoBatchAsync(
+        results.Select(r => r.SongId),
+        cancellationToken);
     if (MetadataRelationshipRanking.NeedsDiverseFallback(infos))
     {
-        foreach (var candidateId in await db.GetDiverseFallbackCandidateIdsAsync(songId, 100))
+        foreach (var candidateId in await db.GetDiverseFallbackCandidateIdsAsync(
+            songId,
+            100,
+            cancellationToken))
             candidateScores.TryAdd(candidateId, -1);
         results = candidateScores
             .Select(candidate => (SongId: candidate.Key, Score: candidate.Value))
             .ToList();
-        infos = await db.GetSongInfoBatchAsync(results.Select(result => result.SongId));
+        infos = await db.GetSongInfoBatchAsync(
+            results.Select(result => result.SongId),
+            cancellationToken);
     }
     if (results.Count == 0)
         return Results.Ok(new { items = Array.Empty<object>() });
@@ -356,7 +395,8 @@ app.MapGet("/api/recommend/audio", async (
     int count,
     int? offset,
     QdrantService qdrant,
-    DbService db) =>
+    DbService db,
+    CancellationToken cancellationToken) =>
 {
     if (count is < 1 or > 100)
         return Results.BadRequest("count must be between 1 and 100");
@@ -366,12 +406,19 @@ app.MapGet("/api/recommend/audio", async (
 
     int skip = offset ?? 0;
     const int fetchCount = 200;
-    var results = await qdrant.SearchAudioOnlyAsync(songId, fetchCount, null, 0);
+    var results = await qdrant.SearchAudioOnlyAsync(
+        songId,
+        fetchCount,
+        cancellationToken,
+        null,
+        0);
 
     if (results.Count == 0)
         return Results.Ok(new { items = Array.Empty<object>() });
 
-    var infos = await db.GetSongInfoBatchAsync(results.Select(r => r.SongId));
+    var infos = await db.GetSongInfoBatchAsync(
+        results.Select(r => r.SongId),
+        cancellationToken);
     var infoMap = infos.ToDictionary(i => i.Id);
     results = results
         .Where(result => infoMap.TryGetValue(result.SongId, out var info) && DiscoveryEligibility.IsEligible(info))
@@ -399,7 +446,8 @@ app.MapGet("/api/recommend/audio", async (
 
 app.MapPost("/api/recommend/multi", async (
     MultiRecommendRequest request,
-    RecommendService svc) =>
+    RecommendService svc,
+    CancellationToken cancellationToken) =>
 {
     if (request.Seeds is null || request.Seeds.Count is < 1 or > 8)
         return Results.BadRequest("seeds must contain between 1 and 8 items");
@@ -417,14 +465,21 @@ app.MapPost("/api/recommend/multi", async (
         .Select(seed => new RecommendSeed(seed.SongId, seed.Weight))
         .ToList();
     var excluded = request.ExcludeSongIds?.Where(id => id > 0).ToHashSet() ?? [];
-    var result = await svc.RecommendFromSeedsAsync(seeds, request.Count, request.SessionProgress, excluded, request.Offset);
+    var result = await svc.RecommendFromSeedsAsync(
+        seeds,
+        request.Count,
+        request.SessionProgress,
+        cancellationToken,
+        excluded,
+        request.Offset);
     return Results.Ok(result);
 });
 
 app.MapPost("/api/recommend/dig", async (
     DigRecommendRequest request,
     DigDiscoveryService dig,
-    DbService db) =>
+    DbService db,
+    CancellationToken cancellationToken) =>
 {
     if (request.Seeds is { Count: > 24 })
         return Results.BadRequest("seeds must contain at most 24 items");
@@ -480,9 +535,10 @@ app.MapPost("/api/recommend/dig", async (
         request.GenerationSeed,
         request.Count,
         request.Offset,
+        cancellationToken,
         globalFilters);
     var orderedIds = discovery.SongIds;
-    var songsById = await db.GetSongsJsonByIdsAsync(orderedIds);
+    var songsById = await db.GetSongsJsonByIdsAsync(orderedIds, cancellationToken);
     var items = orderedIds
         .Where(songsById.ContainsKey)
         .Select(id => JsonSerializer.Deserialize<JsonElement>(songsById[id]))
@@ -502,7 +558,8 @@ app.MapGet("/api/songs/trending", async (
     long? minYoutubeViews,
     long? minNicoViews,
     string? excludeSongTypes,
-    DbService db) =>
+    DbService db,
+    CancellationToken cancellationToken) =>
 {
     if (minYoutubeViews is < 0 || minNicoViews is < 0)
         return Results.BadRequest(new { error = "view thresholds must be non-negative" });
@@ -534,7 +591,8 @@ app.MapGet("/api/songs/trending", async (
         debug ?? false,
         minYoutubeViews,
         minNicoViews,
-        excludedTypes);
+        excludedTypes,
+        cancellationToken: cancellationToken);
     var json = $$"""
     {
       "items": {{itemsJson}},
@@ -587,7 +645,8 @@ app.MapGet("/api/songs/search", async (
     bool? selfCover,
     bool? chorusOnly,
     HttpContext http,
-    DbService db) =>
+    DbService db,
+    CancellationToken cancellationToken) =>
 {
     var requestStopwatch = Stopwatch.StartNew();
     const long maxPublishYear = 5_874_896;
@@ -734,7 +793,8 @@ app.MapGet("/api/songs/search", async (
         exactVIds,
         lyricsQuery,
         selfCover ?? false,
-        chorusOnly ?? false
+        chorusOnly ?? false,
+        cancellationToken: cancellationToken
     );
     requestStopwatch.Stop();
     static string Duration(long milliseconds) => milliseconds.ToString(CultureInfo.InvariantCulture);

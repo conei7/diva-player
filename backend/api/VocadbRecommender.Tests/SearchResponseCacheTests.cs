@@ -70,6 +70,44 @@ public sealed class SearchResponseCacheTests
     }
 
     [Fact]
+    public async Task CanceledSearchWaiter_DoesNotCancelOrRemoveSharedColdLoad()
+    {
+        using var cache = CreateCache();
+        using var canceledCaller = new CancellationTokenSource();
+        var calls = 0;
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        async Task<SongSearchExecution> Load()
+        {
+            Interlocked.Increment(ref calls);
+            started.TrySetResult();
+            await release.Task;
+            return Execution("[{\"id\":10}]", 1);
+        }
+
+        var canceledWaiter = cache.GetOrCreateAsync(
+            "search-caller-canceled",
+            Load,
+            cancellationToken: canceledCaller.Token);
+        await started.Task;
+        var survivingWaiter = cache.GetOrCreateAsync("search-caller-canceled", Load);
+
+        canceledCaller.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await canceledWaiter);
+        Assert.True(cache.HasInFlightLoad("search-caller-canceled"));
+        Assert.Equal(1, Volatile.Read(ref calls));
+
+        release.SetResult();
+        var survivingResult = await survivingWaiter;
+        Assert.Equal("[{\"id\":10}]", survivingResult.ItemsJson);
+        await WaitForNoInFlightLoadAsync(cache, "search-caller-canceled");
+
+        var cachedResult = await cache.GetOrCreateAsync("search-caller-canceled", Load);
+        Assert.True(cachedResult.CacheHit);
+        Assert.Equal(1, calls);
+    }
+
+    [Fact]
     public async Task ColdMissRegistrationRace_RechecksCacheBeforeStartingAnotherLoad()
     {
         var hookEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -330,6 +368,95 @@ public sealed class SearchResponseCacheTests
 
         Assert.All(await Task.WhenAll(requests), value => Assert.Equal("[]", value));
         Assert.Equal(1, calls);
+    }
+
+    [Fact]
+    public async Task CanceledRankingWaiter_DoesNotCancelOrRemoveSharedColdLoad()
+    {
+        using var cache = CreateCache();
+        using var canceledCaller = new CancellationTokenSource();
+        var calls = 0;
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        async Task<string> Load()
+        {
+            Interlocked.Increment(ref calls);
+            started.TrySetResult();
+            await release.Task;
+            return "[{\"id\":10}]";
+        }
+
+        var canceledWaiter = cache.GetOrCreateRankingAsync(
+            "ranking-caller-canceled",
+            Load,
+            cancellationToken: canceledCaller.Token);
+        await started.Task;
+        var survivingWaiter = cache.GetOrCreateRankingAsync("ranking-caller-canceled", Load);
+
+        canceledCaller.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await canceledWaiter);
+        Assert.True(cache.HasInFlightLoad("ranking-caller-canceled"));
+        Assert.Equal(1, Volatile.Read(ref calls));
+
+        release.SetResult();
+        Assert.Equal("[{\"id\":10}]", await survivingWaiter);
+        await WaitForNoInFlightLoadAsync(cache, "ranking-caller-canceled");
+
+        Assert.Equal(
+            "[{\"id\":10}]",
+            await cache.GetOrCreateRankingAsync("ranking-caller-canceled", Load));
+        Assert.Equal(1, calls);
+    }
+
+    [Fact]
+    public async Task CanceledForceWaiter_DoesNotRemoveFailingStaleRefreshOrBypassBackoff()
+    {
+        var time = new MutableTimeProvider(new DateTimeOffset(2026, 8, 10, 0, 0, 0, TimeSpan.Zero));
+        using var cache = CreateCache(timeProvider: time);
+        await cache.GetOrCreateRankingAsync("ranking-force-join", () => Task.FromResult("old"));
+        time.Advance(SearchResponseCache.RankingFreshLifetime + TimeSpan.FromSeconds(1));
+
+        var calls = 0;
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseFailure = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        async Task<string> FailingRefresh()
+        {
+            Interlocked.Increment(ref calls);
+            started.TrySetResult();
+            await releaseFailure.Task;
+            throw new InvalidOperationException("expected refresh failure");
+        }
+
+        Assert.Equal(
+            "old",
+            await cache.GetOrCreateRankingAsync("ranking-force-join", FailingRefresh));
+        await started.Task;
+
+        using var forceCaller = new CancellationTokenSource();
+        var forceWaiter = cache.GetOrCreateRankingAsync(
+            "ranking-force-join",
+            FailingRefresh,
+            forceRefresh: true,
+            cancellationToken: forceCaller.Token);
+        forceCaller.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await forceWaiter);
+
+        Assert.True(cache.HasInFlightLoad("ranking-force-join"));
+        Assert.Equal(
+            "old",
+            await cache.GetOrCreateRankingAsync("ranking-force-join", FailingRefresh));
+        Assert.Equal(1, calls);
+
+        releaseFailure.SetResult();
+        await WaitForNoInFlightLoadAsync(cache, "ranking-force-join");
+
+        var retryCalls = 0;
+        Assert.Equal("old", await cache.GetOrCreateRankingAsync("ranking-force-join", () =>
+        {
+            retryCalls++;
+            return Task.FromResult("new");
+        }));
+        Assert.Equal(0, retryCalls);
     }
 
     [Fact]

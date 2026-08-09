@@ -24,12 +24,13 @@ public class MarkovService
     public async Task<List<(int SongId, double Score)>> FilterAsync(
         SongInfo seedSong,
         List<(int SongId, double Score)> candidates,
-        SongInfo[] candidateInfos)
+        SongInfo[] candidateInfos,
+        CancellationToken cancellationToken)
     {
         if (seedSong.StateCluster < 0)
             return candidates; // クラスタ未計算の場合はパス
 
-        var matrix    = await _db.LoadMarkovMatrixAsync();
+        var matrix    = await _db.LoadMarkovMatrixAsync(cancellationToken);
         var fromState = seedSong.StateCluster;
 
         if (!matrix.TryGetValue(fromState, out var transitions))

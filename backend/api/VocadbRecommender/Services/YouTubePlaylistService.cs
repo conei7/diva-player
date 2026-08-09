@@ -75,12 +75,19 @@ public sealed class YouTubePlaylistService
             await _db.UpsertYouTubePlaylistCacheAsync(fetched, cancellationToken);
             return await ResolveAsync(fetched, stale: false, truncated: fetched.Truncated, cancellationToken);
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
         catch (YouTubePlaylistException)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (cached is not null) return await ResolveAsync(cached, stale: true, truncated: cached.Truncated, cancellationToken);
             throw;
         }
-        catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or JsonException)
+        catch (Exception exception) when (
+            !cancellationToken.IsCancellationRequested
+            && exception is HttpRequestException or TaskCanceledException or JsonException)
         {
             if (cached is not null) return await ResolveAsync(cached, stale: true, truncated: cached.Truncated, cancellationToken);
             throw new YouTubePlaylistException($"YouTube playlist request failed: {exception.Message}");

@@ -30,9 +30,13 @@ public sealed class DigDiscoveryService
         int generationSeed,
         int count,
         int offset,
+        CancellationToken cancellationToken,
         DigGlobalFilterSettings? globalFilters = null)
     {
-        var selectedSeeds = await SelectSeedsAsync(rawSeeds, generationSeed);
+        var selectedSeeds = await SelectSeedsAsync(
+            rawSeeds,
+            generationSeed,
+            cancellationToken);
         var scores = new Dictionary<int, double>();
 
         if (selectedSeeds.Count > 0)
@@ -43,6 +47,7 @@ public sealed class DigDiscoveryService
                 Items = await _qdrant.SearchAudioOnlyAsync(
                     seed.SongId,
                     CandidatesPerSeed,
+                    cancellationToken,
                     excludedSongIds),
             }));
 
@@ -64,12 +69,14 @@ public sealed class DigDiscoveryService
         }
 
         if (scores.Count == 0)
-            scores = await LoadColdStartCandidatesAsync(excludedSongIds);
+            scores = await LoadColdStartCandidatesAsync(
+                excludedSongIds,
+                cancellationToken);
 
         if (scores.Count == 0)
             return new DigDiscoveryResult([], 0);
 
-        var infos = await _db.GetSongInfoBatchAsync(scores.Keys);
+        var infos = await _db.GetSongInfoBatchAsync(scores.Keys, cancellationToken);
         var eligibleInfos = infos
             .Where(info => DiscoveryEligibility.IsEligible(info)
                 && info.HasAudioFeatures
@@ -91,7 +98,8 @@ public sealed class DigDiscoveryService
 
     private async Task<List<RecommendSeed>> SelectSeedsAsync(
         IReadOnlyList<RecommendSeed> rawSeeds,
-        int generationSeed)
+        int generationSeed,
+        CancellationToken cancellationToken)
     {
         var normalized = rawSeeds
             .Where(seed => seed.SongId > 0 && double.IsFinite(seed.Weight) && seed.Weight > 0)
@@ -101,7 +109,9 @@ public sealed class DigDiscoveryService
             .ToList();
         if (normalized.Count == 0) return [];
 
-        var infos = await _db.GetSongInfoBatchAsync(normalized.Select(seed => seed.SongId));
+        var infos = await _db.GetSongInfoBatchAsync(
+            normalized.Select(seed => seed.SongId),
+            cancellationToken);
         var infoById = infos.ToDictionary(info => info.Id);
 
         // Weighted random keys make each generation explore different rated
@@ -125,7 +135,8 @@ public sealed class DigDiscoveryService
     }
 
     private async Task<Dictionary<int, double>> LoadColdStartCandidatesAsync(
-        IReadOnlySet<int> excludedSongIds)
+        IReadOnlySet<int> excludedSongIds,
+        CancellationToken cancellationToken)
     {
         var fallback = await _db.SearchSongsAsync(
             query: null,
@@ -140,7 +151,8 @@ public sealed class DigDiscoveryService
             maxResults: 300,
             onlyWithPVs: true,
             voiceSynthOnly: true,
-            discoveryOnly: true);
+            discoveryOnly: true,
+            cancellationToken: cancellationToken);
         var items = JsonSerializer.Deserialize<JsonElement[]>(fallback.ItemsJson) ?? [];
         return items.Select((item, index) => new
             {

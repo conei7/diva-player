@@ -25,8 +25,9 @@ try {
       get: async key => key === 'quick_tunnel_url' ? 'https://stable-test.trycloudflare.com' : null,
     },
   };
+  const backendRequest = new Request('https://diva-player.pages.dev/backend-api/api/health?full=1');
   const backendResponse = await proxyBackend({
-    request: new Request('https://diva-player.pages.dev/backend-api/api/health?full=1'),
+    request: backendRequest,
     env,
   });
   assert.equal(backendResponse.status, 200);
@@ -35,6 +36,7 @@ try {
   assert.equal(calls[0].init.headers.get('x-diva-client-key'), 'pages-anonymous');
   assert.equal(calls[0].init.headers.get('x-diva-pages-proxy-key'), 'test-proxy-key');
   assert.equal(calls[0].init.headers.get('x-forwarded-for'), null);
+  assert.equal(calls[0].init.signal, backendRequest.signal);
 
   const invalidResponse = await proxyBackend({
     request: new Request('https://diva-player.pages.dev/backend-api/api/health'),
