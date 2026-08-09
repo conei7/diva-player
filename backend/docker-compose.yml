@@ -7,6 +7,8 @@ x-api-environment: &api-environment
   Recommender__NicoPlaylistCacheHours: "6"
   Recommender__SearchCacheSizeMiB: "64"
   Recommender__SearchCacheEntrySizeMiB: "8"
+  Recommender__ObjectCacheSizeMiB: "64"
+  Recommender__ObjectCacheEntrySizeMiB: "16"
   ASPNETCORE_URLS: "http://+:5000"
   ASPNETCORE_ENVIRONMENT: "Production"
 

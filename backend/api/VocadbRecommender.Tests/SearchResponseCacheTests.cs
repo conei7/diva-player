@@ -260,6 +260,247 @@ public sealed class SearchResponseCacheTests
     }
 
     [Fact]
+    public async Task RankingEntry_UsesFiveMinuteFreshnessAndSixHourStaleLifetime()
+    {
+        var time = new MutableTimeProvider(new DateTimeOffset(2026, 8, 10, 0, 0, 0, TimeSpan.Zero));
+        using var cache = CreateCache(timeProvider: time);
+        var calls = 0;
+        var first = await cache.GetOrCreateRankingAsync("ranking:ttl", () =>
+        {
+            calls++;
+            return Task.FromResult("[{\"id\":1}]");
+        });
+
+        time.Advance(SearchResponseCache.RankingFreshLifetime - TimeSpan.FromSeconds(1));
+        var fresh = await cache.GetOrCreateRankingAsync("ranking:ttl", () =>
+        {
+            calls++;
+            return Task.FromResult("[{\"id\":2}]");
+        });
+        Assert.Equal(first, fresh);
+        Assert.Equal(1, calls);
+
+        time.Advance(TimeSpan.FromSeconds(2));
+        var refreshStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseRefresh = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        async Task<string> Refresh()
+        {
+            Interlocked.Increment(ref calls);
+            refreshStarted.TrySetResult();
+            await releaseRefresh.Task;
+            return "[{\"id\":2}]";
+        }
+
+        var stale = await cache.GetOrCreateRankingAsync("ranking:ttl", Refresh);
+        Assert.Equal(first, stale);
+        await refreshStarted.Task;
+        releaseRefresh.SetResult();
+        await WaitForNoInFlightLoadAsync(cache, "ranking:ttl");
+        Assert.Equal("[{\"id\":2}]", await cache.GetOrCreateRankingAsync("ranking:ttl", Refresh));
+        Assert.Equal(2, calls);
+
+        time.Advance(SearchResponseCache.StaleLifetime + TimeSpan.FromSeconds(1));
+        var cold = await cache.GetOrCreateRankingAsync(
+            "ranking:ttl",
+            () => Task.FromResult("[{\"id\":3}]"));
+        Assert.Equal("[{\"id\":3}]", cold);
+    }
+
+    [Fact]
+    public async Task RankingColdMisses_AreSingleFlightPerKey()
+    {
+        using var cache = CreateCache();
+        var calls = 0;
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        async Task<string> Load()
+        {
+            Interlocked.Increment(ref calls);
+            started.TrySetResult();
+            await release.Task;
+            return "[]";
+        }
+
+        var requests = Enumerable.Range(0, 12)
+            .Select(_ => cache.GetOrCreateRankingAsync("ranking:cold", Load))
+            .ToArray();
+        await started.Task;
+        Assert.Equal(1, Volatile.Read(ref calls));
+        release.SetResult();
+
+        Assert.All(await Task.WhenAll(requests), value => Assert.Equal("[]", value));
+        Assert.Equal(1, calls);
+    }
+
+    [Fact]
+    public async Task RankingColdMissRegistrationRace_RechecksCacheBeforeLoading()
+    {
+        var hookEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseFirstHook = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var hookCalls = 0;
+        async Task BeforeRegistration()
+        {
+            if (Interlocked.Increment(ref hookCalls) != 1) return;
+            hookEntered.SetResult();
+            await releaseFirstHook.Task;
+        }
+
+        using var cache = CreateCache(beforeColdLoadRegistration: BeforeRegistration);
+        var delayedCalls = 0;
+        var delayed = cache.GetOrCreateRankingAsync("ranking:race", () =>
+        {
+            delayedCalls++;
+            return Task.FromResult("delayed");
+        });
+        await hookEntered.Task;
+
+        var leaderCalls = 0;
+        var leader = await cache.GetOrCreateRankingAsync("ranking:race", () =>
+        {
+            leaderCalls++;
+            return Task.FromResult("leader");
+        });
+        releaseFirstHook.SetResult();
+
+        Assert.Equal("leader", leader);
+        Assert.Equal("leader", await delayed);
+        Assert.Equal(0, delayedCalls);
+        Assert.Equal(1, leaderCalls);
+    }
+
+    [Fact]
+    public async Task RankingDifferentKeys_DoNotBlockEachOther()
+    {
+        using var cache = CreateCache();
+        var slowStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseSlow = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var slow = cache.GetOrCreateRankingAsync("ranking:slow", async () =>
+        {
+            slowStarted.SetResult();
+            await releaseSlow.Task;
+            return "slow";
+        });
+        await slowStarted.Task;
+
+        Assert.Equal(
+            "fast",
+            await cache.GetOrCreateRankingAsync("ranking:fast", () => Task.FromResult("fast")));
+        Assert.False(slow.IsCompleted);
+        releaseSlow.SetResult();
+        Assert.Equal("slow", await slow);
+    }
+
+    [Fact]
+    public async Task FailedRankingColdLoad_IsRemovedSoNextRequestCanRetry()
+    {
+        using var cache = CreateCache();
+        var calls = 0;
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            cache.GetOrCreateRankingAsync("ranking:retry", () =>
+            {
+                calls++;
+                throw new InvalidOperationException("expected ranking failure");
+            }));
+        var recovered = await cache.GetOrCreateRankingAsync("ranking:retry", () =>
+        {
+            calls++;
+            return Task.FromResult("recovered");
+        });
+
+        Assert.Equal("recovered", recovered);
+        Assert.Equal(2, calls);
+    }
+
+    [Fact]
+    public async Task RankingStaleRefreshFailure_BacksOffForThirtySeconds()
+    {
+        var time = new MutableTimeProvider(new DateTimeOffset(2026, 8, 10, 0, 0, 0, TimeSpan.Zero));
+        using var cache = CreateCache(timeProvider: time);
+        await cache.GetOrCreateRankingAsync("ranking:failure", () => Task.FromResult("old"));
+        time.Advance(SearchResponseCache.RankingFreshLifetime + TimeSpan.FromSeconds(1));
+
+        var failedCalls = 0;
+        var staleResults = await Task.WhenAll(Enumerable.Range(0, 12)
+            .Select(_ => cache.GetOrCreateRankingAsync("ranking:failure", () =>
+            {
+                Interlocked.Increment(ref failedCalls);
+                throw new InvalidOperationException("expected ranking refresh failure");
+            })));
+        Assert.All(staleResults, value => Assert.Equal("old", value));
+        await WaitForNoInFlightLoadAsync(cache, "ranking:failure");
+        Assert.Equal(1, failedCalls);
+
+        var retryCalls = 0;
+        await cache.GetOrCreateRankingAsync("ranking:failure", () =>
+        {
+            retryCalls++;
+            return Task.FromResult("new");
+        });
+        Assert.Equal(0, retryCalls);
+
+        time.Advance(SearchResponseCache.RefreshFailureBackoff + TimeSpan.FromSeconds(1));
+        Assert.Equal("old", await cache.GetOrCreateRankingAsync("ranking:failure", () =>
+        {
+            retryCalls++;
+            return Task.FromResult("new");
+        }));
+        await WaitForNoInFlightLoadAsync(cache, "ranking:failure");
+        Assert.Equal(1, retryCalls);
+        Assert.Equal("new", await cache.GetOrCreateRankingAsync(
+            "ranking:failure",
+            () => Task.FromResult("unexpected")));
+    }
+
+    [Fact]
+    public async Task OversizedRankingRefresh_RemovesOldEntrySoNextRequestIsCold()
+    {
+        var time = new MutableTimeProvider(new DateTimeOffset(2026, 8, 10, 0, 0, 0, TimeSpan.Zero));
+        using var cache = CreateCache(
+            sizeLimitBytes: 16 * 1024,
+            maxEntryBytes: 4 * 1024,
+            timeProvider: time);
+        await cache.GetOrCreateRankingAsync("ranking:oversized", () => Task.FromResult("old"));
+        time.Advance(SearchResponseCache.RankingFreshLifetime + TimeSpan.FromSeconds(1));
+
+        var refreshStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseRefresh = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        async Task<string> Refresh()
+        {
+            refreshStarted.TrySetResult();
+            await releaseRefresh.Task;
+            return new string('x', 3_000);
+        }
+
+        Assert.Equal("old", await cache.GetOrCreateRankingAsync("ranking:oversized", Refresh));
+        await refreshStarted.Task;
+        releaseRefresh.SetResult();
+        await WaitForNoInFlightLoadAsync(cache, "ranking:oversized");
+
+        var coldCalls = 0;
+        var cold = await cache.GetOrCreateRankingAsync("ranking:oversized", () =>
+        {
+            coldCalls++;
+            return Task.FromResult("new");
+        });
+        Assert.Equal("new", cold);
+        Assert.Equal(1, coldCalls);
+    }
+
+    [Fact]
+    public async Task SearchAndRankingResponses_ShareOneBoundedPartition()
+    {
+        using var cache = CreateCache(
+            sizeLimitBytes: SearchResponseCache.MinimumEntryChargeBytes,
+            maxEntryBytes: SearchResponseCache.MinimumEntryChargeBytes);
+
+        await cache.GetOrCreateRankingAsync("ranking:shared", () => Task.FromResult("[]"));
+        await cache.GetOrCreateAsync("search:shared", () => Task.FromResult(Execution("[]", 0)));
+
+        Assert.True(cache.EntryCount <= 1);
+    }
+
+    [Fact]
     public async Task EntryOlderThanSixHours_IsNotServedStale()
     {
         var time = new MutableTimeProvider(new DateTimeOffset(2026, 8, 9, 0, 0, 0, TimeSpan.Zero));

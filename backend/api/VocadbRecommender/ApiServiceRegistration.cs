@@ -16,14 +16,21 @@ internal static class ApiServiceRegistration
                 options => options.SearchCacheEntrySizeMiB > 0
                     && options.SearchCacheEntrySizeMiB <= options.SearchCacheSizeMiB,
                 "Recommender:SearchCacheEntrySizeMiB must be positive and no larger than SearchCacheSizeMiB")
+            .Validate(
+                options => options.ObjectCacheSizeMiB > 0,
+                "Recommender:ObjectCacheSizeMiB must be positive")
+            .Validate(
+                options => options.ObjectCacheEntrySizeMiB > 0
+                    && options.ObjectCacheEntrySizeMiB <= options.ObjectCacheSizeMiB,
+                "Recommender:ObjectCacheEntrySizeMiB must be positive and no larger than ObjectCacheSizeMiB")
             .ValidateOnStart();
-        services.AddMemoryCache();
         services.AddResponseCompression(options =>
         {
             options.EnableForHttps = true;
             options.MimeTypes = ResponseCompressionDefaults.MimeTypes.Concat(["application/json"]);
         });
         services.AddSingleton<SearchResponseCache>();
+        services.AddSingleton<RecommendationObjectCache>();
         services.AddSingleton<DbService>();
         services.AddSingleton<QdrantService>();
         services.AddSingleton<ApiWarmupState>();

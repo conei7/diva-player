@@ -18,10 +18,14 @@ public class RecommenderOptions
     public double BaseDiversity      { get; set; } = 0.5;  // MMR基本多様性パラメータ λ
     public double ProducerDiversityWeight { get; set; } = 0.90;
     public double VocalistDiversityWeight { get; set; } = 0.60;
-    /// <summary>Dedicated search response cache capacity in MiB.</summary>
+    /// <summary>Search and ranking response cache capacity in MiB.</summary>
     public int SearchCacheSizeMiB { get; set; } = 64;
-    /// <summary>Maximum estimated size of one cached search response in MiB.</summary>
+    /// <summary>Maximum estimated size of one cached response in MiB.</summary>
     public int SearchCacheEntrySizeMiB { get; set; } = 8;
+    /// <summary>Dedicated recommendation object cache capacity in MiB.</summary>
+    public int ObjectCacheSizeMiB { get; set; } = 64;
+    /// <summary>Maximum estimated size of one recommendation object cache entry in MiB.</summary>
+    public int ObjectCacheEntrySizeMiB { get; set; } = 16;
     /// <summary>Named Vectors ハイブリッド検索の音響重み (0〜1)</summary>
     public double AudioWeight        { get; set; } = 0.4;
     /// <summary>Named Vectors ハイブリッド検索のメタ重み (0〜1)</summary>

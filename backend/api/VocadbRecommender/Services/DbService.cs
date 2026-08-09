@@ -1,7 +1,5 @@
-using Microsoft.Extensions.Caching.Memory;
 using Npgsql;
 using NpgsqlTypes;
-using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json;
@@ -99,17 +97,34 @@ public class DbService
         $"(COALESCE({youtubeExpression}, 0) + ({NicoWeightSql($"COALESCE({youtubeExpression}, 0)", profile)} * COALESCE({nicoExpression}, 0)))";
 
     private readonly string _connStr;
-    private readonly IMemoryCache _cache;
+    private readonly RecommendationObjectCache _objectCache;
     private readonly SearchResponseCache _searchCache;
-    private readonly ILogger<DbService> _logger;
-    private readonly ConcurrentDictionary<string, byte> _trendingRefreshes = new();
     private readonly SemaphoreSlim _knowledgeMapCatalogLock = new(1, 1);
-    private sealed record CachedTrending(string ItemsJson, DateTimeOffset FreshUntil);
+
+    private static long EstimateViewWeightProfileBytes(ViewWeightProfile profile) =>
+        128L + profile.Bands.Count * 32L;
+
+    private static long EstimateKnowledgeMapCatalogBytes(KnowledgeMapCatalog catalog) =>
+        256L + catalog.YoutubeTopSongs.Concat(catalog.NicoTopSongs).Sum(static song =>
+            128L
+            + (long)song.Name.Length * sizeof(char)
+            + (long)song.ArtistString.Length * sizeof(char)
+            + (long)(song.ThumbUrl?.Length ?? 0) * sizeof(char));
+
+    private static long EstimateSongInfoBytes(SongInfo info) =>
+        256L
+        + (long)(info.Name.Length + info.ArtistString.Length + info.SongType.Length) * sizeof(char)
+        + (long)(info.ProducerIds.Length + info.VocalistIds.Length + info.RelatedTagIds.Length + info.AlbumIds.Length) * sizeof(int);
+
+    private static long EstimateIdArrayBytes(int[] ids) => 64L + (long)ids.Length * sizeof(int);
+
+    private static long EstimateMarkovMatrixBytes(Dictionary<int, Dictionary<int, double>> matrix) =>
+        256L + matrix.Sum(static row => 192L + row.Value.Count * 64L);
 
     private async Task<ViewWeightProfile?> LoadViewWeightProfileAsync(NpgsqlConnection conn)
     {
         const string cacheKey = "platform_view_weight_profile";
-        if (_cache.TryGetValue(cacheKey, out ViewWeightProfile? cached))
+        if (_objectCache.TryGetValue(cacheKey, out ViewWeightProfile? cached))
             return cached;
 
         try
@@ -135,7 +150,11 @@ public class DbService
             if (fallback is null)
                 return null;
             var profile = new ViewWeightProfile(fallback.Value, maxWeight, bands);
-            _cache.Set(cacheKey, profile, TimeSpan.FromMinutes(5));
+            _objectCache.Set(
+                cacheKey,
+                profile,
+                TimeSpan.FromMinutes(5),
+                EstimateViewWeightProfileBytes(profile));
             return profile;
         }
         catch (PostgresException)
@@ -147,15 +166,13 @@ public class DbService
 
     public DbService(
         IConfiguration cfg,
-        IMemoryCache cache,
-        SearchResponseCache searchCache,
-        ILogger<DbService> logger)
+        RecommendationObjectCache objectCache,
+        SearchResponseCache searchCache)
     {
         _connStr = cfg.GetConnectionString("Postgres")
             ?? throw new InvalidOperationException("ConnectionStrings:Postgres is not configured");
-        _cache = cache;
+        _objectCache = objectCache;
         _searchCache = searchCache;
-        _logger = logger;
     }
 
     private NpgsqlConnection Open()
@@ -261,13 +278,13 @@ public class DbService
     public async Task<KnowledgeMapCatalog> GetKnowledgeMapCatalogAsync(CancellationToken cancellationToken)
     {
         const string cacheKey = "knowledge_map_catalog_v1";
-        if (_cache.TryGetValue(cacheKey, out KnowledgeMapCatalog? cached) && cached is not null)
+        if (_objectCache.TryGetValue(cacheKey, out KnowledgeMapCatalog? cached) && cached is not null)
             return cached;
 
         await _knowledgeMapCatalogLock.WaitAsync(cancellationToken);
         try
         {
-            if (_cache.TryGetValue(cacheKey, out cached) && cached is not null)
+            if (_objectCache.TryGetValue(cacheKey, out cached) && cached is not null)
                 return cached;
 
             async Task<(long EligibleSongCount, long YoutubeSongCount, long YoutubeViews, long NicoSongCount, long NicoViews)> LoadAggregateAsync()
@@ -358,7 +375,11 @@ public class DbService
                 aggregate.NicoViews,
                 await youtubeTopSongsTask,
                 await nicoTopSongsTask);
-            _cache.Set(cacheKey, catalog, TimeSpan.FromMinutes(15));
+            _objectCache.Set(
+                cacheKey,
+                catalog,
+                TimeSpan.FromMinutes(15),
+                EstimateKnowledgeMapCatalogBytes(catalog));
             return catalog;
         }
         finally
@@ -1406,7 +1427,7 @@ public class DbService
         var missingIds = new List<int>(ids.Length);
         foreach (var id in ids)
         {
-            if (_cache.TryGetValue($"song:{id}", out SongInfo? cached) && cached is not null)
+            if (_objectCache.TryGetValue($"song:{id}", out SongInfo? cached) && cached is not null)
                 result.Add(cached);
             else
                 missingIds.Add(id);
@@ -1503,7 +1524,11 @@ public class DbService
                 HasOriginalPv: !reader.IsDBNull(19) && reader.GetBoolean(19)
             );
 
-            _cache.Set($"song:{info.Id}", info, TimeSpan.FromMinutes(30));
+            _objectCache.Set(
+                $"song:{info.Id}",
+                info,
+                TimeSpan.FromMinutes(30),
+                EstimateSongInfoBytes(info));
             result.Add(info);
         }
 
@@ -1514,7 +1539,7 @@ public class DbService
     {
         var normalizedLimit = Math.Clamp(limit, 1, 1000);
         var cacheKey = $"metadata-relationship:{seedSongId}:{normalizedLimit}";
-        if (_cache.TryGetValue(cacheKey, out int[]? cached) && cached is not null)
+        if (_objectCache.TryGetValue(cacheKey, out int[]? cached) && cached is not null)
             return cached;
 
         await using var conn = await OpenAsync();
@@ -1558,7 +1583,7 @@ public class DbService
             result.Add(reader.GetInt32(0));
 
         var ids = result.ToArray();
-        _cache.Set(cacheKey, ids, TimeSpan.FromMinutes(15));
+        _objectCache.Set(cacheKey, ids, TimeSpan.FromMinutes(15), EstimateIdArrayBytes(ids));
         return ids;
     }
 
@@ -1566,7 +1591,7 @@ public class DbService
     {
         var normalizedLimit = Math.Clamp(limit, 1, 500);
         var cacheKey = $"diverse-fallback:{seedSongId}:{normalizedLimit}";
-        if (_cache.TryGetValue(cacheKey, out int[]? cached) && cached is not null)
+        if (_objectCache.TryGetValue(cacheKey, out int[]? cached) && cached is not null)
             return cached;
 
         await using var conn = await OpenAsync();
@@ -1639,7 +1664,7 @@ public class DbService
             result.Add(reader.GetInt32(0));
 
         var ids = result.ToArray();
-        _cache.Set(cacheKey, ids, TimeSpan.FromMinutes(15));
+        _objectCache.Set(cacheKey, ids, TimeSpan.FromMinutes(15), EstimateIdArrayBytes(ids));
         return ids;
     }
 
@@ -1762,55 +1787,38 @@ public class DbService
         return new ViewHistoryResponse(points, baselinePoint, normalizedBucket);
     }
 
-    public async Task<string> GetTrendingSongsJsonAsync(int days, int start, int maxResults, string? mode = null, string? ranking = null, int seed = 0, bool debug = false, long? minYoutubeViews = null, long? minNicoViews = null, IReadOnlyCollection<string>? excludedSongTypes = null, bool forceRefresh = false)
+    public Task<string> GetTrendingSongsJsonAsync(int days, int start, int maxResults, string? mode = null, string? ranking = null, int seed = 0, bool debug = false, long? minYoutubeViews = null, long? minNicoViews = null, IReadOnlyCollection<string>? excludedSongTypes = null, bool forceRefresh = false)
     {
-        var clampedDays = Math.Clamp(days, 1, 365);
-        var normalizedStart = Math.Max(0, start);
-        var clampedMaxResults = Math.Clamp(maxResults, 1, 100);
-        var normalizedMode = mode switch
-        {
-            "alltime" => "alltime",
-            "pace" or "popular" => "pace",
-            "surge" => "surge",
-            "recent" => "recent",
-            "deep" => "deep",
-            _ => "growth",
-        };
-        var normalizedRanking = ranking == "legacy" ? "legacy" : "quality";
-        var normalizedSeed = Math.Clamp(seed, 0, 63);
-        var normalizedExcludedTypes = (excludedSongTypes ?? []).Where(type => !string.IsNullOrWhiteSpace(type)).Distinct(StringComparer.Ordinal).Order().ToArray();
-        var normalizedMinYoutube = minYoutubeViews is > 0 ? minYoutubeViews.Value : 0;
-        var normalizedMinNico = minNicoViews is > 0 ? minNicoViews.Value : 0;
+        var request = RankingRequest.Create(
+            days,
+            start,
+            maxResults,
+            mode,
+            ranking,
+            seed,
+            debug,
+            minYoutubeViews,
+            minNicoViews,
+            excludedSongTypes);
+        return _searchCache.GetOrCreateRankingAsync(
+            request.CacheKey,
+            () => ExecuteTrendingSongsJsonAsync(request),
+            forceRefresh);
+    }
+
+    private async Task<string> ExecuteTrendingSongsJsonAsync(RankingRequest request)
+    {
+        var clampedDays = request.Days;
+        var normalizedStart = request.Start;
+        var clampedMaxResults = request.MaxResults;
+        var normalizedMode = request.Mode;
+        var normalizedRanking = request.Ranking;
+        var normalizedSeed = request.Seed;
+        var debug = request.Debug;
+        var normalizedExcludedTypes = request.ExcludedSongTypes;
+        var normalizedMinYoutube = request.MinYoutubeViews;
+        var normalizedMinNico = request.MinNicoViews;
         const string songTypeExpression = "COALESCE(NULLIF(s.raw_json->>'songType', ''), s.song_type, 'Unspecified')";
-        var cacheKey = $"trending:{normalizedMode}:{normalizedRanking}:{normalizedSeed}:{debug}:{clampedDays}:{normalizedStart}:{clampedMaxResults}:{normalizedMinYoutube}:{normalizedMinNico}:{string.Join(',', normalizedExcludedTypes)}";
-        if (!forceRefresh && _cache.TryGetValue(cacheKey, out CachedTrending? cached) && cached is not null)
-        {
-            if (cached.FreshUntil <= DateTimeOffset.UtcNow && _trendingRefreshes.TryAdd(cacheKey, 0))
-            {
-                _ = Task.Run(async () =>
-                {
-                    try
-                    {
-                        await GetTrendingSongsJsonAsync(
-                            days, start, maxResults, mode, ranking, seed, debug,
-                            minYoutubeViews, minNicoViews, excludedSongTypes,
-                            forceRefresh: true);
-                    }
-                    catch (Exception exception)
-                    {
-                        _logger.LogWarning(
-                            exception,
-                            "trending_cache_refresh_failed key={CacheKey}",
-                            cacheKey);
-                    }
-                    finally
-                    {
-                        _trendingRefreshes.TryRemove(cacheKey, out _);
-                    }
-                });
-            }
-            return cached.ItemsJson;
-        }
 
         var modeCondition = normalizedMode switch
         {
@@ -2206,10 +2214,6 @@ public class DbService
         }
 
         var json = items.Count > 0 ? "[" + string.Join(",", items) + "]" : "[]";
-        _cache.Set(
-            cacheKey,
-            new CachedTrending(json, DateTimeOffset.UtcNow.AddMinutes(5)),
-            TimeSpan.FromHours(6));
         return json;
     }
 
@@ -2218,7 +2222,7 @@ public class DbService
     public async Task<Dictionary<int, Dictionary<int, double>>> LoadMarkovMatrixAsync()
     {
         const string cacheKey = "markov_matrix";
-        if (_cache.TryGetValue(cacheKey, out Dictionary<int, Dictionary<int, double>>? m))
+        if (_objectCache.TryGetValue(cacheKey, out Dictionary<int, Dictionary<int, double>>? m))
             return m!;
 
         using var conn = Open();
@@ -2237,7 +2241,7 @@ public class DbService
             row[to] = prob;
         }
 
-        _cache.Set(cacheKey, matrix, TimeSpan.FromHours(1));
+        _objectCache.Set(cacheKey, matrix, TimeSpan.FromHours(1), EstimateMarkovMatrixBytes(matrix));
         return matrix;
     }
 

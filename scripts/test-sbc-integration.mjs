@@ -187,6 +187,20 @@ async function main() {
     console.log(`PASS deterministic ${mode} ranking (${rankedA.items.length} items)`);
   }
 
+  const canonicalRankingA = await getJson(
+    baseUrl,
+    '/api/songs/trending?days=1&start=0&maxResults=24&mode=alltime&ranking=legacy&seed=63&debug=true&excludeSongTypes=Other,Cover,Other',
+  );
+  const canonicalRankingB = await getJson(
+    baseUrl,
+    '/api/songs/trending?days=30&start=0&maxResults=24&mode=alltime&ranking=quality&seed=0&debug=false&excludeSongTypes=Cover,Other',
+  );
+  assert(
+    JSON.stringify(canonicalRankingA) === JSON.stringify(canonicalRankingB),
+    'Canonical no-op ranking parameters changed the public response.',
+  );
+  console.log('PASS canonical ranking response contract');
+
   const metadata = await findSeedWithResults(baseUrl, '/api/recommend/metadata');
   console.log(`PASS Qdrant metadata similarity (seed ${metadata.seed.id}, ${metadata.data.items.length} candidates)`);
 

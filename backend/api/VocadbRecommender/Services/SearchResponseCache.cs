@@ -6,14 +6,15 @@ using System.Diagnostics;
 namespace VocadbRecommender.Services;
 
 /// <summary>
-/// A bounded cache dedicated to search response JSON. It intentionally does
-/// not share capacity with SongInfo and recommendation caches.
+/// A bounded partition for search and ranking response JSON. It intentionally
+/// does not share capacity with SongInfo and recommendation object caches.
 /// </summary>
 public sealed class SearchResponseCache : IDisposable
 {
     internal const long MinimumEntryChargeBytes = 4 * 1024;
     internal const long EstimatedEntryOverheadBytes = 512;
     internal static readonly TimeSpan FreshLifetime = TimeSpan.FromMinutes(1);
+    internal static readonly TimeSpan RankingFreshLifetime = TimeSpan.FromMinutes(5);
     internal static readonly TimeSpan StaleLifetime = TimeSpan.FromHours(6);
     internal static readonly TimeSpan RefreshFailureBackoff = TimeSpan.FromSeconds(30);
 
@@ -23,11 +24,21 @@ public sealed class SearchResponseCache : IDisposable
     private readonly ILogger<SearchResponseCache> _logger;
     private readonly Func<Task>? _beforeColdLoadRegistration;
     private readonly ConcurrentDictionary<string, Lazy<Task<SongSearchExecution>>> _loads = new();
+    private readonly ConcurrentDictionary<string, Lazy<Task<string>>> _rankingLoads = new();
     private long _lastOversizeWarningUtcTicks;
+    private long _lastRankingOversizeWarningUtcTicks;
 
     private sealed record CachedSearchResponse(
         string ItemsJson,
         int TotalCount,
+        DateTimeOffset FreshUntil,
+        DateTimeOffset StaleUntil)
+    {
+        public long RefreshRetryAfterUtcTicks;
+    }
+
+    private sealed record CachedRankingResponse(
+        string ItemsJson,
         DateTimeOffset FreshUntil,
         DateTimeOffset StaleUntil)
     {
@@ -72,6 +83,7 @@ public sealed class SearchResponseCache : IDisposable
 
     internal long SizeLimitBytes { get; }
     internal long MaxEntryBytes => _maxEntryBytes;
+    internal int EntryCount => _cache.Count;
 
     public async Task<SongSearchExecution> GetOrCreateAsync(
         string key,
@@ -103,6 +115,26 @@ public sealed class SearchResponseCache : IDisposable
         return await LoadSingleFlightAsync(key, loader, forceRefresh);
     }
 
+    public async Task<string> GetOrCreateRankingAsync(
+        string key,
+        Func<Task<string>> loader,
+        bool forceRefresh = false)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(key);
+        ArgumentNullException.ThrowIfNull(loader);
+
+        if (!forceRefresh && TryGetCachedRanking(key, out var cached))
+        {
+            if (cached.FreshUntil <= _timeProvider.GetUtcNow())
+                StartRankingBackgroundRefresh(key, cached, loader);
+            return cached.ItemsJson;
+        }
+
+        if (!forceRefresh && _beforeColdLoadRegistration is not null)
+            await _beforeColdLoadRegistration();
+        return await LoadRankingSingleFlightAsync(key, loader, forceRefresh);
+    }
+
     internal static long EstimateEntryChargeBytes(string key, string itemsJson)
     {
         var estimated = (long)key.Length * sizeof(char)
@@ -111,7 +143,8 @@ public sealed class SearchResponseCache : IDisposable
         return Math.Max(MinimumEntryChargeBytes, estimated);
     }
 
-    internal bool HasInFlightLoad(string key) => _loads.ContainsKey(key);
+    internal bool HasInFlightLoad(string key) =>
+        _loads.ContainsKey(key) || _rankingLoads.ContainsKey(key);
 
     private async Task<SongSearchExecution> LoadSingleFlightAsync(
         string key,
@@ -227,6 +260,126 @@ public sealed class SearchResponseCache : IDisposable
         return LoadAndStoreAsync(key, loader);
     }
 
+    private async Task<string> LoadRankingSingleFlightAsync(
+        string key,
+        Func<Task<string>> loader,
+        bool forceRefresh)
+    {
+        var lazy = _rankingLoads.GetOrAdd(
+            key,
+            _ => new Lazy<Task<string>>(
+                () => LoadRankingAfterCacheRecheckAsync(key, loader, forceRefresh),
+                LazyThreadSafetyMode.ExecutionAndPublication));
+        try
+        {
+            return await lazy.Value;
+        }
+        finally
+        {
+            RemoveRankingLoad(key, lazy);
+        }
+    }
+
+    private void StartRankingBackgroundRefresh(
+        string key,
+        CachedRankingResponse stale,
+        Func<Task<string>> loader)
+    {
+        if (Volatile.Read(ref stale.RefreshRetryAfterUtcTicks) > _timeProvider.GetUtcNow().UtcTicks)
+            return;
+
+        var lazy = new Lazy<Task<string>>(
+            () => Task.Run(() => LoadRankingAfterCacheRecheckAsync(key, loader, forceRefresh: false)),
+            LazyThreadSafetyMode.ExecutionAndPublication);
+        if (!_rankingLoads.TryAdd(key, lazy)) return;
+        _ = ObserveRankingBackgroundRefreshAsync(key, stale, lazy);
+    }
+
+    private async Task ObserveRankingBackgroundRefreshAsync(
+        string key,
+        CachedRankingResponse stale,
+        Lazy<Task<string>> lazy)
+    {
+        try
+        {
+            await lazy.Value;
+        }
+        catch (Exception exception)
+        {
+            Volatile.Write(
+                ref stale.RefreshRetryAfterUtcTicks,
+                _timeProvider.GetUtcNow().Add(RefreshFailureBackoff).UtcTicks);
+            _logger.LogWarning(
+                exception,
+                "trending_cache_refresh_failed key={CacheKey}",
+                key);
+        }
+        finally
+        {
+            RemoveRankingLoad(key, lazy);
+        }
+    }
+
+    private async Task<string> LoadAndStoreRankingAsync(
+        string key,
+        Func<Task<string>> loader)
+    {
+        var itemsJson = await loader();
+        var chargeBytes = EstimateEntryChargeBytes(key, itemsJson);
+        if (chargeBytes > _maxEntryBytes)
+        {
+            _cache.Remove(key);
+            LogRankingOversizeSkip(key, chargeBytes);
+            return itemsJson;
+        }
+
+        var now = _timeProvider.GetUtcNow();
+        _cache.Set(
+            key,
+            new CachedRankingResponse(
+                itemsJson,
+                now.Add(RankingFreshLifetime),
+                now.Add(StaleLifetime)),
+            new MemoryCacheEntryOptions
+            {
+                AbsoluteExpirationRelativeToNow = StaleLifetime,
+                Size = chargeBytes,
+            });
+        return itemsJson;
+    }
+
+    private Task<string> LoadRankingAfterCacheRecheckAsync(
+        string key,
+        Func<Task<string>> loader,
+        bool forceRefresh)
+    {
+        if (!forceRefresh
+            && TryGetCachedRanking(key, out var cached)
+            && cached.FreshUntil > _timeProvider.GetUtcNow())
+            return Task.FromResult(cached.ItemsJson);
+
+        return LoadAndStoreRankingAsync(key, loader);
+    }
+
+    private bool TryGetCachedRanking(string key, out CachedRankingResponse cached)
+    {
+        if (!_cache.TryGetValue(key, out CachedRankingResponse? candidate) || candidate is null)
+        {
+            cached = null!;
+            return false;
+        }
+
+        if (candidate.StaleUntil <= _timeProvider.GetUtcNow())
+        {
+            _cache.Remove(key);
+            cached = null!;
+            return false;
+        }
+
+        cached = candidate;
+        return true;
+    }
+
     private bool TryGetCached(string key, out CachedSearchResponse cached)
     {
         if (!_cache.TryGetValue(key, out CachedSearchResponse? candidate) || candidate is null)
@@ -262,10 +415,32 @@ public sealed class SearchResponseCache : IDisposable
             _maxEntryBytes);
     }
 
+    private void LogRankingOversizeSkip(string key, long chargeBytes)
+    {
+        var nowTicks = _timeProvider.GetUtcNow().UtcTicks;
+        var lastTicks = Volatile.Read(ref _lastRankingOversizeWarningUtcTicks);
+        if (lastTicks != 0 && nowTicks - lastTicks < TimeSpan.FromMinutes(1).Ticks)
+            return;
+        if (Interlocked.CompareExchange(ref _lastRankingOversizeWarningUtcTicks, nowTicks, lastTicks) != lastTicks)
+            return;
+
+        _logger.LogWarning(
+            "trending_cache_entry_skipped key={CacheKey} estimatedBytes={EstimatedBytes} maxBytes={MaxBytes}",
+            key,
+            chargeBytes,
+            _maxEntryBytes);
+    }
+
     private void RemoveLoad(string key, Lazy<Task<SongSearchExecution>> expected)
     {
         if (_loads.TryGetValue(key, out var current) && ReferenceEquals(current, expected))
             _loads.TryRemove(key, out _);
+    }
+
+    private void RemoveRankingLoad(string key, Lazy<Task<string>> expected)
+    {
+        if (_rankingLoads.TryGetValue(key, out var current) && ReferenceEquals(current, expected))
+            _rankingLoads.TryRemove(key, out _);
     }
 
     public void Dispose() => _cache.Dispose();
