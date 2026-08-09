@@ -196,16 +196,32 @@ export async function getSongsByIds(ids: number[]): Promise<Song[]> {
     const missingIds = normalizedIds.filter((_, index) => !songs[index]);
     if (missingIds.length === 0) return songs as Song[];
 
-    const fallbackSongs = new Map((await Promise.all(missingIds.map(id =>
-      getSongById(id).catch(() => null)
-    ))).filter((song): song is Song => song !== null).map(song => [song.id, song]));
+    const fallbackSongs = new Map((await getSongDetailsWithConcurrency(missingIds))
+      .map(song => [song.id, song]));
     return normalizedIds
       .map((id, index) => songs[index] ?? fallbackSongs.get(id))
       .filter((song): song is Song => song !== undefined);
   } catch {
-    const songs = await Promise.all(normalizedIds.map(id => getSongById(id).catch(() => null)));
-    return songs.filter((song): song is Song => song !== null);
+    return getSongDetailsWithConcurrency(normalizedIds);
   }
+}
+
+async function getSongDetailsWithConcurrency(ids: readonly number[], concurrency = 5): Promise<Song[]> {
+  const queue = [...ids];
+  const songsById = new Map<number, Song>();
+  const worker = async () => {
+    while (queue.length > 0) {
+      const id = queue.shift();
+      if (id === undefined) return;
+      const song = await getSongById(id).catch(() => null);
+      if (song) songsById.set(id, song);
+    }
+  };
+  await Promise.all(Array.from(
+    { length: Math.min(Math.max(1, concurrency), queue.length) },
+    () => worker(),
+  ));
+  return ids.map(id => songsById.get(id)).filter((song): song is Song => song !== undefined);
 }
 
 /**

@@ -176,4 +176,26 @@ describe('history statistics', () => {
     expect(metadata.get(3)).toEqual({ songName: '曲ID 3', artistString: '' });
     expect(metadata.get(4)).toEqual({ songName: 'CSV曲', artistString: 'CSV作者' });
   });
+
+  it('loads large CSV metadata sequentially in isolated 100-song chunks', async () => {
+    const ids = Array.from({ length: 205 }, (_, index) => index + 1);
+    let activeLoads = 0;
+    let maximumActiveLoads = 0;
+    const loadSongs = vi.fn(async (chunk: number[]) => {
+      activeLoads += 1;
+      maximumActiveLoads = Math.max(maximumActiveLoads, activeLoads);
+      await Promise.resolve();
+      activeLoads -= 1;
+      if (chunk[0] === 101) throw new Error('one chunk failed');
+      return chunk.map(id => ({ id, name: `曲${id}`, artistString: `作者${id}` })) as Song[];
+    });
+
+    const metadata = await enrichSongMetadata(ids, loadSongs);
+
+    expect(loadSongs.mock.calls.map(([chunk]) => chunk.length)).toEqual([100, 100, 5]);
+    expect(maximumActiveLoads).toBe(1);
+    expect(metadata.get(1)).toEqual({ songName: '曲1', artistString: '作者1' });
+    expect(metadata.get(101)).toEqual({ songName: '曲ID 101', artistString: '' });
+    expect(metadata.get(205)).toEqual({ songName: '曲205', artistString: '作者205' });
+  });
 });

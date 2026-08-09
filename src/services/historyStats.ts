@@ -5,6 +5,7 @@ import { serializeCsv } from '../utils/csv';
 
 const STATS_VERSION = 2;
 const DEFAULT_TIME_ZONE = 'Asia/Tokyo';
+const HISTORY_METADATA_BATCH_SIZE = 100;
 
 export interface HistorySongStats {
   songId: number;
@@ -408,7 +409,11 @@ export async function enrichSongMetadata(
   loadSongs: typeof getSongsByIds = getSongsByIds,
 ): Promise<Map<number, HistorySongCsvMeta>> {
   const uniqueIds = [...new Set(songIds)];
-  const songs = await loadSongs(uniqueIds).catch(() => []);
+  const songs = [];
+  for (let index = 0; index < uniqueIds.length; index += HISTORY_METADATA_BATCH_SIZE) {
+    const chunk = uniqueIds.slice(index, index + HISTORY_METADATA_BATCH_SIZE);
+    songs.push(...await loadSongs(chunk).catch(() => []));
+  }
   const songsById = new Map(songs.map(song => [song.id, song]));
   const result = new Map<number, HistorySongCsvMeta>();
   for (const songId of uniqueIds) {
