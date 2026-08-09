@@ -585,7 +585,7 @@ public class DbService
                 WITH high_view_pool AS MATERIALIZED (
                     SELECT s.id,
                            s.song_type,
-                           s.raw_json,
+                           s.original_version_id,
                            sf.audio_computed,
                            sf.computed_at
                     FROM songs s
@@ -613,14 +613,14 @@ public class DbService
                           h.song_type = 'Original'
                           OR (
                               h.song_type <> 'Original'
-                              AND h.raw_json->>'originalVersionId' IS NOT NULL
+                              AND h.original_version_id IS NOT NULL
                               AND EXISTS (
                                   SELECT 1
                                   FROM song_artists sa_cover
                                   JOIN song_artists sa_orig ON sa_cover.artist_id = sa_orig.artist_id
                                   WHERE sa_cover.song_id = h.id
                                     AND sa_cover.is_producer = TRUE
-                                    AND sa_orig.song_id = (h.raw_json->>'originalVersionId')::int
+                                    AND sa_orig.song_id = h.original_version_id
                                     AND sa_orig.is_producer = TRUE
                               )
                           )

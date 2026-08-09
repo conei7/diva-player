@@ -154,6 +154,14 @@ assert.match(externalViewsQuery, /SELECT id, youtube_views, nico_views\s+FROM so
 assert.match(externalViewsQuery, /OpenAsync\(cancellationToken\)/);
 assert.match(externalViewsQuery, /ExecuteReaderAsync\(cancellationToken\)/);
 assert.match(externalViewsQuery, /ReadAsync\(cancellationToken\)/);
+const audioHealthQuery = dbService.match(
+  /public async Task<AudioFeatureHealth> CheckAudioFeatureHealthAsync\([\s\S]*?\n    }\n\n    public Task<SongSearchExecution>/,
+)?.[0];
+assert.ok(audioHealthQuery, 'audio feature health query contract was not found');
+assert.match(audioHealthQuery, /s\.original_version_id/);
+assert.match(audioHealthQuery, /h\.original_version_id IS NOT NULL/);
+assert.match(audioHealthQuery, /sa_orig\.song_id = h\.original_version_id/);
+assert.doesNotMatch(audioHealthQuery, /raw_json/);
 assert.match(warmup, /home-popular/);
 assert.match(warmup, /home-pace/);
 assert.match(warmup, /home-surge/);
