@@ -51,7 +51,7 @@ public sealed class SearchResponseCache : IDisposable
     /// same gate, so a late request can never join a loader that is already
     /// committed to cancellation.
     /// </summary>
-    private sealed class LoadFlight<T> : IDisposable
+    internal sealed class LoadFlight<T> : IDisposable
     {
         private readonly object _gate = new();
         private readonly CancellationTokenSource _loaderCancellation = new();

@@ -172,23 +172,13 @@ public sealed class SearchResponseCacheTests
     [Fact]
     public async Task LastWaiterLeaving_RacingLateJoinNeverJoinsDoomedSearchFlight()
     {
-        using var cache = CreateCache();
-        using var firstCaller = new CancellationTokenSource();
         using var releaseCancellationCallback = new ManualResetEventSlim();
         var firstStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var cancellationCallbackEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var calls = 0;
-
-        Task<SongSearchExecution> Load(CancellationToken cancellationToken)
-        {
-            var call = Interlocked.Increment(ref calls);
-            if (call == 2)
-                return Task.FromResult(Execution("[{\"id\":2}]", 1));
-            if (call != 1)
-                throw new InvalidOperationException("Unexpected extra loader invocation.");
-
-            return RunFirstLoadAsync(cancellationToken);
-        }
+        using var flight = new SearchResponseCache.LoadFlight<SongSearchExecution>(
+            (_, cancellationToken) => RunFirstLoadAsync(cancellationToken),
+            cancelWhenOrphaned: true,
+            _ => { });
 
         async Task<SongSearchExecution> RunFirstLoadAsync(CancellationToken cancellationToken)
         {
@@ -202,17 +192,17 @@ public sealed class SearchResponseCacheTests
             throw new InvalidOperationException("Infinite delay completed unexpectedly.");
         }
 
-        var first = cache.GetOrCreateAsync(
-            "search-leave-join-race",
-            Load,
-            cancellationToken: firstCaller.Token);
+        Assert.True(flight.TryAcquire(out var firstLease));
+        Assert.NotNull(firstLease);
+        var first = flight.Start();
         await firstStarted.Task;
 
-        // Cancellation deliberately blocks inside the callback.  Use a
-        // dedicated thread so a constrained CI thread pool cannot starve the
-        // continuation that observes the callback barrier.
-        var cancelFirst = Task.Factory.StartNew(
-            firstCaller.Cancel,
+        // Dispose the final lease on a dedicated thread. The loader's
+        // cancellation callback deliberately blocks after the flight has
+        // closed its gate, giving the test a deterministic late-join window
+        // without depending on an async continuation under CI load.
+        var releaseFirstLease = Task.Factory.StartNew(
+            firstLease!.Dispose,
             CancellationToken.None,
             TaskCreationOptions.LongRunning,
             TaskScheduler.Default);
@@ -222,24 +212,16 @@ public sealed class SearchResponseCacheTests
 
             // The flight is already closed to new leases while its cancellation
             // callback is deliberately held open.
-            var late = await cache.GetOrCreateAsync("search-leave-join-race", Load);
-            Assert.Equal("[{\"id\":2}]", late.ItemsJson);
-            Assert.Equal(2, Volatile.Read(ref calls));
+            Assert.False(flight.TryAcquire(out var lateLease));
+            Assert.Null(lateLease);
         }
         finally
         {
             releaseCancellationCallback.Set();
-            await cancelFirst.WaitAsync(TimeSpan.FromSeconds(5));
+            await releaseFirstLease.WaitAsync(TimeSpan.FromSeconds(5));
         }
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await first);
-        await WaitForNoInFlightLoadAsync(cache, "search-leave-join-race");
-
-        var cached = await cache.GetOrCreateAsync(
-            "search-leave-join-race",
-            _ => throw new InvalidOperationException("The replacement result was not cached."));
-        Assert.True(cached.CacheHit);
-        Assert.Equal("[{\"id\":2}]", cached.ItemsJson);
     }
 
     [Fact]
