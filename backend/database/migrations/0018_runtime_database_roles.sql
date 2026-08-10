@@ -167,11 +167,17 @@ GRANT TRUNCATE ON TABLE public.markov_transitions TO diva_pipeline_runtime;
 
 -- Migration history and the discovery-quality policy are control-plane state,
 -- not pipeline output.  The pipeline reads both, but only the migration owner
--- may mutate them.  schema_migrations is created by migrate.sh before this
+-- may change policy values.  The trigger's SELECT ... FOR SHARE additionally
+-- requires some UPDATE privilege, so expose only the CHECK-constrained
+-- singleton key; changing it away from TRUE is impossible and policy values
+-- remain non-writable.  schema_migrations is created by migrate.sh before this
 -- migration in production; keep the migration directly runnable in tests too.
 REVOKE INSERT, UPDATE, DELETE, TRUNCATE
     ON TABLE public.discovery_quality_model_policy
     FROM diva_pipeline_runtime;
+GRANT UPDATE (singleton)
+    ON TABLE public.discovery_quality_model_policy
+    TO diva_pipeline_runtime;
 DO $migration_history_privileges$
 BEGIN
     IF to_regclass('public.schema_migrations') IS NOT NULL THEN

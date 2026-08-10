@@ -80,6 +80,30 @@ BEGIN
         RAISE EXCEPTION 'songs autovacuum contract is missing';
     END IF;
 
+    IF NOT has_column_privilege(
+            'diva_pipeline_runtime',
+            'public.discovery_quality_model_policy',
+            'singleton',
+            'UPDATE'
+        ) OR has_column_privilege(
+            'diva_pipeline_runtime',
+            'public.discovery_quality_model_policy',
+            'expected_model_version',
+            'UPDATE'
+        ) OR has_column_privilege(
+            'diva_pipeline_runtime',
+            'public.discovery_quality_model_policy',
+            'expected_revision',
+            'UPDATE'
+        ) OR has_column_privilege(
+            'diva_pipeline_runtime',
+            'public.discovery_quality_model_policy',
+            'updated_at',
+            'UPDATE'
+        ) THEN
+        RAISE EXCEPTION 'pipeline discovery-quality lock privilege is invalid';
+    END IF;
+
     IF EXISTS (
         SELECT 1
         FROM pg_auth_members memberships
