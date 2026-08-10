@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Options;
+using System.Collections.Concurrent;
 
 namespace VocadbRecommender.Services;
 
@@ -15,7 +16,21 @@ public sealed class RecommendationObjectCache : IDisposable
     private readonly MemoryCache _cache;
     private readonly long _maxEntryBytes;
     private readonly ILogger<RecommendationObjectCache> _logger;
+    private readonly object _trackingGate = new();
+    private readonly ConcurrentDictionary<string, TrackedEntry> _trackedEntries = new();
     private long _lastOversizeWarningUtcTicks;
+    private long _nextEntryId;
+    private long _estimatedChargeBytes;
+    private long _hits;
+    private long _misses;
+    private long _evictions;
+    private long _oversizeSkips;
+
+    private sealed record TrackedEntry(long Id, long ChargeBytes);
+    private sealed record EvictionCallbackState(
+        RecommendationObjectCache Owner,
+        string Key,
+        TrackedEntry Entry);
 
     public RecommendationObjectCache(
         IOptions<RecommenderOptions> options,
@@ -51,11 +66,43 @@ public sealed class RecommendationObjectCache : IDisposable
     internal long MaxEntryBytes => _maxEntryBytes;
     internal int EntryCount => _cache.Count;
 
+    public CacheTelemetrySnapshot TelemetrySnapshot
+    {
+        get
+        {
+            int currentEntries;
+            long estimatedChargeBytes;
+            lock (_trackingGate)
+            {
+                currentEntries = _trackedEntries.Count;
+                estimatedChargeBytes = _estimatedChargeBytes;
+            }
+
+            return new CacheTelemetrySnapshot(
+                Interlocked.Read(ref _hits),
+                Interlocked.Read(ref _misses),
+                StaleHits: 0,
+                Refreshes: 0,
+                Followers: 0,
+                Interlocked.Read(ref _evictions),
+                Interlocked.Read(ref _oversizeSkips),
+                InFlight: 0,
+                currentEntries,
+                estimatedChargeBytes,
+                SizeLimitBytes);
+        }
+    }
+
     public bool TryGetValue<T>(string key, out T? value)
         where T : class
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(key);
-        return _cache.TryGetValue(key, out value);
+        var found = _cache.TryGetValue(key, out value);
+        if (found)
+            Interlocked.Increment(ref _hits);
+        else
+            Interlocked.Increment(ref _misses);
+        return found;
     }
 
     public bool Set<T>(
@@ -75,19 +122,13 @@ public sealed class RecommendationObjectCache : IDisposable
         var chargeBytes = EstimateEntryChargeBytes(key, estimatedPayloadBytes);
         if (chargeBytes > _maxEntryBytes)
         {
+            Interlocked.Increment(ref _oversizeSkips);
             _cache.Remove(key);
-            LogOversizeSkip(key, chargeBytes);
+            LogOversizeSkip(chargeBytes);
             return false;
         }
 
-        _cache.Set(
-            key,
-            value,
-            new MemoryCacheEntryOptions
-            {
-                AbsoluteExpirationRelativeToNow = lifetime,
-                Size = chargeBytes,
-            });
+        StoreTracked(key, value, lifetime, chargeBytes);
         return true;
     }
 
@@ -100,7 +141,7 @@ public sealed class RecommendationObjectCache : IDisposable
         return Math.Max(MinimumEntryChargeBytes, estimated);
     }
 
-    private void LogOversizeSkip(string key, long chargeBytes)
+    private void LogOversizeSkip(long chargeBytes)
     {
         var nowTicks = DateTimeOffset.UtcNow.UtcTicks;
         var lastTicks = Volatile.Read(ref _lastOversizeWarningUtcTicks);
@@ -110,10 +151,63 @@ public sealed class RecommendationObjectCache : IDisposable
             return;
 
         _logger.LogWarning(
-            "recommendation_object_cache_entry_skipped key={CacheKey} estimatedBytes={EstimatedBytes} maxBytes={MaxBytes}",
-            key,
+            "recommendation_object_cache_entry_skipped estimatedBytes={EstimatedBytes} maxBytes={MaxBytes}",
             chargeBytes,
             _maxEntryBytes);
+    }
+
+    private void StoreTracked<T>(string key, T value, TimeSpan lifetime, long chargeBytes)
+        where T : class
+    {
+        var tracked = new TrackedEntry(Interlocked.Increment(ref _nextEntryId), chargeBytes);
+        var callbackState = new EvictionCallbackState(this, key, tracked);
+        lock (_trackingGate)
+        {
+            if (_trackedEntries.TryGetValue(key, out var previous))
+                Interlocked.Add(ref _estimatedChargeBytes, -previous.ChargeBytes);
+            _trackedEntries[key] = tracked;
+            Interlocked.Add(ref _estimatedChargeBytes, chargeBytes);
+
+            try
+            {
+                _cache.Set(
+                    key,
+                    value,
+                    new MemoryCacheEntryOptions
+                    {
+                        AbsoluteExpirationRelativeToNow = lifetime,
+                        Size = chargeBytes,
+                    }.RegisterPostEvictionCallback(
+                        static (_, _, _, state) =>
+                        {
+                            var callback = (EvictionCallbackState)state!;
+                            callback.Owner.OnEntryEvicted(callback.Key, callback.Entry);
+                        },
+                        callbackState));
+            }
+            catch
+            {
+                UntrackEntry(key, tracked);
+                throw;
+            }
+        }
+    }
+
+    private void OnEntryEvicted(string key, TrackedEntry entry)
+    {
+        Interlocked.Increment(ref _evictions);
+        lock (_trackingGate)
+            UntrackEntry(key, entry);
+    }
+
+    private void UntrackEntry(string key, TrackedEntry expected)
+    {
+        if (_trackedEntries.TryGetValue(key, out var current)
+            && current.Id == expected.Id
+            && _trackedEntries.TryRemove(key, out _))
+        {
+            Interlocked.Add(ref _estimatedChargeBytes, -expected.ChargeBytes);
+        }
     }
 
     public void Dispose() => _cache.Dispose();

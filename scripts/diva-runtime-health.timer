@@ -1,0 +1,12 @@
+[Unit]
+Description=Run DIVA Player runtime health snapshot every minute
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=60s
+RandomizedDelaySec=5s
+Persistent=true
+Unit=diva-runtime-health.service
+
+[Install]
+WantedBy=timers.target

@@ -7,6 +7,8 @@ const [
   nginx,
   deploy,
   program,
+  publicationMiddleware,
+  publicationGuard,
   healthEndpoints,
   songReadEndpoints,
   serviceRegistration,
@@ -29,12 +31,23 @@ const [
   schema,
   modelGuardMigration,
   modelGuardIntegration,
+  readinessProbeService,
+  runtimeTelemetryService,
+  namedTunnelRunner,
+  namedTunnelUnit,
+  tunnelAdmin,
+  quickTunnelSync,
+  runtimeRoleMigration,
+  apiSettings,
+  backendEnvExample,
 ] = await Promise.all([
   readFile(new URL('../backend/docker-compose.yml', import.meta.url), 'utf8'),
   readFile(new URL('../backend/api-gateway/haproxy.cfg', import.meta.url), 'utf8'),
   readFile(new URL('../nginx.conf', import.meta.url), 'utf8'),
   readFile(new URL('./deploy-sbc-api-rolling.sh', import.meta.url), 'utf8'),
   readFile(new URL('../backend/api/VocadbRecommender/Program.cs', import.meta.url), 'utf8'),
+  readFile(new URL('../backend/api/VocadbRecommender/RecommendationPublicationMiddleware.cs', import.meta.url), 'utf8'),
+  readFile(new URL('../backend/api/VocadbRecommender/Services/RecommendationPublicationGuard.cs', import.meta.url), 'utf8'),
   readFile(new URL('../backend/api/VocadbRecommender/Endpoints/HealthEndpoints.cs', import.meta.url), 'utf8'),
   readFile(new URL('../backend/api/VocadbRecommender/Endpoints/SongReadEndpoints.cs', import.meta.url), 'utf8'),
   readFile(new URL('../backend/api/VocadbRecommender/ApiServiceRegistration.cs', import.meta.url), 'utf8'),
@@ -57,13 +70,63 @@ const [
   readFile(new URL('../backend/database/schema.sql', import.meta.url), 'utf8'),
   readFile(new URL('../backend/database/migrations/0017_discovery_quality_model_guard.sql', import.meta.url), 'utf8'),
   readFile(new URL('./test-discovery-quality-model-guard.sql', import.meta.url), 'utf8'),
+  readFile(new URL('../backend/api/VocadbRecommender/Services/ApiReadinessProbeService.cs', import.meta.url), 'utf8'),
+  readFile(new URL('../backend/api/VocadbRecommender/Services/ApiRuntimeTelemetryService.cs', import.meta.url), 'utf8'),
+  readFile(new URL('./run-cloudflare-named-tunnel.sh', import.meta.url), 'utf8'),
+  readFile(new URL('./diva-cloudflare-named-tunnel.service', import.meta.url), 'utf8'),
+  readFile(new URL('../functions/tunnel-admin/update.js', import.meta.url), 'utf8'),
+  readFile(new URL('./sync-quick-tunnel-to-cloudflare.sh', import.meta.url), 'utf8'),
+  readFile(new URL('../backend/database/migrations/0018_runtime_database_roles.sql', import.meta.url), 'utf8'),
+  readFile(new URL('../backend/api/VocadbRecommender/appsettings.json', import.meta.url), 'utf8'),
+  readFile(new URL('../backend/.env.example', import.meta.url), 'utf8'),
 ]);
 
 assert.match(compose, /api_a:/);
 assert.match(compose, /api_b:/);
 assert.match(compose, /api_gateway:/);
 assert.doesNotMatch(compose, /\n  api:\s*\n/);
+assert.match(compose, /image: "\$\{DIVA_API_IMAGE:-diva-player-api:local\}"/);
+assert.match(compose, /image: "\$\{DIVA_GATEWAY_IMAGE:-diva-player-api-gateway:local\}"/);
+assert.match(compose, /image: "\$\{DIVA_WEB_IMAGE:-diva-player-web:local\}"/);
 assert.match(compose, /Maximum Pool Size=16/);
+assert.match(compose, /DIVA_API_DB_USER:\?DIVA_API_DB_USER is required/);
+assert.match(compose, /DIVA_API_DB_PASSWORD:\?DIVA_API_DB_PASSWORD is required/);
+assert.match(compose, /DIVA_DB_ADMIN_PASSWORD:\?DIVA_DB_ADMIN_PASSWORD is required/);
+assert.match(compose, /PAGES_PROXY_KEY:\?PAGES_PROXY_KEY is required/);
+assert.doesNotMatch(compose, /vocadb_secret/);
+assert.doesNotMatch(apiSettings, /vocadb_secret|Password=/);
+assert.doesNotMatch(backendEnvExample, /vocadb_secret/);
+assert.match(apiSettings, /"CollectionHybrid": "song_hybrid_active"/);
+assert.match(apiSettings, /"CollectionMetadata": "song_metadata_active"/);
+assert.match(apiSettings, /"CollectionNamed": "songs_v2_active"/);
+assert.match(qdrantService, /GetCollectionInfoAsync\(collectionName, cancellationToken\)/);
+assert.match(qdrantService, /ListAliasesAsync\(cancellationToken\)/);
+assert.match(qdrantService, /ValidateRecommendationAliasTargets/);
+assert.match(qdrantService, /RecommendationAliasGenerationMismatch/);
+assert.match(qdrantService, /db\.ReadRecommendationPublicationGenerationUncachedAsync/);
+assert.match(qdrantService, /RecommendationPublicationGenerationInvalid/);
+assert.match(qdrantService, /_opts\.CollectionNamed[\s\S]*_opts\.CollectionHybrid[\s\S]*_opts\.CollectionMetadata/);
+assert.match(qdrantService, /CollectionUnavailable:/);
+assert.match(serviceRegistration, /collection aliases must be non-empty and distinct/);
+assert.match(serviceRegistration, /AddSingleton<RecommendationPublicationGuard>/);
+assert.match(dbService, /recommendation_publication_generation/);
+assert.match(dbService, /ReadRecommendationPublicationGenerationUncachedAsync/);
+assert.match(dbService, /RecommendationPublicationGenerationCacheDuration[\s\S]*TimeSpan\.FromSeconds\(5\)/);
+assert.match(dbService, /_publicationGenerationLock\.WaitAsync\(cancellationToken\)/);
+assert.match(dbService, /ObserveRecommendationPublicationGenerationAsync/);
+assert.match(dbService, /RecommendationCacheKey\(publicationGeneration, \$"song:\{id\}"\)/);
+assert.match(dbService, /RecommendationCacheKey\(publicationGeneration, "markov_matrix"\)/);
+assert.match(program, /UseMiddleware<RecommendationPublicationMiddleware>/);
+assert.match(publicationMiddleware, /path\.StartsWithSegments\("\/api\/recommend"\)/);
+assert.match(publicationMiddleware, /await using \(lease\)[\s\S]*await next\(context\)/);
+assert.match(publicationMiddleware, /recommendation_publication_in_progress/);
+assert.match(publicationMiddleware, /StatusCodes\.Status503ServiceUnavailable/);
+assert.match(publicationGuard, /pg_advisory_lock_shared/);
+assert.match(publicationGuard, /pg_advisory_unlock_shared/);
+assert.match(publicationGuard, /recommendation_publication_in_progress/);
+assert.match(publicationGuard, /ReadSnapshotAsync[\s\S]*ObserveRecommendationPublicationGenerationAsync|_observeGeneration/);
+assert.match(compose, /max-size: "10m"/);
+assert.match(compose, /max-file: "5"/);
 assert.match(compose, /http:\/\/127\.0\.0\.1:5000\/api\/ready/);
 assert.match(gateway, /server api_a api_a:5000 check/);
 assert.match(gateway, /server api_b api_b:5000 check/);
@@ -76,12 +139,48 @@ assert.match(deploy, /wait_slot_sessions "\$slot"/);
 assert.match(deploy, /enable server api_nodes\/\$slot/);
 assert.match(deploy, /--force-recreate "\$slot"/);
 assert.match(deploy, /haproxy -c -f \/usr\/local\/etc\/haproxy\/haproxy\.cfg/);
+assert.match(deploy, /API_A_ROLLBACK_IMAGE="diva-player-api:rollback-api-a"/);
+assert.match(deploy, /GATEWAY_ROLLBACK_IMAGE="diva-player-api-gateway:rollback"/);
+assert.match(deploy, /api_a\.old_image/);
+assert.match(deploy, /migration\.rollback.*not-attempted-forward-only/);
+assert.match(deploy, /validate_candidate_gateway/);
+assert.match(deploy, /validate_candidate_api/);
+assert.match(deploy, /api\.candidate/);
+assert.match(deploy, /validate_candidate_web/);
+assert.match(deploy, /rollback_web/);
+assert.match(deploy, /container_compose_config_hash/);
+assert.match(deploy, /gateway\.candidate_config_hash/);
+assert.match(deploy, /rollback_updated_slots/);
+assert.match(deploy, /DEPLOY_LOCK_DIR="\$STATE_ROOT\/deploy\.lock"/);
+assert.match(deploy, /acquire_deploy_lock/);
+assert.match(deploy, /Refusing to enable unhealthy \$slot/);
+assert.match(deploy, /apply_gateway_image "\$OLD_GATEWAY_IMAGE" "\$NEW_GATEWAY_IMAGE"/);
 assert.match(program, /MapHealthEndpoints\(\)/);
 assert.match(healthEndpoints, /MapGet\("\/api\/ready"/);
 assert.match(healthEndpoints, /DisableRateLimiting\(\)/);
 assert.match(healthEndpoints, /warmupSnapshot\.Failures\.Count == 0/);
 assert.match(program, /isTrustedGatewayProxy/);
 assert.match(serviceRegistration, /AddHostedService<ApiWarmupService>/);
+assert.match(serviceRegistration, /AddHostedService<ApiReadinessProbeService>/);
+assert.match(serviceRegistration, /AddHostedService<ApiRuntimeTelemetryService>/);
+assert.match(readinessProbeService, /MaximumSnapshotAge = TimeSpan\.FromSeconds\(15\)/);
+assert.match(healthEndpoints, /ApiReadinessProbeService\.MaximumSnapshotAge/);
+const readinessHandler = healthEndpoints.match(
+  /private static IResult GetReadinessAsync\([\s\S]*?internal static ReadinessEndpointResponse/,
+)?.[0];
+assert.ok(readinessHandler, 'readiness snapshot handler contract was not found');
+assert.doesNotMatch(readinessHandler, /CheckHealthAsync/);
+assert.match(runtimeTelemetryService, /api_runtime_metrics/);
+assert.match(namedTunnelRunner, /run --token-file "\$TOKEN_FILE"/);
+assert.doesNotMatch(namedTunnelRunner, /(?:^|\s)--token(?:\s|$)/m);
+assert.match(namedTunnelRunner, /stat -c '%u'/);
+assert.match(namedTunnelRunner, /token_mode % 100/);
+assert.match(namedTunnelUnit, /run-cloudflare-named-tunnel\.sh/);
+assert.match(namedTunnelUnit, /UMask=0077/);
+assert.match(tunnelAdmin, /verifyOriginProof/);
+assert.match(tunnelAdmin, /TUNNEL_ORIGIN_PROOF_KEY/);
+assert.match(quickTunnelSync, /PAGES_ORIGIN_PROOF_KEY/);
+assert.match(quickTunnelSync, /hmac\.new/);
 assert.match(warmup, /home-surge/);
 assert.match(compose, /Recommender__SearchCacheSizeMiB: "64"/);
 assert.match(compose, /Recommender__SearchCacheEntrySizeMiB: "8"/);
@@ -116,7 +215,10 @@ assert.match(searchResponseCache, /StaleLifetime = TimeSpan\.FromHours\(6\)/);
 assert.match(searchResponseCache, /RefreshFailureBackoff = TimeSpan\.FromSeconds\(30\)/);
 assert.match(searchResponseCache, /AbsoluteExpirationRelativeToNow = StaleLifetime/);
 assert.match(searchResponseCache, /chargeBytes > _maxEntryBytes/);
-assert.match(searchResponseCache, /chargeBytes > _maxEntryBytes\)\s*\{\s*_cache\.Remove\(key\)/);
+assert.match(
+  searchResponseCache,
+  /chargeBytes > _maxEntryBytes\)[\s\S]*?flight\.TryPublish\(\(\) =>\s*\{\s*_cache\.Remove\(key\)/,
+);
 assert.match(searchResponseCache, /stale\.RefreshRetryAfterUtcTicks/);
 assert.match(searchResponseCache, /LoadAfterCacheRecheckAsync/);
 assert.match(searchResponseCache, /GetOrCreateRankingAsync/);
@@ -128,8 +230,14 @@ assert.match(recommendationObjectCache, /SizeLimit = sizeLimitBytes/);
 assert.match(recommendationObjectCache, /MinimumEntryChargeBytes = 4 \* 1024/);
 assert.match(dbService, /_searchCache\.GetOrCreateAsync/);
 assert.match(dbService, /_searchCache\.GetOrCreateRankingAsync/);
-assert.match(dbService, /ExecuteSongSearchAsync\(request, CancellationToken\.None\)/);
-assert.match(dbService, /ExecuteTrendingSongsJsonAsync\(request, CancellationToken\.None\)/);
+assert.match(
+  dbService,
+  /cacheLoadCancellationToken\s*=>\s*ExecuteSongSearchAsync\(request, cacheLoadCancellationToken\)/,
+);
+assert.match(
+  dbService,
+  /cacheLoadCancellationToken\s*=>\s*ExecuteTrendingSongsJsonAsync\(request, cacheLoadCancellationToken\)/,
+);
 assert.doesNotMatch(dbService, /\bOpen(?:Async)?\(\)/);
 assert.doesNotMatch(dbService, /\bExecute(?:Reader|Scalar|NonQuery)Async\(\)/);
 assert.doesNotMatch(dbService, /\bReadAsync\(\)/);
@@ -150,6 +258,23 @@ assert.match(program, /!double\.IsFinite\(bpmFrom\.Value\)/);
 assert.match(program, /!double\.IsFinite\(bpmTo\.Value\)/);
 assert.match(apiTestsProject, /PackageReference Include="xunit"/);
 assert.match(workflow, /dotnet test backend\/api\/VocadbRecommender\.Tests\/VocadbRecommender\.Tests\.csproj --configuration Release/);
+assert.match(workflow, /npm run test:rolling-deployment/);
+assert.match(workflow, /npm run test:runtime-health/);
+assert.match(workflow, /npm run test:db-role-provisioning/);
+assert.match(workflow, /0018_runtime_database_roles\.sql/);
+assert.match(workflow, /test-database-role-contract\.sql/);
+assert.match(workflow, /Validate Cloudflare credentials/);
+assert.match(workflow, /Cloudflare deployment requires CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID/);
+assert.doesNotMatch(workflow, /Cloudflare deployment skipped/);
+const deployJobStart = workflow.indexOf('  deploy-cloudflare:');
+const deployStepsStart = workflow.indexOf('\n    steps:', deployJobStart);
+assert.notEqual(deployJobStart, -1);
+assert.notEqual(deployStepsStart, -1);
+assert.doesNotMatch(workflow.slice(deployJobStart, deployStepsStart), /^    env:/m);
+assert.match(runtimeRoleMigration, /CREATE ROLE diva_api_runtime/);
+assert.match(runtimeRoleMigration, /GRANT INSERT, UPDATE ON TABLE[\s\S]*youtube_playlist_cache/);
+assert.match(runtimeRoleMigration, /GRANT TRUNCATE ON TABLE public\.markov_transitions/);
+assert.match(runtimeRoleMigration, /GRANT TEMPORARY ON DATABASE %I TO diva_pipeline_runtime/);
 for (const route of [
   '/api/recommend',
   '/api/recommend/producer',
@@ -161,7 +286,10 @@ for (const route of [
   '/api/songs/trending',
   '/api/songs/search',
 ]) {
-  const start = program.indexOf(`"${route}"`);
+  const method = route === '/api/recommend/multi' || route === '/api/recommend/dig'
+    ? 'MapPost'
+    : 'MapGet';
+  const start = program.indexOf(`app.${method}("${route}"`);
   assert.notEqual(start, -1, `${route} endpoint was not found`);
   const nextEndpoint = program.indexOf('\napp.Map', start + route.length + 2);
   const endpoint = program.slice(start, nextEndpoint === -1 ? program.length : nextEndpoint);

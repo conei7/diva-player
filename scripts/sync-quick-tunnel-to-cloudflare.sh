@@ -3,6 +3,8 @@ set -eu
 
 ENV_FILE="${DIVA_CLOUDFLARE_ENV:-$HOME/.config/diva-player/cloudflare.env}"
 LOG_FILE="${DIVA_CLOUDFLARED_LOG:-$HOME/cloudflared-8080.log}"
+PYTHON_COMMAND="${DIVA_PYTHON_COMMAND:-python3}"
+CURL_COMMAND="${DIVA_CURL_COMMAND:-curl}"
 
 if [ -f "$ENV_FILE" ]; then
   # shellcheck disable=SC1090
@@ -10,6 +12,7 @@ if [ -f "$ENV_FILE" ]; then
 fi
 
 : "${PAGES_SYNC_TOKEN:?PAGES_SYNC_TOKEN is required}"
+: "${PAGES_ORIGIN_PROOF_KEY:?PAGES_ORIGIN_PROOF_KEY is required}"
 PAGES_SYNC_URL="${PAGES_SYNC_URL:-https://diva-player.pages.dev/tunnel-admin/update}"
 
 attempt=0
@@ -29,10 +32,25 @@ if [ -z "$tunnel_url" ]; then
   exit 1
 fi
 
-response=$(curl -fsS -X POST "$PAGES_SYNC_URL" \
+timestamp=$(date +%s)
+payload=$(PAGES_ORIGIN_PROOF_KEY="$PAGES_ORIGIN_PROOF_KEY" \
+  TUNNEL_URL="$tunnel_url" PROOF_TIMESTAMP="$timestamp" "$PYTHON_COMMAND" -c '
+import hashlib, hmac, json, os
+timestamp = int(os.environ["PROOF_TIMESTAMP"])
+tunnel_url = os.environ["TUNNEL_URL"]
+key = os.environ["PAGES_ORIGIN_PROOF_KEY"].encode("utf-8")
+message = f"{timestamp}\n{tunnel_url}".encode("utf-8")
+print(json.dumps({
+    "tunnelUrl": tunnel_url,
+    "timestamp": timestamp,
+    "proof": hmac.new(key, message, hashlib.sha256).hexdigest(),
+}, separators=(",", ":")))
+')
+
+response=$("$CURL_COMMAND" -fsS -X POST "$PAGES_SYNC_URL" \
   -H "Authorization: Bearer $PAGES_SYNC_TOKEN" \
   -H "Content-Type: application/json" \
-  --data-binary "{\"tunnelUrl\":\"$tunnel_url\"}")
+  --data-binary "$payload")
 
 case "$response" in
   *'"success":true'*) ;;

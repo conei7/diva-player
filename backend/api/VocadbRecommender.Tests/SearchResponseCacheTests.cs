@@ -77,11 +77,13 @@ public sealed class SearchResponseCacheTests
         var calls = 0;
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        async Task<SongSearchExecution> Load()
+        var loadCancellationToken = CancellationToken.None;
+        async Task<SongSearchExecution> Load(CancellationToken cancellationToken)
         {
             Interlocked.Increment(ref calls);
+            loadCancellationToken = cancellationToken;
             started.TrySetResult();
-            await release.Task;
+            await release.Task.WaitAsync(cancellationToken);
             return Execution("[{\"id\":10}]", 1);
         }
 
@@ -95,6 +97,7 @@ public sealed class SearchResponseCacheTests
         canceledCaller.Cancel();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await canceledWaiter);
         Assert.True(cache.HasInFlightLoad("search-caller-canceled"));
+        Assert.False(loadCancellationToken.IsCancellationRequested);
         Assert.Equal(1, Volatile.Read(ref calls));
 
         release.SetResult();
@@ -104,6 +107,161 @@ public sealed class SearchResponseCacheTests
 
         var cachedResult = await cache.GetOrCreateAsync("search-caller-canceled", Load);
         Assert.True(cachedResult.CacheHit);
+        Assert.Equal(1, calls);
+    }
+
+    [Fact]
+    public async Task AllSearchWaitersCanceled_CancelsLoaderAndDoesNotCache()
+    {
+        using var cache = CreateCache();
+        using var firstCaller = new CancellationTokenSource();
+        using var secondCaller = new CancellationTokenSource();
+        var calls = 0;
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var loaderCanceled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        async Task<SongSearchExecution> Load(CancellationToken cancellationToken)
+        {
+            Interlocked.Increment(ref calls);
+            started.TrySetResult();
+            try
+            {
+                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                loaderCanceled.TrySetResult();
+                throw;
+            }
+
+            throw new InvalidOperationException("Infinite delay completed unexpectedly.");
+        }
+
+        var first = cache.GetOrCreateAsync(
+            "search-all-canceled",
+            Load,
+            cancellationToken: firstCaller.Token);
+        await started.Task;
+        var second = cache.GetOrCreateAsync(
+            "search-all-canceled",
+            Load,
+            cancellationToken: secondCaller.Token);
+
+        firstCaller.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await first);
+        Assert.True(cache.HasInFlightLoad("search-all-canceled"));
+
+        secondCaller.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await second);
+        await loaderCanceled.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await WaitForNoInFlightLoadAsync(cache, "search-all-canceled");
+
+        var retryCalls = 0;
+        var retry = await cache.GetOrCreateAsync("search-all-canceled", () =>
+        {
+            retryCalls++;
+            return Task.FromResult(Execution("[{\"id\":20}]", 1));
+        });
+
+        Assert.False(retry.CacheHit);
+        Assert.Equal("[{\"id\":20}]", retry.ItemsJson);
+        Assert.Equal(1, calls);
+        Assert.Equal(1, retryCalls);
+    }
+
+    [Fact]
+    public async Task LastWaiterLeaving_RacingLateJoinNeverJoinsDoomedSearchFlight()
+    {
+        using var cache = CreateCache();
+        using var firstCaller = new CancellationTokenSource();
+        using var releaseCancellationCallback = new ManualResetEventSlim();
+        var firstStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var cancellationCallbackEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var calls = 0;
+
+        Task<SongSearchExecution> Load(CancellationToken cancellationToken)
+        {
+            var call = Interlocked.Increment(ref calls);
+            if (call == 2)
+                return Task.FromResult(Execution("[{\"id\":2}]", 1));
+            if (call != 1)
+                throw new InvalidOperationException("Unexpected extra loader invocation.");
+
+            return RunFirstLoadAsync(cancellationToken);
+        }
+
+        async Task<SongSearchExecution> RunFirstLoadAsync(CancellationToken cancellationToken)
+        {
+            using var registration = cancellationToken.Register(() =>
+            {
+                cancellationCallbackEntered.TrySetResult();
+                releaseCancellationCallback.Wait();
+            });
+            firstStarted.TrySetResult();
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            throw new InvalidOperationException("Infinite delay completed unexpectedly.");
+        }
+
+        var first = cache.GetOrCreateAsync(
+            "search-leave-join-race",
+            Load,
+            cancellationToken: firstCaller.Token);
+        await firstStarted.Task;
+
+        var cancelFirst = Task.Run(firstCaller.Cancel);
+        await cancellationCallbackEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        // The flight is already closed to new leases while its cancellation
+        // callback is deliberately held open.
+        var late = await cache.GetOrCreateAsync("search-leave-join-race", Load);
+        Assert.Equal("[{\"id\":2}]", late.ItemsJson);
+        Assert.Equal(2, Volatile.Read(ref calls));
+
+        releaseCancellationCallback.Set();
+        await cancelFirst;
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await first);
+        await WaitForNoInFlightLoadAsync(cache, "search-leave-join-race");
+
+        var cached = await cache.GetOrCreateAsync(
+            "search-leave-join-race",
+            _ => throw new InvalidOperationException("The replacement result was not cached."));
+        Assert.True(cached.CacheHit);
+        Assert.Equal("[{\"id\":2}]", cached.ItemsJson);
+    }
+
+    [Fact]
+    public async Task WarmupOwnedSearchLoad_CompletesWhenJoinedRequestCancels()
+    {
+        using var cache = CreateCache();
+        using var requestCaller = new CancellationTokenSource();
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var loadCancellationToken = CancellationToken.None;
+        var calls = 0;
+
+        async Task<SongSearchExecution> WarmupLoad(CancellationToken cancellationToken)
+        {
+            Interlocked.Increment(ref calls);
+            loadCancellationToken = cancellationToken;
+            started.TrySetResult();
+            await release.Task.WaitAsync(cancellationToken);
+            return Execution("[{\"id\":30}]", 1);
+        }
+
+        // A non-request warmup remains an active lease until its await ends.
+        var warmup = cache.GetOrCreateAsync("search-warmup", WarmupLoad);
+        await started.Task;
+        var request = cache.GetOrCreateAsync(
+            "search-warmup",
+            WarmupLoad,
+            cancellationToken: requestCaller.Token);
+
+        requestCaller.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await request);
+        Assert.False(loadCancellationToken.IsCancellationRequested);
+
+        release.SetResult();
+        Assert.Equal("[{\"id\":30}]", (await warmup).ItemsJson);
         Assert.Equal(1, calls);
     }
 
@@ -210,6 +368,55 @@ public sealed class SearchResponseCacheTests
         Assert.NotNull(refreshed);
         Assert.Equal("[{\"id\":2}]", refreshed.ItemsJson);
         Assert.True(refreshed.CacheHit);
+        Assert.Equal(1, calls);
+    }
+
+    [Fact]
+    public async Task StaleBackgroundRefresh_CompletesAfterItsOnlyRequestWaiterCancels()
+    {
+        var time = new MutableTimeProvider(new DateTimeOffset(2026, 8, 9, 0, 0, 0, TimeSpan.Zero));
+        using var cache = CreateCache(timeProvider: time);
+        await cache.GetOrCreateAsync(
+            "stale-completion-owned",
+            () => Task.FromResult(Execution("[{\"id\":1}]", 1)));
+        time.Advance(SearchResponseCache.FreshLifetime + TimeSpan.FromSeconds(1));
+
+        using var joinedCaller = new CancellationTokenSource();
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var loadCancellationToken = CancellationToken.None;
+        var calls = 0;
+        async Task<SongSearchExecution> Refresh(CancellationToken cancellationToken)
+        {
+            Interlocked.Increment(ref calls);
+            loadCancellationToken = cancellationToken;
+            started.TrySetResult();
+            await release.Task.WaitAsync(cancellationToken);
+            return Execution("[{\"id\":2}]", 1);
+        }
+
+        var stale = await cache.GetOrCreateAsync("stale-completion-owned", Refresh);
+        Assert.True(stale.CacheHit);
+        await started.Task;
+
+        var joined = cache.GetOrCreateAsync(
+            "stale-completion-owned",
+            Refresh,
+            forceRefresh: true,
+            cancellationToken: joinedCaller.Token);
+        joinedCaller.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await joined);
+
+        Assert.False(loadCancellationToken.IsCancellationRequested);
+        Assert.True(cache.HasInFlightLoad("stale-completion-owned"));
+        release.SetResult();
+        await WaitForNoInFlightLoadAsync(cache, "stale-completion-owned");
+
+        var refreshed = await cache.GetOrCreateAsync(
+            "stale-completion-owned",
+            _ => throw new InvalidOperationException("Background refresh did not publish."));
+        Assert.True(refreshed.CacheHit);
+        Assert.Equal("[{\"id\":2}]", refreshed.ItemsJson);
         Assert.Equal(1, calls);
     }
 
@@ -378,11 +585,13 @@ public sealed class SearchResponseCacheTests
         var calls = 0;
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        async Task<string> Load()
+        var loadCancellationToken = CancellationToken.None;
+        async Task<string> Load(CancellationToken cancellationToken)
         {
             Interlocked.Increment(ref calls);
+            loadCancellationToken = cancellationToken;
             started.TrySetResult();
-            await release.Task;
+            await release.Task.WaitAsync(cancellationToken);
             return "[{\"id\":10}]";
         }
 
@@ -396,6 +605,7 @@ public sealed class SearchResponseCacheTests
         canceledCaller.Cancel();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await canceledWaiter);
         Assert.True(cache.HasInFlightLoad("ranking-caller-canceled"));
+        Assert.False(loadCancellationToken.IsCancellationRequested);
         Assert.Equal(1, Volatile.Read(ref calls));
 
         release.SetResult();
@@ -406,6 +616,64 @@ public sealed class SearchResponseCacheTests
             "[{\"id\":10}]",
             await cache.GetOrCreateRankingAsync("ranking-caller-canceled", Load));
         Assert.Equal(1, calls);
+    }
+
+    [Fact]
+    public async Task AllRankingWaitersCanceled_CancelsLoaderAndDoesNotCache()
+    {
+        using var cache = CreateCache();
+        using var firstCaller = new CancellationTokenSource();
+        using var secondCaller = new CancellationTokenSource();
+        var calls = 0;
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var loaderCanceled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        async Task<string> Load(CancellationToken cancellationToken)
+        {
+            Interlocked.Increment(ref calls);
+            started.TrySetResult();
+            try
+            {
+                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                loaderCanceled.TrySetResult();
+                throw;
+            }
+
+            throw new InvalidOperationException("Infinite delay completed unexpectedly.");
+        }
+
+        var first = cache.GetOrCreateRankingAsync(
+            "ranking-all-canceled",
+            Load,
+            cancellationToken: firstCaller.Token);
+        await started.Task;
+        var second = cache.GetOrCreateRankingAsync(
+            "ranking-all-canceled",
+            Load,
+            cancellationToken: secondCaller.Token);
+
+        firstCaller.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await first);
+        Assert.True(cache.HasInFlightLoad("ranking-all-canceled"));
+
+        secondCaller.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await second);
+        await loaderCanceled.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await WaitForNoInFlightLoadAsync(cache, "ranking-all-canceled");
+
+        var retryCalls = 0;
+        var retry = await cache.GetOrCreateRankingAsync("ranking-all-canceled", () =>
+        {
+            retryCalls++;
+            return Task.FromResult("[{\"id\":20}]");
+        });
+
+        Assert.Equal("[{\"id\":20}]", retry);
+        Assert.Equal(1, calls);
+        Assert.Equal(1, retryCalls);
     }
 
     [Fact]
@@ -759,6 +1027,51 @@ public sealed class SearchResponseCacheTests
 
         Assert.False(result.CacheHit);
         Assert.Equal(2, calls);
+    }
+
+    [Fact]
+    public async Task AbandonedFailingLoad_IsObservedAndRemovedForRetry()
+    {
+        using var cache = CreateCache();
+        using var caller = new CancellationTokenSource();
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var cancellationObserved = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseFailure = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        async Task<SongSearchExecution> FailAfterCancellation(CancellationToken cancellationToken)
+        {
+            started.TrySetResult();
+            try
+            {
+                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                cancellationObserved.TrySetResult();
+                await releaseFailure.Task;
+                throw new InvalidOperationException("expected post-cancellation loader failure");
+            }
+
+            throw new InvalidOperationException("Infinite delay completed unexpectedly.");
+        }
+
+        var abandoned = cache.GetOrCreateAsync(
+            "abandoned-failure",
+            FailAfterCancellation,
+            cancellationToken: caller.Token);
+        await started.Task;
+        caller.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await abandoned);
+        await cancellationObserved.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        releaseFailure.SetResult();
+        await WaitForNoInFlightLoadAsync(cache, "abandoned-failure");
+
+        var recovered = await cache.GetOrCreateAsync(
+            "abandoned-failure",
+            () => Task.FromResult(Execution("[{\"id\":99}]", 1)));
+        Assert.False(recovered.CacheHit);
+        Assert.Equal("[{\"id\":99}]", recovered.ItemsJson);
     }
 
     private static SearchResponseCache CreateCache(

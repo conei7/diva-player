@@ -1,0 +1,11 @@
+[Unit]
+Description=DIVA Player runtime health snapshot
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/diva-player
+EnvironmentFile=-%h/.config/diva-player/runtime-health.env
+ExecStart=/usr/bin/node %h/diva-player/scripts/collect-sbc-runtime-health.mjs
+TimeoutStartSec=45s

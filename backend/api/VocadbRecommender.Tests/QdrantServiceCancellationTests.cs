@@ -8,10 +8,12 @@ public sealed class QdrantServiceCancellationTests
     [Fact]
     public async Task PreCanceledRequest_StopsEveryQdrantReadBeforeFallback()
     {
-        var service = new QdrantService(Options.Create(new RecommenderOptions
-        {
-            QdrantEndpoint = "http://127.0.0.1:6334",
-        }));
+        var service = new QdrantService(
+            Options.Create(new RecommenderOptions
+            {
+                QdrantEndpoint = "http://127.0.0.1:6334",
+            }),
+            _ => Task.FromResult("legacy"));
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
 

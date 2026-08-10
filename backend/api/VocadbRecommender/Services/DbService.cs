@@ -49,6 +49,9 @@ public sealed record KnowledgeMapCatalog(
 /// <summary>PostgreSQL アクセスサービス</summary>
 public class DbService
 {
+    internal static readonly TimeSpan RecommendationPublicationGenerationCacheDuration =
+        TimeSpan.FromSeconds(5);
+
     internal static readonly string[] VoiceSynthArtistTypes =
     [
         "Vocaloid", "UTAU", "CeVIO", "SynthesizerV", "NEUTRINO", "VoiSona",
@@ -100,6 +103,9 @@ public class DbService
     private readonly RecommendationObjectCache _objectCache;
     private readonly SearchResponseCache _searchCache;
     private readonly SemaphoreSlim _knowledgeMapCatalogLock = new(1, 1);
+    private readonly SemaphoreSlim _publicationGenerationLock = new(1, 1);
+    private string _publicationGeneration = "legacy";
+    private long _publicationGenerationExpiresUtcTicks;
 
     private static long EstimateViewWeightProfileBytes(ViewWeightProfile profile) =>
         128L + profile.Bands.Count * 32L;
@@ -182,6 +188,84 @@ public class DbService
         var conn = new NpgsqlConnection(_connStr);
         await conn.OpenAsync(cancellationToken);
         return conn;
+    }
+
+    private async Task<string> GetRecommendationPublicationGenerationAsync(
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (DateTimeOffset.UtcNow.UtcTicks
+            < Volatile.Read(ref _publicationGenerationExpiresUtcTicks))
+        {
+            return Volatile.Read(ref _publicationGeneration);
+        }
+
+        await _publicationGenerationLock.WaitAsync(cancellationToken);
+        try
+        {
+            if (DateTimeOffset.UtcNow.UtcTicks
+                < Volatile.Read(ref _publicationGenerationExpiresUtcTicks))
+            {
+                return Volatile.Read(ref _publicationGeneration);
+            }
+
+            var generation =
+                await ReadRecommendationPublicationGenerationUncachedAsync(
+                    cancellationToken);
+            Volatile.Write(ref _publicationGeneration, generation);
+            Volatile.Write(
+                ref _publicationGenerationExpiresUtcTicks,
+                DateTimeOffset.UtcNow.Add(RecommendationPublicationGenerationCacheDuration).UtcTicks);
+            return generation;
+        }
+        finally
+        {
+            _publicationGenerationLock.Release();
+        }
+    }
+
+    /// <summary>
+    /// Reads the PostgreSQL side of the cross-store recommendation generation
+    /// without consulting the process cache. Readiness uses this value to
+    /// reject a coherent-looking Qdrant alias set restored from another build.
+    /// </summary>
+    internal async Task<string> ReadRecommendationPublicationGenerationUncachedAsync(
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        await using var conn = await OpenAsync(cancellationToken);
+        await using var cmd = new NpgsqlCommand(@"
+            SELECT COALESCE(
+                (
+                    SELECT value
+                    FROM sync_state
+                    WHERE key = 'recommendation_publication_generation'
+                ),
+                'legacy')", conn);
+        return (string)(await cmd.ExecuteScalarAsync(cancellationToken) ?? "legacy");
+    }
+
+    private static string RecommendationCacheKey(string generation, string key) =>
+        $"publication:{generation}:{key}";
+
+    internal async Task ObserveRecommendationPublicationGenerationAsync(
+        string generation,
+        CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(generation);
+        cancellationToken.ThrowIfCancellationRequested();
+        await _publicationGenerationLock.WaitAsync(cancellationToken);
+        try
+        {
+            Volatile.Write(ref _publicationGeneration, generation);
+            Volatile.Write(
+                ref _publicationGenerationExpiresUtcTicks,
+                DateTimeOffset.UtcNow.Add(RecommendationPublicationGenerationCacheDuration).UtcTicks);
+        }
+        finally
+        {
+            _publicationGenerationLock.Release();
+        }
     }
 
     public async Task<DependencyHealth> CheckHealthAsync(CancellationToken cancellationToken)
@@ -787,7 +871,8 @@ public class DbService
             chorusOnly);
         return _searchCache.GetOrCreateAsync(
             request.CacheKey,
-            () => ExecuteSongSearchAsync(request, CancellationToken.None),
+            cacheLoadCancellationToken =>
+                ExecuteSongSearchAsync(request, cacheLoadCancellationToken),
             forceRefresh,
             cancellationToken);
     }
@@ -1450,12 +1535,15 @@ public class DbService
         cancellationToken.ThrowIfCancellationRequested();
         var ids = songIds.Distinct().ToArray();
         if (ids.Length == 0) return [];
+        var publicationGeneration =
+            await GetRecommendationPublicationGenerationAsync(cancellationToken);
 
         var result = new List<SongInfo>(ids.Length);
         var missingIds = new List<int>(ids.Length);
         foreach (var id in ids)
         {
-            if (_objectCache.TryGetValue($"song:{id}", out SongInfo? cached) && cached is not null)
+            var cacheKey = RecommendationCacheKey(publicationGeneration, $"song:{id}");
+            if (_objectCache.TryGetValue(cacheKey, out SongInfo? cached) && cached is not null)
                 result.Add(cached);
             else
                 missingIds.Add(id);
@@ -1553,7 +1641,7 @@ public class DbService
             );
 
             _objectCache.Set(
-                $"song:{info.Id}",
+                RecommendationCacheKey(publicationGeneration, $"song:{info.Id}"),
                 info,
                 TimeSpan.FromMinutes(30),
                 EstimateSongInfoBytes(info));
@@ -1626,7 +1714,11 @@ public class DbService
     {
         cancellationToken.ThrowIfCancellationRequested();
         var normalizedLimit = Math.Clamp(limit, 1, 500);
-        var cacheKey = $"diverse-fallback:{seedSongId}:{normalizedLimit}";
+        var publicationGeneration =
+            await GetRecommendationPublicationGenerationAsync(cancellationToken);
+        var cacheKey = RecommendationCacheKey(
+            publicationGeneration,
+            $"diverse-fallback:{seedSongId}:{normalizedLimit}");
         if (_objectCache.TryGetValue(cacheKey, out int[]? cached) && cached is not null)
             return cached;
 
@@ -1858,7 +1950,8 @@ public class DbService
             excludedSongTypes);
         return _searchCache.GetOrCreateRankingAsync(
             request.CacheKey,
-            () => ExecuteTrendingSongsJsonAsync(request, CancellationToken.None),
+            cacheLoadCancellationToken =>
+                ExecuteTrendingSongsJsonAsync(request, cacheLoadCancellationToken),
             forceRefresh,
             cancellationToken);
     }
@@ -2282,7 +2375,9 @@ public class DbService
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        const string cacheKey = "markov_matrix";
+        var publicationGeneration =
+            await GetRecommendationPublicationGenerationAsync(cancellationToken);
+        var cacheKey = RecommendationCacheKey(publicationGeneration, "markov_matrix");
         if (_objectCache.TryGetValue(cacheKey, out Dictionary<int, Dictionary<int, double>>? m))
             return m!;
 

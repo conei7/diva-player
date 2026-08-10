@@ -1,8 +1,14 @@
+x-default-logging: &default-logging
+  driver: "json-file"
+  options:
+    max-size: "10m"
+    max-file: "5"
+
 x-api-environment: &api-environment
-  ConnectionStrings__Postgres: "Host=postgres;Port=5432;Database=vocadb_recommender;Username=vocadb;Password=vocadb_secret;Maximum Pool Size=16;Timeout=5;Application Name=diva-api"
+  ConnectionStrings__Postgres: "Host=postgres;Port=5432;Database=vocadb_recommender;Username=${DIVA_API_DB_USER:?DIVA_API_DB_USER is required};Password=${DIVA_API_DB_PASSWORD:?DIVA_API_DB_PASSWORD is required};Maximum Pool Size=16;Timeout=5;Application Name=diva-api"
   Recommender__QdrantEndpoint: "http://qdrant:6334"
   Recommender__YouTubeApiKey: "${YOUTUBE_API_KEY:-}"
-  Recommender__PagesProxyKey: "${PAGES_PROXY_KEY:-}"
+  Recommender__PagesProxyKey: "${PAGES_PROXY_KEY:?PAGES_PROXY_KEY is required}"
   Recommender__YouTubePlaylistCacheHours: "6"
   Recommender__NicoPlaylistCacheHours: "6"
   Recommender__SearchCacheSizeMiB: "64"
@@ -13,7 +19,9 @@ x-api-environment: &api-environment
   ASPNETCORE_ENVIRONMENT: "Production"
 
 x-api-common: &api-common
-  image: diva-player-api:local
+  # The deploy script overrides this with the preserved rollback tag while
+  # restoring a failed slot. Normal compose usage keeps the local tag.
+  image: "${DIVA_API_IMAGE:-diva-player-api:local}"
   build:
     context: ./api
     dockerfile: Dockerfile
@@ -35,6 +43,7 @@ x-api-common: &api-common
     start_period: 10s
   stop_grace_period: 30s
   restart: unless-stopped
+  logging: *default-logging
 
 services:
   postgres:
@@ -43,8 +52,8 @@ services:
     # VACUUM and vector operations can exceed Docker's 64 MiB default /dev/shm.
     shm_size: "1gb"
     environment:
-      POSTGRES_USER: vocadb
-      POSTGRES_PASSWORD: vocadb_secret
+      POSTGRES_USER: "${DIVA_DB_ADMIN_USER:-vocadb}"
+      POSTGRES_PASSWORD: "${DIVA_DB_ADMIN_PASSWORD:?DIVA_DB_ADMIN_PASSWORD is required}"
       POSTGRES_DB: vocadb_recommender
     ports:
       - "127.0.0.1:5432:5432"
@@ -52,11 +61,12 @@ services:
       - postgres_data:/var/lib/postgresql/data
       - ./database/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U vocadb -d vocadb_recommender"]
+      test: ["CMD-SHELL", "pg_isready -U ${DIVA_DB_ADMIN_USER:-vocadb} -d vocadb_recommender"]
       interval: 5s
       timeout: 5s
       retries: 10
     restart: unless-stopped
+    logging: *default-logging
 
   qdrant:
     image: qdrant/qdrant:v1.9.4
@@ -69,6 +79,7 @@ services:
     environment:
       QDRANT__SERVICE__GRPC_PORT: 6334
     restart: unless-stopped
+    logging: *default-logging
 
   migrate:
     image: postgres:16-alpine
@@ -76,8 +87,8 @@ services:
       PGHOST: postgres
       PGPORT: 5432
       PGDATABASE: vocadb_recommender
-      PGUSER: vocadb
-      PGPASSWORD: vocadb_secret
+      PGUSER: "${DIVA_DB_ADMIN_USER:-vocadb}"
+      PGPASSWORD: "${DIVA_DB_ADMIN_PASSWORD:?DIVA_DB_ADMIN_PASSWORD is required}"
     volumes:
       - ./database/migrate.sh:/migrations/migrate.sh:ro
       - ./database/migrations:/migrations/sql:ro
@@ -86,28 +97,33 @@ services:
       postgres:
         condition: service_healthy
     restart: "no"
+    logging: *default-logging
 
   api_a:
     <<: *api-common
     container_name: vocadb_api_a
     environment:
       <<: *api-environment
-      ConnectionStrings__Postgres: "Host=postgres;Port=5432;Database=vocadb_recommender;Username=vocadb;Password=vocadb_secret;Maximum Pool Size=16;Timeout=5;Application Name=diva-api-a"
+      ConnectionStrings__Postgres: "Host=postgres;Port=5432;Database=vocadb_recommender;Username=${DIVA_API_DB_USER:?DIVA_API_DB_USER is required};Password=${DIVA_API_DB_PASSWORD:?DIVA_API_DB_PASSWORD is required};Maximum Pool Size=16;Timeout=5;Application Name=diva-api-a"
 
   api_b:
     <<: *api-common
     container_name: vocadb_api_b
     environment:
       <<: *api-environment
-      ConnectionStrings__Postgres: "Host=postgres;Port=5432;Database=vocadb_recommender;Username=vocadb;Password=vocadb_secret;Maximum Pool Size=16;Timeout=5;Application Name=diva-api-b"
+      ConnectionStrings__Postgres: "Host=postgres;Port=5432;Database=vocadb_recommender;Username=${DIVA_API_DB_USER:?DIVA_API_DB_USER is required};Password=${DIVA_API_DB_PASSWORD:?DIVA_API_DB_PASSWORD is required};Maximum Pool Size=16;Timeout=5;Application Name=diva-api-b"
 
   api_gateway:
+    # Keep the gateway image addressable as well as buildable. This lets the
+    # rolling deploy validate a candidate and restore the previous image if
+    # the replacement cannot become ready.
+    image: "${DIVA_GATEWAY_IMAGE:-diva-player-api-gateway:local}"
     build:
       context: ./api-gateway
       dockerfile: Dockerfile
     container_name: vocadb_api_gateway
     environment:
-      GATEWAY_PROXY_KEY: "${PAGES_PROXY_KEY:-}"
+      GATEWAY_PROXY_KEY: "${PAGES_PROXY_KEY:?PAGES_PROXY_KEY is required}"
     ports:
       - "5000:5000"
     depends_on:
@@ -122,8 +138,10 @@ services:
       retries: 12
       start_period: 5s
     restart: unless-stopped
+    logging: *default-logging
 
   web:
+    image: "${DIVA_WEB_IMAGE:-diva-player-web:local}"
     build:
       context: ../
       dockerfile: Dockerfile.web
@@ -132,7 +150,14 @@ services:
       - "8080:80"
     depends_on:
       - api_gateway
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/backend-api/api/ready"]
+      interval: 5s
+      timeout: 6s
+      retries: 12
+      start_period: 5s
     restart: unless-stopped
+    logging: *default-logging
 
 volumes:
   postgres_data:

@@ -4,10 +4,10 @@ namespace VocadbRecommender.Services;
 public class RecommenderOptions
 {
     public string QdrantEndpoint     { get; set; } = "http://localhost:6333";
-    public string CollectionHybrid   { get; set; } = "song_hybrid";
-    public string CollectionMetadata { get; set; } = "song_metadata";
+    public string CollectionHybrid   { get; set; } = "song_hybrid_active";
+    public string CollectionMetadata { get; set; } = "song_metadata_active";
     /// <summary>Named Vectors コレクション (audio + meta を1つに格納)</summary>
-    public string CollectionNamed    { get; set; } = "songs_v2";
+    public string CollectionNamed    { get; set; } = "songs_v2_active";
     public int    AnnCandidates      { get; set; } = 240;  // ANN探索候補数
     public int    GraphWalkSteps     { get; set; } = 40;   // ランダムウォークステップ数
     public double GraphBias          { get; set; } = 0.85; // 同一プロデューサー側に留まる確率

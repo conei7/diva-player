@@ -17,6 +17,9 @@ dist
 dist-ssr
 build
 *.local
+.deploy-state/
+scripts/.rolling-deployment-test-*/
+scripts/.quick-tunnel-sync-test-*/
 
 # Editor
 .vscode/*

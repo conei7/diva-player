@@ -18,6 +18,7 @@
     "test:e2e:recommendation-debug": "node scripts/test-recommendation-debug-e2e.mjs",
     "test:e2e:trending-seeds": "node scripts/test-trending-seeds.mjs",
     "test:cloudflare-proxy": "node scripts/test-cloudflare-pages-proxy.mjs",
+    "test:runtime-health": "node scripts/test-runtime-health-collector.mjs",
     "test:rate-limit-contract": "node scripts/test-rate-limit-contract.mjs",
     "test:e2e:pages-nico": "node scripts/test-pages-nico-e2e.mjs",
     "test:e2e:navigation": "node scripts/test-navigation-e2e.mjs",
@@ -33,6 +34,8 @@
     "test:e2e:multi-tab-player": "node scripts/test-multi-tab-player-e2e.mjs",
     "test:e2e:hidden-songs": "node scripts/test-hidden-songs-e2e.mjs",
     "test:deployment-topology": "node scripts/test-deployment-topology.mjs",
+    "test:rolling-deployment": "node scripts/test-rolling-deployment.mjs",
+    "test:db-role-provisioning": "node scripts/test-db-role-provisioning.mjs",
     "test:api-availability": "node scripts/test-api-availability.mjs",
     "test:e2e:mobile": "node scripts/test-mobile-e2e.mjs",
     "test:e2e:settings": "node scripts/test-settings-e2e.mjs",
@@ -72,6 +75,7 @@
     "typescript": "~6.0.2",
     "typescript-eslint": "^8.58.2",
     "vite": "^8.0.10",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.10",
+    "wrangler": "4.120.0"
   }
 }

@@ -10,12 +10,23 @@ public class QdrantService
 {
     private readonly QdrantClient _client;
     private readonly RecommenderOptions _opts;
+    private readonly Func<CancellationToken, Task<string>> _readPublicationGeneration;
     private readonly HttpClient _healthClient;
     private readonly Uri _healthUri;
 
-    public QdrantService(IOptions<RecommenderOptions> opts)
+    public QdrantService(IOptions<RecommenderOptions> opts, DbService db)
+        : this(opts, db.ReadRecommendationPublicationGenerationUncachedAsync)
     {
+    }
+
+    internal QdrantService(
+        IOptions<RecommenderOptions> opts,
+        Func<CancellationToken, Task<string>> readPublicationGeneration)
+    {
+        ArgumentNullException.ThrowIfNull(opts);
+        ArgumentNullException.ThrowIfNull(readPublicationGeneration);
         _opts = opts.Value;
+        _readPublicationGeneration = readPublicationGeneration;
         _client = new QdrantClient(new Uri(_opts.QdrantEndpoint));
         var grpcEndpoint = new Uri(_opts.QdrantEndpoint);
         var restPort = grpcEndpoint.Port == 6334 ? 6333 : grpcEndpoint.Port;
@@ -30,9 +41,64 @@ public class QdrantService
         try
         {
             using var response = await _healthClient.GetAsync(_healthUri, cancellationToken);
-            return response.IsSuccessStatusCode
+            if (!response.IsSuccessStatusCode)
+                return new DependencyHealth(false, stopwatch.ElapsedMilliseconds, $"HTTP {(int)response.StatusCode}");
+
+            // A healthy Qdrant process is not sufficient for this API to serve
+            // recommendations. Verify the stable aliases/collections used by
+            // every search path so rolling-deployment candidates fail before
+            // replacing a live slot when publication was not bootstrapped.
+            var requiredCollections = new[]
+            {
+                _opts.CollectionNamed,
+                _opts.CollectionHybrid,
+                _opts.CollectionMetadata,
+            }
+            .Where(name => !string.IsNullOrWhiteSpace(name))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+
+            var aliasError = await ProbeRecommendationAliasGenerationAsync(
+                _readPublicationGeneration,
+                ReadAliasTargetsAsync,
+                _opts.CollectionMetadata,
+                _opts.CollectionNamed,
+                _opts.CollectionHybrid,
+                cancellationToken);
+            if (aliasError is not null)
+            {
+                return new DependencyHealth(
+                    false,
+                    stopwatch.ElapsedMilliseconds,
+                    aliasError);
+            }
+
+            var collectionChecks = requiredCollections.Select(async collectionName =>
+            {
+                try
+                {
+                    await _client.GetCollectionInfoAsync(collectionName, cancellationToken);
+                    return (CollectionName: collectionName, Error: (string?)null);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception exception)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    return (CollectionName: collectionName, Error: exception.GetType().Name);
+                }
+            });
+
+            var unavailable = (await Task.WhenAll(collectionChecks))
+                .FirstOrDefault(result => result.Error is not null);
+            return unavailable.Error is null
                 ? new DependencyHealth(true, stopwatch.ElapsedMilliseconds)
-                : new DependencyHealth(false, stopwatch.ElapsedMilliseconds, $"HTTP {(int)response.StatusCode}");
+                : new DependencyHealth(
+                    false,
+                    stopwatch.ElapsedMilliseconds,
+                    $"CollectionUnavailable:{unavailable.CollectionName}:{unavailable.Error}");
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -43,6 +109,118 @@ public class QdrantService
             cancellationToken.ThrowIfCancellationRequested();
             return new DependencyHealth(false, stopwatch.ElapsedMilliseconds, exception.GetType().Name);
         }
+    }
+
+    private async Task<IReadOnlyDictionary<string, string>> ReadAliasTargetsAsync(
+        CancellationToken cancellationToken)
+    {
+        var aliases = await _client.ListAliasesAsync(cancellationToken);
+        return aliases.ToDictionary(
+            alias => alias.AliasName,
+            alias => alias.CollectionName,
+            StringComparer.Ordinal);
+    }
+
+    internal static async Task<string?> ProbeRecommendationAliasGenerationAsync(
+        Func<CancellationToken, Task<string>> readPublicationGeneration,
+        Func<CancellationToken, Task<IReadOnlyDictionary<string, string>>> readAliasTargets,
+        string metadataAlias,
+        string namedAlias,
+        string hybridAlias,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(readPublicationGeneration);
+        ArgumentNullException.ThrowIfNull(readAliasTargets);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        // Both stores belong to one logical readiness probe. A publication
+        // boundary observed between these reads can only produce a mismatch,
+        // so it fails closed until the next bounded background probe.
+        var generationTask = readPublicationGeneration(cancellationToken);
+        var aliasesTask = readAliasTargets(cancellationToken);
+        await Task.WhenAll(generationTask, aliasesTask);
+        return ValidateRecommendationAliasTargets(
+            await aliasesTask,
+            metadataAlias,
+            namedAlias,
+            hybridAlias,
+            await generationTask);
+    }
+
+    internal static string? ValidateRecommendationAliasTargets(
+        IReadOnlyDictionary<string, string> aliasTargets,
+        string metadataAlias,
+        string namedAlias,
+        string hybridAlias,
+        string publicationGeneration)
+    {
+        if (!aliasTargets.TryGetValue(metadataAlias, out var metadataTarget)
+            || !aliasTargets.TryGetValue(namedAlias, out var namedTarget)
+            || !aliasTargets.TryGetValue(hybridAlias, out var hybridTarget))
+        {
+            return "RecommendationAliasMissing";
+        }
+
+        // The bootstrap maps all stable aliases to the three legacy physical
+        // collections. Later publications use one build-specific suffix for
+        // all three. Any mixed/foreign target set is fail-closed: existence
+        // alone cannot prove a coherent recommendation generation.
+        var legacyTargets = metadataTarget == "song_metadata"
+            && namedTarget == "songs_v2"
+            && hybridTarget == "song_hybrid";
+        if (string.Equals(publicationGeneration, "legacy", StringComparison.Ordinal))
+        {
+            return legacyTargets
+                ? null
+                : "RecommendationAliasGenerationMismatch";
+        }
+
+        static bool IsLowerHex(string value) => value.All(character =>
+            character is >= '0' and <= '9' or >= 'a' and <= 'f');
+        const int basisIdLength = 64;
+        const int buildIdLength = 32;
+        if (string.IsNullOrEmpty(publicationGeneration)
+            || publicationGeneration.Length != basisIdLength + 1 + buildIdLength
+            || publicationGeneration[basisIdLength] != ':'
+            || !IsLowerHex(publicationGeneration[..basisIdLength])
+            || !IsLowerHex(publicationGeneration[(basisIdLength + 1)..]))
+        {
+            return "RecommendationPublicationGenerationInvalid";
+        }
+
+        if (legacyTargets)
+            return "RecommendationAliasGenerationMismatch";
+
+        const string metadataPrefix = "song_metadata_basis_";
+        const string namedPrefix = "songs_v2_basis_";
+        const string hybridPrefix = "song_hybrid_basis_";
+        if (!metadataTarget.StartsWith(metadataPrefix, StringComparison.Ordinal)
+            || !namedTarget.StartsWith(namedPrefix, StringComparison.Ordinal)
+            || !hybridTarget.StartsWith(hybridPrefix, StringComparison.Ordinal))
+        {
+            return "RecommendationAliasTargetInvalid";
+        }
+
+        var metadataSuffix = metadataTarget[metadataPrefix.Length..];
+        var namedSuffix = namedTarget[namedPrefix.Length..];
+        var hybridSuffix = hybridTarget[hybridPrefix.Length..];
+        if (metadataSuffix.Length != 21
+            || metadataSuffix[12] != '_'
+            || !IsLowerHex(metadataSuffix[..12])
+            || !IsLowerHex(metadataSuffix[13..])
+            || !string.Equals(metadataSuffix, namedSuffix, StringComparison.Ordinal)
+            || !string.Equals(metadataSuffix, hybridSuffix, StringComparison.Ordinal))
+        {
+            return "RecommendationAliasGenerationMismatch";
+        }
+
+        var buildIdStart = basisIdLength + 1;
+        var expectedSuffix =
+            $"{publicationGeneration[..12]}_{publicationGeneration[buildIdStart..(buildIdStart + 8)]}";
+        if (!string.Equals(metadataSuffix, expectedSuffix, StringComparison.Ordinal))
+            return "RecommendationAliasGenerationMismatch";
+
+        return null;
     }
 
     /// <summary>

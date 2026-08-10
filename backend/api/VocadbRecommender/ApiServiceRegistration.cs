@@ -10,6 +10,21 @@ internal static class ApiServiceRegistration
         services.AddOptions<RecommenderOptions>()
             .Bind(configuration.GetSection("Recommender"))
             .Validate(
+                options => new[]
+                    {
+                        options.CollectionNamed,
+                        options.CollectionHybrid,
+                        options.CollectionMetadata,
+                    }
+                    .All(name => !string.IsNullOrWhiteSpace(name))
+                    && new[]
+                    {
+                        options.CollectionNamed,
+                        options.CollectionHybrid,
+                        options.CollectionMetadata,
+                    }.Distinct(StringComparer.Ordinal).Count() == 3,
+                "Recommender collection aliases must be non-empty and distinct")
+            .Validate(
                 options => options.SearchCacheSizeMiB > 0,
                 "Recommender:SearchCacheSizeMiB must be positive")
             .Validate(
@@ -32,9 +47,13 @@ internal static class ApiServiceRegistration
         services.AddSingleton<SearchResponseCache>();
         services.AddSingleton<RecommendationObjectCache>();
         services.AddSingleton<DbService>();
+        services.AddSingleton<RecommendationPublicationGuard>();
         services.AddSingleton<QdrantService>();
         services.AddSingleton<ApiWarmupState>();
         services.AddHostedService<ApiWarmupService>();
+        services.AddSingleton<ApiReadinessProbeState>();
+        services.AddHostedService<ApiReadinessProbeService>();
+        services.AddHostedService<ApiRuntimeTelemetryService>();
         services.AddSingleton<MarkovService>();
         services.AddScoped<RecommendService>();
         services.AddScoped<DigDiscoveryService>();

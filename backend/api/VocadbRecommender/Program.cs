@@ -132,6 +132,7 @@ var app = builder.Build();
 app.UseResponseCompression();
 app.UseCors("AllowFrontend");
 app.UseRateLimiter();
+app.UseMiddleware<RecommendationPublicationMiddleware>();
 
 const int maxSearchStart = 100_000;
 const int maxSearchResults = 200;
