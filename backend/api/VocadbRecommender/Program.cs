@@ -325,7 +325,12 @@ app.MapGet("/api/recommend/metadata", async (
     if (seed is null)
         return Results.Ok(new { items = Array.Empty<object>() });
 
-    var candidateScores = (await vectorTask)
+    var vectorCandidates = await vectorTask;
+    var vocalistDiversityAssessmentIds = vectorCandidates
+        .Take(RecommendService.VocalistDiversityAssessmentCandidateCount)
+        .Select(candidate => candidate.SongId)
+        .ToHashSet();
+    var candidateScores = vectorCandidates
         .ToDictionary(candidate => candidate.SongId, candidate => candidate.Score);
     foreach (var candidateId in await tagTask)
         candidateScores.TryAdd(candidateId, -1);
@@ -343,7 +348,11 @@ app.MapGet("/api/recommend/metadata", async (
     var infos = await db.GetSongInfoBatchAsync(
         results.Select(r => r.SongId),
         cancellationToken);
-    if (MetadataRelationshipRanking.NeedsDiverseFallback(infos))
+    var vocalistDiversityAssessmentInfos = infos
+        .Where(info => vocalistDiversityAssessmentIds.Contains(info.Id));
+    if (MetadataRelationshipRanking.NeedsDiverseFallback(
+        infos,
+        vocalistDiversityAssessmentInfos))
     {
         foreach (var candidateId in await db.GetDiverseFallbackCandidateIdsAsync(
             songId,

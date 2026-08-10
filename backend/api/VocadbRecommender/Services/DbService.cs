@@ -1734,6 +1734,11 @@ public class DbService
                 SELECT artist_id
                 FROM song_artists
                 WHERE song_id = $1 AND is_producer = TRUE
+            ),
+            seed_vocalists AS (
+                SELECT artist_id
+                FROM song_artists
+                WHERE song_id = $1 AND is_vocalist = TRUE
             )
             SELECT candidate.id
             FROM songs candidate
@@ -1769,6 +1774,14 @@ public class DbService
                     AND candidate_producer.is_producer = TRUE
               )
             ORDER BY
+                CASE WHEN EXISTS (
+                    SELECT 1
+                    FROM song_artists candidate_vocalist
+                    JOIN seed_vocalists seed_vocalist
+                      ON seed_vocalist.artist_id = candidate_vocalist.artist_id
+                    WHERE candidate_vocalist.song_id = candidate.id
+                      AND candidate_vocalist.is_vocalist = TRUE
+                ) THEN 1 ELSE 0 END,
                 CASE WHEN candidate.song_type = seed.song_type THEN 0 ELSE 1 END,
                 CASE
                     WHEN seed.state_cluster IS NOT NULL

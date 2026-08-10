@@ -13,6 +13,7 @@
     "test": "vitest run",
     "test:integration:sbc": "node scripts/test-sbc-integration.mjs",
     "test:recommendation-regression": "node scripts/test-recommendation-regression.mjs",
+    "test:recommendation-regression-report": "node scripts/test-recommendation-regression-report.mjs",
     "test:recommendation-history": "node scripts/test-recommendation-history.mjs",
     "test:e2e:sbc": "node scripts/test-sbc-e2e.mjs",
     "test:e2e:recommendation-debug": "node scripts/test-recommendation-debug-e2e.mjs",

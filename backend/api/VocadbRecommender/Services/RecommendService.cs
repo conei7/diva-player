@@ -8,6 +8,9 @@ namespace VocadbRecommender.Services;
 /// </summary>
 public class RecommendService
 {
+    internal const int DiverseFallbackCandidateCount = 80;
+    internal const int VocalistDiversityAssessmentCandidateCount = 100;
+
     private readonly DbService     _db;
     private readonly QdrantService _qdrant;
     private readonly MarkovService _markov;
@@ -58,6 +61,10 @@ public class RecommendService
                 cancellationToken,
                 playedSet);
         }
+        var vocalistDiversityAssessmentIds = annCandidates
+            .Take(VocalistDiversityAssessmentCandidateCount)
+            .Select(candidate => candidate.SongId)
+            .ToHashSet();
 
         // --- 2. 知識グラフ バイアス付きランダムウォーク ---
         var graphTask = KnowledgeGraphWalkAsync(
@@ -111,22 +118,25 @@ public class RecommendService
         var candidateInfos = await _db.GetSongInfoBatchAsync(
             mergedCandidates.Select(c => c.Key),
             cancellationToken);
-        if (MetadataRelationshipRanking.NeedsDiverseFallback(candidateInfos))
+        var vocalistDiversityAssessmentInfos = candidateInfos
+            .Where(info => vocalistDiversityAssessmentIds.Contains(info.Id));
+        if (MetadataRelationshipRanking.NeedsDiverseFallback(
+            candidateInfos,
+            vocalistDiversityAssessmentInfos))
         {
             var maximumScore = mergedCandidates.Count == 0
                 ? 1.0
                 : Math.Max(1e-9, mergedCandidates.Max(candidate => candidate.Value));
             var fallbackIds = await _db.GetDiverseFallbackCandidateIdsAsync(
                 seedSongId,
-                80,
+                DiverseFallbackCandidateCount,
                 cancellationToken);
-            foreach (var (id, index) in fallbackIds.Select((id, index) => (id, index)))
-            {
-                if (playedSet.Contains(id) || candidateScores.ContainsKey(id)) continue;
-                candidateScores[id] = maximumScore
-                    * _opts.DiverseFallbackScoreWeight
-                    / Math.Pow(index + 1.0, 0.15);
-            }
+            MergeDiverseFallbackCandidates(
+                candidateScores,
+                fallbackIds,
+                playedSet,
+                maximumScore,
+                _opts.DiverseFallbackScoreWeight);
             mergedCandidates = candidateScores
                 .OrderByDescending(candidate => candidate.Value)
                 .Select(candidate => (candidate.Key, candidate.Value))
@@ -188,6 +198,27 @@ public class RecommendService
             .ToList();
 
         return new RecommendResponse(items, null);
+    }
+
+    internal static void MergeDiverseFallbackCandidates(
+        IDictionary<int, double> candidateScores,
+        IEnumerable<int> fallbackIds,
+        IReadOnlySet<int> excludedSongIds,
+        double maximumScore,
+        double fallbackScoreWeight)
+    {
+        foreach (var (id, index) in fallbackIds.Select((id, index) => (id, index)))
+        {
+            if (excludedSongIds.Contains(id)) continue;
+            var fallbackScore = maximumScore
+                * fallbackScoreWeight
+                / Math.Pow(index + 1.0, 0.15);
+            if (!candidateScores.TryGetValue(id, out var existingScore)
+                || existingScore < fallbackScore)
+            {
+                candidateScores[id] = fallbackScore;
+            }
+        }
     }
 
     /// <summary>
@@ -343,7 +374,7 @@ public class RecommendService
 
     // ---- MMR (Maximal Marginal Relevance) 再ランキング ----------
 
-    private static List<(int SongId, double Score, string Reason)> MmrRerank(
+    internal static List<(int SongId, double Score, string Reason)> MmrRerank(
         List<(int SongId, double Score)> candidates,
         SongInfo[] infos,
         int count,

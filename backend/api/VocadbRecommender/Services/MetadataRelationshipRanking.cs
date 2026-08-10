@@ -7,26 +7,56 @@ namespace VocadbRecommender.Services;
 /// </summary>
 public static class MetadataRelationshipRanking
 {
-    public static bool NeedsDiverseFallback(IEnumerable<SongInfo> candidateInfos)
+    public static bool NeedsDiverseFallback(
+        IEnumerable<SongInfo> candidateInfos,
+        IEnumerable<SongInfo>? vocalistAssessmentInfos = null)
     {
-        var infos = candidateInfos
+        var eligibleInfos = candidateInfos
             .Where(DiscoveryEligibility.IsEligible)
+            .ToArray();
+        var producerInfos = eligibleInfos
             .Where(info => info.ProducerIds.Length > 0)
             .ToArray();
         // Newly ingested songs may not have a vector, tags, or another song by
         // the same producer yet. A sparse pool needs the same catalog fallback
         // as a producer-concentrated pool so these valid seeds do not return an
         // empty recommendation list.
-        if (infos.Length < 20) return true;
+        if (producerInfos.Length < 20) return true;
 
-        var dominantShare = infos
+        var dominantProducerShare = producerInfos
             .SelectMany(info => info.ProducerIds.Distinct())
             .GroupBy(id => id)
-            .Select(group => (double)group.Count() / infos.Length)
+            .Select(group => (double)group.Count() / producerInfos.Length)
             .DefaultIfEmpty(0)
             .Max();
-        var distinctProducers = infos.SelectMany(info => info.ProducerIds).Distinct().Count();
-        return dominantShare >= 0.65 || distinctProducers < 8;
+        var distinctProducers = producerInfos
+            .SelectMany(info => info.ProducerIds)
+            .Distinct()
+            .Count();
+
+        // A pool can have hundreds of distinct producers and still consist of
+        // one voice-synth catalog. MMR can downrank repetition, but it cannot
+        // select another vocalist unless the candidate pool contains one.
+        var vocalistInfos = (vocalistAssessmentInfos ?? eligibleInfos)
+            .Where(DiscoveryEligibility.IsEligible)
+            .Where(info => info.VocalistIds.Length > 0)
+            .ToArray();
+        if (vocalistInfos.Length < 20) return true;
+
+        var dominantVocalistShare = vocalistInfos
+            .SelectMany(info => info.VocalistIds.Distinct())
+            .GroupBy(id => id)
+            .Select(group => (double)group.Count() / vocalistInfos.Length)
+            .DefaultIfEmpty(0)
+            .Max();
+        var distinctVocalists = vocalistInfos
+            .SelectMany(info => info.VocalistIds)
+            .Distinct()
+            .Count();
+        return dominantProducerShare >= 0.65
+            || distinctProducers < 8
+            || dominantVocalistShare >= 0.65
+            || distinctVocalists < 8;
     }
 
     public static List<(int SongId, double Score)> RerankRelated(

@@ -6,6 +6,7 @@ on:
     paths:
       - '.github/workflows/recommendation-monitor.yml'
       - 'scripts/test-recommendation-regression.mjs'
+      - 'scripts/test-recommendation-regression-report.mjs'
       - 'package.json'
       - 'package-lock.json'
   schedule:
@@ -31,6 +32,8 @@ jobs:
           cache: npm
       - name: Install dependencies
         run: npm ci
+      - name: Test recommendation report diagnostics
+        run: npm run test:recommendation-regression-report
       - name: Check deployed recommendation API
         run: |
           for attempt in 1 2; do
