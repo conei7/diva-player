@@ -173,8 +173,8 @@ public sealed class SearchResponseCacheTests
     public async Task LastWaiterLeaving_RacingLateJoinNeverJoinsDoomedSearchFlight()
     {
         using var releaseCancellationCallback = new ManualResetEventSlim();
-        var firstStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var cancellationCallbackEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var firstStarted = new ManualResetEventSlim();
+        using var cancellationCallbackEntered = new ManualResetEventSlim();
         using var flight = new SearchResponseCache.LoadFlight<SongSearchExecution>(
             (_, cancellationToken) => RunFirstLoadAsync(cancellationToken),
             cancelWhenOrphaned: true,
@@ -184,10 +184,10 @@ public sealed class SearchResponseCacheTests
         {
             using var registration = cancellationToken.Register(() =>
             {
-                cancellationCallbackEntered.TrySetResult();
+                cancellationCallbackEntered.Set();
                 releaseCancellationCallback.Wait();
             });
-            firstStarted.TrySetResult();
+            firstStarted.Set();
             await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
             throw new InvalidOperationException("Infinite delay completed unexpectedly.");
         }
@@ -195,20 +195,21 @@ public sealed class SearchResponseCacheTests
         Assert.True(flight.TryAcquire(out var firstLease));
         Assert.NotNull(firstLease);
         var first = flight.Start();
-        await firstStarted.Task;
+        Assert.True(firstStarted.Wait(TimeSpan.FromSeconds(5)));
 
-        // Dispose the final lease on a dedicated thread. The loader's
+        // Dispose the final lease on a dedicated OS thread. The loader's
         // cancellation callback deliberately blocks after the flight has
         // closed its gate, giving the test a deterministic late-join window
-        // without depending on an async continuation under CI load.
-        var releaseFirstLease = Task.Factory.StartNew(
-            firstLease!.Dispose,
-            CancellationToken.None,
-            TaskCreationOptions.LongRunning,
-            TaskScheduler.Default);
+        // without depending on a thread-pool continuation under CI load.
+        var releaseFirstLease = new Thread(firstLease!.Dispose)
+        {
+            IsBackground = true,
+            Name = "search-cache-flight-release-test",
+        };
+        releaseFirstLease.Start();
         try
         {
-            await cancellationCallbackEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.True(cancellationCallbackEntered.Wait(TimeSpan.FromSeconds(5)));
 
             // The flight is already closed to new leases while its cancellation
             // callback is deliberately held open.
@@ -218,7 +219,7 @@ public sealed class SearchResponseCacheTests
         finally
         {
             releaseCancellationCallback.Set();
-            await releaseFirstLease.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.True(releaseFirstLease.Join(TimeSpan.FromSeconds(5)));
         }
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await first);
