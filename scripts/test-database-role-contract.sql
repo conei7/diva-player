@@ -103,9 +103,9 @@ BEGIN
           AND owner.rolname IN ('diva_api_runtime', 'diva_pipeline_runtime')
     ) OR EXISTS (
         SELECT 1
-        FROM pg_class relation
-        JOIN pg_namespace namespace ON namespace.oid = relation.relnamespace
-        JOIN pg_roles owner ON owner.oid = relation.relowner
+        FROM pg_class owned_relation
+        JOIN pg_namespace namespace ON namespace.oid = owned_relation.relnamespace
+        JOIN pg_roles owner ON owner.oid = owned_relation.relowner
         WHERE namespace.nspname <> 'information_schema'
           AND namespace.nspname !~ '^pg_'
           AND owner.rolname IN ('diva_api_runtime', 'diva_pipeline_runtime')
