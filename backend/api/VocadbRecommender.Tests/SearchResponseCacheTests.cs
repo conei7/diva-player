@@ -182,14 +182,16 @@ public sealed class SearchResponseCacheTests
 
         async Task<SongSearchExecution> RunFirstLoadAsync(CancellationToken cancellationToken)
         {
+            var completion = new TaskCompletionSource<SongSearchExecution>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
             using var registration = cancellationToken.Register(() =>
             {
                 cancellationCallbackEntered.Set();
                 releaseCancellationCallback.Wait();
+                completion.TrySetCanceled(cancellationToken);
             });
             firstStarted.Set();
-            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
-            throw new InvalidOperationException("Infinite delay completed unexpectedly.");
+            return await completion.Task;
         }
 
         Assert.True(flight.TryAcquire(out var firstLease));
