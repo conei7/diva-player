@@ -7,5 +7,5 @@ Wants=network-online.target
 Type=oneshot
 WorkingDirectory=%h/diva-player
 EnvironmentFile=-%h/.config/diva-player/runtime-health.env
-ExecStart=/usr/bin/node %h/diva-player/scripts/collect-sbc-runtime-health.mjs
+ExecStart=/usr/bin/python3 -B %h/diva-player/scripts/collect-sbc-runtime-health.py
 TimeoutStartSec=45s

@@ -36,6 +36,9 @@ jobs:
         with:
           node-version: '22.22.0'
           cache: 'npm'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.0.x'
@@ -55,6 +58,8 @@ jobs:
         run: npm run test:rolling-deployment
       - name: Runtime health collector contract
         run: npm run test:runtime-health
+      - name: Python runtime health collector contract
+        run: npm run test:runtime-health:python
       - name: Database LOGIN role provisioning contract
         run: npm run test:db-role-provisioning
       - name: Database schema and model guard contract
