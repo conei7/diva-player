@@ -208,17 +208,30 @@ public sealed class SearchResponseCacheTests
             cancellationToken: firstCaller.Token);
         await firstStarted.Task;
 
-        var cancelFirst = Task.Run(firstCaller.Cancel);
-        await cancellationCallbackEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        // Cancellation deliberately blocks inside the callback.  Use a
+        // dedicated thread so a constrained CI thread pool cannot starve the
+        // continuation that observes the callback barrier.
+        var cancelFirst = Task.Factory.StartNew(
+            firstCaller.Cancel,
+            CancellationToken.None,
+            TaskCreationOptions.LongRunning,
+            TaskScheduler.Default);
+        try
+        {
+            await cancellationCallbackEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
-        // The flight is already closed to new leases while its cancellation
-        // callback is deliberately held open.
-        var late = await cache.GetOrCreateAsync("search-leave-join-race", Load);
-        Assert.Equal("[{\"id\":2}]", late.ItemsJson);
-        Assert.Equal(2, Volatile.Read(ref calls));
+            // The flight is already closed to new leases while its cancellation
+            // callback is deliberately held open.
+            var late = await cache.GetOrCreateAsync("search-leave-join-race", Load);
+            Assert.Equal("[{\"id\":2}]", late.ItemsJson);
+            Assert.Equal(2, Volatile.Read(ref calls));
+        }
+        finally
+        {
+            releaseCancellationCallback.Set();
+            await cancelFirst.WaitAsync(TimeSpan.FromSeconds(5));
+        }
 
-        releaseCancellationCallback.Set();
-        await cancelFirst;
         await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await first);
         await WaitForNoInFlightLoadAsync(cache, "search-leave-join-race");
 
