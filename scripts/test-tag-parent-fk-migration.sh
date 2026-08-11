@@ -6,6 +6,7 @@ set -euo pipefail
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd -- "$script_dir/.." && pwd)"
 migration="$repo_root/backend/database/migrations/0019_repair_tag_parent_fk.sql"
+normalization_migration="$repo_root/backend/database/migrations/0020_normalize_annoyloids_category.sql"
 
 export PGHOST="${PGHOST:-127.0.0.1}"
 export PGPORT="${PGPORT:-5432}"
@@ -20,12 +21,13 @@ if [[ "${DIVA_ALLOW_DESTRUCTIVE_DB_MIGRATION_TEST:-}" != '1' ]]; then
     exit 2
 fi
 
-expect_migration_failure() {
-    local expected_message="$1"
-    shift
+expect_sql_failure() {
+    local migration_file="$1"
+    local expected_message="$2"
+    shift 2
     local output
 
-    if output="$("${psql_cmd[@]}" "$@" --file="$migration" 2>&1)"; then
+    if output="$("${psql_cmd[@]}" "$@" --file="$migration_file" 2>&1)"; then
         printf 'migration unexpectedly succeeded; wanted: %s\n' "$expected_message" >&2
         exit 1
     fi
@@ -34,6 +36,18 @@ expect_migration_failure() {
         printf 'migration failed for an unexpected reason\n%s\n' "$output" >&2
         exit 1
     fi
+}
+
+expect_migration_failure() {
+    local expected_message="$1"
+    shift
+    expect_sql_failure "$migration" "$expected_message" "$@"
+}
+
+expect_normalization_failure() {
+    local expected_message="$1"
+    shift
+    expect_sql_failure "$normalization_migration" "$expected_message" "$@"
 }
 
 # Refuse a database that is not the freshly created CI fixture before running
@@ -55,6 +69,8 @@ SQL
 # empty schema must validate that constraint without seeding source data.
 "${psql_cmd[@]}" --file="$migration"
 "${psql_cmd[@]}" --file="$migration"
+"${psql_cmd[@]}" --file="$normalization_migration"
+"${psql_cmd[@]}" --file="$normalization_migration"
 "${psql_cmd[@]}" <<'SQL'
 DO $test$
 BEGIN
@@ -356,6 +372,155 @@ SQL
 # must be a no-op that leaves data and privileges intact.
 "${psql_cmd[@]}" --file="$migration"
 
+# 0020 is owner-only, rejects identity/category drift, and changes only the
+# source's NULL-vs-empty representation after all 0019 invariants hold.
+expect_normalization_failure '0020 must run as the tags owner or a superuser' \
+    --command='SET ROLE diva_pipeline_runtime'
+"${psql_cmd[@]}" <<'SQL'
+DO $test$
+BEGIN
+    IF (SELECT category FROM public.tags WHERE id = 11669) IS NOT NULL THEN
+        RAISE EXCEPTION 'runtime-role normalization attempt changed tag 11669';
+    END IF;
+END;
+$test$;
+
+UPDATE public.tags SET category = 'Unexpected' WHERE id = 11669;
+SQL
+expect_normalization_failure 'tag 11669 conflicts with the verified Annoyloids category shape'
+"${psql_cmd[@]}" <<'SQL'
+DO $test$
+BEGIN
+    IF (SELECT category FROM public.tags WHERE id = 11669)
+       IS DISTINCT FROM 'Unexpected' THEN
+        RAISE EXCEPTION 'failed normalization changed an unexpected category';
+    END IF;
+END;
+$test$;
+
+UPDATE public.tags SET category = NULL WHERE id = 11669;
+UPDATE public.tags SET name = 'Annoyloids drift' WHERE id = 11669;
+SQL
+expect_normalization_failure 'tag 11669 conflicts with the verified Annoyloids category shape'
+"${psql_cmd[@]}" <<'SQL'
+DO $test$
+BEGIN
+    IF (SELECT name FROM public.tags WHERE id = 11669)
+       IS DISTINCT FROM 'Annoyloids drift' THEN
+        RAISE EXCEPTION 'failed normalization changed an unexpected identity';
+    END IF;
+END;
+$test$;
+
+UPDATE public.tags SET name = 'Annoyloids' WHERE id = 11669;
+UPDATE public.tags SET parent_id = 11805 WHERE id = 11669;
+SQL
+expect_normalization_failure 'tag 11669 conflicts with the verified Annoyloids category shape'
+"${psql_cmd[@]}" <<'SQL'
+DO $test$
+BEGIN
+    IF (SELECT parent_id FROM public.tags WHERE id = 11669)
+       IS DISTINCT FROM 11805 THEN
+        RAISE EXCEPTION 'failed normalization changed an unexpected parent';
+    END IF;
+END;
+$test$;
+
+UPDATE public.tags SET parent_id = 92 WHERE id = 11669;
+SQL
+"${psql_cmd[@]}" --file="$normalization_migration"
+"${psql_cmd[@]}" --file="$normalization_migration"
+"${psql_cmd[@]}" <<'SQL'
+DO $test$
+DECLARE
+    parent_attnum SMALLINT;
+    id_attnum SMALLINT;
+    cycle_origin INTEGER;
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM public.tags
+        WHERE id = 11669
+          AND name = 'Annoyloids'
+          AND category = ''
+          AND parent_id = 92
+    ) THEN
+        RAISE EXCEPTION 'tag 11669 was not normalized to an empty category';
+    END IF;
+
+    IF (SELECT count(*) FROM public.song_tags
+        WHERE (song_id, tag_id, tag_count) IN (
+            (-2147483000, 11668, 7),
+            (-2147482999, 11822, 11)
+        )) <> 2 THEN
+        RAISE EXCEPTION 'song_tags references changed during category normalization';
+    END IF;
+
+    IF EXISTS (
+        SELECT 1
+        FROM public.tags child
+        LEFT JOIN public.tags parent_tag ON parent_tag.id = child.parent_id
+        WHERE child.parent_id IS NOT NULL
+          AND parent_tag.id IS NULL
+    ) THEN
+        RAISE EXCEPTION 'category normalization introduced an orphan';
+    END IF;
+
+    WITH RECURSIVE parent_walk AS (
+        SELECT child.id AS origin_id,
+               child.parent_id AS next_id,
+               ARRAY[child.id]::INTEGER[] AS path,
+               FALSE AS cycle_found
+        FROM public.tags child
+        WHERE child.parent_id IS NOT NULL
+        UNION ALL
+        SELECT walk.origin_id,
+               parent_tag.parent_id,
+               walk.path || parent_tag.id,
+               parent_tag.id = ANY(walk.path)
+        FROM parent_walk walk
+        JOIN public.tags parent_tag ON parent_tag.id = walk.next_id
+        WHERE NOT walk.cycle_found
+    )
+    SELECT origin_id
+    INTO cycle_origin
+    FROM parent_walk
+    WHERE cycle_found
+    LIMIT 1;
+
+    IF cycle_origin IS NOT NULL THEN
+        RAISE EXCEPTION 'category normalization left a cycle';
+    END IF;
+
+    SELECT attnum INTO STRICT parent_attnum
+    FROM pg_attribute
+    WHERE attrelid = 'public.tags'::regclass
+      AND attname = 'parent_id'
+      AND NOT attisdropped;
+
+    SELECT attnum INTO STRICT id_attnum
+    FROM pg_attribute
+    WHERE attrelid = 'public.tags'::regclass
+      AND attname = 'id'
+      AND NOT attisdropped;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'public.tags'::regclass
+          AND conname = 'tags_parent_id_fkey'
+          AND contype = 'f'
+          AND conkey = ARRAY[parent_attnum]::SMALLINT[]
+          AND confrelid = 'public.tags'::regclass
+          AND confkey = ARRAY[id_attnum]::SMALLINT[]
+          AND NOT condeferrable
+          AND NOT condeferred
+          AND convalidated
+    ) THEN
+        RAISE EXCEPTION 'category normalization changed the parent FK contract';
+    END IF;
+END;
+$test$;
+SQL
+
 # Remove test data in FK-safe order, then exercise an exact unvalidated FK and
 # a competing differently named FK on an empty schema.
 "${psql_cmd[@]}" <<'SQL'
@@ -373,7 +538,9 @@ ALTER TABLE public.tags
     FOREIGN KEY (parent_id) REFERENCES public.tags (id)
     NOT VALID;
 SQL
+expect_normalization_failure '0020 requires the validated tags(parent_id) self-reference'
 "${psql_cmd[@]}" --file="$migration"
+"${psql_cmd[@]}" --file="$normalization_migration"
 "${psql_cmd[@]}" <<'SQL'
 DO $test$
 BEGIN
@@ -403,5 +570,7 @@ SQL
 # which the test started.  Repeat once more to cover the no-FK creation path.
 "${psql_cmd[@]}" --file="$migration"
 "${psql_cmd[@]}" --file="$migration"
+"${psql_cmd[@]}" --file="$normalization_migration"
+"${psql_cmd[@]}" --file="$normalization_migration"
 
 printf 'PASS tag parent FK migration contract\n'

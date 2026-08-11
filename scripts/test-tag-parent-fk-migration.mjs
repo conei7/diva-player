@@ -1,9 +1,13 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
-const [migration, integration, runner, workflow, compose, runtimeRoles] = await Promise.all([
+const [migration, normalization, integration, runner, workflow, compose, runtimeRoles] = await Promise.all([
   readFile(
     new URL('../backend/database/migrations/0019_repair_tag_parent_fk.sql', import.meta.url),
+    'utf8',
+  ),
+  readFile(
+    new URL('../backend/database/migrations/0020_normalize_annoyloids_category.sql', import.meta.url),
     'utf8',
   ),
   readFile(new URL('./test-tag-parent-fk-migration.sh', import.meta.url), 'utf8'),
@@ -107,5 +111,26 @@ assert.doesNotMatch(
   runtimeRoles,
   /GRANT (?:REFERENCES|TRIGGER)[\s\S]*diva_pipeline_runtime/,
 );
+
+assert.match(normalization, /^BEGIN;\s*$/m);
+assert.match(normalization, /COMMIT;\s*$/);
+assert.match(normalization, /SET LOCAL lock_timeout = '5s'/);
+assert.match(normalization, /SET LOCAL statement_timeout = '30s'/);
+assert.match(normalization, /LOCK TABLE public\.tags IN SHARE ROW EXCLUSIVE MODE/);
+assert.match(normalization, /0020 must run as the tags owner or a superuser/);
+assert.match(normalization, /0020 requires the validated tags\(parent_id\) self-reference/);
+assert.match(
+  normalization,
+  /id = 11669[\s\S]*name = 'Annoyloids'[\s\S]*parent_id = 92[\s\S]*\(category IS NULL OR category = ''\)/,
+);
+assert.match(
+  normalization,
+  /UPDATE public\.tags[\s\S]*SET category = ''[\s\S]*WHERE id = 11669[\s\S]*category IS NULL/,
+);
+assert.match(normalization, /orphan tag parent edges found during 0020/);
+assert.match(normalization, /tag parent cycle found during 0020/);
+assert.doesNotMatch(normalization, /\bDELETE\s+FROM\s+public\.tags\b/i);
+assert.doesNotMatch(normalization, /session_replication_role/i);
+assert.doesNotMatch(normalization, /\b(?:GRANT|REVOKE|ALTER\s+ROLE)\b/i);
 
 console.log('PASS tag parent FK migration static contract');
