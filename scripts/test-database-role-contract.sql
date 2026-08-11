@@ -47,6 +47,22 @@ BEGIN
         RAISE EXCEPTION 'expected two runtime privilege roles';
     END IF;
 
+    IF (SELECT count(*)
+        FROM pg_roles
+        WHERE rolname IN (
+            'diva_api_login_role_contract',
+            'diva_pipeline_login_role_contract'
+        )
+          AND rolcanlogin
+          AND rolinherit
+          AND NOT rolsuper
+          AND NOT rolcreatedb
+          AND NOT rolcreaterole
+          AND NOT rolreplication
+          AND NOT rolbypassrls) <> 2 THEN
+        RAISE EXCEPTION 'runtime LOGIN role attributes are unsafe';
+    END IF;
+
     IF has_schema_privilege('diva_api_runtime', 'public', 'CREATE')
         OR has_schema_privilege('diva_pipeline_runtime', 'public', 'CREATE') THEN
         RAISE EXCEPTION 'runtime role can create objects in public';
@@ -525,6 +541,21 @@ DELETE FROM songs WHERE id = -2147483647;
 
 DO $pipeline_denials$
 BEGIN
+    IF current_setting('session_replication_role') <> 'origin' THEN
+        RAISE EXCEPTION 'unexpected session replication role before denial test';
+    END IF;
+
+    BEGIN
+        EXECUTE 'SET LOCAL session_replication_role = replica';
+        RAISE EXCEPTION 'pipeline unexpectedly disabled foreign-key checks';
+    EXCEPTION WHEN insufficient_privilege THEN
+        NULL;
+    END;
+
+    IF current_setting('session_replication_role') <> 'origin' THEN
+        RAISE EXCEPTION 'failed replication-role change altered the session';
+    END IF;
+
     BEGIN
         UPDATE discovery_quality_model_policy
         SET expected_revision = expected_revision

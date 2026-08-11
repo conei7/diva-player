@@ -99,7 +99,13 @@ fi
   assert.match(stdinText, /SET LOCAL log_statement = 'none'/);
   assert.match(stdinText, /GRANT %I TO %I/);
   assert.match(stdinText, /in-place password rotation is forbidden/);
-  assert.match(stdinText, /CREATE ROLE %I WITH LOGIN/);
+  assert.match(
+    stdinText,
+    /CREATE ROLE %I WITH LOGIN NOSUPERUSER INHERIT NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS/,
+  );
+  assert.match(stdinText, /runtime_role\.rolsuper/);
+  assert.match(stdinText, /runtime_role\.rolreplication/);
+  assert.match(stdinText, /runtime_role\.rolbypassrls/);
   assert.doesNotMatch(stdinText, /ALTER ROLE %I WITH LOGIN[^\n]*PASSWORD/);
   assert.match(stdinText, /diva_api_login_20260810a/);
   assert.match(stdinText, /diva_pipeline_login_20260810a/);
