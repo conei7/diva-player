@@ -62,8 +62,15 @@ jobs:
         run: npm run test:runtime-health:python
       - name: Database LOGIN role provisioning contract
         run: npm run test:db-role-provisioning
+      - name: Tag parent FK migration static contract
+        run: npm run test:tag-parent-fk-migration
       - name: Database schema and model guard contract
         env:
+          DIVA_ALLOW_DESTRUCTIVE_DB_MIGRATION_TEST: '1'
+          PGHOST: 127.0.0.1
+          PGPORT: '5432'
+          PGUSER: vocadb
+          PGDATABASE: vocadb_recommender
           PGPASSWORD: diva-ci-password
         run: |
           psql -v ON_ERROR_STOP=1 -h 127.0.0.1 -U vocadb -d vocadb_recommender -f backend/database/schema.sql
@@ -73,6 +80,7 @@ jobs:
           psql -v ON_ERROR_STOP=1 -h 127.0.0.1 -U vocadb -d vocadb_recommender -f backend/database/migrations/0018_runtime_database_roles.sql
           psql -v ON_ERROR_STOP=1 -h 127.0.0.1 -U vocadb -d vocadb_recommender -f backend/database/migrations/0018_runtime_database_roles.sql
           psql -v ON_ERROR_STOP=1 -h 127.0.0.1 -U vocadb -d vocadb_recommender -f scripts/test-database-role-contract.sql
+          bash scripts/test-tag-parent-fk-migration.sh
       - name: Build
         run: npm run build
       - name: Start preview server for E2E
