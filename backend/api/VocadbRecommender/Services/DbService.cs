@@ -59,6 +59,13 @@ public class DbService
         "ACEVirtualSinger", "VOICEVOX", "AIVOICE"
     ];
 
+    internal const string AudioHealthActionablePvPredicateSql = """
+        p.disabled = FALSE
+        AND p.pv_type IN ('Original', 'Reprint')
+        AND p.service IN ('Youtube', 'NicoNicoDouga')
+        AND NULLIF(BTRIM(p.pv_id), '') IS NOT NULL
+        """;
+
     private static readonly string VoiceSynthArtistTypesSql = string.Join(
         ", ",
         VoiceSynthArtistTypes.Select(static artistType => $"'{artistType}'"));
@@ -695,12 +702,11 @@ public class DbService
                            COUNT(*) FILTER (WHERE h.audio_computed IS NOT TRUE)::bigint AS pending_count
                     FROM high_view_pool h
                     WHERE EXISTS (
-                          SELECT 1
-                          FROM pvs p
-                          WHERE p.song_id = h.id
-                            AND p.disabled = FALSE
-                            AND p.pv_type IN ('Original', 'Reprint')
-                      )
+                           SELECT 1
+                           FROM pvs p
+                           WHERE p.song_id = h.id
+                             AND " + AudioHealthActionablePvPredicateSql + @"
+                       )
                       AND (
                           h.song_type = 'Original'
                           OR (

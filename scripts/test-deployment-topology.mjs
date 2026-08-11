@@ -112,6 +112,15 @@ assert.match(serviceRegistration, /AddSingleton<RecommendationPublicationGuard>/
 assert.match(dbService, /recommendation_publication_generation/);
 assert.match(dbService, /ReadRecommendationPublicationGenerationUncachedAsync/);
 assert.match(dbService, /RecommendationPublicationGenerationCacheDuration[\s\S]*TimeSpan\.FromSeconds\(5\)/);
+const audioHealthSelector = dbService.match(
+  /public async Task<AudioFeatureHealth> CheckAudioFeatureHealthAsync[\s\S]*?public Task<SongSearchExecution> SearchSongsAsync/,
+)?.[0];
+assert.ok(audioHealthSelector, 'audio feature health selector contract was not found');
+assert.match(audioHealthSelector, /AND " \+ AudioHealthActionablePvPredicateSql \+ @"/);
+assert.match(
+  dbService,
+  /AudioHealthActionablePvPredicateSql = """[\s\S]*?p\.disabled = FALSE[\s\S]*?p\.pv_type IN \('Original', 'Reprint'\)[\s\S]*?p\.service IN \('Youtube', 'NicoNicoDouga'\)[\s\S]*?NULLIF\(BTRIM\(p\.pv_id\), ''\) IS NOT NULL[\s\S]*?""";/,
+);
 assert.match(dbService, /_publicationGenerationLock\.WaitAsync\(cancellationToken\)/);
 assert.match(dbService, /ObserveRecommendationPublicationGenerationAsync/);
 assert.match(dbService, /RecommendationCacheKey\(publicationGeneration, \$"song:\{id\}"\)/);
