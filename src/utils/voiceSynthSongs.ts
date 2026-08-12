@@ -3,7 +3,9 @@ import { isVoiceSynthArtistType } from '../config/voiceSynthTypes';
 
 /** Excludes the occasional human-vocal / non-vocaloid record registered in VocaDB. */
 export function isVoiceSynthSong(song: Song): boolean {
-  const vocalists = (song.artists ?? []).filter(artist => artist.categories?.includes('Vocalist'));
+  const vocalists = (song.artists ?? []).filter(artist =>
+    artist.categories?.includes('Vocalist') && !artist.isSupport,
+  );
   return vocalists.some(artist => isVoiceSynthArtistType(artist.artist?.artistType));
 }
 

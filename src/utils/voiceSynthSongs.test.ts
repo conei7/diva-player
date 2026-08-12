@@ -4,7 +4,7 @@ import { filterVoiceSynthSongs } from './voiceSynthSongs';
 
 type ArtistType = NonNullable<ArtistForSong['artist']>['artistType'];
 
-function song(id: number, artistType: ArtistType): Song {
+function song(id: number, artistType: ArtistType, isSupport = false): Song {
   return {
     id,
     name: `song-${id}`,
@@ -22,6 +22,7 @@ function song(id: number, artistType: ArtistType): Song {
     artists: [{
       artist: { artistType } as NonNullable<ArtistForSong['artist']>,
       categories: 'Vocalist',
+      isSupport,
     } as ArtistForSong],
   };
 }
@@ -50,5 +51,18 @@ describe('filterVoiceSynthSongs', () => {
       song(1, 'Voiceroid'),
       song(2, 'OtherVocalist'),
     ]).map(item => item.id)).toEqual([1]);
+  });
+
+  it('does not treat a support-only voice synthesizer as the main vocalist', () => {
+    const manuallyExcludedHumanOriginal = song(933455, 'OtherVocalist');
+    manuallyExcludedHumanOriginal.artists?.push({
+      artist: { artistType: 'OtherVoiceSynthesizer' } as NonNullable<ArtistForSong['artist']>,
+      categories: 'Vocalist',
+      isSupport: true,
+    } as ArtistForSong);
+    expect(filterVoiceSynthSongs([
+      manuallyExcludedHumanOriginal,
+      song(566566, 'Vocaloid'),
+    ]).map(item => item.id)).toEqual([566566]);
   });
 });
