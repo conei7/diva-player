@@ -191,6 +191,77 @@ body {
   transition: transform 0.2s ease;
 }
 
+/* ─── フィルタ折りたたみセクション ─── */
+.filter-section-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.625rem 1rem;
+  cursor: pointer;
+  user-select: none;
+  color: var(--color-text-secondary);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  letter-spacing: 0.025em;
+  transition: color 0.15s ease, background 0.15s ease;
+  background: transparent;
+  border: none;
+  text-align: left;
+}
+
+.filter-section-header:hover {
+  color: var(--color-text-primary);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.filter-section-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.filter-section-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  font-size: 0.625rem;
+  font-weight: 700;
+  background: var(--color-accent-purple);
+  color: #fff;
+}
+
+.filter-section-chevron {
+  flex-shrink: 0;
+  transition: transform 0.2s ease;
+}
+
+.filter-section-chevron[data-open="true"] {
+  transform: rotate(90deg);
+}
+
+.filter-section-body {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.25s ease;
+}
+
+.filter-section-body[data-open="true"] {
+  grid-template-rows: 1fr;
+}
+
+.filter-section-content {
+  overflow: hidden;
+  padding: 0 1rem;
+}
+
+.filter-section-body[data-open="true"] .filter-section-content {
+  padding-bottom: 0.75rem;
+}
+
 /* ─── トグルスイッチ ─── */
 .ui-switch {
   position: relative;
