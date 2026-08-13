@@ -3,7 +3,11 @@
 import { appendFile, writeFile } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 
-const DEFAULT_TIMEOUT_MS = 20_000;
+// A cold slot may need longer than the 15-second quality budget to finish
+// hydrating its bounded recommendation cache. Let that first attempt complete
+// so the workflow's one full retry can distinguish a transient cold start from
+// sustained latency; the asserted p95 budget below remains 15 seconds.
+const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_LATENCY_MS = 15_000;
 const DEFAULT_MAX_ARTIST_SHARE = 0.75;
 const DEFAULT_MAX_PRODUCER_SHARE = 0.70;
@@ -55,25 +59,37 @@ function assert(condition, message) {
 
 async function getJson(baseUrl, path) {
   const startedAt = performance.now();
-  const response = await fetch(`${baseUrl}${path}`, {
-    signal: AbortSignal.timeout(DEFAULT_TIMEOUT_MS),
-  });
-  const elapsedMs = Math.round(performance.now() - startedAt);
-  if (!response.ok) throw new Error(`${path} returned HTTP ${response.status}.`);
-  return { data: await response.json(), elapsedMs };
+  try {
+    const response = await fetch(`${baseUrl}${path}`, {
+      signal: AbortSignal.timeout(DEFAULT_TIMEOUT_MS),
+    });
+    const elapsedMs = Math.round(performance.now() - startedAt);
+    if (!response.ok) throw new Error(`${path} returned HTTP ${response.status}.`);
+    return { data: await response.json(), elapsedMs };
+  } catch (error) {
+    const elapsedMs = Math.round(performance.now() - startedAt);
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`GET ${path} failed after ${elapsedMs}ms: ${message}`, { cause: error });
+  }
 }
 
 async function postJson(baseUrl, path, body) {
   const startedAt = performance.now();
-  const response = await fetch(`${baseUrl}${path}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(DEFAULT_TIMEOUT_MS),
-  });
-  const elapsedMs = Math.round(performance.now() - startedAt);
-  if (!response.ok) throw new Error(`${path} returned HTTP ${response.status}.`);
-  return { data: await response.json(), elapsedMs };
+  try {
+    const response = await fetch(`${baseUrl}${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(DEFAULT_TIMEOUT_MS),
+    });
+    const elapsedMs = Math.round(performance.now() - startedAt);
+    if (!response.ok) throw new Error(`${path} returned HTTP ${response.status}.`);
+    return { data: await response.json(), elapsedMs };
+  } catch (error) {
+    const elapsedMs = Math.round(performance.now() - startedAt);
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`POST ${path} failed after ${elapsedMs}ms: ${message}`, { cause: error });
+  }
 }
 
 function validateItems(data, endpoint, seedId) {
