@@ -270,6 +270,12 @@ CREATE TABLE IF NOT EXISTS song_artists (
 CREATE INDEX IF NOT EXISTS sa_artist_idx    ON song_artists (artist_id);
 CREATE INDEX IF NOT EXISTS sa_producer_idx  ON song_artists (artist_id) WHERE is_producer = TRUE;
 CREATE INDEX IF NOT EXISTS sa_vocalist_idx  ON song_artists (artist_id) WHERE is_vocalist = TRUE;
+CREATE INDEX IF NOT EXISTS song_artists_producer_song_idx
+    ON song_artists (song_id, artist_id)
+    WHERE is_producer = TRUE;
+CREATE INDEX IF NOT EXISTS song_artists_vocalist_song_idx
+    ON song_artists (song_id, artist_id)
+    WHERE is_vocalist = TRUE;
 
 -- ============================================================
 -- タグテーブル (階層構造あり)
@@ -331,6 +337,10 @@ CREATE TABLE IF NOT EXISTS pvs (
 
 CREATE INDEX IF NOT EXISTS pvs_song_idx ON pvs (song_id);
 CREATE INDEX IF NOT EXISTS pvs_playable_song_idx ON pvs (song_id) WHERE disabled = FALSE;
+CREATE INDEX IF NOT EXISTS pvs_playable_song_cover_idx
+    ON pvs (song_id)
+    INCLUDE (pv_type)
+    WHERE disabled = FALSE;
 CREATE INDEX IF NOT EXISTS pvs_stats_due_idx
     ON pvs (service, stats_last_success_at ASC NULLS FIRST, song_id)
     WHERE disabled = FALSE;

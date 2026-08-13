@@ -1566,10 +1566,12 @@ public class DbService
                    ARRAY(
                        SELECT artist_id FROM song_artists
                        WHERE song_id = s.id AND is_producer = TRUE
+                       ORDER BY artist_id
                    ) AS producer_ids,
                    ARRAY(
                        SELECT artist_id FROM song_artists
                        WHERE song_id = s.id AND is_vocalist = TRUE
+                       ORDER BY artist_id
                    ) AS vocalist_ids,
                    s.youtube_views, s.nico_views, s.publish_date,
                    ARRAY(
@@ -1578,6 +1580,7 @@ public class DbService
                        JOIN tags t ON t.id = st.tag_id
                        WHERE st.song_id = s.id
                          AND COALESCE(t.category, '') <> 'Vocalists'
+                       ORDER BY st.tag_id
                    ) AS related_tag_ids,
                    ARRAY(
                        SELECT (album ->> 'id')::int
@@ -1603,11 +1606,7 @@ public class DbService
                    ) AS has_playable_pv,
                    COALESCE(q.discovery_eligible, FALSE) AS discovery_eligible
                    ,COALESCE(q.quality_score, 0.5)::double precision AS quality_score
-                   ,EXISTS (
-                       SELECT 1 FROM song_features audio_features
-                       WHERE audio_features.song_id = s.id
-                         AND audio_features.audio_computed IS TRUE
-                   ) AS has_audio_features
+                   ,sf.audio_computed IS TRUE AS has_audio_features
                    ,EXISTS (
                        SELECT 1 FROM pvs original_pv
                        WHERE original_pv.song_id = s.id
@@ -1664,7 +1663,12 @@ public class DbService
     {
         cancellationToken.ThrowIfCancellationRequested();
         var normalizedLimit = Math.Clamp(limit, 1, 1000);
-        var cacheKey = $"metadata-relationship:{seedSongId}:{normalizedLimit}";
+        var publicationGeneration =
+            await GetRecommendationPublicationGenerationAsync(cancellationToken);
+        var cacheKey = MetadataRelationshipCacheKey(
+            publicationGeneration,
+            seedSongId,
+            normalizedLimit);
         if (_objectCache.TryGetValue(cacheKey, out int[]? cached) && cached is not null)
             return cached;
 
@@ -1712,6 +1716,14 @@ public class DbService
         _objectCache.Set(cacheKey, ids, TimeSpan.FromMinutes(15), EstimateIdArrayBytes(ids));
         return ids;
     }
+
+    internal static string MetadataRelationshipCacheKey(
+        string publicationGeneration,
+        int seedSongId,
+        int normalizedLimit) =>
+        RecommendationCacheKey(
+            publicationGeneration,
+            $"metadata-relationship:{seedSongId}:{normalizedLimit}");
 
     public async Task<int[]> GetDiverseFallbackCandidateIdsAsync(
         int seedSongId,

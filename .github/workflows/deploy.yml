@@ -77,6 +77,10 @@ jobs:
           psql -v ON_ERROR_STOP=1 -h 127.0.0.1 -U vocadb -d vocadb_recommender -c "DROP INDEX song_discovery_eligible_song_idx"
           psql -v ON_ERROR_STOP=1 -h 127.0.0.1 -U vocadb -d vocadb_recommender -f backend/database/migrations/0021_discovery_eligible_song_lookup.sql
           psql -v ON_ERROR_STOP=1 -h 127.0.0.1 -U vocadb -d vocadb_recommender -Atc "SELECT indisvalid AND indisready FROM pg_index WHERE indexrelid = 'song_discovery_eligible_song_idx'::regclass" | grep -qx t
+          psql -v ON_ERROR_STOP=1 -h 127.0.0.1 -U vocadb -d vocadb_recommender -c "DROP INDEX song_artists_producer_song_idx, song_artists_vocalist_song_idx, pvs_playable_song_cover_idx"
+          psql -v ON_ERROR_STOP=1 -h 127.0.0.1 -U vocadb -d vocadb_recommender -f backend/database/migrations/0022_recommendation_song_info_covering_indexes.sql
+          psql -v ON_ERROR_STOP=1 -h 127.0.0.1 -U vocadb -d vocadb_recommender -Atc "SELECT COUNT(*) FROM pg_index WHERE indexrelid IN ('song_artists_producer_song_idx'::regclass, 'song_artists_vocalist_song_idx'::regclass, 'pvs_playable_song_cover_idx'::regclass) AND indisvalid AND indisready" | grep -qx 3
+          psql -v ON_ERROR_STOP=1 -h 127.0.0.1 -U vocadb -d vocadb_recommender -f backend/database/tests/recommendation_song_info_contract.sql
           psql -v ON_ERROR_STOP=1 -h 127.0.0.1 -U vocadb -d vocadb_recommender -f backend/database/migrations/0017_discovery_quality_model_guard.sql
           psql -v ON_ERROR_STOP=1 -h 127.0.0.1 -U vocadb -d vocadb_recommender -f scripts/test-discovery-quality-model-guard.sql
           psql -v ON_ERROR_STOP=1 -h 127.0.0.1 -U vocadb -d vocadb_recommender -c "CREATE TABLE IF NOT EXISTS schema_migrations (migration_id TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now())"
