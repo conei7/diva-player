@@ -15,6 +15,12 @@ internal static class SongReadEndpoints
             DbService db,
             CancellationToken cancellationToken) =>
             GetSongsByIdsAsync(ids, db, compact: false, cancellationToken));
+        endpoints.MapGet("/api/songs/discovery-eligibility", (
+            string ids,
+            DbService db,
+            HttpContext httpContext,
+            CancellationToken cancellationToken) =>
+            GetDiscoveryEligibilityAsync(ids, db, httpContext, cancellationToken));
         endpoints.MapGet("/api/songs/views", GetExternalViewsAsync);
         endpoints.MapGet("/api/songs/{id}/history", GetViewHistoryAsync);
         return endpoints;
@@ -50,6 +56,46 @@ internal static class SongReadEndpoints
             .ToArray();
         return Results.Ok(new { items });
     }
+
+    private static async Task<IResult> GetDiscoveryEligibilityAsync(
+        string ids,
+        DbService db,
+        HttpContext httpContext,
+        CancellationToken cancellationToken)
+    {
+        httpContext.Response.Headers.CacheControl = "no-store";
+        if (string.IsNullOrWhiteSpace(ids))
+            return Results.Ok(new { items = Array.Empty<SongDiscoveryEligibilityItem>() });
+
+        var rawIds = ids.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (rawIds.Length > 500)
+            return Results.BadRequest(new { error = "ids must contain at most 500 items" });
+
+        var orderedIds = rawIds
+            .Select(value => int.TryParse(value, out var id) ? id : 0)
+            .Where(id => id > 0)
+            .Distinct()
+            .ToArray();
+        if (orderedIds.Length == 0)
+            return Results.Ok(new { items = Array.Empty<SongDiscoveryEligibilityItem>() });
+
+        var eligibility = await db.GetDiscoveryEligibilityBySongIdsAsync(
+            orderedIds,
+            cancellationToken);
+        return Results.Ok(new
+        {
+            items = BuildDiscoveryEligibilityItems(orderedIds, eligibility),
+        });
+    }
+
+    internal static SongDiscoveryEligibilityItem[] BuildDiscoveryEligibilityItems(
+        IReadOnlyList<int> orderedIds,
+        IReadOnlyDictionary<int, bool> eligibility) =>
+        orderedIds
+            .Select(id => new SongDiscoveryEligibilityItem(
+                id,
+                eligibility.GetValueOrDefault(id, false)))
+            .ToArray();
 
     private static async Task<IResult> GetExternalViewsAsync(
         string ids,
@@ -107,3 +153,5 @@ internal static class SongReadEndpoints
         return Results.Ok(await db.GetViewHistoryAsync(id, cancellationToken));
     }
 }
+
+internal sealed record SongDiscoveryEligibilityItem(int SongId, bool DiscoveryEligible);

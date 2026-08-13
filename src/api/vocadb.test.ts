@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Artist, Song } from '../types/vocadb';
-import { attachExternalViews, buildDigRecommendationRequest, getSongById, getSongsByIds, getTopSongs, getTrendingSongs, rankArtistsByName, resolveProducerByName, searchVocalistsByName, selectVocalistVariants } from './vocadb';
+import { attachExternalViews, buildDigRecommendationRequest, filterDiscoveryEligibleSongs, getDiscoveryEligibleSongIds, getSongById, getSongsByIds, getTopSongs, getTrendingSongs, rankArtistsByName, resolveProducerByName, searchVocalistsByName, selectVocalistVariants } from './vocadb';
 import { DEFAULT_GLOBAL_FILTER_SETTINGS } from '../stores/globalFilterStore';
 import { VOCALIST_SEARCH_ARTIST_TYPES } from '../config/voiceSynthTypes';
 
@@ -270,6 +270,133 @@ describe('recommendation song detail batching', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(String(fetchMock.mock.calls[0]?.[0])).toContain('/api/songs/details?ids=92006,92007');
     expect(details.map(song => song.id)).toEqual([92007, 92006]);
+  });
+});
+
+describe('authoritative discovery eligibility', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('keeps an eligible synth cover and excludes a manually rejected stale playlist song', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          items: [
+            { songId: 566566, discoveryEligible: true },
+            { songId: 933455, discoveryEligible: false },
+          ],
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          items: [
+            { songId: 566566, discoveryEligible: false },
+            { songId: 933455, discoveryEligible: false },
+          ],
+        }),
+      });
+    vi.stubGlobal('fetch', fetchMock);
+    const staleLocalSongs = [
+      { id: 566566, name: 'eligible synth cover' },
+      { id: 933455, name: 'manually excluded' },
+    ] as Song[];
+
+    const first = await filterDiscoveryEligibleSongs(staleLocalSongs);
+    const second = await filterDiscoveryEligibleSongs(staleLocalSongs);
+
+    expect(first.map(song => song.id)).toEqual([566566]);
+    expect(second).toEqual([]);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain(
+      '/api/songs/discovery-eligibility?ids=566566,933455',
+    );
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ cache: 'no-store' });
+  });
+
+  it('removes a manual exclusion returned by the public VocaDB recommendation fallback', async () => {
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.endsWith('/api/ready')) {
+        return { ok: true, status: 200 };
+      }
+      if (url.includes('/api/recommend?')) {
+        return { ok: false, status: 503 };
+      }
+      if (url.includes('/songs/42/related?')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            likeMatches: [
+              { id: 933455, name: 'excluded fallback', youtubeViews: 1, nicoViews: 1 },
+              { id: 566566, name: 'eligible synth cover', youtubeViews: 1, nicoViews: 1 },
+            ],
+            artistMatches: [],
+            tagMatches: [],
+          }),
+        };
+      }
+      if (url.includes('/api/songs/discovery-eligibility?')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            items: [
+              { songId: 933455, discoveryEligible: false },
+              { songId: 566566, discoveryEligible: true },
+            ],
+          }),
+        };
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    vi.resetModules();
+    const fallbackApi = await import('./vocadb');
+
+    const fallbackSongs = await fallbackApi.getRecommendedSongs(42, 10);
+    const filtered = await fallbackApi.filterDiscoveryEligibleSongs(fallbackSongs);
+
+    expect(fallbackSongs.map(song => song.id)).toEqual([933455, 566566]);
+    expect(filtered.map(song => song.id)).toEqual([566566]);
+    expect(fetchMock.mock.calls.some(call =>
+      String(call[0]).includes('/api/songs/discovery-eligibility?ids=933455,566566'))).toBe(true);
+  });
+
+  it('chunks more than 500 IDs and fails closed for an unavailable chunk', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          items: Array.from({ length: 500 }, (_, index) => ({
+            songId: index + 1,
+            discoveryEligible: true,
+          })),
+        }),
+      })
+      .mockResolvedValueOnce({ ok: false, status: 503 });
+    vi.stubGlobal('fetch', fetchMock);
+    const controller = new AbortController();
+
+    const eligible = await getDiscoveryEligibleSongIds(
+      Array.from({ length: 501 }, (_, index) => index + 1),
+      controller.signal,
+    );
+
+    expect(eligible.size).toBe(500);
+    expect(eligible.has(500)).toBe(true);
+    expect(eligible.has(501)).toBe(false);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const firstIds = new URL(String(fetchMock.mock.calls[0]?.[0]), 'http://localhost')
+      .searchParams.get('ids')?.split(',');
+    const secondIds = new URL(String(fetchMock.mock.calls[1]?.[0]), 'http://localhost')
+      .searchParams.get('ids')?.split(',');
+    expect(firstIds).toHaveLength(500);
+    expect(secondIds).toEqual(['501']);
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ signal: controller.signal });
   });
 });
 

@@ -25,6 +25,7 @@ const EXTERNAL_VIEWS_BATCH_DELAY_MS = 20;
 const EXTERNAL_VIEWS_BATCH_SIZE = 200;
 const SONG_DETAILS_BATCH_DELAY_MS = 20;
 const SONG_DETAILS_BATCH_SIZE = 100;
+const DISCOVERY_ELIGIBILITY_BATCH_SIZE = 500;
 
 interface ExternalViewCounts {
   youtubeViews: number;
@@ -39,6 +40,11 @@ interface ExternalViewRequest {
 interface SongBatchRequest {
   resolve: (value: Song | undefined) => void;
   reject: (reason?: unknown) => void;
+}
+
+interface SongDiscoveryEligibilityItem {
+  songId: number;
+  discoveryEligible: boolean;
 }
 
 // 上限付きメモリキャッシュ。検索の同時実行は同じPromiseへまとめる。
@@ -204,6 +210,54 @@ export async function getSongsByIds(ids: number[]): Promise<Song[]> {
   } catch {
     return getSongDetailsWithConcurrency(normalizedIds);
   }
+}
+
+/**
+ * Rechecks local history/playlist IDs against the current server-side
+ * discovery policy. This intentionally bypasses the song-card cache: an old
+ * IndexedDB or playlist payload must not resurrect a manually excluded song.
+ * Failed or malformed chunks fail closed for discovery surfaces.
+ */
+export async function getDiscoveryEligibleSongIds(
+  ids: readonly number[],
+  signal?: AbortSignal,
+): Promise<Set<number>> {
+  const normalizedIds = [...new Set(ids.filter(id => Number.isInteger(id) && id > 0))];
+  if (normalizedIds.length === 0) return new Set<number>();
+
+  const chunks: number[][] = [];
+  for (let index = 0; index < normalizedIds.length; index += DISCOVERY_ELIGIBILITY_BATCH_SIZE) {
+    chunks.push(normalizedIds.slice(index, index + DISCOVERY_ELIGIBILITY_BATCH_SIZE));
+  }
+
+  const results = await Promise.all(chunks.map(async chunk => {
+    try {
+      const response = await fetch(
+        `${RECOMMENDER_API}/api/songs/discovery-eligibility?ids=${chunk.join(',')}`,
+        { cache: 'no-store', signal },
+      );
+      if (!response.ok) return [] as number[];
+      const payload = await response.json() as { items?: unknown };
+      if (!Array.isArray(payload.items)) return [] as number[];
+      return payload.items
+        .filter((item): item is SongDiscoveryEligibilityItem => (
+          typeof item === 'object'
+          && item !== null
+          && Number.isInteger((item as { songId?: unknown }).songId)
+          && (item as { discoveryEligible?: unknown }).discoveryEligible === true
+        ))
+        .map(item => item.songId);
+    } catch {
+      return [] as number[];
+    }
+  }));
+
+  return new Set(results.flat());
+}
+
+export async function filterDiscoveryEligibleSongs(songs: readonly Song[]): Promise<Song[]> {
+  const eligibleIds = await getDiscoveryEligibleSongIds(songs.map(song => song.id));
+  return songs.filter(song => eligibleIds.has(song.id));
 }
 
 async function getSongDetailsWithConcurrency(ids: readonly number[], concurrency = 5): Promise<Song[]> {

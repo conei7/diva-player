@@ -23,6 +23,7 @@ public sealed class DbServiceCancellationTests
     [InlineData(nameof(DbService.SearchTagsAsync))]
     [InlineData(nameof(DbService.GetSongsJsonByIdsAsync))]
     [InlineData(nameof(DbService.GetSongsCardJsonByIdsAsync))]
+    [InlineData(nameof(DbService.GetDiscoveryEligibilityBySongIdsAsync))]
     [InlineData(nameof(DbService.GetExternalViewCountsAsync))]
     [InlineData(nameof(DbService.GetSongInfoAsync))]
     [InlineData(nameof(DbService.GetSongInfoBatchAsync))]
@@ -92,6 +93,7 @@ public sealed class DbServiceCancellationTests
                 cancellationToken: cancellation.Token),
             () => service.GetSongsJsonByIdsAsync([1], cancellation.Token),
             () => service.GetSongsCardJsonByIdsAsync([1], cancellation.Token),
+            () => service.GetDiscoveryEligibilityBySongIdsAsync([1], cancellation.Token),
             () => service.GetSongInfoAsync(1, cancellation.Token),
             () => service.GetSongInfoBatchAsync([1], cancellation.Token),
             () => service.GetMetadataRelationshipCandidateIdsAsync(1, 10, cancellation.Token),

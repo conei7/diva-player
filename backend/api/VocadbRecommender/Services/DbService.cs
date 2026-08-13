@@ -1501,6 +1501,43 @@ public class DbService
 
     // ---- 楽曲情報 -------------------------------------------------
 
+    /// <summary>
+    /// Rechecks browser-local history and playlist IDs against the authoritative
+    /// discovery policy. Missing quality rows deliberately fail closed.
+    /// </summary>
+    public async Task<Dictionary<int, bool>> GetDiscoveryEligibilityBySongIdsAsync(
+        IEnumerable<int> songIds,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var ids = songIds
+            .Where(id => id > 0)
+            .Distinct()
+            .Take(500)
+            .ToArray();
+        if (ids.Length == 0) return [];
+
+        await using var conn = await OpenAsync(cancellationToken);
+        await using var cmd = new NpgsqlCommand(@"
+            SELECT requested.song_id,
+                   COALESCE(quality.discovery_eligible, FALSE) AS discovery_eligible
+            FROM unnest($1::integer[]) WITH ORDINALITY AS requested(song_id, ordinal)
+            LEFT JOIN song_discovery_quality quality
+              ON quality.song_id = requested.song_id
+            ORDER BY requested.ordinal", conn);
+        cmd.Parameters.Add(new NpgsqlParameter
+        {
+            Value = ids,
+            NpgsqlDbType = NpgsqlDbType.Array | NpgsqlDbType.Integer,
+        });
+
+        var result = new Dictionary<int, bool>(ids.Length);
+        await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+            result[reader.GetInt32(0)] = reader.GetBoolean(1);
+        return result;
+    }
+
     public async Task<Dictionary<int, ExternalViewCounts>> GetExternalViewCountsAsync(
         IEnumerable<int> songIds,
         CancellationToken cancellationToken)

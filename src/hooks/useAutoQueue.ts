@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import {
+  getDiscoveryEligibleSongIds,
   getMultiRecommendedSongs,
   getSongsByProducer,
   attachExternalViews,
@@ -244,13 +245,31 @@ export function useAutoQueue({
       ...queue.map(song => song.id),
       ...Object.keys(hiddenSongs).map(Number),
     ]);
-    const playlistSongIds = buildPlaylistSongSet(playlists);
-    const playlistSongs = getPlaylistSongs(playlists);
-    const tasteProfile = buildUserTasteProfile(historyEntries, playlists, ratings, implicitFeedback);
     setStatus('fetching');
 
     void (async () => {
       try {
+        const localPlaylistSongs = getPlaylistSongs(playlists);
+        const eligibleKnownIds = await getDiscoveryEligibleSongIds([
+          ...historyEntries.map(entry => entry.song.id),
+          ...localPlaylistSongs.map(song => song.id),
+        ], controller.signal);
+        if (controller.signal.aborted || generation !== requestGenerationRef.current) return;
+
+        const eligibleHistoryEntries = historyEntries
+          .filter(entry => eligibleKnownIds.has(entry.song.id));
+        const eligiblePlaylists = playlists.map(playlist => ({
+          ...playlist,
+          songs: playlist.songs.filter(song => eligibleKnownIds.has(song.id)),
+        }));
+        const playlistSongIds = buildPlaylistSongSet(eligiblePlaylists);
+        const playlistSongs = getPlaylistSongs(eligiblePlaylists);
+        const tasteProfile = buildUserTasteProfile(
+          eligibleHistoryEntries,
+          eligiblePlaylists,
+          ratings,
+          implicitFeedback,
+        );
         const candidates = await fetchCandidates(
           currentSong,
           rootSeed,
@@ -266,19 +285,26 @@ export function useAutoQueue({
             .catch(() => [] as Song[]),
         ))).flat();
         const candidatePool = [...candidates, ...favoriteCandidates];
+        const eligibleCandidateIds = await getDiscoveryEligibleSongIds(
+          candidatePool.map(song => song.id),
+          controller.signal,
+        );
+        if (controller.signal.aborted || generation !== requestGenerationRef.current) return;
+        const authoritativeCandidatePool = candidatePool
+          .filter(song => eligibleCandidateIds.has(song.id));
         const enrichedCandidates = requiresExternalViewCounts(globalFilterSettings)
-          ? await attachExternalViews(candidatePool)
-          : candidatePool;
+          ? await attachExternalViews(authoritativeCandidatePool)
+          : authoritativeCandidatePool;
         const filteredCandidates = filterCandidatePool(
           enrichedCandidates,
-          historyEntries,
+          eligibleHistoryEntries,
           existingIds,
           globalFilterSettings,
           ratings,
           queuePlan.requestedCount,
         );
         const knownCandidateSongs = rankKnownSongs(
-          historyEntries,
+          eligibleHistoryEntries,
           playlistSongs,
           ratings,
           existingIds,
@@ -291,7 +317,7 @@ export function useAutoQueue({
           {
           settings: globalFilterSettings,
           ratings,
-          lastPlayedAtBySongId: new Map(historyEntries.map(entry => [entry.song.id, entry.playedAt] as const)),
+          lastPlayedAtBySongId: new Map(eligibleHistoryEntries.map(entry => [entry.song.id, entry.playedAt] as const)),
           },
           strategyTarget.known,
         );
@@ -300,7 +326,7 @@ export function useAutoQueue({
           ...knownCandidates.relaxedConditions,
         ])];
         const knownIds = new Set<number>([
-          ...historyEntries.map(entry => entry.song.id),
+          ...eligibleHistoryEntries.map(entry => entry.song.id),
           ...playlistSongs.map(song => song.id),
           ...Object.keys(ratings).map(Number),
           ...Object.keys(implicitFeedback).map(Number),
@@ -315,8 +341,8 @@ export function useAutoQueue({
           [source]: filteredCandidates.items,
         }, {
           total: queuePlan.requestedCount,
-          historyEntries,
-          playlists,
+          historyEntries: eligibleHistoryEntries,
+          playlists: eligiblePlaylists,
           ratings,
           implicitFeedback,
           excludeIds: existingIds,
@@ -328,6 +354,7 @@ export function useAutoQueue({
           favoriteProducerIds: new Set(favoriteProducers.map(producer => producer.id)),
         });
         const nextSongs = detailed.ranked.map(item => item.song);
+        if (controller.signal.aborted || generation !== requestGenerationRef.current) return;
         useRecommendationDebugStore.getState().recordSnapshot({
           id: `${Date.now()}-autoplay-${generation}`,
           surface: 'autoplay',
@@ -340,7 +367,6 @@ export function useAutoQueue({
           selectedCount: detailed.ranked.length,
           trace: detailed.trace,
         });
-        if (controller.signal.aborted || generation !== requestGenerationRef.current) return;
 
         if (nextSongs.length === 0) {
           setStatus('exhausted');

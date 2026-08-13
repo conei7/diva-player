@@ -3,7 +3,7 @@ import { useShallow } from 'zustand/react/shallow';
 import { useSearchParams } from 'react-router';
 import CategoryChips, { type CategoryChip } from '../components/home/CategoryChips';
 import VideoGrid from '../components/home/VideoGrid';
-import { getRecommendedSongs, getSimilarSongs, getAudioSimilarSongs, getTrendingSongs, attachExternalViews } from '../api/vocadb';
+import { attachExternalViews, filterDiscoveryEligibleSongs, getAudioSimilarSongs, getRecommendedSongs, getSimilarSongs, getTrendingSongs } from '../api/vocadb';
 import { useHistoryStore } from '../stores/historyStore';
 import { usePlayerStore } from '../stores/playerStore';
 import { useRatingStore } from '../stores/ratingStore';
@@ -143,13 +143,30 @@ export default function HomePage() {
     const excludeIds = new Set<number>();
     if (currentSong?.id) excludeIds.add(currentSong.id);
 
-    const playlistSongs = getPlaylistSongs(playlists);
+    const localPlaylistSongs = getPlaylistSongs(playlists);
+    const eligibleKnownSongs = await filterDiscoveryEligibleSongs(uniqueSongsById([
+      ...entries.map(entry => entry.song),
+      ...localPlaylistSongs,
+    ]));
+    const eligibleKnownIds = new Set(eligibleKnownSongs.map(song => song.id));
+    const eligibleEntries = entries.filter(entry => eligibleKnownIds.has(entry.song.id));
+    const eligiblePlaylists = playlists.map(playlist => ({
+      ...playlist,
+      songs: playlist.songs.filter(song => eligibleKnownIds.has(song.id)),
+    }));
+    const playlistSongs = getPlaylistSongs(eligiblePlaylists);
     const playlistSongIds = new Set(playlistSongs.map(song => song.id));
-    const rankedKnown = rankKnownSongs(entries, playlistSongs, ratings, excludeIds, implicitFeedback);
+    const rankedKnown = rankKnownSongs(
+      eligibleEntries,
+      playlistSongs,
+      ratings,
+      excludeIds,
+      implicitFeedback,
+    );
     const knownSongs = rankedKnown.map(item => item.song);
 
     const seedIds = uniqueSongsById([
-      ...entries.slice(0, 5).map(entry => entry.song),
+      ...eligibleEntries.slice(0, 5).map(entry => entry.song),
       ...(currentSong ? [currentSong] : []),
     ])
       .filter(song => !excludeIds.has(song.id))
@@ -213,17 +230,28 @@ export default function HomePage() {
         : optionalSources.then(value => ({ value, timedOut: false })),
     ]);
     const [seedResults, preferenceResults, audioResults, favoriteResults] = optionalResult.value;
+    const hybridCandidates = uniqueSongsById([
+      ...favoriteResults.flat(),
+      ...preferenceResults.flat(),
+      ...seedResults.flat(),
+    ]);
+    const audioCandidates = uniqueSongsById(audioResults.flat());
+    const eligibleDiscoverySongs = await filterDiscoveryEligibleSongs(uniqueSongsById([
+      ...hybridCandidates,
+      ...audioCandidates,
+    ]));
+    const eligibleDiscoveryIds = new Set(eligibleDiscoverySongs.map(song => song.id));
 
     const knownStart = pageNum * 10;
     const detailed = rerankRecommendationCandidatesDetailed({
       known: knownSongs.slice(knownStart, knownStart + 18),
-      hybrid: uniqueSongsById([...favoriteResults.flat(), ...preferenceResults.flat(), ...seedResults.flat()]),
-      audio: uniqueSongsById(audioResults.flat()),
+      hybrid: hybridCandidates.filter(song => eligibleDiscoveryIds.has(song.id)),
+      audio: audioCandidates.filter(song => eligibleDiscoveryIds.has(song.id)),
       popular: popularResult.items,
     }, {
       total: PAGE_SIZE,
-      historyEntries: entries,
-      playlists,
+      historyEntries: eligibleEntries,
+      playlists: eligiblePlaylists,
       ratings,
       implicitFeedback,
       excludeIds,
