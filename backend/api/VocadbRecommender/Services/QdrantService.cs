@@ -261,33 +261,32 @@ public class QdrantService
 
         var fetch = (int)(offset + topK + excludeSet.Count + 10);
 
-        // audio と meta の両方を検索してスコアをマージ
-        var audioResults = new Dictionary<ulong, double>();
-        var metaResults  = new Dictionary<ulong, double>();
-
-        if (audioVec is not null && audioVec.Any(x => x != 0f))
+        // The two named-vector searches are independent. Keep their result
+        // dictionaries separate so the existing deterministic merge is unchanged.
+        async Task<Dictionary<ulong, double>> SearchNamedVectorAsync(
+            float[]? vector,
+            string vectorName)
         {
-            var res = await _client.SearchAsync(
+            var results = new Dictionary<ulong, double>();
+            if (vector is null || !vector.Any(value => value != 0f))
+                return results;
+
+            var response = await _client.SearchAsync(
                 collectionName: _opts.CollectionNamed,
-                vector: audioVec,
-                vectorName: "audio",
+                vector: vector,
+                vectorName: vectorName,
                 limit: (ulong)fetch,
                 cancellationToken: cancellationToken);
-            foreach (var r in res)
-                audioResults[r.Id.Num] = r.Score;
+            foreach (var point in response)
+                results[point.Id.Num] = point.Score;
+            return results;
         }
 
-        if (metaVec is not null && metaVec.Any(x => x != 0f))
-        {
-            var res = await _client.SearchAsync(
-                collectionName: _opts.CollectionNamed,
-                vector: metaVec,
-                vectorName: "meta",
-                limit: (ulong)fetch,
-                cancellationToken: cancellationToken);
-            foreach (var r in res)
-                metaResults[r.Id.Num] = r.Score;
-        }
+        var audioSearchTask = SearchNamedVectorAsync(audioVec, "audio");
+        var metaSearchTask = SearchNamedVectorAsync(metaVec, "meta");
+        await Task.WhenAll(audioSearchTask, metaSearchTask);
+        var audioResults = await audioSearchTask;
+        var metaResults = await metaSearchTask;
 
         // スコアをマージ (audio × AudioWeight + meta × MetaWeight)
         var allIds = audioResults.Keys.Union(metaResults.Keys);

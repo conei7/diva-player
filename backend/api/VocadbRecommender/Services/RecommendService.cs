@@ -46,11 +46,29 @@ public class RecommendService
         var playedSet = new HashSet<int> { seedSongId };
 
         // --- 1. ANN 近似最近傍探索 ---
-        var annCandidates = await _qdrant.SearchSimilarAsync(
+        var annTask = _qdrant.SearchSimilarAsync(
             seedSongId,
             _opts.AnnCandidates,
             cancellationToken,
             playedSet);
+
+        // These sources are independent once the seed is loaded. Starting them
+        // together removes cold-start latency without changing the score merge.
+        var graphTask = KnowledgeGraphWalkAsync(
+            seedSong,
+            playedSet,
+            _opts.GraphWalkSteps,
+            cancellationToken);
+        var relationshipTask = _db.GetMetadataRelationshipCandidateIdsAsync(
+            seedSongId,
+            300,
+            cancellationToken);
+
+        // Observe every started operation together. If one source fails, the
+        // remaining request-scoped work is still joined instead of becoming an
+        // unobserved database or Qdrant operation.
+        await Task.WhenAll(annTask, graphTask, relationshipTask);
+        var annCandidates = await annTask;
 
         // ハイブリッドコレクションがない場合のフォールバック
         if (annCandidates.Count == 0)
@@ -67,16 +85,6 @@ public class RecommendService
             .ToHashSet();
 
         // --- 2. 知識グラフ バイアス付きランダムウォーク ---
-        var graphTask = KnowledgeGraphWalkAsync(
-            seedSong,
-            playedSet,
-            _opts.GraphWalkSteps,
-            cancellationToken);
-        var relationshipTask = _db.GetMetadataRelationshipCandidateIdsAsync(
-            seedSongId,
-            300,
-            cancellationToken);
-        await Task.WhenAll(graphTask, relationshipTask);
         var graphCandidates = await graphTask;
         var relationshipCandidates = await relationshipTask;
 
@@ -328,6 +336,7 @@ public class RecommendService
         CancellationToken cancellationToken)
     {
         var scores = new Dictionary<int, double>();
+        var songsByProducerCache = new Dictionary<string, int[]>();
         // Use a stable walk so offset-based requests share the same ranking.
         var rand   = new Random(seed.Id);
         var currentProducers = seed.ProducerIds.ToList();
@@ -342,11 +351,16 @@ public class RecommendService
                 .Take(3)
                 .ToArray();
 
-            var songsByProducer = await _db.GetSongsByProducersAsync(
-                producerBatch,
-                seed.Id,
-                20,
-                cancellationToken);
+            var producerBatchCacheKey = ProducerBatchCacheKey(producerBatch);
+            if (!songsByProducerCache.TryGetValue(producerBatchCacheKey, out var songsByProducer))
+            {
+                songsByProducer = await _db.GetSongsByProducersAsync(
+                    producerBatch,
+                    seed.Id,
+                    20,
+                    cancellationToken);
+                songsByProducerCache[producerBatchCacheKey] = songsByProducer;
+            }
 
             foreach (var sid in songsByProducer)
             {
@@ -371,6 +385,9 @@ public class RecommendService
             .Select(kv => (kv.Key, kv.Value))
             .ToList();
     }
+
+    internal static string ProducerBatchCacheKey(IEnumerable<int> producerIds) =>
+        string.Join(",", producerIds.Order());
 
     // ---- MMR (Maximal Marginal Relevance) 再ランキング ----------
 

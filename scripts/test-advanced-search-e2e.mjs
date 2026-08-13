@@ -28,9 +28,21 @@ try {
   await page.goto(baseUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
   await page.waitForSelector('button[aria-label="詳細検索"]', { timeout: 60_000 });
   await page.click('button[aria-label="詳細検索"]');
-  await page.waitForFunction(() => [...document.querySelectorAll('*')].some(element => element.textContent?.trim() === '絞り込み条件'));
-  await page.evaluate(() => [...document.querySelectorAll('.search-section-header')].find(element => element.textContent?.includes('絞り込み条件'))?.click());
-  await page.waitForFunction(() => document.body.textContent?.includes('人気・再生数') && document.body.textContent?.includes('参加者・役割'));
+  const requiredSections = ['再生数・支持', 'VocaDBタグ', '参加者・役割', '音源からの推定'];
+  await page.evaluate(sectionTitles => {
+    for (const title of sectionTitles) {
+      const titleElement = [...document.querySelectorAll('.filter-section-title')]
+        .find(element => element.textContent?.trim() === title);
+      const button = titleElement?.closest('button.filter-section-header');
+      if (!(button instanceof HTMLButtonElement)) throw new Error(`Filter section not found: ${title}`);
+      if (button.getAttribute('aria-expanded') !== 'true') button.click();
+    }
+  }, requiredSections);
+  await page.waitForFunction(sectionTitles => sectionTitles.every(title => {
+    const titleElement = [...document.querySelectorAll('.filter-section-title')]
+      .find(element => element.textContent?.trim() === title);
+    return titleElement?.closest('button.filter-section-header')?.getAttribute('aria-expanded') === 'true';
+  }), {}, requiredSections);
 
   await page.evaluate(() => {
     const tagFilters = document.querySelector('[data-testid="vocadb-tag-filters"]');

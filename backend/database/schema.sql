@@ -191,6 +191,9 @@ CREATE INDEX IF NOT EXISTS song_discovery_quality_score_idx
 CREATE INDEX IF NOT EXISTS song_discovery_eligible_score_idx
     ON song_discovery_quality (quality_score DESC, song_id)
     WHERE discovery_eligible = TRUE;
+CREATE INDEX IF NOT EXISTS song_discovery_eligible_song_idx
+    ON song_discovery_quality (song_id)
+    WHERE discovery_eligible;
 
 CREATE TABLE IF NOT EXISTS view_history (
     id              BIGSERIAL PRIMARY KEY,

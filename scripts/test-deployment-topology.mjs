@@ -40,6 +40,7 @@ const [
   runtimeRoleMigration,
   apiSettings,
   backendEnvExample,
+  discoveryEligibleLookupMigration,
 ] = await Promise.all([
   readFile(new URL('../backend/docker-compose.yml', import.meta.url), 'utf8'),
   readFile(new URL('../backend/api-gateway/haproxy.cfg', import.meta.url), 'utf8'),
@@ -79,6 +80,7 @@ const [
   readFile(new URL('../backend/database/migrations/0018_runtime_database_roles.sql', import.meta.url), 'utf8'),
   readFile(new URL('../backend/api/VocadbRecommender/appsettings.json', import.meta.url), 'utf8'),
   readFile(new URL('../backend/.env.example', import.meta.url), 'utf8'),
+  readFile(new URL('../backend/database/migrations/0021_discovery_eligible_song_lookup.sql', import.meta.url), 'utf8'),
 ]);
 
 assert.match(compose, /api_a:/);
@@ -96,6 +98,22 @@ assert.match(compose, /PAGES_PROXY_KEY:\?PAGES_PROXY_KEY is required/);
 assert.doesNotMatch(compose, /vocadb_secret/);
 assert.doesNotMatch(apiSettings, /vocadb_secret|Password=/);
 assert.doesNotMatch(backendEnvExample, /vocadb_secret/);
+assert.match(
+  schema,
+  /CREATE INDEX IF NOT EXISTS song_discovery_eligible_song_idx\s+ON song_discovery_quality \(song_id\)\s+WHERE discovery_eligible;/,
+);
+assert.match(
+  discoveryEligibleLookupMigration,
+  /CREATE INDEX CONCURRENTLY IF NOT EXISTS song_discovery_eligible_song_idx\s+ON song_discovery_quality \(song_id\)\s+WHERE discovery_eligible;/,
+);
+assert.doesNotMatch(discoveryEligibleLookupMigration, /\b(?:DROP|DELETE|UPDATE|GRANT|REVOKE)\b/i);
+assert.match(discoveryEligibleLookupMigration, /index_state\.indisvalid/);
+assert.match(discoveryEligibleLookupMigration, /index_state\.indisready/);
+assert.match(discoveryEligibleLookupMigration, /pg_get_expr\(index_state\.indpred, index_state\.indrelid, FALSE\) = 'discovery_eligible'/);
+assert.match(discoveryEligibleLookupMigration, /invalid or unexpected semantics/);
+assert.match(workflow, /backend\/database\/migrations\/0021_discovery_eligible_song_lookup\.sql/);
+assert.match(workflow, /DROP INDEX song_discovery_eligible_song_idx/);
+assert.match(workflow, /indisvalid AND indisready/);
 assert.match(apiSettings, /"CollectionHybrid": "song_hybrid_active"/);
 assert.match(apiSettings, /"CollectionMetadata": "song_metadata_active"/);
 assert.match(apiSettings, /"CollectionNamed": "songs_v2_active"/);
