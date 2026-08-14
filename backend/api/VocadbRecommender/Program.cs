@@ -365,12 +365,18 @@ app.MapGet("/api/recommend/metadata", async (
                 diverseFallbackCandidateCount,
                 restrictedCandidatePool,
                 token),
+            token => db.GetQualityDiverseFallbackCandidateIdsAsync(
+                songId,
+                DbService.QualityDiverseFallbackPoolCount,
+                token),
+            (ids, token) => db.GetSongInfoBatchAsync(ids, token),
             token => db.GetDiverseFallbackCandidateIdsAsync(
                 songId,
                 diverseFallbackCandidateCount,
                 token),
             cancellationToken);
-        if (!fallbackSelection.Value.UsedRestrictedPool)
+        if (fallbackSelection.Value.Source
+            != RecommendService.DiverseFallbackCandidateSource.RestrictedExisting)
         {
             foreach (var candidateId in fallbackSelection.Value.CandidateIds)
                 candidateScores.TryAdd(candidateId, -1);
@@ -388,9 +394,10 @@ app.MapGet("/api/recommend/metadata", async (
     results = results
         .Where(result => infoMap.TryGetValue(result.SongId, out var info) && DiscoveryEligibility.IsEligible(info))
         .ToList();
-    var usedRestrictedFallback = fallbackSelection?.UsedRestrictedPool == true;
-    var rerankCount = usedRestrictedFallback
-        ? RecommendService.MetadataDiversityProbeCount(results.Count, count + skip)
+    var usedFastFallback = fallbackSelection is { } selection
+        && selection.Source != RecommendService.DiverseFallbackCandidateSource.ExactGlobal;
+    var rerankCount = usedFastFallback
+        ? RecommendService.MetadataDiversityCanonicalRerankCount(results.Count, count + skip)
         : Math.Min(results.Count, count + skip);
     results = MetadataRelationshipRanking.RerankRelated(
         results,
@@ -398,8 +405,9 @@ app.MapGet("/api/recommend/metadata", async (
         infos,
         rerankCount);
 
-    if (usedRestrictedFallback)
+    if (usedFastFallback)
     {
+        results = RecommendService.StabilizeMetadataFallbackDiversity(results, infos);
         var globalFallbackIds = await RecommendService.GetMetadataGlobalFallbackIfNeededAsync(
             fallbackSelection!.Value,
             results,

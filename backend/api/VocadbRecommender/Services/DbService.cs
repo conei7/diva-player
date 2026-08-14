@@ -50,6 +50,8 @@ public sealed record KnowledgeMapCatalog(
 public class DbService
 {
     internal const int MaxRestrictedDiverseFallbackCandidateCount = 2_000;
+    internal const int QualityDiverseFallbackSourceCount = 2_000;
+    internal const int QualityDiverseFallbackPoolCount = 500;
 
     internal static readonly TimeSpan RecommendationPublicationGenerationCacheDuration =
         TimeSpan.FromSeconds(5);
@@ -1828,6 +1830,88 @@ public class DbService
             Math.Clamp(limit, 1, 500),
             restrictedCandidateIds,
             cancellationToken);
+    }
+
+    public async Task<int[]> GetQualityDiverseFallbackCandidateIdsAsync(
+        int seedSongId,
+        int limit,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var normalizedLimit = Math.Clamp(limit, 1, QualityDiverseFallbackPoolCount);
+        var publicationGeneration =
+            await GetRecommendationPublicationGenerationAsync(cancellationToken);
+        var cacheKey = QualityDiverseFallbackSourceCacheKey(
+            publicationGeneration,
+            seedSongId);
+        if (!_objectCache.TryGetValue(cacheKey, out int[]? sourceIds)
+            || sourceIds is null)
+        {
+            sourceIds = await QueryQualityDiverseFallbackSourceCandidateIdsAsync(
+                seedSongId,
+                cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            _objectCache.Set(
+                cacheKey,
+                sourceIds,
+                TimeSpan.FromMinutes(15),
+                EstimateIdArrayBytes(sourceIds));
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+        if (sourceIds.Length == 0)
+            return [];
+
+        // The cached reservoir is intentionally only the cheap quality/date source.
+        // Re-run the shared exact query on every request so PV, vocalist, producer,
+        // eligibility and ordering changes cannot be hidden by a stale cached result.
+        return await QueryDiverseFallbackCandidateIdsAsync(
+            seedSongId,
+            normalizedLimit,
+            sourceIds,
+            cancellationToken);
+    }
+
+    internal static string QualityDiverseFallbackSourceCacheKey(
+        string publicationGeneration,
+        int seedSongId) =>
+        RecommendationCacheKey(
+            publicationGeneration,
+            $"quality-diverse-fallback-source:v1:{seedSongId}:source-{QualityDiverseFallbackSourceCount}");
+
+    private async Task<int[]> QueryQualityDiverseFallbackSourceCandidateIdsAsync(
+        int seedSongId,
+        CancellationToken cancellationToken)
+    {
+        await using var conn = await OpenAsync(cancellationToken);
+        await using var cmd = new NpgsqlCommand($@"
+            WITH seed AS (
+                SELECT id, publish_date
+                FROM songs
+                WHERE id = $1
+            )
+            SELECT quality.song_id
+            FROM song_discovery_quality quality
+            JOIN songs candidate ON candidate.id = quality.song_id
+            CROSS JOIN seed
+            WHERE quality.discovery_eligible = TRUE
+              AND candidate.id <> seed.id
+              AND (
+                  seed.publish_date IS NULL
+                  OR candidate.publish_date BETWEEN seed.publish_date - 730 AND seed.publish_date + 730
+              )
+            ORDER BY
+                quality.quality_score DESC,
+                mod(abs(hashtext(candidate.id::text || ':' || seed.id::text))::bigint, 100000),
+                candidate.id
+            LIMIT {QualityDiverseFallbackSourceCount}", conn);
+        cmd.Parameters.AddWithValue(seedSongId);
+
+        var result = new List<int>(QualityDiverseFallbackSourceCount);
+        await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+            result.Add(reader.GetInt32(0));
+        return result.ToArray();
     }
 
     internal static int[] NormalizeRestrictedDiverseFallbackCandidateIds(

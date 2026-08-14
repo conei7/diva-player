@@ -30,6 +30,7 @@ public sealed class DbServiceCancellationTests
     [InlineData(nameof(DbService.GetMetadataRelationshipCandidateIdsAsync))]
     [InlineData(nameof(DbService.GetDiverseFallbackCandidateIdsAsync))]
     [InlineData(nameof(DbService.GetRestrictedDiverseFallbackCandidateIdsAsync))]
+    [InlineData(nameof(DbService.GetQualityDiverseFallbackCandidateIdsAsync))]
     [InlineData(nameof(DbService.GetViewHistoryAsync))]
     [InlineData(nameof(DbService.GetViewHistoryWindowAsync))]
     [InlineData(nameof(DbService.GetTrendingSongsJsonAsync))]
@@ -103,6 +104,10 @@ public sealed class DbServiceCancellationTests
                 1,
                 10,
                 [2, 3],
+                cancellation.Token),
+            () => service.GetQualityDiverseFallbackCandidateIdsAsync(
+                1,
+                10,
                 cancellation.Token),
             () => service.GetViewHistoryAsync(1, cancellation.Token),
             () => service.GetViewHistoryWindowAsync(1, "30d", "day", cancellation.Token),

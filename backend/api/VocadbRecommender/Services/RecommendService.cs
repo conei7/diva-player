@@ -11,10 +11,18 @@ public class RecommendService
     internal const int DiverseFallbackCandidateCount = 80;
     internal const int VocalistDiversityAssessmentCandidateCount = 100;
     internal const int MetadataDiversityProbeMinimumCount = 20;
+    internal const int MetadataDiversityCanonicalLookaheadCount = 100;
+
+    internal enum DiverseFallbackCandidateSource
+    {
+        RestrictedExisting,
+        QualityReservoir,
+        ExactGlobal,
+    }
 
     internal readonly record struct DiverseFallbackCandidateSelection(
         int[] CandidateIds,
-        bool UsedRestrictedPool);
+        DiverseFallbackCandidateSource Source);
 
     private readonly DbService     _db;
     private readonly QdrantService _qdrant;
@@ -149,6 +157,11 @@ public class RecommendService
                     DiverseFallbackCandidateCount,
                     restrictedCandidatePool,
                     token),
+                token => _db.GetQualityDiverseFallbackCandidateIdsAsync(
+                    seedSongId,
+                    DbService.QualityDiverseFallbackPoolCount,
+                    token),
+                (ids, token) => _db.GetSongInfoBatchAsync(ids, token),
                 token => _db.GetDiverseFallbackCandidateIdsAsync(
                     seedSongId,
                     DiverseFallbackCandidateCount,
@@ -228,12 +241,16 @@ public class RecommendService
         int requiredCount,
         IReadOnlyCollection<SongInfo> candidateInfos,
         Func<CancellationToken, Task<int[]>> restrictedLoader,
+        Func<CancellationToken, Task<int[]>> qualityReservoirLoader,
+        Func<IReadOnlyCollection<int>, CancellationToken, Task<SongInfo[]>> songInfoLoader,
         Func<CancellationToken, Task<int[]>> globalLoader,
         CancellationToken cancellationToken)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(requiredCount);
         ArgumentNullException.ThrowIfNull(candidateInfos);
         ArgumentNullException.ThrowIfNull(restrictedLoader);
+        ArgumentNullException.ThrowIfNull(qualityReservoirLoader);
+        ArgumentNullException.ThrowIfNull(songInfoLoader);
         ArgumentNullException.ThrowIfNull(globalLoader);
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -246,12 +263,102 @@ public class RecommendService
         {
             return new DiverseFallbackCandidateSelection(
                 restrictedIds,
-                UsedRestrictedPool: true);
+                DiverseFallbackCandidateSource.RestrictedExisting);
+        }
+
+        var qualityReservoirIds = await qualityReservoirLoader(cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+        if (qualityReservoirIds.Length > 0)
+        {
+            var qualityReservoirInfos = await songInfoLoader(
+                qualityReservoirIds,
+                cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            var selectedQualityIds = SelectQualityDiverseFallbackCandidateIds(
+                qualityReservoirIds,
+                qualityReservoirInfos,
+                requiredCount);
+            if (RestrictedDiverseFallbackIsUsable(
+                selectedQualityIds,
+                requiredCount,
+                qualityReservoirInfos))
+            {
+                return new DiverseFallbackCandidateSelection(
+                    selectedQualityIds,
+                    DiverseFallbackCandidateSource.QualityReservoir);
+            }
         }
 
         return new DiverseFallbackCandidateSelection(
             await globalLoader(cancellationToken),
-            UsedRestrictedPool: false);
+            DiverseFallbackCandidateSource.ExactGlobal);
+    }
+
+    internal static int[] SelectQualityDiverseFallbackCandidateIds(
+        IReadOnlyCollection<int> orderedCandidateIds,
+        IReadOnlyCollection<SongInfo> candidateInfos,
+        int requiredCount)
+    {
+        ArgumentNullException.ThrowIfNull(orderedCandidateIds);
+        ArgumentNullException.ThrowIfNull(candidateInfos);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(requiredCount);
+
+        var infoMap = candidateInfos
+            .GroupBy(info => info.Id)
+            .ToDictionary(group => group.Key, group => group.First());
+        var orderedIds = orderedCandidateIds
+            .Where(id => id > 0)
+            .Distinct()
+            .Where(id => infoMap.TryGetValue(id, out var info)
+                && DiscoveryEligibility.IsEligible(info)
+                && info.ProducerIds.Length > 0
+                && info.VocalistIds.Length > 0)
+            .ToArray();
+        var fullIdentityCap = Math.Max(1, (int)Math.Ceiling(requiredCount * 0.20));
+        var prefixCount = Math.Min(MetadataDiversityProbeMinimumCount, requiredCount);
+        var prefixIds = SelectStableDiversePrefixCandidateIds(
+            orderedIds.Take(MetadataDiversityCanonicalLookaheadCount),
+            infoMap,
+            prefixCount,
+            Math.Min(fullIdentityCap, (int)Math.Ceiling(prefixCount * 0.60)));
+        if (prefixIds.Length != prefixCount)
+            return [];
+
+        var selectedIds = new List<int>(requiredCount);
+        var selectedSet = new HashSet<int>();
+        var producerCounts = new Dictionary<int, int>();
+        var vocalistCounts = new Dictionary<int, int>();
+        foreach (var id in prefixIds)
+        {
+            if (!TryAddWithinRelationshipCaps(
+                infoMap[id],
+                producerCounts,
+                vocalistCounts,
+                fullIdentityCap))
+            {
+                return [];
+            }
+            selectedIds.Add(id);
+            selectedSet.Add(id);
+        }
+
+        foreach (var id in orderedIds)
+        {
+            if (selectedIds.Count >= requiredCount)
+                break;
+            if (selectedSet.Contains(id)
+                || !TryAddWithinRelationshipCaps(
+                    infoMap[id],
+                    producerCounts,
+                    vocalistCounts,
+                    fullIdentityCap))
+            {
+                continue;
+            }
+            selectedIds.Add(id);
+            selectedSet.Add(id);
+        }
+        return selectedIds.Count == requiredCount ? selectedIds.ToArray() : [];
     }
 
     internal static bool RestrictedDiverseFallbackIsUsable(
@@ -280,6 +387,57 @@ public class RecommendService
             Math.Max(0, availableCount),
             Math.Max(MetadataDiversityProbeMinimumCount, requestedCount));
 
+    internal static int MetadataDiversityCanonicalRerankCount(
+        int availableCount,
+        int requestedCount) =>
+        Math.Min(
+            Math.Max(0, availableCount),
+            Math.Max(MetadataDiversityCanonicalLookaheadCount, requestedCount));
+
+    internal static List<(int SongId, double Score)> StabilizeMetadataFallbackDiversity(
+        IReadOnlyCollection<(int SongId, double Score)> rerankedCandidates,
+        IReadOnlyCollection<SongInfo> candidateInfos)
+    {
+        ArgumentNullException.ThrowIfNull(rerankedCandidates);
+        ArgumentNullException.ThrowIfNull(candidateInfos);
+        var ordered = rerankedCandidates.ToList();
+        if (ordered.Count < MetadataDiversityProbeMinimumCount
+            || ordered.Select(candidate => candidate.SongId).Distinct().Count() != ordered.Count)
+        {
+            return ordered;
+        }
+
+        var infoMap = candidateInfos
+            .GroupBy(info => info.Id)
+            .ToDictionary(group => group.Key, group => group.First());
+        var currentProbeIds = ordered
+            .Take(MetadataDiversityProbeMinimumCount)
+            .Select(candidate => candidate.SongId)
+            .ToArray();
+        if (DiverseProbeIsUsable(currentProbeIds, infoMap))
+            return ordered;
+
+        var prefixIds = SelectStableDiversePrefixCandidateIds(
+            ordered
+                .Take(MetadataDiversityCanonicalLookaheadCount)
+                .Select(candidate => candidate.SongId),
+            infoMap,
+            MetadataDiversityProbeMinimumCount,
+            identityCap: 12);
+        if (prefixIds.Length != MetadataDiversityProbeMinimumCount
+            || !DiverseProbeIsUsable(prefixIds, infoMap))
+        {
+            return ordered;
+        }
+
+        var prefixSet = prefixIds.ToHashSet();
+        var candidateMap = ordered.ToDictionary(candidate => candidate.SongId);
+        return prefixIds
+            .Select(id => candidateMap[id])
+            .Concat(ordered.Where(candidate => !prefixSet.Contains(candidate.SongId)))
+            .ToList();
+    }
+
     internal static async Task<int[]?> GetMetadataGlobalFallbackIfNeededAsync(
         DiverseFallbackCandidateSelection fallbackSelection,
         IReadOnlyCollection<(int SongId, double Score)> rerankedCandidates,
@@ -291,7 +449,7 @@ public class RecommendService
         ArgumentNullException.ThrowIfNull(candidateInfos);
         ArgumentNullException.ThrowIfNull(globalLoader);
         cancellationToken.ThrowIfCancellationRequested();
-        if (!fallbackSelection.UsedRestrictedPool)
+        if (fallbackSelection.Source == DiverseFallbackCandidateSource.ExactGlobal)
             return null;
 
         var diversityProbeCandidates = rerankedCandidates
@@ -310,6 +468,111 @@ public class RecommendService
             return null;
 
         return await globalLoader(cancellationToken);
+    }
+
+    private static int[] SelectStableDiversePrefixCandidateIds(
+        IEnumerable<int> orderedCandidateIds,
+        IReadOnlyDictionary<int, SongInfo> infoMap,
+        int prefixCount,
+        int identityCap)
+    {
+        if (prefixCount < MetadataDiversityProbeMinimumCount)
+            return [];
+
+        var candidates = orderedCandidateIds
+            .Distinct()
+            .Where(id => infoMap.TryGetValue(id, out var info)
+                && DiscoveryEligibility.IsEligible(info)
+                && info.ProducerIds.Length > 0
+                && info.VocalistIds.Length > 0)
+            .ToArray();
+        var anchorIds = new HashSet<int>();
+        var anchorProducerIds = new HashSet<int>();
+        var anchorVocalistIds = new HashSet<int>();
+        foreach (var id in candidates)
+        {
+            var info = infoMap[id];
+            var addsProducer = anchorProducerIds.Count < 8
+                && info.ProducerIds.Distinct().Any(producerId => !anchorProducerIds.Contains(producerId));
+            var addsVocalist = anchorVocalistIds.Count < 8
+                && info.VocalistIds.Distinct().Any(vocalistId => !anchorVocalistIds.Contains(vocalistId));
+            if (!addsProducer && !addsVocalist)
+                continue;
+
+            anchorIds.Add(id);
+            anchorProducerIds.UnionWith(info.ProducerIds.Distinct());
+            anchorVocalistIds.UnionWith(info.VocalistIds.Distinct());
+            if (anchorProducerIds.Count >= 8 && anchorVocalistIds.Count >= 8)
+                break;
+        }
+        if (anchorProducerIds.Count < 8 || anchorVocalistIds.Count < 8)
+            return [];
+
+        var selected = new List<int>(prefixCount);
+        var producerCounts = new Dictionary<int, int>();
+        var vocalistCounts = new Dictionary<int, int>();
+        var remainingAnchors = anchorIds.Count;
+        foreach (var id in candidates)
+        {
+            var isAnchor = anchorIds.Contains(id);
+            if (isAnchor)
+                remainingAnchors--;
+            if (!isAnchor && selected.Count + remainingAnchors >= prefixCount)
+                continue;
+            if (!TryAddWithinRelationshipCaps(
+                infoMap[id],
+                producerCounts,
+                vocalistCounts,
+                identityCap))
+            {
+                if (isAnchor)
+                    return [];
+                continue;
+            }
+
+            selected.Add(id);
+            if (selected.Count == prefixCount && remainingAnchors == 0)
+                break;
+        }
+
+        if (selected.Count != prefixCount)
+            return [];
+        return DiverseProbeIsUsable(selected, infoMap) ? selected.ToArray() : [];
+    }
+
+    private static bool TryAddWithinRelationshipCaps(
+        SongInfo info,
+        Dictionary<int, int> producerCounts,
+        Dictionary<int, int> vocalistCounts,
+        int identityCap)
+    {
+        var producerIds = info.ProducerIds.Distinct().ToArray();
+        var vocalistIds = info.VocalistIds.Distinct().ToArray();
+        if (producerIds.Any(id => producerCounts.GetValueOrDefault(id) >= identityCap)
+            || vocalistIds.Any(id => vocalistCounts.GetValueOrDefault(id) >= identityCap))
+        {
+            return false;
+        }
+
+        foreach (var id in producerIds)
+            producerCounts[id] = producerCounts.GetValueOrDefault(id) + 1;
+        foreach (var id in vocalistIds)
+            vocalistCounts[id] = vocalistCounts.GetValueOrDefault(id) + 1;
+        return true;
+    }
+
+    private static bool DiverseProbeIsUsable(
+        IReadOnlyCollection<int> candidateIds,
+        IReadOnlyDictionary<int, SongInfo> infoMap)
+    {
+        if (candidateIds.Count != MetadataDiversityProbeMinimumCount
+            || candidateIds.Distinct().Count() != candidateIds.Count
+            || candidateIds.Any(id => !infoMap.ContainsKey(id)))
+        {
+            return false;
+        }
+        return !MetadataRelationshipRanking.NeedsDiverseFallback(
+            candidateIds.Select(id => infoMap[id]));
     }
 
     internal static void MergeDiverseFallbackCandidates(
