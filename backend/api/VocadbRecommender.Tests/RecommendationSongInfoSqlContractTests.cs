@@ -38,6 +38,94 @@ public sealed class RecommendationSongInfoSqlContractTests
     }
 
     [Fact]
+    public void MetadataRelationshipQuery_PreaggregatesBeforeEligibilityJoin()
+    {
+        var source = ReadRepositoryFile(
+            "backend", "api", "VocadbRecommender", "Services", "DbService.cs");
+        var relationshipQuery = ExtractBetween(
+            source,
+            "public async Task<int[]> GetMetadataRelationshipCandidateIdsAsync(",
+            "internal static string MetadataRelationshipCacheKey(");
+        var scoredCandidates = ExtractBetween(
+            relationshipQuery,
+            "scored_candidates AS MATERIALIZED (",
+            "            SELECT candidate.song_id");
+        var eligibleRanking = relationshipQuery[
+            relationshipQuery.IndexOf("            SELECT candidate.song_id", StringComparison.Ordinal)..];
+
+        Assert.Contains("GROUP BY candidate_tag.song_id", scoredCandidates);
+        Assert.Contains("AS relationship_score", scoredCandidates);
+        Assert.Contains("AS matching_tag_count", scoredCandidates);
+        Assert.DoesNotContain("song_discovery_quality", scoredCandidates);
+
+        Assert.Contains("FROM scored_candidates candidate", eligibleRanking);
+        Assert.Contains("ON quality.song_id = candidate.song_id", eligibleRanking);
+        Assert.Contains("AND quality.discovery_eligible = TRUE", eligibleRanking);
+        Assert.Contains("candidate.relationship_score DESC", eligibleRanking);
+        Assert.Contains("candidate.matching_tag_count DESC", eligibleRanking);
+        Assert.Contains("candidate.song_id\n            LIMIT $2", eligibleRanking);
+        Assert.Equal(
+            1,
+            relationshipQuery.Split(
+                "JOIN song_discovery_quality quality",
+                StringSplitOptions.None).Length - 1);
+    }
+
+    [Fact]
+    public void MetadataRelationshipPreaggregation_PreservesEdgeCaseRanking()
+    {
+        const int seedSongId = 1;
+        const int limit = 4;
+        var matches = new[]
+        {
+            new RelationshipMatch(seedSongId, 20, 500),
+            new RelationshipMatch(2, 20, 500),
+            new RelationshipMatch(2, 5, 25),
+            new RelationshipMatch(3, 20, 500),
+            new RelationshipMatch(3, 5, 25),
+            new RelationshipMatch(4, 20, 2),       // High score, but ineligible.
+            new RelationshipMatch(5, 1, 2),
+            new RelationshipMatch(6, 20, 2),       // Missing quality row.
+            new RelationshipMatch(7, 100, 500),    // Exercises the tag-count cap.
+            new RelationshipMatch(8, 1, 2),        // Ties song 5; song ID breaks it.
+        };
+        var eligibility = new Dictionary<int, bool>
+        {
+            [seedSongId] = true,
+            [2] = true,
+            [3] = true,
+            [4] = false,
+            [5] = true,
+            [7] = true,
+            [8] = true,
+        };
+
+        var filterBeforeAggregate = RankRelationshipMatches(
+            matches.Where(match =>
+                eligibility.TryGetValue(match.SongId, out var eligible) && eligible),
+            seedSongId,
+            limit);
+        var aggregateBeforeFilter = matches
+            .Where(match => match.SongId != seedSongId)
+            .GroupBy(match => match.SongId)
+            .Select(group => new RelationshipRank(
+                group.Key,
+                group.Sum(RelationshipScore),
+                group.LongCount()))
+            .Where(candidate =>
+                eligibility.TryGetValue(candidate.SongId, out var eligible) && eligible)
+            .OrderByDescending(candidate => candidate.Score)
+            .ThenByDescending(candidate => candidate.MatchingTagCount)
+            .ThenBy(candidate => candidate.SongId)
+            .Take(limit)
+            .Select(candidate => candidate.SongId)
+            .ToArray();
+
+        Assert.Equal(filterBeforeAggregate, aggregateBeforeFilter);
+        Assert.Equal([2, 3, 5, 8], aggregateBeforeFilter);
+    }
+
+    [Fact]
     public void CoveringIndexMigration_IsConcurrentAndFailClosed()
     {
         var schema = ReadRepositoryFile("backend", "database", "schema.sql");
@@ -133,6 +221,31 @@ public sealed class RecommendationSongInfoSqlContractTests
         Assert.True(end > start, $"Missing end marker: {endMarker}");
         return source[start..end];
     }
+
+    private static int[] RankRelationshipMatches(
+        IEnumerable<RelationshipMatch> matches,
+        int seedSongId,
+        int limit) =>
+        matches
+            .Where(match => match.SongId != seedSongId)
+            .GroupBy(match => match.SongId)
+            .Select(group => new RelationshipRank(
+                group.Key,
+                group.Sum(RelationshipScore),
+                group.LongCount()))
+            .OrderByDescending(candidate => candidate.Score)
+            .ThenByDescending(candidate => candidate.MatchingTagCount)
+            .ThenBy(candidate => candidate.SongId)
+            .Take(limit)
+            .Select(candidate => candidate.SongId)
+            .ToArray();
+
+    private static double RelationshipScore(RelationshipMatch match) =>
+        (1.0 + Math.Log(1.0 + Math.Min(match.TagCount, 20)))
+        / Math.Log(2.0 + match.TagFrequency);
+
+    private sealed record RelationshipMatch(int SongId, int TagCount, double TagFrequency);
+    private sealed record RelationshipRank(int SongId, double Score, long MatchingTagCount);
 
     private static string ReadRepositoryFile(
         string firstRelativeSegment,

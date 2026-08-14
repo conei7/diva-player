@@ -1704,6 +1704,9 @@ public class DbService
         if (_objectCache.TryGetValue(cacheKey, out int[]? cached) && cached is not null)
             return cached;
 
+        // Keep the per-song aggregate behind a materialized planner fence. Joining
+        // discovery quality per tag match multiplies heap visibility checks on the
+        // frequently refreshed quality table without changing the final score.
         await using var conn = await OpenAsync(cancellationToken);
         await using var cmd = new NpgsqlCommand(@"
             WITH seed_tags AS (
@@ -1718,23 +1721,29 @@ public class DbService
                 FROM song_tags candidate_tag
                 JOIN seed_tags seed_tag ON seed_tag.tag_id = candidate_tag.tag_id
                 GROUP BY candidate_tag.tag_id
+            ),
+            scored_candidates AS MATERIALIZED (
+                SELECT candidate_tag.song_id,
+                       SUM(
+                           (1.0 + LN(1.0 + LEAST(candidate_tag.tag_count, 20)))
+                           / LN(2.0 + frequency.frequency)
+                       ) AS relationship_score,
+                       COUNT(*) AS matching_tag_count
+                FROM song_tags candidate_tag
+                JOIN seed_tags seed_tag ON seed_tag.tag_id = candidate_tag.tag_id
+                JOIN tag_frequency frequency ON frequency.tag_id = candidate_tag.tag_id
+                WHERE candidate_tag.song_id <> $1
+                GROUP BY candidate_tag.song_id
             )
-            SELECT candidate_tag.song_id
-            FROM song_tags candidate_tag
-            JOIN seed_tags seed_tag ON seed_tag.tag_id = candidate_tag.tag_id
-            JOIN tag_frequency frequency ON frequency.tag_id = candidate_tag.tag_id
+            SELECT candidate.song_id
+            FROM scored_candidates candidate
             JOIN song_discovery_quality quality
-              ON quality.song_id = candidate_tag.song_id
+              ON quality.song_id = candidate.song_id
              AND quality.discovery_eligible = TRUE
-            WHERE candidate_tag.song_id <> $1
-            GROUP BY candidate_tag.song_id
             ORDER BY
-                SUM(
-                    (1.0 + LN(1.0 + LEAST(candidate_tag.tag_count, 20)))
-                    / LN(2.0 + frequency.frequency)
-                ) DESC,
-                COUNT(*) DESC,
-                candidate_tag.song_id
+                candidate.relationship_score DESC,
+                candidate.matching_tag_count DESC,
+                candidate.song_id
             LIMIT $2", conn);
         cmd.Parameters.AddWithValue(seedSongId);
         cmd.Parameters.AddWithValue(normalizedLimit);
