@@ -10,13 +10,21 @@ public sealed class RecommendationSongInfoSqlContractTests
     {
         var source = ReadRepositoryFile(
             "backend", "api", "VocadbRecommender", "Services", "DbService.cs");
+        var hydration = ExtractBetween(
+            source,
+            "public async Task<SongInfo[]> GetSongInfoBatchAsync(",
+            "public async Task<int[]> GetMetadataRelationshipCandidateIdsAsync(");
 
-        Assert.Contains("WHERE song_id = s.id AND is_producer = TRUE\n                       ORDER BY artist_id", source);
-        Assert.Contains("WHERE song_id = s.id AND is_vocalist = TRUE\n                       ORDER BY artist_id", source);
-        Assert.Contains("ORDER BY st.tag_id", source);
-        Assert.Contains(",sf.audio_computed IS TRUE AS has_audio_features", source);
-        Assert.DoesNotContain("FROM song_features audio_features", source);
-        Assert.Contains("WHERE s.id = ANY($1)", source);
+        Assert.Contains("WHERE song_id = s.id AND is_producer = TRUE\n                       ORDER BY artist_id", hydration);
+        Assert.Contains("WHERE song_id = s.id AND is_vocalist = TRUE\n                       ORDER BY artist_id", hydration);
+        Assert.Contains("ORDER BY st.tag_id", hydration);
+        Assert.Contains("FROM song_album_links album_link", hydration);
+        Assert.Contains("ORDER BY album_link.ordinal", hydration);
+        Assert.Contains(",sf.audio_computed IS TRUE AS has_audio_features", hydration);
+        Assert.DoesNotContain("FROM song_features audio_features", hydration);
+        Assert.DoesNotContain("raw_json", hydration);
+        Assert.DoesNotContain("jsonb_array_elements", hydration);
+        Assert.Contains("WHERE s.id = ANY($1)", hydration);
     }
 
     [Fact]
@@ -54,6 +62,76 @@ public sealed class RecommendationSongInfoSqlContractTests
         Assert.Contains("index_state.indexprs IS NULL", migration);
         Assert.Contains("access_method.amname = 'btree'", migration);
         Assert.Contains("IS NOT DISTINCT FROM expected.predicate", migration);
+    }
+
+    [Fact]
+    public void AlbumNormalizationMigration_IsBoundedRetryableAndFailClosed()
+    {
+        var schema = ReadRepositoryFile("backend", "database", "schema.sql");
+        var migration = ReadRepositoryFile(
+            "backend", "database", "migrations", "0023_normalize_song_album_links.sql");
+        var migrator = ReadRepositoryFile("backend", "database", "migrate.sh");
+
+        Assert.Contains("CREATE TABLE IF NOT EXISTS song_album_links", schema);
+        Assert.Contains("PRIMARY KEY (song_id, ordinal)", schema);
+        Assert.Contains("ordinal   INTEGER NOT NULL CHECK (ordinal > 0)", schema);
+        Assert.Contains("CREATE OR REPLACE FUNCTION sync_song_album_links_from_raw_json_v1()", schema);
+        Assert.Contains("CREATE OR REPLACE TRIGGER song_album_insert_guard_v1", schema);
+        Assert.Contains("CREATE OR REPLACE TRIGGER song_album_key_preserve_v1", schema);
+        Assert.Contains("CREATE OR REPLACE TRIGGER song_album_links_sync_v1", schema);
+        Assert.Contains("TG_WHEN = 'BEFORE'", schema);
+        Assert.Contains("jsonb_typeof(NEW.raw_json) = 'object'", schema);
+        Assert.Contains("OLD.raw_json ? 'albums'", schema);
+        Assert.Contains("non-owner song INSERT must include an explicit albums key", schema);
+        Assert.Contains("NOT (NEW.raw_json ? 'albums')", schema);
+
+        Assert.Contains("pg_try_advisory_lock(hashtext('diva-data-pipeline-publication-v1'))", migration);
+        Assert.Contains("pg_try_advisory_lock(hashtext('diva-data-pipeline-child-v1'))", migration);
+        Assert.Contains("CREATE OR REPLACE PROCEDURE public.backfill_song_album_links_batch_v1", migration);
+        Assert.Contains("DO $backfill_procedure_preflight$", migration);
+        Assert.Contains("complete dual-write", migration);
+        Assert.Contains("/ 5000", migration);
+        Assert.Contains("DELETE FROM public.song_album_links links", migration);
+        Assert.Contains("INSERT INTO public.song_album_links (song_id, ordinal, album_id)", migration);
+        Assert.Contains("WITH ORDINALITY AS album(value, ordinal)", migration);
+        Assert.Contains("album.value ->> 'id' ~ '^[0-9]+$'", migration);
+        Assert.Contains("SET statement_timeout = ''120s''", migration);
+        Assert.Contains("\\gexec", migration);
+        Assert.Contains("EXCEPT", migration);
+        Assert.Contains("missing_count <> 0 OR unexpected_count <> 0", migration);
+        Assert.Contains("REVOKE ALL ON PROCEDURE", migration);
+        Assert.Contains("FROM PUBLIC, diva_api_runtime, diva_pipeline_runtime", migration);
+        Assert.Contains("GRANT SELECT ON TABLE public.song_album_links TO diva_api_runtime", migration);
+        Assert.Contains("GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.song_album_links", migration);
+        Assert.Contains("relation.relowner = (", migration);
+        Assert.Contains("NOT trigger_state.tgisinternal", migration);
+        Assert.Contains("FROM pg_rewrite rule_state", migration);
+        Assert.Contains("CROSS JOIN LATERAL aclexplode", migration);
+        Assert.Contains("DO $post_create_acl_validation$", migration);
+        Assert.Contains("CREATE OR REPLACE FUNCTION public.sync_song_album_links_from_raw_json_v1()", migration);
+        Assert.Contains("SECURITY INVOKER", migration);
+        Assert.Contains("jsonb_typeof(NEW.raw_json) = 'object'", migration);
+        Assert.Contains("OLD.raw_json ? 'albums'", migration);
+        Assert.Contains("NOT (NEW.raw_json ? 'albums')", migration);
+        Assert.Contains("CREATE OR REPLACE TRIGGER song_album_insert_guard_v1", migration);
+        Assert.Contains("CREATE OR REPLACE TRIGGER song_album_key_preserve_v1", migration);
+        Assert.Contains("CREATE OR REPLACE TRIGGER song_album_links_sync_v1", migration);
+        Assert.Contains("REVOKE ALL ON FUNCTION public.sync_song_album_links_from_raw_json_v1()", migration);
+        Assert.Contains("migrations_sql_dir=\"${MIGRATIONS_SQL_DIR:-/migrations/sql}\"", migrator);
+
+        var migrationRun = migrator.IndexOf("psql -v ON_ERROR_STOP=1 -f \"$file\"", StringComparison.Ordinal);
+        var historyWrite = migrator.IndexOf("INSERT INTO schema_migrations", StringComparison.Ordinal);
+        Assert.True(migrationRun >= 0);
+        Assert.True(historyWrite > migrationRun);
+    }
+
+    private static string ExtractBetween(string source, string startMarker, string endMarker)
+    {
+        var start = source.IndexOf(startMarker, StringComparison.Ordinal);
+        Assert.True(start >= 0, $"Missing start marker: {startMarker}");
+        var end = source.IndexOf(endMarker, start, StringComparison.Ordinal);
+        Assert.True(end > start, $"Missing end marker: {endMarker}");
+        return source[start..end];
     }
 
     private static string ReadRepositoryFile(

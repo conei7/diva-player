@@ -1620,15 +1620,10 @@ public class DbService
                        ORDER BY st.tag_id
                    ) AS related_tag_ids,
                    ARRAY(
-                       SELECT (album ->> 'id')::int
-                       FROM jsonb_array_elements(
-                           CASE
-                               WHEN jsonb_typeof(s.raw_json -> 'albums') = 'array'
-                                   THEN s.raw_json -> 'albums'
-                               ELSE '[]'::jsonb
-                           END
-                       ) album
-                       WHERE album ->> 'id' ~ '^[0-9]+$'
+                       SELECT album_link.album_id
+                       FROM song_album_links album_link
+                       WHERE album_link.song_id = s.id
+                       ORDER BY album_link.ordinal
                    ) AS album_ids,
                    EXISTS (
                        SELECT 1 FROM song_artists sa

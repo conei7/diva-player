@@ -20,6 +20,8 @@ VALUES
         '{"albums":{"id":"9"}}'::jsonb),
     (900000003, 'contract-disabled', 'human', 240, 'Original', 0, NULL);
 
+-- The schema trigger must keep the invalid second JSON element as an ordinal
+-- hole and the duplicate album ID as a distinct ordered relationship.
 INSERT INTO artists (id, name, artist_type)
 VALUES
     (910000001, 'contract-vocaloid', 'Vocaloid'),
@@ -92,15 +94,10 @@ SELECT s.id,
            ORDER BY st.tag_id
        ) AS related_tag_ids,
        ARRAY(
-           SELECT (album ->> 'id')::int
-           FROM jsonb_array_elements(
-               CASE
-                   WHEN jsonb_typeof(s.raw_json -> 'albums') = 'array'
-                       THEN s.raw_json -> 'albums'
-                   ELSE '[]'::jsonb
-               END
-           ) album
-           WHERE album ->> 'id' ~ '^[0-9]+$'
+           SELECT album_link.album_id
+           FROM song_album_links album_link
+           WHERE album_link.song_id = s.id
+           ORDER BY album_link.ordinal
        ) AS album_ids,
        EXISTS (
            SELECT 1

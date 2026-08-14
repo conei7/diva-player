@@ -8,7 +8,9 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 );
 SQL
 
-for file in /migrations/sql/*.sql; do
+migrations_sql_dir="${MIGRATIONS_SQL_DIR:-/migrations/sql}"
+
+for file in "$migrations_sql_dir"/*.sql; do
   [ -f "$file" ] || continue
   migration_id="$(basename "$file")"
   applied="$(psql -v ON_ERROR_STOP=1 -tAc "SELECT 1 FROM schema_migrations WHERE migration_id = '$migration_id'")"

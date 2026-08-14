@@ -64,6 +64,92 @@ CREATE INDEX IF NOT EXISTS songs_self_cover_idx
     ON songs (id)
     WHERE is_self_cover = TRUE;
 
+-- Recommendation hydration must not detoast each song's complete VocaDB
+-- response just to obtain album relationships.  `ordinal` is the original
+-- one-based JSON array position; gaps and duplicate album IDs are intentional
+-- so the normalized projection has the exact legacy ordering semantics.
+CREATE TABLE IF NOT EXISTS song_album_links (
+    song_id   INTEGER NOT NULL REFERENCES songs(id) ON DELETE CASCADE,
+    ordinal   INTEGER NOT NULL CHECK (ordinal > 0),
+    album_id  INTEGER NOT NULL,
+    PRIMARY KEY (song_id, ordinal)
+);
+
+-- Keep the normalized relation in the same transaction as raw_json.  Older
+-- step-00 clients did not request VocaDB's optional Albums component.  A
+-- non-owner INSERT without that key fails closed; an UPDATE copies it from OLD.
+-- The AFTER invocation then normalizes the complete value.  New clients always
+-- send the key; explicit empty/null/non-array remains authoritative empty data.
+CREATE OR REPLACE FUNCTION sync_song_album_links_from_raw_json_v1()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = pg_catalog, public
+AS $$
+BEGIN
+    IF TG_WHEN = 'BEFORE' THEN
+        IF TG_OP = 'INSERT' THEN
+            IF jsonb_typeof(NEW.raw_json) = 'object'
+               AND NOT (NEW.raw_json ? 'albums')
+               AND to_regrole(CURRENT_USER)::OID <> (
+                   SELECT relation.relowner
+                   FROM pg_class relation
+                   WHERE relation.oid = 'public.songs'::regclass
+               ) THEN
+                RAISE EXCEPTION
+                    'non-owner song INSERT must include an explicit albums key'
+                    USING ERRCODE = '23514';
+            END IF;
+        ELSIF TG_OP = 'UPDATE' THEN
+            IF jsonb_typeof(NEW.raw_json) = 'object'
+               AND NOT (NEW.raw_json ? 'albums')
+               AND jsonb_typeof(OLD.raw_json) = 'object'
+               AND OLD.raw_json ? 'albums' THEN
+                NEW.raw_json := NEW.raw_json || jsonb_build_object(
+                    'albums', OLD.raw_json -> 'albums'
+                );
+            END IF;
+        END IF;
+        RETURN NEW;
+    END IF;
+
+    DELETE FROM public.song_album_links
+    WHERE song_id = NEW.id;
+
+    INSERT INTO public.song_album_links (song_id, ordinal, album_id)
+    SELECT NEW.id,
+           album.ordinal::INTEGER,
+           (album.value ->> 'id')::INTEGER
+    FROM jsonb_array_elements(
+        CASE
+            WHEN jsonb_typeof(NEW.raw_json -> 'albums') = 'array'
+                THEN NEW.raw_json -> 'albums'
+            ELSE '[]'::jsonb
+        END
+    ) WITH ORDINALITY AS album(value, ordinal)
+    WHERE album.value ->> 'id' ~ '^[0-9]+$';
+
+    RETURN NEW;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION sync_song_album_links_from_raw_json_v1() FROM PUBLIC;
+
+CREATE OR REPLACE TRIGGER song_album_insert_guard_v1
+BEFORE INSERT ON songs
+FOR EACH ROW
+EXECUTE FUNCTION sync_song_album_links_from_raw_json_v1();
+
+CREATE OR REPLACE TRIGGER song_album_key_preserve_v1
+BEFORE UPDATE OF raw_json ON songs
+FOR EACH ROW
+EXECUTE FUNCTION sync_song_album_links_from_raw_json_v1();
+
+CREATE OR REPLACE TRIGGER song_album_links_sync_v1
+AFTER INSERT OR UPDATE OF raw_json ON songs
+FOR EACH ROW
+EXECUTE FUNCTION sync_song_album_links_from_raw_json_v1();
+
 -- Heuristic discovery quality signals are refreshed by diva-data-pipeline.
 CREATE TABLE IF NOT EXISTS song_discovery_quality (
     song_id             INTEGER PRIMARY KEY REFERENCES songs(id) ON DELETE CASCADE,
