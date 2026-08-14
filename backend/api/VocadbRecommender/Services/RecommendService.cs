@@ -10,6 +10,11 @@ public class RecommendService
 {
     internal const int DiverseFallbackCandidateCount = 80;
     internal const int VocalistDiversityAssessmentCandidateCount = 100;
+    internal const int MetadataDiversityProbeMinimumCount = 20;
+
+    internal readonly record struct DiverseFallbackCandidateSelection(
+        int[] CandidateIds,
+        bool UsedRestrictedPool);
 
     private readonly DbService     _db;
     private readonly QdrantService _qdrant;
@@ -135,13 +140,23 @@ public class RecommendService
             var maximumScore = mergedCandidates.Count == 0
                 ? 1.0
                 : Math.Max(1e-9, mergedCandidates.Max(candidate => candidate.Value));
-            var fallbackIds = await _db.GetDiverseFallbackCandidateIdsAsync(
-                seedSongId,
+            var restrictedCandidatePool = candidateScores.Keys.ToArray();
+            var fallbackSelection = await GetDiverseFallbackCandidateIdsRestrictedFirstAsync(
                 DiverseFallbackCandidateCount,
+                candidateInfos,
+                token => _db.GetRestrictedDiverseFallbackCandidateIdsAsync(
+                    seedSongId,
+                    DiverseFallbackCandidateCount,
+                    restrictedCandidatePool,
+                    token),
+                token => _db.GetDiverseFallbackCandidateIdsAsync(
+                    seedSongId,
+                    DiverseFallbackCandidateCount,
+                    token),
                 cancellationToken);
             MergeDiverseFallbackCandidates(
                 candidateScores,
-                fallbackIds,
+                fallbackSelection.CandidateIds,
                 playedSet,
                 maximumScore,
                 _opts.DiverseFallbackScoreWeight);
@@ -206,6 +221,95 @@ public class RecommendService
             .ToList();
 
         return new RecommendResponse(items, null);
+    }
+
+    internal static async Task<DiverseFallbackCandidateSelection>
+        GetDiverseFallbackCandidateIdsRestrictedFirstAsync(
+        int requiredCount,
+        IReadOnlyCollection<SongInfo> candidateInfos,
+        Func<CancellationToken, Task<int[]>> restrictedLoader,
+        Func<CancellationToken, Task<int[]>> globalLoader,
+        CancellationToken cancellationToken)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(requiredCount);
+        ArgumentNullException.ThrowIfNull(candidateInfos);
+        ArgumentNullException.ThrowIfNull(restrictedLoader);
+        ArgumentNullException.ThrowIfNull(globalLoader);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var restrictedIds = await restrictedLoader(cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+        if (RestrictedDiverseFallbackIsUsable(
+            restrictedIds,
+            requiredCount,
+            candidateInfos))
+        {
+            return new DiverseFallbackCandidateSelection(
+                restrictedIds,
+                UsedRestrictedPool: true);
+        }
+
+        return new DiverseFallbackCandidateSelection(
+            await globalLoader(cancellationToken),
+            UsedRestrictedPool: false);
+    }
+
+    internal static bool RestrictedDiverseFallbackIsUsable(
+        IReadOnlyCollection<int> restrictedIds,
+        int requiredCount,
+        IReadOnlyCollection<SongInfo> candidateInfos)
+    {
+        if (restrictedIds.Count != requiredCount)
+            return false;
+
+        var restrictedIdSet = restrictedIds.ToHashSet();
+        if (restrictedIdSet.Count != requiredCount)
+            return false;
+
+        var restrictedInfos = candidateInfos
+            .Where(info => restrictedIdSet.Contains(info.Id))
+            .ToArray();
+        return restrictedInfos.Length == requiredCount
+            && !MetadataRelationshipRanking.NeedsDiverseFallback(restrictedInfos);
+    }
+
+    internal static int MetadataDiversityProbeCount(
+        int availableCount,
+        int requestedCount) =>
+        Math.Min(
+            Math.Max(0, availableCount),
+            Math.Max(MetadataDiversityProbeMinimumCount, requestedCount));
+
+    internal static async Task<int[]?> GetMetadataGlobalFallbackIfNeededAsync(
+        DiverseFallbackCandidateSelection fallbackSelection,
+        IReadOnlyCollection<(int SongId, double Score)> rerankedCandidates,
+        IReadOnlyCollection<SongInfo> candidateInfos,
+        Func<CancellationToken, Task<int[]>> globalLoader,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(rerankedCandidates);
+        ArgumentNullException.ThrowIfNull(candidateInfos);
+        ArgumentNullException.ThrowIfNull(globalLoader);
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!fallbackSelection.UsedRestrictedPool)
+            return null;
+
+        var diversityProbeCandidates = rerankedCandidates
+            .Take(MetadataDiversityProbeMinimumCount)
+            .ToArray();
+        var selectedIds = diversityProbeCandidates
+            .Select(candidate => candidate.SongId)
+            .ToHashSet();
+        var selectedInfos = candidateInfos
+            .Where(info => selectedIds.Contains(info.Id))
+            .ToArray();
+        var needsGlobalFallback = selectedIds.Count != diversityProbeCandidates.Length
+            || selectedInfos.Length != selectedIds.Count
+            || MetadataRelationshipRanking.NeedsDiverseFallback(selectedInfos);
+        if (!needsGlobalFallback)
+            return null;
+
+        return await globalLoader(cancellationToken);
     }
 
     internal static void MergeDiverseFallbackCandidates(
@@ -405,27 +509,27 @@ public class RecommendService
         var maximumRelevance = Math.Max(1e-9, remaining.Count == 0 ? 0 : remaining.Max(item => Math.Max(0, item.Score)));
         producerDiversityWeight = Math.Clamp(producerDiversityWeight, 0, 1);
         vocalistDiversityWeight = Math.Clamp(vocalistDiversityWeight, 0, 1);
+        // Counts represent selected songs containing each relationship ID, not
+        // raw array occurrences. This is the incremental form of the legacy scans.
+        var selectedProducerCounts = new Dictionary<int, int>();
+        var selectedVocalistCounts = new Dictionary<int, int>();
 
         while (selected.Count < count && remaining.Count > 0)
         {
-            (int SongId, double Score, string Reason) best = default;
+            var bestIndex = -1;
             double bestMmr = double.NegativeInfinity;
 
-            foreach (var (sid, relevance) in remaining)
+            for (var index = 0; index < remaining.Count; index++)
             {
+                var (sid, relevance) = remaining[index];
                 var normalizedRelevance = Math.Clamp(relevance / maximumRelevance, 0, 1);
                 double redundancy = 0;
                 if (selected.Count > 0 && infoMap.TryGetValue(sid, out var info))
                 {
-                    var selectedInfos = selected
-                        .Select(item => infoMap.GetValueOrDefault(item.SongId))
-                        .Where(item => item is not null)
-                        .Cast<SongInfo>()
-                        .ToArray();
                     var producerRepeats = info.ProducerIds.Length == 0 ? 0 : info.ProducerIds
-                        .Max(id => selectedInfos.Count(item => item.ProducerIds.Contains(id)));
+                        .Max(id => selectedProducerCounts.GetValueOrDefault(id));
                     var vocalistRepeats = info.VocalistIds.Length == 0 ? 0 : info.VocalistIds
-                        .Max(id => selectedInfos.Count(item => item.VocalistIds.Contains(id)));
+                        .Max(id => selectedVocalistCounts.GetValueOrDefault(id));
                     var producerRedundancy = 1.0 - Math.Exp(-0.9 * producerRepeats);
                     var vocalistRedundancy = 1.0 - Math.Exp(-0.55 * vocalistRepeats);
                     redundancy = Math.Min(1.0,
@@ -434,16 +538,29 @@ public class RecommendService
                 }
 
                 var mmr = lambda * normalizedRelevance - (1.0 - lambda) * redundancy;
-                if (mmr > bestMmr)
-                {
-                    bestMmr = mmr;
-                    var reason = DetermineReason(sid, selected, infoMap);
-                    best = (sid, mmr, reason);
-                }
+                // Preserve the legacy strict-greater comparison, including its
+                // behavior for non-finite defensive-test inputs.
+                if (!(mmr > bestMmr)) continue;
+                bestMmr = mmr;
+                bestIndex = index;
             }
 
-            if (best == default) break;
+            if (bestIndex < 0) break;
+            var bestCandidate = remaining[bestIndex];
+            var best = (
+                bestCandidate.SongId,
+                Score: bestMmr,
+                Reason: DetermineReason(bestCandidate.SongId, selected, infoMap));
             selected.Add(best);
+            if (infoMap.TryGetValue(best.SongId, out var selectedInfo))
+            {
+                IncrementSelectedRelationshipCounts(
+                    selectedProducerCounts,
+                    selectedInfo.ProducerIds);
+                IncrementSelectedRelationshipCounts(
+                    selectedVocalistCounts,
+                    selectedInfo.VocalistIds);
+            }
             remaining.RemoveAll(r => r.SongId == best.SongId);
         }
 
@@ -461,10 +578,39 @@ public class RecommendService
         foreach (var (selId, _, _) in selected)
         {
             if (!infoMap.TryGetValue(selId, out var sel)) continue;
-            if (info.ProducerIds.Intersect(sel.ProducerIds).Any()) return "same_producer";
-            if (info.VocalistIds.Intersect(sel.VocalistIds).Any()) return "same_vocalist";
+            if (SharesAny(info.ProducerIds, sel.ProducerIds)) return "same_producer";
+            if (SharesAny(info.VocalistIds, sel.VocalistIds)) return "same_vocalist";
         }
         return "similar";
+    }
+
+    private static void IncrementSelectedRelationshipCounts(
+        Dictionary<int, int> counts,
+        int[] relationshipIds)
+    {
+        for (var index = 0; index < relationshipIds.Length; index++)
+        {
+            var relationshipId = relationshipIds[index];
+            var alreadyCounted = false;
+            for (var previousIndex = 0; previousIndex < index; previousIndex++)
+            {
+                if (relationshipIds[previousIndex] != relationshipId) continue;
+                alreadyCounted = true;
+                break;
+            }
+            if (!alreadyCounted)
+                counts[relationshipId] = counts.GetValueOrDefault(relationshipId) + 1;
+        }
+    }
+
+    private static bool SharesAny(int[] first, int[] second)
+    {
+        foreach (var firstId in first)
+        foreach (var secondId in second)
+        {
+            if (firstId == secondId) return true;
+        }
+        return false;
     }
 }
 

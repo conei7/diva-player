@@ -63,20 +63,54 @@ public static class MetadataRelationshipRanking
         IEnumerable<(int SongId, double Score)> candidates,
         SongInfo seed,
         IEnumerable<SongInfo> candidateInfos,
-        int desiredCount)
+        int desiredCount) =>
+        RerankRelatedCore(candidates, seed, candidateInfos, desiredCount, null);
+
+    internal static List<(int SongId, double Score)> RerankRelatedWithDiagnostics(
+        IEnumerable<(int SongId, double Score)> candidates,
+        SongInfo seed,
+        IEnumerable<SongInfo> candidateInfos,
+        int desiredCount,
+        Action contextComparisonObserver) =>
+        RerankRelatedCore(
+            candidates,
+            seed,
+            candidateInfos,
+            desiredCount,
+            contextComparisonObserver ?? throw new ArgumentNullException(nameof(contextComparisonObserver)));
+
+    private static List<(int SongId, double Score)> RerankRelatedCore(
+        IEnumerable<(int SongId, double Score)> candidates,
+        SongInfo seed,
+        IEnumerable<SongInfo> candidateInfos,
+        int desiredCount,
+        Action? contextComparisonObserver)
     {
         var infoMap = candidateInfos.ToDictionary(info => info.Id);
+        // Relationship sets are immutable for this request. Preparing them once
+        // avoids rebuilding HashSets for every candidate/selected-song pair.
+        var preparedInfoMap = infoMap.ToDictionary(
+            pair => pair.Key,
+            pair => new PreparedRelationships(pair.Value));
+        var preparedSeed = new PreparedRelationships(seed);
         var remaining = candidates
             .Where(candidate => infoMap.ContainsKey(candidate.SongId))
-            .Select(candidate => (
+            .Select(candidate => new RankedCandidate(
                 candidate.SongId,
-                Score: RelatedScore(seed, infoMap[candidate.SongId], candidate.Score)))
+                RelatedScore(
+                    preparedSeed,
+                    preparedInfoMap[candidate.SongId],
+                    candidate.Score),
+                preparedInfoMap[candidate.SongId],
+                desiredCount))
             .OrderByDescending(candidate => candidate.Score)
             .ThenBy(candidate => candidate.SongId)
             .ToList();
 
         var selected = new List<(int SongId, double Score)>(
             Math.Min(desiredCount, remaining.Count));
+        var selectedProducerCounts = new Dictionary<int, int>();
+        var selectedVocalistCounts = new Dictionary<int, int>();
 
         while (selected.Count < desiredCount && remaining.Count > 0)
         {
@@ -86,19 +120,15 @@ public static class MetadataRelationshipRanking
             for (var index = 0; index < remaining.Count; index++)
             {
                 var candidate = remaining[index];
-                var redundancies = selected
-                    .Select(item => ContextRedundancy(infoMap[candidate.SongId], infoMap[item.SongId]))
-                    .OrderByDescending(value => value)
-                    .ToArray();
-                var redundancy = redundancies.Length == 0
+                var redundancy = candidate.Redundancies.Count == 0
                     ? 0
-                    : redundancies[0] * 0.07 + redundancies.Average() * 0.04;
-                var selectedInfos = selected.Select(item => infoMap[item.SongId]).ToArray();
-                var info = infoMap[candidate.SongId];
+                    : candidate.Redundancies[0] * 0.07
+                        + candidate.Redundancies.Average() * 0.04;
+                var info = candidate.Relationships.Info;
                 var producerRepeats = info.ProducerIds.Length == 0 ? 0 : info.ProducerIds
-                    .Max(id => selectedInfos.Count(item => item.ProducerIds.Contains(id)));
+                    .Max(id => selectedProducerCounts.GetValueOrDefault(id));
                 var vocalistRepeats = info.VocalistIds.Length == 0 ? 0 : info.VocalistIds
-                    .Max(id => selectedInfos.Count(item => item.VocalistIds.Contains(id)));
+                    .Max(id => selectedVocalistCounts.GetValueOrDefault(id));
                 var diversityPenalty = 0.42 * (1.0 - Math.Exp(-0.8 * producerRepeats))
                     + 0.16 * (1.0 - Math.Exp(-0.45 * vocalistRepeats));
                 var adjustedScore = candidate.Score - redundancy - diversityPenalty;
@@ -111,6 +141,22 @@ public static class MetadataRelationshipRanking
             var best = remaining[bestIndex];
             selected.Add((best.SongId, bestScore));
             remaining.RemoveAt(bestIndex);
+            IncrementSelectedRelationshipCounts(
+                selectedProducerCounts,
+                best.Relationships.Info.ProducerIds);
+            IncrementSelectedRelationshipCounts(
+                selectedVocalistCounts,
+                best.Relationships.Info.VocalistIds);
+
+            if (selected.Count >= desiredCount || remaining.Count == 0) continue;
+            // Each candidate pair is evaluated once, when the newer item becomes
+            // selected. RankedCandidate retains the legacy descending Average order.
+            foreach (var candidate in remaining)
+            {
+                contextComparisonObserver?.Invoke();
+                candidate.AddRedundancy(
+                    ContextRedundancy(candidate.Relationships, best.Relationships));
+            }
         }
 
         return selected;
@@ -144,22 +190,25 @@ public static class MetadataRelationshipRanking
             .ToList();
     }
 
-    private static double RelatedScore(SongInfo seed, SongInfo candidate, double vectorScore)
+    private static double RelatedScore(
+        PreparedRelationships seed,
+        PreparedRelationships candidate,
+        double vectorScore)
     {
-        var values = new List<(double Value, double Weight)>();
+        var values = new WeightedValues();
         if (vectorScore >= 0)
-            values.Add((Math.Clamp(vectorScore, 0, 1), 0.18));
+            values.Add(Math.Clamp(vectorScore, 0, 1), 0.18);
 
-        AddIfAvailable(values, TagSimilarity(seed, candidate), 0.34);
-        AddIfAvailable(values, AlbumSimilarity(seed, candidate), 0.24);
-        AddIfAvailable(values, ProducerSimilarity(seed, candidate), 0.10);
-        AddIfAvailable(values, EraSimilarity(seed, candidate), 0.15);
-        AddIfAvailable(values, PopularitySimilarity(seed, candidate), 0.14);
-        AddIfAvailable(values, FavoriteSimilarity(seed, candidate), 0.06);
-        AddIfAvailable(values, SongTypeSimilarity(seed, candidate), 0.06);
-        AddIfAvailable(values, LengthSimilarity(seed, candidate), 0.05);
+        values.Add(TagSimilarity(seed, candidate), 0.34);
+        values.Add(AlbumSimilarity(seed, candidate), 0.24);
+        values.Add(ProducerSimilarity(seed, candidate), 0.10);
+        values.Add(EraSimilarity(seed.Info, candidate.Info), 0.15);
+        values.Add(PopularitySimilarity(seed.Info, candidate.Info), 0.14);
+        values.Add(FavoriteSimilarity(seed.Info, candidate.Info), 0.06);
+        values.Add(SongTypeSimilarity(seed.Info, candidate.Info), 0.06);
+        values.Add(LengthSimilarity(seed.Info, candidate.Info), 0.05);
 
-        return WeightedAverage(values) * RecommendationQuality.EvidenceMultiplier(candidate);
+        return values.Average * RecommendationQuality.EvidenceMultiplier(candidate.Info);
     }
 
     private static double IndependentContextScore(SongInfo seed, SongInfo candidate)
@@ -176,15 +225,46 @@ public static class MetadataRelationshipRanking
         return values.Count == 0 ? 0 : WeightedAverage(values);
     }
 
-    private static double ContextRedundancy(SongInfo first, SongInfo second)
+    private static double ContextRedundancy(
+        PreparedRelationships first,
+        PreparedRelationships second)
     {
-        var values = new List<(double Value, double Weight)>();
-        AddIfAvailable(values, TagSimilarity(first, second), 0.46);
-        AddIfAvailable(values, AlbumSimilarity(first, second), 0.24);
-        AddIfAvailable(values, ProducerSimilarity(first, second), 0.14);
-        AddIfAvailable(values, EraSimilarity(first, second), 0.08);
-        AddIfAvailable(values, PopularitySimilarity(first, second), 0.08);
-        return values.Count == 0 ? 0 : WeightedAverage(values);
+        var values = new WeightedValues();
+        values.Add(TagSimilarity(first, second), 0.46);
+        values.Add(AlbumSimilarity(first, second), 0.24);
+        values.Add(ProducerSimilarity(first, second), 0.14);
+        values.Add(EraSimilarity(first.Info, second.Info), 0.08);
+        values.Add(PopularitySimilarity(first.Info, second.Info), 0.08);
+        return values.Average;
+    }
+
+    private static double? TagSimilarity(
+        PreparedRelationships first,
+        PreparedRelationships second)
+    {
+        if (first.Info.RelatedTagIds.Length == 0 || second.Info.RelatedTagIds.Length == 0)
+            return null;
+        var intersection = second.Info.RelatedTagIds.Count(first.RelatedTagIds.Contains);
+        var union = first.RelatedTagIds.Count + second.RelatedTagDistinctCount - intersection;
+        return union == 0 ? null : (double)intersection / union;
+    }
+
+    private static double? AlbumSimilarity(
+        PreparedRelationships first,
+        PreparedRelationships second)
+    {
+        if (first.Info.AlbumIds.Length == 0 || second.Info.AlbumIds.Length == 0)
+            return null;
+        return second.Info.AlbumIds.Any(first.AlbumIds.Contains) ? 1 : 0;
+    }
+
+    private static double? ProducerSimilarity(
+        PreparedRelationships first,
+        PreparedRelationships second)
+    {
+        if (first.Info.ProducerIds.Length == 0 || second.Info.ProducerIds.Length == 0)
+            return null;
+        return second.Info.ProducerIds.Any(first.ProducerIds.Contains) ? 1 : 0;
     }
 
     private static double? TagSimilarity(SongInfo first, SongInfo second) =>
@@ -277,5 +357,94 @@ public static class MetadataRelationshipRanking
             totalWeight += weight;
         }
         return totalWeight == 0 ? 0 : total / totalWeight;
+    }
+
+    private static void IncrementSelectedRelationshipCounts(
+        Dictionary<int, int> counts,
+        int[] relationshipIds)
+    {
+        for (var index = 0; index < relationshipIds.Length; index++)
+        {
+            var relationshipId = relationshipIds[index];
+            var alreadyCounted = false;
+            for (var previousIndex = 0; previousIndex < index; previousIndex++)
+            {
+                if (relationshipIds[previousIndex] != relationshipId) continue;
+                alreadyCounted = true;
+                break;
+            }
+            if (!alreadyCounted)
+                counts[relationshipId] = counts.GetValueOrDefault(relationshipId) + 1;
+        }
+    }
+
+    private sealed class PreparedRelationships
+    {
+        public PreparedRelationships(SongInfo info)
+        {
+            Info = info;
+            RelatedTagIds = info.RelatedTagIds.ToHashSet();
+            RelatedTagDistinctCount = RelatedTagIds.Count;
+            AlbumIds = info.AlbumIds.ToHashSet();
+            ProducerIds = info.ProducerIds.ToHashSet();
+        }
+
+        public SongInfo Info { get; }
+        public HashSet<int> RelatedTagIds { get; }
+        public int RelatedTagDistinctCount { get; }
+        public HashSet<int> AlbumIds { get; }
+        public HashSet<int> ProducerIds { get; }
+    }
+
+    private sealed class RankedCandidate
+    {
+        public RankedCandidate(
+            int songId,
+            double score,
+            PreparedRelationships relationships,
+            int desiredCount)
+        {
+            SongId = songId;
+            Score = score;
+            Relationships = relationships;
+            Redundancies = new List<double>(Math.Max(0, desiredCount));
+        }
+
+        public int SongId { get; }
+        public double Score { get; }
+        public PreparedRelationships Relationships { get; }
+        public List<double> Redundancies { get; }
+
+        public void AddRedundancy(double value)
+        {
+            // LINQ OrderByDescending is stable. Insert after equal values so the
+            // later Average performs floating-point additions in the same order.
+            var index = 0;
+            while (index < Redundancies.Count
+                   && Comparer<double>.Default.Compare(Redundancies[index], value) >= 0)
+            {
+                index++;
+            }
+            Redundancies.Insert(index, value);
+        }
+    }
+
+    private struct WeightedValues
+    {
+        private double _total;
+        private double _totalWeight;
+
+        public readonly double Average => _totalWeight == 0 ? 0 : _total / _totalWeight;
+
+        public void Add(double value, double weight)
+        {
+            _total += Math.Clamp(value, 0, 1) * weight;
+            _totalWeight += weight;
+        }
+
+        public void Add(double? value, double weight)
+        {
+            if (value is not null) Add(value.Value, weight);
+        }
     }
 }

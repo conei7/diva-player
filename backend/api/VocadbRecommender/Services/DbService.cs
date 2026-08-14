@@ -49,6 +49,8 @@ public sealed record KnowledgeMapCatalog(
 /// <summary>PostgreSQL アクセスサービス</summary>
 public class DbService
 {
+    internal const int MaxRestrictedDiverseFallbackCandidateCount = 2_000;
+
     internal static readonly TimeSpan RecommendationPublicationGenerationCacheDuration =
         TimeSpan.FromSeconds(5);
 
@@ -1800,6 +1802,61 @@ public class DbService
         if (_objectCache.TryGetValue(cacheKey, out int[]? cached) && cached is not null)
             return cached;
 
+        var ids = await QueryDiverseFallbackCandidateIdsAsync(
+            seedSongId,
+            normalizedLimit,
+            restrictedCandidateIds: null,
+            cancellationToken);
+        _objectCache.Set(cacheKey, ids, TimeSpan.FromMinutes(15), EstimateIdArrayBytes(ids));
+        return ids;
+    }
+
+    public async Task<int[]> GetRestrictedDiverseFallbackCandidateIdsAsync(
+        int seedSongId,
+        int limit,
+        IEnumerable<int> candidateSongIds,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var restrictedCandidateIds = NormalizeRestrictedDiverseFallbackCandidateIds(
+            candidateSongIds);
+        if (restrictedCandidateIds.Length == 0)
+            return [];
+
+        return await QueryDiverseFallbackCandidateIdsAsync(
+            seedSongId,
+            Math.Clamp(limit, 1, 500),
+            restrictedCandidateIds,
+            cancellationToken);
+    }
+
+    internal static int[] NormalizeRestrictedDiverseFallbackCandidateIds(
+        IEnumerable<int> candidateSongIds)
+    {
+        ArgumentNullException.ThrowIfNull(candidateSongIds);
+        var result = new List<int>(MaxRestrictedDiverseFallbackCandidateCount);
+        var seen = new HashSet<int>();
+        foreach (var candidateSongId in candidateSongIds)
+        {
+            if (candidateSongId <= 0 || !seen.Add(candidateSongId))
+                continue;
+
+            result.Add(candidateSongId);
+            if (result.Count >= MaxRestrictedDiverseFallbackCandidateCount)
+                break;
+        }
+        return result.ToArray();
+    }
+
+    private async Task<int[]> QueryDiverseFallbackCandidateIdsAsync(
+        int seedSongId,
+        int normalizedLimit,
+        int[]? restrictedCandidateIds,
+        CancellationToken cancellationToken)
+    {
+        var restrictedCandidatePredicate = restrictedCandidateIds is null
+            ? string.Empty
+            : "AND candidate.id = ANY($3)";
         await using var conn = await OpenAsync(cancellationToken);
         await using var cmd = new NpgsqlCommand($@"
             WITH seed AS (
@@ -1826,6 +1883,7 @@ public class DbService
              AND quality.discovery_eligible = TRUE
             LEFT JOIN song_features features ON features.song_id = candidate.id
             WHERE candidate.id <> $1
+              {restrictedCandidatePredicate}
               AND (
                   seed.publish_date IS NULL
                   OR candidate.publish_date BETWEEN seed.publish_date - 730 AND seed.publish_date + 730
@@ -1876,6 +1934,12 @@ public class DbService
             LIMIT $2", conn);
         cmd.Parameters.AddWithValue(seedSongId);
         cmd.Parameters.AddWithValue(normalizedLimit);
+        if (restrictedCandidateIds is not null)
+        {
+            cmd.Parameters.AddWithValue(
+                NpgsqlDbType.Array | NpgsqlDbType.Integer,
+                restrictedCandidateIds);
+        }
 
         var result = new List<int>(normalizedLimit);
         await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
@@ -1883,7 +1947,6 @@ public class DbService
             result.Add(reader.GetInt32(0));
 
         var ids = result.ToArray();
-        _objectCache.Set(cacheKey, ids, TimeSpan.FromMinutes(15), EstimateIdArrayBytes(ids));
         return ids;
     }
 

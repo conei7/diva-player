@@ -29,6 +29,7 @@ public sealed class DbServiceCancellationTests
     [InlineData(nameof(DbService.GetSongInfoBatchAsync))]
     [InlineData(nameof(DbService.GetMetadataRelationshipCandidateIdsAsync))]
     [InlineData(nameof(DbService.GetDiverseFallbackCandidateIdsAsync))]
+    [InlineData(nameof(DbService.GetRestrictedDiverseFallbackCandidateIdsAsync))]
     [InlineData(nameof(DbService.GetViewHistoryAsync))]
     [InlineData(nameof(DbService.GetViewHistoryWindowAsync))]
     [InlineData(nameof(DbService.GetTrendingSongsJsonAsync))]
@@ -98,6 +99,11 @@ public sealed class DbServiceCancellationTests
             () => service.GetSongInfoBatchAsync([1], cancellation.Token),
             () => service.GetMetadataRelationshipCandidateIdsAsync(1, 10, cancellation.Token),
             () => service.GetDiverseFallbackCandidateIdsAsync(1, 10, cancellation.Token),
+            () => service.GetRestrictedDiverseFallbackCandidateIdsAsync(
+                1,
+                10,
+                [2, 3],
+                cancellation.Token),
             () => service.GetViewHistoryAsync(1, cancellation.Token),
             () => service.GetViewHistoryWindowAsync(1, "30d", "day", cancellation.Token),
             () => service.LoadMarkovMatrixAsync(cancellation.Token),
@@ -107,6 +113,36 @@ public sealed class DbServiceCancellationTests
 
         foreach (var operation in operations)
             await Assert.ThrowsAnyAsync<OperationCanceledException>(operation);
+    }
+
+    [Fact]
+    public async Task RestrictedDiverseFallback_EmptyPoolDoesNotOpenDatabaseConnection()
+    {
+        using var objectCache = CreateObjectCache();
+        using var searchCache = CreateSearchCache();
+        var service = CreateService(objectCache, searchCache);
+
+        var result = await service.GetRestrictedDiverseFallbackCandidateIdsAsync(
+            1,
+            10,
+            [],
+            CancellationToken.None);
+
+        Assert.Empty(result);
+    }
+
+    [Fact]
+    public void RestrictedDiverseFallback_NormalizesPositiveDistinctBoundedPool()
+    {
+        var normalized = DbService.NormalizeRestrictedDiverseFallbackCandidateIds(
+            [-7, 0, 7, 3, 7, 2]);
+        var bounded = DbService.NormalizeRestrictedDiverseFallbackCandidateIds(
+            Enumerable.Range(1, DbService.MaxRestrictedDiverseFallbackCandidateCount + 50));
+
+        Assert.Equal([7, 3, 2], normalized);
+        Assert.Equal(DbService.MaxRestrictedDiverseFallbackCandidateCount, bounded.Length);
+        Assert.Equal(1, bounded[0]);
+        Assert.Equal(DbService.MaxRestrictedDiverseFallbackCandidateCount, bounded[^1]);
     }
 
     private static DbService CreateService(
