@@ -38,10 +38,11 @@ public sealed class RecommendationSongInfoSqlContractTests
     }
 
     [Fact]
-    public void MetadataRelationshipQuery_PreaggregatesBeforeEligibilityJoin()
+    public void MetadataRelationshipQuery_PreaggregatesAndProbesEligibilityInRankOrder()
     {
         var source = ReadRepositoryFile(
             "backend", "api", "VocadbRecommender", "Services", "DbService.cs");
+        var schema = ReadRepositoryFile("backend", "database", "schema.sql");
         var relationshipQuery = ExtractBetween(
             source,
             "public async Task<int[]> GetMetadataRelationshipCandidateIdsAsync(",
@@ -49,9 +50,9 @@ public sealed class RecommendationSongInfoSqlContractTests
         var scoredCandidates = ExtractBetween(
             relationshipQuery,
             "scored_candidates AS MATERIALIZED (",
-            "            SELECT candidate.song_id");
+            "            SELECT ranked_candidate.song_id");
         var eligibleRanking = relationshipQuery[
-            relationshipQuery.IndexOf("            SELECT candidate.song_id", StringComparison.Ordinal)..];
+            relationshipQuery.IndexOf("            SELECT ranked_candidate.song_id", StringComparison.Ordinal)..];
 
         Assert.Contains("GROUP BY candidate_tag.song_id", scoredCandidates);
         Assert.Contains("AS relationship_score", scoredCandidates);
@@ -59,16 +60,68 @@ public sealed class RecommendationSongInfoSqlContractTests
         Assert.DoesNotContain("song_discovery_quality", scoredCandidates);
 
         Assert.Contains("FROM scored_candidates candidate", eligibleRanking);
-        Assert.Contains("ON quality.song_id = candidate.song_id", eligibleRanking);
+        Assert.Contains("JOIN LATERAL (", eligibleRanking);
+        Assert.Contains("WHERE quality.song_id = ranked_candidate.song_id", eligibleRanking);
         Assert.Contains("AND quality.discovery_eligible = TRUE", eligibleRanking);
-        Assert.Contains("candidate.relationship_score DESC", eligibleRanking);
-        Assert.Contains("candidate.matching_tag_count DESC", eligibleRanking);
-        Assert.Contains("candidate.song_id\n            LIMIT $2", eligibleRanking);
+        Assert.Contains("LIMIT 1\n                OFFSET 0", eligibleRanking);
+        Assert.Contains("ranked_candidate.relationship_score DESC", eligibleRanking);
+        Assert.Contains("ranked_candidate.matching_tag_count DESC", eligibleRanking);
+        Assert.Contains("ranked_candidate.song_id\n            LIMIT $2", eligibleRanking);
+        Assert.Equal(
+            2,
+            eligibleRanking.Split("OFFSET 0", StringSplitOptions.None).Length - 1);
         Assert.Equal(
             1,
             relationshipQuery.Split(
-                "JOIN song_discovery_quality quality",
+                "FROM song_discovery_quality quality",
                 StringSplitOptions.None).Length - 1);
+        Assert.DoesNotContain("JOIN song_discovery_quality quality", relationshipQuery);
+        Assert.Contains(
+            "CREATE INDEX IF NOT EXISTS song_discovery_eligible_song_idx\n" +
+            "    ON song_discovery_quality (song_id)\n" +
+            "    WHERE discovery_eligible;",
+            schema);
+
+        var rankedSource = eligibleRanking.IndexOf(
+            "FROM scored_candidates candidate",
+            StringComparison.Ordinal);
+        var rankedOrder = eligibleRanking.IndexOf(
+            "candidate.relationship_score DESC",
+            rankedSource,
+            StringComparison.Ordinal);
+        var rankedFence = eligibleRanking.IndexOf(
+            "OFFSET 0",
+            rankedOrder,
+            StringComparison.Ordinal);
+        var lateralProbe = eligibleRanking.IndexOf(
+            "JOIN LATERAL (",
+            rankedFence,
+            StringComparison.Ordinal);
+        var eligibilityLookup = eligibleRanking.IndexOf(
+            "FROM song_discovery_quality quality",
+            lateralProbe,
+            StringComparison.Ordinal);
+        var probeLimit = eligibleRanking.IndexOf(
+            "LIMIT 1",
+            eligibilityLookup,
+            StringComparison.Ordinal);
+        var probeFence = eligibleRanking.IndexOf(
+            "OFFSET 0",
+            probeLimit,
+            StringComparison.Ordinal);
+        var resultLimit = eligibleRanking.IndexOf(
+            "LIMIT $2",
+            probeFence,
+            StringComparison.Ordinal);
+
+        Assert.True(rankedSource >= 0);
+        Assert.True(rankedOrder > rankedSource);
+        Assert.True(rankedFence > rankedOrder);
+        Assert.True(lateralProbe > rankedFence);
+        Assert.True(eligibilityLookup > lateralProbe);
+        Assert.True(probeLimit > eligibilityLookup);
+        Assert.True(probeFence > probeLimit);
+        Assert.True(resultLimit > probeFence);
     }
 
     [Fact]
@@ -123,6 +176,90 @@ public sealed class RecommendationSongInfoSqlContractTests
 
         Assert.Equal(filterBeforeAggregate, aggregateBeforeFilter);
         Assert.Equal([2, 3, 5, 8], aggregateBeforeFilter);
+    }
+
+    [Fact]
+    public void MetadataRelationshipEligibilityProbe_SkipsHighRankedIneligibleAndMissingRows()
+    {
+        const int seedSongId = 1;
+        const int limit = 3;
+        var matches = new[]
+        {
+            new RelationshipMatch(seedSongId, 20, 2),
+            new RelationshipMatch(2, 20, 2),  // Highest candidate, explicitly ineligible.
+            new RelationshipMatch(3, 19, 2),  // Next candidate, missing quality row.
+            new RelationshipMatch(4, 10, 10),
+            new RelationshipMatch(5, 10, 10), // Exact score/count tie; song ID breaks it.
+            new RelationshipMatch(6, 10, 10),
+            new RelationshipMatch(7, 1, 500), // Eligible but beyond the requested limit.
+        };
+        var eligibility = new Dictionary<int, bool>
+        {
+            [seedSongId] = true,
+            [2] = false,
+            [4] = true,
+            [5] = true,
+            [6] = true,
+            [7] = true,
+        };
+
+        var filterThenRank = RankEligibleRelationships(
+            matches,
+            eligibility,
+            seedSongId,
+            limit,
+            filterBeforeOrdering: true);
+        var rankThenProbe = RankEligibleRelationships(
+            matches,
+            eligibility,
+            seedSongId,
+            limit,
+            filterBeforeOrdering: false);
+
+        Assert.Equal(filterThenRank, rankThenProbe);
+        Assert.Equal([4, 5, 6], rankThenProbe);
+    }
+
+    [Fact]
+    public void MetadataRelationshipEligibilityProbe_ReturnsAllEligibleRowsBelowLargeLimit()
+    {
+        const int seedSongId = 1;
+        const int limit = 600;
+        var matches = new[]
+        {
+            new RelationshipMatch(seedSongId, 20, 2),
+            new RelationshipMatch(2, 20, 2),
+            new RelationshipMatch(3, 15, 3),
+            new RelationshipMatch(4, 10, 4),
+            new RelationshipMatch(5, 5, 5),
+            new RelationshipMatch(6, 1, 6),
+        };
+        var eligibility = new Dictionary<int, bool>
+        {
+            [seedSongId] = true,
+            [2] = false,
+            [3] = true,
+            [4] = true,
+            [5] = false,
+            // Song 6 deliberately has no quality row.
+        };
+
+        var filterThenRank = RankEligibleRelationships(
+            matches,
+            eligibility,
+            seedSongId,
+            limit,
+            filterBeforeOrdering: true);
+        var rankThenProbe = RankEligibleRelationships(
+            matches,
+            eligibility,
+            seedSongId,
+            limit,
+            filterBeforeOrdering: false);
+
+        Assert.Equal(filterThenRank, rankThenProbe);
+        Assert.Equal([3, 4], rankThenProbe);
+        Assert.True(rankThenProbe.Length < limit);
     }
 
     [Fact]
@@ -239,6 +376,42 @@ public sealed class RecommendationSongInfoSqlContractTests
             .Take(limit)
             .Select(candidate => candidate.SongId)
             .ToArray();
+
+    private static int[] RankEligibleRelationships(
+        IEnumerable<RelationshipMatch> matches,
+        IReadOnlyDictionary<int, bool> eligibility,
+        int seedSongId,
+        int limit,
+        bool filterBeforeOrdering)
+    {
+        var candidates = matches
+            .Where(match => match.SongId != seedSongId)
+            .GroupBy(match => match.SongId)
+            .Select(group => new RelationshipRank(
+                group.Key,
+                group.Sum(RelationshipScore),
+                group.LongCount()));
+        Func<RelationshipRank, bool> isEligible = candidate =>
+            eligibility.TryGetValue(candidate.SongId, out var eligible) && eligible;
+
+        return filterBeforeOrdering
+            ? candidates
+                .Where(isEligible)
+                .OrderByDescending(candidate => candidate.Score)
+                .ThenByDescending(candidate => candidate.MatchingTagCount)
+                .ThenBy(candidate => candidate.SongId)
+                .Take(limit)
+                .Select(candidate => candidate.SongId)
+                .ToArray()
+            : candidates
+                .OrderByDescending(candidate => candidate.Score)
+                .ThenByDescending(candidate => candidate.MatchingTagCount)
+                .ThenBy(candidate => candidate.SongId)
+                .Where(isEligible)
+                .Take(limit)
+                .Select(candidate => candidate.SongId)
+                .ToArray();
+    }
 
     private static double RelationshipScore(RelationshipMatch match) =>
         (1.0 + Math.Log(1.0 + Math.Min(match.TagCount, 20)))

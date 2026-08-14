@@ -1707,6 +1707,10 @@ public class DbService
         // Keep the per-song aggregate behind a materialized planner fence. Joining
         // discovery quality per tag match multiplies heap visibility checks on the
         // frequently refreshed quality table without changing the final score.
+        // The ordered OFFSET 0 boundary and correlated LATERAL LIMIT are also
+        // intentional planner fences: eligibility only removes rows, so probing
+        // the partial index in rank order is exact and can stop once the requested
+        // number of eligible songs has been found.
         await using var conn = await OpenAsync(cancellationToken);
         await using var cmd = new NpgsqlCommand(@"
             WITH seed_tags AS (
@@ -1735,15 +1739,30 @@ public class DbService
                 WHERE candidate_tag.song_id <> $1
                 GROUP BY candidate_tag.song_id
             )
-            SELECT candidate.song_id
-            FROM scored_candidates candidate
-            JOIN song_discovery_quality quality
-              ON quality.song_id = candidate.song_id
-             AND quality.discovery_eligible = TRUE
+            SELECT ranked_candidate.song_id
+            FROM (
+                SELECT candidate.song_id,
+                       candidate.relationship_score,
+                       candidate.matching_tag_count
+                FROM scored_candidates candidate
+                ORDER BY
+                    candidate.relationship_score DESC,
+                    candidate.matching_tag_count DESC,
+                    candidate.song_id
+                OFFSET 0
+            ) ranked_candidate
+            JOIN LATERAL (
+                SELECT 1
+                FROM song_discovery_quality quality
+                WHERE quality.song_id = ranked_candidate.song_id
+                  AND quality.discovery_eligible = TRUE
+                LIMIT 1
+                OFFSET 0
+            ) eligible_candidate ON TRUE
             ORDER BY
-                candidate.relationship_score DESC,
-                candidate.matching_tag_count DESC,
-                candidate.song_id
+                ranked_candidate.relationship_score DESC,
+                ranked_candidate.matching_tag_count DESC,
+                ranked_candidate.song_id
             LIMIT $2", conn);
         cmd.Parameters.AddWithValue(seedSongId);
         cmd.Parameters.AddWithValue(normalizedLimit);
