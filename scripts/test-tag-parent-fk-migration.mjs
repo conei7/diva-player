@@ -97,7 +97,11 @@ assert.match(integration, /PASS tag parent FK migration contract/);
 
 const runMigration = runner.indexOf('psql -v ON_ERROR_STOP=1 -f "$file"');
 const recordMigration = runner.indexOf('INSERT INTO schema_migrations');
-assert.match(runner, /for file in \/migrations\/sql\/\*\.sql/);
+assert.match(
+  runner,
+  /migrations_sql_dir="\$\{MIGRATIONS_SQL_DIR:-\/migrations\/sql\}"/,
+);
+assert.match(runner, /for file in "\$migrations_sql_dir"\/\*\.sql/);
 assert.ok(runMigration !== -1 && recordMigration > runMigration);
 assert.match(compose, /\.\/database\/migrations:\/migrations\/sql:ro/);
 assert.match(compose, /PGUSER: "\$\{DIVA_DB_ADMIN_USER:-vocadb\}"/);
