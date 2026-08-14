@@ -29,15 +29,23 @@ function passingReport() {
           dominantProducerIds: [7, 8],
           maxVocalistShare: 0.5,
           dominantVocalistIds: [39, 40],
+          elapsedMs: 321,
         },
       },
     }],
+    health: { requestElapsedMs: 456 },
     latency: {
       p95Ms: 500,
       maximumMs: 15_000,
       endpoints: Object.fromEntries(endpoints.map(endpoint => [endpoint, { p50Ms: 100, p95Ms: 500 }])),
     },
-    dig: { count: 20, latencyMs: 200, generationOverlap: 0.2, maxProducerShare: 0.2 },
+    dig: {
+      count: 20,
+      latencyMs: 200,
+      alternateLatencyMs: 180,
+      generationOverlap: 0.2,
+      maxProducerShare: 0.2,
+    },
     quality: {
       maxModeOverlap: 0.2,
       thresholds: {
@@ -110,6 +118,12 @@ try {
     savedReport.seedResults[0].endpointDiagnostics['/api/recommend'].dominantVocalistIds,
     [39, 40],
   );
+  assert.equal(
+    savedReport.seedResults[0].endpointDiagnostics['/api/recommend'].elapsedMs,
+    321,
+  );
+  assert.equal(savedReport.health.requestElapsedMs, 456);
+  assert.equal(savedReport.dig.alternateLatencyMs, 180);
   const history = (await readFile(historyFile, 'utf8')).trim().split('\n').map(JSON.parse);
   assert.equal(history.length, 1);
   assert.equal(history[0].quality.endpoints[0].maxVocalistShare, 0.95);

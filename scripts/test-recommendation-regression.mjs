@@ -439,6 +439,7 @@ async function main() {
   const nonEmptyByEndpoint = new Map(endpoints.map(endpoint => [endpoint, 0]));
   const itemsByEndpoint = new Map(endpoints.map(endpoint => [endpoint, []]));
   const itemsBySeed = new Map(seeds.map(seed => [seed.id, new Map()]));
+  const latencyBySeed = new Map(seeds.map(seed => [seed.id, new Map()]));
 
   for (const seed of seeds) {
     for (const endpoint of endpoints) {
@@ -451,6 +452,7 @@ async function main() {
       endpointCounts.set(endpoint, [...(endpointCounts.get(endpoint) ?? []), count]);
       itemsByEndpoint.get(endpoint).push(items);
       itemsBySeed.get(seed.id).set(endpoint, items);
+      latencyBySeed.get(seed.id).set(endpoint, result.elapsedMs);
       if (count > 0) nonEmptyByEndpoint.set(endpoint, nonEmptyByEndpoint.get(endpoint) + 1);
     }
   }
@@ -533,10 +535,14 @@ async function main() {
       ])),
       endpointDiagnostics: Object.fromEntries(endpoints.map(endpoint => [
         endpoint,
-        buildSeedEndpointDiagnostics(itemsBySeed.get(seed.id).get(endpoint) ?? []),
+        {
+          ...buildSeedEndpointDiagnostics(itemsBySeed.get(seed.id).get(endpoint) ?? []),
+          elapsedMs: latencyBySeed.get(seed.id).get(endpoint),
+        },
       ])),
     })),
     health: {
+      requestElapsedMs: health.elapsedMs,
       discoveryQuality: health.data.discoveryQuality,
       audioFeatures,
     },
@@ -544,6 +550,7 @@ async function main() {
     dig: {
       count: digItems.length,
       latencyMs: digResult.elapsedMs,
+      alternateLatencyMs: alternateDigResult.elapsedMs,
       seedIds: [...digSeedIds],
       generationOverlap: digGenerationOverlap,
       maxProducerShare: digMaxProducerShare,
@@ -567,6 +574,15 @@ async function main() {
   console.log(`PASS representative seeds (${seeds.map(seed => `${seed.group}:${seed.id}`).join(', ')})`);
   console.log(`PASS recommendation regression (${summary.join('; ')})`);
   console.log(`PASS recommendation latency (overall p95=${p95}ms; ${endpoints.map(endpoint => `${endpoint} p50=${endpointLatency[endpoint].p50Ms} p95=${endpointLatency[endpoint].p95Ms}`).join('; ')})`);
+  const slowestRequests = seeds
+    .flatMap(seed => endpoints.map(endpoint => ({
+      seedId: seed.id,
+      endpoint,
+      elapsedMs: latencyBySeed.get(seed.id).get(endpoint),
+    })))
+    .sort((left, right) => right.elapsedMs - left.elapsedMs)
+    .slice(0, 5);
+  console.log(`PASS slowest recommendation requests (${slowestRequests.map(sample => `${sample.endpoint} seed=${sample.seedId} ${sample.elapsedMs}ms`).join('; ')})`);
   console.log(`PASS representative seed balance (producerShare=${getSeedProducerShare(seeds).toFixed(2)}, audioCoverage=${(seeds.filter(seed => seed.audioComputed === true).length / seeds.length).toFixed(2)})`);
   console.log(`PASS Dig discovery (${digItems.length} candidates, latency=${digResult.elapsedMs}ms, generationOverlap=${digGenerationOverlap.toFixed(2)}, producerShare=${digMaxProducerShare.toFixed(2)})`);
   console.log(`PASS recommendation diversity (${endpointQuality.map(quality => `${quality.endpoint} artist=${quality.maxArtistShare.toFixed(2)} producer=${quality.maxProducerShare.toFixed(2)} vocalist=${quality.maxVocalistShare.toFixed(2)} seedOverlap=${quality.maxSeedOverlap.toFixed(2)} unique=${quality.uniqueRatio.toFixed(2)} minor=${quality.minorShare.toFixed(2)} metadata=${quality.groupMetadataCoverage.toFixed(2)}`).join('; ')}; modeOverlap=${observedMaxModeOverlap.toFixed(2)})`);
