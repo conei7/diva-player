@@ -70,6 +70,18 @@ async function seedRatings(page) {
   });
 }
 
+async function clickButtonByText(page, label) {
+  const buttons = await page.$$('button');
+  for (const button of buttons) {
+    const text = await button.evaluate(element => element.textContent?.trim());
+    if (text === label) {
+      await button.click();
+      return;
+    }
+  }
+  throw new Error(`Button not found: ${label}`);
+}
+
 try {
   const page = await browser.newPage();
   page.setDefaultTimeout(60_000);
@@ -111,14 +123,28 @@ try {
     throw new Error('YouTube knowledge map summary or tiles are missing.');
   }
 
-  const buttons = await page.$$('button');
-  for (const button of buttons) {
-    const text = await button.evaluate(element => element.textContent?.trim());
-    if (text === 'ニコニコ') {
-      await button.click();
-      break;
-    }
+  await clickButtonByText(page, '知っている曲');
+  const knownMapText = await page.$eval('[data-testid="youtube-knowledge-treemap"]', element => element.textContent ?? '');
+  if (!knownMapText.includes('Known YouTube Song') || !knownMapText.includes('Rated YouTube Song') || knownMapText.includes('その他の未再生曲')) {
+    throw new Error(`Known-song filter returned unexpected tiles: ${knownMapText}`);
   }
+  const knownSongTile = await page.$('[data-testid="youtube-knowledge-treemap"] a[aria-label*="Known YouTube Song"]');
+  if (!knownSongTile) throw new Error('Known-song filter did not render the expected linked song tile.');
+  await knownSongTile.hover();
+  await page.waitForSelector('[data-testid="knowledge-map-tooltip"]');
+  const tooltipText = await page.$eval('[data-testid="knowledge-map-tooltip"]', element => element.textContent ?? '');
+  if (!tooltipText.includes('Known YouTube Song') || !tooltipText.includes('知っている')) {
+    throw new Error(`Knowledge map tooltip is missing song details: ${tooltipText}`);
+  }
+
+  await clickButtonByText(page, 'まだ知らない曲');
+  const unknownMapText = await page.$eval('[data-testid="youtube-knowledge-treemap"]', element => element.textContent ?? '');
+  if (!unknownMapText.includes('その他の未再生曲') || unknownMapText.includes('Known YouTube Song')) {
+    throw new Error(`Unknown-song filter returned unexpected tiles: ${unknownMapText}`);
+  }
+  await clickButtonByText(page, '全体');
+
+  await clickButtonByText(page, 'ニコニコ');
   await page.waitForSelector('[data-testid="nico-knowledge-treemap"]');
   const nicoText = await page.$eval('[data-testid="knowledge-map-page"]', element => element.textContent ?? '');
   if (!nicoText.includes('50.0%') || !nicoText.includes('Known Nico Song')) {
@@ -128,11 +154,12 @@ try {
   await page.setViewport({ width: 390, height: 844 });
   await page.reload({ waitUntil: 'domcontentloaded' });
   await page.waitForSelector('[data-testid="youtube-knowledge-treemap"]');
+  await clickButtonByText(page, 'まだ知らない曲');
   const width = await page.evaluate(() => ({ viewport: innerWidth, document: document.documentElement.scrollWidth, body: document.body.scrollWidth }));
   if (width.document > width.viewport + 1 || width.body > width.viewport + 1) {
     throw new Error(`Knowledge map has horizontal overflow: ${JSON.stringify(width)}`);
   }
-  console.log('PASS YouTube/NicoNico knowledge map, local history/rating join, and 390px layout');
+  console.log('PASS YouTube/NicoNico knowledge map, known/unknown filtering, tooltip, local history/rating join, and 390px layout');
 } finally {
   await browser.close();
 }

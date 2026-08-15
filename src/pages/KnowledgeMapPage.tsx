@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router';
 import {
   fetchKnowledgeMap,
@@ -10,6 +10,8 @@ import { getPlayedSongIds } from '../services/historyDatabase';
 import { useRatingStore } from '../stores/ratingStore';
 import { buildKnowledgeMapItems, layoutKnowledgeMap, type KnowledgeMapRect } from '../utils/knowledgeMap';
 import { getRatedSongIds } from '../utils/ratedSongs';
+
+type ViewMode = 'all' | 'known' | 'unknown';
 
 const compactNumber = new Intl.NumberFormat('ja-JP', { notation: 'compact', maximumFractionDigits: 1 });
 
@@ -37,10 +39,17 @@ function tileBackground(rect: KnowledgeMapRect, platform: KnowledgeMapPlatform, 
     : 'linear-gradient(145deg, rgba(82,82,91,.9), rgba(39,39,42,.98))';
 }
 
+const VIEW_MODES: { value: ViewMode; label: string }[] = [
+  { value: 'all', label: '全体' },
+  { value: 'known', label: '知っている曲' },
+  { value: 'unknown', label: 'まだ知らない曲' },
+];
+
 export default function KnowledgeMapPage() {
   const ratings = useRatingStore(state => state.ratings);
   const [result, setResult] = useState<KnowledgeMapResponse | null>(null);
   const [platform, setPlatform] = useState<KnowledgeMapPlatform>('youtube');
+  const [viewMode, setViewMode] = useState<ViewMode>('all');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [reloadKey, setReloadKey] = useState(0);
@@ -73,9 +82,19 @@ export default function KnowledgeMapPage() {
   }, [ratedSongIds, reloadKey]);
 
   const data = result?.[platform] ?? null;
-  const rectangles = useMemo(
-    () => data ? layoutKnowledgeMap(buildKnowledgeMapItems(data)) : [],
+  const allItems = useMemo(
+    () => data ? buildKnowledgeMapItems(data) : [],
     [data],
+  );
+  const filteredItems = useMemo(
+    () => viewMode === 'all'
+      ? allItems
+      : allItems.filter(item => viewMode === 'known' ? item.known : !item.known),
+    [allItems, viewMode],
+  );
+  const rectangles = useMemo(
+    () => layoutKnowledgeMap(filteredItems),
+    [filteredItems],
   );
   const topKnown = useMemo(
     () => data?.tiles.filter(tile => tile.known).sort((left, right) => right.views - left.views).slice(0, 8) ?? [],
@@ -97,7 +116,7 @@ export default function KnowledgeMapPage() {
         </p>
       </div>
 
-      <div className="mb-6 inline-flex min-h-11 rounded-xl border border-white/[0.08] bg-white/[0.03] p-1" role="group" aria-label="再生数のサービス">
+      <div className="mb-3 inline-flex min-h-11 rounded-xl border border-white/[0.08] bg-white/[0.03] p-1" role="group" aria-label="再生数のサービス">
         {(['youtube', 'nico'] as const).map(value => (
           <button
             key={value}
@@ -109,6 +128,29 @@ export default function KnowledgeMapPage() {
             {platformLabel(value)}
           </button>
         ))}
+      </div>
+
+      <div className="mb-6 flex flex-wrap items-center gap-1.5" role="group" aria-label="マップ表示">
+        {VIEW_MODES.map(({ value, label }) => (
+          <button
+            key={value}
+            type="button"
+            onClick={() => setViewMode(value)}
+            aria-pressed={viewMode === value}
+            className={`rounded-lg px-3 py-1.5 text-xs font-medium transition ${
+              viewMode === value
+                ? 'bg-white/[0.12] text-white ring-1 ring-white/20'
+                : 'text-neutral-500 hover:bg-white/[0.05] hover:text-neutral-300'
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+        {viewMode !== 'all' && (
+          <span className="ml-2 text-[11px] text-neutral-600">
+            マップをフィルター中 — タイルが拡大されています
+          </span>
+        )}
       </div>
 
       {loading ? (
@@ -123,6 +165,7 @@ export default function KnowledgeMapPage() {
           result={result}
           data={data}
           platform={platform}
+          viewMode={viewMode}
           rectangles={rectangles}
           topKnown={topKnown}
           topUnknown={topUnknown}
@@ -136,6 +179,7 @@ function KnowledgeMapContent({
   result,
   data,
   platform,
+  viewMode,
   rectangles,
   topKnown,
   topUnknown,
@@ -143,10 +187,36 @@ function KnowledgeMapContent({
   result: KnowledgeMapResponse;
   data: PlatformKnowledgeMap;
   platform: KnowledgeMapPlatform;
+  viewMode: ViewMode;
   rectangles: KnowledgeMapRect[];
   topKnown: PlatformKnowledgeMap['tiles'];
   topUnknown: PlatformKnowledgeMap['tiles'];
 }) {
+  const [hovered, setHovered] = useState<{ rect: KnowledgeMapRect; x: number; y: number } | null>(null);
+  const tooltipRef = useRef<HTMLDivElement>(null);
+
+  // Position tooltip directly via DOM to avoid per-pixel re-renders.
+  useEffect(() => {
+    if (!hovered) return;
+    const positionTooltip = (clientX: number, clientY: number) => {
+      const el = tooltipRef.current;
+      if (!el) return;
+      let left = clientX + 14;
+      let top = clientY + 14;
+      const rect = el.getBoundingClientRect();
+      if (left + rect.width > window.innerWidth - 8) left = clientX - rect.width - 8;
+      if (top + rect.height > window.innerHeight - 8) top = clientY - rect.height - 8;
+      left = Math.max(8, left);
+      top = Math.max(8, top);
+      el.style.left = `${left}px`;
+      el.style.top = `${top}px`;
+    };
+    positionTooltip(hovered.x, hovered.y);
+    const handleMouseMove = (e: MouseEvent) => positionTooltip(e.clientX, e.clientY);
+    document.addEventListener('mousemove', handleMouseMove, { passive: true });
+    return () => document.removeEventListener('mousemove', handleMouseMove);
+  }, [hovered]);
+
   return (
     <>
       <section className="mb-5 grid grid-cols-2 gap-3 lg:grid-cols-4" aria-label={`${platformLabel(platform)}の知ってる度`}>
@@ -157,10 +227,19 @@ function KnowledgeMapContent({
       </section>
 
       <section className="overflow-hidden rounded-3xl border border-white/[0.08] bg-neutral-950 p-2 shadow-2xl sm:p-3">
-        <div className="relative h-[460px] w-full overflow-hidden rounded-2xl bg-neutral-900 sm:h-[560px]" data-testid={`${platform}-knowledge-treemap`}>
-          {rectangles.map((rect, index) => {
-            const showFullLabel = rect.width >= 9 && rect.height >= 8;
-            const showShortLabel = !showFullLabel && rect.width >= 4.5 && rect.height >= 4.5;
+        <div
+          className="relative h-[460px] w-full overflow-hidden rounded-2xl bg-neutral-900 sm:h-[560px]"
+          data-testid={`${platform}-knowledge-treemap`}
+          onMouseLeave={() => setHovered(null)}
+        >
+          {rectangles.length === 0 ? (
+            <div className="flex h-full items-center justify-center text-sm text-neutral-500">
+              {viewMode === 'known' ? '知っている曲がこのサービスにありません' : viewMode === 'unknown' ? '未再生の曲がありません' : '表示する曲がありません'}
+            </div>
+          ) : rectangles.map((rect, index) => {
+            const showFullLabel = rect.width >= 8 && rect.height >= 7;
+            const showShortLabel = !showFullLabel && rect.width >= 3.5 && rect.height >= 3.5;
+            const showDot = !showFullLabel && !showShortLabel && rect.width >= 1.5 && rect.height >= 1.5;
             const style = {
               left: `${rect.x}%`,
               top: `${rect.y}%`,
@@ -172,22 +251,46 @@ function KnowledgeMapContent({
               <>
                 {rect.thumbUrl && <img src={rect.thumbUrl} alt="" className={`absolute inset-0 h-full w-full object-cover ${rect.known ? 'opacity-30' : 'opacity-10'} mix-blend-luminosity`} />}
                 <span className="absolute inset-0 border border-black/35" />
+                {rect.known && <span className={`absolute inset-y-0 left-0 w-[3px] ${platform === 'youtube' ? 'bg-rose-400/80' : 'bg-teal-400/80'}`} />}
                 {(showFullLabel || showShortLabel) && (
                   <span className="relative z-10 flex h-full min-w-0 flex-col justify-end overflow-hidden p-1.5 text-left sm:p-2">
-                    <span className={`${showFullLabel ? 'text-xs sm:text-sm' : 'text-[9px]'} truncate font-bold text-white`}>{rect.known ? '✓ ' : ''}{rect.label}</span>
+                    <span className={`${showFullLabel ? 'text-xs sm:text-sm' : 'text-[9px]'} truncate font-bold text-white`}>{rect.label}</span>
                     {showFullLabel && <span className="mt-0.5 truncate text-[10px] text-white/65">{rect.secondaryLabel || formatViews(rect.views)}</span>}
                     {showFullLabel && rect.secondaryLabel && <span className="text-[10px] text-white/75">{formatViews(rect.views)}</span>}
+                  </span>
+                )}
+                {showDot && (
+                  <span className="absolute inset-0 flex items-center justify-center">
+                    <span className={`h-1 w-1 rounded-full ${rect.known ? (platform === 'youtube' ? 'bg-rose-400/70' : 'bg-teal-400/70') : 'bg-neutral-500/50'}`} />
                   </span>
                 )}
               </>
             );
             const title = `${rect.known ? '知っている' : 'まだ知らない'}: ${rect.label} — ${formatViews(rect.views)}`;
             return rect.songId ? (
-              <Link key={rect.id} to={`/watch?v=${rect.songId}`} className="absolute overflow-hidden outline-none ring-inset focus-visible:ring-2 focus-visible:ring-white" style={style} title={title} aria-label={title}>
+              <Link
+                key={rect.id}
+                to={`/watch?v=${rect.songId}`}
+                className="absolute overflow-hidden outline-none ring-inset transition-shadow duration-100 hover:ring-2 hover:ring-white/60 focus-visible:ring-2 focus-visible:ring-white"
+                style={style}
+                aria-label={title}
+                onMouseEnter={(e) => setHovered({ rect, x: e.clientX, y: e.clientY })}
+                onFocus={(e) => {
+                  const bounds = e.currentTarget.getBoundingClientRect();
+                  setHovered({ rect, x: bounds.left + bounds.width / 2, y: bounds.bottom });
+                }}
+                onBlur={() => setHovered(null)}
+              >
                 {content}
               </Link>
             ) : (
-              <div key={rect.id} className="absolute overflow-hidden" style={style} title={title} aria-label={title}>
+              <div
+                key={rect.id}
+                className="absolute overflow-hidden transition-shadow duration-100 hover:ring-1 hover:ring-inset hover:ring-white/30"
+                style={style}
+                aria-label={title}
+                onMouseEnter={(e) => setHovered({ rect, x: e.clientX, y: e.clientY })}
+              >
                 {content}
               </div>
             );
@@ -199,6 +302,34 @@ function KnowledgeMapContent({
           <span>長方形の面積＝{platformLabel(platform)}再生数</span>
         </div>
       </section>
+
+      {/* Tooltip rendered outside the overflow container for correct visibility */}
+      {hovered && (
+        <div
+          ref={tooltipRef}
+          role="tooltip"
+          data-testid="knowledge-map-tooltip"
+          className="pointer-events-none fixed z-50 max-w-[260px] rounded-xl border border-white/[0.12] bg-neutral-900/95 px-3.5 py-2.5 shadow-2xl backdrop-blur-sm"
+          style={{ left: hovered.x + 14, top: hovered.y + 14 }}
+        >
+          {hovered.rect.thumbUrl && (
+            <img src={hovered.rect.thumbUrl} alt="" className="mb-2 h-16 w-full rounded-lg object-cover" />
+          )}
+          <p className="truncate text-sm font-bold text-white">{hovered.rect.label}</p>
+          {hovered.rect.secondaryLabel && <p className="mt-0.5 truncate text-xs text-neutral-400">{hovered.rect.secondaryLabel}</p>}
+          <div className="mt-1.5 flex items-center gap-2">
+            <span className="text-xs font-medium text-neutral-200">{formatViews(hovered.rect.views)}</span>
+            <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${
+              hovered.rect.known
+                ? platform === 'youtube' ? 'bg-rose-500/20 text-rose-300' : 'bg-teal-500/20 text-teal-300'
+                : 'bg-neutral-700/50 text-neutral-400'
+            }`}>
+              {hovered.rect.known ? '知っている' : 'まだ知らない'}
+            </span>
+          </div>
+          {hovered.rect.songId && <p className="mt-1 text-[10px] text-neutral-600">クリックで曲ページへ</p>}
+        </div>
+      )}
 
       <section className="mt-6 grid gap-4 lg:grid-cols-2">
         <SongRanking title="知っている曲の上位" songs={topKnown} empty="このサービスで再生数を取得できた履歴・評価済み曲はありません。" />
