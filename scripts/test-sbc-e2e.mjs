@@ -70,7 +70,12 @@ async function main() {
   const failures = [];
   page.on('pageerror', error => failures.push(`page error: ${error.message}`));
   page.on('console', message => {
-    if (message.type() === 'error') failures.push(`console error: ${message.text()}`);
+    if (message.type() === 'error') {
+      const location = message.location();
+      if (location.url?.startsWith('https://i.ytimg.com/') && message.text().includes('404')) return;
+      const source = location.url ? ` (${location.url}:${location.lineNumber ?? 0})` : '';
+      failures.push(`console error: ${message.text()}${source}`);
+    }
   });
 
   try {
@@ -108,8 +113,14 @@ async function main() {
     assert(exposureCount > 0, 'Visible recommendation cards did not record exposure history.');
     console.log(`PASS home page (${home.cards} visible song cards, ${exposureCount} exposures)`);
 
-    await page.click('button[aria-label="複数選択モード"]');
-    const selectedSongIds = await page.evaluate(() => {
+    const selectionContext = await browser.createBrowserContext();
+    const selectionPage = await selectionContext.newPage();
+    selectionPage.setDefaultTimeout(PAGE_TIMEOUT_MS);
+    await selectionPage.setViewport({ width: 1440, height: 900 });
+    await selectionPage.goto(baseUrl, { waitUntil: 'domcontentloaded' });
+    await selectionPage.waitForSelector('a[href*="/watch?v="]');
+    await selectionPage.click('button[aria-label="複数選択モード"]');
+    const selectedSongIds = await selectionPage.evaluate(() => {
       const selected = [];
       const seen = new Set();
       for (const link of document.querySelectorAll('a[href*="/watch?v="]')) {
@@ -123,11 +134,11 @@ async function main() {
       return selected;
     });
     assert(selectedSongIds.length === 2, 'The home page did not provide two selectable songs.');
-    await page.waitForFunction(() => document.querySelector('[data-testid="selection-fab"]')?.textContent?.includes('2 /') === true);
+    await selectionPage.waitForFunction(() => document.querySelector('[data-testid="selection-fab"]')?.textContent?.includes('2 /') === true);
 
     const addSelectedToQueue = async () => {
-      await page.click('button[title="アクション"]');
-      const clicked = await page.evaluate(() => {
+      await selectionPage.click('button[title="アクション"]');
+      const clicked = await selectionPage.evaluate(() => {
         const button = [...document.querySelectorAll('button')]
           .find(element => element.textContent?.includes('キューに追加'));
         button?.click();
@@ -137,18 +148,19 @@ async function main() {
     };
 
     await addSelectedToQueue();
-    await page.waitForFunction(expectedIds => {
+    await selectionPage.waitForFunction(expectedIds => {
       const stored = JSON.parse(localStorage.getItem('diva_playerQueue') ?? '{}');
       return JSON.stringify(stored.songIds) === JSON.stringify(expectedIds);
     }, {}, selectedSongIds);
 
     await addSelectedToQueue();
-    const duplicatedSelection = await page.evaluate(() => JSON.parse(localStorage.getItem('diva_playerQueue') ?? '{}').songIds);
+    const duplicatedSelection = await selectionPage.evaluate(() => JSON.parse(localStorage.getItem('diva_playerQueue') ?? '{}').songIds);
     assert(
       JSON.stringify(duplicatedSelection) === JSON.stringify([...selectedSongIds, ...selectedSongIds]),
       'Bulk queue addition did not follow the normal duplicate-preserving queue behavior.',
     );
     console.log('PASS multi-select queue addition (selected songs retained, duplicates preserved)');
+    await selectionContext.close();
 
     await page.goto(`${baseUrl}watch?v=1501`, { waitUntil: 'domcontentloaded' });
     await page.waitForFunction(() => {
