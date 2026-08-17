@@ -159,6 +159,33 @@ try {
   if (width.document > width.viewport + 1 || width.body > width.viewport + 1) {
     throw new Error(`Knowledge map has horizontal overflow: ${JSON.stringify(width)}`);
   }
+  const mobileLayout = await page.evaluate(() => {
+    const viewport = innerWidth;
+    const rankings = [...document.querySelectorAll('[data-testid="knowledge-map-ranking"]')].map(element => {
+      const bounds = element.getBoundingClientRect();
+      return {
+        left: bounds.left,
+        right: bounds.right,
+        clientWidth: element.clientWidth,
+        scrollWidth: element.scrollWidth,
+      };
+    });
+    const platformGroup = document.querySelector('[role="group"][aria-label="再生数のサービス"]')?.getBoundingClientRect();
+    return {
+      viewport,
+      rankings,
+      platformWidth: platformGroup?.width ?? 0,
+    };
+  });
+  if (mobileLayout.rankings.length !== 2
+    || mobileLayout.rankings.some(ranking => ranking.left < 0
+      || ranking.right > mobileLayout.viewport + 1
+      || ranking.scrollWidth > ranking.clientWidth + 1)) {
+    throw new Error(`Knowledge map rankings are clipped on mobile: ${JSON.stringify(mobileLayout)}`);
+  }
+  if (mobileLayout.platformWidth < mobileLayout.viewport - 40) {
+    throw new Error(`Knowledge map platform switch is too narrow on mobile: ${JSON.stringify(mobileLayout)}`);
+  }
   console.log('PASS YouTube/NicoNico knowledge map, known/unknown filtering, tooltip, local history/rating join, and 390px layout');
 } finally {
   await browser.close();

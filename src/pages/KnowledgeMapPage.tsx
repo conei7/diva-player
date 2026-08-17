@@ -107,8 +107,8 @@ export default function KnowledgeMapPage() {
   const retry = useCallback(() => setReloadKey(key => key + 1), []);
 
   return (
-    <main className="mx-auto w-full max-w-7xl px-4 py-6 pb-32 sm:px-6" data-testid="knowledge-map-page">
-      <div className="mb-6 max-w-3xl">
+    <main className="mx-auto w-full max-w-7xl px-3 py-4 pb-32 sm:px-6 sm:py-6" data-testid="knowledge-map-page">
+      <div className="mb-5 max-w-3xl sm:mb-6">
         <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-300">Your Vocal Synth Map</p>
         <h1 className="mt-1 text-2xl font-bold text-white sm:text-3xl">知ってる度マップ</h1>
         <p className="mt-2 text-sm leading-6 text-neutral-400">
@@ -116,28 +116,28 @@ export default function KnowledgeMapPage() {
         </p>
       </div>
 
-      <div className="mb-3 inline-flex min-h-11 rounded-xl border border-white/[0.08] bg-white/[0.03] p-1" role="group" aria-label="再生数のサービス">
+      <div className="mb-3 grid min-h-11 w-full grid-cols-2 rounded-xl border border-white/[0.08] bg-white/[0.03] p-1 sm:inline-flex sm:w-auto" role="group" aria-label="再生数のサービス">
         {(['youtube', 'nico'] as const).map(value => (
           <button
             key={value}
             type="button"
             onClick={() => setPlatform(value)}
             aria-pressed={platform === value}
-            className={`min-w-32 rounded-lg px-4 py-2 text-sm font-semibold transition ${platform === value ? 'bg-white text-black' : 'text-neutral-400 hover:bg-white/[0.06] hover:text-white'}`}
+            className={`min-h-10 rounded-lg px-4 py-2 text-sm font-semibold transition sm:min-w-32 ${platform === value ? 'bg-white text-black' : 'text-neutral-400 hover:bg-white/[0.06] hover:text-white'}`}
           >
             {platformLabel(value)}
           </button>
         ))}
       </div>
 
-      <div className="mb-6 flex flex-wrap items-center gap-1.5" role="group" aria-label="マップ表示">
+      <div className="mb-5 grid grid-cols-3 gap-1.5 sm:mb-6 sm:flex sm:flex-wrap sm:items-center" role="group" aria-label="マップ表示">
         {VIEW_MODES.map(({ value, label }) => (
           <button
             key={value}
             type="button"
             onClick={() => setViewMode(value)}
             aria-pressed={viewMode === value}
-            className={`rounded-lg px-3 py-1.5 text-xs font-medium transition ${
+            className={`min-h-10 rounded-lg px-1.5 py-1.5 text-xs font-medium leading-tight transition sm:min-h-0 sm:px-3 ${
               viewMode === value
                 ? 'bg-white/[0.12] text-white ring-1 ring-white/20'
                 : 'text-neutral-500 hover:bg-white/[0.05] hover:text-neutral-300'
@@ -147,7 +147,7 @@ export default function KnowledgeMapPage() {
           </button>
         ))}
         {viewMode !== 'all' && (
-          <span className="ml-2 text-[11px] text-neutral-600">
+          <span className="col-span-3 mt-0.5 text-[11px] text-neutral-600 sm:col-auto sm:ml-2 sm:mt-0">
             マップをフィルター中 — タイルが拡大されています
           </span>
         )}
@@ -226,9 +226,9 @@ function KnowledgeMapContent({
         <Metric label="知っている曲" value={`${data.knownSongCount.toLocaleString()} / ${data.totalSongCount.toLocaleString()}曲`} />
       </section>
 
-      <section className="overflow-hidden rounded-3xl border border-white/[0.08] bg-neutral-950 p-2 shadow-2xl sm:p-3">
+      <section className="overflow-hidden rounded-2xl border border-white/[0.08] bg-neutral-950 p-1.5 shadow-2xl sm:rounded-3xl sm:p-3">
         <div
-          className="relative h-[460px] w-full overflow-hidden rounded-2xl bg-neutral-900 sm:h-[560px]"
+          className="relative h-[420px] w-full overflow-hidden rounded-xl bg-neutral-900 sm:h-[560px] sm:rounded-2xl"
           data-testid={`${platform}-knowledge-treemap`}
           onMouseLeave={() => setHovered(null)}
         >
@@ -296,7 +296,7 @@ function KnowledgeMapContent({
             );
           })}
         </div>
-        <div className="flex flex-wrap items-center gap-x-5 gap-y-2 px-2 pb-1 pt-3 text-xs text-neutral-400">
+        <div className="grid gap-2 px-2 pb-1 pt-3 text-[11px] text-neutral-400 sm:flex sm:flex-wrap sm:items-center sm:gap-x-5 sm:gap-y-2 sm:text-xs">
           <span className="inline-flex items-center gap-2"><span className={`h-3 w-3 rounded-sm ${platform === 'youtube' ? 'bg-rose-500' : 'bg-teal-400'}`} />履歴または星評価がある曲</span>
           <span className="inline-flex items-center gap-2"><span className="h-3 w-3 rounded-sm bg-neutral-600" />履歴・星評価がない曲</span>
           <span>長方形の面積＝{platformLabel(platform)}再生数</span>
@@ -331,7 +331,7 @@ function KnowledgeMapContent({
         </div>
       )}
 
-      <section className="mt-6 grid gap-4 lg:grid-cols-2">
+      <section className="mt-5 grid min-w-0 gap-3 sm:mt-6 sm:gap-4 lg:grid-cols-2">
         <SongRanking title="知っている曲の上位" songs={topKnown} empty="このサービスで再生数を取得できた履歴・評価済み曲はありません。" />
         <SongRanking title="まだ知らない上位曲" songs={topUnknown} empty="表示対象の上位曲はすべて履歴または星評価に含まれています。" />
       </section>
@@ -354,17 +354,17 @@ function Metric({ label, value, accent = false }: { label: string; value: string
 
 function SongRanking({ title, songs, empty }: { title: string; songs: PlatformKnowledgeMap['tiles']; empty: string }) {
   return (
-    <div className="rounded-2xl border border-white/[0.06] bg-white/[0.03] p-4">
+    <div className="min-w-0 overflow-hidden rounded-2xl border border-white/[0.06] bg-white/[0.03] p-3 sm:p-4" data-testid="knowledge-map-ranking">
       <h2 className="font-bold text-white">{title}</h2>
       {songs.length === 0 ? <p className="py-8 text-center text-sm text-neutral-500">{empty}</p> : (
         <ol className="mt-3 space-y-1">
           {songs.map((song, index) => (
             <li key={song.songId}>
-              <Link to={`/watch?v=${song.songId}`} className="flex min-h-12 items-center gap-3 rounded-xl px-2 py-1.5 hover:bg-white/[0.05] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300">
+              <Link to={`/watch?v=${song.songId}`} className="grid min-h-14 min-w-0 grid-cols-[1.25rem_3rem_minmax(0,1fr)] items-center gap-x-2 rounded-xl px-1 py-1.5 hover:bg-white/[0.05] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 sm:min-h-12 sm:grid-cols-[1.25rem_3.5rem_minmax(0,1fr)_auto] sm:gap-x-3 sm:px-2">
                 <span className="w-5 text-center text-xs text-neutral-600">{index + 1}</span>
-                <span className="h-9 w-14 shrink-0 overflow-hidden rounded-md bg-neutral-800">{song.thumbUrl && <img src={song.thumbUrl} alt="" className="h-full w-full object-cover" />}</span>
-                <span className="min-w-0 flex-1"><span className="block truncate text-sm font-medium text-neutral-200">{song.name}</span><span className="block truncate text-xs text-neutral-500">{song.artistString}</span></span>
-                <span className="shrink-0 text-xs text-neutral-400">{formatViews(song.views)}</span>
+                <span className="h-9 w-12 overflow-hidden rounded-md bg-neutral-800 sm:w-14">{song.thumbUrl && <img src={song.thumbUrl} alt="" className="h-full w-full object-cover" />}</span>
+                <span className="min-w-0"><span className="block truncate text-sm font-medium text-neutral-200">{song.name}</span><span className="block truncate text-xs text-neutral-500">{song.artistString}</span><span className="mt-0.5 block text-[11px] text-neutral-400 sm:hidden">{formatViews(song.views)}</span></span>
+                <span className="hidden shrink-0 text-xs text-neutral-400 sm:block">{formatViews(song.views)}</span>
               </Link>
             </li>
           ))}
