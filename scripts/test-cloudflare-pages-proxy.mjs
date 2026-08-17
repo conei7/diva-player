@@ -22,6 +22,7 @@ try {
   const pagesRoutes = JSON.parse(await readFile(new URL('../public/_routes.json', import.meta.url), 'utf8'));
   assert(pagesRoutes.include.includes('/chorus-highlights'), 'Chorus highlights must use the Pages SPA fallback.');
   assert(pagesRoutes.include.includes('/knowledge-map'), 'Knowledge map must use the Pages SPA fallback.');
+  assert(pagesRoutes.include.includes('/settings/hidden-songs'), 'Hidden songs settings must use the Pages SPA fallback.');
 
   const env = {
     PAGES_PROXY_KEY: 'test-proxy-key',

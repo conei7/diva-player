@@ -12,7 +12,8 @@
     "/favorite-producers",
     "/playlists",
     "/reports",
-    "/knowledge-map"
+    "/knowledge-map",
+    "/settings/hidden-songs"
   ],
   "exclude": []
 }
