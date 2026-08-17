@@ -1,7 +1,7 @@
 /**
  * selectionStore.ts - 複数選択モードの状態管理
  *
- * 複数選択モードのON/OFFと選択されたSong IDのSetを管理する。
+ * 複数選択モードのON/OFFと選択されたSongを管理する。
  * FABからのバルクアクションと、各SongCardの選択トグルで使用。
  */
 import { create } from 'zustand';
@@ -16,6 +16,8 @@ interface SelectionState {
   setLongPressSelectionEnabled: (enabled: boolean) => void;
   /** 選択されたSong IDのSet */
   selectedSongIds: Set<number>;
+  /** 選択時点のSongオブジェクト。画面の表示内容が変わってもバルク操作に使う */
+  selectedSongs: Map<number, Song>;
   /** 現在の画面で表示されている全曲（FABの全選択/フィルター対象） */
   visibleSongs: Song[];
   /** 表示中の曲リストを更新（各ページが呼び出す） */
@@ -25,7 +27,7 @@ interface SelectionState {
   /** 選択モードをOFFにして選択をクリア */
   exitSelectionMode: () => void;
   /** 1曲をトグル（選択 ↔ 解除） */
-  toggleSong: (id: number) => void;
+  toggleSong: (song: Song) => void;
   /** 指定曲リストを全て選択に追加 */
   selectAll: (songs: Song[]) => void;
   /** 全選択を解除 */
@@ -42,33 +44,48 @@ export const useSelectionStore = create<SelectionState>((set, get) => ({
     set({ longPressSelectionEnabled: enabled });
   },
   selectedSongIds: new Set<number>(),
+  selectedSongs: new Map<number, Song>(),
   visibleSongs: [],
   setVisibleSongs: (songs) => set({ visibleSongs: songs }),
 
   enterSelectionMode: () => set({ isSelectionMode: true }),
 
   exitSelectionMode: () =>
-    set({ isSelectionMode: false, selectedSongIds: new Set<number>() }),
+    set({
+      isSelectionMode: false,
+      selectedSongIds: new Set<number>(),
+      selectedSongs: new Map<number, Song>(),
+    }),
 
-  toggleSong: (id) => {
-    const { selectedSongIds } = get();
+  toggleSong: (song) => {
+    const { selectedSongIds, selectedSongs } = get();
     const next = new Set(selectedSongIds);
-    if (next.has(id)) {
-      next.delete(id);
+    const nextSongs = new Map(selectedSongs);
+    if (next.has(song.id)) {
+      next.delete(song.id);
+      nextSongs.delete(song.id);
     } else {
-      next.add(id);
+      next.add(song.id);
+      nextSongs.set(song.id, song);
     }
-    set({ selectedSongIds: next });
+    set({ selectedSongIds: next, selectedSongs: nextSongs });
   },
 
   selectAll: (songs) => {
-    const { selectedSongIds } = get();
+    const { selectedSongIds, selectedSongs } = get();
     const next = new Set(selectedSongIds);
-    songs.forEach((s) => next.add(s.id));
-    set({ selectedSongIds: next });
+    const nextSongs = new Map(selectedSongs);
+    songs.forEach((song) => {
+      next.add(song.id);
+      nextSongs.set(song.id, song);
+    });
+    set({ selectedSongIds: next, selectedSongs: nextSongs });
   },
 
-  clearSelection: () => set({ selectedSongIds: new Set<number>() }),
+  clearSelection: () => set({
+    selectedSongIds: new Set<number>(),
+    selectedSongs: new Map<number, Song>(),
+  }),
 
   isSelected: (id) => get().selectedSongIds.has(id),
 }));

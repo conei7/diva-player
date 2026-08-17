@@ -161,11 +161,11 @@ export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect, 
     if (isSelectionMode) {
       e.stopPropagation();
       e.preventDefault();
-      toggleSelection(song.id);
+      toggleSelection(song);
     } else {
       handlePlay(e);
     }
-  }, [isSelectionMode, toggleSelection, song.id, handlePlay]);
+  }, [isSelectionMode, toggleSelection, song, handlePlay]);
 
   const handleSongLinkClick = useCallback((e: React.MouseEvent<HTMLAnchorElement>) => {
     if (longPressTriggered.current) {
@@ -177,7 +177,7 @@ export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect, 
     if (isSelectionMode) {
       e.preventDefault();
       e.stopPropagation();
-      toggleSelection(song.id);
+      toggleSelection(song);
       return;
     }
     if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) {
@@ -187,7 +187,7 @@ export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect, 
     e.preventDefault();
     e.stopPropagation();
     handlePlay(e);
-  }, [handlePlay, isSelectionMode, song.id, toggleSelection]);
+  }, [handlePlay, isSelectionMode, song, toggleSelection]);
 
   const handleSongLinkAuxClick = useCallback((e: React.MouseEvent<HTMLAnchorElement>) => {
     if (isSelectionMode) {
@@ -208,9 +208,9 @@ export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect, 
     longPressTimer.current = setTimeout(() => {
       longPressTriggered.current = true;
       enterSelectionMode();
-      toggleSelection(song.id);
+      toggleSelection(song);
     }, 500);
-  }, [isSelectionMode, enterSelectionMode, toggleSelection, song.id, longPressSelectionEnabled]);
+  }, [isSelectionMode, enterSelectionMode, toggleSelection, song, longPressSelectionEnabled]);
   const handlePointerUp = useCallback(() => {
     if (longPressTimer.current) {
       clearTimeout(longPressTimer.current);

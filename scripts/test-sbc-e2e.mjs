@@ -108,6 +108,48 @@ async function main() {
     assert(exposureCount > 0, 'Visible recommendation cards did not record exposure history.');
     console.log(`PASS home page (${home.cards} visible song cards, ${exposureCount} exposures)`);
 
+    await page.click('button[aria-label="複数選択モード"]');
+    const selectedSongIds = await page.evaluate(() => {
+      const selected = [];
+      const seen = new Set();
+      for (const link of document.querySelectorAll('a[href*="/watch?v="]')) {
+        const id = Number(new URL(link.href).searchParams.get('v'));
+        if (!Number.isFinite(id) || seen.has(id)) continue;
+        seen.add(id);
+        selected.push(id);
+        link.click();
+        if (selected.length === 2) break;
+      }
+      return selected;
+    });
+    assert(selectedSongIds.length === 2, 'The home page did not provide two selectable songs.');
+    await page.waitForFunction(() => document.querySelector('[data-testid="selection-fab"]')?.textContent?.includes('2 /') === true);
+
+    const addSelectedToQueue = async () => {
+      await page.click('button[title="アクション"]');
+      const clicked = await page.evaluate(() => {
+        const button = [...document.querySelectorAll('button')]
+          .find(element => element.textContent?.includes('キューに追加'));
+        button?.click();
+        return Boolean(button);
+      });
+      assert(clicked, 'The bulk queue action was not rendered.');
+    };
+
+    await addSelectedToQueue();
+    await page.waitForFunction(expectedIds => {
+      const stored = JSON.parse(localStorage.getItem('diva_playerQueue') ?? '{}');
+      return JSON.stringify(stored.songIds) === JSON.stringify(expectedIds);
+    }, {}, selectedSongIds);
+
+    await addSelectedToQueue();
+    const duplicatedSelection = await page.evaluate(() => JSON.parse(localStorage.getItem('diva_playerQueue') ?? '{}').songIds);
+    assert(
+      JSON.stringify(duplicatedSelection) === JSON.stringify([...selectedSongIds, ...selectedSongIds]),
+      'Bulk queue addition did not follow the normal duplicate-preserving queue behavior.',
+    );
+    console.log('PASS multi-select queue addition (selected songs retained, duplicates preserved)');
+
     await page.goto(`${baseUrl}watch?v=1501`, { waitUntil: 'domcontentloaded' });
     await page.waitForFunction(() => {
       const raw = localStorage.getItem('diva_playerQueue');

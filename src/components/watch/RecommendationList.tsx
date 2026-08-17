@@ -171,18 +171,18 @@ function RecItemRow({
     if (isSelectionMode) {
       e.stopPropagation();
       e.preventDefault();
-      toggleSelection(song.id);
+      toggleSelection(song);
     } else {
       onExposureClick?.();
       navigate(`/watch?v=${song.id}`);
     }
-  }, [isSelectionMode, toggleSelection, song.id, navigate, onExposureClick]);
+  }, [isSelectionMode, toggleSelection, song, navigate, onExposureClick]);
 
   const handleItemLinkClick = useCallback((e: React.MouseEvent<HTMLAnchorElement>) => {
     if (isSelectionMode) {
       e.preventDefault();
       e.stopPropagation();
-      toggleSelection(song.id);
+      toggleSelection(song);
       return;
     }
     if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) {
@@ -192,7 +192,7 @@ function RecItemRow({
     e.preventDefault();
     e.stopPropagation();
     handleCardClick(e);
-  }, [handleCardClick, isSelectionMode, song.id, toggleSelection]);
+  }, [handleCardClick, isSelectionMode, song, toggleSelection]);
 
   const handleItemLinkAuxClick = useCallback((e: React.MouseEvent<HTMLAnchorElement>) => {
     if (isSelectionMode) e.preventDefault();

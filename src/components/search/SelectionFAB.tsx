@@ -193,12 +193,13 @@ export default function SelectionFAB({ visibleSongs }: SelectionFABProps) {
   const {
     isSelectionMode,
     selectedSongIds,
+    selectedSongs,
     exitSelectionMode,
     selectAll,
     clearSelection,
   } = useSelectionStore();
 
-  const { addToQueue, queue } = usePlayerStore();
+  const addManyToQueue = usePlayerStore(s => s.addManyToQueue);
   const { openSaveToPlaylist } = useUiStore();
 
   const [menuOpen, setMenuOpen] = useState(false);
@@ -234,24 +235,17 @@ export default function SelectionFAB({ visibleSongs }: SelectionFABProps) {
     setTimeout(() => setToast(null), 2500);
   }, []);
 
-  // 選択されているSongオブジェクトを取得（visibleSongsから）
+  // 選択時点のSongオブジェクトを取得。表示タブや絞り込みが変わっても選択を維持する。
   const getSelectedSongs = useCallback((): Song[] => {
-    return visibleSongs.filter(s => selectedSongIds.has(s.id));
-  }, [visibleSongs, selectedSongIds]);
+    return [...selectedSongs.values()];
+  }, [selectedSongs]);
 
   const handleAddToQueue = useCallback(() => {
     const songs = getSelectedSongs();
-    const existingIds = new Set(queue.map(s => s.id));
-    let added = 0;
-    songs.forEach(s => {
-      if (!existingIds.has(s.id)) {
-        addToQueue(s);
-        added++;
-      }
-    });
+    addManyToQueue(songs);
     setMenuOpen(false);
-    showToast(`${added} 曲をキューに追加しました`);
-  }, [getSelectedSongs, addToQueue, queue, showToast]);
+    showToast(`${songs.length} 曲をキューに追加しました`);
+  }, [getSelectedSongs, addManyToQueue, showToast]);
 
   const handleSaveToPlaylist = useCallback(() => {
     const songs = getSelectedSongs();
