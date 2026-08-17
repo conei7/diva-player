@@ -15,7 +15,7 @@ export default function FavoriteProducerButton({ id, name, artistType = 'Produce
   return (
     <button
       type="button"
-      className="rounded-full px-2 py-1 text-[11px] transition-colors"
+      className="min-h-10 rounded-full px-3 py-2 text-[11px] transition-colors sm:min-h-0 sm:px-2 sm:py-1"
       style={{
         background: isFavorite ? 'rgba(250, 204, 21, 0.16)' : 'var(--color-surface)',
         color: isFavorite ? '#facc15' : 'var(--color-text-muted)',

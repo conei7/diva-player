@@ -228,7 +228,7 @@ export default function Description({ song }: DescriptionProps) {
 
       {/* 展開/折りたたみトグル */}
       <button
-        className="text-xs font-medium mt-2"
+        className="mt-2 inline-flex min-h-10 items-center rounded-lg px-2 text-xs font-medium sm:min-h-0 sm:px-0"
         style={{ color: 'var(--color-text-secondary)' }}
         type="button"
         aria-expanded={expanded}

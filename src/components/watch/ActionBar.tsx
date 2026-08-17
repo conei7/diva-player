@@ -78,7 +78,7 @@ export default function ActionBar({ song }: ActionBarProps) {
     <div className="flex flex-wrap items-center gap-2 mt-3 pb-3 border-b" style={{ borderColor: 'var(--color-border)' }}>
       {/* ─── 5段階スター評価 ─── */}
       <div
-        className="flex items-center gap-2 px-4 py-2 rounded-full"
+        className="watch-action-rating flex items-center gap-1 rounded-full px-2 py-1 sm:gap-2 sm:px-4 sm:py-2"
         style={{ background: 'var(--color-yt-chip)' }}
       >
         <StarRating

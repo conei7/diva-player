@@ -56,14 +56,14 @@ export default function AlbumPlaylistButton({ song }: { song: Song }) {
 
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <button type="button" className="btn-secondary text-xs px-3 py-1.5" disabled={busy} onClick={() => void loadAlbums()}>アルバムをプレイリスト化</button>
+      <button type="button" className="btn-secondary min-h-10 px-3 py-1.5 text-xs sm:min-h-0" disabled={busy} onClick={() => void loadAlbums()}>アルバムをプレイリスト化</button>
       {open && albums.length > 0 && (
         <div className="flex flex-wrap items-center gap-2">
-          <select className="min-w-0 max-w-full rounded-lg px-2 py-1.5 text-xs bg-black/30 border border-white/10" value={selectedId} onChange={event => setSelectedId(event.target.value ? Number(event.target.value) : '')} disabled={busy}>
+          <select className="min-h-10 min-w-0 max-w-full rounded-lg border border-white/10 bg-black/30 px-2 py-1.5 text-xs sm:min-h-0" value={selectedId} onChange={event => setSelectedId(event.target.value ? Number(event.target.value) : '')} disabled={busy}>
             {albums.map(album => <option key={album.id} value={album.id}>{album.name}</option>)}
           </select>
-          <button type="button" className="btn-primary text-xs px-3 py-1.5" disabled={busy || selectedId === ''} onClick={() => void createFromAlbum()}>作成</button>
-          <button type="button" className="btn-ghost text-xs px-2 py-1.5" disabled={busy} onClick={() => setOpen(false)}>取消</button>
+          <button type="button" className="btn-primary min-h-10 px-3 py-1.5 text-xs sm:min-h-0" disabled={busy || selectedId === ''} onClick={() => void createFromAlbum()}>作成</button>
+          <button type="button" className="btn-ghost min-h-10 px-3 py-1.5 text-xs sm:min-h-0" disabled={busy} onClick={() => setOpen(false)}>取消</button>
         </div>
       )}
       {message && <p className="text-xs mt-1" role="status" style={{ color: 'var(--color-text-muted)' }}>{message}</p>}

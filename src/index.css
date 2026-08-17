@@ -1208,6 +1208,11 @@ select optgroup {
     padding: 6px 2px !important;
   }
 
+  .watch-action-rating .rating-star-button {
+    min-width: 36px;
+    min-height: 40px;
+  }
+
   .queue-drawer {
     width: 100vw !important;
     max-width: 100vw !important;
