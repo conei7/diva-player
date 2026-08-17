@@ -6,6 +6,8 @@ public class RecommenderOptions
     public string QdrantEndpoint     { get; set; } = "http://localhost:6333";
     public string CollectionHybrid   { get; set; } = "song_hybrid_active";
     public string CollectionMetadata { get; set; } = "song_metadata_active";
+    /// <summary>Canonical audio-only vector collection updated by audio extraction.</summary>
+    public string CollectionAudio    { get; set; } = "song_audio";
     /// <summary>Named Vectors コレクション (audio + meta を1つに格納)</summary>
     public string CollectionNamed    { get; set; } = "songs_v2_active";
     public int    AnnCandidates      { get; set; } = 240;  // ANN探索候補数

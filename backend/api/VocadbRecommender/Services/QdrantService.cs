@@ -53,6 +53,7 @@ public class QdrantService
                 _opts.CollectionNamed,
                 _opts.CollectionHybrid,
                 _opts.CollectionMetadata,
+                _opts.CollectionAudio,
             }
             .Where(name => !string.IsNullOrWhiteSpace(name))
             .Distinct(StringComparer.Ordinal)
@@ -369,7 +370,7 @@ public class QdrantService
     }
 
     /// <summary>
-    /// Named Vectors コレクションの audio ベクトルのみで探索 (deep dig)
+    /// Canonical audio vector collectionで探索 (deep dig)
     /// </summary>
     public async Task<List<(int SongId, double Score)>> SearchAudioOnlyAsync(
         int seedSongId,
@@ -382,8 +383,12 @@ public class QdrantService
         var excludeSet = excludeIds?.ToHashSet() ?? [];
         excludeSet.Add(seedSongId);
 
+        // Audio extraction publishes to the canonical song_audio collection
+        // before the generation-scoped named collection is incrementally
+        // refreshed. Querying the canonical source avoids returning an empty
+        // result for newly analyzed songs during that safe publication gap.
         var retrieveResult = await _client.RetrieveAsync(
-            collectionName: _opts.CollectionNamed,
+            collectionName: _opts.CollectionAudio,
             ids: new[] { new PointId { Num = (ulong)seedSongId } },
             withPayload: false,
             withVectors: true,
@@ -393,19 +398,14 @@ public class QdrantService
         if (seedPoint is null || seedPoint.Vectors is null)
             return [];
 
-        var namedVecs = seedPoint.Vectors.Vectors_?.Vectors;
-        if (namedVecs is null || !namedVecs.TryGetValue("audio", out var av))
-            return [];
-
-        var audioVec = av.Data.ToArray();
+        var audioVec = seedPoint.Vectors.Vector?.Data.ToArray() ?? [];
         if (!audioVec.Any(x => x != 0f))
             return []; // 音響特徴なし
 
         var fetch = (int)(offset + topK + excludeSet.Count + 10);
         var res = await _client.SearchAsync(
-            collectionName: _opts.CollectionNamed,
+            collectionName: _opts.CollectionAudio,
             vector: audioVec,
-            vectorName: "audio",
             limit: (ulong)fetch,
             cancellationToken: cancellationToken);
 

@@ -116,6 +116,7 @@ assert.match(workflow, /DROP INDEX song_discovery_eligible_song_idx/);
 assert.match(workflow, /indisvalid AND indisready/);
 assert.match(apiSettings, /"CollectionHybrid": "song_hybrid_active"/);
 assert.match(apiSettings, /"CollectionMetadata": "song_metadata_active"/);
+assert.match(apiSettings, /"CollectionAudio": "song_audio"/);
 assert.match(apiSettings, /"CollectionNamed": "songs_v2_active"/);
 assert.match(qdrantService, /GetCollectionInfoAsync\(collectionName, cancellationToken\)/);
 assert.match(qdrantService, /ListAliasesAsync\(cancellationToken\)/);
@@ -123,9 +124,16 @@ assert.match(qdrantService, /ValidateRecommendationAliasTargets/);
 assert.match(qdrantService, /RecommendationAliasGenerationMismatch/);
 assert.match(qdrantService, /db\.ReadRecommendationPublicationGenerationUncachedAsync/);
 assert.match(qdrantService, /RecommendationPublicationGenerationInvalid/);
-assert.match(qdrantService, /_opts\.CollectionNamed[\s\S]*_opts\.CollectionHybrid[\s\S]*_opts\.CollectionMetadata/);
+assert.match(qdrantService, /_opts\.CollectionNamed[\s\S]*_opts\.CollectionHybrid[\s\S]*_opts\.CollectionMetadata[\s\S]*_opts\.CollectionAudio/);
+const audioOnlySearch = qdrantService.match(
+  /public async Task<List<\(int SongId, double Score\)>> SearchAudioOnlyAsync[\s\S]*?public async Task<List<\(int SongId, double Score\)>> SearchMetadataSimilarAsync/,
+)?.[0];
+assert.ok(audioOnlySearch, 'audio-only Qdrant search contract was not found');
+assert.match(audioOnlySearch, /collectionName: _opts\.CollectionAudio/);
+assert.doesNotMatch(audioOnlySearch, /collectionName: _opts\.CollectionNamed/);
+assert.doesNotMatch(audioOnlySearch, /vectorName: "audio"/);
 assert.match(qdrantService, /CollectionUnavailable:/);
-assert.match(serviceRegistration, /collection aliases must be non-empty and distinct/);
+assert.match(serviceRegistration, /collection names must be non-empty and distinct/);
 assert.match(serviceRegistration, /AddSingleton<RecommendationPublicationGuard>/);
 assert.match(dbService, /recommendation_publication_generation/);
 assert.match(dbService, /ReadRecommendationPublicationGenerationUncachedAsync/);

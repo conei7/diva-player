@@ -15,6 +15,7 @@ internal static class ApiServiceRegistration
                         options.CollectionNamed,
                         options.CollectionHybrid,
                         options.CollectionMetadata,
+                        options.CollectionAudio,
                     }
                     .All(name => !string.IsNullOrWhiteSpace(name))
                     && new[]
@@ -22,8 +23,9 @@ internal static class ApiServiceRegistration
                         options.CollectionNamed,
                         options.CollectionHybrid,
                         options.CollectionMetadata,
-                    }.Distinct(StringComparer.Ordinal).Count() == 3,
-                "Recommender collection aliases must be non-empty and distinct")
+                        options.CollectionAudio,
+                    }.Distinct(StringComparer.Ordinal).Count() == 4,
+                "Recommender collection names must be non-empty and distinct")
             .Validate(
                 options => options.SearchCacheSizeMiB > 0,
                 "Recommender:SearchCacheSizeMiB must be positive")
