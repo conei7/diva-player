@@ -72,7 +72,7 @@ export default function SongCardMenu({
         aria-haspopup="menu"
         aria-expanded={menuOpen}
         aria-label={`${songName} のメニュー`}
-        className="opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity p-1 rounded-md hover:bg-white/10"
+        className="flex h-10 w-10 items-center justify-center rounded-lg opacity-100 transition-opacity hover:bg-white/10 sm:h-6 sm:w-6 sm:p-1 sm:opacity-0 sm:group-hover:opacity-100"
         style={{ color: 'var(--color-text-muted)' }}
         onClick={onToggle}
         title="メニュー"

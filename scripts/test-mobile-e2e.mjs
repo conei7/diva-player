@@ -58,6 +58,22 @@ async function assertNoHorizontalOverflow(page, label) {
   console.log(`PASS ${label} mobile width (${dimensions.viewportWidth}px)`);
 }
 
+async function assertMobileButtonTargets(page, label) {
+  const undersized = await page.$$eval('main button', buttons => buttons.flatMap(button => {
+    const style = getComputedStyle(button);
+    const rect = button.getBoundingClientRect();
+    if (style.display === 'none' || style.visibility === 'hidden' || rect.width === 0 || rect.height === 0) return [];
+    if (rect.width >= 36 && rect.height >= 36) return [];
+    return [{
+      label: button.getAttribute('aria-label') || button.textContent?.trim() || '(unlabelled)',
+      width: rect.width,
+      height: rect.height,
+    }];
+  }));
+  assert(undersized.length === 0, `${label} has undersized mobile buttons: ${JSON.stringify(undersized)}`);
+  console.log(`PASS ${label} mobile button targets`);
+}
+
 async function main() {
   const baseUrl = getBaseUrl();
   const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox'] });
@@ -67,10 +83,12 @@ async function main() {
     await page.setViewport({ width: 390, height: 844, deviceScaleFactor: 1 });
 
     for (const [route, selector, label] of [
-      ['', 'a[href*="/watch?v="]', 'home'],
+      ['', 'main', 'home'],
+      ['chorus-highlights', 'h1', 'chorus highlights'],
       ['history', 'h1', 'history'],
       ['reports', 'h1', 'reports'],
       ['knowledge-map', '[data-testid="knowledge-map-page"]', 'knowledge map'],
+      ['settings/hidden-songs', 'h1', 'hidden songs'],
       ['favorites', 'h1', 'favorites'],
       ['favorite-producers', 'h1', 'favorite producers'],
       ['playlists', 'input[placeholder="新しいプレイリスト"]', 'playlists'],
@@ -82,6 +100,7 @@ async function main() {
       await page.waitForSelector(selector);
       await assertBackendNoticePlacement(page, label);
       await assertNoHorizontalOverflow(page, label);
+      await assertMobileButtonTargets(page, label);
     }
 
     await page.goto(new URL('playlists', baseUrl), { waitUntil: 'domcontentloaded' });

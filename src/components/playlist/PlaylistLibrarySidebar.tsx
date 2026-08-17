@@ -329,10 +329,10 @@ export default function PlaylistLibrarySidebar({
             <option value="name">名前順</option>
             <option value="songCount">曲数順</option>
           </select>
-          <button type="button" className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/10 text-xs text-neutral-400 hover:bg-white/10 hover:text-white" onClick={() => setPreferences(current => ({ ...current, sortOrder: current.sortOrder === 'desc' ? 'asc' : 'desc' }))} title="並び順を反転" aria-label="並び順を反転">
+          <button type="button" className="flex h-10 w-10 items-center justify-center rounded-lg border border-white/10 text-xs text-neutral-400 hover:bg-white/10 hover:text-white sm:h-8 sm:w-8" onClick={() => setPreferences(current => ({ ...current, sortOrder: current.sortOrder === 'desc' ? 'asc' : 'desc' }))} title="並び順を反転" aria-label="並び順を反転">
             {preferences.sortOrder === 'desc' ? '↓' : '↑'}
           </button>
-          <button type="button" className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/10 text-neutral-400 hover:bg-white/10 hover:text-white" onClick={() => setPreferences(current => ({ ...current, density: current.density === 'comfortable' ? 'compact' : 'comfortable' as PlaylistListDensity }))} title="表示密度を切り替え" aria-label="表示密度を切り替え">
+          <button type="button" className="flex h-10 w-10 items-center justify-center rounded-lg border border-white/10 text-neutral-400 hover:bg-white/10 hover:text-white sm:h-8 sm:w-8" onClick={() => setPreferences(current => ({ ...current, density: current.density === 'comfortable' ? 'compact' : 'comfortable' as PlaylistListDensity }))} title="表示密度を切り替え" aria-label="表示密度を切り替え">
             <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16" /></svg>
           </button>
         </div>

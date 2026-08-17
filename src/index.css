@@ -1312,6 +1312,13 @@ select optgroup {
   background: var(--color-yt-surface-hover);
 }
 
+@media (max-width: 639px) {
+  .yt-chip,
+  .yt-action-btn {
+    min-height: 40px;
+  }
+}
+
 /* ─── 2行クランプ ─── */
 .line-clamp-2 {
   display: -webkit-box;

@@ -36,7 +36,7 @@ export default function FavoriteProducersPage() {
               </div>
               <button
                 type="button"
-                className="btn-ghost rounded-lg px-2 py-1 text-xs"
+                className="btn-ghost min-h-10 rounded-lg px-3 py-2 text-xs"
                 aria-label={`${producer.name}をお気に入りPから解除`}
                 onClick={() => removeProducer(producer.id)}
               >
