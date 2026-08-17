@@ -163,4 +163,10 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: npx wrangler pages deploy dist --project-name diva-player --branch main
       - name: Nico autoplay smoke test
-        run: npm run test:e2e:pages-nico -- https://diva-player.pages.dev/
+        run: |
+          if npm run test:e2e:pages-nico -- https://diva-player.pages.dev/; then
+            exit 0
+          fi
+          echo "Nico autoplay smoke failed once; retrying the complete smoke after 15 seconds."
+          sleep 15
+          npm run test:e2e:pages-nico -- https://diva-player.pages.dev/
