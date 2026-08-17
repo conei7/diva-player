@@ -152,6 +152,12 @@ async function main() {
       const stored = JSON.parse(localStorage.getItem('diva_playerQueue') ?? '{}');
       return JSON.stringify(stored.songIds) === JSON.stringify(expectedIds);
     }, {}, selectedSongIds);
+    await selectionPage.waitForFunction(() => {
+      const drawer = document.querySelector('[data-testid="queue-drawer"]');
+      if (!drawer) return false;
+      const rect = drawer.getBoundingClientRect();
+      return rect.left < window.innerWidth && rect.right <= window.innerWidth + 1;
+    });
 
     await addSelectedToQueue();
     const duplicatedSelection = await selectionPage.evaluate(() => JSON.parse(localStorage.getItem('diva_playerQueue') ?? '{}').songIds);

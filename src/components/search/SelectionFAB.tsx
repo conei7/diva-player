@@ -199,7 +199,7 @@ export default function SelectionFAB({ visibleSongs }: SelectionFABProps) {
     clearSelection,
   } = useSelectionStore();
 
-  const addManyToQueue = usePlayerStore(s => s.addManyToQueue);
+  const { addManyToQueue, queueDrawerOpen, toggleQueueDrawer } = usePlayerStore();
   const { openSaveToPlaylist } = useUiStore();
 
   const [menuOpen, setMenuOpen] = useState(false);
@@ -243,9 +243,10 @@ export default function SelectionFAB({ visibleSongs }: SelectionFABProps) {
   const handleAddToQueue = useCallback(() => {
     const songs = getSelectedSongs();
     addManyToQueue(songs);
+    if (!queueDrawerOpen) toggleQueueDrawer();
     setMenuOpen(false);
     showToast(`${songs.length} 曲をキューに追加しました`);
-  }, [getSelectedSongs, addManyToQueue, showToast]);
+  }, [getSelectedSongs, addManyToQueue, queueDrawerOpen, toggleQueueDrawer, showToast]);
 
   const handleSaveToPlaylist = useCallback(() => {
     const songs = getSelectedSongs();
