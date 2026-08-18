@@ -598,12 +598,14 @@ export default function PlayerEmbed() {
   }, [failCurrentYouTubeAttempt, scheduleEndRecovery]);
 
   const isYouTube = currentPV?.service === 'Youtube';
+  const currentYouTubePVId = isYouTube ? currentPV.pvId : null;
 
   // Create one YouTube iframe per continuous YouTube session. Song changes are
   // applied with loadVideoById below, so a background tab never has to create a
   // fresh cross-origin iframe before the next track can start.
   useEffect(() => {
     if (!isYouTube) return;
+    const attemptController = attemptControllerRef.current;
     const playerContainer = containerRef.current;
     if (!playerContainer) return;
     let disposed = false;
@@ -684,7 +686,7 @@ export default function PlayerEmbed() {
     void initPlayer();
     return () => {
       disposed = true;
-      attemptControllerRef.current.cancel();
+      attemptController.cancel();
       youtubeDesiredVideoRef.current = null;
       youtubeReadyRef.current = false;
       stopVolumeSync();
@@ -705,7 +707,7 @@ export default function PlayerEmbed() {
   // Switch videos inside the persistent player. playbackSequence is included so
   // replaying the same PV restarts it without recreating the iframe.
   useEffect(() => {
-    if (!currentPV || currentPV.service !== 'Youtube') return;
+    if (!currentYouTubePVId) return;
     const attemptController = attemptControllerRef.current;
     attemptController.cancel();
     advancedPVRef.current = null;
@@ -714,9 +716,8 @@ export default function PlayerEmbed() {
     setProgress(0);
     if (currentSong?.lengthSeconds) setDuration(currentSong.lengthSeconds);
 
-    const pvId = currentPV.pvId;
-    let attempt: PlaybackAttemptToken;
-    attempt = attemptController.start(pvId, () => {
+    const pvId = currentYouTubePVId;
+    const attempt = attemptController.start(pvId, () => {
       if (youtubeDesiredVideoRef.current?.attempt !== attempt) return;
       failCurrentYouTubeAttempt('YouTube動画の準備がタイムアウトしました');
     });
@@ -734,7 +735,7 @@ export default function PlayerEmbed() {
       attemptController.cancel();
       youtubeDesiredVideoRef.current = null;
     };
-  }, [clearEndRecoveryTimer, currentPV?.pvId, currentPV?.service, currentSong?.id, currentSong?.lengthSeconds, failCurrentYouTubeAttempt, loadDesiredYouTubeVideo, playbackSequence, setDuration, setProgress, stopProgressTimer]);
+  }, [clearEndRecoveryTimer, currentSong?.id, currentSong?.lengthSeconds, currentYouTubePVId, failCurrentYouTubeAttempt, loadDesiredYouTubeVideo, playbackSequence, setDuration, setProgress, stopProgressTimer]);
 
   // Muted autoplay is the browser-safe way to get a newly selected song
   // moving in a background tab. If the session had no activation yet, restore
