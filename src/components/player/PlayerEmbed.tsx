@@ -751,9 +751,10 @@ export default function PlayerEmbed() {
       return token;
     };
     const attempt = armAttempt();
+    const songId = currentSong?.id ?? null;
     youtubeDesiredVideoRef.current = {
       pvId,
-      songId: currentSong?.id ?? null,
+      songId,
       playbackSequence,
       attempt,
     };
@@ -761,7 +762,11 @@ export default function PlayerEmbed() {
     if (player && youtubeReadyRef.current) loadDesiredYouTubeVideo(player);
 
     return () => {
-      if (youtubeDesiredVideoRef.current?.attempt !== attempt) return;
+      const desired = youtubeDesiredVideoRef.current;
+      if (!desired
+        || desired.pvId !== pvId
+        || desired.songId !== songId
+        || desired.playbackSequence !== playbackSequence) return;
       attemptController.cancel();
       youtubeDesiredVideoRef.current = null;
     };
