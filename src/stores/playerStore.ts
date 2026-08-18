@@ -17,7 +17,11 @@ import { isPlayablePV } from '../utils/playablePV';
 
 type FailedPVMap = Record<string, Record<string, number>>;
 
-const FAILED_PVS_KEY = 'failedPVs';
+// v2 intentionally ignores timeout failures written before background-safe
+// YouTube startup was introduced. Those entries could incorrectly force a
+// healthy official YouTube PV (for example コバルトメモリーズ) to NicoNico
+// for 30 minutes after a hidden-tab startup was deferred by the browser.
+const FAILED_PVS_KEY = 'failedPVsV2';
 const PV_PREFERENCE_KEY = 'pvPreference';
 const FAILED_PV_RETRY_MS = 30 * 60 * 1000;
 const VOLUME_KEY = 'volume';

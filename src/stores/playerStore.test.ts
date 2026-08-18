@@ -141,6 +141,40 @@ describe('player queue autoplay', () => {
     expect(result?.pvType).toBe('Original');
   });
 
+  it('uses the official YouTube PV for コバルトメモリーズ and ignores legacy hidden-tab failures', () => {
+    localStorage.setItem('diva_failedPVs', JSON.stringify({
+      '167789': { 'Youtube:0X_pI_SCDK8': Date.now() },
+    }));
+    const result = getPlayablePV({
+      ...song,
+      id: 167789,
+      name: 'コバルトメモリーズ',
+      pvs: [
+        { ...song.pvs![0], id: 243038, pvId: 'sm31936023', service: 'NicoNicoDouga', name: 'コバルトメモリーズ / 初音ミク アニメMV' },
+        { ...song.pvs![0], id: 243059, pvId: '0X_pI_SCDK8', service: 'Youtube', name: 'コバルトメモリーズ / はるまきごはん feat.初音ミク アニメMV' },
+      ],
+    });
+    expect(result?.service).toBe('Youtube');
+    expect(result?.pvId).toBe('0X_pI_SCDK8');
+  });
+
+  it('still falls back to the official NicoNico PV after a current explicit YouTube failure', () => {
+    localStorage.setItem('diva_failedPVsV2', JSON.stringify({
+      '167789': { 'Youtube:0X_pI_SCDK8': Date.now() },
+    }));
+    const result = getPlayablePV({
+      ...song,
+      id: 167789,
+      name: 'コバルトメモリーズ',
+      pvs: [
+        { ...song.pvs![0], id: 243038, pvId: 'sm31936023', service: 'NicoNicoDouga' },
+        { ...song.pvs![0], id: 243059, pvId: '0X_pI_SCDK8', service: 'Youtube' },
+      ],
+    });
+    expect(result?.service).toBe('NicoNicoDouga');
+    localStorage.removeItem('diva_failedPVsV2');
+  });
+
   it('plays a SoundCloud-only or Bilibili-only song', () => {
     expect(getPlayablePV({
       ...song,

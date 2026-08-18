@@ -49,11 +49,8 @@ export default function GlobalPlayer() {
     onSwipe: handleSwipe,
   });
 
-  // 再生する曲がない場合は表示しない (ただしアンマウントはしたくないため opacity: 0 などで対応も可能だが、
-  // 最初は何もないのでnullでOK。一度曲がセットされた後は常に存在する)
-  if (!currentSong) return null;
-
   const producerName = (() => {
+    if (!currentSong) return '';
     const producer = currentSong.artists?.find(a => a.categories?.includes('Producer'));
     if (producer) return producer.name || producer.artist?.name || '';
     const str = currentSong.artistString;
@@ -61,7 +58,7 @@ export default function GlobalPlayer() {
     return str;
   })();
   const containerStyle: React.CSSProperties = (() => {
-    if (isWatchPage && playerRect) {
+    if (currentSong && isWatchPage && playerRect) {
       // WatchPage の VideoPlayer の位置にピタリと合わせる
       // absolute にすることで、スクロール時に自動追従し、JSによる遅延を防ぐ
       return {
@@ -119,14 +116,14 @@ export default function GlobalPlayer() {
           cursor: showMiniPlayer ? 'pointer' : 'default',
         }}
         onClick={() => {
-          if (showMiniPlayer) navigate(`/watch?v=${currentSong.id}`);
+          if (showMiniPlayer && currentSong) navigate(`/watch?v=${currentSong.id}`);
         }}
       >
         <PlayerEmbed />
       </div>
 
       {/* MiniPlayer コントロール (PiPモード時のみ表示) */}
-      <div 
+      {currentSong && <div
         className="mini-player-controls"
         data-testid="mini-player-gesture-surface"
         {...swipeHandlers}
@@ -277,7 +274,7 @@ export default function GlobalPlayer() {
             </button>
           </div>
         </div>
-      </div>
+      </div>}
     </div>
   );
 }

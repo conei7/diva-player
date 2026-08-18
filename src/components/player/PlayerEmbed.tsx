@@ -600,11 +600,10 @@ export default function PlayerEmbed() {
   const isYouTube = currentPV?.service === 'Youtube';
   const currentYouTubePVId = isYouTube ? currentPV.pvId : null;
 
-  // Create one YouTube iframe per continuous YouTube session. Song changes are
-  // applied with loadVideoById below, so a background tab never has to create a
-  // fresh cross-origin iframe before the next track can start.
+  // Create one idle YouTube iframe for the lifetime of the app. GlobalPlayer is
+  // mounted before a song is selected, so even the first track can reuse a
+  // foreground-created iframe after the user switches to another tab/window.
   useEffect(() => {
-    if (!isYouTube) return;
     const attemptController = attemptControllerRef.current;
     const playerContainer = containerRef.current;
     if (!playerContainer) return;
@@ -702,7 +701,18 @@ export default function PlayerEmbed() {
       }
       if (playerContainer) playerContainer.innerHTML = '';
     };
-  }, [advanceOnce, clearEndRecoveryTimer, failCurrentYouTubeAttempt, isYouTube, loadDesiredYouTubeVideo, markPVHealthy, scheduleEndRecovery, setDuration, setIsPlaying, startProgressTimer, stopProgressTimer, startVolumeSync, stopVolumeSync]);
+  }, [advanceOnce, clearEndRecoveryTimer, failCurrentYouTubeAttempt, loadDesiredYouTubeVideo, markPVHealthy, scheduleEndRecovery, setDuration, setIsPlaying, startProgressTimer, stopProgressTimer, startVolumeSync, stopVolumeSync]);
+
+  // The persistent YouTube iframe remains mounted while another service is in
+  // use, but its previous video must not keep playing underneath that service.
+  useEffect(() => {
+    if (isYouTube || !ytPlayerRef.current) return;
+    try {
+      ytPlayerRef.current.stopVideo?.();
+    } catch {
+      // The idle player may still be completing its initial setup.
+    }
+  }, [isYouTube]);
 
   // Switch videos inside the persistent player. playbackSequence is included so
   // replaying the same PV restarts it without recreating the iframe.
@@ -717,10 +727,30 @@ export default function PlayerEmbed() {
     if (currentSong?.lengthSeconds) setDuration(currentSong.lengthSeconds);
 
     const pvId = currentYouTubePVId;
-    const attempt = attemptController.start(pvId, () => {
-      if (youtubeDesiredVideoRef.current?.attempt !== attempt) return;
-      failCurrentYouTubeAttempt('YouTube動画の準備がタイムアウトしました');
-    });
+    const armAttempt = (): PlaybackAttemptToken => {
+      const token = attemptController.start(pvId, () => {
+        const desired = youtubeDesiredVideoRef.current;
+        if (!desired || desired.attempt !== token) return;
+        if (document.hidden && usePlayerStore.getState().isPlaying) {
+          // A hidden page may delay iframe/API readiness even though the PV is
+          // healthy. Keep the preferred YouTube PV selected and retry muted;
+          // only an explicit YT error or a visible timeout may fail it over.
+          try {
+            ytPlayerRef.current?.mute?.();
+            youtubeAutoplayMutedRef.current = true;
+            ytPlayerRef.current?.playVideo?.();
+            if (ytPlayerRef.current) scheduleEndRecovery(ytPlayerRef.current);
+          } catch {
+            // The next bounded attempt will retry after iframe readiness.
+          }
+          desired.attempt = armAttempt();
+          return;
+        }
+        failCurrentYouTubeAttempt('YouTube動画の準備がタイムアウトしました');
+      });
+      return token;
+    };
+    const attempt = armAttempt();
     youtubeDesiredVideoRef.current = {
       pvId,
       songId: currentSong?.id ?? null,
@@ -735,7 +765,7 @@ export default function PlayerEmbed() {
       attemptController.cancel();
       youtubeDesiredVideoRef.current = null;
     };
-  }, [clearEndRecoveryTimer, currentSong?.id, currentSong?.lengthSeconds, currentYouTubePVId, failCurrentYouTubeAttempt, loadDesiredYouTubeVideo, playbackSequence, setDuration, setProgress, stopProgressTimer]);
+  }, [clearEndRecoveryTimer, currentSong?.id, currentSong?.lengthSeconds, currentYouTubePVId, failCurrentYouTubeAttempt, loadDesiredYouTubeVideo, playbackSequence, scheduleEndRecovery, setDuration, setProgress, stopProgressTimer]);
 
   // Muted autoplay is the browser-safe way to get a newly selected song
   // moving in a background tab. If the session had no activation yet, restore
@@ -828,23 +858,20 @@ export default function PlayerEmbed() {
     clearSeekTarget();
   }, [seekTarget, clearSeekTarget, currentPV, setProgress]);
 
-  // ニコニコ動画の埋め込み
-  if (currentPV?.service === 'NicoNicoDouga') {
-    return <NicoEmbed key={`${currentPV.pvId}:${playbackSequence}`} pvId={currentPV.pvId} name={currentPV.name} duration={currentSong?.lengthSeconds} isPlaying={isPlaying} />;
-  }
-
-  if (currentPV?.service === 'SoundCloud') {
-    return <SoundCloudEmbed key={`${currentPV.pvId}:${playbackSequence}`} pv={currentPV} isPlaying={isPlaying} />;
-  }
-
-  if (currentPV?.service === 'Bilibili') {
-    return <BilibiliEmbed key={`${currentPV.pvId}:${playbackSequence}`} pv={currentPV} isPlaying={isPlaying} duration={currentSong?.lengthSeconds} />;
-  }
-
-  // YouTube プレイヤーコンテナ
   return (
-    <div ref={containerRef} className="w-full h-full">
-      <div id="yt-player-embed" />
-    </div>
+    <>
+      <div ref={containerRef} className={`w-full h-full${currentPV && !isYouTube ? ' hidden' : ''}`} aria-hidden={currentPV ? !isYouTube : true}>
+        <div id="yt-player-embed" />
+      </div>
+      {currentPV?.service === 'NicoNicoDouga' && (
+        <NicoEmbed key={`${currentPV.pvId}:${playbackSequence}`} pvId={currentPV.pvId} name={currentPV.name} duration={currentSong?.lengthSeconds} isPlaying={isPlaying} />
+      )}
+      {currentPV?.service === 'SoundCloud' && (
+        <SoundCloudEmbed key={`${currentPV.pvId}:${playbackSequence}`} pv={currentPV} isPlaying={isPlaying} />
+      )}
+      {currentPV?.service === 'Bilibili' && (
+        <BilibiliEmbed key={`${currentPV.pvId}:${playbackSequence}`} pv={currentPV} isPlaying={isPlaying} duration={currentSong?.lengthSeconds} />
+      )}
+    </>
   );
 }

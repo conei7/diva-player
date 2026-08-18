@@ -5,12 +5,12 @@ const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox'] 
 
 const songs = [
   {
-    id: 900001,
-    name: 'Background recovery fixture 1',
-    artistString: 'Fixture producer',
-    createDate: '2026-01-01T00:00:00Z',
-    defaultName: 'Background recovery fixture 1',
-    defaultNameLanguage: 'English',
+    id: 167789,
+    name: 'コバルトメモリーズ',
+    artistString: 'はるまきごはん feat. 初音ミク',
+    createDate: '2017-09-16T14:47:17Z',
+    defaultName: 'コバルトメモリーズ',
+    defaultNameLanguage: 'Japanese',
     favoritedTimes: 0,
     lengthSeconds: 3,
     pvServices: 'Youtube',
@@ -18,7 +18,10 @@ const songs = [
     songType: 'Original',
     status: 'Finished',
     version: 1,
-    pvs: [{ author: '', disabled: false, id: 9000011, length: 3, name: 'fixture-1', pvId: 'fixture-1', service: 'Youtube', pvType: 'Original', url: 'https://youtu.be/fixture-1' }],
+    pvs: [
+      { author: 'はるまきごはん', disabled: false, id: 243038, length: 3, name: 'コバルトメモリーズ / 初音ミク アニメMV', pvId: 'sm31936023', service: 'NicoNicoDouga', pvType: 'Original', url: 'https://www.nicovideo.jp/watch/sm31936023' },
+      { author: 'はるまきごはん', disabled: false, id: 243059, length: 3, name: 'コバルトメモリーズ / はるまきごはん feat.初音ミク アニメMV', pvId: '0X_pI_SCDK8', service: 'Youtube', pvType: 'Original', url: 'https://youtu.be/0X_pI_SCDK8' },
+    ],
   },
   {
     id: 900002,
@@ -34,7 +37,10 @@ const songs = [
     songType: 'Original',
     status: 'Finished',
     version: 1,
-    pvs: [{ author: '', disabled: false, id: 9000021, length: 30, name: 'fixture-2', pvId: 'fixture-2', service: 'Youtube', pvType: 'Original', url: 'https://youtu.be/fixture-2' }],
+    pvs: [
+      { author: '', disabled: false, id: 9000021, length: 30, name: 'fixture-2', pvId: 'fixture-2', service: 'Youtube', pvType: 'Original', url: 'https://youtu.be/fixture-2' },
+      { author: '', disabled: false, id: 9000022, length: 30, name: 'fixture-2-nico', pvId: 'sm900002', service: 'NicoNicoDouga', pvType: 'Original', url: 'https://www.nicovideo.jp/watch/sm900002' },
+    ],
   },
 ];
 
@@ -42,6 +48,10 @@ try {
   const playerPage = await browser.newPage();
   playerPage.on('pageerror', (error) => console.error('PAGE ERROR', error.message));
   await playerPage.evaluateOnNewDocument((queue) => {
+    // A pre-fix hidden-tab timeout must not keep forcing the official Nico PV.
+    localStorage.setItem('diva_failedPVs', JSON.stringify({
+      '167789': { 'Youtube:0X_pI_SCDK8': Date.now() },
+    }));
     localStorage.setItem('diva_playerQueue', JSON.stringify({
       queue,
       queueIndex: 0,
@@ -55,7 +65,7 @@ try {
   await playerPage.setRequestInterception(true);
   playerPage.on('request', async (request) => {
     const requestUrl = request.url();
-    if (requestUrl.startsWith('https://vocadb.net/api/songs/900001?')) {
+    if (requestUrl.startsWith('https://vocadb.net/api/songs/167789?')) {
       await request.respond({
         contentType: 'application/json',
         headers: { 'access-control-allow-origin': '*' },
@@ -63,10 +73,10 @@ try {
       });
       return;
     }
-    if (requestUrl.includes('/backend-api/api/songs/views?ids=900001')) {
+    if (requestUrl.includes('/backend-api/api/songs/views?ids=167789')) {
       await request.respond({
         contentType: 'application/json',
-        body: JSON.stringify({ 900001: { youtubeViews: 0, nicoViews: 0 } }),
+        body: JSON.stringify({ 167789: { youtubeViews: 0, nicoViews: 0 } }),
       });
       return;
     }
@@ -91,7 +101,7 @@ try {
             let elapsed = 0;
             let currentVideoId = options.videoId || null;
             player.getCurrentTime = () => state === 1 ? elapsed + (Date.now() - startedAt) / 1000 : elapsed;
-            player.getDuration = () => currentVideoId === 'fixture-1' ? 3 : 30;
+            player.getDuration = () => currentVideoId === '0X_pI_SCDK8' ? 3 : 30;
             player.getPlayerState = () => state;
             player.getVolume = () => 50;
             player.setVolume = () => {};
@@ -102,6 +112,7 @@ try {
               currentVideoId = videoId;
               elapsed = 0;
               state = -1;
+              if (videoId === 'fixture-2') window.__blockSecondStartUntil = Date.now() + 13_000;
               window.__youtubeLoadedVideoIds = [...(window.__youtubeLoadedVideoIds || []), videoId];
             };
             player.cueVideoById = (videoId) => {
@@ -112,7 +123,7 @@ try {
             };
             player.playVideo = () => {
               window.__playVideoAttemptCount = (window.__playVideoAttemptCount || 0) + 1;
-              if (currentVideoId === 'fixture-2' && document.hidden && state === -1 && (window.__backgroundInitialStartIgnoreCount || 0) < 2) {
+              if (currentVideoId === 'fixture-2' && document.hidden && state === -1 && Date.now() < (window.__blockSecondStartUntil || 0)) {
                 window.__backgroundInitialStartIgnoreCount = (window.__backgroundInitialStartIgnoreCount || 0) + 1;
                 return;
               }
@@ -155,16 +166,16 @@ try {
     });
   });
 
-  await playerPage.goto(new URL('watch?v=900001', baseUrl), { waitUntil: 'domcontentloaded', timeout: 60_000 });
+  await playerPage.goto(new URL('watch?v=167789', baseUrl), { waitUntil: 'domcontentloaded', timeout: 60_000 });
   await playerPage.waitForFunction(() => {
     const queue = JSON.parse(localStorage.getItem('diva_playerQueue') || 'null');
-    return queue?.currentSongId === 900001 && document.querySelector('#yt-player-embed');
+    return queue?.currentSongId === 167789 && document.querySelector('#yt-player-embed');
   });
   await playerPage.waitForFunction(() => window.__backgroundPlaybackStarted === true);
   console.log('PASS same-song page click resumes YouTube playback');
   await playerPage.waitForFunction(() => {
     const queue = JSON.parse(localStorage.getItem('diva_playerQueue') || 'null');
-    return queue?.currentSongId === 900001;
+    return queue?.currentSongId === 167789;
   });
 
   const otherPage = await browser.newPage();
@@ -192,6 +203,21 @@ try {
   }
   console.log(`PASS background playback recovery (${result.visibilityState})`);
 
+  await new Promise((resolve) => setTimeout(resolve, 14_000));
+  const hiddenTimeoutState = await playerPage.evaluate(() => ({
+    failedPVs: JSON.parse(localStorage.getItem('diva_failedPVsV2') || '{}'),
+    selectedNicoEmbed: Boolean(document.querySelector('iframe[src*="embed.nicovideo.jp"]')),
+    visibilityState: document.visibilityState,
+  }));
+  if (hiddenTimeoutState.selectedNicoEmbed || Object.keys(hiddenTimeoutState.failedPVs['900002'] || {}).length > 0) {
+    throw new Error(`A hidden >12s delay incorrectly failed over to NicoNico: ${JSON.stringify(hiddenTimeoutState)}`);
+  }
+  // Model a provider/device wake while the DIVA tab remains hidden. Recovery
+  // must start the same YouTube iframe without requiring focus or visibility.
+  await playerPage.evaluate(() => {
+    window.__blockSecondStartUntil = 0;
+    document.dispatchEvent(new Event('resume'));
+  });
   await playerPage.waitForFunction(() => window.__backgroundSecondPlaybackStarted === true, { timeout: 6_000 });
   const backgroundStart = await playerPage.evaluate(() => ({
     backgroundIframeCreationBlocked: window.__backgroundIframeCreationBlocked || false,
@@ -199,18 +225,23 @@ try {
     loadedVideoIds: window.__youtubeLoadedVideoIds || [],
     playAttempts: window.__playVideoAttemptCount || 0,
     playerConstructCount: window.__youtubePlayerConstructCount || 0,
+    selectedNicoEmbed: Boolean(document.querySelector('iframe[src*="embed.nicovideo.jp"]')),
+    currentFailureMap: JSON.parse(localStorage.getItem('diva_failedPVsV2') || '{}'),
     visibilityState: document.visibilityState,
   }));
-  if (backgroundStart.ignoredStarts !== 2 || backgroundStart.visibilityState !== 'hidden') {
+  if (backgroundStart.ignoredStarts < 2 || backgroundStart.visibilityState !== 'hidden') {
     throw new Error(`The fixture did not exercise hidden initial-start recovery: ${JSON.stringify(backgroundStart)}`);
   }
   if (backgroundStart.backgroundIframeCreationBlocked || backgroundStart.playerConstructCount !== 1) {
     throw new Error(`YouTube iframe was recreated while hidden: ${JSON.stringify(backgroundStart)}`);
   }
-  if (backgroundStart.loadedVideoIds.join(',') !== 'fixture-1,fixture-2') {
+  if (backgroundStart.loadedVideoIds.join(',') !== '0X_pI_SCDK8,fixture-2') {
     throw new Error(`Persistent player did not load both videos in order: ${JSON.stringify(backgroundStart)}`);
   }
-  console.log(`PASS hidden next-track playback reuses one iframe (${backgroundStart.playAttempts} play attempts)`);
+  if (backgroundStart.selectedNicoEmbed || Object.keys(backgroundStart.currentFailureMap['900002'] || {}).length > 0) {
+    throw new Error(`A hidden startup delay incorrectly failed over to NicoNico: ${JSON.stringify(backgroundStart)}`);
+  }
+  console.log(`PASS hidden >12s startup delay stays on YouTube and reuses one iframe (${backgroundStart.playAttempts} play attempts)`);
 
   await playerPage.bringToFront();
   await playerPage.waitForFunction(() => typeof window.__simulateDeviceWake === 'function');
