@@ -1,8 +1,7 @@
-import { useEffect } from 'react';
+import { Suspense, useEffect } from 'react';
 import { Outlet, useLocation } from 'react-router';
 import TopNav from './TopNav';
 import Sidebar from './Sidebar';
-import GlobalPlayer from '../player/GlobalPlayer';
 import HistoryDrawer from '../player/HistoryDrawer';
 import QueueDrawer from '../player/QueueDrawer';
 import SongDetailsModal from '../player/SongDetailsModal';
@@ -71,11 +70,15 @@ export default function Layout() {
             main { margin-left: 0 !important; }
           }
         `}</style>
-        <Outlet />
+        {/*
+          Lazy page modules may suspend on their first visit. Keep that boundary
+          inside the route content so GlobalPlayer never falls back with the page
+          and its iframe remains visible and mounted during navigation.
+        */}
+        <Suspense fallback={<div className="min-h-screen bg-zinc-950" aria-busy="true" />}>
+          <Outlet />
+        </Suspense>
       </main>
-
-      {/* グローバルプレイヤー (WatchPageの埋め込み or フローティングPiP) */}
-      <GlobalPlayer />
 
       <HistoryDrawer />
       <QueueDrawer />

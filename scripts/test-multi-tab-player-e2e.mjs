@@ -22,9 +22,19 @@ const song = {
 
 async function preparePage() {
   const page = await browser.newPage();
+  await page.evaluateOnNewDocument(() => {
+    window.__playerLifecycle = { created: 0, destroyed: 0, state: -1 };
+  });
   await page.setRequestInterception(true);
   page.on('request', async (request) => {
     const requestUrl = request.url();
+    if (requestUrl.includes('KnowledgeMapPage')) {
+      // Keep the lazy route suspended long enough to catch accidental teardown
+      // of the persistent player boundary during navigation.
+      await new Promise(resolve => setTimeout(resolve, 400));
+      await request.continue();
+      return;
+    }
     if (requestUrl.startsWith('https://vocadb.net/api/songs/900008?')) {
       await request.respond({
         contentType: 'application/json',
@@ -49,6 +59,8 @@ async function preparePage() {
           Player: function (_id, options) {
             const player = this;
             let state = -1;
+            window.__playerLifecycle.created += 1;
+            window.__playerLifecycle.state = state;
             player.getCurrentTime = () => 1;
             player.getDuration = () => 120;
             player.getPlayerState = () => state;
@@ -61,11 +73,12 @@ async function preparePage() {
             player.cueVideoById = () => { state = 5; };
             player.playVideo = () => {
               state = 1;
+              window.__playerLifecycle.state = state;
               options.events.onStateChange({ data: state, target: player });
             };
-            player.pauseVideo = () => { state = 2; };
-            player.stopVideo = () => { state = 0; };
-            player.destroy = () => {};
+            player.pauseVideo = () => { state = 2; window.__playerLifecycle.state = state; };
+            player.stopVideo = () => { state = 0; window.__playerLifecycle.state = state; };
+            player.destroy = () => { window.__playerLifecycle.destroyed += 1; };
             setTimeout(() => options.events.onReady({ target: player }), 0);
           },
         };
@@ -87,8 +100,50 @@ async function startAndOpenMiniPlayer(page) {
   await page.waitForSelector('.global-mini-player', { visible: true });
 }
 
+async function assertLazyNavigationKeepsPlayback(page) {
+  await page.goto(new URL('watch?v=900008', baseUrl), { waitUntil: 'domcontentloaded', timeout: 60_000 });
+  await page.waitForFunction(() => window.__playerLifecycle?.state === 1);
+  await page.click('button[aria-label="メニュー"]');
+  await page.waitForSelector('a[href$="/knowledge-map"]', { visible: true });
+  await page.$eval('a[href$="/knowledge-map"]', link => link.click());
+  await new Promise(resolve => setTimeout(resolve, 100));
+  const suspendedState = await page.evaluate(() => {
+    const player = document.querySelector('[data-testid="global-player"]');
+    return {
+      exists: Boolean(player),
+      hasLayoutBox: Boolean(player?.getClientRects().length),
+      isMiniPlayerVisible: Boolean(document.querySelector('.global-mini-player')),
+      lifecycle: window.__playerLifecycle,
+    };
+  });
+  if (!suspendedState.exists || !suspendedState.hasLayoutBox || !suspendedState.isMiniPlayerVisible) {
+    throw new Error(`Lazy route fallback hid the persistent player: ${JSON.stringify(suspendedState)}`);
+  }
+  await page.waitForSelector('[data-testid="knowledge-map-page"]', { timeout: 60_000 });
+  await page.waitForSelector('.global-mini-player', { visible: true });
+
+  const state = await page.evaluate(() => ({
+    lifecycle: window.__playerLifecycle,
+    isMiniPlayerVisible: Boolean(document.querySelector('.global-mini-player')),
+    title: document.title,
+    ownerTabId: JSON.parse(localStorage.getItem('diva-playback-owner-v1') || 'null')?.tabId,
+    thisTabId: sessionStorage.getItem('diva-playback-tab-v1'),
+  }));
+  if (state.lifecycle.created !== 1 || state.lifecycle.destroyed !== 0 || state.lifecycle.state !== 1) {
+    throw new Error(`Lazy navigation recreated or stopped the persistent player: ${JSON.stringify(state)}`);
+  }
+  if (!state.isMiniPlayerVisible || state.ownerTabId !== state.thisTabId) {
+    throw new Error(`Lazy navigation lost the local mini-player owner: ${JSON.stringify(state)}`);
+  }
+  if (state.title !== 'Multi-tab ownership fixture — Fixture producer | DIVA Player') {
+    throw new Error(`Lazy navigation left an inconsistent browser title: ${JSON.stringify(state)}`);
+  }
+  console.log('PASS lazy page navigation preserves playback, mini-player ownership, and title');
+}
+
 try {
   const first = await preparePage();
+  await assertLazyNavigationKeepsPlayback(first);
   await startAndOpenMiniPlayer(first);
 
   const second = await preparePage();

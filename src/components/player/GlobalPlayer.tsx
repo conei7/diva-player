@@ -1,4 +1,4 @@
-import { useCallback, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
 import { useLocation, useNavigate } from 'react-router';
 import { usePlayerStore } from '../../stores/playerStore';
 import { usePlayerInteractionStore } from '../../stores/playerInteractionStore';
@@ -36,8 +36,44 @@ export default function GlobalPlayer() {
   );
 
   const isWatchPage = location.pathname === '/watch';
-  // WatchPage 以外で曲が選択されていればミニプレイヤーを表示
-  const showMiniPlayer = !isWatchPage && !!currentSong && ownershipState === 'local';
+  const [isLeavingWatchPage, setIsLeavingWatchPage] = useState(false);
+
+  useEffect(() => {
+    if (!isWatchPage) {
+      setIsLeavingWatchPage(false);
+      return;
+    }
+
+    const handleInternalNavigation = (event: MouseEvent) => {
+      if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      const anchor = target.closest<HTMLAnchorElement>('a[href]');
+      if (!anchor || anchor.target === '_blank' || anchor.hasAttribute('download')) return;
+      const destination = new URL(anchor.href, window.location.href);
+      if (destination.origin !== window.location.origin) return;
+      const destinationIsWatch = destination.pathname.endsWith('/watch') || destination.pathname.endsWith('/playing');
+      if (destinationIsWatch) return;
+
+      // React Router may keep the old Watch route rendered while a lazy page is
+      // loading. Move the persistent iframe to PiP immediately instead of
+      // waiting for that transition to commit.
+      setIsLeavingWatchPage(true);
+    };
+
+    document.addEventListener('click', handleInternalNavigation, { capture: true });
+    return () => {
+      document.removeEventListener('click', handleInternalNavigation, { capture: true });
+    };
+  }, [isWatchPage]);
+
+  const renderAsWatchPage = isWatchPage && !isLeavingWatchPage && !!playerRect;
+  // WatchPage 以外では、別タブが再生を取得したと確定した場合だけ隠す。
+  // `none` は初期化・SPA遷移・page lifecycleの短い中間状態でも現れるため、
+  // 再生中ならlocal claimが反映されるまでPiPを維持する。停止状態の別タブに
+  // 永続queueだけが復元された場合は表示しない。
+  const hasLocalPlayback = ownershipState === 'local' || (ownershipState === 'none' && isPlaying);
+  const showMiniPlayer = !renderAsWatchPage && !!currentSong && hasLocalPlayback;
   const canShuffle = queue.length > 1;
   const handleSwipe = useCallback((direction: 'left' | 'right' | 'up') => {
     if (direction === 'left') next();
@@ -58,7 +94,7 @@ export default function GlobalPlayer() {
     return str;
   })();
   const containerStyle: React.CSSProperties = (() => {
-    if (currentSong && isWatchPage && playerRect) {
+    if (currentSong && renderAsWatchPage && playerRect) {
       // WatchPage の VideoPlayer の位置にピタリと合わせる
       // absolute にすることで、スクロール時に自動追従し、JSによる遅延を防ぐ
       return {

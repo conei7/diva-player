@@ -1,8 +1,9 @@
-import { lazy, Suspense, useEffect, useRef } from 'react';
+import { lazy, useEffect, useRef } from 'react';
 import { BrowserRouter, Routes, Route } from 'react-router';
 import Layout from './components/layout/Layout';
 import MediaSession from './components/player/MediaSession';
 import KeyboardShortcuts from './components/player/KeyboardShortcuts';
+import GlobalPlayer from './components/player/GlobalPlayer';
 import { usePlayerStore } from './stores/playerStore';
 import { useHistoryStore } from './stores/historyStore';
 import { useRatingStore } from './stores/ratingStore';
@@ -190,24 +191,24 @@ function AppContent() {
       <PlayerTracker />
       <MediaSession />
       <KeyboardShortcuts />
-      <Suspense fallback={<div className="min-h-screen bg-zinc-950" aria-busy="true" />}>
-        <Routes>
-          <Route element={<Layout />}>
-            <Route path="/" element={<HomePage />} />
-            <Route path="/watch" element={<WatchPage />} />
-            <Route path="/history" element={<HistoryPage />} />
-            <Route path="/favorites" element={<FavoritesPage />} />
-            <Route path="/favorite-producers" element={<FavoriteProducersPage />} />
-            <Route path="/playlists" element={<PlaylistPage />} />
-            <Route path="/reports" element={<ReportsPage />} />
-            <Route path="/chorus-highlights" element={<ChorusHighlightsPage />} />
-            <Route path="/knowledge-map" element={<KnowledgeMapPage />} />
-            <Route path="/settings/hidden-songs" element={<HiddenSongsPage />} />
-            {/* 旧ルートの互換性 */}
-            <Route path="/playing" element={<WatchPage />} />
-          </Route>
-        </Routes>
-      </Suspense>
+      {/* Keep the playback iframe outside route rendering and lazy-page suspension. */}
+      <GlobalPlayer />
+      <Routes>
+        <Route element={<Layout />}>
+          <Route path="/" element={<HomePage />} />
+          <Route path="/watch" element={<WatchPage />} />
+          <Route path="/history" element={<HistoryPage />} />
+          <Route path="/favorites" element={<FavoritesPage />} />
+          <Route path="/favorite-producers" element={<FavoriteProducersPage />} />
+          <Route path="/playlists" element={<PlaylistPage />} />
+          <Route path="/reports" element={<ReportsPage />} />
+          <Route path="/chorus-highlights" element={<ChorusHighlightsPage />} />
+          <Route path="/knowledge-map" element={<KnowledgeMapPage />} />
+          <Route path="/settings/hidden-songs" element={<HiddenSongsPage />} />
+          {/* 旧ルートの互換性 */}
+          <Route path="/playing" element={<WatchPage />} />
+        </Route>
+      </Routes>
     </>
   );
 }
