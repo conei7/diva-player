@@ -85,6 +85,7 @@ export default function SoundCloudEmbed({ pv, isPlaying }: SoundCloudEmbedProps)
   const playbackSyncIdRef = useRef(0);
   const pendingPlaybackTargetRef = useRef<boolean | null>(null);
   const pauseConfirmationTimerRef = useRef<number | null>(null);
+  const playbackRetryTimerRef = useRef<number | null>(null);
   const volume = usePlayerStore(state => state.volume);
   const setIsPlaying = usePlayerStore(state => state.setIsPlaying);
   const markPVHealthy = usePlayerStore(state => state.markPVHealthy);
@@ -106,6 +107,12 @@ export default function SoundCloudEmbed({ pv, isPlaying }: SoundCloudEmbedProps)
     pauseConfirmationTimerRef.current = null;
   }, []);
 
+  const clearPlaybackRetry = useCallback(() => {
+    if (playbackRetryTimerRef.current === null) return;
+    window.clearTimeout(playbackRetryTimerRef.current);
+    playbackRetryTimerRef.current = null;
+  }, []);
+
   const syncWidgetPlayback = useCallback((widget: SoundCloudWidget, shouldPlay: boolean) => {
     const syncId = ++playbackSyncIdRef.current;
     widget.isPaused(paused => {
@@ -115,6 +122,7 @@ export default function SoundCloudEmbed({ pv, isPlaying }: SoundCloudEmbedProps)
       const widgetIsPlaying = !paused;
       if (widgetIsPlaying === shouldPlay) {
         pendingPlaybackTargetRef.current = null;
+        if (shouldPlay) clearPlaybackRetry();
         return;
       }
 
@@ -122,7 +130,21 @@ export default function SoundCloudEmbed({ pv, isPlaying }: SoundCloudEmbedProps)
       if (shouldPlay) widget.play();
       else widget.pause();
     });
-  }, []);
+  }, [clearPlaybackRetry]);
+
+  const scheduleWidgetPlayback = useCallback((widget: SoundCloudWidget, initialDelayMs = 0) => {
+    clearPlaybackRetry();
+    if (!requestedPlayingRef.current) return;
+    const retry = () => {
+      playbackRetryTimerRef.current = null;
+      if (widgetRef.current !== widget || !requestedPlayingRef.current) return;
+      // Arm first so an asynchronous isPaused confirmation can cancel it as
+      // soon as playback is known to be active.
+      playbackRetryTimerRef.current = window.setTimeout(retry, 1_000);
+      syncWidgetPlayback(widget, true);
+    };
+    playbackRetryTimerRef.current = window.setTimeout(retry, initialDelayMs);
+  }, [clearPlaybackRetry, syncWidgetPlayback]);
 
   useEffect(() => {
     if (embedUrl) return;
@@ -152,11 +174,13 @@ export default function SoundCloudEmbed({ pv, isPlaying }: SoundCloudEmbedProps)
             setDuration(milliseconds / 1000);
           }
         });
-        syncWidgetPlayback(widget, requestedPlayingRef.current);
+        if (requestedPlayingRef.current) scheduleWidgetPlayback(widget);
+        else syncWidgetPlayback(widget, false);
       });
       widget.bind(events.PLAY, () => {
         if (!active) return;
         clearPauseConfirmation();
+        clearPlaybackRetry();
         pendingPlaybackTargetRef.current = null;
         requestedPlayingRef.current = true;
         markPVHealthy(pv);
@@ -178,6 +202,11 @@ export default function SoundCloudEmbed({ pv, isPlaying }: SoundCloudEmbedProps)
               if (!active || widgetRef.current !== activeWidget) return;
               pendingPlaybackTargetRef.current = null;
               if (!paused) return;
+              if (document.hidden && usePlayerStore.getState().isPlaying) {
+                requestedPlayingRef.current = true;
+                scheduleWidgetPlayback(activeWidget);
+                return;
+              }
               requestedPlayingRef.current = false;
               if (usePlayerStore.getState().isPlaying) setIsPlaying(false);
             });
@@ -214,20 +243,25 @@ export default function SoundCloudEmbed({ pv, isPlaying }: SoundCloudEmbedProps)
     return () => {
       active = false;
       clearPauseConfirmation();
+      clearPlaybackRetry();
       playbackSyncIdRef.current += 1;
       pendingPlaybackTargetRef.current = null;
       widgetRef.current = null;
       if (!factory || !widget) return;
       Object.values(factory.Events).forEach(eventName => widget?.unbind(eventName));
     };
-  }, [clearPauseConfirmation, embedUrl, markPVHealthy, next, pv, setDuration, setError, setIsPlaying, setProgress, syncWidgetPlayback, tryNextPV]);
+  }, [clearPauseConfirmation, clearPlaybackRetry, embedUrl, markPVHealthy, next, pv, scheduleWidgetPlayback, setDuration, setError, setIsPlaying, setProgress, syncWidgetPlayback, tryNextPV]);
 
   useEffect(() => {
     requestedPlayingRef.current = isPlaying;
     const widget = widgetRef.current;
     if (!widget) return;
-    syncWidgetPlayback(widget, isPlaying);
-  }, [isPlaying, syncWidgetPlayback]);
+    if (isPlaying) scheduleWidgetPlayback(widget);
+    else {
+      clearPlaybackRetry();
+      syncWidgetPlayback(widget, false);
+    }
+  }, [clearPlaybackRetry, isPlaying, scheduleWidgetPlayback, syncWidgetPlayback]);
 
   const recoverPlayback = useCallback(() => {
     const widget = widgetRef.current;
@@ -244,11 +278,11 @@ export default function SoundCloudEmbed({ pv, isPlaying }: SoundCloudEmbedProps)
         next();
         return;
       }
-      syncWidgetPlayback(widget, true);
+      scheduleWidgetPlayback(widget);
     };
     if (widget.getPosition) widget.getPosition(resume);
     else resume();
-  }, [next, setProgress, syncWidgetPlayback]);
+  }, [next, scheduleWidgetPlayback, setProgress]);
   usePlaybackWakeRecovery(recoverPlayback);
 
   useEffect(() => {

@@ -112,6 +112,12 @@ function NicoEmbed({ pvId, name, duration: songDuration, isPlaying }: { pvId: st
     sendPlaybackState(playing);
   }, [sendMuted, sendPlaybackState]);
 
+  const clearPlaybackRetry = useCallback(() => {
+    if (playTimerRef.current === null) return;
+    window.clearTimeout(playTimerRef.current);
+    playTimerRef.current = null;
+  }, []);
+
   const cancelPlaybackAttempt = useCallback(() => {
     attemptControllerRef.current.cancel();
     attemptTokenRef.current = null;
@@ -131,6 +137,19 @@ function NicoEmbed({ pvId, name, duration: songDuration, isPlaying }: { pvId: st
     attemptControllerRef.current.complete(attempt);
     attemptTokenRef.current = null;
   }, []);
+
+  const schedulePlaybackRetry = useCallback((initialDelayMs = 750) => {
+    clearPlaybackRetry();
+    if (!requestedPlayingRef.current || !iframeReadyRef.current) return;
+    const retry = () => {
+      playTimerRef.current = null;
+      if (!requestedPlayingRef.current || !iframeReadyRef.current) return;
+      prepareAndSendPlaybackState(true);
+      ensurePlaybackAttempt();
+      playTimerRef.current = window.setTimeout(retry, 1_000);
+    };
+    playTimerRef.current = window.setTimeout(retry, initialDelayMs);
+  }, [clearPlaybackRetry, ensurePlaybackAttempt, prepareAndSendPlaybackState]);
 
   const scheduleVolumeSync = useCallback(() => {
     sendVolume();
@@ -177,9 +196,8 @@ function NicoEmbed({ pvId, name, duration: songDuration, isPlaying }: { pvId: st
       stopTimer();
       cancelPlaybackAttempt();
       if (volumeRetryRef.current !== null) window.clearTimeout(volumeRetryRef.current);
-      if (playTimerRef.current !== null) window.clearTimeout(playTimerRef.current);
+      clearPlaybackRetry();
       volumeRetryRef.current = null;
-      playTimerRef.current = null;
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pvId]);
@@ -192,21 +210,22 @@ function NicoEmbed({ pvId, name, duration: songDuration, isPlaying }: { pvId: st
     scheduleVolumeSync();
     prepareAndSendPlaybackState(requestedPlayingRef.current);
     ensurePlaybackAttempt();
-    if (playTimerRef.current !== null) window.clearTimeout(playTimerRef.current);
-    playTimerRef.current = window.setTimeout(() => {
-      playTimerRef.current = null;
-      prepareAndSendPlaybackState(requestedPlayingRef.current);
-    }, 750);
+    schedulePlaybackRetry();
     const pendingSeek = usePlayerStore.getState().seekTarget;
     if (pendingSeek !== null) applySeek(pendingSeek);
-  }, [applySeek, ensurePlaybackAttempt, prepareAndSendPlaybackState, scheduleVolumeSync, setDuration, songDuration]);
+  }, [applySeek, ensurePlaybackAttempt, prepareAndSendPlaybackState, schedulePlaybackRetry, scheduleVolumeSync, setDuration, songDuration]);
 
   useEffect(() => {
     requestedPlayingRef.current = isPlaying;
-    sendPlaybackState(isPlaying);
-    if (isPlaying) ensurePlaybackAttempt();
-    else cancelPlaybackAttempt();
-  }, [cancelPlaybackAttempt, ensurePlaybackAttempt, isPlaying, sendPlaybackState]);
+    prepareAndSendPlaybackState(isPlaying);
+    if (isPlaying) {
+      ensurePlaybackAttempt();
+      schedulePlaybackRetry();
+    } else {
+      clearPlaybackRetry();
+      cancelPlaybackAttempt();
+    }
+  }, [cancelPlaybackAttempt, clearPlaybackRetry, ensurePlaybackAttempt, isPlaying, prepareAndSendPlaybackState, schedulePlaybackRetry]);
 
   useEffect(() => {
     if (seekTarget !== null) applySeek(seekTarget);
@@ -229,6 +248,7 @@ function NicoEmbed({ pvId, name, duration: songDuration, isPlaying }: { pvId: st
           scheduleVolumeSync();
           prepareAndSendPlaybackState(requestedPlayingRef.current);
           ensurePlaybackAttempt();
+          schedulePlaybackRetry();
           break;
         }
         case 'progress': {
@@ -237,6 +257,7 @@ function NicoEmbed({ pvId, name, duration: songDuration, isPlaying }: { pvId: st
           const current = trackerRef.current.current();
           setProgress(current);
           if (confirmsPlayback) {
+            clearPlaybackRetry();
             markCurrentPVHealthy();
             completePlaybackAttempt();
             requestedPlayingRef.current = true;
@@ -247,6 +268,7 @@ function NicoEmbed({ pvId, name, duration: songDuration, isPlaying }: { pvId: st
           break;
         }
         case 'playing':
+          clearPlaybackRetry();
           markCurrentPVHealthy();
           completePlaybackAttempt();
           requestedPlayingRef.current = true;
@@ -260,12 +282,7 @@ function NicoEmbed({ pvId, name, duration: songDuration, isPlaying }: { pvId: st
           break;
         case 'paused':
           if (requestedPlayingRef.current) {
-            if (playTimerRef.current === null) {
-              playTimerRef.current = window.setTimeout(() => {
-                playTimerRef.current = null;
-                if (requestedPlayingRef.current) sendPlaybackState(true);
-              }, 500);
-            }
+            schedulePlaybackRetry(500);
             break;
           }
           trackerRef.current.setPlaying(false);
@@ -280,7 +297,7 @@ function NicoEmbed({ pvId, name, duration: songDuration, isPlaying }: { pvId: st
     };
     window.addEventListener('message', handler);
     return () => window.removeEventListener('message', handler);
-  }, [advanceOnce, completePlaybackAttempt, ensurePlaybackAttempt, markCurrentPVHealthy, prepareAndSendPlaybackState, scheduleVolumeSync, sendMuted, sendPlaybackState, setProgress, setDuration, setIsPlaying, startTimer, stopTimer]);
+  }, [advanceOnce, clearPlaybackRetry, completePlaybackAttempt, ensurePlaybackAttempt, markCurrentPVHealthy, prepareAndSendPlaybackState, schedulePlaybackRetry, scheduleVolumeSync, sendMuted, setProgress, setDuration, setIsPlaying, startTimer, stopTimer]);
 
   useEffect(() => {
     const restoreAutoplayAudio = () => {
@@ -310,9 +327,10 @@ function NicoEmbed({ pvId, name, duration: songDuration, isPlaying }: { pvId: st
       return;
     }
     requestedPlayingRef.current = true;
-    sendPlaybackState(true);
+    prepareAndSendPlaybackState(true);
+    schedulePlaybackRetry();
     startTimer();
-  }, [advanceOnce, sendPlaybackState, startTimer]);
+  }, [advanceOnce, prepareAndSendPlaybackState, schedulePlaybackRetry, startTimer]);
   usePlaybackWakeRecovery(recoverNicoPlayback);
 
   // ボリューム同期。iframeロード前に送ったメッセージを補うため遅延再送する。
@@ -379,6 +397,7 @@ export default function PlayerEmbed() {
   const attemptControllerRef = useRef(createPlaybackAttemptController());
   const volumeRef = useRef(volume);
   const initialAutoplayRef = useRef(isPlaying);
+  const youtubeAutoplayMutedRef = useRef(false);
   const ownershipRef = useRef<ReturnType<typeof getPlaybackOwnership> | null>(null);
 
   useEffect(() => {
@@ -483,7 +502,11 @@ export default function PlayerEmbed() {
 
   const scheduleEndRecovery = useCallback((player: YT.Player) => {
     clearEndRecoveryTimer();
+    const needsPlaybackRestart = (playerState: number | undefined) => playerState === window.YT.PlayerState.PAUSED
+      || playerState === window.YT.PlayerState.UNSTARTED
+      || playerState === window.YT.PlayerState.CUED;
     const check = () => {
+      endRecoveryTimerRef.current = null;
       if (ytPlayerRef.current !== player) return;
       try {
         const currentTime = player.getCurrentTime?.() ?? 0;
@@ -494,30 +517,35 @@ export default function PlayerEmbed() {
           return;
         }
         if (!usePlayerStore.getState().isPlaying) return;
-        const playerNeedsRestart = playerState === window.YT.PlayerState.PAUSED
-          || playerState === window.YT.PlayerState.UNSTARTED
-          || playerState === window.YT.PlayerState.CUED;
-        if (playerNeedsRestart) player.playVideo?.();
+        const playerNeedsRestart = needsPlaybackRestart(playerState);
+        // Arm the next verification before calling playVideo. The mock API and
+        // some browser versions may report PLAYING synchronously, whose state
+        // callback replaces this timer without leaving an orphaned retry.
         endRecoveryTimerRef.current = window.setTimeout(
           check,
           getPlaybackRecoveryCheckDelayMs(playerNeedsRestart, currentTime, duration),
         );
+        if (playerNeedsRestart) player.playVideo?.();
       } catch {
         // Player destruction can race with a scheduled check.
       }
     };
     let currentTime = 0;
     let duration = 0;
+    let playerState: number | undefined;
     try {
       currentTime = player.getCurrentTime?.() ?? 0;
       duration = player.getDuration?.() ?? 0;
+      playerState = player.getPlayerState?.();
     } catch {
       // Use the periodic fallback delay until the player is ready.
     }
+    const playerNeedsRestart = needsPlaybackRestart(playerState);
     endRecoveryTimerRef.current = window.setTimeout(
       check,
-      getPlaybackRecoveryCheckDelayMs(false, currentTime, duration),
+      getPlaybackRecoveryCheckDelayMs(playerNeedsRestart, currentTime, duration),
     );
+    if (playerNeedsRestart) player.playVideo?.();
   }, [advanceOnce, clearEndRecoveryTimer]);
 
   // YouTube プレイヤー初期化/更新
@@ -543,6 +571,7 @@ export default function PlayerEmbed() {
     const pvId = currentPV.pvId;
     const shouldAutoplayOnCreate = usePlayerStore.getState().isPlaying;
     initialAutoplayRef.current = shouldAutoplayOnCreate;
+    youtubeAutoplayMutedRef.current = shouldAutoplayOnCreate;
     let player: YT.Player | null = null;
     const attempt = attemptController.start(pvId, () => {
       handleFailure('YouTube動画の準備がタイムアウトしました');
@@ -558,7 +587,6 @@ export default function PlayerEmbed() {
         ytPlayerRef.current = null;
       }
       if (containerRef.current) containerRef.current.innerHTML = '';
-      setIsPlaying(false);
       setError(message);
       tryNextPV();
     };
@@ -588,14 +616,13 @@ export default function PlayerEmbed() {
           events: {
             onReady: (event: YT.PlayerEvent) => {
               if (!attemptController.isCurrent(attempt)) return;
-              attemptController.complete(attempt);
-              markPVHealthy(currentPV);
               event.target.setVolume(volumeRef.current);
               startVolumeSync(event.target);
               if (usePlayerStore.getState().isPlaying) {
                 event.target.playVideo();
                 if (!navigator.userActivation || navigator.userActivation.hasBeenActive) {
                   event.target.unMute();
+                  youtubeAutoplayMutedRef.current = false;
                 }
               }
               const dur = event.target.getDuration();
@@ -610,6 +637,10 @@ export default function PlayerEmbed() {
                   attemptController.complete(attempt);
                   markPVHealthy(currentPV);
                   setIsPlaying(true);
+                  if (youtubeAutoplayMutedRef.current && (!navigator.userActivation || navigator.userActivation.hasBeenActive)) {
+                    event.target.unMute();
+                    youtubeAutoplayMutedRef.current = false;
+                  }
                   const dur = event.target.getDuration();
                   if (dur > 0) setDuration(dur);
                   startProgressTimer();
@@ -655,6 +686,30 @@ export default function PlayerEmbed() {
       if (playerContainer) playerContainer.innerHTML = '';
     };
   }, [advanceOnce, clearEndRecoveryTimer, currentPV, currentSong?.id, markPVHealthy, playbackSequence, scheduleEndRecovery, setDuration, setIsPlaying, setError, tryNextPV, startProgressTimer, stopProgressTimer, startVolumeSync, stopVolumeSync]);
+
+  // Muted autoplay is the browser-safe way to get a newly selected song
+  // moving in a background tab. If the session had no activation yet, restore
+  // audio on the first later gesture instead of leaving successful playback
+  // silently muted forever.
+  useEffect(() => {
+    const restoreAutoplayAudio = () => {
+      const player = ytPlayerRef.current;
+      if (!player || !youtubeAutoplayMutedRef.current || !usePlayerStore.getState().isPlaying) return;
+      try {
+        player.unMute?.();
+        player.setVolume?.(volumeRef.current);
+        youtubeAutoplayMutedRef.current = false;
+      } catch {
+        // The player may be replaced during navigation.
+      }
+    };
+    window.addEventListener('pointerdown', restoreAutoplayAudio, { capture: true });
+    window.addEventListener('keydown', restoreAutoplayAudio, { capture: true });
+    return () => {
+      window.removeEventListener('pointerdown', restoreAutoplayAudio, { capture: true });
+      window.removeEventListener('keydown', restoreAutoplayAudio, { capture: true });
+    };
+  }, []);
 
   const recoverYouTubePlayback = useCallback(() => {
     const player = ytPlayerRef.current;

@@ -75,10 +75,19 @@ async function preparePage(fixtureSong) {
                 unbind(name) { delete listeners[name]; },
                 play() {
                   window.__soundCloudPlayCalls = (window.__soundCloudPlayCalls || 0) + 1;
+                  if ((window.__soundCloudIgnoredStarts || 0) < (window.__soundCloudStartsToIgnore || 0)) {
+                    window.__soundCloudIgnoredStarts = (window.__soundCloudIgnoredStarts || 0) + 1;
+                    setTimeout(() => listeners[Events.PAUSE]?.(), 0);
+                    return;
+                  }
                   // Reproduce the transient stale PAUSE observed while a real
                   // SoundCloud Widget play request is settling.
                   setTimeout(() => listeners[Events.PAUSE]?.(), 0);
-                  setTimeout(() => { paused = false; listeners[Events.PLAY]?.(); }, 50);
+                  setTimeout(() => {
+                    paused = false;
+                    window.__soundCloudConfirmedPlaying = true;
+                    listeners[Events.PLAY]?.();
+                  }, 50);
                 },
                 pause() {
                   window.__soundCloudPauseCalls = (window.__soundCloudPauseCalls || 0) + 1;
@@ -138,6 +147,27 @@ try {
   await soundCloudPage.waitForFunction(() => window.__soundCloudPauseCalls > 0);
   await soundCloudPage.waitForSelector('button[title="再生"]');
   console.log('PASS SoundCloud stable playback and inherited volume');
+
+  await soundCloudPage.evaluate(() => {
+    Object.defineProperty(document, 'hidden', { configurable: true, get: () => true });
+    Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' });
+    window.__soundCloudStartsToIgnore = 2;
+    window.__soundCloudIgnoredStarts = 0;
+    window.__soundCloudConfirmedPlaying = false;
+    document.querySelector('button[title="再生"]')?.click();
+  });
+  await soundCloudPage.waitForFunction(() => window.__soundCloudConfirmedPlaying === true, { timeout: 5_000 });
+  const soundCloudBackgroundState = await soundCloudPage.evaluate(() => ({
+    confirmedPlaying: window.__soundCloudConfirmedPlaying === true,
+    ignoredStarts: window.__soundCloudIgnoredStarts || 0,
+    playCalls: window.__soundCloudPlayCalls || 0,
+    controlTitle: document.querySelector('button[title="再生"], button[title="一時停止"]')?.getAttribute('title'),
+    visibilityState: document.visibilityState,
+  }));
+  if (!soundCloudBackgroundState.confirmedPlaying || soundCloudBackgroundState.visibilityState !== 'hidden') {
+    throw new Error(`SoundCloud recovery did not run in the background: ${JSON.stringify(soundCloudBackgroundState)}`);
+  }
+  console.log(`PASS SoundCloud hidden start retries until PLAY (${soundCloudBackgroundState.playCalls} calls)`);
 
   const bilibiliPage = await preparePage(bilibiliSong);
   await bilibiliPage.goto(baseUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });

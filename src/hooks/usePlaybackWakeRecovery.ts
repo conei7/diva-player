@@ -21,23 +21,24 @@ export function usePlaybackWakeRecovery(
       const signal = detector.observe(source, force);
       if (signal) onWakeRef.current(signal);
     };
-    const onVisible = () => {
-      if (document.visibilityState === 'visible') observe('visibility', true);
-    };
+    // Observe both directions. The hidden transition is often the last event
+    // before a browser throttles a background tab, so player adapters get one
+    // immediate chance to reaffirm an in-flight play request before suspension.
+    const onVisibilityChange = () => observe('visibility', true);
     const onPageShow = () => observe('pageshow', true);
     const onFocus = () => observe('focus', true);
     const onOnline = () => observe('online', true);
     const onResume = () => observe('resume', true);
     const heartbeat = window.setInterval(() => observe('heartbeat'), HEARTBEAT_INTERVAL_MS);
 
-    document.addEventListener('visibilitychange', onVisible);
+    document.addEventListener('visibilitychange', onVisibilityChange);
     window.addEventListener('pageshow', onPageShow);
     window.addEventListener('focus', onFocus);
     window.addEventListener('online', onOnline);
     document.addEventListener('resume', onResume);
     return () => {
       window.clearInterval(heartbeat);
-      document.removeEventListener('visibilitychange', onVisible);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
       window.removeEventListener('pageshow', onPageShow);
       window.removeEventListener('focus', onFocus);
       window.removeEventListener('online', onOnline);

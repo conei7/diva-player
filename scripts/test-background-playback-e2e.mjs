@@ -92,6 +92,11 @@ try {
             player.unMute = () => {};
             player.seekTo = (seconds) => { elapsed = seconds; startedAt = Date.now(); };
             player.playVideo = () => {
+              window.__playVideoAttemptCount = (window.__playVideoAttemptCount || 0) + 1;
+              if (options.videoId === 'fixture-2' && document.hidden && state === -1 && (window.__backgroundInitialStartIgnoreCount || 0) < 2) {
+                window.__backgroundInitialStartIgnoreCount = (window.__backgroundInitialStartIgnoreCount || 0) + 1;
+                return;
+              }
               if (document.hidden && state === 2 && !window.__backgroundRetryIgnored) {
                 window.__backgroundRetryIgnored = true;
                 return;
@@ -103,6 +108,7 @@ try {
                 window.__wakeRecoveryPlayCount = (window.__wakeRecoveryPlayCount || 0) + 1;
               }
               window.__backgroundPlaybackStarted = true;
+              if (options.videoId === 'fixture-2') window.__backgroundSecondPlaybackStarted = true;
               options.events.onStateChange({ data: state, target: player });
             };
             player.pauseVideo = () => { elapsed = player.getCurrentTime(); state = 2; };
@@ -166,6 +172,17 @@ try {
     throw new Error(`Background end recovery did not advance the queue: ${JSON.stringify(result)}`);
   }
   console.log(`PASS background playback recovery (${result.visibilityState})`);
+
+  await playerPage.waitForFunction(() => window.__backgroundSecondPlaybackStarted === true, { timeout: 6_000 });
+  const backgroundStart = await playerPage.evaluate(() => ({
+    ignoredStarts: window.__backgroundInitialStartIgnoreCount || 0,
+    playAttempts: window.__playVideoAttemptCount || 0,
+    visibilityState: document.visibilityState,
+  }));
+  if (backgroundStart.ignoredStarts !== 2 || backgroundStart.visibilityState !== 'hidden') {
+    throw new Error(`The fixture did not exercise hidden initial-start recovery: ${JSON.stringify(backgroundStart)}`);
+  }
+  console.log(`PASS hidden initial playback retries until PLAYING (${backgroundStart.playAttempts} attempts)`);
 
   await playerPage.bringToFront();
   await playerPage.waitForFunction(() => typeof window.__simulateDeviceWake === 'function');
