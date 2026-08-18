@@ -37,6 +37,7 @@ interface StoredPlayerQueue {
   queueSources?: PlaybackSource[];
   currentPlaybackSource?: PlaybackSource;
   queueTitle?: string;
+  rootSeedId?: number | null;
 }
 
 export interface RemovedQueueItem {
@@ -199,6 +200,9 @@ function getStoredPlayerQueue(): StoredPlayerQueue | null {
     queueTitle: typeof stored.queueTitle === 'string' && stored.queueTitle.trim()
       ? stored.queueTitle
       : 'ミックスリスト',
+    rootSeedId: Number.isInteger(stored.rootSeedId) && (stored.rootSeedId ?? 0) > 0
+      ? stored.rootSeedId
+      : null,
   };
 }
 
@@ -218,16 +222,18 @@ function savePlayerQueue(
   queueSources?: PlaybackSource[],
   currentPlaybackSource?: PlaybackSource,
   queueTitle?: string,
+  rootSeed?: Song | null,
 ): void {
   const normalizedSources = normalizeQueueSources(queue.length, queueSources);
-  const storedTitle = storage.get<StoredPlayerQueue>(PLAYER_QUEUE_KEY)?.queueTitle;
+  const storedQueue = storage.get<StoredPlayerQueue>(PLAYER_QUEUE_KEY);
   storage.set(PLAYER_QUEUE_KEY, {
     songIds: queue.map(song => song.id),
     queueIndex,
     currentSongId: currentSong?.id ?? null,
     queueSources: normalizedSources,
     currentPlaybackSource: currentPlaybackSource ?? normalizedSources[queueIndex] ?? 'manual',
-    queueTitle: queueTitle ?? storedTitle ?? 'ミックスリスト',
+    queueTitle: queueTitle ?? storedQueue?.queueTitle ?? 'ミックスリスト',
+    rootSeedId: rootSeed === undefined ? storedQueue?.rootSeedId ?? null : rootSeed?.id ?? null,
   });
 }
 
@@ -358,13 +364,31 @@ async function restoreStoredPlayerQueue(): Promise<void> {
   const stored = getStoredPlayerQueue();
   if (!stored) return;
 
+  const persistedRootSeedId = stored.rootSeedId
+    ?? useAutoPlaySessionStore.getState().session?.rootSeedId
+    ?? null;
+  const resolveRootSeed = async (songs: Song[]): Promise<Song | null> => {
+    if (!persistedRootSeedId) return null;
+    const queued = songs.find(song => song.id === persistedRootSeedId);
+    if (queued) return queued;
+    try {
+      return await getSongById(persistedRootSeedId);
+    } catch {
+      return null;
+    }
+  };
+
   if (stored.queue && stored.queue.length > 0) {
+    const rootSeed = await resolveRootSeed(stored.queue);
+    if (rootSeed) usePlayerStore.setState({ rootSeed });
     savePlayerQueue(
       stored.queue,
       stored.queueIndex,
       stored.currentSong ?? stored.queue[stored.queueIndex] ?? null,
       stored.queueSources,
       stored.currentPlaybackSource,
+      stored.queueTitle,
+      rootSeed,
     );
     return;
   }
@@ -404,6 +428,7 @@ async function restoreStoredPlayerQueue(): Promise<void> {
     : Math.max(0, Math.min(stored.queueIndex, queue.length - 1));
   const currentSong = queue[queueIndex] ?? null;
   const currentPlaybackSource = stored.currentPlaybackSource ?? queueSources[queueIndex] ?? 'manual';
+  const rootSeed = await resolveRootSeed(queue);
 
   usePlayerStore.setState({
     queue,
@@ -412,9 +437,10 @@ async function restoreStoredPlayerQueue(): Promise<void> {
     currentSong,
     currentPV: currentSong ? getPlayablePV(currentSong) : null,
     currentPlaybackSource,
+    rootSeed,
     isPlaying: false,
   });
-  savePlayerQueue(queue, queueIndex, currentSong, queueSources, currentPlaybackSource);
+  savePlayerQueue(queue, queueIndex, currentSong, queueSources, currentPlaybackSource, stored.queueTitle, rootSeed);
 }
 
 export const usePlayerStore = create<PlayerState>((set, get) => ({
@@ -473,7 +499,8 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     } else if (playbackSource === 'auto' && startPlaying) {
       useAutoPlaySessionStore.getState().recordAutoPlaybackStarted();
     }
-    savePlayerQueue(queue, queueIndex, song, nextQueueSources, playbackSource);
+    const nextRootSeed = isUserAction ? song : get().rootSeed;
+    savePlayerQueue(queue, queueIndex, song, nextQueueSources, playbackSource, undefined, nextRootSeed);
     
     set({
       currentSong: song,
@@ -723,6 +750,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       currentSong: null,
       currentPV: null,
       currentPlaybackSource: 'manual',
+      rootSeed: null,
       isPlaying: false,
     });
     useAutoPlaySessionStore.getState().clearSession();
@@ -738,6 +766,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       currentSong: null,
       currentPV: null,
       currentPlaybackSource: 'manual',
+      rootSeed: null,
       isPlaying: false,
     });
     useAutoPlaySessionStore.getState().clearSession();
@@ -784,7 +813,13 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
 
   // ─── ルートシード ──────────────────────────────────────────────────────────
   rootSeed: null,
-  setRootSeed: (song) => set({ rootSeed: song }),
+  setRootSeed: (song) => {
+    const { queue, queueIndex, queueSources, currentSong, currentPlaybackSource, queueTitle } = get();
+    set({ rootSeed: song });
+    if (queue.length > 0) {
+      savePlayerQueue(queue, queueIndex, currentSong, queueSources, currentPlaybackSource, queueTitle, song);
+    }
+  },
 
   toggleShuffle: () => {
     const { shuffleEnabled, queue, queueIndex, queueSources, currentSong, currentPlaybackSource, originalQueue } = get();

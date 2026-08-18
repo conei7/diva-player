@@ -63,6 +63,14 @@ describe('player queue autoplay', () => {
     expect(usePlayerStore.getState().isPlaying).toBe(true);
   });
 
+  it('persists the user-selected root seed with the queue', () => {
+    usePlayerStore.getState().setQueue([song], 0);
+
+    const stored = JSON.parse(localStorage.getItem('diva_playerQueue') ?? '{}') as { rootSeedId?: number };
+    expect(usePlayerStore.getState().rootSeed?.id).toBe(song.id);
+    expect(stored.rootSeedId).toBe(song.id);
+  });
+
   it('preserves discovery as the playback source while starting the queue', () => {
     usePlayerStore.getState().setQueue([song], 0, true, 'discovery', '発掘ミックス');
     const state = usePlayerStore.getState();

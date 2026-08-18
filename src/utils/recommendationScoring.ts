@@ -152,7 +152,7 @@ export function getVocalistIds(song: Song): number[] {
     .filter((id): id is number => id !== undefined);
 }
 
-function getProducerIds(song: Song): number[] {
+export function getProducerIds(song: Song): number[] {
   return (song.artists ?? [])
     .filter(artist => String(artist.categories ?? '').split(',').map(value => value.trim())
       .some(category => category === 'Producer' || category === 'Band' || category === 'Circle'))

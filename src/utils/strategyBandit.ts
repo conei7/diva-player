@@ -1,5 +1,4 @@
 import type { AutoQueueStrategyArm } from '../types/autoplay';
-import type { KnownUnknownTarget } from './autoQueuePolicy';
 
 export const AUTO_QUEUE_STRATEGY_ARMS: AutoQueueStrategyArm[] = ['balanced'];
 export const MIN_BANDIT_DECISIONS = 0;
@@ -74,9 +73,9 @@ export function selectThompsonArm(
   return best;
 }
 
-export function adjustTargetForStrategy(target: KnownUnknownTarget, arm: AutoQueueStrategyArm): KnownUnknownTarget {
+export function adjustFamiliarityBiasForStrategy(bias: number, arm: AutoQueueStrategyArm): number {
   void arm;
-  return target;
+  return bias;
 }
 
 /** A deterministic-test-friendly offline simulation for tuning strategy arms. */

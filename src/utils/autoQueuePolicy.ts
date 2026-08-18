@@ -1,15 +1,11 @@
-import type { Song } from '../types/vocadb';
-
 export type AutoQueueStage = 'early' | 'middle' | 'late';
-
-export interface KnownUnknownTarget {
-  known: number;
-  unknown: number;
-}
 
 export interface AutoQueuePlan {
   stage: AutoQueueStage;
-  target: KnownUnknownTarget;
+  /** Smooth 0..1 session position. It changes scoring, never reserves slots. */
+  mixProgress: number;
+  /** Positive values keep familiar songs softly preferred throughout a mix. */
+  familiarityBias: number;
   requestedCount: number;
 }
 
@@ -34,22 +30,26 @@ export function getAutoQueueStage(autoPlayedCount: number): AutoQueueStage {
   return 'late';
 }
 
-export function getKnownUnknownTarget(
-  stage: AutoQueueStage,
-  requestedCount: number,
+export function getAutoQueueMixProgress(autoPlayedCount: number): number {
+  return 1 - Math.exp(-Math.max(0, autoPlayedCount) / 10);
+}
+
+export function getAutoQueueFamiliarityBias(
+  autoPlayedCount: number,
   adaptation?: AutoQueueAdaptation,
-): KnownUnknownTarget {
-  const safeCount = Math.max(0, Math.floor(requestedCount));
-  let knownRatio = stage === 'early' ? 0.8 : stage === 'middle' ? 0.6 : 0.4;
+): number {
+  const progress = getAutoQueueMixProgress(autoPlayedCount);
+  // Keep known songs favoured for the entire mix while letting that preference
+  // relax gradually. This is intentionally a score, not a known/unknown quota.
+  let bias = 0.45 - progress * 0.24;
   const outcomes = (adaptation?.autoCompletedCount ?? 0) + (adaptation?.autoSkippedCount ?? 0);
   const skipRate = outcomes > 0 ? (adaptation?.autoSkippedCount ?? 0) / outcomes : 0;
   if (skipRate >= 0.4 || (adaptation?.consecutiveSkips ?? 0) >= 2) {
-    knownRatio = Math.min(0.9, knownRatio + 0.1);
+    bias += 0.10;
   } else if (outcomes >= 5 && skipRate <= 0.1) {
-    knownRatio = Math.max(0.2, knownRatio - 0.1);
+    bias -= 0.05;
   }
-  const known = Math.round(safeCount * knownRatio);
-  return { known, unknown: safeCount - known };
+  return Math.max(0.12, Math.min(0.55, bias));
 }
 
 export function createAutoQueuePlan(
@@ -64,46 +64,10 @@ export function createAutoQueuePlan(
     Math.max(0, AUTO_QUEUE_TARGET_WATERMARK - Math.max(0, remainingCount)),
   );
   const stage = getAutoQueueStage(autoPlayedCount);
-  return { stage, target: getKnownUnknownTarget(stage, requestedCount, adaptation), requestedCount };
-}
-
-/**
- * Selects an exact known/unknown mix where both pools are sufficient. If a pool
- * is exhausted, candidates from the other pool fill the remainder in ranked
- * order, so a low candidate supply never empties autoplay unnecessarily.
- */
-export function selectKnownUnknownMix(
-  knownSongs: Song[],
-  unknownSongs: Song[],
-  target: KnownUnknownTarget,
-  excludeIds: ReadonlySet<number>,
-): Song[] {
-  const unique = (songs: Song[]) => {
-    const seen = new Set<number>(excludeIds);
-    return songs.filter(song => {
-      if (seen.has(song.id)) return false;
-      seen.add(song.id);
-      return true;
-    });
+  return {
+    stage,
+    mixProgress: getAutoQueueMixProgress(autoPlayedCount),
+    familiarityBias: getAutoQueueFamiliarityBias(autoPlayedCount, adaptation),
+    requestedCount,
   };
-
-  const known = unique(knownSongs);
-  const unknown = unique(unknownSongs);
-  const selectedKnown = known.slice(0, target.known);
-  const knownIds = new Set(selectedKnown.map(song => song.id));
-  const selectedUnknown = unknown.filter(song => !knownIds.has(song.id)).slice(0, target.unknown);
-  const selectedIds = new Set([...knownIds, ...selectedUnknown.map(song => song.id)]);
-  const requestedCount = target.known + target.unknown;
-
-  const overflow = [...known, ...unknown].filter(song => !selectedIds.has(song.id));
-
-  const result: Song[] = [];
-  const resultIds = new Set<number>();
-  for (const song of [...selectedKnown, ...selectedUnknown, ...overflow]) {
-    if (resultIds.has(song.id)) continue;
-    resultIds.add(song.id);
-    result.push(song);
-    if (result.length === requestedCount) break;
-  }
-  return result;
 }

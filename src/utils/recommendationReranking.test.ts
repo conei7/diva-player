@@ -143,4 +143,64 @@ describe('rerankRecommendationCandidates', () => {
     expect(result.trace.find(item => item.songId === 2)?.tasteAffinityAdjustment).toBeGreaterThan(0);
     expect(result.ranked[0].reason).toContain('特徴');
   });
+
+  it('changes the leading candidate when the user-selected root producer changes', () => {
+    const producerTen = song(1, 10);
+    const producerTwenty = song(2, 20);
+    const rootTen = song(100, 10);
+    const rootTwenty = song(200, 20);
+
+    const fromTen = rerankRecommendationCandidatesDetailed({
+      hybrid: [producerTen, producerTwenty],
+      rootProducer: [producerTen],
+    }, { ...baseOptions, total: 2, rootSeed: rootTen });
+    const fromTwenty = rerankRecommendationCandidatesDetailed({
+      hybrid: [producerTen, producerTwenty],
+      rootProducer: [producerTwenty],
+    }, { ...baseOptions, total: 2, rootSeed: rootTwenty });
+
+    expect(fromTen.ranked[0].song.id).toBe(producerTen.id);
+    expect(fromTwenty.ranked[0].song.id).toBe(producerTwenty.id);
+    expect(fromTen.trace.find(item => item.songId === producerTen.id)?.rootAffinityAdjustment).toBeGreaterThan(0);
+    expect(fromTen.ranked[0].reason).toContain('同じP');
+  });
+
+  it('raises discovery gently with progress while preserving a five-star familiar favorite', () => {
+    const favorite = song(1, 10);
+    const discovery = { ...song(2, 20), favoritedTimes: 500, youtubeViews: 500_000, nicoViews: 20_000 };
+    const options = {
+      ...baseOptions,
+      total: 2,
+      historyEntries: [{ song: favorite, playedAt: 1 }],
+      ratings: { '1': 5 },
+      familiarityBias: 0.3,
+    };
+    const early = rerankRecommendationCandidatesDetailed({
+      known: [favorite],
+      hybrid: [discovery],
+      rootVector: [discovery],
+    }, { ...options, mixProgress: 0 });
+    const later = rerankRecommendationCandidatesDetailed({
+      known: [favorite],
+      hybrid: [discovery],
+      rootVector: [discovery],
+    }, { ...options, mixProgress: 1 });
+
+    expect(early.ranked[0].song.id).toBe(favorite.id);
+    expect(later.ranked[0].song.id).toBe(favorite.id);
+    expect(later.trace.find(item => item.songId === discovery.id)?.discoveryAdjustment)
+      .toBeGreaterThan(early.trace.find(item => item.songId === discovery.id)?.discoveryAdjustment ?? 0);
+  });
+
+  it('uses popularity as a bounded hint without overriding closer vector rank', () => {
+    const closer = { ...song(1, 10), favoritedTimes: 0, youtubeViews: 0, nicoViews: 0 };
+    const famous = { ...song(2, 20), favoritedTimes: 20_000, youtubeViews: 20_000_000, nicoViews: 2_000_000 };
+    const result = rerankRecommendationCandidatesDetailed({
+      rootVector: [closer, famous],
+    }, { ...baseOptions, total: 2, mixProgress: 1 });
+
+    expect(result.ranked[0].song.id).toBe(closer.id);
+    expect(result.trace.find(item => item.songId === famous.id)?.popularityAdjustment)
+      .toBeGreaterThan(result.trace.find(item => item.songId === closer.id)?.popularityAdjustment ?? 0);
+  });
 });

@@ -4,6 +4,8 @@ import {
   getDiscoveryEligibleSongIds,
   getMultiRecommendedSongs,
   getSongsByProducer,
+  getSongsByProducerFromBackend,
+  getSimilarSongs,
   attachExternalViews,
 } from '../api/vocadb';
 import type { Song } from '../types/vocadb';
@@ -11,6 +13,7 @@ import type { HistoryEntry } from '../stores/historyStore';
 import type { ImplicitSongFeedback } from '../stores/implicitFeedbackStore';
 import {
   buildPlaylistSongSet,
+  getProducerIds,
   getPlaylistSongs,
   rankKnownSongs,
 } from '../utils/recommendationScoring';
@@ -22,7 +25,7 @@ import { useAutoQueueDecisionStore } from '../stores/autoQueueDecisionStore';
 import { useQueueRecommendationStore } from '../stores/queueRecommendationStore';
 import { useAutoQueueStatusStore } from '../stores/autoQueueStatusStore';
 import { useAutoQueueBanditStore } from '../stores/autoQueueBanditStore';
-import { adjustTargetForStrategy } from '../utils/strategyBandit';
+import { adjustFamiliarityBiasForStrategy } from '../utils/strategyBandit';
 import type { AutoQueueDecision, AutoQueueStatus, AutoQueueStrategyArm, QueueRecommendation } from '../types/autoplay';
 import { useRecommendationDebugStore } from '../stores/recommendationDebugStore';
 import { createRankingSeed } from '../utils/rankingRandomization';
@@ -114,12 +117,12 @@ function buildRecommendationSeeds(currentSong: Song, rootSeed: Song | null, tast
     byId.set(songId, Math.max(weight, byId.get(songId) ?? 0));
   };
   add(rootSeed?.id ?? currentSong.id, 1);
-  add(currentSong.id, 0.9);
-  for (const seed of tasteSeeds) add(seed.song.id, seed.weight * (seed.kind === 'shortTerm' ? 0.9 : 0.8));
+  add(currentSong.id, 0.68);
+  for (const seed of tasteSeeds) add(seed.song.id, seed.weight * (seed.kind === 'shortTerm' ? 0.46 : 0.36));
   return [...byId.entries()]
     .map(([songId, weight]) => ({ songId, weight }))
     .sort((a, b) => b.weight - a.weight)
-    .slice(0, 5);
+    .slice(0, 4);
 }
 
 function buildRecommendationMetadata(
@@ -130,7 +133,7 @@ function buildRecommendationMetadata(
   rootSeed: Song | null,
   currentSong: Song,
   stage: 'early' | 'middle' | 'late',
-  target: { known: number; unknown: number },
+  familiarityBias: number,
   queueLength: number,
   recentSkipRate: number,
   strategyArm: AutoQueueStrategyArm,
@@ -156,7 +159,7 @@ function buildRecommendationMetadata(
       : '履歴・評価をもとにした既知のおすすめ';
     return {
       songId: song.id,
-      strategyVersion: 'fixed-known-unknown-v1',
+      strategyVersion: 'continuous-seed-affinity-v2',
       reasonCode,
       reasonText,
       seedSongIds,
@@ -172,8 +175,7 @@ function buildRecommendationMetadata(
       sessionId,
       queuePosition: queueLength + index,
       stage,
-      targetKnown: target.known,
-      targetUnknown: target.unknown,
+      familiarityBias,
       recentSkipRate,
       strategyArm,
     })),
@@ -237,7 +239,7 @@ export function useAutoQueue({
     const strategyArm = useAutoQueueBanditStore.getState().selectArm(
       useAutoQueueDecisionStore.getState().decisions.length,
     );
-    const strategyTarget = adjustTargetForStrategy(queuePlan.target, strategyArm);
+    const familiarityBias = adjustFamiliarityBiasForStrategy(queuePlan.familiarityBias, strategyArm);
 
     const generation = ++requestGenerationRef.current;
     const controller = new AbortController();
@@ -270,21 +272,39 @@ export function useAutoQueue({
           ratings,
           implicitFeedback,
         );
-        const candidates = await fetchCandidates(
-          currentSong,
-          rootSeed,
-          [...tasteProfile.longTerm, ...tasteProfile.shortTerm],
-          [...existingIds],
-        );
+        const anchorSong = rootSeed ?? currentSong;
+        const anchorProducerIds = getProducerIds(anchorSong);
+        const [
+          candidates,
+          rootVectorCandidates,
+          rootProducerCandidates,
+          favoriteCandidateGroups,
+        ] = await Promise.all([
+          fetchCandidates(
+            currentSong,
+            rootSeed,
+            [...tasteProfile.longTerm, ...tasteProfile.shortTerm],
+            [...existingIds],
+          ),
+          getSimilarSongs(anchorSong.id, 60, 0).catch(() => [] as Song[]),
+          getSongsByProducerFromBackend(anchorSong.id, anchorProducerIds, 40, 0)
+            .catch(() => [] as Song[]),
+          Promise.all(favoriteProducers.map(producer =>
+            getSongsByProducer([producer.id], 0, 20, 0)
+              .then(result => result.items)
+              .catch(() => [] as Song[]),
+          )),
+        ]);
         if (controller.signal.aborted || generation !== requestGenerationRef.current) return;
 
         setStatus('reranking');
-        const favoriteCandidates = (await Promise.all(favoriteProducers.map(producer =>
-          getSongsByProducer([producer.id], 0, 20, 0)
-            .then(result => result.items)
-            .catch(() => [] as Song[]),
-        ))).flat();
-        const candidatePool = [...candidates, ...favoriteCandidates];
+        const favoriteCandidates = favoriteCandidateGroups.flat();
+        const candidatePool = [
+          ...candidates,
+          ...rootVectorCandidates,
+          ...rootProducerCandidates,
+          ...favoriteCandidates,
+        ];
         const eligibleCandidateIds = await getDiscoveryEligibleSongIds(
           candidatePool.map(song => song.id),
           controller.signal,
@@ -292,9 +312,9 @@ export function useAutoQueue({
         if (controller.signal.aborted || generation !== requestGenerationRef.current) return;
         const authoritativeCandidatePool = candidatePool
           .filter(song => eligibleCandidateIds.has(song.id));
-        const enrichedCandidates = requiresExternalViewCounts(globalFilterSettings)
-          ? await attachExternalViews(authoritativeCandidatePool)
-          : authoritativeCandidatePool;
+        // Mix discovery always uses public popularity as a bounded confidence
+        // hint, so attach view counts even when no explicit view filter is on.
+        const enrichedCandidates = await attachExternalViews(authoritativeCandidatePool);
         const filteredCandidates = filterCandidatePool(
           enrichedCandidates,
           eligibleHistoryEntries,
@@ -319,7 +339,7 @@ export function useAutoQueue({
           ratings,
           lastPlayedAtBySongId: new Map(eligibleHistoryEntries.map(entry => [entry.song.id, entry.playedAt] as const)),
           },
-          strategyTarget.known,
+          queuePlan.requestedCount,
         );
         const relaxedConditions = [...new Set([
           ...filteredCandidates.relaxedConditions,
@@ -331,14 +351,22 @@ export function useAutoQueue({
           ...Object.keys(ratings).map(Number),
           ...Object.keys(implicitFeedback).map(Number),
         ]);
-        const source = 'hybrid' as const;
-        const familiarityBias = queuePlan.requestedCount > 0
-          ? (strategyTarget.known - strategyTarget.unknown) / queuePlan.requestedCount
-          : 0;
+        const filteredById = new Map(filteredCandidates.items.map(song => [song.id, song]));
+        const orderedFilteredSongs = (songs: Song[]): Song[] => {
+          const seen = new Set<number>();
+          return songs.flatMap(song => {
+            if (seen.has(song.id)) return [];
+            seen.add(song.id);
+            const filtered = filteredById.get(song.id);
+            return filtered ? [filtered] : [];
+          });
+        };
         const rankingSeed = createRankingSeed();
         const detailed = rerankRecommendationCandidatesDetailed({
           known: knownCandidates.items,
-          [source]: filteredCandidates.items,
+          hybrid: orderedFilteredSongs([...candidates, ...favoriteCandidates]),
+          rootVector: orderedFilteredSongs(rootVectorCandidates),
+          rootProducer: orderedFilteredSongs(rootProducerCandidates),
         }, {
           total: queuePlan.requestedCount,
           historyEntries: eligibleHistoryEntries,
@@ -352,6 +380,8 @@ export function useAutoQueue({
           explorationStrength: 0.05,
           exposureEntries: useRecommendationExposureStore.getState().entries,
           favoriteProducerIds: new Set(favoriteProducers.map(producer => producer.id)),
+          rootSeed: anchorSong,
+          mixProgress: queuePlan.mixProgress,
         });
         const nextSongs = detailed.ranked.map(item => item.song);
         if (controller.signal.aborted || generation !== requestGenerationRef.current) return;
@@ -361,7 +391,7 @@ export function useAutoQueue({
           generatedAt: Date.now(),
           rankingSeed,
           seedSongIds: buildRecommendationSeeds(currentSong, rootSeed, [...tasteProfile.longTerm, ...tasteProfile.shortTerm]).map(seed => seed.songId),
-          strategy: `balanced/${queuePlan.stage}`,
+          strategy: `continuous/${queuePlan.stage}`,
           familiarityBias,
           candidateCount: detailed.trace.length,
           selectedCount: detailed.ranked.length,
@@ -383,7 +413,7 @@ export function useAutoQueue({
           rootSeed,
           currentSong,
           queuePlan.stage,
-          strategyTarget,
+          familiarityBias,
           queue.length,
           recentSkipRate,
           strategyArm,

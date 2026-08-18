@@ -25,7 +25,7 @@ interface AutoPlaySessionState {
 }
 
 const SESSION_STORAGE_KEY = 'diva-autoplay-session-v1';
-const STRATEGY_VERSION = 'fixed-known-unknown-v1';
+const STRATEGY_VERSION = 'continuous-seed-affinity-v2';
 
 function createSession(rootSeedId: number): AutoPlaySession {
   const now = Date.now();

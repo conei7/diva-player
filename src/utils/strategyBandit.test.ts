@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  adjustTargetForStrategy,
+  adjustFamiliarityBiasForStrategy,
   createDefaultBanditStats,
   selectThompsonArm,
   simulateThompsonSampling,
@@ -21,8 +21,8 @@ describe('autoplay strategy bandit', () => {
     expect(selectThompsonArm(stats, () => 0)).toBe('balanced');
   });
 
-  it('does not shift known and unknown slots', () => {
-    expect(adjustTargetForStrategy({ known: 6, unknown: 4 }, 'balanced')).toEqual({ known: 6, unknown: 4 });
+  it('keeps the continuous familiarity score unchanged for the balanced policy', () => {
+    expect(adjustFamiliarityBiasForStrategy(0.35, 'balanced')).toBe(0.35);
   });
 
   it('keeps simulation on the balanced policy', () => {

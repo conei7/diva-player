@@ -192,6 +192,7 @@ function SnapshotSection({
                         <div className="text-xs">暗黙フィードバック: ×{item.preference?.implicitFeedback.multiplier.toFixed(3) ?? '-'}</div>
                         <div className="text-xs">VocaDB人気: ×{item.preference?.popularityMultiplier.toFixed(3) ?? '-'}</div>
                         <div className="mt-1 text-xs">属性好み: {item.tasteAffinityAdjustment.toFixed(3)}（P {item.tasteAffinity?.producer.toFixed(2) ?? '-'} / 歌声 {item.tasteAffinity?.vocalist.toFixed(2) ?? '-'} / タグ {item.tasteAffinity?.tags.toFixed(2) ?? '-'}）</div>
+                        <div className="text-xs">起点P: {item.rootAffinityAdjustment.toFixed(3)} / 未聴進行: {item.discoveryAdjustment.toFixed(3)} / 発見人気: {item.popularityAdjustment.toFixed(3)}</div>
                       </div>
                     </div>
                   </td>

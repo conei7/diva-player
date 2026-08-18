@@ -1,29 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import type { Song } from '../types/vocadb';
 import {
   createAutoQueuePlan,
+  getAutoQueueFamiliarityBias,
+  getAutoQueueMixProgress,
   getAutoQueueStage,
-  getKnownUnknownTarget,
-  selectKnownUnknownMix,
 } from './autoQueuePolicy';
-
-function song(id: number): Song {
-  return {
-    id,
-    name: `song-${id}`,
-    defaultName: `song-${id}`,
-    defaultNameLanguage: 'Japanese',
-    artistString: '',
-    createDate: '2026-01-01',
-    favoritedTimes: 0,
-    lengthSeconds: 180,
-    pvServices: 'Youtube',
-    ratingScore: 0,
-    songType: 'Original',
-    status: 'Finished',
-    version: 1,
-  };
-}
 
 describe('auto queue policy', () => {
   it('uses stable session stages rather than queue length', () => {
@@ -34,23 +15,26 @@ describe('auto queue policy', () => {
     expect(getAutoQueueStage(12)).toBe('late');
   });
 
-  it('uses the early, middle, and late known/unknown ratios', () => {
-    expect(getKnownUnknownTarget('early', 10)).toEqual({ known: 8, unknown: 2 });
-    expect(getKnownUnknownTarget('middle', 10)).toEqual({ known: 6, unknown: 4 });
-    expect(getKnownUnknownTarget('late', 10)).toEqual({ known: 4, unknown: 6 });
+  it('uses smooth progress and keeps familiarity positive instead of reserving slots', () => {
+    expect(getAutoQueueMixProgress(0)).toBe(0);
+    expect(getAutoQueueMixProgress(6)).toBeGreaterThan(getAutoQueueMixProgress(2));
+    expect(getAutoQueueMixProgress(20)).toBeGreaterThan(getAutoQueueMixProgress(6));
+    expect(getAutoQueueFamiliarityBias(0)).toBeGreaterThan(getAutoQueueFamiliarityBias(20));
+    expect(getAutoQueueFamiliarityBias(20)).toBeGreaterThan(0);
   });
 
-  it('reduces exploration after skips and increases it after sustained success', () => {
-    expect(getKnownUnknownTarget('middle', 10, {
+  it('moves smoothly toward familiarity after skips and discovery after sustained success', () => {
+    const baseline = getAutoQueueFamiliarityBias(8);
+    expect(getAutoQueueFamiliarityBias(8, {
       autoCompletedCount: 1,
       autoSkippedCount: 2,
       consecutiveSkips: 2,
-    })).toEqual({ known: 7, unknown: 3 });
-    expect(getKnownUnknownTarget('middle', 10, {
+    })).toBeGreaterThan(baseline);
+    expect(getAutoQueueFamiliarityBias(8, {
       autoCompletedCount: 9,
       autoSkippedCount: 1,
       consecutiveSkips: 0,
-    })).toEqual({ known: 5, unknown: 5 });
+    })).toBeLessThan(baseline);
   });
 
   it('refills only below the low watermark and targets a bounded queue', () => {
@@ -59,25 +43,11 @@ describe('auto queue policy', () => {
     expect(createAutoQueuePlan(0, 20)).toMatchObject({ requestedCount: 12, stage: 'late' });
   });
 
-  it('selects the configured mix without duplicates or excluded songs', () => {
-    const result = selectKnownUnknownMix(
-      [song(1), song(2), song(3), song(4), song(5)],
-      [song(6), song(7), song(8), song(9), song(10)],
-      { known: 4, unknown: 3 },
-      new Set([2]),
-    );
-
-    expect(result.map(item => item.id)).toEqual([1, 3, 4, 5, 6, 7, 8]);
-  });
-
-  it('fills from the other pool when one side is exhausted', () => {
-    const result = selectKnownUnknownMix(
-      [song(1)],
-      [song(2), song(3), song(4), song(5), song(6)],
-      { known: 4, unknown: 3 },
-      new Set(),
-    );
-
-    expect(result.map(item => item.id)).toEqual([1, 2, 3, 4, 5, 6]);
+  it('returns continuous scores in the refill plan without known/unknown counts', () => {
+    const plan = createAutoQueuePlan(0, 7);
+    expect(plan).toMatchObject({ requestedCount: 12, stage: 'middle' });
+    expect(plan?.mixProgress).toBeGreaterThan(0);
+    expect(plan?.familiarityBias).toBeGreaterThan(0);
+    expect(plan).not.toHaveProperty('target');
   });
 });

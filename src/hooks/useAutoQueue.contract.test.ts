@@ -17,4 +17,13 @@ describe('auto queue request generation contract', () => {
     expect(finalGuard).toBeGreaterThan(finalRanking);
     expect(snapshot).toBeGreaterThan(finalGuard);
   });
+
+  it('loads root-vector and root-producer evidence without fixed discovery slots', () => {
+    expect(source).toContain('getSimilarSongs(anchorSong.id');
+    expect(source).toContain('getSongsByProducerFromBackend(anchorSong.id');
+    expect(source).toContain('rootVector: orderedFilteredSongs(rootVectorCandidates)');
+    expect(source).toContain('rootProducer: orderedFilteredSongs(rootProducerCandidates)');
+    expect(source).not.toContain('targetKnown:');
+    expect(source).not.toContain('targetUnknown:');
+  });
 });

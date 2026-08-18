@@ -27,8 +27,11 @@ export interface AutoQueueDecision extends QueueRecommendation {
   songId: number;
   queuePosition: number;
   stage: 'early' | 'middle' | 'late';
-  targetKnown: number;
-  targetUnknown: number;
+  /** Continuous preference used by current mixes. Legacy records may omit it. */
+  familiarityBias?: number;
+  /** Legacy quota-shaped telemetry retained only for persisted-record compatibility. */
+  targetKnown?: number;
+  targetUnknown?: number;
   recentSkipRate: number;
   strategyArm: AutoQueueStrategyArm;
 }

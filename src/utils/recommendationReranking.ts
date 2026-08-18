@@ -5,6 +5,7 @@ import {
   buildTasteAffinityProfile,
   explainTasteAffinity,
   getArtistBucket,
+  getProducerIds,
   getVocalistIds,
   scoreQueueCandidates,
   type TasteAffinityBreakdown,
@@ -14,7 +15,7 @@ import { filterVoiceSynthSongs } from './voiceSynthSongs';
 import { rankingNoise, type RankingSeed } from './rankingRandomization';
 import { calculateExposurePenalty, type RecommendationExposureEntry } from '../stores/recommendationExposureStore';
 
-export type RecommendationSource = 'known' | 'hybrid' | 'audio' | 'popular';
+export type RecommendationSource = 'known' | 'hybrid' | 'audio' | 'popular' | 'rootVector' | 'rootProducer';
 
 export interface RecommendationCandidate {
   song: Song;
@@ -50,6 +51,10 @@ export interface RecommendationCandidateTrace {
   vocalistPenalty: number;
   favoriteProducer: boolean;
   favoriteProducerAdjustment: number;
+  rootProducerMatch: boolean;
+  rootAffinityAdjustment: number;
+  discoveryAdjustment: number;
+  popularityAdjustment: number;
   finalScore: number | null;
   selectedRank: number | null;
   status: 'selected' | 'not_selected';
@@ -80,6 +85,10 @@ export interface RecommendationRerankOptions {
   exposureNow?: number;
   /** Producer/circle/band IDs the user explicitly marked as favorites. */
   favoriteProducerIds?: ReadonlySet<number>;
+  /** The user-selected song that anchors this continuous mix. */
+  rootSeed?: Song | null;
+  /** Smooth 0..1 session position; it changes scores rather than reserving slots. */
+  mixProgress?: number;
 }
 
 const SOURCE_WEIGHT: Record<RecommendationSource, number> = {
@@ -87,14 +96,22 @@ const SOURCE_WEIGHT: Record<RecommendationSource, number> = {
   hybrid: 1.0,
   audio: 1.0,
   popular: 0.55,
+  // These are supporting signals. A top root-vector hit should not by itself
+  // outweigh a strongly rated familiar song, while overlap with the ordinary
+  // hybrid pool and same-P affinity can still make the selected root audible.
+  rootVector: 0.52,
+  rootProducer: 0.38,
 };
 
 function sourceReason(
   sources: Set<RecommendationSource>,
   known: boolean,
   favoriteProducer: boolean,
+  rootProducerMatch: boolean,
   tasteAffinityAdjustment: number,
 ): string {
+  if (rootProducerMatch) return '最初に選んだ曲と同じPを反映したおすすめ';
+  if (sources.has('rootVector')) return '最初に選んだ曲のベクトルに近いおすすめ';
   if (favoriteProducer) return 'お気に入りPの楽曲を優先したおすすめ';
   if (tasteAffinityAdjustment >= 0.08) return '評価・保存した曲の特徴に近いおすすめ';
   if (sources.has('audio') && sources.has('hybrid')) return '音響・タグ・アーティスト情報が重なるおすすめ';
@@ -124,6 +141,8 @@ export function rerankRecommendationCandidates(
     exposureEntries = {},
     exposureNow = Date.now(),
     favoriteProducerIds = new Set<number>(),
+    rootSeed = null,
+    mixProgress = 0,
   }: RecommendationRerankOptions,
 ): RankedRecommendation[] {
   return rerankRecommendationCandidatesDetailed(pools, {
@@ -140,7 +159,18 @@ export function rerankRecommendationCandidates(
     exposureEntries,
     exposureNow,
     favoriteProducerIds,
+    rootSeed,
+    mixProgress,
   }).ranked;
+}
+
+function discoveryPopularityConfidence(song: Song): number {
+  const favoriteSignal = Math.min(1, Math.log10(1 + Math.max(0, song.favoritedTimes ?? 0)) / 4);
+  const externalViews = Math.max(0, song.youtubeViews ?? 0) + Math.max(0, song.nicoViews ?? 0) * 1.35;
+  const viewSignal = Math.min(1, Math.log10(1 + externalViews) / 7);
+  return externalViews > 0
+    ? favoriteSignal * 0.35 + viewSignal * 0.65
+    : favoriteSignal;
 }
 
 export function rerankRecommendationCandidatesDetailed(
@@ -159,8 +189,12 @@ export function rerankRecommendationCandidatesDetailed(
     exposureEntries = {},
     exposureNow = Date.now(),
     favoriteProducerIds = new Set<number>(),
+    rootSeed = null,
+    mixProgress = 0,
   }: RecommendationRerankOptions,
 ): DetailedRerankResult {
+  const normalizedMixProgress = Math.max(0, Math.min(1, mixProgress));
+  const rootProducerIds = new Set(rootSeed ? getProducerIds(rootSeed) : []);
   const entries = new Map<number, {
     song: Song;
     evidence: number;
@@ -176,6 +210,10 @@ export function rerankRecommendationCandidatesDetailed(
     baseScore: number | null;
     exposurePenalty: number;
     tasteAffinityAdjustment: number;
+    rootProducerMatch: boolean;
+    rootAffinityAdjustment: number;
+    discoveryAdjustment: number;
+    popularityAdjustment: number;
   }>();
   (Object.entries(pools) as Array<[RecommendationSource, Song[] | undefined]>).forEach(([source, songs]) => {
     filterVoiceSynthSongs(songs ?? []).forEach((song, index) => {
@@ -197,6 +235,10 @@ export function rerankRecommendationCandidatesDetailed(
         baseScore: null,
         exposurePenalty: 0,
         tasteAffinityAdjustment: 0,
+        rootProducerMatch: false,
+        rootAffinityAdjustment: 0,
+        discoveryAdjustment: 0,
+        popularityAdjustment: 0,
       };
       current.evidence += sourceWeight * rankSignal;
       current.sources.add(source);
@@ -269,8 +311,23 @@ export function rerankRecommendationCandidatesDetailed(
       const familiarityAdjustment = (known ? 1 : -1) * familiarityBias * 0.2;
       const exposurePenalty = calculateExposurePenalty(exposureEntries[String(entry.song.id)], exposureNow);
       const tasteAffinity = explainTasteAffinity(entry.song, tasteAffinityProfile);
+      const rootProducerMatch = rootProducerIds.size > 0
+        && getProducerIds(entry.song).some(producerId => rootProducerIds.has(producerId));
+      // The anchor stays meaningful throughout the session, while sequential
+      // diversity naturally moves repeated producers behind alternatives.
+      const rootAffinityAdjustment = rootProducerMatch
+        ? 0.42 - normalizedMixProgress * 0.12
+        : 0;
+      // Unknown songs become only slightly easier to select later. Vector rank
+      // remains the main discovery signal; public popularity is a bounded
+      // confidence hint and never an absolute cutoff.
+      const discoveryAdjustment = known ? 0 : normalizedMixProgress * 0.035;
+      const popularityAdjustment = known
+        ? 0
+        : discoveryPopularityConfidence(entry.song) * (0.015 + normalizedMixProgress * 0.025);
       const baseScore = entry.evidence * 0.9 + Math.sqrt(Math.max(0, preference)) * 0.8
         + familiarityAdjustment + tasteAffinity.adjustment
+        + rootAffinityAdjustment + discoveryAdjustment + popularityAdjustment
         - producerPenalty - vocalistPenalty - exposurePenalty;
       const favoriteProducerAdjustment = favoriteProducer ? 0.45 : 0;
       // The perturbation is deliberately small and deterministic. Hard filters,
@@ -289,6 +346,10 @@ export function rerankRecommendationCandidatesDetailed(
       entry.familiarityAdjustment = familiarityAdjustment;
       entry.favoriteProducer = favoriteProducer;
       entry.favoriteProducerAdjustment = favoriteProducerAdjustment;
+      entry.rootProducerMatch = rootProducerMatch;
+      entry.rootAffinityAdjustment = rootAffinityAdjustment;
+      entry.discoveryAdjustment = discoveryAdjustment;
+      entry.popularityAdjustment = popularityAdjustment;
       if (score > bestScore) {
         bestScore = score;
         bestIndex = index;
@@ -301,7 +362,13 @@ export function rerankRecommendationCandidatesDetailed(
     result.push({
       song: selected.song,
       source: primarySource,
-      reason: sourceReason(selected.sources, known, selected.favoriteProducer, selected.tasteAffinityAdjustment),
+      reason: sourceReason(
+        selected.sources,
+        known,
+        selected.favoriteProducer,
+        selected.rootProducerMatch,
+        selected.tasteAffinityAdjustment,
+      ),
     });
     addDiversity(selected.song);
   }
@@ -326,10 +393,20 @@ export function rerankRecommendationCandidatesDetailed(
       vocalistPenalty: entry.vocalistPenalty,
       favoriteProducer: entry.favoriteProducer,
       favoriteProducerAdjustment: entry.favoriteProducerAdjustment,
+      rootProducerMatch: entry.rootProducerMatch,
+      rootAffinityAdjustment: entry.rootAffinityAdjustment,
+      discoveryAdjustment: entry.discoveryAdjustment,
+      popularityAdjustment: entry.popularityAdjustment,
       finalScore: entry.finalScore,
       selectedRank: rankedIds.get(entry.song.id) ?? null,
       status: rankedIds.has(entry.song.id) ? 'selected' as const : 'not_selected' as const,
-      reason: sourceReason(entry.sources, known, entry.favoriteProducer, entry.tasteAffinityAdjustment),
+      reason: sourceReason(
+        entry.sources,
+        known,
+        entry.favoriteProducer,
+        entry.rootProducerMatch,
+        entry.tasteAffinityAdjustment,
+      ),
     };
   });
   return { ranked: result, trace };
