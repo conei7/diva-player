@@ -26,7 +26,10 @@ async function swipe(page, from, to) {
     return { x: box.x, y: box.y, width: box.width, height: box.height };
   });
   const client = await page.createCDPSession();
-  const y = rect.y + rect.height / 2;
+  // Start inside the controls' top padding. The vertical midpoint can land on
+  // a child button when remote fonts change the row heights, and interactive
+  // children deliberately opt out of the player swipe gesture.
+  const y = rect.y + Math.min(6, Math.max(2, rect.height / 4));
   const startX = from < to ? rect.x + 24 : rect.x + rect.width - 24;
   const endX = from < to ? rect.x + rect.width - 24 : rect.x + 24;
   await client.send('Input.dispatchTouchEvent', {
@@ -50,6 +53,44 @@ async function swipe(page, from, to) {
 try {
   const page = await browser.newPage();
   await page.setViewport({ width: 390, height: 844, deviceScaleFactor: 1, isMobile: true, hasTouch: true });
+  // Keep the gesture contract independent from the availability of external
+  // fixture videos. An invalid real iframe can auto-skip the queue while the
+  // second swipe is being asserted, especially against a remote SBC build.
+  await page.setRequestInterception(true);
+  page.on('request', async (request) => {
+    if (request.url() !== 'https://www.youtube.com/iframe_api') {
+      await request.continue();
+      return;
+    }
+    await request.respond({
+      contentType: 'application/javascript',
+      body: `
+        window.YT = {
+          PlayerState: { UNSTARTED: -1, ENDED: 0, PLAYING: 1, PAUSED: 2, BUFFERING: 3, CUED: 5 },
+          Player: function (_id, options) {
+            const player = this;
+            let state = -1;
+            player.getCurrentTime = () => 0;
+            player.getDuration = () => 30;
+            player.getPlayerState = () => state;
+            player.getVolume = () => 50;
+            player.setVolume = () => {};
+            player.unMute = () => {};
+            player.seekTo = () => {};
+            player.playVideo = () => {
+              state = 1;
+              options.events.onStateChange({ data: state, target: player });
+            };
+            player.pauseVideo = () => { state = 2; };
+            player.stopVideo = () => { state = 0; };
+            player.destroy = () => {};
+            setTimeout(() => options.events.onReady({ target: player }), 0);
+          },
+        };
+        window.onYouTubeIframeAPIReady();
+      `,
+    });
+  });
   await page.goto(baseUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
   await page.evaluate(currentSongs => {
     const tabId = 'mobile-gesture-fixture-tab';
@@ -82,17 +123,24 @@ try {
   await waitForSong('Third gesture fixture');
   console.log('PASS left swipe advances queue');
 
+  // Let the first pointer lifecycle and the resulting React render settle
+  // before starting a second physical gesture in the opposite direction.
+  await new Promise(resolve => setTimeout(resolve, 500));
   await swipe(page, 80, 280);
   await waitForSong('Second gesture fixture');
   console.log('PASS right swipe goes to previous queue item');
+
+  await new Promise(resolve => setTimeout(resolve, 500));
 
   const rect = await page.$eval('[data-testid="mini-player-gesture-surface"]', element => {
     const box = element.getBoundingClientRect();
     return { x: box.x, y: box.y, width: box.width, height: box.height };
   });
   const client = await page.createCDPSession();
-  const x = rect.x + rect.width / 2;
-  const startY = rect.y + rect.height / 2;
+  // Use the same non-interactive padding for the negative downward case so it
+  // proves the gesture classifier ignored the direction rather than a button.
+  const x = rect.x + Math.min(6, Math.max(2, rect.width / 4));
+  const startY = rect.y + Math.min(6, Math.max(2, rect.height / 4));
   await client.send('Input.dispatchTouchEvent', {
     type: 'touchStart',
     touchPoints: [{ x, y: startY, radiusX: 1, radiusY: 1, id: 2 }],
