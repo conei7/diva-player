@@ -35,6 +35,19 @@ async function preparePage() {
       await request.continue();
       return;
     }
+    const parsedUrl = new URL(requestUrl);
+    const requestedSongIds = parsedUrl.searchParams.get('ids')?.split(',') ?? [];
+    if (
+      (parsedUrl.pathname.endsWith('/api/songs/details') || parsedUrl.pathname.endsWith('/api/songs/batch'))
+      && requestedSongIds.includes(String(song.id))
+    ) {
+      await request.respond({
+        contentType: 'application/json',
+        headers: { 'access-control-allow-origin': '*' },
+        body: JSON.stringify({ items: [song] }),
+      });
+      return;
+    }
     if (requestUrl.startsWith('https://vocadb.net/api/songs/900008?')) {
       await request.respond({
         contentType: 'application/json',
