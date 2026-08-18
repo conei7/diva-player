@@ -395,8 +395,14 @@ export default function PlayerEmbed() {
   const endRecoveryTimerRef = useRef<number | null>(null);
   const advancedPVRef = useRef<string | null>(null);
   const attemptControllerRef = useRef(createPlaybackAttemptController());
+  const youtubeReadyRef = useRef(false);
+  const youtubeDesiredVideoRef = useRef<{
+    pvId: string;
+    songId: number | null;
+    playbackSequence: number;
+    attempt: PlaybackAttemptToken;
+  } | null>(null);
   const volumeRef = useRef(volume);
-  const initialAutoplayRef = useRef(isPlaying);
   const youtubeAutoplayMutedRef = useRef(false);
   const ownershipRef = useRef<ReturnType<typeof getPlaybackOwnership> | null>(null);
 
@@ -548,97 +554,101 @@ export default function PlayerEmbed() {
     if (playerNeedsRestart) player.playVideo?.();
   }, [advanceOnce, clearEndRecoveryTimer]);
 
-  // YouTube プレイヤー初期化/更新
-  useEffect(() => {
+  const failCurrentYouTubeAttempt = useCallback((message: string) => {
+    const desired = youtubeDesiredVideoRef.current;
     const attemptController = attemptControllerRef.current;
-    const playerContainer = containerRef.current;
+    if (!desired || !attemptController.isCurrent(desired.attempt)) return;
     attemptController.cancel();
-    advancedPVRef.current = null;
+    youtubeDesiredVideoRef.current = null;
+    stopProgressTimer();
     clearEndRecoveryTimer();
-
-    if (!currentPV || currentPV.service !== 'Youtube') {
-      // YouTube以外の場合、YTプレイヤーをクリーンアップ
-      stopVolumeSync();
-      if (ytPlayerRef.current) {
-        ytPlayerRef.current.destroy();
-        ytPlayerRef.current = null;
-      }
-      if (playerContainer) playerContainer.innerHTML = '';
-      stopProgressTimer();
-      return;
+    try {
+      ytPlayerRef.current?.stopVideo?.();
+    } catch {
+      // Keep the persistent iframe alive; the next PV can still be loaded into it.
     }
+    setError(message);
+    tryNextPV();
+  }, [clearEndRecoveryTimer, setError, stopProgressTimer, tryNextPV]);
 
-    const pvId = currentPV.pvId;
-    const shouldAutoplayOnCreate = usePlayerStore.getState().isPlaying;
-    initialAutoplayRef.current = shouldAutoplayOnCreate;
-    youtubeAutoplayMutedRef.current = shouldAutoplayOnCreate;
-    let player: YT.Player | null = null;
-    const attempt = attemptController.start(pvId, () => {
-      handleFailure('YouTube動画の準備がタイムアウトしました');
-    });
-
-    const handleFailure = (message: string) => {
-      if (!attemptController.isCurrent(attempt)) return;
-      attemptController.cancel();
-      stopProgressTimer();
-      if (ytPlayerRef.current === player && ytPlayerRef.current) {
-        ytPlayerRef.current.stopVideo?.();
-        ytPlayerRef.current.destroy();
-        ytPlayerRef.current = null;
+  const loadDesiredYouTubeVideo = useCallback((player: YT.Player) => {
+    const desired = youtubeDesiredVideoRef.current;
+    if (!desired || !youtubeReadyRef.current) return;
+    if (!attemptControllerRef.current.isCurrent(desired.attempt)) return;
+    const shouldPlay = usePlayerStore.getState().isPlaying;
+    try {
+      if (shouldPlay) {
+        // Loading muted is allowed while the document is hidden. Reusing this
+        // already-created player preserves the original user activation instead
+        // of asking Chromium to authorize a brand-new background iframe.
+        player.mute?.();
+        youtubeAutoplayMutedRef.current = true;
+        player.loadVideoById(desired.pvId, 0);
+        player.playVideo?.();
+        // Do not unmute until PLAYING. Unmuting during the asynchronous load can
+        // make a browser re-evaluate autoplay and defer the start until visible.
+        scheduleEndRecovery(player);
+      } else {
+        youtubeAutoplayMutedRef.current = false;
+        player.cueVideoById(desired.pvId, 0);
       }
-      if (containerRef.current) containerRef.current.innerHTML = '';
-      setError(message);
-      tryNextPV();
-    };
+    } catch {
+      failCurrentYouTubeAttempt('YouTube動画の準備に失敗しました');
+    }
+  }, [failCurrentYouTubeAttempt, scheduleEndRecovery]);
+
+  const isYouTube = currentPV?.service === 'Youtube';
+
+  // Create one YouTube iframe per continuous YouTube session. Song changes are
+  // applied with loadVideoById below, so a background tab never has to create a
+  // fresh cross-origin iframe before the next track can start.
+  useEffect(() => {
+    if (!isYouTube) return;
+    const playerContainer = containerRef.current;
+    if (!playerContainer) return;
+    let disposed = false;
+    let player: YT.Player | null = null;
 
     const initPlayer = async () => {
       try {
         await loadYouTubeAPI();
-        if (!attemptController.isCurrent(attempt) || !playerContainer) return;
+        if (disposed || !containerRef.current) return;
 
-        // div要素を再作成（YT APIが要素を置き換えるため）
         const playerDiv = document.createElement('div');
         playerDiv.id = 'yt-player-embed';
-        playerContainer.innerHTML = '';
-        playerContainer.appendChild(playerDiv);
+        containerRef.current.innerHTML = '';
+        containerRef.current.appendChild(playerDiv);
 
         player = new window.YT.Player('yt-player-embed', {
-          videoId: pvId,
           width: '100%',
           height: '100%',
           playerVars: {
-            autoplay: shouldAutoplayOnCreate ? 1 : 0,
-            // mute: 1 でミュート自動再生を許可し、onReady でアンミュートする。
-            mute: shouldAutoplayOnCreate ? 1 : 0,
+            autoplay: 0,
             controls: 1,
             origin: window.location.origin,
           },
           events: {
             onReady: (event: YT.PlayerEvent) => {
-              if (!attemptController.isCurrent(attempt)) return;
+              if (disposed || ytPlayerRef.current !== event.target) return;
+              youtubeReadyRef.current = true;
               event.target.setVolume(volumeRef.current);
               startVolumeSync(event.target);
-              if (usePlayerStore.getState().isPlaying) {
-                event.target.playVideo();
-                if (!navigator.userActivation || navigator.userActivation.hasBeenActive) {
-                  event.target.unMute();
-                  youtubeAutoplayMutedRef.current = false;
-                }
-              }
-              const dur = event.target.getDuration();
-              if (dur > 0) setDuration(dur);
               startProgressTimer();
-              if (usePlayerStore.getState().isPlaying) scheduleEndRecovery(event.target);
+              loadDesiredYouTubeVideo(event.target);
             },
             onStateChange: (event: YT.OnStateChangeEvent) => {
-              if (!attemptController.isCurrent(attempt)) return;
+              const desired = youtubeDesiredVideoRef.current;
+              if (!desired || !attemptControllerRef.current.isCurrent(desired.attempt)) return;
               switch (event.data) {
                 case window.YT.PlayerState.PLAYING: {
-                  attemptController.complete(attempt);
-                  markPVHealthy(currentPV);
+                  attemptControllerRef.current.complete(desired.attempt);
+                  const activePV = usePlayerStore.getState().currentPV;
+                  if (activePV?.service === 'Youtube' && activePV.pvId === desired.pvId) {
+                    markPVHealthy(activePV);
+                  }
                   setIsPlaying(true);
                   if (youtubeAutoplayMutedRef.current && (!navigator.userActivation || navigator.userActivation.hasBeenActive)) {
-                    event.target.unMute();
+                    event.target.unMute?.();
                     youtubeAutoplayMutedRef.current = false;
                   }
                   const dur = event.target.getDuration();
@@ -649,7 +659,7 @@ export default function PlayerEmbed() {
                 }
                 case window.YT.PlayerState.PAUSED:
                   if (document.hidden && usePlayerStore.getState().isPlaying) {
-                    event.target.playVideo();
+                    event.target.playVideo?.();
                     scheduleEndRecovery(event.target);
                     break;
                   }
@@ -662,30 +672,69 @@ export default function PlayerEmbed() {
                   break;
               }
             },
-            onError: () => handleFailure('YouTube動画の再生中にエラーが発生しました'),
+            onError: () => failCurrentYouTubeAttempt('YouTube動画の再生中にエラーが発生しました'),
           },
         });
         ytPlayerRef.current = player;
       } catch {
-        handleFailure('YouTube動画の準備に失敗しました');
+        if (!disposed) failCurrentYouTubeAttempt('YouTube動画の準備に失敗しました');
       }
     };
 
     void initPlayer();
-
     return () => {
-      attemptController.cancel();
+      disposed = true;
+      attemptControllerRef.current.cancel();
+      youtubeDesiredVideoRef.current = null;
+      youtubeReadyRef.current = false;
       stopVolumeSync();
       stopProgressTimer();
       clearEndRecoveryTimer();
-      if (ytPlayerRef.current === player && ytPlayerRef.current) {
-        ytPlayerRef.current.stopVideo?.();
-        ytPlayerRef.current.destroy();
-        ytPlayerRef.current = null;
+      if (ytPlayerRef.current === player && player) {
+        try {
+          player.stopVideo?.();
+          player.destroy();
+        } finally {
+          ytPlayerRef.current = null;
+        }
       }
       if (playerContainer) playerContainer.innerHTML = '';
     };
-  }, [advanceOnce, clearEndRecoveryTimer, currentPV, currentSong?.id, markPVHealthy, playbackSequence, scheduleEndRecovery, setDuration, setIsPlaying, setError, tryNextPV, startProgressTimer, stopProgressTimer, startVolumeSync, stopVolumeSync]);
+  }, [advanceOnce, clearEndRecoveryTimer, failCurrentYouTubeAttempt, isYouTube, loadDesiredYouTubeVideo, markPVHealthy, scheduleEndRecovery, setDuration, setIsPlaying, startProgressTimer, stopProgressTimer, startVolumeSync, stopVolumeSync]);
+
+  // Switch videos inside the persistent player. playbackSequence is included so
+  // replaying the same PV restarts it without recreating the iframe.
+  useEffect(() => {
+    if (!currentPV || currentPV.service !== 'Youtube') return;
+    const attemptController = attemptControllerRef.current;
+    attemptController.cancel();
+    advancedPVRef.current = null;
+    clearEndRecoveryTimer();
+    stopProgressTimer();
+    setProgress(0);
+    if (currentSong?.lengthSeconds) setDuration(currentSong.lengthSeconds);
+
+    const pvId = currentPV.pvId;
+    let attempt: PlaybackAttemptToken;
+    attempt = attemptController.start(pvId, () => {
+      if (youtubeDesiredVideoRef.current?.attempt !== attempt) return;
+      failCurrentYouTubeAttempt('YouTube動画の準備がタイムアウトしました');
+    });
+    youtubeDesiredVideoRef.current = {
+      pvId,
+      songId: currentSong?.id ?? null,
+      playbackSequence,
+      attempt,
+    };
+    const player = ytPlayerRef.current;
+    if (player && youtubeReadyRef.current) loadDesiredYouTubeVideo(player);
+
+    return () => {
+      if (youtubeDesiredVideoRef.current?.attempt !== attempt) return;
+      attemptController.cancel();
+      youtubeDesiredVideoRef.current = null;
+    };
+  }, [clearEndRecoveryTimer, currentPV?.pvId, currentPV?.service, currentSong?.id, currentSong?.lengthSeconds, failCurrentYouTubeAttempt, loadDesiredYouTubeVideo, playbackSequence, setDuration, setProgress, stopProgressTimer]);
 
   // Muted autoplay is the browser-safe way to get a newly selected song
   // moving in a background tab. If the session had no activation yet, restore

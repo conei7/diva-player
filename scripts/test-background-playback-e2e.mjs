@@ -80,20 +80,39 @@ try {
         window.YT = {
           PlayerState: { UNSTARTED: -1, ENDED: 0, PLAYING: 1, PAUSED: 2, BUFFERING: 3, CUED: 5 },
           Player: function (_id, options) {
+            window.__youtubePlayerConstructCount = (window.__youtubePlayerConstructCount || 0) + 1;
+            if (document.hidden && window.__youtubePlayerConstructCount > 1) {
+              window.__backgroundIframeCreationBlocked = true;
+              throw new Error('Background iframe creation was blocked by the fixture');
+            }
             const player = this;
             let state = -1;
             let startedAt = 0;
             let elapsed = 0;
+            let currentVideoId = options.videoId || null;
             player.getCurrentTime = () => state === 1 ? elapsed + (Date.now() - startedAt) / 1000 : elapsed;
-            player.getDuration = () => options.videoId === 'fixture-1' ? 3 : 30;
+            player.getDuration = () => currentVideoId === 'fixture-1' ? 3 : 30;
             player.getPlayerState = () => state;
             player.getVolume = () => 50;
             player.setVolume = () => {};
+            player.mute = () => {};
             player.unMute = () => {};
             player.seekTo = (seconds) => { elapsed = seconds; startedAt = Date.now(); };
+            player.loadVideoById = (videoId) => {
+              currentVideoId = videoId;
+              elapsed = 0;
+              state = -1;
+              window.__youtubeLoadedVideoIds = [...(window.__youtubeLoadedVideoIds || []), videoId];
+            };
+            player.cueVideoById = (videoId) => {
+              currentVideoId = videoId;
+              elapsed = 0;
+              state = 5;
+              window.__youtubeLoadedVideoIds = [...(window.__youtubeLoadedVideoIds || []), videoId];
+            };
             player.playVideo = () => {
               window.__playVideoAttemptCount = (window.__playVideoAttemptCount || 0) + 1;
-              if (options.videoId === 'fixture-2' && document.hidden && state === -1 && (window.__backgroundInitialStartIgnoreCount || 0) < 2) {
+              if (currentVideoId === 'fixture-2' && document.hidden && state === -1 && (window.__backgroundInitialStartIgnoreCount || 0) < 2) {
                 window.__backgroundInitialStartIgnoreCount = (window.__backgroundInitialStartIgnoreCount || 0) + 1;
                 return;
               }
@@ -108,7 +127,7 @@ try {
                 window.__wakeRecoveryPlayCount = (window.__wakeRecoveryPlayCount || 0) + 1;
               }
               window.__backgroundPlaybackStarted = true;
-              if (options.videoId === 'fixture-2') window.__backgroundSecondPlaybackStarted = true;
+              if (currentVideoId === 'fixture-2') window.__backgroundSecondPlaybackStarted = true;
               options.events.onStateChange({ data: state, target: player });
             };
             player.pauseVideo = () => { elapsed = player.getCurrentTime(); state = 2; };
@@ -175,14 +194,23 @@ try {
 
   await playerPage.waitForFunction(() => window.__backgroundSecondPlaybackStarted === true, { timeout: 6_000 });
   const backgroundStart = await playerPage.evaluate(() => ({
+    backgroundIframeCreationBlocked: window.__backgroundIframeCreationBlocked || false,
     ignoredStarts: window.__backgroundInitialStartIgnoreCount || 0,
+    loadedVideoIds: window.__youtubeLoadedVideoIds || [],
     playAttempts: window.__playVideoAttemptCount || 0,
+    playerConstructCount: window.__youtubePlayerConstructCount || 0,
     visibilityState: document.visibilityState,
   }));
   if (backgroundStart.ignoredStarts !== 2 || backgroundStart.visibilityState !== 'hidden') {
     throw new Error(`The fixture did not exercise hidden initial-start recovery: ${JSON.stringify(backgroundStart)}`);
   }
-  console.log(`PASS hidden initial playback retries until PLAYING (${backgroundStart.playAttempts} attempts)`);
+  if (backgroundStart.backgroundIframeCreationBlocked || backgroundStart.playerConstructCount !== 1) {
+    throw new Error(`YouTube iframe was recreated while hidden: ${JSON.stringify(backgroundStart)}`);
+  }
+  if (backgroundStart.loadedVideoIds.join(',') !== 'fixture-1,fixture-2') {
+    throw new Error(`Persistent player did not load both videos in order: ${JSON.stringify(backgroundStart)}`);
+  }
+  console.log(`PASS hidden next-track playback reuses one iframe (${backgroundStart.playAttempts} play attempts)`);
 
   await playerPage.bringToFront();
   await playerPage.waitForFunction(() => typeof window.__simulateDeviceWake === 'function');
