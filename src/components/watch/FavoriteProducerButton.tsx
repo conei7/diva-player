@@ -15,18 +15,23 @@ export default function FavoriteProducerButton({ id, name, artistType = 'Produce
   return (
     <button
       type="button"
-      className="min-h-10 rounded-full px-3 py-2 text-[11px] transition-colors sm:min-h-0 sm:px-2 sm:py-1"
+      className="watch-favorite-producer-button inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-[15px] leading-none transition-colors sm:h-7 sm:w-7 sm:text-sm"
       style={{
-        background: isFavorite ? 'rgba(250, 204, 21, 0.16)' : 'var(--color-surface)',
         color: isFavorite ? '#facc15' : 'var(--color-text-muted)',
-        border: '1px solid var(--color-border)',
+        background: 'transparent',
+        border: 'none',
+        cursor: 'pointer',
       }}
       aria-pressed={isFavorite}
       aria-label={isFavorite ? `${name}をお気に入りPから解除` : `${name}をお気に入りPに登録`}
       title={isFavorite ? 'お気に入りPから解除' : 'お気に入りPに登録'}
-      onClick={() => toggleProducer({ id, name, artistType: normalizedType })}
+      onClick={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        toggleProducer({ id, name, artistType: normalizedType });
+      }}
     >
-      {isFavorite ? '★ お気に入りP' : '☆ お気に入りP'}
+      {isFavorite ? '★' : '☆'}
     </button>
   );
 }

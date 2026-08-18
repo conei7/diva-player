@@ -24,7 +24,7 @@ export default function PVSourceSelector({ song, compact = false }: PVSourceSele
 
   const currentKey = currentPV ? `${currentPV.service}:${currentPV.pvId || currentPV.id}` : '';
   return (
-    <label className={compact ? 'inline-flex min-w-0 items-center' : 'flex min-w-0 items-center gap-2'}>
+    <label className={compact ? 'inline-flex min-w-0 items-center' : 'flex w-full min-w-0 items-center gap-2'}>
       {!compact && <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>再生PV</span>}
       <span className={`relative min-w-0 ${compact ? 'w-[min(20rem,42vw)] max-w-[20rem]' : 'w-full max-w-[32rem]'}`}>
         <select

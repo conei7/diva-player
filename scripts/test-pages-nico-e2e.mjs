@@ -1,10 +1,50 @@
 import puppeteer from 'puppeteer';
 
 const baseUrl = process.argv[2] || 'https://diva-player.pages.dev/';
+const useLocalFixture = process.argv.includes('--local-fixture');
 const AUTOPLAY_OBSERVATION_MS = 9_000;
+const fixtureSong = {
+  id: 3269,
+  name: 'Nico autoplay fixture',
+  artistString: 'DIVA fixture',
+  createDate: '2009-08-30T00:00:00Z',
+  defaultName: 'Nico autoplay fixture',
+  defaultNameLanguage: 'English',
+  favoritedTimes: 0,
+  lengthSeconds: 30,
+  pvServices: 'NicoNicoDouga',
+  ratingScore: 0,
+  songType: 'Original',
+  status: 'Finished',
+  version: 1,
+  pvs: [{
+    author: '',
+    disabled: false,
+    id: 32691,
+    length: 30,
+    name: 'Nico autoplay fixture',
+    pvId: 'sm7918983',
+    service: 'NicoNicoDouga',
+    pvType: 'Original',
+    url: 'https://www.nicovideo.jp/watch/sm7918983',
+  }],
+};
 const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox'] });
 try {
   const page = await browser.newPage();
+  if (useLocalFixture) {
+    await page.evaluateOnNewDocument(song => {
+      localStorage.setItem('diva_pvPreference', JSON.stringify('NicoNicoDouga'));
+      localStorage.setItem('diva_playerQueue', JSON.stringify({
+        queue: [song],
+        queueIndex: 0,
+        currentSong: song,
+        currentSongId: song.id,
+        queueSources: ['manual'],
+        currentPlaybackSource: 'manual',
+      }));
+    }, fixtureSong);
+  }
   let embedStatus = null;
   page.on('response', response => {
     if (response.url().includes('embed.nicovideo.jp/watch/sm7918983')) embedStatus = response.status();

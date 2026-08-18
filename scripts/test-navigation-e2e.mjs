@@ -21,6 +21,14 @@ const fixtureProducer = {
   status: 'Finished',
   version: 1,
 };
+const fixtureProducers = [
+  fixtureProducer,
+  ...[2, 3, 4].map(index => ({
+    ...fixtureProducer,
+    id: fixtureProducer.id + index,
+    name: `DIVA E2E Producer ${index}`,
+  })),
+];
 const fixtureVocalist = {
   id: 424243,
   artistType: 'Vocaloid',
@@ -44,18 +52,26 @@ const fixturePv = {
   url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
   description: 'DIVA E2E description\\nhttps://example.com/diva-e2e',
 };
+const fixtureNicoPv = {
+  ...fixturePv,
+  id: fixturePv.id + 1,
+  name: 'DIVA E2E Nico PV',
+  pvId: 'sm9',
+  service: 'NicoNicoDouga',
+  url: 'https://www.nicovideo.jp/watch/sm9',
+};
 const fixtureSong = {
   artists: [
-    {
-      artist: fixtureProducer,
+    ...fixtureProducers.map(producer => ({
+      artist: producer,
       categories: 'Producer',
       effectiveRoles: 'Producer',
-      id: fixtureProducer.id,
+      id: producer.id,
       isCustomName: false,
       isSupport: false,
-      name: fixtureProducer.name,
+      name: producer.name,
       roles: 'Producer',
-    },
+    })),
     {
       artist: fixtureVocalist,
       categories: 'Vocalist',
@@ -76,8 +92,8 @@ const fixtureSong = {
   lengthSeconds: 180,
   name: 'DIVA E2E Song',
   publishDate: '2020-01-01T00:00:00Z',
-  pvs: [fixturePv],
-  pvServices: 'Youtube',
+  pvs: [fixturePv, fixtureNicoPv],
+  pvServices: 'Youtube,NicoNicoDouga',
   ratingScore: 5,
   songType: 'Original',
   status: 'Finished',
@@ -159,6 +175,34 @@ try {
   if (!producerHref?.includes('artistId=') && !producerHref?.includes('?q=')) {
     throw new Error(`Watch-page producer is not a searchable link: ${producerHref}`);
   }
+  await page.waitForSelector('[data-testid="watch-action-bar"] select[aria-label="再生PVを選択"]', { timeout: 60_000 });
+  const compactWatchLayout = await page.$eval('[data-testid="watch-action-bar"]', actionBar => {
+    const selector = actionBar.querySelector('select[aria-label="再生PVを選択"]');
+    const info = document.querySelector('[data-testid="watch-video-info"]');
+    return {
+      optionCount: selector?.querySelectorAll('option').length ?? 0,
+      selectorInActionBar: Boolean(selector),
+      selectorStillInInfo: Boolean(info?.querySelector('select[aria-label="再生PVを選択"]')),
+      actionBarWidth: actionBar.getBoundingClientRect().width,
+      actionBarScrollWidth: actionBar.scrollWidth,
+    };
+  });
+  if (!compactWatchLayout.selectorInActionBar
+    || compactWatchLayout.selectorStillInInfo
+    || compactWatchLayout.optionCount !== 2
+    || compactWatchLayout.actionBarScrollWidth > compactWatchLayout.actionBarWidth + 1) {
+    throw new Error(`Unexpected watch action layout: ${JSON.stringify(compactWatchLayout)}`);
+  }
+  await page.waitForSelector('button[aria-label="他1名のPを表示"]');
+  const collapsedProducerButtons = await page.$$eval('.watch-favorite-producer-button', buttons => buttons.length);
+  if (collapsedProducerButtons !== 3) throw new Error(`Expected 3 collapsed producers, got ${collapsedProducerButtons}`);
+  await page.click('button[aria-label="他1名のPを表示"]');
+  await page.waitForSelector('button[aria-label="P一覧を折りたたむ"]');
+  const expandedProducerButtons = await page.$$eval('.watch-favorite-producer-button', buttons => buttons.length);
+  if (expandedProducerButtons !== 4) throw new Error(`Expected 4 expanded producers, got ${expandedProducerButtons}`);
+  await page.click('button[aria-label="P一覧を折りたたむ"]');
+  await page.waitForSelector('button[aria-label="他1名のPを表示"]');
+  console.log('PASS compact watch metadata, producer collapse, and action layout');
   await page.waitForSelector('button[aria-label="概要を展開する"]', { timeout: 60_000 });
   await page.click('button[aria-label="概要を展開する"]');
   await page.waitForSelector('button[aria-label="概要を折りたたむ"]', { timeout: 60_000 });
