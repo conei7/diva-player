@@ -21,8 +21,15 @@ try {
     url: location.href,
     nicoFrames: document.querySelectorAll('iframe[src*="embed.nicovideo.jp"]').length,
     youtubeFrames: document.querySelectorAll('iframe[src*="youtube.com"]').length,
+    activeYoutubeFrames: [...document.querySelectorAll('iframe[src*="youtube.com"]')]
+      .filter(frame => !frame.closest('[aria-hidden="true"]')).length,
   }));
-  if (playerState.nicoFrames !== 1 || playerState.youtubeFrames !== 0) {
+  // The app keeps one hidden, idle YouTube iframe warm even while Nico is the
+  // active service. This lets a later YouTube song start in a background tab;
+  // it is not a Nico-to-YouTube fallback.
+  if (playerState.nicoFrames !== 1
+    || playerState.youtubeFrames !== 1
+    || playerState.activeYoutubeFrames !== 0) {
     throw new Error(`Nico playback fell back or disappeared: ${JSON.stringify(playerState)}`);
   }
   if (embedStatus !== null && embedStatus >= 400) throw new Error(`Nico embed returned HTTP ${embedStatus}`);
