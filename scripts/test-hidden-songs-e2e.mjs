@@ -35,7 +35,7 @@ try {
     if (url === 'https://www.youtube.com/iframe_api') {
       await request.respond({
         contentType: 'application/javascript',
-        body: `window.YT={PlayerState:{UNSTARTED:-1,ENDED:0,PLAYING:1,PAUSED:2,BUFFERING:3,CUED:5},Player:function(_id,o){this.getCurrentTime=()=>0;this.getDuration=()=>120;this.getPlayerState=()=>2;this.getVolume=()=>50;this.setVolume=()=>{};this.unMute=()=>{};this.playVideo=()=>{};this.pauseVideo=()=>{};this.stopVideo=()=>{};this.destroy=()=>{};setTimeout(()=>o.events.onReady({target:this}),0)}};window.onYouTubeIframeAPIReady();`,
+        body: `window.YT={PlayerState:{UNSTARTED:-1,ENDED:0,PLAYING:1,PAUSED:2,BUFFERING:3,CUED:5},Player:function(_id,o){this.getCurrentTime=()=>0;this.getDuration=()=>120;this.getPlayerState=()=>2;this.getVolume=()=>50;this.setVolume=()=>{};this.mute=()=>{};this.unMute=()=>{};this.loadVideoById=()=>{};this.cueVideoById=()=>{};this.playVideo=()=>{};this.pauseVideo=()=>{};this.stopVideo=()=>{};this.destroy=()=>{};setTimeout(()=>o.events.onReady({target:this}),0)}};window.onYouTubeIframeAPIReady();`,
       });
       return;
     }

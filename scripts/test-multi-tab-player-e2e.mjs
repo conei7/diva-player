@@ -54,8 +54,11 @@ async function preparePage() {
             player.getPlayerState = () => state;
             player.getVolume = () => 50;
             player.setVolume = () => {};
+            player.mute = () => {};
             player.unMute = () => {};
             player.seekTo = () => {};
+            player.loadVideoById = () => { state = -1; };
+            player.cueVideoById = () => { state = 5; };
             player.playVideo = () => {
               state = 1;
               options.events.onStateChange({ data: state, target: player });
