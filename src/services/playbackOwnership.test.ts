@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createPlaybackOwnership, isRemoteClaim, type PlaybackOwnershipMessage } from './playbackOwnership';
+import {
+  createPlaybackOwnership,
+  isRemoteClaim,
+  PLAYBACK_OWNER_STALE_MS,
+  type PlaybackOwnershipMessage,
+} from './playbackOwnership';
 
 function fakeChannel() {
   const listeners = new Set<(event: { data: PlaybackOwnershipMessage }) => void>();
@@ -29,7 +34,7 @@ describe('playback ownership', () => {
   it('broadcasts claims and invokes takeover callback for another tab', () => {
     const channel = fakeChannel();
     const owner = createPlaybackOwnership({ tabId: 'owner', channel, storage: null, now: () => 123 });
-    const observer = createPlaybackOwnership({ tabId: 'observer', channel, storage: null });
+    const observer = createPlaybackOwnership({ tabId: 'observer', channel, storage: null, now: () => 123 });
     const takeover = vi.fn();
     observer.onRemoteClaim(takeover);
 
@@ -64,6 +69,49 @@ describe('playback ownership', () => {
     expect(second.getState()).toBe('none');
     first.destroy();
     second.destroy();
+  });
+
+  it('keeps a recent persisted owner remote but ignores a crashed stale owner', () => {
+    const claimedAt = 10_000;
+    let persisted = JSON.stringify({ type: 'claim', tabId: 'other', songId: 42, claimedAt });
+    const storage = {
+      getItem: vi.fn(() => persisted),
+      setItem: vi.fn((_key: string, value: string) => { persisted = value; }),
+      removeItem: vi.fn(),
+    };
+
+    const recent = createPlaybackOwnership({
+      tabId: 'current',
+      channel: null,
+      storage,
+      now: () => claimedAt + PLAYBACK_OWNER_STALE_MS - 1,
+    });
+    expect(recent.getState()).toBe('remote');
+    recent.destroy();
+
+    const stale = createPlaybackOwnership({
+      tabId: 'current',
+      channel: null,
+      storage,
+      now: () => claimedAt + PLAYBACK_OWNER_STALE_MS,
+    });
+    expect(stale.getState()).toBe('none');
+    stale.destroy();
+  });
+
+  it('expires a remote owner in an already-open passive tab', () => {
+    const channel = fakeChannel();
+    let currentTime = 20_000;
+    const owner = createPlaybackOwnership({ tabId: 'owner', channel, storage: null, now: () => currentTime });
+    const passive = createPlaybackOwnership({ tabId: 'passive', channel, storage: null, now: () => currentTime });
+
+    owner.claim(42);
+    expect(passive.getState()).toBe('remote');
+    currentTime += PLAYBACK_OWNER_STALE_MS;
+    expect(passive.getState()).toBe('none');
+
+    owner.destroy();
+    passive.destroy();
   });
 
   it('stops notifying after destroy', () => {

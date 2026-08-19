@@ -1,6 +1,8 @@
 export const PLAYBACK_CHANNEL_NAME = 'diva-player-playback-v1';
 export const PLAYBACK_OWNER_KEY = 'diva-playback-owner-v1';
 const PLAYBACK_TAB_KEY = 'diva-playback-tab-v1';
+export const PLAYBACK_OWNER_HEARTBEAT_MS = 3_000;
+export const PLAYBACK_OWNER_STALE_MS = 10_000;
 
 export type PlaybackOwnershipState = 'none' | 'local' | 'remote';
 
@@ -47,7 +49,10 @@ export function createPlaybackOwnership(options: PlaybackOwnershipOptions = {}) 
   const channel = options.channel ?? getDefaultChannel();
   const storage = options.storage ?? getDefaultStorage();
   let onRemoteClaim: (() => void) | null = null;
-  let state = readInitialState(storage, tabId);
+  const initial = readInitialOwnership(storage, tabId, now());
+  let state = initial.state;
+  let remoteClaimedAt = initial.remoteClaimedAt;
+  let remoteExpiryTimer: ReturnType<typeof setTimeout> | null = null;
   const subscribers = new Set<() => void>();
 
   const setState = (nextState: PlaybackOwnershipState) => {
@@ -56,17 +61,48 @@ export function createPlaybackOwnership(options: PlaybackOwnershipOptions = {}) 
     for (const subscriber of subscribers) subscriber();
   };
 
+  const clearRemoteExpiry = () => {
+    if (remoteExpiryTimer === null) return;
+    clearTimeout(remoteExpiryTimer);
+    remoteExpiryTimer = null;
+  };
+
+  const scheduleRemoteExpiry = (claimedAt: number) => {
+    clearRemoteExpiry();
+    const remaining = Math.max(0, PLAYBACK_OWNER_STALE_MS - (now() - claimedAt));
+    remoteExpiryTimer = setTimeout(() => {
+      remoteExpiryTimer = null;
+      if (state !== 'remote' || remoteClaimedAt !== claimedAt) return;
+      if (now() - claimedAt < PLAYBACK_OWNER_STALE_MS) {
+        scheduleRemoteExpiry(claimedAt);
+        return;
+      }
+      remoteClaimedAt = null;
+      setState('none');
+    }, remaining);
+  };
+
+  if (state === 'remote' && remoteClaimedAt !== null) scheduleRemoteExpiry(remoteClaimedAt);
+
   const applyMessage = (message: PlaybackOwnershipMessage) => {
     if (message.type === 'claim') {
       if (message.tabId === tabId) {
+        clearRemoteExpiry();
+        remoteClaimedAt = null;
         setState('local');
       } else {
+        remoteClaimedAt = message.claimedAt;
+        scheduleRemoteExpiry(message.claimedAt);
         setState('remote');
         onRemoteClaim?.();
       }
       return;
     }
-    if (message.tabId === tabId || state === 'remote') setState('none');
+    if (message.tabId === tabId || state === 'remote') {
+      clearRemoteExpiry();
+      remoteClaimedAt = null;
+      setState('none');
+    }
   };
 
   const handleMessage: MessageListener = (event) => {
@@ -101,6 +137,15 @@ export function createPlaybackOwnership(options: PlaybackOwnershipOptions = {}) 
   return {
     tabId,
     getState() {
+      if (state === 'remote' && (
+        remoteClaimedAt === null
+        || !Number.isFinite(remoteClaimedAt)
+        || now() - remoteClaimedAt >= PLAYBACK_OWNER_STALE_MS
+      )) {
+        clearRemoteExpiry();
+        remoteClaimedAt = null;
+        state = 'none';
+      }
       return state;
     },
     subscribe(callback: () => void) {
@@ -125,6 +170,7 @@ export function createPlaybackOwnership(options: PlaybackOwnershipOptions = {}) 
       };
     },
     destroy() {
+      clearRemoteExpiry();
       channel?.removeEventListener('message', handleMessage);
       channel?.close?.();
       if (typeof window !== 'undefined') window.removeEventListener('storage', storageListener);
@@ -140,16 +186,25 @@ export function getPlaybackOwnership() {
   return sharedOwnership;
 }
 
-function readInitialState(storage: StorageLike | null, tabId: string): PlaybackOwnershipState {
-  if (!storage?.getItem) return 'none';
+function readInitialOwnership(
+  storage: StorageLike | null,
+  tabId: string,
+  currentTime: number,
+): { state: PlaybackOwnershipState; remoteClaimedAt: number | null } {
+  if (!storage?.getItem) return { state: 'none', remoteClaimedAt: null };
   try {
     const raw = storage.getItem(PLAYBACK_OWNER_KEY);
-    if (!raw) return 'none';
+    if (!raw) return { state: 'none', remoteClaimedAt: null };
     const message = JSON.parse(raw) as PlaybackOwnershipMessage;
-    if (message.type !== 'claim') return 'none';
-    return message.tabId === tabId ? 'local' : 'remote';
+    if (message.type !== 'claim') return { state: 'none', remoteClaimedAt: null };
+    if (!Number.isFinite(message.claimedAt) || currentTime - message.claimedAt >= PLAYBACK_OWNER_STALE_MS) {
+      return { state: 'none', remoteClaimedAt: null };
+    }
+    return message.tabId === tabId
+      ? { state: 'local', remoteClaimedAt: null }
+      : { state: 'remote', remoteClaimedAt: message.claimedAt };
   } catch {
-    return 'none';
+    return { state: 'none', remoteClaimedAt: null };
   }
 }
 

@@ -2,9 +2,11 @@ import puppeteer from 'puppeteer';
 
 const PAGE_TIMEOUT_MS = 45_000;
 const BUDGETS_MS = {
-  'home.load': 15_000,
-  'home.paint': 15_000,
-  'search.paint': 15_000,
+  'home.first-card': 3_000,
+  'home.first-content': 3_000,
+  'home.load': 5_000,
+  'home.paint': 3_000,
+  'search.paint': 3_000,
 };
 
 function getBaseUrl() {
@@ -82,9 +84,68 @@ const fixtureSong = {
   nicoViews: 567,
 };
 
-async function installApiFixtures(page) {
+function fixtureSongForId(id) {
+  return {
+    ...fixtureSong,
+    id,
+    name: `DIVA Performance Song ${id}`,
+    defaultName: `DIVA Performance Song ${id}`,
+  };
+}
+
+function parseIds(url) {
+  return (url.searchParams.get('ids') ?? '')
+    .split(',')
+    .map(Number)
+    .filter(Number.isInteger);
+}
+
+async function seedLargeHistory(page) {
+  await page.evaluate(async () => {
+    localStorage.setItem('diva-history-log-migrated-v1', '1');
+    const db = await new Promise((resolve, reject) => {
+      const request = indexedDB.open('diva-listening-history', 3);
+      request.onupgradeneeded = () => {
+        const database = request.result;
+        const plays = database.objectStoreNames.contains('plays')
+          ? request.transaction.objectStore('plays')
+          : database.createObjectStore('plays', { keyPath: 'id', autoIncrement: true });
+        if (!plays.indexNames.contains('songId')) plays.createIndex('songId', 's', { unique: false });
+        if (!plays.indexNames.contains('playedAt')) plays.createIndex('playedAt', 't', { unique: false });
+        const keyedStores = [
+          ['stats_pending', 'eventId'],
+          ['stats_applied', 'eventId'],
+          ['song_stats', 'songId'],
+          ['year_stats', 'key'],
+          ['month_stats', 'key'],
+          ['stats_meta', 'key'],
+        ];
+        for (const [storeName, keyPath] of keyedStores) {
+          if (!database.objectStoreNames.contains(storeName)) database.createObjectStore(storeName, { keyPath });
+        }
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    await new Promise((resolve, reject) => {
+      const transaction = db.transaction('plays', 'readwrite');
+      const store = transaction.objectStore('plays');
+      store.clear();
+      const now = Date.now();
+      for (let index = 0; index < 300; index += 1) {
+        store.add({ s: 300_001 + index, t: now - index * 60_000, f: 1 });
+      }
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error);
+      transaction.onabort = () => reject(transaction.error);
+    });
+    db.close();
+  });
+}
+
+async function installApiFixtures(page, counters) {
   await page.setRequestInterception(true);
-  page.on('request', request => {
+  page.on('request', async request => {
     const url = new URL(request.url());
     const path = url.pathname;
     const isBackend = path.startsWith('/backend-api/');
@@ -97,6 +158,12 @@ async function installApiFixtures(page) {
     let body = null;
     if (path.endsWith('/api/health') || path.endsWith('/api/ready')) {
       body = { status: path.endsWith('/api/ready') ? 'ready' : 'ok', postgres: true, qdrant: true };
+    } else if (path.includes('/api/songs/batch') || path.includes('/api/songs/details')) {
+      counters.historyMetadataRequests += 1;
+      await new Promise(resolve => setTimeout(resolve, 100));
+      body = { items: parseIds(url).map(fixtureSongForId) };
+    } else if (path.includes('/api/songs/discovery-eligibility')) {
+      body = { items: parseIds(url).map(songId => ({ songId, discoveryEligible: true })) };
     } else if (path.includes('/api/songs/search')) {
       body = { items: [fixtureSong], totalCount: 1 };
     } else if (path.includes('/api/recommend')) {
@@ -164,13 +231,26 @@ async function main() {
   const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox'] });
   const page = await browser.newPage();
   page.setDefaultTimeout(PAGE_TIMEOUT_MS);
-  await installApiFixtures(page);
+  const counters = { historyMetadataRequests: 0 };
+  await installApiFixtures(page, counters);
 
   try {
     await page.goto(baseUrl, { waitUntil: 'domcontentloaded' });
     await waitForCards(page, 'home');
+    await seedLargeHistory(page);
+
+    counters.historyMetadataRequests = 0;
+    const homeStartedAt = Date.now();
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await waitForCards(page, 'home with 300 history entries');
+    const firstCardMs = Date.now() - homeStartedAt;
+    const firstContent = await waitForMetric(page, 'home.first-content');
     const homeLoad = await waitForMetric(page, 'home.load');
     const homePaint = await waitForMetric(page, 'home.paint');
+    assert(
+      counters.historyMetadataRequests <= 3,
+      `History hydration used ${counters.historyMetadataRequests} sequential metadata requests (expected at most 3 parallel chunks).`,
+    );
 
     // This producer name is present in the SBC/VocaDB fixture and keeps the
     // search paint budget independent of a single localized song title.
@@ -182,7 +262,13 @@ async function main() {
     await waitForCards(page, 'search');
     const searchPaint = await waitForMetric(page, 'search.paint');
 
-    const metrics = { 'home.load': homeLoad, 'home.paint': homePaint, 'search.paint': searchPaint };
+    const metrics = {
+      'home.first-card': { durationMs: firstCardMs },
+      'home.first-content': firstContent,
+      'home.load': homeLoad,
+      'home.paint': homePaint,
+      'search.paint': searchPaint,
+    };
     for (const [name, metric] of Object.entries(metrics)) {
       assert(metric && Number.isFinite(metric.durationMs), `${name} was not recorded.`);
       const budget = BUDGETS_MS[name];

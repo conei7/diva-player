@@ -39,6 +39,7 @@ import {
   type DiscoveryRelaxedCondition,
 } from '../utils/globalFilters';
 import { excludeHiddenSongs, useHiddenSongStore } from '../stores/hiddenSongStore';
+import { getPlaybackOwnership } from '../services/playbackOwnership';
 
 function WatchQueue() {
   const queue = usePlayerStore(s => s.queue);
@@ -132,7 +133,12 @@ export default function WatchPage() {
   const navigate = useNavigate();
   const songIdStr = searchParams.get('v');
   const songId = songIdStr ? Number(songIdStr) : null;
-  const shouldAutoplay = searchParams.get('autoplay') !== '0';
+  // Song links use autoplay=0 so a newly opened tab does not steal an active
+  // player from another tab. If no live remote owner exists, the same URL is a
+  // normal direct play request and should start automatically. Stale crashed
+  // owners are expired by playbackOwnership.
+  const shouldAutoplay = searchParams.get('autoplay') !== '0'
+    || getPlaybackOwnership().getState() !== 'remote';
 
   const { currentSong, setQueue, setRootSeed, resume } = usePlayerStore();
   const currentSongId = currentSong?.id;

@@ -2,7 +2,7 @@
 import { useEffect, useRef, useCallback } from 'react';
 import { usePlayerStore } from '../../stores/playerStore';
 import { useProgressStore } from '../../stores/progressStore';
-import { getPlaybackOwnership } from '../../services/playbackOwnership';
+import { getPlaybackOwnership, PLAYBACK_OWNER_HEARTBEAT_MS } from '../../services/playbackOwnership';
 import { createPlaybackAttemptController, type PlaybackAttemptToken } from '../../services/playbackAttempt';
 import { usePlaybackWakeRecovery } from '../../hooks/usePlaybackWakeRecovery';
 import {
@@ -400,7 +400,8 @@ export default function PlayerEmbed() {
     pvId: string;
     songId: number | null;
     playbackSequence: number;
-    attempt: PlaybackAttemptToken;
+    attempt: PlaybackAttemptToken | null;
+    loaded: boolean;
   } | null>(null);
   const volumeRef = useRef(volume);
   const youtubeAutoplayMutedRef = useRef(false);
@@ -465,7 +466,17 @@ export default function PlayerEmbed() {
   }, []);
 
   useEffect(() => {
-    if (isPlaying) ownershipRef.current?.claim(currentSong?.id ?? null);
+    if (!isPlaying) return;
+    const ownership = ownershipRef.current;
+    if (!ownership) return;
+    const refreshClaim = () => {
+      const state = usePlayerStore.getState();
+      if (!state.isPlaying) return;
+      ownership.claim(state.currentSong?.id ?? null);
+    };
+    refreshClaim();
+    const heartbeat = window.setInterval(refreshClaim, PLAYBACK_OWNER_HEARTBEAT_MS);
+    return () => window.clearInterval(heartbeat);
   }, [currentSong?.id, isPlaying]);
 
   // プログレス更新の定期実行
@@ -557,7 +568,7 @@ export default function PlayerEmbed() {
   const failCurrentYouTubeAttempt = useCallback((message: string) => {
     const desired = youtubeDesiredVideoRef.current;
     const attemptController = attemptControllerRef.current;
-    if (!desired || !attemptController.isCurrent(desired.attempt)) return;
+    if (!desired || (desired.attempt && !attemptController.isCurrent(desired.attempt))) return;
     attemptController.cancel();
     youtubeDesiredVideoRef.current = null;
     stopProgressTimer();
@@ -571,31 +582,73 @@ export default function PlayerEmbed() {
     tryNextPV();
   }, [clearEndRecoveryTimer, setError, stopProgressTimer, tryNextPV]);
 
+  const armYouTubePlaybackAttempt = useCallback((player: YT.Player, desired: NonNullable<typeof youtubeDesiredVideoRef.current>) => {
+    const attemptController = attemptControllerRef.current;
+    if (!usePlayerStore.getState().isPlaying) {
+      attemptController.cancel();
+      desired.attempt = null;
+      return;
+    }
+    if (desired.attempt && attemptController.isCurrent(desired.attempt)) return;
+
+    const startAttempt = (): PlaybackAttemptToken => {
+      const token = attemptController.start(desired.pvId, () => {
+        if (youtubeDesiredVideoRef.current !== desired || desired.attempt !== token) return;
+        if (document.hidden && usePlayerStore.getState().isPlaying) {
+          // A hidden page may delay iframe/API readiness even though the PV is
+          // healthy. Keep retrying the same muted player in that case.
+          try {
+            player.mute?.();
+            youtubeAutoplayMutedRef.current = true;
+            player.playVideo?.();
+            scheduleEndRecovery(player);
+          } catch {
+            // The next bounded attempt will retry after iframe readiness.
+          }
+          desired.attempt = startAttempt();
+          return;
+        }
+        failCurrentYouTubeAttempt('YouTube動画の準備がタイムアウトしました');
+      });
+      return token;
+    };
+
+    desired.attempt = startAttempt();
+  }, [failCurrentYouTubeAttempt, scheduleEndRecovery]);
+
   const loadDesiredYouTubeVideo = useCallback((player: YT.Player) => {
     const desired = youtubeDesiredVideoRef.current;
     if (!desired || !youtubeReadyRef.current) return;
-    if (!attemptControllerRef.current.isCurrent(desired.attempt)) return;
     const shouldPlay = usePlayerStore.getState().isPlaying;
     try {
       if (shouldPlay) {
+        armYouTubePlaybackAttempt(player, desired);
         // Loading muted is allowed while the document is hidden. Reusing this
         // already-created player preserves the original user activation instead
         // of asking Chromium to authorize a brand-new background iframe.
         player.mute?.();
         youtubeAutoplayMutedRef.current = true;
-        player.loadVideoById(desired.pvId, 0);
+        if (!desired.loaded) {
+          player.loadVideoById(desired.pvId, 0);
+          desired.loaded = true;
+        }
         player.playVideo?.();
         // Do not unmute until PLAYING. Unmuting during the asynchronous load can
         // make a browser re-evaluate autoplay and defer the start until visible.
         scheduleEndRecovery(player);
       } else {
+        attemptControllerRef.current.cancel();
+        desired.attempt = null;
         youtubeAutoplayMutedRef.current = false;
-        player.cueVideoById(desired.pvId, 0);
+        if (!desired.loaded) {
+          player.cueVideoById(desired.pvId, 0);
+          desired.loaded = true;
+        }
       }
     } catch {
       failCurrentYouTubeAttempt('YouTube動画の準備に失敗しました');
     }
-  }, [failCurrentYouTubeAttempt, scheduleEndRecovery]);
+  }, [armYouTubePlaybackAttempt, failCurrentYouTubeAttempt, scheduleEndRecovery]);
 
   const isYouTube = currentPV?.service === 'Youtube';
   const currentYouTubePVId = isYouTube ? currentPV.pvId : null;
@@ -639,10 +692,19 @@ export default function PlayerEmbed() {
             },
             onStateChange: (event: YT.OnStateChangeEvent) => {
               const desired = youtubeDesiredVideoRef.current;
-              if (!desired || !attemptControllerRef.current.isCurrent(desired.attempt)) return;
+              if (!desired) return;
               switch (event.data) {
                 case window.YT.PlayerState.PLAYING: {
-                  attemptControllerRef.current.complete(desired.attempt);
+                  if (!usePlayerStore.getState().isPlaying) {
+                    attemptControllerRef.current.cancel();
+                    desired.attempt = null;
+                    event.target.pauseVideo?.();
+                    break;
+                  }
+                  if (desired.attempt && attemptControllerRef.current.isCurrent(desired.attempt)) {
+                    attemptControllerRef.current.complete(desired.attempt);
+                    desired.attempt = null;
+                  }
                   const activePV = usePlayerStore.getState().currentPV;
                   if (activePV?.service === 'Youtube' && activePV.pvId === desired.pvId) {
                     markPVHealthy(activePV);
@@ -658,8 +720,11 @@ export default function PlayerEmbed() {
                   scheduleEndRecovery(event.target);
                   break;
                 }
-                case window.YT.PlayerState.PAUSED:
-                  if (document.hidden && usePlayerStore.getState().isPlaying) {
+                case window.YT.PlayerState.PAUSED: {
+                  const startupPending = Boolean(
+                    desired.attempt && attemptControllerRef.current.isCurrent(desired.attempt),
+                  );
+                  if (usePlayerStore.getState().isPlaying && (startupPending || document.hidden)) {
                     event.target.playVideo?.();
                     scheduleEndRecovery(event.target);
                     break;
@@ -668,6 +733,7 @@ export default function PlayerEmbed() {
                   stopProgressTimer();
                   clearEndRecoveryTimer();
                   break;
+                }
                 case window.YT.PlayerState.ENDED:
                   advanceOnce();
                   break;
@@ -727,36 +793,13 @@ export default function PlayerEmbed() {
     if (currentSong?.lengthSeconds) setDuration(currentSong.lengthSeconds);
 
     const pvId = currentYouTubePVId;
-    const armAttempt = (): PlaybackAttemptToken => {
-      const token = attemptController.start(pvId, () => {
-        const desired = youtubeDesiredVideoRef.current;
-        if (!desired || desired.attempt !== token) return;
-        if (document.hidden && usePlayerStore.getState().isPlaying) {
-          // A hidden page may delay iframe/API readiness even though the PV is
-          // healthy. Keep the preferred YouTube PV selected and retry muted;
-          // only an explicit YT error or a visible timeout may fail it over.
-          try {
-            ytPlayerRef.current?.mute?.();
-            youtubeAutoplayMutedRef.current = true;
-            ytPlayerRef.current?.playVideo?.();
-            if (ytPlayerRef.current) scheduleEndRecovery(ytPlayerRef.current);
-          } catch {
-            // The next bounded attempt will retry after iframe readiness.
-          }
-          desired.attempt = armAttempt();
-          return;
-        }
-        failCurrentYouTubeAttempt('YouTube動画の準備がタイムアウトしました');
-      });
-      return token;
-    };
-    const attempt = armAttempt();
     const songId = currentSong?.id ?? null;
     youtubeDesiredVideoRef.current = {
       pvId,
       songId,
       playbackSequence,
-      attempt,
+      attempt: null,
+      loaded: false,
     };
     const player = ytPlayerRef.current;
     if (player && youtubeReadyRef.current) loadDesiredYouTubeVideo(player);
@@ -770,7 +813,7 @@ export default function PlayerEmbed() {
       attemptController.cancel();
       youtubeDesiredVideoRef.current = null;
     };
-  }, [clearEndRecoveryTimer, currentSong?.id, currentSong?.lengthSeconds, currentYouTubePVId, failCurrentYouTubeAttempt, loadDesiredYouTubeVideo, playbackSequence, scheduleEndRecovery, setDuration, setProgress, stopProgressTimer]);
+  }, [clearEndRecoveryTimer, currentSong?.id, currentSong?.lengthSeconds, currentYouTubePVId, loadDesiredYouTubeVideo, playbackSequence, setDuration, setProgress, stopProgressTimer]);
 
   // Muted autoplay is the browser-safe way to get a newly selected song
   // moving in a background tab. If the session had no activation yet, restore
@@ -829,17 +872,23 @@ export default function PlayerEmbed() {
   // 再生/一時停止の同期
   useEffect(() => {
     if (!ytPlayerRef.current || !currentPV || currentPV.service !== 'Youtube') return;
-    
+    const desired = youtubeDesiredVideoRef.current;
     try {
       if (isPlaying) {
-        ytPlayerRef.current.playVideo?.();
+        if (desired && youtubeReadyRef.current) {
+          loadDesiredYouTubeVideo(ytPlayerRef.current);
+        } else {
+          ytPlayerRef.current.playVideo?.();
+        }
       } else {
+        attemptControllerRef.current.cancel();
+        if (desired) desired.attempt = null;
         ytPlayerRef.current.pauseVideo?.();
       }
     } catch {
       // プレイヤーが準備できていない場合は無視
     }
-  }, [isPlaying, currentPV]);
+  }, [isPlaying, currentPV, loadDesiredYouTubeVideo]);
 
   // ボリューム同期
   useEffect(() => {

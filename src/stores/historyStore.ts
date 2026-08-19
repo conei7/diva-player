@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { get as idbGet, del as idbDel } from 'idb-keyval';
-import { getSongById } from '../api/vocadb';
+import { getSongsByIds } from '../api/vocadb';
 import type { Song } from '../types/vocadb';
 import { HISTORY_STORES, openHistoryDb } from '../services/historyDatabase';
 import { filterHistoryEntries } from '../utils/historySearch';
@@ -9,7 +9,7 @@ const PLAY_STORE = HISTORY_STORES.plays;
 const LEGACY_HISTORY_KEY = 'diva-history';
 const LEGACY_MIGRATED_KEY = 'diva-history-log-migrated-v1';
 const RECENT_ENTRY_LIMIT = 300;
-const SONG_FETCH_CONCURRENCY = 8;
+const SONG_METADATA_WAVE_SIZE = 300;
 const DUPLICATE_PLAY_WINDOW_MS = 2000;
 
 export interface HistoryEntry {
@@ -209,18 +209,20 @@ async function clearPlayEvents(): Promise<void> {
 
 async function loadEntriesFromEvents(events: ListeningPlayEvent[]): Promise<HistoryEntry[]> {
   const songIds = [...new Set(events.map(event => event.s))];
-  const songPairs: Array<readonly [number, Song | null]> = [];
-  for (let index = 0; index < songIds.length; index += SONG_FETCH_CONCURRENCY) {
-    const batch = await Promise.all(songIds.slice(index, index + SONG_FETCH_CONCURRENCY).map(async id => {
-      try {
-        return [id, await getSongById(id)] as const;
-      } catch {
-        return [id, null] as const;
-      }
-    }));
-    songPairs.push(...batch);
+  const songs: Song[] = [];
+  for (let index = 0; index < songIds.length; index += SONG_METADATA_WAVE_SIZE) {
+    try {
+      // Each 300-ID wave becomes at most three parallel compact requests.
+      // Walking the initial snapshot eight songs at a time made Home wait for
+      // up to 38 sequential round trips, while one unbounded wave would make a
+      // full-history search fan out too aggressively.
+      songs.push(...await getSongsByIds(songIds.slice(index, index + SONG_METADATA_WAVE_SIZE)));
+    } catch {
+      // History is best-effort during startup. A failed metadata wave must not
+      // block the rest of the application from hydrating.
+    }
   }
-  const songMap = new Map(songPairs);
+  const songMap = new Map(songs.map(song => [song.id, song]));
 
   return events.flatMap(event => {
     const song = songMap.get(event.s);

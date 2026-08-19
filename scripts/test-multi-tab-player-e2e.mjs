@@ -4,20 +4,23 @@ const baseUrl = process.argv[2] || 'http://127.0.0.1:5173/diva-player/';
 const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox'] });
 
 const song = {
-  id: 900008,
-  name: 'Multi-tab ownership fixture',
+  id: 483777,
+  name: 'スターダストメドレー',
   artistString: 'Fixture producer',
   createDate: '2026-01-01T00:00:00Z',
-  defaultName: 'Multi-tab ownership fixture',
-  defaultNameLanguage: 'English',
+  defaultName: 'スターダストメドレー',
+  defaultNameLanguage: 'Japanese',
   favoritedTimes: 0,
   lengthSeconds: 120,
-  pvServices: 'Youtube',
+  pvServices: 'Youtube,NicoNicoDouga',
   ratingScore: 0,
   songType: 'Original',
   status: 'Finished',
   version: 1,
-  pvs: [{ author: '', disabled: false, id: 9000081, length: 120, name: 'fixture', pvId: 'fixture', service: 'Youtube', pvType: 'Original', url: 'https://youtu.be/fixture' }],
+  pvs: [
+    { author: '', disabled: false, id: 4837771, length: 120, name: 'YouTube Topic fixture', pvId: 'fixture', service: 'Youtube', pvType: 'Original', url: 'https://youtu.be/fixture' },
+    { author: '', disabled: false, id: 4837772, length: 120, name: 'Nico official fixture', pvId: 'sm-fixture', service: 'NicoNicoDouga', pvType: 'Original', url: 'https://www.nicovideo.jp/watch/sm-fixture' },
+  ],
 };
 
 async function preparePage() {
@@ -48,7 +51,7 @@ async function preparePage() {
       });
       return;
     }
-    if (requestUrl.startsWith('https://vocadb.net/api/songs/900008?')) {
+    if (requestUrl.startsWith(`https://vocadb.net/api/songs/${song.id}?`)) {
       await request.respond({
         contentType: 'application/json',
         headers: { 'access-control-allow-origin': '*' },
@@ -56,8 +59,8 @@ async function preparePage() {
       });
       return;
     }
-    if (requestUrl.includes('/backend-api/api/songs/views?ids=900008')) {
-      await request.respond({ contentType: 'application/json', body: JSON.stringify({ 900008: { youtubeViews: 0, nicoViews: 0 } }) });
+    if (requestUrl.includes(`/backend-api/api/songs/views?ids=${song.id}`)) {
+      await request.respond({ contentType: 'application/json', body: JSON.stringify({ [song.id]: { youtubeViews: 0, nicoViews: 0 } }) });
       return;
     }
     if (requestUrl !== 'https://www.youtube.com/iframe_api') {
@@ -103,7 +106,7 @@ async function preparePage() {
 }
 
 async function startAndOpenMiniPlayer(page) {
-  await page.goto(new URL('watch?v=900008', baseUrl), { waitUntil: 'domcontentloaded', timeout: 60_000 });
+  await page.goto(new URL(`watch?v=${song.id}`, baseUrl), { waitUntil: 'domcontentloaded', timeout: 60_000 });
   await page.waitForFunction(() => {
     const owner = JSON.parse(localStorage.getItem('diva-playback-owner-v1') || 'null');
     return owner?.type === 'claim' && owner.tabId === sessionStorage.getItem('diva-playback-tab-v1');
@@ -114,7 +117,9 @@ async function startAndOpenMiniPlayer(page) {
 }
 
 async function assertLazyNavigationKeepsPlayback(page) {
-  await page.goto(new URL('watch?v=900008', baseUrl), { waitUntil: 'domcontentloaded', timeout: 60_000 });
+  // With no live owner, a copied autoplay=0 URL is still expected to play.
+  // The flag only prevents a newly opened tab from stealing another tab.
+  await page.goto(new URL(`watch?v=${song.id}&autoplay=0`, baseUrl), { waitUntil: 'domcontentloaded', timeout: 60_000 });
   await page.waitForFunction(() => window.__playerLifecycle?.state === 1);
   await page.click('button[aria-label="メニュー"]');
   await page.waitForSelector('a[href$="/knowledge-map"]', { visible: true });
@@ -148,10 +153,41 @@ async function assertLazyNavigationKeepsPlayback(page) {
   if (!state.isMiniPlayerVisible || state.ownerTabId !== state.thisTabId) {
     throw new Error(`Lazy navigation lost the local mini-player owner: ${JSON.stringify(state)}`);
   }
-  if (state.title !== 'Multi-tab ownership fixture — Fixture producer | DIVA Player') {
+  if (state.title !== 'スターダストメドレー — Fixture producer | DIVA Player') {
     throw new Error(`Lazy navigation left an inconsistent browser title: ${JSON.stringify(state)}`);
   }
   console.log('PASS lazy page navigation preserves playback, mini-player ownership, and title');
+}
+
+async function assertAutoplayZeroStaysPassive(page) {
+  await page.goto(new URL(`watch?v=${song.id}&autoplay=0`, baseUrl), { waitUntil: 'domcontentloaded', timeout: 60_000 });
+  await page.waitForFunction(songName => (
+    window.__playerLifecycle?.created === 1 && document.title.startsWith(songName)
+  ), {}, song.name);
+  const initialState = await page.evaluate(() => window.__playerLifecycle?.state);
+  if (initialState === 1) {
+    throw new Error(`autoplay=0 started while another tab owned playback (state ${initialState})`);
+  }
+
+  // The old implementation armed a 12-second readiness timeout even though
+  // playback was intentionally paused. That falsely failed YouTube and fell
+  // through to the Nico PV. Wait past that boundary to lock in the fix.
+  await new Promise(resolve => setTimeout(resolve, 13_000));
+  const state = await page.evaluate(songId => ({
+    lifecycle: window.__playerLifecycle,
+    failedPVs: JSON.parse(localStorage.getItem('diva_failedPVsV2') || '{}')[String(songId)] ?? null,
+    hasNicoPlayer: Boolean(document.querySelector('iframe[src*="embed.nicovideo.jp"]')),
+    hasMiniPlayer: Boolean(document.querySelector('.global-mini-player')),
+    ownerTabId: JSON.parse(localStorage.getItem('diva-playback-owner-v1') || 'null')?.tabId,
+    thisTabId: sessionStorage.getItem('diva-playback-tab-v1'),
+  }), song.id);
+  if (state.lifecycle.state === 1 || state.failedPVs || state.hasNicoPlayer || state.hasMiniPlayer) {
+    throw new Error(`autoplay=0 falsely started or failed over after 12 seconds: ${JSON.stringify(state)}`);
+  }
+  if (state.ownerTabId === state.thisTabId) {
+    throw new Error(`autoplay=0 stole playback ownership from the active tab: ${JSON.stringify(state)}`);
+  }
+  console.log('PASS song 483777 autoplay=0 stays paused on YouTube past the old 12-second failover');
 }
 
 try {
@@ -160,8 +196,7 @@ try {
   await startAndOpenMiniPlayer(first);
 
   const second = await preparePage();
-  await second.goto(baseUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
-  await second.waitForSelector('[data-testid="global-player"]');
+  await assertAutoplayZeroStaysPassive(second);
   const passiveState = await second.evaluate(() => ({
     hasMiniPlayer: Boolean(document.querySelector('.global-mini-player')),
     ownerTabId: JSON.parse(localStorage.getItem('diva-playback-owner-v1') || 'null')?.tabId,

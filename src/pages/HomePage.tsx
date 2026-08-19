@@ -139,7 +139,10 @@ export default function HomePage() {
     searchByArtistId(artistId, decodeURIComponent(artistNameParam), artistRoleParam || undefined);
   }, [artistIdParam, artistNameParam, artistRoleParam, searchByArtistId, setAdvancedSearchOpen]);
 
-  const fetchRecommendedHomeSongs = useCallback(async (pageNum: number): Promise<Song[]> => {
+  const fetchRecommendedHomeSongs = useCallback(async (
+    pageNum: number,
+    onPopularReady?: (songs: Song[]) => void,
+  ): Promise<Song[]> => {
     const excludeIds = new Set<number>();
     if (currentSong?.id) excludeIds.add(currentSong.id);
 
@@ -217,18 +220,31 @@ export default function HomePage() {
           .catch(() => [] as Song[]),
       )),
     ]);
-    const [popularResult, optionalResult] = await Promise.all([
-      searchSongsBackend({
-        sort: 'FavoritedTimes',
-        sortOrder: 'desc',
-        maxResults: 12,
-        start: pageNum * 12,
-        discoveryOnly: true,
-      }),
-      pageNum === 0
-        ? resolveWithin(optionalSources, INITIAL_OPTIONAL_RECOMMENDATION_BUDGET_MS, [[], [], [], []] as Song[][][])
-        : optionalSources.then(value => ({ value, timedOut: false })),
-    ]);
+    const popularPromise = searchSongsBackend({
+      sort: 'FavoritedTimes',
+      sortOrder: 'desc',
+      maxResults: 12,
+      start: pageNum * 12,
+      discoveryOnly: true,
+    });
+    const optionalPromise = pageNum === 0
+      ? resolveWithin(optionalSources, INITIAL_OPTIONAL_RECOMMENDATION_BUDGET_MS, [[], [], [], []] as Song[][][])
+      : optionalSources.then(value => ({ value, timedOut: false }));
+
+    // The personalized sources are valuable but can legitimately use their
+    // whole 2.5-second budget. Paint the authoritative popular fallback as
+    // soon as it arrives, then replace it with the personalized mix below.
+    // This keeps first content independent from a cold recommendation path.
+    if (pageNum === 0 && onPopularReady) {
+      void popularPromise.then(result => {
+        const fallback = filterVoiceSynthSongs(result.items);
+        if (fallback.length > 0) onPopularReady(fallback);
+      }).catch(() => {
+        // The final Promise.all below owns the actual error handling path.
+      });
+    }
+
+    const [popularResult, optionalResult] = await Promise.all([popularPromise, optionalPromise]);
     const [seedResults, preferenceResults, audioResults, favoriteResults] = optionalResult.value;
     const hybridCandidates = uniqueSongsById([
       ...favoriteResults.flat(),
@@ -330,7 +346,18 @@ export default function HomePage() {
             break;
           }
           case 'recommended':
-            result = await fetchRecommendedHomeSongs(pageNum);
+            result = await fetchRecommendedHomeSongs(pageNum, pageNum === 0 ? interimSongs => {
+              if (requestId !== requestIdRef.current) return;
+              setSongs(interimSongs);
+              setRecommendationReasons({});
+              setLoading(false);
+              recordPerformanceMetric({
+                name: 'home.first-content',
+                startedAt,
+                segments: [{ name: 'source', durationMs: performanceNow() - sourceStartedAt }],
+                detail: { category, displayedCount: interimSongs.length },
+              });
+            } : undefined);
             break;
           case 'trending':
             result = await getTrendingSongs(7, PAGE_SIZE, pageNum * PAGE_SIZE, 'surge', 0, globalFilterSettings);
