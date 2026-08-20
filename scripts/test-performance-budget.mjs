@@ -112,6 +112,19 @@ async function seedLargeHistory(page) {
       },
       version: 0,
     }));
+    localStorage.setItem('diva-global-filters', JSON.stringify({
+      state: {
+        enabled: false,
+        minYoutubeViews: 0,
+        minNicoViews: 0,
+        excludedSongTypes: [],
+        vocalistFilters: [],
+        vocalistMatchMode: 'Any',
+        cooldownHours: 24,
+        excludeRatedFromDiscovery: false,
+      },
+      version: 2,
+    }));
     const db = await new Promise((resolve, reject) => {
       const request = indexedDB.open('diva-listening-history', 3);
       request.onupgradeneeded = () => {
@@ -144,6 +157,7 @@ async function seedLargeHistory(page) {
       for (let index = 0; index < 300; index += 1) {
         store.add({ s: 300_001 + index, t: now - index * 60_000, f: 1 });
       }
+      store.add({ s: 2502, t: now - 60_000, f: 1 });
       transaction.oncomplete = () => resolve();
       transaction.onerror = () => reject(transaction.error);
       transaction.onabort = () => reject(transaction.error);
@@ -180,7 +194,7 @@ async function installApiFixtures(page, counters) {
         && url.searchParams.get('maxResults') === '12') {
         counters.startupPopularRequests += 1;
       }
-      body = { items: [fixtureSong, fixtureSongForId(2502)], totalCount: 2 };
+      body = { items: [fixtureSong, fixtureSongForId(2502), fixtureSongForId(2503)], totalCount: 3 };
     } else if (path.includes('/api/recommend')) {
       body = { items: [] };
     } else if (path.match(/\/api\/songs\/\d+$/)) {
@@ -269,8 +283,10 @@ async function main() {
       `Document-start recommendation shell missed its budget: ${JSON.stringify(startupShell)}`,
     );
     assert(
-      !startupShell.songIds.includes(2501) && startupShell.songIds.includes(2502),
-      `Document-start recommendations bypassed the hidden-song filter: ${JSON.stringify(startupShell)}`,
+      !startupShell.songIds.includes(2501)
+        && !startupShell.songIds.includes(2502)
+        && startupShell.songIds.includes(2503),
+      `Document-start recommendations bypassed a local hidden/cooldown filter: ${JSON.stringify(startupShell)}`,
     );
     assert(
       firstContent?.detail?.source === 'startup-popular',

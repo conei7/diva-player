@@ -140,27 +140,87 @@
           var allowed = new Set(filters.map(function(filter) { return filter.id; }));
           return Array.from(vocalistIds).every(function(id) { return allowed.has(id); });
         }
+        function recentCooldownSongIds(items, cooldownHours) {
+          var excluded = new Set();
+          if (!(cooldownHours > 0)) return Promise.resolve(excluded);
+          // Opening a missing database here would create an incomplete schema.
+          // Only read an existing v3 history database; unsupported browsers
+          // fall back to React rather than weakening the cooldown.
+          if (typeof indexedDB === 'undefined' || typeof indexedDB.databases !== 'function') {
+            return Promise.reject(new Error('IndexedDB database listing is unavailable'));
+          }
+          var songIds = new Set(items.map(function(song) { return Number(song?.id); }).filter(Number.isInteger));
+          var cutoff = Date.now() - cooldownHours * 60 * 60 * 1000;
+          return indexedDB.databases().then(function(databases) {
+            if (!databases.some(function(database) { return database.name === 'diva-listening-history'; })) {
+              return excluded;
+            }
+            return new Promise(function(resolve, reject) {
+              var request = indexedDB.open('diva-listening-history');
+              var settled = false;
+              function fail(error) {
+                if (settled) return;
+                settled = true;
+                reject(error instanceof Error ? error : new Error('Startup cooldown history read failed'));
+              }
+              request.onupgradeneeded = function() {
+                request.transaction?.abort();
+                fail(new Error('Startup history database was not initialized'));
+              };
+              request.onerror = function() { fail(request.error); };
+              request.onsuccess = function() {
+                var database = request.result;
+                try {
+                  if (!database.objectStoreNames.contains('plays')) throw new Error('History plays store is unavailable');
+                  var transaction = database.transaction('plays', 'readonly');
+                  var store = transaction.objectStore('plays');
+                  if (!store.indexNames.contains('playedAt')) throw new Error('History playedAt index is unavailable');
+                  var cursorRequest = store.index('playedAt').openCursor(IDBKeyRange.lowerBound(cutoff), 'prev');
+                  cursorRequest.onsuccess = function() {
+                    var cursor = cursorRequest.result;
+                    if (!cursor || excluded.size >= songIds.size) {
+                      if (!settled) {
+                        settled = true;
+                        resolve(excluded);
+                      }
+                      database.close();
+                      return;
+                    }
+                    var songId = Number(cursor.value?.s);
+                    if (songIds.has(songId)) excluded.add(songId);
+                    cursor.continue();
+                  };
+                  cursorRequest.onerror = function() { database.close(); fail(cursorRequest.error); };
+                  transaction.onerror = function() { database.close(); fail(transaction.error); };
+                  transaction.onabort = function() { database.close(); fail(transaction.error); };
+                } catch (error) {
+                  database.close();
+                  fail(error);
+                }
+              };
+            });
+          });
+        }
         function filteredSongs(items) {
           var hidden = persistedState('diva-hidden-songs').hiddenSongs || {};
           var ratings = persistedState('diva-ratings').ratings || {};
           var settings = persistedState('diva-global-filters');
-          // Cooldown depends on IndexedDB history. Do not bypass it for speed;
-          // keep the shell until React applies the authoritative local state.
-          if (Number(settings.cooldownHours || 0) > 0) return [];
-          return items.filter(function(song) {
-            if (!song || !Number.isInteger(song.id) || hidden[String(song.id)]) return false;
-            if (settings.excludeRatedFromDiscovery && Number(ratings[String(song.id)] || 0) > 0) return false;
-            if (settings.enabled) {
-              if ((settings.excludedSongTypes || []).includes(song.songType)) return false;
-              if (!vocalistMatches(song, settings)) return false;
-              var youtubeMinimum = Number(settings.minYoutubeViews || 0);
-              var youtubeViews = Number(song.youtubeViews);
-              if (youtubeMinimum > 0 && (!Number.isFinite(youtubeViews) || youtubeViews < youtubeMinimum)) return false;
-              var nicoMinimum = Number(settings.minNicoViews || 0);
-              var nicoViews = Number(song.nicoViews);
-              if (nicoMinimum > 0 && (!Number.isFinite(nicoViews) || nicoViews < nicoMinimum)) return false;
-            }
-            return true;
+          return recentCooldownSongIds(items, Number(settings.cooldownHours || 0)).then(function(cooldownSongIds) {
+            return items.filter(function(song) {
+              if (!song || !Number.isInteger(song.id) || hidden[String(song.id)] || cooldownSongIds.has(song.id)) return false;
+              if (settings.excludeRatedFromDiscovery && Number(ratings[String(song.id)] || 0) > 0) return false;
+              if (settings.enabled) {
+                if ((settings.excludedSongTypes || []).includes(song.songType)) return false;
+                if (!vocalistMatches(song, settings)) return false;
+                var youtubeMinimum = Number(settings.minYoutubeViews || 0);
+                var youtubeViews = Number(song.youtubeViews);
+                if (youtubeMinimum > 0 && (!Number.isFinite(youtubeViews) || youtubeViews < youtubeMinimum)) return false;
+                var nicoMinimum = Number(settings.minNicoViews || 0);
+                var nicoViews = Number(song.nicoViews);
+                if (nicoMinimum > 0 && (!Number.isFinite(nicoViews) || nicoViews < nicoMinimum)) return false;
+              }
+              return true;
+            });
           });
         }
         function duration(seconds) {
@@ -169,7 +229,8 @@
           return Math.floor(value / 60) + ':' + String(Math.floor(value % 60)).padStart(2, '0');
         }
         startup?.data.then(function(payload) {
-          var songs = filteredSongs(Array.isArray(payload?.items) ? payload.items : []);
+          return filteredSongs(Array.isArray(payload?.items) ? payload.items : []);
+        }).then(function(songs) {
           if (songs.length === 0 || dismissed) return;
           var grid = document.getElementById('startup-grid');
           if (!grid) return;
