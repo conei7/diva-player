@@ -336,7 +336,7 @@ describe('backend artist union search', () => {
   });
 
   it('consumes the document-start popular request without issuing a duplicate fetch', async () => {
-    const startupUrl = '/backend-api/api/songs/search?sort=FavoritedTimes&order=desc&start=0&maxResults=12&onlyWithPVs=true&discoveryOnly=true';
+    const startupUrl = '/backend-api/api/songs/search?sort=FavoritedTimes&order=desc&start=0&maxResults=48&onlyWithPVs=true&discoveryOnly=true';
     const startupResponse = {
       ok: true,
       headers: { get: () => null },
@@ -355,7 +355,7 @@ describe('backend artist union search', () => {
       sort: 'FavoritedTimes',
       sortOrder: 'desc',
       start: 0,
-      maxResults: 12,
+      maxResults: 48,
       discoveryOnly: true,
     });
 

@@ -191,7 +191,7 @@ async function installApiFixtures(page, counters) {
       if (url.searchParams.get('discoveryOnly') === 'true'
         && url.searchParams.get('sort') === 'FavoritedTimes'
         && url.searchParams.get('start') === '0'
-        && url.searchParams.get('maxResults') === '12') {
+        && url.searchParams.get('maxResults') === '48') {
         counters.startupPopularRequests += 1;
       }
       body = { items: [fixtureSong, fixtureSongForId(2502), fixtureSongForId(2503)], totalCount: 3 };

@@ -63,7 +63,7 @@
         if (!isHome || params.has('q') || params.has('artistId')) return;
 
         document.documentElement.classList.add('diva-startup-home');
-        var url = '/backend-api/api/songs/search?sort=FavoritedTimes&order=desc&start=0&maxResults=12&onlyWithPVs=true&discoveryOnly=true';
+        var url = '/backend-api/api/songs/search?sort=FavoritedTimes&order=desc&start=0&maxResults=48&onlyWithPVs=true&discoveryOnly=true';
         var response = fetch(url);
         // Keep the speculative request quiet if navigation leaves Home before
         // the application consumes it. Awaiting the original promise still
@@ -232,11 +232,12 @@
           return filteredSongs(Array.isArray(payload?.items) ? payload.items : []);
         }).then(function(songs) {
           if (songs.length === 0 || dismissed) return;
+          var displaySongs = songs.slice(0, 12);
           var grid = document.getElementById('startup-grid');
           if (!grid) return;
           grid.replaceChildren();
           var base = location.pathname.replace(/\/+$/, '') === '/diva-player' ? '/diva-player' : '';
-          songs.forEach(function(song) {
+          displaySongs.forEach(function(song) {
             var card = document.createElement('a');
             card.className = 'startup-card';
             card.href = base + '/watch?v=' + encodeURIComponent(song.id) + '&autoplay=0';
@@ -271,8 +272,8 @@
           document.getElementById('startup-home')?.setAttribute('aria-label', 'あなたへのおすすめ');
           window.__DIVA_STARTUP_TIMING__ = {
             cardsRenderedAt: performance.now(),
-            displayedCount: songs.length,
-            songIds: songs.map(function(song) { return song.id; })
+            displayedCount: displaySongs.length,
+            songIds: displaySongs.map(function(song) { return song.id; })
           };
         }).catch(window.__DIVA_DISMISS_STARTUP_HOME__);
       }())
