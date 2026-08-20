@@ -104,6 +104,7 @@ function parseIds(url) {
 async function seedLargeHistory(page) {
   await page.evaluate(async () => {
     localStorage.setItem('diva-history-log-migrated-v1', '1');
+    localStorage.removeItem('diva-startup-recommendations');
     localStorage.setItem('diva-hidden-songs', JSON.stringify({
       state: {
         hiddenSongs: {
@@ -155,7 +156,7 @@ async function seedLargeHistory(page) {
       store.clear();
       const now = Date.now();
       for (let index = 0; index < 300; index += 1) {
-        store.add({ s: 300_001 + index, t: now - index * 60_000, f: 1 });
+        store.add({ s: 300_001 + index, t: now - 48 * 60 * 60 * 1000 - index * 60_000, f: 1 });
       }
       store.add({ s: 2502, t: now - 60_000, f: 1 });
       transaction.oncomplete = () => resolve();
@@ -183,7 +184,7 @@ async function installApiFixtures(page, counters) {
       body = { status: path.endsWith('/api/ready') ? 'ready' : 'ok', postgres: true, qdrant: true };
     } else if (path.includes('/api/songs/batch') || path.includes('/api/songs/details')) {
       counters.historyMetadataRequests += 1;
-      await new Promise(resolve => setTimeout(resolve, HISTORY_METADATA_DELAY_MS));
+      await new Promise(resolve => setTimeout(resolve, counters.historyMetadataDelayMs));
       body = { items: parseIds(url).map(fixtureSongForId) };
     } else if (path.includes('/api/songs/discovery-eligibility')) {
       body = { items: parseIds(url).map(songId => ({ songId, discoveryEligible: true })) };
@@ -265,7 +266,12 @@ async function main() {
   const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox'] });
   const page = await browser.newPage();
   page.setDefaultTimeout(PAGE_TIMEOUT_MS);
-  const counters = { historyMetadataRequests: 0, startupPopularRequests: 0, startupPopularMoreRequests: 0 };
+  const counters = {
+    historyMetadataRequests: 0,
+    startupPopularRequests: 0,
+    startupPopularMoreRequests: 0,
+    historyMetadataDelayMs: HISTORY_METADATA_DELAY_MS,
+  };
   await installApiFixtures(page, counters);
 
   try {
@@ -312,6 +318,30 @@ async function main() {
     );
     await page.waitForFunction(() => Array.from(document.querySelectorAll('a[href*="/watch?v="]'))
       .some(link => /[?&]v=300\d{3}/.test(link.getAttribute('href') ?? '')));
+    try {
+      await page.waitForFunction(() => {
+        const cached = JSON.parse(localStorage.getItem('diva-startup-recommendations') || 'null');
+        return Array.isArray(cached?.songs) && cached.songs.some(song => /^300\d{3}$/.test(String(song.id)));
+      });
+    } catch (error) {
+      const diagnostic = await page.evaluate(() => ({
+        cache: JSON.parse(localStorage.getItem('diva-startup-recommendations') || 'null'),
+        links: Array.from(document.querySelectorAll('a[href*="/watch?v="]')).slice(0, 30)
+          .map(link => link.getAttribute('href')),
+      }));
+      throw new Error(`Personalized startup cache was not persisted: ${JSON.stringify(diagnostic)} (${error.message})`);
+    }
+
+    counters.historyMetadataDelayMs = 0;
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.waitForFunction(() => window.__DIVA_STARTUP_TIMING__?.source === 'personalized-cache');
+    const cachedStartupShell = await page.evaluate(() => window.__DIVA_STARTUP_TIMING__ ?? null);
+    assert(
+      cachedStartupShell?.cardsRenderedAt <= BUDGETS_MS['home.first-card']
+        && cachedStartupShell.songIds.some(songId => /^300\d{3}$/.test(String(songId))),
+      `Personalized startup cache was not rendered immediately: ${JSON.stringify(cachedStartupShell)}`,
+    );
+    console.log(`PASS home.personalized-cache: ${Math.round(cachedStartupShell.cardsRenderedAt)}ms / ${BUDGETS_MS['home.first-card']}ms`);
 
     // This producer name is present in the SBC/VocaDB fixture and keeps the
     // search paint budget independent of a single localized song title.

@@ -33,7 +33,12 @@ declare global {
       data?: Promise<{ items?: Song[]; totalCount?: number }>;
     };
     __DIVA_DISMISS_STARTUP_HOME__?: () => void;
-    __DIVA_STARTUP_TIMING__?: { cardsRenderedAt: number; displayedCount: number; songIds: number[] };
+    __DIVA_STARTUP_TIMING__?: {
+      cardsRenderedAt: number;
+      displayedCount: number;
+      songIds: number[];
+      source?: 'personalized-cache' | 'popular-primary' | 'popular-fill';
+    };
   }
 }
 

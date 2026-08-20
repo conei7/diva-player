@@ -124,6 +124,16 @@
             return {};
           }
         }
+        function cachedRecommendations() {
+          try {
+            var cached = JSON.parse(localStorage.getItem('diva-startup-recommendations') || 'null');
+            if (cached?.version !== 1 || !Array.isArray(cached.songs)) return [];
+            if (!Number.isFinite(cached.savedAt) || Date.now() - cached.savedAt > 12 * 60 * 60 * 1000) return [];
+            return cached.songs;
+          } catch (_) {
+            return [];
+          }
+        }
         function vocalistMatches(song, settings) {
           var filters = Array.isArray(settings.vocalistFilters) ? settings.vocalistFilters : [];
           if (filters.length === 0) return true;
@@ -234,7 +244,7 @@
           if (value <= 0) return '';
           return Math.floor(value / 60) + ':' + String(Math.floor(value % 60)).padStart(2, '0');
         }
-        function renderSongs(songs) {
+        function renderSongs(songs, source) {
           if (songs.length === 0 || dismissed) return false;
           var displaySongs = songs.slice(0, 12);
           var grid = document.getElementById('startup-grid');
@@ -277,7 +287,8 @@
           window.__DIVA_STARTUP_TIMING__ = {
             cardsRenderedAt: window.__DIVA_STARTUP_TIMING__?.cardsRenderedAt ?? performance.now(),
             displayedCount: displaySongs.length,
-            songIds: displaySongs.map(function(song) { return song.id; })
+            songIds: displaySongs.map(function(song) { return song.id; }),
+            source: window.__DIVA_STARTUP_TIMING__?.source ?? source
           };
           return true;
         }
@@ -286,16 +297,25 @@
         }
         var primaryItems = startup?.data.then(payloadItems) ?? Promise.resolve([]);
         var moreItems = startupMore?.data.then(payloadItems) ?? Promise.resolve([]);
+        var preferredRendered = false;
+        var cachedItems = cachedRecommendations();
+        if (cachedItems.length > 0) {
+          filteredSongs(cachedItems).then(function(songs) {
+            preferredRendered = renderSongs(songs, 'personalized-cache');
+          }).catch(function() {});
+        }
         // Paint page zero as soon as it has any eligible songs. The second
         // cacheable page only fills strict-filter gaps and updates the grid.
-        primaryItems.then(filteredSongs).then(renderSongs).catch(function() {});
+        primaryItems.then(filteredSongs).then(function(songs) {
+          if (!preferredRendered) renderSongs(songs, 'popular-primary');
+        }).catch(function() {});
         Promise.all([
           primaryItems.catch(function() { return []; }),
           moreItems.catch(function() { return []; })
         ]).then(function(pages) {
           return filteredSongs(pages[0].concat(pages[1]));
         }).then(function(songs) {
-          if (!renderSongs(songs)) window.__DIVA_DISMISS_STARTUP_HOME__?.();
+          if (!preferredRendered && !renderSongs(songs, 'popular-fill')) window.__DIVA_DISMISS_STARTUP_HOME__?.();
         }).catch(window.__DIVA_DISMISS_STARTUP_HOME__);
       }())
     </script>

@@ -67,6 +67,7 @@ const CATEGORIES: CategoryChip[] = [
 const PAGE_SIZE = 24;
 const MAX_FAVORITE_PRODUCER_REQUESTS = 4;
 const INITIAL_OPTIONAL_RECOMMENDATION_BUDGET_MS = 2_500;
+const STARTUP_RECOMMENDATION_CACHE_KEY = 'diva-startup-recommendations';
 
 function asHomeCategoryId(id: string): HomeCategoryId {
   return CATEGORIES.some(category => category.id === id)
@@ -85,6 +86,7 @@ export default function HomePage() {
   const [songs, setSongs] = useState<Song[]>([]);
   const [startupSongs, setStartupSongs] = useState<Song[]>([]);
   const [loading, setLoading] = useState(true);
+  const [recommendationsReady, setRecommendationsReady] = useState(false);
   const [page, setPage] = useState(0);
   const [hasMore, setHasMore] = useState(true);
   const advancedSearchOpen = useUiStore(s => s.advancedSearchOpen);
@@ -528,6 +530,7 @@ export default function HomePage() {
 
       if (pageNum === 0) {
         setSongs(result);
+        setRecommendationsReady(category === 'recommended');
         if (category === 'trending') setRecommendationReasons(trendingReasons);
         else if (category !== 'recommended') setRecommendationReasons({});
       } else {
@@ -570,6 +573,7 @@ export default function HomePage() {
 
   useEffect(() => {
     setLoading(true);
+    setRecommendationsReady(false);
     setSongs([]);
     setPage(0);
     setHasMore(true);
@@ -666,6 +670,51 @@ export default function HomePage() {
       : discoveryResult.items,
     [discoveryResult.items, globalFilterSettings, hasSearched, unhiddenSearchResults],
   );
+
+  useEffect(() => {
+    if (activeCategory !== 'recommended'
+      || isSearchMode
+      || isArtistMode
+      || !hasHydrated
+      || !recommendationsReady
+      || loading
+      || songs.length === 0
+      || displaySongs.length === 0) return;
+
+    const cachedSongs = displaySongs.slice(0, PAGE_SIZE).map(song => ({
+      id: song.id,
+      name: song.name,
+      defaultName: song.defaultName,
+      artistString: song.artistString,
+      lengthSeconds: song.lengthSeconds,
+      thumbUrl: song.thumbUrl,
+      songType: song.songType,
+      youtubeViews: song.youtubeViews,
+      nicoViews: song.nicoViews,
+      artists: song.artists?.map(credit => ({
+        categories: credit.categories,
+        artist: credit.artist ? { id: credit.artist.id } : undefined,
+      })),
+    }));
+    try {
+      localStorage.setItem(STARTUP_RECOMMENDATION_CACHE_KEY, JSON.stringify({
+        version: 1,
+        savedAt: Date.now(),
+        songs: cachedSongs,
+      }));
+    } catch {
+      // Private browsing and a full storage quota retain the network path.
+    }
+  }, [
+    activeCategory,
+    displaySongs,
+    hasHydrated,
+    isArtistMode,
+    isSearchMode,
+    loading,
+    recommendationsReady,
+    songs.length,
+  ]);
   const relaxationMessage = hasSearched
     ? null
     : getDiscoveryRelaxationMessage(discoveryResult.relaxedConditions);
