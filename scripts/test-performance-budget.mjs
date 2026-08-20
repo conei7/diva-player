@@ -102,9 +102,12 @@ function parseIds(url) {
 }
 
 async function seedLargeHistory(page) {
-  await page.evaluate(async () => {
+  const seededAt = Date.now() - 60_000;
+  const cachedSongs = Array.from({ length: 24 }, (_, index) => fixtureSongForId(300_001 + index));
+  await page.evaluate(async ({ seededAt: cacheSavedAt, cachedSongs: personalizedSongs }) => {
     localStorage.setItem('diva-history-log-migrated-v1', '1');
-    localStorage.removeItem('diva-startup-recommendations');
+    const startupSnapshot = { version: 2, savedAt: cacheSavedAt, songs: personalizedSongs };
+    localStorage.setItem('diva-startup-recommendations', JSON.stringify(startupSnapshot));
     localStorage.setItem('diva-hidden-songs', JSON.stringify({
       state: {
         hiddenSongs: {
@@ -164,7 +167,27 @@ async function seedLargeHistory(page) {
       transaction.onabort = () => reject(transaction.error);
     });
     db.close();
-  });
+
+    const startupDb = await new Promise((resolve, reject) => {
+      const request = indexedDB.open('diva-startup-cache', 1);
+      request.onupgradeneeded = () => {
+        if (!request.result.objectStoreNames.contains('recommendations')) {
+          request.result.createObjectStore('recommendations', { keyPath: 'key' });
+        }
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    await new Promise((resolve, reject) => {
+      const transaction = startupDb.transaction('recommendations', 'readwrite');
+      transaction.objectStore('recommendations').put({ key: 'home', snapshot: startupSnapshot });
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error);
+      transaction.onabort = () => reject(transaction.error);
+    });
+    startupDb.close();
+  }, { seededAt, cachedSongs });
+  return seededAt;
 }
 
 async function installApiFixtures(page, counters) {
@@ -277,7 +300,7 @@ async function main() {
   try {
     await page.goto(baseUrl, { waitUntil: 'domcontentloaded' });
     await waitForCards(page, 'home');
-    await seedLargeHistory(page);
+    const seededCacheAt = await seedLargeHistory(page);
 
     counters.historyMetadataRequests = 0;
     counters.startupPopularRequests = 0;
@@ -286,23 +309,43 @@ async function main() {
     await page.reload({ waitUntil: 'domcontentloaded' });
     await waitForCards(page, 'home with 300 history entries');
     const firstCardMs = Date.now() - homeStartedAt;
+    const firstFrame = await page.evaluate(() => ({
+      hasLegacyStartupPage: document.querySelector('#startup-home') !== null
+        || document.documentElement.classList.contains('diva-startup-home'),
+      hasNormalHeader: document.querySelector('header') !== null,
+      hasNormalNavigation: document.querySelector('aside nav') !== null,
+      songIds: Array.from(document.querySelectorAll('main a[href*="/watch?v="]')).slice(0, 24)
+        .map(link => new URL(link.href).searchParams.get('v')),
+      skeletons: document.querySelectorAll('main .skeleton').length,
+    }));
     const firstContent = await waitForMetric(page, 'home.first-content');
     const homeLoad = await waitForMetric(page, 'home.load');
     const homePaint = await waitForMetric(page, 'home.paint');
-    const startupShell = await page.evaluate(() => window.__DIVA_STARTUP_TIMING__ ?? null);
+    const settledFrame = await page.evaluate(() => ({
+      songIds: Array.from(document.querySelectorAll('main a[href*="/watch?v="]')).slice(0, 24)
+        .map(link => new URL(link.href).searchParams.get('v')),
+      skeletons: document.querySelectorAll('main .skeleton').length,
+    }));
     assert(
-      startupShell?.displayedCount > 0 && startupShell.cardsRenderedAt <= BUDGETS_MS['home.first-card'],
-      `Document-start recommendation shell missed its budget: ${JSON.stringify(startupShell)}`,
+      !firstFrame.hasLegacyStartupPage && firstFrame.hasNormalHeader && firstFrame.hasNormalNavigation,
+      `Startup rendered a second layout before the application: ${JSON.stringify(firstFrame)}`,
     );
     assert(
-      !startupShell.songIds.includes(2501)
-        && !startupShell.songIds.includes(2502)
-        && startupShell.songIds.includes(2503),
-      `Document-start recommendations bypassed a local hidden/cooldown filter: ${JSON.stringify(startupShell)}`,
+      firstFrame.songIds.length > 0 && firstFrame.songIds.every(songId => /^300\d{3}$/.test(String(songId))),
+      `A default popular list flashed before the personalized cache: ${JSON.stringify(firstFrame)}`,
     );
     assert(
-      firstContent?.detail?.source === 'startup-popular',
-      `First content did not use the startup popular path: ${JSON.stringify(firstContent)}`,
+      firstFrame.skeletons === 0,
+      `Loading-more skeletons were appended below an already visible grid: ${JSON.stringify(firstFrame)}`,
+    );
+    assert(
+      JSON.stringify(settledFrame.songIds) === JSON.stringify(firstFrame.songIds)
+        && settledFrame.skeletons === 0,
+      `The visible personalized grid shifted while its refresh ran: ${JSON.stringify({ firstFrame, settledFrame })}`,
+    );
+    assert(
+      firstContent?.detail?.source === 'personalized-cache',
+      `First content did not use the personalized startup cache: ${JSON.stringify(firstContent)}`,
     );
     assert(
       counters.startupPopularRequests === 1,
@@ -319,10 +362,12 @@ async function main() {
     await page.waitForFunction(() => Array.from(document.querySelectorAll('a[href*="/watch?v="]'))
       .some(link => /[?&]v=300\d{3}/.test(link.getAttribute('href') ?? '')));
     try {
-      await page.waitForFunction(() => {
+      await page.waitForFunction(previousSavedAt => {
         const cached = JSON.parse(localStorage.getItem('diva-startup-recommendations') || 'null');
-        return Array.isArray(cached?.songs) && cached.songs.some(song => /^300\d{3}$/.test(String(song.id)));
-      });
+        return cached?.savedAt > previousSavedAt
+          && Array.isArray(cached?.songs)
+          && cached.songs.some(song => /^300\d{3}$/.test(String(song.id)));
+      }, {}, seededCacheAt);
     } catch (error) {
       const diagnostic = await page.evaluate(() => ({
         cache: JSON.parse(localStorage.getItem('diva-startup-recommendations') || 'null'),
@@ -332,21 +377,24 @@ async function main() {
       throw new Error(`Personalized startup cache was not persisted: ${JSON.stringify(diagnostic)} (${error.message})`);
     }
     try {
-      await page.waitForFunction(async () => new Promise(resolve => {
+      await page.waitForFunction(async previousSavedAt => new Promise(resolve => {
         const request = indexedDB.open('diva-startup-cache', 1);
         request.onsuccess = () => {
           const database = request.result;
           const transaction = database.transaction('recommendations', 'readonly');
           const getRequest = transaction.objectStore('recommendations').get('home');
           getRequest.onsuccess = () => {
-            const songs = getRequest.result?.snapshot?.songs;
+            const snapshot = getRequest.result?.snapshot;
+            const songs = snapshot?.songs;
             database.close();
-            resolve(Array.isArray(songs) && songs.some(song => /^300\d{3}$/.test(String(song.id))));
+            resolve(snapshot?.savedAt > previousSavedAt
+              && Array.isArray(songs)
+              && songs.some(song => /^300\d{3}$/.test(String(song.id))));
           };
           getRequest.onerror = () => { database.close(); resolve(false); };
         };
         request.onerror = () => resolve(false);
-      }));
+      }), {}, seededCacheAt);
     } catch (error) {
       const diagnostic = await page.evaluate(async () => {
         const databases = typeof indexedDB.databases === 'function' ? await indexedDB.databases() : [];
@@ -368,25 +416,27 @@ async function main() {
 
     counters.historyMetadataDelayMs = 0;
     await page.evaluate(() => localStorage.removeItem('diva-startup-recommendations'));
+    const indexedDbReloadStartedAt = Date.now();
     await page.reload({ waitUntil: 'domcontentloaded' });
-    try {
-      await page.waitForFunction(() => window.__DIVA_STARTUP_TIMING__?.source === 'personalized-cache');
-    } catch (error) {
-      const diagnostic = await page.evaluate(() => ({
-        startup: window.__DIVA_STARTUP_TIMING__ ?? null,
-        metrics: window.__DIVA_PERFORMANCE__?.getMetrics() ?? [],
-        cards: Array.from(document.querySelectorAll('a[href*="/watch?v="]')).slice(0, 30)
-          .map(link => link.getAttribute('href')),
-      }));
-      throw new Error(`IndexedDB personalized cache was not rendered: ${JSON.stringify(diagnostic)} (${error.message})`);
-    }
-    const cachedStartupShell = await page.evaluate(() => window.__DIVA_STARTUP_TIMING__ ?? null);
+    await waitForCards(page, 'IndexedDB personalized cache');
+    const indexedDbFirstCardMs = Date.now() - indexedDbReloadStartedAt;
+    const cachedFirstContent = await waitForMetric(page, 'home.first-content');
+    const cachedFrame = await page.evaluate(() => ({
+      hasLegacyStartupPage: document.querySelector('#startup-home') !== null,
+      songIds: Array.from(document.querySelectorAll('main a[href*="/watch?v="]')).slice(0, 24)
+        .map(link => new URL(link.href).searchParams.get('v')),
+      skeletons: document.querySelectorAll('main .skeleton').length,
+    }));
     assert(
-      cachedStartupShell?.personalizedRenderedAt <= BUDGETS_MS['home.first-card']
-        && cachedStartupShell.songIds.some(songId => /^300\d{3}$/.test(String(songId))),
-      `Personalized startup cache was not rendered immediately: ${JSON.stringify(cachedStartupShell)}`,
+      cachedFirstContent?.detail?.source === 'personalized-cache'
+        && cachedFirstContent.durationMs <= BUDGETS_MS['home.first-card']
+        && indexedDbFirstCardMs <= BUDGETS_MS['home.first-card']
+        && cachedFrame.songIds.some(songId => /^300\d{3}$/.test(String(songId)))
+        && !cachedFrame.hasLegacyStartupPage
+        && cachedFrame.skeletons === 0,
+      `IndexedDB personalized cache was not rendered seamlessly: ${JSON.stringify({ cachedFirstContent, indexedDbFirstCardMs, cachedFrame })}`,
     );
-    console.log(`PASS home.personalized-cache: ${Math.round(cachedStartupShell.personalizedRenderedAt)}ms / ${BUDGETS_MS['home.first-card']}ms`);
+    console.log(`PASS home.personalized-cache: ${Math.round(cachedFirstContent.durationMs)}ms / ${BUDGETS_MS['home.first-card']}ms`);
 
     // This producer name is present in the SBC/VocaDB fixture and keeps the
     // search paint budget independent of a single localized song title.

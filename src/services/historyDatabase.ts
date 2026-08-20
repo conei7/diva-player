@@ -1,3 +1,5 @@
+import type { Song } from '../types/vocadb';
+
 export const HISTORY_DB_NAME = 'diva-listening-history';
 export const HISTORY_DB_VERSION = 3;
 
@@ -16,6 +18,14 @@ const STARTUP_CACHE_DB_NAME = 'diva-startup-cache';
 const STARTUP_CACHE_DB_VERSION = 1;
 const STARTUP_CACHE_STORE = 'recommendations';
 const HOME_CACHE_KEY = 'home';
+export const STARTUP_RECOMMENDATION_CACHE_KEY = 'diva-startup-recommendations';
+const STARTUP_RECOMMENDATION_TTL_MS = 12 * 60 * 60 * 1000;
+
+export interface StartupRecommendationSnapshot {
+  version: 2;
+  savedAt: number;
+  songs: Song[];
+}
 
 export function openHistoryDb(): Promise<IDBDatabase> {
   if (dbPromise) return dbPromise;
@@ -104,7 +114,90 @@ function openStartupCacheDb(): Promise<IDBDatabase> {
   });
 }
 
-export async function saveStartupRecommendationSnapshot(snapshot: unknown): Promise<void> {
+function validStartupRecommendationSnapshot(value: unknown): StartupRecommendationSnapshot | null {
+  if (!value || typeof value !== 'object') return null;
+  const candidate = value as Partial<StartupRecommendationSnapshot>;
+  if (candidate.version !== 2
+    || !Number.isFinite(candidate.savedAt)
+    || Date.now() - Number(candidate.savedAt) > STARTUP_RECOMMENDATION_TTL_MS
+    || !Array.isArray(candidate.songs)) return null;
+  return candidate as StartupRecommendationSnapshot;
+}
+
+async function loadStartupRecommendationSnapshotFromDatabase(): Promise<StartupRecommendationSnapshot | null> {
+  if (typeof indexedDB === 'undefined') return null;
+  const database = await openStartupCacheDb();
+  try {
+    const value = await new Promise<unknown>((resolve, reject) => {
+      const transaction = database.transaction(STARTUP_CACHE_STORE, 'readonly');
+      const request = transaction.objectStore(STARTUP_CACHE_STORE).get(HOME_CACHE_KEY);
+      request.onsuccess = () => resolve(request.result?.snapshot ?? null);
+      request.onerror = () => reject(request.error);
+      transaction.onerror = () => reject(transaction.error);
+      transaction.onabort = () => reject(transaction.error);
+    });
+    return validStartupRecommendationSnapshot(value);
+  } finally {
+    database.close();
+  }
+}
+
+export async function loadStartupRecommendationSnapshot(): Promise<StartupRecommendationSnapshot | null> {
+  let localSnapshot: StartupRecommendationSnapshot | null = null;
+  try {
+    localSnapshot = validStartupRecommendationSnapshot(
+      JSON.parse(localStorage.getItem(STARTUP_RECOMMENDATION_CACHE_KEY) || 'null'),
+    );
+  } catch {
+    // The dedicated IndexedDB cache remains authoritative when storage is full
+    // or a previous browser version left malformed local data.
+  }
+
+  let databaseSnapshot: StartupRecommendationSnapshot | null = null;
+  try {
+    databaseSnapshot = await loadStartupRecommendationSnapshotFromDatabase();
+  } catch {
+    // Private browsing can disable IndexedDB while localStorage still works.
+  }
+  if (!localSnapshot) return databaseSnapshot;
+  if (!databaseSnapshot) return localSnapshot;
+  return databaseSnapshot.savedAt > localSnapshot.savedAt ? databaseSnapshot : localSnapshot;
+}
+
+export async function loadRecentPlayedAtBySongId(
+  songIds: Iterable<number>,
+  cutoff: number,
+): Promise<Map<number, number>> {
+  const candidates = new Set(Array.from(songIds).filter(Number.isInteger));
+  const playedAtBySongId = new Map<number, number>();
+  if (typeof indexedDB === 'undefined' || candidates.size === 0) return playedAtBySongId;
+
+  const database = await openHistoryDb();
+  await new Promise<void>((resolve, reject) => {
+    const transaction = database.transaction(HISTORY_STORES.plays, 'readonly');
+    const index = transaction.objectStore(HISTORY_STORES.plays).index('playedAt');
+    const request = index.openCursor(IDBKeyRange.lowerBound(cutoff), 'prev');
+    request.onsuccess = () => {
+      const cursor = request.result;
+      if (!cursor || playedAtBySongId.size >= candidates.size) {
+        resolve();
+        return;
+      }
+      const songId = Number(cursor.value?.s);
+      const playedAt = Number(cursor.value?.t);
+      if (candidates.has(songId) && !playedAtBySongId.has(songId) && Number.isFinite(playedAt)) {
+        playedAtBySongId.set(songId, playedAt);
+      }
+      cursor.continue();
+    };
+    request.onerror = () => reject(request.error);
+    transaction.onerror = () => reject(transaction.error);
+    transaction.onabort = () => reject(transaction.error);
+  });
+  return playedAtBySongId;
+}
+
+export async function saveStartupRecommendationSnapshot(snapshot: StartupRecommendationSnapshot): Promise<void> {
   if (typeof indexedDB === 'undefined') return;
   const database = await openStartupCacheDb();
   await new Promise<void>((resolve, reject) => {

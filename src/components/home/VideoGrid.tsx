@@ -87,12 +87,6 @@ export default function VideoGrid({ songs, loading, recommendationReasons, expos
           onExposureClick={exposureSurface ? () => recordClicked(song.id) : undefined}
         />
       ))}
-      {/* 追加ローディング */}
-      {loading && visibleSongs.length > 0 &&
-        Array.from({ length: 4 }).map((_, i) => (
-          <SkeletonCard key={`skel-${i}`} />
-        ))
-      }
     </div>
   );
 }
