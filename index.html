@@ -124,15 +124,42 @@
             return {};
           }
         }
+        function validCachedRecommendations(cached) {
+          if (cached?.version !== 1 || !Array.isArray(cached.songs)) return [];
+          if (!Number.isFinite(cached.savedAt) || Date.now() - cached.savedAt > 12 * 60 * 60 * 1000) return [];
+          return cached.songs;
+        }
         function cachedRecommendations() {
           try {
-            var cached = JSON.parse(localStorage.getItem('diva-startup-recommendations') || 'null');
-            if (cached?.version !== 1 || !Array.isArray(cached.songs)) return [];
-            if (!Number.isFinite(cached.savedAt) || Date.now() - cached.savedAt > 12 * 60 * 60 * 1000) return [];
-            return cached.songs;
+            return validCachedRecommendations(JSON.parse(localStorage.getItem('diva-startup-recommendations') || 'null'));
           } catch (_) {
             return [];
           }
+        }
+        function cachedRecommendationsFromDatabase() {
+          if (typeof indexedDB === 'undefined') return Promise.resolve([]);
+          return new Promise(function(resolve, reject) {
+            var openRequest = indexedDB.open('diva-startup-cache', 1);
+            openRequest.onupgradeneeded = function() {
+              var database = openRequest.result;
+              if (!database.objectStoreNames.contains('recommendations')) {
+                database.createObjectStore('recommendations', { keyPath: 'key' });
+              }
+            };
+            openRequest.onerror = function() { reject(openRequest.error); };
+            openRequest.onsuccess = function() {
+              var database = openRequest.result;
+              var transaction = database.transaction('recommendations', 'readonly');
+              var getRequest = transaction.objectStore('recommendations').get('home');
+              getRequest.onsuccess = function() {
+                resolve(validCachedRecommendations(getRequest.result?.snapshot));
+              };
+              getRequest.onerror = function() { reject(getRequest.error); };
+              transaction.oncomplete = function() { database.close(); };
+              transaction.onerror = function() { database.close(); reject(transaction.error); };
+              transaction.onabort = function() { database.close(); reject(transaction.error); };
+            };
+          });
         }
         function vocalistMatches(song, settings) {
           var filters = Array.isArray(settings.vocalistFilters) ? settings.vocalistFilters : [];
@@ -284,11 +311,16 @@
             grid.appendChild(card);
           });
           document.getElementById('startup-home')?.setAttribute('aria-label', 'あなたへのおすすめ');
+          var renderedAt = performance.now();
+          var previousTiming = window.__DIVA_STARTUP_TIMING__;
           window.__DIVA_STARTUP_TIMING__ = {
-            cardsRenderedAt: window.__DIVA_STARTUP_TIMING__?.cardsRenderedAt ?? performance.now(),
+            cardsRenderedAt: previousTiming?.cardsRenderedAt ?? renderedAt,
+            personalizedRenderedAt: source === 'personalized-cache'
+              ? renderedAt
+              : previousTiming?.personalizedRenderedAt,
             displayedCount: displaySongs.length,
             songIds: displaySongs.map(function(song) { return song.id; }),
-            source: window.__DIVA_STARTUP_TIMING__?.source ?? source
+            source: source === 'personalized-cache' ? source : previousTiming?.source ?? source
           };
           return true;
         }
@@ -304,6 +336,9 @@
             preferredRendered = renderSongs(songs, 'personalized-cache');
           }).catch(function() {});
         }
+        cachedRecommendationsFromDatabase().then(filteredSongs).then(function(songs) {
+          if (!preferredRendered) preferredRendered = renderSongs(songs, 'personalized-cache');
+        }).catch(function() {});
         // Paint page zero as soon as it has any eligible songs. The second
         // cacheable page only fills strict-filter gaps and updates the grid.
         primaryItems.then(filteredSongs).then(function(songs) {

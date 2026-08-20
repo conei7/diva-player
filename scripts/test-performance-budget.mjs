@@ -331,17 +331,62 @@ async function main() {
       }));
       throw new Error(`Personalized startup cache was not persisted: ${JSON.stringify(diagnostic)} (${error.message})`);
     }
+    try {
+      await page.waitForFunction(async () => new Promise(resolve => {
+        const request = indexedDB.open('diva-startup-cache', 1);
+        request.onsuccess = () => {
+          const database = request.result;
+          const transaction = database.transaction('recommendations', 'readonly');
+          const getRequest = transaction.objectStore('recommendations').get('home');
+          getRequest.onsuccess = () => {
+            const songs = getRequest.result?.snapshot?.songs;
+            database.close();
+            resolve(Array.isArray(songs) && songs.some(song => /^300\d{3}$/.test(String(song.id))));
+          };
+          getRequest.onerror = () => { database.close(); resolve(false); };
+        };
+        request.onerror = () => resolve(false);
+      }));
+    } catch (error) {
+      const diagnostic = await page.evaluate(async () => {
+        const databases = typeof indexedDB.databases === 'function' ? await indexedDB.databases() : [];
+        const record = await new Promise(resolve => {
+          const request = indexedDB.open('diva-startup-cache', 1);
+          request.onsuccess = () => {
+            const database = request.result;
+            const transaction = database.transaction('recommendations', 'readonly');
+            const getRequest = transaction.objectStore('recommendations').get('home');
+            getRequest.onsuccess = () => { database.close(); resolve(getRequest.result ?? null); };
+            getRequest.onerror = () => { database.close(); resolve({ error: String(getRequest.error) }); };
+          };
+          request.onerror = () => resolve({ error: String(request.error) });
+        });
+        return { databases, record, local: JSON.parse(localStorage.getItem('diva-startup-recommendations') || 'null') };
+      });
+      throw new Error(`IndexedDB startup cache was not persisted: ${JSON.stringify(diagnostic)} (${error.message})`);
+    }
 
     counters.historyMetadataDelayMs = 0;
+    await page.evaluate(() => localStorage.removeItem('diva-startup-recommendations'));
     await page.reload({ waitUntil: 'domcontentloaded' });
-    await page.waitForFunction(() => window.__DIVA_STARTUP_TIMING__?.source === 'personalized-cache');
+    try {
+      await page.waitForFunction(() => window.__DIVA_STARTUP_TIMING__?.source === 'personalized-cache');
+    } catch (error) {
+      const diagnostic = await page.evaluate(() => ({
+        startup: window.__DIVA_STARTUP_TIMING__ ?? null,
+        metrics: window.__DIVA_PERFORMANCE__?.getMetrics() ?? [],
+        cards: Array.from(document.querySelectorAll('a[href*="/watch?v="]')).slice(0, 30)
+          .map(link => link.getAttribute('href')),
+      }));
+      throw new Error(`IndexedDB personalized cache was not rendered: ${JSON.stringify(diagnostic)} (${error.message})`);
+    }
     const cachedStartupShell = await page.evaluate(() => window.__DIVA_STARTUP_TIMING__ ?? null);
     assert(
-      cachedStartupShell?.cardsRenderedAt <= BUDGETS_MS['home.first-card']
+      cachedStartupShell?.personalizedRenderedAt <= BUDGETS_MS['home.first-card']
         && cachedStartupShell.songIds.some(songId => /^300\d{3}$/.test(String(songId))),
       `Personalized startup cache was not rendered immediately: ${JSON.stringify(cachedStartupShell)}`,
     );
-    console.log(`PASS home.personalized-cache: ${Math.round(cachedStartupShell.cardsRenderedAt)}ms / ${BUDGETS_MS['home.first-card']}ms`);
+    console.log(`PASS home.personalized-cache: ${Math.round(cachedStartupShell.personalizedRenderedAt)}ms / ${BUDGETS_MS['home.first-card']}ms`);
 
     // This producer name is present in the SBC/VocaDB fixture and keeps the
     // search paint budget independent of a single localized song title.

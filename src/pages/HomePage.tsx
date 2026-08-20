@@ -42,6 +42,7 @@ import { resolveWithin } from '../utils/timeBudget';
 import { isDeterministicHomeRankingCategory } from '../utils/homeRanking';
 import { formatTrendingReason } from '../utils/trendingReason';
 import { excludeHiddenSongs, useHiddenSongStore } from '../stores/hiddenSongStore';
+import { saveStartupRecommendationSnapshot } from '../services/historyDatabase';
 
 type HomeCategoryId =
   | 'recommended'
@@ -696,15 +697,19 @@ export default function HomePage() {
         artist: credit.artist ? { id: credit.artist.id } : undefined,
       })),
     }));
+    const snapshot = {
+      version: 1,
+      savedAt: Date.now(),
+      songs: cachedSongs,
+    };
     try {
-      localStorage.setItem(STARTUP_RECOMMENDATION_CACHE_KEY, JSON.stringify({
-        version: 1,
-        savedAt: Date.now(),
-        songs: cachedSongs,
-      }));
+      localStorage.setItem(STARTUP_RECOMMENDATION_CACHE_KEY, JSON.stringify(snapshot));
     } catch {
-      // Private browsing and a full storage quota retain the network path.
+      // IndexedDB below remains available when the localStorage quota is full.
     }
+    void saveStartupRecommendationSnapshot(snapshot).catch(() => {
+      // Private browsing retains the staged network path.
+    });
   }, [
     activeCategory,
     displaySongs,

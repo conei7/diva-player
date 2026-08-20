@@ -35,6 +35,7 @@ declare global {
     __DIVA_DISMISS_STARTUP_HOME__?: () => void;
     __DIVA_STARTUP_TIMING__?: {
       cardsRenderedAt: number;
+      personalizedRenderedAt?: number;
       displayedCount: number;
       songIds: number[];
       source?: 'personalized-cache' | 'popular-primary' | 'popular-fill';

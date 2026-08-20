@@ -12,6 +12,10 @@ export const HISTORY_STORES = {
 } as const;
 
 let dbPromise: Promise<IDBDatabase> | null = null;
+const STARTUP_CACHE_DB_NAME = 'diva-startup-cache';
+const STARTUP_CACHE_DB_VERSION = 1;
+const STARTUP_CACHE_STORE = 'recommendations';
+const HOME_CACHE_KEY = 'home';
 
 export function openHistoryDb(): Promise<IDBDatabase> {
   if (dbPromise) return dbPromise;
@@ -84,4 +88,31 @@ export async function getPlayedSongIds(): Promise<Set<number>> {
     request.onerror = () => reject(request.error);
     tx.onerror = () => reject(tx.error);
   });
+}
+
+function openStartupCacheDb(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(STARTUP_CACHE_DB_NAME, STARTUP_CACHE_DB_VERSION);
+    request.onupgradeneeded = () => {
+      const database = request.result;
+      if (!database.objectStoreNames.contains(STARTUP_CACHE_STORE)) {
+        database.createObjectStore(STARTUP_CACHE_STORE, { keyPath: 'key' });
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+export async function saveStartupRecommendationSnapshot(snapshot: unknown): Promise<void> {
+  if (typeof indexedDB === 'undefined') return;
+  const database = await openStartupCacheDb();
+  await new Promise<void>((resolve, reject) => {
+    const transaction = database.transaction(STARTUP_CACHE_STORE, 'readwrite');
+    transaction.objectStore(STARTUP_CACHE_STORE).put({ key: HOME_CACHE_KEY, snapshot });
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error);
+    transaction.onabort = () => reject(transaction.error);
+  });
+  database.close();
 }
