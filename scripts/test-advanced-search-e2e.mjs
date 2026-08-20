@@ -27,6 +27,10 @@ try {
 
   await page.goto(baseUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
   await page.waitForSelector('button[aria-label="詳細検索"]', { timeout: 60_000 });
+  // The document-start Home shell intentionally stays above React until the
+  // first recommendation grid is ready. Wait for that visible hand-off so the
+  // test does not click a button that is present in the DOM but still covered.
+  await page.waitForFunction(() => !document.documentElement.classList.contains('diva-startup-home'));
   await page.click('button[aria-label="詳細検索"]');
   const requiredSections = ['再生数・支持', 'VocaDBタグ', '参加者・役割', '音源からの推定'];
   await page.evaluate(sectionTitles => {
