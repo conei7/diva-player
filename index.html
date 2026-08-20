@@ -6,6 +6,38 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content="DIVA Player - VocaDB APIを活用したボカロ特化ミュージックプレイヤー。YouTube・ニコニコ動画のボカロ楽曲を検索・再生。" />
     <title>DIVA Player — ボカロミュージックプレイヤー</title>
+    <style>
+      #startup-home { display: none; }
+      html.diva-startup-home #startup-home {
+        position: fixed; inset: 0; z-index: 9999; display: block; overflow: auto;
+        color: #f5f5f5; background: #0f0f0f; font-family: Inter, "Noto Sans JP", sans-serif;
+      }
+      .startup-header {
+        position: sticky; top: 0; z-index: 2; height: 56px; display: flex; align-items: center;
+        gap: 10px; padding: 0 20px; border-bottom: 1px solid #292929; background: rgba(15, 15, 15, .96);
+      }
+      .startup-logo { width: 28px; height: 28px; border-radius: 9px; background: linear-gradient(135deg, #22d3ee, #a855f7); }
+      .startup-title { font-size: 17px; font-weight: 800; letter-spacing: -.02em; }
+      .startup-main { padding: 18px 20px 32px; }
+      .startup-chip {
+        display: inline-flex; min-height: 36px; align-items: center; padding: 0 16px; margin-bottom: 18px;
+        border: 1px solid rgba(34, 211, 238, .7); border-radius: 999px; color: #cffafe;
+        background: rgba(8, 145, 178, .18); font-size: 14px; font-weight: 700;
+      }
+      .startup-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
+      .startup-card { min-width: 0; overflow: hidden; border-radius: 12px; color: inherit; text-decoration: none; background: #181818; }
+      .startup-thumb { position: relative; aspect-ratio: 16 / 9; overflow: hidden; background: #252525; }
+      .startup-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+      .startup-duration { position: absolute; right: 7px; bottom: 7px; padding: 2px 5px; border-radius: 4px; background: rgba(0,0,0,.82); font-size: 11px; }
+      .startup-meta { padding: 10px 11px 12px; }
+      .startup-song { overflow: hidden; color: #fafafa; font-size: 14px; font-weight: 700; line-height: 1.4; text-overflow: ellipsis; white-space: nowrap; }
+      .startup-artist { overflow: hidden; margin-top: 4px; color: #a3a3a3; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+      .startup-skeleton { min-height: 190px; background: linear-gradient(110deg, #191919 15%, #242424 30%, #191919 45%); background-size: 200% 100%; animation: startup-shimmer 1.2s linear infinite; }
+      @keyframes startup-shimmer { to { background-position-x: -200%; } }
+      @media (min-width: 1024px) { .startup-main { margin-left: 72px; } }
+      @media (max-width: 900px) { .startup-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+      @media (max-width: 520px) { .startup-main { padding: 14px 12px 28px; } .startup-grid { grid-template-columns: 1fr; gap: 11px; } }
+    </style>
     <script>
       // GitHub Pages SPA redirect restore
       (function(l) {
@@ -30,6 +62,7 @@
         var isHome = normalizedPath === '' || normalizedPath === '/diva-player';
         if (!isHome || params.has('q') || params.has('artistId')) return;
 
+        document.documentElement.classList.add('diva-startup-home');
         var url = '/backend-api/api/songs/search?sort=FavoritedTimes&order=desc&start=0&maxResults=12&onlyWithPVs=true&discoveryOnly=true';
         var response = fetch(url);
         // Keep the speculative request quiet if navigation leaves Home before
@@ -38,8 +71,13 @@
         response.catch(function() {});
         window.__DIVA_STARTUP_POPULAR__ = {
           url: url,
-          response: response
+          response: response,
+          data: response.then(function(result) {
+            if (!result.ok) throw new Error('Startup search failed');
+            return result.clone().json();
+          })
         };
+        window.__DIVA_STARTUP_POPULAR__.data.catch(function() {});
       }(window.location))
     </script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -47,6 +85,137 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Noto+Sans+JP:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
   </head>
   <body>
+    <div id="startup-home" aria-label="おすすめを読み込み中" aria-live="polite">
+      <div class="startup-header"><span class="startup-logo"></span><span class="startup-title">DIVA Player</span></div>
+      <main class="startup-main">
+        <div class="startup-chip">あなたへのおすすめ</div>
+        <div class="startup-grid" id="startup-grid">
+          <div class="startup-card startup-skeleton"></div><div class="startup-card startup-skeleton"></div>
+          <div class="startup-card startup-skeleton"></div><div class="startup-card startup-skeleton"></div>
+          <div class="startup-card startup-skeleton"></div><div class="startup-card startup-skeleton"></div>
+          <div class="startup-card startup-skeleton"></div><div class="startup-card startup-skeleton"></div>
+        </div>
+      </main>
+    </div>
+    <script>
+      (function() {
+        if (!document.documentElement.classList.contains('diva-startup-home')) return;
+        var startup = window.__DIVA_STARTUP_POPULAR__;
+        var dismissed = false;
+        window.__DIVA_DISMISS_STARTUP_HOME__ = function() {
+          if (dismissed) return;
+          dismissed = true;
+          document.documentElement.classList.remove('diva-startup-home');
+          document.getElementById('startup-home')?.remove();
+        };
+        setTimeout(window.__DIVA_DISMISS_STARTUP_HOME__, 8000);
+
+        function persistedState(key) {
+          try {
+            var parsed = JSON.parse(localStorage.getItem(key) || 'null');
+            return parsed && typeof parsed.state === 'object' ? parsed.state : {};
+          } catch (_) {
+            return {};
+          }
+        }
+        function vocalistMatches(song, settings) {
+          var filters = Array.isArray(settings.vocalistFilters) ? settings.vocalistFilters : [];
+          if (filters.length === 0) return true;
+          var vocalistIds = new Set((song.artists || [])
+            .filter(function(credit) { return String(credit.categories || '').includes('Vocalist'); })
+            .map(function(credit) { return credit.artist?.id; })
+            .filter(Number.isInteger));
+          if (vocalistIds.size === 0) return false;
+          var grouped = {};
+          var groups = [];
+          filters.forEach(function(filter) {
+            if (!filter.variantGroup) groups.push([filter.id]);
+            else (grouped[filter.variantGroup] ||= []).push(filter.id);
+          });
+          Object.keys(grouped).forEach(function(key) { groups.push(grouped[key]); });
+          var matches = groups.map(function(group) { return group.some(function(id) { return vocalistIds.has(id); }); });
+          if (settings.vocalistMatchMode === 'Any') return matches.some(Boolean);
+          if (!matches.every(Boolean)) return false;
+          if (settings.vocalistMatchMode !== 'Exact') return true;
+          var allowed = new Set(filters.map(function(filter) { return filter.id; }));
+          return Array.from(vocalistIds).every(function(id) { return allowed.has(id); });
+        }
+        function filteredSongs(items) {
+          var hidden = persistedState('diva-hidden-songs').hiddenSongs || {};
+          var ratings = persistedState('diva-ratings').ratings || {};
+          var settings = persistedState('diva-global-filters');
+          // Cooldown depends on IndexedDB history. Do not bypass it for speed;
+          // keep the shell until React applies the authoritative local state.
+          if (Number(settings.cooldownHours || 0) > 0) return [];
+          return items.filter(function(song) {
+            if (!song || !Number.isInteger(song.id) || hidden[String(song.id)]) return false;
+            if (settings.excludeRatedFromDiscovery && Number(ratings[String(song.id)] || 0) > 0) return false;
+            if (settings.enabled) {
+              if ((settings.excludedSongTypes || []).includes(song.songType)) return false;
+              if (!vocalistMatches(song, settings)) return false;
+              var youtubeMinimum = Number(settings.minYoutubeViews || 0);
+              var youtubeViews = Number(song.youtubeViews);
+              if (youtubeMinimum > 0 && (!Number.isFinite(youtubeViews) || youtubeViews < youtubeMinimum)) return false;
+              var nicoMinimum = Number(settings.minNicoViews || 0);
+              var nicoViews = Number(song.nicoViews);
+              if (nicoMinimum > 0 && (!Number.isFinite(nicoViews) || nicoViews < nicoMinimum)) return false;
+            }
+            return true;
+          });
+        }
+        function duration(seconds) {
+          var value = Number(seconds || 0);
+          if (value <= 0) return '';
+          return Math.floor(value / 60) + ':' + String(Math.floor(value % 60)).padStart(2, '0');
+        }
+        startup?.data.then(function(payload) {
+          var songs = filteredSongs(Array.isArray(payload?.items) ? payload.items : []);
+          if (songs.length === 0 || dismissed) return;
+          var grid = document.getElementById('startup-grid');
+          if (!grid) return;
+          grid.replaceChildren();
+          var base = location.pathname.replace(/\/+$/, '') === '/diva-player' ? '/diva-player' : '';
+          songs.forEach(function(song) {
+            var card = document.createElement('a');
+            card.className = 'startup-card';
+            card.href = base + '/watch?v=' + encodeURIComponent(song.id) + '&autoplay=0';
+            var thumb = document.createElement('div');
+            thumb.className = 'startup-thumb';
+            if (typeof song.thumbUrl === 'string' && song.thumbUrl) {
+              var image = document.createElement('img');
+              image.src = song.thumbUrl;
+              image.alt = '';
+              image.loading = 'eager';
+              thumb.appendChild(image);
+            }
+            var length = duration(song.lengthSeconds);
+            if (length) {
+              var badge = document.createElement('span');
+              badge.className = 'startup-duration';
+              badge.textContent = length;
+              thumb.appendChild(badge);
+            }
+            var meta = document.createElement('div');
+            meta.className = 'startup-meta';
+            var title = document.createElement('div');
+            title.className = 'startup-song';
+            title.textContent = song.name || song.defaultName || '名称未設定';
+            var artist = document.createElement('div');
+            artist.className = 'startup-artist';
+            artist.textContent = song.artistString || '';
+            meta.append(title, artist);
+            card.append(thumb, meta);
+            grid.appendChild(card);
+          });
+          document.getElementById('startup-home')?.setAttribute('aria-label', 'あなたへのおすすめ');
+          window.__DIVA_STARTUP_TIMING__ = {
+            cardsRenderedAt: performance.now(),
+            displayedCount: songs.length,
+            songIds: songs.map(function(song) { return song.id; })
+          };
+        }).catch(window.__DIVA_DISMISS_STARTUP_HOME__);
+      }())
+    </script>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

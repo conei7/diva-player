@@ -25,7 +25,10 @@ declare global {
     __DIVA_STARTUP_POPULAR__?: {
       url: string;
       response: Promise<Response>;
+      data?: Promise<{ items?: Song[]; totalCount?: number }>;
     };
+    __DIVA_DISMISS_STARTUP_HOME__?: () => void;
+    __DIVA_STARTUP_TIMING__?: { cardsRenderedAt: number; displayedCount: number; songIds: number[] };
   }
 }
 

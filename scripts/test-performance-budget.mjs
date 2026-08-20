@@ -104,6 +104,14 @@ function parseIds(url) {
 async function seedLargeHistory(page) {
   await page.evaluate(async () => {
     localStorage.setItem('diva-history-log-migrated-v1', '1');
+    localStorage.setItem('diva-hidden-songs', JSON.stringify({
+      state: {
+        hiddenSongs: {
+          '2501': { song: { id: 2501, name: 'Hidden startup song' }, hiddenAt: Date.now() },
+        },
+      },
+      version: 0,
+    }));
     const db = await new Promise((resolve, reject) => {
       const request = indexedDB.open('diva-listening-history', 3);
       request.onupgradeneeded = () => {
@@ -172,7 +180,7 @@ async function installApiFixtures(page, counters) {
         && url.searchParams.get('maxResults') === '12') {
         counters.startupPopularRequests += 1;
       }
-      body = { items: [fixtureSong], totalCount: 1 };
+      body = { items: [fixtureSong, fixtureSongForId(2502)], totalCount: 2 };
     } else if (path.includes('/api/recommend')) {
       body = { items: [] };
     } else if (path.match(/\/api\/songs\/\d+$/)) {
@@ -255,6 +263,15 @@ async function main() {
     const firstContent = await waitForMetric(page, 'home.first-content');
     const homeLoad = await waitForMetric(page, 'home.load');
     const homePaint = await waitForMetric(page, 'home.paint');
+    const startupShell = await page.evaluate(() => window.__DIVA_STARTUP_TIMING__ ?? null);
+    assert(
+      startupShell?.displayedCount > 0 && startupShell.cardsRenderedAt <= BUDGETS_MS['home.first-card'],
+      `Document-start recommendation shell missed its budget: ${JSON.stringify(startupShell)}`,
+    );
+    assert(
+      !startupShell.songIds.includes(2501) && startupShell.songIds.includes(2502),
+      `Document-start recommendations bypassed the hidden-song filter: ${JSON.stringify(startupShell)}`,
+    );
     assert(
       firstContent?.detail?.source === 'startup-popular',
       `First content did not use the startup popular path: ${JSON.stringify(firstContent)}`,

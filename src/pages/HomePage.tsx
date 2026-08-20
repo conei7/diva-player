@@ -162,7 +162,10 @@ export default function HomePage() {
     }).then(result => {
       if (cancelled) return;
       const initialSongs = filterVoiceSynthSongs(result.items);
-      if (initialSongs.length === 0) return;
+      if (initialSongs.length === 0) {
+        window.__DIVA_DISMISS_STARTUP_HOME__?.();
+        return;
+      }
 
       setStartupSongs(initialSongs);
       setLoading(false);
@@ -180,6 +183,7 @@ export default function HomePage() {
       }
     }).catch(() => {
       // The hydrated recommendation request below remains the fallback.
+      window.__DIVA_DISMISS_STARTUP_HOME__?.();
     });
 
     return () => {
@@ -702,6 +706,7 @@ export default function HomePage() {
         if (pendingHomePaintRef.current !== pending) return;
         pendingHomePaintRef.current = null;
         firstHomePaintRecordedRef.current = true;
+        window.__DIVA_DISMISS_STARTUP_HOME__?.();
         recordPerformanceMetric({
           name: 'home.paint',
           startedAt: pending.startedAt,
