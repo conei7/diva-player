@@ -1,11 +1,12 @@
 import puppeteer from 'puppeteer';
 
 const PAGE_TIMEOUT_MS = 45_000;
+const HISTORY_METADATA_DELAY_MS = 5_000;
 const BUDGETS_MS = {
-  'home.first-card': 3_000,
-  'home.first-content': 3_000,
-  'home.load': 5_000,
-  'home.paint': 3_000,
+  'home.first-card': 1_500,
+  'home.first-content': 1_500,
+  'home.load': 10_000,
+  'home.paint': 1_500,
   'search.paint': 3_000,
 };
 
@@ -160,11 +161,17 @@ async function installApiFixtures(page, counters) {
       body = { status: path.endsWith('/api/ready') ? 'ready' : 'ok', postgres: true, qdrant: true };
     } else if (path.includes('/api/songs/batch') || path.includes('/api/songs/details')) {
       counters.historyMetadataRequests += 1;
-      await new Promise(resolve => setTimeout(resolve, 100));
+      await new Promise(resolve => setTimeout(resolve, HISTORY_METADATA_DELAY_MS));
       body = { items: parseIds(url).map(fixtureSongForId) };
     } else if (path.includes('/api/songs/discovery-eligibility')) {
       body = { items: parseIds(url).map(songId => ({ songId, discoveryEligible: true })) };
     } else if (path.includes('/api/songs/search')) {
+      if (url.searchParams.get('discoveryOnly') === 'true'
+        && url.searchParams.get('sort') === 'FavoritedTimes'
+        && url.searchParams.get('start') === '0'
+        && url.searchParams.get('maxResults') === '12') {
+        counters.startupPopularRequests += 1;
+      }
       body = { items: [fixtureSong], totalCount: 1 };
     } else if (path.includes('/api/recommend')) {
       body = { items: [] };
@@ -231,7 +238,7 @@ async function main() {
   const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox'] });
   const page = await browser.newPage();
   page.setDefaultTimeout(PAGE_TIMEOUT_MS);
-  const counters = { historyMetadataRequests: 0 };
+  const counters = { historyMetadataRequests: 0, startupPopularRequests: 0 };
   await installApiFixtures(page, counters);
 
   try {
@@ -240,6 +247,7 @@ async function main() {
     await seedLargeHistory(page);
 
     counters.historyMetadataRequests = 0;
+    counters.startupPopularRequests = 0;
     const homeStartedAt = Date.now();
     await page.reload({ waitUntil: 'domcontentloaded' });
     await waitForCards(page, 'home with 300 history entries');
@@ -248,9 +256,19 @@ async function main() {
     const homeLoad = await waitForMetric(page, 'home.load');
     const homePaint = await waitForMetric(page, 'home.paint');
     assert(
+      firstContent?.detail?.source === 'startup-popular',
+      `First content did not use the startup popular path: ${JSON.stringify(firstContent)}`,
+    );
+    assert(
+      counters.startupPopularRequests === 1,
+      `Startup popular search was requested ${counters.startupPopularRequests} times (expected one shared request).`,
+    );
+    assert(
       counters.historyMetadataRequests <= 3,
       `History hydration used ${counters.historyMetadataRequests} sequential metadata requests (expected at most 3 parallel chunks).`,
     );
+    await page.waitForFunction(() => Array.from(document.querySelectorAll('a[href*="/watch?v="]'))
+      .some(link => /[?&]v=300\d{3}/.test(link.getAttribute('href') ?? '')));
 
     // This producer name is present in the SBC/VocaDB fixture and keeps the
     // search paint budget independent of a single localized song title.

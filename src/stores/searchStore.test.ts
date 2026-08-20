@@ -92,6 +92,7 @@ describe('advanced search input limits', () => {
 
 describe('backend artist union search', () => {
   afterEach(() => {
+    if (typeof window !== 'undefined') delete window.__DIVA_STARTUP_POPULAR__;
     vi.unstubAllGlobals();
   });
 
@@ -332,6 +333,35 @@ describe('backend artist union search', () => {
     await searchSongsBackend(params);
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('consumes the document-start popular request without issuing a duplicate fetch', async () => {
+    const startupUrl = '/backend-api/api/songs/search?sort=FavoritedTimes&order=desc&start=0&maxResults=12&onlyWithPVs=true&discoveryOnly=true';
+    const startupResponse = {
+      ok: true,
+      headers: { get: () => null },
+      json: async () => ({ items: [{ id: 4242, name: 'Startup song' }], totalCount: 1 }),
+    } as unknown as Response;
+    vi.stubGlobal('window', {
+      __DIVA_STARTUP_POPULAR__: {
+        url: startupUrl,
+        response: Promise.resolve(startupResponse),
+      },
+    });
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await searchSongsBackend({
+      sort: 'FavoritedTimes',
+      sortOrder: 'desc',
+      start: 0,
+      maxResults: 12,
+      discoveryOnly: true,
+    });
+
+    expect(result.items.map(song => song.id)).toEqual([4242]);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(window.__DIVA_STARTUP_POPULAR__).toBeUndefined();
   });
 });
 

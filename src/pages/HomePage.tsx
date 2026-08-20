@@ -83,6 +83,7 @@ export default function HomePage() {
 
   const [activeCategory, setActiveCategory] = useState<HomeCategoryId>('recommended');
   const [songs, setSongs] = useState<Song[]>([]);
+  const [startupSongs, setStartupSongs] = useState<Song[]>([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(0);
   const [hasMore, setHasMore] = useState(true);
@@ -100,6 +101,9 @@ export default function HomePage() {
   const rankingSeedRef = useRef(createRankingSeed());
   const pendingHomePaintRef = useRef<{ startedAt: number; category: HomeCategoryId } | null>(null);
   const pendingSearchPaintRef = useRef<number | null>(null);
+  const startupBootstrapStartedRef = useRef(false);
+  const firstHomeContentRecordedRef = useRef(false);
+  const firstHomePaintRecordedRef = useRef(false);
 
   const { entries, hasHydrated } = useHistoryStore();
   const { currentSong } = usePlayerStore();
@@ -138,6 +142,55 @@ export default function HomePage() {
     setAdvancedSearchOpen(true);
     searchByArtistId(artistId, decodeURIComponent(artistNameParam), artistRoleParam || undefined);
   }, [artistIdParam, artistNameParam, artistRoleParam, searchByArtistId, setAdvancedSearchOpen]);
+
+  useEffect(() => {
+    if (startupBootstrapStartedRef.current
+      || activeCategory !== 'recommended'
+      || isSearchMode
+      || isArtistMode) return;
+
+    startupBootstrapStartedRef.current = true;
+    pendingHomePaintRef.current = { startedAt: 0, category: 'recommended' };
+    let cancelled = false;
+
+    void searchSongsBackend({
+      sort: 'FavoritedTimes',
+      sortOrder: 'desc',
+      maxResults: 12,
+      start: 0,
+      discoveryOnly: true,
+    }).then(result => {
+      if (cancelled) return;
+      const initialSongs = filterVoiceSynthSongs(result.items);
+      if (initialSongs.length === 0) return;
+
+      setStartupSongs(initialSongs);
+      setLoading(false);
+      if (!firstHomeContentRecordedRef.current) {
+        firstHomeContentRecordedRef.current = true;
+        recordPerformanceMetric({
+          name: 'home.first-content',
+          startedAt: 0,
+          detail: {
+            category: 'recommended',
+            displayedCount: initialSongs.length,
+            source: 'startup-popular',
+          },
+        });
+      }
+    }).catch(() => {
+      // The hydrated recommendation request below remains the fallback.
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeCategory, isArtistMode, isSearchMode]);
+
+  useEffect(() => {
+    if (activeCategory === 'recommended' && !isSearchMode && !isArtistMode) return;
+    setStartupSongs([]);
+  }, [activeCategory, isArtistMode, isSearchMode]);
 
   const fetchRecommendedHomeSongs = useCallback(async (
     pageNum: number,
@@ -310,7 +363,9 @@ export default function HomePage() {
     fetchingRef.current = true;
     const startedAt = performanceNow();
     const segments: PerformanceSegment[] = [];
-    if (pageNum === 0) pendingHomePaintRef.current = { startedAt, category };
+    if (pageNum === 0 && !firstHomePaintRecordedRef.current) {
+      pendingHomePaintRef.current ??= { startedAt, category };
+    }
 
     try {
       let result: Song[] = [];
@@ -351,12 +406,15 @@ export default function HomePage() {
               setSongs(interimSongs);
               setRecommendationReasons({});
               setLoading(false);
-              recordPerformanceMetric({
-                name: 'home.first-content',
-                startedAt,
-                segments: [{ name: 'source', durationMs: performanceNow() - sourceStartedAt }],
-                detail: { category, displayedCount: interimSongs.length },
-              });
+              if (!firstHomeContentRecordedRef.current) {
+                firstHomeContentRecordedRef.current = true;
+                recordPerformanceMetric({
+                  name: 'home.first-content',
+                  startedAt,
+                  segments: [{ name: 'source', durationMs: performanceNow() - sourceStartedAt }],
+                  detail: { category, displayedCount: interimSongs.length, source: 'hydrated-popular' },
+                });
+              }
             } : undefined);
             break;
           case 'trending':
@@ -578,7 +636,8 @@ export default function HomePage() {
     ratings,
     lastPlayedAtBySongId: discoveryLastPlayed,
   }), [discoveryLastPlayed, globalFilterSettings, ratings]);
-  const unhiddenSongs = useMemo(() => excludeHiddenSongs(songs, hiddenSongs), [hiddenSongs, songs]);
+  const homeSongs = songs.length > 0 ? songs : startupSongs;
+  const unhiddenSongs = useMemo(() => excludeHiddenSongs(homeSongs, hiddenSongs), [hiddenSongs, homeSongs]);
   const unhiddenSearchResults = useMemo(
     () => excludeHiddenSongs(searchResults, hiddenSongs),
     [hiddenSongs, searchResults],
@@ -642,6 +701,7 @@ export default function HomePage() {
       secondFrame = requestAnimationFrame(() => {
         if (pendingHomePaintRef.current !== pending) return;
         pendingHomePaintRef.current = null;
+        firstHomePaintRecordedRef.current = true;
         recordPerformanceMetric({
           name: 'home.paint',
           startedAt: pending.startedAt,
@@ -721,7 +781,14 @@ export default function HomePage() {
           <CategoryChips
             chips={CATEGORIES}
             activeChip={activeCategory}
-            onSelect={(id) => setActiveCategory(asHomeCategoryId(id))}
+            onSelect={(id) => {
+              const nextCategory = asHomeCategoryId(id);
+              if (nextCategory === activeCategory) return;
+              firstHomePaintRecordedRef.current = false;
+              pendingHomePaintRef.current = null;
+              setStartupSongs([]);
+              setActiveCategory(nextCategory);
+            }}
           />
         </div>
       )}

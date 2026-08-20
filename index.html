@@ -19,6 +19,29 @@
         }
       }(window.location))
     </script>
+    <script>
+      // Start the authoritative discovery-safe popular request before the
+      // application bundle, lazy Home route, and listening-history restore.
+      // HomePage consumes this exact Response through searchSongsBackend, so
+      // the request is shared with the normal recommendation pipeline.
+      (function(l) {
+        var normalizedPath = l.pathname.replace(/\/+$/, '');
+        var params = new URLSearchParams(l.search);
+        var isHome = normalizedPath === '' || normalizedPath === '/diva-player';
+        if (!isHome || params.has('q') || params.has('artistId')) return;
+
+        var url = '/backend-api/api/songs/search?sort=FavoritedTimes&order=desc&start=0&maxResults=12&onlyWithPVs=true&discoveryOnly=true';
+        var response = fetch(url);
+        // Keep the speculative request quiet if navigation leaves Home before
+        // the application consumes it. Awaiting the original promise still
+        // reports the failure to the normal search fallback.
+        response.catch(function() {});
+        window.__DIVA_STARTUP_POPULAR__ = {
+          url: url,
+          response: response
+        };
+      }(window.location))
+    </script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Noto+Sans+JP:wght@300;400;500;600;700&display=swap" rel="stylesheet" />

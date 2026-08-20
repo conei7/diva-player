@@ -18,7 +18,16 @@ import AppErrorBoundary from './components/AppErrorBoundary';
 import { formatDocumentTitle } from './utils/documentTitle';
 import { shouldRecordPlayback } from './utils/playbackHistory';
 
-const HomePage = lazy(() => import('./pages/HomePage'));
+// Root navigation is the dominant entry path. Start its split-chunk download
+// while App is being evaluated instead of waiting for the first React render.
+const initialPath = typeof window !== 'undefined'
+  ? window.location.pathname.replace(/\/+$/, '')
+  : '';
+const initialHomePageImport = typeof window !== 'undefined'
+  && (initialPath === '' || initialPath === '/diva-player')
+  ? import('./pages/HomePage')
+  : null;
+const HomePage = lazy(() => initialHomePageImport ?? import('./pages/HomePage'));
 const WatchPage = lazy(() => import('./pages/WatchPage'));
 const PlaylistPage = lazy(() => import('./pages/PlaylistPage'));
 const HistoryPage = lazy(() => import('./pages/HistoryPage'));

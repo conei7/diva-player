@@ -20,6 +20,15 @@ const RECOMMENDER_API = import.meta.env.VITE_RECOMMENDER_API || '/backend-api';
 const backendSearchCache = new AsyncTtlCache(60_000, 100);
 let searchRandomSeed = createRandomSeed();
 
+declare global {
+  interface Window {
+    __DIVA_STARTUP_POPULAR__?: {
+      url: string;
+      response: Promise<Response>;
+    };
+  }
+}
+
 function createRandomSeed(): number {
   return Math.floor(Math.random() * 2_147_483_647);
 }
@@ -157,7 +166,12 @@ export async function searchSongsBackend(
     serverCache?: string;
   }>(url, async () => {
     const fetchStartedAt = performanceNow();
-    const response = await fetch(url);
+    const startupRequest = typeof window !== 'undefined'
+      && window.__DIVA_STARTUP_POPULAR__?.url === url
+      ? window.__DIVA_STARTUP_POPULAR__
+      : undefined;
+    const response = await (startupRequest?.response ?? fetch(url));
+    if (startupRequest) delete window.__DIVA_STARTUP_POPULAR__;
     const responseAt = performanceNow();
     if (!response.ok) throw new Error('Search failed');
     const data: { items: Song[]; totalCount: number } = await response.json();
