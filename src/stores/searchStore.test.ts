@@ -93,6 +93,7 @@ describe('advanced search input limits', () => {
 describe('backend artist union search', () => {
   afterEach(() => {
     if (typeof window !== 'undefined') delete window.__DIVA_STARTUP_POPULAR__;
+    if (typeof window !== 'undefined') delete window.__DIVA_STARTUP_POPULAR_MORE__;
     vi.unstubAllGlobals();
   });
 
@@ -336,7 +337,8 @@ describe('backend artist union search', () => {
   });
 
   it('consumes the document-start popular request without issuing a duplicate fetch', async () => {
-    const startupUrl = '/backend-api/api/songs/search?sort=FavoritedTimes&order=desc&start=0&maxResults=48&onlyWithPVs=true&discoveryOnly=true';
+    const startupUrl = '/backend-api/api/songs/search?sort=FavoritedTimes&order=desc&start=0&maxResults=12&onlyWithPVs=true&discoveryOnly=true';
+    const startupMoreUrl = '/backend-api/api/songs/search?sort=FavoritedTimes&order=desc&start=12&maxResults=12&onlyWithPVs=true&discoveryOnly=true';
     const startupResponse = {
       ok: true,
       headers: { get: () => null },
@@ -347,6 +349,13 @@ describe('backend artist union search', () => {
         url: startupUrl,
         response: Promise.resolve(startupResponse),
       },
+      __DIVA_STARTUP_POPULAR_MORE__: {
+        url: startupMoreUrl,
+        response: Promise.resolve({
+          ...startupResponse,
+          json: async () => ({ items: [{ id: 4243, name: 'More startup song' }], totalCount: 2 }),
+        } as unknown as Response),
+      },
     });
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
@@ -355,13 +364,22 @@ describe('backend artist union search', () => {
       sort: 'FavoritedTimes',
       sortOrder: 'desc',
       start: 0,
-      maxResults: 48,
+      maxResults: 12,
+      discoveryOnly: true,
+    });
+    const moreResult = await searchSongsBackend({
+      sort: 'FavoritedTimes',
+      sortOrder: 'desc',
+      start: 12,
+      maxResults: 12,
       discoveryOnly: true,
     });
 
     expect(result.items.map(song => song.id)).toEqual([4242]);
+    expect(moreResult.items.map(song => song.id)).toEqual([4243]);
     expect(fetchMock).not.toHaveBeenCalled();
     expect(window.__DIVA_STARTUP_POPULAR__).toBeUndefined();
+    expect(window.__DIVA_STARTUP_POPULAR_MORE__).toBeUndefined();
   });
 });
 

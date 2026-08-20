@@ -156,7 +156,7 @@ export default function HomePage() {
     void searchSongsBackend({
       sort: 'FavoritedTimes',
       sortOrder: 'desc',
-      maxResults: 48,
+      maxResults: 12,
       start: 0,
       discoveryOnly: true,
     }).then(result => {

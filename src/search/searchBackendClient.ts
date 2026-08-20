@@ -27,6 +27,11 @@ declare global {
       response: Promise<Response>;
       data?: Promise<{ items?: Song[]; totalCount?: number }>;
     };
+    __DIVA_STARTUP_POPULAR_MORE__?: {
+      url: string;
+      response: Promise<Response>;
+      data?: Promise<{ items?: Song[]; totalCount?: number }>;
+    };
     __DIVA_DISMISS_STARTUP_HOME__?: () => void;
     __DIVA_STARTUP_TIMING__?: { cardsRenderedAt: number; displayedCount: number; songIds: number[] };
   }
@@ -170,11 +175,14 @@ export async function searchSongsBackend(
   }>(url, async () => {
     const fetchStartedAt = performanceNow();
     const startupRequest = typeof window !== 'undefined'
-      && window.__DIVA_STARTUP_POPULAR__?.url === url
-      ? window.__DIVA_STARTUP_POPULAR__
+      ? [window.__DIVA_STARTUP_POPULAR__, window.__DIVA_STARTUP_POPULAR_MORE__]
+        .find(request => request?.url === url)
       : undefined;
     const response = await (startupRequest?.response ?? fetch(url));
-    if (startupRequest) delete window.__DIVA_STARTUP_POPULAR__;
+    if (typeof window !== 'undefined') {
+      if (startupRequest === window.__DIVA_STARTUP_POPULAR__) delete window.__DIVA_STARTUP_POPULAR__;
+      if (startupRequest === window.__DIVA_STARTUP_POPULAR_MORE__) delete window.__DIVA_STARTUP_POPULAR_MORE__;
+    }
     const responseAt = performanceNow();
     if (!response.ok) throw new Error('Search failed');
     const data: { items: Song[]; totalCount: number } = await response.json();

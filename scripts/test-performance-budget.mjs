@@ -188,13 +188,18 @@ async function installApiFixtures(page, counters) {
     } else if (path.includes('/api/songs/discovery-eligibility')) {
       body = { items: parseIds(url).map(songId => ({ songId, discoveryEligible: true })) };
     } else if (path.includes('/api/songs/search')) {
-      if (url.searchParams.get('discoveryOnly') === 'true'
+      const isStartupPopular = url.searchParams.get('discoveryOnly') === 'true'
         && url.searchParams.get('sort') === 'FavoritedTimes'
-        && url.searchParams.get('start') === '0'
-        && url.searchParams.get('maxResults') === '48') {
+        && url.searchParams.get('maxResults') === '12';
+      if (isStartupPopular && url.searchParams.get('start') === '0') {
         counters.startupPopularRequests += 1;
+        body = { items: [fixtureSong, fixtureSongForId(2502)], totalCount: 3 };
+      } else if (isStartupPopular && url.searchParams.get('start') === '12') {
+        counters.startupPopularMoreRequests += 1;
+        body = { items: [fixtureSongForId(2503)], totalCount: 3 };
+      } else {
+        body = { items: [fixtureSong, fixtureSongForId(2502), fixtureSongForId(2503)], totalCount: 3 };
       }
-      body = { items: [fixtureSong, fixtureSongForId(2502), fixtureSongForId(2503)], totalCount: 3 };
     } else if (path.includes('/api/recommend')) {
       body = { items: [] };
     } else if (path.match(/\/api\/songs\/\d+$/)) {
@@ -260,7 +265,7 @@ async function main() {
   const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox'] });
   const page = await browser.newPage();
   page.setDefaultTimeout(PAGE_TIMEOUT_MS);
-  const counters = { historyMetadataRequests: 0, startupPopularRequests: 0 };
+  const counters = { historyMetadataRequests: 0, startupPopularRequests: 0, startupPopularMoreRequests: 0 };
   await installApiFixtures(page, counters);
 
   try {
@@ -270,6 +275,7 @@ async function main() {
 
     counters.historyMetadataRequests = 0;
     counters.startupPopularRequests = 0;
+    counters.startupPopularMoreRequests = 0;
     const homeStartedAt = Date.now();
     await page.reload({ waitUntil: 'domcontentloaded' });
     await waitForCards(page, 'home with 300 history entries');
@@ -294,7 +300,11 @@ async function main() {
     );
     assert(
       counters.startupPopularRequests === 1,
-      `Startup popular search was requested ${counters.startupPopularRequests} times (expected one shared request).`,
+      `Startup popular first page was requested ${counters.startupPopularRequests} times (expected one shared request).`,
+    );
+    assert(
+      counters.startupPopularMoreRequests === 1,
+      `Startup popular fill page was requested ${counters.startupPopularMoreRequests} times (expected one shared request).`,
     );
     assert(
       counters.historyMetadataRequests <= 3,

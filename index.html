@@ -52,10 +52,10 @@
       }(window.location))
     </script>
     <script>
-      // Start the authoritative discovery-safe popular request before the
+      // Start authoritative discovery-safe popular pages before the
       // application bundle, lazy Home route, and listening-history restore.
-      // HomePage consumes this exact Response through searchSongsBackend, so
-      // the request is shared with the normal recommendation pipeline.
+      // HomePage consumes these exact Responses through searchSongsBackend, so
+      // both pages are shared with the normal recommendation pipeline.
       (function(l) {
         var normalizedPath = l.pathname.replace(/\/+$/, '');
         var params = new URLSearchParams(l.search);
@@ -63,21 +63,26 @@
         if (!isHome || params.has('q') || params.has('artistId')) return;
 
         document.documentElement.classList.add('diva-startup-home');
-        var url = '/backend-api/api/songs/search?sort=FavoritedTimes&order=desc&start=0&maxResults=48&onlyWithPVs=true&discoveryOnly=true';
-        var response = fetch(url);
-        // Keep the speculative request quiet if navigation leaves Home before
-        // the application consumes it. Awaiting the original promise still
-        // reports the failure to the normal search fallback.
-        response.catch(function() {});
-        window.__DIVA_STARTUP_POPULAR__ = {
-          url: url,
-          response: response,
-          data: response.then(function(result) {
-            if (!result.ok) throw new Error('Startup search failed');
-            return result.clone().json();
-          })
-        };
-        window.__DIVA_STARTUP_POPULAR__.data.catch(function() {});
+        function startPopularPage(start) {
+          var url = '/backend-api/api/songs/search?sort=FavoritedTimes&order=desc&start=' + start + '&maxResults=12&onlyWithPVs=true&discoveryOnly=true';
+          var response = fetch(url);
+          // Keep speculative requests quiet if navigation leaves Home before
+          // the application consumes them. Awaiting the original promise still
+          // reports a failure to the normal search fallback.
+          response.catch(function() {});
+          var request = {
+            url: url,
+            response: response,
+            data: response.then(function(result) {
+              if (!result.ok) throw new Error('Startup search failed');
+              return result.clone().json();
+            })
+          };
+          request.data.catch(function() {});
+          return request;
+        }
+        window.__DIVA_STARTUP_POPULAR__ = startPopularPage(0);
+        window.__DIVA_STARTUP_POPULAR_MORE__ = startPopularPage(12);
       }(window.location))
     </script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -101,6 +106,7 @@
       (function() {
         if (!document.documentElement.classList.contains('diva-startup-home')) return;
         var startup = window.__DIVA_STARTUP_POPULAR__;
+        var startupMore = window.__DIVA_STARTUP_POPULAR_MORE__;
         var dismissed = false;
         window.__DIVA_DISMISS_STARTUP_HOME__ = function() {
           if (dismissed) return;
@@ -228,13 +234,11 @@
           if (value <= 0) return '';
           return Math.floor(value / 60) + ':' + String(Math.floor(value % 60)).padStart(2, '0');
         }
-        startup?.data.then(function(payload) {
-          return filteredSongs(Array.isArray(payload?.items) ? payload.items : []);
-        }).then(function(songs) {
-          if (songs.length === 0 || dismissed) return;
+        function renderSongs(songs) {
+          if (songs.length === 0 || dismissed) return false;
           var displaySongs = songs.slice(0, 12);
           var grid = document.getElementById('startup-grid');
-          if (!grid) return;
+          if (!grid) return false;
           grid.replaceChildren();
           var base = location.pathname.replace(/\/+$/, '') === '/diva-player' ? '/diva-player' : '';
           displaySongs.forEach(function(song) {
@@ -271,10 +275,27 @@
           });
           document.getElementById('startup-home')?.setAttribute('aria-label', 'あなたへのおすすめ');
           window.__DIVA_STARTUP_TIMING__ = {
-            cardsRenderedAt: performance.now(),
+            cardsRenderedAt: window.__DIVA_STARTUP_TIMING__?.cardsRenderedAt ?? performance.now(),
             displayedCount: displaySongs.length,
             songIds: displaySongs.map(function(song) { return song.id; })
           };
+          return true;
+        }
+        function payloadItems(payload) {
+          return Array.isArray(payload?.items) ? payload.items : [];
+        }
+        var primaryItems = startup?.data.then(payloadItems) ?? Promise.resolve([]);
+        var moreItems = startupMore?.data.then(payloadItems) ?? Promise.resolve([]);
+        // Paint page zero as soon as it has any eligible songs. The second
+        // cacheable page only fills strict-filter gaps and updates the grid.
+        primaryItems.then(filteredSongs).then(renderSongs).catch(function() {});
+        Promise.all([
+          primaryItems.catch(function() { return []; }),
+          moreItems.catch(function() { return []; })
+        ]).then(function(pages) {
+          return filteredSongs(pages[0].concat(pages[1]));
+        }).then(function(songs) {
+          if (!renderSongs(songs)) window.__DIVA_DISMISS_STARTUP_HOME__?.();
         }).catch(window.__DIVA_DISMISS_STARTUP_HOME__);
       }())
     </script>
