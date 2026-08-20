@@ -48,8 +48,10 @@ try {
   await first.$eval('[data-testid="mini-player-close"]', (button) => button.click());
   await first.waitForFunction(() => !document.querySelector('[data-testid="mini-player-close"]'));
   await first.waitForFunction(() => document.title === 'DIVA Player — ボカロミュージックプレイヤー');
-  const queueCleared = await first.evaluate(() => localStorage.getItem('diva_playerQueue') === null);
-  if (!queueCleared) throw new Error('Closing the mini player did not clear the persisted queue.');
+  // Player state persistence may finish one task after the React UI disappears,
+  // especially while the startup shell and route chunks are initializing.
+  // Verify the durable contract without sampling that transient boundary.
+  await first.waitForFunction(() => localStorage.getItem('diva_playerQueue') === null);
   console.log('PASS mini-player close control');
 } finally {
   await browser.close();
