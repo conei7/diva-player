@@ -48,9 +48,11 @@ internal sealed record RankingRequest(
             .Distinct(StringComparer.Ordinal)
             .Order(StringComparer.Ordinal)
             .ToArray();
-        var normalizedDays = normalizedMode is "alltime" or "pace" or "recent" or "deep"
-            ? 30
-            : Math.Clamp(days, 1, 365);
+        var normalizedDays = normalizedMode switch
+        {
+            "surge" => 7,
+            _ => 30,
+        };
         var normalizedSeed = normalizedMode is "alltime" or "pace" or "surge" or "recent"
             ? 0
             : Math.Clamp(seed, 0, 63);

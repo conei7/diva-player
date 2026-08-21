@@ -240,7 +240,7 @@ assert.doesNotMatch(searchRequest, /\n            Query:.*(?:Trim|ToLower|Normal
 assert.match(searchRequest, /normalizedInstrumentKeys is not null && instrumentMatchMode == "any"/);
 assert.match(searchRequest, /normalizedTagIds is not null && tagMatchMode == "any"/);
 assert.match(rankingRequest, /"pace" or "popular" => "pace"/);
-assert.match(rankingRequest, /normalizedMode is "alltime" or "pace" or "surge" or "recent"/);
+assert.match(rankingRequest, /"surge" => 7/);
 assert.match(rankingRequest, /Order\(StringComparer\.Ordinal\)/);
 assert.match(searchResponseCache, /MinimumEntryChargeBytes = 4 \* 1024/);
 assert.match(searchResponseCache, /SizeLimit = sizeLimitBytes/);
@@ -406,9 +406,9 @@ assert.match(warmup, /home-recent/);
 assert.match(warmup, /home-deep/);
 assert.match(warmup, /PeriodicTimer\(RefreshInterval\)/);
 assert.match(warmup, /forceRefresh: true/);
-assert.match(dbService, /CASE WHEN h\.recorded_at IS NULL\s+THEN NULL::double precision/);
-assert.match(dbService, /surgeLatestCondition = normalizedMode == "surge"/);
-assert.match(dbService, /maximumNicoWeight\)} \* COALESCE\(h\.nico_views, 0\)/);
+assert.match(dbService, /history_windows AS MATERIALIZED/);
+assert.match(dbService, /RANGE BETWEEN interval '10 days' PRECEDING AND interval '7 days' PRECEDING/);
+assert.match(dbService, /baseline\.previous_observed_at IS NULL\s+THEN NULL::double precision/);
 assert.match(dbService, /cmd\.CommandTimeout = normalizedMode == "surge" \? 90 : 30/);
 assert.doesNotMatch(dbService, /surge_debug_sql/);
 assert.ok(

@@ -2271,21 +2271,9 @@ public class DbService
         var viewWeightProfile = await LoadViewWeightProfileAsync(conn, cacheLoadCancellationToken);
         var latestTotalViewsSql = WeightedViewsSql("h.youtube_views", "h.nico_views", viewWeightProfile);
         var baselineTotalViewsSql = WeightedViewsSql("h.youtube_views", "h.nico_views", viewWeightProfile);
+        var previousTotalViewsSql = WeightedViewsSql("baseline.previous_youtube_views", "baseline.previous_nico_views", viewWeightProfile);
         var currentSongTotalViewsSql = WeightedViewsSql("s.youtube_views", "s.nico_views", viewWeightProfile);
         var growthNicoWeightSql = NicoWeightSql("b.youtube_views", viewWeightProfile);
-        var latestQualityScoreSql = "CASE WHEN COALESCE(latest_quality.duration_score, 0.5) < 0.50 THEN GREATEST(0, COALESCE(latest_quality.quality_score, 0.5) - 0.25) ELSE COALESCE(latest_quality.quality_score, 0.5) END";
-        var maximumNicoWeight = viewWeightProfile?.MaxWeight ?? 8.0;
-        var surgeLatestCondition = normalizedMode == "surge" && normalizedRanking == "quality"
-            ? $"""
-                  AND (COALESCE(h.youtube_views, 0) + ({FormatSqlNumber(maximumNicoWeight)} * COALESCE(h.nico_views, 0))) >= 750
-                  AND COALESCE(NULLIF(latest_song.raw_json->>'songType', ''), latest_song.song_type, 'Unspecified') IN ('Original', 'Cover', 'Remix', 'Remaster', 'Arrangement', 'Mashup', 'MusicPV')
-                  AND {latestQualityScoreSql} >= 0.45
-                  AND NOT ({latestQualityScoreSql} < 0.60 AND EXISTS (
-                      SELECT 1 FROM unnest(COALESCE(latest_quality.reason_codes, ARRAY['quality_missing']::text[])) reason
-                      WHERE reason LIKE 'negative_tag:%'
-                  ))
-              """
-            : string.Empty;
         var catalogCandidateSql = normalizedMode switch
         {
             "recent" => "SELECT id FROM songs WHERE publish_date >= CURRENT_DATE - interval '30 days'",
@@ -2346,6 +2334,32 @@ public class DbService
                 SELECT MAX(recorded_at) AS observed_at
                 FROM view_history
             ),
+            history_windows AS MATERIALIZED (
+                SELECT
+                    h.song_id,
+                    h.recorded_at,
+                    COALESCE(h.youtube_views, 0) AS youtube_views,
+                    COALESCE(h.nico_views, 0) AS nico_views,
+                    last_value(h.recorded_at) OVER normal_window AS normal_baseline_at,
+                    last_value(h.recorded_at) OVER fallback_window AS fallback_baseline_at,
+                    last_value(COALESCE(h.youtube_views, 0)) OVER fallback_window AS fallback_youtube_views,
+                    last_value(COALESCE(h.nico_views, 0)) OVER fallback_window AS fallback_nico_views
+                FROM view_history h
+                CROSS JOIN latest_watermark watermark
+                WHERE watermark.observed_at IS NOT NULL
+                  AND h.recorded_at >= watermark.observed_at - interval '21 days'
+                WINDOW
+                    normal_window AS (
+                        PARTITION BY h.song_id
+                        ORDER BY h.recorded_at
+                        RANGE BETWEEN interval '10 days' PRECEDING AND interval '7 days' PRECEDING
+                    ),
+                    fallback_window AS (
+                        PARTITION BY h.song_id
+                        ORDER BY h.recorded_at
+                        RANGE BETWEEN interval '10 days' PRECEDING AND interval '3 days' PRECEDING
+                    )
+            ),
             latest AS (
                 SELECT DISTINCT ON (h.song_id)
                        h.song_id,
@@ -2373,7 +2387,6 @@ public class DbService
                       SELECT 1 FROM pvs latest_pv
                       WHERE latest_pv.song_id = latest_song.id AND latest_pv.disabled = FALSE
                   )
-                  {surgeLatestCondition}
                 ORDER BY h.song_id, h.recorded_at DESC
             ),
             baseline AS (
@@ -2381,43 +2394,35 @@ public class DbService
                        h.recorded_at AS observed_at,
                        COALESCE(h.youtube_views, 0) AS youtube_views,
                        COALESCE(h.nico_views, 0) AS nico_views,
-                       {baselineTotalViewsSql} AS total_views
+                       {baselineTotalViewsSql} AS total_views,
+                       h.fallback_baseline_at AS previous_observed_at,
+                       h.fallback_youtube_views AS previous_youtube_views,
+                       h.fallback_nico_views AS previous_nico_views
                 FROM latest
-                JOIN LATERAL (
-                    SELECT history.*
-                    FROM view_history history
-                    WHERE history.song_id = latest.song_id
-                      AND history.recorded_at <= latest.observed_at - ({baselineMinimumDays}::int * interval '1 day')
-                      AND history.recorded_at >= latest.observed_at - (($1::int + 3) * interval '1 day')
-                    ORDER BY
-                      CASE WHEN history.recorded_at <= latest.observed_at - ($1::int * interval '1 day') THEN 0 ELSE 1 END,
-                      history.recorded_at DESC
-                    LIMIT 1
-                ) h ON TRUE
+                JOIN history_windows latest_window
+                  ON latest_window.song_id = latest.song_id
+                 AND latest_window.recorded_at = latest.observed_at
+                JOIN history_windows h
+                  ON h.song_id = latest.song_id
+                 AND h.recorded_at = CASE
+                     WHEN {baselineMinimumDays} = $1::int THEN latest_window.normal_baseline_at
+                     ELSE COALESCE(latest_window.normal_baseline_at, latest_window.fallback_baseline_at)
+                 END
             ),
             previous_baseline AS (
                 SELECT baseline.song_id,
-                       h.recorded_at AS observed_at,
+                       baseline.previous_observed_at AS observed_at,
                        -- Preserve the absence of a preceding window. The
                        -- weighted expression coalesces missing counters to
-                       -- zero, which would otherwise turn a missing lateral
+                       -- zero, which would otherwise turn a missing window
                        -- row into previous_views = 0 and reject every
                        -- bootstrap candidate because prior_window_days is
                        -- still NULL.
-                       CASE WHEN h.recorded_at IS NULL
+                       CASE WHEN baseline.previous_observed_at IS NULL
                            THEN NULL::double precision
-                           ELSE {baselineTotalViewsSql}
+                           ELSE {previousTotalViewsSql}
                        END AS total_views
                 FROM baseline
-                LEFT JOIN LATERAL (
-                    SELECT history.*
-                    FROM view_history history
-                    WHERE history.song_id = baseline.song_id
-                      AND history.recorded_at <= baseline.observed_at - interval '3 days'
-                      AND history.recorded_at >= baseline.observed_at - interval '10 days'
-                    ORDER BY history.recorded_at DESC
-                    LIMIT 1
-                ) h ON TRUE
             ),
             growth AS (
                 SELECT

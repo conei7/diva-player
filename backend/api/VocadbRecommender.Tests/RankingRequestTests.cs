@@ -60,6 +60,10 @@ public sealed class RankingRequestTests
             Create(mode: null).CacheKey);
         Assert.Equal("legacy", Create(mode: "surge", ranking: "legacy").Ranking);
         Assert.Equal("quality", Create(mode: "surge", ranking: "LEGACY").Ranking);
+        Assert.Equal(7, Create(mode: "surge").Days);
+        Assert.Equal(
+            Create(mode: "surge").CacheKey,
+            RankingRequest.Create(365, 0, 24, "surge", null, 0, false, null, null, null).CacheKey);
     }
 
     private static RankingRequest Create(
