@@ -407,6 +407,9 @@ assert.match(warmup, /home-deep/);
 assert.match(warmup, /PeriodicTimer\(RefreshInterval\)/);
 assert.match(warmup, /forceRefresh: true/);
 assert.match(dbService, /CASE WHEN h\.recorded_at IS NULL\s+THEN NULL::double precision/);
+assert.match(dbService, /surgeLatestCondition = normalizedMode == "surge"/);
+assert.match(dbService, /maximumNicoWeight\)} \* COALESCE\(h\.nico_views, 0\)/);
+assert.match(dbService, /cmd\.CommandTimeout = normalizedMode == "surge" \? 90 : 30/);
 assert.doesNotMatch(dbService, /surge_debug_sql/);
 assert.ok(
   schema.includes('ADD COLUMN IF NOT EXISTS youtube_views')

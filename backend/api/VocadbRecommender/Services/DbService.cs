@@ -2273,6 +2273,19 @@ public class DbService
         var baselineTotalViewsSql = WeightedViewsSql("h.youtube_views", "h.nico_views", viewWeightProfile);
         var currentSongTotalViewsSql = WeightedViewsSql("s.youtube_views", "s.nico_views", viewWeightProfile);
         var growthNicoWeightSql = NicoWeightSql("b.youtube_views", viewWeightProfile);
+        var latestQualityScoreSql = "CASE WHEN COALESCE(latest_quality.duration_score, 0.5) < 0.50 THEN GREATEST(0, COALESCE(latest_quality.quality_score, 0.5) - 0.25) ELSE COALESCE(latest_quality.quality_score, 0.5) END";
+        var maximumNicoWeight = viewWeightProfile?.MaxWeight ?? 8.0;
+        var surgeLatestCondition = normalizedMode == "surge" && normalizedRanking == "quality"
+            ? $"""
+                  AND (COALESCE(h.youtube_views, 0) + ({FormatSqlNumber(maximumNicoWeight)} * COALESCE(h.nico_views, 0))) >= 750
+                  AND COALESCE(NULLIF(latest_song.raw_json->>'songType', ''), latest_song.song_type, 'Unspecified') IN ('Original', 'Cover', 'Remix', 'Remaster', 'Arrangement', 'Mashup', 'MusicPV')
+                  AND {latestQualityScoreSql} >= 0.45
+                  AND NOT ({latestQualityScoreSql} < 0.60 AND EXISTS (
+                      SELECT 1 FROM unnest(COALESCE(latest_quality.reason_codes, ARRAY['quality_missing']::text[])) reason
+                      WHERE reason LIKE 'negative_tag:%'
+                  ))
+              """
+            : string.Empty;
         var catalogCandidateSql = normalizedMode switch
         {
             "recent" => "SELECT id FROM songs WHERE publish_date >= CURRENT_DATE - interval '30 days'",
@@ -2360,6 +2373,7 @@ public class DbService
                       SELECT 1 FROM pvs latest_pv
                       WHERE latest_pv.song_id = latest_song.id AND latest_pv.disabled = FALSE
                   )
+                  {surgeLatestCondition}
                 ORDER BY h.song_id, h.recorded_at DESC
             ),
             baseline AS (
@@ -2644,6 +2658,11 @@ public class DbService
             FROM limited_ids ranked
             JOIN songs s ON s.id = ranked.song_id
             ORDER BY ranked.rank", conn);
+        // The surge feed evaluates several million daily history rows. Its
+        // candidate is warmed before readiness and refreshed in the background,
+        // so a cold database must be allowed to finish without exposing that
+        // work to an interactive request or publishing an empty fallback.
+        cmd.CommandTimeout = normalizedMode == "surge" ? 90 : 30;
         cmd.Parameters.AddWithValue(clampedDays);
         cmd.Parameters.AddWithValue(normalizedStart);
         cmd.Parameters.AddWithValue(clampedMaxResults);
