@@ -7,6 +7,7 @@ const BUDGETS_MS = {
   'home.first-content': 1_500,
   'home.load': 10_000,
   'home.paint': 1_500,
+  'home.prefetched-category': 500,
   'search.paint': 3_000,
 };
 
@@ -215,6 +216,19 @@ async function installApiFixtures(page, counters) {
       body = { items: parseIds(url).map(fixtureSongForId) };
     } else if (path.includes('/api/songs/discovery-eligibility')) {
       body = { items: parseIds(url).map(songId => ({ songId, discoveryEligible: true })) };
+    } else if (path.includes('/api/songs/trending')) {
+      counters.homeRankingRequests += 1;
+      await new Promise(resolve => setTimeout(resolve, counters.homeRankingDelayMs));
+      counters.homeRankingResponses += 1;
+      const modeIds = { alltime: 2601, pace: 2602, surge: 2603, recent: 2604, deep: 2605 };
+      const mode = url.searchParams.get('mode') ?? 'pace';
+      body = {
+        items: [{
+          ...fixtureSongForId(modeIds[mode] ?? 2600),
+          ...(mode === 'surge' ? { viewGrowth: 1234, growthRate: 0.5, surgeRate: 2, trendTier: 2, trendWindowDays: 7 } : {}),
+        }],
+        totalCount: 1,
+      };
     } else if (path.includes('/api/songs/search')) {
       const isStartupPopular = url.searchParams.get('discoveryOnly') === 'true'
         && url.searchParams.get('sort') === 'FavoritedTimes'
@@ -298,6 +312,9 @@ async function main() {
     startupPopularRequests: 0,
     startupPopularMoreRequests: 0,
     historyMetadataDelayMs: HISTORY_METADATA_DELAY_MS,
+    homeRankingRequests: 0,
+    homeRankingResponses: 0,
+    homeRankingDelayMs: 800,
   };
   await installApiFixtures(page, counters);
 
@@ -420,6 +437,8 @@ async function main() {
     }
 
     counters.historyMetadataDelayMs = 0;
+    counters.homeRankingRequests = 0;
+    counters.homeRankingResponses = 0;
     await page.evaluate(async () => {
       localStorage.removeItem('diva-startup-recommendations');
       localStorage.removeItem('diva-startup-recommendations-backup');
@@ -463,6 +482,29 @@ async function main() {
     );
     console.log(`PASS home.personalized-cache: ${Math.round(cachedFirstContent.durationMs)}ms / ${BUDGETS_MS['home.first-card']}ms`);
 
+    const rankingPrefetchDeadline = Date.now() + PAGE_TIMEOUT_MS;
+    while (counters.homeRankingResponses < 5 && Date.now() < rankingPrefetchDeadline) {
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    assert(counters.homeRankingResponses >= 5, `Home ranking prefetch did not cover all server feeds: ${counters.homeRankingResponses}`);
+    const categoryStartedAt = Date.now();
+    await page.evaluate(() => {
+      const chip = Array.from(document.querySelectorAll('button')).find(button => button.textContent?.trim() === '急上昇');
+      if (!(chip instanceof HTMLButtonElement)) throw new Error('Trending category chip was not found.');
+      chip.click();
+    });
+    await page.waitForFunction(() => Array.from(document.querySelectorAll('a[href*="/watch?v="]'))
+      .some(link => /[?&]v=2603(?:&|$)/.test(link.getAttribute('href') ?? '')));
+    const prefetchedCategoryMs = Date.now() - categoryStartedAt;
+    const hasUnwantedTrendingDescription = await page.evaluate(() =>
+      document.body.innerText.includes('直近約7日間の再生増加が平常時より加速している曲'));
+    assert(
+      prefetchedCategoryMs <= BUDGETS_MS['home.prefetched-category'],
+      `Prefetched Home category exceeded ${BUDGETS_MS['home.prefetched-category']}ms (${prefetchedCategoryMs}ms).`,
+    );
+    assert(!hasUnwantedTrendingDescription, 'The removed trending explanation is still visible.');
+    console.log(`PASS home.prefetched-category: ${prefetchedCategoryMs}ms / ${BUDGETS_MS['home.prefetched-category']}ms`);
+
     // This producer name is present in the SBC/VocaDB fixture and keeps the
     // search paint budget independent of a single localized song title.
     const searchInput = 'form input[type="text"]';
@@ -478,6 +520,7 @@ async function main() {
       'home.first-content': firstContent,
       'home.load': homeLoad,
       'home.paint': homePaint,
+      'home.prefetched-category': { durationMs: prefetchedCategoryMs },
       'search.paint': searchPaint,
     };
     for (const [name, metric] of Object.entries(metrics)) {

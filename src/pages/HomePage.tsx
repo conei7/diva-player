@@ -60,6 +60,8 @@ type HomeCategoryId =
   | 'history_based'
   | 'favorite_producers';
 
+type PrefetchableHomeCategoryId = Exclude<HomeCategoryId, 'recommended'>;
+
 const CATEGORIES: CategoryChip[] = [
   { id: 'recommended', label: 'あなたへのおすすめ' },
   { id: 'popular', label: '人気の曲' },
@@ -77,6 +79,16 @@ const STARTUP_ROTATION_KEY = 'diva-startup-rotation-v1';
 const MAX_FAVORITE_PRODUCER_REQUESTS = 4;
 const INITIAL_OPTIONAL_RECOMMENDATION_BUDGET_MS = 2_500;
 const MAX_AUTOFILL_PAGES = 2;
+const HOME_CATEGORY_PREFETCH_DELAY_MS = 300;
+const PREFETCHABLE_HOME_CATEGORIES: PrefetchableHomeCategoryId[] = [
+  'popular',
+  'pace',
+  'trending',
+  'recent',
+  'deep',
+  'history_based',
+  'favorite_producers',
+];
 
 function asHomeCategoryId(id: string): HomeCategoryId {
   return CATEGORIES.some(category => category.id === id)
@@ -143,6 +155,7 @@ export default function HomePage() {
   const firstHomeContentRecordedRef = useRef(false);
   const firstHomePaintRecordedRef = useRef(false);
   const persistedStartupSignatureRef = useRef('');
+  const homeSourcePromisesRef = useRef<Map<string, Promise<Song[]>>>(new Map());
 
   const { entries, hasHydrated } = useHistoryStore();
   const { currentSong } = usePlayerStore();
@@ -172,6 +185,14 @@ export default function HomePage() {
   } = useSearchStore();
   const isSearchMode = searchQuery.length > 0;
   const isArtistMode = !!artistIdParam;
+  const recentProducerIds = useMemo(() => selectRecentProducerIds(entries), [entries]);
+  const homeSourceContextKey = useMemo(() => JSON.stringify({
+    filters: globalFilterSettings,
+    favoriteProducerIds: favoriteProducers.map(producer => producer.id),
+    recentProducerIds,
+    recentSongIds: entries.slice(0, 50).map(entry => entry.song.id),
+    rankingSeed: rankingSeedRef.current,
+  }), [entries, favoriteProducers, globalFilterSettings, recentProducerIds]);
 
   useEffect(() => {
     if (!artistIdParam) return;
@@ -384,6 +405,90 @@ export default function HomePage() {
     return result.length > 0 ? result : popularResult.items;
   }, [currentSong, entries, favoriteProducers, playlists, ratings, implicitFeedback]);
 
+  const fetchPrefetchableHomeSongs = useCallback(async (
+    category: PrefetchableHomeCategoryId,
+    pageNum: number,
+  ): Promise<Song[]> => {
+    switch (category) {
+      case 'popular':
+        return getTrendingSongs(30, PAGE_SIZE, pageNum * PAGE_SIZE, 'alltime', 0, globalFilterSettings);
+      case 'pace':
+        return getTrendingSongs(30, PAGE_SIZE, pageNum * PAGE_SIZE, 'pace', 0, globalFilterSettings);
+      case 'trending':
+        return getTrendingSongs(7, PAGE_SIZE, pageNum * PAGE_SIZE, 'surge', 0, globalFilterSettings);
+      case 'recent':
+        return getTrendingSongs(30, PAGE_SIZE, pageNum * PAGE_SIZE, 'recent', 0, globalFilterSettings);
+      case 'deep':
+        return getTrendingSongs(30, PAGE_SIZE, pageNum * PAGE_SIZE, 'deep', rankingSeedRef.current, globalFilterSettings);
+      case 'history_based': {
+        const recentSongIds = new Set(entries.slice(0, 50).map(entry => entry.song.id));
+        if (recentProducerIds.length > 0) {
+          const producerWindow = selectRotatingWindow(recentProducerIds, pageNum, 4);
+          const producerResults = await Promise.all(producerWindow.map(producerId =>
+            searchSongsBackend({
+              anyArtistIds: [producerId],
+              sort: 'FavoritedTimes',
+              sortOrder: 'desc',
+              maxResults: 12,
+              start: pageNum * 12,
+              discoveryOnly: true,
+            }).then(searchResult => searchResult.items).catch(() => [] as Song[]),
+          ));
+          const interleaved = interleaveUniqueSongs(producerResults, recentSongIds, PAGE_SIZE);
+          if (interleaved.length > 0) return interleaved;
+        }
+
+        const fallback = await searchSongsBackend({
+          sort: 'FavoritedTimes',
+          sortOrder: 'desc',
+          maxResults: PAGE_SIZE,
+          start: pageNum * PAGE_SIZE,
+          discoveryOnly: true,
+        });
+        return fallback.items;
+      }
+      case 'favorite_producers': {
+        if (favoriteProducers.length === 0) return [];
+        const favoriteProducerWindow = selectRotatingWindow(
+          favoriteProducers,
+          pageNum,
+          MAX_FAVORITE_PRODUCER_REQUESTS,
+        );
+        const producerResults = await Promise.all(favoriteProducerWindow.map(producer =>
+          searchSongsBackend({
+            artistIds: [producer.id],
+            sort: 'FavoritedTimes',
+            sortOrder: 'desc',
+            start: pageNum * 12,
+            maxResults: 12,
+            discoveryOnly: true,
+          }).then(result => result.items).catch(() => [] as Song[]),
+        ));
+        return uniqueSongsById(producerResults.flat()).slice(0, PAGE_SIZE);
+      }
+    }
+  }, [entries, favoriteProducers, globalFilterSettings, recentProducerIds]);
+
+  const loadPrefetchableHomeSongs = useCallback((
+    category: PrefetchableHomeCategoryId,
+    pageNum: number,
+  ): Promise<Song[]> => {
+    if (pageNum > 0) return fetchPrefetchableHomeSongs(category, pageNum);
+
+    const key = `${homeSourceContextKey}:${category}:0`;
+    const existing = homeSourcePromisesRef.current.get(key);
+    if (existing) return existing;
+
+    const request = fetchPrefetchableHomeSongs(category, 0);
+    homeSourcePromisesRef.current.set(key, request);
+    void request.catch(() => {
+      if (homeSourcePromisesRef.current.get(key) === request) {
+        homeSourcePromisesRef.current.delete(key);
+      }
+    });
+    return request;
+  }, [fetchPrefetchableHomeSongs, homeSourceContextKey]);
+
   const fetchSongs = useCallback(async (
     category: HomeCategoryId,
     pageNum: number,
@@ -421,88 +526,10 @@ export default function HomePage() {
           start: pageNum * PAGE_SIZE,
         });
         result = searchResult.items;
+      } else if (category === 'recommended') {
+        result = await fetchRecommendedHomeSongs(pageNum);
       } else {
-        switch (category) {
-          case 'popular': {
-            result = await getTrendingSongs(30, PAGE_SIZE, pageNum * PAGE_SIZE, 'alltime', 0, globalFilterSettings);
-            break;
-          }
-          case 'pace': {
-            result = await getTrendingSongs(30, PAGE_SIZE, pageNum * PAGE_SIZE, 'pace', 0, globalFilterSettings);
-            break;
-          }
-          case 'recommended':
-            result = await fetchRecommendedHomeSongs(pageNum);
-            break;
-          case 'trending':
-            result = await getTrendingSongs(7, PAGE_SIZE, pageNum * PAGE_SIZE, 'surge', 0, globalFilterSettings);
-            break;
-          case 'recent': {
-            result = await getTrendingSongs(30, PAGE_SIZE, pageNum * PAGE_SIZE, 'recent', 0, globalFilterSettings);
-            break;
-          }
-          case 'deep': {
-            result = await getTrendingSongs(30, PAGE_SIZE, pageNum * PAGE_SIZE, 'deep', rankingSeedRef.current, globalFilterSettings);
-            break;
-          }
-          case 'history_based': {
-            const producers = selectRecentProducerIds(entries);
-            const recentSongIds = new Set(entries.slice(0, 50).map(entry => entry.song.id));
-
-            if (producers.length > 0) {
-              const producerWindow = selectRotatingWindow(producers, pageNum, 4);
-              const producerResults = await Promise.all(producerWindow.map(producerId =>
-                searchSongsBackend({
-                  anyArtistIds: [producerId],
-                  sort: 'FavoritedTimes',
-                  sortOrder: 'desc',
-                  maxResults: 12,
-                  start: pageNum * 12,
-                  discoveryOnly: true,
-                }).then(searchResult => searchResult.items).catch(() => [] as Song[]),
-              ));
-              result = interleaveUniqueSongs(producerResults, recentSongIds, PAGE_SIZE);
-            }
-
-            if (result.length === 0) {
-              const fallback = await searchSongsBackend({
-                sort: 'FavoritedTimes',
-                sortOrder: 'desc',
-                maxResults: PAGE_SIZE,
-                start: pageNum * PAGE_SIZE,
-                discoveryOnly: true,
-              });
-              result = fallback.items;
-            }
-            break;
-          }
-          case 'favorite_producers': {
-            if (favoriteProducers.length > 0) {
-              const favoriteProducerWindow = selectRotatingWindow(
-                favoriteProducers,
-                pageNum,
-                MAX_FAVORITE_PRODUCER_REQUESTS,
-              );
-              const producerResults = await Promise.all(favoriteProducerWindow.map(producer =>
-                searchSongsBackend({
-                  artistIds: [producer.id],
-                  sort: 'FavoritedTimes',
-                  sortOrder: 'desc',
-                  start: pageNum * 12,
-                  maxResults: 12,
-                  discoveryOnly: true,
-                }).then(result => result.items).catch(() => [] as Song[]),
-              ));
-              const seen = new Set<number>();
-              result = producerResults.flat().filter(song => {
-                if (seen.has(song.id)) return false;
-                seen.add(song.id);
-                return true;
-              }).slice(0, PAGE_SIZE);
-            }
-            break;
-          }
-        }
+        result = await loadPrefetchableHomeSongs(category, pageNum);
       }
       segments.push({ name: 'source', durationMs: performanceNow() - sourceStartedAt });
 
@@ -592,7 +619,7 @@ export default function HomePage() {
       }
       fetchingRef.current = false;
     }
-  }, [artistIdParam, artistRoleParam, entries, favoriteProducers, fetchRecommendedHomeSongs, globalFilterSettings]);
+  }, [artistIdParam, artistRoleParam, favoriteProducers, fetchRecommendedHomeSongs, globalFilterSettings, loadPrefetchableHomeSongs]);
 
   useEffect(() => {
     setLoading(true);
@@ -696,6 +723,34 @@ export default function HomePage() {
       : discoveryResult.items,
     [discoveryResult.items, globalFilterSettings, hasSearched, unhiddenSearchResults],
   );
+
+  useEffect(() => {
+    if (activeCategory !== 'recommended'
+      || isSearchMode
+      || isArtistMode
+      || hasSearched
+      || displaySongs.length === 0) return;
+
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        const rankingFeeds = PREFETCHABLE_HOME_CATEGORIES.slice(0, 5);
+        await Promise.all(rankingFeeds.map(category =>
+          loadPrefetchableHomeSongs(category, 0).catch(() => [] as Song[]),
+        ));
+        if (cancelled) return;
+        for (const category of PREFETCHABLE_HOME_CATEGORIES.slice(5)) {
+          await loadPrefetchableHomeSongs(category, 0).catch(() => [] as Song[]);
+          if (cancelled) return;
+        }
+      })();
+    }, HOME_CATEGORY_PREFETCH_DELAY_MS);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [activeCategory, displaySongs.length, hasSearched, isArtistMode, isSearchMode, loadPrefetchableHomeSongs]);
 
   useEffect(() => {
     if (activeCategory !== 'recommended'
@@ -872,12 +927,6 @@ export default function HomePage() {
             }}
           />
         </div>
-      )}
-
-      {!isSearchMode && !isArtistMode && !hasSearched && activeCategory === 'trending' && (
-        <p className="mb-4 text-sm" style={{ color: 'var(--color-text-secondary)' }}>
-          直近約7日間の再生増加が平常時より加速している曲。強い加速を優先し、相対的な伸びと楽曲情報の信頼性も加味します。
-        </p>
       )}
 
       {hasSearched && searchError && (

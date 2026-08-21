@@ -23,48 +23,68 @@ public sealed class ApiWarmupService(
     ApiWarmupState state,
     ILogger<ApiWarmupService> logger) : BackgroundService
 {
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
-    {
-        var stopwatch = Stopwatch.StartNew();
-        var failures = new List<string>();
-        var jobs = new (string Name, Func<Task> Run)[]
-        {
-            ("home-recommended", async () =>
-            {
-                await db.SearchSongsAsync(
-                    null, null, null, null, null, null,
-                    "FavoritedTimes", "desc", 0, 12,
-                    onlyWithPVs: true,
-                    discoveryOnly: true,
-                    cancellationToken: stoppingToken);
-            }),
-            ("home-popular", () => db.GetTrendingSongsJsonAsync(
-                30, 0, 24, "alltime", cancellationToken: stoppingToken)),
-            ("home-pace", () => db.GetTrendingSongsJsonAsync(
-                30, 0, 24, "pace", cancellationToken: stoppingToken)),
-            ("home-surge", () => db.GetTrendingSongsJsonAsync(
-                7, 0, 24, "surge", cancellationToken: stoppingToken)),
-            ("home-recent", () => db.GetTrendingSongsJsonAsync(
-                30, 0, 24, "recent", cancellationToken: stoppingToken)),
-        };
+    internal static readonly TimeSpan RefreshInterval = TimeSpan.FromMinutes(5);
 
-        foreach (var job in jobs)
+    private (string Name, Func<Task> Run)[] CreateJobs(
+        bool forceRefresh,
+        CancellationToken cancellationToken) =>
+    [
+        ("home-recommended", async () =>
         {
-            if (stoppingToken.IsCancellationRequested) break;
+            await db.SearchSongsAsync(
+                null, null, null, null, null, null,
+                "FavoritedTimes", "desc", 0, 12,
+                onlyWithPVs: true,
+                discoveryOnly: true,
+                forceRefresh: forceRefresh,
+                cancellationToken: cancellationToken);
+        }),
+        ("home-popular", () => db.GetTrendingSongsJsonAsync(
+            30, 0, 24, "alltime", forceRefresh: forceRefresh, cancellationToken: cancellationToken)),
+        ("home-pace", () => db.GetTrendingSongsJsonAsync(
+            30, 0, 24, "pace", forceRefresh: forceRefresh, cancellationToken: cancellationToken)),
+        ("home-surge", () => db.GetTrendingSongsJsonAsync(
+            7, 0, 24, "surge", forceRefresh: forceRefresh, cancellationToken: cancellationToken)),
+        ("home-recent", () => db.GetTrendingSongsJsonAsync(
+            30, 0, 24, "recent", forceRefresh: forceRefresh, cancellationToken: cancellationToken)),
+        ("home-deep", () => db.GetTrendingSongsJsonAsync(
+            30, 0, 24, "deep", seed: 0, forceRefresh: forceRefresh, cancellationToken: cancellationToken)),
+    ];
+
+    private async Task<List<string>> RunJobsAsync(
+        bool forceRefresh,
+        CancellationToken cancellationToken)
+    {
+        var failures = new List<string>();
+        foreach (var job in CreateJobs(forceRefresh, cancellationToken))
+        {
+            if (cancellationToken.IsCancellationRequested) break;
             try
             {
                 await job.Run();
             }
-            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
                 break;
             }
             catch (Exception exception)
             {
                 failures.Add($"{job.Name}:{exception.GetType().Name}");
-                logger.LogWarning(exception, "api_warmup_failed job={Job}", job.Name);
+                logger.LogWarning(
+                    exception,
+                    forceRefresh ? "api_warmup_refresh_failed job={Job}" : "api_warmup_failed job={Job}",
+                    job.Name);
             }
         }
+        return failures;
+    }
+
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        var failures = await RunJobsAsync(
+            forceRefresh: false,
+            cancellationToken: stoppingToken);
 
         stopwatch.Stop();
         state.Complete(stopwatch.ElapsedMilliseconds, failures);
@@ -72,5 +92,26 @@ public sealed class ApiWarmupService(
             "api_warmup_completed durationMs={DurationMs} failures={Failures}",
             stopwatch.ElapsedMilliseconds,
             failures.Count);
+
+        using var timer = new PeriodicTimer(RefreshInterval);
+        try
+        {
+            while (await timer.WaitForNextTickAsync(stoppingToken))
+            {
+                var refreshStopwatch = Stopwatch.StartNew();
+                var refreshFailures = await RunJobsAsync(
+                    forceRefresh: true,
+                    cancellationToken: stoppingToken);
+                refreshStopwatch.Stop();
+                logger.LogInformation(
+                    "api_warmup_refresh_completed durationMs={DurationMs} failures={Failures}",
+                    refreshStopwatch.ElapsedMilliseconds,
+                    refreshFailures.Count);
+            }
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+            // Normal host shutdown interrupts the periodic wait.
+        }
     }
 }

@@ -16,6 +16,7 @@ public sealed class SearchResponseCache : IDisposable
     internal static readonly TimeSpan FreshLifetime = TimeSpan.FromMinutes(1);
     internal static readonly TimeSpan RankingFreshLifetime = TimeSpan.FromMinutes(5);
     internal static readonly TimeSpan StaleLifetime = TimeSpan.FromHours(6);
+    internal static readonly TimeSpan RankingStaleLifetime = TimeSpan.FromDays(30);
     internal static readonly TimeSpan RefreshFailureBackoff = TimeSpan.FromSeconds(30);
 
     private readonly MemoryCache _cache;
@@ -743,8 +744,9 @@ public sealed class SearchResponseCache : IDisposable
                 new CachedRankingResponse(
                     itemsJson,
                     now.Add(RankingFreshLifetime),
-                    now.Add(StaleLifetime)),
-                chargeBytes));
+                    now.Add(RankingStaleLifetime)),
+                chargeBytes,
+                RankingStaleLifetime));
         return itemsJson;
     }
 
@@ -831,7 +833,11 @@ public sealed class SearchResponseCache : IDisposable
             _maxEntryBytes);
     }
 
-    private void StoreTracked<T>(string key, T value, long chargeBytes)
+    private void StoreTracked<T>(
+        string key,
+        T value,
+        long chargeBytes,
+        TimeSpan? absoluteLifetime = null)
         where T : class
     {
         var tracked = new TrackedEntry(Interlocked.Increment(ref _nextEntryId), chargeBytes);
@@ -850,7 +856,7 @@ public sealed class SearchResponseCache : IDisposable
                     value,
                     new MemoryCacheEntryOptions
                     {
-                        AbsoluteExpirationRelativeToNow = StaleLifetime,
+                        AbsoluteExpirationRelativeToNow = absoluteLifetime ?? StaleLifetime,
                         Size = chargeBytes,
                     }.RegisterPostEvictionCallback(
                         static (_, _, _, state) =>

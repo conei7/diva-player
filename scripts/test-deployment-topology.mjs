@@ -247,8 +247,9 @@ assert.match(searchResponseCache, /SizeLimit = sizeLimitBytes/);
 assert.match(searchResponseCache, /FreshLifetime = TimeSpan\.FromMinutes\(1\)/);
 assert.match(searchResponseCache, /RankingFreshLifetime = TimeSpan\.FromMinutes\(5\)/);
 assert.match(searchResponseCache, /StaleLifetime = TimeSpan\.FromHours\(6\)/);
+assert.match(searchResponseCache, /RankingStaleLifetime = TimeSpan\.FromDays\(30\)/);
 assert.match(searchResponseCache, /RefreshFailureBackoff = TimeSpan\.FromSeconds\(30\)/);
-assert.match(searchResponseCache, /AbsoluteExpirationRelativeToNow = StaleLifetime/);
+assert.match(searchResponseCache, /AbsoluteExpirationRelativeToNow = absoluteLifetime \?\? StaleLifetime/);
 assert.match(searchResponseCache, /chargeBytes > _maxEntryBytes/);
 assert.match(
   searchResponseCache,
@@ -363,7 +364,8 @@ for (const playlistService of [youtubePlaylistService, nicoPlaylistService]) {
   assert.match(playlistService, /catch \(OperationCanceledException\) when \(cancellationToken\.IsCancellationRequested\)/);
   assert.match(playlistService, /!cancellationToken\.IsCancellationRequested[\s\S]*TaskCanceledException/);
 }
-assert.match(warmup, /cancellationToken: stoppingToken/);
+assert.match(warmup, /cancellationToken: cancellationToken/);
+assert.match(warmup, /catch \(OperationCanceledException\) when \(cancellationToken\.IsCancellationRequested\)/);
 assert.match(warmup, /catch \(OperationCanceledException\) when \(stoppingToken\.IsCancellationRequested\)/);
 const rankingEndpoint = program.match(
   /app\.MapGet\("\/api\/songs\/trending"[\s\S]*?app\.MapGet\("\/api\/songs\/search"/,
@@ -401,6 +403,9 @@ assert.match(warmup, /home-popular/);
 assert.match(warmup, /home-pace/);
 assert.match(warmup, /home-surge/);
 assert.match(warmup, /home-recent/);
+assert.match(warmup, /home-deep/);
+assert.match(warmup, /PeriodicTimer\(RefreshInterval\)/);
+assert.match(warmup, /forceRefresh: true/);
 assert.match(dbService, /CASE WHEN h\.recorded_at IS NULL\s+THEN NULL::double precision/);
 assert.doesNotMatch(dbService, /surge_debug_sql/);
 assert.ok(

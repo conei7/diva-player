@@ -53,8 +53,11 @@ public sealed class RankingRequestTests
         Assert.NotEqual(
             Create(minYoutubeViews: null).CacheKey,
             Create(minYoutubeViews: 1).CacheKey);
-        Assert.Equal("growth", Create(mode: "unknown").Mode);
-        Assert.Equal("growth", Create(mode: "ALLTIME").Mode);
+        Assert.Equal("pace", Create(mode: "unknown").Mode);
+        Assert.Equal("pace", Create(mode: "ALLTIME").Mode);
+        Assert.Equal(
+            Create(mode: "pace").CacheKey,
+            Create(mode: null).CacheKey);
         Assert.Equal("legacy", Create(mode: "surge", ranking: "legacy").Ranking);
         Assert.Equal("quality", Create(mode: "surge", ranking: "LEGACY").Ranking);
     }

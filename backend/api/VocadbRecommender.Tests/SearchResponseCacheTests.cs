@@ -503,7 +503,7 @@ public sealed class SearchResponseCacheTests
     }
 
     [Fact]
-    public async Task RankingEntry_UsesFiveMinuteFreshnessAndSixHourStaleLifetime()
+    public async Task RankingEntry_UsesFiveMinuteFreshnessAndThirtyDayStaleLifetime()
     {
         var time = new MutableTimeProvider(new DateTimeOffset(2026, 8, 10, 0, 0, 0, TimeSpan.Zero));
         using var cache = CreateCache(timeProvider: time);
@@ -542,7 +542,7 @@ public sealed class SearchResponseCacheTests
         Assert.Equal("[{\"id\":2}]", await cache.GetOrCreateRankingAsync("ranking:ttl", Refresh));
         Assert.Equal(2, calls);
 
-        time.Advance(SearchResponseCache.StaleLifetime + TimeSpan.FromSeconds(1));
+        time.Advance(SearchResponseCache.RankingStaleLifetime + TimeSpan.FromSeconds(1));
         var cold = await cache.GetOrCreateRankingAsync(
             "ranking:ttl",
             () => Task.FromResult("[{\"id\":3}]"));

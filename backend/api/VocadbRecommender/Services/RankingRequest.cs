@@ -37,7 +37,11 @@ internal sealed record RankingRequest(
             "surge" => "surge",
             "recent" => "recent",
             "deep" => "deep",
-            _ => "growth",
+            // The old implicit growth feed performs a full history scan and is
+            // not used by any current Home category. Treat omitted, legacy
+            // `growth`, and unknown values as the bounded playback-pace feed so
+            // the endpoint remains useful instead of timing out on a cold API.
+            _ => "pace",
         };
         var normalizedExcludedTypes = (excludedSongTypes ?? [])
             .Where(type => !string.IsNullOrWhiteSpace(type))
