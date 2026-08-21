@@ -222,6 +222,7 @@ async function installApiFixtures(page, counters) {
       counters.homeRankingResponses += 1;
       const modeIds = { alltime: 2601, pace: 2602, surge: 2603, recent: 2604, deep: 2605 };
       const mode = url.searchParams.get('mode') ?? 'pace';
+      if (mode === 'deep') counters.deepRankingSeeds.push(url.searchParams.get('seed'));
       body = {
         items: [{
           ...fixtureSongForId(modeIds[mode] ?? 2600),
@@ -315,6 +316,7 @@ async function main() {
     homeRankingRequests: 0,
     homeRankingResponses: 0,
     homeRankingDelayMs: 800,
+    deepRankingSeeds: [],
   };
   await installApiFixtures(page, counters);
 
@@ -487,6 +489,10 @@ async function main() {
       await new Promise(resolve => setTimeout(resolve, 50));
     }
     assert(counters.homeRankingResponses >= 5, `Home ranking prefetch did not cover all server feeds: ${counters.homeRankingResponses}`);
+    assert(
+      counters.deepRankingSeeds.length > 0 && counters.deepRankingSeeds.every(seed => seed === '0'),
+      `Home deep prefetch missed the canonical warm seed: ${JSON.stringify(counters.deepRankingSeeds)}`,
+    );
     const categoryStartedAt = Date.now();
     await page.evaluate(() => {
       const chip = Array.from(document.querySelectorAll('button')).find(button => button.textContent?.trim() === '急上昇');

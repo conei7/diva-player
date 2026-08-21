@@ -419,7 +419,10 @@ export default function HomePage() {
       case 'recent':
         return getTrendingSongs(30, PAGE_SIZE, pageNum * PAGE_SIZE, 'recent', 0, globalFilterSettings);
       case 'deep':
-        return getTrendingSongs(30, PAGE_SIZE, pageNum * PAGE_SIZE, 'deep', rankingSeedRef.current, globalFilterSettings);
+        // The API's canonical seed-0 pool is kept hot with the other Home
+        // feeds. Client-side exposure reranking below still varies its order
+        // per page view, without making a new SQL/cache variant block the tab.
+        return getTrendingSongs(30, PAGE_SIZE, pageNum * PAGE_SIZE, 'deep', 0, globalFilterSettings);
       case 'history_based': {
         const recentSongIds = new Set(entries.slice(0, 50).map(entry => entry.song.id));
         if (recentProducerIds.length > 0) {
