@@ -18,11 +18,13 @@ const STARTUP_CACHE_DB_NAME = 'diva-startup-cache';
 const STARTUP_CACHE_DB_VERSION = 1;
 const STARTUP_CACHE_STORE = 'recommendations';
 const HOME_CACHE_KEY = 'home';
+const HOME_CACHE_BACKUP_KEY = 'home-previous';
 export const STARTUP_RECOMMENDATION_CACHE_KEY = 'diva-startup-recommendations';
-const STARTUP_RECOMMENDATION_TTL_MS = 12 * 60 * 60 * 1000;
+export const STARTUP_RECOMMENDATION_BACKUP_CACHE_KEY = 'diva-startup-recommendations-backup';
+const LOCAL_CACHE_RECONCILIATION_MS = 75;
 
 export interface StartupRecommendationSnapshot {
-  version: 2;
+  version: 1 | 2 | 3;
   savedAt: number;
   songs: Song[];
 }
@@ -117,51 +119,85 @@ function openStartupCacheDb(): Promise<IDBDatabase> {
 function validStartupRecommendationSnapshot(value: unknown): StartupRecommendationSnapshot | null {
   if (!value || typeof value !== 'object') return null;
   const candidate = value as Partial<StartupRecommendationSnapshot>;
-  if (candidate.version !== 2
+  if ((candidate.version !== 1 && candidate.version !== 2 && candidate.version !== 3)
     || !Number.isFinite(candidate.savedAt)
-    || Date.now() - Number(candidate.savedAt) > STARTUP_RECOMMENDATION_TTL_MS
-    || !Array.isArray(candidate.songs)) return null;
+    || Number(candidate.savedAt) <= 0
+    || !Array.isArray(candidate.songs)
+    || candidate.songs.length === 0) return null;
   return candidate as StartupRecommendationSnapshot;
+}
+
+function newerStartupSnapshot(
+  first: StartupRecommendationSnapshot | null,
+  second: StartupRecommendationSnapshot | null,
+): StartupRecommendationSnapshot | null {
+  if (!first) return second;
+  if (!second) return first;
+  return second.savedAt > first.savedAt ? second : first;
+}
+
+function strongerBackupSnapshot(
+  first: StartupRecommendationSnapshot | null,
+  second: StartupRecommendationSnapshot | null,
+): StartupRecommendationSnapshot | null {
+  if (!first) return second;
+  if (!second) return first;
+  if (second.songs.length !== first.songs.length) {
+    return second.songs.length > first.songs.length ? second : first;
+  }
+  return newerStartupSnapshot(first, second);
+}
+
+function loadStartupRecommendationSnapshotFromLocalStorage(): StartupRecommendationSnapshot | null {
+  if (typeof localStorage === 'undefined') return null;
+  let snapshot: StartupRecommendationSnapshot | null = null;
+  for (const key of [STARTUP_RECOMMENDATION_CACHE_KEY, STARTUP_RECOMMENDATION_BACKUP_CACHE_KEY]) {
+    try {
+      snapshot = newerStartupSnapshot(
+        snapshot,
+        validStartupRecommendationSnapshot(JSON.parse(localStorage.getItem(key) || 'null')),
+      );
+    } catch {
+      // Keep checking the second copy if one record is malformed.
+    }
+  }
+  return snapshot;
 }
 
 async function loadStartupRecommendationSnapshotFromDatabase(): Promise<StartupRecommendationSnapshot | null> {
   if (typeof indexedDB === 'undefined') return null;
   const database = await openStartupCacheDb();
   try {
-    const value = await new Promise<unknown>((resolve, reject) => {
+    const values = await new Promise<unknown[]>((resolve, reject) => {
       const transaction = database.transaction(STARTUP_CACHE_STORE, 'readonly');
-      const request = transaction.objectStore(STARTUP_CACHE_STORE).get(HOME_CACHE_KEY);
-      request.onsuccess = () => resolve(request.result?.snapshot ?? null);
-      request.onerror = () => reject(request.error);
+      const store = transaction.objectStore(STARTUP_CACHE_STORE);
+      const requests = [store.get(HOME_CACHE_KEY), store.get(HOME_CACHE_BACKUP_KEY)];
+      transaction.oncomplete = () => resolve(requests.map(request => request.result?.snapshot ?? null));
       transaction.onerror = () => reject(transaction.error);
       transaction.onabort = () => reject(transaction.error);
     });
-    return validStartupRecommendationSnapshot(value);
+    return values.reduce<StartupRecommendationSnapshot | null>(
+      (snapshot, value) => newerStartupSnapshot(snapshot, validStartupRecommendationSnapshot(value)),
+      null,
+    );
   } finally {
     database.close();
   }
 }
 
 export async function loadStartupRecommendationSnapshot(): Promise<StartupRecommendationSnapshot | null> {
-  let localSnapshot: StartupRecommendationSnapshot | null = null;
-  try {
-    localSnapshot = validStartupRecommendationSnapshot(
-      JSON.parse(localStorage.getItem(STARTUP_RECOMMENDATION_CACHE_KEY) || 'null'),
-    );
-  } catch {
-    // The dedicated IndexedDB cache remains authoritative when storage is full
-    // or a previous browser version left malformed local data.
-  }
+  const localSnapshot = loadStartupRecommendationSnapshotFromLocalStorage();
+  const databasePromise = loadStartupRecommendationSnapshotFromDatabase().catch(() => null);
+  if (!localSnapshot) return databasePromise;
 
-  let databaseSnapshot: StartupRecommendationSnapshot | null = null;
-  try {
-    databaseSnapshot = await loadStartupRecommendationSnapshotFromDatabase();
-  } catch {
-    // Private browsing can disable IndexedDB while localStorage still works.
-  }
-  if (!localSnapshot) return databaseSnapshot;
-  if (!databaseSnapshot) return localSnapshot;
-  return databaseSnapshot.savedAt > localSnapshot.savedAt ? databaseSnapshot : localSnapshot;
+  // localStorage gives the first frame synchronously. Give IndexedDB a short
+  // chance to provide a newer/corruption-safe copy without turning startup
+  // into an unbounded database wait.
+  const databaseSnapshot = await Promise.race([
+    databasePromise,
+    new Promise<null>(resolve => setTimeout(() => resolve(null), LOCAL_CACHE_RECONCILIATION_MS)),
+  ]);
+  return newerStartupSnapshot(localSnapshot, databaseSnapshot);
 }
 
 export async function loadRecentPlayedAtBySongId(
@@ -198,14 +234,53 @@ export async function loadRecentPlayedAtBySongId(
 }
 
 export async function saveStartupRecommendationSnapshot(snapshot: StartupRecommendationSnapshot): Promise<void> {
+  if (typeof localStorage !== 'undefined') {
+    try {
+      const current = validStartupRecommendationSnapshot(
+        JSON.parse(localStorage.getItem(STARTUP_RECOMMENDATION_CACHE_KEY) || 'null'),
+      );
+      const existingBackup = validStartupRecommendationSnapshot(
+        JSON.parse(localStorage.getItem(STARTUP_RECOMMENDATION_BACKUP_CACHE_KEY) || 'null'),
+      );
+      const resilientBackup = strongerBackupSnapshot(current, existingBackup);
+      if (resilientBackup) {
+        localStorage.setItem(STARTUP_RECOMMENDATION_BACKUP_CACHE_KEY, JSON.stringify(resilientBackup));
+      }
+    } catch {
+      // A valid IndexedDB backup may still be available.
+    }
+    try {
+      localStorage.setItem(STARTUP_RECOMMENDATION_CACHE_KEY, JSON.stringify(snapshot));
+    } catch {
+      // IndexedDB is the primary copy when localStorage quota is exhausted.
+    }
+  }
+
   if (typeof indexedDB === 'undefined') return;
   const database = await openStartupCacheDb();
-  await new Promise<void>((resolve, reject) => {
-    const transaction = database.transaction(STARTUP_CACHE_STORE, 'readwrite');
-    transaction.objectStore(STARTUP_CACHE_STORE).put({ key: HOME_CACHE_KEY, snapshot });
-    transaction.oncomplete = () => resolve();
-    transaction.onerror = () => reject(transaction.error);
-    transaction.onabort = () => reject(transaction.error);
-  });
-  database.close();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const transaction = database.transaction(STARTUP_CACHE_STORE, 'readwrite');
+      const store = transaction.objectStore(STARTUP_CACHE_STORE);
+      const currentRequest = store.get(HOME_CACHE_KEY);
+      const backupRequest = store.get(HOME_CACHE_BACKUP_KEY);
+      let completedReads = 0;
+      const writeSnapshots = () => {
+        completedReads += 1;
+        if (completedReads < 2) return;
+        const current = validStartupRecommendationSnapshot(currentRequest.result?.snapshot);
+        const existingBackup = validStartupRecommendationSnapshot(backupRequest.result?.snapshot);
+        const resilientBackup = strongerBackupSnapshot(current, existingBackup);
+        if (resilientBackup) store.put({ key: HOME_CACHE_BACKUP_KEY, snapshot: resilientBackup });
+        store.put({ key: HOME_CACHE_KEY, snapshot });
+      };
+      currentRequest.onsuccess = writeSnapshots;
+      backupRequest.onsuccess = writeSnapshots;
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error);
+      transaction.onabort = () => reject(transaction.error);
+    });
+  } finally {
+    database.close();
+  }
 }

@@ -102,12 +102,16 @@ function parseIds(url) {
 }
 
 async function seedLargeHistory(page) {
-  const seededAt = Date.now() - 60_000;
-  const cachedSongs = Array.from({ length: 24 }, (_, index) => fixtureSongForId(300_001 + index));
+  // A returning listener must still get an immediate personalized frame even
+  // when the last successful refresh is old or the network is unavailable.
+  const seededAt = Date.now() - 48 * 60 * 60 * 1000;
+  const cachedSongs = Array.from({ length: 48 }, (_, index) => fixtureSongForId(300_001 + index));
   await page.evaluate(async ({ seededAt: cacheSavedAt, cachedSongs: personalizedSongs }) => {
     localStorage.setItem('diva-history-log-migrated-v1', '1');
     const startupSnapshot = { version: 2, savedAt: cacheSavedAt, songs: personalizedSongs };
     localStorage.setItem('diva-startup-recommendations', JSON.stringify(startupSnapshot));
+    localStorage.removeItem('diva-startup-recommendations-backup');
+    sessionStorage.removeItem('diva-startup-rotation-v1');
     localStorage.setItem('diva-hidden-songs', JSON.stringify({
       state: {
         hiddenSongs: {
@@ -314,16 +318,16 @@ async function main() {
         || document.documentElement.classList.contains('diva-startup-home'),
       hasNormalHeader: document.querySelector('header') !== null,
       hasNormalNavigation: document.querySelector('aside nav') !== null,
-      songIds: Array.from(document.querySelectorAll('main a[href*="/watch?v="]')).slice(0, 24)
-        .map(link => new URL(link.href).searchParams.get('v')),
+      songIds: Array.from(new Set(Array.from(document.querySelectorAll('main a[href*="/watch?v="]'))
+        .map(link => new URL(link.href).searchParams.get('v')))).slice(0, 24),
       skeletons: document.querySelectorAll('main .skeleton').length,
     }));
     const firstContent = await waitForMetric(page, 'home.first-content');
     const homeLoad = await waitForMetric(page, 'home.load');
     const homePaint = await waitForMetric(page, 'home.paint');
     const settledFrame = await page.evaluate(() => ({
-      songIds: Array.from(document.querySelectorAll('main a[href*="/watch?v="]')).slice(0, 24)
-        .map(link => new URL(link.href).searchParams.get('v')),
+      songIds: Array.from(new Set(Array.from(document.querySelectorAll('main a[href*="/watch?v="]'))
+        .map(link => new URL(link.href).searchParams.get('v')))).slice(0, 24),
       skeletons: document.querySelectorAll('main .skeleton').length,
     }));
     assert(
@@ -365,6 +369,7 @@ async function main() {
       await page.waitForFunction(previousSavedAt => {
         const cached = JSON.parse(localStorage.getItem('diva-startup-recommendations') || 'null');
         return cached?.savedAt > previousSavedAt
+          && cached?.version === 3
           && Array.isArray(cached?.songs)
           && cached.songs.some(song => /^300\d{3}$/.test(String(song.id)));
       }, {}, seededCacheAt);
@@ -415,7 +420,26 @@ async function main() {
     }
 
     counters.historyMetadataDelayMs = 0;
-    await page.evaluate(() => localStorage.removeItem('diva-startup-recommendations'));
+    await page.evaluate(async () => {
+      localStorage.removeItem('diva-startup-recommendations');
+      localStorage.removeItem('diva-startup-recommendations-backup');
+      const database = await new Promise((resolve, reject) => {
+        const request = indexedDB.open('diva-startup-cache', 1);
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      await new Promise((resolve, reject) => {
+        const transaction = database.transaction('recommendations', 'readwrite');
+        transaction.objectStore('recommendations').put({
+          key: 'home',
+          snapshot: { version: 999, savedAt: Date.now(), songs: [] },
+        });
+        transaction.oncomplete = () => resolve();
+        transaction.onerror = () => reject(transaction.error);
+        transaction.onabort = () => reject(transaction.error);
+      });
+      database.close();
+    });
     const indexedDbReloadStartedAt = Date.now();
     await page.reload({ waitUntil: 'domcontentloaded' });
     await waitForCards(page, 'IndexedDB personalized cache');
@@ -423,8 +447,8 @@ async function main() {
     const cachedFirstContent = await waitForMetric(page, 'home.first-content');
     const cachedFrame = await page.evaluate(() => ({
       hasLegacyStartupPage: document.querySelector('#startup-home') !== null,
-      songIds: Array.from(document.querySelectorAll('main a[href*="/watch?v="]')).slice(0, 24)
-        .map(link => new URL(link.href).searchParams.get('v')),
+      songIds: Array.from(new Set(Array.from(document.querySelectorAll('main a[href*="/watch?v="]'))
+        .map(link => new URL(link.href).searchParams.get('v')))).slice(0, 24),
       skeletons: document.querySelectorAll('main .skeleton').length,
     }));
     assert(
@@ -432,9 +456,10 @@ async function main() {
         && cachedFirstContent.durationMs <= BUDGETS_MS['home.first-card']
         && indexedDbFirstCardMs <= BUDGETS_MS['home.first-card']
         && cachedFrame.songIds.some(songId => /^300\d{3}$/.test(String(songId)))
+        && JSON.stringify(cachedFrame.songIds) !== JSON.stringify(firstFrame.songIds)
         && !cachedFrame.hasLegacyStartupPage
         && cachedFrame.skeletons === 0,
-      `IndexedDB personalized cache was not rendered seamlessly: ${JSON.stringify({ cachedFirstContent, indexedDbFirstCardMs, cachedFrame })}`,
+      `IndexedDB backup did not render a rotated personalized frame: ${JSON.stringify({ cachedFirstContent, indexedDbFirstCardMs, firstFrame, cachedFrame })}`,
     );
     console.log(`PASS home.personalized-cache: ${Math.round(cachedFirstContent.durationMs)}ms / ${BUDGETS_MS['home.first-card']}ms`);
 

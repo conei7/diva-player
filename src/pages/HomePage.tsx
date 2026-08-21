@@ -42,11 +42,11 @@ import { resolveWithin } from '../utils/timeBudget';
 import { isDeterministicHomeRankingCategory } from '../utils/homeRanking';
 import { formatTrendingReason } from '../utils/trendingReason';
 import { excludeHiddenSongs, useHiddenSongStore } from '../stores/hiddenSongStore';
+import { selectRotatingStartupSongs } from '../utils/startupRecommendations';
 import {
   loadRecentPlayedAtBySongId,
   loadStartupRecommendationSnapshot,
   saveStartupRecommendationSnapshot,
-  STARTUP_RECOMMENDATION_CACHE_KEY,
   type StartupRecommendationSnapshot,
 } from '../services/historyDatabase';
 
@@ -72,6 +72,8 @@ const CATEGORIES: CategoryChip[] = [
 ];
 
 const PAGE_SIZE = 24;
+const STARTUP_POOL_SIZE = PAGE_SIZE * 2;
+const STARTUP_ROTATION_KEY = 'diva-startup-rotation-v1';
 const MAX_FAVORITE_PRODUCER_REQUESTS = 4;
 const INITIAL_OPTIONAL_RECOMMENDATION_BUDGET_MS = 2_500;
 const MAX_AUTOFILL_PAGES = 2;
@@ -84,18 +86,24 @@ function asHomeCategoryId(id: string): HomeCategoryId {
 
 function persistStartupRecommendations(songs: Song[]): void {
   const snapshot: StartupRecommendationSnapshot = {
-    version: 2,
+    version: 3,
     savedAt: Date.now(),
-    songs: songs.slice(0, PAGE_SIZE),
+    songs: songs.slice(0, STARTUP_POOL_SIZE),
   };
-  try {
-    localStorage.setItem(STARTUP_RECOMMENDATION_CACHE_KEY, JSON.stringify(snapshot));
-  } catch {
-    // The dedicated IndexedDB cache remains available when localStorage is full.
-  }
   void saveStartupRecommendationSnapshot(snapshot).catch(() => {
     // Private browsing retains the normal fresh recommendation path.
   });
+}
+
+function nextStartupRotation(): number {
+  try {
+    const stored = Number.parseInt(sessionStorage.getItem(STARTUP_ROTATION_KEY) || '0', 10);
+    const rotation = Number.isFinite(stored) && stored >= 0 ? stored : 0;
+    sessionStorage.setItem(STARTUP_ROTATION_KEY, String(rotation + 1));
+    return rotation;
+  } catch {
+    return Date.now();
+  }
 }
 
 export default function HomePage() {
@@ -129,6 +137,7 @@ export default function HomePage() {
   });
   const pendingSearchPaintRef = useRef<number | null>(null);
   const startupCacheStartedRef = useRef(false);
+  const startupCacheAvailableRef = useRef(false);
   const firstHomeContentRecordedRef = useRef(false);
   const firstHomePaintRecordedRef = useRef(false);
   const persistedStartupSignatureRef = useRef('');
@@ -194,7 +203,10 @@ export default function HomePage() {
       );
       if (cachedSongs.length === 0) return;
 
-      setStartupSongs(cachedSongs);
+      const rotation = nextStartupRotation();
+      const selectedSongs = selectRotatingStartupSongs(cachedSongs, rotation, PAGE_SIZE);
+      startupCacheAvailableRef.current = true;
+      setStartupSongs(selectedSongs);
       setLoading(false);
       if (!firstHomeContentRecordedRef.current) {
         firstHomeContentRecordedRef.current = true;
@@ -203,7 +215,9 @@ export default function HomePage() {
           startedAt: 0,
           detail: {
             category: 'recommended',
-            displayedCount: cachedSongs.length,
+            displayedCount: selectedSongs.length,
+            poolCount: cachedSongs.length,
+            rotation,
             source: 'personalized-cache',
           },
         });
@@ -308,7 +322,7 @@ export default function HomePage() {
       start: pageNum * 12,
       discoveryOnly: true,
     });
-    const optionalPromise = pageNum === 0
+    const optionalPromise = pageNum === 0 && !startupCacheAvailableRef.current
       ? resolveWithin(optionalSources, INITIAL_OPTIONAL_RECOMMENDATION_BUDGET_MS, [[], [], [], []] as Song[][][])
       : optionalSources.then(value => ({ value, timedOut: false }));
 
@@ -673,6 +687,7 @@ export default function HomePage() {
     ? { items: startupDiscoverySongs, relaxedConditions: [] }
     : freshDiscoveryResult;
   const homeLoading = loading && !showingStartupCache;
+  const startupRefreshTarget = showingStartupCache ? STARTUP_POOL_SIZE : PAGE_SIZE;
   const displaySongs = useMemo(
     () => hasSearched
       ? applyGlobalSongFilter(unhiddenSearchResults, globalFilterSettings)
@@ -687,12 +702,23 @@ export default function HomePage() {
       || !hasHydrated
       || loading
       || songs.length === 0
-      || freshDiscoveryResult.items.length === 0) return;
-    const signature = freshDiscoveryResult.items.slice(0, PAGE_SIZE).map(song => song.id).join(',');
+      || freshDiscoveryResult.items.length === 0
+      || (hasMore && freshDiscoveryResult.items.length < startupRefreshTarget)) return;
+    const signature = freshDiscoveryResult.items.slice(0, STARTUP_POOL_SIZE).map(song => song.id).join(',');
     if (signature === persistedStartupSignatureRef.current) return;
     persistedStartupSignatureRef.current = signature;
     persistStartupRecommendations(freshDiscoveryResult.items);
-  }, [activeCategory, freshDiscoveryResult.items, hasHydrated, isArtistMode, isSearchMode, loading, songs.length]);
+  }, [
+    activeCategory,
+    freshDiscoveryResult.items,
+    hasHydrated,
+    hasMore,
+    isArtistMode,
+    isSearchMode,
+    loading,
+    songs.length,
+    startupRefreshTarget,
+  ]);
 
   useEffect(() => {
     // An underfilled first screen is handled by the bounded auto-fill below.
@@ -772,7 +798,7 @@ export default function HomePage() {
       || loading
       || !hasMore
       || fetchingRef.current
-      || freshStrictDiscoverySongs.length >= PAGE_SIZE
+      || freshStrictDiscoverySongs.length >= startupRefreshTarget
     ) return;
 
     if (autoFillPagesRef.current >= MAX_AUTOFILL_PAGES) {
@@ -781,7 +807,7 @@ export default function HomePage() {
     }
     autoFillPagesRef.current += 1;
     loadMore();
-  }, [freshStrictDiscoverySongs.length, hasSearched, loading, hasMore, loadMore]);
+  }, [freshStrictDiscoverySongs.length, hasSearched, loading, hasMore, loadMore, startupRefreshTarget]);
 
   return (
     <div className="w-full px-4 sm:px-6 lg:px-8 py-4">
