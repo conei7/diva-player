@@ -97,8 +97,10 @@ function persistStartupRecommendations(songs: Song[]): void {
 
 function nextStartupRotation(): number {
   try {
-    const stored = Number.parseInt(sessionStorage.getItem(STARTUP_ROTATION_KEY) || '0', 10);
-    const rotation = Number.isFinite(stored) && stored >= 0 ? stored : 0;
+    // The freshly generated cache is already shown in its base order before
+    // the first reload, so an unset counter starts from the next rotation.
+    const stored = Number.parseInt(sessionStorage.getItem(STARTUP_ROTATION_KEY) || '1', 10);
+    const rotation = Number.isFinite(stored) && stored >= 0 ? stored : 1;
     sessionStorage.setItem(STARTUP_ROTATION_KEY, String(rotation + 1));
     return rotation;
   } catch {
