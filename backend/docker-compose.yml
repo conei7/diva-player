@@ -40,7 +40,10 @@ x-api-common: &api-common
     interval: 5s
     timeout: 6s
     retries: 12
-    start_period: 10s
+    # Ranking warmup deliberately finishes before readiness. Keep Docker in
+    # `starting` while a cold history scan runs; the rolling script has the
+    # same 180-second fail-closed deadline and accepts success immediately.
+    start_period: 180s
   stop_grace_period: 30s
   restart: unless-stopped
   logging: *default-logging

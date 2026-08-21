@@ -219,6 +219,7 @@ assert.match(quickTunnelSync, /PAGES_ORIGIN_PROOF_KEY/);
 assert.match(quickTunnelSync, /hmac\.new/);
 assert.match(warmup, /home-surge/);
 assert.match(compose, /Recommender__SearchCacheSizeMiB: "64"/);
+assert.match(compose, /start_period: 180s/);
 assert.match(compose, /Recommender__SearchCacheEntrySizeMiB: "8"/);
 assert.match(compose, /Recommender__ObjectCacheSizeMiB: "64"/);
 assert.match(compose, /Recommender__ObjectCacheEntrySizeMiB: "16"/);
