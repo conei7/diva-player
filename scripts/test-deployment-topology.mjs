@@ -188,6 +188,7 @@ assert.match(deploy, /gateway\.candidate_config_hash/);
 assert.match(deploy, /rollback_updated_slots/);
 assert.match(deploy, /DEPLOY_LOCK_DIR="\$STATE_ROOT\/deploy\.lock"/);
 assert.match(deploy, /acquire_deploy_lock/);
+assert.match(deploy, /HEALTH_ATTEMPTS=\$\{DIVA_DEPLOY_HEALTH_ATTEMPTS:-180\}/);
 assert.match(deploy, /Refusing to enable unhealthy \$slot/);
 assert.match(deploy, /apply_gateway_image "\$OLD_GATEWAY_IMAGE" "\$NEW_GATEWAY_IMAGE"/);
 assert.match(program, /MapHealthEndpoints\(\)/);
