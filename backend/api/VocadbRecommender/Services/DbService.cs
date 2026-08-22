@@ -2221,9 +2221,10 @@ public class DbService
         var normalizedModeCondition = modeCondition.Replace("s.song_type", songTypeExpression, StringComparison.Ordinal);
         var orderBy = normalizedMode switch
         {
-            // These four feeds are user-facing rankings. Keep their order
+            // These feeds are user-facing rankings. Keep their order
             // independent of the optional exploration seed and break ties by
             // song ID so repeated requests produce the same list.
+            "weekly" => "g.average_daily_growth DESC, g.view_growth DESC, g.quality_score DESC, s.favorited_times DESC NULLS LAST, s.id ASC",
             "surge" when normalizedRanking == "legacy" => "g.surge_rate DESC, g.view_growth DESC, s.favorited_times DESC NULLS LAST, s.id ASC",
             "surge" => "CASE WHEN g.current_window_days >= 7 AND g.previous_views IS NOT NULL AND g.prior_window_days >= 3 THEN 1 ELSE 0 END DESC, g.trend_tier DESC, g.surge_rank_score DESC, g.view_growth DESC, g.quality_score DESC, s.favorited_times DESC NULLS LAST, s.id ASC",
             "recent" => "g.recent_score DESC, g.view_growth DESC, s.publish_date DESC, s.id ASC",
@@ -2235,12 +2236,13 @@ public class DbService
         var sourceTable = normalizedMode switch
         {
             "alltime" or "pace" or "recent" or "deep" => "catalog_candidates",
+            "weekly" => "weekly_candidates",
             "surge" when normalizedRanking == "quality" => "surge_ranked",
             _ => "growth",
         };
-        var surgeRankScoreExpression = sourceTable == "growth"
-            ? "0::double precision"
-            : "g.surge_rank_score";
+        var surgeRankScoreExpression = sourceTable == "surge_ranked"
+            ? "g.surge_rank_score"
+            : "0::double precision";
         var trendTierExpression = sourceTable == "surge_ranked"
             ? "g.trend_tier"
             : "0";
@@ -2250,6 +2252,7 @@ public class DbService
         var minimumCondition = normalizedMode switch
         {
             "growth" => "g.popular_score > 0",
+            "weekly" => "g.average_daily_growth > 0",
             "surge" => "g.view_growth > 0",
             "alltime" => "g.popular_score > 0",
             "pace" or "recent" => "g.recent_score > 0",
@@ -2258,9 +2261,12 @@ public class DbService
         var debugFields = debug && normalizedMode == "surge"
             ? ", 'qualityScore', ranked.quality_score, 'surgeRankScore', ranked.surge_rank_score, 'qualityReasons', to_jsonb(ranked.quality_reasons)"
             : string.Empty;
-        var trendFields = normalizedMode == "surge"
-            ? ", 'surgeRate', ranked.surge_rate, 'trendTier', ranked.trend_tier, 'trendWindowDays', ROUND(ranked.current_window_days)"
-            : string.Empty;
+        var trendFields = normalizedMode switch
+        {
+            "weekly" => ", 'averageDailyGrowth', ranked.average_daily_growth, 'trendWindowDays', ROUND(ranked.current_window_days)",
+            "surge" => ", 'surgeRate', ranked.surge_rate, 'trendTier', ranked.trend_tier, 'trendWindowDays', ROUND(ranked.current_window_days)",
+            _ => string.Empty,
+        };
         var filterConditions = new List<string>();
         var nextFilterParameter = 5;
         if (normalizedMinYoutube > 0) filterConditions.Add($"COALESCE(s.youtube_views, 0) >= ${nextFilterParameter++}");
@@ -2276,6 +2282,7 @@ public class DbService
         var growthNicoWeightSql = NicoWeightSql("b.youtube_views", viewWeightProfile);
         var catalogCandidateSql = normalizedMode switch
         {
+            "weekly" => "SELECT id FROM songs WHERE publish_date >= CURRENT_DATE - interval '7 days'",
             "recent" => "SELECT id FROM songs WHERE publish_date >= CURRENT_DATE - interval '30 days'",
             "alltime" or "pace" => $"""
                 SELECT id FROM songs WHERE publish_date >= CURRENT_DATE - interval '90 days'
@@ -2435,6 +2442,12 @@ public class DbService
                         CASE WHEN b.youtube_views >= 100 THEN GREATEST(0, l.youtube_views - b.youtube_views) ELSE 0 END
                         + ({growthNicoWeightSql} * CASE WHEN b.nico_views >= 100 THEN GREATEST(0, l.nico_views - b.nico_views) ELSE 0 END)
                     ) AS view_growth,
+                    (
+                        GREATEST(0, l.youtube_views - b.youtube_views)
+                        + ({growthNicoWeightSql} * GREATEST(0, l.nico_views - b.nico_views))
+                    )::double precision
+                    / GREATEST(1.0, EXTRACT(EPOCH FROM (l.observed_at - b.observed_at)) / 86400.0)
+                    AS average_daily_growth,
                     CASE
                         WHEN b.total_views > 0
                             THEN ((
@@ -2515,6 +2528,10 @@ public class DbService
                     (
                         {currentSongTotalViewsSql}::double precision
                         / GREATEST(1, CURRENT_DATE - s.publish_date)
+                    ) AS average_daily_growth,
+                    (
+                        {currentSongTotalViewsSql}::double precision
+                        / GREATEST(1, CURRENT_DATE - s.publish_date)
                     ) AS growth_rate,
                     0::double precision AS surge_rate,
                     LN(1 + {currentSongTotalViewsSql}) AS popular_score,
@@ -2550,10 +2567,47 @@ public class DbService
                 LEFT JOIN song_discovery_quality q ON q.song_id = s.id
                 WHERE s.publish_date IS NOT NULL
             ),
+            weekly_candidates AS (
+                -- Established songs use the measured seven-day history
+                -- window. Songs published in the last seven days use their
+                -- complete lifetime counters divided by their actual age
+                -- (minimum one day), so a new release is not diluted by a
+                -- seven-day denominator or penalized for lacking a baseline.
+                SELECT
+                    g.song_id,
+                    (g.average_daily_growth * GREATEST(1.0, g.current_window_days)) AS view_growth,
+                    g.growth_rate,
+                    g.surge_rate,
+                    g.current_window_days,
+                    g.quality_score,
+                    g.quality_reasons,
+                    g.discovery_eligible,
+                    g.average_daily_growth
+                FROM growth g
+                JOIN songs s ON s.id = g.song_id
+                WHERE s.publish_date < CURRENT_DATE - interval '7 days'
+
+                UNION ALL
+
+                SELECT
+                    c.song_id,
+                    c.view_growth,
+                    c.growth_rate,
+                    c.surge_rate,
+                    GREATEST(1.0, (CURRENT_DATE - s.publish_date)::double precision) AS current_window_days,
+                    c.quality_score,
+                    c.quality_reasons,
+                    c.discovery_eligible,
+                    c.average_daily_growth
+                FROM catalog_candidates c
+                JOIN songs s ON s.id = c.song_id
+                WHERE s.publish_date >= CURRENT_DATE - interval '7 days'
+            ),
             ranked_ids AS (
                 SELECT
                     s.id AS song_id,
                     g.view_growth,
+                    g.average_daily_growth,
                     g.growth_rate,
                     g.surge_rate,
                     g.current_window_days,
@@ -2582,7 +2636,7 @@ public class DbService
                   {normalizedModeCondition}
             ),
             limited_ids AS (
-                SELECT song_id, view_growth, growth_rate, surge_rate, current_window_days, trend_tier, quality_score, surge_rank_score, quality_reasons, rank
+                SELECT song_id, view_growth, average_daily_growth, growth_rate, surge_rate, current_window_days, trend_tier, quality_score, surge_rank_score, quality_reasons, rank
                 FROM ranked_ids
                 WHERE rank > $2
                 ORDER BY rank
@@ -2667,7 +2721,7 @@ public class DbService
         // candidate is warmed before readiness and refreshed in the background,
         // so a cold database must be allowed to finish without exposing that
         // work to an interactive request or publishing an empty fallback.
-        cmd.CommandTimeout = normalizedMode == "surge" ? 90 : 30;
+        cmd.CommandTimeout = normalizedMode is "weekly" or "surge" ? 90 : 30;
         cmd.Parameters.AddWithValue(clampedDays);
         cmd.Parameters.AddWithValue(normalizedStart);
         cmd.Parameters.AddWithValue(clampedMaxResults);

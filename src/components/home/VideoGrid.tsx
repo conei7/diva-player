@@ -18,6 +18,7 @@ interface VideoGridProps {
   loading?: boolean;
   showScore?: boolean;
   recommendationReasons?: Record<number, string>;
+  alwaysShowReasons?: boolean;
   exposureSurface?: ExposureSurface;
   emptyMessage?: string;
 }
@@ -34,7 +35,7 @@ function SkeletonCard() {
   );
 }
 
-export default function VideoGrid({ songs, loading, recommendationReasons, exposureSurface, emptyMessage = '楽曲が見つかりません' }: VideoGridProps) {
+export default function VideoGrid({ songs, loading, recommendationReasons, alwaysShowReasons = false, exposureSurface, emptyMessage = '楽曲が見つかりません' }: VideoGridProps) {
   const navigate = useNavigate();
   const setVisibleSongs = useSelectionStore(s => s.setVisibleSongs);
   const recordVisible = useRecommendationExposureStore(s => s.recordVisible);
@@ -82,7 +83,7 @@ export default function VideoGrid({ songs, loading, recommendationReasons, expos
           song={song}
           index={index}
           onPlay={handlePlay}
-          recommendationReason={showRecommendationHints ? recommendationReasons?.[song.id] : undefined}
+          recommendationReason={showRecommendationHints || alwaysShowReasons ? recommendationReasons?.[song.id] : undefined}
           onVisible={exposureSurface ? () => recordVisible(song.id, exposureSurface, index + 1) : undefined}
           onExposureClick={exposureSurface ? () => recordClicked(song.id) : undefined}
         />

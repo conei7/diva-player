@@ -218,6 +218,7 @@ assert.match(tunnelAdmin, /TUNNEL_ORIGIN_PROOF_KEY/);
 assert.match(quickTunnelSync, /PAGES_ORIGIN_PROOF_KEY/);
 assert.match(quickTunnelSync, /hmac\.new/);
 assert.match(warmup, /home-surge/);
+assert.match(warmup, /home-weekly/);
 assert.match(compose, /Recommender__SearchCacheSizeMiB: "64"/);
 assert.match(compose, /start_period: 180s/);
 assert.match(compose, /Recommender__SearchCacheEntrySizeMiB: "8"/);
@@ -402,6 +403,7 @@ assert.match(audioHealthQuery, /h\.original_version_id IS NOT NULL/);
 assert.match(audioHealthQuery, /sa_orig\.song_id = h\.original_version_id/);
 assert.doesNotMatch(audioHealthQuery, /raw_json/);
 assert.match(warmup, /home-popular/);
+assert.match(warmup, /home-weekly/);
 assert.match(warmup, /home-pace/);
 assert.match(warmup, /home-surge/);
 assert.match(warmup, /home-recent/);
@@ -409,9 +411,11 @@ assert.match(warmup, /home-deep/);
 assert.match(warmup, /PeriodicTimer\(RefreshInterval\)/);
 assert.match(warmup, /forceRefresh: true/);
 assert.match(dbService, /history_windows AS MATERIALIZED/);
+assert.match(dbService, /weekly_candidates AS/);
+assert.match(dbService, /average_daily_growth DESC/);
 assert.match(dbService, /RANGE BETWEEN interval '10 days' PRECEDING AND interval '7 days' PRECEDING/);
 assert.match(dbService, /baseline\.previous_observed_at IS NULL\s+THEN NULL::double precision/);
-assert.match(dbService, /cmd\.CommandTimeout = normalizedMode == "surge" \? 90 : 30/);
+assert.match(dbService, /cmd\.CommandTimeout = normalizedMode is "weekly" or "surge" \? 90 : 30/);
 assert.doesNotMatch(dbService, /surge_debug_sql/);
 assert.ok(
   schema.includes('ADD COLUMN IF NOT EXISTS youtube_views')

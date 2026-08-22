@@ -41,6 +41,7 @@ import { interleaveUniqueSongs, selectRecentProducerIds } from '../utils/recentP
 import { resolveWithin } from '../utils/timeBudget';
 import { isDeterministicHomeRankingCategory } from '../utils/homeRanking';
 import { formatTrendingReason } from '../utils/trendingReason';
+import { formatWeeklyRankingReason } from '../utils/weeklyRankingReason';
 import { excludeHiddenSongs, useHiddenSongStore } from '../stores/hiddenSongStore';
 import { selectRotatingStartupSongs } from '../utils/startupRecommendations';
 import {
@@ -52,6 +53,7 @@ import {
 
 type HomeCategoryId =
   | 'recommended'
+  | 'ranking'
   | 'popular'
   | 'pace'
   | 'trending'
@@ -64,6 +66,7 @@ type PrefetchableHomeCategoryId = Exclude<HomeCategoryId, 'recommended'>;
 
 const CATEGORIES: CategoryChip[] = [
   { id: 'recommended', label: 'あなたへのおすすめ' },
+  { id: 'ranking', label: 'ランキング' },
   { id: 'popular', label: '人気の曲' },
   { id: 'pace', label: '再生ペース' },
   { id: 'trending', label: '急上昇' },
@@ -81,6 +84,7 @@ const INITIAL_OPTIONAL_RECOMMENDATION_BUDGET_MS = 2_500;
 const MAX_AUTOFILL_PAGES = 2;
 const HOME_CATEGORY_PREFETCH_DELAY_MS = 300;
 const PREFETCHABLE_HOME_CATEGORIES: PrefetchableHomeCategoryId[] = [
+  'ranking',
   'popular',
   'pace',
   'trending',
@@ -410,6 +414,8 @@ export default function HomePage() {
     pageNum: number,
   ): Promise<Song[]> => {
     switch (category) {
+      case 'ranking':
+        return getTrendingSongs(7, PAGE_SIZE, pageNum * PAGE_SIZE, 'weekly', 0, globalFilterSettings);
       case 'popular':
         return getTrendingSongs(30, PAGE_SIZE, pageNum * PAGE_SIZE, 'alltime', 0, globalFilterSettings);
       case 'pace':
@@ -561,9 +567,11 @@ export default function HomePage() {
       result = filterVoiceSynthSongs(result);
       segments.push({ name: 'voiceFilter', durationMs: performanceNow() - filterStartedAt });
 
-      const trendingReasons = category === 'trending'
+      const categoryReasons = category === 'ranking' || category === 'trending'
         ? result.reduce<Record<number, string>>((reasons, song) => {
-            const reason = formatTrendingReason(song);
+            const reason = category === 'ranking'
+              ? formatWeeklyRankingReason(song)
+              : formatTrendingReason(song);
             if (reason) reasons[song.id] = reason;
             return reasons;
           }, {})
@@ -584,7 +592,7 @@ export default function HomePage() {
             },
           });
         }
-        if (category === 'trending') setRecommendationReasons(trendingReasons);
+        if (category === 'ranking' || category === 'trending') setRecommendationReasons(categoryReasons);
         else if (category !== 'recommended') setRecommendationReasons({});
       } else {
         setSongs(prev => {
@@ -592,8 +600,8 @@ export default function HomePage() {
           const newSongs = result.filter(song => !existingIds.has(song.id));
           return [...prev, ...newSongs];
         });
-        if (category === 'trending') {
-          setRecommendationReasons(previous => ({ ...previous, ...trendingReasons }));
+        if (category === 'ranking' || category === 'trending') {
+          setRecommendationReasons(previous => ({ ...previous, ...categoryReasons }));
         }
       }
       // A filtered page may contain no visible songs even though the source
@@ -737,12 +745,12 @@ export default function HomePage() {
     let cancelled = false;
     const timer = window.setTimeout(() => {
       void (async () => {
-        const rankingFeeds = PREFETCHABLE_HOME_CATEGORIES.slice(0, 5);
+        const rankingFeeds = PREFETCHABLE_HOME_CATEGORIES.slice(0, 6);
         await Promise.all(rankingFeeds.map(category =>
           loadPrefetchableHomeSongs(category, 0).catch(() => [] as Song[]),
         ));
         if (cancelled) return;
-        for (const category of PREFETCHABLE_HOME_CATEGORIES.slice(5)) {
+        for (const category of PREFETCHABLE_HOME_CATEGORIES.slice(6)) {
           await loadPrefetchableHomeSongs(category, 0).catch(() => [] as Song[]);
           if (cancelled) return;
         }
@@ -956,9 +964,10 @@ export default function HomePage() {
           : isDiscoveryFilterActive(globalFilterSettings))
           ? '現在の表示フィルターに一致する曲がありません。設定の「表示・発見」で条件を調整してください。'
           : undefined}
-        recommendationReasons={!isSearchMode && !isArtistMode && !hasSearched && (activeCategory === 'recommended' || activeCategory === 'trending')
+        recommendationReasons={!isSearchMode && !isArtistMode && !hasSearched && (activeCategory === 'recommended' || activeCategory === 'ranking' || activeCategory === 'trending')
           ? recommendationReasons
           : undefined}
+        alwaysShowReasons={!isSearchMode && !isArtistMode && !hasSearched && activeCategory === 'ranking'}
         exposureSurface={!isSearchMode && !isArtistMode && !hasSearched
           ? activeCategory === 'recommended' ? 'home-recommended' : 'home-discovery'
           : undefined}

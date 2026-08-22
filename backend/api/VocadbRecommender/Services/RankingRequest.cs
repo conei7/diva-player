@@ -33,6 +33,7 @@ internal sealed record RankingRequest(
         var normalizedMode = mode switch
         {
             "alltime" => "alltime",
+            "weekly" => "weekly",
             "pace" or "popular" => "pace",
             "surge" => "surge",
             "recent" => "recent",
@@ -50,10 +51,10 @@ internal sealed record RankingRequest(
             .ToArray();
         var normalizedDays = normalizedMode switch
         {
-            "surge" => 7,
+            "weekly" or "surge" => 7,
             _ => 30,
         };
-        var normalizedSeed = normalizedMode is "alltime" or "pace" or "surge" or "recent"
+        var normalizedSeed = normalizedMode is "alltime" or "weekly" or "pace" or "surge" or "recent"
             ? 0
             : Math.Clamp(seed, 0, 63);
         var normalizedRanking = normalizedMode == "surge" && ranking == "legacy"

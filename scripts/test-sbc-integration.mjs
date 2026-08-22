@@ -174,11 +174,16 @@ async function main() {
   assert(Array.isArray(trending.items), 'Trending endpoint did not return an items array.');
   console.log(`PASS PostgreSQL trending (${trending.items.length} songs)`);
 
-  for (const [mode, days] of [['alltime', 30], ['pace', 30], ['surge', 7], ['recent', 30]]) {
+  for (const [mode, days] of [['weekly', 7], ['alltime', 30], ['pace', 30], ['surge', 7], ['recent', 30]]) {
     const rankedA = await getJson(baseUrl, `/api/songs/trending?days=${days}&start=0&maxResults=24&mode=${mode}&seed=11`);
     const rankedB = await getJson(baseUrl, `/api/songs/trending?days=${days}&start=0&maxResults=24&mode=${mode}&seed=12`);
     assert(JSON.stringify(rankedA.items.map(item => item.id)) === JSON.stringify(rankedB.items.map(item => item.id)), `${mode} ranking changed with its exploration seed.`);
-    if (mode === 'surge') {
+    if (mode === 'weekly') {
+      assert(rankedA.items.length === 24, `Weekly ranking returned only ${rankedA.items.length}/24 songs.`);
+      assert(rankedA.items.every(item => Number(item.averageDailyGrowth) > 0), 'Weekly ranking omitted average daily growth evidence.');
+      assert(rankedA.items.every(item => Number(item.trendWindowDays) >= 1 && Number(item.trendWindowDays) <= 10), 'Weekly ranking returned an incorrect measurement window.');
+      assert(rankedA.items.every((item, index, items) => index === 0 || Number(items[index - 1].averageDailyGrowth) >= Number(item.averageDailyGrowth)), 'Weekly ranking is not ordered by average daily growth.');
+    } else if (mode === 'surge') {
       assert(rankedA.items.length === 24, `Surge ranking returned only ${rankedA.items.length}/24 songs.`);
       assert(rankedA.items.every(item => Number(item.viewGrowth) > 0), 'Surge ranking omitted recent growth evidence.');
       assert(rankedA.items.every(item => Number(item.surgeRate) >= 1.25), 'Surge ranking included a song below the acceleration boundary.');

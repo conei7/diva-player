@@ -12,6 +12,7 @@ async function fetchItems(mode, days, seed) {
 }
 
 const rankings = [
+  ['weekly', 7],
   ['alltime', 30],
   ['pace', 30],
   ['surge', 7],

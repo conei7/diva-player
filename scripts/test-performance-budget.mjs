@@ -220,12 +220,13 @@ async function installApiFixtures(page, counters) {
       counters.homeRankingRequests += 1;
       await new Promise(resolve => setTimeout(resolve, counters.homeRankingDelayMs));
       counters.homeRankingResponses += 1;
-      const modeIds = { alltime: 2601, pace: 2602, surge: 2603, recent: 2604, deep: 2605 };
+      const modeIds = { alltime: 2601, pace: 2602, surge: 2603, recent: 2604, deep: 2605, weekly: 2606 };
       const mode = url.searchParams.get('mode') ?? 'pace';
       if (mode === 'deep') counters.deepRankingSeeds.push(url.searchParams.get('seed'));
       body = {
         items: [{
           ...fixtureSongForId(modeIds[mode] ?? 2600),
+          ...(mode === 'weekly' ? { viewGrowth: 8642, averageDailyGrowth: 1234.5, trendWindowDays: 7 } : {}),
           ...(mode === 'surge' ? { viewGrowth: 1234, growthRate: 0.5, surgeRate: 2, trendTier: 2, trendWindowDays: 7 } : {}),
         }],
         totalCount: 1,
@@ -485,30 +486,30 @@ async function main() {
     console.log(`PASS home.personalized-cache: ${Math.round(cachedFirstContent.durationMs)}ms / ${BUDGETS_MS['home.first-card']}ms`);
 
     const rankingPrefetchDeadline = Date.now() + PAGE_TIMEOUT_MS;
-    while (counters.homeRankingResponses < 5 && Date.now() < rankingPrefetchDeadline) {
+    while (counters.homeRankingResponses < 6 && Date.now() < rankingPrefetchDeadline) {
       await new Promise(resolve => setTimeout(resolve, 50));
     }
-    assert(counters.homeRankingResponses >= 5, `Home ranking prefetch did not cover all server feeds: ${counters.homeRankingResponses}`);
+    assert(counters.homeRankingResponses >= 6, `Home ranking prefetch did not cover all server feeds: ${counters.homeRankingResponses}`);
     assert(
       counters.deepRankingSeeds.length > 0 && counters.deepRankingSeeds.every(seed => seed === '0'),
       `Home deep prefetch missed the canonical warm seed: ${JSON.stringify(counters.deepRankingSeeds)}`,
     );
     const categoryStartedAt = Date.now();
     await page.evaluate(() => {
-      const chip = Array.from(document.querySelectorAll('button')).find(button => button.textContent?.trim() === '急上昇');
-      if (!(chip instanceof HTMLButtonElement)) throw new Error('Trending category chip was not found.');
+      const chip = Array.from(document.querySelectorAll('button')).find(button => button.textContent?.trim() === 'ランキング');
+      if (!(chip instanceof HTMLButtonElement)) throw new Error('Weekly ranking category chip was not found.');
       chip.click();
     });
     await page.waitForFunction(() => Array.from(document.querySelectorAll('a[href*="/watch?v="]'))
-      .some(link => /[?&]v=2603(?:&|$)/.test(link.getAttribute('href') ?? '')));
+      .some(link => /[?&]v=2606(?:&|$)/.test(link.getAttribute('href') ?? '')));
     const prefetchedCategoryMs = Date.now() - categoryStartedAt;
-    const hasUnwantedTrendingDescription = await page.evaluate(() =>
-      document.body.innerText.includes('直近約7日間の再生増加が平常時より加速している曲'));
+    const rankingCopy = await page.evaluate(() => document.body.innerText);
     assert(
       prefetchedCategoryMs <= BUDGETS_MS['home.prefetched-category'],
       `Prefetched Home category exceeded ${BUDGETS_MS['home.prefetched-category']}ms (${prefetchedCategoryMs}ms).`,
     );
-    assert(!hasUnwantedTrendingDescription, 'The removed trending explanation is still visible.');
+    assert(rankingCopy.includes('1日平均 +1,235再生'), 'Weekly ranking did not show its average daily increase.');
+    assert(!rankingCopy.includes('直近約7日間の再生増加が平常時より加速している曲'), 'The removed trending explanation is still visible.');
     console.log(`PASS home.prefetched-category: ${prefetchedCategoryMs}ms / ${BUDGETS_MS['home.prefetched-category']}ms`);
 
     // This producer name is present in the SBC/VocaDB fixture and keeps the

@@ -1,4 +1,5 @@
 export const DETERMINISTIC_HOME_RANKING_CATEGORIES = [
+  'ranking',
   'popular',
   'pace',
   'trending',

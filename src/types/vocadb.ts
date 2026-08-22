@@ -88,6 +88,7 @@ export interface Song {
   youtubeViews?: number;
   nicoViews?: number;
   viewGrowth?: number;
+  averageDailyGrowth?: number;
   growthRate?: number;
   surgeRate?: number;
   trendTier?: number;

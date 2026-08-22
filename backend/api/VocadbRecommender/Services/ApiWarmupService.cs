@@ -39,6 +39,8 @@ public sealed class ApiWarmupService(
                 forceRefresh: forceRefresh,
                 cancellationToken: cancellationToken);
         }),
+        ("home-weekly", () => db.GetTrendingSongsJsonAsync(
+            7, 0, 24, "weekly", forceRefresh: forceRefresh, cancellationToken: cancellationToken)),
         ("home-popular", () => db.GetTrendingSongsJsonAsync(
             30, 0, 24, "alltime", forceRefresh: forceRefresh, cancellationToken: cancellationToken)),
         ("home-pace", () => db.GetTrendingSongsJsonAsync(

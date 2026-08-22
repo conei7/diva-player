@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { isDeterministicHomeRankingCategory } from './homeRanking';
 
 describe('home ranking categories', () => {
-  it('keeps the four ranking tabs deterministic', () => {
-    expect(['popular', 'pace', 'trending', 'recent'].every(isDeterministicHomeRankingCategory)).toBe(true);
+  it('keeps the five ranking tabs deterministic', () => {
+    expect(['ranking', 'popular', 'pace', 'trending', 'recent'].every(isDeterministicHomeRankingCategory)).toBe(true);
   });
 
   it('leaves discovery and recommendation tabs eligible for exploration', () => {
