@@ -23,6 +23,16 @@ const song = {
   ],
 };
 
+const nextSong = {
+  ...song,
+  id: 483778,
+  name: 'Watch switch fixture',
+  defaultName: 'Watch switch fixture',
+  pvs: [
+    { author: '', disabled: false, id: 4837781, length: 120, name: 'YouTube switch fixture', pvId: 'fixture-next', service: 'Youtube', pvType: 'Original', url: 'https://youtu.be/fixture-next' },
+  ],
+};
+
 async function preparePage() {
   const page = await browser.newPage();
   await page.evaluateOnNewDocument(() => {
@@ -40,27 +50,36 @@ async function preparePage() {
     }
     const parsedUrl = new URL(requestUrl);
     const requestedSongIds = parsedUrl.searchParams.get('ids')?.split(',') ?? [];
+    const requestedFixtureSongs = [song, nextSong].filter(item => requestedSongIds.includes(String(item.id)));
     if (
       (parsedUrl.pathname.endsWith('/api/songs/details') || parsedUrl.pathname.endsWith('/api/songs/batch'))
-      && requestedSongIds.includes(String(song.id))
+      && requestedFixtureSongs.length > 0
     ) {
+      if (requestedFixtureSongs.some(item => item.id === nextSong.id)) {
+        await new Promise(resolve => setTimeout(resolve, 400));
+      }
       await request.respond({
         contentType: 'application/json',
         headers: { 'access-control-allow-origin': '*' },
-        body: JSON.stringify({ items: [song] }),
+        body: JSON.stringify({ items: requestedFixtureSongs }),
       });
       return;
     }
-    if (requestUrl.startsWith(`https://vocadb.net/api/songs/${song.id}?`)) {
+    const vocadbFixtureSong = [song, nextSong].find(item => requestUrl.startsWith(`https://vocadb.net/api/songs/${item.id}?`));
+    if (vocadbFixtureSong) {
+      if (vocadbFixtureSong.id === nextSong.id) {
+        await new Promise(resolve => setTimeout(resolve, 400));
+      }
       await request.respond({
         contentType: 'application/json',
         headers: { 'access-control-allow-origin': '*' },
-        body: JSON.stringify(song),
+        body: JSON.stringify(vocadbFixtureSong),
       });
       return;
     }
-    if (requestUrl.includes(`/backend-api/api/songs/views?ids=${song.id}`)) {
-      await request.respond({ contentType: 'application/json', body: JSON.stringify({ [song.id]: { youtubeViews: 0, nicoViews: 0 } }) });
+    const requestedViewSong = [song, nextSong].find(item => requestUrl.includes(`/backend-api/api/songs/views?ids=${item.id}`));
+    if (requestedViewSong) {
+      await request.respond({ contentType: 'application/json', body: JSON.stringify({ [requestedViewSong.id]: { youtubeViews: 0, nicoViews: 0 } }) });
       return;
     }
     if (requestUrl !== 'https://www.youtube.com/iframe_api') {
@@ -132,6 +151,41 @@ async function assertLazyNavigationKeepsPlayback(page) {
   // The flag only prevents a newly opened tab from stealing another tab.
   await page.goto(new URL(`watch?v=${song.id}&autoplay=0`, baseUrl), { waitUntil: 'domcontentloaded', timeout: 60_000 });
   await page.waitForFunction(() => window.__playerLifecycle?.state === 1);
+  await page.evaluate(nextSongId => {
+    const spacer = document.createElement('div');
+    spacer.dataset.testid = 'watch-switch-scroll-spacer';
+    spacer.style.height = '2400px';
+    document.body.append(spacer);
+    window.scrollTo(0, 1200);
+    window.__watchSwitchSawMiniPlayer = false;
+    window.__watchSwitchObserver = new MutationObserver(() => {
+      if (document.querySelector('.global-mini-player')) window.__watchSwitchSawMiniPlayer = true;
+    });
+    window.__watchSwitchObserver.observe(document.documentElement, {
+      attributes: true,
+      childList: true,
+      subtree: true,
+    });
+    const nextUrl = new URL(location.href);
+    nextUrl.search = `?v=${nextSongId}`;
+    history.pushState({}, '', `${nextUrl.pathname}${nextUrl.search}`);
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  }, nextSong.id);
+  await page.waitForFunction(nextSongName => document.title.startsWith(nextSongName), {}, nextSong.name);
+  const switchState = await page.evaluate(() => {
+    window.__watchSwitchObserver?.disconnect();
+    return {
+      sawMiniPlayer: window.__watchSwitchSawMiniPlayer,
+      scrollY: window.scrollY,
+      currentPath: `${location.pathname}${location.search}`,
+      hasWatchPlayer: Boolean(document.querySelector('[data-testid="global-player"]')),
+    };
+  });
+  if (switchState.sawMiniPlayer || switchState.scrollY !== 0 || !switchState.hasWatchPlayer) {
+    throw new Error(`Watch song switch flashed PiP or kept the old scroll position: ${JSON.stringify(switchState)}`);
+  }
+  console.log('PASS Watch song switch keeps the full player and resets scroll');
+
   await page.click('button[aria-label="メニュー"]');
   await page.waitForSelector('a[href$="/knowledge-map"]', { visible: true });
   await page.$eval('a[href$="/knowledge-map"]', link => link.click());
@@ -164,7 +218,7 @@ async function assertLazyNavigationKeepsPlayback(page) {
   if (!state.isMiniPlayerVisible || state.ownerTabId !== state.thisTabId) {
     throw new Error(`Lazy navigation lost the local mini-player owner: ${JSON.stringify(state)}`);
   }
-  if (state.title !== 'スターダストメドレー — Fixture producer | DIVA Player') {
+  if (state.title !== 'Watch switch fixture — Fixture producer | DIVA Player') {
     throw new Error(`Lazy navigation left an inconsistent browser title: ${JSON.stringify(state)}`);
   }
   console.log('PASS lazy page navigation preserves playback, mini-player ownership, and title');

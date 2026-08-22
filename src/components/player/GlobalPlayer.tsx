@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { useLocation, useNavigate } from 'react-router';
 import { usePlayerStore } from '../../stores/playerStore';
 import { usePlayerInteractionStore } from '../../stores/playerInteractionStore';
@@ -37,10 +37,16 @@ export default function GlobalPlayer() {
 
   const isWatchPage = location.pathname === '/watch';
   const [isLeavingWatchPage, setIsLeavingWatchPage] = useState(false);
+  const lastWatchPlayerRectRef = useRef<DOMRect | null>(null);
+
+  useEffect(() => {
+    if (isWatchPage && playerRect) lastWatchPlayerRectRef.current = playerRect;
+  }, [isWatchPage, playerRect]);
 
   useEffect(() => {
     if (!isWatchPage) {
       setIsLeavingWatchPage(false);
+      lastWatchPlayerRectRef.current = null;
       return;
     }
 
@@ -67,13 +73,22 @@ export default function GlobalPlayer() {
     };
   }, [isWatchPage]);
 
-  const renderAsWatchPage = isWatchPage && !isLeavingWatchPage && !!playerRect;
+  // Watch-to-Watch song changes briefly unmount the placeholder while the new
+  // song details load. Keep the last full-player rectangle through that gap;
+  // never reinterpret a missing rectangle on /watch as a request for PiP.
+  const watchPlayerRect = isWatchPage
+    ? playerRect ?? lastWatchPlayerRectRef.current
+    : null;
+  const renderAsWatchPage = isWatchPage && !isLeavingWatchPage && !!watchPlayerRect;
   // WatchPage 以外では、別タブが再生を取得したと確定した場合だけ隠す。
   // `none` は初期化・SPA遷移・page lifecycleの短い中間状態でも現れるため、
   // 再生中ならlocal claimが反映されるまでPiPを維持する。停止状態の別タブに
   // 永続queueだけが復元された場合は表示しない。
   const hasLocalPlayback = ownershipState === 'local' || (ownershipState === 'none' && isPlaying);
-  const showMiniPlayer = !renderAsWatchPage && !!currentSong && hasLocalPlayback;
+  const showMiniPlayer = (!isWatchPage || isLeavingWatchPage)
+    && !renderAsWatchPage
+    && !!currentSong
+    && hasLocalPlayback;
   const canShuffle = queue.length > 1;
   const handleSwipe = useCallback((direction: 'left' | 'right' | 'up') => {
     if (direction === 'left') next();
@@ -94,15 +109,15 @@ export default function GlobalPlayer() {
     return str;
   })();
   const containerStyle: React.CSSProperties = (() => {
-    if (currentSong && renderAsWatchPage && playerRect) {
+    if (currentSong && renderAsWatchPage && watchPlayerRect) {
       // WatchPage の VideoPlayer の位置にピタリと合わせる
       // absolute にすることで、スクロール時に自動追従し、JSによる遅延を防ぐ
       return {
       position: 'absolute',
-      top: playerRect.top,
-      left: playerRect.left,
-      width: playerRect.width,
-      height: playerRect.height,
+      top: watchPlayerRect.top,
+      left: watchPlayerRect.left,
+      width: watchPlayerRect.width,
+      height: watchPlayerRect.height,
       borderRadius: '12px',
       zIndex: 10,
       background: '#000',

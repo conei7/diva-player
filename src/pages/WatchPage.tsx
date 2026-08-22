@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useCallback } from 'react';
+import { useEffect, useState, useRef, useCallback, useLayoutEffect } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { useSearchParams, Navigate, useNavigate } from 'react-router';
 import VideoPlayer from '../components/watch/VideoPlayer';
@@ -195,6 +195,11 @@ export default function WatchPage() {
   });
 
   const sentinelRef = useRef<HTMLDivElement>(null);
+
+  useLayoutEffect(() => {
+    if (!songId) return;
+    window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+  }, [songId]);
 
   // 曲をロード & 再生開始
   useEffect(() => {
