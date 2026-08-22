@@ -421,13 +421,14 @@ const rankingQueryEnd = dbService.indexOf('public async Task<List<(int SongId, s
 assert.ok(rankingQueryStart >= 0 && rankingQueryEnd > rankingQueryStart, 'ranking query contract was not found');
 const rankingQuery = dbService.slice(rankingQueryStart, rankingQueryEnd);
 assert.match(rankingQuery, /history_observation_groups AS MATERIALIZED/);
-assert.match(rankingQuery, /COUNT\(NULLIF\(h\.youtube_views, 0\)\) OVER/);
-assert.match(rankingQuery, /COUNT\(NULLIF\(h\.nico_views, 0\)\) OVER/);
+assert.match(rankingQuery, /CASE WHEN h\.youtube_observed THEN h\.youtube_views END AS youtube_views/);
+assert.match(rankingQuery, /CASE WHEN h\.nico_observed THEN h\.nico_views END AS nico_views/);
 assert.match(rankingQuery, /history_filled AS MATERIALIZED/);
-assert.match(rankingQuery, /MAX\(h\.youtube_views\) OVER \(\s*PARTITION BY h\.song_id, h\.youtube_observation_group/);
-assert.match(rankingQuery, /MAX\(h\.nico_views\) OVER \(\s*PARTITION BY h\.song_id, h\.nico_observation_group/);
+assert.match(rankingQuery, /MAX\(h\.youtube_views\) OVER \(\s*PARTITION BY h\.song_id\s*ORDER BY h\.recorded_at, h\.observation_id/);
+assert.match(rankingQuery, /MAX\(h\.nico_views\) OVER \(\s*PARTITION BY h\.song_id\s*ORDER BY h\.recorded_at, h\.observation_id/);
 assert.match(rankingQuery, /latest AS \([\s\S]*?FROM history_filled h/);
 assert.doesNotMatch(rankingQuery, /COALESCE\(h\.(?:youtube|nico)_views, 0\) AS (?:youtube|nico)_views/);
+assert.doesNotMatch(rankingQuery, /NULLIF\(h\.(?:youtube|nico)_views, 0\)/);
 assert.match(dbService, /history_windows AS MATERIALIZED/);
 assert.match(dbService, /weekly_candidates AS/);
 assert.match(dbService, /average_daily_growth DESC/);
