@@ -2341,20 +2341,55 @@ public class DbService
                 SELECT MAX(recorded_at) AS observed_at
                 FROM view_history
             ),
-            history_windows AS MATERIALIZED (
+            history_observation_groups AS MATERIALIZED (
+                -- YouTube and NicoNico are acquired independently. A zero in
+                -- one column means that service was not observed on this row;
+                -- it is not a counter reset. Group consecutive missing rows
+                -- with their most recent real observation per service.
                 SELECT
                     h.song_id,
                     h.recorded_at,
-                    COALESCE(h.youtube_views, 0) AS youtube_views,
-                    COALESCE(h.nico_views, 0) AS nico_views,
-                    last_value(h.recorded_at) OVER normal_window AS normal_baseline_at,
-                    last_value(h.recorded_at) OVER fallback_window AS fallback_baseline_at,
-                    last_value(COALESCE(h.youtube_views, 0)) OVER fallback_window AS fallback_youtube_views,
-                    last_value(COALESCE(h.nico_views, 0)) OVER fallback_window AS fallback_nico_views
+                    NULLIF(h.youtube_views, 0) AS youtube_views,
+                    NULLIF(h.nico_views, 0) AS nico_views,
+                    COUNT(NULLIF(h.youtube_views, 0)) OVER observation_window AS youtube_observation_group,
+                    COUNT(NULLIF(h.nico_views, 0)) OVER observation_window AS nico_observation_group
                 FROM view_history h
                 CROSS JOIN latest_watermark watermark
                 WHERE watermark.observed_at IS NOT NULL
                   AND h.recorded_at >= watermark.observed_at - interval '21 days'
+                WINDOW observation_window AS (
+                    PARTITION BY h.song_id
+                    ORDER BY h.recorded_at
+                    ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+                )
+            ),
+            history_filled AS MATERIALIZED (
+                -- Carry each service's last measured counter forward without
+                -- mixing it with the other service's acquisition schedule.
+                -- A service with no measurement in the retained history stays
+                -- NULL and therefore contributes no fabricated growth.
+                SELECT
+                    h.song_id,
+                    h.recorded_at,
+                    MAX(h.youtube_views) OVER (
+                        PARTITION BY h.song_id, h.youtube_observation_group
+                    ) AS youtube_views,
+                    MAX(h.nico_views) OVER (
+                        PARTITION BY h.song_id, h.nico_observation_group
+                    ) AS nico_views
+                FROM history_observation_groups h
+            ),
+            history_windows AS MATERIALIZED (
+                SELECT
+                    h.song_id,
+                    h.recorded_at,
+                    h.youtube_views,
+                    h.nico_views,
+                    last_value(h.recorded_at) OVER normal_window AS normal_baseline_at,
+                    last_value(h.recorded_at) OVER fallback_window AS fallback_baseline_at,
+                    last_value(h.youtube_views) OVER fallback_window AS fallback_youtube_views,
+                    last_value(h.nico_views) OVER fallback_window AS fallback_nico_views
+                FROM history_filled h
                 WINDOW
                     normal_window AS (
                         PARTITION BY h.song_id
@@ -2371,10 +2406,10 @@ public class DbService
                 SELECT DISTINCT ON (h.song_id)
                        h.song_id,
                        h.recorded_at AS observed_at,
-                       COALESCE(h.youtube_views, 0) AS youtube_views,
-                       COALESCE(h.nico_views, 0) AS nico_views,
+                       h.youtube_views,
+                       h.nico_views,
                        {latestTotalViewsSql} AS total_views
-                FROM view_history h
+                FROM history_filled h
                 JOIN songs latest_song ON latest_song.id = h.song_id
                 JOIN song_discovery_quality latest_quality
                   ON latest_quality.song_id = h.song_id
@@ -2399,8 +2434,8 @@ public class DbService
             baseline AS (
                 SELECT latest.song_id,
                        h.recorded_at AS observed_at,
-                       COALESCE(h.youtube_views, 0) AS youtube_views,
-                       COALESCE(h.nico_views, 0) AS nico_views,
+                       h.youtube_views,
+                       h.nico_views,
                        {baselineTotalViewsSql} AS total_views,
                        h.fallback_baseline_at AS previous_observed_at,
                        h.fallback_youtube_views AS previous_youtube_views,
