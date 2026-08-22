@@ -5,7 +5,9 @@ public sealed class ViewHistoryObservationContractTests
     private static string RepositoryRoot()
     {
         var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && !File.Exists(Path.Combine(current.FullName, "diva-player.sln")))
+        while (current is not null && !(
+            File.Exists(Path.Combine(current.FullName, "package.json")) &&
+            File.Exists(Path.Combine(current.FullName, "backend", "database", "schema.sql"))))
             current = current.Parent;
         return current?.FullName ?? throw new InvalidOperationException("Repository root not found");
     }
