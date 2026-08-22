@@ -180,24 +180,5 @@ export function normalizeViewHistory(history: unknown[]): ViewHistoryData[] {
     });
   }
   const sorted = [...daily.values()].sort((a, b) => a.date.localeCompare(b.date));
-  for (const service of ['youtube', 'nico'] as const) {
-    let previous: number | null = null;
-    for (let index = 0; index < sorted.length; index += 1) {
-      const current = sorted[index][service];
-      if (current === null) continue;
-      const next = sorted[index + 1]?.[service] ?? null;
-      if (previous === null && current === 0 && !sorted[index].baseline) {
-        sorted[index][service] = null;
-        continue;
-      }
-      const isolatedDrop = previous !== null && current < previous && next !== null && next >= previous * 0.98;
-      const isolatedSpike = previous !== null && next !== null && current > previous * 2 + 1000 && next < current * 0.5;
-      if (isolatedDrop || isolatedSpike) {
-        sorted[index][service] = Math.max(previous ?? 0, next ?? 0);
-        sorted[index][service === 'youtube' ? 'correctedYoutube' : 'correctedNico'] = true;
-      }
-      previous = sorted[index][service];
-    }
-  }
   return sorted;
 }

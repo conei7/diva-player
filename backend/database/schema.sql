@@ -287,7 +287,9 @@ CREATE TABLE IF NOT EXISTS view_history (
     recorded_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
     recorded_date   DATE,
     youtube_views   BIGINT NOT NULL DEFAULT 0,
-    nico_views      BIGINT NOT NULL DEFAULT 0
+    nico_views      BIGINT NOT NULL DEFAULT 0,
+    youtube_observed BOOLEAN NOT NULL DEFAULT FALSE,
+    nico_observed    BOOLEAN NOT NULL DEFAULT FALSE
 );
 
 CREATE INDEX IF NOT EXISTS view_history_song_date_idx

@@ -11,13 +11,13 @@ import {
 } from '../../utils/viewHistory';
 
 describe('normalizeViewHistory', () => {
-  it('keeps irregular dates and treats an initial zero as missing', () => {
+  it('keeps irregular dates and preserves an explicitly observed zero', () => {
     const result = normalizeViewHistory([
       { date: '2026-01-01', youtube: 0, nico: 10 },
       { date: '2026-01-03', youtube: 100, nico: 20 },
     ]);
     expect(result.map(item => item.date)).toEqual(['2026-01-01', '2026-01-03']);
-    expect(result[0].youtube).toBeNull();
+    expect(result[0].youtube).toBe(0);
   });
 
   it('keeps a missing service distinct from an explicit zero', () => {
@@ -31,14 +31,14 @@ describe('normalizeViewHistory', () => {
     expect(result[2].nico).toBeNull();
   });
 
-  it('corrects an isolated cumulative spike and leaves sustained decreases visible', () => {
+  it('does not guess at counter corrections in the browser', () => {
     const spike = normalizeViewHistory([
       { date: '2026-01-01', youtube: 100, nico: 0 },
       { date: '2026-01-02', youtube: 5000, nico: 0 },
       { date: '2026-01-03', youtube: 120, nico: 0 },
     ]);
-    expect(spike[1].youtube).toBe(120);
-    expect(spike[1].correctedYoutube).toBe(true);
+    expect(spike[1].youtube).toBe(5000);
+    expect(spike[1].correctedYoutube).toBeUndefined();
 
     const sustained = normalizeViewHistory([
       { date: '2026-01-01', youtube: 100, nico: 0 },

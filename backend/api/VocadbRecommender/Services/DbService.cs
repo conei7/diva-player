@@ -2041,9 +2041,27 @@ public class DbService
         cancellationToken.ThrowIfCancellationRequested();
         await using var conn = await OpenAsync(cancellationToken);
         await using var cmd = new NpgsqlCommand(@"
-            SELECT recorded_at, youtube_views, nico_views
-            FROM view_history
-            WHERE song_id = $1
+            WITH observations AS (
+                SELECT id,
+                       recorded_at,
+                       CASE WHEN youtube_observed THEN youtube_views END AS youtube_views,
+                       CASE WHEN nico_observed THEN nico_views END AS nico_views
+                FROM view_history
+                WHERE song_id = $1
+            ), monotonic AS (
+                SELECT recorded_at,
+                       MAX(youtube_views) OVER cumulative_window AS youtube_views,
+                       MAX(nico_views) OVER cumulative_window AS nico_views
+                FROM observations
+                WINDOW cumulative_window AS (
+                    ORDER BY recorded_at, id
+                    ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+                )
+            )
+            SELECT (recorded_at AT TIME ZONE 'Asia/Tokyo')::date,
+                   youtube_views,
+                   nico_views
+            FROM monotonic
             ORDER BY recorded_at ASC", conn);
         cmd.Parameters.AddWithValue(songId);
 
@@ -2054,8 +2072,8 @@ public class DbService
             result.Add(new
             {
                 date = reader.GetDateTime(0).ToString("yyyy-MM-dd"),
-                youtube = reader.GetInt64(1),
-                nico = reader.GetInt64(2)
+                youtube = reader.IsDBNull(1) ? (long?)null : reader.GetInt64(1),
+                nico = reader.IsDBNull(2) ? (long?)null : reader.GetInt64(2)
             });
         }
         return result;
@@ -2079,9 +2097,9 @@ public class DbService
         var normalizedBucket = bucket is "day" or "week" or "month" ? bucket : "day";
         var bucketExpression = normalizedBucket switch
         {
-            "week" => "date_trunc('week', h.recorded_at AT TIME ZONE 'UTC')::date",
-            "month" => "date_trunc('month', h.recorded_at AT TIME ZONE 'UTC')::date",
-            _ => "(h.recorded_at AT TIME ZONE 'UTC')::date",
+            "week" => "date_trunc('week', h.recorded_at AT TIME ZONE 'Asia/Tokyo')::date",
+            "month" => "date_trunc('month', h.recorded_at AT TIME ZONE 'Asia/Tokyo')::date",
+            _ => "(h.recorded_at AT TIME ZONE 'Asia/Tokyo')::date",
         };
 
         await using var conn = await OpenAsync(cancellationToken);
@@ -2090,41 +2108,59 @@ public class DbService
                 SELECT MAX(recorded_at) AS latest_at
                 FROM view_history
                 WHERE song_id = @songId
+            ), observations AS (
+                SELECT h.id,
+                       h.recorded_at,
+                       CASE WHEN h.youtube_observed THEN h.youtube_views END AS youtube_views,
+                       CASE WHEN h.nico_observed THEN h.nico_views END AS nico_views
+                FROM view_history h
+                WHERE h.song_id = @songId
+            ), monotonic AS (
+                -- Platform counters are cumulative. Missing platform samples
+                -- remain NULL until first observation; later gaps carry the
+                -- last measurement and API regressions cannot lower history.
+                SELECT h.id,
+                       h.recorded_at,
+                       MAX(h.youtube_views) OVER cumulative_window AS youtube_views,
+                       MAX(h.nico_views) OVER cumulative_window AS nico_views
+                FROM observations h
+                WINDOW cumulative_window AS (
+                    ORDER BY h.recorded_at, h.id
+                    ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+                )
             ), filtered AS (
                 SELECT {bucketExpression} AS bucket_date,
                        h.recorded_at,
                        h.youtube_views,
                        h.nico_views
-                FROM view_history h
+                FROM monotonic h
                 CROSS JOIN latest l
-                WHERE h.song_id = @songId
-                  AND l.latest_at IS NOT NULL
+                WHERE l.latest_at IS NOT NULL
                   AND (@days::int IS NULL OR h.recorded_at >= l.latest_at - (@days::int * interval '1 day'))
             ), points AS (
-                -- YouTube/Nico updates are stored as separate snapshots and a song can
-                -- have multiple PVs per service. Zero means not observed here; the
-                -- service-level maximum matches the aggregate kept on songs.
                 SELECT bucket_date,
                        MAX(recorded_at) AS recorded_at,
-                       MAX(NULLIF(youtube_views, 0)) AS youtube_views,
-                       MAX(NULLIF(nico_views, 0)) AS nico_views,
+                       MAX(youtube_views) AS youtube_views,
+                       MAX(nico_views) AS nico_views,
                        false AS is_baseline
                 FROM filtered
                 GROUP BY bucket_date
             ), baseline AS (
-                SELECT (l.latest_at - (@days::int * interval '1 day'))::date AS bucket_date,
+                SELECT ((l.latest_at - (@days::int * interval '1 day')) AT TIME ZONE 'Asia/Tokyo')::date AS bucket_date,
                        l.latest_at - (@days::int * interval '1 day') AS recorded_at,
                        (
-                           SELECT MAX(NULLIF(h.youtube_views, 0))
-                           FROM view_history h
-                           WHERE h.song_id = @songId
-                             AND h.recorded_at < l.latest_at - (@days::int * interval '1 day')
+                           SELECT h.youtube_views
+                           FROM monotonic h
+                           WHERE h.recorded_at < l.latest_at - (@days::int * interval '1 day')
+                           ORDER BY h.recorded_at DESC, h.id DESC
+                           LIMIT 1
                        ) AS youtube_views,
                        (
-                           SELECT MAX(NULLIF(h.nico_views, 0))
-                           FROM view_history h
-                           WHERE h.song_id = @songId
-                             AND h.recorded_at < l.latest_at - (@days::int * interval '1 day')
+                           SELECT h.nico_views
+                           FROM monotonic h
+                           WHERE h.recorded_at < l.latest_at - (@days::int * interval '1 day')
+                           ORDER BY h.recorded_at DESC, h.id DESC
+                           LIMIT 1
                        ) AS nico_views,
                        true AS is_baseline
                 FROM latest l
@@ -2342,40 +2378,36 @@ public class DbService
                 FROM view_history
             ),
             history_observation_groups AS MATERIALIZED (
-                -- YouTube and NicoNico are acquired independently. A zero in
-                -- one column means that service was not observed on this row;
-                -- it is not a counter reset. Group consecutive missing rows
-                -- with their most recent real observation per service.
+                -- YouTube and NicoNico are acquired independently. Explicit
+                -- observation flags distinguish a real zero from a missing
+                -- service sample without guessing from the counter value.
                 SELECT
                     h.song_id,
+                    h.id AS observation_id,
                     h.recorded_at,
-                    NULLIF(h.youtube_views, 0) AS youtube_views,
-                    NULLIF(h.nico_views, 0) AS nico_views,
-                    COUNT(NULLIF(h.youtube_views, 0)) OVER observation_window AS youtube_observation_group,
-                    COUNT(NULLIF(h.nico_views, 0)) OVER observation_window AS nico_observation_group
+                    CASE WHEN h.youtube_observed THEN h.youtube_views END AS youtube_views,
+                    CASE WHEN h.nico_observed THEN h.nico_views END AS nico_views
                 FROM view_history h
                 CROSS JOIN latest_watermark watermark
                 WHERE watermark.observed_at IS NOT NULL
                   AND h.recorded_at >= watermark.observed_at - interval '21 days'
-                WINDOW observation_window AS (
-                    PARTITION BY h.song_id
-                    ORDER BY h.recorded_at
-                    ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
-                )
             ),
             history_filled AS MATERIALIZED (
-                -- Carry each service's last measured counter forward without
-                -- mixing it with the other service's acquisition schedule.
-                -- A service with no measurement in the retained history stays
-                -- NULL and therefore contributes no fabricated growth.
+                -- A cumulative counter cannot legitimately decrease. Running
+                -- maxima both carry independent-service gaps and suppress API
+                -- regressions without fabricating a pre-observation value.
                 SELECT
                     h.song_id,
                     h.recorded_at,
                     MAX(h.youtube_views) OVER (
-                        PARTITION BY h.song_id, h.youtube_observation_group
+                        PARTITION BY h.song_id
+                        ORDER BY h.recorded_at, h.observation_id
+                        ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
                     ) AS youtube_views,
                     MAX(h.nico_views) OVER (
-                        PARTITION BY h.song_id, h.nico_observation_group
+                        PARTITION BY h.song_id
+                        ORDER BY h.recorded_at, h.observation_id
+                        ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
                     ) AS nico_views
                 FROM history_observation_groups h
             ),
