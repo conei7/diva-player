@@ -40,6 +40,7 @@ import {
 } from '../utils/globalFilters';
 import { excludeHiddenSongs, useHiddenSongStore } from '../stores/hiddenSongStore';
 import { getPlaybackOwnership } from '../services/playbackOwnership';
+import { fetchProgressivePages } from '../utils/progressivePageFetch';
 
 function WatchQueue() {
   const queue = usePlayerStore(s => s.queue);
@@ -315,17 +316,35 @@ export default function WatchPage() {
 
   const fetchRelated = useCallback(async (s: Song, page: number) => {
     try {
-      const pagesToFetch = page === 0 ? INITIAL_REFILL_PAGES : 1;
-      const relatedPages = await Promise.all(
-        Array.from({ length: pagesToFetch }, (_, index) =>
-          getMetadataSimilarSongs(s.id, PAGE_SIZE * 2, (page + index) * PAGE_SIZE * 2),
-        ),
-      );
+      const { pages: relatedPages, nextPage } = await fetchProgressivePages({
+        startPage: page,
+        maxPages: page === 0 ? INITIAL_REFILL_PAGES : 1,
+        fetchPage: async sourcePage => {
+          const source = await getMetadataSimilarSongs(
+            s.id,
+            PAGE_SIZE * 2,
+            sourcePage * PAGE_SIZE * 2,
+          );
+          return requiresExternalViewCounts(globalFilterSettings)
+            ? await attachExternalViews(source)
+            : source;
+        },
+        needsMore: pages => {
+          const sourceExhausted = pages[pages.length - 1].length < PAGE_SIZE * 2;
+          if (sourceExhausted) return false;
+          return filterDiscoverySongs(
+            mergeUniqueSongs(pages),
+            PAGE_SIZE,
+            false,
+          ).items.length < PAGE_SIZE;
+        },
+      });
       const relatedSongs = mergeUniqueSongs(relatedPages);
+      const sourceExhausted = relatedPages[relatedPages.length - 1].length < PAGE_SIZE * 2;
       const filtered = filterDiscoverySongs(
-        requiresExternalViewCounts(globalFilterSettings) ? await attachExternalViews(relatedSongs) : relatedSongs,
+        relatedSongs,
         PAGE_SIZE,
-        relatedPages[relatedPages.length - 1].length < PAGE_SIZE * 2,
+        sourceExhausted,
       );
       const items = rerankDisplayedSongs(
         filtered.items.slice(0, PAGE_SIZE),
@@ -342,8 +361,8 @@ export default function WatchPage() {
             ? filtered.relaxedConditions
             : [...new Set([...prev.related.relaxedConditions, ...filtered.relaxedConditions])],
           loading: false,
-          hasMore: relatedPages[relatedPages.length - 1].length >= PAGE_SIZE * 2,
-          page: page + pagesToFetch,
+          hasMore: !sourceExhausted,
+          page: nextPage,
         },
       }));
     } catch {
@@ -353,12 +372,48 @@ export default function WatchPage() {
 
   const fetchRecommended = useCallback(async (s: Song, page: number) => {
     try {
-      const pagesToFetch = page === 0 ? INITIAL_REFILL_PAGES : 1;
-      const pageResults = await Promise.all(
-        Array.from({ length: pagesToFetch }, (_, index) => {
-          const sourcePage = page + index;
+      type SourcePage = [Song[], Song[], Song[]];
+      const rankSources = (sourcePages: SourcePage[]) => {
+        const hybrid = mergeUniqueSongs(sourcePages.map(result => result[0]));
+        const audio = mergeUniqueSongs(sourcePages.map(result => result[1]));
+        const favorite = mergeUniqueSongs(sourcePages.map(result => result[2]));
+        const lastPage = sourcePages[sourcePages.length - 1];
+        const sourceExhausted = lastPage[0].length < PAGE_SIZE * 2
+          && lastPage[1].length < PAGE_SIZE
+          && lastPage[2].length < PAGE_SIZE;
+        const hybridFiltered = filterDiscoverySongs([...favorite, ...hybrid], PAGE_SIZE, sourceExhausted);
+        const audioFiltered = filterDiscoverySongs(audio, 4, sourceExhausted);
+        const detailed = rerankRecommendationCandidatesDetailed({
+          hybrid: hybridFiltered.items,
+          audio: audioFiltered.items,
+        }, {
+          total: PAGE_SIZE,
+          historyEntries: entries,
+          playlists,
+          ratings,
+          implicitFeedback,
+          excludeIds: new Set([s.id]),
+          rankingSeed: rankingSeedRef.current,
+          explorationStrength: 0.06,
+          exposureEntries: useRecommendationExposureStore.getState().entries,
+          favoriteProducerIds: new Set(favoriteProducers.map(producer => producer.id)),
+        });
+        return {
+          detailed,
+          sourceExhausted,
+          relaxedConditions: [...new Set([
+            ...hybridFiltered.relaxedConditions,
+            ...audioFiltered.relaxedConditions,
+          ])],
+        };
+      };
+
+      const { pages: pageResults, nextPage } = await fetchProgressivePages<SourcePage>({
+        startPage: page,
+        maxPages: page === 0 ? INITIAL_REFILL_PAGES : 1,
+        fetchPage: async sourcePage => {
           const offset = randomOffsetRef.current + sourcePage * PAGE_SIZE * 2;
-          return Promise.all([
+          const raw = await Promise.all([
             getRecommendedSongs(s.id, PAGE_SIZE * 2, 0.0, ratings, offset),
             getAudioSimilarSongs(s.id, PAGE_SIZE, offset),
             Promise.all(favoriteProducers.map(producer =>
@@ -367,39 +422,15 @@ export default function WatchPage() {
                 .catch(() => [] as Song[]),
             )).then(results => results.flat()),
           ]);
-        }),
-      );
-      const hybridRaw = mergeUniqueSongs(pageResults.map(result => result[0]));
-      const audioRaw = mergeUniqueSongs(pageResults.map(result => result[1]));
-      const favoriteRaw = mergeUniqueSongs(pageResults.map(result => result[2]));
-      const [hybrid, audio, favorite] = requiresExternalViewCounts(globalFilterSettings)
-        ? await Promise.all([attachExternalViews(hybridRaw), attachExternalViews(audioRaw), attachExternalViews(favoriteRaw)])
-        : [hybridRaw, audioRaw, favoriteRaw];
-      const lastPage = pageResults[pageResults.length - 1];
-      const sourceExhausted = lastPage[0].length < PAGE_SIZE * 2
-        && lastPage[1].length < PAGE_SIZE
-        && lastPage[2].length < PAGE_SIZE;
-      const hybridFiltered = filterDiscoverySongs([...favorite, ...hybrid], PAGE_SIZE, sourceExhausted);
-      const audioFiltered = filterDiscoverySongs(audio, 4, sourceExhausted);
-      const relaxedConditions = [...new Set([
-        ...hybridFiltered.relaxedConditions,
-        ...audioFiltered.relaxedConditions,
-      ])];
-      const detailed = rerankRecommendationCandidatesDetailed({
-        hybrid: hybridFiltered.items,
-        audio: audioFiltered.items,
-      }, {
-        total: PAGE_SIZE,
-        historyEntries: entries,
-        playlists,
-        ratings,
-        implicitFeedback,
-        excludeIds: new Set([s.id]),
-        rankingSeed: rankingSeedRef.current,
-        explorationStrength: 0.06,
-        exposureEntries: useRecommendationExposureStore.getState().entries,
-        favoriteProducerIds: new Set(favoriteProducers.map(producer => producer.id)),
+          if (!requiresExternalViewCounts(globalFilterSettings)) return raw as SourcePage;
+          return await Promise.all(raw.map(items => attachExternalViews(items))) as SourcePage;
+        },
+        needsMore: sourcePages => {
+          const ranked = rankSources(sourcePages);
+          return !ranked.sourceExhausted && ranked.detailed.ranked.length < PAGE_SIZE;
+        },
       });
+      const { detailed, sourceExhausted, relaxedConditions } = rankSources(pageResults);
       const mixed = detailed.ranked;
       const items = mixed.map(item => item.song);
       const fresh = items.filter(item => !seenSets.current.recommended.has(item.id));
@@ -431,10 +462,8 @@ export default function WatchPage() {
             ? relaxedConditions
             : [...new Set([...prev.recommended.relaxedConditions, ...relaxedConditions])],
           loading: false,
-          hasMore: pageResults[pageResults.length - 1][0].length >= PAGE_SIZE * 2
-            || pageResults[pageResults.length - 1][1].length >= PAGE_SIZE
-            || pageResults[pageResults.length - 1][2].length >= PAGE_SIZE,
-          page: page + pagesToFetch,
+          hasMore: !sourceExhausted,
+          page: nextPage,
         },
       }));
     } catch {

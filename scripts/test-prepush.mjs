@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
+import { createServer } from 'node:net';
 import path from 'node:path';
 
 const root = process.cwd();
@@ -33,7 +34,13 @@ async function waitForUrl(url, child) {
     if (child.exitCode !== null) throw new Error(`Preview exited before ${url} became ready.`);
     try {
       const response = await fetch(url);
-      if (response.ok) return;
+      if (response.ok) {
+        // A stale preview on the same port must not make a newly failed child
+        // look healthy. Give the spawned process time to report a bind error.
+        await new Promise(resolve => setTimeout(resolve, 100));
+        if (child.exitCode !== null) throw new Error(`Preview exited after ${url} responded.`);
+        return;
+      }
     } catch {
       // Preview is still starting.
     }
@@ -42,9 +49,27 @@ async function waitForUrl(url, child) {
   throw new Error(`Preview did not become ready: ${url}`);
 }
 
-async function withPreview(port, pathname, callback) {
+function findAvailablePort() {
+  return new Promise((resolve, reject) => {
+    const server = createServer();
+    server.unref();
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address();
+      if (!address || typeof address === 'string') {
+        server.close();
+        reject(new Error('Could not allocate an E2E preview port.'));
+        return;
+      }
+      server.close(error => error ? reject(error) : resolve(address.port));
+    });
+  });
+}
+
+async function withPreview(pathname, callback) {
   const viteScript = path.join(root, 'node_modules', 'vite', 'bin', 'vite.js');
   if (!existsSync(viteScript)) throw new Error('Vite is not installed. Run npm ci first.');
+  const port = await findAvailablePort();
   const child = spawn(process.execPath, [
     viteScript,
     'preview',
@@ -95,7 +120,7 @@ async function main() {
     'build',
   ]);
 
-  await withPreview(4173, '/diva-player/', async baseUrl => {
+  await withPreview('/diva-player/', async baseUrl => {
     for (const script of [
       'test:e2e:player-controls',
       'test:e2e:hidden-songs',
@@ -121,7 +146,7 @@ async function main() {
   });
 
   await run(npmCommand, [...npmPrefix, 'run', 'build:cloudflare'], { label: 'Build Cloudflare artifact' });
-  await withPreview(4174, '/', async baseUrl => {
+  await withPreview('/', async baseUrl => {
     await run(npmCommand, [...npmPrefix, 'run', 'test:e2e:pages-nico', '--', baseUrl, '--local-fixture'], {
       label: 'Local equivalent of post-deploy Nico smoke',
     });

@@ -1,4 +1,5 @@
 import puppeteer from 'puppeteer';
+import { readFile, stat } from 'node:fs/promises';
 
 const PAGE_TIMEOUT_MS = 45_000;
 const HISTORY_METADATA_DELAY_MS = 5_000;
@@ -10,6 +11,27 @@ const BUDGETS_MS = {
   'home.prefetched-category': 500,
   'search.paint': 3_000,
 };
+const INITIAL_MAIN_JS_BUDGET_BYTES = 400 * 1024;
+const INITIAL_JS_BUDGET_BYTES = 430 * 1024;
+
+async function assertInitialBundleBudget() {
+  const indexPath = new URL('../dist/index.html', import.meta.url);
+  const html = await readFile(indexPath, 'utf8');
+  const initialJs = [...html.matchAll(/<(?:script|link)\b[^>]*(?:src|href)="([^"]+\.js)"[^>]*>/g)]
+    .map(match => match[1]);
+  assert(initialJs.length > 0, 'Production index did not reference an initial JavaScript graph.');
+  const sizes = await Promise.all(initialJs.map(async asset => ({
+    asset,
+    size: (await stat(new URL(`../dist/assets/${asset.split('/').pop()}`, import.meta.url))).size,
+  })));
+  const main = sizes.find(item => /\/index-[^/]+\.js$/.test(item.asset));
+  const total = sizes.reduce((sum, item) => sum + item.size, 0);
+  assert(main && main.size <= INITIAL_MAIN_JS_BUDGET_BYTES,
+    `Initial main bundle exceeded ${INITIAL_MAIN_JS_BUDGET_BYTES} bytes: ${JSON.stringify(main)}`);
+  assert(total <= INITIAL_JS_BUDGET_BYTES,
+    `Initial JavaScript graph exceeded ${INITIAL_JS_BUDGET_BYTES} bytes: ${JSON.stringify(sizes)}`);
+  console.log(`PASS bundle.initial-js: ${total} bytes / ${INITIAL_JS_BUDGET_BYTES} bytes`);
+}
 
 function getBaseUrl() {
   const provided = process.argv[2] ?? process.env.PERF_BUDGET_BASE_URL ?? 'http://127.0.0.1:4173/diva-player/';
@@ -305,6 +327,7 @@ async function waitForCards(page, label) {
 }
 
 async function main() {
+  await assertInitialBundleBudget();
   const baseUrl = getBaseUrl();
   const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox'] });
   const page = await browser.newPage();

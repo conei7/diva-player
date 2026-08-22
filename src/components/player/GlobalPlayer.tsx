@@ -177,6 +177,7 @@ export default function GlobalPlayer() {
         <div className="flex items-center gap-2">
           <div
             className="flex-1 min-w-0 cursor-pointer"
+            data-testid="mini-player-swipe-origin"
             onClick={() => navigate(`/watch?v=${currentSong.id}`)}
           >
             <p

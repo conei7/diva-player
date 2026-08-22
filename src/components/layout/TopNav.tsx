@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { lazy, Suspense, useState, useRef, useEffect } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router';
 import { useShallow } from 'zustand/react/shallow';
 import { useUiStore } from '../../stores/uiStore';
@@ -12,9 +12,10 @@ import {
   searchVocalistsByName,
   type SearchSuggestion,
 } from '../../api/vocadb';
-import SettingsModal from '../settings/SettingsModal';
 import { useGlobalFilterStore } from '../../stores/globalFilterStore';
 import { getGlobalFilterSummary, isDiscoveryFilterActive } from '../../utils/globalFilters';
+
+const SettingsModal = lazy(() => import('../settings/SettingsModal'));
 
 const SEARCH_HISTORY_KEY = 'divaSearchHistory';
 const MAX_SEARCH_HISTORY = 10;
@@ -599,7 +600,11 @@ export default function TopNav() {
           </button>
         </div>
       </div>
-      <SettingsModal isOpen={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      {settingsOpen && (
+        <Suspense fallback={null}>
+          <SettingsModal isOpen onClose={() => setSettingsOpen(false)} />
+        </Suspense>
+      )}
     </header>
   );
 }

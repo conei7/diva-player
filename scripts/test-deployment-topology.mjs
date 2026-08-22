@@ -82,6 +82,7 @@ const [
   readFile(new URL('../backend/.env.example', import.meta.url), 'utf8'),
   readFile(new URL('../backend/database/migrations/0021_discovery_eligible_song_lookup.sql', import.meta.url), 'utf8'),
 ]);
+const staticHeaders = await readFile(new URL('../public/_headers', import.meta.url), 'utf8');
 
 assert.match(compose, /api_a:/);
 assert.match(compose, /api_b:/);
@@ -169,6 +170,11 @@ assert.match(gateway, /stats socket \/tmp\/haproxy-admin\.sock/);
 assert.match(gateway, /balance hdr\(X-Diva-Balance-Key\)/);
 assert.match(gateway, /X-Diva-Api-Slot/);
 assert.match(nginx, /proxy_pass http:\/\/api_gateway:5000\//);
+assert.match(nginx, /location \^~ \/diva-player\/assets\//);
+assert.match(nginx, /Cache-Control "public, max-age=31536000, immutable"/);
+assert.match(nginx, /location = \/diva-player\/index\.html[\s\S]*Cache-Control "no-cache"/);
+assert.match(staticHeaders, /\/assets\/\*[\s\S]*Cache-Control: public, max-age=31536000, immutable/);
+assert.match(staticHeaders, /\/index\.html[\s\S]*Cache-Control: no-cache/);
 assert.match(deploy, /disable server api_nodes\/\$slot/);
 assert.match(deploy, /wait_slot_sessions "\$slot"/);
 assert.match(deploy, /enable server api_nodes\/\$slot/);

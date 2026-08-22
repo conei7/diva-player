@@ -18,12 +18,14 @@ export function usePlayerSwipeGesture({
   onSwipe: (direction: SwipeDirection) => void;
 }) {
   const startRef = useRef<SwipeGesturePoint | null>(null);
+  const latestRef = useRef<SwipeGesturePoint | null>(null);
   const activePointerRef = useRef<number | null>(null);
 
   const onPointerDown = useCallback((event: React.PointerEvent<HTMLElement>) => {
     if (!enabled || event.pointerType !== 'touch' || isInteractiveTarget(event.target)) return;
     activePointerRef.current = event.pointerId;
     startRef.current = { x: event.clientX, y: event.clientY, time: event.timeStamp };
+    latestRef.current = startRef.current;
     try {
       (event.currentTarget as unknown as SwipeSurface).setPointerCapture?.(event.pointerId);
     } catch {
@@ -31,18 +33,28 @@ export function usePlayerSwipeGesture({
     }
   }, [enabled]);
 
+  const onPointerMove = useCallback((event: React.PointerEvent<HTMLElement>) => {
+    if (activePointerRef.current !== event.pointerId) return;
+    latestRef.current = { x: event.clientX, y: event.clientY, time: event.timeStamp };
+  }, []);
+
   const finish = useCallback((event: React.PointerEvent<HTMLElement>, cancelled = false) => {
     if (activePointerRef.current !== event.pointerId) return;
     const start = startRef.current;
+    const latest = latestRef.current;
     activePointerRef.current = null;
     startRef.current = null;
+    latestRef.current = null;
     try {
       (event.currentTarget as unknown as SwipeSurface).releasePointerCapture?.(event.pointerId);
     } catch {
       // The pointer may already have been released or cancelled.
     }
     if (cancelled || !start) return;
-    const direction = getSwipeDirection(start, {
+    // Chromium's CDP touch path and some Android WebViews report zeroed
+    // pointer-up coordinates after touchEnd. Prefer the final pointer-move,
+    // which is also the user's last visible contact point.
+    const direction = getSwipeDirection(start, latest ?? {
       x: event.clientX,
       y: event.clientY,
       time: event.timeStamp,
@@ -52,6 +64,7 @@ export function usePlayerSwipeGesture({
 
   return {
     onPointerDown,
+    onPointerMove,
     onPointerUp: (event: React.PointerEvent<HTMLElement>) => finish(event),
     onPointerCancel: (event: React.PointerEvent<HTMLElement>) => finish(event, true),
   };

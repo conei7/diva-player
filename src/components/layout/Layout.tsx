@@ -1,21 +1,25 @@
-import { Suspense, useEffect } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { Outlet, useLocation } from 'react-router';
 import TopNav from './TopNav';
 import Sidebar from './Sidebar';
-import HistoryDrawer from '../player/HistoryDrawer';
-import QueueDrawer from '../player/QueueDrawer';
-import SongDetailsModal from '../player/SongDetailsModal';
-import { SaveToPlaylistModal } from '../playlist/SaveToPlaylistModal';
 import { useUiStore } from '../../stores/uiStore';
-import SelectionFAB from '../search/SelectionFAB';
 import { useSelectionStore } from '../../stores/selectionStore';
 import BackendStatusNotice from './BackendStatusNotice';
-import RecommendationDebugPanel from '../debug/RecommendationDebugPanel';
+import { usePlayerStore } from '../../stores/playerStore';
 import { useYouTubePlaylistSync } from '../../hooks/useYouTubePlaylistSync';
 import {
   RECOMMENDATION_DEBUG_STORAGE_KEY,
   useRecommendationDebugStore,
 } from '../../stores/recommendationDebugStore';
+
+const HistoryDrawer = lazy(() => import('../player/HistoryDrawer'));
+const QueueDrawer = lazy(() => import('../player/QueueDrawer'));
+const SongDetailsModal = lazy(() => import('../player/SongDetailsModal'));
+const SaveToPlaylistModal = lazy(() => import('../playlist/SaveToPlaylistModal').then(module => ({
+  default: module.SaveToPlaylistModal,
+})));
+const SelectionFAB = lazy(() => import('../search/SelectionFAB'));
+const RecommendationDebugPanel = lazy(() => import('../debug/RecommendationDebugPanel'));
 
 /**
  * メインレイアウト (YouTube風)
@@ -29,7 +33,14 @@ export default function Layout() {
   const location = useLocation();
   const { sidebarExpanded } = useUiStore();
   const visibleSongs = useSelectionStore(s => s.visibleSongs);
+  const isSelectionMode = useSelectionStore(s => s.isSelectionMode);
+  const historyDrawerOpen = usePlayerStore(s => s.historyDrawerOpen);
+  const queueDrawerOpen = usePlayerStore(s => s.queueDrawerOpen);
+  const detailSong = useUiStore(s => s.detailSong);
+  const saveToPlaylistSongs = useUiStore(s => s.saveToPlaylistSongs);
+  const debugEnabled = useRecommendationDebugStore(s => s.enabled);
   const setDebugEnabled = useRecommendationDebugStore(s => s.setEnabled);
+  const [mountedOverlays, setMountedOverlays] = useState({ history: false, queue: false });
   useYouTubePlaylistSync();
 
   const isWatchPage = location.pathname === '/watch';
@@ -42,6 +53,14 @@ export default function Layout() {
     if (requested === '0') sessionStorage.removeItem(RECOMMENDATION_DEBUG_STORAGE_KEY);
     setDebugEnabled(requested === '1' || (requested !== '0' && sessionStorage.getItem(RECOMMENDATION_DEBUG_STORAGE_KEY) === '1'));
   }, [location.search, setDebugEnabled]);
+
+  useEffect(() => {
+    if (!historyDrawerOpen && !queueDrawerOpen) return;
+    setMountedOverlays(current => ({
+      history: current.history || historyDrawerOpen,
+      queue: current.queue || queueDrawerOpen,
+    }));
+  }, [historyDrawerOpen, queueDrawerOpen]);
 
   return (
     <div className="min-h-screen flex flex-col" style={{ background: 'var(--color-bg-primary)' }}>
@@ -80,12 +99,14 @@ export default function Layout() {
         </Suspense>
       </main>
 
-      <HistoryDrawer />
-      <QueueDrawer />
-      <SongDetailsModal />
-      <SaveToPlaylistModal />
-      <SelectionFAB visibleSongs={visibleSongs} />
-      <RecommendationDebugPanel />
+      <Suspense fallback={null}>
+        {mountedOverlays.history && <HistoryDrawer />}
+        {mountedOverlays.queue && <QueueDrawer />}
+        {detailSong && <SongDetailsModal />}
+        {saveToPlaylistSongs && <SaveToPlaylistModal />}
+        {isSelectionMode && <SelectionFAB visibleSongs={visibleSongs} />}
+        {debugEnabled && <RecommendationDebugPanel />}
+      </Suspense>
     </div>
   );
 }

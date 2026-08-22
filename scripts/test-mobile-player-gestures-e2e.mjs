@@ -21,17 +21,30 @@ const songs = ['First gesture fixture', 'Second gesture fixture', 'Third gesture
 }));
 
 async function swipe(page, from, to) {
-  const rect = await page.$eval('[data-testid="mini-player-gesture-surface"]', element => {
-    const box = element.getBoundingClientRect();
-    return { x: box.x, y: box.y, width: box.width, height: box.height };
+  const geometry = await page.evaluate(() => {
+    const surface = document.querySelector('[data-testid="mini-player-gesture-surface"]');
+    const origin = document.querySelector('[data-testid="mini-player-swipe-origin"]');
+    if (!(surface instanceof HTMLElement) || !(origin instanceof HTMLElement)) {
+      throw new Error('mini player swipe geometry is unavailable');
+    }
+    const surfaceBox = surface.getBoundingClientRect();
+    const originBox = origin.getBoundingClientRect();
+    return {
+      surface: { x: surfaceBox.x, width: surfaceBox.width },
+      origin: { x: originBox.x, y: originBox.y, width: originBox.width, height: originBox.height },
+    };
   });
   const client = await page.createCDPSession();
-  // Start inside the controls' top padding. The vertical midpoint can land on
-  // a child button when remote fonts change the row heights, and interactive
-  // children deliberately opt out of the player swipe gesture.
-  const y = rect.y + Math.min(6, Math.max(2, rect.height / 4));
-  const startX = from < to ? rect.x + 24 : rect.x + rect.width - 24;
-  const endX = from < to ? rect.x + rect.width - 24 : rect.x + 24;
+  // Begin on the song label's explicitly non-button region. Controls opt out
+  // of gestures by design, and fixed edge coordinates can land on the close
+  // button when fonts or mobile row height change.
+  const y = geometry.origin.y + geometry.origin.height / 2;
+  const startX = from < to
+    ? geometry.origin.x + 8
+    : geometry.origin.x + geometry.origin.width - 8;
+  const endX = from < to
+    ? geometry.surface.x + geometry.surface.width - 24
+    : geometry.surface.x + 24;
   await client.send('Input.dispatchTouchEvent', {
     type: 'touchStart',
     touchPoints: [{ x: startX, y, radiusX: 1, radiusY: 1, id: 1 }],
@@ -115,11 +128,39 @@ try {
   }, songs);
   await page.reload({ waitUntil: 'domcontentloaded', timeout: 60_000 });
   await page.waitForSelector('[data-testid="mini-player-gesture-surface"]', { timeout: 60_000 });
-  const waitForSong = (name) => page.waitForFunction(
-    expected => document.querySelector('[data-testid="global-player"]')?.textContent?.includes(expected),
-    { timeout: 60_000 },
-    name,
-  );
+  await page.evaluate(() => {
+    window.__DIVA_GESTURE_EVENTS__ = [];
+    const surface = document.querySelector('[data-testid="mini-player-gesture-surface"]');
+    for (const type of ['pointerdown', 'pointermove', 'pointerup', 'pointercancel']) {
+      surface?.addEventListener(type, event => {
+        window.__DIVA_GESTURE_EVENTS__.push({
+          type,
+          pointerType: event.pointerType,
+          pointerId: event.pointerId,
+          x: event.clientX,
+          y: event.clientY,
+          target: event.target instanceof Element ? event.target.tagName : '',
+        });
+      }, { capture: true });
+    }
+  });
+  const waitForSong = async (name) => {
+    try {
+      await page.waitForFunction(
+        expected => document.querySelector('[data-testid="global-player"]')?.textContent?.includes(expected),
+        { timeout: 10_000 },
+        name,
+      );
+    } catch (error) {
+      const diagnostic = await page.evaluate(() => ({
+        href: location.href,
+        playerText: document.querySelector('[data-testid="global-player"]')?.textContent,
+        owner: localStorage.getItem('diva-playback-owner-v1'),
+        gestures: window.__DIVA_GESTURE_EVENTS__,
+      }));
+      throw new Error(`Timed out waiting for ${name}: ${JSON.stringify(diagnostic)} (${error.message})`);
+    }
+  };
   await waitForSong('Second gesture fixture');
 
   await swipe(page, 280, 80);
@@ -135,15 +176,15 @@ try {
 
   await new Promise(resolve => setTimeout(resolve, 500));
 
-  const rect = await page.$eval('[data-testid="mini-player-gesture-surface"]', element => {
+  const rect = await page.$eval('[data-testid="mini-player-swipe-origin"]', element => {
     const box = element.getBoundingClientRect();
     return { x: box.x, y: box.y, width: box.width, height: box.height };
   });
   const client = await page.createCDPSession();
-  // Use the same non-interactive padding for the negative downward case so it
-  // proves the gesture classifier ignored the direction rather than a button.
-  const x = rect.x + Math.min(6, Math.max(2, rect.width / 4));
-  const startY = rect.y + Math.min(6, Math.max(2, rect.height / 4));
+  // Use the same explicit non-button origin for the negative downward case so
+  // it proves the classifier ignored the direction rather than a button.
+  const x = rect.x + rect.width / 2;
+  const startY = rect.y + rect.height / 2;
   await client.send('Input.dispatchTouchEvent', {
     type: 'touchStart',
     touchPoints: [{ x, y: startY, radiusX: 1, radiusY: 1, id: 2 }],
