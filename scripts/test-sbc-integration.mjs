@@ -182,6 +182,7 @@ async function main() {
       assert(rankedA.items.length === 24, `Weekly ranking returned only ${rankedA.items.length}/24 songs.`);
       assert(rankedA.items.every(item => Number(item.averageDailyGrowth) > 0), 'Weekly ranking omitted average daily growth evidence.');
       assert(rankedA.items.every(item => Number(item.trendWindowDays) >= 1 && Number(item.trendWindowDays) <= 10), 'Weekly ranking returned an incorrect measurement window.');
+      assert(rankedA.items.every(item => !item.publishDate || new Date(item.publishDate).getTime() <= Date.now()), 'Weekly ranking included a future release.');
       assert(rankedA.items.every((item, index, items) => index === 0 || Number(items[index - 1].averageDailyGrowth) >= Number(item.averageDailyGrowth)), 'Weekly ranking is not ordered by average daily growth.');
     } else if (mode === 'surge') {
       assert(rankedA.items.length === 24, `Surge ranking returned only ${rankedA.items.length}/24 songs.`);

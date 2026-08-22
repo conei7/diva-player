@@ -2282,7 +2282,7 @@ public class DbService
         var growthNicoWeightSql = NicoWeightSql("b.youtube_views", viewWeightProfile);
         var catalogCandidateSql = normalizedMode switch
         {
-            "weekly" => "SELECT id FROM songs WHERE publish_date >= CURRENT_DATE - interval '7 days'",
+            "weekly" => "SELECT id FROM songs WHERE publish_date BETWEEN CURRENT_DATE - interval '7 days' AND CURRENT_DATE",
             "recent" => "SELECT id FROM songs WHERE publish_date >= CURRENT_DATE - interval '30 days'",
             "alltime" or "pace" => $"""
                 SELECT id FROM songs WHERE publish_date >= CURRENT_DATE - interval '90 days'
@@ -2601,7 +2601,7 @@ public class DbService
                     c.average_daily_growth
                 FROM catalog_candidates c
                 JOIN songs s ON s.id = c.song_id
-                WHERE s.publish_date >= CURRENT_DATE - interval '7 days'
+                WHERE s.publish_date BETWEEN CURRENT_DATE - interval '7 days' AND CURRENT_DATE
             ),
             ranked_ids AS (
                 SELECT

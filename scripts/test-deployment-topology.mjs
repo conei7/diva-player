@@ -413,6 +413,7 @@ assert.match(warmup, /forceRefresh: true/);
 assert.match(dbService, /history_windows AS MATERIALIZED/);
 assert.match(dbService, /weekly_candidates AS/);
 assert.match(dbService, /average_daily_growth DESC/);
+assert.match(dbService, /publish_date BETWEEN CURRENT_DATE - interval '7 days' AND CURRENT_DATE/);
 assert.match(dbService, /RANGE BETWEEN interval '10 days' PRECEDING AND interval '7 days' PRECEDING/);
 assert.match(dbService, /baseline\.previous_observed_at IS NULL\s+THEN NULL::double precision/);
 assert.match(dbService, /cmd\.CommandTimeout = normalizedMode is "weekly" or "surge" \? 90 : 30/);
