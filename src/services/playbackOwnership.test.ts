@@ -3,6 +3,7 @@ import {
   createPlaybackOwnership,
   isRemoteClaim,
   PLAYBACK_OWNER_STALE_MS,
+  shouldAcceptPlayerPlayingEvent,
   type PlaybackOwnershipMessage,
 } from './playbackOwnership';
 
@@ -29,6 +30,33 @@ describe('playback ownership', () => {
     expect(isRemoteClaim({ type: 'claim', tabId: 'a', songId: 1, claimedAt: 1 }, 'b')).toBe(true);
     expect(isRemoteClaim({ type: 'claim', tabId: 'a', songId: 1, claimedAt: 1 }, 'a')).toBe(false);
     expect(isRemoteClaim({ type: 'release', tabId: 'a', releasedAt: 1 }, 'b')).toBe(false);
+  });
+
+  it('accepts an explicit native-player resume but rejects delayed automatic playback', () => {
+    expect(shouldAcceptPlayerPlayingEvent({
+      requestedPlaying: false,
+      ownershipState: 'remote',
+      programmaticPausePending: true,
+      nativePlayerFocused: true,
+    })).toBe(true);
+    expect(shouldAcceptPlayerPlayingEvent({
+      requestedPlaying: false,
+      ownershipState: 'remote',
+      programmaticPausePending: false,
+      nativePlayerFocused: false,
+    })).toBe(false);
+    expect(shouldAcceptPlayerPlayingEvent({
+      requestedPlaying: false,
+      ownershipState: 'none',
+      programmaticPausePending: true,
+      nativePlayerFocused: false,
+    })).toBe(false);
+    expect(shouldAcceptPlayerPlayingEvent({
+      requestedPlaying: false,
+      ownershipState: 'none',
+      programmaticPausePending: false,
+      nativePlayerFocused: false,
+    })).toBe(true);
   });
 
   it('broadcasts claims and invokes takeover callback for another tab', () => {

@@ -26,7 +26,7 @@ const song = {
 async function preparePage() {
   const page = await browser.newPage();
   await page.evaluateOnNewDocument(() => {
-    window.__playerLifecycle = { created: 0, destroyed: 0, state: -1 };
+    window.__playerLifecycle = { created: 0, destroyed: 0, state: -1, nativePlay: null };
   });
   await page.setRequestInterception(true);
   page.on('request', async (request) => {
@@ -74,6 +74,8 @@ async function preparePage() {
           PlayerState: { UNSTARTED: -1, ENDED: 0, PLAYING: 1, PAUSED: 2, BUFFERING: 3, CUED: 5 },
           Player: function (_id, options) {
             const player = this;
+            const iframe = document.getElementById(_id);
+            iframe.tabIndex = -1;
             let state = -1;
             window.__playerLifecycle.created += 1;
             window.__playerLifecycle.state = state;
@@ -81,6 +83,7 @@ async function preparePage() {
             player.getDuration = () => 120;
             player.getPlayerState = () => state;
             player.getVolume = () => 50;
+            player.getIframe = () => iframe;
             player.setVolume = () => {};
             player.mute = () => {};
             player.unMute = () => {};
@@ -92,7 +95,15 @@ async function preparePage() {
               window.__playerLifecycle.state = state;
               options.events.onStateChange({ data: state, target: player });
             };
-            player.pauseVideo = () => { state = 2; window.__playerLifecycle.state = state; };
+            window.__playerLifecycle.nativePlay = () => {
+              iframe.focus();
+              player.playVideo();
+            };
+            player.pauseVideo = () => {
+              state = 2;
+              window.__playerLifecycle.state = state;
+              options.events.onStateChange({ data: state, target: player });
+            };
             player.stopVideo = () => { state = 0; window.__playerLifecycle.state = state; };
             player.destroy = () => { window.__playerLifecycle.destroyed += 1; };
             setTimeout(() => options.events.onReady({ target: player }), 0);
@@ -218,6 +229,29 @@ try {
     throw new Error(`Takeover tab did not become the sole mini-player owner: ${JSON.stringify(activeState)}`);
   }
   console.log('PASS playback takeover moves the mini-player to the active tab');
+
+  await second.close();
+  await first.bringToFront();
+  await first.evaluate(() => window.__playerLifecycle.nativePlay());
+  await first.waitForFunction(() => {
+    const owner = JSON.parse(localStorage.getItem('diva-playback-owner-v1') || 'null');
+    return window.__playerLifecycle?.state === 1
+      && owner?.type === 'claim'
+      && owner.tabId === sessionStorage.getItem('diva-playback-tab-v1');
+  });
+  await new Promise(resolve => setTimeout(resolve, 6_500));
+  const reclaimedState = await first.evaluate(() => ({
+    lifecycle: window.__playerLifecycle,
+    isPlaying: document.querySelector('button[aria-label="一時停止"]') !== null,
+    ownerTabId: JSON.parse(localStorage.getItem('diva-playback-owner-v1') || 'null')?.tabId,
+    thisTabId: sessionStorage.getItem('diva-playback-tab-v1'),
+  }));
+  if (reclaimedState.lifecycle.state !== 1
+      || !reclaimedState.isPlaying
+      || reclaimedState.ownerTabId !== reclaimedState.thisTabId) {
+    throw new Error(`Original tab could not reclaim stable playback after the owner closed: ${JSON.stringify(reclaimedState)}`);
+  }
+  console.log('PASS original tab reclaims stable playback after the takeover tab closes');
 } finally {
   await browser.close();
 }

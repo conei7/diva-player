@@ -43,6 +43,16 @@ export function isRemoteClaim(message: PlaybackOwnershipMessage, tabId: string):
   return message.type === 'claim' && message.tabId !== tabId;
 }
 
+export function shouldAcceptPlayerPlayingEvent(options: {
+  requestedPlaying: boolean;
+  ownershipState: PlaybackOwnershipState;
+  programmaticPausePending: boolean;
+  nativePlayerFocused: boolean;
+}): boolean {
+  if (options.requestedPlaying || options.nativePlayerFocused) return true;
+  return !options.programmaticPausePending && options.ownershipState !== 'remote';
+}
+
 export function createPlaybackOwnership(options: PlaybackOwnershipOptions = {}) {
   const tabId = options.tabId ?? getDefaultTabId();
   const now = options.now ?? (() => Date.now());

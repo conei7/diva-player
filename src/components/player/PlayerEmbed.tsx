@@ -2,7 +2,11 @@
 import { useEffect, useRef, useCallback } from 'react';
 import { usePlayerStore } from '../../stores/playerStore';
 import { useProgressStore } from '../../stores/progressStore';
-import { getPlaybackOwnership, PLAYBACK_OWNER_HEARTBEAT_MS } from '../../services/playbackOwnership';
+import {
+  getPlaybackOwnership,
+  PLAYBACK_OWNER_HEARTBEAT_MS,
+  shouldAcceptPlayerPlayingEvent,
+} from '../../services/playbackOwnership';
 import { createPlaybackAttemptController, type PlaybackAttemptToken } from '../../services/playbackAttempt';
 import { usePlaybackWakeRecovery } from '../../hooks/usePlaybackWakeRecovery';
 import {
@@ -405,6 +409,7 @@ export default function PlayerEmbed() {
   } | null>(null);
   const volumeRef = useRef(volume);
   const youtubeAutoplayMutedRef = useRef(false);
+  const youtubePauseRequestedAtRef = useRef<number | null>(null);
   const ownershipRef = useRef<ReturnType<typeof getPlaybackOwnership> | null>(null);
 
   useEffect(() => {
@@ -695,11 +700,32 @@ export default function PlayerEmbed() {
               if (!desired) return;
               switch (event.data) {
                 case window.YT.PlayerState.PLAYING: {
-                  if (!usePlayerStore.getState().isPlaying) {
+                  const playbackState = usePlayerStore.getState();
+                  const ownership = ownershipRef.current;
+                  const ownershipState = ownership?.getState() ?? 'none';
+                  const pauseRequestedAt = youtubePauseRequestedAtRef.current;
+                  const programmaticPausePending = pauseRequestedAt !== null
+                    && performance.now() - pauseRequestedAt < 1_000;
+                  let nativePlayerFocused = false;
+                  try {
+                    nativePlayerFocused = event.target.getIframe?.() === document.activeElement;
+                  } catch {
+                    // Cross-origin player teardown can make getIframe unavailable.
+                  }
+                  if (!shouldAcceptPlayerPlayingEvent({
+                    requestedPlaying: playbackState.isPlaying,
+                    ownershipState,
+                    programmaticPausePending,
+                    nativePlayerFocused,
+                  })) {
                     attemptControllerRef.current.cancel();
                     desired.attempt = null;
                     event.target.pauseVideo?.();
                     break;
+                  }
+                  youtubePauseRequestedAtRef.current = null;
+                  if (!playbackState.isPlaying) {
+                    ownership?.claim(playbackState.currentSong?.id ?? null);
                   }
                   if (desired.attempt && attemptControllerRef.current.isCurrent(desired.attempt)) {
                     attemptControllerRef.current.complete(desired.attempt);
@@ -721,6 +747,7 @@ export default function PlayerEmbed() {
                   break;
                 }
                 case window.YT.PlayerState.PAUSED: {
+                  youtubePauseRequestedAtRef.current = null;
                   const startupPending = Boolean(
                     desired.attempt && attemptControllerRef.current.isCurrent(desired.attempt),
                   );
@@ -883,6 +910,7 @@ export default function PlayerEmbed() {
       } else {
         attemptControllerRef.current.cancel();
         if (desired) desired.attempt = null;
+        youtubePauseRequestedAtRef.current = performance.now();
         ytPlayerRef.current.pauseVideo?.();
       }
     } catch {
