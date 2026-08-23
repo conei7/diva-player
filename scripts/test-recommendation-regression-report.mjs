@@ -7,6 +7,7 @@ import {
   assertRecommendationReport,
   buildSeedEndpointDiagnostics,
   persistAndAssertRecommendationReport,
+  validateRecommendationHealth,
 } from './test-recommendation-regression.mjs';
 
 const endpoints = ['/api/recommend', '/api/recommend/metadata', '/api/recommend/audio'];
@@ -100,6 +101,30 @@ assert.deepEqual(buildSeedEndpointDiagnostics([]), {
 });
 
 assert.doesNotThrow(() => assertRecommendationReport(passingReport()));
+
+const healthyDependencies = {
+  status: 'ok',
+  dependencies: { postgres: { ok: true }, qdrant: { ok: true } },
+  discoveryQuality: { ok: true },
+  audioFeatures: {
+    ok: false,
+    error: 'stale',
+    targetCount: 100,
+    actionableTargetCount: 99,
+    actionablePendingCount: 1,
+  },
+};
+assert.deepEqual(validateRecommendationHealth(healthyDependencies), {
+  audioFeatures: healthyDependencies.audioFeatures,
+  audioFeaturesStale: true,
+});
+assert.throws(
+  () => validateRecommendationHealth({
+    ...healthyDependencies,
+    audioFeatures: { ...healthyDependencies.audioFeatures, error: 'query_failed' },
+  }),
+  /Audio feature backlog is unhealthy: query_failed/,
+);
 
 const failing = passingReport();
 failing.quality.endpoints[0].maxVocalistShare = 0.95;

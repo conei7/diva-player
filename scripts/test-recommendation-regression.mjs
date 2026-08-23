@@ -402,6 +402,27 @@ export async function persistAndAssertRecommendationReport(
   assertRecommendationReport(report);
 }
 
+export function validateRecommendationHealth(health) {
+  assert(health.status === 'ok', 'API health status is not ok.');
+  assert(health.dependencies?.postgres?.ok === true, 'PostgreSQL is not healthy.');
+  assert(health.dependencies?.qdrant?.ok === true, 'Qdrant is not healthy.');
+  assert(health.discoveryQuality?.ok !== false, `Discovery quality is unhealthy: ${health.discoveryQuality?.error ?? 'unknown'}.`);
+  const audioFeatures = health.audioFeatures;
+  assert(audioFeatures && Number.isInteger(audioFeatures.targetCount), 'Audio feature health is missing from /api/health.');
+  assert(Number.isInteger(audioFeatures.actionableTargetCount), 'Audio actionable backlog is missing from /api/health.');
+  assert(Number.isInteger(audioFeatures.actionablePendingCount), 'Audio actionable pending count is missing from /api/health.');
+
+  // Audio acquisition freshness is monitored by the pipeline runtime monitor.
+  // Existing recommendations remain testable while that separate backlog is
+  // stale, so do not turn its warning into an hourly recommendation failure.
+  const audioFeaturesStale = audioFeatures.ok === false && audioFeatures.error === 'stale';
+  assert(
+    audioFeatures.ok !== false || audioFeaturesStale,
+    `Audio feature backlog is unhealthy: ${audioFeatures.error ?? 'unknown'}.`,
+  );
+  return { audioFeatures, audioFeaturesStale };
+}
+
 async function main() {
   const baseUrl = getBaseUrl();
   const maxLatencyMs = getMaxLatency();
@@ -422,16 +443,13 @@ async function main() {
   console.log(`Recommendation regression check: ${baseUrl}`);
 
   const health = await getJson(baseUrl, '/api/health');
-  assert(health.data.status === 'ok', 'API health status is not ok.');
-  assert(health.data.dependencies?.postgres?.ok === true, 'PostgreSQL is not healthy.');
-  assert(health.data.dependencies?.qdrant?.ok === true, 'Qdrant is not healthy.');
-  assert(health.data.discoveryQuality?.ok !== false, `Discovery quality is unhealthy: ${health.data.discoveryQuality?.error ?? 'unknown'}.`);
-  const audioFeatures = health.data.audioFeatures;
-  assert(audioFeatures && Number.isInteger(audioFeatures.targetCount), 'Audio feature health is missing from /api/health.');
-  assert(Number.isInteger(audioFeatures.actionableTargetCount), 'Audio actionable backlog is missing from /api/health.');
-  assert(Number.isInteger(audioFeatures.actionablePendingCount), 'Audio actionable pending count is missing from /api/health.');
-  assert(audioFeatures.ok !== false, `Audio feature backlog is unhealthy: ${audioFeatures.error ?? 'unknown'}.`);
-  console.log(`PASS audio feature health (${audioFeatures.computedCount}/${audioFeatures.targetCount} computed, pending ${audioFeatures.pendingCount}; actionable ${audioFeatures.actionablePendingCount}/${audioFeatures.actionableTargetCount} pending)`);
+  const { audioFeatures, audioFeaturesStale } = validateRecommendationHealth(health.data);
+  const audioFeatureSummary = `${audioFeatures.computedCount}/${audioFeatures.targetCount} computed, pending ${audioFeatures.pendingCount}; actionable ${audioFeatures.actionablePendingCount}/${audioFeatures.actionableTargetCount} pending`;
+  if (audioFeaturesStale) {
+    console.warn(`WARN audio feature acquisition is stale (${audioFeatureSummary}); continuing recommendation regression checks.`);
+  } else {
+    console.log(`PASS audio feature health (${audioFeatureSummary})`);
+  }
 
   const seeds = await getRepresentativeSeeds(baseUrl);
   assert(seeds.length === SAMPLE_SIZE, `Only ${seeds.length}/${SAMPLE_SIZE} representative seed songs were returned.`);
