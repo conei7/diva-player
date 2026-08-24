@@ -331,7 +331,7 @@ assert.match(apiTestsProject, /PackageReference Include="xunit"/);
 assert.match(workflow, /dotnet test backend\/api\/VocadbRecommender\.Tests\/VocadbRecommender\.Tests\.csproj --configuration Release/);
 assert.match(workflow, /npm run test:rolling-deployment/);
 assert.match(workflow, /npm run test:runtime-health/);
-assert.match(workflow, /actions\/setup-python@[0-9a-f]{40} # v5/);
+assert.match(workflow, /actions\/setup-python@[0-9a-f]{40} # v7\.0\.0/);
 assert.doesNotMatch(workflow, /uses: actions\/[a-z-]+@v\d/);
 assert.match(workflow, /npm audit --audit-level=high/);
 assert.match(workflow, /package --vulnerable --include-transitive/);
