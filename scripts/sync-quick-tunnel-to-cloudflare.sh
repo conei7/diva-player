@@ -60,4 +60,4 @@ case "$response" in
     ;;
 esac
 
-echo "Cloudflare Pages origin updated: $tunnel_url"
+echo "Cloudflare Pages origin updated"

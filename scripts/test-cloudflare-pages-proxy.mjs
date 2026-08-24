@@ -6,6 +6,7 @@ import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { onRequest as proxyBackend } from '../functions/backend-api/[[path]].js';
 import { onRequest as proxyInvidious } from '../functions/invidious-api/[[path]].js';
+import { onRequest as serveSpaFallback } from '../functions/[[path]].js';
 import { onRequest as updateTunnel } from '../functions/tunnel-admin/update.js';
 
 const originalFetch = globalThis.fetch;
@@ -162,11 +163,28 @@ try {
   assert.equal(invalidMethodResponse.status, 405);
   assert.equal(calls.length, 4, 'Invalid Invidious requests must never be fetched.');
 
+  const spaResponse = await serveSpaFallback({
+    request: new Request('https://diva-player.pages.dev/watch?v=10767'),
+    env: {
+      ASSETS: {
+        fetch: async () => new Response('<!doctype html><title>DIVA Player</title>', {
+          headers: { 'content-type': 'text/html; charset=utf-8' },
+        }),
+      },
+    },
+  });
+  assert.match(spaResponse.headers.get('content-security-policy'), /frame-ancestors 'none'/);
+  assert.match(spaResponse.headers.get('content-security-policy'), /https:\/\/www\.youtube\.com/);
+  assert.equal(spaResponse.headers.get('x-frame-options'), 'DENY');
+  assert.equal(spaResponse.headers.get('x-content-type-options'), 'nosniff');
+  assert.match(spaResponse.headers.get('permissions-policy'), /camera=\(\)/);
+
   let written = null;
   const proofKey = 'test-origin-proof-key';
   const updateEnv = {
     TUNNEL_SYNC_TOKEN: 'test-secret',
     TUNNEL_ORIGIN_PROOF_KEY: proofKey,
+    PAGES_PROXY_KEY: 'test-proxy-key',
     TUNNEL_CONFIG: { put: async (key, value) => { written = { key, value }; } },
   };
   const unauthorized = await updateTunnel({
@@ -192,6 +210,19 @@ try {
   });
   assert.equal(updated.status, 200);
   assert.deepEqual(written, { key: 'quick_tunnel_url', value: tunnelUrl });
+  assert.equal(calls[4].init.headers['x-diva-pages-proxy'], '1');
+  assert.equal(calls[4].init.headers['x-diva-pages-proxy-key'], 'test-proxy-key');
+
+  const missingHealthCredential = await updateTunnel({
+    request: new Request('https://diva-player.pages.dev/tunnel-admin/update', {
+      method: 'POST',
+      headers: { authorization: 'Bearer test-secret', 'content-type': 'application/json' },
+      body: JSON.stringify({ tunnelUrl, timestamp, proof }),
+    }),
+    env: { ...updateEnv, PAGES_PROXY_KEY: '' },
+  });
+  assert.equal(missingHealthCredential.status, 503);
+  assert.equal(calls.length, 5, 'Tunnel health must not run without the Pages proxy credential.');
 
   const invalidProof = await updateTunnel({
     request: new Request('https://diva-player.pages.dev/tunnel-admin/update', {

@@ -1,4 +1,5 @@
 using VocadbRecommender.Services;
+using VocadbRecommender;
 using Microsoft.AspNetCore.ResponseCompression;
 using Microsoft.AspNetCore.RateLimiting;
 using System.Diagnostics;
@@ -9,6 +10,15 @@ using System.Text.Json;
 using System.Threading.RateLimiting;
 
 var builder = WebApplication.CreateBuilder(args);
+
+builder.WebHost.ConfigureKestrel(options =>
+{
+    // The largest valid request is the 50,000-ID knowledge map payload and is
+    // comfortably below this boundary. Reject oversized bodies before JSON
+    // deserialization can consume the SBC's constrained memory.
+    options.Limits.MaxRequestBodySize = 1 * 1024 * 1024;
+    options.Limits.RequestHeadersTimeout = TimeSpan.FromSeconds(15);
+});
 
 // --- 設定 ---
 builder.Services.AddDivaApiServices(builder.Configuration);
@@ -129,6 +139,7 @@ static bool FixedTimeEquals(string left, string right)
 }
 
 var app = builder.Build();
+app.UseMiddleware<PublicIngressSecurityMiddleware>(pagesProxyKey);
 app.UseResponseCompression();
 app.UseCors("AllowFrontend");
 app.UseRateLimiter();

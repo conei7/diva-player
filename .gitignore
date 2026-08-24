@@ -35,11 +35,9 @@ scripts/.quick-tunnel-sync-test-*/
 Thumbs.db
 
 # Environment
-.env
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
+.env*
+!.env.example
+!**/.env.example
 .dev.vars
 .wrangler/
 wrangler.toml

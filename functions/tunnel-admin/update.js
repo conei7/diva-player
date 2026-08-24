@@ -44,6 +44,9 @@ export async function onRequest({ request, env }) {
   if (!env.TUNNEL_ORIGIN_PROOF_KEY) {
     return Response.json({ error: 'tunnel origin proof is not configured' }, { status: 503 });
   }
+  if (!env.PAGES_PROXY_KEY) {
+    return Response.json({ error: 'Pages proxy authentication is not configured' }, { status: 503 });
+  }
 
   const body = await request.json().catch(() => null);
   const tunnelUrl = typeof body?.tunnelUrl === 'string' ? body.tunnelUrl.trim() : '';
@@ -58,6 +61,10 @@ export async function onRequest({ request, env }) {
   )) return unauthorized();
 
   const health = await fetch(`${tunnelUrl}/backend-api/api/health`, {
+    headers: {
+      'x-diva-pages-proxy': '1',
+      'x-diva-pages-proxy-key': env.PAGES_PROXY_KEY,
+    },
     signal: AbortSignal.timeout(10_000),
   }).catch(() => null);
   if (!health?.ok) return Response.json({ error: 'tunnel health check failed' }, { status: 424 });

@@ -41,6 +41,9 @@ const [
   apiSettings,
   backendEnvExample,
   discoveryEligibleLookupMigration,
+  ingressMiddleware,
+  spaFallback,
+  startDevSbc,
 ] = await Promise.all([
   readFile(new URL('../backend/docker-compose.yml', import.meta.url), 'utf8'),
   readFile(new URL('../backend/api-gateway/haproxy.cfg', import.meta.url), 'utf8'),
@@ -81,6 +84,9 @@ const [
   readFile(new URL('../backend/api/VocadbRecommender/appsettings.json', import.meta.url), 'utf8'),
   readFile(new URL('../backend/.env.example', import.meta.url), 'utf8'),
   readFile(new URL('../backend/database/migrations/0021_discovery_eligible_song_lookup.sql', import.meta.url), 'utf8'),
+  readFile(new URL('../backend/api/VocadbRecommender/PublicIngressSecurityMiddleware.cs', import.meta.url), 'utf8'),
+  readFile(new URL('../functions/[[path]].js', import.meta.url), 'utf8'),
+  readFile(new URL('./start-dev-sbc.ps1', import.meta.url), 'utf8'),
 ]);
 const staticHeaders = await readFile(new URL('../public/_headers', import.meta.url), 'utf8');
 
@@ -202,6 +208,13 @@ assert.match(healthEndpoints, /MapGet\("\/api\/ready"/);
 assert.match(healthEndpoints, /DisableRateLimiting\(\)/);
 assert.match(healthEndpoints, /warmupSnapshot\.Failures\.Count == 0/);
 assert.match(program, /isTrustedGatewayProxy/);
+assert.match(program, /MaxRequestBodySize = 1 \* 1024 \* 1024/);
+assert.match(program, /UseMiddleware<PublicIngressSecurityMiddleware>\(pagesProxyKey\)/);
+assert.match(ingressMiddleware, /CF-Connecting-IP/);
+assert.match(ingressMiddleware, /CF-Ray/);
+assert.match(ingressMiddleware, /X-Diva-Pages-Proxy-Key/);
+assert.match(ingressMiddleware, /FixedTimeEquals/);
+assert.match(ingressMiddleware, /StatusCodes\.Status403Forbidden/);
 assert.match(serviceRegistration, /AddHostedService<ApiWarmupService>/);
 assert.match(serviceRegistration, /AddHostedService<ApiReadinessProbeService>/);
 assert.match(serviceRegistration, /AddHostedService<ApiRuntimeTelemetryService>/);
@@ -221,8 +234,19 @@ assert.match(namedTunnelUnit, /run-cloudflare-named-tunnel\.sh/);
 assert.match(namedTunnelUnit, /UMask=0077/);
 assert.match(tunnelAdmin, /verifyOriginProof/);
 assert.match(tunnelAdmin, /TUNNEL_ORIGIN_PROOF_KEY/);
+assert.match(tunnelAdmin, /'x-diva-pages-proxy-key': env\.PAGES_PROXY_KEY/);
 assert.match(quickTunnelSync, /PAGES_ORIGIN_PROOF_KEY/);
 assert.match(quickTunnelSync, /hmac\.new/);
+assert.doesNotMatch(quickTunnelSync, /origin updated: \$tunnel_url/);
+assert.match(startDevSbc, /PagesApiBase = "https:\/\/diva-player\.pages\.dev\/backend-api"/);
+assert.match(startDevSbc, /\$apiTarget = \$PagesApiBase\.TrimEnd\('\/'\)/);
+assert.doesNotMatch(startDevSbc, /\$apiTarget = "\$cloudflareUrl\/backend-api"/);
+assert.match(staticHeaders, /Content-Security-Policy: default-src 'self'/);
+assert.match(staticHeaders, /frame-ancestors 'none'/);
+assert.match(staticHeaders, /X-Frame-Options: DENY/);
+assert.match(staticHeaders, /Permissions-Policy: camera=\(\)/);
+assert.match(spaFallback, /content-security-policy/);
+assert.match(spaFallback, /frame-ancestors 'none'/);
 assert.match(warmup, /home-surge/);
 assert.match(warmup, /home-weekly/);
 assert.match(compose, /Recommender__SearchCacheSizeMiB: "64"/);
@@ -305,7 +329,10 @@ assert.match(apiTestsProject, /PackageReference Include="xunit"/);
 assert.match(workflow, /dotnet test backend\/api\/VocadbRecommender\.Tests\/VocadbRecommender\.Tests\.csproj --configuration Release/);
 assert.match(workflow, /npm run test:rolling-deployment/);
 assert.match(workflow, /npm run test:runtime-health/);
-assert.match(workflow, /actions\/setup-python@v5/);
+assert.match(workflow, /actions\/setup-python@[0-9a-f]{40} # v5/);
+assert.doesNotMatch(workflow, /uses: actions\/[a-z-]+@v\d/);
+assert.match(workflow, /npm audit --audit-level=high/);
+assert.match(workflow, /package --vulnerable --include-transitive/);
 assert.match(workflow, /python-version: '3\.10'/);
 assert.match(workflow, /npm run test:runtime-health:python/);
 assert.match(workflow, /npm run test:db-role-provisioning/);

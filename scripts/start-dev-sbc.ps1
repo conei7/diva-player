@@ -1,6 +1,7 @@
 param(
     [string]$SshHost = "diva-sbc",
     [int]$RemoteWebPort = 8080,
+    [string]$PagesApiBase = "https://diva-player.pages.dev/backend-api",
     [switch]$CheckOnly
 )
 
@@ -22,19 +23,17 @@ function Get-CloudflareUrl {
     return $latestUrl.Trim()
 }
 
-function Test-CloudflareHealth {
-    param([string]$CloudflareUrl)
-
-    if (!$CloudflareUrl) {
-        return $false
-    }
-
+function Test-PagesHealth {
     try {
-        $health = Invoke-WebRequest -Uri "$CloudflareUrl/backend-api/api/ready" -UseBasicParsing -TimeoutSec 10
+        $health = Invoke-WebRequest -Uri "$PagesApiBase/api/ready" -UseBasicParsing -TimeoutSec 10
         return $health.StatusCode -eq 200
     } catch {
         return $false
     }
+}
+
+function Sync-CloudflareOrigin {
+    Invoke-Sbc "cd ~/diva-player && sh scripts/sync-quick-tunnel-to-cloudflare.sh"
 }
 
 Push-Location $repoRoot
@@ -48,7 +47,15 @@ try {
     Invoke-Sbc "curl -fsS --max-time 10 http://localhost:$RemoteWebPort/backend-api/api/ready >/dev/null"
 
     $cloudflareUrl = Get-CloudflareUrl
-    $cloudflareOk = Test-CloudflareHealth $cloudflareUrl
+    $cloudflareOk = $false
+    if ($cloudflareUrl) {
+        try {
+            Sync-CloudflareOrigin
+            $cloudflareOk = Test-PagesHealth
+        } catch {
+            Write-Host "[start-dev-sbc] Existing tunnel could not be registered; replacing it."
+        }
+    }
 
     if (!$cloudflareOk) {
         Write-Host "[start-dev-sbc] Starting Cloudflare Tunnel: $SshHost localhost:$RemoteWebPort"
@@ -57,21 +64,27 @@ try {
         for ($attempt = 1; $attempt -le 8; $attempt++) {
             Start-Sleep -Seconds 3
             $cloudflareUrl = Get-CloudflareUrl
-            if (Test-CloudflareHealth $cloudflareUrl) {
-                $cloudflareOk = $true
-                break
+            if ($cloudflareUrl) {
+                try {
+                    Sync-CloudflareOrigin
+                    if (Test-PagesHealth) {
+                        $cloudflareOk = $true
+                        break
+                    }
+                } catch {
+                    # The Quick URL can exist in the log before its edge is ready.
+                    # Retry the bounded registration loop without exposing it.
+                }
             }
         }
 
         if (!$cloudflareOk) {
-            throw "Cloudflare Tunnel did not return HTTP 200 from /backend-api/api/ready. See ~/cloudflared-8080.log on $SshHost."
+            throw "Cloudflare Pages did not return HTTP 200 from /backend-api/api/ready after tunnel registration. See ~/cloudflared-8080.log on $SshHost."
         }
     }
 
-    $apiTarget = "$cloudflareUrl/backend-api"
-    Write-Host "[start-dev-sbc] Cloudflare URL is ready: $cloudflareUrl"
-    Write-Host "[start-dev-sbc] Syncing the current tunnel URL to Cloudflare Pages..."
-    Invoke-Sbc "cd ~/diva-player && sh scripts/sync-quick-tunnel-to-cloudflare.sh"
+    $apiTarget = $PagesApiBase.TrimEnd('/')
+    Write-Host "[start-dev-sbc] Cloudflare Pages origin is registered."
     Write-Host "[start-dev-sbc] Backend API target: $apiTarget"
     if ($CheckOnly) {
         return
