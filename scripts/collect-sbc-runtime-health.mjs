@@ -72,7 +72,7 @@ export function parseHaProxyStats(output) {
     }));
 }
 
-export function parseHostMemory(meminfoOutput, vmstatOutput) {
+export function parseHostMemory(meminfoOutput, vmstatOutput, pressureOutput = '') {
   const meminfo = Object.fromEntries(meminfoOutput.split(/\r?\n/).flatMap(line => {
     const match = /^([A-Za-z_()]+):\s+(\d+)\s+kB$/.exec(line.trim());
     return match ? [[match[1], Number(match[2]) * 1024]] : [];
@@ -85,6 +85,20 @@ export function parseHostMemory(meminfoOutput, vmstatOutput) {
     return rest.length === 0 && (name === 'pswpin' || name === 'pswpout')
       ? [[name, Number(value)]]
       : [];
+  }));
+  const pressure = Object.fromEntries(pressureOutput.split(/\r?\n/).flatMap(line => {
+    const [kind, ...columns] = line.trim().split(/\s+/);
+    if (kind !== 'some' && kind !== 'full') return [];
+    const raw = Object.fromEntries(columns.flatMap(column => {
+      const [name, value, ...rest] = column.split('=');
+      return rest.length === 0 && value !== undefined ? [[name, Number(value)]] : [];
+    }));
+    return [[kind, {
+      avg10Percent: Number.isFinite(raw.avg10) ? raw.avg10 : null,
+      avg60Percent: Number.isFinite(raw.avg60) ? raw.avg60 : null,
+      avg300Percent: Number.isFinite(raw.avg300) ? raw.avg300 : null,
+      totalMicros: Number.isFinite(raw.total) ? raw.total : null,
+    }]];
   }));
   const totalBytes = meminfo.MemTotal;
   const availableBytes = meminfo.MemAvailable;
@@ -99,6 +113,7 @@ export function parseHostMemory(meminfoOutput, vmstatOutput) {
     swapUsedPercent: swapTotalBytes > 0 ? Number(((swapUsedBytes / swapTotalBytes) * 100).toFixed(2)) : 0,
     swapInPages: Number.isFinite(vmstat.pswpin) ? vmstat.pswpin : null,
     swapOutPages: Number.isFinite(vmstat.pswpout) ? vmstat.pswpout : null,
+    pressure: Object.keys(pressure).length > 0 ? pressure : null,
   };
 }
 
@@ -230,7 +245,8 @@ async function collectSnapshot() {
     settle('host-memory', Promise.all([
       readFile('/proc/meminfo', 'utf8'),
       readFile('/proc/vmstat', 'utf8'),
-    ]).then(([meminfo, vmstat]) => parseHostMemory(meminfo, vmstat))),
+      readFile('/proc/pressure/memory', 'utf8'),
+    ]).then(([meminfo, vmstat, pressure]) => parseHostMemory(meminfo, vmstat, pressure))),
     settle('disk', statfs('/')),
   ]);
 
@@ -256,6 +272,7 @@ async function collectSnapshot() {
     swapUsedPercent: null,
     swapInPages: null,
     swapOutPages: null,
+    pressure: null,
     error: hostMemoryResult.error,
   };
   const disk = diskResult.ok ? diskResult.value : null;

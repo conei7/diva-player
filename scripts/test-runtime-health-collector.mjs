@@ -54,11 +54,16 @@ const hostMemory = parseHostMemory([
   'MemAvailable:   3200000 kB',
   'SwapTotal:     20000000 kB',
   'SwapFree:      12500000 kB',
-].join('\n'), 'pswpin 123\npswpout 45\n');
+].join('\n'), 'pswpin 123\npswpout 45\n', [
+  'some avg10=1.50 avg60=2.50 avg300=3.50 total=1000',
+  'full avg10=0.50 avg60=1.50 avg300=2.50 total=500',
+].join('\n'));
 assert.equal(hostMemory.availablePercent, 40);
 assert.equal(hostMemory.swapUsedPercent, 37.5);
 assert.equal(hostMemory.swapInPages, 123);
 assert.equal(hostMemory.swapOutPages, 45);
+assert.equal(hostMemory.pressure.some.avg60Percent, 2.5);
+assert.equal(hostMemory.pressure.full.totalMicros, 500);
 
 const baseSnapshot = {
   checkedAt: '2026-08-10T00:00:00.000Z',

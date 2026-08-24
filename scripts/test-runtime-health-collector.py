@@ -55,6 +55,20 @@ class RuntimeHealthCollectorContractTests(unittest.TestCase):
                 "swapUsedPercent": 35,
                 "swapInPages": 100,
                 "swapOutPages": 50,
+                "pressure": {
+                    "some": {
+                        "avg10Percent": 1.5,
+                        "avg60Percent": 2.5,
+                        "avg300Percent": 3.5,
+                        "totalMicros": 1000,
+                    },
+                    "full": {
+                        "avg10Percent": 0.5,
+                        "avg60Percent": 1.5,
+                        "avg300Percent": 2.5,
+                        "totalMicros": 500,
+                    },
+                },
             },
             "disk": {"usedPercent": 70},
         }
@@ -133,11 +147,15 @@ class RuntimeHealthCollectorContractTests(unittest.TestCase):
             "MemTotal:       8000000 kB\nMemAvailable:   3200000 kB\n"
             "SwapTotal:     20000000 kB\nSwapFree:      12500000 kB\n",
             "pswpin 123\npswpout 45\n",
+            "some avg10=1.50 avg60=2.50 avg300=3.50 total=1000\n"
+            "full avg10=0.50 avg60=1.50 avg300=2.50 total=500\n",
         )
         self.assertEqual(host_memory["availablePercent"], 40)
         self.assertEqual(host_memory["swapUsedPercent"], 37.5)
         self.assertEqual(host_memory["swapInPages"], 123)
         self.assertEqual(host_memory["swapOutPages"], 45)
+        self.assertEqual(host_memory["pressure"]["some"]["avg60Percent"], 2.5)
+        self.assertEqual(host_memory["pressure"]["full"]["totalMicros"], 500)
 
         low = copy.deepcopy(self.base_snapshot)
         low["hostMemory"]["availablePercent"] = 8
@@ -317,6 +335,10 @@ class RuntimeHealthCollectorContractTests(unittest.TestCase):
                 "SwapTotal:     20000000 kB\nSwapFree:      12500000 kB\n"
             ),
             "vmstat": "pswpin 123\npswpout 45\n",
+            "pressure": (
+                "some avg10=1.50 avg60=2.50 avg300=3.50 total=1000\n"
+                "full avg10=0.50 avg60=1.50 avg300=2.50 total=500\n"
+            ),
             "snapshot": self.base_snapshot,
         }
         module_url = COLLECTOR_PATH.with_suffix(".mjs").resolve().as_uri()
@@ -337,7 +359,7 @@ process.stdout.write(JSON.stringify({{
   containerHealth: parseContainerHealth(fixture.containerHealth),
   postgres: parsePostgresActivity(fixture.postgres),
   haproxy: parseHaProxyStats(fixture.haproxy),
-  hostMemory: parseHostMemory(fixture.meminfo, fixture.vmstat),
+  hostMemory: parseHostMemory(fixture.meminfo, fixture.vmstat, fixture.pressure),
   evaluated: evaluateRuntimeSnapshot(fixture.snapshot),
 }}));
 """
@@ -358,7 +380,7 @@ process.stdout.write(JSON.stringify({{
             "postgres": COLLECTOR.parse_postgres_activity(fixture["postgres"]),
             "haproxy": COLLECTOR.parse_haproxy_stats(fixture["haproxy"]),
             "hostMemory": COLLECTOR.parse_host_memory(
-                fixture["meminfo"], fixture["vmstat"]
+                fixture["meminfo"], fixture["vmstat"], fixture["pressure"]
             ),
             "evaluated": COLLECTOR.evaluate_runtime_snapshot(fixture["snapshot"]),
         }

@@ -184,7 +184,11 @@ def parse_haproxy_stats(output: str) -> list[dict[str, Any]]:
     return slots
 
 
-def parse_host_memory(meminfo_output: str, vmstat_output: str) -> dict[str, Any]:
+def parse_host_memory(
+    meminfo_output: str,
+    vmstat_output: str,
+    pressure_output: str = "",
+) -> dict[str, Any]:
     """Parse Linux host memory and cumulative swap-I/O counters."""
     meminfo: dict[str, int] = {}
     for line in meminfo_output.splitlines():
@@ -202,6 +206,27 @@ def parse_host_memory(meminfo_output: str, vmstat_output: str) -> dict[str, Any]
         if len(columns) == 2 and columns[0] in {"pswpin", "pswpout"}:
             vmstat[columns[0]] = int(columns[1])
 
+    pressure: dict[str, dict[str, int | float | None]] = {}
+    for line in pressure_output.splitlines():
+        columns = line.split()
+        if not columns or columns[0] not in {"some", "full"}:
+            continue
+        values: dict[str, int | float | None] = {
+            "avg10Percent": None,
+            "avg60Percent": None,
+            "avg300Percent": None,
+            "totalMicros": None,
+        }
+        for column in columns[1:]:
+            name, separator, raw_value = column.partition("=")
+            if not separator:
+                continue
+            if name == "total":
+                values["totalMicros"] = int(raw_value)
+            elif name in {"avg10", "avg60", "avg300"}:
+                values[f"{name}Percent"] = float(raw_value)
+        pressure[columns[0]] = values
+
     total = meminfo["MemTotal"]
     available = meminfo["MemAvailable"]
     swap_total = meminfo["SwapTotal"]
@@ -217,6 +242,7 @@ def parse_host_memory(meminfo_output: str, vmstat_output: str) -> dict[str, Any]
         else 0,
         "swapInPages": vmstat.get("pswpin"),
         "swapOutPages": vmstat.get("pswpout"),
+        "pressure": pressure or None,
     }
 
 
@@ -385,6 +411,7 @@ def _read_host_memory_stats() -> dict[str, Any]:
     return parse_host_memory(
         Path("/proc/meminfo").read_text(encoding="utf-8"),
         Path("/proc/vmstat").read_text(encoding="utf-8"),
+        Path("/proc/pressure/memory").read_text(encoding="utf-8"),
     )
 
 
@@ -534,6 +561,7 @@ def collect_snapshot() -> dict[str, Any]:
             "swapUsedPercent": None,
             "swapInPages": None,
             "swapOutPages": None,
+            "pressure": None,
             "error": host_memory_result["error"],
         }
     )
