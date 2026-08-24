@@ -60,7 +60,10 @@ export async function onRequest({ request, env }) {
     body?.proof,
   )) return unauthorized();
 
-  const health = await fetch(`${tunnelUrl}/backend-api/api/health`, {
+  // Readiness already verifies PostgreSQL, Qdrant aliases/generation, and
+  // warmup state from the bounded background snapshot. Avoid the slower
+  // operational report here so a cold but healthy deployment can register.
+  const health = await fetch(`${tunnelUrl}/backend-api/api/ready`, {
     headers: {
       'x-diva-pages-proxy': '1',
       'x-diva-pages-proxy-key': env.PAGES_PROXY_KEY,

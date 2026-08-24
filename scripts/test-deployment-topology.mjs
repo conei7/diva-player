@@ -235,6 +235,8 @@ assert.match(namedTunnelUnit, /UMask=0077/);
 assert.match(tunnelAdmin, /verifyOriginProof/);
 assert.match(tunnelAdmin, /TUNNEL_ORIGIN_PROOF_KEY/);
 assert.match(tunnelAdmin, /'x-diva-pages-proxy-key': env\.PAGES_PROXY_KEY/);
+assert.match(tunnelAdmin, /\/backend-api\/api\/ready/);
+assert.doesNotMatch(tunnelAdmin, /\/backend-api\/api\/health/);
 assert.match(quickTunnelSync, /PAGES_ORIGIN_PROOF_KEY/);
 assert.match(quickTunnelSync, /hmac\.new/);
 assert.doesNotMatch(quickTunnelSync, /origin updated: \$tunnel_url/);

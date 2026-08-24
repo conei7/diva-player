@@ -210,6 +210,7 @@ try {
   });
   assert.equal(updated.status, 200);
   assert.deepEqual(written, { key: 'quick_tunnel_url', value: tunnelUrl });
+  assert.equal(calls[4].target, `${tunnelUrl}/backend-api/api/ready`);
   assert.equal(calls[4].init.headers['x-diva-pages-proxy'], '1');
   assert.equal(calls[4].init.headers['x-diva-pages-proxy-key'], 'test-proxy-key');
 
