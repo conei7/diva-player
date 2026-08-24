@@ -8,6 +8,7 @@ import {
   parseContainerHealth,
   parseDockerStats,
   parseHaProxyStats,
+  parseHostMemory,
   parsePostgresActivity,
   rotateHistoryIfNeeded,
 } from './collect-sbc-runtime-health.mjs';
@@ -48,6 +49,17 @@ assert.deepEqual(haproxy, [
   { slot: 'api_b', status: 'MAINT', currentSessions: 0 },
 ]);
 
+const hostMemory = parseHostMemory([
+  'MemTotal:       8000000 kB',
+  'MemAvailable:   3200000 kB',
+  'SwapTotal:     20000000 kB',
+  'SwapFree:      12500000 kB',
+].join('\n'), 'pswpin 123\npswpout 45\n');
+assert.equal(hostMemory.availablePercent, 40);
+assert.equal(hostMemory.swapUsedPercent, 37.5);
+assert.equal(hostMemory.swapInPages, 123);
+assert.equal(hostMemory.swapOutPages, 45);
+
 const baseSnapshot = {
   checkedAt: '2026-08-10T00:00:00.000Z',
   containers: [
@@ -56,6 +68,7 @@ const baseSnapshot = {
   ],
   postgres: { total: 30, active: 1, applications: [] },
   haproxy: [{ slot: 'api_a', status: 'UP', currentSessions: 0 }, { slot: 'api_b', status: 'UP', currentSessions: 0 }],
+  hostMemory: { availablePercent: 50 },
   disk: { usedPercent: 70 },
 };
 const warning = evaluateRuntimeSnapshot(baseSnapshot);
@@ -71,6 +84,16 @@ const recovered = evaluateRuntimeSnapshot({
 }, critical);
 assert.equal(recovered.status, 'ok');
 assert.deepEqual(recovered.consecutiveViolations, {});
+
+const lowHostMemoryWarning = evaluateRuntimeSnapshot({
+  ...baseSnapshot,
+  containers: baseSnapshot.containers.map(container => ({ ...container, memoryUsedBytes: 100 * 1024 ** 2 })),
+  postgres: { ...baseSnapshot.postgres, total: 10 },
+  hostMemory: { availablePercent: 8 },
+});
+assert(lowHostMemoryWarning.violations.some(item => item.id === 'host:memory-available'));
+const lowHostMemoryCritical = evaluateRuntimeSnapshot(lowHostMemoryWarning, lowHostMemoryWarning);
+assert(lowHostMemoryCritical.critical.some(item => item.id === 'host:memory-available'));
 
 const collectionFailure = evaluateRuntimeSnapshot({
   ...baseSnapshot,

@@ -46,6 +46,16 @@ class RuntimeHealthCollectorContractTests(unittest.TestCase):
                 {"slot": "api_a", "status": "UP", "currentSessions": 0},
                 {"slot": "api_b", "status": "UP", "currentSessions": 0},
             ],
+            "hostMemory": {
+                "totalBytes": 8 * 1024**3,
+                "availableBytes": 4 * 1024**3,
+                "availablePercent": 50,
+                "swapTotalBytes": 20 * 1024**3,
+                "swapUsedBytes": 7 * 1024**3,
+                "swapUsedPercent": 35,
+                "swapInPages": 100,
+                "swapOutPages": 50,
+            },
             "disk": {"usedPercent": 70},
         }
 
@@ -116,6 +126,30 @@ class RuntimeHealthCollectorContractTests(unittest.TestCase):
                 {"slot": "api_a", "status": "UP", "currentSessions": 2},
                 {"slot": "api_b", "status": "MAINT", "currentSessions": 0},
             ],
+        )
+
+    def test_host_memory_parser_and_consecutive_low_available_alert(self) -> None:
+        host_memory = COLLECTOR.parse_host_memory(
+            "MemTotal:       8000000 kB\nMemAvailable:   3200000 kB\n"
+            "SwapTotal:     20000000 kB\nSwapFree:      12500000 kB\n",
+            "pswpin 123\npswpout 45\n",
+        )
+        self.assertEqual(host_memory["availablePercent"], 40)
+        self.assertEqual(host_memory["swapUsedPercent"], 37.5)
+        self.assertEqual(host_memory["swapInPages"], 123)
+        self.assertEqual(host_memory["swapOutPages"], 45)
+
+        low = copy.deepcopy(self.base_snapshot)
+        low["hostMemory"]["availablePercent"] = 8
+        warning = COLLECTOR.evaluate_runtime_snapshot(low)
+        self.assertIn(
+            "host:memory-available",
+            {item["id"] for item in warning["violations"]},
+        )
+        critical = COLLECTOR.evaluate_runtime_snapshot(low, warning)
+        self.assertIn(
+            "host:memory-available",
+            {item["id"] for item in critical["critical"]},
         )
 
     def test_two_consecutive_violations_become_critical_and_recover(self) -> None:
@@ -278,6 +312,11 @@ class RuntimeHealthCollectorContractTests(unittest.TestCase):
                     "api_nodes,api_b,0,MAINT,",
                 ]
             ),
+            "meminfo": (
+                "MemTotal:       8000000 kB\nMemAvailable:   3200000 kB\n"
+                "SwapTotal:     20000000 kB\nSwapFree:      12500000 kB\n"
+            ),
+            "vmstat": "pswpin 123\npswpout 45\n",
             "snapshot": self.base_snapshot,
         }
         module_url = COLLECTOR_PATH.with_suffix(".mjs").resolve().as_uri()
@@ -287,6 +326,7 @@ import {{
   parseContainerHealth,
   parseDockerStats,
   parseHaProxyStats,
+  parseHostMemory,
   parsePostgresActivity,
 }} from {json.dumps(module_url)};
 let input = '';
@@ -297,6 +337,7 @@ process.stdout.write(JSON.stringify({{
   containerHealth: parseContainerHealth(fixture.containerHealth),
   postgres: parsePostgresActivity(fixture.postgres),
   haproxy: parseHaProxyStats(fixture.haproxy),
+  hostMemory: parseHostMemory(fixture.meminfo, fixture.vmstat),
   evaluated: evaluateRuntimeSnapshot(fixture.snapshot),
 }}));
 """
@@ -316,6 +357,9 @@ process.stdout.write(JSON.stringify({{
             ),
             "postgres": COLLECTOR.parse_postgres_activity(fixture["postgres"]),
             "haproxy": COLLECTOR.parse_haproxy_stats(fixture["haproxy"]),
+            "hostMemory": COLLECTOR.parse_host_memory(
+                fixture["meminfo"], fixture["vmstat"]
+            ),
             "evaluated": COLLECTOR.evaluate_runtime_snapshot(fixture["snapshot"]),
         }
         self.assertEqual(python_result, reference)

@@ -184,6 +184,42 @@ def parse_haproxy_stats(output: str) -> list[dict[str, Any]]:
     return slots
 
 
+def parse_host_memory(meminfo_output: str, vmstat_output: str) -> dict[str, Any]:
+    """Parse Linux host memory and cumulative swap-I/O counters."""
+    meminfo: dict[str, int] = {}
+    for line in meminfo_output.splitlines():
+        match = re.fullmatch(r"([A-Za-z_()]+):\s+(\d+)\s+kB", line.strip())
+        if match:
+            meminfo[match.group(1)] = int(match.group(2)) * 1024
+    required = {"MemTotal", "MemAvailable", "SwapTotal", "SwapFree"}
+    missing = sorted(required - meminfo.keys())
+    if missing:
+        raise ValueError(f"missing /proc/meminfo fields: {', '.join(missing)}")
+
+    vmstat: dict[str, int] = {}
+    for line in vmstat_output.splitlines():
+        columns = line.split()
+        if len(columns) == 2 and columns[0] in {"pswpin", "pswpout"}:
+            vmstat[columns[0]] = int(columns[1])
+
+    total = meminfo["MemTotal"]
+    available = meminfo["MemAvailable"]
+    swap_total = meminfo["SwapTotal"]
+    swap_used = max(0, swap_total - meminfo["SwapFree"])
+    return {
+        "totalBytes": total,
+        "availableBytes": available,
+        "availablePercent": round(available / total * 100, 2) if total else None,
+        "swapTotalBytes": swap_total,
+        "swapUsedBytes": swap_used,
+        "swapUsedPercent": round(swap_used / swap_total * 100, 2)
+        if swap_total
+        else 0,
+        "swapInPages": vmstat.get("pswpin"),
+        "swapOutPages": vmstat.get("pswpout"),
+    }
+
+
 def _is_finite(value: Any) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
 
@@ -204,6 +240,7 @@ def evaluate_runtime_snapshot(
     api_rss_warn_mib = thresholds.get("apiRssWarnMiB", 384)
     db_connections_warn = thresholds.get("dbConnectionsWarn", 28)
     disk_used_warn_percent = thresholds.get("diskUsedWarnPercent", 85)
+    host_available_warn_percent = thresholds.get("hostAvailableWarnPercent", 10)
     violations: list[dict[str, str]] = []
 
     for collection_error in snapshot.get("collectionErrors") or []:
@@ -278,6 +315,17 @@ def evaluate_runtime_snapshot(
                 ),
             }
         )
+    host_available = (snapshot.get("hostMemory") or {}).get("availablePercent")
+    if _is_finite(host_available) and host_available < host_available_warn_percent:
+        violations.append(
+            {
+                "id": "host:memory-available",
+                "message": (
+                    "host available memory is below "
+                    f"{_display_number(host_available_warn_percent)}%"
+                ),
+            }
+        )
 
     prior_counts = previous.get("consecutiveViolations") or {}
     consecutive_violations = {
@@ -331,6 +379,13 @@ def _run_command(
 
 def _read_disk_stats() -> os.statvfs_result:
     return os.statvfs("/")
+
+
+def _read_host_memory_stats() -> dict[str, Any]:
+    return parse_host_memory(
+        Path("/proc/meminfo").read_text(encoding="utf-8"),
+        Path("/proc/vmstat").read_text(encoding="utf-8"),
+    )
 
 
 def _settle(source: str, operation: Callable[[], Any]) -> dict[str, Any]:
@@ -431,6 +486,7 @@ def collect_snapshot() -> dict[str, Any]:
                 timeout_seconds=10,
             ),
         ),
+        ("host-memory", _read_host_memory_stats),
         ("disk", _read_disk_stats),
     ]
     with concurrent.futures.ThreadPoolExecutor(max_workers=len(operations)) as executor:
@@ -440,7 +496,14 @@ def collect_snapshot() -> dict[str, Any]:
         ]
         results = [future.result() for future in futures]
 
-    stats_result, health_result, postgres_result, haproxy_result, disk_result = results
+    (
+        stats_result,
+        health_result,
+        postgres_result,
+        haproxy_result,
+        host_memory_result,
+        disk_result,
+    ) = results
     collection_errors = [
         {"source": result["source"], "error": result["error"]}
         for result in results
@@ -459,6 +522,21 @@ def collect_snapshot() -> dict[str, Any]:
     if not postgres_result["ok"]:
         postgres["error"] = postgres_result["error"]
     haproxy = parse_haproxy_stats(output_of(haproxy_result))
+    host_memory = (
+        host_memory_result["value"]
+        if host_memory_result["ok"]
+        else {
+            "totalBytes": None,
+            "availableBytes": None,
+            "availablePercent": None,
+            "swapTotalBytes": None,
+            "swapUsedBytes": None,
+            "swapUsedPercent": None,
+            "swapInPages": None,
+            "swapOutPages": None,
+            "error": host_memory_result["error"],
+        }
+    )
     disk = disk_result["value"] if disk_result["ok"] else None
     containers = []
     for name in DEFAULT_CONTAINERS:
@@ -495,6 +573,7 @@ def collect_snapshot() -> dict[str, Any]:
         "containers": containers,
         "postgres": postgres,
         "haproxy": haproxy,
+        "hostMemory": host_memory,
         "disk": disk_snapshot,
     }
 
@@ -638,6 +717,9 @@ def main() -> int:
             ),
             "diskUsedWarnPercent": _environment_number(
                 "DIVA_RUNTIME_DISK_USED_WARN_PERCENT", 85
+            ),
+            "hostAvailableWarnPercent": _environment_number(
+                "DIVA_RUNTIME_HOST_AVAILABLE_WARN_PERCENT", 10
             ),
         },
     )

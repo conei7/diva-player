@@ -72,10 +72,41 @@ export function parseHaProxyStats(output) {
     }));
 }
 
+export function parseHostMemory(meminfoOutput, vmstatOutput) {
+  const meminfo = Object.fromEntries(meminfoOutput.split(/\r?\n/).flatMap(line => {
+    const match = /^([A-Za-z_()]+):\s+(\d+)\s+kB$/.exec(line.trim());
+    return match ? [[match[1], Number(match[2]) * 1024]] : [];
+  }));
+  const required = ['MemTotal', 'MemAvailable', 'SwapTotal', 'SwapFree'];
+  const missing = required.filter(name => !Number.isFinite(meminfo[name]));
+  if (missing.length > 0) throw new Error(`missing /proc/meminfo fields: ${missing.join(', ')}`);
+  const vmstat = Object.fromEntries(vmstatOutput.split(/\r?\n/).flatMap(line => {
+    const [name, value, ...rest] = line.trim().split(/\s+/);
+    return rest.length === 0 && (name === 'pswpin' || name === 'pswpout')
+      ? [[name, Number(value)]]
+      : [];
+  }));
+  const totalBytes = meminfo.MemTotal;
+  const availableBytes = meminfo.MemAvailable;
+  const swapTotalBytes = meminfo.SwapTotal;
+  const swapUsedBytes = Math.max(0, swapTotalBytes - meminfo.SwapFree);
+  return {
+    totalBytes,
+    availableBytes,
+    availablePercent: totalBytes > 0 ? Number(((availableBytes / totalBytes) * 100).toFixed(2)) : null,
+    swapTotalBytes,
+    swapUsedBytes,
+    swapUsedPercent: swapTotalBytes > 0 ? Number(((swapUsedBytes / swapTotalBytes) * 100).toFixed(2)) : 0,
+    swapInPages: Number.isFinite(vmstat.pswpin) ? vmstat.pswpin : null,
+    swapOutPages: Number.isFinite(vmstat.pswpout) ? vmstat.pswpout : null,
+  };
+}
+
 export function evaluateRuntimeSnapshot(snapshot, previous = {}, thresholds = {}) {
   const apiRssWarnMiB = thresholds.apiRssWarnMiB ?? 384;
   const dbConnectionsWarn = thresholds.dbConnectionsWarn ?? 28;
   const diskUsedWarnPercent = thresholds.diskUsedWarnPercent ?? 85;
+  const hostAvailableWarnPercent = thresholds.hostAvailableWarnPercent ?? 10;
   const violations = [];
 
   for (const error of snapshot.collectionErrors || []) {
@@ -110,6 +141,10 @@ export function evaluateRuntimeSnapshot(snapshot, previous = {}, thresholds = {}
   }
   if (Number.isFinite(snapshot.disk.usedPercent) && snapshot.disk.usedPercent > diskUsedWarnPercent) {
     violations.push({ id: 'disk:used', message: `disk use exceeds ${diskUsedWarnPercent}%` });
+  }
+  if (Number.isFinite(snapshot.hostMemory?.availablePercent)
+    && snapshot.hostMemory.availablePercent < hostAvailableWarnPercent) {
+    violations.push({ id: 'host:memory-available', message: `host available memory is below ${hostAvailableWarnPercent}%` });
   }
 
   const priorCounts = previous.consecutiveViolations || {};
@@ -169,7 +204,7 @@ async function collectSnapshot() {
       };
     }
   };
-  const [statsResult, healthResult, postgresResult, haproxyResult, diskResult] = await Promise.all([
+  const [statsResult, healthResult, postgresResult, haproxyResult, hostMemoryResult, diskResult] = await Promise.all([
     settle('docker-stats', execFileAsync(
       'docker',
       ['stats', '--no-stream', '--format', '{{json .}}', ...DEFAULT_CONTAINERS],
@@ -192,6 +227,10 @@ async function collectSnapshot() {
         'show stat\n',
       ),
     ),
+    settle('host-memory', Promise.all([
+      readFile('/proc/meminfo', 'utf8'),
+      readFile('/proc/vmstat', 'utf8'),
+    ]).then(([meminfo, vmstat]) => parseHostMemory(meminfo, vmstat))),
     settle('disk', statfs('/')),
   ]);
 
@@ -208,6 +247,17 @@ async function collectSnapshot() {
   const postgres = parsePostgresActivity(outputOf(postgresResult));
   if (!postgresResult.ok) postgres.error = postgresResult.error;
   const haproxy = parseHaProxyStats(outputOf(haproxyResult));
+  const hostMemory = hostMemoryResult.ok ? hostMemoryResult.value : {
+    totalBytes: null,
+    availableBytes: null,
+    availablePercent: null,
+    swapTotalBytes: null,
+    swapUsedBytes: null,
+    swapUsedPercent: null,
+    swapInPages: null,
+    swapOutPages: null,
+    error: hostMemoryResult.error,
+  };
   const disk = diskResult.ok ? diskResult.value : null;
   return {
     checkedAt: new Date().toISOString(),
@@ -224,6 +274,7 @@ async function collectSnapshot() {
     })),
     postgres,
     haproxy,
+    hostMemory,
     disk: {
       totalBytes: disk ? disk.blocks * disk.bsize : null,
       availableBytes: disk ? disk.bavail * disk.bsize : null,
@@ -314,6 +365,7 @@ export async function main() {
     apiRssWarnMiB: Number(process.env.DIVA_RUNTIME_API_RSS_WARN_MIB || 384),
     dbConnectionsWarn: Number(process.env.DIVA_RUNTIME_DB_CONNECTIONS_WARN || 28),
     diskUsedWarnPercent: Number(process.env.DIVA_RUNTIME_DISK_USED_WARN_PERCENT || 85),
+    hostAvailableWarnPercent: Number(process.env.DIVA_RUNTIME_HOST_AVAILABLE_WARN_PERCENT || 10),
   });
   // Notification failures are recorded without suppressing the local state.
   // notifiedCriticalIds advances only after delivery, so the next timer run
