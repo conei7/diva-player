@@ -190,6 +190,8 @@ assert.match(publicDrWorkflow, /cron: '\*\/15 \* \* \* \*'/);
 assert.match(publicDrWorkflow, /workflow_run:/);
 assert.match(publicDrWorkflow, /workflows: \['Deploy DIVA Player'\]/);
 assert.match(publicDrWorkflow, /github\.event\.workflow_run\.conclusion == 'success'/);
+assert.match(publicDrWorkflow, /if: github\.event_name == 'workflow_run'/);
+assert.match(publicDrWorkflow, /run: sleep 60/);
 assert.match(publicDrWorkflow, /retention-days: 14/);
 assert.doesNotMatch(publicDrWorkflow, /secrets\./);
 assert.equal(
