@@ -79,6 +79,7 @@ assert.match(tunnelRunner, /backend-api\/api\/ready/);
 assert.match(tunnelRunner, /--no-autoupdate/);
 assert.match(tunnelRunner, /--protocol http2/);
 assert.match(tunnelRunner, /chmod 0640/);
+assert.match(tunnelRunner, /install -d -m 0750/);
 assert.match(tunnelUnit, /ProtectSystem=strict/);
 assert.match(tunnelUnit, /User=diva-dr-tunnel/);
 assert.doesNotMatch(tunnelUnit, /sync-wsl-dr-origin-to-cloudflare/);
