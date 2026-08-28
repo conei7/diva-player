@@ -9,6 +9,7 @@ WorkingDirectory=%h/diva-player
 ExecStart=/bin/sh %h/diva-player/scripts/run-cloudflare-quick-tunnel.sh
 Restart=always
 RestartSec=5
+SuccessExitStatus=143
 UMask=0077
 NoNewPrivileges=true
 PrivateTmp=true

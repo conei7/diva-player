@@ -38,6 +38,8 @@ const [
   namedTunnelUnit,
   tunnelAdmin,
   quickTunnelSync,
+  quickTunnelSyncHelper,
+  quickTunnelUnit,
   runtimeRoleMigration,
   apiSettings,
   backendEnvExample,
@@ -82,6 +84,8 @@ const [
   readFile(new URL('./diva-cloudflare-named-tunnel.service', import.meta.url), 'utf8'),
   readFile(new URL('../functions/tunnel-admin/update.js', import.meta.url), 'utf8'),
   readFile(new URL('./sync-quick-tunnel-to-cloudflare.sh', import.meta.url), 'utf8'),
+  readFile(new URL('./sync-quick-tunnel-to-cloudflare.py', import.meta.url), 'utf8'),
+  readFile(new URL('./diva-cloudflare-tunnel.service', import.meta.url), 'utf8'),
   readFile(new URL('../backend/database/migrations/0018_runtime_database_roles.sql', import.meta.url), 'utf8'),
   readFile(new URL('../backend/api/VocadbRecommender/appsettings.json', import.meta.url), 'utf8'),
   readFile(new URL('../backend/.env.example', import.meta.url), 'utf8'),
@@ -248,9 +252,11 @@ assert.match(tunnelAdmin, /TUNNEL_ORIGIN_PROOF_KEY/);
 assert.match(tunnelAdmin, /'x-diva-pages-proxy-key': env\.PAGES_PROXY_KEY/);
 assert.match(tunnelAdmin, /\/backend-api\/api\/ready/);
 assert.doesNotMatch(tunnelAdmin, /\/backend-api\/api\/health/);
-assert.match(quickTunnelSync, /PAGES_ORIGIN_PROOF_KEY/);
-assert.match(quickTunnelSync, /hmac\.new/);
+assert.doesNotMatch(quickTunnelSync, /PAGES_ORIGIN_PROOF_KEY|Authorization: Bearer/);
+assert.match(quickTunnelSyncHelper, /PAGES_ORIGIN_PROOF_KEY/);
+assert.match(quickTunnelSyncHelper, /hmac\.new/);
 assert.doesNotMatch(quickTunnelSync, /origin updated: \$tunnel_url/);
+assert.match(quickTunnelUnit, /SuccessExitStatus=143/);
 assert.match(startDevSbc, /PagesApiBase = "https:\/\/diva-player\.pages\.dev\/backend-api"/);
 assert.match(startDevSbc, /\$apiTarget = \$PagesApiBase\.TrimEnd\('\/'\)/);
 assert.doesNotMatch(startDevSbc, /\$apiTarget = "\$cloudflareUrl\/backend-api"/);
