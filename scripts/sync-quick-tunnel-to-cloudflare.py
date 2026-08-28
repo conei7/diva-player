@@ -23,6 +23,8 @@ SYNC_HOST = "diva-player.pages.dev"
 SYNC_PATH = "/tunnel-admin/update"
 MAX_ENV_BYTES = 64 * 1024
 MAX_RESPONSE_BYTES = 64 * 1024
+RETRY_DELAYS_SECONDS = (3, 5, 8, 12, 16)
+RETRYABLE_HTTP_CODES = frozenset({424, 429, 500, 502, 503, 504})
 
 
 class SyncError(RuntimeError):
@@ -150,14 +152,21 @@ def post_update(sync_url: str, token: str, payload: bytes, origin_role: str) -> 
         },
     )
     opener = request.build_opener(NoRedirectHandler())
-    try:
-        with opener.open(update_request, timeout=30) as response:
-            body = response.read(MAX_RESPONSE_BYTES + 1)
-            status_code = response.status
-    except error.HTTPError as exc:
-        raise SyncError(f"Pages origin update returned HTTP {exc.code}") from exc
-    except (error.URLError, TimeoutError, OSError) as exc:
-        raise SyncError("Pages origin update request failed") from exc
+    body = b""
+    status_code = 0
+    for attempt in range(len(RETRY_DELAYS_SECONDS) + 1):
+        try:
+            with opener.open(update_request, timeout=20) as response:
+                body = response.read(MAX_RESPONSE_BYTES + 1)
+                status_code = response.status
+            break
+        except error.HTTPError as exc:
+            if exc.code not in RETRYABLE_HTTP_CODES or attempt >= len(RETRY_DELAYS_SECONDS):
+                raise SyncError(f"Pages origin update returned HTTP {exc.code}") from exc
+        except (error.URLError, TimeoutError, OSError) as exc:
+            if attempt >= len(RETRY_DELAYS_SECONDS):
+                raise SyncError("Pages origin update request failed") from exc
+        time.sleep(RETRY_DELAYS_SECONDS[attempt])
     if status_code != 200 or len(body) > MAX_RESPONSE_BYTES:
         raise SyncError("Pages origin update returned an invalid response")
     try:
