@@ -11,5 +11,7 @@ if ! curl -fsS --max-time 10 "http://127.0.0.1:$WEB_PORT/backend-api/api/ready" 
 fi
 
 : > "$LOG_FILE"
-exec cloudflared tunnel --no-autoupdate --url "http://127.0.0.1:$WEB_PORT" \
+chmod 0640 "$LOG_FILE"
+exec cloudflared tunnel --no-autoupdate --protocol http2 \
+  --url "http://127.0.0.1:$WEB_PORT" \
   >> "$LOG_FILE" 2>&1

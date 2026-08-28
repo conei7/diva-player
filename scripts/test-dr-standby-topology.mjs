@@ -77,6 +77,8 @@ assert.match(watchdog, /Repair one slot per run/);
 assert.match(watchdogTimer, /OnUnitActiveSec=1min/);
 assert.match(tunnelRunner, /backend-api\/api\/ready/);
 assert.match(tunnelRunner, /--no-autoupdate/);
+assert.match(tunnelRunner, /--protocol http2/);
+assert.match(tunnelRunner, /chmod 0640/);
 assert.match(tunnelUnit, /ProtectSystem=strict/);
 assert.match(tunnelUnit, /User=diva-dr-tunnel/);
 assert.doesNotMatch(tunnelUnit, /sync-wsl-dr-origin-to-cloudflare/);
@@ -93,6 +95,7 @@ assert.match(tunnelInstaller, /systemctl restart diva-wsl-dr-quick-tunnel\.servi
 assert.match(tunnelInstaller, /systemctl enable --now diva-wsl-dr-quick-tunnel-sync\.timer/);
 assert.match(tunnelSyncUnit, /Requires=diva-wsl-dr-quick-tunnel\.service/);
 assert.match(tunnelSyncUnit, /ExecStart=.*sync-wsl-dr-origin-to-cloudflare\.sh/);
+assert.match(tunnelSyncUnit, /SupplementaryGroups=diva-dr-tunnel/);
 assert.match(tunnelSyncUnit, /ProtectSystem=strict/);
 assert.match(tunnelSyncTimer, /OnActiveSec=1min/);
 assert.match(tunnelSyncTimer, /OnUnitInactiveSec=5min/);
