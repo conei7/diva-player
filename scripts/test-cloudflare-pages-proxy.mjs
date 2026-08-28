@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHmac } from 'node:crypto';
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { onRequest as proxyBackend } from '../functions/backend-api/[[path]].js';
@@ -344,9 +344,8 @@ try {
   globalThis.fetch = originalFetch;
 }
 
-// The production env file intentionally contains plain KEY=value assignments,
-// not shell `export` statements. Exercise the real sync script with a fake
-// Python/curl toolchain so a future environment-propagation regression fails.
+// Exercise the real environment parser and HMAC builder without sending a
+// request. Secrets must stay out of argv, child environments, and output.
 const scriptsDirectory = dirname(fileURLToPath(import.meta.url));
 const projectDirectory = join(scriptsDirectory, '..');
 const syncFixture = await mkdtemp(join(scriptsDirectory, '.quick-tunnel-sync-test-'));
@@ -355,35 +354,17 @@ const shellAbsolutePath = path => path
   .replaceAll('\\', '/')
   .replace(/^([A-Za-z]):/, (_, drive) => `/${drive.toLowerCase()}`);
 try {
-  const fakeBin = join(syncFixture, 'bin');
   const envFile = join(syncFixture, 'cloudflare.env');
   const tunnelLog = join(syncFixture, 'cloudflared.log');
-  const curlCapture = join(syncFixture, 'curl.args');
-  await mkdir(fakeBin);
   await writeFile(envFile, [
     'PAGES_SYNC_TOKEN=test-sync-token',
-    'PAGES_ORIGIN_PROOF_KEY=test-origin-proof-key',
+    'PAGES_ORIGIN_PROOF_KEY=test-origin-proof-key-0123456789abcdef',
     'PAGES_SYNC_URL=https://diva-player.pages.dev/tunnel-admin/update',
     '',
   ].join('\n'));
+  await chmod(envFile, 0o600);
   await writeFile(tunnelLog, 'https://sync-fixture.trycloudflare.com\n');
-  await writeFile(join(fakeBin, 'python3'), `#!/bin/sh
-set -eu
-: "\${PAGES_ORIGIN_PROOF_KEY:?origin proof key was not exported to Python}"
-: "\${TUNNEL_ORIGIN_ROLE:?origin role was not exported to Python}"
-printf '{"tunnelUrl":"fixture","timestamp":1,"proof":"fixture"}\\n'
-`);
-  await writeFile(join(fakeBin, 'curl'), `#!/bin/sh
-set -eu
-printf '%s\\n' "$*" > "$SYNC_CAPTURE"
-printf '{"success":true}\\n'
-`);
-  await Promise.all([
-    chmod(join(fakeBin, 'python3'), 0o755),
-    chmod(join(fakeBin, 'curl'), 0o755),
-  ]);
 
-  const inheritedPath = process.env.PATH ?? process.env.Path ?? '';
   const spawnEnvironment = Object.fromEntries(
     Object.entries(process.env).filter(([key]) => key.toLowerCase() !== 'path'),
   );
@@ -392,17 +373,29 @@ printf '{"success":true}\\n'
     encoding: 'utf8',
     env: {
       ...spawnEnvironment,
-      PATH: `${shellAbsolutePath(fakeBin)}:${inheritedPath}`,
+      PATH: process.env.PATH ?? process.env.Path ?? '',
       DIVA_CLOUDFLARE_ENV: fixturePath(envFile),
       DIVA_CLOUDFLARED_LOG: fixturePath(tunnelLog),
-      DIVA_PYTHON_COMMAND: fixturePath(join(fakeBin, 'python3')),
-      DIVA_CURL_COMMAND: fixturePath(join(fakeBin, 'curl')),
+      DIVA_PYTHON_COMMAND: process.platform === 'win32'
+        ? shellAbsolutePath(join(
+          projectDirectory,
+          '..',
+          'diva-data-pipeline',
+          'ml_pipeline',
+          '.venv',
+          'Scripts',
+          'python.exe',
+        ))
+        : 'python3',
+      DIVA_SYNC_HELPER: fixturePath(join(scriptsDirectory, 'sync-quick-tunnel-to-cloudflare.py')),
+      DIVA_SYNC_DRY_RUN: '1',
       DIVA_TUNNEL_ORIGIN_ROLE: 'standby',
-      SYNC_CAPTURE: fixturePath(curlCapture),
     },
   });
   assert.equal(syncResult.status, 0, syncResult.stderr);
-  assert.match(await readFile(curlCapture, 'utf8'), /Authorization: Bearer test-sync-token/);
+  assert.match(syncResult.stdout, /"originRole":"standby"/);
+  assert.match(syncResult.stdout, /"proofLength":64/);
+  assert.doesNotMatch(syncResult.stdout + syncResult.stderr, /test-sync-token|test-origin-proof-key/);
 } finally {
   await rm(syncFixture, { recursive: true, force: true });
 }

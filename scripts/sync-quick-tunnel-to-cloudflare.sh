@@ -1,19 +1,11 @@
 #!/bin/sh
 set -eu
 
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 ENV_FILE="${DIVA_CLOUDFLARE_ENV:-$HOME/.config/diva-player/cloudflare.env}"
 LOG_FILE="${DIVA_CLOUDFLARED_LOG:-$HOME/cloudflared-8080.log}"
 PYTHON_COMMAND="${DIVA_PYTHON_COMMAND:-python3}"
-CURL_COMMAND="${DIVA_CURL_COMMAND:-curl}"
-
-if [ -f "$ENV_FILE" ]; then
-  # shellcheck disable=SC1090
-  . "$ENV_FILE"
-fi
-
-: "${PAGES_SYNC_TOKEN:?PAGES_SYNC_TOKEN is required}"
-: "${PAGES_ORIGIN_PROOF_KEY:?PAGES_ORIGIN_PROOF_KEY is required}"
-PAGES_SYNC_URL="${PAGES_SYNC_URL:-https://diva-player.pages.dev/tunnel-admin/update}"
+SYNC_HELPER="${DIVA_SYNC_HELPER:-$SCRIPT_DIR/sync-quick-tunnel-to-cloudflare.py}"
 origin_role="${DIVA_TUNNEL_ORIGIN_ROLE:-primary}"
 case "$origin_role" in
   primary|standby) ;;
@@ -37,35 +29,15 @@ if [ -z "$tunnel_url" ]; then
   exit 1
 fi
 
-timestamp=$(date +%s)
-payload=$(PAGES_ORIGIN_PROOF_KEY="$PAGES_ORIGIN_PROOF_KEY" \
-  TUNNEL_URL="$tunnel_url" PROOF_TIMESTAMP="$timestamp" \
-  TUNNEL_ORIGIN_ROLE="$origin_role" "$PYTHON_COMMAND" -c '
-import hashlib, hmac, json, os
-timestamp = int(os.environ["PROOF_TIMESTAMP"])
-tunnel_url = os.environ["TUNNEL_URL"]
-origin_role = os.environ["TUNNEL_ORIGIN_ROLE"]
-key = os.environ["PAGES_ORIGIN_PROOF_KEY"].encode("utf-8")
-message = f"{timestamp}\n{origin_role}\n{tunnel_url}".encode("utf-8")
-print(json.dumps({
-    "tunnelUrl": tunnel_url,
-    "originRole": origin_role,
-    "timestamp": timestamp,
-    "proof": hmac.new(key, message, hashlib.sha256).hexdigest(),
-}, separators=(",", ":")))
-')
+if [ "${DIVA_SYNC_DRY_RUN:-0}" = 1 ]; then
+  exec "$PYTHON_COMMAND" "$SYNC_HELPER" \
+    --env-file "$ENV_FILE" \
+    --tunnel-url "$tunnel_url" \
+    --origin-role "$origin_role" \
+    --dry-run
+fi
 
-response=$("$CURL_COMMAND" -fsS -X POST "$PAGES_SYNC_URL" \
-  -H "Authorization: Bearer $PAGES_SYNC_TOKEN" \
-  -H "Content-Type: application/json" \
-  --data-binary "$payload")
-
-case "$response" in
-  *'"success":true'*) ;;
-  *)
-    echo "Cloudflare KV update failed: $response" >&2
-    exit 1
-    ;;
-esac
-
-echo "Cloudflare Pages $origin_role origin updated"
+exec "$PYTHON_COMMAND" "$SYNC_HELPER" \
+  --env-file "$ENV_FILE" \
+  --tunnel-url "$tunnel_url" \
+  --origin-role "$origin_role"

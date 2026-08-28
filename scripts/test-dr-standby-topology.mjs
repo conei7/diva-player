@@ -12,6 +12,8 @@ const [
   tunnelRunner,
   tunnelUnit,
   tunnelSync,
+  tunnelSyncHelper,
+  tunnelInstaller,
   pagesProxy,
   tunnelAdmin,
 ] = await Promise.all([
@@ -25,6 +27,8 @@ const [
   readFile(new URL('./run-wsl-dr-quick-tunnel.sh', import.meta.url), 'utf8'),
   readFile(new URL('./diva-wsl-dr-quick-tunnel.service', import.meta.url), 'utf8'),
   readFile(new URL('./sync-quick-tunnel-to-cloudflare.sh', import.meta.url), 'utf8'),
+  readFile(new URL('./sync-quick-tunnel-to-cloudflare.py', import.meta.url), 'utf8'),
+  readFile(new URL('./install-wsl-dr-quick-tunnel.sh', import.meta.url), 'utf8'),
   readFile(new URL('../functions/backend-api/[[path]].js', import.meta.url), 'utf8'),
   readFile(new URL('../functions/tunnel-admin/update.js', import.meta.url), 'utf8'),
 ]);
@@ -69,7 +73,16 @@ assert.match(watchdogTimer, /OnUnitActiveSec=1min/);
 assert.match(tunnelRunner, /backend-api\/api\/ready/);
 assert.match(tunnelRunner, /--no-autoupdate/);
 assert.match(tunnelUnit, /ProtectSystem=strict/);
+assert.match(tunnelUnit, /User=diva-dr-tunnel/);
+assert.match(tunnelUnit, /ExecStartPost=\+.*sync-wsl-dr-origin-to-cloudflare\.sh/);
+assert.match(tunnelUnit, /CapabilityBoundingSet=/);
 assert.match(tunnelSync, /DIVA_TUNNEL_ORIGIN_ROLE/);
+assert.doesNotMatch(tunnelSync, /\. "\$ENV_FILE"|Authorization: Bearer/);
+assert.match(tunnelSyncHelper, /NoRedirectHandler/);
+assert.match(tunnelSyncHelper, /outside the fixed Pages update endpoint/);
+assert.match(tunnelSyncHelper, /must not be accessible by group\/other/);
+assert.match(tunnelInstaller, /useradd --system --user-group/);
+assert.match(tunnelInstaller, /systemctl enable --now diva-wsl-dr-quick-tunnel\.service/);
 assert.match(pagesProxy, /quick_tunnel_primary_url/);
 assert.match(pagesProxy, /quick_tunnel_standby_url/);
 assert.match(pagesProxy, /firstResponse\.status < 500/);
