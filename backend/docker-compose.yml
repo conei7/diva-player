@@ -7,6 +7,7 @@ x-default-logging: &default-logging
 x-api-environment: &api-environment
   ConnectionStrings__Postgres: "Host=postgres;Port=5432;Database=vocadb_recommender;Username=${DIVA_API_DB_USER:?DIVA_API_DB_USER is required};Password=${DIVA_API_DB_PASSWORD:?DIVA_API_DB_PASSWORD is required};Maximum Pool Size=16;Timeout=5;Application Name=diva-api"
   Recommender__QdrantEndpoint: "http://qdrant:6334"
+  Recommender__QdrantRestEndpoint: "http://qdrant:6333"
   Recommender__YouTubeApiKey: "${YOUTUBE_API_KEY:-}"
   Recommender__PagesProxyKey: "${PAGES_PROXY_KEY:?PAGES_PROXY_KEY is required}"
   Recommender__YouTubePlaylistCacheHours: "6"

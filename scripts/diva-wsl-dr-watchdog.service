@@ -1,0 +1,11 @@
+[Unit]
+Description=Check and repair one isolated DIVA Player WSL DR service
+After=docker.service postgresql.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/lib/diva-player-standby/check-wsl-dr-standby.sh
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict

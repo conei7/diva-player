@@ -1,4 +1,6 @@
-const TUNNEL_KEY = 'quick_tunnel_url';
+const LEGACY_TUNNEL_KEY = 'quick_tunnel_url';
+const PRIMARY_TUNNEL_KEY = 'quick_tunnel_primary_url';
+const STANDBY_TUNNEL_KEY = 'quick_tunnel_standby_url';
 const QUICK_TUNNEL_PATTERN = /^https:\/\/[a-z0-9-]+\.trycloudflare\.com$/i;
 
 function configurationError(message) {
@@ -42,40 +44,41 @@ async function resolveOrigin(env, incoming) {
     if (!env.CF_ACCESS_CLIENT_ID || !env.CF_ACCESS_CLIENT_SECRET) {
       return { error: 'named tunnel access credentials are not configured' };
     }
-    return { mode, origin };
+    return { mode, origins: [origin] };
   }
 
   if (mode !== 'quick') return { error: 'unsupported API origin mode' };
-  const tunnelUrl = await env.TUNNEL_CONFIG?.get(TUNNEL_KEY, { cacheTtl: 60 });
-  if (!tunnelUrl || !QUICK_TUNNEL_PATTERN.test(tunnelUrl)) {
+  const [configuredPrimary, legacyPrimary, configuredStandby] = await Promise.all([
+    env.TUNNEL_CONFIG?.get(PRIMARY_TUNNEL_KEY, { cacheTtl: 60 }),
+    env.TUNNEL_CONFIG?.get(LEGACY_TUNNEL_KEY, { cacheTtl: 60 }),
+    env.TUNNEL_CONFIG?.get(STANDBY_TUNNEL_KEY, { cacheTtl: 60 }),
+  ]);
+  const primary = configuredPrimary || legacyPrimary;
+  if (!primary || !QUICK_TUNNEL_PATTERN.test(primary)) {
     return { error: 'SBC tunnel is not registered' };
   }
-  return { mode, origin: tunnelUrl };
+  const origins = [primary];
+  if (configuredStandby
+      && QUICK_TUNNEL_PATTERN.test(configuredStandby)
+      && configuredStandby !== primary) {
+    origins.push(configuredStandby);
+  }
+  return { mode, origins };
 }
 
-export async function onRequest({ request, env }) {
-  const incoming = new URL(request.url);
-  if (!env.PAGES_PROXY_KEY) return configurationError('Pages proxy authentication is not configured');
-
-  const resolved = await resolveOrigin(env, incoming);
-  if (resolved.error) return configurationError(resolved.error);
-
-  // Quick Tunnel terminates at the Web container, whose nginx removes the
-  // /backend-api prefix. The named tunnel terminates directly at HAProxy, so
-  // remove that prefix here and expose only the API gateway at the origin.
-  const upstreamPath = resolved.mode === 'named'
+function buildTarget(origin, mode, incoming) {
+  const upstreamPath = mode === 'named'
     ? incoming.pathname.replace(/^\/backend-api(?=\/|$)/, '') || '/'
     : incoming.pathname;
-  // Assign the path on the validated origin. A path beginning with "//"
-  // passed to the URL constructor is interpreted as a scheme-relative host,
-  // which could otherwise leak the proxy credentials to another origin.
-  const target = new URL(resolved.origin);
+  const target = new URL(origin);
   target.pathname = upstreamPath;
   target.search = incoming.search;
+  return target;
+}
+
+function proxyHeaders(request, env, mode) {
   const headers = new Headers(request.headers);
   headers.delete('host');
-  // Do not forward client-controlled identity headers. Cloudflare sets
-  // cf-connecting-ip at the edge; the API uses this value for rate limiting.
   headers.delete('x-diva-client-key');
   headers.delete('x-forwarded-for');
   headers.delete('x-real-ip');
@@ -87,16 +90,51 @@ export async function onRequest({ request, env }) {
   headers.set('x-diva-pages-proxy', '1');
   headers.delete('x-diva-pages-proxy-key');
   headers.set('x-diva-pages-proxy-key', env.PAGES_PROXY_KEY);
-  if (resolved.mode === 'named') {
+  if (mode === 'named') {
     headers.set('cf-access-client-id', env.CF_ACCESS_CLIENT_ID);
     headers.set('cf-access-client-secret', env.CF_ACCESS_CLIENT_SECRET);
   }
+  return headers;
+}
 
-  return fetch(target, {
+export async function onRequest({ request, env }) {
+  const incoming = new URL(request.url);
+  if (!env.PAGES_PROXY_KEY) return configurationError('Pages proxy authentication is not configured');
+
+  const resolved = await resolveOrigin(env, incoming);
+  if (resolved.error) return configurationError(resolved.error);
+
+  const headers = proxyHeaders(request, env, resolved.mode);
+  const canRetryBody = request.method !== 'GET' && request.method !== 'HEAD'
+    && resolved.origins.length > 1;
+  const fallbackRequest = canRetryBody ? request.clone() : null;
+  const firstResponse = await fetch(buildTarget(resolved.origins[0], resolved.mode, incoming), {
     method: request.method,
     headers,
     body: request.method === 'GET' || request.method === 'HEAD' ? undefined : request.body,
     redirect: 'manual',
     signal: request.signal,
-  });
+  }).catch(() => null);
+
+  if (resolved.origins.length === 1
+      || (firstResponse && firstResponse.status < 500)) {
+    return firstResponse ?? Response.json({ error: 'API origin unavailable' }, { status: 502 });
+  }
+
+  await firstResponse?.body?.cancel().catch(() => {});
+
+  const fallbackResponse = await fetch(
+    buildTarget(resolved.origins[1], resolved.mode, incoming),
+    {
+      method: request.method,
+      headers,
+      body: request.method === 'GET' || request.method === 'HEAD'
+        ? undefined
+        : fallbackRequest?.body,
+      redirect: 'manual',
+      signal: request.signal,
+    },
+  ).catch(() => null);
+  return fallbackResponse
+    ?? Response.json({ error: 'API origins unavailable' }, { status: 502 });
 }

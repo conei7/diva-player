@@ -1,4 +1,8 @@
 const QUICK_TUNNEL_PATTERN = /^https:\/\/[a-z0-9-]+\.trycloudflare\.com$/i;
+const ORIGIN_KEYS = {
+  primary: 'quick_tunnel_primary_url',
+  standby: 'quick_tunnel_standby_url',
+};
 
 function unauthorized() {
   return Response.json({ error: 'unauthorized' }, { status: 401 });
@@ -9,7 +13,7 @@ function hexBytes(value) {
   return Uint8Array.from(value.match(/../g), byte => Number.parseInt(byte, 16));
 }
 
-async function verifyOriginProof(secret, timestamp, tunnelUrl, proof) {
+async function verifyOriginProof(secret, timestamp, originRole, tunnelUrl, proof, legacy = false) {
   const signature = hexBytes(proof);
   if (!secret || !signature || !Number.isSafeInteger(timestamp)) return false;
   const now = Math.floor(Date.now() / 1000);
@@ -26,7 +30,9 @@ async function verifyOriginProof(secret, timestamp, tunnelUrl, proof) {
     'HMAC',
     key,
     signature,
-    encoder.encode(`${timestamp}\n${tunnelUrl}`),
+    encoder.encode(legacy
+      ? `${timestamp}\n${tunnelUrl}`
+      : `${timestamp}\n${originRole}\n${tunnelUrl}`),
   );
 }
 
@@ -50,14 +56,21 @@ export async function onRequest({ request, env }) {
 
   const body = await request.json().catch(() => null);
   const tunnelUrl = typeof body?.tunnelUrl === 'string' ? body.tunnelUrl.trim() : '';
+  const legacyRequest = body?.originRole == null;
+  const originRole = legacyRequest ? 'primary' : body?.originRole;
+  if (!Object.hasOwn(ORIGIN_KEYS, originRole)) {
+    return Response.json({ error: 'invalid origin role' }, { status: 400 });
+  }
   if (!QUICK_TUNNEL_PATTERN.test(tunnelUrl)) {
     return Response.json({ error: 'invalid tunnel URL' }, { status: 400 });
   }
   if (!await verifyOriginProof(
     env.TUNNEL_ORIGIN_PROOF_KEY,
     body?.timestamp,
+    originRole,
     tunnelUrl,
     body?.proof,
+    legacyRequest,
   )) return unauthorized();
 
   // Readiness already verifies PostgreSQL, Qdrant aliases/generation, and
@@ -72,6 +85,11 @@ export async function onRequest({ request, env }) {
   }).catch(() => null);
   if (!health?.ok) return Response.json({ error: 'tunnel health check failed' }, { status: 424 });
 
-  await env.TUNNEL_CONFIG.put('quick_tunnel_url', tunnelUrl);
-  return Response.json({ success: true });
+  await env.TUNNEL_CONFIG.put(ORIGIN_KEYS[originRole], tunnelUrl);
+  // Preserve the legacy primary key while older deployments and rollback
+  // builds may still read it. Standby registration never changes it.
+  if (originRole === 'primary') {
+    await env.TUNNEL_CONFIG.put('quick_tunnel_url', tunnelUrl);
+  }
+  return Response.json({ success: true, originRole });
 }

@@ -10,6 +10,11 @@ internal static class ApiServiceRegistration
         services.AddOptions<RecommenderOptions>()
             .Bind(configuration.GetSection("Recommender"))
             .Validate(
+                options => IsHttpEndpoint(options.QdrantEndpoint)
+                    && (string.IsNullOrWhiteSpace(options.QdrantRestEndpoint)
+                        || IsHttpEndpoint(options.QdrantRestEndpoint)),
+                "Qdrant endpoints must be absolute HTTP(S) origins without credentials")
+            .Validate(
                 options => new[]
                     {
                         options.CollectionNamed,
@@ -77,4 +82,11 @@ internal static class ApiServiceRegistration
         });
         return services;
     }
+
+    private static bool IsHttpEndpoint(string value) =>
+        Uri.TryCreate(value, UriKind.Absolute, out var endpoint)
+        && (endpoint.Scheme == Uri.UriSchemeHttp || endpoint.Scheme == Uri.UriSchemeHttps)
+        && string.IsNullOrEmpty(endpoint.UserInfo)
+        && string.IsNullOrEmpty(endpoint.Query)
+        && string.IsNullOrEmpty(endpoint.Fragment);
 }

@@ -28,10 +28,25 @@ public class QdrantService
         _opts = opts.Value;
         _readPublicationGeneration = readPublicationGeneration;
         _client = new QdrantClient(new Uri(_opts.QdrantEndpoint));
-        var grpcEndpoint = new Uri(_opts.QdrantEndpoint);
-        var restPort = grpcEndpoint.Port == 6334 ? 6333 : grpcEndpoint.Port;
-        _healthUri = new UriBuilder(grpcEndpoint.Scheme, grpcEndpoint.Host, restPort, "healthz").Uri;
+        _healthUri = ResolveHealthUri(_opts);
         _healthClient = new HttpClient { Timeout = TimeSpan.FromSeconds(3) };
+    }
+
+    internal static Uri ResolveHealthUri(RecommenderOptions options)
+    {
+        var grpcEndpoint = new Uri(options.QdrantEndpoint);
+        var configuredRestEndpoint = string.IsNullOrWhiteSpace(options.QdrantRestEndpoint)
+            ? null
+            : new Uri(options.QdrantRestEndpoint);
+        var restEndpoint = configuredRestEndpoint ?? new UriBuilder(
+            grpcEndpoint.Scheme,
+            grpcEndpoint.Host,
+            grpcEndpoint.Port == 6334 ? 6333 : grpcEndpoint.Port).Uri;
+        return new UriBuilder(
+            restEndpoint.Scheme,
+            restEndpoint.Host,
+            restEndpoint.Port,
+            "healthz").Uri;
     }
 
     public async Task<DependencyHealth> CheckHealthAsync(CancellationToken cancellationToken)

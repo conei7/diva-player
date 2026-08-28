@@ -244,6 +244,101 @@ try {
     env: { ...updateEnv, DIVA_API_ORIGIN_MODE: 'named' },
   });
   assert.equal(disabledUpdate.status, 410);
+
+  const standbyUrl = 'https://standby-origin.trycloudflare.com';
+  const standbyProof = createHmac('sha256', proofKey)
+    .update(`${timestamp}\nstandby\n${standbyUrl}`)
+    .digest('hex');
+  const standbyUpdated = await updateTunnel({
+    request: new Request('https://diva-player.pages.dev/tunnel-admin/update', {
+      method: 'POST',
+      headers: { authorization: 'Bearer test-secret', 'content-type': 'application/json' },
+      body: JSON.stringify({
+        tunnelUrl: standbyUrl,
+        originRole: 'standby',
+        timestamp,
+        proof: standbyProof,
+      }),
+    }),
+    env: updateEnv,
+  });
+  assert.equal(standbyUpdated.status, 200);
+  assert.deepEqual(written, { key: 'quick_tunnel_standby_url', value: standbyUrl });
+
+  const failoverCalls = [];
+  globalThis.fetch = async (target, init) => {
+    failoverCalls.push({ target: String(target), init });
+    return new Response(
+      JSON.stringify({ origin: failoverCalls.length === 1 ? 'primary' : 'standby' }),
+      { status: failoverCalls.length === 1 ? 503 : 200 },
+    );
+  };
+  const failoverResponse = await proxyBackend({
+    request: new Request('https://diva-player.pages.dev/backend-api/api/health?full=1'),
+    env: {
+      PAGES_PROXY_KEY: 'test-proxy-key',
+      TUNNEL_CONFIG: {
+        get: async key => ({
+          quick_tunnel_primary_url: tunnelUrl,
+          quick_tunnel_standby_url: standbyUrl,
+        })[key] ?? null,
+      },
+    },
+  });
+  assert.equal(failoverResponse.status, 200);
+  assert.equal(failoverCalls.length, 2);
+  assert.equal(failoverCalls[0].target, `${tunnelUrl}/backend-api/api/health?full=1`);
+  assert.equal(failoverCalls[1].target, `${standbyUrl}/backend-api/api/health?full=1`);
+
+  const postFailoverCalls = [];
+  globalThis.fetch = async (target, init) => {
+    postFailoverCalls.push({
+      target: String(target),
+      body: init.body ? await new Response(init.body).text() : '',
+    });
+    return new Response('{}', { status: postFailoverCalls.length === 1 ? 503 : 200 });
+  };
+  const postBody = JSON.stringify({ songIds: [1, 2, 3] });
+  const postFailoverResponse = await proxyBackend({
+    request: new Request(
+      'https://diva-player.pages.dev/backend-api/api/discovery/knowledge-map',
+      { method: 'POST', body: postBody, headers: { 'content-type': 'application/json' } },
+    ),
+    env: {
+      PAGES_PROXY_KEY: 'test-proxy-key',
+      TUNNEL_CONFIG: {
+        get: async key => ({
+          quick_tunnel_primary_url: tunnelUrl,
+          quick_tunnel_standby_url: standbyUrl,
+        })[key] ?? null,
+      },
+    },
+  });
+  assert.equal(postFailoverResponse.status, 200);
+  assert.deepEqual(postFailoverCalls.map(call => call.body), [postBody, postBody]);
+
+  let unavailableCallCount = 0;
+  globalThis.fetch = async () => {
+    unavailableCallCount += 1;
+    if (unavailableCallCount === 1) return new Response('primary failed', { status: 503 });
+    throw new Error('standby unavailable');
+  };
+  const unavailableResponse = await proxyBackend({
+    request: new Request('https://diva-player.pages.dev/backend-api/api/ready'),
+    env: {
+      PAGES_PROXY_KEY: 'test-proxy-key',
+      TUNNEL_CONFIG: {
+        get: async key => ({
+          quick_tunnel_primary_url: tunnelUrl,
+          quick_tunnel_standby_url: standbyUrl,
+        })[key] ?? null,
+      },
+    },
+  });
+  assert.equal(unavailableResponse.status, 502);
+  assert.deepEqual(await unavailableResponse.json(), { error: 'API origins unavailable' });
+  assert.equal(unavailableCallCount, 2);
+  globalThis.fetch = originalFetch;
   console.log('PASS Cloudflare Pages API proxy routing');
 } finally {
   globalThis.fetch = originalFetch;
@@ -275,6 +370,7 @@ try {
   await writeFile(join(fakeBin, 'python3'), `#!/bin/sh
 set -eu
 : "\${PAGES_ORIGIN_PROOF_KEY:?origin proof key was not exported to Python}"
+: "\${TUNNEL_ORIGIN_ROLE:?origin role was not exported to Python}"
 printf '{"tunnelUrl":"fixture","timestamp":1,"proof":"fixture"}\\n'
 `);
   await writeFile(join(fakeBin, 'curl'), `#!/bin/sh
@@ -301,6 +397,7 @@ printf '{"success":true}\\n'
       DIVA_CLOUDFLARED_LOG: fixturePath(tunnelLog),
       DIVA_PYTHON_COMMAND: fixturePath(join(fakeBin, 'python3')),
       DIVA_CURL_COMMAND: fixturePath(join(fakeBin, 'curl')),
+      DIVA_TUNNEL_ORIGIN_ROLE: 'standby',
       SYNC_CAPTURE: fixturePath(curlCapture),
     },
   });

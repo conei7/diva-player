@@ -14,6 +14,11 @@ fi
 : "${PAGES_SYNC_TOKEN:?PAGES_SYNC_TOKEN is required}"
 : "${PAGES_ORIGIN_PROOF_KEY:?PAGES_ORIGIN_PROOF_KEY is required}"
 PAGES_SYNC_URL="${PAGES_SYNC_URL:-https://diva-player.pages.dev/tunnel-admin/update}"
+origin_role="${DIVA_TUNNEL_ORIGIN_ROLE:-primary}"
+case "$origin_role" in
+  primary|standby) ;;
+  *) echo "DIVA_TUNNEL_ORIGIN_ROLE must be primary or standby" >&2; exit 1 ;;
+esac
 
 attempt=0
 tunnel_url=""
@@ -34,14 +39,17 @@ fi
 
 timestamp=$(date +%s)
 payload=$(PAGES_ORIGIN_PROOF_KEY="$PAGES_ORIGIN_PROOF_KEY" \
-  TUNNEL_URL="$tunnel_url" PROOF_TIMESTAMP="$timestamp" "$PYTHON_COMMAND" -c '
+  TUNNEL_URL="$tunnel_url" PROOF_TIMESTAMP="$timestamp" \
+  TUNNEL_ORIGIN_ROLE="$origin_role" "$PYTHON_COMMAND" -c '
 import hashlib, hmac, json, os
 timestamp = int(os.environ["PROOF_TIMESTAMP"])
 tunnel_url = os.environ["TUNNEL_URL"]
+origin_role = os.environ["TUNNEL_ORIGIN_ROLE"]
 key = os.environ["PAGES_ORIGIN_PROOF_KEY"].encode("utf-8")
-message = f"{timestamp}\n{tunnel_url}".encode("utf-8")
+message = f"{timestamp}\n{origin_role}\n{tunnel_url}".encode("utf-8")
 print(json.dumps({
     "tunnelUrl": tunnel_url,
+    "originRole": origin_role,
     "timestamp": timestamp,
     "proof": hmac.new(key, message, hashlib.sha256).hexdigest(),
 }, separators=(",", ":")))
@@ -60,4 +68,4 @@ case "$response" in
     ;;
 esac
 
-echo "Cloudflare Pages origin updated"
+echo "Cloudflare Pages $origin_role origin updated"

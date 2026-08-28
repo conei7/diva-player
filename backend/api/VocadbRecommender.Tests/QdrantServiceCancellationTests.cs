@@ -6,6 +6,29 @@ namespace VocadbRecommender.Tests;
 public sealed class QdrantServiceCancellationTests
 {
     [Fact]
+    public void HealthEndpoint_UsesExplicitRestPortForNonstandardGrpcPort()
+    {
+        var uri = QdrantService.ResolveHealthUri(new RecommenderOptions
+        {
+            QdrantEndpoint = "http://127.0.0.1:16334",
+            QdrantRestEndpoint = "http://127.0.0.1:16333",
+        });
+
+        Assert.Equal("http://127.0.0.1:16333/healthz", uri.AbsoluteUri);
+    }
+
+    [Fact]
+    public void HealthEndpoint_PreservesConventionalQdrantPortPair()
+    {
+        var uri = QdrantService.ResolveHealthUri(new RecommenderOptions
+        {
+            QdrantEndpoint = "http://qdrant:6334",
+        });
+
+        Assert.Equal("http://qdrant:6333/healthz", uri.AbsoluteUri);
+    }
+
+    [Fact]
     public async Task PreCanceledRequest_StopsEveryQdrantReadBeforeFallback()
     {
         var service = new QdrantService(

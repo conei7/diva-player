@@ -109,6 +109,7 @@ async function main() {
   await run('dotnet', ['test', 'backend/api/VocadbRecommender.Tests/VocadbRecommender.Tests.csproj', '--configuration', 'Release'], { label: 'Test API', env: dotnetEnvironment });
   await npmScripts([
     'test:deployment-topology',
+    'test:dr-standby-topology',
     'test:rolling-deployment',
     'test:runtime-health',
   ]);

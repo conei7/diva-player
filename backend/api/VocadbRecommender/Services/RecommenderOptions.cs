@@ -4,6 +4,11 @@ namespace VocadbRecommender.Services;
 public class RecommenderOptions
 {
     public string QdrantEndpoint     { get; set; } = "http://localhost:6333";
+    /// <summary>
+    /// Optional REST endpoint used by health probes. Leave empty only when the
+    /// gRPC endpoint uses Qdrant's conventional 6334/6333 port pair.
+    /// </summary>
+    public string QdrantRestEndpoint { get; set; } = "";
     public string CollectionHybrid   { get; set; } = "song_hybrid_active";
     public string CollectionMetadata { get; set; } = "song_metadata_active";
     /// <summary>Canonical audio-only vector collection updated by audio extraction.</summary>
