@@ -1,35 +1,26 @@
 [Unit]
-Description=DIVA Player isolated WSL DR Quick Tunnel
-After=network-online.target docker.service postgresql.service
+Description=Register the DIVA Player WSL DR Quick Tunnel origin
+After=network-online.target diva-wsl-dr-quick-tunnel.service
 Wants=network-online.target
+Requires=diva-wsl-dr-quick-tunnel.service
 
 [Service]
-Type=simple
-User=diva-dr-tunnel
-Group=diva-dr-tunnel
-LogsDirectory=diva-player-standby
-LogsDirectoryMode=0700
-ExecStart=/usr/local/lib/diva-player-standby/run-wsl-dr-quick-tunnel.sh
-Restart=always
-RestartSec=15
+Type=oneshot
+ExecStart=/usr/local/lib/diva-player-standby/sync-wsl-dr-origin-to-cloudflare.sh
 UMask=0077
 CapabilityBoundingSet=
 LockPersonality=true
 NoNewPrivileges=true
 PrivateDevices=true
 PrivateTmp=true
-ProtectHome=true
 ProtectClock=true
 ProtectControlGroups=true
+ProtectHome=true
 ProtectKernelLogs=true
 ProtectKernelModules=true
 ProtectKernelTunables=true
 ProtectSystem=strict
-ReadWritePaths=/var/log/diva-player-standby
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 RestrictNamespaces=true
 RestrictRealtime=true
 SystemCallArchitectures=native
-
-[Install]
-WantedBy=multi-user.target

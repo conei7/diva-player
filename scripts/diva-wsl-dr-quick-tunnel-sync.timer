@@ -1,0 +1,14 @@
+[Unit]
+Description=Retry DIVA Player WSL DR Quick Tunnel origin registration
+After=diva-wsl-dr-quick-tunnel.service
+Wants=diva-wsl-dr-quick-tunnel.service
+
+[Timer]
+OnActiveSec=1min
+OnUnitInactiveSec=5min
+AccuracySec=15s
+RandomizedDelaySec=15s
+Unit=diva-wsl-dr-quick-tunnel-sync.service
+
+[Install]
+WantedBy=timers.target

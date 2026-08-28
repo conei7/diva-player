@@ -12,6 +12,8 @@ ENV_FILE="${DIVA_CLOUDFLARE_ENV:-/etc/diva-player-standby/cloudflare.env}"
 INSTALL_DIR="/usr/local/lib/diva-player-standby"
 SERVICE_USER="diva-dr-tunnel"
 SERVICE_FILE="/etc/systemd/system/diva-wsl-dr-quick-tunnel.service"
+SYNC_SERVICE_FILE="/etc/systemd/system/diva-wsl-dr-quick-tunnel-sync.service"
+SYNC_TIMER_FILE="/etc/systemd/system/diva-wsl-dr-quick-tunnel-sync.timer"
 
 [[ -f "$ENV_FILE" && ! -L "$ENV_FILE" ]] || {
     echo 'Cloudflare environment must be a regular non-symlink file.' >&2
@@ -50,10 +52,23 @@ install -o root -g root -m 0755 \
 install -o root -g root -m 0644 \
     "$ROOT_DIR/scripts/diva-wsl-dr-quick-tunnel.service" \
     "$SERVICE_FILE"
+install -o root -g root -m 0644 \
+    "$ROOT_DIR/scripts/diva-wsl-dr-quick-tunnel-sync.service" \
+    "$SYNC_SERVICE_FILE"
+install -o root -g root -m 0644 \
+    "$ROOT_DIR/scripts/diva-wsl-dr-quick-tunnel-sync.timer" \
+    "$SYNC_TIMER_FILE"
 
 systemctl daemon-reload
-systemctl enable --now diva-wsl-dr-quick-tunnel.service
+systemctl enable diva-wsl-dr-quick-tunnel.service
+systemctl restart diva-wsl-dr-quick-tunnel.service
 systemctl is-active --quiet diva-wsl-dr-quick-tunnel.service
+
+registration_succeeded=0
+if systemctl start diva-wsl-dr-quick-tunnel-sync.service; then
+    registration_succeeded=1
+fi
+systemctl enable --now diva-wsl-dr-quick-tunnel-sync.timer
 
 service_user="$(systemctl show -p User --value diva-wsl-dr-quick-tunnel.service)"
 main_pid="$(systemctl show -p MainPID --value diva-wsl-dr-quick-tunnel.service)"
@@ -62,4 +77,9 @@ main_pid="$(systemctl show -p MainPID --value diva-wsl-dr-quick-tunnel.service)"
     exit 1
 }
 
-echo 'PASS WSL DR Quick Tunnel is enabled, registered, and running as a non-root user.'
+if (( registration_succeeded != 1 )); then
+    echo 'Quick Tunnel is running; origin registration remains pending and will retry automatically.' >&2
+    exit 1
+fi
+
+echo 'PASS WSL DR Quick Tunnel is enabled, registered, self-retrying, and running as a non-root user.'
