@@ -23,7 +23,7 @@ SYNC_HOST = "diva-player.pages.dev"
 SYNC_PATH = "/tunnel-admin/update"
 MAX_ENV_BYTES = 64 * 1024
 MAX_RESPONSE_BYTES = 64 * 1024
-RETRY_DELAYS_SECONDS = (3, 5, 8, 12, 16)
+RETRY_DELAYS_SECONDS = (5, 10, 15, 20, 25, 30, 30, 30)
 RETRYABLE_HTTP_CODES = frozenset({424, 429, 500, 502, 503, 504})
 
 
@@ -140,21 +140,36 @@ def build_payload(
     return payload, proof
 
 
-def post_update(sync_url: str, token: str, payload: bytes, origin_role: str) -> None:
-    update_request = request.Request(
-        sync_url,
-        data=payload,
-        method="POST",
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json",
-            "User-Agent": "diva-player-origin-sync/1",
-        },
-    )
+def post_update(
+    sync_url: str,
+    token: str,
+    proof_key: str,
+    tunnel_url: str,
+    origin_role: str,
+) -> None:
     opener = request.build_opener(NoRedirectHandler())
     body = b""
     status_code = 0
     for attempt in range(len(RETRY_DELAYS_SECONDS) + 1):
+        # A proof is accepted for only five minutes. Refresh it on every
+        # attempt so a slow Quick Tunnel DNS rollout never makes later retries
+        # fail authentication with a stale timestamp.
+        payload, _ = build_payload(
+            proof_key,
+            tunnel_url,
+            origin_role,
+            int(time.time()),
+        )
+        update_request = request.Request(
+            sync_url,
+            data=payload,
+            method="POST",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+                "User-Agent": "diva-player-origin-sync/1",
+            },
+        )
         try:
             with opener.open(update_request, timeout=20) as response:
                 body = response.read(MAX_RESPONSE_BYTES + 1)
@@ -193,7 +208,7 @@ def main() -> int:
             raise SyncError("Quick Tunnel URL is invalid")
         environment = load_environment(args.env_file)
         sync_url = validate_sync_url(environment["PAGES_SYNC_URL"])
-        payload, proof = build_payload(
+        _, proof = build_payload(
             environment["PAGES_ORIGIN_PROOF_KEY"],
             args.tunnel_url,
             args.origin_role,
@@ -215,7 +230,8 @@ def main() -> int:
         post_update(
             sync_url,
             environment["PAGES_SYNC_TOKEN"],
-            payload,
+            environment["PAGES_ORIGIN_PROOF_KEY"],
+            args.tunnel_url,
             args.origin_role,
         )
         print(f"Cloudflare Pages {args.origin_role} origin updated")
