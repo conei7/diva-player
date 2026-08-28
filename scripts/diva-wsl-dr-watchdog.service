@@ -1,11 +1,32 @@
 [Unit]
 Description=Check and repair one isolated DIVA Player WSL DR service
-After=docker.service postgresql.service
+After=docker.service postgresql.service diva-wsl-dr-quick-tunnel.service
 
 [Service]
 Type=oneshot
+Environment=DIVA_DR_SYNC_MAX_AGE_SECONDS=900
+Environment=DIVA_DR_COMMAND_TIMEOUT_SECONDS=15
+Environment=DIVA_DR_REPAIR_TIMEOUT_SECONDS=45
 ExecStart=/usr/local/lib/diva-player-standby/check-wsl-dr-standby.sh
+SuccessExitStatus=75
+TimeoutStartSec=120s
+TimeoutStopSec=15s
+UMask=0027
+CapabilityBoundingSet=
+LockPersonality=true
 NoNewPrivileges=true
+PrivateDevices=true
 PrivateTmp=true
+ProtectClock=true
+ProtectControlGroups=true
 ProtectHome=true
+ProtectHostname=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
 ProtectSystem=strict
+ReadWritePaths=-/etc/systemd/system -/run/lock
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=true
+RestrictRealtime=true
+SystemCallArchitectures=native

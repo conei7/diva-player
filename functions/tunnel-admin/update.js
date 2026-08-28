@@ -81,15 +81,23 @@ export async function onRequest({ request, env }) {
       'x-diva-pages-proxy': '1',
       'x-diva-pages-proxy-key': env.PAGES_PROXY_KEY,
     },
+    redirect: 'manual',
     signal: AbortSignal.timeout(10_000),
   }).catch(() => null);
-  if (!health?.ok) return Response.json({ error: 'tunnel health check failed' }, { status: 424 });
+  if (!health || health.status !== 200) {
+    return Response.json({ error: 'tunnel health check failed' }, { status: 424 });
+  }
+  const healthPayload = await health.json().catch(() => null);
+  if (!healthPayload || healthPayload.status !== 'ready') {
+    return Response.json({ error: 'tunnel readiness response is invalid' }, { status: 424 });
+  }
 
-  await env.TUNNEL_CONFIG.put(ORIGIN_KEYS[originRole], tunnelUrl);
+  const metadata = { checkedAt: new Date().toISOString() };
+  await env.TUNNEL_CONFIG.put(ORIGIN_KEYS[originRole], tunnelUrl, { metadata });
   // Preserve the legacy primary key while older deployments and rollback
   // builds may still read it. Standby registration never changes it.
   if (originRole === 'primary') {
-    await env.TUNNEL_CONFIG.put('quick_tunnel_url', tunnelUrl);
+    await env.TUNNEL_CONFIG.put('quick_tunnel_url', tunnelUrl, { metadata });
   }
   return Response.json({ success: true, originRole });
 }

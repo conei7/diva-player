@@ -15,6 +15,52 @@ SERVICE_FILE="/etc/systemd/system/diva-wsl-dr-quick-tunnel.service"
 SYNC_SERVICE_FILE="/etc/systemd/system/diva-wsl-dr-quick-tunnel-sync.service"
 SYNC_TIMER_FILE="/etc/systemd/system/diva-wsl-dr-quick-tunnel-sync.timer"
 
+exec 9>/run/lock/diva-wsl-dr-maintenance.lock
+flock 9
+
+verify_watchdog_full_pass() {
+    local deadline remaining result status
+    command -v timeout >/dev/null || {
+        echo 'The timeout command is required for bounded watchdog validation.' >&2
+        return 1
+    }
+    deadline=$((SECONDS + 180))
+    while (( SECONDS < deadline )); do
+        remaining=$((deadline - SECONDS))
+        if ! timeout --foreground --signal=KILL "${remaining}s" \
+            systemctl restart diva-wsl-dr-watchdog.service; then
+            : # Inspect the authoritative unit result below.
+        fi
+        remaining=$((deadline - SECONDS))
+        (( remaining > 0 )) || break
+        if ! result="$(timeout --foreground --signal=KILL "${remaining}s" \
+            systemctl show --property=Result --value diva-wsl-dr-watchdog.service)"; then
+            echo 'Unable to read the bounded watchdog result.' >&2
+            return 1
+        fi
+        remaining=$((deadline - SECONDS))
+        (( remaining > 0 )) || break
+        if ! status="$(timeout --foreground --signal=KILL "${remaining}s" \
+            systemctl show --property=ExecMainStatus --value diva-wsl-dr-watchdog.service)"; then
+            echo 'Unable to read the bounded watchdog exit status.' >&2
+            return 1
+        fi
+        if [[ "$result" == success && "$status" == 0 ]]; then
+            return 0
+        fi
+        if [[ "$result" == success && "$status" == 75 ]]; then
+            remaining=$((deadline - SECONDS))
+            (( remaining > 0 )) || break
+            if (( remaining < 2 )); then sleep "$remaining"; else sleep 2; fi
+            continue
+        fi
+        echo "Watchdog validation failed: result=$result status=$status" >&2
+        return 1
+    done
+    echo 'Watchdog did not reach a complete healthy pass within 180 seconds.' >&2
+    return 1
+}
+
 [[ -f "$ENV_FILE" && ! -L "$ENV_FILE" ]] || {
     echo 'Cloudflare environment must be a regular non-symlink file.' >&2
     exit 1
@@ -34,8 +80,24 @@ command -v cloudflared >/dev/null || {
     echo 'cloudflared is not installed.' >&2
     exit 1
 }
-curl -fsS --max-time 10 \
-    http://127.0.0.1:18080/backend-api/api/ready >/dev/null
+ready_response="$(mktemp)"
+if ! ready_code="$(curl -sS \
+        --connect-timeout 3 \
+        --max-time 10 \
+        --max-filesize 1048576 \
+        --max-redirs 0 \
+        --output "$ready_response" \
+        --write-out '%{http_code}' \
+        http://127.0.0.1:18080/backend-api/api/ready)" \
+        || [[ "$ready_code" != 200 ]] \
+        || ! python3 -c \
+            'import json, sys; payload = json.load(open(sys.argv[1], encoding="utf-8")); raise SystemExit(0 if isinstance(payload, dict) and payload.get("status") == "ready" else 1)' \
+            "$ready_response" 2>/dev/null; then
+    rm -f -- "$ready_response"
+    echo 'WSL DR API readiness check failed.' >&2
+    exit 1
+fi
+rm -f -- "$ready_response"
 
 if ! getent passwd "$SERVICE_USER" >/dev/null; then
     useradd --system --user-group --home-dir /nonexistent \
@@ -69,6 +131,28 @@ if systemctl start diva-wsl-dr-quick-tunnel-sync.service; then
     registration_succeeded=1
 fi
 systemctl enable --now diva-wsl-dr-quick-tunnel-sync.timer
+
+# Let the watchdog run through its normal lock path; otherwise a synchronous
+# start here would be an intentional maintenance skip and a false validation.
+flock -u 9
+exec 9>&-
+
+if ! watchdog_load_state="$(systemctl show --property=LoadState --value diva-wsl-dr-watchdog.service)"; then
+    echo 'Unable to inspect the DR watchdog unit.' >&2
+    exit 1
+fi
+case "$watchdog_load_state" in
+    loaded)
+        systemctl restart diva-wsl-dr-watchdog.timer
+        verify_watchdog_full_pass
+        registration_succeeded=1
+        ;;
+    not-found) ;;
+    *)
+        echo "Unexpected DR watchdog unit state: $watchdog_load_state" >&2
+        exit 1
+        ;;
+esac
 
 service_user="$(systemctl show -p User --value diva-wsl-dr-quick-tunnel.service)"
 main_pid="$(systemctl show -p MainPID --value diva-wsl-dr-quick-tunnel.service)"

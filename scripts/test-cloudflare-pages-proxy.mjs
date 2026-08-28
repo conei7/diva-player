@@ -13,9 +13,13 @@ const originalFetch = globalThis.fetch;
 const calls = [];
 globalThis.fetch = async (target, init) => {
   calls.push({ target: String(target), init });
-  return new Response(JSON.stringify({ ok: true }), {
+  return new Response(JSON.stringify({ ok: true, status: 'ready' }), {
     status: 200,
-    headers: { 'content-type': 'application/json' },
+    headers: {
+      'content-type': 'application/json',
+      'x-diva-origin-role': 'standby',
+      'x-diva-standby-state': 'stale',
+    },
   });
 };
 
@@ -31,7 +35,15 @@ try {
       get: async key => key === 'quick_tunnel_url' ? 'https://stable-test.trycloudflare.com' : null,
     },
   };
-  const backendRequest = new Request('https://diva-player.pages.dev/backend-api/api/health?full=1');
+  const backendRequest = new Request(
+    'https://diva-player.pages.dev/backend-api/api/health?full=1',
+    {
+      headers: {
+        'x-diva-origin-role': 'standby',
+        'x-diva-standby-state': 'fresh',
+      },
+    },
+  );
   const backendResponse = await proxyBackend({
     request: backendRequest,
     env,
@@ -42,7 +54,12 @@ try {
   assert.equal(calls[0].init.headers.get('x-diva-client-key'), 'pages-anonymous');
   assert.equal(calls[0].init.headers.get('x-diva-pages-proxy-key'), 'test-proxy-key');
   assert.equal(calls[0].init.headers.get('x-forwarded-for'), null);
-  assert.equal(calls[0].init.signal, backendRequest.signal);
+  assert.equal(calls[0].init.headers.get('x-diva-origin-role'), null);
+  assert.equal(calls[0].init.headers.get('x-diva-standby-state'), null);
+  assert(calls[0].init.signal instanceof AbortSignal);
+  assert.notEqual(calls[0].init.signal, backendRequest.signal);
+  assert.equal(backendResponse.headers.get('x-diva-origin-role'), 'primary');
+  assert.equal(backendResponse.headers.get('x-diva-standby-state'), 'missing');
 
   const invalidResponse = await proxyBackend({
     request: new Request('https://diva-player.pages.dev/backend-api/api/health'),
@@ -78,7 +95,10 @@ try {
   assert.equal(calls[1].target, 'https://api-origin.example.net/api/health?full=1');
   assert.equal(calls[1].init.headers.get('cf-access-client-id'), 'pages-client-id');
   assert.equal(calls[1].init.headers.get('cf-access-client-secret'), 'pages-client-secret');
-  assert.equal(calls[1].init.signal, namedRequest.signal);
+  assert(calls[1].init.signal instanceof AbortSignal);
+  assert.notEqual(calls[1].init.signal, namedRequest.signal);
+  assert.equal(namedResponse.headers.get('x-diva-origin-role'), 'named');
+  assert.equal(namedResponse.headers.get('x-diva-standby-state'), 'unknown');
 
   const doubleSlashRequest = new Request(
     'https://diva-player.pages.dev/backend-api//attacker.example/steal?x=1',
@@ -179,13 +199,15 @@ try {
   assert.equal(spaResponse.headers.get('x-content-type-options'), 'nosniff');
   assert.match(spaResponse.headers.get('permissions-policy'), /camera=\(\)/);
 
-  let written = null;
+  const writes = [];
   const proofKey = 'test-origin-proof-key';
   const updateEnv = {
     TUNNEL_SYNC_TOKEN: 'test-secret',
     TUNNEL_ORIGIN_PROOF_KEY: proofKey,
     PAGES_PROXY_KEY: 'test-proxy-key',
-    TUNNEL_CONFIG: { put: async (key, value) => { written = { key, value }; } },
+    TUNNEL_CONFIG: {
+      put: async (key, value, options) => { writes.push({ key, value, options }); },
+    },
   };
   const unauthorized = await updateTunnel({
     request: new Request('https://diva-player.pages.dev/tunnel-admin/update', {
@@ -209,10 +231,43 @@ try {
     env: updateEnv,
   });
   assert.equal(updated.status, 200);
-  assert.deepEqual(written, { key: 'quick_tunnel_url', value: tunnelUrl });
+  assert.deepEqual(writes.map(write => write.key), [
+    'quick_tunnel_primary_url',
+    'quick_tunnel_url',
+  ]);
+  assert(writes.every(write => write.value === tunnelUrl));
+  assert(writes.every(write => Number.isFinite(Date.parse(write.options?.metadata?.checkedAt))));
+  assert.equal(
+    writes[0].options.metadata.checkedAt,
+    writes[1].options.metadata.checkedAt,
+    'Primary and legacy keys must share one server-side health-check timestamp.',
+  );
   assert.equal(calls[4].target, `${tunnelUrl}/backend-api/api/ready`);
   assert.equal(calls[4].init.headers['x-diva-pages-proxy'], '1');
   assert.equal(calls[4].init.headers['x-diva-pages-proxy-key'], 'test-proxy-key');
+  assert.equal(calls[4].init.redirect, 'manual');
+
+  const healthyOriginFetch = globalThis.fetch;
+  globalThis.fetch = async (target, init) => {
+    calls.push({ target: String(target), init });
+    return new Response('<html>wrong route</html>', {
+      status: 200,
+      headers: { 'content-type': 'text/html' },
+    });
+  };
+  const writesBeforeInvalidReadiness = writes.length;
+  const invalidReadiness = await updateTunnel({
+    request: new Request('https://diva-player.pages.dev/tunnel-admin/update', {
+      method: 'POST',
+      headers: { authorization: 'Bearer test-secret', 'content-type': 'application/json' },
+      body: JSON.stringify({ tunnelUrl, timestamp, proof }),
+    }),
+    env: updateEnv,
+  });
+  assert.equal(invalidReadiness.status, 424);
+  assert.equal(writes.length, writesBeforeInvalidReadiness);
+  assert.equal(calls[5].init.redirect, 'manual');
+  globalThis.fetch = healthyOriginFetch;
 
   const missingHealthCredential = await updateTunnel({
     request: new Request('https://diva-player.pages.dev/tunnel-admin/update', {
@@ -223,7 +278,7 @@ try {
     env: { ...updateEnv, PAGES_PROXY_KEY: '' },
   });
   assert.equal(missingHealthCredential.status, 503);
-  assert.equal(calls.length, 5, 'Tunnel health must not run without the Pages proxy credential.');
+  assert.equal(calls.length, 6, 'Tunnel health must not run without the Pages proxy credential.');
 
   const invalidProof = await updateTunnel({
     request: new Request('https://diva-player.pages.dev/tunnel-admin/update', {
@@ -263,14 +318,22 @@ try {
     env: updateEnv,
   });
   assert.equal(standbyUpdated.status, 200);
-  assert.deepEqual(written, { key: 'quick_tunnel_standby_url', value: standbyUrl });
+  assert.equal(writes.at(-1).key, 'quick_tunnel_standby_url');
+  assert.equal(writes.at(-1).value, standbyUrl);
+  assert(Number.isFinite(Date.parse(writes.at(-1).options?.metadata?.checkedAt)));
 
   const failoverCalls = [];
   globalThis.fetch = async (target, init) => {
     failoverCalls.push({ target: String(target), init });
     return new Response(
       JSON.stringify({ origin: failoverCalls.length === 1 ? 'primary' : 'standby' }),
-      { status: failoverCalls.length === 1 ? 503 : 200 },
+      {
+        status: failoverCalls.length === 1 ? 503 : 200,
+        headers: {
+          'x-diva-origin-role': 'primary',
+          'x-diva-standby-state': 'stale',
+        },
+      },
     );
   };
   const failoverResponse = await proxyBackend({
@@ -278,10 +341,15 @@ try {
     env: {
       PAGES_PROXY_KEY: 'test-proxy-key',
       TUNNEL_CONFIG: {
-        get: async key => ({
-          quick_tunnel_primary_url: tunnelUrl,
-          quick_tunnel_standby_url: standbyUrl,
-        })[key] ?? null,
+        getWithMetadata: async key => ({
+          value: ({
+            quick_tunnel_primary_url: tunnelUrl,
+            quick_tunnel_standby_url: standbyUrl,
+          })[key] ?? null,
+          metadata: key === 'quick_tunnel_standby_url'
+            ? { checkedAt: new Date().toISOString() }
+            : null,
+        }),
       },
     },
   });
@@ -289,6 +357,74 @@ try {
   assert.equal(failoverCalls.length, 2);
   assert.equal(failoverCalls[0].target, `${tunnelUrl}/backend-api/api/health?full=1`);
   assert.equal(failoverCalls[1].target, `${standbyUrl}/backend-api/api/health?full=1`);
+  assert.equal(failoverResponse.headers.get('x-diva-origin-role'), 'standby');
+  assert.equal(failoverResponse.headers.get('x-diva-standby-state'), 'fresh');
+
+  globalThis.fetch = async () => new Response('{}', { status: 200 });
+  const staleStandbyResponse = await proxyBackend({
+    request: new Request('https://diva-player.pages.dev/backend-api/api/ready'),
+    env: {
+      PAGES_PROXY_KEY: 'test-proxy-key',
+      TUNNEL_CONFIG: {
+        getWithMetadata: async key => ({
+          value: ({
+            quick_tunnel_primary_url: tunnelUrl,
+            quick_tunnel_standby_url: standbyUrl,
+          })[key] ?? null,
+          metadata: key === 'quick_tunnel_standby_url'
+            ? { checkedAt: new Date(Date.now() - (16 * 60 * 1000)).toISOString() }
+            : null,
+        }),
+      },
+    },
+  });
+  assert.equal(staleStandbyResponse.headers.get('x-diva-origin-role'), 'primary');
+  assert.equal(staleStandbyResponse.headers.get('x-diva-standby-state'), 'stale');
+
+  const futureStandbyResponse = await proxyBackend({
+    request: new Request('https://diva-player.pages.dev/backend-api/api/ready'),
+    env: {
+      PAGES_PROXY_KEY: 'test-proxy-key',
+      TUNNEL_CONFIG: {
+        getWithMetadata: async key => ({
+          value: ({
+            quick_tunnel_primary_url: tunnelUrl,
+            quick_tunnel_standby_url: standbyUrl,
+          })[key] ?? null,
+          metadata: key === 'quick_tunnel_standby_url'
+            ? { checkedAt: new Date(Date.now() + (2 * 60 * 1000)).toISOString() }
+            : null,
+        }),
+      },
+    },
+  });
+  assert.equal(futureStandbyResponse.headers.get('x-diva-standby-state'), 'stale');
+
+  let duplicateOriginCallCount = 0;
+  globalThis.fetch = async () => {
+    duplicateOriginCallCount += 1;
+    return new Response('{}', { status: 200 });
+  };
+  const duplicateStandbyResponse = await proxyBackend({
+    request: new Request('https://diva-player.pages.dev/backend-api/api/ready'),
+    env: {
+      PAGES_PROXY_KEY: 'test-proxy-key',
+      TUNNEL_CONFIG: {
+        getWithMetadata: async key => ({
+          value: ({
+            quick_tunnel_primary_url: tunnelUrl,
+            quick_tunnel_standby_url: tunnelUrl.toUpperCase(),
+          })[key] ?? null,
+          metadata: key === 'quick_tunnel_standby_url'
+            ? { checkedAt: new Date().toISOString() }
+            : null,
+        }),
+      },
+    },
+  });
+  assert.equal(duplicateOriginCallCount, 1);
+  assert.equal(duplicateStandbyResponse.headers.get('x-diva-origin-role'), 'primary');
+  assert.equal(duplicateStandbyResponse.headers.get('x-diva-standby-state'), 'missing');
 
   const postFailoverCalls = [];
   globalThis.fetch = async (target, init) => {
@@ -314,8 +450,86 @@ try {
       },
     },
   });
-  assert.equal(postFailoverResponse.status, 200);
-  assert.deepEqual(postFailoverCalls.map(call => call.body), [postBody, postBody]);
+  assert.equal(postFailoverResponse.status, 503);
+  assert.deepEqual(postFailoverCalls.map(call => call.body), [postBody]);
+  assert.equal(postFailoverResponse.headers.get('x-diva-origin-role'), 'primary');
+  assert.equal(
+    postFailoverResponse.headers.get('x-diva-standby-state'),
+    'unknown',
+    'KV records created before metadata support must fail closed until revalidated.',
+  );
+
+  const freshFailoverEnv = {
+    PAGES_PROXY_KEY: 'test-proxy-key',
+    TUNNEL_CONFIG: {
+      getWithMetadata: async key => ({
+        value: ({
+          quick_tunnel_primary_url: tunnelUrl,
+          quick_tunnel_standby_url: standbyUrl,
+        })[key] ?? null,
+        metadata: key === 'quick_tunnel_standby_url'
+          ? { checkedAt: new Date().toISOString() }
+          : null,
+      }),
+    },
+  };
+  for (const path of [
+    '/backend-api/api/recommend/multi',
+    '/backend-api/api/recommend/dig',
+    '/backend-api/api/discovery/knowledge-map',
+  ]) {
+    postFailoverCalls.length = 0;
+    const readOnlyPostFailoverResponse = await proxyBackend({
+      request: new Request(
+        `https://diva-player.pages.dev${path}`,
+        { method: 'POST', body: postBody, headers: { 'content-type': 'application/json' } },
+      ),
+      env: freshFailoverEnv,
+    });
+    assert.equal(readOnlyPostFailoverResponse.status, 200);
+    assert.deepEqual(postFailoverCalls.map(call => call.body), [postBody, postBody]);
+    assert.equal(readOnlyPostFailoverResponse.headers.get('x-diva-origin-role'), 'standby');
+  }
+
+  postFailoverCalls.length = 0;
+  const mutatingPostResponse = await proxyBackend({
+    request: new Request(
+      'https://diva-player.pages.dev/backend-api/api/future-write',
+      { method: 'POST', body: postBody, headers: { 'content-type': 'application/json' } },
+    ),
+    env: freshFailoverEnv,
+  });
+  assert.equal(mutatingPostResponse.status, 503);
+  assert.deepEqual(postFailoverCalls.map(call => call.body), [postBody]);
+  assert.equal(mutatingPostResponse.headers.get('x-diva-origin-role'), 'primary');
+
+  postFailoverCalls.length = 0;
+  const mutatingPutResponse = await proxyBackend({
+    request: new Request(
+      'https://diva-player.pages.dev/backend-api/api/future-write',
+      { method: 'PUT', body: postBody, headers: { 'content-type': 'application/json' } },
+    ),
+    env: freshFailoverEnv,
+  });
+  assert.equal(mutatingPutResponse.status, 503);
+  assert.deepEqual(postFailoverCalls.map(call => call.body), [postBody]);
+  assert.equal(mutatingPutResponse.headers.get('x-diva-origin-role'), 'primary');
+
+  let mutatingTransportCallCount = 0;
+  globalThis.fetch = async () => {
+    mutatingTransportCallCount += 1;
+    throw new Error('ambiguous primary transport failure');
+  };
+  const mutatingTransportResponse = await proxyBackend({
+    request: new Request(
+      'https://diva-player.pages.dev/backend-api/api/future-write',
+      { method: 'POST', body: postBody, headers: { 'content-type': 'application/json' } },
+    ),
+    env: freshFailoverEnv,
+  });
+  assert.equal(mutatingTransportResponse.status, 502);
+  assert.equal(mutatingTransportCallCount, 1);
+  assert.equal(mutatingTransportResponse.headers.get('x-diva-origin-role'), 'primary');
 
   let unavailableCallCount = 0;
   globalThis.fetch = async () => {
@@ -335,9 +549,47 @@ try {
       },
     },
   });
-  assert.equal(unavailableResponse.status, 502);
-  assert.deepEqual(await unavailableResponse.json(), { error: 'API origins unavailable' });
-  assert.equal(unavailableCallCount, 2);
+  assert.equal(unavailableResponse.status, 503);
+  assert.equal(await unavailableResponse.text(), 'primary failed');
+  assert.equal(unavailableCallCount, 1);
+  assert.equal(unavailableResponse.headers.get('x-diva-origin-role'), 'primary');
+  assert.equal(unavailableResponse.headers.get('x-diva-standby-state'), 'unknown');
+
+  const originalAbortTimeout = AbortSignal.timeout;
+  try {
+    for (const abortSource of ['caller', 'timeout']) {
+      const callerController = new AbortController();
+      const timeoutController = new AbortController();
+      let streamedSignal;
+      AbortSignal.timeout = milliseconds => {
+        assert.equal(milliseconds, 15_000);
+        return timeoutController.signal;
+      };
+      globalThis.fetch = async (_target, init) => {
+        streamedSignal = init.signal;
+        return new Response(new ReadableStream({ start() {} }), { status: 200 });
+      };
+      const streamingResponse = await proxyBackend({
+        request: new Request(
+          'https://diva-player.pages.dev/backend-api/api/ready',
+          { signal: callerController.signal },
+        ),
+        env: freshFailoverEnv,
+      });
+      assert.equal(streamedSignal.aborted, false);
+      if (abortSource === 'caller') callerController.abort('caller disconnected');
+      else timeoutController.abort(new Error('origin timeout'));
+      await Promise.resolve();
+      assert.equal(
+        streamedSignal.aborted,
+        true,
+        `${abortSource} abort must remain attached while the origin body streams.`,
+      );
+      await streamingResponse.body.cancel().catch(() => {});
+    }
+  } finally {
+    AbortSignal.timeout = originalAbortTimeout;
+  }
   globalThis.fetch = originalFetch;
   console.log('PASS Cloudflare Pages API proxy routing');
 } finally {

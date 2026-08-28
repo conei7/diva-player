@@ -39,6 +39,7 @@
     "test:e2e:hidden-songs": "node scripts/test-hidden-songs-e2e.mjs",
     "test:deployment-topology": "node scripts/test-deployment-topology.mjs",
     "test:dr-standby-topology": "node scripts/test-dr-standby-topology.mjs",
+    "check:public-dr-health": "node scripts/check-public-dr-health.mjs",
     "test:rolling-deployment": "node scripts/test-rolling-deployment.mjs",
     "test:db-role-provisioning": "node scripts/test-db-role-provisioning.mjs",
     "test:tag-parent-fk-migration": "node scripts/test-tag-parent-fk-migration.mjs",
