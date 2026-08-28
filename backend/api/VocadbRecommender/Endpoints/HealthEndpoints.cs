@@ -2,13 +2,10 @@ using VocadbRecommender.Services;
 
 internal static class HealthEndpoints
 {
-    private static readonly SemaphoreSlim HealthGate = new(1, 1);
-    private static HealthSnapshot? healthSnapshot;
-
     public static IEndpointRouteBuilder MapHealthEndpoints(this IEndpointRouteBuilder endpoints)
     {
         endpoints.MapGet("/api/ready", GetReadinessAsync).DisableRateLimiting();
-        endpoints.MapGet("/api/health", GetHealthAsync);
+        endpoints.MapGet("/api/health", GetHealth);
         return endpoints;
     }
 
@@ -61,56 +58,57 @@ internal static class HealthEndpoints
                 : StatusCodes.Status503ServiceUnavailable);
     }
 
-    private static async Task<IResult> GetHealthAsync(
-        DbService db,
-        QdrantService qdrant,
-        CancellationToken cancellationToken)
+    private static IResult GetHealth(ApiOperationalHealthProbeState health)
     {
-        await HealthGate.WaitAsync(cancellationToken);
-        try
-        {
-            if (healthSnapshot is not null && healthSnapshot.ExpiresAt > DateTimeOffset.UtcNow)
-                return Results.Json(healthSnapshot.Payload, statusCode: healthSnapshot.StatusCode);
+        var response = CreateOperationalHealthResponse(
+            health.Snapshot,
+            TimeProvider.System.GetUtcNow(),
+            ApiOperationalHealthProbeService.MaximumSnapshotAge);
+        return Results.Json(response.Payload, statusCode: response.StatusCode);
+    }
 
-            var postgresTask = db.CheckHealthAsync(cancellationToken);
-            var qdrantTask = qdrant.CheckHealthAsync(cancellationToken);
-            var discoveryTask = db.CheckDiscoveryQualityAsync(cancellationToken);
-            var audioFeatureTask = db.CheckAudioFeatureHealthAsync(cancellationToken);
-            await Task.WhenAll(postgresTask, qdrantTask, discoveryTask, audioFeatureTask);
-            var postgres = await postgresTask;
-            var qdrantStatus = await qdrantTask;
-            var discoveryQuality = await discoveryTask;
-            var audioFeatures = await audioFeatureTask;
-            var ready = postgres.Ok && qdrantStatus.Ok && discoveryQuality.Ok;
-            var payload = new HealthPayload(
-                ready ? "ok" : "degraded",
-                new { postgres, qdrant = qdrantStatus },
-                discoveryQuality,
-                audioFeatures);
-            healthSnapshot = new HealthSnapshot(
-                payload,
-                ready ? StatusCodes.Status200OK : StatusCodes.Status503ServiceUnavailable,
-                DateTimeOffset.UtcNow.AddSeconds(30));
+    internal static OperationalHealthEndpointResponse CreateOperationalHealthResponse(
+        ApiOperationalHealthProbeSnapshot snapshot,
+        DateTimeOffset now,
+        TimeSpan maximumSnapshotAge)
+    {
+        if (maximumSnapshotAge <= TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(maximumSnapshotAge));
 
-            return Results.Json(payload, statusCode: healthSnapshot.StatusCode);
-        }
-        finally
-        {
-            HealthGate.Release();
-        }
+        var snapshotAge = snapshot.CheckedAt is { } checkedAt && checkedAt <= now
+            ? now - checkedAt
+            : TimeSpan.MaxValue;
+        var fresh = snapshot.Known && snapshotAge <= maximumSnapshotAge;
+        var healthy = fresh
+            && snapshot.Postgres.Ok
+            && snapshot.Qdrant.Ok
+            && snapshot.DiscoveryQuality.Ok;
+        var payload = new HealthPayload(
+            healthy ? "ok" : "degraded",
+            new HealthDependencies(snapshot.Postgres, snapshot.Qdrant),
+            snapshot.DiscoveryQuality,
+            snapshot.AudioFeatures);
+        return new OperationalHealthEndpointResponse(
+            payload,
+            healthy
+                ? StatusCodes.Status200OK
+                : StatusCodes.Status503ServiceUnavailable);
     }
 }
 
 internal record HealthPayload(
     string status,
-    object dependencies,
+    HealthDependencies dependencies,
     DiscoveryQualityHealth discoveryQuality,
     AudioFeatureHealth audioFeatures);
 
-internal record HealthSnapshot(
+internal sealed record HealthDependencies(
+    DependencyHealth Postgres,
+    DependencyHealth Qdrant);
+
+internal sealed record OperationalHealthEndpointResponse(
     HealthPayload Payload,
-    int StatusCode,
-    DateTimeOffset ExpiresAt);
+    int StatusCode);
 
 internal sealed record ReadinessEndpointResponse(object Payload, int StatusCode);
 

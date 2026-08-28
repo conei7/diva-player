@@ -11,6 +11,7 @@
     "build:cloudflare": "tsc -b && vite build --base=/",
     "lint": "eslint .",
     "test": "vitest run",
+    "test:api": "dotnet test diva-player.sln --configuration Release",
     "test:prepush": "node scripts/test-prepush.mjs",
     "test:integration:sbc": "node scripts/test-sbc-integration.mjs",
     "test:recommendation-regression": "node scripts/test-recommendation-regression.mjs",

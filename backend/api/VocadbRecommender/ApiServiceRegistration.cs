@@ -55,6 +55,8 @@ internal static class ApiServiceRegistration
         services.AddHostedService<ApiWarmupService>();
         services.AddSingleton<ApiReadinessProbeState>();
         services.AddHostedService<ApiReadinessProbeService>();
+        services.AddSingleton<ApiOperationalHealthProbeState>();
+        services.AddHostedService<ApiOperationalHealthProbeService>();
         services.AddHostedService<ApiRuntimeTelemetryService>();
         services.AddSingleton<MarkovService>();
         services.AddScoped<RecommendService>();

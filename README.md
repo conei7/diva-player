@@ -48,6 +48,8 @@ Viteは既定で`/backend-api`を`http://localhost:5000`へproxyします。別�
 
 backend（PostgreSQL、Qdrant、ASP.NET Core API A/B、HAProxy gateway、Web）をDocker Composeで起動し、続けてVite開発サーバーを起動できます。新規環境では`backend/.env.example`を`backend/.env`へコピーし、必須項目をローカル専用の値で設定してください。既存の`backend/.env`がある場合は上書きせず、内容を退避・確認して不足する現行キーだけをmergeします。秘密値をcommitしたり、本番値を開発環境へ流用したりしないでください。
 
+ローカルのAPI build／testには.NET 8 SDKが必要です。repositoryの`global.json`は8.0系の最新feature bandを選び、同居する.NET 9へ暗黙に切り替えません。`dotnet --version`が8.0系を返すことを確認してください。
+
 `DIVA_API_DB_USER`には、対象PostgreSQLへ事前作成済みのversion付きLOGIN（`diva_api_login_<version>`形式）を指定します。このLOGINは非特権の`diva_api_runtime` roleだけに所属し、`DIVA_API_DB_PASSWORD`と一致している必要があります。migration `0018_runtime_database_roles.sql`はNOLOGINの権限roleを定義しますが、LOGINやpasswordは作成しません。API LOGINへschema ownershipや管理者権限を与えないでください。
 
 新規DBの初回bootstrapは、repository rootから次の順で実行します。role作成helperはBashを使うため、WindowsではWSLまたはGit Bashから実行してください。
@@ -99,6 +101,7 @@ npm run dev:all:sh
 
 ```bash
 npm run build
+npm run test:api
 npm run preview
 ```
 

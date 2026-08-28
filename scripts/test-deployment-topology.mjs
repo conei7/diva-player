@@ -32,6 +32,7 @@ const [
   modelGuardMigration,
   modelGuardIntegration,
   readinessProbeService,
+  operationalHealthProbeService,
   runtimeTelemetryService,
   namedTunnelRunner,
   namedTunnelUnit,
@@ -75,6 +76,7 @@ const [
   readFile(new URL('../backend/database/migrations/0017_discovery_quality_model_guard.sql', import.meta.url), 'utf8'),
   readFile(new URL('./test-discovery-quality-model-guard.sql', import.meta.url), 'utf8'),
   readFile(new URL('../backend/api/VocadbRecommender/Services/ApiReadinessProbeService.cs', import.meta.url), 'utf8'),
+  readFile(new URL('../backend/api/VocadbRecommender/Services/ApiOperationalHealthProbeService.cs', import.meta.url), 'utf8'),
   readFile(new URL('../backend/api/VocadbRecommender/Services/ApiRuntimeTelemetryService.cs', import.meta.url), 'utf8'),
   readFile(new URL('./run-cloudflare-named-tunnel.sh', import.meta.url), 'utf8'),
   readFile(new URL('./diva-cloudflare-named-tunnel.service', import.meta.url), 'utf8'),
@@ -217,6 +219,8 @@ assert.match(ingressMiddleware, /FixedTimeEquals/);
 assert.match(ingressMiddleware, /StatusCodes\.Status403Forbidden/);
 assert.match(serviceRegistration, /AddHostedService<ApiWarmupService>/);
 assert.match(serviceRegistration, /AddHostedService<ApiReadinessProbeService>/);
+assert.match(serviceRegistration, /AddSingleton<ApiOperationalHealthProbeState>/);
+assert.match(serviceRegistration, /AddHostedService<ApiOperationalHealthProbeService>/);
 assert.match(serviceRegistration, /AddHostedService<ApiRuntimeTelemetryService>/);
 assert.match(readinessProbeService, /MaximumSnapshotAge = TimeSpan\.FromSeconds\(15\)/);
 assert.match(healthEndpoints, /ApiReadinessProbeService\.MaximumSnapshotAge/);
@@ -225,6 +229,13 @@ const readinessHandler = healthEndpoints.match(
 )?.[0];
 assert.ok(readinessHandler, 'readiness snapshot handler contract was not found');
 assert.doesNotMatch(readinessHandler, /CheckHealthAsync/);
+assert.match(operationalHealthProbeService, /ProbeInterval = TimeSpan\.FromMinutes\(5\)/);
+assert.match(operationalHealthProbeService, /MaximumSnapshotAge = TimeSpan\.FromMinutes\(15\)/);
+const operationalHealthHandler = healthEndpoints.match(
+  /private static IResult GetHealth\([\s\S]*?internal static OperationalHealthEndpointResponse/,
+)?.[0];
+assert.ok(operationalHealthHandler, 'operational health snapshot handler contract was not found');
+assert.doesNotMatch(operationalHealthHandler, /CheckHealthAsync|CheckDiscoveryQualityAsync|CheckAudioFeatureHealthAsync/);
 assert.match(runtimeTelemetryService, /api_runtime_metrics/);
 assert.match(namedTunnelRunner, /run --token-file "\$TOKEN_FILE"/);
 assert.doesNotMatch(namedTunnelRunner, /(?:^|\s)--token(?:\s|$)/m);
@@ -488,7 +499,7 @@ assert.match(modelGuardIntegration, /outdated model insert was not rejected/);
 assert.match(modelGuardIntegration, /outdated model upsert was not rejected/);
 assert.match(modelGuardIntegration, /outdated model update was not rejected/);
 assert.match(modelGuardIntegration, /model policy downgrade was not rejected/);
-assert.match(healthEndpoints, /postgres\.Ok && qdrantStatus\.Ok && discoveryQuality\.Ok/);
+assert.match(healthEndpoints, /snapshot\.Postgres\.Ok[\s\S]*snapshot\.Qdrant\.Ok[\s\S]*snapshot\.DiscoveryQuality\.Ok/);
 assert.match(dbService, /unexpected_model_version/);
 
 console.log('PASS rolling deployment topology contract');
