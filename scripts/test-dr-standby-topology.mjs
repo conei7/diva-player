@@ -54,6 +54,7 @@ assert.match(gateway, /bind 127\.0\.0\.1:15000/);
 assert.match(gateway, /server api_a 127\.0\.0\.1:15001 check/);
 assert.match(gateway, /server api_b 127\.0\.0\.1:15002 check/);
 assert.match(nginx, /listen 127\.0\.0\.1:18080/);
+assert.match(nginx, /absolute_redirect off/);
 assert.match(nginx, /proxy_pass http:\/\/127\.0\.0\.1:15000\//);
 
 assert.match(provisioner, /0018_runtime_database_roles\.sql/);
