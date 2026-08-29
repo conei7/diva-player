@@ -21,6 +21,7 @@ export const SENSITIVE_ENVIRONMENT_VARIABLES = Object.freeze([
   'TUNNEL_ORIGIN_PROOF_KEY',
   'CF_ACCESS_CLIENT_SECRET',
 ]);
+const ALWAYS_REQUIRED_SECRET_VARIABLES = SENSITIVE_ENVIRONMENT_VARIABLES.slice(0, 3);
 
 function positiveInteger(value, option) {
   const parsed = Number.parseInt(value, 10);
@@ -67,6 +68,15 @@ function assertSuccessfulDeployment(deployment, environment) {
   return deployment;
 }
 
+function requireSecretVariable(config, environment, name) {
+  const variable = config.env_vars?.[name];
+  if (!variable) throw new Error(`Cloudflare ${environment} ${name} is missing`);
+  if (variable.type !== 'secret_text') {
+    throw new Error(`Cloudflare ${environment} ${name} must be secret_text`);
+  }
+  return variable;
+}
+
 function environmentContract(config, environment) {
   if (!config || typeof config !== 'object' || Array.isArray(config)) {
     throw new Error(`Cloudflare ${environment} deployment configuration is missing`);
@@ -74,14 +84,24 @@ function environmentContract(config, environment) {
   if (!config.kv_namespaces?.TUNNEL_CONFIG?.namespace_id) {
     throw new Error(`Cloudflare ${environment} TUNNEL_CONFIG binding is missing`);
   }
-  for (const name of SENSITIVE_ENVIRONMENT_VARIABLES) {
-    const variable = config.env_vars?.[name];
-    if (!variable) throw new Error(`Cloudflare ${environment} ${name} is missing`);
-    if (variable.type !== 'secret_text') {
-      throw new Error(`Cloudflare ${environment} ${name} must be secret_text`);
-    }
-  }
+  for (const name of ALWAYS_REQUIRED_SECRET_VARIABLES) requireSecretVariable(config, environment, name);
   return config;
+}
+
+function requireMatchingPlainText(productionVars, previewVars, name) {
+  const productionValue = productionVars[name];
+  const previewValue = previewVars[name];
+  if (!productionValue || !previewValue) {
+    throw new Error(`Cloudflare named origin requires ${name} in production and preview`);
+  }
+  if (productionValue.type !== 'plain_text' || previewValue.type !== 'plain_text') {
+    throw new Error(`Cloudflare named origin ${name} must be plain_text in production and preview`);
+  }
+  if (
+    typeof productionValue.value !== 'string'
+    || productionValue.value.trim() === ''
+    || productionValue.value !== previewValue.value
+  ) throw new Error(`Cloudflare named origin ${name} must be non-empty and match production and preview`);
 }
 
 function compatibilityDate(value, environment) {
@@ -140,6 +160,11 @@ export function inspectProjectContract(project, expectedProductionBranch = 'main
 
   const productionVars = production.env_vars || {};
   const previewVars = preview.env_vars || {};
+  const productionNames = Object.keys(productionVars).sort();
+  const previewNames = Object.keys(previewVars).sort();
+  if (JSON.stringify(productionNames) !== JSON.stringify(previewNames)) {
+    throw new Error('Cloudflare preview and production environment variable name sets must match exactly');
+  }
   for (const [name, productionValue] of Object.entries(productionVars)) {
     const previewValue = previewVars[name];
     if (!previewValue) throw new Error(`Cloudflare preview environment variable ${name} is missing`);
@@ -149,6 +174,21 @@ export function inspectProjectContract(project, expectedProductionBranch = 'main
     if (productionValue.type === 'plain_text' && productionValue.value !== previewValue.value) {
       throw new Error(`Cloudflare preview environment variable ${name} differs from production`);
     }
+  }
+  const originMode = productionVars.DIVA_API_ORIGIN_MODE;
+  if (originMode && originMode.type !== 'plain_text') {
+    throw new Error('Cloudflare DIVA_API_ORIGIN_MODE must be plain_text');
+  }
+  const usesNamedOrigin = String(originMode?.value || 'quick').trim().toLowerCase() === 'named';
+  const hasAccessSecret = Object.hasOwn(productionVars, 'CF_ACCESS_CLIENT_SECRET')
+    || Object.hasOwn(previewVars, 'CF_ACCESS_CLIENT_SECRET');
+  if (usesNamedOrigin || hasAccessSecret) {
+    requireSecretVariable(production, 'production', 'CF_ACCESS_CLIENT_SECRET');
+    requireSecretVariable(preview, 'preview', 'CF_ACCESS_CLIENT_SECRET');
+  }
+  if (usesNamedOrigin) {
+    requireMatchingPlainText(productionVars, previewVars, 'CF_ACCESS_CLIENT_ID');
+    requireMatchingPlainText(productionVars, previewVars, 'DIVA_NAMED_TUNNEL_ORIGIN');
   }
 
   const canonical = assertSuccessfulDeployment(project.canonical_deployment, 'production');

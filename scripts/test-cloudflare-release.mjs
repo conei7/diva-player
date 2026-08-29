@@ -66,7 +66,6 @@ function environmentConfig() {
       PAGES_PROXY_KEY: { type: 'secret_text', value: '' },
       TUNNEL_SYNC_TOKEN: { type: 'secret_text', value: '' },
       TUNNEL_ORIGIN_PROOF_KEY: { type: 'secret_text', value: '' },
-      CF_ACCESS_CLIENT_SECRET: { type: 'secret_text', value: '' },
       DIVA_API_ORIGIN_MODE: { type: 'plain_text', value: 'quick' },
     },
     kv_namespaces: {
@@ -87,6 +86,18 @@ function project(overrides = {}) {
     canonical_deployment: deployment(),
     ...overrides,
   };
+}
+
+function namedEnvironmentConfig() {
+  const config = environmentConfig();
+  config.env_vars.DIVA_API_ORIGIN_MODE.value = 'named';
+  config.env_vars.CF_ACCESS_CLIENT_ID = { type: 'plain_text', value: 'pages-client-id' };
+  config.env_vars.CF_ACCESS_CLIENT_SECRET = { type: 'secret_text', value: '' };
+  config.env_vars.DIVA_NAMED_TUNNEL_ORIGIN = {
+    type: 'plain_text',
+    value: 'https://api-origin.example.net',
+  };
+  return config;
 }
 
 try {
@@ -256,7 +267,7 @@ try {
     })),
     /preview PAGES_PROXY_KEY is missing/,
   );
-  for (const sensitiveName of SENSITIVE_ENVIRONMENT_VARIABLES) {
+  for (const sensitiveName of SENSITIVE_ENVIRONMENT_VARIABLES.slice(0, 3)) {
     for (const environment of ['production', 'preview']) {
       const production = environmentConfig();
       const preview = environmentConfig();
@@ -268,6 +279,80 @@ try {
       );
     }
   }
+  assert.equal(validateProjectContract(project()).id, deployment().id);
+
+  const quickProductionWithAccess = environmentConfig();
+  const quickPreviewWithAccess = environmentConfig();
+  quickProductionWithAccess.env_vars.CF_ACCESS_CLIENT_SECRET = { type: 'secret_text', value: '' };
+  quickPreviewWithAccess.env_vars.CF_ACCESS_CLIENT_SECRET = { type: 'secret_text', value: '' };
+  assert.equal(validateProjectContract(project({
+    deployment_configs: { production: quickProductionWithAccess, preview: quickPreviewWithAccess },
+  })).id, deployment().id);
+
+  quickProductionWithAccess.env_vars.CF_ACCESS_CLIENT_SECRET = { type: 'plain_text', value: 'unsafe' };
+  quickPreviewWithAccess.env_vars.CF_ACCESS_CLIENT_SECRET = { type: 'plain_text', value: 'unsafe' };
+  assert.throws(
+    () => validateProjectContract(project({
+      deployment_configs: { production: quickProductionWithAccess, preview: quickPreviewWithAccess },
+    })),
+    /production CF_ACCESS_CLIENT_SECRET must be secret_text/,
+  );
+
+  for (const environment of ['production', 'preview']) {
+    const production = environmentConfig();
+    const preview = environmentConfig();
+    const config = environment === 'production' ? production : preview;
+    config.env_vars.CF_ACCESS_CLIENT_SECRET = { type: 'secret_text', value: '' };
+    assert.throws(
+      () => validateProjectContract(project({ deployment_configs: { production, preview } })),
+      /environment variable name sets must match exactly/,
+    );
+  }
+
+  const previewOnlyVariable = environmentConfig();
+  previewOnlyVariable.env_vars.PREVIEW_ONLY_BEHAVIOR = { type: 'plain_text', value: 'unsafe-drift' };
+  assert.throws(
+    () => validateProjectContract(project({
+      deployment_configs: { production: environmentConfig(), preview: previewOnlyVariable },
+    })),
+    /environment variable name sets must match exactly/,
+  );
+
+  assert.equal(validateProjectContract(project({
+    deployment_configs: { production: namedEnvironmentConfig(), preview: namedEnvironmentConfig() },
+  })).id, deployment().id);
+  const namedFields = ['CF_ACCESS_CLIENT_ID', 'DIVA_NAMED_TUNNEL_ORIGIN'];
+  for (const field of namedFields) {
+    const production = namedEnvironmentConfig();
+    const preview = namedEnvironmentConfig();
+    delete production.env_vars[field];
+    delete preview.env_vars[field];
+    assert.throws(
+      () => validateProjectContract(project({ deployment_configs: { production, preview } })),
+      new RegExp(`named origin requires ${field}`),
+    );
+  }
+  const mismatchedNamedPreview = namedEnvironmentConfig();
+  mismatchedNamedPreview.env_vars.DIVA_NAMED_TUNNEL_ORIGIN.value = 'https://different-origin.example.net';
+  assert.throws(
+    () => validateProjectContract(project({
+      deployment_configs: { production: namedEnvironmentConfig(), preview: mismatchedNamedPreview },
+    })),
+    /DIVA_NAMED_TUNNEL_ORIGIN differs from production/,
+  );
+  const namedWithoutAccessProduction = namedEnvironmentConfig();
+  const namedWithoutAccessPreview = namedEnvironmentConfig();
+  delete namedWithoutAccessProduction.env_vars.CF_ACCESS_CLIENT_SECRET;
+  delete namedWithoutAccessPreview.env_vars.CF_ACCESS_CLIENT_SECRET;
+  assert.throws(
+    () => validateProjectContract(project({
+      deployment_configs: {
+        production: namedWithoutAccessProduction,
+        preview: namedWithoutAccessPreview,
+      },
+    })),
+    /production CF_ACCESS_CLIENT_SECRET is missing/,
+  );
 
   const priorPreviewId = '22222222-3333-4444-5555-666666666666';
   assert.deepEqual(validatePreviewBaseline({
