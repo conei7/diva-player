@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
+const normalizeNewlines = text => text.replaceAll('\r\n', '\n');
+
 const [
   compose,
   gateway,
@@ -47,7 +49,7 @@ const [
   ingressMiddleware,
   spaFallback,
   startDevSbc,
-] = await Promise.all([
+] = (await Promise.all([
   readFile(new URL('../backend/docker-compose.yml', import.meta.url), 'utf8'),
   readFile(new URL('../backend/api-gateway/haproxy.cfg', import.meta.url), 'utf8'),
   readFile(new URL('../nginx.conf', import.meta.url), 'utf8'),
@@ -93,8 +95,8 @@ const [
   readFile(new URL('../backend/api/VocadbRecommender/PublicIngressSecurityMiddleware.cs', import.meta.url), 'utf8'),
   readFile(new URL('../functions/[[path]].js', import.meta.url), 'utf8'),
   readFile(new URL('./start-dev-sbc.ps1', import.meta.url), 'utf8'),
-]);
-const staticHeaders = await readFile(new URL('../public/_headers', import.meta.url), 'utf8');
+])).map(normalizeNewlines);
+const staticHeaders = normalizeNewlines(await readFile(new URL('../public/_headers', import.meta.url), 'utf8'));
 
 assert.match(compose, /api_a:/);
 assert.match(compose, /api_b:/);
