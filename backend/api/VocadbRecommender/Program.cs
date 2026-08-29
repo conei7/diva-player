@@ -22,6 +22,7 @@ builder.WebHost.ConfigureKestrel(options =>
 
 // --- 設定 ---
 builder.Services.AddDivaApiServices(builder.Configuration);
+builder.Services.AddSingleton(ApiBulkheadOptions.FromConfiguration(builder.Configuration));
 
 // --- サービス登録 ---
 
@@ -46,7 +47,12 @@ builder.Services.AddCors(options =>
             .WithOrigins(allowedOrigins)
             .WithMethods("GET", "POST", "OPTIONS")
             .WithHeaders("Accept", "Content-Type", "Cache-Control")
-            .WithExposedHeaders("Server-Timing", "X-Diva-Search-Cache", "Retry-After", "X-Diva-Rate-Limit"));
+            .WithExposedHeaders(
+                "Server-Timing",
+                "X-Diva-Search-Cache",
+                "Retry-After",
+                "X-Diva-Rate-Limit",
+                "X-Diva-Bulkhead"));
 });
 
 // 推薦・検索APIは高コストなDB/Qdrant処理を含むため、クライアントIP単位で抑制する。
@@ -142,6 +148,7 @@ var app = builder.Build();
 app.UseMiddleware<PublicIngressSecurityMiddleware>(pagesProxyKey);
 app.UseResponseCompression();
 app.UseCors("AllowFrontend");
+app.UseMiddleware<ApiBulkheadMiddleware>();
 app.UseRateLimiter();
 app.UseMiddleware<RecommendationPublicationMiddleware>();
 

@@ -47,6 +47,7 @@ const [
   backendEnvExample,
   discoveryEligibleLookupMigration,
   ingressMiddleware,
+  bulkheadMiddleware,
   spaFallback,
   startDevSbc,
 ] = (await Promise.all([
@@ -93,6 +94,7 @@ const [
   readFile(new URL('../backend/.env.example', import.meta.url), 'utf8'),
   readFile(new URL('../backend/database/migrations/0021_discovery_eligible_song_lookup.sql', import.meta.url), 'utf8'),
   readFile(new URL('../backend/api/VocadbRecommender/PublicIngressSecurityMiddleware.cs', import.meta.url), 'utf8'),
+  readFile(new URL('../backend/api/VocadbRecommender/Middleware/ApiBulkheadMiddleware.cs', import.meta.url), 'utf8'),
   readFile(new URL('../functions/[[path]].js', import.meta.url), 'utf8'),
   readFile(new URL('./start-dev-sbc.ps1', import.meta.url), 'utf8'),
 ])).map(normalizeNewlines);
@@ -106,6 +108,9 @@ assert.match(compose, /image: "\$\{DIVA_API_IMAGE:-diva-player-api:local\}"/);
 assert.match(compose, /image: "\$\{DIVA_GATEWAY_IMAGE:-diva-player-api-gateway:local\}"/);
 assert.match(compose, /image: "\$\{DIVA_WEB_IMAGE:-diva-player-web:local\}"/);
 assert.match(compose, /Maximum Pool Size=16/);
+assert.match(compose, /Recommender__Bulkhead__HeavyPermitLimit: "\$\{DIVA_API_HEAVY_CONCURRENCY:-12\}"/);
+assert.match(compose, /mem_limit: "768m"/);
+assert.match(compose, /pids_limit: 256/);
 assert.match(compose, /DIVA_API_DB_USER:\?DIVA_API_DB_USER is required/);
 assert.match(compose, /DIVA_API_DB_PASSWORD:\?DIVA_API_DB_PASSWORD is required/);
 assert.match(compose, /DIVA_DB_ADMIN_PASSWORD:\?DIVA_DB_ADMIN_PASSWORD is required/);
@@ -178,9 +183,12 @@ assert.match(publicationGuard, /ReadSnapshotAsync[\s\S]*ObserveRecommendationPub
 assert.match(compose, /max-size: "10m"/);
 assert.match(compose, /max-file: "5"/);
 assert.match(compose, /http:\/\/127\.0\.0\.1:5000\/api\/ready/);
-assert.match(gateway, /server api_a api_a:5000 check/);
-assert.match(gateway, /server api_b api_b:5000 check/);
+assert.match(gateway, /server api_a api_a:5000 maxconn 128 check/);
+assert.match(gateway, /server api_b api_b:5000 maxconn 128 check/);
 assert.match(gateway, /stats socket \/tmp\/haproxy-admin\.sock/);
+assert.match(gateway, /maxconn 512/);
+assert.match(gateway, /timeout queue 3s/);
+assert.match(gateway, /frontend api_front[\s\S]*maxconn 256/);
 assert.match(gateway, /balance hdr\(X-Diva-Balance-Key\)/);
 assert.match(gateway, /X-Diva-Api-Slot/);
 assert.match(nginx, /proxy_pass http:\/\/api_gateway:5000\//);
@@ -218,6 +226,11 @@ assert.match(healthEndpoints, /warmupSnapshot\.Failures\.Count == 0/);
 assert.match(program, /isTrustedGatewayProxy/);
 assert.match(program, /MaxRequestBodySize = 1 \* 1024 \* 1024/);
 assert.match(program, /UseMiddleware<PublicIngressSecurityMiddleware>\(pagesProxyKey\)/);
+assert.match(program, /UseMiddleware<ApiBulkheadMiddleware>\(\)/);
+assert.match(bulkheadMiddleware, /DefaultHeavyPermitLimit = 12/);
+assert.match(bulkheadMiddleware, /StatusCodes\.Status503ServiceUnavailable/);
+assert.match(bulkheadMiddleware, /error = "server_busy"/);
+assert.match(bulkheadMiddleware, /QueueTimeoutMilliseconds/);
 assert.match(ingressMiddleware, /CF-Connecting-IP/);
 assert.match(ingressMiddleware, /CF-Ray/);
 assert.match(ingressMiddleware, /X-Diva-Pages-Proxy-Key/);
