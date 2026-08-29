@@ -22,7 +22,10 @@ builder.WebHost.ConfigureKestrel(options =>
 
 // --- 設定 ---
 builder.Services.AddDivaApiServices(builder.Configuration);
-builder.Services.AddSingleton(ApiBulkheadOptions.FromConfiguration(builder.Configuration));
+var apiBulkheadOptions = ApiBulkheadOptions.FromConfiguration(builder.Configuration);
+builder.Services.AddSingleton(apiBulkheadOptions);
+builder.Services.AddSingleton(serviceProvider => new ApiDatabaseConnectionBudget(
+    serviceProvider.GetRequiredService<ApiBulkheadOptions>()));
 
 // --- サービス登録 ---
 
@@ -148,8 +151,8 @@ var app = builder.Build();
 app.UseMiddleware<PublicIngressSecurityMiddleware>(pagesProxyKey);
 app.UseResponseCompression();
 app.UseCors("AllowFrontend");
-app.UseMiddleware<ApiBulkheadMiddleware>();
 app.UseRateLimiter();
+app.UseMiddleware<ApiBulkheadMiddleware>();
 app.UseMiddleware<RecommendationPublicationMiddleware>();
 
 const int maxSearchStart = 100_000;

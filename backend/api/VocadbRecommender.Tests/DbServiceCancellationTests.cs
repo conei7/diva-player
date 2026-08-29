@@ -161,7 +161,12 @@ public sealed class DbServiceCancellationTests
                     "Host=127.0.0.1;Port=1;Username=test;Password=test;Database=test;Timeout=1",
             })
             .Build();
-        return new DbService(configuration, objectCache, searchCache);
+        var bulkheadOptions = ApiBulkheadOptions.FromConfiguration(configuration);
+        return new DbService(
+            configuration,
+            new ApiDatabaseConnectionBudget(bulkheadOptions),
+            objectCache,
+            searchCache);
     }
 
     private static RecommendationObjectCache CreateObjectCache() =>

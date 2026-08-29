@@ -16,8 +16,8 @@ x-api-environment: &api-environment
   Recommender__SearchCacheEntrySizeMiB: "8"
   Recommender__ObjectCacheSizeMiB: "64"
   Recommender__ObjectCacheEntrySizeMiB: "16"
-  # Per API slot. Aggregate*2 + reserve equals the 16-connection pool: a
-  # recommendation can retain one guard lease while opening its query lease.
+  # Per API slot. Foreground database fan-out is capped at pool minus reserve,
+  # leaving four of the 16 connections for probes and the publication guard.
   Recommender__Bulkhead__AggregatePermitLimit: "${DIVA_API_AGGREGATE_CONCURRENCY:-6}"
   Recommender__Bulkhead__DatabaseConnectionReserve: "${DIVA_API_DB_CONNECTION_RESERVE:-4}"
   Recommender__Bulkhead__HeavyPermitLimit: "${DIVA_API_HEAVY_CONCURRENCY:-6}"

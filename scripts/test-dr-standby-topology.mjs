@@ -76,7 +76,7 @@ assert.match(compose, /Recommender__QdrantEndpoint: "http:\/\/127\.0\.0\.1:16334
 assert.match(compose, /Recommender__QdrantRestEndpoint: "http:\/\/127\.0\.0\.1:16333"/);
 assert.match(compose, /Maximum Pool Size=8/);
 assert.match(compose, /Recommender__Bulkhead__AggregatePermitLimit: "3"/);
-assert.match(compose, /Recommender__Bulkhead__DatabaseConnectionReserve: "2"/);
+assert.match(compose, /Recommender__Bulkhead__DatabaseConnectionReserve: "3"/);
 assert.match(compose, /Recommender__Bulkhead__HeavyPermitLimit: "3"/);
 assert.match(compose, /Recommender__Bulkhead__ProviderPermitLimit: "1"/);
 assert.match(compose, /Recommender__Bulkhead__QueueTimeoutMilliseconds: "1000"/);

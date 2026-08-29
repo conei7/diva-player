@@ -48,6 +48,7 @@ const [
   discoveryEligibleLookupMigration,
   ingressMiddleware,
   bulkheadMiddleware,
+  databaseConnectionBudget,
   spaFallback,
   startDevSbc,
   bulkheadProbe,
@@ -96,6 +97,7 @@ const [
   readFile(new URL('../backend/database/migrations/0021_discovery_eligible_song_lookup.sql', import.meta.url), 'utf8'),
   readFile(new URL('../backend/api/VocadbRecommender/PublicIngressSecurityMiddleware.cs', import.meta.url), 'utf8'),
   readFile(new URL('../backend/api/VocadbRecommender/Middleware/ApiBulkheadMiddleware.cs', import.meta.url), 'utf8'),
+  readFile(new URL('../backend/api/VocadbRecommender/Middleware/ApiDatabaseConnectionBudget.cs', import.meta.url), 'utf8'),
   readFile(new URL('../functions/[[path]].js', import.meta.url), 'utf8'),
   readFile(new URL('./start-dev-sbc.ps1', import.meta.url), 'utf8'),
   readFile(new URL('./probe-api-bulkhead.mjs', import.meta.url), 'utf8'),
@@ -231,11 +233,19 @@ assert.match(program, /isTrustedGatewayProxy/);
 assert.match(program, /MaxRequestBodySize = 1 \* 1024 \* 1024/);
 assert.match(program, /UseMiddleware<PublicIngressSecurityMiddleware>\(pagesProxyKey\)/);
 assert.match(program, /UseMiddleware<ApiBulkheadMiddleware>\(\)/);
+assert.ok(
+  program.indexOf('app.UseRateLimiter();') < program.indexOf('app.UseMiddleware<ApiBulkheadMiddleware>();'),
+  'client rate limiting must run before aggregate load shedding',
+);
 assert.match(bulkheadMiddleware, /DefaultAggregatePermitLimit = 6/);
 assert.match(bulkheadMiddleware, /DefaultDatabaseConnectionReserve = 4/);
-assert.match(bulkheadMiddleware, /DatabaseConnectionsPerExecutionBudget = 2/);
 assert.match(bulkheadMiddleware, /postgres\.MaxPoolSize/);
 assert.match(bulkheadMiddleware, /_aggregateExecution/);
+assert.match(bulkheadMiddleware, /_databaseConnectionBudget\.EnterRequestScope\(\)/);
+assert.match(databaseConnectionBudget, /ForegroundConnectionLimit/);
+assert.match(databaseConnectionBudget, /AcquireConnectionAsync/);
+assert.match(databaseConnectionBudget, /connection\.StateChange \+= OnStateChange/);
+assert.match(dbService, /_connectionBudget\.AcquireConnectionAsync\(cancellationToken\)/);
 assert.match(bulkheadMiddleware, /StatusCodes\.Status503ServiceUnavailable/);
 assert.match(bulkheadMiddleware, /error = "server_busy"/);
 assert.match(bulkheadMiddleware, /QueueTimeoutMilliseconds/);

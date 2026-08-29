@@ -111,6 +111,7 @@ public class DbService
         $"(COALESCE({youtubeExpression}, 0) + ({NicoWeightSql($"COALESCE({youtubeExpression}, 0)", profile)} * COALESCE({nicoExpression}, 0)))";
 
     private readonly string _connStr;
+    private readonly ApiDatabaseConnectionBudget _connectionBudget;
     private readonly RecommendationObjectCache _objectCache;
     private readonly SearchResponseCache _searchCache;
     private readonly SemaphoreSlim _knowledgeMapCatalogLock = new(1, 1);
@@ -185,20 +186,35 @@ public class DbService
 
     public DbService(
         IConfiguration cfg,
+        ApiDatabaseConnectionBudget connectionBudget,
         RecommendationObjectCache objectCache,
         SearchResponseCache searchCache)
     {
         _connStr = cfg.GetConnectionString("Postgres")
             ?? throw new InvalidOperationException("ConnectionStrings:Postgres is not configured");
+        _connectionBudget = connectionBudget;
         _objectCache = objectCache;
         _searchCache = searchCache;
     }
 
     private async Task<NpgsqlConnection> OpenAsync(CancellationToken cancellationToken)
     {
-        var conn = new NpgsqlConnection(_connStr);
-        await conn.OpenAsync(cancellationToken);
-        return conn;
+        var permit = await _connectionBudget.AcquireConnectionAsync(cancellationToken);
+        NpgsqlConnection? conn = null;
+        try
+        {
+            conn = new NpgsqlConnection(_connStr);
+            await conn.OpenAsync(cancellationToken);
+            permit?.ReleaseWhenClosed(conn);
+            return conn;
+        }
+        catch
+        {
+            if (conn is not null)
+                await conn.DisposeAsync();
+            permit?.Dispose();
+            throw;
+        }
     }
 
     private async Task<string> GetRecommendationPublicationGenerationAsync(

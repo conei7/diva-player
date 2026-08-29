@@ -17,11 +17,6 @@ internal sealed record ApiBulkheadOptions(
     int ProviderQueueLimit,
     int QueueTimeoutMilliseconds)
 {
-    // Recommendation execution can retain one publication-guard connection
-    // while opening a second connection for its actual query.  Budget every
-    // admitted request at that worst case so mixed lanes cannot jointly drain
-    // the Npgsql pool and starve background/readiness probes.
-    internal const int DatabaseConnectionsPerExecutionBudget = 2;
     internal const int DefaultAggregatePermitLimit = 6;
     internal const int DefaultDatabaseConnectionReserve = 4;
     internal const int DefaultHeavyPermitLimit = 6;
@@ -90,15 +85,19 @@ internal sealed record ApiBulkheadOptions(
                 "Every Recommender:Bulkhead lane permit limit must be less than or equal to AggregatePermitLimit.");
         }
 
-        var requiredPoolCapacity = checked(
-            aggregatePermitLimit * DatabaseConnectionsPerExecutionBudget
-            + databaseConnectionReserve);
-        if (requiredPoolCapacity > postgres.MaxPoolSize)
+        var foregroundConnectionLimit = checked(
+            postgres.MaxPoolSize - databaseConnectionReserve);
+        if (foregroundConnectionLimit < 1)
         {
             throw new InvalidOperationException(
-                $"Recommender:Bulkhead requires {requiredPoolCapacity} PostgreSQL pool connections "
-                + $"but ConnectionStrings:Postgres Maximum Pool Size is {postgres.MaxPoolSize}. "
-                + "Lower AggregatePermitLimit or DatabaseConnectionReserve.");
+                "Recommender:Bulkhead:DatabaseConnectionReserve must be smaller than "
+                + $"ConnectionStrings:Postgres Maximum Pool Size ({postgres.MaxPoolSize}).");
+        }
+        if (aggregatePermitLimit > foregroundConnectionLimit)
+        {
+            throw new InvalidOperationException(
+                $"Recommender:Bulkhead:AggregatePermitLimit ({aggregatePermitLimit}) must not exceed "
+                + $"the foreground PostgreSQL connection budget ({foregroundConnectionLimit}).");
         }
 
         return options;
@@ -131,6 +130,7 @@ internal sealed class ApiBulkheadMiddleware
     private readonly TimeSpan _queueTimeout;
     private readonly IReadOnlyDictionary<ApiBulkheadLane, BulkheadLane> _lanes;
     private readonly SemaphoreSlim _aggregateExecution;
+    private readonly ApiDatabaseConnectionBudget _databaseConnectionBudget;
 
     internal enum ApiBulkheadLane
     {
@@ -143,10 +143,12 @@ internal sealed class ApiBulkheadMiddleware
     public ApiBulkheadMiddleware(
         RequestDelegate next,
         ApiBulkheadOptions options,
+        ApiDatabaseConnectionBudget databaseConnectionBudget,
         ILogger<ApiBulkheadMiddleware> logger)
     {
         _next = next;
         _logger = logger;
+        _databaseConnectionBudget = databaseConnectionBudget;
         _queueTimeout = TimeSpan.FromMilliseconds(options.QueueTimeoutMilliseconds);
         _aggregateExecution = new SemaphoreSlim(options.AggregatePermitLimit);
         _lanes = new Dictionary<ApiBulkheadLane, BulkheadLane>
@@ -223,6 +225,7 @@ internal sealed class ApiBulkheadMiddleware
             }
 
             context.Response.Headers["X-Diva-Bulkhead"] = lane.Name;
+            using var databaseRequestScope = _databaseConnectionBudget.EnterRequestScope();
             await _next(context);
         }
         finally

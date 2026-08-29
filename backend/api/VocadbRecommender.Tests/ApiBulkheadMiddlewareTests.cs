@@ -1,10 +1,12 @@
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Features;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using System.Text.Json;
+using System.Threading.RateLimiting;
 
 namespace VocadbRecommender.Tests;
 
@@ -37,11 +39,7 @@ public sealed class ApiBulkheadMiddlewareTests
         Assert.Equal(6, defaults.HeavyPermitLimit);
         Assert.Equal(6, defaults.HeavyQueueLimit);
         Assert.Equal(1_500, defaults.QueueTimeoutMilliseconds);
-        Assert.Equal(
-            16,
-            defaults.AggregatePermitLimit
-                * ApiBulkheadOptions.DatabaseConnectionsPerExecutionBudget
-                + defaults.DatabaseConnectionReserve);
+        Assert.Equal(12, new ApiDatabaseConnectionBudget(defaults).ForegroundConnectionLimit);
 
         Assert.Throws<InvalidOperationException>(() =>
             ApiBulkheadOptions.FromConfiguration(CreateConfiguration(
@@ -54,7 +52,11 @@ public sealed class ApiBulkheadMiddlewareTests
         Assert.Throws<InvalidOperationException>(() =>
             ApiBulkheadOptions.FromConfiguration(CreateConfiguration(
                 poolSize: 16,
-                ("Recommender:Bulkhead:AggregatePermitLimit", "7"))));
+                ("Recommender:Bulkhead:AggregatePermitLimit", "13"))));
+        Assert.Throws<InvalidOperationException>(() =>
+            ApiBulkheadOptions.FromConfiguration(CreateConfiguration(
+                poolSize: 8,
+                ("Recommender:Bulkhead:DatabaseConnectionReserve", "8"))));
         Assert.Throws<InvalidOperationException>(() =>
             ApiBulkheadOptions.FromConfiguration(new ConfigurationBuilder().Build()));
         Assert.Throws<InvalidOperationException>(() =>
@@ -66,11 +68,11 @@ public sealed class ApiBulkheadMiddlewareTests
         var standby = ApiBulkheadOptions.FromConfiguration(CreateConfiguration(
             poolSize: 8,
             ("Recommender:Bulkhead:AggregatePermitLimit", "3"),
-            ("Recommender:Bulkhead:DatabaseConnectionReserve", "2"),
+            ("Recommender:Bulkhead:DatabaseConnectionReserve", "3"),
             ("Recommender:Bulkhead:HeavyPermitLimit", "3"),
             ("Recommender:Bulkhead:StandardPermitLimit", "3"),
             ("Recommender:Bulkhead:ProviderPermitLimit", "1")));
-        Assert.Equal(8, standby.AggregatePermitLimit * 2 + standby.DatabaseConnectionReserve);
+        Assert.Equal(5, new ApiDatabaseConnectionBudget(standby).ForegroundConnectionLimit);
     }
 
     [Fact]
@@ -271,6 +273,8 @@ public sealed class ApiBulkheadMiddlewareTests
             queueLimit: 0,
             aggregatePermitLimit: 1,
             timeoutMilliseconds: 100));
+        services.AddSingleton(serviceProvider => new ApiDatabaseConnectionBudget(
+            serviceProvider.GetRequiredService<ApiBulkheadOptions>()));
         await using var serviceProvider = services.BuildServiceProvider();
 
         var application = new ApplicationBuilder(serviceProvider);
@@ -327,20 +331,87 @@ public sealed class ApiBulkheadMiddlewareTests
         await saturatedTask.WaitAsync(TimeSpan.FromSeconds(2));
     }
 
+    [Fact]
+    public async Task RateLimiterBeforeBulkhead_CountsSameClientBulkheadRejections()
+    {
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var calls = 0;
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddRateLimiter(options =>
+        {
+            options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+            options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(_ =>
+                RateLimitPartition.GetFixedWindowLimiter(
+                    "same-client",
+                    _ => new FixedWindowRateLimiterOptions
+                    {
+                        PermitLimit = 2,
+                        Window = TimeSpan.FromMinutes(1),
+                        QueueLimit = 0,
+                        QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+                        AutoReplenishment = true,
+                    }));
+        });
+        services.AddSingleton(CreateOptions(
+            permitLimit: 1,
+            queueLimit: 0,
+            aggregatePermitLimit: 1,
+            timeoutMilliseconds: 100));
+        services.AddSingleton(serviceProvider => new ApiDatabaseConnectionBudget(
+            serviceProvider.GetRequiredService<ApiBulkheadOptions>()));
+        await using var serviceProvider = services.BuildServiceProvider();
+
+        var application = new ApplicationBuilder(serviceProvider);
+        application.UseRateLimiter();
+        application.UseMiddleware<ApiBulkheadMiddleware>();
+        application.Run(async _ =>
+        {
+            Interlocked.Increment(ref calls);
+            entered.TrySetResult();
+            await release.Task;
+        });
+        var pipeline = application.Build();
+
+        var activeTask = pipeline(CreateContext("/api/recommend", serviceProvider));
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        try
+        {
+            var bulkheadRejected = CreateContext("/api/recommend", serviceProvider);
+            await pipeline(bulkheadRejected);
+            Assert.Equal(StatusCodes.Status503ServiceUnavailable, bulkheadRejected.Response.StatusCode);
+
+            var rateLimited = CreateContext("/api/recommend", serviceProvider);
+            await pipeline(rateLimited);
+            Assert.Equal(StatusCodes.Status429TooManyRequests, rateLimited.Response.StatusCode);
+            Assert.Equal(1, Volatile.Read(ref calls));
+        }
+        finally
+        {
+            release.TrySetResult();
+            await activeTask.WaitAsync(TimeSpan.FromSeconds(2));
+        }
+    }
+
     private static ApiBulkheadMiddleware CreateMiddleware(
         RequestDelegate next,
         int permitLimit,
         int queueLimit,
         int aggregatePermitLimit,
-        int timeoutMilliseconds) =>
-        new(
-            next,
-            CreateOptions(
+        int timeoutMilliseconds)
+    {
+        var options = CreateOptions(
                 permitLimit,
                 queueLimit,
                 aggregatePermitLimit,
-                timeoutMilliseconds),
+                timeoutMilliseconds);
+        return new ApiBulkheadMiddleware(
+            next,
+            options,
+            new ApiDatabaseConnectionBudget(options),
             NullLogger<ApiBulkheadMiddleware>.Instance);
+    }
 
     private static ApiBulkheadOptions CreateOptions(
         int permitLimit,
@@ -350,7 +421,7 @@ public sealed class ApiBulkheadMiddlewareTests
         new(
             aggregatePermitLimit,
             DatabaseConnectionReserve: 2,
-            DatabaseMaximumPoolSize: checked(aggregatePermitLimit * 2 + 2),
+            DatabaseMaximumPoolSize: checked(aggregatePermitLimit + 2),
             permitLimit,
             queueLimit,
             permitLimit,
