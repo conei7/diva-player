@@ -1,10 +1,17 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { packageRelease, verifyRelease } from './cloudflare-release-artifact.mjs';
 import {
+  packageRelease,
+  parseCompatibilityFlagsJson,
+  verifyRelease,
+} from './cloudflare-release-artifact.mjs';
+import {
+  inspectProjectContract,
   matchesReleaseDeployment,
+  rollbackReachedTarget,
   validateProjectContract,
   validateRollbackCandidate,
 } from './cloudflare-pages-release.mjs';
@@ -18,6 +25,9 @@ const workflow = (await readFile(new URL('../.github/workflows/deploy.yml', impo
   .replaceAll('\r\n', '\n');
 const spaFallback = await readFile(new URL('../functions/[[path]].js', import.meta.url), 'utf8');
 const productionRoutes = JSON.parse(await readFile(new URL('../public/_routes.json', import.meta.url), 'utf8'));
+const compatibilityDate = '2026-08-20';
+const compatibilityFlags = ['nodejs_compat'];
+const workerSource = 'const worker = { fetch: (request, env) => env.ASSETS.fetch(request) }; export { worker as default };\n';
 
 function deployment(overrides = {}) {
   return {
@@ -42,9 +52,9 @@ function deployment(overrides = {}) {
 
 function environmentConfig() {
   return {
-    compatibility_date: '2026-07-12',
+    compatibility_date: compatibilityDate,
     always_use_latest_compatibility_date: false,
-    compatibility_flags: [],
+    compatibility_flags: compatibilityFlags,
     env_vars: {
       PAGES_PROXY_KEY: { type: 'secret_text', value: '' },
       DIVA_API_ORIGIN_MODE: { type: 'plain_text', value: 'quick' },
@@ -72,9 +82,15 @@ function project(overrides = {}) {
 try {
   assert.equal(workflow.match(/npm run build:cloudflare/g)?.length, 1);
   assert.match(workflow, /build:\n\s+if: github\.ref == 'refs\/heads\/main'/);
-  assert.equal(workflow.match(/wrangler pages functions build functions/g)?.length, 1);
+  assert.match(workflow, /cloudflare_contract:\n\s+if: github\.ref == 'refs\/heads\/main'/);
+  assert.match(workflow, /Inspect live Cloudflare release contract[\s\S]*--github-output "\$GITHUB_OUTPUT"/);
+  assert.match(workflow, /build:\n\s+if: github\.ref == 'refs\/heads\/main'\n\s+needs: cloudflare_contract/);
+  assert.match(workflow, /deploy-cloudflare:\n\s+needs: \[cloudflare_contract, build\]/);
+  assert.equal(workflow.match(/cloudflare-release-artifact\.mjs build-worker/g)?.length, 1);
   assert.equal(workflow.match(/--no-bundle/g)?.length, 2);
-  assert.match(workflow, /--compatibility-date 2026-07-12 \\\n\s+--minify/);
+  assert.match(workflow, /build-worker \\\n\s+--compatibility-date "\$COMPATIBILITY_DATE" \\\n\s+--compatibility-flags-json "\$COMPATIBILITY_FLAGS_JSON"/);
+  assert.doesNotMatch(workflow, /2026-07-12/);
+  assert.match(workflow, /Validate Cloudflare project release contract[\s\S]*--expected-compatibility-date "\$COMPATIBILITY_DATE"[\s\S]*--expected-compatibility-flags-json "\$COMPATIBILITY_FLAGS_JSON"/);
   assert.match(workflow, /actions\/upload-artifact@[a-f0-9]{40} # v7\.0\.1/);
   assert.match(workflow, /actions\/download-artifact@[a-f0-9]{40} # v8\.0\.1/);
   assert.match(workflow, /Deploy exact release to isolated preview[\s\S]*--branch "\$preview_branch"/);
@@ -86,6 +102,9 @@ try {
   assert.match(workflow, /canonical state will be reconciled before rollback/);
   assert.match(workflow, /last-known-good remained canonical, so rollback was unnecessary/);
   assert.match(workflow, /rollback-production[\s\S]*--target-file "\$RUNNER_TEMP\/last-known-good-production\.json"/);
+  const releaseScript = await readFile(new URL('./cloudflare-pages-release.mjs', import.meta.url), 'utf8');
+  assert.match(releaseScript, /canonical\.id === target\.id/);
+  assert.match(releaseScript, /rollbackResponse[\s\S]*rollbackReachedTarget\(rollbackResponse, target\)/);
   const deployJob = workflow.slice(workflow.indexOf('  deploy-cloudflare:'));
   assert.doesNotMatch(deployJob, /npm run build:cloudflare/);
   assert.match(spaFallback, /env\.ASSETS\.fetch/);
@@ -103,10 +122,13 @@ try {
     include: ['/backend-api/*', '/tunnel-admin/update', '/watch', '/playing', '/knowledge-map'],
     exclude: [],
   }));
-  await writeFile(
-    join(projectRoot, '.cloudflare-functions-build', 'index.js'),
-    'const worker = { fetch: (request, env) => env.ASSETS.fetch(request) }; export { worker as default };\n',
-  );
+  await writeFile(join(projectRoot, '.cloudflare-functions-build', 'index.js'), workerSource);
+  await writeFile(join(projectRoot, '.cloudflare-functions-build', 'metadata.json'), JSON.stringify({
+    schemaVersion: 1,
+    compatibilityDate,
+    compatibilityFlags,
+    workerSha256: createHash('sha256').update(workerSource).digest('hex'),
+  }));
 
   const manifest = await packageRelease({
     projectRoot,
@@ -121,7 +143,25 @@ try {
   assert.ok(manifest.files.some(file => file.path === 'dist/_worker.js'));
   assert.ok(manifest.files.every(file => !file.path.startsWith('functions/')));
   assert.match(manifest.payloadSha256, /^[a-f0-9]{64}$/);
-  assert.deepEqual((await verifyRelease({ releaseDirectory, expectedCommit: commit })).files, manifest.files);
+  assert.deepEqual(manifest.pagesFunctions, {
+    compatibilityDate,
+    compatibilityFlags,
+    workerSha256: createHash('sha256').update(workerSource).digest('hex'),
+  });
+  assert.deepEqual((await verifyRelease({
+    releaseDirectory,
+    expectedCommit: commit,
+    expectedCompatibilityDate: compatibilityDate,
+    expectedCompatibilityFlags: compatibilityFlags,
+  })).files, manifest.files);
+  await assert.rejects(
+    verifyRelease({
+      releaseDirectory,
+      expectedCommit: commit,
+      expectedCompatibilityDate: '2026-08-19',
+    }),
+    /release compatibility date mismatch/,
+  );
 
   await writeFile(join(releaseDirectory, 'payload', 'dist', 'index.html'), '<main>tampered</main>\n');
   await assert.rejects(
@@ -144,6 +184,13 @@ try {
   );
 
   assert.equal(validateProjectContract(project()).id, deployment().id);
+  assert.deepEqual(inspectProjectContract(project()), {
+    canonical: project().canonical_deployment,
+    compatibilityDate,
+    compatibilityFlags,
+  });
+  assert.deepEqual(parseCompatibilityFlagsJson('["nodejs_compat"]'), compatibilityFlags);
+  assert.throws(() => parseCompatibilityFlagsJson('["nodejs_compat","nodejs_compat"]'), /duplicate flag/);
   assert.throws(
     () => validateProjectContract(project({ source: { config: { production_deployments_enabled: true } } })),
     /automatic production branch deployments must be disabled/,
@@ -163,6 +210,14 @@ try {
       deployment_configs: { production: environmentConfig(), preview: latestCompatibilityPreview },
     })),
     /latest compatibility date overrides must be disabled/,
+  );
+  const mismatchedCompatibilityPreview = environmentConfig();
+  mismatchedCompatibilityPreview.compatibility_date = '2026-08-19';
+  assert.throws(
+    () => validateProjectContract(project({
+      deployment_configs: { production: environmentConfig(), preview: mismatchedCompatibilityPreview },
+    })),
+    /compatibility dates must match/,
   );
   const missingPreviewSecret = environmentConfig();
   delete missingPreviewSecret.env_vars.PAGES_PROXY_KEY;
@@ -199,6 +254,8 @@ try {
     commitHash: commit,
   };
   assert.equal(validateRollbackCandidate(rollbackTarget, deployment()).id, rollbackTarget.id);
+  assert.equal(rollbackReachedTarget(deployment(), rollbackTarget), true);
+  assert.equal(rollbackReachedTarget(deployment({ id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee' }), rollbackTarget), false);
   assert.throws(
     () => validateRollbackCandidate(rollbackTarget, deployment({ environment: 'preview' })),
     /expected a production deployment/,

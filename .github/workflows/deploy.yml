@@ -13,8 +13,40 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  cloudflare_contract:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      compatibility_date: ${{ steps.inspect.outputs.compatibility_date }}
+      compatibility_flags_json: ${{ steps.inspect.outputs.compatibility_flags_json }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22.22.0'
+      - name: Validate Cloudflare credentials
+        shell: bash
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [[ -z "$CLOUDFLARE_API_TOKEN" || -z "$CLOUDFLARE_ACCOUNT_ID" ]]; then
+            echo "::error::Cloudflare release inspection requires CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID repository secrets."
+            exit 1
+          fi
+      - name: Inspect live Cloudflare release contract
+        id: inspect
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          node scripts/cloudflare-pages-release.mjs inspect-project \
+            --project diva-player \
+            --github-output "$GITHUB_OUTPUT"
   build:
     if: github.ref == 'refs/heads/main'
+    needs: cloudflare_contract
     runs-on: ubuntu-latest
     timeout-minutes: 45
     outputs:
@@ -162,25 +194,31 @@ jobs:
           fi
       - name: Build exact Cloudflare release once
         shell: bash
+        env:
+          COMPATIBILITY_DATE: ${{ needs.cloudflare_contract.outputs.compatibility_date }}
+          COMPATIBILITY_FLAGS_JSON: ${{ needs.cloudflare_contract.outputs.compatibility_flags_json }}
         run: |
           npm run build:cloudflare
-          npx wrangler pages functions build functions \
-            --outdir .cloudflare-functions-build \
-            --project-directory . \
-            --build-output-directory dist \
-            --compatibility-date 2026-07-12 \
-            --minify
+          node scripts/cloudflare-release-artifact.mjs build-worker \
+            --compatibility-date "$COMPATIBILITY_DATE" \
+            --compatibility-flags-json "$COMPATIBILITY_FLAGS_JSON"
           test -s .cloudflare-functions-build/index.js
       - name: Package Cloudflare release with provenance
         id: release_artifact
         shell: bash
+        env:
+          COMPATIBILITY_DATE: ${{ needs.cloudflare_contract.outputs.compatibility_date }}
+          COMPATIBILITY_FLAGS_JSON: ${{ needs.cloudflare_contract.outputs.compatibility_flags_json }}
         run: |
           npm run package:cloudflare-release -- \
             --git-commit "$GITHUB_SHA" \
             --github-run-id "$GITHUB_RUN_ID" \
             --github-run-attempt "$GITHUB_RUN_ATTEMPT" \
             --github-output "$GITHUB_OUTPUT"
-          npm run verify:cloudflare-release -- --expected-commit "$GITHUB_SHA"
+          npm run verify:cloudflare-release -- \
+            --expected-commit "$GITHUB_SHA" \
+            --expected-compatibility-date "$COMPATIBILITY_DATE" \
+            --expected-compatibility-flags-json "$COMPATIBILITY_FLAGS_JSON"
           tar --sort=name \
             --mtime='UTC 1970-01-01' \
             --owner=0 \
@@ -197,7 +235,7 @@ jobs:
           retention-days: 30
           compression-level: 0
   deploy-cloudflare:
-    needs: build
+    needs: [cloudflare_contract, build]
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -228,17 +266,27 @@ jobs:
         shell: bash
         env:
           EXPECTED_RELEASE_SHA256: ${{ needs.build.outputs.release_sha256 }}
+          COMPATIBILITY_DATE: ${{ needs.cloudflare_contract.outputs.compatibility_date }}
+          COMPATIBILITY_FLAGS_JSON: ${{ needs.cloudflare_contract.outputs.compatibility_flags_json }}
         run: |
           tar -xf "$RUNNER_TEMP/cloudflare-pages-release/cloudflare-pages-release.tar" -C "$GITHUB_WORKSPACE"
           npm run verify:cloudflare-release -- \
             --expected-commit "$GITHUB_SHA" \
             --expected-sha256 "$EXPECTED_RELEASE_SHA256" \
+            --expected-compatibility-date "$COMPATIBILITY_DATE" \
+            --expected-compatibility-flags-json "$COMPATIBILITY_FLAGS_JSON" \
             --github-output "$GITHUB_OUTPUT"
       - name: Validate Cloudflare project release contract
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: node scripts/cloudflare-pages-release.mjs inspect-project --project diva-player
+          COMPATIBILITY_DATE: ${{ needs.cloudflare_contract.outputs.compatibility_date }}
+          COMPATIBILITY_FLAGS_JSON: ${{ needs.cloudflare_contract.outputs.compatibility_flags_json }}
+        run: |
+          node scripts/cloudflare-pages-release.mjs inspect-project \
+            --project diva-player \
+            --expected-compatibility-date "$COMPATIBILITY_DATE" \
+            --expected-compatibility-flags-json "$COMPATIBILITY_FLAGS_JSON"
       - name: Deploy exact release to isolated preview
         shell: bash
         env:
@@ -326,8 +374,13 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           RELEASE_SHA256: ${{ needs.build.outputs.release_sha256 }}
+          COMPATIBILITY_DATE: ${{ needs.cloudflare_contract.outputs.compatibility_date }}
+          COMPATIBILITY_FLAGS_JSON: ${{ needs.cloudflare_contract.outputs.compatibility_flags_json }}
         run: |
-          npm run verify:cloudflare-release -- --expected-commit "$GITHUB_SHA"
+          npm run verify:cloudflare-release -- \
+            --expected-commit "$GITHUB_SHA" \
+            --expected-compatibility-date "$COMPATIBILITY_DATE" \
+            --expected-compatibility-flags-json "$COMPATIBILITY_FLAGS_JSON"
           cd .cloudflare-release/payload
           "$GITHUB_WORKSPACE/node_modules/.bin/wrangler" pages deploy dist \
             --project-name diva-player \

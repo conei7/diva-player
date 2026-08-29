@@ -3,13 +3,14 @@ import { pathToFileURL } from 'node:url';
 
 const API_BASE = 'https://api.cloudflare.com/client/v4';
 const DEFAULT_PROJECT = 'diva-player';
-const RELEASE_COMPATIBILITY_DATE = '2026-07-12';
 const DEFAULT_ATTEMPTS = 8;
 const DEFAULT_INTERVAL_MS = 5_000;
 const REQUEST_TIMEOUT_MS = 15_000;
 const DEPLOYMENT_ID_PATTERN = /^[a-zA-Z0-9-]{8,64}$/;
 const GIT_COMMIT_PATTERN = /^[a-f0-9]{40}$/;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
+const COMPATIBILITY_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const COMPATIBILITY_FLAG_PATTERN = /^[a-z0-9_-]{1,128}$/;
 
 function positiveInteger(value, option) {
   const parsed = Number.parseInt(value, 10);
@@ -69,7 +70,29 @@ function environmentContract(config, environment) {
   return config;
 }
 
-export function validateProjectContract(project, expectedProductionBranch = 'main') {
+function compatibilityDate(value, environment) {
+  const date = String(value || '');
+  if (!COMPATIBILITY_DATE_PATTERN.test(date)) {
+    throw new Error(`Cloudflare ${environment} compatibility date is invalid`);
+  }
+  const parsed = new Date(`${date}T00:00:00.000Z`);
+  if (Number.isNaN(parsed.valueOf()) || parsed.toISOString().slice(0, 10) !== date) {
+    throw new Error(`Cloudflare ${environment} compatibility date is invalid`);
+  }
+  return date;
+}
+
+export function normalizeCompatibilityFlags(value, label = 'compatibility flags') {
+  if (!Array.isArray(value)) throw new Error(`Cloudflare ${label} must be an array`);
+  const flags = value.map(flag => String(flag));
+  if (flags.some(flag => !COMPATIBILITY_FLAG_PATTERN.test(flag))) {
+    throw new Error(`Cloudflare ${label} contains an invalid flag`);
+  }
+  if (new Set(flags).size !== flags.length) throw new Error(`Cloudflare ${label} contains a duplicate flag`);
+  return flags.sort();
+}
+
+export function inspectProjectContract(project, expectedProductionBranch = 'main') {
   if (!project || typeof project !== 'object' || Array.isArray(project)) throw new Error('Cloudflare project is missing');
   if (project.name !== DEFAULT_PROJECT) throw new Error(`unexpected Cloudflare project: ${project.name || 'unknown'}`);
   if (project.production_branch !== expectedProductionBranch) {
@@ -82,18 +105,17 @@ export function validateProjectContract(project, expectedProductionBranch = 'mai
 
   const production = environmentContract(project.deployment_configs?.production, 'production');
   const preview = environmentContract(project.deployment_configs?.preview, 'preview');
-  const productionCompatibilityDate = String(production.compatibility_date || '').slice(0, 10);
-  const previewCompatibilityDate = String(preview.compatibility_date || '').slice(0, 10);
-  if (
-    productionCompatibilityDate !== RELEASE_COMPATIBILITY_DATE
-    || previewCompatibilityDate !== RELEASE_COMPATIBILITY_DATE
-  ) throw new Error(`Cloudflare preview and production compatibility date must be ${RELEASE_COMPATIBILITY_DATE}`);
+  const productionCompatibilityDate = compatibilityDate(production.compatibility_date, 'production');
+  const previewCompatibilityDate = compatibilityDate(preview.compatibility_date, 'preview');
+  if (productionCompatibilityDate !== previewCompatibilityDate) {
+    throw new Error('Cloudflare preview and production compatibility dates must match');
+  }
   if (
     production.always_use_latest_compatibility_date !== false
     || preview.always_use_latest_compatibility_date !== false
   ) throw new Error('Cloudflare latest compatibility date overrides must be disabled');
-  const productionFlags = [...(production.compatibility_flags || [])].sort();
-  const previewFlags = [...(preview.compatibility_flags || [])].sort();
+  const productionFlags = normalizeCompatibilityFlags(production.compatibility_flags || [], 'production compatibility flags');
+  const previewFlags = normalizeCompatibilityFlags(preview.compatibility_flags || [], 'preview compatibility flags');
   if (JSON.stringify(productionFlags) !== JSON.stringify(previewFlags)) {
     throw new Error('Cloudflare preview and production compatibility flags must match');
   }
@@ -123,7 +145,15 @@ export function validateProjectContract(project, expectedProductionBranch = 'mai
   if (!GIT_COMMIT_PATTERN.test(canonicalMetadata.commit_hash || '')) {
     throw new Error('canonical Cloudflare production deployment has invalid commit provenance');
   }
-  return canonical;
+  return {
+    canonical,
+    compatibilityDate: productionCompatibilityDate,
+    compatibilityFlags: productionFlags,
+  };
+}
+
+export function validateProjectContract(project, expectedProductionBranch = 'main') {
+  return inspectProjectContract(project, expectedProductionBranch).canonical;
 }
 
 export function matchesReleaseDeployment(deployment, {
@@ -158,6 +188,10 @@ export function validateRollbackCandidate(target, deployment) {
     || summary.url !== target.url
   ) throw new Error('rollback target no longer matches the verified production deployment');
   return candidate;
+}
+
+export function rollbackReachedTarget(current, target) {
+  return Boolean(current?.id && target?.id && current.id === target.id);
 }
 
 function requireCloudflareEnvironment() {
@@ -279,8 +313,33 @@ async function main() {
   const intervalMs = positiveInteger(values.get('--interval-ms') || `${DEFAULT_INTERVAL_MS}`, '--interval-ms');
 
   if (command === 'inspect-project') {
-    const current = validateProjectContract(await getProject(project));
-    await writeSummary(values.get('--output'), deploymentSummary(current));
+    const inspected = inspectProjectContract(await getProject(project));
+    const expectedDate = values.get('--expected-compatibility-date') || null;
+    if (expectedDate && inspected.compatibilityDate !== expectedDate) {
+      throw new Error(`Cloudflare compatibility date changed after preflight (expected ${expectedDate})`);
+    }
+    const expectedFlagsJson = values.get('--expected-compatibility-flags-json') || null;
+    if (expectedFlagsJson) {
+      let expectedFlags;
+      try {
+        expectedFlags = normalizeCompatibilityFlags(JSON.parse(expectedFlagsJson), 'expected compatibility flags');
+      } catch (error) {
+        throw new Error(`expected compatibility flags JSON is invalid: ${error.message}`);
+      }
+      if (JSON.stringify(inspected.compatibilityFlags) !== JSON.stringify(expectedFlags)) {
+        throw new Error('Cloudflare compatibility flags changed after preflight');
+      }
+    }
+    const summary = {
+      ...deploymentSummary(inspected.canonical),
+      compatibilityDate: inspected.compatibilityDate,
+      compatibilityFlags: inspected.compatibilityFlags,
+    };
+    await writeSummary(values.get('--output'), summary);
+    await appendGitHubOutput(values.get('--github-output'), {
+      compatibility_date: inspected.compatibilityDate,
+      compatibility_flags_json: JSON.stringify(inspected.compatibilityFlags),
+    });
     return;
   }
 
@@ -336,13 +395,21 @@ async function main() {
     const target = JSON.parse(await readFile(targetFile, 'utf8'));
     assertDeploymentId(target.id, 'rollback deployment ID');
     validateRollbackCandidate(target, await getDeployment(project, target.id));
-    await cloudflareRequest(
+    // The official endpoint returns the existing successful production target.
+    // Treat any different response ID as a contract failure before polling.
+    const rollbackResponse = await cloudflareRequest(
       `${projectPath(project)}/deployments/${encodeURIComponent(target.id)}/rollback`,
       { method: 'POST' },
     );
+    if (!rollbackReachedTarget(rollbackResponse, target)) {
+      throw new Error('Cloudflare rollback API did not return the requested target deployment');
+    }
     const restored = await waitFor(async () => {
       const current = validateProjectContract(await getProject(project));
-      return current.id === target.id ? current : null;
+      // Pages rollback re-points canonical production to the existing successful
+      // target deployment; it does not promote preview or create a new release ID.
+      // Therefore convergence is proved only by canonical.id === target.id.
+      return rollbackReachedTarget(current, target) ? current : null;
     }, { attempts, intervalMs, description: 'production rollback' });
     await writeSummary(values.get('--output'), deploymentSummary(restored));
     return;

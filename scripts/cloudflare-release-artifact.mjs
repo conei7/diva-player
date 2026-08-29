@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { spawn } from 'node:child_process';
 import {
   copyFile,
   lstat,
@@ -13,9 +14,13 @@ import { pathToFileURL } from 'node:url';
 
 const MANIFEST_NAME = 'manifest.json';
 const PAYLOAD_NAME = 'payload';
-const SCHEMA_VERSION = 1;
+const WORKER_BUILD_DIRECTORY = '.cloudflare-functions-build';
+const WORKER_METADATA_NAME = 'metadata.json';
+const SCHEMA_VERSION = 2;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 const GIT_COMMIT_PATTERN = /^[a-f0-9]{40}$/;
+const COMPATIBILITY_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const COMPATIBILITY_FLAG_PATTERN = /^[a-z0-9_-]{1,128}$/;
 
 function sha256(value) {
   return createHash('sha256').update(value).digest('hex');
@@ -28,6 +33,99 @@ function toPosixPath(value) {
 function pathInside(parent, candidate) {
   const child = relative(parent, candidate);
   return child !== '' && !child.startsWith(`..${sep}`) && child !== '..' && !isAbsolute(child);
+}
+
+function normalizeCompatibilityDate(value) {
+  const date = String(value || '');
+  if (!COMPATIBILITY_DATE_PATTERN.test(date)) throw new Error('compatibility date is invalid');
+  const parsed = new Date(`${date}T00:00:00.000Z`);
+  if (Number.isNaN(parsed.valueOf()) || parsed.toISOString().slice(0, 10) !== date) {
+    throw new Error('compatibility date is invalid');
+  }
+  return date;
+}
+
+function normalizeCompatibilityFlags(value) {
+  if (!Array.isArray(value)) throw new Error('compatibility flags must be an array');
+  const flags = value.map(flag => String(flag));
+  if (flags.some(flag => !COMPATIBILITY_FLAG_PATTERN.test(flag))) {
+    throw new Error('compatibility flags contain an invalid flag');
+  }
+  if (new Set(flags).size !== flags.length) throw new Error('compatibility flags contain a duplicate flag');
+  return flags.sort();
+}
+
+export function parseCompatibilityFlagsJson(value) {
+  let parsed;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new Error('compatibility flags JSON is invalid');
+  }
+  return normalizeCompatibilityFlags(parsed);
+}
+
+async function assertRegularFile(path, label) {
+  const stat = await lstat(path);
+  if (!stat.isFile() || stat.isSymbolicLink()) throw new Error(`${label} must be a regular file`);
+}
+
+async function run(command, argumentsList, cwd) {
+  await new Promise((resolvePromise, rejectPromise) => {
+    const child = spawn(command, argumentsList, {
+      cwd,
+      stdio: 'inherit',
+      windowsHide: true,
+    });
+    child.once('error', rejectPromise);
+    child.once('close', (code, signal) => {
+      if (code === 0) resolvePromise();
+      else rejectPromise(new Error(`Wrangler Pages Functions build failed (${signal || `exit ${code}`})`));
+    });
+  });
+}
+
+export async function buildWorker({ projectRoot, compatibilityDate, compatibilityFlags }) {
+  const root = resolve(projectRoot);
+  const date = normalizeCompatibilityDate(compatibilityDate);
+  const flags = normalizeCompatibilityFlags(compatibilityFlags);
+  const outputDirectory = resolve(root, WORKER_BUILD_DIRECTORY);
+  const wrangler = resolve(root, 'node_modules', 'wrangler', 'bin', 'wrangler.js');
+  await assertRegularFile(wrangler, 'Wrangler entry point');
+  await rm(outputDirectory, { recursive: true, force: true });
+  const argumentsList = [
+    wrangler,
+    'pages',
+    'functions',
+    'build',
+    'functions',
+    '--outdir',
+    WORKER_BUILD_DIRECTORY,
+    '--project-directory',
+    '.',
+    '--build-output-directory',
+    'dist',
+    '--compatibility-date',
+    date,
+    '--minify',
+  ];
+  for (const flag of flags) argumentsList.push('--compatibility-flag', flag);
+  await run(process.execPath, argumentsList, root);
+
+  const workerBundle = resolve(outputDirectory, 'index.js');
+  await assertRegularFile(workerBundle, 'compiled Pages Functions worker');
+  const metadata = {
+    schemaVersion: 1,
+    compatibilityDate: date,
+    compatibilityFlags: flags,
+    workerSha256: sha256(await readFile(workerBundle)),
+  };
+  await writeFile(
+    resolve(outputDirectory, WORKER_METADATA_NAME),
+    `${JSON.stringify(metadata, null, 2)}\n`,
+    'utf8',
+  );
+  return metadata;
 }
 
 async function regularFiles(root) {
@@ -91,6 +189,17 @@ function validateManifestShape(manifest) {
   if (manifest.schemaVersion !== SCHEMA_VERSION) throw new Error('unsupported release manifest schema');
   if (!GIT_COMMIT_PATTERN.test(manifest.gitCommit || '')) throw new Error('release manifest has an invalid git commit');
   if (!SHA256_PATTERN.test(manifest.payloadSha256 || '')) throw new Error('release manifest has an invalid payload hash');
+  if (!manifest.pagesFunctions || typeof manifest.pagesFunctions !== 'object' || Array.isArray(manifest.pagesFunctions)) {
+    throw new Error('release manifest has invalid Pages Functions provenance');
+  }
+  normalizeCompatibilityDate(manifest.pagesFunctions.compatibilityDate);
+  const normalizedFlags = normalizeCompatibilityFlags(manifest.pagesFunctions.compatibilityFlags);
+  if (JSON.stringify(normalizedFlags) !== JSON.stringify(manifest.pagesFunctions.compatibilityFlags)) {
+    throw new Error('release manifest compatibility flags are not canonical');
+  }
+  if (!SHA256_PATTERN.test(manifest.pagesFunctions.workerSha256 || '')) {
+    throw new Error('release manifest has an invalid worker hash');
+  }
   if (!Array.isArray(manifest.files) || manifest.files.length === 0) {
     throw new Error('release manifest has no files');
   }
@@ -110,6 +219,30 @@ function validateManifestShape(manifest) {
       throw new Error(`release manifest contains invalid metadata for ${file.path}`);
     }
   }
+  const worker = manifest.files.find(file => file.path === 'dist/_worker.js');
+  if (!worker || worker.sha256 !== manifest.pagesFunctions.workerSha256) {
+    throw new Error('release manifest worker provenance does not match the payload');
+  }
+}
+
+async function readWorkerMetadata(compiledWorker) {
+  const metadataPath = resolve(dirname(compiledWorker), WORKER_METADATA_NAME);
+  await assertRegularFile(metadataPath, 'Pages Functions build metadata');
+  const metadata = JSON.parse(await readFile(metadataPath, 'utf8'));
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata) || metadata.schemaVersion !== 1) {
+    throw new Error('Pages Functions build metadata is invalid');
+  }
+  const compatibilityDate = normalizeCompatibilityDate(metadata.compatibilityDate);
+  const compatibilityFlags = normalizeCompatibilityFlags(metadata.compatibilityFlags);
+  if (JSON.stringify(compatibilityFlags) !== JSON.stringify(metadata.compatibilityFlags)) {
+    throw new Error('Pages Functions build compatibility flags are not canonical');
+  }
+  if (!SHA256_PATTERN.test(metadata.workerSha256 || '')) throw new Error('Pages Functions build worker hash is invalid');
+  const actualWorkerSha256 = sha256(await readFile(compiledWorker));
+  if (actualWorkerSha256 !== metadata.workerSha256) {
+    throw new Error('compiled Pages Functions worker does not match its build metadata');
+  }
+  return { compatibilityDate, compatibilityFlags, workerSha256: actualWorkerSha256 };
 }
 
 export async function packageRelease({
@@ -134,10 +267,8 @@ export async function packageRelease({
   if (pathInside(output, dist) || pathInside(output, compiledWorker)) {
     throw new Error('release output must not contain its inputs');
   }
-  const workerStat = await lstat(compiledWorker);
-  if (!workerStat.isFile() || workerStat.isSymbolicLink()) {
-    throw new Error('compiled Pages Functions worker must be a regular file');
-  }
+  await assertRegularFile(compiledWorker, 'compiled Pages Functions worker');
+  const pagesFunctions = await readWorkerMetadata(compiledWorker);
   const workerSource = await readFile(compiledWorker, 'utf8');
   if (!/\bASSETS\b/.test(workerSource) || !/\.fetch\(/.test(workerSource) || !/export\s*\{/.test(workerSource)) {
     throw new Error('compiled Pages Functions worker does not contain the ASSETS fallback contract');
@@ -169,6 +300,7 @@ export async function packageRelease({
       node: process.version,
       wrangler: packageJson.devDependencies?.wrangler || null,
     },
+    pagesFunctions,
     payloadSha256: description.payloadSha256,
     files: description.files,
   };
@@ -176,7 +308,13 @@ export async function packageRelease({
   return manifest;
 }
 
-export async function verifyRelease({ releaseDirectory, expectedCommit = null, expectedSha256 = null }) {
+export async function verifyRelease({
+  releaseDirectory,
+  expectedCommit = null,
+  expectedSha256 = null,
+  expectedCompatibilityDate = null,
+  expectedCompatibilityFlags = null,
+}) {
   const releaseRoot = resolve(releaseDirectory);
   const manifestPath = resolve(releaseRoot, MANIFEST_NAME);
   const manifestStat = await lstat(manifestPath);
@@ -192,6 +330,16 @@ export async function verifyRelease({ releaseDirectory, expectedCommit = null, e
   }
   if (expectedSha256 && manifest.payloadSha256 !== expectedSha256) {
     throw new Error(`release hash mismatch: expected ${expectedSha256}, received ${manifest.payloadSha256}`);
+  }
+  if (
+    expectedCompatibilityDate
+    && manifest.pagesFunctions.compatibilityDate !== normalizeCompatibilityDate(expectedCompatibilityDate)
+  ) throw new Error('release compatibility date mismatch');
+  if (expectedCompatibilityFlags) {
+    const expectedFlags = normalizeCompatibilityFlags(expectedCompatibilityFlags);
+    if (JSON.stringify(expectedFlags) !== JSON.stringify(manifest.pagesFunctions.compatibilityFlags)) {
+      throw new Error('release compatibility flags mismatch');
+    }
   }
 
   const actual = await describePayload(resolve(releaseRoot, PAYLOAD_NAME));
@@ -228,6 +376,15 @@ async function main() {
   const { command, values } = parseArguments(process.argv.slice(2));
   const projectRoot = resolve(values.get('--project-root') || process.cwd());
   const releaseDirectory = resolve(values.get('--release-dir') || resolve(projectRoot, '.cloudflare-release'));
+  if (command === 'build-worker') {
+    const metadata = await buildWorker({
+      projectRoot,
+      compatibilityDate: values.get('--compatibility-date') || '',
+      compatibilityFlags: parseCompatibilityFlagsJson(values.get('--compatibility-flags-json') || ''),
+    });
+    console.log(JSON.stringify(metadata, null, 2));
+    return;
+  }
   let manifest;
   if (command === 'package') {
     manifest = await packageRelease({
@@ -243,6 +400,10 @@ async function main() {
       releaseDirectory,
       expectedCommit: values.get('--expected-commit') || null,
       expectedSha256: values.get('--expected-sha256') || null,
+      expectedCompatibilityDate: values.get('--expected-compatibility-date') || null,
+      expectedCompatibilityFlags: values.has('--expected-compatibility-flags-json')
+        ? parseCompatibilityFlagsJson(values.get('--expected-compatibility-flags-json'))
+        : null,
     });
   } else throw new Error(`unsupported command: ${command || '(missing)'}`);
 
