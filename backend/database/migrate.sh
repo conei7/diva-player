@@ -332,7 +332,7 @@ SQL
       if grep -Eiq '^[[:space:]]*(BEGIN|COMMIT)[[:space:]]*;|^[[:space:]]*(CREATE([[:space:]]+UNIQUE)?[[:space:]]+INDEX|DROP[[:space:]]+INDEX|REINDEX)[[:space:]].*CONCURRENTLY|^[[:space:]]*(VACUUM|CLUSTER|CREATE[[:space:]]+DATABASE|DROP[[:space:]]+DATABASE|ALTER[[:space:]]+SYSTEM|CALL)[[:space:]]|^[[:space:]]*\\(gexec|set[[:space:]]+AUTOCOMMIT)' "$migration_file"; then
         fail "atomic migration contains transaction-incompatible SQL: $migration_id"
       fi
-      echo "\\echo [migrate] applying atomic migration: $migration_id" >>"$driver"
+      printf '%s\n' "\\echo [migrate] applying atomic migration: $migration_id" >>"$driver"
       echo "BEGIN;" >>"$driver"
       echo "SET LOCAL search_path = public, pg_catalog;" >>"$driver"
       cat "$migration_file" >>"$driver"
@@ -355,7 +355,7 @@ SQL
       if grep -Eiq '^[[:space:]]*(CREATE([[:space:]]+UNIQUE)?[[:space:]]+INDEX|DROP[[:space:]]+INDEX|REINDEX)[[:space:]].*CONCURRENTLY|^[[:space:]]*(VACUUM|CLUSTER|CREATE[[:space:]]+DATABASE|DROP[[:space:]]+DATABASE|ALTER[[:space:]]+SYSTEM|CALL)[[:space:]]|^[[:space:]]*\\(gexec|set[[:space:]]+AUTOCOMMIT)' "$prepared_file"; then
         fail "atomic-boundary migration contains transaction-incompatible SQL: $migration_id"
       fi
-      echo "\\echo [migrate] applying atomic migration: $migration_id" >>"$driver"
+      printf '%s\n' "\\echo [migrate] applying atomic migration: $migration_id" >>"$driver"
       echo "BEGIN;" >>"$driver"
       echo "SET LOCAL search_path = public, pg_catalog;" >>"$driver"
       cat "$prepared_file" >>"$driver"
@@ -420,7 +420,7 @@ SQL
       ;;
   esac
 
-  echo "\\endif" >>"$driver"
+  printf '%s\n' "\\endif" >>"$driver"
 done <"$normalized_manifest"
 
 cat >>"$driver" <<'SQL'

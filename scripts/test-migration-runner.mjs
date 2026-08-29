@@ -133,6 +133,16 @@ cat "$driver"
 
   const generated = runWithFakePsql(migrationsDir);
   assert.equal(generated.status, 0, generated.stderr);
+  assert.doesNotMatch(
+    generated.stdout,
+    /\u001b/,
+    'generated psql driver must not contain shell-expanded escape characters',
+  );
+  assert.equal(
+    (generated.stdout.match(/^\\endif\r?$/gm) ?? []).length,
+    entries.length,
+    'every migration guard must end with a literal psql \\endif command',
+  );
   const appliedGuards = [...generated.stdout.matchAll(
     /SELECT EXISTS \(\r?\n {4}SELECT 1 FROM public\.schema_migrations\r?\n {4}WHERE migration_id = '[^']+'\r?\n\) AS ([a-z_]+)\r?\n\\gset ([a-z_]+)\r?\n\\if :([a-z_]+)/g,
   )];
@@ -148,7 +158,10 @@ cat "$driver"
       `psql \\if references undefined variable ${conditionalVariable}`,
     );
   }
-  assert.match(generated.stdout, /applying atomic migration: 0002_view_history_recorded_song_idx\.sql/);
+  assert.match(
+    generated.stdout,
+    /^\\echo \[migrate\] applying atomic migration: 0002_view_history_recorded_song_idx\.sql\r?$/m,
+  );
   assert.match(generated.stdout, /CREATE INDEX IF NOT EXISTS view_history_recorded_song_idx[\s\S]*INSERT INTO public\.schema_migrations[\s\S]*COMMIT;/);
 
   const boundaryStart = generated.stdout.indexOf(
