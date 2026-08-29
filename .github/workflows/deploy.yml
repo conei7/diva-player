@@ -139,6 +139,7 @@ jobs:
           bash scripts/test-song-album-normalization.sh
           bash scripts/test-tag-parent-fk-migration.sh
           psql -v ON_ERROR_STOP=1 -h 127.0.0.1 -U vocadb -d vocadb_recommender <<'SQL'
+          DROP TABLE IF EXISTS public.schema_migration_attempts;
           DROP TABLE public.schema_migrations;
           CREATE TABLE public.schema_migrations (
             migration_id TEXT PRIMARY KEY,
