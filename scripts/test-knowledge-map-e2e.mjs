@@ -48,17 +48,101 @@ function jsonResponse(body) {
 }
 
 async function seedHistory(page) {
-  await page.evaluate(() => new Promise((resolve, reject) => {
-    const request = indexedDB.open('diva-listening-history', 3);
-    request.onerror = () => reject(request.error);
-    request.onsuccess = () => {
-      const db = request.result;
-      const transaction = db.transaction('plays', 'readwrite');
-      transaction.objectStore('plays').add({ s: 1501, t: Date.now(), f: 1 });
-      transaction.oncomplete = () => resolve();
-      transaction.onerror = () => reject(transaction.error);
-    };
-  }));
+  try {
+    await page.evaluate(() => new Promise((resolve, reject) => {
+      const timeoutMs = 15_000;
+      let database = null;
+      let transaction = null;
+      let settled = false;
+
+      const errorMessage = error => error instanceof Error
+        ? error.message
+        : String(error ?? 'unknown IndexedDB error');
+      const finish = (error = null, abort = false) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        if (abort && transaction) {
+          try {
+            transaction.abort();
+          } catch {
+            // The transaction may already have aborted because of the write error.
+          }
+        }
+        database?.close();
+        if (error) reject(error);
+        else resolve();
+      };
+      const timeout = setTimeout(() => {
+        finish(new Error(`Timed out after ${timeoutMs} ms while seeding diva-listening-history`), true);
+      }, timeoutMs);
+
+      let request;
+      try {
+        request = indexedDB.open('diva-listening-history', 3);
+      } catch (error) {
+        finish(new Error(`Could not open diva-listening-history: ${errorMessage(error)}`));
+        return;
+      }
+
+      request.onblocked = () => {
+        finish(new Error('Opening diva-listening-history was blocked by another connection'));
+      };
+      request.onerror = () => {
+        finish(new Error(`Could not open diva-listening-history: ${errorMessage(request.error)}`));
+      };
+      request.onupgradeneeded = () => {
+        try {
+          const db = request.result;
+          const plays = db.objectStoreNames.contains('plays')
+            ? request.transaction.objectStore('plays')
+            : db.createObjectStore('plays', { keyPath: 'id', autoIncrement: true });
+          if (!plays.indexNames.contains('songId')) plays.createIndex('songId', 's', { unique: false });
+          if (!plays.indexNames.contains('playedAt')) plays.createIndex('playedAt', 't', { unique: false });
+          const keyedStores = [
+            ['stats_pending', 'eventId'],
+            ['stats_applied', 'eventId'],
+            ['song_stats', 'songId'],
+            ['year_stats', 'key'],
+            ['month_stats', 'key'],
+            ['stats_meta', 'key'],
+          ];
+          for (const [storeName, keyPath] of keyedStores) {
+            if (!db.objectStoreNames.contains(storeName)) db.createObjectStore(storeName, { keyPath });
+          }
+        } catch (error) {
+          try {
+            request.transaction?.abort();
+          } catch {
+            // Preserve the schema error below if the upgrade already aborted.
+          }
+          finish(new Error(`Could not create diva-listening-history v3 schema: ${errorMessage(error)}`));
+        }
+      };
+      request.onsuccess = () => {
+        database = request.result;
+        try {
+          transaction = database.transaction('plays', 'readwrite');
+          transaction.oncomplete = () => finish();
+          transaction.onerror = () => {
+            finish(new Error(`Could not write knowledge-map history fixture: ${errorMessage(transaction.error)}`));
+          };
+          transaction.onabort = () => {
+            finish(new Error(`Knowledge-map history fixture transaction aborted: ${errorMessage(transaction.error)}`));
+          };
+          const addRequest = transaction.objectStore('plays').add({ s: 1501, t: Date.now(), f: 1 });
+          addRequest.onerror = () => {
+            finish(new Error(`Could not add knowledge-map history fixture: ${errorMessage(addRequest.error)}`), true);
+          };
+        } catch (error) {
+          finish(new Error(`Could not start knowledge-map history fixture transaction: ${errorMessage(error)}`), true);
+        }
+      };
+    }));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Knowledge-map IndexedDB seed failed: ${message}`, { cause: error });
+  }
 }
 
 async function seedRatings(page) {
