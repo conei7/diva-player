@@ -118,6 +118,7 @@ async function main() {
   await npmScripts([
     'test:db-role-provisioning',
     'test:tag-parent-fk-migration',
+    'test:cloudflare-release',
     'build',
   ]);
 

@@ -360,7 +360,7 @@ assert.match(workflow, /test-database-role-contract\.sql/);
 assert.match(workflow, /Validate Cloudflare credentials/);
 assert.match(workflow, /Cloudflare deployment requires CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID/);
 assert.doesNotMatch(workflow, /Cloudflare deployment skipped/);
-assert.equal(workflow.match(/npm run test:e2e:pages-nico -- https:\/\/diva-player\.pages\.dev\//g)?.length, 2);
+assert.ok((workflow.match(/npm run test:e2e:pages-nico -- https:\/\/diva-player\.pages\.dev\//g)?.length ?? 0) >= 4);
 assert.match(workflow, /if npm run test:e2e:pages-nico[\s\S]*?sleep 15[\s\S]*?npm run test:e2e:pages-nico/);
 const deployJobStart = workflow.indexOf('  deploy-cloudflare:');
 const deployStepsStart = workflow.indexOf('\n    steps:', deployJobStart);

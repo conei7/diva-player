@@ -14,8 +14,11 @@ concurrency:
 
 jobs:
   build:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    outputs:
+      release_sha256: ${{ steps.release_artifact.outputs.release_sha256 }}
     services:
       postgres:
         image: pgvector/pgvector:pg16
@@ -149,10 +152,54 @@ jobs:
         run: npm run test:e2e:navigation -- http://127.0.0.1:4173/diva-player/
       - name: Performance budget E2E
         run: npm run test:performance-budget -- http://127.0.0.1:4173/diva-player/
+      - name: Cloudflare release contract
+        run: npm run test:cloudflare-release
+      - name: Stop local preview server
+        shell: bash
+        run: |
+          if [[ -f "$RUNNER_TEMP/diva-player-preview.pid" ]]; then
+            kill "$(cat "$RUNNER_TEMP/diva-player-preview.pid")" 2>/dev/null || true
+          fi
+      - name: Build exact Cloudflare release once
+        shell: bash
+        run: |
+          npm run build:cloudflare
+          npx wrangler pages functions build functions \
+            --outdir .cloudflare-functions-build \
+            --project-directory . \
+            --build-output-directory dist \
+            --compatibility-date 2026-07-12 \
+            --minify
+          test -s .cloudflare-functions-build/index.js
+      - name: Package Cloudflare release with provenance
+        id: release_artifact
+        shell: bash
+        run: |
+          npm run package:cloudflare-release -- \
+            --git-commit "$GITHUB_SHA" \
+            --github-run-id "$GITHUB_RUN_ID" \
+            --github-run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --github-output "$GITHUB_OUTPUT"
+          npm run verify:cloudflare-release -- --expected-commit "$GITHUB_SHA"
+          tar --sort=name \
+            --mtime='UTC 1970-01-01' \
+            --owner=0 \
+            --group=0 \
+            --numeric-owner \
+            -cf cloudflare-pages-release.tar \
+            .cloudflare-release
+      - name: Save exact Cloudflare release artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cloudflare-pages-release
+          path: cloudflare-pages-release.tar
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
   deploy-cloudflare:
     needs: build
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -171,18 +218,208 @@ jobs:
           fi
       - name: Install dependencies
         run: npm ci
-      - name: Build Cloudflare artifact
-        run: npm run build:cloudflare
-      - name: Deploy to Cloudflare Pages
+      - name: Download exact Cloudflare release artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: cloudflare-pages-release
+          path: ${{ runner.temp }}/cloudflare-pages-release
+      - name: Verify downloaded release provenance
+        id: verify_artifact
+        shell: bash
+        env:
+          EXPECTED_RELEASE_SHA256: ${{ needs.build.outputs.release_sha256 }}
+        run: |
+          tar -xf "$RUNNER_TEMP/cloudflare-pages-release/cloudflare-pages-release.tar" -C "$GITHUB_WORKSPACE"
+          npm run verify:cloudflare-release -- \
+            --expected-commit "$GITHUB_SHA" \
+            --expected-sha256 "$EXPECTED_RELEASE_SHA256" \
+            --github-output "$GITHUB_OUTPUT"
+      - name: Validate Cloudflare project release contract
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: npx wrangler pages deploy dist --project-name diva-player --branch main
-      - name: Nico autoplay smoke test
+        run: node scripts/cloudflare-pages-release.mjs inspect-project --project diva-player
+      - name: Deploy exact release to isolated preview
+        shell: bash
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          RELEASE_SHA256: ${{ needs.build.outputs.release_sha256 }}
         run: |
+          # A fixed non-production alias avoids leaving one branch alias per run;
+          # the API-resolved hash URL below remains immutable for verification.
+          preview_branch="release-candidate"
+          echo "PREVIEW_BRANCH=$preview_branch" >> "$GITHUB_ENV"
+          cd .cloudflare-release/payload
+          "$GITHUB_WORKSPACE/node_modules/.bin/wrangler" pages deploy dist \
+            --project-name diva-player \
+            --branch "$preview_branch" \
+            --commit-hash "$GITHUB_SHA" \
+            --commit-message "artifact-sha256:${RELEASE_SHA256}" \
+            --commit-dirty=false \
+            --no-bundle
+      - name: Resolve immutable preview deployment
+        id: preview_deployment
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          RELEASE_SHA256: ${{ needs.build.outputs.release_sha256 }}
+        run: |
+          node scripts/cloudflare-pages-release.mjs wait-preview \
+            --project diva-player \
+            --branch "$PREVIEW_BRANCH" \
+            --commit-hash "$GITHUB_SHA" \
+            --release-sha256 "$RELEASE_SHA256" \
+            --attempts 8 \
+            --interval-ms 5000 \
+            --github-output "$GITHUB_OUTPUT"
+      - name: Verify preview root, ready, health, and origin headers
+        env:
+          PREVIEW_URL: ${{ steps.preview_deployment.outputs.preview_url }}
+        run: npm run check:public-dr-health -- --base-url "$PREVIEW_URL" --timeout-ms 15000 --interval-ms 5000
+      - name: Verify preview Nico autoplay smoke
+        env:
+          PREVIEW_URL: ${{ steps.preview_deployment.outputs.preview_url }}
+        run: |
+          if npm run test:e2e:pages-nico -- "$PREVIEW_URL"; then
+            exit 0
+          fi
+          echo "Preview Nico autoplay smoke failed once; retrying the complete smoke after 15 seconds."
+          sleep 15
+          npm run test:e2e:pages-nico -- "$PREVIEW_URL"
+      - name: Capture current production rollback candidate
+        id: rollback_candidate
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          node scripts/cloudflare-pages-release.mjs capture-production \
+            --project diva-player \
+            --output "$RUNNER_TEMP/last-known-good-production.json" \
+            --github-output "$GITHUB_OUTPUT"
+      - name: Verify rollback candidate through production URLs
+        run: |
+          npm run check:public-dr-health -- \
+            --base-url https://diva-player.pages.dev \
+            --timeout-ms 15000 \
+            --interval-ms 5000
           if npm run test:e2e:pages-nico -- https://diva-player.pages.dev/; then
             exit 0
           fi
-          echo "Nico autoplay smoke failed once; retrying the complete smoke after 15 seconds."
+          echo "Current production Nico autoplay smoke failed once; retrying after 15 seconds."
           sleep 15
           npm run test:e2e:pages-nico -- https://diva-player.pages.dev/
+      - name: Seal verified last-known-good production
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          ROLLBACK_DEPLOYMENT_ID: ${{ steps.rollback_candidate.outputs.production_deployment_id }}
+        run: |
+          node scripts/cloudflare-pages-release.mjs assert-production \
+            --project diva-player \
+            --expected-id "$ROLLBACK_DEPLOYMENT_ID"
+      - name: Deploy the same verified release to production
+        id: production_deploy
+        continue-on-error: true
+        shell: bash
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          RELEASE_SHA256: ${{ needs.build.outputs.release_sha256 }}
+        run: |
+          npm run verify:cloudflare-release -- --expected-commit "$GITHUB_SHA"
+          cd .cloudflare-release/payload
+          "$GITHUB_WORKSPACE/node_modules/.bin/wrangler" pages deploy dist \
+            --project-name diva-player \
+            --branch main \
+            --commit-hash "$GITHUB_SHA" \
+            --commit-message "artifact-sha256:${RELEASE_SHA256}" \
+            --commit-dirty=false \
+            --no-bundle
+      - name: Verify production or perform one bounded rollback
+        if: ${{ always() && (steps.production_deploy.outcome == 'success' || steps.production_deploy.outcome == 'failure') }}
+        shell: bash
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          RELEASE_SHA256: ${{ needs.build.outputs.release_sha256 }}
+          ROLLBACK_DEPLOYMENT_ID: ${{ steps.rollback_candidate.outputs.production_deployment_id }}
+          PRODUCTION_DEPLOY_OUTCOME: ${{ steps.production_deploy.outcome }}
+        run: |
+          set +e
+          verification_failed=0
+          new_deployment_seen=0
+          if [[ "$PRODUCTION_DEPLOY_OUTCOME" != "success" ]]; then
+            echo "Production upload command failed; canonical state will be reconciled before rollback."
+            verification_failed=1
+          fi
+
+          if node scripts/cloudflare-pages-release.mjs wait-production \
+            --project diva-player \
+            --branch main \
+            --commit-hash "$GITHUB_SHA" \
+            --release-sha256 "$RELEASE_SHA256" \
+            --excluded-id "$ROLLBACK_DEPLOYMENT_ID" \
+            --attempts 8 \
+            --interval-ms 5000 \
+            --output "$RUNNER_TEMP/new-production.json"; then
+            new_deployment_seen=1
+          else
+            verification_failed=1
+          fi
+
+          npm run check:public-dr-health -- \
+            --base-url https://diva-player.pages.dev \
+            --timeout-ms 15000 \
+            --interval-ms 5000 || verification_failed=1
+
+          if ! npm run test:e2e:pages-nico -- https://diva-player.pages.dev/; then
+            echo "Production Nico autoplay smoke failed once; retrying after 15 seconds."
+            sleep 15
+            npm run test:e2e:pages-nico -- https://diva-player.pages.dev/ || verification_failed=1
+          fi
+
+          if [[ "$verification_failed" -eq 0 ]]; then
+            echo "Cloudflare production release ${RELEASE_SHA256} verified." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          if [[ "$new_deployment_seen" -eq 0 ]]; then
+            if node scripts/cloudflare-pages-release.mjs assert-production \
+              --project diva-player \
+              --expected-id "$ROLLBACK_DEPLOYMENT_ID"; then
+              echo "Production upload failed or did not converge; verified last-known-good remained canonical, so rollback was unnecessary." >> "$GITHUB_STEP_SUMMARY"
+              exit 1
+            fi
+          fi
+
+          echo "::error::Production verification failed; requesting one rollback to the verified deployment ${ROLLBACK_DEPLOYMENT_ID}."
+          node scripts/cloudflare-pages-release.mjs rollback-production \
+            --project diva-player \
+            --target-file "$RUNNER_TEMP/last-known-good-production.json" \
+            --attempts 8 \
+            --interval-ms 5000 \
+            --output "$RUNNER_TEMP/rollback-result.json"
+          rollback_api_status=$?
+          if [[ "$rollback_api_status" -ne 0 ]]; then
+            echo "Cloudflare rollback API failed; no second rollback was attempted." >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
+          rollback_verification_failed=0
+          npm run check:public-dr-health -- \
+            --base-url https://diva-player.pages.dev \
+            --timeout-ms 15000 \
+            --interval-ms 5000 || rollback_verification_failed=1
+          if ! npm run test:e2e:pages-nico -- https://diva-player.pages.dev/; then
+            echo "Rolled-back Nico autoplay smoke failed once; retrying after 15 seconds."
+            sleep 15
+            npm run test:e2e:pages-nico -- https://diva-player.pages.dev/ || rollback_verification_failed=1
+          fi
+
+          if [[ "$rollback_verification_failed" -eq 0 ]]; then
+            echo "Production verification failed; verified rollback to ${ROLLBACK_DEPLOYMENT_ID} completed." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Production verification failed and the restored deployment did not pass bounded smoke verification." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit 1

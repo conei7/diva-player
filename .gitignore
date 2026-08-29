@@ -20,6 +20,10 @@ build
 .deploy-state/
 scripts/.rolling-deployment-test-*/
 scripts/.quick-tunnel-sync-test-*/
+scripts/.cloudflare-release-test-*/
+.cloudflare-release/
+.cloudflare-functions-build*/
+cloudflare-pages-release.tar
 
 # Editor
 .vscode/*

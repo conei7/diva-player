@@ -105,6 +105,27 @@ npm run test:api
 npm run preview
 ```
 
+## Cloudflare Pagesリリース
+
+`main`のGitHub Actionsは、通常のtest／E2Eに成功した後でCloudflare用の`dist`を1回だけbuildし、`functions`もWranglerで再現可能なminify済み`dist/_worker.js`へ1回だけcompileします。その配備可能な`dist`全体をSHA-256 file manifest付きの単一release artifactへ固定します。配備jobはこのartifactを再build／再bundleせず、download後とproduction upload直前にcommitと全file hashを検証します。
+
+releaseは次の順序で進みます。
+
+1. non-productionの`release-candidate` preview branchへ固定artifactをdirect uploadし、Cloudflare APIからrun固有のimmutable deployment URLと、commit／artifact hashを含むdeployment metadataを照合します。branch aliasは毎回同じものを更新し、runごとのaliasを増やしません。
+2. preview URLの`/`、`/backend-api/api/ready`、`/backend-api/api/health`、origin headers、およびNico autoplay smokeを確認します。
+3. 現在のproduction deployment IDを取得し、production URLでも同じhealth／smokeを通過したことと、確認中にdeployment IDが変化していないことを確認してlast-known-goodとして封印します。
+4. previewと同じmanifest検証済みpayloadを`main`へdirect uploadし、Cloudflare deployment metadata、公開health／smokeを再確認します。production検証に失敗した場合だけ、Cloudflare公式rollback APIを1回だけ呼び、封印済みproduction deploymentへ戻ったことと公開health／smokeを再確認したうえでworkflow自体は失敗として残します。
+
+Cloudflare Pagesはpreview deploymentそのものをproductionへ昇格できず、previewはrollback先にもできません。そのためこのworkflowの「同じartifact」は、同一のmanifest検証済みupload payloadをpreviewとproductionへ再uploadすることを意味します。未検証のbranch buildや、APIに存在しないpromotion操作は使いません。
+
+このrelease gateには、Cloudflare／GitHub側で次の設定が必要です。workflowは設定差異を検出するとproduction変更前に停止します。
+
+- GitHub repository secretsの`CLOUDFLARE_API_TOKEN`と`CLOUDFLARE_ACCOUNT_ID`。tokenには対象projectのPages Write権限が必要です。
+- Pages project `diva-player`のproduction branchは`main`とし、Git連携のautomatic production branch deploymentsを無効化します。productionを更新する経路をこのGitHub Actionsだけに限定するためです。
+- Pagesのpreview／productionで「常に最新のcompatibility date」を無効化し、compatibility dateを`2026-07-12`、compatibility flagsを同一にして、同じ`TUNNEL_CONFIG` KV namespaceをbindします。productionに存在する環境変数／secretはpreviewにも同名・同種で設定し、特に`PAGES_PROXY_KEY`が必須です。plain text値とbinding IDはAPIで一致確認し、secret値そのものはpreviewのready／health probeで動作確認します。
+
+release artifactはGitHub Actionsに30日保存され、manifestの`gitCommit`、file別SHA-256、payload SHA-256、およびCloudflare deploymentの`artifact-sha256:<hash>` metadataで追跡できます。
+
 ## ディレクトリ構成
 
 ```
