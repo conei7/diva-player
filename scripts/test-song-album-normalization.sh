@@ -13,6 +13,7 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 migration="$repo_root/backend/database/migrations/0023_normalize_song_album_links.sql"
+manifest="$repo_root/backend/database/migrations/migration-manifest.tsv"
 migrator="$repo_root/backend/database/migrate.sh"
 psql_cmd=(
   psql -X -v ON_ERROR_STOP=1
@@ -25,6 +26,8 @@ lock_pid=""
 migration_test_dir="$(mktemp -d "$task_temp_dir/diva-album-migrations-XXXXXX")"
 mkdir "$migration_test_dir/sql"
 cp "$migration" "$migration_test_dir/sql/0023_normalize_song_album_links.sql"
+grep '^0023_normalize_song_album_links\.sql|' "$manifest" \
+  >"$migration_test_dir/sql/migration-manifest.tsv"
 
 cleanup() {
   if [[ -n "$lock_pid" ]]; then
@@ -52,6 +55,7 @@ ALTER DEFAULT PRIVILEGES REVOKE EXECUTE ON FUNCTIONS FROM pg_monitor;
 DELETE FROM public.songs WHERE id BETWEEN 930000001 AND 930005004;
 SQL
   rm -f -- "$migration_test_dir/sql/0023_normalize_song_album_links.sql"
+  rm -f -- "$migration_test_dir/sql/migration-manifest.tsv"
   rmdir -- "$migration_test_dir/sql" 2>/dev/null || true
   rmdir -- "$migration_test_dir" 2>/dev/null || true
   rm -f -- "$failure_log" "$lock_log"
@@ -115,6 +119,23 @@ history_count="$("${psql_cmd[@]}" -Atc \
   "SELECT COUNT(*) FROM schema_migrations WHERE migration_id = '0023_normalize_song_album_links.sql'")"
 [[ "$history_count" == "0" ]] || fail "failed migration recorded history"
 
+incomplete_attempt="$("${psql_cmd[@]}" -Atc "
+SELECT COUNT(*) || '|' || MIN(status)
+FROM schema_migration_attempts
+WHERE migration_id = '0023_normalize_song_album_links.sql'
+  AND status = 'running';")"
+[[ "$incomplete_attempt" == "1|running" ]] || \
+  fail "failed non-transactional migration did not preserve one running attempt: $incomplete_attempt"
+
+# This is the explicit operator acknowledgement required after inspecting the
+# committed prefix.  The production runner never retries an incomplete
+# non-transactional attempt on its own.
+"${psql_cmd[@]}" -c "
+UPDATE schema_migration_attempts
+SET status = 'abandoned', finished_at = clock_timestamp()
+WHERE migration_id = '0023_normalize_song_album_links.sql'
+  AND status = 'running';" >/dev/null
+
 procedure_privileges="$("${psql_cmd[@]}" -Atc "
 SELECT has_function_privilege(
            'diva_api_runtime',
@@ -168,8 +189,9 @@ partial_count="$("${psql_cmd[@]}" -Atc \
 "${psql_cmd[@]}" -c \
   "UPDATE songs SET raw_json = '{\"albums\":[{\"id\":\"17\"}]}'::jsonb WHERE id = 930005001"
 
-# Simulate a process crash after the SQL file succeeds but before migrate.sh's
-# separate history INSERT.  A direct retry must be idempotent.
+# Simulate the unavoidable SQL/history boundary of a non-transactional
+# migration.  The runner journals this boundary; a direct SQL retry remains
+# idempotent after an operator has inspected and acknowledged the prior run.
 "${psql_cmd[@]}" -f "$migration"
 
 history_after_direct_success="$("${psql_cmd[@]}" -Atc \
@@ -177,8 +199,8 @@ history_after_direct_success="$("${psql_cmd[@]}" -Atc \
 [[ "$history_after_direct_success" == "0" ]] || \
   fail "direct SQL success unexpectedly recorded migration history"
 
-# Model a crash in the gap between SQL success and migrate.sh's separate
-# history INSERT.  An old step-00 checkout must preserve both the source JSON
+# Model a crash in the gap between non-transactional SQL success and its
+# history record.  An old step-00 checkout must preserve both the source JSON
 # component and links, so a complete migration retry cannot erase them.
 gap_albums_before="$("${psql_cmd[@]}" -Atc \
   "SELECT raw_json -> 'albums' FROM songs WHERE id = 930000003")"
@@ -221,15 +243,15 @@ WITH expected AS (
 SELECT (SELECT COUNT(*) FROM song_album_links), COUNT(*) FROM differences;")"
 [[ "$parity" == "10001|0" ]] || fail "unexpected link/parity counts: $parity"
 
-# The complete migration is deliberately safe to rerun after a crash between
-# the SQL file and migrate.sh's separate history INSERT.
+# The complete migration is deliberately safe to rerun after an inspected
+# crash at the SQL/history boundary.
 "${psql_cmd[@]}" -f "$migration" >/dev/null
 rerun_count="$("${psql_cmd[@]}" -Atc \
   "SELECT COUNT(*) FROM song_album_links WHERE song_id BETWEEN 930000001 AND 930005001")"
 [[ "$rerun_count" == "10001" ]] || fail "rerun changed link count"
 
-# The real migrator performs one final convergent run and records success only
-# after psql exits zero.
+# The real migrator performs one final convergent run, then atomically records
+# history and closes its durable attempt row.
 MIGRATIONS_SQL_DIR="$migration_test_dir/sql" sh "$migrator" >/dev/null
 history_after_migrator="$(${psql_cmd[@]} -Atc \
   "SELECT COUNT(*) FROM schema_migrations WHERE migration_id = '0023_normalize_song_album_links.sql'")"

@@ -109,6 +109,8 @@ jobs:
         run: npm run test:runtime-health:python
       - name: Database LOGIN role provisioning contract
         run: npm run test:db-role-provisioning
+      - name: Migration runner integrity contract
+        run: npm run test:migration-runner
       - name: Tag parent FK migration static contract
         run: npm run test:tag-parent-fk-migration
       - name: Database schema and model guard contract
@@ -136,6 +138,10 @@ jobs:
           psql -v ON_ERROR_STOP=1 -h 127.0.0.1 -U vocadb -d vocadb_recommender -f scripts/test-database-role-contract.sql
           bash scripts/test-song-album-normalization.sh
           bash scripts/test-tag-parent-fk-migration.sh
+          MIGRATIONS_SQL_DIR="$GITHUB_WORKSPACE/backend/database/migrations" sh backend/database/migrate.sh
+          MIGRATIONS_SQL_DIR="$GITHUB_WORKSPACE/backend/database/migrations" sh backend/database/migrate.sh
+          psql -v ON_ERROR_STOP=1 -h 127.0.0.1 -U vocadb -d vocadb_recommender -f scripts/test-database-role-contract.sql
+          psql -v ON_ERROR_STOP=1 -h 127.0.0.1 -U vocadb -d vocadb_recommender -Atc "SELECT COUNT(*) || '|' || COUNT(*) FILTER (WHERE content_sha256 ~ '^[0-9a-f]{64}$') || '|' || (SELECT COUNT(*) FROM schema_migration_attempts WHERE status = 'running') FROM schema_migrations" | grep -qx '24|24|0'
       - name: Build
         run: npm run build
       - name: Start preview server for E2E

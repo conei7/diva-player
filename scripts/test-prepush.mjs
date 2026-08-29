@@ -117,6 +117,7 @@ async function main() {
   await run(python.command, [...python.prefix, '-B', 'scripts/test-runtime-health-collector.py'], { label: 'Python runtime health collector contract' });
   await npmScripts([
     'test:db-role-provisioning',
+    'test:migration-runner',
     'test:tag-parent-fk-migration',
     'test:cloudflare-release',
     'build',

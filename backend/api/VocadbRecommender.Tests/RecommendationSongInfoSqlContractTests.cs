@@ -296,6 +296,8 @@ public sealed class RecommendationSongInfoSqlContractTests
         var migration = ReadRepositoryFile(
             "backend", "database", "migrations", "0023_normalize_song_album_links.sql");
         var migrator = ReadRepositoryFile("backend", "database", "migrate.sh");
+        var manifest = ReadRepositoryFile(
+            "backend", "database", "migrations", "migration-manifest.tsv");
 
         Assert.Contains("CREATE TABLE IF NOT EXISTS song_album_links", schema);
         Assert.Contains("PRIMARY KEY (song_id, ordinal)", schema);
@@ -343,11 +345,15 @@ public sealed class RecommendationSongInfoSqlContractTests
         Assert.Contains("CREATE OR REPLACE TRIGGER song_album_links_sync_v1", migration);
         Assert.Contains("REVOKE ALL ON FUNCTION public.sync_song_album_links_from_raw_json_v1()", migration);
         Assert.Contains("migrations_sql_dir=\"${MIGRATIONS_SQL_DIR:-/migrations/sql}\"", migrator);
-
-        var migrationRun = migrator.IndexOf("psql -v ON_ERROR_STOP=1 -f \"$file\"", StringComparison.Ordinal);
-        var historyWrite = migrator.IndexOf("INSERT INTO schema_migrations", StringComparison.Ordinal);
-        Assert.True(migrationRun >= 0);
-        Assert.True(historyWrite > migrationRun);
+        Assert.Contains("pg_try_advisory_lock", migrator);
+        Assert.Contains("content_sha256", migrator);
+        Assert.Contains("schema_migration_attempts", migrator);
+        Assert.Contains("has incomplete attempt", migrator);
+        Assert.Contains("cat \"$migration_file\" >>\"$driver\"", migrator);
+        Assert.Contains("INSERT INTO public.schema_migrations", migrator);
+        Assert.Matches(
+            "(?m)^0023_normalize_song_album_links\\.sql\\|non-transactional\\|[0-9a-f]{64}$",
+            manifest.ReplaceLineEndings("\n"));
     }
 
     private static string ExtractBetween(string source, string startMarker, string endMarker)

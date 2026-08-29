@@ -96,6 +96,12 @@ npm run dev:all:sh
 
 これらは`backend/docker-compose.yml`を使ってbackendを`docker compose up -d --build`で起動し、その後`npm run dev`でViteを起動します。必須値がprocess環境にない、またはruntime LOGINが未作成の場合、backend起動は失敗します。
 
+### Database migrationの整合性
+
+`backend/database/migrations/migration-manifest.tsv`は、migration ID、実行mode、改行をLFへ正規化したSQL本文のSHA-256を固定します。適用済みSQLを編集せず、migrationを追加するときは連番の新しいSQLとmanifest entryを同じcommitへ含め、`npm run test:migration-runner`を実行してください。manifestにないSQL、checksum変更、古いcheckoutから見えない適用済みmigration、同時runnerはすべてDB変更前に拒否されます。
+
+runnerは全体をPostgreSQL advisory lockで直列化します。transaction互換migrationはSQLと`schema_migrations`記録を同一transactionでcommitし、`CREATE INDEX CONCURRENTLY`などの非transactional migrationは`schema_migration_attempts`へ開始証跡を永続化してから実行します。非transactional実行が中断した場合、次回実行は自動retryしません。partial objectとattempt IDを保ったまま運用手順に従って調査し、確認済みattemptを`abandoned`として終了させてから再実行します。
+
 
 ## ビルド
 

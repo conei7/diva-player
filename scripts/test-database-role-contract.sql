@@ -242,6 +242,7 @@ BEGIN
 
         expected_pipeline_write := relation.relname NOT IN (
             'schema_migrations',
+            'schema_migration_attempts',
             'discovery_quality_model_policy'
         );
         IF NOT has_table_privilege('diva_pipeline_runtime', relation.oid, 'SELECT')
@@ -278,7 +279,10 @@ BEGIN
             RAISE EXCEPTION 'API has sequence privilege on %', sequence.relname;
         END IF;
 
-        IF NOT has_sequence_privilege('diva_pipeline_runtime', sequence.oid, 'USAGE')
+        IF has_sequence_privilege('diva_pipeline_runtime', sequence.oid, 'USAGE')
+                IS DISTINCT FROM (
+                    sequence.relname <> 'schema_migration_attempts_attempt_id_seq'
+                )
             OR has_sequence_privilege('diva_pipeline_runtime', sequence.oid, 'SELECT')
             OR has_sequence_privilege('diva_pipeline_runtime', sequence.oid, 'UPDATE') THEN
             RAISE EXCEPTION 'pipeline sequence privilege mismatch on %', sequence.relname;

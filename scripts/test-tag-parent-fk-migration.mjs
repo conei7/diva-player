@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
-const [migration, normalization, integration, runner, workflow, compose, runtimeRoles] = await Promise.all([
+const [migration, normalization, integration, runner, manifest, workflow, compose, runtimeRoles] = await Promise.all([
   readFile(
     new URL('../backend/database/migrations/0019_repair_tag_parent_fk.sql', import.meta.url),
     'utf8',
@@ -12,6 +12,7 @@ const [migration, normalization, integration, runner, workflow, compose, runtime
   ),
   readFile(new URL('./test-tag-parent-fk-migration.sh', import.meta.url), 'utf8'),
   readFile(new URL('../backend/database/migrate.sh', import.meta.url), 'utf8'),
+  readFile(new URL('../backend/database/migrations/migration-manifest.tsv', import.meta.url), 'utf8'),
   readFile(new URL('../.github/workflows/deploy.yml', import.meta.url), 'utf8'),
   readFile(new URL('../backend/docker-compose.yml', import.meta.url), 'utf8'),
   readFile(
@@ -19,6 +20,7 @@ const [migration, normalization, integration, runner, workflow, compose, runtime
     'utf8',
   ),
 ]);
+const normalizedManifest = manifest.replaceAll('\r\n', '\n');
 
 assert.match(migration, /^BEGIN;\s*$/m);
 assert.match(migration, /COMMIT;\s*$/);
@@ -95,14 +97,23 @@ assert.match(integration, /exact pre-existing FK was not validated/);
 assert.match(integration, /competing foreign keys involve tags\.parent_id/);
 assert.match(integration, /PASS tag parent FK migration contract/);
 
-const runMigration = runner.indexOf('psql -v ON_ERROR_STOP=1 -f "$file"');
-const recordMigration = runner.indexOf('INSERT INTO schema_migrations');
 assert.match(
   runner,
   /migrations_sql_dir="\$\{MIGRATIONS_SQL_DIR:-\/migrations\/sql\}"/,
 );
-assert.match(runner, /for file in "\$migrations_sql_dir"\/\*\.sql/);
-assert.ok(runMigration !== -1 && recordMigration > runMigration);
+assert.match(runner, /pg_try_advisory_lock/);
+assert.match(runner, /content_sha256/);
+assert.match(runner, /atomic-boundary/);
+assert.match(runner, /cat "\$prepared_file" >>"\$driver"/);
+assert.match(runner, /INSERT INTO public\.schema_migrations/);
+assert.match(
+  normalizedManifest,
+  /^0019_repair_tag_parent_fk\.sql\|atomic-boundary\|[0-9a-f]{64}$/m,
+);
+assert.match(
+  normalizedManifest,
+  /^0020_normalize_annoyloids_category\.sql\|atomic-boundary\|[0-9a-f]{64}$/m,
+);
 assert.match(compose, /\.\/database\/migrations:\/migrations\/sql:ro/);
 assert.match(compose, /PGUSER: "\$\{DIVA_DB_ADMIN_USER:-vocadb\}"/);
 
