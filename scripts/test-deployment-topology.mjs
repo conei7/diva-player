@@ -50,6 +50,7 @@ const [
   bulkheadMiddleware,
   spaFallback,
   startDevSbc,
+  bulkheadProbe,
 ] = (await Promise.all([
   readFile(new URL('../backend/docker-compose.yml', import.meta.url), 'utf8'),
   readFile(new URL('../backend/api-gateway/haproxy.cfg', import.meta.url), 'utf8'),
@@ -97,6 +98,7 @@ const [
   readFile(new URL('../backend/api/VocadbRecommender/Middleware/ApiBulkheadMiddleware.cs', import.meta.url), 'utf8'),
   readFile(new URL('../functions/[[path]].js', import.meta.url), 'utf8'),
   readFile(new URL('./start-dev-sbc.ps1', import.meta.url), 'utf8'),
+  readFile(new URL('./probe-api-bulkhead.mjs', import.meta.url), 'utf8'),
 ])).map(normalizeNewlines);
 const staticHeaders = normalizeNewlines(await readFile(new URL('../public/_headers', import.meta.url), 'utf8'));
 
@@ -108,7 +110,9 @@ assert.match(compose, /image: "\$\{DIVA_API_IMAGE:-diva-player-api:local\}"/);
 assert.match(compose, /image: "\$\{DIVA_GATEWAY_IMAGE:-diva-player-api-gateway:local\}"/);
 assert.match(compose, /image: "\$\{DIVA_WEB_IMAGE:-diva-player-web:local\}"/);
 assert.match(compose, /Maximum Pool Size=16/);
-assert.match(compose, /Recommender__Bulkhead__HeavyPermitLimit: "\$\{DIVA_API_HEAVY_CONCURRENCY:-12\}"/);
+assert.match(compose, /Recommender__Bulkhead__AggregatePermitLimit: "\$\{DIVA_API_AGGREGATE_CONCURRENCY:-6\}"/);
+assert.match(compose, /Recommender__Bulkhead__DatabaseConnectionReserve: "\$\{DIVA_API_DB_CONNECTION_RESERVE:-4\}"/);
+assert.match(compose, /Recommender__Bulkhead__HeavyPermitLimit: "\$\{DIVA_API_HEAVY_CONCURRENCY:-6\}"/);
 assert.match(compose, /mem_limit: "768m"/);
 assert.match(compose, /pids_limit: 256/);
 assert.match(compose, /DIVA_API_DB_USER:\?DIVA_API_DB_USER is required/);
@@ -227,10 +231,17 @@ assert.match(program, /isTrustedGatewayProxy/);
 assert.match(program, /MaxRequestBodySize = 1 \* 1024 \* 1024/);
 assert.match(program, /UseMiddleware<PublicIngressSecurityMiddleware>\(pagesProxyKey\)/);
 assert.match(program, /UseMiddleware<ApiBulkheadMiddleware>\(\)/);
-assert.match(bulkheadMiddleware, /DefaultHeavyPermitLimit = 12/);
+assert.match(bulkheadMiddleware, /DefaultAggregatePermitLimit = 6/);
+assert.match(bulkheadMiddleware, /DefaultDatabaseConnectionReserve = 4/);
+assert.match(bulkheadMiddleware, /DatabaseConnectionsPerExecutionBudget = 2/);
+assert.match(bulkheadMiddleware, /postgres\.MaxPoolSize/);
+assert.match(bulkheadMiddleware, /_aggregateExecution/);
 assert.match(bulkheadMiddleware, /StatusCodes\.Status503ServiceUnavailable/);
 assert.match(bulkheadMiddleware, /error = "server_busy"/);
 assert.match(bulkheadMiddleware, /QueueTimeoutMilliseconds/);
+assert.match(bulkheadProbe, /probeBypass\('\/api\/ready', 'ready'\)/);
+assert.match(bulkheadProbe, /probeBypass\('\/api\/health', 'ok'\)/);
+assert.match(bulkheadProbe, /Promise\.all\(\[burst, probes\]\)/);
 assert.match(ingressMiddleware, /CF-Connecting-IP/);
 assert.match(ingressMiddleware, /CF-Ray/);
 assert.match(ingressMiddleware, /X-Diva-Pages-Proxy-Key/);
@@ -292,6 +303,9 @@ assert.match(appsettings, /"SearchCacheSizeMiB": 64/);
 assert.match(appsettings, /"SearchCacheEntrySizeMiB": 8/);
 assert.match(appsettings, /"ObjectCacheSizeMiB": 64/);
 assert.match(appsettings, /"ObjectCacheEntrySizeMiB": 16/);
+assert.match(appsettings, /"AggregatePermitLimit": 6/);
+assert.match(appsettings, /"DatabaseConnectionReserve": 4/);
+assert.match(backendEnvExample, /DIVA_API_AGGREGATE_CONCURRENCY=6/);
 assert.match(recommenderOptions, /SearchCacheSizeMiB \{ get; set; \} = 64/);
 assert.match(recommenderOptions, /SearchCacheEntrySizeMiB \{ get; set; \} = 8/);
 assert.match(recommenderOptions, /ObjectCacheSizeMiB \{ get; set; \} = 64/);

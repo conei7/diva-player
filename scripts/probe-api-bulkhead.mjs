@@ -27,7 +27,8 @@ const requestCount = boundedInteger('--requests', 32, 1, 64);
 const concurrency = boundedInteger('--concurrency', 32, 1, 32);
 const timeoutMilliseconds = boundedInteger('--timeout-ms', 15_000, 1_000, 30_000);
 const requireShed = process.argv.includes('--require-shed');
-const target = `${new URL(baseUrl).toString().replace(/\/$/, '')}${requestPath}`;
+const normalizedBaseUrl = new URL(baseUrl).toString().replace(/\/$/, '');
+const target = `${normalizedBaseUrl}${requestPath}`;
 let cursor = 0;
 const results = [];
 
@@ -59,8 +60,37 @@ async function worker() {
   }
 }
 
+async function probeBypass(path, expectedStatus) {
+  const probeTarget = `${normalizedBaseUrl}${path}`;
+  const startedAt = performance.now();
+  const response = await fetch(probeTarget, {
+    signal: AbortSignal.timeout(Math.min(timeoutMilliseconds, 5_000)),
+  });
+  const body = await response.text();
+  assert.equal(
+    response.status,
+    200,
+    `${path} must stay available during the bounded burst: ${body}`,
+  );
+  const payload = JSON.parse(body);
+  assert.equal(payload.status, expectedStatus, `${path} returned an unexpected health state.`);
+  return {
+    path,
+    status: response.status,
+    state: payload.status,
+    elapsedMs: Math.round(performance.now() - startedAt),
+  };
+}
+
 const startedAt = performance.now();
-await Promise.all(Array.from({ length: Math.min(concurrency, requestCount) }, () => worker()));
+const burst = Promise.all(
+  Array.from({ length: Math.min(concurrency, requestCount) }, () => worker()),
+);
+const probes = Promise.all([
+  probeBypass('/api/ready', 'ready'),
+  probeBypass('/api/health', 'ok'),
+]);
+const [, probeResults] = await Promise.all([burst, probes]);
 const statusCounts = Object.fromEntries(
   [...new Set(results.map(result => result.status))]
     .sort((left, right) => left - right)
@@ -90,4 +120,5 @@ console.log(JSON.stringify({
   wallMilliseconds: Math.round(performance.now() - startedAt),
   successP95Milliseconds: sortedLatency[p95Index],
   statusCounts,
+  probes: probeResults,
 }, null, 2));

@@ -26,7 +26,9 @@ const [
   publicDrMonitor,
   publicDrWorkflow,
   packageJson,
-] = await Promise.all([
+  primaryCompose,
+  primaryGateway,
+] = (await Promise.all([
   readFile(new URL('../backend/docker-compose.dr-standby.yml', import.meta.url), 'utf8'),
   readFile(new URL('../backend/api-gateway/haproxy.dr-standby.cfg', import.meta.url), 'utf8'),
   readFile(new URL('../nginx.dr-standby.conf', import.meta.url), 'utf8'),
@@ -47,7 +49,19 @@ const [
   readFile(new URL('./check-public-dr-health.mjs', import.meta.url), 'utf8'),
   readFile(new URL('../.github/workflows/public-dr-health.yml', import.meta.url), 'utf8'),
   readFile(new URL('../package.json', import.meta.url), 'utf8'),
-]);
+  readFile(new URL('../backend/docker-compose.yml', import.meta.url), 'utf8'),
+  readFile(new URL('../backend/api-gateway/haproxy.cfg', import.meta.url), 'utf8'),
+])).map(content => content.replaceAll('\r\n', '\n'));
+
+function capturedInteger(content, pattern, label) {
+  const match = content.match(pattern);
+  assert.ok(match, `${label} was not found`);
+  return Number(match[1]);
+}
+
+function capturedIntegers(content, pattern) {
+  return [...content.matchAll(pattern)].map(match => Number(match[1]));
+}
 
 assert.match(compose, /container_name: diva_dr_api_a/);
 assert.match(compose, /container_name: diva_dr_api_b/);
@@ -60,6 +74,16 @@ assert.doesNotMatch(compose, /^\s+ports:/m);
 assert.match(compose, /Host=127\.0\.0\.1;Port=5432;Database=diva_standby/);
 assert.match(compose, /Recommender__QdrantEndpoint: "http:\/\/127\.0\.0\.1:16334"/);
 assert.match(compose, /Recommender__QdrantRestEndpoint: "http:\/\/127\.0\.0\.1:16333"/);
+assert.match(compose, /Maximum Pool Size=8/);
+assert.match(compose, /Recommender__Bulkhead__AggregatePermitLimit: "3"/);
+assert.match(compose, /Recommender__Bulkhead__DatabaseConnectionReserve: "2"/);
+assert.match(compose, /Recommender__Bulkhead__HeavyPermitLimit: "3"/);
+assert.match(compose, /Recommender__Bulkhead__ProviderPermitLimit: "1"/);
+assert.match(compose, /Recommender__Bulkhead__QueueTimeoutMilliseconds: "1000"/);
+assert.match(compose, /mem_limit: "384m"/);
+assert.equal((compose.match(/mem_limit: "128m"/g) ?? []).length, 2);
+assert.match(compose, /pids_limit: 128/);
+assert.equal((compose.match(/pids_limit: 64/g) ?? []).length, 2);
 assert.match(compose, /DIVA_API_DB_PASSWORD:\?DIVA_API_DB_PASSWORD is required/);
 assert.match(compose, /PAGES_PROXY_KEY:\?PAGES_PROXY_KEY is required/);
 assert.doesNotMatch(compose, /DIVA_DB_ADMIN_PASSWORD/);
@@ -67,8 +91,62 @@ assert.doesNotMatch(compose, /postgres_data|qdrant_data/);
 assert.match(compose, /cap_drop:\s*\n\s+- ALL/);
 assert.match(compose, /no-new-privileges=true/);
 assert.match(gateway, /bind 127\.0\.0\.1:15000/);
-assert.match(gateway, /server api_a 127\.0\.0\.1:15001 check/);
-assert.match(gateway, /server api_b 127\.0\.0\.1:15002 check/);
+assert.match(gateway, /maxconn 128/);
+assert.match(gateway, /timeout queue 2s/);
+assert.match(gateway, /timeout http-request 10s/);
+assert.match(gateway, /frontend api_front[\s\S]*maxconn 64/);
+assert.match(gateway, /server api_a 127\.0\.0\.1:15001 maxconn 32 check/);
+assert.match(gateway, /server api_b 127\.0\.0\.1:15002 maxconn 32 check/);
+assert.match(primaryCompose, /Recommender__Bulkhead__AggregatePermitLimit: "\$\{DIVA_API_AGGREGATE_CONCURRENCY:-6\}"/);
+assert.match(primaryCompose, /mem_limit: "768m"/);
+assert.match(primaryGateway, /maxconn 512/);
+const drAggregate = capturedInteger(
+  compose,
+  /Recommender__Bulkhead__AggregatePermitLimit: "(\d+)"/,
+  'DR aggregate cap',
+);
+const primaryAggregate = capturedInteger(
+  primaryCompose,
+  /Recommender__Bulkhead__AggregatePermitLimit: "\$\{DIVA_API_AGGREGATE_CONCURRENCY:-(\d+)\}"/,
+  'primary aggregate cap',
+);
+assert.ok(drAggregate < primaryAggregate, 'DR aggregate cap must remain below primary');
+
+for (const [label, pattern] of [
+  ['memory reservation', /mem_reservation: "(\d+)m"/g],
+  ['memory limit', /mem_limit: "(\d+)m"/g],
+  ['PID limit', /pids_limit: (\d+)/g],
+]) {
+  const drValues = capturedIntegers(compose, pattern);
+  const primaryValues = capturedIntegers(primaryCompose, pattern);
+  assert.equal(drValues.length, 3, `DR ${label} contract must cover API, gateway, and Web`);
+  assert.equal(primaryValues.length, 3, `primary ${label} contract must cover API, gateway, and Web`);
+  assert.ok(
+    drValues.every((value, index) => value < primaryValues[index]),
+    `every DR ${label} must remain below its primary counterpart`,
+  );
+}
+
+const drMaxConnections = capturedIntegers(gateway, /\bmaxconn\s+(\d+)/g);
+const primaryMaxConnections = capturedIntegers(primaryGateway, /\bmaxconn\s+(\d+)/g);
+assert.deepEqual(drMaxConnections.length, primaryMaxConnections.length);
+assert.ok(
+  drMaxConnections.every((value, index) => value < primaryMaxConnections[index]),
+  'every DR HAProxy connection cap must remain below its primary counterpart',
+);
+for (const timeout of ['connect', 'queue', 'http-request', 'client', 'server']) {
+  const drSeconds = capturedInteger(
+    gateway,
+    new RegExp(`timeout ${timeout} (\\d+)s`),
+    `DR HAProxy ${timeout} timeout`,
+  );
+  const primarySeconds = capturedInteger(
+    primaryGateway,
+    new RegExp(`timeout ${timeout} (\\d+)s`),
+    `primary HAProxy ${timeout} timeout`,
+  );
+  assert.ok(drSeconds < primarySeconds, `DR HAProxy ${timeout} timeout must remain below primary`);
+}
 assert.match(nginx, /listen 127\.0\.0\.1:18080/);
 assert.match(nginx, /absolute_redirect off/);
 assert.match(nginx, /proxy_pass http:\/\/127\.0\.0\.1:15000\//);

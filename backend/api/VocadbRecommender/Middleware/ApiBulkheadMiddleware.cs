@@ -1,9 +1,14 @@
+using Npgsql;
+using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json;
 
 namespace VocadbRecommender;
 
 internal sealed record ApiBulkheadOptions(
+    int AggregatePermitLimit,
+    int DatabaseConnectionReserve,
+    int DatabaseMaximumPoolSize,
     int HeavyPermitLimit,
     int HeavyQueueLimit,
     int StandardPermitLimit,
@@ -12,18 +17,63 @@ internal sealed record ApiBulkheadOptions(
     int ProviderQueueLimit,
     int QueueTimeoutMilliseconds)
 {
-    internal const int DefaultHeavyPermitLimit = 12;
-    internal const int DefaultHeavyQueueLimit = 12;
-    internal const int DefaultStandardPermitLimit = 24;
-    internal const int DefaultStandardQueueLimit = 24;
-    internal const int DefaultProviderPermitLimit = 4;
-    internal const int DefaultProviderQueueLimit = 4;
-    internal const int DefaultQueueTimeoutMilliseconds = 2_000;
+    // Recommendation execution can retain one publication-guard connection
+    // while opening a second connection for its actual query.  Budget every
+    // admitted request at that worst case so mixed lanes cannot jointly drain
+    // the Npgsql pool and starve background/readiness probes.
+    internal const int DatabaseConnectionsPerExecutionBudget = 2;
+    internal const int DefaultAggregatePermitLimit = 6;
+    internal const int DefaultDatabaseConnectionReserve = 4;
+    internal const int DefaultHeavyPermitLimit = 6;
+    internal const int DefaultHeavyQueueLimit = 6;
+    internal const int DefaultStandardPermitLimit = 6;
+    internal const int DefaultStandardQueueLimit = 8;
+    internal const int DefaultProviderPermitLimit = 2;
+    internal const int DefaultProviderQueueLimit = 2;
+    internal const int DefaultQueueTimeoutMilliseconds = 1_500;
 
     internal static ApiBulkheadOptions FromConfiguration(IConfiguration configuration)
     {
         var section = configuration.GetSection("Recommender:Bulkhead");
-        return new ApiBulkheadOptions(
+        var connectionString = configuration.GetConnectionString("Postgres");
+        if (string.IsNullOrWhiteSpace(connectionString))
+        {
+            throw new InvalidOperationException(
+                "ConnectionStrings:Postgres is required for pool-aware bulkhead validation.");
+        }
+
+        NpgsqlConnectionStringBuilder postgres;
+        try
+        {
+            postgres = new NpgsqlConnectionStringBuilder(connectionString);
+        }
+        catch (ArgumentException)
+        {
+            throw new InvalidOperationException(
+                "ConnectionStrings:Postgres is invalid for pool-aware bulkhead validation.");
+        }
+        if (!postgres.Pooling)
+        {
+            throw new InvalidOperationException(
+                "ConnectionStrings:Postgres must enable pooling for bounded API execution.");
+        }
+
+        var aggregatePermitLimit = ReadBoundedInt(
+            section,
+            "AggregatePermitLimit",
+            DefaultAggregatePermitLimit,
+            1,
+            64);
+        var databaseConnectionReserve = ReadBoundedInt(
+            section,
+            "DatabaseConnectionReserve",
+            DefaultDatabaseConnectionReserve,
+            2,
+            64);
+        var options = new ApiBulkheadOptions(
+            aggregatePermitLimit,
+            databaseConnectionReserve,
+            postgres.MaxPoolSize,
             ReadBoundedInt(section, "HeavyPermitLimit", DefaultHeavyPermitLimit, 1, 64),
             ReadBoundedInt(section, "HeavyQueueLimit", DefaultHeavyQueueLimit, 0, 128),
             ReadBoundedInt(section, "StandardPermitLimit", DefaultStandardPermitLimit, 1, 128),
@@ -31,6 +81,27 @@ internal sealed record ApiBulkheadOptions(
             ReadBoundedInt(section, "ProviderPermitLimit", DefaultProviderPermitLimit, 1, 32),
             ReadBoundedInt(section, "ProviderQueueLimit", DefaultProviderQueueLimit, 0, 64),
             ReadBoundedInt(section, "QueueTimeoutMilliseconds", DefaultQueueTimeoutMilliseconds, 100, 5_000));
+
+        if (options.HeavyPermitLimit > aggregatePermitLimit
+            || options.StandardPermitLimit > aggregatePermitLimit
+            || options.ProviderPermitLimit > aggregatePermitLimit)
+        {
+            throw new InvalidOperationException(
+                "Every Recommender:Bulkhead lane permit limit must be less than or equal to AggregatePermitLimit.");
+        }
+
+        var requiredPoolCapacity = checked(
+            aggregatePermitLimit * DatabaseConnectionsPerExecutionBudget
+            + databaseConnectionReserve);
+        if (requiredPoolCapacity > postgres.MaxPoolSize)
+        {
+            throw new InvalidOperationException(
+                $"Recommender:Bulkhead requires {requiredPoolCapacity} PostgreSQL pool connections "
+                + $"but ConnectionStrings:Postgres Maximum Pool Size is {postgres.MaxPoolSize}. "
+                + "Lower AggregatePermitLimit or DatabaseConnectionReserve.");
+        }
+
+        return options;
     }
 
     private static int ReadBoundedInt(
@@ -59,6 +130,7 @@ internal sealed class ApiBulkheadMiddleware
     private readonly ILogger<ApiBulkheadMiddleware> _logger;
     private readonly TimeSpan _queueTimeout;
     private readonly IReadOnlyDictionary<ApiBulkheadLane, BulkheadLane> _lanes;
+    private readonly SemaphoreSlim _aggregateExecution;
 
     internal enum ApiBulkheadLane
     {
@@ -76,6 +148,7 @@ internal sealed class ApiBulkheadMiddleware
         _next = next;
         _logger = logger;
         _queueTimeout = TimeSpan.FromMilliseconds(options.QueueTimeoutMilliseconds);
+        _aggregateExecution = new SemaphoreSlim(options.AggregatePermitLimit);
         _lanes = new Dictionary<ApiBulkheadLane, BulkheadLane>
         {
             [ApiBulkheadLane.Heavy] = new(
@@ -96,7 +169,8 @@ internal sealed class ApiBulkheadMiddleware
     public async Task InvokeAsync(HttpContext context)
     {
         var laneKind = Classify(context.Request.Path);
-        if (laneKind == ApiBulkheadLane.Bypass)
+        if (HttpMethods.IsOptions(context.Request.Method)
+            || laneKind == ApiBulkheadLane.Bypass)
         {
             await _next(context);
             return;
@@ -109,13 +183,15 @@ internal sealed class ApiBulkheadMiddleware
             return;
         }
 
-        var executing = false;
+        var queueStartedAt = Stopwatch.GetTimestamp();
+        var laneExecuting = false;
+        var aggregateExecuting = false;
         try
         {
             try
             {
-                executing = await lane.WaitForExecutionAsync(
-                    _queueTimeout,
+                laneExecuting = await lane.WaitForExecutionAsync(
+                    RemainingQueueTime(queueStartedAt),
                     context.RequestAborted);
             }
             catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
@@ -123,9 +199,26 @@ internal sealed class ApiBulkheadMiddleware
                 return;
             }
 
-            if (!executing)
+            if (!laneExecuting)
             {
                 await RejectAsync(context, lane, "queue-timeout");
+                return;
+            }
+
+            try
+            {
+                aggregateExecuting = await _aggregateExecution.WaitAsync(
+                    RemainingQueueTime(queueStartedAt),
+                    context.RequestAborted);
+            }
+            catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
+            {
+                return;
+            }
+
+            if (!aggregateExecuting)
+            {
+                await RejectAsync(context, lane, "aggregate-queue-timeout");
                 return;
             }
 
@@ -134,9 +227,16 @@ internal sealed class ApiBulkheadMiddleware
         }
         finally
         {
-            if (executing) lane.ReleaseExecution();
+            if (aggregateExecuting) _aggregateExecution.Release();
+            if (laneExecuting) lane.ReleaseExecution();
             lane.ReleaseAdmission();
         }
+    }
+
+    private TimeSpan RemainingQueueTime(long startedAt)
+    {
+        var elapsed = Stopwatch.GetElapsedTime(startedAt);
+        return elapsed >= _queueTimeout ? TimeSpan.Zero : _queueTimeout - elapsed;
     }
 
     internal static ApiBulkheadLane Classify(PathString path)

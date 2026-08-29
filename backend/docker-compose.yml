@@ -16,15 +16,17 @@ x-api-environment: &api-environment
   Recommender__SearchCacheEntrySizeMiB: "8"
   Recommender__ObjectCacheSizeMiB: "64"
   Recommender__ObjectCacheEntrySizeMiB: "16"
-  # Per API slot. Heavy work stays below the 16-connection PostgreSQL pool so
-  # readiness and lightweight reads retain headroom during a public burst.
-  Recommender__Bulkhead__HeavyPermitLimit: "${DIVA_API_HEAVY_CONCURRENCY:-12}"
-  Recommender__Bulkhead__HeavyQueueLimit: "${DIVA_API_HEAVY_QUEUE:-12}"
-  Recommender__Bulkhead__StandardPermitLimit: "${DIVA_API_STANDARD_CONCURRENCY:-24}"
-  Recommender__Bulkhead__StandardQueueLimit: "${DIVA_API_STANDARD_QUEUE:-24}"
-  Recommender__Bulkhead__ProviderPermitLimit: "${DIVA_API_PROVIDER_CONCURRENCY:-4}"
-  Recommender__Bulkhead__ProviderQueueLimit: "${DIVA_API_PROVIDER_QUEUE:-4}"
-  Recommender__Bulkhead__QueueTimeoutMilliseconds: "${DIVA_API_QUEUE_TIMEOUT_MS:-2000}"
+  # Per API slot. Aggregate*2 + reserve equals the 16-connection pool: a
+  # recommendation can retain one guard lease while opening its query lease.
+  Recommender__Bulkhead__AggregatePermitLimit: "${DIVA_API_AGGREGATE_CONCURRENCY:-6}"
+  Recommender__Bulkhead__DatabaseConnectionReserve: "${DIVA_API_DB_CONNECTION_RESERVE:-4}"
+  Recommender__Bulkhead__HeavyPermitLimit: "${DIVA_API_HEAVY_CONCURRENCY:-6}"
+  Recommender__Bulkhead__HeavyQueueLimit: "${DIVA_API_HEAVY_QUEUE:-6}"
+  Recommender__Bulkhead__StandardPermitLimit: "${DIVA_API_STANDARD_CONCURRENCY:-6}"
+  Recommender__Bulkhead__StandardQueueLimit: "${DIVA_API_STANDARD_QUEUE:-8}"
+  Recommender__Bulkhead__ProviderPermitLimit: "${DIVA_API_PROVIDER_CONCURRENCY:-2}"
+  Recommender__Bulkhead__ProviderQueueLimit: "${DIVA_API_PROVIDER_QUEUE:-2}"
+  Recommender__Bulkhead__QueueTimeoutMilliseconds: "${DIVA_API_QUEUE_TIMEOUT_MS:-1500}"
   ASPNETCORE_URLS: "http://+:5000"
   ASPNETCORE_ENVIRONMENT: "Production"
 

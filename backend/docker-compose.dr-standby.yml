@@ -16,6 +16,17 @@ x-api-environment: &api-environment
   Recommender__SearchCacheEntrySizeMiB: "8"
   Recommender__ObjectCacheSizeMiB: "64"
   Recommender__ObjectCacheEntrySizeMiB: "16"
+  # The standby pool has eight connections per slot. Three aggregate workers
+  # budget two leases each and preserve two connections for probes/guard work.
+  Recommender__Bulkhead__AggregatePermitLimit: "3"
+  Recommender__Bulkhead__DatabaseConnectionReserve: "2"
+  Recommender__Bulkhead__HeavyPermitLimit: "3"
+  Recommender__Bulkhead__HeavyQueueLimit: "3"
+  Recommender__Bulkhead__StandardPermitLimit: "3"
+  Recommender__Bulkhead__StandardQueueLimit: "4"
+  Recommender__Bulkhead__ProviderPermitLimit: "1"
+  Recommender__Bulkhead__ProviderQueueLimit: "1"
+  Recommender__Bulkhead__QueueTimeoutMilliseconds: "1000"
   ASPNETCORE_ENVIRONMENT: "Production"
 
 x-api-common: &api-common
@@ -29,6 +40,9 @@ x-api-common: &api-common
   tmpfs:
     - /tmp:size=64m,mode=1777
   stop_grace_period: 30s
+  mem_reservation: "128m"
+  mem_limit: "384m"
+  pids_limit: 128
   restart: unless-stopped
   logging: *default-logging
 
@@ -88,6 +102,9 @@ services:
       timeout: 6s
       retries: 12
       start_period: 185s
+    mem_reservation: "32m"
+    mem_limit: "128m"
+    pids_limit: 64
     restart: unless-stopped
     logging: *default-logging
 
@@ -114,5 +131,8 @@ services:
       timeout: 6s
       retries: 12
       start_period: 190s
+    mem_reservation: "32m"
+    mem_limit: "128m"
+    pids_limit: 64
     restart: unless-stopped
     logging: *default-logging
