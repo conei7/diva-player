@@ -11,7 +11,10 @@ import {
 import {
   inspectProjectContract,
   matchesReleaseDeployment,
+  releaseCommitMessage,
   rollbackReachedTarget,
+  SENSITIVE_ENVIRONMENT_VARIABLES,
+  validatePreviewBaseline,
   validateProjectContract,
   validateRollbackCandidate,
 } from './cloudflare-pages-release.mjs';
@@ -28,6 +31,10 @@ const productionRoutes = JSON.parse(await readFile(new URL('../public/_routes.js
 const compatibilityDate = '2026-08-20';
 const compatibilityFlags = ['nodejs_compat'];
 const workerSource = 'const worker = { fetch: (request, env) => env.ASSETS.fetch(request) }; export { worker as default };\n';
+const githubRunId = '1234567890';
+const githubRunAttempt = '2';
+const releaseSha256 = 'b'.repeat(64);
+const releaseMarker = releaseCommitMessage({ releaseSha256, githubRunId, githubRunAttempt });
 
 function deployment(overrides = {}) {
   return {
@@ -42,7 +49,7 @@ function deployment(overrides = {}) {
       metadata: {
         branch: 'main',
         commit_hash: commit,
-        commit_message: `artifact-sha256:${'b'.repeat(64)}`,
+        commit_message: releaseMarker,
       },
     },
     uses_functions: true,
@@ -57,6 +64,9 @@ function environmentConfig() {
     compatibility_flags: compatibilityFlags,
     env_vars: {
       PAGES_PROXY_KEY: { type: 'secret_text', value: '' },
+      TUNNEL_SYNC_TOKEN: { type: 'secret_text', value: '' },
+      TUNNEL_ORIGIN_PROOF_KEY: { type: 'secret_text', value: '' },
+      CF_ACCESS_CLIENT_SECRET: { type: 'secret_text', value: '' },
       DIVA_API_ORIGIN_MODE: { type: 'plain_text', value: 'quick' },
     },
     kv_namespaces: {
@@ -93,8 +103,16 @@ try {
   assert.match(workflow, /Validate Cloudflare project release contract[\s\S]*--expected-compatibility-date "\$COMPATIBILITY_DATE"[\s\S]*--expected-compatibility-flags-json "\$COMPATIBILITY_FLAGS_JSON"/);
   assert.match(workflow, /actions\/upload-artifact@[a-f0-9]{40} # v7\.0\.1/);
   assert.match(workflow, /actions\/download-artifact@[a-f0-9]{40} # v8\.0\.1/);
-  assert.match(workflow, /Deploy exact release to isolated preview[\s\S]*--branch "\$preview_branch"/);
-  assert.match(workflow, /preview_branch="release-candidate"/);
+  assert.match(workflow, /PREVIEW_BRANCH=release-candidate/);
+  const baselineIndex = workflow.indexOf('Capture preview deployment baseline');
+  const previewUploadIndex = workflow.indexOf('Deploy exact release to isolated preview');
+  assert.ok(baselineIndex > 0 && baselineIndex < previewUploadIndex);
+  assert.match(workflow, /capture-preview[\s\S]*--output "\$RUNNER_TEMP\/preview-before-upload\.json"/);
+  assert.match(workflow, /Deploy exact release to isolated preview[\s\S]*--branch "\$PREVIEW_BRANCH"/);
+  assert.equal(workflow.match(/--commit-message "artifact-sha256:\$\{RELEASE_SHA256\};github-run-id:\$\{GITHUB_RUN_ID\};github-run-attempt:\$\{GITHUB_RUN_ATTEMPT\}"/g)?.length, 2);
+  assert.equal(workflow.match(/--github-run-id "\$GITHUB_RUN_ID"/g)?.length, 3);
+  assert.equal(workflow.match(/--github-run-attempt "\$GITHUB_RUN_ATTEMPT"/g)?.length, 3);
+  assert.match(workflow, /wait-preview[\s\S]*--excluded-ids-file "\$RUNNER_TEMP\/preview-before-upload\.json"/);
   assert.match(workflow, /Verify preview root, ready, health, and origin headers/);
   assert.match(workflow, /Seal verified last-known-good production/);
   assert.match(workflow, /Deploy the same verified release to production[\s\S]*--branch main/);
@@ -108,6 +126,12 @@ try {
   const deployJob = workflow.slice(workflow.indexOf('  deploy-cloudflare:'));
   assert.doesNotMatch(deployJob, /npm run build:cloudflare/);
   assert.match(spaFallback, /env\.ASSETS\.fetch/);
+  assert.deepEqual(SENSITIVE_ENVIRONMENT_VARIABLES, [
+    'PAGES_PROXY_KEY',
+    'TUNNEL_SYNC_TOKEN',
+    'TUNNEL_ORIGIN_PROOF_KEY',
+    'CF_ACCESS_CLIENT_SECRET',
+  ]);
   for (const route of ['/backend-api/*', '/tunnel-admin/update', '/watch', '/playing', '/knowledge-map']) {
     assert.ok(productionRoutes.include.includes(route), `production _routes.json must include ${route}`);
   }
@@ -191,6 +215,11 @@ try {
   });
   assert.deepEqual(parseCompatibilityFlagsJson('["nodejs_compat"]'), compatibilityFlags);
   assert.throws(() => parseCompatibilityFlagsJson('["nodejs_compat","nodejs_compat"]'), /duplicate flag/);
+  assert.equal(releaseMarker, `artifact-sha256:${releaseSha256};github-run-id:${githubRunId};github-run-attempt:${githubRunAttempt}`);
+  assert.throws(
+    () => releaseCommitMessage({ releaseSha256, githubRunId: '0', githubRunAttempt }),
+    /GitHub run ID is invalid/,
+  );
   assert.throws(
     () => validateProjectContract(project({ source: { config: { production_deployments_enabled: true } } })),
     /automatic production branch deployments must be disabled/,
@@ -227,25 +256,65 @@ try {
     })),
     /preview PAGES_PROXY_KEY is missing/,
   );
+  for (const sensitiveName of SENSITIVE_ENVIRONMENT_VARIABLES) {
+    for (const environment of ['production', 'preview']) {
+      const production = environmentConfig();
+      const preview = environmentConfig();
+      const config = environment === 'production' ? production : preview;
+      config.env_vars[sensitiveName] = { type: 'plain_text', value: 'must-not-be-plain' };
+      assert.throws(
+        () => validateProjectContract(project({ deployment_configs: { production, preview } })),
+        new RegExp(`${environment} ${sensitiveName} must be secret_text`),
+      );
+    }
+  }
+
+  const priorPreviewId = '22222222-3333-4444-5555-666666666666';
+  assert.deepEqual(validatePreviewBaseline({
+    schemaVersion: 1,
+    project: 'diva-player',
+    branch: 'release-candidate',
+    deploymentIds: [priorPreviewId],
+  }, 'release-candidate'), [priorPreviewId]);
+  assert.throws(
+    () => validatePreviewBaseline({
+      schemaVersion: 1,
+      project: 'diva-player',
+      branch: 'release-candidate',
+      deploymentIds: [priorPreviewId, priorPreviewId],
+    }, 'release-candidate'),
+    /duplicate IDs/,
+  );
 
   assert.equal(matchesReleaseDeployment(deployment(), {
     environment: 'production',
     branch: 'main',
     commitHash: commit,
-    commitMessage: `artifact-sha256:${'b'.repeat(64)}`,
+    commitMessage: releaseMarker,
     excludedId: 'different-deployment',
   }), true);
   assert.equal(matchesReleaseDeployment(deployment(), {
     environment: 'production',
     branch: 'main',
     commitHash: commit,
-    commitMessage: `artifact-sha256:${'c'.repeat(64)}`,
+    commitMessage: releaseCommitMessage({
+      releaseSha256,
+      githubRunId,
+      githubRunAttempt: '1',
+    }),
   }), false);
   assert.equal(matchesReleaseDeployment(deployment({ uses_functions: false }), {
     environment: 'production',
     branch: 'main',
     commitHash: commit,
-    commitMessage: `artifact-sha256:${'b'.repeat(64)}`,
+    commitMessage: releaseMarker,
+  }), false);
+  assert.equal(matchesReleaseDeployment(deployment(), {
+    environment: 'production',
+    branch: 'main',
+    commitHash: commit,
+    commitMessage: releaseMarker,
+    excludedIds: [deployment().id],
   }), false);
 
   const rollbackTarget = {

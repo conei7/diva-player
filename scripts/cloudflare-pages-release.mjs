@@ -11,6 +11,16 @@ const GIT_COMMIT_PATTERN = /^[a-f0-9]{40}$/;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 const COMPATIBILITY_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const COMPATIBILITY_FLAG_PATTERN = /^[a-z0-9_-]{1,128}$/;
+const RUN_IDENTIFIER_PATTERN = /^[1-9][0-9]{0,19}$/;
+const PREVIEW_PAGE_SIZE = 100;
+const MAX_PREVIEW_PAGES = 10;
+
+export const SENSITIVE_ENVIRONMENT_VARIABLES = Object.freeze([
+  'PAGES_PROXY_KEY',
+  'TUNNEL_SYNC_TOKEN',
+  'TUNNEL_ORIGIN_PROOF_KEY',
+  'CF_ACCESS_CLIENT_SECRET',
+]);
 
 function positiveInteger(value, option) {
   const parsed = Number.parseInt(value, 10);
@@ -64,8 +74,12 @@ function environmentContract(config, environment) {
   if (!config.kv_namespaces?.TUNNEL_CONFIG?.namespace_id) {
     throw new Error(`Cloudflare ${environment} TUNNEL_CONFIG binding is missing`);
   }
-  if (!config.env_vars?.PAGES_PROXY_KEY) {
-    throw new Error(`Cloudflare ${environment} PAGES_PROXY_KEY is missing`);
+  for (const name of SENSITIVE_ENVIRONMENT_VARIABLES) {
+    const variable = config.env_vars?.[name];
+    if (!variable) throw new Error(`Cloudflare ${environment} ${name} is missing`);
+    if (variable.type !== 'secret_text') {
+      throw new Error(`Cloudflare ${environment} ${name} must be secret_text`);
+    }
   }
   return config;
 }
@@ -162,6 +176,7 @@ export function matchesReleaseDeployment(deployment, {
   commitHash,
   commitMessage,
   excludedId = null,
+  excludedIds = [],
 }) {
   try {
     assertSuccessfulDeployment(deployment, environment);
@@ -169,12 +184,35 @@ export function matchesReleaseDeployment(deployment, {
     return false;
   }
   const metadata = deployment.deployment_trigger?.metadata || {};
+  const exclusions = new Set(excludedIds);
+  if (excludedId) exclusions.add(excludedId);
   return (
-    (!excludedId || deployment.id !== excludedId)
+    !exclusions.has(deployment.id)
     && metadata.branch === branch
     && metadata.commit_hash === commitHash
     && metadata.commit_message === commitMessage
   );
+}
+
+export function releaseCommitMessage({ releaseSha256, githubRunId, githubRunAttempt }) {
+  if (!SHA256_PATTERN.test(releaseSha256 || '')) throw new Error('release SHA-256 is invalid');
+  if (!RUN_IDENTIFIER_PATTERN.test(githubRunId || '')) throw new Error('GitHub run ID is invalid');
+  if (!RUN_IDENTIFIER_PATTERN.test(githubRunAttempt || '')) throw new Error('GitHub run attempt is invalid');
+  return `artifact-sha256:${releaseSha256};github-run-id:${githubRunId};github-run-attempt:${githubRunAttempt}`;
+}
+
+export function validatePreviewBaseline(snapshot, expectedBranch) {
+  if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot) || snapshot.schemaVersion !== 1) {
+    throw new Error('preview deployment baseline is invalid');
+  }
+  if (snapshot.project !== DEFAULT_PROJECT || snapshot.branch !== expectedBranch) {
+    throw new Error('preview deployment baseline belongs to a different project or branch');
+  }
+  if (!Array.isArray(snapshot.deploymentIds)) throw new Error('preview deployment baseline IDs are invalid');
+  const ids = snapshot.deploymentIds.map(id => String(id));
+  for (const id of ids) assertDeploymentId(id, 'preview baseline deployment ID');
+  if (new Set(ids).size !== ids.length) throw new Error('preview deployment baseline contains duplicate IDs');
+  return ids;
 }
 
 export function validateRollbackCandidate(target, deployment) {
@@ -248,7 +286,16 @@ async function getDeployment(project, deploymentId) {
 }
 
 async function getPreviewDeployments(project) {
-  return cloudflareRequest(`${projectPath(project)}/deployments?env=preview&page=1&per_page=25`);
+  const deployments = [];
+  for (let page = 1; page <= MAX_PREVIEW_PAGES; page += 1) {
+    const batch = await cloudflareRequest(
+      `${projectPath(project)}/deployments?env=preview&page=${page}&per_page=${PREVIEW_PAGE_SIZE}`,
+    );
+    if (!Array.isArray(batch)) throw new Error('Cloudflare preview deployment list is invalid');
+    deployments.push(...batch);
+    if (batch.length < PREVIEW_PAGE_SIZE) return deployments;
+  }
+  throw new Error(`Cloudflare preview deployment list exceeds the ${MAX_PREVIEW_PAGES * PREVIEW_PAGE_SIZE} item safety bound`);
 }
 
 async function waitFor(check, { attempts, intervalMs, description }) {
@@ -301,7 +348,11 @@ function releaseExpectation(values, environment) {
     environment,
     branch,
     commitHash,
-    commitMessage: `artifact-sha256:${releaseHash}`,
+    commitMessage: releaseCommitMessage({
+      releaseSha256: releaseHash,
+      githubRunId: values.get('--github-run-id') || '',
+      githubRunAttempt: values.get('--github-run-attempt') || '',
+    }),
     excludedId: values.get('--excluded-id') || null,
   };
 }
@@ -363,11 +414,41 @@ async function main() {
     return;
   }
 
+  if (command === 'capture-preview') {
+    const output = values.get('--output');
+    if (!output) throw new Error('--output is required');
+    const branch = values.get('--branch') || '';
+    if (!branch || branch.length > 63 || !/^[a-z0-9-]+$/.test(branch)) throw new Error('branch is invalid');
+    const deployments = await getPreviewDeployments(project);
+    const deploymentIds = [];
+    for (const deployment of deployments) {
+      if (deployment?.environment !== 'preview') throw new Error('Cloudflare preview query returned another environment');
+      if (deployment.deployment_trigger?.metadata?.branch !== branch) continue;
+      assertDeploymentId(deployment.id, 'preview deployment ID');
+      deploymentIds.push(deployment.id);
+    }
+    const baseline = {
+      schemaVersion: 1,
+      project,
+      branch,
+      capturedAt: new Date().toISOString(),
+      deploymentIds: [...new Set(deploymentIds)].sort(),
+    };
+    await writeSummary(output, baseline);
+    return;
+  }
+
   if (command === 'wait-preview') {
-    const expectation = releaseExpectation(values, 'preview');
+    const baselineFile = values.get('--excluded-ids-file');
+    if (!baselineFile) throw new Error('--excluded-ids-file is required');
+    const baseExpectation = releaseExpectation(values, 'preview');
+    const excludedIds = validatePreviewBaseline(
+      JSON.parse(await readFile(baselineFile, 'utf8')),
+      baseExpectation.branch,
+    );
+    const expectation = { ...baseExpectation, excludedIds };
     const deployment = await waitFor(async () => {
       const deployments = await getPreviewDeployments(project);
-      if (!Array.isArray(deployments)) throw new Error('Cloudflare preview deployment list is invalid');
       return deployments.find(candidate => matchesReleaseDeployment(candidate, expectation)) || null;
     }, { attempts, intervalMs, description: 'preview deployment' });
     const summary = deploymentSummary(deployment);

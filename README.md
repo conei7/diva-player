@@ -111,7 +111,7 @@ npm run preview
 
 releaseは次の順序で進みます。
 
-1. non-productionの`release-candidate` preview branchへ固定artifactをdirect uploadし、Cloudflare APIからrun固有のimmutable deployment URLと、commit／artifact hashを含むdeployment metadataを照合します。branch aliasは毎回同じものを更新し、runごとのaliasを増やしません。
+1. upload前の`release-candidate` preview deployment ID群を取得してbaselineへ封印し、non-production branchへ固定artifactをdirect uploadします。Cloudflare APIから、baselineに存在しないrun固有のimmutable deployment URLを解決し、commit／artifact hash／GitHub run ID／run attemptを含む完全一致metadataを照合します。同じcommitとpayloadのworkflow rerunでも過去previewを選びません。branch aliasは毎回同じものを更新し、runごとのaliasを増やしません。
 2. preview URLの`/`、`/backend-api/api/ready`、`/backend-api/api/health`、origin headers、およびNico autoplay smokeを確認します。
 3. 現在のproduction deployment IDを取得し、production URLでも同じhealth／smokeを通過したことと、確認中にdeployment IDが変化していないことを確認してlast-known-goodとして封印します。
 4. previewと同じmanifest検証済みpayloadを`main`へdirect uploadし、Cloudflare deployment metadata、公開health／smokeを再確認します。production検証に失敗した場合だけ、Cloudflare公式rollback APIを1回だけ呼び、封印済みproduction deploymentへ戻ったことと公開health／smokeを再確認したうえでworkflow自体は失敗として残します。
@@ -122,9 +122,9 @@ Cloudflare Pagesはpreview deploymentそのものをproductionへ昇格できず
 
 - GitHub repository secretsの`CLOUDFLARE_API_TOKEN`と`CLOUDFLARE_ACCOUNT_ID`。tokenには対象projectのPages Write権限が必要です。
 - Pages project `diva-player`のproduction branchは`main`とし、Git連携のautomatic production branch deploymentsを無効化します。productionを更新する経路をこのGitHub Actionsだけに限定するためです。
-- Pagesのpreview／productionで「常に最新のcompatibility date」を無効化し、compatibility dateとcompatibility flagsを両環境で同一にします。日付はrepositoryに固定せず、各releaseのpreflightでCloudflareの実設定を読み取り、その値をworker build provenanceへ封印します。同じ`TUNNEL_CONFIG` KV namespaceを両環境へbindし、productionに存在する環境変数／secretはpreviewにも同名・同種で設定します。plain text値とbinding IDはAPIで一致確認します。
+- Pagesのpreview／productionで「常に最新のcompatibility date」を無効化し、compatibility dateとcompatibility flagsを両環境で同一にします。日付はrepositoryに固定せず、各releaseのpreflightでCloudflareの実設定を読み取り、その値をworker build provenanceへ封印します。同じ`TUNNEL_CONFIG` KV namespaceを両環境へbindし、productionに存在する環境変数／secretはpreviewにも同名・同種で設定します。plain text値とbinding IDはAPIで一致確認します。`PAGES_PROXY_KEY`、`TUNNEL_SYNC_TOKEN`、`TUNNEL_ORIGIN_PROOF_KEY`、`CF_ACCESS_CLIENT_SECRET`は両環境とも必ずencrypted `secret_text`でなければならず、欠落またはplain textならpreview upload前に停止します。
 
-初回だけ、Cloudflare dashboardのWorkers & Pages > `diva-player` > Settings > Variables and Secrets／Bindingsでpreview環境を設定します。`TUNNEL_CONFIG`にはproductionと同じKV namespace IDを選び、`PAGES_PROXY_KEY`は正規のsecret保管元からpreviewへ直接encrypted secretとして入力してください。Cloudflare APIから既存のproduction secret値を安全に読み戻せないため、workflowはsecret値のcopyや表示を行いません。正規値を取得できない場合は、origin、Pages production、Pages previewの3か所を同じ新しい値へ計画的にrotateする必要があります。これは新しいGitHub secretを必要とせず、設定が揃うまでworkflowはpreview uploadより前に安全停止します。
+初回だけ、Cloudflare dashboardのWorkers & Pages > `diva-player` > Settings > Variables and Secrets／Bindingsでpreview環境を設定します。`TUNNEL_CONFIG`にはproductionと同じKV namespace IDを選び、上記4 credentialはそれぞれ正規のsecret保管元からpreviewへ直接encrypted secretとして入力してください。Cloudflare APIから既存のproduction secret値を安全に読み戻せないため、workflowはsecret値のcopyや表示を行いません。正規値を取得できない場合は、対応するorigin／client、Pages production、Pages previewを同じ新しい値へ計画的にrotateする必要があります。これは新しいGitHub secretを必要とせず、設定が揃うまでworkflowはpreview uploadより前に安全停止します。
 
 設定metadataだけを手元で確認する場合は、既存の`CLOUDFLARE_API_TOKEN`／`CLOUDFLARE_ACCOUNT_ID`をprocess環境に読み込んだ状態で次を実行します。このcommandはprojectをGETして日付、flags、binding名／型／ID、canonical deploymentだけを検査し、secret値を出力しません。
 
@@ -132,7 +132,7 @@ Cloudflare Pagesはpreview deploymentそのものをproductionへ昇格できず
 node scripts/cloudflare-pages-release.mjs inspect-project --project diva-player
 ```
 
-release artifactはGitHub Actionsに30日保存され、manifestの`gitCommit`、compatibility date／flags、compiled worker SHA-256、file別SHA-256、payload SHA-256、およびCloudflare deploymentの`artifact-sha256:<hash>` metadataで追跡できます。
+release artifactはGitHub Actionsに30日保存され、manifestの`gitCommit`、compatibility date／flags、compiled worker SHA-256、file別SHA-256、payload SHA-256、およびCloudflare deploymentのartifact hash／GitHub run ID／attempt metadataで追跡できます。
 
 ## ディレクトリ構成
 

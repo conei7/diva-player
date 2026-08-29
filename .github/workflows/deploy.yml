@@ -287,6 +287,17 @@ jobs:
             --project diva-player \
             --expected-compatibility-date "$COMPATIBILITY_DATE" \
             --expected-compatibility-flags-json "$COMPATIBILITY_FLAGS_JSON"
+      - name: Select fixed preview branch
+        run: echo "PREVIEW_BRANCH=release-candidate" >> "$GITHUB_ENV"
+      - name: Capture preview deployment baseline
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          node scripts/cloudflare-pages-release.mjs capture-preview \
+            --project diva-player \
+            --branch "$PREVIEW_BRANCH" \
+            --output "$RUNNER_TEMP/preview-before-upload.json"
       - name: Deploy exact release to isolated preview
         shell: bash
         env:
@@ -296,14 +307,12 @@ jobs:
         run: |
           # A fixed non-production alias avoids leaving one branch alias per run;
           # the API-resolved hash URL below remains immutable for verification.
-          preview_branch="release-candidate"
-          echo "PREVIEW_BRANCH=$preview_branch" >> "$GITHUB_ENV"
           cd .cloudflare-release/payload
           "$GITHUB_WORKSPACE/node_modules/.bin/wrangler" pages deploy dist \
             --project-name diva-player \
-            --branch "$preview_branch" \
+            --branch "$PREVIEW_BRANCH" \
             --commit-hash "$GITHUB_SHA" \
-            --commit-message "artifact-sha256:${RELEASE_SHA256}" \
+            --commit-message "artifact-sha256:${RELEASE_SHA256};github-run-id:${GITHUB_RUN_ID};github-run-attempt:${GITHUB_RUN_ATTEMPT}" \
             --commit-dirty=false \
             --no-bundle
       - name: Resolve immutable preview deployment
@@ -318,6 +327,9 @@ jobs:
             --branch "$PREVIEW_BRANCH" \
             --commit-hash "$GITHUB_SHA" \
             --release-sha256 "$RELEASE_SHA256" \
+            --github-run-id "$GITHUB_RUN_ID" \
+            --github-run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --excluded-ids-file "$RUNNER_TEMP/preview-before-upload.json" \
             --attempts 8 \
             --interval-ms 5000 \
             --github-output "$GITHUB_OUTPUT"
@@ -386,7 +398,7 @@ jobs:
             --project-name diva-player \
             --branch main \
             --commit-hash "$GITHUB_SHA" \
-            --commit-message "artifact-sha256:${RELEASE_SHA256}" \
+            --commit-message "artifact-sha256:${RELEASE_SHA256};github-run-id:${GITHUB_RUN_ID};github-run-attempt:${GITHUB_RUN_ATTEMPT}" \
             --commit-dirty=false \
             --no-bundle
       - name: Verify production or perform one bounded rollback
@@ -412,6 +424,8 @@ jobs:
             --branch main \
             --commit-hash "$GITHUB_SHA" \
             --release-sha256 "$RELEASE_SHA256" \
+            --github-run-id "$GITHUB_RUN_ID" \
+            --github-run-attempt "$GITHUB_RUN_ATTEMPT" \
             --excluded-id "$ROLLBACK_DEPLOYMENT_ID" \
             --attempts 8 \
             --interval-ms 5000 \
