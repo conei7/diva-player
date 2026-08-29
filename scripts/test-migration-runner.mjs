@@ -78,6 +78,18 @@ assert.match(runner, /schema_migration_attempts/);
 assert.match(runner, /has incomplete attempt/);
 assert.match(runner, /status = 'succeeded'/);
 assert.match(runner, /psql -X -v ON_ERROR_STOP=1 -f "\$driver"/);
+const migrationHistoryNotNull = runner.indexOf('ALTER COLUMN content_sha256 SET NOT NULL');
+const preflightPrivilegeRevoke = runner.indexOf(
+  'DO $migration_history_privileges$',
+  migrationHistoryNotNull,
+);
+const preflightCommit = runner.indexOf('COMMIT;', migrationHistoryNotNull);
+assert.ok(
+  migrationHistoryNotNull >= 0
+    && preflightPrivilegeRevoke > migrationHistoryNotNull
+    && preflightCommit > preflightPrivilegeRevoke,
+  'new migration-history objects must lose runtime write privileges before commit',
+);
 
 const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'diva-migration-runner-contract-'));
 const fakeBin = path.join(tempRoot, 'bin');
@@ -121,6 +133,21 @@ cat "$driver"
 
   const generated = runWithFakePsql(migrationsDir);
   assert.equal(generated.status, 0, generated.stderr);
+  const appliedGuards = [...generated.stdout.matchAll(
+    /SELECT EXISTS \(\r?\n {4}SELECT 1 FROM public\.schema_migrations\r?\n {4}WHERE migration_id = '[^']+'\r?\n\) AS ([a-z_]+)\r?\n\\gset ([a-z_]+)\r?\n\\if :([a-z_]+)/g,
+  )];
+  assert.equal(
+    appliedGuards.length,
+    entries.length,
+    'every migration must have an applied-history guard',
+  );
+  for (const [, columnName, variablePrefix, conditionalVariable] of appliedGuards) {
+    assert.equal(
+      `${variablePrefix}${columnName}`,
+      conditionalVariable,
+      `psql \\if references undefined variable ${conditionalVariable}`,
+    );
+  }
   assert.match(generated.stdout, /applying atomic migration: 0002_view_history_recorded_song_idx\.sql/);
   assert.match(generated.stdout, /CREATE INDEX IF NOT EXISTS view_history_recorded_song_idx[\s\S]*INSERT INTO public\.schema_migrations[\s\S]*COMMIT;/);
 

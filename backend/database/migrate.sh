@@ -290,8 +290,6 @@ ALTER TABLE public.schema_migrations
     ALTER COLUMN content_sha256 SET NOT NULL,
     ALTER COLUMN execution_mode SET NOT NULL;
 
-COMMIT;
-
 DO $migration_history_privileges$
 BEGIN
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'diva_pipeline_runtime') THEN
@@ -310,6 +308,8 @@ BEGIN
     END IF;
 END;
 $migration_history_privileges$;
+
+COMMIT;
 SQL
 
 while IFS='|' read -r migration_id execution_mode expected_sha256; do
@@ -320,7 +320,7 @@ while IFS='|' read -r migration_id execution_mode expected_sha256; do
 SELECT EXISTS (
     SELECT 1 FROM public.schema_migrations
     WHERE migration_id = '$migration_id'
-) AS migration_applied
+) AS applied
 \gset migration_
 \if :migration_applied
 \echo [migrate] already applied: $migration_id
