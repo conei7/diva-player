@@ -39,6 +39,7 @@ public sealed class ApiReadinessProbeService : BackgroundService
 
     private readonly Func<CancellationToken, Task<DependencyHealth>> _postgresProbe;
     private readonly Func<CancellationToken, Task<DependencyHealth>> _qdrantProbe;
+    private readonly ApiDatabaseConnectionBudget _connectionBudget;
     private readonly ApiReadinessProbeState _state;
     private readonly ILogger<ApiReadinessProbeService> _logger;
     private readonly TimeProvider _timeProvider;
@@ -50,12 +51,14 @@ public sealed class ApiReadinessProbeService : BackgroundService
     public ApiReadinessProbeService(
         DbService db,
         QdrantService qdrant,
+        ApiDatabaseConnectionBudget connectionBudget,
         ApiReadinessProbeState state,
         IHostApplicationLifetime applicationLifetime,
         ILogger<ApiReadinessProbeService> logger)
         : this(
             db.CheckHealthAsync,
             qdrant.CheckHealthAsync,
+            connectionBudget,
             state,
             logger,
             TimeProvider.System,
@@ -68,6 +71,7 @@ public sealed class ApiReadinessProbeService : BackgroundService
     internal ApiReadinessProbeService(
         Func<CancellationToken, Task<DependencyHealth>> postgresProbe,
         Func<CancellationToken, Task<DependencyHealth>> qdrantProbe,
+        ApiDatabaseConnectionBudget connectionBudget,
         ApiReadinessProbeState state,
         ILogger<ApiReadinessProbeService> logger,
         TimeProvider timeProvider,
@@ -77,6 +81,7 @@ public sealed class ApiReadinessProbeService : BackgroundService
     {
         ArgumentNullException.ThrowIfNull(postgresProbe);
         ArgumentNullException.ThrowIfNull(qdrantProbe);
+        ArgumentNullException.ThrowIfNull(connectionBudget);
         ArgumentNullException.ThrowIfNull(state);
         ArgumentNullException.ThrowIfNull(logger);
         ArgumentNullException.ThrowIfNull(timeProvider);
@@ -87,6 +92,7 @@ public sealed class ApiReadinessProbeService : BackgroundService
 
         _postgresProbe = postgresProbe;
         _qdrantProbe = qdrantProbe;
+        _connectionBudget = connectionBudget;
         _state = state;
         _logger = logger;
         _timeProvider = timeProvider;
@@ -122,6 +128,7 @@ public sealed class ApiReadinessProbeService : BackgroundService
 
         try
         {
+            using var connectionScope = _connectionBudget.EnterReadinessScope();
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
             timeout.CancelAfter(_probeTimeout);
             var stopwatch = Stopwatch.StartNew();

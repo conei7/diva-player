@@ -17,9 +17,9 @@ x-api-environment: &api-environment
   Recommender__ObjectCacheSizeMiB: "64"
   Recommender__ObjectCacheEntrySizeMiB: "16"
   # The standby pool has eight connections per slot. Foreground fan-out is
-  # capped at five, preserving three connections for probes/guard work.
+  # capped at four, preserving readiness 2, maintenance 1, and guard 1.
   Recommender__Bulkhead__AggregatePermitLimit: "3"
-  Recommender__Bulkhead__DatabaseConnectionReserve: "3"
+  Recommender__Bulkhead__DatabaseConnectionReserve: "4"
   Recommender__Bulkhead__HeavyPermitLimit: "3"
   Recommender__Bulkhead__HeavyQueueLimit: "3"
   Recommender__Bulkhead__StandardPermitLimit: "3"

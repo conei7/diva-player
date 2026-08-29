@@ -52,6 +52,8 @@ public sealed class ApiOperationalHealthProbeService : BackgroundService
     private readonly Func<CancellationToken, Task<DependencyHealth>> _qdrantProbe;
     private readonly Func<CancellationToken, Task<DiscoveryQualityHealth>> _discoveryProbe;
     private readonly Func<CancellationToken, Task<AudioFeatureHealth>> _audioProbe;
+    private readonly ApiDatabaseConnectionBudget _connectionBudget;
+    private readonly ApiMaintenanceExecutionGate _maintenanceGate;
     private readonly ApiOperationalHealthProbeState _state;
     private readonly ILogger<ApiOperationalHealthProbeService> _logger;
     private readonly TimeProvider _timeProvider;
@@ -63,6 +65,8 @@ public sealed class ApiOperationalHealthProbeService : BackgroundService
     public ApiOperationalHealthProbeService(
         DbService db,
         QdrantService qdrant,
+        ApiDatabaseConnectionBudget connectionBudget,
+        ApiMaintenanceExecutionGate maintenanceGate,
         ApiOperationalHealthProbeState state,
         IHostApplicationLifetime applicationLifetime,
         ILogger<ApiOperationalHealthProbeService> logger)
@@ -71,6 +75,8 @@ public sealed class ApiOperationalHealthProbeService : BackgroundService
             qdrant.CheckHealthAsync,
             db.CheckDiscoveryQualityAsync,
             db.CheckAudioFeatureHealthAsync,
+            connectionBudget,
+            maintenanceGate,
             state,
             logger,
             TimeProvider.System,
@@ -85,6 +91,8 @@ public sealed class ApiOperationalHealthProbeService : BackgroundService
         Func<CancellationToken, Task<DependencyHealth>> qdrantProbe,
         Func<CancellationToken, Task<DiscoveryQualityHealth>> discoveryProbe,
         Func<CancellationToken, Task<AudioFeatureHealth>> audioProbe,
+        ApiDatabaseConnectionBudget connectionBudget,
+        ApiMaintenanceExecutionGate maintenanceGate,
         ApiOperationalHealthProbeState state,
         ILogger<ApiOperationalHealthProbeService> logger,
         TimeProvider timeProvider,
@@ -96,6 +104,8 @@ public sealed class ApiOperationalHealthProbeService : BackgroundService
         ArgumentNullException.ThrowIfNull(qdrantProbe);
         ArgumentNullException.ThrowIfNull(discoveryProbe);
         ArgumentNullException.ThrowIfNull(audioProbe);
+        ArgumentNullException.ThrowIfNull(connectionBudget);
+        ArgumentNullException.ThrowIfNull(maintenanceGate);
         ArgumentNullException.ThrowIfNull(state);
         ArgumentNullException.ThrowIfNull(logger);
         ArgumentNullException.ThrowIfNull(timeProvider);
@@ -108,6 +118,8 @@ public sealed class ApiOperationalHealthProbeService : BackgroundService
         _qdrantProbe = qdrantProbe;
         _discoveryProbe = discoveryProbe;
         _audioProbe = audioProbe;
+        _connectionBudget = connectionBudget;
+        _maintenanceGate = maintenanceGate;
         _state = state;
         _logger = logger;
         _timeProvider = timeProvider;
@@ -146,48 +158,64 @@ public sealed class ApiOperationalHealthProbeService : BackgroundService
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
             timeout.CancelAfter(_probeTimeout);
             var stopwatch = Stopwatch.StartNew();
-            var postgresTask = ProbeAsync(
-                _postgresProbe,
-                (elapsed, error) => new DependencyHealth(false, elapsed, error),
-                timeout.Token,
-                stoppingToken,
-                stopwatch);
-            var qdrantTask = ProbeAsync(
-                _qdrantProbe,
-                (elapsed, error) => new DependencyHealth(false, elapsed, error),
-                timeout.Token,
-                stoppingToken,
-                stopwatch);
-            var discoveryTask = ProbeAsync(
-                _discoveryProbe,
-                (elapsed, error) => new DiscoveryQualityHealth(
-                    false, elapsed, 0, 0, 0, 0, 0, null, new Dictionary<string, long>(), 0, null, error),
-                timeout.Token,
-                stoppingToken,
-                stopwatch);
-            var audioTask = ProbeAsync(
-                _audioProbe,
-                (elapsed, error) => new AudioFeatureHealth(
-                    false, elapsed, 0, 0, 0, 0, 0, 0, 0, 0, null, null, error),
-                timeout.Token,
-                stoppingToken,
-                stopwatch);
-            await Task.WhenAll(postgresTask, qdrantTask, discoveryTask, audioTask);
-            stoppingToken.ThrowIfCancellationRequested();
-
-            var postgres = await postgresTask;
-            var qdrant = await qdrantTask;
-            var discovery = await discoveryTask;
-            var audio = await audioTask;
-            _state.Publish(postgres, qdrant, discovery, audio, _timeProvider.GetUtcNow());
-            if (!postgres.Ok || !qdrant.Ok || !discovery.Ok)
+            IDisposable maintenanceLease;
+            try
             {
-                _logger.LogWarning(
-                    "api_operational_health_probe_degraded postgres={PostgresError} qdrant={QdrantError} discovery={DiscoveryError} audio={AudioError}",
-                    postgres.Error,
-                    qdrant.Error,
-                    discovery.Error,
-                    audio.Error);
+                maintenanceLease = await _maintenanceGate.EnterAsync(timeout.Token);
+            }
+            catch (OperationCanceledException) when (
+                !stoppingToken.IsCancellationRequested
+                && timeout.IsCancellationRequested)
+            {
+                PublishTimeoutSnapshot(stopwatch.ElapsedMilliseconds);
+                return true;
+            }
+
+            using (maintenanceLease)
+            using (_connectionBudget.EnterMaintenanceScope())
+            {
+                // Run the four PostgreSQL-using checks serially under one
+                // deadline. Readiness runs outside this gate and retains its
+                // two dedicated pool permits.
+                var postgres = await ProbeAsync(
+                    _postgresProbe,
+                    (elapsed, error) => new DependencyHealth(false, elapsed, error),
+                    timeout.Token,
+                    stoppingToken,
+                    stopwatch);
+                var qdrant = await ProbeAsync(
+                    _qdrantProbe,
+                    (elapsed, error) => new DependencyHealth(false, elapsed, error),
+                    timeout.Token,
+                    stoppingToken,
+                    stopwatch);
+                var discovery = await ProbeAsync(
+                    _discoveryProbe,
+                    (elapsed, error) => new DiscoveryQualityHealth(
+                        false, elapsed, 0, 0, 0, 0, 0, null,
+                        new Dictionary<string, long>(), 0, null, error),
+                    timeout.Token,
+                    stoppingToken,
+                    stopwatch);
+                var audio = await ProbeAsync(
+                    _audioProbe,
+                    (elapsed, error) => new AudioFeatureHealth(
+                        false, elapsed, 0, 0, 0, 0, 0, 0, 0, 0, null, null, error),
+                    timeout.Token,
+                    stoppingToken,
+                    stopwatch);
+                stoppingToken.ThrowIfCancellationRequested();
+
+                _state.Publish(postgres, qdrant, discovery, audio, _timeProvider.GetUtcNow());
+                if (!postgres.Ok || !qdrant.Ok || !discovery.Ok)
+                {
+                    _logger.LogWarning(
+                        "api_operational_health_probe_degraded postgres={PostgresError} qdrant={QdrantError} discovery={DiscoveryError} audio={AudioError}",
+                        postgres.Error,
+                        qdrant.Error,
+                        discovery.Error,
+                        audio.Error);
+                }
             }
             return true;
         }
@@ -195,6 +223,27 @@ public sealed class ApiOperationalHealthProbeService : BackgroundService
         {
             _probeGate.Release();
         }
+    }
+
+    private void PublishTimeoutSnapshot(long elapsedMilliseconds)
+    {
+        const string error = "Timeout";
+        _state.Publish(
+            new DependencyHealth(false, elapsedMilliseconds, error),
+            new DependencyHealth(false, elapsedMilliseconds, error),
+            new DiscoveryQualityHealth(
+                false, elapsedMilliseconds, 0, 0, 0, 0, 0, null,
+                new Dictionary<string, long>(), 0, null, error),
+            new AudioFeatureHealth(
+                false, elapsedMilliseconds, 0, 0, 0, 0, 0, 0, 0, 0,
+                null, null, error),
+            _timeProvider.GetUtcNow());
+        _logger.LogWarning(
+            "api_operational_health_probe_degraded postgres={PostgresError} qdrant={QdrantError} discovery={DiscoveryError} audio={AudioError}",
+            error,
+            error,
+            error,
+            error);
     }
 
     private static async Task<T> ProbeAsync<T>(

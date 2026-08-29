@@ -296,11 +296,25 @@ public sealed class ApiReadinessProbeServiceTests
         new(
             postgres,
             qdrant,
+            CreateConnectionBudget(),
             state,
             NullLogger<ApiReadinessProbeService>.Instance,
             TimeProvider.System,
             TimeSpan.FromSeconds(5),
             timeout ?? TimeSpan.FromSeconds(2));
+
+    private static ApiDatabaseConnectionBudget CreateConnectionBudget() =>
+        new(new ApiBulkheadOptions(
+            AggregatePermitLimit: 4,
+            DatabaseConnectionReserve: 4,
+            DatabaseMaximumPoolSize: 8,
+            HeavyPermitLimit: 4,
+            HeavyQueueLimit: 0,
+            StandardPermitLimit: 4,
+            StandardQueueLimit: 0,
+            ProviderPermitLimit: 1,
+            ProviderQueueLimit: 0,
+            QueueTimeoutMilliseconds: 100));
 
     private sealed class MutableTimeProvider(DateTimeOffset now) : TimeProvider
     {

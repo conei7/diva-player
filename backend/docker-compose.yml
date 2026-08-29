@@ -17,7 +17,7 @@ x-api-environment: &api-environment
   Recommender__ObjectCacheSizeMiB: "64"
   Recommender__ObjectCacheEntrySizeMiB: "16"
   # Per API slot. Foreground database fan-out is capped at pool minus reserve,
-  # leaving four of the 16 connections for probes and the publication guard.
+  # leaving readiness 2, maintenance 1, and publication guard 1.
   Recommender__Bulkhead__AggregatePermitLimit: "${DIVA_API_AGGREGATE_CONCURRENCY:-6}"
   Recommender__Bulkhead__DatabaseConnectionReserve: "${DIVA_API_DB_CONNECTION_RESERVE:-4}"
   Recommender__Bulkhead__HeavyPermitLimit: "${DIVA_API_HEAVY_CONCURRENCY:-6}"

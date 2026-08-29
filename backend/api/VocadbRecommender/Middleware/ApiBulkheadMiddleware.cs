@@ -63,7 +63,7 @@ internal sealed record ApiBulkheadOptions(
             section,
             "DatabaseConnectionReserve",
             DefaultDatabaseConnectionReserve,
-            2,
+            ApiDatabaseConnectionBudget.RequiredConnectionReserve,
             64);
         var options = new ApiBulkheadOptions(
             aggregatePermitLimit,

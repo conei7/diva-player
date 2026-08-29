@@ -243,6 +243,9 @@ assert.match(bulkheadMiddleware, /postgres\.MaxPoolSize/);
 assert.match(bulkheadMiddleware, /_aggregateExecution/);
 assert.match(bulkheadMiddleware, /_databaseConnectionBudget\.EnterRequestScope\(\)/);
 assert.match(databaseConnectionBudget, /ForegroundConnectionLimit/);
+assert.match(databaseConnectionBudget, /RequiredConnectionReserve/);
+assert.match(databaseConnectionBudget, /EnterReadinessScope/);
+assert.match(databaseConnectionBudget, /EnterMaintenanceScope/);
 assert.match(databaseConnectionBudget, /AcquireConnectionAsync/);
 assert.match(databaseConnectionBudget, /connection\.StateChange \+= OnStateChange/);
 assert.match(dbService, /_connectionBudget\.AcquireConnectionAsync\(cancellationToken\)/);
@@ -258,11 +261,17 @@ assert.match(ingressMiddleware, /X-Diva-Pages-Proxy-Key/);
 assert.match(ingressMiddleware, /FixedTimeEquals/);
 assert.match(ingressMiddleware, /StatusCodes\.Status403Forbidden/);
 assert.match(serviceRegistration, /AddHostedService<ApiWarmupService>/);
+assert.match(serviceRegistration, /AddSingleton<ApiMaintenanceExecutionGate>/);
 assert.match(serviceRegistration, /AddHostedService<ApiReadinessProbeService>/);
 assert.match(serviceRegistration, /AddSingleton<ApiOperationalHealthProbeState>/);
 assert.match(serviceRegistration, /AddHostedService<ApiOperationalHealthProbeService>/);
 assert.match(serviceRegistration, /AddHostedService<ApiRuntimeTelemetryService>/);
 assert.match(readinessProbeService, /MaximumSnapshotAge = TimeSpan\.FromSeconds\(15\)/);
+assert.match(readinessProbeService, /EnterReadinessScope\(\)/);
+assert.match(operationalHealthProbeService, /EnterMaintenanceScope\(\)/);
+assert.match(operationalHealthProbeService, /_maintenanceGate\.EnterAsync\(timeout\.Token\)/);
+assert.match(warmup, /EnterMaintenanceScope\(\)/);
+assert.match(warmup, /maintenanceGate\.EnterAsync\(cancellationToken\)/);
 assert.match(healthEndpoints, /ApiReadinessProbeService\.MaximumSnapshotAge/);
 const readinessHandler = healthEndpoints.match(
   /private static IResult GetReadinessAsync\([\s\S]*?internal static ReadinessEndpointResponse/,

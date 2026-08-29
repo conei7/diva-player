@@ -49,6 +49,8 @@ public sealed record KnowledgeMapCatalog(
 /// <summary>PostgreSQL アクセスサービス</summary>
 public class DbService
 {
+    internal const string ConnectionCleanupExceptionDataKey =
+        "Diva.DatabaseConnectionCleanupExceptionType";
     internal const int MaxRestrictedDiverseFallbackCandidateCount = 2_000;
     internal const int QualityDiverseFallbackSourceCount = 2_000;
     internal const int QualityDiverseFallbackPoolCount = 500;
@@ -208,13 +210,62 @@ public class DbService
             permit?.ReleaseWhenClosed(conn);
             return conn;
         }
-        catch
+        catch (Exception openException)
         {
-            if (conn is not null)
-                await conn.DisposeAsync();
-            permit?.Dispose();
-            throw;
+            await RethrowOpenFailureAfterCleanupAsync(openException, conn, permit);
+            throw new UnreachableException();
         }
+    }
+
+    internal static async ValueTask RethrowOpenFailureAfterCleanupAsync(
+        Exception openException,
+        IAsyncDisposable? connection,
+        IDisposable? permit)
+    {
+        ArgumentNullException.ThrowIfNull(openException);
+        Exception? cleanupException = null;
+        try
+        {
+            if (connection is not null)
+                await connection.DisposeAsync();
+        }
+        catch (Exception exception)
+        {
+            cleanupException = exception;
+        }
+
+        try
+        {
+            // A provider cleanup exception or cancellation must never strand
+            // a process-wide connection permit.
+            permit?.Dispose();
+        }
+        catch (Exception exception)
+        {
+            cleanupException ??= exception;
+        }
+
+        if (cleanupException is not null)
+        {
+            try
+            {
+                // Preserve only a non-sensitive diagnostic type. The original
+                // open/cancellation exception remains the endpoint-visible one.
+                openException.Data[ConnectionCleanupExceptionDataKey] =
+                    cleanupException.GetType().FullName
+                    ?? cleanupException.GetType().Name;
+            }
+            catch
+            {
+                // Exception.Data is best-effort diagnostics and must not mask
+                // the primary connection failure either.
+            }
+        }
+
+        System.Runtime.ExceptionServices.ExceptionDispatchInfo
+            .Capture(openException)
+            .Throw();
+        throw new UnreachableException();
     }
 
     private async Task<string> GetRecommendationPublicationGenerationAsync(

@@ -82,33 +82,51 @@ public sealed class ApiOperationalHealthProbeServiceTests
     }
 
     [Fact]
-    public async Task ProbeOnce_RunsAllExpensiveChecksConcurrently()
+    public async Task ProbeOnce_RunsAllExpensiveChecksSequentially()
     {
         var state = new ApiOperationalHealthProbeState();
-        var started = Enumerable.Range(0, 4)
-            .Select(_ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously))
-            .ToArray();
-        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        async Task Wait(int index, CancellationToken token)
-        {
-            started[index].SetResult();
-            await release.Task.WaitAsync(token);
-        }
+        var order = new List<int>();
         var service = CreateService(
-            async token => { await Wait(0, token); return new DependencyHealth(true, 1); },
-            async token => { await Wait(1, token); return new DependencyHealth(true, 2); },
-            async token => { await Wait(2, token); return Discovery(); },
-            async token => { await Wait(3, token); return Audio(); },
+            _ => { order.Add(0); return Task.FromResult(new DependencyHealth(true, 1)); },
+            _ => { order.Add(1); return Task.FromResult(new DependencyHealth(true, 2)); },
+            _ => { order.Add(2); return Task.FromResult(Discovery()); },
+            _ => { order.Add(3); return Task.FromResult(Audio()); },
             state);
 
-        var probe = service.ProbeOnceAsync();
-        await Task.WhenAll(started.Select(item => item.Task)).WaitAsync(TimeSpan.FromSeconds(2));
-        release.SetResult();
-
-        Assert.True(await probe);
+        Assert.True(await service.ProbeOnceAsync());
+        Assert.Equal([0, 1, 2, 3], order);
         Assert.True(state.Snapshot.Known);
         Assert.Equal(2, state.Snapshot.Qdrant.LatencyMs);
         Assert.Equal(94, state.Snapshot.AudioFeatures.ActionablePendingCount);
+    }
+
+    [Fact]
+    public async Task MaintenanceGateWait_UsesTheSharedProbeDeadline()
+    {
+        var state = new ApiOperationalHealthProbeState();
+        var gate = new ApiMaintenanceExecutionGate();
+        using var heldByWarmup = await gate.EnterAsync(CancellationToken.None);
+        var calls = 0;
+        Task<DependencyHealth> Dependency(CancellationToken _)
+        {
+            Interlocked.Increment(ref calls);
+            return Task.FromResult(new DependencyHealth(true, 1));
+        }
+        var service = CreateService(
+            Dependency,
+            Dependency,
+            _ => Task.FromResult(Discovery()),
+            _ => Task.FromResult(Audio()),
+            state,
+            TimeSpan.FromMilliseconds(50),
+            gate);
+
+        Assert.True(await service.ProbeOnceAsync().WaitAsync(TimeSpan.FromSeconds(2)));
+
+        Assert.Equal(0, Volatile.Read(ref calls));
+        Assert.True(state.Snapshot.Known);
+        Assert.Equal("Timeout", state.Snapshot.Postgres.Error);
+        Assert.Equal("Timeout", state.Snapshot.AudioFeatures.Error);
     }
 
     [Fact]
@@ -179,15 +197,31 @@ public sealed class ApiOperationalHealthProbeServiceTests
         Func<CancellationToken, Task<DiscoveryQualityHealth>> discovery,
         Func<CancellationToken, Task<AudioFeatureHealth>> audio,
         ApiOperationalHealthProbeState state,
-        TimeSpan? timeout = null) =>
+        TimeSpan? timeout = null,
+        ApiMaintenanceExecutionGate? maintenanceGate = null) =>
         new(
             postgres,
             qdrant,
             discovery,
             audio,
+            CreateConnectionBudget(),
+            maintenanceGate ?? new ApiMaintenanceExecutionGate(),
             state,
             NullLogger<ApiOperationalHealthProbeService>.Instance,
             TimeProvider.System,
             TimeSpan.FromSeconds(30),
             timeout ?? TimeSpan.FromSeconds(2));
+
+    private static ApiDatabaseConnectionBudget CreateConnectionBudget() =>
+        new(new ApiBulkheadOptions(
+            AggregatePermitLimit: 4,
+            DatabaseConnectionReserve: 4,
+            DatabaseMaximumPoolSize: 8,
+            HeavyPermitLimit: 4,
+            HeavyQueueLimit: 0,
+            StandardPermitLimit: 4,
+            StandardQueueLimit: 0,
+            ProviderPermitLimit: 1,
+            ProviderQueueLimit: 0,
+            QueueTimeoutMilliseconds: 100));
 }

@@ -20,6 +20,8 @@ public sealed class ApiWarmupState
 
 public sealed class ApiWarmupService(
     DbService db,
+    ApiDatabaseConnectionBudget connectionBudget,
+    ApiMaintenanceExecutionGate maintenanceGate,
     ApiWarmupState state,
     ILogger<ApiWarmupService> logger) : BackgroundService
 {
@@ -81,10 +83,19 @@ public sealed class ApiWarmupService(
         return failures;
     }
 
+    private async Task<List<string>> RunMaintenanceJobsAsync(
+        bool forceRefresh,
+        CancellationToken cancellationToken)
+    {
+        using var maintenanceLease = await maintenanceGate.EnterAsync(cancellationToken);
+        using var connectionScope = connectionBudget.EnterMaintenanceScope();
+        return await RunJobsAsync(forceRefresh, cancellationToken);
+    }
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         var stopwatch = Stopwatch.StartNew();
-        var failures = await RunJobsAsync(
+        var failures = await RunMaintenanceJobsAsync(
             forceRefresh: false,
             cancellationToken: stoppingToken);
 
@@ -101,7 +112,7 @@ public sealed class ApiWarmupService(
             while (await timer.WaitForNextTickAsync(stoppingToken))
             {
                 var refreshStopwatch = Stopwatch.StartNew();
-                var refreshFailures = await RunJobsAsync(
+                var refreshFailures = await RunMaintenanceJobsAsync(
                     forceRefresh: true,
                     cancellationToken: stoppingToken);
                 refreshStopwatch.Stop();

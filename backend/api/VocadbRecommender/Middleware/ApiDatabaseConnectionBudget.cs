@@ -4,21 +4,38 @@ using System.Data.Common;
 namespace VocadbRecommender;
 
 /// <summary>
-/// Keeps request-originated database fan-out below the Npgsql pool boundary.
-/// Hosted probes and the publication guard do not enter a request scope, so
-/// the configured reserve remains available even when one request starts many
-/// parallel database operations.
+/// Keeps each class of database work inside its share of the Npgsql pool.
+/// Foreground fan-out cannot consume the reserved connections, readiness has
+/// two dedicated permits, and operational/warmup maintenance shares one. The
+/// remaining reserved connection belongs to the publication advisory-lock
+/// session, which intentionally opens its connection outside this budget.
 /// </summary>
 public sealed class ApiDatabaseConnectionBudget
 {
+    internal const int ReadinessConnectionLimit = 2;
+    internal const int MaintenanceConnectionLimit = 1;
+    internal const int PublicationGuardConnectionLimit = 1;
+    internal const int RequiredConnectionReserve =
+        ReadinessConnectionLimit
+        + MaintenanceConnectionLimit
+        + PublicationGuardConnectionLimit;
+
     private readonly SemaphoreSlim _foregroundConnections;
-    // AsyncLocal deliberately flows into child tasks. Request-created
-    // single-flight/cache loaders therefore remain foreground work even if
-    // they outlive the initiating middleware continuation.
-    private readonly AsyncLocal<RequestScopeMarker?> _requestScope = new();
+    private readonly SemaphoreSlim _readinessConnections = new(ReadinessConnectionLimit);
+    private readonly SemaphoreSlim _maintenanceConnections = new(MaintenanceConnectionLimit);
+    // AsyncLocal deliberately flows into child tasks. Request-created and
+    // maintenance-created single-flight/cache loaders therefore retain their
+    // originating budget even if they outlive the initiating continuation.
+    private readonly AsyncLocal<ConnectionScopeMarker?> _connectionScope = new();
 
     internal ApiDatabaseConnectionBudget(ApiBulkheadOptions options)
     {
+        if (options.DatabaseConnectionReserve < RequiredConnectionReserve)
+        {
+            throw new InvalidOperationException(
+                $"The PostgreSQL pool reserve must be at least {RequiredConnectionReserve} "
+                + "connections (readiness 2, maintenance 1, publication guard 1).");
+        }
         ForegroundConnectionLimit = checked(
             options.DatabaseMaximumPoolSize - options.DatabaseConnectionReserve);
         if (ForegroundConnectionLimit < 1)
@@ -31,26 +48,39 @@ public sealed class ApiDatabaseConnectionBudget
 
     internal int ForegroundConnectionLimit { get; }
 
-    internal IDisposable EnterRequestScope()
-    {
-        var previous = _requestScope.Value;
-        _requestScope.Value = new RequestScopeMarker();
-        return new RequestScope(this, previous);
-    }
+    internal IDisposable EnterRequestScope() => EnterScope(ConnectionWorkload.Foreground);
+
+    internal IDisposable EnterReadinessScope() => EnterScope(ConnectionWorkload.Readiness);
+
+    internal IDisposable EnterMaintenanceScope() => EnterScope(ConnectionWorkload.Maintenance);
 
     internal async ValueTask<ConnectionPermit?> AcquireConnectionAsync(
         CancellationToken cancellationToken)
     {
-        if (_requestScope.Value is null)
-            return null;
+        var semaphore = _connectionScope.Value?.Workload switch
+        {
+            ConnectionWorkload.Foreground => _foregroundConnections,
+            ConnectionWorkload.Readiness => _readinessConnections,
+            ConnectionWorkload.Maintenance => _maintenanceConnections,
+            // Future hosted/background callers fail into the bounded lane
+            // instead of silently bypassing the pool reserve.
+            _ => _maintenanceConnections,
+        };
 
-        await _foregroundConnections.WaitAsync(cancellationToken);
-        return new ConnectionPermit(_foregroundConnections);
+        await semaphore.WaitAsync(cancellationToken);
+        return new ConnectionPermit(semaphore);
     }
 
-    private sealed class RequestScope(
+    private IDisposable EnterScope(ConnectionWorkload workload)
+    {
+        var previous = _connectionScope.Value;
+        _connectionScope.Value = new ConnectionScopeMarker(workload);
+        return new ConnectionScope(this, previous);
+    }
+
+    private sealed class ConnectionScope(
         ApiDatabaseConnectionBudget owner,
-        RequestScopeMarker? previous) : IDisposable
+        ConnectionScopeMarker? previous) : IDisposable
     {
         private ApiDatabaseConnectionBudget? _owner = owner;
 
@@ -58,12 +88,17 @@ public sealed class ApiDatabaseConnectionBudget
         {
             var activeOwner = Interlocked.Exchange(ref _owner, null);
             if (activeOwner is not null)
-                activeOwner._requestScope.Value = previous;
+                activeOwner._connectionScope.Value = previous;
         }
     }
 
-    private sealed class RequestScopeMarker
+    private sealed record ConnectionScopeMarker(ConnectionWorkload Workload);
+
+    private enum ConnectionWorkload
     {
+        Foreground,
+        Readiness,
+        Maintenance,
     }
 
     internal sealed class ConnectionPermit(SemaphoreSlim semaphore) : IDisposable

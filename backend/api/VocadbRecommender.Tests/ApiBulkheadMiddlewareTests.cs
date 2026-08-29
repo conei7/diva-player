@@ -58,6 +58,10 @@ public sealed class ApiBulkheadMiddlewareTests
                 poolSize: 8,
                 ("Recommender:Bulkhead:DatabaseConnectionReserve", "8"))));
         Assert.Throws<InvalidOperationException>(() =>
+            ApiBulkheadOptions.FromConfiguration(CreateConfiguration(
+                poolSize: 16,
+                ("Recommender:Bulkhead:DatabaseConnectionReserve", "3"))));
+        Assert.Throws<InvalidOperationException>(() =>
             ApiBulkheadOptions.FromConfiguration(new ConfigurationBuilder().Build()));
         Assert.Throws<InvalidOperationException>(() =>
             ApiBulkheadOptions.FromConfiguration(CreateConfiguration(
@@ -68,11 +72,11 @@ public sealed class ApiBulkheadMiddlewareTests
         var standby = ApiBulkheadOptions.FromConfiguration(CreateConfiguration(
             poolSize: 8,
             ("Recommender:Bulkhead:AggregatePermitLimit", "3"),
-            ("Recommender:Bulkhead:DatabaseConnectionReserve", "3"),
+            ("Recommender:Bulkhead:DatabaseConnectionReserve", "4"),
             ("Recommender:Bulkhead:HeavyPermitLimit", "3"),
             ("Recommender:Bulkhead:StandardPermitLimit", "3"),
             ("Recommender:Bulkhead:ProviderPermitLimit", "1")));
-        Assert.Equal(5, new ApiDatabaseConnectionBudget(standby).ForegroundConnectionLimit);
+        Assert.Equal(4, new ApiDatabaseConnectionBudget(standby).ForegroundConnectionLimit);
     }
 
     [Fact]
@@ -420,8 +424,8 @@ public sealed class ApiBulkheadMiddlewareTests
         int timeoutMilliseconds) =>
         new(
             aggregatePermitLimit,
-            DatabaseConnectionReserve: 2,
-            DatabaseMaximumPoolSize: checked(aggregatePermitLimit + 2),
+            DatabaseConnectionReserve: 4,
+            DatabaseMaximumPoolSize: checked(aggregatePermitLimit + 4),
             permitLimit,
             queueLimit,
             permitLimit,

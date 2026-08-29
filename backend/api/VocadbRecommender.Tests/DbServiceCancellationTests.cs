@@ -150,6 +150,56 @@ public sealed class DbServiceCancellationTests
         Assert.Equal(DbService.MaxRestrictedDiverseFallbackCandidateCount, bounded[^1]);
     }
 
+    [Fact]
+    public async Task FailedOpenCleanup_ReleasesPermitWhenConnectionDisposalThrows()
+    {
+        var budget = CreateConnectionBudget();
+        using var scope = budget.EnterRequestScope();
+        var permit = await budget.AcquireConnectionAsync(CancellationToken.None);
+        Assert.NotNull(permit);
+        var original = new InvalidOperationException("original open failure");
+
+        var thrown = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            DbService.RethrowOpenFailureAfterCleanupAsync(
+                original,
+                new FailingAsyncDisposable(canceled: false),
+                permit).AsTask());
+
+        Assert.Same(original, thrown);
+        Assert.Equal(
+            typeof(InvalidOperationException).FullName,
+            thrown.Data[DbService.ConnectionCleanupExceptionDataKey]);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        using var nextPermit = await budget.AcquireConnectionAsync(timeout.Token);
+        Assert.NotNull(nextPermit);
+    }
+
+    [Fact]
+    public async Task FailedOpenCleanup_ReleasesPermitWhenConnectionDisposalIsCanceled()
+    {
+        var budget = CreateConnectionBudget();
+        using var scope = budget.EnterRequestScope();
+        var permit = await budget.AcquireConnectionAsync(CancellationToken.None);
+        Assert.NotNull(permit);
+        using var requestCancellation = new CancellationTokenSource();
+        requestCancellation.Cancel();
+        var original = new OperationCanceledException(requestCancellation.Token);
+
+        var thrown = await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            DbService.RethrowOpenFailureAfterCleanupAsync(
+                original,
+                new FailingAsyncDisposable(canceled: true),
+                permit).AsTask());
+
+        Assert.Same(original, thrown);
+        Assert.Equal(
+            typeof(TaskCanceledException).FullName,
+            thrown.Data[DbService.ConnectionCleanupExceptionDataKey]);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        using var nextPermit = await budget.AcquireConnectionAsync(timeout.Token);
+        Assert.NotNull(nextPermit);
+    }
+
     private static DbService CreateService(
         RecommendationObjectCache objectCache,
         SearchResponseCache searchCache)
@@ -178,4 +228,24 @@ public sealed class DbServiceCancellationTests
         new(
             Options.Create(new RecommenderOptions()),
             NullLogger<SearchResponseCache>.Instance);
+
+    private static ApiDatabaseConnectionBudget CreateConnectionBudget() =>
+        new(new ApiBulkheadOptions(
+            AggregatePermitLimit: 1,
+            DatabaseConnectionReserve: 4,
+            DatabaseMaximumPoolSize: 5,
+            HeavyPermitLimit: 1,
+            HeavyQueueLimit: 0,
+            StandardPermitLimit: 1,
+            StandardQueueLimit: 0,
+            ProviderPermitLimit: 1,
+            ProviderQueueLimit: 0,
+            QueueTimeoutMilliseconds: 100));
+
+    private sealed class FailingAsyncDisposable(bool canceled) : IAsyncDisposable
+    {
+        public ValueTask DisposeAsync() => canceled
+            ? ValueTask.FromCanceled(new CancellationToken(canceled: true))
+            : ValueTask.FromException(new InvalidOperationException("cleanup failed"));
+    }
 }
