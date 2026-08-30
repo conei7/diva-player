@@ -11,6 +11,7 @@ import {
 import {
   inspectProjectContract,
   matchesReleaseDeployment,
+  previewDeploymentPageComplete,
   releaseCommitMessage,
   rollbackReachedTarget,
   SENSITIVE_ENVIRONMENT_VARIABLES,
@@ -369,6 +370,35 @@ try {
       deploymentIds: [priorPreviewId, priorPreviewId],
     }, 'release-candidate'),
     /duplicate IDs/,
+  );
+
+  const fullPreviewPage = Array.from({ length: 20 }, () => ({}));
+  assert.equal(previewDeploymentPageComplete(
+    fullPreviewPage,
+    { page: 1, per_page: 20, total_pages: 2 },
+    1,
+  ), false);
+  assert.equal(previewDeploymentPageComplete(
+    fullPreviewPage,
+    { page: 2, per_page: 20, total_pages: 2 },
+    2,
+  ), true);
+  assert.equal(previewDeploymentPageComplete([{}], null, 1), true);
+  assert.throws(
+    () => previewDeploymentPageComplete(
+      fullPreviewPage,
+      { page: 1, per_page: 100, total_pages: 1 },
+      1,
+    ),
+    /pagination size is invalid/,
+  );
+  assert.throws(
+    () => previewDeploymentPageComplete(
+      fullPreviewPage,
+      { page: 2, per_page: 20, total_pages: 2 },
+      1,
+    ),
+    /pagination page is invalid/,
   );
 
   assert.equal(matchesReleaseDeployment(deployment(), {

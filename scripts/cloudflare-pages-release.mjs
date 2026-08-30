@@ -12,8 +12,12 @@ const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 const COMPATIBILITY_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const COMPATIBILITY_FLAG_PATTERN = /^[a-z0-9_-]{1,128}$/;
 const RUN_IDENTIFIER_PATTERN = /^[1-9][0-9]{0,19}$/;
-const PREVIEW_PAGE_SIZE = 100;
-const MAX_PREVIEW_PAGES = 10;
+// Cloudflare Pages currently rejects a 100-item deployment page with error
+// 8000024.  Twenty is the documented response-page size and keeps the same
+// explicit 1,000-deployment safety bound without relying on an undocumented
+// upper limit.
+const PREVIEW_PAGE_SIZE = 20;
+const MAX_PREVIEW_PAGES = 50;
 
 export const SENSITIVE_ENVIRONMENT_VARIABLES = Object.freeze([
   'PAGES_PROXY_KEY',
@@ -282,7 +286,7 @@ function requireCloudflareEnvironment() {
   return { accountId, token };
 }
 
-async function cloudflareRequest(path, { method = 'GET', body = null } = {}) {
+async function cloudflareRequestEnvelope(path, { method = 'GET', body = null } = {}) {
   const { token } = requireCloudflareEnvironment();
   const response = await fetch(`${API_BASE}${path}`, {
     method,
@@ -307,7 +311,11 @@ async function cloudflareRequest(path, { method = 'GET', body = null } = {}) {
       : 'unknown';
     throw new Error(`Cloudflare API failed with HTTP ${response.status} (${messages})`);
   }
-  return payload.result;
+  return payload;
+}
+
+async function cloudflareRequest(path, options = {}) {
+  return (await cloudflareRequestEnvelope(path, options)).result;
 }
 
 function projectPath(project) {
@@ -325,15 +333,48 @@ async function getDeployment(project, deploymentId) {
   return cloudflareRequest(`${projectPath(project)}/deployments/${encodeURIComponent(deploymentId)}`);
 }
 
+export function previewDeploymentPageComplete(batch, resultInfo, expectedPage) {
+  if (!Array.isArray(batch) || batch.length > PREVIEW_PAGE_SIZE) {
+    throw new Error('Cloudflare preview deployment list is invalid');
+  }
+  if (!Number.isSafeInteger(expectedPage) || expectedPage < 1 || expectedPage > MAX_PREVIEW_PAGES) {
+    throw new Error('Cloudflare preview deployment page request is invalid');
+  }
+
+  if (resultInfo !== undefined && resultInfo !== null) {
+    if (typeof resultInfo !== 'object' || Array.isArray(resultInfo)) {
+      throw new Error('Cloudflare preview deployment pagination is invalid');
+    }
+    const page = resultInfo.page;
+    const perPage = resultInfo.per_page;
+    const totalPages = resultInfo.total_pages;
+    if (!Number.isSafeInteger(page) || page !== expectedPage) {
+      throw new Error('Cloudflare preview deployment pagination page is invalid');
+    }
+    if (!Number.isSafeInteger(perPage) || perPage !== PREVIEW_PAGE_SIZE) {
+      throw new Error('Cloudflare preview deployment pagination size is invalid');
+    }
+    if (totalPages !== undefined && totalPages !== null) {
+      if (!Number.isSafeInteger(totalPages) || totalPages < 0) {
+        throw new Error('Cloudflare preview deployment total page count is invalid');
+      }
+      if (expectedPage >= Math.max(1, totalPages)) return true;
+    }
+  }
+
+  return batch.length < PREVIEW_PAGE_SIZE;
+}
+
 async function getPreviewDeployments(project) {
   const deployments = [];
   for (let page = 1; page <= MAX_PREVIEW_PAGES; page += 1) {
-    const batch = await cloudflareRequest(
+    const envelope = await cloudflareRequestEnvelope(
       `${projectPath(project)}/deployments?env=preview&page=${page}&per_page=${PREVIEW_PAGE_SIZE}`,
     );
-    if (!Array.isArray(batch)) throw new Error('Cloudflare preview deployment list is invalid');
+    const batch = envelope.result;
+    const complete = previewDeploymentPageComplete(batch, envelope.result_info, page);
     deployments.push(...batch);
-    if (batch.length < PREVIEW_PAGE_SIZE) return deployments;
+    if (complete) return deployments;
   }
   throw new Error(`Cloudflare preview deployment list exceeds the ${MAX_PREVIEW_PAGES * PREVIEW_PAGE_SIZE} item safety bound`);
 }
