@@ -51,6 +51,17 @@ export interface RemovedQueueItem {
   queueTitle: string;
 }
 
+export interface PlaybackAppendExpectation {
+  currentSongId: number;
+  playbackSequence: number;
+}
+
+type AddManyToQueue = {
+  (songs: Song[]): boolean;
+  (songs: Song[], source: Exclude<PlaybackSource, 'auto'>): boolean;
+  (songs: Song[], source: 'auto', expectedPlayback: PlaybackAppendExpectation): boolean;
+};
+
 const pvPriorities: Array<{ service: PVService; pvType: PVType }> = [
   { service: 'Youtube', pvType: 'Original' },
   { service: 'Youtube', pvType: 'Reprint' },
@@ -330,7 +341,7 @@ interface PlayerState {
   setQueueShuffled: (songs: Song[], queueTitle?: string) => void;
   replaceQueueList: (songs: Song[]) => void;
   addToQueue: (song: Song, source?: PlaybackSource) => void;
-  addManyToQueue: (songs: Song[], source?: PlaybackSource) => void;
+  addManyToQueue: AddManyToQueue;
   removeFromQueue: (index: number) => RemovedQueueItem | null;
   restoreQueueItem: (removed: RemovedQueueItem) => void;
   removeDuplicateQueueSongs: () => number;
@@ -667,13 +678,36 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     savePlayerQueue(nextQueue, queueIndex, currentSong, nextSources, currentPlaybackSource);
   },
 
-  addManyToQueue: (songs: Song[], source: PlaybackSource = 'manual') => {
-    const { queue, queueIndex, queueSources, currentSong, currentPlaybackSource } = get();
+  addManyToQueue: (
+    songs: Song[],
+    source: PlaybackSource = 'manual',
+    expectedPlayback?: PlaybackAppendExpectation,
+  ) => {
+    const {
+      queue,
+      queueIndex,
+      queueSources,
+      currentSong,
+      currentPlaybackSource,
+      playbackSequence,
+    } = get();
+    if (source === 'auto' && !expectedPlayback) return false;
+    if (
+      expectedPlayback
+      && (
+        currentSong?.id !== expectedPlayback.currentSongId
+        || playbackSequence !== expectedPlayback.playbackSequence
+      )
+    ) {
+      return false;
+    }
+    if (songs.length === 0) return true;
     const nextQueue = [...queue, ...songs];
     const nextSources = [...queueSources, ...songs.map(() => source)];
     set({ queue: nextQueue, queueSources: nextSources });
     savePlayerQueue(nextQueue, queueIndex, currentSong, nextSources, currentPlaybackSource);
     if (source === 'auto') useAutoPlaySessionStore.getState().recordAutoQueueAdded(songs.length);
+    return true;
   },
 
   removeFromQueue: (index: number) => {

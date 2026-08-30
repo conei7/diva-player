@@ -169,6 +169,7 @@ function PlayerTracker() {
 
   useAutoQueue({
     currentSong,
+    playbackSequence: currentPlaybackSequence,
     rootSeed,
     queue,
     queueIndex,

@@ -63,6 +63,65 @@ describe('player queue autoplay', () => {
     expect(usePlayerStore.getState().isPlaying).toBe(true);
   });
 
+  it('rejects a delayed automatic queue append after the player closes', () => {
+    const delayedSong = { ...song, id: song.id + 1, name: 'Delayed auto fixture' };
+    usePlayerStore.getState().setQueue([song], 0);
+    const { currentSong, playbackSequence } = usePlayerStore.getState();
+    const expectedPlayback = { currentSongId: currentSong!.id, playbackSequence };
+
+    usePlayerStore.getState().closePlayer();
+    const appendApplied = usePlayerStore.getState().addManyToQueue(
+      [delayedSong],
+      'auto',
+      expectedPlayback,
+    );
+
+    expect(appendApplied).toBe(false);
+    expect(usePlayerStore.getState().queue).toEqual([]);
+    expect(localStorage.getItem('diva_playerQueue')).toBeNull();
+  });
+
+  it('rejects a delayed automatic queue append after playback switches songs', () => {
+    const second = { ...song, id: song.id + 1, name: 'Second queue fixture' };
+    const delayedSong = { ...song, id: song.id + 2, name: 'Delayed auto fixture' };
+    usePlayerStore.getState().setQueue([song, second], 0);
+    const { currentSong, playbackSequence } = usePlayerStore.getState();
+    const expectedPlayback = { currentSongId: currentSong!.id, playbackSequence };
+
+    usePlayerStore.getState().jumpToIndex(1);
+    const appendApplied = usePlayerStore.getState().addManyToQueue(
+      [delayedSong],
+      'auto',
+      expectedPlayback,
+    );
+
+    expect(appendApplied).toBe(false);
+    expect(usePlayerStore.getState().currentSong?.id).toBe(second.id);
+    expect(usePlayerStore.getState().queue.map(item => item.id)).toEqual([song.id, second.id]);
+    const stored = JSON.parse(localStorage.getItem('diva_playerQueue') ?? '{}') as { songIds?: number[] };
+    expect(stored.songIds).toEqual([song.id, second.id]);
+  });
+
+  it('rejects a delayed automatic queue append after the same song restarts', () => {
+    const delayedSong = { ...song, id: song.id + 1, name: 'Delayed auto fixture' };
+    usePlayerStore.getState().setQueue([song], 0);
+    const { currentSong, playbackSequence } = usePlayerStore.getState();
+    const expectedPlayback = { currentSongId: currentSong!.id, playbackSequence };
+
+    usePlayerStore.getState().playSong(song, true);
+    expect(usePlayerStore.getState().currentSong?.id).toBe(expectedPlayback.currentSongId);
+    expect(usePlayerStore.getState().playbackSequence).toBeGreaterThan(playbackSequence);
+
+    const appendApplied = usePlayerStore.getState().addManyToQueue(
+      [delayedSong],
+      'auto',
+      expectedPlayback,
+    );
+
+    expect(appendApplied).toBe(false);
+    expect(usePlayerStore.getState().queue.map(item => item.id)).toEqual([song.id]);
+  });
+
   it('persists the user-selected root seed with the queue', () => {
     usePlayerStore.getState().setQueue([song], 0);
 

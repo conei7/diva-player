@@ -38,9 +38,11 @@ import {
   type DiscoveryFilterResult,
 } from '../utils/globalFilters';
 import { useHiddenSongStore } from '../stores/hiddenSongStore';
+import type { PlaybackAppendExpectation } from '../stores/playerStore';
 
 interface UseAutoQueueArgs {
   currentSong: Song | null;
+  playbackSequence: number;
   rootSeed: Song | null;
   queue: Song[];
   queueIndex: number;
@@ -50,7 +52,11 @@ interface UseAutoQueueArgs {
   implicitFeedback: Record<string, ImplicitSongFeedback>;
   autoPlayedCount: number;
   adaptation: AutoQueueAdaptation;
-  addManyToQueue: (songs: Song[], source: 'auto') => void;
+  addManyToQueue: (
+    songs: Song[],
+    source: 'auto',
+    expectedPlayback: PlaybackAppendExpectation,
+  ) => boolean;
 }
 
 /** Candidate generation only enforces hard exclusions. Personalisation and
@@ -189,6 +195,7 @@ function buildRecommendationMetadata(
  */
 export function useAutoQueue({
   currentSong,
+  playbackSequence,
   rootSeed,
   queue,
   queueIndex,
@@ -385,6 +392,16 @@ export function useAutoQueue({
         });
         const nextSongs = detailed.ranked.map(item => item.song);
         if (controller.signal.aborted || generation !== requestGenerationRef.current) return;
+
+        const appendApplied = addManyToQueue(nextSongs, 'auto', {
+          currentSongId: currentSong.id,
+          playbackSequence,
+        });
+        if (!appendApplied) return;
+        if (nextSongs.length === 0) {
+          setStatus('exhausted');
+          return;
+        }
         useRecommendationDebugStore.getState().recordSnapshot({
           id: `${Date.now()}-autoplay-${generation}`,
           surface: 'autoplay',
@@ -397,12 +414,6 @@ export function useAutoQueue({
           selectedCount: detailed.ranked.length,
           trace: detailed.trace,
         });
-
-        if (nextSongs.length === 0) {
-          setStatus('exhausted');
-          return;
-        }
-        addManyToQueue(nextSongs, 'auto');
         const outcomes = autoCompletedCount + autoSkippedCount;
         const recentSkipRate = outcomes > 0 ? autoSkippedCount / outcomes : 0;
         const metadata = buildRecommendationMetadata(
@@ -435,6 +446,7 @@ export function useAutoQueue({
     consecutiveSkips,
     autoPlayedCount,
     currentSong,
+    playbackSequence,
     historyEntries,
     implicitFeedback,
     playlists,
