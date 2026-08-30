@@ -1,5 +1,6 @@
 using Qdrant.Client;
 using Qdrant.Client.Grpc;
+using Grpc.Core;
 using Microsoft.Extensions.Options;
 using System.Diagnostics;
 
@@ -47,6 +48,54 @@ public class QdrantService
             restEndpoint.Host,
             restEndpoint.Port,
             "healthz").Uri;
+    }
+
+    internal static float[] ReadDenseVector(VectorOutput? vector)
+    {
+        // Qdrant 1.10+ can encode dense vectors through the typed `dense`
+        // field, while older servers use the deprecated flattened `data`
+        // field. The client helper deliberately understands both encodings,
+        // which keeps rolling upgrades from 1.9 fail-safe and warning-free.
+        return vector?.GetDenseVector()?.Data.ToArray() ?? [];
+    }
+
+    internal static bool IsLegacyQueryApiUnavailable(RpcException exception)
+    {
+        ArgumentNullException.ThrowIfNull(exception);
+        return exception.StatusCode == StatusCode.Unimplemented;
+    }
+
+    private async Task<IReadOnlyList<ScoredPoint>> QueryCompatibleAsync(
+        string collectionName,
+        float[] vector,
+        ulong limit,
+        CancellationToken cancellationToken,
+        string? vectorName = null)
+    {
+        try
+        {
+            return await _client.QueryAsync(
+                collectionName: collectionName,
+                query: vector,
+                usingVector: vectorName,
+                limit: limit,
+                cancellationToken: cancellationToken);
+        }
+        catch (RpcException exception) when (IsLegacyQueryApiUnavailable(exception))
+        {
+            // Qdrant 1.9 predates the universal Query API. This exact fallback
+            // permits an availability-preserving rolling upgrade: deploy the
+            // current API first, then migrate Qdrant through every minor. Do
+            // not hide transport, authorization, cancellation, or data errors.
+#pragma warning disable CS0618 // Deliberate, bounded compatibility with Qdrant 1.9 rollback.
+            return await _client.SearchAsync(
+                collectionName: collectionName,
+                vector: vector,
+                vectorName: vectorName,
+                limit: limit,
+                cancellationToken: cancellationToken);
+#pragma warning restore CS0618
+        }
     }
 
     public async Task<DependencyHealth> CheckHealthAsync(CancellationToken cancellationToken)
@@ -270,10 +319,10 @@ public class QdrantService
         float[]? audioVec = null;
         float[]? metaVec  = null;
 
-        if (seedPoint.Vectors.Vectors_?.Vectors.TryGetValue("audio", out var av) == true)
-            audioVec = av.Data.ToArray();
-        if (seedPoint.Vectors.Vectors_?.Vectors.TryGetValue("meta", out var mv) == true)
-            metaVec = mv.Data.ToArray();
+        if (seedPoint.Vectors.Vectors?.Vectors.TryGetValue("audio", out var av) == true)
+            audioVec = ReadDenseVector(av);
+        if (seedPoint.Vectors.Vectors?.Vectors.TryGetValue("meta", out var mv) == true)
+            metaVec = ReadDenseVector(mv);
 
         var fetch = (int)(offset + topK + excludeSet.Count + 10);
 
@@ -287,12 +336,12 @@ public class QdrantService
             if (vector is null || !vector.Any(value => value != 0f))
                 return results;
 
-            var response = await _client.SearchAsync(
-                collectionName: _opts.CollectionNamed,
-                vector: vector,
-                vectorName: vectorName,
-                limit: (ulong)fetch,
-                cancellationToken: cancellationToken);
+            var response = await QueryCompatibleAsync(
+                _opts.CollectionNamed,
+                vector,
+                (ulong)fetch,
+                cancellationToken,
+                vectorName);
             foreach (var point in response)
                 results[point.Id.Num] = point.Score;
             return results;
@@ -368,13 +417,13 @@ public class QdrantService
         if (getResult is null || getResult.Vectors is null)
             return [];
 
-        var seedVector = getResult.Vectors.Vector.Data.ToArray();
+        var seedVector = ReadDenseVector(getResult.Vectors.Vector);
 
-        var searchResult = await _client.SearchAsync(
-            collectionName: _opts.CollectionHybrid,
-            vector: seedVector,
-            limit: (ulong)(offset + topK + excludeSet.Count + 10),
-            cancellationToken: cancellationToken);
+        var searchResult = await QueryCompatibleAsync(
+            _opts.CollectionHybrid,
+            seedVector,
+            (ulong)(offset + topK + excludeSet.Count + 10),
+            cancellationToken);
 
         return searchResult
             .Where(r => !excludeSet.Contains((int)r.Id.Num))
@@ -413,16 +462,16 @@ public class QdrantService
         if (seedPoint is null || seedPoint.Vectors is null)
             return [];
 
-        var audioVec = seedPoint.Vectors.Vector?.Data.ToArray() ?? [];
+        var audioVec = ReadDenseVector(seedPoint.Vectors.Vector);
         if (!audioVec.Any(x => x != 0f))
             return []; // 音響特徴なし
 
         var fetch = (int)(offset + topK + excludeSet.Count + 10);
-        var res = await _client.SearchAsync(
-            collectionName: _opts.CollectionAudio,
-            vector: audioVec,
-            limit: (ulong)fetch,
-            cancellationToken: cancellationToken);
+        var res = await QueryCompatibleAsync(
+            _opts.CollectionAudio,
+            audioVec,
+            (ulong)fetch,
+            cancellationToken);
 
         return res
             .Where(r => !excludeSet.Contains((int)r.Id.Num))
@@ -457,13 +506,13 @@ public class QdrantService
         if (getResult is null || getResult.Vectors is null)
             return [];
 
-        var seedVector = getResult.Vectors.Vector.Data.ToArray();
+        var seedVector = ReadDenseVector(getResult.Vectors.Vector);
 
-        var searchResult = await _client.SearchAsync(
-            collectionName: _opts.CollectionMetadata,
-            vector: seedVector,
-            limit: (ulong)(offset + topK + excludeSet.Count + 10),
-            cancellationToken: cancellationToken);
+        var searchResult = await QueryCompatibleAsync(
+            _opts.CollectionMetadata,
+            seedVector,
+            (ulong)(offset + topK + excludeSet.Count + 10),
+            cancellationToken);
 
         return searchResult
             .Where(r => !excludeSet.Contains((int)r.Id.Num))

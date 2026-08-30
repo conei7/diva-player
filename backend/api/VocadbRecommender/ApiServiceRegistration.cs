@@ -45,6 +45,12 @@ internal static class ApiServiceRegistration
                 options => options.ObjectCacheEntrySizeMiB > 0
                     && options.ObjectCacheEntrySizeMiB <= options.ObjectCacheSizeMiB,
                 "Recommender:ObjectCacheEntrySizeMiB must be positive and no larger than ObjectCacheSizeMiB")
+            .Validate(
+                options => options.DiscoveryQualityMaxAgeHours is >= 1 and <= 336,
+                "Recommender:DiscoveryQualityMaxAgeHours must be between 1 and 336")
+            .Validate(
+                options => options.AudioFeatureMaxAgeHours is >= 1 and <= 336,
+                "Recommender:AudioFeatureMaxAgeHours must be between 1 and 336")
             .ValidateOnStart();
         services.AddResponseCompression(options =>
         {

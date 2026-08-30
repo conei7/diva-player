@@ -33,6 +33,14 @@ public class RecommenderOptions
     public int ObjectCacheSizeMiB { get; set; } = 64;
     /// <summary>Maximum estimated size of one recommendation object cache entry in MiB.</summary>
     public int ObjectCacheEntrySizeMiB { get; set; } = 16;
+    /// <summary>
+    /// Maximum age of discovery-quality data before operational health fails.
+    /// The primary keeps the 48-hour default; a snapshot-based DR environment
+    /// may set a bounded value that matches its documented recovery-point objective.
+    /// </summary>
+    public int DiscoveryQualityMaxAgeHours { get; set; } = 48;
+    /// <summary>Maximum age of incomplete audio-feature data before health fails.</summary>
+    public int AudioFeatureMaxAgeHours { get; set; } = 72;
     /// <summary>Named Vectors ハイブリッド検索の音響重み (0〜1)</summary>
     public double AudioWeight        { get; set; } = 0.4;
     /// <summary>Named Vectors ハイブリッド検索のメタ重み (0〜1)</summary>

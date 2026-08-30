@@ -216,7 +216,8 @@ public sealed class DbServiceCancellationTests
             configuration,
             new ApiDatabaseConnectionBudget(bulkheadOptions),
             objectCache,
-            searchCache);
+            searchCache,
+            Options.Create(new RecommenderOptions()));
     }
 
     private static RecommendationObjectCache CreateObjectCache() =>

@@ -3,6 +3,7 @@ using NpgsqlTypes;
 using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json;
+using Microsoft.Extensions.Options;
 
 namespace VocadbRecommender.Services;
 
@@ -116,6 +117,8 @@ public class DbService
     private readonly ApiDatabaseConnectionBudget _connectionBudget;
     private readonly RecommendationObjectCache _objectCache;
     private readonly SearchResponseCache _searchCache;
+    private readonly TimeSpan _discoveryQualityMaximumAge;
+    private readonly TimeSpan _audioFeatureMaximumAge;
     private readonly SemaphoreSlim _knowledgeMapCatalogLock = new(1, 1);
     private readonly SemaphoreSlim _publicationGenerationLock = new(1, 1);
     private string _publicationGeneration = "legacy";
@@ -190,13 +193,26 @@ public class DbService
         IConfiguration cfg,
         ApiDatabaseConnectionBudget connectionBudget,
         RecommendationObjectCache objectCache,
-        SearchResponseCache searchCache)
+        SearchResponseCache searchCache,
+        IOptions<RecommenderOptions> options)
     {
         _connStr = cfg.GetConnectionString("Postgres")
             ?? throw new InvalidOperationException("ConnectionStrings:Postgres is not configured");
         _connectionBudget = connectionBudget;
         _objectCache = objectCache;
         _searchCache = searchCache;
+        _discoveryQualityMaximumAge = TimeSpan.FromHours(options.Value.DiscoveryQualityMaxAgeHours);
+        _audioFeatureMaximumAge = TimeSpan.FromHours(options.Value.AudioFeatureMaxAgeHours);
+    }
+
+    internal static bool IsWithinMaximumAge(
+        DateTimeOffset? latest,
+        DateTimeOffset now,
+        TimeSpan maximumAge)
+    {
+        if (latest is null || maximumAge <= TimeSpan.Zero) return false;
+        var age = now - latest.Value;
+        return age >= TimeSpan.FromMinutes(-5) && age <= maximumAge;
     }
 
     private async Task<NpgsqlConnection> OpenAsync(CancellationToken cancellationToken)
@@ -414,7 +430,7 @@ public class DbService
                 .Sum(entry => entry.Value);
             var warnings = new List<string>();
             if (total == 0) warnings.Add("empty");
-            if (latest is null || DateTimeOffset.UtcNow - latest.Value > TimeSpan.FromHours(48)) warnings.Add("stale");
+            if (!IsWithinMaximumAge(latest, DateTimeOffset.UtcNow, _discoveryQualityMaximumAge)) warnings.Add("stale");
             if (nicoRatio == 0) warnings.Add("nico_presence_zero");
             if (shortRatio > 0.08) warnings.Add("short_ratio_high");
             if (eligibleRatio < 0.85) warnings.Add("discovery_eligible_ratio_low");
@@ -836,7 +852,8 @@ public class DbService
                 : Math.Max(0, (DateTimeOffset.UtcNow - latest.Value).TotalHours);
             var warnings = new List<string>();
             if (targetCount == 0) warnings.Add("empty");
-            if (pendingCount > 0 && (latestAgeHours is null || latestAgeHours > 72)) warnings.Add("stale");
+            if (pendingCount > 0
+                && !IsWithinMaximumAge(latest, DateTimeOffset.UtcNow, _audioFeatureMaximumAge)) warnings.Add("stale");
             return new AudioFeatureHealth(
                 warnings.Count == 0,
                 stopwatch.ElapsedMilliseconds,
