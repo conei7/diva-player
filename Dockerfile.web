@@ -10,6 +10,10 @@ RUN npm run build
 FROM nginxinc/nginx-unprivileged:alpine@sha256:901e944d1f4fc2bd077e8f5568b98c1f6f8cdacf6b97a87747c43134a339b9a7
 ARG NGINX_CONFIG=nginx.conf
 USER root
+# The immutable base predates the Alpine fix for CVE-2026-14456.
+RUN apk add --no-cache \
+      libcrypto3=3.5.8-r0 \
+      libssl3=3.5.8-r0
 COPY --from=build /app/dist /usr/share/nginx/html/diva-player
 COPY --chown=101:101 ${NGINX_CONFIG} /etc/nginx/conf.d/default.conf
 RUN chmod 0644 /etc/nginx/conf.d/default.conf

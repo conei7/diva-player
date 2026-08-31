@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -17,10 +18,45 @@ SCRIPT = Path(__file__).with_name("validate-container-image-scan.py")
 WORKFLOW = SCRIPT.parents[1] / ".github" / "workflows" / "deploy.yml"
 IMAGE_ID = "sha256:" + "a" * 64
 SCANNER_SHA256 = "b" * 64
+VULNERABILITY_FINDING_FIELDS = (
+    "VulnerabilityID",
+    "PkgID",
+    "PkgName",
+    "PkgPath",
+    "InstalledVersion",
+    "FixedVersion",
+    "Severity",
+    "Status",
+)
 
 
 def rfc3339(value: datetime) -> str:
     return value.astimezone(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def rfc3339_fraction(value: datetime, fraction: str) -> str:
+    if not 1 <= len(fraction) <= 9 or not fraction.isascii() or not fraction.isdigit():
+        raise ValueError("fraction must contain 1-9 ASCII digits")
+    return f'{value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")}.{fraction}Z'
+
+
+def finding_fingerprint_sha256(result: dict, vulnerability: dict) -> str:
+    projection = {
+        "Class": result["Class"],
+        "Type": result["Type"],
+        "Target": result["Target"],
+        **{
+            field: vulnerability.get(field)
+            for field in VULNERABILITY_FINDING_FIELDS
+        },
+    }
+    payload = json.dumps(
+        projection,
+        ensure_ascii=True,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
 
 
 class ContainerImageScanValidatorTests(unittest.TestCase):
@@ -82,6 +118,16 @@ class ContainerImageScanValidatorTests(unittest.TestCase):
                 {
                     "Target": "VocadbRecommender.dll",
                     "Class": "lang-pkgs",
+                    "Type": "nuget",
+                    "Packages": [
+                        {"Name": f"NuGet.Package.{index}", "Version": "8.0.0"}
+                        for index in range(12)
+                    ],
+                    "Vulnerabilities": [],
+                },
+                {
+                    "Target": "VocadbRecommender.dll",
+                    "Class": "lang-pkgs",
                     "Type": "dotnet-core",
                     "Packages": [{"Name": "Npgsql", "Version": "8.0.3"}],
                     "Vulnerabilities": [],
@@ -106,17 +152,35 @@ class ContainerImageScanValidatorTests(unittest.TestCase):
             "NextUpdate": rfc3339(self.next_update),
         }
 
+    def exact_finding(self) -> dict:
+        return {
+            "VulnerabilityID": "CVE-2026-12345",
+            "PkgID": "busybox@1.37.0-r30",
+            "PkgName": "busybox",
+            "PkgPath": "/lib/apk/db/installed",
+            "InstalledVersion": "1.37.0-r30",
+            "FixedVersion": "1.37.0-r31",
+            "Severity": "HIGH",
+            "Status": "fixed",
+        }
+
     def write_report(self, document: dict) -> None:
         self.report_path.write_text(json.dumps(document), encoding="utf-8")
 
     def write_metadata(self, document: dict) -> None:
         self.metadata_path.write_text(json.dumps(document), encoding="utf-8")
 
-    def validation_arguments(self, *, receipt: Path | None = None) -> list[str]:
-        return [
+    def validation_arguments(
+        self,
+        *,
+        receipt: Path | None = None,
+        service: str = "api",
+        allowed_findings: tuple[str, ...] = (),
+    ) -> list[str]:
+        arguments = [
             "validate",
             "--service",
-            "api",
+            service,
             "--expected-image-id",
             IMAGE_ID,
             "--expected-architecture",
@@ -137,6 +201,8 @@ class ContainerImageScanValidatorTests(unittest.TestCase):
             "os-pkgs:alpine:2:16:1",
             "--inventory-bound",
             "lang-pkgs:dotnet-core:13:16:3",
+            "--inventory-bound",
+            "lang-pkgs:nuget:12:12:1",
             "--scanner-version",
             "0.74.0",
             "--scanner-sha256",
@@ -146,17 +212,21 @@ class ContainerImageScanValidatorTests(unittest.TestCase):
             "--scan-completed-at",
             rfc3339(self.completed),
         ]
+        for fingerprint in allowed_findings:
+            arguments.extend(("--allowed-finding-sha256", fingerprint))
+        return arguments
 
     def verification_arguments(
         self,
         receipt_sha256: str,
         *,
         expected_image_id: str = IMAGE_ID,
+        service: str = "api",
     ) -> list[str]:
         return [
             "verify",
             "--service",
-            "api",
+            service,
             "--expected-image-id",
             expected_image_id,
             "--expected-architecture",
@@ -213,9 +283,174 @@ class ContainerImageScanValidatorTests(unittest.TestCase):
         self.assertEqual(verified["receiptSha256"], summary["receiptSha256"])
         self.assertEqual(verified["reportSha256"], summary["reportSha256"])
         self.assertEqual(verified["databaseSha256"], summary["databaseSha256"])
-        self.assertEqual(verified["packageCount"], 15)
+        self.assertEqual(verified["packageCount"], 27)
         if os.name == "posix":
             self.assertEqual(self.receipt_path.stat().st_mode & 0o777, 0o600)
+
+    def test_exact_rollback_finding_succeeds_validate_and_verify(self) -> None:
+        report = self.valid_report()
+        result = report["Results"][0]
+        finding = self.exact_finding()
+        result["Vulnerabilities"] = [finding]
+        fingerprint = finding_fingerprint_sha256(result, finding)
+        self.write_report(report)
+
+        validation = self.run_validator(
+            self.validation_arguments(
+                service="qdrant-rollback",
+                allowed_findings=(fingerprint,),
+            )
+        )
+        self.assertEqual(validation.returncode, 0, validation.stderr)
+        summary = json.loads(validation.stdout)
+        self.assertEqual(summary["highCriticalCount"], 1)
+
+        receipt = json.loads(self.receipt_path.read_text(encoding="utf-8"))
+        self.assertEqual(receipt["schemaVersion"], 2)
+        self.assertEqual(
+            receipt["findings"],
+            [{"count": 1, "sha256": fingerprint}],
+        )
+        self.assertEqual(receipt["verdict"]["highCriticalCount"], 1)
+
+        verification = self.run_validator(
+            self.verification_arguments(
+                summary["receiptSha256"],
+                service="qdrant-rollback",
+            )
+        )
+        self.assertEqual(verification.returncode, 0, verification.stderr)
+        self.assertEqual(json.loads(verification.stdout)["highCriticalCount"], 1)
+
+    def test_repeated_allowlist_flags_bind_duplicate_multiplicity(self) -> None:
+        report = self.valid_report()
+        result = report["Results"][0]
+        finding = self.exact_finding()
+        result["Vulnerabilities"] = [finding, dict(finding)]
+        fingerprint = finding_fingerprint_sha256(result, finding)
+        self.write_report(report)
+
+        validation = self.run_validator(
+            self.validation_arguments(
+                service="postgres-rollback",
+                allowed_findings=(fingerprint, fingerprint),
+            )
+        )
+        self.assertEqual(validation.returncode, 0, validation.stderr)
+        receipt = json.loads(self.receipt_path.read_text(encoding="utf-8"))
+        self.assertEqual(
+            receipt["findings"],
+            [{"count": 2, "sha256": fingerprint}],
+        )
+        self.assertEqual(receipt["verdict"]["highCriticalCount"], 2)
+
+    def test_rollback_allowlist_rejects_extra_missing_drift_and_multiplicity(self) -> None:
+        baseline_report = self.valid_report()
+        baseline_result = baseline_report["Results"][0]
+        baseline_finding = self.exact_finding()
+        fingerprint = finding_fingerprint_sha256(
+            baseline_result,
+            baseline_finding,
+        )
+
+        cases: list[tuple[str, list[dict]]] = []
+        extra = [dict(baseline_finding), dict(baseline_finding)]
+        extra[1]["VulnerabilityID"] = "CVE-2026-99999"
+        cases.append(("extra", extra))
+        cases.append(("missing", []))
+        drifted = dict(baseline_finding)
+        drifted["FixedVersion"] = "1.37.0-r32"
+        cases.append(("field-drift", [drifted]))
+        cases.append(
+            ("duplicate-multiplicity", [dict(baseline_finding), dict(baseline_finding)])
+        )
+
+        for index, (label, findings) in enumerate(cases):
+            with self.subTest(label=label):
+                report = self.valid_report()
+                report["Results"][0]["Vulnerabilities"] = findings
+                self.write_report(report)
+                receipt_path = self.root / f"finding-mismatch-{index}.json"
+                validation = self.run_validator(
+                    self.validation_arguments(
+                        receipt=receipt_path,
+                        service="qdrant-rollback",
+                        allowed_findings=(fingerprint,),
+                    )
+                )
+                self.assertNotEqual(validation.returncode, 0, validation.stdout)
+                self.assertIn("fingerprint multiset", validation.stderr)
+                self.assertFalse(receipt_path.exists())
+
+    def test_nonrollback_allowlist_and_default_candidate_finding_are_rejected(self) -> None:
+        report = self.valid_report()
+        result = report["Results"][0]
+        finding = self.exact_finding()
+        result["Vulnerabilities"] = [finding]
+        fingerprint = finding_fingerprint_sha256(result, finding)
+        self.write_report(report)
+
+        nonrollback_receipt = self.root / "nonrollback.json"
+        nonrollback = self.run_validator(
+            self.validation_arguments(
+                receipt=nonrollback_receipt,
+                service="api",
+                allowed_findings=(fingerprint,),
+            )
+        )
+        self.assertNotEqual(nonrollback.returncode, 0, nonrollback.stdout)
+        self.assertIn("only for exact rollback images", nonrollback.stderr)
+        self.assertFalse(nonrollback_receipt.exists())
+
+        candidate_receipt = self.root / "candidate.json"
+        candidate = self.run_validator(
+            self.validation_arguments(receipt=candidate_receipt, service="api")
+        )
+        self.assertNotEqual(candidate.returncode, 0, candidate.stdout)
+        self.assertIn("fingerprint multiset", candidate.stderr)
+        self.assertFalse(candidate_receipt.exists())
+
+    def test_verify_revalidates_receipt_finding_multiset(self) -> None:
+        report = self.valid_report()
+        result = report["Results"][0]
+        finding = self.exact_finding()
+        result["Vulnerabilities"] = [finding]
+        fingerprint = finding_fingerprint_sha256(result, finding)
+        self.write_report(report)
+        validation = self.run_validator(
+            self.validation_arguments(
+                service="qdrant-rollback",
+                allowed_findings=(fingerprint,),
+            )
+        )
+        self.assertEqual(validation.returncode, 0, validation.stderr)
+
+        report["Results"][0]["Vulnerabilities"][0]["Status"] = "affected"
+        self.write_report(report)
+        report_payload = self.report_path.read_bytes()
+        receipt = json.loads(self.receipt_path.read_text(encoding="utf-8"))
+        receipt["scan"]["reportSha256"] = hashlib.sha256(report_payload).hexdigest()
+        receipt["scan"]["reportSize"] = len(report_payload)
+        receipt_payload = (
+            json.dumps(
+                receipt,
+                ensure_ascii=True,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            + "\n"
+        ).encode("utf-8")
+        self.receipt_path.write_bytes(receipt_payload)
+        receipt_sha256 = hashlib.sha256(receipt_payload).hexdigest()
+
+        verification = self.run_validator(
+            self.verification_arguments(
+                receipt_sha256,
+                service="qdrant-rollback",
+            )
+        )
+        self.assertNotEqual(verification.returncode, 0, verification.stdout)
+        self.assertIn("fingerprint multiset", verification.stderr)
 
     def test_report_identity_contract_is_exact(self) -> None:
         mutations = {
@@ -297,6 +532,23 @@ class ContainerImageScanValidatorTests(unittest.TestCase):
                 self.write_report(report)
                 self.assert_validation_fails(receipt=self.root / f"inventory-{index}.json")
 
+    def test_unreviewed_result_key_is_named_but_still_rejected(self) -> None:
+        report = self.valid_report()
+        report["Results"].append(
+            {
+                "Target": "unexpected",
+                "Class": "secret",
+                "Type": "unknown",
+                "Packages": [{"Name": "unexpected", "Version": "1"}],
+                "Vulnerabilities": None,
+            }
+        )
+        self.write_report(report)
+        result = self.run_validator(self.validation_arguments())
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("secret:unknown", result.stderr)
+        self.assertFalse(self.receipt_path.exists())
+
     def test_database_freshness_contract_is_exact(self) -> None:
         metadata_documents = []
         wrong_version = self.valid_metadata()
@@ -316,6 +568,36 @@ class ContainerImageScanValidatorTests(unittest.TestCase):
                 self.write_report(self.valid_report())
                 self.write_metadata(document)
                 self.assert_validation_fails(receipt=self.root / f"db-{index}.json")
+
+    def test_go_rfc3339_nanoseconds_are_retained_exactly(self) -> None:
+        metadata = self.valid_metadata()
+        metadata["UpdatedAt"] = rfc3339_fraction(self.updated, "78069098")
+        metadata["DownloadedAt"] = rfc3339_fraction(self.downloaded, "434935021")
+        metadata["NextUpdate"] = rfc3339_fraction(self.next_update, "780690593")
+        self.write_metadata(metadata)
+        result = self.run_validator(self.validation_arguments())
+        self.assertEqual(result.returncode, 0, result.stderr)
+        receipt = json.loads(self.receipt_path.read_text(encoding="utf-8"))
+        self.assertEqual(receipt["database"]["updatedAt"], metadata["UpdatedAt"])
+        self.assertEqual(receipt["database"]["downloadedAt"], metadata["DownloadedAt"])
+        self.assertEqual(receipt["database"]["nextUpdate"], metadata["NextUpdate"])
+
+    def test_noncanonical_or_overprecision_rfc3339_fails_closed(self) -> None:
+        invalid_values = (
+            "2026-08-31T13:59:52.1234567890Z",
+            "2026-08-31T13:59:52.1z",
+            "2026-08-31 13:59:52.1Z",
+            "2026-08-31T13:59:52,1Z",
+            "2026-08-31T13:59:52-00:00",
+        )
+        for index, invalid in enumerate(invalid_values):
+            with self.subTest(value=invalid):
+                metadata = self.valid_metadata()
+                metadata["UpdatedAt"] = invalid
+                self.write_metadata(metadata)
+                self.assert_validation_fails(
+                    receipt=self.root / f"invalid-rfc3339-{index}.json"
+                )
 
     def test_truncated_duplicate_and_oversized_reports_fail_closed(self) -> None:
         invalid_documents = [
@@ -497,9 +779,10 @@ class DeployImageScanWorkflowContractTests(unittest.TestCase):
 
     def test_reviewed_inventory_and_receipt_contracts_are_fail_closed(self) -> None:
         expected_bounds = (
-            "os-pkgs:alpine:30:30:1",
+            "os-pkgs:alpine:21:21:1",
             "lang-pkgs:dotnet-core:13:13:3",
-            "os-pkgs:alpine:33:33:1",
+            "lang-pkgs:nuget:12:12:1",
+            "os-pkgs:alpine:24:24:1",
             "os-pkgs:alpine:70:70:1",
             "os-pkgs:debian:8:8:1",
             "os-pkgs:alpine:3:3:1",

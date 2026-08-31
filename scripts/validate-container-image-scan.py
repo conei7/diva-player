@@ -10,13 +10,14 @@ import os
 import re
 import stat as stat_module
 import sys
+from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
 
-RECEIPT_SCHEMA_VERSION = 1
+RECEIPT_SCHEMA_VERSION = 2
 RECEIPT_KIND = "diva-container-image-vulnerability-scan"
 TRIVY_SCHEMA_VERSION = 2
 TRIVY_ARTIFACT_TYPE = "container_image"
@@ -27,6 +28,8 @@ MAX_DATABASE_BYTES = 2 * 1024 * 1024 * 1024
 MAX_RECEIPT_BYTES = 1024 * 1024
 MAX_RESULTS = 10_000
 MAX_PACKAGES = 250_000
+MAX_FINDINGS = 10_000
+MAX_FINDING_VALUE_LENGTH = 8_192
 MAXIMUM_DB_AGE_SECONDS = 86_400
 MAXIMUM_SCAN_AGE_SECONDS = 3_600
 MAXIMUM_SCAN_DURATION_SECONDS = 7_200
@@ -34,6 +37,31 @@ MAXIMUM_CLOCK_SKEW_SECONDS = 300
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 IMAGE_ID_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 TOKEN_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+ROLLBACK_FINDING_ALLOWLIST_SERVICES = frozenset(
+    {"qdrant-rollback", "postgres-rollback"}
+)
+CANONICAL_FINDING_FIELDS = (
+    "Class",
+    "Type",
+    "Target",
+    "VulnerabilityID",
+    "PkgID",
+    "PkgName",
+    "PkgPath",
+    "InstalledVersion",
+    "FixedVersion",
+    "Severity",
+    "Status",
+)
+VULNERABILITY_FINDING_FIELDS = CANONICAL_FINDING_FIELDS[3:]
+RFC3339_RE = re.compile(
+    r"^(?P<date>[0-9]{4}-[0-9]{2}-[0-9]{2})"
+    r"T(?P<time>[0-9]{2}:[0-9]{2}:[0-9]{2})"
+    r"(?:\.(?P<fraction>[0-9]{1,9}))?"
+    r"(?P<zone>Z|[+-][0-9]{2}:[0-9]{2})$"
+)
+NANOSECONDS_PER_SECOND = 1_000_000_000
+UTC_EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 
 
 class ValidationError(RuntimeError):
@@ -57,10 +85,17 @@ class ScanPolicy:
     clock_skew_seconds: int
 
 
+@dataclass(frozen=True, order=True)
+class Rfc3339Instant:
+    """An RFC3339 instant retaining all of Go's nanosecond precision."""
+
+    epoch_nanoseconds: int
+
+
 @dataclass(frozen=True)
 class ScanTimes:
-    started: datetime
-    completed: datetime
+    started: Rfc3339Instant
+    completed: Rfc3339Instant
 
 
 def _is_reparse_point(file_stat: os.stat_result) -> bool:
@@ -216,6 +251,77 @@ def _validate_image_id(value: Any, *, label: str) -> str:
     return value
 
 
+def canonical_finding_projection(
+    result: dict[str, Any],
+    vulnerability: dict[str, Any],
+) -> dict[str, str | None]:
+    """Return the exact public projection used for finding fingerprints."""
+
+    if not isinstance(result, dict) or not isinstance(vulnerability, dict):
+        raise ValidationError("Trivy finding projection inputs must be objects")
+    projection: dict[str, str | None] = {
+        "Class": _validate_token(result.get("Class"), label="Trivy result class"),
+        "Type": _validate_token(result.get("Type"), label="Trivy result type"),
+        "Target": _required_string(
+            result.get("Target"),
+            label="Trivy result target",
+            maximum=MAX_FINDING_VALUE_LENGTH,
+        ),
+    }
+    for field in VULNERABILITY_FINDING_FIELDS:
+        value = vulnerability.get(field)
+        if value is not None and (
+            not isinstance(value, str) or len(value) > MAX_FINDING_VALUE_LENGTH
+        ):
+            raise ValidationError(
+                f"Trivy finding {field} must be null or a bounded string"
+            )
+        projection[field] = value
+    if not projection["VulnerabilityID"]:
+        raise ValidationError("Trivy finding VulnerabilityID must be a non-empty string")
+    if projection["Severity"] not in {"HIGH", "CRITICAL"}:
+        raise ValidationError("Trivy finding Severity must be exactly HIGH or CRITICAL")
+    return projection
+
+
+def finding_fingerprint_sha256(
+    result: dict[str, Any],
+    vulnerability: dict[str, Any],
+) -> str:
+    """Hash the canonical finding projection without a trailing newline."""
+
+    projection = canonical_finding_projection(result, vulnerability)
+    payload = json.dumps(
+        projection,
+        ensure_ascii=True,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def parse_allowed_finding_sha256(
+    values: Sequence[str],
+    *,
+    service: str,
+) -> Counter[str]:
+    if len(values) > MAX_FINDINGS:
+        raise ValidationError("allowed finding multiplicity exceeds the safety limit")
+    counts: Counter[str] = Counter()
+    for index, value in enumerate(values):
+        counts[
+            _validate_sha256(
+                value,
+                label=f"allowed finding SHA-256 {index}",
+            )
+        ] += 1
+    if counts and service not in ROLLBACK_FINDING_ALLOWLIST_SERVICES:
+        raise ValidationError(
+            "finding allowlists are supported only for exact rollback images"
+        )
+    return counts
+
+
 def parse_inventory_bounds(
     values: Sequence[str],
 ) -> tuple[tuple[str, str, int, int, int], ...]:
@@ -272,7 +378,8 @@ def validate_report(
     expected_os: str,
     expected_os_family: str,
     inventory_bounds: tuple[tuple[str, str, int, int, int], ...],
-) -> tuple[int, dict[tuple[str, str], int]]:
+    expected_finding_counts: Counter[str],
+) -> tuple[int, dict[tuple[str, str], int], Counter[str]]:
     if document.get("SchemaVersion") != TRIVY_SCHEMA_VERSION:
         raise ValidationError("Trivy report SchemaVersion is not exactly 2")
     if document.get("ArtifactType") != TRIVY_ARTIFACT_TYPE:
@@ -307,6 +414,7 @@ def validate_report(
     inventory_result_counts = {key: 0 for key in bounds_by_key}
     total_packages = 0
     vulnerability_count = 0
+    finding_counts: Counter[str] = Counter()
 
     for result_index, result in enumerate(results):
         if not isinstance(result, dict):
@@ -317,9 +425,17 @@ def validate_report(
         result_type = _validate_token(
             result.get("Type"), label=f"Trivy result {result_index} type"
         )
+        _required_string(
+            result.get("Target"),
+            label=f"Trivy result {result_index} target",
+            maximum=MAX_FINDING_VALUE_LENGTH,
+        )
         key = (result_class, result_type)
         if key not in inventory_counts:
-            raise ValidationError("Trivy report contains an unreviewed result class or type")
+            raise ValidationError(
+                "Trivy report contains an unreviewed result class/type at "
+                f"index {result_index}: {result_class}:{result_type}"
+            )
         packages = result.get("Packages")
         if not isinstance(packages, list) or not packages:
             raise ValidationError(
@@ -348,13 +464,25 @@ def validate_report(
                 raise ValidationError(
                     f"Trivy result {result_index} Vulnerabilities must be an array or null"
                 )
+            if len(vulnerabilities) > MAX_FINDINGS - vulnerability_count:
+                raise ValidationError("Trivy finding multiplicity exceeds the safety limit")
             vulnerability_count += len(vulnerabilities)
+            for vulnerability_index, vulnerability in enumerate(vulnerabilities):
+                if not isinstance(vulnerability, dict):
+                    raise ValidationError(
+                        "Trivy vulnerability "
+                        f"{result_index}:{vulnerability_index} must be an object"
+                    )
+                fingerprint = finding_fingerprint_sha256(result, vulnerability)
+                finding_counts[fingerprint] += 1
 
         inventory_result_counts[key] += 1
         inventory_counts[key] += len(packages)
 
-    if vulnerability_count:
-        raise ValidationError("Trivy report contains a vulnerability finding")
+    if finding_counts != expected_finding_counts:
+        raise ValidationError(
+            "Trivy finding fingerprint multiset does not match the exact allowlist"
+        )
     for key, (minimum, maximum, expected_result_count) in bounds_by_key.items():
         if inventory_result_counts[key] != expected_result_count:
             raise ValidationError(
@@ -368,24 +496,49 @@ def validate_report(
             )
     if total_packages <= 0:
         raise ValidationError("Trivy report contains no packages")
-    return total_packages, inventory_counts
+    return total_packages, inventory_counts, finding_counts
 
 
-def parse_rfc3339(value: Any, *, label: str) -> datetime:
+def _datetime_to_instant(value: datetime) -> Rfc3339Instant:
+    utc_value = value.astimezone(timezone.utc)
+    delta = utc_value - UTC_EPOCH
+    whole_seconds = delta.days * 86_400 + delta.seconds
+    return Rfc3339Instant(
+        whole_seconds * NANOSECONDS_PER_SECOND + utc_value.microsecond * 1_000
+    )
+
+
+def parse_rfc3339(value: Any, *, label: str) -> Rfc3339Instant:
     text = _required_string(value, label=label, maximum=64)
-    if text.endswith("Z"):
-        text = text[:-1] + "+00:00"
+    match = RFC3339_RE.fullmatch(text)
+    if match is None or match.group("zone") == "-00:00":
+        raise ValidationError(f"{label} is not canonical RFC3339")
+    zone = "+00:00" if match.group("zone") == "Z" else match.group("zone")
     try:
-        parsed = datetime.fromisoformat(text)
+        # Parse only whole seconds with datetime so acceptance is independent
+        # of the host Python's fractional-second limit.  Go's RFC3339Nano
+        # output is retained separately at its full 1-9 digit precision.
+        parsed = datetime.fromisoformat(
+            f'{match.group("date")}T{match.group("time")}{zone}'
+        )
     except ValueError as exc:
         raise ValidationError(f"{label} is not RFC3339") from exc
     if parsed.tzinfo is None or parsed.utcoffset() is None:
         raise ValidationError(f"{label} must include a timezone")
-    return parsed.astimezone(timezone.utc)
+    fraction = (match.group("fraction") or "").ljust(9, "0")
+    return Rfc3339Instant(
+        _datetime_to_instant(parsed).epoch_nanoseconds
+        + (int(fraction) if fraction else 0)
+    )
 
 
-def format_rfc3339(value: datetime) -> str:
-    return value.astimezone(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+def format_rfc3339(value: Rfc3339Instant) -> str:
+    seconds, nanoseconds = divmod(value.epoch_nanoseconds, NANOSECONDS_PER_SECOND)
+    base = (UTC_EPOCH + timedelta(seconds=seconds)).strftime("%Y-%m-%dT%H:%M:%S")
+    if nanoseconds:
+        fraction = f"{nanoseconds:09d}".rstrip("0")
+        return f"{base}.{fraction}Z"
+    return f"{base}Z"
 
 
 def validate_scan_times(
@@ -397,14 +550,21 @@ def validate_scan_times(
 ) -> ScanTimes:
     started = parse_rfc3339(started_value, label="scan startedAt")
     completed = parse_rfc3339(completed_value, label="scan completedAt")
-    skew = timedelta(seconds=policy.clock_skew_seconds)
+    now_instant = _datetime_to_instant(now)
+    skew = policy.clock_skew_seconds * NANOSECONDS_PER_SECOND
     if started > completed:
         raise ValidationError("scan completedAt precedes startedAt")
-    if completed - started > timedelta(seconds=policy.maximum_scan_duration_seconds):
+    if (
+        completed.epoch_nanoseconds - started.epoch_nanoseconds
+        > policy.maximum_scan_duration_seconds * NANOSECONDS_PER_SECOND
+    ):
         raise ValidationError("scan duration exceeds the allowed maximum")
-    if completed > now + skew:
+    if completed.epoch_nanoseconds > now_instant.epoch_nanoseconds + skew:
         raise ValidationError("scan completedAt is unreasonably in the future")
-    if now - completed > timedelta(seconds=policy.maximum_scan_age_seconds):
+    if (
+        now_instant.epoch_nanoseconds - completed.epoch_nanoseconds
+        > policy.maximum_scan_age_seconds * NANOSECONDS_PER_SECOND
+    ):
         raise ValidationError("scan result is older than the allowed maximum")
     return ScanTimes(started=started, completed=completed)
 
@@ -421,20 +581,28 @@ def validate_database_metadata(
     updated = parse_rfc3339(document.get("UpdatedAt"), label="DB UpdatedAt")
     downloaded = parse_rfc3339(document.get("DownloadedAt"), label="DB DownloadedAt")
     next_update = parse_rfc3339(document.get("NextUpdate"), label="DB NextUpdate")
-    skew = timedelta(seconds=policy.clock_skew_seconds)
-    if updated > now + skew:
+    now_instant = _datetime_to_instant(now)
+    skew = policy.clock_skew_seconds * NANOSECONDS_PER_SECOND
+    if updated.epoch_nanoseconds > now_instant.epoch_nanoseconds + skew:
         raise ValidationError("Trivy DB UpdatedAt is unreasonably in the future")
     if downloaded < updated:
         raise ValidationError("Trivy DB DownloadedAt precedes UpdatedAt")
     if next_update <= updated:
         raise ValidationError("Trivy DB NextUpdate must be later than UpdatedAt")
-    if scan_times.completed - updated > timedelta(seconds=policy.maximum_db_age_seconds):
+    if (
+        scan_times.completed.epoch_nanoseconds - updated.epoch_nanoseconds
+        > policy.maximum_db_age_seconds * NANOSECONDS_PER_SECOND
+    ):
         raise ValidationError("Trivy DB is older than the allowed maximum")
-    if downloaded < scan_times.started - skew:
+    if downloaded.epoch_nanoseconds < scan_times.started.epoch_nanoseconds - skew:
         raise ValidationError("Trivy DB was not downloaded for this bounded scan run")
-    if downloaded > scan_times.completed + skew:
+    if downloaded.epoch_nanoseconds > scan_times.completed.epoch_nanoseconds + skew:
         raise ValidationError("Trivy DB DownloadedAt is later than the scan")
-    if next_update + timedelta(seconds=policy.maximum_db_age_seconds) < scan_times.completed:
+    if (
+        next_update.epoch_nanoseconds
+        + policy.maximum_db_age_seconds * NANOSECONDS_PER_SECOND
+        < scan_times.completed.epoch_nanoseconds
+    ):
         raise ValidationError("Trivy DB NextUpdate is implausibly stale")
     return {
         "version": TRIVY_DB_VERSION,
@@ -559,8 +727,19 @@ def _inventory_receipt(
     ]
 
 
+def _finding_receipt(counts: Counter[str]) -> list[dict[str, Any]]:
+    return [
+        {"sha256": fingerprint, "count": counts[fingerprint]}
+        for fingerprint in sorted(counts)
+    ]
+
+
 def build_receipt(args: argparse.Namespace, *, now: datetime) -> tuple[dict[str, Any], list[SafeBlob]]:
     service = _validate_token(args.service, label="service")
+    allowed_finding_counts = parse_allowed_finding_sha256(
+        args.allowed_finding_sha256,
+        service=service,
+    )
     image_id = _validate_image_id(args.expected_image_id, label="expected image ID")
     architecture = _validate_token(args.expected_architecture, label="expected architecture")
     expected_os = _validate_token(args.expected_os, label="expected OS")
@@ -595,13 +774,14 @@ def build_receipt(args: argparse.Namespace, *, now: datetime) -> tuple[dict[str,
         capture=False,
     )
     _ensure_distinct([report_blob, metadata_blob, database_blob])
-    package_count, inventory_counts = validate_report(
+    package_count, inventory_counts, finding_counts = validate_report(
         parse_json(report_blob, label="Trivy report"),
         expected_image_id=image_id,
         expected_architecture=architecture,
         expected_os=expected_os,
         expected_os_family=os_family,
         inventory_bounds=inventories,
+        expected_finding_counts=allowed_finding_counts,
     )
     database_metadata = validate_database_metadata(
         parse_json(metadata_blob, label="Trivy DB metadata"),
@@ -639,8 +819,9 @@ def build_receipt(args: argparse.Namespace, *, now: datetime) -> tuple[dict[str,
             "dbSize": database_blob.size,
         },
         "inventory": _inventory_receipt(inventories, inventory_counts),
+        "findings": _finding_receipt(finding_counts),
         "verdict": {
-            "highCriticalCount": 0,
+            "highCriticalCount": sum(finding_counts.values()),
             "packageCount": package_count,
         },
         "policy": {
@@ -669,6 +850,7 @@ def _parse_receipt_contract(
     str,
     str,
     tuple[tuple[str, str, int, int, int], ...],
+    Counter[str],
     ScanPolicy,
     ScanTimes,
 ]:
@@ -683,6 +865,7 @@ def _parse_receipt_contract(
             "scan",
             "database",
             "inventory",
+            "findings",
             "verdict",
             "policy",
         },
@@ -699,6 +882,7 @@ def _parse_receipt_contract(
     scan = receipt.get("scan")
     database = receipt.get("database")
     inventory = receipt.get("inventory")
+    findings = receipt.get("findings")
     verdict = receipt.get("verdict")
     policy_document = receipt.get("policy")
     for value, label in (
@@ -713,6 +897,8 @@ def _parse_receipt_contract(
             raise ValidationError(f"{label} must be an object")
     if not isinstance(inventory, list) or not inventory:
         raise ValidationError("receipt inventory must be a non-empty array")
+    if not isinstance(findings, list):
+        raise ValidationError("receipt findings must be an array")
 
     _exact_keys(image, {"id", "architecture", "os", "osFamily"}, label="receipt image")
     image_id = _validate_image_id(image.get("id"), label="receipt image ID")
@@ -775,8 +961,43 @@ def _parse_receipt_contract(
         policy=policy,
         now=datetime.now(timezone.utc),
     )
-    if _required_int(verdict.get("highCriticalCount"), label="receipt vulnerability count") != 0:
-        raise ValidationError("receipt does not record a clean vulnerability verdict")
+    finding_counts: Counter[str] = Counter()
+    previous_fingerprint: str | None = None
+    finding_total = 0
+    for index, item in enumerate(findings):
+        if not isinstance(item, dict):
+            raise ValidationError(f"receipt finding {index} must be an object")
+        _exact_keys(item, {"sha256", "count"}, label=f"receipt finding {index}")
+        fingerprint = _validate_sha256(
+            item.get("sha256"),
+            label=f"receipt finding {index} SHA-256",
+        )
+        if previous_fingerprint is not None and fingerprint <= previous_fingerprint:
+            raise ValidationError(
+                "receipt finding fingerprints must be unique and sorted"
+            )
+        count = _required_int(
+            item.get("count"),
+            label=f"receipt finding {index} count",
+            minimum=1,
+        )
+        finding_total += count
+        if finding_total > MAX_FINDINGS:
+            raise ValidationError("receipt finding multiplicity exceeds the safety limit")
+        finding_counts[fingerprint] = count
+        previous_fingerprint = fingerprint
+    if finding_counts and service not in ROLLBACK_FINDING_ALLOWLIST_SERVICES:
+        raise ValidationError(
+            "receipt finding allowlist is supported only for exact rollback images"
+        )
+    if (
+        _required_int(
+            verdict.get("highCriticalCount"),
+            label="receipt vulnerability count",
+        )
+        != finding_total
+    ):
+        raise ValidationError("receipt vulnerability count does not match its findings")
     _required_int(verdict.get("packageCount"), label="receipt package count", minimum=1)
     if database.get("version") != TRIVY_DB_VERSION:
         raise ValidationError("receipt database version is not supported")
@@ -847,7 +1068,17 @@ def _parse_receipt_contract(
             f"{maximum_packages}:{expected_result_count}"
         )
     inventories = parse_inventory_bounds(inventory_specs)
-    return service, image_id, architecture, expected_os, os_family, inventories, policy, scan_times
+    return (
+        service,
+        image_id,
+        architecture,
+        expected_os,
+        os_family,
+        inventories,
+        finding_counts,
+        policy,
+        scan_times,
+    )
 
 
 def command_validate(args: argparse.Namespace) -> dict[str, Any]:
@@ -867,6 +1098,7 @@ def command_validate(args: argparse.Namespace) -> dict[str, Any]:
         "reportSha256": receipt["scan"]["reportSha256"],
         "databaseSha256": receipt["database"]["dbSha256"],
         "packageCount": receipt["verdict"]["packageCount"],
+        "highCriticalCount": receipt["verdict"]["highCriticalCount"],
     }
 
 
@@ -891,12 +1123,16 @@ def command_verify(args: argparse.Namespace) -> dict[str, Any]:
         expected_os,
         os_family,
         inventories,
+        finding_counts,
         policy,
         scan_times,
     ) = _parse_receipt_contract(receipt, args=args)
     now = datetime.now(timezone.utc)
-    maximum_receipt_age = timedelta(seconds=args.maximum_receipt_age_seconds)
-    if now - scan_times.completed > maximum_receipt_age:
+    now_instant = _datetime_to_instant(now)
+    if (
+        now_instant.epoch_nanoseconds - scan_times.completed.epoch_nanoseconds
+        > args.maximum_receipt_age_seconds * NANOSECONDS_PER_SECOND
+    ):
         raise ValidationError("receipt is older than the promotion window")
 
     report_blob = read_plain_file(
@@ -931,13 +1167,14 @@ def command_verify(args: argparse.Namespace) -> dict[str, Any]:
     ):
         raise ValidationError("scan report or database artifact changed after attestation")
 
-    package_count, inventory_counts = validate_report(
+    package_count, inventory_counts, observed_finding_counts = validate_report(
         parse_json(report_blob, label="Trivy report"),
         expected_image_id=image_id,
         expected_architecture=architecture,
         expected_os=expected_os,
         expected_os_family=os_family,
         inventory_bounds=inventories,
+        expected_finding_counts=finding_counts,
     )
     if package_count != receipt["verdict"]["packageCount"]:
         raise ValidationError("package count no longer matches the receipt")
@@ -947,6 +1184,8 @@ def command_verify(args: argparse.Namespace) -> dict[str, Any]:
     }
     if inventory_counts != expected_inventory_counts:
         raise ValidationError("required inventory no longer matches the receipt")
+    if observed_finding_counts != finding_counts:
+        raise ValidationError("exact findings no longer match the receipt")
     database_metadata = validate_database_metadata(
         parse_json(metadata_blob, label="Trivy DB metadata"),
         scan_times=scan_times,
@@ -965,6 +1204,7 @@ def command_verify(args: argparse.Namespace) -> dict[str, Any]:
         "reportSha256": report_blob.sha256,
         "databaseSha256": database_blob.sha256,
         "packageCount": package_count,
+        "highCriticalCount": sum(observed_finding_counts.values()),
     }
 
 
@@ -1003,6 +1243,16 @@ def build_argument_parser() -> argparse.ArgumentParser:
     )
     validate_parser.add_argument("--scanner-version", required=True)
     validate_parser.add_argument("--scanner-sha256", required=True)
+    validate_parser.add_argument(
+        "--allowed-finding-sha256",
+        action="append",
+        default=[],
+        metavar="SHA256",
+        help=(
+            "allow one exact HIGH/CRITICAL finding instance; repeat only for "
+            "rollback-service multisets"
+        ),
+    )
     validate_parser.add_argument("--scan-started-at", required=True)
     validate_parser.add_argument("--scan-completed-at", required=True)
     validate_parser.add_argument("--maximum-db-age-seconds", type=_positive_argument, default=86_400)

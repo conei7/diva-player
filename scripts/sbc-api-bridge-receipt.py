@@ -25,8 +25,14 @@ from typing import Any
 
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
 ID64 = re.compile(r"^(?:sha256:)?[0-9a-f]{64}$")
+GENERATION = re.compile(r"^[0-9a-f]{64}:[0-9a-f]{32}$")
 TOKEN_PATH = "/tmp/.diva-qdrant-bridge-probe-token"
 INDEX_DIGEST = "sha256:8f9011596cb03595a340cf2388083e36e38421eb49cb3fdc0ab7666cf14a90c1"
+REQUIRED_ALIAS_NAMES = (
+    "song_hybrid_active",
+    "song_metadata_active",
+    "songs_v2_active",
+)
 
 
 def require(condition: bool, message: str) -> None:
@@ -41,6 +47,14 @@ def canonical(value: Any) -> bytes:
 
 def digest(value: Any) -> str:
     return hashlib.sha256(canonical(value)).hexdigest()
+
+
+def compact_json_digest(value: Any) -> str:
+    """Match the backup contract's newline-free canonical projection hash."""
+    encoded = json.dumps(
+        value, ensure_ascii=True, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def file_sha(path: Path) -> str:
@@ -163,7 +177,35 @@ def endpoint_semantics(payload: dict[str, Any], *, dig: bool = False) -> dict[st
     return result
 
 
-def validate_read_matrix(matrix: Any, seed: int) -> dict[str, Any]:
+def expected_publication_projection(generation: str) -> dict[str, Any]:
+    if generation == "legacy":
+        aliases = {
+            "song_hybrid_active": "song_hybrid",
+            "song_metadata_active": "song_metadata",
+            "songs_v2_active": "songs_v2",
+        }
+    else:
+        require(GENERATION.fullmatch(generation) is not None,
+                "publication generation is invalid")
+        basis_id, build_id = generation.split(":", 1)
+        suffix = f"{basis_id[:12]}_{build_id[:8]}"
+        aliases = {
+            "song_hybrid_active": f"song_hybrid_basis_{suffix}",
+            "song_metadata_active": f"song_metadata_basis_{suffix}",
+            "songs_v2_active": f"songs_v2_basis_{suffix}",
+        }
+    return {
+        "aliases": aliases,
+        "collections": sorted({"song_audio", *aliases.values()}),
+        "generation": generation,
+    }
+
+
+def validate_read_matrix(
+    matrix: Any,
+    seed: int,
+    publication_generation: str,
+) -> dict[str, Any]:
     require(isinstance(matrix, dict) and set(matrix) == {
         "aliases", "collectionInfo", "collections", "operations", "schemaVersion", "seedSongId"
     }, "read matrix schema is invalid")
@@ -196,18 +238,52 @@ def validate_read_matrix(matrix: Any, seed: int) -> dict[str, Any]:
             and all(str(row.get("status", "")).lower() == "green"
                     and isinstance(row.get("pointsCount"), int) and row["pointsCount"] > 0
                     for row in info), "collection health matrix is invalid")
+    expected_projection = expected_publication_projection(publication_generation)
     aliases = matrix.get("aliases")
-    require(isinstance(aliases, list) and {row.get("alias") for row in aliases}
-            >= {"songs_v2_active", "song_hybrid_active", "song_metadata_active"},
-            "required aliases are missing")
+    require(isinstance(aliases, list) and len(aliases) == len(REQUIRED_ALIAS_NAMES),
+            "alias inventory is not exact")
+    observed_aliases: dict[str, str] = {}
+    for row in aliases:
+        require(isinstance(row, dict) and set(row) == {"alias", "collection"},
+                "alias row schema is invalid")
+        alias = row.get("alias")
+        collection = row.get("collection")
+        require(isinstance(alias, str) and alias
+                and isinstance(collection, str) and collection,
+                "alias row value is invalid")
+        require(alias not in observed_aliases, "duplicate alias is invalid")
+        observed_aliases[alias] = collection
+    require(observed_aliases == expected_projection["aliases"],
+            "live aliases do not match the backed-up publication generation")
     collections = matrix.get("collections")
-    require(isinstance(collections, list) and collections == sorted(set(collections)),
-            "collection inventory is invalid")
+    require(isinstance(collections, list)
+            and all(isinstance(value, str) and value for value in collections)
+            and collections == expected_projection["collections"],
+            "live collection inventory does not match the backed-up publication generation")
     return matrix
 
 
-def probe_slot(docker: str, gateway: str, container: str, service: str,
-               seed: int) -> dict[str, Any]:
+def validate_matching_slot_matrices(
+    slot_a: Any,
+    slot_b: Any,
+    seed: int,
+    publication_generation: str,
+) -> dict[str, Any]:
+    validated_a = validate_read_matrix(slot_a, seed, publication_generation)
+    validated_b = validate_read_matrix(slot_b, seed, publication_generation)
+    require(canonical(validated_a) == canonical(validated_b),
+            "API A/B live publication matrices differ")
+    return validated_a
+
+
+def probe_read_matrix(
+    docker: str,
+    gateway: str,
+    container: str,
+    service: str,
+    seed: int,
+    publication_generation: str,
+) -> dict[str, Any]:
     token = secrets.token_hex(32)
     install_token(docker, container, token)
     try:
@@ -215,33 +291,91 @@ def probe_slot(docker: str, gateway: str, container: str, service: str,
             docker, gateway,
             f"http://{service}:5000/api/internal/qdrant-compatibility-matrix?seedSongId={seed}",
             token=token,
-        ), seed)
+        ), seed, publication_generation)
         require(token_absent(docker, container), "one-shot compatibility token was retained")
-        endpoints: dict[str, Any] = {}
-        for name in ("recommend", "similar", "metadata", "audio", "multi", "dig"):
-            body = None
-            if name == "recommend":
-                url = f"http://{service}:5000/api/recommend?songId={seed}&count=3&offset=0&sessionProgress=0"
-            elif name in {"similar", "metadata", "audio"}:
-                url = f"http://{service}:5000/api/recommend/{name}?songId={seed}&count=3&offset=0"
-            elif name == "multi":
-                url = f"http://{service}:5000/api/recommend/multi"
-                body = json.dumps({"seeds": [{"songId": seed, "weight": 1.0}], "count": 3,
-                                   "sessionProgress": 0.0, "excludeSongIds": [], "offset": 0},
-                                  separators=(",", ":"))
-            else:
-                url = f"http://{service}:5000/api/recommend/dig"
-                body = json.dumps({"seeds": [{"songId": seed, "weight": 1.0}], "count": 3,
-                                   "offset": 0, "generationSeed": 0, "excludeSongIds": [],
-                                   "vocalistMatchMode": "Any"}, separators=(",", ":"))
-            endpoints[name] = endpoint_semantics(
-                fetch_json(docker, gateway, url, body=body), dig=name == "dig"
-            )
-        return {"endpoints": endpoints, "readMatrix": matrix,
-                "schemaVersion": 1, "seedSongId": seed}
+        return matrix
     finally:
         if not token_absent(docker, container):
             run([docker, "exec", container, "/bin/rm", "-f", TOKEN_PATH], check=False)
+
+
+def probe_slot(docker: str, gateway: str, container: str, service: str,
+               seed: int, publication_generation: str) -> dict[str, Any]:
+    matrix = probe_read_matrix(
+        docker, gateway, container, service, seed, publication_generation,
+    )
+    endpoints: dict[str, Any] = {}
+    for name in ("recommend", "similar", "metadata", "audio", "multi", "dig"):
+        body = None
+        if name == "recommend":
+            url = f"http://{service}:5000/api/recommend?songId={seed}&count=3&offset=0&sessionProgress=0"
+        elif name in {"similar", "metadata", "audio"}:
+            url = f"http://{service}:5000/api/recommend/{name}?songId={seed}&count=3&offset=0"
+        elif name == "multi":
+            url = f"http://{service}:5000/api/recommend/multi"
+            body = json.dumps({"seeds": [{"songId": seed, "weight": 1.0}], "count": 3,
+                               "sessionProgress": 0.0, "excludeSongIds": [], "offset": 0},
+                              separators=(",", ":"))
+        else:
+            url = f"http://{service}:5000/api/recommend/dig"
+            body = json.dumps({"seeds": [{"songId": seed, "weight": 1.0}], "count": 3,
+                               "offset": 0, "generationSeed": 0, "excludeSongIds": [],
+                               "vocalistMatchMode": "Any"}, separators=(",", ":"))
+        endpoints[name] = endpoint_semantics(
+            fetch_json(docker, gateway, url, body=body), dig=name == "dig"
+        )
+    return {"endpoints": endpoints, "readMatrix": matrix,
+            "schemaVersion": 1, "seedSongId": seed}
+
+
+def build_live_publication_contract(
+    slot_a: Any,
+    slot_b: Any,
+    seed: int,
+    publication_generation: str,
+) -> dict[str, Any]:
+    matrix = validate_matching_slot_matrices(
+        slot_a, slot_b, seed, publication_generation,
+    )
+    projection = expected_publication_projection(publication_generation)
+    read_matrix_sha = digest(matrix)
+    return {
+        "kind": "diva.sbc-api-bridge-live-publication.v1",
+        "projection": projection,
+        "projectionSha256": compact_json_digest(projection),
+        "readMatrixSha256": read_matrix_sha,
+        "schemaVersion": 1,
+        "slots": {"api_a": read_matrix_sha, "api_b": read_matrix_sha},
+    }
+
+
+def verify_live_publication(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(
+        prog="sbc-api-bridge-receipt.py verify-live-publication"
+    )
+    parser.add_argument("--docker", required=True)
+    parser.add_argument("--gateway-id", required=True)
+    parser.add_argument("--api-a-id", required=True)
+    parser.add_argument("--api-b-id", required=True)
+    parser.add_argument("--publication-generation", required=True)
+    args = parser.parse_args(argv)
+    for value in (args.gateway_id, args.api_a_id, args.api_b_id):
+        require(ID64.fullmatch(value) is not None, "container ID is invalid")
+    expected_publication_projection(args.publication_generation)
+    seed, _ = select_seed(args.docker, args.gateway_id)
+    slot_a = probe_read_matrix(
+        args.docker, args.gateway_id, args.api_a_id, "api_a", seed,
+        args.publication_generation,
+    )
+    slot_b = probe_read_matrix(
+        args.docker, args.gateway_id, args.api_b_id, "api_b", seed,
+        args.publication_generation,
+    )
+    contract = build_live_publication_contract(
+        slot_a, slot_b, seed, args.publication_generation,
+    )
+    os.sys.stdout.buffer.write(canonical(contract))
+    return 0
 
 
 def write_exclusive(path: Path, data: bytes) -> None:
@@ -264,6 +398,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--docker", required=True)
     parser.add_argument("--gateway-id", required=True)
+    parser.add_argument("--web-id", required=True)
     parser.add_argument("--api-a-id", required=True)
     parser.add_argument("--api-b-id", required=True)
     parser.add_argument("--old-api-a-id", required=True)
@@ -278,11 +413,17 @@ def main() -> int:
     parser.add_argument("--publication-generation", required=True)
     parser.add_argument("--api-a-rollback-tag", required=True)
     parser.add_argument("--api-b-rollback-tag", required=True)
+    parser.add_argument("--api-scan-receipt", required=True, type=Path)
+    parser.add_argument("--api-scan-receipt-sha256", required=True)
+    parser.add_argument("--gateway-scan-receipt", required=True, type=Path)
+    parser.add_argument("--gateway-scan-receipt-sha256", required=True)
+    parser.add_argument("--web-scan-receipt", required=True, type=Path)
+    parser.add_argument("--web-scan-receipt-sha256", required=True)
     parser.add_argument("--previous-output", required=True, type=Path)
     parser.add_argument("--receipt-output", required=True, type=Path)
     args = parser.parse_args()
-    for value in (args.gateway_id, args.api_a_id, args.api_b_id, args.old_api_a_id,
-                  args.old_api_b_id, args.qdrant_id):
+    for value in (args.gateway_id, args.web_id, args.api_a_id, args.api_b_id, args.old_api_a_id,
+                   args.old_api_b_id, args.qdrant_id):
         require(ID64.fullmatch(value) is not None, "container ID is invalid")
     require(re.fullmatch(r"[0-9a-f]{40}", args.player_commit) is not None,
             "player commit is invalid")
@@ -290,6 +431,16 @@ def main() -> int:
             "source snapshot SHA is invalid")
     require(re.fullmatch(r"off-host-evidence-sha256-[0-9a-f]{64}", args.backup_binding)
             is not None, "backup binding is invalid")
+    scan_receipts = {
+        "api": (args.api_scan_receipt, args.api_scan_receipt_sha256),
+        "gateway": (args.gateway_scan_receipt, args.gateway_scan_receipt_sha256),
+        "web": (args.web_scan_receipt, args.web_scan_receipt_sha256),
+    }
+    for service, (path, expected_sha) in scan_receipts.items():
+        require(HEX64.fullmatch(expected_sha) is not None,
+                f"{service} scan receipt SHA is invalid")
+        require(file_sha(path) == expected_sha,
+                f"{service} scan receipt changed before bridge preparation")
     helper = args.source_root / "scripts" / "wsl-dr-api-bridge-receipt.py"
     helper_sha = file_sha(helper)
     source_manifest_sha = file_sha(args.source_entries)
@@ -336,8 +487,15 @@ def main() -> int:
             "Qdrant volume options changed between inspect projections")
 
     seed, selection_sha = select_seed(args.docker, args.gateway_id)
-    slot_a = probe_slot(args.docker, args.gateway_id, args.api_a_id, "api_a", seed)
-    slot_b = probe_slot(args.docker, args.gateway_id, args.api_b_id, "api_b", seed)
+    expected_publication_projection(args.publication_generation)
+    slot_a = probe_slot(
+        args.docker, args.gateway_id, args.api_a_id, "api_a", seed,
+        args.publication_generation,
+    )
+    slot_b = probe_slot(
+        args.docker, args.gateway_id, args.api_b_id, "api_b", seed,
+        args.publication_generation,
+    )
     require(canonical(slot_a) == canonical(slot_b), "API A/B semantics differ")
     read_hash = digest(slot_a["readMatrix"])
     endpoint_hash = digest(slot_a["endpoints"])
@@ -356,7 +514,7 @@ def main() -> int:
     }
     compatibility_sha = digest(compatibility)
 
-    def api_fact(container: str, name: str) -> dict[str, str]:
+    def container_fact(container: str, name: str) -> dict[str, str]:
         image_id = inspect(args.docker, container, "{{.Image}}")
         require(image_inspect(args.docker, image_id, "{{.Os}}|{{.Architecture}}") == "linux|arm64",
                 f"{name} image is not linux/arm64")
@@ -366,11 +524,15 @@ def main() -> int:
         return {"container": container, "image": image_id, "config": config,
                 "reference": inspect(args.docker, container, "{{.Config.Image}}")}
 
-    current = {"api_a": api_fact(args.api_a_id, "api_a"),
-               "api_b": api_fact(args.api_b_id, "api_b")}
-    previous = {"api_a": api_fact(args.old_api_a_id, "old api_a"),
-                "api_b": api_fact(args.old_api_b_id, "old api_b")}
-    previous_lines = ["schema\t1", "provenance\tlegacy-pre-contract-unattested"]
+    current = {"api_a": container_fact(args.api_a_id, "api_a"),
+               "api_b": container_fact(args.api_b_id, "api_b")}
+    previous = {"api_a": container_fact(args.old_api_a_id, "old api_a"),
+                "api_b": container_fact(args.old_api_b_id, "old api_b")}
+    stateless = {
+        "api_gateway": container_fact(args.gateway_id, "api_gateway"),
+        "web": container_fact(args.web_id, "web"),
+    }
+    previous_lines = ["schema\t2", "provenance\tlegacy-pre-contract-unattested"]
     for name, rollback in (("api_a", args.api_a_rollback_tag),
                            ("api_b", args.api_b_rollback_tag)):
         fact = previous[name]
@@ -378,6 +540,21 @@ def main() -> int:
         previous_lines.append("\t".join([
             name, f"vocadb_{name}", archive, fact["container"], fact["image"],
             fact["reference"], fact["config"], rollback,
+        ]))
+    scan_images = {
+        "api": current["api_a"]["image"],
+        "gateway": stateless["api_gateway"]["image"],
+        "web": stateless["web"]["image"],
+    }
+    for service in ("api", "gateway", "web"):
+        previous_lines.append("\t".join([
+            "scan", service, scan_images[service], scan_receipts[service][1],
+        ]))
+    for service in ("api_gateway", "web"):
+        fact = stateless[service]
+        previous_lines.append("\t".join([
+            "stateless", service, f"vocadb_{service}", fact["container"],
+            fact["image"], fact["reference"], fact["config"],
         ]))
     write_exclusive(args.previous_output, ("\n".join(previous_lines) + "\n").encode())
     previous_sha = file_sha(args.previous_output)
@@ -436,6 +613,8 @@ def main() -> int:
 
 if __name__ == "__main__":
     try:
+        if len(os.sys.argv) > 1 and os.sys.argv[1] == "verify-live-publication":
+            raise SystemExit(verify_live_publication(os.sys.argv[2:]))
         raise SystemExit(main())
     except (OSError, RuntimeError, subprocess.SubprocessError, ValueError, json.JSONDecodeError) as error:
         print(f"SBC bridge receipt: {error}", file=os.sys.stderr)

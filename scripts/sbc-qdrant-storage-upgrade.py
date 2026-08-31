@@ -25,7 +25,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Any, Callable, Iterable, Sequence
+from typing import Any, Callable, Iterable, Mapping, Sequence
 
 
 SCHEMA_VERSION = 1
@@ -33,6 +33,23 @@ MAX_JOURNAL_BYTES = 2 * 1024 * 1024
 NAME_RE = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}\Z")
 HEX64_RE = re.compile(r"[0-9a-f]{64}\Z")
 CONTAINER_ID_RE = re.compile(r"[0-9a-f]{64}\Z")
+PRODUCTION_STATE_ROOT = Path("/var/lib/diva-player-deploy")
+STATEFUL_RUN_PREFIX = "stateful-"
+JOURNAL_BASENAME = "qdrant-storage-upgrade.json"
+RESULT_BASENAME = "qdrant-storage-upgrade-result.json"
+TEST_MODE_ENV = "DIVA_QDRANT_UPGRADE_TEST_MODE"
+TEST_STATE_ROOT_ENV = "DIVA_QDRANT_UPGRADE_TEST_STATE_ROOT"
+DOCKER_ENDPOINT_ENV = frozenset({
+    "DOCKER_API_VERSION",
+    "DOCKER_CERT_PATH",
+    "DOCKER_CONFIG",
+    "DOCKER_CONTEXT",
+    "DOCKER_CUSTOM_HEADERS",
+    "DOCKER_DEFAULT_PLATFORM",
+    "DOCKER_HOST",
+    "DOCKER_TLS",
+    "DOCKER_TLS_VERIFY",
+})
 
 
 @dataclasses.dataclass(frozen=True)
@@ -93,6 +110,176 @@ class UpgradeError(RuntimeError):
     """Fail-closed upgrade error."""
 
 
+@dataclasses.dataclass(frozen=True)
+class StandaloneBoundary:
+    """Privilege and state-root boundary established before argument parsing."""
+
+    state_root: Path
+    expected_uid: int
+    expected_gid: int
+    test_mode: bool
+
+
+def establish_standalone_boundary(
+    environment: Mapping[str, str] | None = None,
+    *,
+    effective_uid: int | None = None,
+    effective_gid: int | None = None,
+) -> StandaloneBoundary:
+    """Reject ambient Docker routing and select the one permitted state root.
+
+    Production has no state-root override: it is uid/gid 0 at the fixed durable
+    root. Deterministic tests must opt in with both test variables and must run
+    unprivileged, so the test escape hatch cannot weaken a root invocation.
+    """
+    values = os.environ if environment is None else environment
+    routed = sorted(
+        key for key in values
+        if key in DOCKER_ENDPOINT_ENV or key.startswith("DOCKER_TLS_")
+    )
+    if routed:
+        raise UpgradeError(
+            "ambient Docker endpoint environment is forbidden: " + ", ".join(routed)
+        )
+    if effective_uid is None:
+        getuid = getattr(os, "geteuid", None)
+        effective_uid = getuid() if getuid is not None else None
+    if effective_gid is None:
+        getgid = getattr(os, "getegid", None)
+        effective_gid = getgid() if getgid is not None else None
+
+    test_flag_present = TEST_MODE_ENV in values
+    test_root_present = TEST_STATE_ROOT_ENV in values
+    if test_flag_present or test_root_present:
+        if (
+            values.get(TEST_MODE_ENV) != "1"
+            or not test_root_present
+            or not values.get(TEST_STATE_ROOT_ENV)
+        ):
+            raise UpgradeError("the deterministic Qdrant upgrade test boundary is incomplete")
+        if effective_uid is None or effective_gid is None or effective_uid == 0:
+            raise UpgradeError("the deterministic Qdrant upgrade test boundary refuses uid 0")
+        root_text = values[TEST_STATE_ROOT_ENV]
+        state_root = Path(root_text)
+        if (
+            not state_root.is_absolute()
+            or os.path.normpath(root_text) != root_text
+            or any(part == ".." for part in state_root.parts)
+        ):
+            raise UpgradeError("the deterministic Qdrant upgrade test state root is not exact")
+        return StandaloneBoundary(state_root, effective_uid, effective_gid, True)
+
+    if effective_uid != 0 or effective_gid != 0:
+        raise UpgradeError("standalone Qdrant storage upgrade requires uid/gid 0")
+    return StandaloneBoundary(PRODUCTION_STATE_ROOT, 0, 0, False)
+
+
+def _require_secure_directory(
+    path: Path,
+    *,
+    expected_uid: int,
+    expected_gid: int,
+    exact_mode: int,
+) -> None:
+    try:
+        info = path.lstat()
+    except FileNotFoundError as error:
+        raise UpgradeError(f"required private state directory is absent: {path}") from error
+    if not stat.S_ISDIR(info.st_mode) or path.is_symlink():
+        raise UpgradeError(f"private state path is not a real directory: {path}")
+    if os.name == "posix" and (
+        info.st_uid != expected_uid
+        or info.st_gid != expected_gid
+        or stat.S_IMODE(info.st_mode) != exact_mode
+    ):
+        raise UpgradeError(f"private state directory metadata is unsafe: {path}")
+
+
+def _require_trusted_system_directory(path: Path) -> None:
+    try:
+        info = path.lstat()
+    except FileNotFoundError as error:
+        raise UpgradeError(f"trusted system ancestry is absent: {path}") from error
+    if (
+        not stat.S_ISDIR(info.st_mode)
+        or path.is_symlink()
+        or info.st_uid != 0
+        or info.st_gid != 0
+        or stat.S_IMODE(info.st_mode) & 0o022
+    ):
+        raise UpgradeError(f"trusted system ancestry is unsafe: {path}")
+
+
+def _require_secure_regular_or_absent(
+    path: Path,
+    *,
+    expected_uid: int,
+    expected_gid: int,
+) -> None:
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        return
+    if (
+        not stat.S_ISREG(info.st_mode)
+        or path.is_symlink()
+        or info.st_nlink != 1
+        or (
+            os.name == "posix"
+            and (
+                info.st_uid != expected_uid
+                or info.st_gid != expected_gid
+                or stat.S_IMODE(info.st_mode) != 0o600
+            )
+        )
+    ):
+        raise UpgradeError(f"existing standalone output is unsafe: {path}")
+
+
+def validate_standalone_paths(
+    arguments: argparse.Namespace,
+    boundary: StandaloneBoundary,
+) -> None:
+    """Bind standalone mutation evidence to one pre-created private run dir."""
+    run_id = require_name(arguments.run_id, "run ID")
+    run_directory = boundary.state_root / f"{STATEFUL_RUN_PREFIX}{run_id}"
+    journal = run_directory / JOURNAL_BASENAME
+    result = run_directory / RESULT_BASENAME
+    if arguments.journal != str(journal) or arguments.output != str(result):
+        raise UpgradeError("journal and result must be the exact fixed run children")
+    if boundary.test_mode:
+        if not isinstance(arguments.docker, str) or not arguments.docker:
+            raise UpgradeError("test Docker command is empty")
+    elif arguments.docker != "/usr/bin/docker":
+        raise UpgradeError("production standalone upgrade requires /usr/bin/docker")
+
+    if not boundary.test_mode:
+        for parent in (Path("/"), Path("/var"), Path("/var/lib")):
+            _require_trusted_system_directory(parent)
+    _require_secure_directory(
+        boundary.state_root,
+        expected_uid=boundary.expected_uid,
+        expected_gid=boundary.expected_gid,
+        exact_mode=0o700,
+    )
+    _require_secure_directory(
+        run_directory,
+        expected_uid=boundary.expected_uid,
+        expected_gid=boundary.expected_gid,
+        exact_mode=0o700,
+    )
+    _require_secure_regular_or_absent(
+        journal,
+        expected_uid=boundary.expected_uid,
+        expected_gid=boundary.expected_gid,
+    )
+    _require_secure_regular_or_absent(
+        result,
+        expected_uid=boundary.expected_uid,
+        expected_gid=boundary.expected_gid,
+    )
+
+
 def utc_now() -> str:
     return dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
 
@@ -103,6 +290,85 @@ def canonical_bytes(document: Any) -> bytes:
 
 def sha256_bytes(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
+
+
+def load_runtime_attestation(path_text: str) -> tuple[dict[str, Any], str]:
+    """Load the hardener-produced, bounded venv probe attestation.
+
+    This controller is deliberately stdlib-only and never executes the
+    pipeline virtual environment.  Its only dependency on that runtime is a
+    canonical, owner-only attestation captured by the root hardener while the
+    pipeline's shared runtime lock is held.
+    """
+    path = Path(path_text)
+    info = path.lstat()
+    if (
+        not stat.S_ISREG(info.st_mode)
+        or info.st_nlink != 1
+        or (os.name == "posix" and stat.S_IMODE(info.st_mode) != 0o600)
+        or info.st_size <= 0
+        or info.st_size > 64 * 1024
+        or (getattr(os, "geteuid", lambda: -1)() == 0 and info.st_uid != 0)
+    ):
+        raise UpgradeError("pipeline runtime attestation is unsafe")
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(path, flags)
+    try:
+        opened = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or opened.st_nlink != 1
+            or (os.name == "posix" and stat.S_IMODE(opened.st_mode) != 0o600)
+            or opened.st_size != info.st_size
+            or opened.st_dev != info.st_dev
+            or opened.st_ino != info.st_ino
+        ):
+            raise UpgradeError("pipeline runtime attestation changed while opening")
+        chunks: list[bytes] = []
+        remaining = opened.st_size
+        while remaining:
+            chunk = os.read(descriptor, remaining)
+            if not chunk:
+                raise UpgradeError("pipeline runtime attestation was truncated")
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        if os.read(descriptor, 1):
+            raise UpgradeError("pipeline runtime attestation grew while reading")
+        raw = b"".join(chunks)
+        if len(raw) != opened.st_size:
+            raise UpgradeError("pipeline runtime attestation changed while reading")
+        after = os.fstat(descriptor)
+        if (after.st_dev, after.st_ino, after.st_size, after.st_nlink) != (
+            opened.st_dev, opened.st_ino, opened.st_size, opened.st_nlink
+        ):
+            raise UpgradeError("pipeline runtime attestation changed while reading")
+    finally:
+        os.close(descriptor)
+    try:
+        document = json.loads(raw)
+    except (UnicodeDecodeError, ValueError) as error:
+        raise UpgradeError("pipeline runtime attestation is not JSON") from error
+    expected = {
+        "baseExecutable", "contract", "executable", "gid", "lockSha256", "patcherSha256",
+        "privilegeBoundary", "qdrantClientVersion", "qdrantModule", "runtimeReceiptSha256",
+        "schema", "uid", "verifierSha256",
+    }
+    if (
+        not isinstance(document, dict)
+        or set(document) != expected
+        or document.get("schema") != "diva.pipeline-qdrant-probe-runtime.v1"
+        or document.get("contract") != "linux-aarch64"
+        or document.get("qdrantClientVersion") != "1.19.0"
+        or document.get("privilegeBoundary") != "uid-gid-no-groups-no-caps-nnp"
+        or not isinstance(document.get("uid"), int) or document["uid"] <= 0
+        or not isinstance(document.get("gid"), int) or document["gid"] < 0
+        or any(not isinstance(document.get(key), str) or HEX64_RE.fullmatch(document[key]) is None
+               for key in ("lockSha256", "patcherSha256", "runtimeReceiptSha256", "verifierSha256"))
+    ):
+        raise UpgradeError("pipeline runtime attestation contract mismatch")
+    if canonical_bytes(document) != raw:
+        raise UpgradeError("pipeline runtime attestation is not canonical")
+    return document, sha256_bytes(raw)
 
 
 def fsync_directory(path: Path) -> None:
@@ -515,6 +781,9 @@ class UpgradeController:
             or self.audit_evidence["contractHelperSha256"] != AUDIT_CONTRACT_HELPER_SHA256
         ):
             raise UpgradeError("offline audit evidence does not match the pinned architecture map")
+        runtime_attestation, runtime_attestation_sha256 = load_runtime_attestation(
+            arguments.runtime_attestation
+        )
         initial = {
             "runId": run_id,
             "old": self.old,
@@ -527,14 +796,14 @@ class UpgradeController:
                 "auditEvidence": self.audit_evidence,
                 "finalImageId": final_image_id,
                 "runtimeEvidence": self.runtime_evidence,
+                "pipelineRuntimeAttestation": runtime_attestation,
+                "pipelineRuntimeAttestationSha256": runtime_attestation_sha256,
             },
             "probe": {"apiImages": probe_slots, "seedSongId": arguments.seed_song_id},
         }
         journal_path = Path(arguments.journal)
-        journal_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        if journal_path.parent.is_symlink():
-            raise UpgradeError("journal parent is a symlink")
-        os.chmod(journal_path.parent, 0o700)
+        if not journal_path.parent.is_dir() or journal_path.parent.is_symlink():
+            raise UpgradeError("journal parent is not the pre-created private run directory")
         self.journal = DurableJournal(journal_path, initial)
         self.candidate_volume = candidate_volume
         self.probe_slots: dict[str, str] = probe_slots
@@ -1483,39 +1752,9 @@ printf 'structure=%s\nlogicalStructure=%s\ncontent=%s\nentries=%s\nnonRootOwned=
             raise UpgradeError("received hop removal did not stabilize")
         self.journal.receipt(key, {"containerId": container_id, "absent": True})
 
-    def attest_python_runtime(self) -> None:
-        executable = Path(self.arguments.pipeline_python).resolve(strict=True)
-        expected_root = Path(self.arguments.pipeline_venv).resolve(strict=True)
-        if expected_root not in executable.parents:
-            raise UpgradeError("pipeline Python is outside the attested virtual environment")
-        code = r'''
-import importlib.metadata, json, os, qdrant_client, site, sys
-root = os.path.realpath(sys.argv[1])
-exe = os.path.realpath(sys.executable)
-module = os.path.realpath(qdrant_client.__file__)
-if os.path.commonpath([root, exe]) != root or os.path.commonpath([root, module]) != root:
-    raise SystemExit(3)
-if importlib.metadata.version("qdrant-client") != "1.19.0":
-    raise SystemExit(4)
-if site.ENABLE_USER_SITE:
-    raise SystemExit(5)
-print(json.dumps({"executable": exe, "module": module, "version": "1.19.0"}, sort_keys=True))
-'''
-        output = subprocess.run(
-            [str(executable), "-I", "-c", code, str(expected_root)],
-            text=True, encoding="utf-8", stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            timeout=self.arguments.read_timeout, check=False,
-        )
-        if output.returncode != 0:
-            raise UpgradeError(f"pipeline qdrant-client runtime attestation failed: {output.stderr[-500:]}")
-        document = json.loads(output.stdout)
-        self.journal.document["pythonRuntime"] = document
-        self.journal._commit()
-
     def run(self) -> dict[str, Any]:
         self.journal.set_phase("preflight")
         assert_old_identity(self.runner, self.old, require_stopped=False)
-        self.attest_python_runtime()
         image_ids = {hop.version: self.ensure_image(hop) for hop in HOPS}
         final_image_id = require_image_id(self.arguments.final_image_id, "hardened final image")
         final_base = image_ids[HOPS[-1].version]
@@ -1729,8 +1968,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--publication-generation", required=True)
     parser.add_argument("--probe-slots", required=True)
     parser.add_argument("--seed-song-id", required=True, type=int)
-    parser.add_argument("--pipeline-python", required=True)
-    parser.add_argument("--pipeline-venv", required=True)
+    parser.add_argument("--runtime-attestation", required=True)
     parser.add_argument("--final-image-id", required=True)
     parser.add_argument("--audit-image-id", required=True)
     parser.add_argument("--audit-architecture", required=True)
@@ -1750,7 +1988,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    boundary = establish_standalone_boundary()
     arguments = build_parser().parse_args(argv)
+    validate_standalone_paths(arguments, boundary)
     for value in (arguments.read_timeout, arguments.mutation_timeout, arguments.health_timeout):
         if value <= 0:
             raise UpgradeError("timeouts must be positive")

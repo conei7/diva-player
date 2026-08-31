@@ -1230,7 +1230,7 @@ async function testStatefulMigrateContractRetagFailsClosed() {
 async function testNormalCandidatePlatformFailsClosed() {
   const result = await runScenario('normal-candidate-platform', 'candidate_platform');
   assert.notEqual(result.result.status, 0);
-  assert.match(result.state, /failure=A normal rolling candidate is not a native linux\/arm64 image/u);
+  assert.match(result.state, /failure=A rolling candidate is not a native linux\/arm64 image/u);
   assert.equal(result.trivyLog, '');
   assert.match(result.state, /backend_env\.private_cleanup=durable-exact-inode-unlink/u);
   assert.match(result.state, /backend_env\.private_runtime_cleanup=durable-tmpfs-dirfd-release/u);
@@ -1284,11 +1284,31 @@ function testBridgeTrivyAndExactImageContract() {
   );
   assert.match(
     deploymentSource,
-    /if \[ "\$BRIDGE_BOOTSTRAP_MODE" = "true" \]; then\s+if ! scan_bridge_api_candidate_image;/u,
+    /1:--bootstrap-legacy-qdrant-bridge\) BRIDGE_BOOTSTRAP_MODE=true/u,
   );
   assert.match(
     deploymentSource,
-    /if \[ "\$BRIDGE_BOOTSTRAP_MODE" = "true" \]; then\s+if ! verify_bridge_api_candidate_scan_receipt;/u,
+    /if \[ "\$BRIDGE_BOOTSTRAP_MODE" != "true" \]; then\s+if ! validate_stateful_runtime_contract;/u,
+  );
+  assert.match(
+    deploymentSource,
+    /bounded_compose "\$BUILD_TIMEOUT_SECONDS" build api_a api_gateway web/u,
+  );
+  assert.match(
+    deploymentSource,
+    /if ! scan_all_rolling_candidate_images; then/u,
+  );
+  assert.match(
+    deploymentSource,
+    /migration\.status" "forbidden-by-pre-stateful-stateless-bootstrap"[\s\S]*verify_bridge_legacy_contract/u,
+  );
+  assert.match(
+    deploymentSource,
+    /verify_bridge_stateful_contract\(\)[\s\S]*compose_service_container_ids migrate[\s\S]*BRIDGE_QDRANT_MOUNTS_JSON[\s\S]*BRIDGE_POSTGRES_MOUNTS_JSON/u,
+  );
+  assert.match(
+    deploymentSource,
+    /--api-scan-receipt-sha256 "\$API_SCAN_RECEIPT_SHA"[\s\S]*--gateway-scan-receipt-sha256 "\$GATEWAY_SCAN_RECEIPT_SHA"[\s\S]*--web-scan-receipt-sha256 "\$WEB_SCAN_RECEIPT_SHA"/u,
   );
   assert.match(
     deploymentSource,
@@ -1298,6 +1318,1181 @@ function testBridgeTrivyAndExactImageContract() {
     deploymentSource,
     /create_managed_service_container api_gateway "\$CANDIDATE_CONFIG_HASH" \\\s+"\$CANDIDATE_GATEWAY_IMAGE_ID" "\$CANDIDATE_GATEWAY_IMAGE_ID"/u,
   );
+  const mainRollingFlow = deploymentSource.slice(
+    deploymentSource.lastIndexOf('if [ "$GATEWAY_WAS_RUNNING" = "true" ]; then'),
+  );
+  const apiAUpdate = mainRollingFlow.indexOf('update_slot api_a');
+  const apiBUpdate = mainRollingFlow.indexOf('update_slot api_b');
+  const gatewayUpdate = mainRollingFlow.indexOf('apply_gateway_image');
+  const webUpdate = mainRollingFlow.indexOf('replace_web');
+  const bridgeFinalVerification = mainRollingFlow.indexOf(
+    'verifying-pre-stateful-stateless-bridge',
+  );
+  const bridgeReceipt = mainRollingFlow.indexOf('prepare_and_publish_bridge_receipt');
+  assert.ok(
+    apiAUpdate >= 0 && apiAUpdate < apiBUpdate && apiBUpdate < gatewayUpdate
+      && gatewayUpdate < webUpdate && webUpdate < bridgeFinalVerification
+      && bridgeFinalVerification < bridgeReceipt,
+    'explicit bridge receipt must be the last step after API, gateway, Web, and stateful reproof',
+  );
+  assert.match(
+    mainRollingFlow.slice(bridgeFinalVerification, bridgeReceipt),
+    /verify_bridge_stateful_contract[\s\S]*verify_all_rolling_candidate_scan_receipts/u,
+  );
+  assert.match(
+    deploymentSource,
+    /API_BRIDGE_PUBLISHED=true[\s\S]*API_CANDIDATE_TAG_CREATED=false[\s\S]*GATEWAY_CANDIDATE_TAG_CREATED=false[\s\S]*WEB_CANDIDATE_TAG_CREATED=false/u,
+  );
+  const receiptFunctionStart = deploymentSource.indexOf(
+    'prepare_and_publish_bridge_receipt() {',
+  );
+  const receiptFunctionEnd = deploymentSource.indexOf(
+    '\nrelease_active_journal() {',
+    receiptFunctionStart,
+  );
+  assert.ok(receiptFunctionStart >= 0 && receiptFunctionEnd > receiptFunctionStart);
+  const receiptFunction = deploymentSource.slice(receiptFunctionStart, receiptFunctionEnd);
+  const preparationRevalidation = receiptFunction.indexOf('before-receipt-preparation');
+  const receiptProducer = receiptFunction.indexOf('"$PYTHON_COMMAND" -I "$producer"');
+  const publicationHook = receiptFunction.indexOf(
+    'run_test_hook "before-bridge-receipt-publication"',
+  );
+  const publicationRevalidation = receiptFunction.indexOf(
+    'before-receipt-publication',
+    preparationRevalidation + 1,
+  );
+  const livePublicationEvidence = receiptFunction.indexOf(
+    'verify_bridge_live_publication_evidence "$producer"',
+  );
+  const postProbeRevalidation = receiptFunction.indexOf(
+    'verify_bridge_backup_post_probe_boundary',
+    livePublicationEvidence,
+  );
+  const receiptPublisher = receiptFunction.indexOf(
+    '"$PYTHON_COMMAND" -I "$publisher" publish',
+  );
+  assert.ok(
+    preparationRevalidation >= 0 && preparationRevalidation < receiptProducer
+      && receiptProducer < publicationHook && publicationHook < publicationRevalidation
+      && publicationRevalidation < livePublicationEvidence
+      && livePublicationEvidence < postProbeRevalidation
+      && postProbeRevalidation < receiptPublisher,
+    'backup and live publication evidence must be revalidated before canonical publication',
+  );
+  assert.match(
+    receiptFunction,
+    /prepare_bridge_backup_contract "\$BRIDGE_QDRANT_BACKUP_BINDING" \\\s+"\$BRIDGE_QDRANT_PUBLICATION_GENERATION" before-receipt-preparation \\\s+\|\| return 1/u,
+  );
+  assert.match(
+    receiptFunction,
+    /prepare_bridge_backup_contract "\$BRIDGE_QDRANT_BACKUP_BINDING" \\\s+"\$BRIDGE_QDRANT_PUBLICATION_GENERATION" before-receipt-publication \\\s+\|\| return 1/u,
+  );
+  assert.match(
+    deploymentSource,
+    /computed_binding="off-host-evidence-sha256-\$binding_sha"[\s\S]*\[ "\$computed_binding" = "\$expected_binding" \][\s\S]*\[ "\$computed_generation" = "\$expected_generation" \][\s\S]*BRIDGE_QDRANT_BACKUP_BINDING="\$computed_binding"/u,
+  );
+  assert.match(
+    deploymentSource,
+    /BRIDGE_BACKUP_MAX_ELAPSED_SECONDS=14400/u,
+  );
+  assert.doesNotMatch(
+    deploymentSource,
+    /BRIDGE_BACKUP_MAX_ELAPSED_SECONDS=\$\{DIVA_/u,
+    'the four-hour bridge lifetime is a fixed production bound, not an environment override',
+  );
+  for (const phase of [
+    'after-build', 'after-scan', 'before-first-live-mutation',
+    'before-receipt-preparation', 'before-receipt-publication',
+    'after-live-publication-probe',
+  ]) {
+    assert.match(deploymentSource, new RegExp(`verify_bridge_backup_lifetime "\\$phase"|${phase}`, 'u'));
+  }
+  assert.match(
+    deploymentSource,
+    /verify_bridge_attester_source\(\)[\s\S]*\[ "\$current_metadata" = 644:1 \][\s\S]*expected_owner=0:0[\s\S]*\[ "\$snapshot_metadata" = "\$expected_owner:644:1" \][\s\S]*\[ "\$snapshot_sha" = "\$current_sha" \]/u,
+  );
+  assert.match(
+    deploymentSource,
+    /\[ "\$\(stat -c '%a' "\$attestation_file"\)" = 600 \] \|\| return 1/u,
+    'the external backup attestation remains an exact owner-only evidence file',
+  );
+}
+
+async function testCandidateScanBatchTimestampContract() {
+  const functionStart = deploymentSource.indexOf('prepare_candidate_image_scan_database() {');
+  const functionEnd = deploymentSource.indexOf(
+    '\nverify_all_rolling_candidate_scan_receipts() {',
+    functionStart,
+  );
+  assert.ok(functionStart >= 0 && functionEnd > functionStart);
+  const scanFunctions = deploymentSource.slice(functionStart, functionEnd)
+    .replaceAll('\r\n', '\n');
+  const preparation = deploymentSource.slice(
+    functionStart,
+    deploymentSource.indexOf('\nscan_exact_candidate_image() {', functionStart),
+  );
+  assert.ok(
+    preparation.indexOf('IMAGE_SCAN_BATCH_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)')
+      < preparation.indexOf('--download-db-only'),
+    'the one batch timestamp must be captured before the Trivy DB download',
+  );
+  assert.match(
+    scanFunctions,
+    /started_at="\$IMAGE_SCAN_BATCH_STARTED_AT"[\s\S]*--scan-started-at "\$started_at"/u,
+  );
+  assert.doesNotMatch(
+    scanFunctions.slice(
+      scanFunctions.indexOf('scan_exact_candidate_image() {'),
+      scanFunctions.indexOf('verify_exact_candidate_scan_receipt() {'),
+    ),
+    /started_at=\$\(date /u,
+  );
+
+  const root = await mkdtemp(join(scriptsDirectory, '.candidate-scan-batch-'));
+  const scanRoot = join(root, 'scan');
+  const fakeTrivyPath = join(root, 'trivy');
+  const fakePythonPath = join(root, 'python3');
+  const validatorPath = join(root, 'validator.py');
+  const validatorLog = join(root, 'validator.log');
+  const dateCounter = join(root, 'date-counter');
+  const harnessPath = join(root, 'harness.sh');
+  try {
+    const fakeTrivySource = '#!/bin/sh\nexit 99\n';
+    const scannerSha = createHash('sha256').update(fakeTrivySource).digest('hex');
+    const fakePython = `#!/bin/sh
+set -eu
+[ "$1" = -I ]
+shift 2
+[ "$1" = validate ]
+shift
+service=
+receipt=
+started=
+completed=
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --service) service="$2"; shift 2 ;;
+        --receipt) receipt="$2"; shift 2 ;;
+        --scan-started-at) started="$2"; shift 2 ;;
+        --scan-completed-at) completed="$2"; shift 2 ;;
+        *) shift ;;
+    esac
+done
+[ -n "$service" ] && [ -n "$receipt" ] && [ -n "$started" ] && [ -n "$completed" ]
+printf '{"service":"%s","status":"passed"}\n' "$service" > "$receipt"
+printf '%s|%s|%s\n' "$service" "$started" "$completed" >> "${shellPath(validatorLog)}"
+printf '%s\n' '{}'
+`;
+    await Promise.all([
+      writeFile(fakeTrivyPath, fakeTrivySource, 'utf8'),
+      writeFile(fakePythonPath, fakePython, 'utf8'),
+      writeFile(validatorPath, '', 'utf8'),
+    ]);
+    await Promise.all([chmod(fakeTrivyPath, 0o755), chmod(fakePythonPath, 0o755)]);
+
+    const harness = `#!/bin/sh
+set -eu
+IMAGE_SCAN_ROOT="${shellPath(scanRoot)}"
+TRIVY_RUN_CACHE="$IMAGE_SCAN_ROOT/trivy-cache"
+TRIVY_EMPTY_CONFIG="$IMAGE_SCAN_ROOT/trivy-empty.yaml"
+TRIVY_EMPTY_IGNORE="$IMAGE_SCAN_ROOT/trivy-empty.ignore"
+TRIVY_COMMAND="${shellPath(fakeTrivyPath)}"
+TRIVY_BINARY_SHA256=${scannerSha}
+TRIVY_VERSION=0.74.0
+TRIVY_SCANNER_SHA=
+IMAGE_SCAN_BATCH_STARTED_AT=
+API_SCAN_RECEIPT_SHA=
+GATEWAY_SCAN_RECEIPT_SHA=
+WEB_SCAN_RECEIPT_SHA=
+TEST_MODE=0
+BUILD_TIMEOUT_SECONDS=7200
+SYNC_COMMAND=true
+PYTHON_COMMAND="${shellPath(fakePythonPath)}"
+IMAGE_SCAN_VALIDATOR_RELEASE="${shellPath(validatorPath)}"
+API_CANDIDATE_IMAGE=api-reference
+GATEWAY_CANDIDATE_IMAGE=gateway-reference
+WEB_CANDIDATE_IMAGE=web-reference
+NEW_API_IMAGE=sha256:${'1'.repeat(64)}
+NEW_GATEWAY_IMAGE=sha256:${'2'.repeat(64)}
+NEW_WEB_IMAGE=sha256:${'3'.repeat(64)}
+DATE_COUNTER="${shellPath(dateCounter)}"
+date() {
+    count=0
+    [ ! -f "$DATE_COUNTER" ] || count=$(cat "$DATE_COUNTER")
+    count=$((count + 1))
+    printf '%s\n' "$count" > "$DATE_COUNTER"
+    case "$count" in
+        1) printf '%s\n' 2026-09-01T00:00:00Z ;;
+        2) printf '%s\n' 2026-09-01T00:01:00Z ;;
+        3) printf '%s\n' 2026-09-01T00:10:00Z ;;
+        4) printf '%s\n' 2026-09-01T00:20:00Z ;;
+        *) exit 81 ;;
+    esac
+}
+run_with_timeout() {
+    shift
+    case " $* " in
+        *' --download-db-only '*)
+            mkdir -p "$TRIVY_RUN_CACHE/db"
+            printf '%s\n' '{}' > "$TRIVY_RUN_CACHE/db/metadata.json"
+            printf '%s\n' database > "$TRIVY_RUN_CACHE/db/trivy.db"
+            ;;
+        *)
+            output=
+            while [ "$#" -gt 0 ]; do
+                case "$1" in
+                    --output) output="$2"; shift 2 ;;
+                    *) shift ;;
+                esac
+            done
+            [ -n "$output" ]
+            printf '%s\n' '{}' > "$output"
+            ;;
+    esac
+}
+record_state() { :; }
+image_ref_id() {
+    case "$1" in
+        api-reference) printf '%s\n' "$NEW_API_IMAGE" ;;
+        gateway-reference) printf '%s\n' "$NEW_GATEWAY_IMAGE" ;;
+        web-reference) printf '%s\n' "$NEW_WEB_IMAGE" ;;
+        *) return 1 ;;
+    esac
+}
+verify_image_linux_arm64() { :; }
+${scanFunctions}
+scan_all_rolling_candidate_images
+[ "$(cat "$DATE_COUNTER")" = 4 ]
+`;
+    await writeFile(harnessPath, harness, 'utf8');
+    await chmod(harnessPath, 0o755);
+    const result = spawnSync('sh', [shellPath(harnessPath)], {
+      cwd: projectDirectory,
+      encoding: 'utf8',
+      timeout: 30_000,
+    });
+    assert.equal(result.error, undefined);
+    assert.equal(result.status, 0, JSON.stringify({
+      stdout: result.stdout,
+      stderr: result.stderr,
+    }));
+    const lines = (await readFile(validatorLog, 'utf8')).trim().split('\n');
+    assert.deepEqual(lines, [
+      'api|2026-09-01T00:00:00Z|2026-09-01T00:01:00Z',
+      'gateway|2026-09-01T00:00:00Z|2026-09-01T00:10:00Z',
+      'web|2026-09-01T00:00:00Z|2026-09-01T00:20:00Z',
+    ]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
+async function testBridgeBackupLifetimeContract() {
+  const functionStart = deploymentSource.indexOf('read_bridge_backup_clock() {');
+  const functionEnd = deploymentSource.indexOf('\nprepare_bridge_backup_contract() {', functionStart);
+  assert.ok(functionStart >= 0 && functionEnd > functionStart);
+  const lifetimeFunctions = deploymentSource.slice(functionStart, functionEnd)
+    .replaceAll('\r\n', '\n');
+  const backupFunction = deploymentSource.slice(
+    functionEnd,
+    deploymentSource.indexOf('\ncompose_service_container_ids() {', functionEnd),
+  );
+  assert.match(
+    backupFunction,
+    /if phase == "initial":\s+require\(-300 <= attestation_age <= 900,/u,
+    'only the initial backup attestation check retains the short freshness window',
+  );
+  assert.match(
+    backupFunction,
+    /if phase == "initial":\s+require\(all\(-900 <= age <= max_age_hours \* 3600 for age in ages\),/u,
+    'backup status/manifest UTC freshness is also initial-admission-only',
+  );
+  assert.match(
+    backupFunction,
+    /evidence_selection_sha[\s\S]*phase-evidence-selection-changed/u,
+  );
+  assert.match(
+    backupFunction,
+    /publication_sha" = "\$BRIDGE_QDRANT_PUBLICATION_SHA256/u,
+  );
+  assert.match(
+    lifetimeFunctions,
+    /\/proc\/sys\/kernel\/random\/boot_id[\s\S]*CLOCK_BOOTTIME/u,
+  );
+
+  const root = await mkdtemp(join(scriptsDirectory, '.bridge-backup-lifetime-'));
+  const harnessPath = join(root, 'harness.sh');
+  try {
+    const harness = `#!/bin/sh
+set -eu
+BRIDGE_BACKUP_ANCHOR_UTC_EPOCH=
+BRIDGE_BACKUP_ANCHOR_BOOT_ID=
+BRIDGE_BACKUP_ANCHOR_BOOTTIME_NS=
+BRIDGE_BACKUP_LAST_UTC_EPOCH=
+BRIDGE_BACKUP_LAST_BOOTTIME_NS=
+BRIDGE_BACKUP_LIFETIME_FAILED=false
+BRIDGE_BACKUP_MAX_ELAPSED_SECONDS=14400
+record_state() { :; }
+run_with_timeout() { return 99; }
+PYTHON_COMMAND=python3
+DOCKER_READ_TIMEOUT_SECONDS=10
+${lifetimeFunctions}
+read_bridge_backup_clock() {
+    printf '%s\n%s\n%s\n' "$CLOCK_UTC" "$CLOCK_BOOT" "$CLOCK_BOOTTIME"
+}
+reset_anchor() {
+    BRIDGE_BACKUP_ANCHOR_UTC_EPOCH=
+    BRIDGE_BACKUP_ANCHOR_BOOT_ID=
+    BRIDGE_BACKUP_ANCHOR_BOOTTIME_NS=
+    BRIDGE_BACKUP_LAST_UTC_EPOCH=
+    BRIDGE_BACKUP_LAST_BOOTTIME_NS=
+    BRIDGE_BACKUP_LIFETIME_FAILED=false
+    CLOCK_UTC=2000000000
+    CLOCK_BOOT=11111111-2222-3333-4444-555555555555
+    CLOCK_BOOTTIME=5000000000000
+    initialize_bridge_backup_lifetime
+}
+expect_elapsed_success() {
+    seconds="$1"
+    phase="$2"
+    reset_anchor
+    CLOCK_UTC=$((2000000000 + seconds))
+    CLOCK_BOOTTIME=$((5000000000000 + seconds * 1000000000))
+    verify_bridge_backup_lifetime "$phase"
+    [ "$BRIDGE_BACKUP_LIFETIME_FAILED" = false ]
+}
+expect_elapsed_failure() {
+    seconds="$1"
+    phase="$2"
+    reset_anchor
+    CLOCK_UTC=$((2000000000 + seconds))
+    CLOCK_BOOTTIME=$((5000000000000 + seconds * 1000000000))
+    if verify_bridge_backup_lifetime "$phase"; then exit 71; fi
+    [ "$BRIDGE_BACKUP_LIFETIME_FAILED" = true ]
+    CLOCK_UTC=2000000001
+    CLOCK_BOOTTIME=5001000000000
+    if verify_bridge_backup_lifetime "$phase"; then exit 72; fi
+}
+[ "$BRIDGE_BACKUP_MAX_ELAPSED_SECONDS" = 14400 ]
+  expect_elapsed_success 901 after-build
+  expect_elapsed_success 14399 after-scan
+  expect_elapsed_failure 14400 before-receipt-preparation
+  expect_elapsed_failure 14401 after-live-publication-probe
+reset_anchor
+CLOCK_UTC=1999999999
+CLOCK_BOOTTIME=5001000000000
+verify_bridge_backup_lifetime before-receipt-publication
+[ "$BRIDGE_BACKUP_LIFETIME_FAILED" = false ]
+reset_anchor
+CLOCK_UTC=2000000001
+CLOCK_BOOT=aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee
+CLOCK_BOOTTIME=5001000000000
+if verify_bridge_backup_lifetime before-receipt-publication; then exit 74; fi
+[ "$BRIDGE_BACKUP_LIFETIME_FAILED" = true ]
+reset_anchor
+CLOCK_UTC=2000000001
+CLOCK_BOOTTIME=4999999999999
+if verify_bridge_backup_lifetime before-receipt-publication; then exit 75; fi
+[ "$BRIDGE_BACKUP_LIFETIME_FAILED" = true ]
+`;
+    await writeFile(harnessPath, harness, 'utf8');
+    await chmod(harnessPath, 0o755);
+    const result = spawnSync('sh', [shellPath(harnessPath)], {
+      cwd: projectDirectory,
+      encoding: 'utf8',
+      timeout: 30_000,
+      env: {
+        ...process.env,
+        DIVA_BRIDGE_BACKUP_MAX_ELAPSED_SECONDS: '999999999',
+      },
+    });
+    assert.equal(result.error, undefined);
+    assert.equal(result.status, 0, JSON.stringify({
+      stdout: result.stdout,
+      stderr: result.stderr,
+    }));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
+async function testBridgeLivePublicationEvidenceContract() {
+  const functionStart = deploymentSource.indexOf('verify_bridge_live_publication_evidence() {');
+  const functionEnd = deploymentSource.indexOf('\nprepare_and_publish_bridge_receipt() {', functionStart);
+  assert.ok(functionStart >= 0 && functionEnd > functionStart);
+  const evidenceFunction = deploymentSource.slice(functionStart, functionEnd)
+    .replaceAll('\r\n', '\n');
+  assert.match(
+    evidenceFunction,
+    /verify-live-publication[\s\S]*--gateway-id "\$NEW_GATEWAY_CONTAINER_ID"[\s\S]*--api-a-id "\$NEW_API_A_CONTAINER_ID" --api-b-id "\$NEW_API_B_CONTAINER_ID"/u,
+  );
+  assert.match(
+    evidenceFunction,
+    /document\.get\("projectionSha256"\) != expected_projection_sha/u,
+  );
+  assert.match(
+    evidenceFunction,
+    /slots\.get\("api_a"\) != read_matrix_sha[\s\S]*slots\.get\("api_b"\) != read_matrix_sha/u,
+  );
+
+  const generation = 'legacy';
+  const projection = deepSort({
+    aliases: {
+      song_hybrid_active: 'song_hybrid',
+      song_metadata_active: 'song_metadata',
+      songs_v2_active: 'songs_v2',
+    },
+    collections: ['song_audio', 'song_hybrid', 'song_metadata', 'songs_v2'],
+    generation,
+  });
+  const projectionSha = createHash('sha256')
+    .update(JSON.stringify(projection))
+    .digest('hex');
+  const matrixSha = 'e'.repeat(64);
+  const validDocument = deepSort({
+    kind: 'diva.sbc-api-bridge-live-publication.v1',
+    projection,
+    projectionSha256: projectionSha,
+    readMatrixSha256: matrixSha,
+    schemaVersion: 1,
+    slots: { api_a: matrixSha, api_b: matrixSha },
+  });
+  const invalidDocument = { ...validDocument, projectionSha256: '0'.repeat(64) };
+
+  for (const [mode, document, expectedSuccess] of [
+    ['valid', validDocument, true],
+    ['projection-drift', invalidDocument, false],
+  ]) {
+    const root = await mkdtemp(join(scriptsDirectory, `.bridge-live-publication-${mode}-`));
+    const deploymentDirectory = join(root, 'deployment');
+    const evidencePath = join(deploymentDirectory, 'bridge-live-publication.json');
+    const producerPath = join(root, 'producer.py');
+    const pythonWrapperPath = join(root, 'python3');
+    const stateLog = join(root, 'state.log');
+    const harnessPath = join(root, 'harness.sh');
+    try {
+      await mkdir(deploymentDirectory);
+      await writeFile(producerPath, '', 'utf8');
+      const pythonWrapper = `#!/bin/sh
+set -eu
+if [ "$#" -ge 2 ] && [ "$1" = -I ] && [ "$2" = - ]; then
+    exec "${nativeExactPythonShellCommand}" "$@"
+fi
+[ "$1" = -I ]
+shift
+[ "$1" = "${shellPath(producerPath)}" ]
+shift
+[ "$1" = verify-live-publication ]
+printf '%s\n' '${JSON.stringify(document)}'
+`;
+      await writeFile(pythonWrapperPath, pythonWrapper, 'utf8');
+      await chmod(pythonWrapperPath, 0o755);
+      const harness = `#!/bin/sh
+set -eu
+DEPLOYMENT_DIR="${shellPath(deploymentDirectory)}"
+BRIDGE_LIVE_PUBLICATION_EVIDENCE="${shellPath(evidencePath)}"
+PYTHON_COMMAND="${shellPath(pythonWrapperPath)}"
+DOCKER_COMMAND=docker
+NEW_GATEWAY_CONTAINER_ID=${'1'.repeat(64)}
+NEW_API_A_CONTAINER_ID=${'2'.repeat(64)}
+NEW_API_B_CONTAINER_ID=${'3'.repeat(64)}
+BRIDGE_QDRANT_PUBLICATION_GENERATION=${generation}
+BRIDGE_QDRANT_PUBLICATION_SHA256=${projectionSha}
+TEST_MODE=1
+SYNC_COMMAND=true
+DOCKER_READ_TIMEOUT_SECONDS=30
+run_with_timeout() { shift; "$@"; }
+record_state() { printf '%s=%s\n' "$1" "$2" >> "${shellPath(stateLog)}"; }
+stat() {
+    if [ "$1" = -c ] && [ "$2" = '%u:%g:%a:%h' ] \
+        && [ "$3" = "$BRIDGE_LIVE_PUBLICATION_EVIDENCE" ]; then
+        owner=$(/usr/bin/stat -c '%u:%g' "$3")
+        printf '%s:600:1\n' "$owner"
+        return 0
+    fi
+    /usr/bin/stat "$@"
+}
+${evidenceFunction}
+case "${mode}" in
+    valid)
+        verify_bridge_live_publication_evidence "${shellPath(producerPath)}"
+        grep -Eq '^bridge\.live_publication_evidence_sha256=[0-9a-f]{64}$' \
+            "${shellPath(stateLog)}"
+        ;;
+    projection-drift)
+        if verify_bridge_live_publication_evidence "${shellPath(producerPath)}"; then
+            exit 91
+        fi
+        [ -s "$BRIDGE_LIVE_PUBLICATION_EVIDENCE" ]
+        [ ! -e "${shellPath(join(root, 'canonical-receipt.json'))}" ]
+        ;;
+esac
+`;
+      await writeFile(harnessPath, harness, 'utf8');
+      await chmod(harnessPath, 0o755);
+      const result = spawnSync('sh', [shellPath(harnessPath)], {
+        cwd: projectDirectory,
+        encoding: 'utf8',
+        timeout: 30_000,
+      });
+      assert.equal(result.error, undefined);
+      assert.equal(result.status, 0, JSON.stringify({
+        mode,
+        stdout: result.stdout,
+        stderr: result.stderr,
+      }));
+      const artifact = await readFile(evidencePath, 'utf8');
+      assert.equal(artifact, `${JSON.stringify(document)}\n`);
+      assert.equal(expectedSuccess, mode === 'valid');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }
+}
+
+async function testBridgeAttesterSourceModeContract() {
+  const functionStart = deploymentSource.indexOf('verify_bridge_attester_source() {');
+  const functionEnd = deploymentSource.indexOf('\nprepare_bridge_backup_contract() {', functionStart);
+  assert.ok(functionStart >= 0 && functionEnd > functionStart);
+  const verificationFunction = deploymentSource.slice(functionStart, functionEnd)
+    .replaceAll('\r\n', '\n');
+  const root = await mkdtemp(join(scriptsDirectory, '.bridge-attester-source-'));
+  const currentRoot = join(root, 'current');
+  const currentScripts = join(currentRoot, 'scripts');
+  const snapshotScripts = join(root, 'snapshot', 'scripts');
+  const currentAttester = join(currentScripts, 'attest-disaster-backup-payloads.py');
+  const snapshotAttester = join(snapshotScripts, 'attest-disaster-backup-payloads.py');
+  const harnessPath = join(root, 'harness.sh');
+  const payload = 'print("reviewed attester fixture")\n';
+  try {
+    await Promise.all([
+      mkdir(currentScripts, { recursive: true }),
+      mkdir(snapshotScripts, { recursive: true }),
+    ]);
+    await Promise.all([
+      writeFile(currentAttester, payload, 'utf8'),
+      writeFile(snapshotAttester, payload, 'utf8'),
+    ]);
+    await Promise.all([chmod(currentAttester, 0o644), chmod(snapshotAttester, 0o644)]);
+    const expectedSha = createHash('sha256').update(payload).digest('hex');
+    const harness = `#!/bin/sh
+set -eu
+ORIGINAL_ROOT_DIR="${shellPath(currentRoot)}"
+SNAPSHOT_FILE="${shellPath(snapshotAttester)}"
+TEST_MODE=1
+SIMULATED_MODE="${'${1:-real}'}"
+stat() {
+    if [ "$SIMULATED_MODE" != real ] \
+        && [ "$1" = -c ] && [ "$2" = '%u:%g:%a:%h' ] \
+        && [ "$3" = "$SNAPSHOT_FILE" ]; then
+        owner=$(/usr/bin/stat -c '%u:%g' "$3")
+        printf '%s:%s:1\n' "$owner" "$SIMULATED_MODE"
+        return 0
+    fi
+    /usr/bin/stat "$@"
+}
+${verificationFunction}
+case "$SIMULATED_MODE" in
+    real)
+        [ "$(verify_bridge_attester_source "$SNAPSHOT_FILE")" = "${expectedSha}" ]
+        ;;
+    646|664)
+        if verify_bridge_attester_source "$SNAPSHOT_FILE" >/dev/null; then
+            exit 91
+        fi
+        ;;
+    *) exit 92 ;;
+esac
+`;
+    await writeFile(harnessPath, harness, 'utf8');
+    await chmod(harnessPath, 0o755);
+    for (const mode of ['real', '646', '664']) {
+      const result = spawnSync('sh', [shellPath(harnessPath), mode], {
+        cwd: projectDirectory,
+        encoding: 'utf8',
+        timeout: 30_000,
+      });
+      assert.equal(result.error, undefined);
+      assert.equal(result.status, 0, JSON.stringify({
+        mode,
+        stdout: result.stdout,
+        stderr: result.stderr,
+      }));
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
+async function testBridgePublicationWriterBarrierContract() {
+  const barrierStart = deploymentSource.indexOf('observe_bridge_publication_writer_barrier() {');
+  const barrierEnd = deploymentSource.indexOf('\nprepare_and_publish_bridge_receipt() {', barrierStart);
+  assert.ok(barrierStart >= 0 && barrierEnd > barrierStart);
+  const barrierFunctions = deploymentSource.slice(barrierStart, barrierEnd)
+    .replaceAll('\r\n', '\n');
+  assert.match(
+    barrierFunctions,
+    /pg_try_advisory_lock\(hashtext\('diva-data-pipeline-publication-v1'\)\)[\s\S]*pg_try_advisory_lock\(hashtext\('diva-data-pipeline-child-v1'\)\)[\s\S]*pg_try_advisory_lock\(hashtextextended\('diva-recommendation-publication-v1', 0\)\)/u,
+    'the persistent psql session acquires all three writer locks',
+  );
+  assert.match(
+    barrierFunctions,
+    /INSERT INTO sync_state\(key, value, updated_at\)[\s\S]*'diva_stateful_maintenance_gate', :'token'[\s\S]*pg_stat_activity/u,
+    'writer idleness and the exact maintenance token are established together',
+  );
+  assert.match(
+    barrierFunctions,
+    /\) < "\$BRIDGE_PUBLICATION_WRITER_BARRIER_FIFO"[\s\S]*&[\s\S]*exec 9> "\$BRIDGE_PUBLICATION_WRITER_BARRIER_FIFO"/u,
+    'the lock-owning psql connection remains alive behind a private FIFO',
+  );
+  assert.match(
+    barrierFunctions,
+    /DELETE FROM sync_state\s+WHERE key = 'diva_stateful_maintenance_gate' AND value = :'token'/u,
+    'release can delete only this deployment exact token',
+  );
+  assert.match(
+    barrierFunctions,
+    /actual_result" = refused[\s\S]*WHERE key = 'diva_stateful_maintenance_gate' AND value = :'token'[\s\S]*"not-owned\|0"/u,
+    'a clean busy refusal is reaped only after proving no owned token/session remains',
+  );
+  assert.match(
+    barrierFunctions,
+    /verify_bridge_publication_writer_barrier[\s\S]*verify_bridge_backup_lifetime "\$phase"/u,
+    'the post-probe boundary re-proves both the held writer barrier and monotonic lifetime',
+  );
+
+  const receiptStart = deploymentSource.indexOf('prepare_and_publish_bridge_receipt() {');
+  const receiptEnd = deploymentSource.indexOf('\nrelease_active_journal() {', receiptStart);
+  const receiptFunction = deploymentSource.slice(receiptStart, receiptEnd)
+    .replaceAll('\r\n', '\n');
+  const finalFullRehash = receiptFunction.indexOf('before-receipt-publication');
+  const acquire = receiptFunction.indexOf('acquire_bridge_publication_writer_barrier');
+  const liveProbe = receiptFunction.indexOf('verify_bridge_live_publication_evidence');
+  const postProbe = receiptFunction.indexOf('verify_bridge_backup_post_probe_boundary');
+  const publisher = receiptFunction.indexOf('"$publisher" publish');
+  const release = receiptFunction.lastIndexOf('release_bridge_publication_writer_barrier');
+  assert.ok(
+    finalFullRehash >= 0 && finalFullRehash < acquire && acquire < liveProbe
+      && liveProbe < postProbe && postProbe < publisher && publisher < release,
+    'full evidence rehash, held-lock probe, lifetime boundary, atomic publish, and release are ordered',
+  );
+  assert.doesNotMatch(
+    receiptFunction,
+    /prepare_bridge_backup_contract[^\n]*[\s\S]{0,200}after-live-publication-probe/u,
+  );
+  const cleanupStart = deploymentSource.indexOf('cleanup() {');
+  const cleanupEnd = deploymentSource.indexOf('\nhandle_signal() {', cleanupStart);
+  const cleanupFunction = deploymentSource.slice(cleanupStart, cleanupEnd)
+    .replaceAll('\r\n', '\n');
+  assert.match(
+    cleanupFunction,
+    /BRIDGE_PUBLICATION_WRITER_BARRIER_ACTIVE" = "true" \] \\\n+        && \[ "\$DEPLOYMENT_SUCCEEDED" = "true"/u,
+    'only a durable/ambiguous canonical commit may release the barrier before rollback',
+  );
+  const rollbackSlots = cleanupFunction.indexOf('rollback_updated_slots');
+  const rollbackWeb = cleanupFunction.indexOf('rollback_web');
+  const restoreImages = cleanupFunction.indexOf('restore_canonical_image_state');
+  const failureRelease = cleanupFunction.lastIndexOf('release_bridge_publication_writer_barrier');
+  assert.ok(
+    rollbackSlots >= 0 && rollbackSlots < rollbackWeb && rollbackWeb < restoreImages
+      && restoreImages < failureRelease,
+    'an unpublished failure retains the writer barrier through exact stateless rollback',
+  );
+
+  const refusalStart = barrierFunctions.indexOf(
+    'settle_bridge_publication_writer_barrier_refusal() {',
+  );
+  const refusalEnd = barrierFunctions.indexOf(
+    '\nacquire_bridge_publication_writer_barrier() {',
+    refusalStart,
+  );
+  assert.ok(refusalStart >= 0 && refusalEnd > refusalStart);
+  const refusalFunction = barrierFunctions.slice(refusalStart, refusalEnd);
+  const refusalRoot = await mkdtemp(join(scriptsDirectory, '.bridge-writer-refusal-'));
+  const refusalHarness = join(refusalRoot, 'harness.sh');
+  try {
+    const fifo = join(refusalRoot, 'barrier.fifo');
+    const resultPath = join(refusalRoot, 'barrier.result');
+    const exitPath = join(refusalRoot, 'barrier.exit');
+    const statePath = join(refusalRoot, 'state.log');
+    const harness = `#!/bin/sh
+set -eu
+BRIDGE_PUBLICATION_WRITER_BARRIER_ACTIVE=true
+BRIDGE_PUBLICATION_WRITER_BARRIER_UNRESOLVED=true
+BRIDGE_PUBLICATION_WRITER_BARRIER_FD_OPEN=true
+BRIDGE_PUBLICATION_WRITER_BARRIER_TOKEN=diva-bridge-test
+BRIDGE_PUBLICATION_WRITER_BARRIER_APPLICATION=diva_bridge_test
+BRIDGE_PUBLICATION_WRITER_BARRIER_FIFO="${shellPath(fifo)}"
+BRIDGE_PUBLICATION_WRITER_BARRIER_RESULT="${shellPath(resultPath)}"
+BRIDGE_PUBLICATION_WRITER_BARRIER_EXIT="${shellPath(exitPath)}"
+PRIVATE_RUNTIME_ROOT="${shellPath(refusalRoot)}"
+BRIDGE_POSTGRES_ID=${'1'.repeat(64)}
+DOCKER_READ_TIMEOUT_SECONDS=30
+DOCKER_COMMAND=docker
+SYNC_COMMAND=true
+printf '%s\n' fifo > "$BRIDGE_PUBLICATION_WRITER_BARRIER_FIFO"
+printf '%s\n' refused > "$BRIDGE_PUBLICATION_WRITER_BARRIER_RESULT"
+printf '%s\n' 3 > "$BRIDGE_PUBLICATION_WRITER_BARRIER_EXIT"
+(exit 0) &
+BRIDGE_PUBLICATION_WRITER_BARRIER_PID=$!
+exec 9>/dev/null
+run_with_timeout() { printf '%s\n' 'not-owned|0'; }
+record_state() { printf '%s=%s\n' "$1" "$2" >> "${shellPath(statePath)}"; }
+${refusalFunction}
+settle_bridge_publication_writer_barrier_refusal
+[ "$BRIDGE_PUBLICATION_WRITER_BARRIER_ACTIVE" = false ]
+[ "$BRIDGE_PUBLICATION_WRITER_BARRIER_UNRESOLVED" = false ]
+[ "$BRIDGE_PUBLICATION_WRITER_BARRIER_FD_OPEN" = false ]
+[ -z "$BRIDGE_PUBLICATION_WRITER_BARRIER_PID" ]
+[ ! -e "$BRIDGE_PUBLICATION_WRITER_BARRIER_FIFO" ]
+grep -Fx 'bridge.publication_writer_barrier=refused-busy:diva-bridge-test' \
+    "${shellPath(statePath)}" >/dev/null
+`;
+    await writeFile(refusalHarness, harness, 'utf8');
+    await chmod(refusalHarness, 0o755);
+    const result = spawnSync('sh', [shellPath(refusalHarness)], {
+      cwd: projectDirectory,
+      encoding: 'utf8',
+      timeout: 30_000,
+    });
+    assert.equal(result.error, undefined);
+    assert.equal(result.status, 0, JSON.stringify({
+      stdout: result.stdout,
+      stderr: result.stderr,
+    }));
+  } finally {
+    await rm(refusalRoot, { recursive: true, force: true });
+  }
+
+  const root = await mkdtemp(join(scriptsDirectory, '.bridge-post-probe-binding-'));
+  const harnessPath = join(root, 'harness.sh');
+  try {
+    const evidenceNames = [
+      'postgres-status.json', 'postgres-manifest.json', 'qdrant-status.json',
+      'qdrant-manifest.json', 'attestation.json',
+    ];
+    const evidence = {};
+    for (const [index, name] of evidenceNames.entries()) {
+      const path = join(root, name);
+      const payload = `evidence-${index}\n`;
+      await writeFile(path, payload, 'utf8');
+      evidence[name] = {
+        path: shellPath(path),
+        sha: createHash('sha256').update(payload).digest('hex'),
+      };
+    }
+    const postBoundaryStart = barrierFunctions.indexOf('verify_bridge_backup_post_probe_boundary() {');
+    assert.ok(postBoundaryStart >= 0);
+    const postBoundaryFunction = barrierFunctions.slice(postBoundaryStart);
+    const harness = `#!/bin/sh
+set -eu
+BRIDGE_BACKUP_CONTRACT_FAILED=false
+BRIDGE_BACKUP_LIFETIME_FAILED=false
+BRIDGE_QDRANT_BACKUP_BINDING=off-host-evidence-sha256-${'a'.repeat(64)}
+BRIDGE_QDRANT_PUBLICATION_GENERATION=legacy
+BRIDGE_QDRANT_PUBLICATION_SHA256=${'b'.repeat(64)}
+DIVA_VERIFIED_POSTGRES_BACKUP_RUN_ID=${'1'.repeat(32)}
+DIVA_VERIFIED_POSTGRES_BACKUP_STATUS_FILE="${evidence['postgres-status.json'].path}"
+DIVA_VERIFIED_POSTGRES_BACKUP_STATUS_SHA256=${evidence['postgres-status.json'].sha}
+DIVA_VERIFIED_POSTGRES_BACKUP_MANIFEST_FILE="${evidence['postgres-manifest.json'].path}"
+DIVA_VERIFIED_POSTGRES_BACKUP_MANIFEST_SHA256=${evidence['postgres-manifest.json'].sha}
+DIVA_VERIFIED_QDRANT_BACKUP_RUN_ID=${'2'.repeat(32)}
+DIVA_VERIFIED_QDRANT_BACKUP_STATUS_FILE="${evidence['qdrant-status.json'].path}"
+DIVA_VERIFIED_QDRANT_BACKUP_STATUS_SHA256=${evidence['qdrant-status.json'].sha}
+DIVA_VERIFIED_QDRANT_BACKUP_MANIFEST_FILE="${evidence['qdrant-manifest.json'].path}"
+DIVA_VERIFIED_QDRANT_BACKUP_MANIFEST_SHA256=${evidence['qdrant-manifest.json'].sha}
+DIVA_VERIFIED_BACKUP_PAYLOAD_ATTESTATION_FILE="${evidence['attestation.json'].path}"
+DIVA_VERIFIED_BACKUP_PAYLOAD_ATTESTATION_SHA256=${evidence['attestation.json'].sha}
+DIVA_VERIFIED_BACKUP_PAYLOAD_ATTESTATION_CHALLENGE=${'3'.repeat(64)}
+DIVA_EXPECTED_BACKUP_VERIFIER_HOST=verifier
+DIVA_EXPECTED_BACKUP_SOURCE_HOST=source
+record_state() { :; }
+verify_bridge_publication_writer_barrier() { :; }
+verify_bridge_backup_lifetime() { [ "$1" = after-live-publication-probe ]; }
+mark_bridge_backup_contract_failed() { BRIDGE_BACKUP_CONTRACT_FAILED=true; }
+${postBoundaryFunction}
+BRIDGE_BACKUP_EVIDENCE_SELECTION_SHA256=$(printf '%s\n' \
+    "postgres_run=$DIVA_VERIFIED_POSTGRES_BACKUP_RUN_ID" \
+    "postgres_status=$DIVA_VERIFIED_POSTGRES_BACKUP_STATUS_FILE" \
+    "postgres_status_sha256=$DIVA_VERIFIED_POSTGRES_BACKUP_STATUS_SHA256" \
+    "postgres_manifest=$DIVA_VERIFIED_POSTGRES_BACKUP_MANIFEST_FILE" \
+    "postgres_manifest_sha256=$DIVA_VERIFIED_POSTGRES_BACKUP_MANIFEST_SHA256" \
+    "qdrant_run=$DIVA_VERIFIED_QDRANT_BACKUP_RUN_ID" \
+    "qdrant_status=$DIVA_VERIFIED_QDRANT_BACKUP_STATUS_FILE" \
+    "qdrant_status_sha256=$DIVA_VERIFIED_QDRANT_BACKUP_STATUS_SHA256" \
+    "qdrant_manifest=$DIVA_VERIFIED_QDRANT_BACKUP_MANIFEST_FILE" \
+    "qdrant_manifest_sha256=$DIVA_VERIFIED_QDRANT_BACKUP_MANIFEST_SHA256" \
+    "attestation=$DIVA_VERIFIED_BACKUP_PAYLOAD_ATTESTATION_FILE" \
+    "attestation_sha256=$DIVA_VERIFIED_BACKUP_PAYLOAD_ATTESTATION_SHA256" \
+    "challenge=$DIVA_VERIFIED_BACKUP_PAYLOAD_ATTESTATION_CHALLENGE" \
+    "verifier_host=$DIVA_EXPECTED_BACKUP_VERIFIER_HOST" \
+    "source_host=$DIVA_EXPECTED_BACKUP_SOURCE_HOST" | sha256sum | awk '{print $1}')
+verify_bridge_backup_post_probe_boundary
+original_sha=$DIVA_VERIFIED_BACKUP_PAYLOAD_ATTESTATION_SHA256
+DIVA_VERIFIED_BACKUP_PAYLOAD_ATTESTATION_SHA256=${'0'.repeat(64)}
+if verify_bridge_backup_post_probe_boundary; then exit 81; fi
+[ "$BRIDGE_BACKUP_CONTRACT_FAILED" = true ]
+DIVA_VERIFIED_BACKUP_PAYLOAD_ATTESTATION_SHA256=$original_sha
+if verify_bridge_backup_post_probe_boundary; then exit 82; fi
+`;
+    await writeFile(harnessPath, harness, 'utf8');
+    await chmod(harnessPath, 0o755);
+    const result = spawnSync('sh', [shellPath(harnessPath)], {
+      cwd: projectDirectory,
+      encoding: 'utf8',
+      timeout: 30_000,
+    });
+    assert.equal(result.error, undefined);
+    assert.equal(result.status, 0, JSON.stringify({
+      stdout: result.stdout,
+      stderr: result.stderr,
+    }));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
+async function testBridgeRollbackTagsRetainedAfterMutation() {
+  const functionStart = deploymentSource.indexOf('cleanup_unpublished_bridge_rollback_tags() {');
+  const functionEnd = deploymentSource.indexOf('\ncleanup() {', functionStart);
+  assert.ok(functionStart >= 0 && functionEnd > functionStart);
+  const cleanupFunction = deploymentSource.slice(functionStart, functionEnd)
+    .replaceAll('\r\n', '\n');
+  const root = await mkdtemp(join(scriptsDirectory, '.bridge-rollback-tag-retention-'));
+  const harnessPath = join(root, 'harness.sh');
+  const removeLog = join(root, 'remove.log');
+  try {
+    const harness = `#!/bin/sh
+set -eu
+DEPLOYMENT_SUCCEEDED=false
+API_BRIDGE_PUBLISHED=false
+API_A_BRIDGE_ROLLBACK_TAG_CREATED=true
+API_B_BRIDGE_ROLLBACK_TAG_CREATED=true
+API_A_BRIDGE_ROLLBACK_IMAGE=rollback-a
+API_B_BRIDGE_ROLLBACK_IMAGE=rollback-b
+OLD_API_A_IMAGE=old-a
+OLD_API_B_IMAGE=old-b
+BRIDGE_LIVE_MUTATION_STARTED=false
+REMOVE_LOG="${shellPath(removeLog)}"
+record_state() { :; }
+remove_owned_image_ref() { printf '%s|%s\n' "$1" "$2" >> "$REMOVE_LOG"; }
+${cleanupFunction}
+cleanup_unpublished_bridge_rollback_tags 0
+[ "$API_A_BRIDGE_ROLLBACK_TAG_CREATED" = false ]
+[ "$API_B_BRIDGE_ROLLBACK_TAG_CREATED" = false ]
+[ "$(wc -l < "$REMOVE_LOG")" = 2 ]
+: > "$REMOVE_LOG"
+API_A_BRIDGE_ROLLBACK_TAG_CREATED=true
+API_B_BRIDGE_ROLLBACK_TAG_CREATED=true
+BRIDGE_LIVE_MUTATION_STARTED=true
+cleanup_unpublished_bridge_rollback_tags 0
+[ "$API_A_BRIDGE_ROLLBACK_TAG_CREATED" = true ]
+[ "$API_B_BRIDGE_ROLLBACK_TAG_CREATED" = true ]
+[ ! -s "$REMOVE_LOG" ]
+BRIDGE_LIVE_MUTATION_STARTED=false
+cleanup_unpublished_bridge_rollback_tags 1
+[ "$API_A_BRIDGE_ROLLBACK_TAG_CREATED" = true ]
+[ "$API_B_BRIDGE_ROLLBACK_TAG_CREATED" = true ]
+[ ! -s "$REMOVE_LOG" ]
+`;
+    await writeFile(harnessPath, harness, 'utf8');
+    await chmod(harnessPath, 0o755);
+    const result = spawnSync('sh', [shellPath(harnessPath)], {
+      cwd: projectDirectory,
+      encoding: 'utf8',
+      timeout: 30_000,
+    });
+    assert.equal(result.error, undefined);
+    assert.equal(result.status, 0, JSON.stringify({
+      stdout: result.stdout,
+      stderr: result.stderr,
+    }));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
+async function testBridgeBackupRevalidationStopsPublication() {
+  const functionStart = deploymentSource.indexOf('prepare_and_publish_bridge_receipt() {');
+  const functionEnd = deploymentSource.indexOf('\nrelease_active_journal() {', functionStart);
+  assert.ok(functionStart >= 0 && functionEnd > functionStart);
+  const receiptFunction = deploymentSource.slice(functionStart, functionEnd)
+    .replaceAll('\r\n', '\n');
+
+  for (const failAt of [0, 1, 2, 3, 4, 5]) {
+    const root = await mkdtemp(join(scriptsDirectory, `.bridge-backup-revalidation-${failAt}-`));
+    const sourceScripts = join(root, 'source', 'scripts');
+    const deploymentDirectory = join(root, 'deployment');
+    const imageScanRoot = join(deploymentDirectory, 'image-scan');
+    const fakePythonPath = join(root, 'python3');
+    const harnessPath = join(root, 'harness.sh');
+    const pythonLog = join(root, 'python.log');
+    const revalidationCount = join(root, 'revalidation-count');
+    const canonicalReceipt = join(root, 'api-bridge-receipt.json');
+    const preparedReceipt = join(deploymentDirectory, 'api-bridge-receipt.prepared.json');
+    const previousReceipt = join(deploymentDirectory, 'api-bridge-previous.receipt');
+    const liveEvidence = join(deploymentDirectory, 'bridge-live-publication.json');
+    try {
+      await Promise.all([
+        mkdir(sourceScripts, { recursive: true }),
+        mkdir(imageScanRoot, { recursive: true }),
+      ]);
+      await Promise.all([
+        writeFile(join(sourceScripts, 'sbc-api-bridge-receipt.py'), '', 'utf8'),
+        writeFile(join(sourceScripts, 'wsl-dr-api-bridge-receipt.py'), '', 'utf8'),
+        writeFile(join(sourceScripts, 'sbc-api-bridge-publication.py'), '', 'utf8'),
+      ]);
+      const fakePython = String.raw`#!/bin/sh
+set -eu
+log="${shellPath(pythonLog)}"
+[ "$1" = -I ]
+script="$2"
+shift 2
+case "$script" in
+    */sbc-api-bridge-receipt.py)
+        previous=""
+        receipt=""
+        while [ "$#" -gt 0 ]; do
+            case "$1" in
+                --previous-output) previous="$2"; shift 2 ;;
+                --receipt-output) receipt="$2"; shift 2 ;;
+                *) shift ;;
+            esac
+        done
+        printf '%s\n' producer >> "$log"
+        printf '%s\n' '{"schemaVersion":2}' > "$previous"
+        printf '%s\n' '{"schemaVersion":2}' > "$receipt"
+        ;;
+    */wsl-dr-api-bridge-receipt.py)
+        printf '%s\n' helper >> "$log"
+        printf '%s\n' '{}'
+        ;;
+    */sbc-api-bridge-publication.py)
+        printf '%s\n' publisher >> "$log"
+        [ "$FAIL_AT" = 0 ] || exit 97
+        [ "$1" = publish ]
+        shift
+        prepared=""
+        canonical=""
+        while [ "$#" -gt 0 ]; do
+            case "$1" in
+                --prepared) prepared="$2"; shift 2 ;;
+                --canonical) canonical="$2"; shift 2 ;;
+                --expected-sha256) shift 2 ;;
+                *) exit 95 ;;
+            esac
+        done
+        mv "$prepared" "$canonical"
+        printf '%s\n' published
+        ;;
+    *) exit 96 ;;
+esac
+`;
+      await writeFile(fakePythonPath, fakePython, 'utf8');
+      await chmod(fakePythonPath, 0o755);
+
+      const harness = `#!/bin/sh
+set -eu
+SOURCE_SNAPSHOT_ROOT="${shellPath(join(root, 'source'))}"
+DEPLOYMENT_DIR="${shellPath(deploymentDirectory)}"
+IMAGE_SCAN_ROOT="${shellPath(imageScanRoot)}"
+API_BRIDGE_RECEIPT="${shellPath(canonicalReceipt)}"
+API_BRIDGE_PREPARED_RECEIPT="${shellPath(preparedReceipt)}"
+API_BRIDGE_PREVIOUS_RECEIPT="${shellPath(previousReceipt)}"
+BRIDGE_LIVE_PUBLICATION_EVIDENCE="${shellPath(liveEvidence)}"
+PYTHON_COMMAND="${shellPath(fakePythonPath)}"
+SYNC_COMMAND=true
+DOCKER_COMMAND=docker
+TEST_MODE=1
+NEW_GATEWAY_CONTAINER_ID=${'6'.repeat(64)}
+NEW_WEB_CONTAINER_ID=${'7'.repeat(64)}
+NEW_API_A_CONTAINER_ID=${'4'.repeat(64)}
+NEW_API_B_CONTAINER_ID=${'5'.repeat(64)}
+OLD_API_A_CONTAINER_ID=${'d'.repeat(64)}
+OLD_API_B_CONTAINER_ID=${'e'.repeat(64)}
+BRIDGE_QDRANT_ID=${'1'.repeat(64)}
+DEPLOYMENT_ID=test-deployment
+GIT_COMMIT=${'a'.repeat(40)}
+SOURCE_TREE_ENTRIES_FILE=source.entries
+SOURCE_SNAPSHOT_SHA256=${'b'.repeat(64)}
+BRIDGE_QDRANT_BACKUP_BINDING=off-host-evidence-sha256-${'c'.repeat(64)}
+BRIDGE_QDRANT_PUBLICATION_GENERATION=legacy
+API_A_BRIDGE_ROLLBACK_IMAGE=rollback-a
+API_B_BRIDGE_ROLLBACK_IMAGE=rollback-b
+OLD_API_A_IMAGE=old-a
+OLD_API_B_IMAGE=old-b
+API_SCAN_RECEIPT_SHA=${'1'.repeat(64)}
+GATEWAY_SCAN_RECEIPT_SHA=${'2'.repeat(64)}
+WEB_SCAN_RECEIPT_SHA=${'3'.repeat(64)}
+RECOVERY_ARMED=true
+BRIDGE_PUBLICATION_WRITER_BARRIER_ACTIVE=false
+BRIDGE_HARNESS_LOG="${shellPath(pythonLog)}"
+export BRIDGE_HARNESS_LOG
+REVALIDATION_COUNT="${shellPath(revalidationCount)}"
+FAIL_AT=${failAt}
+export FAIL_AT
+ALIAS_STATE=expected
+verify_bridge_stateful_contract() { :; }
+verify_exact_rolling_topology() { :; }
+verify_published_web() { :; }
+verify_all_rolling_candidate_scan_receipts() { :; }
+verify_private_source_snapshot() { :; }
+verify_bridge_live_publication_evidence() {
+    if [ "$BRIDGE_PUBLICATION_WRITER_BARRIER_ACTIVE" = true ]; then
+        printf '%s\n' alias-writer-blocked >> "$BRIDGE_HARNESS_LOG"
+    else
+        ALIAS_STATE=drifted
+    fi
+    [ "$ALIAS_STATE" = expected ]
+    printf '%s\n' live-probe >> "$BRIDGE_HARNESS_LOG"
+    printf '%s\n' '{"probe":"passed"}' > "$BRIDGE_LIVE_PUBLICATION_EVIDENCE"
+    [ "$FAIL_AT" != 5 ]
+}
+acquire_bridge_publication_writer_barrier() {
+    printf '%s\n' gate-acquire >> "$BRIDGE_HARNESS_LOG"
+    BRIDGE_PUBLICATION_WRITER_BARRIER_ACTIVE=true
+}
+verify_bridge_publication_writer_barrier() {
+    printf '%s\n' gate-verify >> "$BRIDGE_HARNESS_LOG"
+    [ "$BRIDGE_PUBLICATION_WRITER_BARRIER_ACTIVE" = true ]
+}
+release_bridge_publication_writer_barrier() {
+    printf '%s\n' gate-release >> "$BRIDGE_HARNESS_LOG"
+    BRIDGE_PUBLICATION_WRITER_BARRIER_ACTIVE=false
+}
+record_state() { :; }
+run_test_hook() { :; }
+image_ref_id() {
+    case "$1" in
+        rollback-a) printf '%s\n' old-a ;;
+        rollback-b) printf '%s\n' old-b ;;
+        *) return 1 ;;
+    esac
+}
+stat() {
+    if [ "$1" = -c ] && [ "$2" = '%a:%h' ] \
+        && [ "$3" = "$API_BRIDGE_RECEIPT" ]; then
+        printf '%s\n' 600:1
+        return 0
+    fi
+    /usr/bin/stat "$@"
+}
+prepare_bridge_backup_contract() {
+    count=0
+    [ ! -f "$REVALIDATION_COUNT" ] || count=$(cat "$REVALIDATION_COUNT")
+    count=$((count + 1))
+    printf '%s\n' "$count" > "$REVALIDATION_COUNT"
+    case "$count:$3" in
+        1:before-receipt-preparation|2:before-receipt-publication) ;;
+        *) return 88 ;;
+    esac
+    [ "$count" -ne "$FAIL_AT" ]
+}
+verify_bridge_backup_post_probe_boundary() {
+    count=0
+    [ ! -f "$REVALIDATION_COUNT" ] || count=$(cat "$REVALIDATION_COUNT")
+    count=$((count + 1))
+    printf '%s\n' "$count" > "$REVALIDATION_COUNT"
+    [ "$count" = 3 ] || return 89
+    printf '%s\n' post-probe-boundary >> "$BRIDGE_HARNESS_LOG"
+    [ "$count" -ne "$FAIL_AT" ]
+}
+${receiptFunction}
+if [ "$FAIL_AT" = 0 ]; then
+    if ! prepare_and_publish_bridge_receipt; then
+        printf 'canonical=%s prepared=%s mode=%s sha=%s expected=%s\n' \
+            "$(test -f "$API_BRIDGE_RECEIPT" && echo file || echo absent)" \
+            "$(test -e "$API_BRIDGE_PREPARED_RECEIPT" && echo present || echo absent)" \
+            "$(stat -c '%a:%h' "$API_BRIDGE_RECEIPT" 2>/dev/null || echo missing)" \
+            "$(sha256sum "$API_BRIDGE_RECEIPT" 2>/dev/null | awk '{print $1}')" \
+            "$API_BRIDGE_PREPARED_SHA" >&2
+        exit 93
+    fi
+    [ "$(cat "$REVALIDATION_COUNT")" = 3 ]
+    [ -f "$API_BRIDGE_RECEIPT" ] && [ ! -L "$API_BRIDGE_RECEIPT" ]
+    [ ! -e "$API_BRIDGE_PREPARED_RECEIPT" ]
+    [ "$API_BRIDGE_PUBLISHED" = true ]
+    [ "$BRIDGE_PUBLICATION_WRITER_BARRIER_ACTIVE" = false ]
+    [ "$ALIAS_STATE" = expected ]
+    actual=$(cat "$BRIDGE_HARNESS_LOG")
+    expected=$(printf '%s\n' producer helper gate-acquire gate-verify \
+        alias-writer-blocked live-probe post-probe-boundary publisher gate-release)
+    [ "$actual" = "$expected" ]
+    exit 0
+fi
+if prepare_and_publish_bridge_receipt; then
+    exit 90
+fi
+case "$FAIL_AT" in
+    1|2|3) [ "$(cat "$REVALIDATION_COUNT")" = "$FAIL_AT" ] ;;
+    4) [ "$(cat "$REVALIDATION_COUNT")" = 3 ] ;;
+    5) [ "$(cat "$REVALIDATION_COUNT")" = 2 ] ;;
+    *) exit 94 ;;
+esac
+[ ! -e "$API_BRIDGE_RECEIPT" ] && [ ! -L "$API_BRIDGE_RECEIPT" ]
+case "$FAIL_AT" in
+    1)
+        [ ! -e "$API_BRIDGE_PREPARED_RECEIPT" ]
+        [ ! -e "$BRIDGE_HARNESS_LOG" ]
+        ;;
+    2)
+        [ -f "$API_BRIDGE_PREPARED_RECEIPT" ]
+        grep -Fx producer "$BRIDGE_HARNESS_LOG" >/dev/null
+        ! grep -Fx publisher "$BRIDGE_HARNESS_LOG" >/dev/null
+        ;;
+    3)
+        [ -f "$API_BRIDGE_PREPARED_RECEIPT" ]
+        [ -f "$BRIDGE_LIVE_PUBLICATION_EVIDENCE" ]
+        [ "$RECOVERY_ARMED" = true ]
+        [ "$BRIDGE_PUBLICATION_WRITER_BARRIER_ACTIVE" = true ]
+        grep -Fx producer "$BRIDGE_HARNESS_LOG" >/dev/null
+        grep -Fx gate-acquire "$BRIDGE_HARNESS_LOG" >/dev/null
+        grep -Fx gate-verify "$BRIDGE_HARNESS_LOG" >/dev/null
+        grep -Fx live-probe "$BRIDGE_HARNESS_LOG" >/dev/null
+        grep -Fx post-probe-boundary "$BRIDGE_HARNESS_LOG" >/dev/null
+        ! grep -Fx publisher "$BRIDGE_HARNESS_LOG" >/dev/null
+        ! grep -Fx gate-release "$BRIDGE_HARNESS_LOG" >/dev/null
+        ;;
+    4)
+        [ -f "$API_BRIDGE_PREPARED_RECEIPT" ]
+        [ -f "$BRIDGE_LIVE_PUBLICATION_EVIDENCE" ]
+        [ "$BRIDGE_PUBLICATION_WRITER_BARRIER_ACTIVE" = true ]
+        grep -Fx post-probe-boundary "$BRIDGE_HARNESS_LOG" >/dev/null
+        grep -Fx publisher "$BRIDGE_HARNESS_LOG" >/dev/null
+        ! grep -Fx gate-release "$BRIDGE_HARNESS_LOG" >/dev/null
+        ;;
+    5)
+        [ -f "$API_BRIDGE_PREPARED_RECEIPT" ]
+        [ -f "$BRIDGE_LIVE_PUBLICATION_EVIDENCE" ]
+        [ "$BRIDGE_PUBLICATION_WRITER_BARRIER_ACTIVE" = true ]
+        grep -Fx live-probe "$BRIDGE_HARNESS_LOG" >/dev/null
+        ! grep -Fx post-probe-boundary "$BRIDGE_HARNESS_LOG" >/dev/null
+        ! grep -Fx publisher "$BRIDGE_HARNESS_LOG" >/dev/null
+        ! grep -Fx gate-release "$BRIDGE_HARNESS_LOG" >/dev/null
+        ;;
+esac
+`;
+      await writeFile(harnessPath, harness, 'utf8');
+      await chmod(harnessPath, 0o755);
+      const result = spawnSync('sh', [shellPath(harnessPath)], {
+        cwd: projectDirectory,
+        encoding: 'utf8',
+        timeout: 30_000,
+      });
+      assert.equal(result.error, undefined);
+      const harnessLog = await readFile(pythonLog, 'utf8').catch(() => '<absent>');
+      const countLog = await readFile(revalidationCount, 'utf8').catch(() => '<absent>');
+      assert.equal(result.status, 0, JSON.stringify({
+        failAt,
+        stdout: result.stdout,
+        stderr: result.stderr,
+        harnessLog,
+        countLog,
+      }));
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }
 }
 
 function assertMigrationFailureStopsWithUnresolvedDaemonMutation(result) {
@@ -1607,9 +2802,136 @@ async function testUnverifiableDeploymentLockFailsClosed() {
   assert.equal(lockFailure.dockerLog, '');
 }
 
+async function testStateRootAndPrivilegeModeContract() {
+  const testModeStart = deploymentSource.indexOf('if [ "$TEST_MODE" = "1" ]; then');
+  const productionModeStart = deploymentSource.indexOf('\nelse\n', testModeStart);
+  const backendSourceStart = deploymentSource.indexOf(
+    'if [ "$TEST_MODE" = "1" ]; then',
+    productionModeStart,
+  );
+  assert.ok(
+    testModeStart >= 0 && productionModeStart > testModeStart
+      && backendSourceStart > productionModeStart,
+    'rolling privilege mode branches must remain explicit and ordered',
+  );
+  const privilegeModeContract = deploymentSource.slice(testModeStart, backendSourceStart);
+  assert.match(
+    privilegeModeContract,
+    /deterministic deployment test mode refuses uid 0/u,
+  );
+  assert.match(
+    privilegeModeContract,
+    /\[ "\$\{DIVA_DEPLOY_STATE_DIR\+x\}" = x \][\s\S]*\[ "\$\{DIVA_STATEFUL_STATE_DIR\+x\}" = x \]/u,
+  );
+  assert.match(
+    privilegeModeContract,
+    /production deployment state-root overrides are forbidden/u,
+  );
+  assert.match(
+    privilegeModeContract,
+    /\[ "\$\(\/usr\/bin\/id -u\)" -eq 0 \][\s\S]*production rolling deployment requires uid 0/u,
+  );
+  assert.match(
+    deploymentSource,
+    /if \[ "\$TEST_MODE" = "1" \]; then[\s\S]*STATE_ROOT=\$\{DIVA_DEPLOY_STATE_DIR:-\$\{DIVA_STATEFUL_STATE_DIR:-"\$ROOT_DIR\/\.deploy-state"\}\}[\s\S]*else\s+#[\s\S]*STATE_ROOT=\/var\/lib\/diva-player-deploy\s+fi/u,
+  );
+  assert.match(
+    deploymentSource,
+    /prepare_deployment_state_root\(\)[\s\S]*\[ "\$STATE_ROOT" = \/var\/lib\/diva-player-deploy \][\s\S]*validate_trusted_system_directory \/var\/lib[\s\S]*0:0[\s\S]*\[ "\$mode" = 700 \]/u,
+  );
+
+  const productionEnvironment = { ...process.env };
+  for (const key of Object.keys(productionEnvironment)) {
+    if (key.startsWith('DIVA_')) delete productionEnvironment[key];
+  }
+  productionEnvironment.DIVA_DEPLOY_TEST_MODE = '0';
+  for (const stateVariable of ['DIVA_DEPLOY_STATE_DIR', 'DIVA_STATEFUL_STATE_DIR']) {
+    const overrideRejected = spawnSync('sh', [shellPath(deploymentScript)], {
+      cwd: projectDirectory,
+      encoding: 'utf8',
+      timeout: 10_000,
+      env: { ...productionEnvironment, [stateVariable]: '' },
+    });
+    assert.equal(overrideRejected.error, undefined);
+    assert.equal(overrideRejected.status, 1);
+    assert.match(
+      overrideRejected.stderr,
+      /ERROR: production deployment state-root overrides are forbidden/u,
+    );
+  }
+
+  const uidProbe = spawnSync('sh', ['-c', '/usr/bin/id -u'], {
+    cwd: projectDirectory,
+    encoding: 'utf8',
+    timeout: 10_000,
+  });
+  assert.equal(uidProbe.error, undefined);
+  assert.equal(uidProbe.status, 0, uidProbe.stderr);
+  if (uidProbe.stdout.trim() !== '0') {
+    const nonRootProduction = spawnSync('sh', [shellPath(deploymentScript)], {
+      cwd: projectDirectory,
+      encoding: 'utf8',
+      timeout: 10_000,
+      env: productionEnvironment,
+    });
+    assert.equal(nonRootProduction.error, undefined);
+    assert.equal(nonRootProduction.status, 1);
+    assert.match(
+      nonRootProduction.stderr,
+      /ERROR: production rolling deployment requires uid 0/u,
+    );
+  }
+
+  const scenario = await createScenario('state-root-mode');
+  try {
+    const mismatch = executeScenario(scenario, 'state-root-mode', {
+      environment: {
+        DIVA_STATEFUL_STATE_DIR: `${shellPath(scenario.deploymentState)}-different`,
+      },
+      timeout: 30_000,
+    });
+    assert.equal(mismatch.error, undefined);
+    assert.equal(mismatch.status, 1);
+    assert.match(
+      mismatch.stderr,
+      /ERROR: deploy and stateful state-root overrides must be identical/u,
+    );
+    assert.equal(
+      await readFile(join(scenario.fakeState, 'docker.log'), 'utf8').catch(() => ''),
+      '',
+    );
+
+    const lockDirectory = join(scenario.deploymentState, 'deploy.lock');
+    await mkdir(lockDirectory);
+    await writeFile(
+      join(lockDirectory, 'owner'),
+      'pid=unverifiable started=2026-08-10T00:00:00Z\n',
+      'utf8',
+    );
+    const accepted = executeScenario(scenario, 'state-root-mode', {
+      environment: { DIVA_STATEFUL_STATE_DIR: shellPath(scenario.deploymentState) },
+      timeout: 30_000,
+    });
+    assert.equal(accepted.error, undefined);
+    assert.equal(accepted.status, 75);
+    assert.match(accepted.stderr, /rolling deployment/u);
+    assert.doesNotMatch(
+      accepted.stderr,
+      /state-root overrides are forbidden|state-root overrides must be identical/u,
+    );
+  } finally {
+    await rm(scenario.root, { recursive: true, force: true });
+  }
+}
+
 if (process.env.DIVA_ROLLING_TEST_ONLY === 'crash-reconcile') {
   await testSigkillStartupReconciliation();
   console.log('PASS SIGKILL stale secret/journal/lock exact startup reconciliation');
+  process.exit(0);
+}
+if (process.env.DIVA_ROLLING_TEST_ONLY === 'state-root') {
+  await testStateRootAndPrivilegeModeContract();
+  console.log('PASS rolling production/test state-root and uid mode contract');
   process.exit(0);
 }
 if (process.env.DIVA_ROLLING_TEST_ONLY === 'bootstrap-gateway-failure') {
@@ -1659,13 +2981,34 @@ if (process.env.DIVA_ROLLING_TEST_ONLY === 'private-runtime') {
 }
 if (process.env.DIVA_ROLLING_TEST_ONLY === 'bridge-contract') {
   testBridgeTrivyAndExactImageContract();
-  console.log('PASS bridge API Trivy and exact immutable image publication contract');
+  await testBridgeBackupLifetimeContract();
+  await testBridgeLivePublicationEvidenceContract();
+  await testBridgeAttesterSourceModeContract();
+  await testBridgePublicationWriterBarrierContract();
+  await testBridgeRollbackTagsRetainedAfterMutation();
+  await testBridgeBackupRevalidationStopsPublication();
+  console.log('PASS pre-stateful stateless image and fresh backup receipt publication contract');
+  process.exit(0);
+}
+if (process.env.DIVA_ROLLING_TEST_ONLY === 'bridge-lifetime') {
+  await testBridgeBackupLifetimeContract();
+  await testBridgeLivePublicationEvidenceContract();
+  await testBridgePublicationWriterBarrierContract();
+  await testBridgeRollbackTagsRetainedAfterMutation();
+  await testBridgeBackupRevalidationStopsPublication();
+  console.log('PASS bridge monotonic lifetime and live publication gates');
   process.exit(0);
 }
 if (process.env.DIVA_ROLLING_TEST_ONLY === 'candidate-trivy') {
+  await testCandidateScanBatchTimestampContract();
   await testCandidateTrivyScanFailsClosed();
   await testCandidateReceiptReverificationFailsBeforePromotion();
   console.log('PASS rolling candidate Trivy scan and exact receipt gates');
+  process.exit(0);
+}
+if (process.env.DIVA_ROLLING_TEST_ONLY === 'candidate-trivy-batch') {
+  await testCandidateScanBatchTimestampContract();
+  console.log('PASS rolling candidate Trivy common batch timestamp contract');
   process.exit(0);
 }
 if (process.env.DIVA_ROLLING_TEST_ONLY === 'candidate-trivy-scan') {
@@ -1715,6 +3058,7 @@ if (process.env.DIVA_ROLLING_TEST_ONLY === 'web-inventory') {
   process.exit(0);
 }
 
+await testStateRootAndPrivilegeModeContract();
 const successful = await runScenario('success');
 assert.equal(successful.result.status, 0, JSON.stringify({
   error: successful.result.error?.message,
@@ -2002,6 +3346,13 @@ await testGatewayAndRouteIdentitySwapsFailClosed();
 await testNormalCandidatePlatformFailsClosed();
 await testPrivateRuntimeSignalCleanup();
 testBridgeTrivyAndExactImageContract();
+await testBridgeBackupLifetimeContract();
+await testBridgeLivePublicationEvidenceContract();
+await testBridgeAttesterSourceModeContract();
+await testBridgePublicationWriterBarrierContract();
+await testBridgeRollbackTagsRetainedAfterMutation();
+await testBridgeBackupRevalidationStopsPublication();
+await testCandidateScanBatchTimestampContract();
 await testCandidateTrivyScanFailsClosed();
 await testCandidateReceiptReverificationFailsBeforePromotion();
 await testPublishedContainerPlatformFailsClosed();

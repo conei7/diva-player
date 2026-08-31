@@ -104,6 +104,16 @@ RUN set -eux; \
 FROM qdrant/qdrant:v1.19.0-unprivileged@sha256:a0e04fe623cb064502cd869cefc1dc7ce359d8edd481063b5bd351c0a0a2c91e AS source
 
 USER root
+# Upgrade only the pre-existing OpenSSL runtime packages to Debian's fixed
+# CVE-2026-14456 build before selecting files for the final scratch image.
+RUN set -eux; \
+    apt-get update; \
+    apt-get install --yes --no-install-recommends --only-upgrade \
+      libssl3t64=3.5.7-1~deb13u2 \
+      openssl-provider-legacy=3.5.7-1~deb13u2; \
+    rm -rf /var/lib/apt/lists/*; \
+    [ "$(dpkg-query -W -f='${Version}' libssl3t64)" = 3.5.7-1~deb13u2 ]; \
+    [ "$(dpkg-query -W -f='${Version}' openssl-provider-legacy)" = 3.5.7-1~deb13u2 ]
 RUN set -eux; \
     root=/opt/diva-runtime-root; \
     runtime_packages=/tmp/diva-runtime-packages; \
@@ -229,7 +239,9 @@ RUN set -eux; \
       source_target=/$expected_target; \
       [ -d "$source_target" ] && [ ! -L "$source_target" ]; \
       [ "$(stat -c '%u:%g:%a' "$source_target")" = '0:0:755' ]; \
-      record_package "$source_target" "$package_list"; \
+      # Only the empty destination directory is materialized below.  Do not \
+      # claim every package which happens to co-own Debian's generic /usr/lib \
+      # directory as copied runtime content. \
       if [ ! -e "$target_root/$expected_target" ]; then \
         install -d -m 0755 "$target_root/$expected_target"; \
       fi; \

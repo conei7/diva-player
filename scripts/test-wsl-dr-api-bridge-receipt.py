@@ -17,6 +17,7 @@ from pathlib import Path
 
 SCRIPT_DIRECTORY = Path(__file__).resolve().parent
 HELPER_PATH = SCRIPT_DIRECTORY / "wsl-dr-api-bridge-receipt.py"
+PRODUCER_PATH = SCRIPT_DIRECTORY / "sbc-api-bridge-receipt.py"
 
 
 def load_helper():
@@ -25,6 +26,17 @@ def load_helper():
     )
     if specification is None or specification.loader is None:
         raise RuntimeError("could not load bridge receipt helper")
+    module = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(module)
+    return module
+
+
+def load_producer():
+    specification = importlib.util.spec_from_file_location(
+        "diva_sbc_api_bridge_receipt_producer", PRODUCER_PATH
+    )
+    if specification is None or specification.loader is None:
+        raise RuntimeError("could not load SBC bridge receipt producer")
     module = importlib.util.module_from_spec(specification)
     specification.loader.exec_module(module)
     return module
@@ -123,6 +135,107 @@ def build_compatibility(seed: int) -> dict[str, object]:
             for service in ("api_a", "api_b")
         },
     }
+
+
+def build_producer_read_matrix(
+    producer: object,
+    seed: int,
+    generation: str,
+) -> dict[str, object]:
+    matrix = json.loads(json.dumps(build_compatibility(seed)["readMatrix"]))
+    projection = producer.expected_publication_projection(generation)
+    matrix["aliases"] = [
+        {"alias": alias, "collection": collection}
+        for alias, collection in sorted(projection["aliases"].items())
+    ]
+    matrix["collections"] = projection["collections"]
+    return matrix
+
+
+def require_runtime_failure(action, label: str) -> None:
+    try:
+        action()
+    except RuntimeError:
+        return
+    raise AssertionError(f"unsafe live publication matrix was accepted: {label}")
+
+
+def test_live_publication_binding(producer: object) -> None:
+    seed = 3022
+    generation = f"{'a' * 64}:{'b' * 32}"
+    next_generation = f"{'c' * 64}:{'d' * 32}"
+
+    for accepted_generation in ("legacy", generation):
+        matrix = build_producer_read_matrix(producer, seed, accepted_generation)
+        assert producer.validate_read_matrix(
+            matrix, seed, accepted_generation
+        ) == matrix
+        contract = producer.build_live_publication_contract(
+            matrix, json.loads(json.dumps(matrix)), seed, accepted_generation
+        )
+        projection = producer.expected_publication_projection(accepted_generation)
+        assert contract["projection"] == projection
+        assert contract["projectionSha256"] == producer.compact_json_digest(projection)
+        assert contract["slots"]["api_a"] == contract["slots"]["api_b"]
+
+    exact = build_producer_read_matrix(producer, seed, generation)
+
+    target_drift = json.loads(json.dumps(exact))
+    target_drift["aliases"][0]["collection"] += "_drift"
+    require_runtime_failure(
+        lambda: producer.validate_read_matrix(target_drift, seed, generation),
+        "alias target drift",
+    )
+
+    duplicate = json.loads(json.dumps(exact))
+    duplicate["aliases"][-1] = json.loads(json.dumps(duplicate["aliases"][0]))
+    require_runtime_failure(
+        lambda: producer.validate_read_matrix(duplicate, seed, generation),
+        "duplicate alias",
+    )
+
+    extra_alias = json.loads(json.dumps(exact))
+    extra_alias["aliases"].append({"alias": "foreign", "collection": "foreign"})
+    require_runtime_failure(
+        lambda: producer.validate_read_matrix(extra_alias, seed, generation),
+        "extra alias",
+    )
+
+    missing_alias = json.loads(json.dumps(exact))
+    missing_alias["aliases"].pop()
+    require_runtime_failure(
+        lambda: producer.validate_read_matrix(missing_alias, seed, generation),
+        "missing alias",
+    )
+
+    extra_collection = json.loads(json.dumps(exact))
+    extra_collection["collections"].append("unused_collection")
+    require_runtime_failure(
+        lambda: producer.validate_read_matrix(extra_collection, seed, generation),
+        "extra collection",
+    )
+
+    missing_collection = json.loads(json.dumps(exact))
+    missing_collection["collections"].pop()
+    require_runtime_failure(
+        lambda: producer.validate_read_matrix(missing_collection, seed, generation),
+        "missing collection",
+    )
+
+    next_matrix = build_producer_read_matrix(producer, seed, next_generation)
+    require_runtime_failure(
+        lambda: producer.validate_read_matrix(next_matrix, seed, generation),
+        "coherent next generation",
+    )
+
+    slot_drift = json.loads(json.dumps(exact))
+    slot_drift["collectionInfo"][0]["pointsCount"] += 1
+    require_runtime_failure(
+        lambda: producer.validate_matching_slot_matrices(
+            exact, slot_drift, seed, generation
+        ),
+        "API slot drift",
+    )
 
 
 def build_fixture(root: Path, host_scope: str) -> tuple[Path, Path, dict[str, object]]:
@@ -293,23 +406,83 @@ def build_fixture(root: Path, host_scope: str) -> tuple[Path, Path, dict[str, ob
     return receipt_path, previous_path, payload
 
 
+def convert_sbc_fixture_to_stateless_schema2(
+    receipt_path: Path,
+    previous_path: Path,
+    payload: dict[str, object],
+) -> dict[str, object]:
+    """Replace the legacy JSON test sidecar with the exact SBC schema-2 form."""
+    rows = [
+        "schema\t2",
+        "provenance\tlegacy-pre-contract-unattested",
+        "\t".join((
+            "api_a", "vocadb_api_a", "diva_api_a_previous_contract",
+            "1" * 64, f"sha256:{'5' * 64}", "legacy-api:old",
+            "a" * 64, "diva-player-api:bridge-rollback-api-a-contract",
+        )),
+        "\t".join((
+            "api_b", "vocadb_api_b", "diva_api_b_previous_contract",
+            "2" * 64, f"sha256:{'6' * 64}", "legacy-api:old",
+            "b" * 64, "diva-player-api:bridge-rollback-api-b-contract",
+        )),
+        "\t".join(("scan", "api", f"sha256:{'9' * 64}", "1" * 64)),
+        "\t".join(("scan", "gateway", f"sha256:{'a' * 64}", "2" * 64)),
+        "\t".join(("scan", "web", f"sha256:{'b' * 64}", "3" * 64)),
+        "\t".join((
+            "stateless", "api_gateway", "vocadb_api_gateway", "d" * 64,
+            f"sha256:{'a' * 64}", "diva-player-api-gateway:candidate-contract",
+            "c" * 64,
+        )),
+        "\t".join((
+            "stateless", "web", "vocadb_web", "e" * 64,
+            f"sha256:{'b' * 64}", "diva-player-web:candidate-contract", "d" * 64,
+        )),
+    ]
+    previous = ("\n".join(rows) + "\n").encode("utf-8")
+    previous_path.write_bytes(previous)
+    os.chmod(previous_path, 0o600)
+    updated = json.loads(json.dumps(payload))
+    updated["previousApiRollback"]["sha256"] = hashlib.sha256(previous).hexdigest()
+    updated["payloadSha256"] = digest({
+        key: value for key, value in updated.items() if key != "payloadSha256"
+    })
+    receipt_path.write_bytes(canonical(updated))
+    os.chmod(receipt_path, 0o600)
+    return updated
+
+
 def main() -> int:
     helper = load_helper()
+    producer = load_producer()
+    test_live_publication_binding(producer)
     with tempfile.TemporaryDirectory(prefix="diva-wsl-dr-api-bridge-receipt.") as temporary:
         root = Path(temporary)
         for host_scope in ("wsl-dr-standby", "sbc-primary"):
             fixture = root / host_scope
             fixture.mkdir()
             receipt, previous, payload = build_fixture(fixture, host_scope)
+            if host_scope == "sbc-primary":
+                payload = convert_sbc_fixture_to_stateless_schema2(
+                    receipt, previous, payload
+                )
             assert helper.read_receipt(receipt, require_trusted_metadata=False) == payload
             previous_payload = helper.read_previous_api_rollback(
                 payload, require_trusted_metadata=False
             )
             assert set(previous_payload["apiSlots"]) == {"api_a", "api_b"}
-            assert previous_payload["schemaVersion"] == 3
-            assert set(previous_payload["bridgeApplication"]) == {
-                "api_a", "api_b", "api_gateway", "web",
-            }
+            if host_scope == "sbc-primary":
+                assert previous_payload["schemaVersion"] == 2
+                assert set(previous_payload["scanReceipts"]) == {
+                    "api", "gateway", "web",
+                }
+                assert set(previous_payload["statelessServices"]) == {
+                    "api_gateway", "web",
+                }
+            else:
+                assert previous_payload["schemaVersion"] == 3
+                assert set(previous_payload["bridgeApplication"]) == {
+                    "api_a", "api_b", "api_gateway", "web",
+                }
             command = [
                 sys.executable, "-I", str(HELPER_PATH), "--path", str(receipt),
                 "--allow-current-owner-for-test", "--expect-host-scope", host_scope,
@@ -388,6 +561,38 @@ def main() -> int:
             else:
                 raise AssertionError("rehashed tampered compatibility matrix was accepted")
             receipt.write_bytes(raw)
+            if host_scope == "sbc-primary":
+                previous_raw = previous.read_bytes()
+                semantic_tamper = previous_raw.replace(
+                    f"scan\tgateway\tsha256:{'a' * 64}".encode("ascii"),
+                    f"scan\tgateway\tsha256:{'c' * 64}".encode("ascii"),
+                )
+                assert semantic_tamper != previous_raw
+                previous.write_bytes(semantic_tamper)
+                rehashed = json.loads(raw)
+                rehashed["previousApiRollback"]["sha256"] = hashlib.sha256(
+                    semantic_tamper
+                ).hexdigest()
+                rehashed["payloadSha256"] = digest({
+                    key: value for key, value in rehashed.items()
+                    if key != "payloadSha256"
+                })
+                receipt.write_bytes(canonical(rehashed))
+                rehashed_payload = helper.read_receipt(
+                    receipt, require_trusted_metadata=False
+                )
+                try:
+                    helper.read_previous_api_rollback(
+                        rehashed_payload, require_trusted_metadata=False
+                    )
+                except helper.ReceiptError:
+                    pass
+                else:
+                    raise AssertionError(
+                        "rehashed stateless scan/image mismatch was accepted"
+                    )
+                previous.write_bytes(previous_raw)
+                receipt.write_bytes(raw)
             previous.write_bytes(previous.read_bytes() + b"tamper\n")
             try:
                 helper.read_previous_api_rollback(payload, require_trusted_metadata=False)

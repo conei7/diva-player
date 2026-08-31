@@ -45,6 +45,9 @@ const postgresMigrateDockerfile = join(projectDirectory, 'backend', 'database', 
 const postgresDockerignore = join(projectDirectory, 'backend', 'database', '.dockerignore');
 const postgresSchema = join(projectDirectory, 'backend', 'database', 'schema.sql');
 const imageScanValidator = join(scriptsDirectory, 'validate-container-image-scan.py');
+const playerOfficialOrigin = 'https://github.com/conei7/diva-player.git';
+const pipelineOfficialOrigin = 'git@github.com:conei7/diva-data-pipeline.git';
+const githubEd25519HostKey = 'github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl';
 const bashCommand = process.platform === 'win32'
   ? 'C:\\Program Files\\Git\\bin\\bash.exe'
   : 'bash';
@@ -105,6 +108,10 @@ const timeoutFaultScenarios = new Set([
 const preRunRejectionScenarios = new Set([
   'assume-unchanged-pipeline-source',
   'skip-worktree-pipeline-source',
+  'pipeline-origin-alias',
+  'github-host-key-drift',
+  'github-identity-drift',
+  'forged-origin-main',
   'status-swap-after-shell-hash',
   'invalid-evidence-existing-journal',
   'zero-point-backup-evidence',
@@ -159,6 +166,121 @@ const [
   readFile(imageScanValidator, 'utf8'),
 ]);
 
+const imageScanValidatorSha256 = sha256(Buffer.from(imageScanValidatorSource, 'utf8'));
+assert.ok(
+  hardeningSource.includes(`= ${imageScanValidatorSha256} ]`),
+  'stateful hardener must freeze the exact image-scan validator SHA-256',
+);
+
+const trustedGitContract = hardeningSource.slice(
+  hardeningSource.indexOf('trusted_git()'),
+  hardeningSource.indexOf('verify_tracked_runtime_source()'),
+);
+assert.match(trustedGitContract, /GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=\/dev\/null/);
+assert.equal(
+  trustedGitContract.split('/usr/bin/env -i').length - 1,
+  4,
+  'local test/production and remote test/production Git must start from an empty environment',
+);
+assert.match(
+  trustedGitContract,
+  /else[\s\S]*\/usr\/bin\/env -i[\s\S]*HOME=\/var\/empty PATH=\/usr\/bin:\/bin[\s\S]*\/usr\/bin\/git/,
+  'production local/HTTPS Git must receive only fixed environment values and an absolute binary',
+);
+assert.equal(
+  trustedGitContract.split('-c "safe.directory=$ROOT_DIR"').length - 1,
+  4,
+  'local and test/production remote Git must allow only the fixed player root',
+);
+assert.equal(
+  trustedGitContract.split('-c "safe.directory=$PIPELINE_ROOT"').length - 1,
+  4,
+  'local and test/production remote Git must allow only the fixed pipeline root',
+);
+assert.doesNotMatch(
+  trustedGitContract,
+  /safe\.directory=["']?\*/,
+  'trusted Git must never allow a wildcard safe.directory',
+);
+assert.match(hardeningSource, /PIPELINE_OFFICIAL_ORIGIN=git@github\.com:conei7\/diva-data-pipeline\.git/);
+assert.match(hardeningSource, new RegExp(githubEd25519HostKey.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')));
+assert.doesNotMatch(
+  trustedGitContract,
+  /SSH_AUTH_SOCK|SSH_AGENT_PID/,
+  'empty-environment Git launches must not forward an ambient SSH agent',
+);
+assert.match(trustedGitContract, /-F \/dev\/null/);
+assert.match(trustedGitContract, /IdentityAgent=none/);
+assert.match(trustedGitContract, /GlobalKnownHostsFile=\/dev\/null/);
+assert.match(trustedGitContract, /HostKeyAlgorithms=ssh-ed25519/);
+assert.match(trustedGitContract, /run_bounded_command 30/);
+assert.match(trustedGitContract, /\/usr\/bin\/setpriv[\s\S]*--reuid="\$PIPELINE_RUNTIME_UID"/);
+assert.match(hardeningSource, /os\.fchown\(descriptor, expected_uid, expected_gid\)/);
+assert.match(
+  hardeningSource,
+  /stat -c '%u:%g:%a:%h'[\s\S]*BACKEND_ENV_OWNER_UID:[^\n]*BACKEND_ENV_OWNER_GID:600:1/,
+);
+
+const unexpectedArgument = spawnSync(
+  bashCommand,
+  [shellPath(hardeningScript), '--dry-run'],
+  {
+    env: { ...process.env, DIVA_STATEFUL_TEST_MODE: '1' },
+    encoding: 'utf8',
+    windowsHide: true,
+  },
+);
+assert.equal(unexpectedArgument.status, 64, unexpectedArgument.stderr);
+assert.equal(unexpectedArgument.stdout, '');
+assert.match(unexpectedArgument.stderr, /^Usage: .*harden-sbc-stateful-services\.sh\r?\n$/);
+
+const pipelineRuntimeContract = hardeningSource.slice(
+  hardeningSource.indexOf('validate_pipeline_runtime_structure()'),
+  hardeningSource.indexOf('validate_trivy_db_metadata()'),
+);
+assert.match(pipelineRuntimeContract, /acquire_pipeline_runtime_lock\(\)/);
+assert.match(pipelineRuntimeContract, /release_pipeline_runtime_lock\(\)/);
+assert.match(pipelineRuntimeContract, /--shared --timeout 900/);
+assert.match(pipelineRuntimeContract, /python-link=/);
+assert.match(hardeningSource, /\.ml-runtime-use\.lock/);
+assert.match(hardeningSource, /\.diva-runtime-receipt\.json/);
+assert.match(pipelineRuntimeContract, /--clear-groups --no-new-privs/);
+assert.match(pipelineRuntimeContract, /--inh-caps=-all --ambient-caps=-all --bounding-set=-all/);
+assert.match(pipelineRuntimeContract, /env -i[\s\S]*PYTHONNOUSERSITE=1[\s\S]*-I -B/);
+assert.match(pipelineRuntimeContract, /write_pipeline_runtime_attestation\(\)/);
+assert.doesNotMatch(
+  hardeningSource,
+  /run_qdrant_controller_supervised "\$PIPELINE_PYTHON"/,
+  'root controller must not execute the pipeline venv',
+);
+assert.match(hardeningSource, /run_qdrant_controller_supervised "\$PYTHON_COMMAND" -I -B/);
+assert.match(hardeningSource, /--runtime-attestation "\$PIPELINE_RUNTIME_ATTESTATION_FILE"/);
+assert.doesNotMatch(qdrantUpgradeControllerSource, /qdrant_client/);
+
+const backupAttestationContract = hardeningSource.slice(
+  hardeningSource.indexOf('validate_backup_payload_attestation()'),
+  hardeningSource.indexOf('validate_backup_source_ancestry()'),
+);
+assert.match(backupAttestationContract, /bridge_receipt_created_at="\$\{15\}"/);
+assert.match(
+  backupAttestationContract,
+  /receipt_created_at\.astimezone\(dt\.timezone\.utc\)[\s\S]*verified_at\.astimezone\(dt\.timezone\.utc\)/,
+);
+assert.match(backupAttestationContract, /-300 <= attestation_offset <= 900/);
+assert.doesNotMatch(backupAttestationContract, /datetime\.now|dt\.datetime\.now/);
+assert.match(
+  backupAttestationContract,
+  /--require-fresh --field createdAt/,
+);
+assert.match(
+  backupAttestationContract,
+  /\[ "\$after_sha" = "\$before_sha" \]/,
+);
+assert.match(
+  hardeningSource,
+  /verify_api_bridge_receipt[\s\S]*fresh API bridge receipt changed before the first Qdrant mutation/,
+);
+
 for (const [architecture, busyboxSha256, contractSha256] of [
   [
     'x86_64',
@@ -184,6 +306,11 @@ assert.match(
 );
 assert.match(qdrantDockerfileSource, /install_usrmerge_link \/lib usr\/lib/);
 assert.match(qdrantDockerfileSource, /install_usrmerge_link \/lib64 usr\/lib64/);
+assert.doesNotMatch(qdrantDockerfileSource, /record_package "\$source_target"/);
+assert.match(
+  qdrantDockerfileSource,
+  /apt-get install --yes --no-install-recommends --only-upgrade[\s\S]*libssl3t64=3\.5\.7-1~deb13u2[\s\S]*openssl-provider-legacy=3\.5\.7-1~deb13u2/u,
+);
 assert.match(qdrantDockerfileSource, /resolved_interpreter/);
 assert.match(
   qdrantDockerfileSource,
@@ -306,6 +433,40 @@ function canonicalDigest(value) {
   return sha256(Buffer.from(canonicalJson(value), 'utf8'));
 }
 
+function canonicalFindingDigest(value) {
+  const payload = canonicalJson(value);
+  return sha256(Buffer.from(payload.slice(0, -1), 'utf8'));
+}
+
+const legacyFindingDigests = Object.freeze({
+  qdrant: canonicalFindingDigest({
+    Class: 'os-pkgs',
+    Type: 'debian',
+    Target: 'fixture',
+    VulnerabilityID: 'CVE-OLD-QDRANT',
+    PkgID: 'openssl@1',
+    PkgName: 'openssl',
+    PkgPath: '/usr/lib/libssl.so',
+    InstalledVersion: '1',
+    FixedVersion: '2',
+    Severity: 'HIGH',
+    Status: 'fixed',
+  }),
+  postgres: canonicalFindingDigest({
+    Class: 'os-pkgs',
+    Type: 'alpine',
+    Target: 'fixture',
+    VulnerabilityID: 'CVE-OLD-POSTGRES',
+    PkgID: 'libcrypto@1',
+    PkgName: 'libcrypto',
+    PkgPath: '/lib/libcrypto.so',
+    InstalledVersion: '1',
+    FixedVersion: '2',
+    Severity: 'CRITICAL',
+    Status: 'fixed',
+  }),
+});
+
 function runFixtureGit(directory, arguments_) {
   const result = spawnSync('git', arguments_, {
     cwd: directory,
@@ -320,21 +481,29 @@ function runFixtureGit(directory, arguments_) {
   return result.stdout.trim();
 }
 
-function initializeFixtureRepository(directory, message) {
+function initializeFixtureRepository(directory, message, origin) {
   runFixtureGit(directory, ['init', '--quiet']);
   runFixtureGit(directory, ['config', 'user.name', 'DIVA Contract Test']);
   runFixtureGit(directory, ['config', 'user.email', 'diva-contract@example.invalid']);
   runFixtureGit(directory, ['add', '--all']);
   runFixtureGit(directory, ['commit', '--quiet', '-m', message]);
-  return runFixtureGit(directory, ['rev-parse', 'HEAD']);
+  runFixtureGit(directory, ['branch', '-M', 'main']);
+  const head = runFixtureGit(directory, ['rev-parse', 'HEAD']);
+  runFixtureGit(directory, ['remote', 'add', 'origin', origin]);
+  runFixtureGit(directory, ['update-ref', 'refs/remotes/origin/main', head]);
+  return head;
 }
 
 async function createBridgeEvidence(fixtureProject, stateRoot, playerCommit, evidence) {
   const deploymentId = 'bridge-deployment-20260831';
   const deploymentDirectory = join(stateRoot, deploymentId);
   const sourceRoot = join(deploymentDirectory, 'source-root');
+  const imageScanRoot = join(deploymentDirectory, 'image-scan');
   const entriesPath = join(deploymentDirectory, 'source-tree.entries');
-  await mkdir(sourceRoot, { recursive: true, mode: 0o700 });
+  await Promise.all([
+    mkdir(sourceRoot, { recursive: true, mode: 0o700 }),
+    mkdir(imageScanRoot, { recursive: true, mode: 0o700 }),
+  ]);
   const tree = spawnSync('git', ['ls-tree', '-rz', '--full-tree', playerCommit], {
     cwd: fixtureProject,
     encoding: null,
@@ -396,6 +565,17 @@ async function createBridgeEvidence(fixtureProject, stateRoot, playerCommit, evi
   const emptyMapSha = sha256(Buffer.from('{}\n', 'utf8'));
   const receiptPath = join(stateRoot, 'api-bridge-receipt.json');
   const wrapperPath = join(stateRoot, 'api-bridge-wrapper.json');
+  const scanReceipts = {};
+  for (const [service, imageId] of [
+    ['api', `sha256:${'1'.repeat(64)}`],
+    ['gateway', `sha256:${'3'.repeat(64)}`],
+    ['web', `sha256:${'5'.repeat(64)}`],
+  ]) {
+    const payload = Buffer.from(`${JSON.stringify({ imageId, service, status: 'passed' })}\n`, 'utf8');
+    await writeFile(join(imageScanRoot, `${service}.receipt.json`), payload, { mode: 0o600 });
+    await chmod(join(imageScanRoot, `${service}.receipt.json`), 0o600);
+    scanReceipts[service] = { imageId, sha256: sha256(payload) };
+  }
   const seedSongId = 42;
   const readMatrix = {
     aliases: [
@@ -470,7 +650,9 @@ async function createBridgeEvidence(fixtureProject, stateRoot, playerCommit, evi
       endpointResponsesSha256, readMatrixSha256, semanticSha256,
     }])),
   };
-  const createdAt = new Date();
+  const createdAt = evidence.bridgeCreatedAt
+    ? new Date(evidence.bridgeCreatedAt)
+    : new Date();
   const validUntil = new Date(createdAt.getTime() + 24 * 60 * 60 * 1000);
   const receipt = {
     schemaVersion: 3,
@@ -514,7 +696,7 @@ async function createBridgeEvidence(fixtureProject, stateRoot, playerCommit, evi
       },
       api_b: {
         containerName: 'vocadb_api_b', containerId: '5'.repeat(64),
-        imageId: `sha256:${'2'.repeat(64)}`, configHash: '6'.repeat(64),
+        imageId: `sha256:${'1'.repeat(64)}`, configHash: '6'.repeat(64),
         sourceCommit: playerCommit, clientPackageVersion: '1.19.0',
       },
     },
@@ -536,11 +718,32 @@ async function createBridgeEvidence(fixtureProject, stateRoot, playerCommit, evi
   await writeFile(receiptPath, canonicalJson(receipt), 'utf8');
   await chmod(receiptPath, 0o600);
   await writeFile(wrapperPath, `${JSON.stringify({
-    previousApiRollback: { schemaVersion: 1, provenance: 'fixture', apiSlots: {} },
+    previousApiRollback: {
+      apiSlots: {},
+      provenance: 'legacy-pre-contract-unattested',
+      scanReceipts,
+      schemaVersion: 2,
+      statelessServices: {
+        api_gateway: {
+          canonicalName: 'vocadb_api_gateway',
+          configHash: '7'.repeat(64),
+          containerId: 'c0'.repeat(32),
+          imageId: `sha256:${'3'.repeat(64)}`,
+          imageReference: 'diva-player-api-gateway:local',
+        },
+        web: {
+          canonicalName: 'vocadb_web',
+          configHash: '8'.repeat(64),
+          containerId: 'd0'.repeat(32),
+          imageId: `sha256:${'5'.repeat(64)}`,
+          imageReference: 'diva-player-web:local',
+        },
+      },
+    },
     receipt,
   })}\n`, 'utf8');
   await chmod(wrapperPath, 0o600);
-  return { receiptPath, wrapperPath };
+  return { imageScanRoot, receiptPath, wrapperPath };
 }
 
 function currentWindowsSid() {
@@ -773,6 +976,102 @@ async function hardenVerifierPath(path) {
   await chmod(path, 0o755);
 }
 
+const fakeGit = String.raw`#!/bin/sh
+set -eu
+root=__D__{FAKE_STATE:?}
+player_root=$(cat "$root/trusted-git-player-root")
+pipeline_root=$(cat "$root/trusted-git-pipeline-root")
+[ "__D__{GIT_CONFIG_NOSYSTEM:-}" = 1 ] || exit 91
+[ "__D__{GIT_CONFIG_GLOBAL:-}" = /dev/null ] || exit 92
+[ "__D__{GIT_CONFIG_COUNT+x}" != x ] || exit 93
+[ "__D__{GIT_CONFIG_PARAMETERS+x}" != x ] || exit 94
+[ "__D__{GIT_CONFIG+x}" != x ] || exit 95
+[ "__D__{GIT_ASKPASS+x}" != x ] || exit 96
+[ "__D__{GIT_TERMINAL_PROMPT:-}" = 0 ] || exit 97
+[ "__D__{GIT_SSL_NO_VERIFY+x}" != x ] || exit 120
+[ "__D__{GIT_SSL_CAINFO+x}" != x ] || exit 121
+[ "__D__{GIT_SSL_CAPATH+x}" != x ] || exit 122
+[ "__D__{GIT_PROXY_COMMAND+x}" != x ] || exit 123
+[ "__D__{HTTPS_PROXY+x}" != x ] || exit 124
+[ "__D__{https_proxy+x}" != x ] || exit 125
+[ "__D__{HTTP_PROXY+x}" != x ] || exit 126
+[ "__D__{http_proxy+x}" != x ] || exit 127
+[ "__D__{ALL_PROXY+x}" != x ] || exit 128
+[ "__D__{all_proxy+x}" != x ] || exit 129
+[ "__D__{NO_PROXY+x}" != x ] || exit 130
+[ "__D__{no_proxy+x}" != x ] || exit 131
+player_count=0
+pipeline_count=0
+previous=""
+ls_remote=false
+remote_url=""
+for argument in "$@"; do
+  if [ "$previous" = -c ]; then
+    case "$argument" in
+      "safe.directory=$player_root") player_count=__D__((player_count + 1)) ;;
+      "safe.directory=$pipeline_root") pipeline_count=__D__((pipeline_count + 1)) ;;
+      safe.directory=*) exit 98 ;;
+    esac
+  fi
+  if [ "$ls_remote" = true ] && [ -z "$remote_url" ]; then
+    case "$argument" in ls-remote|--exit-code) ;; *) remote_url="$argument" ;; esac
+  fi
+  [ "$argument" != ls-remote ] || ls_remote=true
+  previous="$argument"
+done
+[ "$player_count" -eq 1 ] || exit 99
+[ "$pipeline_count" -eq 1 ] || exit 100
+printf '%s\n' "$*" >> "$root/trusted-git.log"
+if [ "$ls_remote" = true ]; then
+  case "$remote_url" in
+    https://github.com/conei7/diva-player.git)
+      live_head=$(cat "$root/trusted-git-player-head")
+      ;;
+    git@github.com:conei7/diva-data-pipeline.git)
+      [ "__D__{SSH_AUTH_SOCK+x}" != x ] || exit 103
+      [ "__D__{SSH_AGENT_PID+x}" != x ] || exit 104
+      [ "__D__{SSH_ASKPASS+x}" != x ] || exit 105
+      [ "__D__{GIT_SSH_VARIANT:-}" = ssh ] || exit 106
+      [ "__D__{HOME:-}" = "__D__{FAKE_PIPELINE_GITHUB_HOME:?}" ] || exit 107
+      ssh_command=__D__{GIT_SSH_COMMAND:?}
+      case "$ssh_command" in *'/usr/bin/ssh -F /dev/null'*) ;; *) exit 108 ;; esac
+      case "$ssh_command" in *'-o HostName=github.com -o User=git -o Port=22'*) ;; *) exit 109 ;; esac
+      case "$ssh_command" in *'-o BatchMode=yes -o IdentitiesOnly=yes -o IdentityAgent=none'*) ;; *) exit 110 ;; esac
+      case "$ssh_command" in *"-o IdentityFile=__D__{FAKE_PIPELINE_GITHUB_IDENTITY:?}"*) ;; *) exit 111 ;; esac
+      case "$ssh_command" in *"-o UserKnownHostsFile=__D__{FAKE_GITHUB_HOST_KEY_FILE:?}"*) ;; *) exit 112 ;; esac
+      case "$ssh_command" in *'-o GlobalKnownHostsFile=/dev/null -o HostKeyAlgorithms=ssh-ed25519'*) ;; *) exit 113 ;; esac
+      case "$ssh_command" in *'-o ProxyCommand=none -o ProxyJump=none -o PermitLocalCommand=no'*) ;; *) exit 114 ;; esac
+      [ "$(cat "__D__{FAKE_GITHUB_HOST_KEY_FILE}")" = 'github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl' ] || exit 115
+      [ "$(/usr/bin/stat -c '%a:%h' "__D__{FAKE_PIPELINE_GITHUB_IDENTITY}")" = 600:1 ] || exit 116
+      printf '%s\n' 'config=isolated agent=none host-key=run-specific identity=dedicated owner-boundary=setpriv' > "$root/pipeline-remote-boundary.log"
+      case "__D__{FAKE_SCENARIO:-}" in
+        github-host-key-drift)
+          chmod 600 "__D__{FAKE_GITHUB_HOST_KEY_FILE}"
+          printf '%s\n' '# drift' >> "__D__{FAKE_GITHUB_HOST_KEY_FILE}"
+          ;;
+        github-identity-drift)
+          printf '%s\n' '# drift' >> "__D__{FAKE_PIPELINE_GITHUB_IDENTITY}"
+          ;;
+      esac
+      live_head=$(cat "$root/trusted-git-pipeline-head")
+      if [ "__D__{FAKE_SCENARIO:-}" = forged-origin-main ]; then
+        live_head=0000000000000000000000000000000000000000
+      fi
+      ;;
+    *) exit 101 ;;
+  esac
+  printf '%s\trefs/heads/main\n' "$live_head"
+  exit 0
+fi
+[ "__D__{SSH_AUTH_SOCK+x}" != x ] || exit 117
+[ "__D__{SSH_AGENT_PID+x}" != x ] || exit 118
+[ "__D__{GIT_SSH_COMMAND+x}" != x ] || exit 119
+for real_git in /mingw64/bin/git.exe /mingw64/bin/git /usr/bin/git; do
+  if [ -x "$real_git" ]; then exec "$real_git" "$@"; fi
+done
+exit 102
+`.replaceAll('__D__', '$');
+
 const fakeDocker = String.raw`#!/bin/sh
 set -eu
 
@@ -865,6 +1164,7 @@ create_container() {
 if [ "$1" = container ] && [ "__D__{2:-}" = ls ]; then
   target=""
   project=""
+  ancestor=""
   shift 2
   while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -877,6 +1177,7 @@ if [ "$1" = container ] && [ "__D__{2:-}" = ls ]; then
           label=com.docker.compose.project=*)
             project=__D__{2#label=com.docker.compose.project=}
             ;;
+          ancestor=*) ancestor=__D__{2#ancestor=} ;;
         esac
         shift 2
         ;;
@@ -890,6 +1191,13 @@ if [ "$1" = container ] && [ "__D__{2:-}" = ls ]; then
       [ -f "$project_file" ] || continue
       [ "$(cat "$project_file")" = "$project" ] || continue
       base=__D__{project_file%.project}
+      cat "$base.id"
+    done
+  elif [ -n "$ancestor" ]; then
+    for image_file in "$containers"/*.image; do
+      [ -f "$image_file" ] || continue
+      [ "$(cat "$image_file")" = "$ancestor" ] || continue
+      base=__D__{image_file%.image}
       cat "$base.id"
     done
   fi
@@ -920,10 +1228,12 @@ if [ "$1" = image ]; then
       elif [ "$reference" = diva-player-postgres-migrate:16.15-hardened-r1 ] \
           && [ -f "$root/stable-postgres-migrate-image-id" ]; then
         cat "$root/stable-postgres-migrate-image-id"
-      elif [ -f "$root/rollback-image-id" ]; then
-        case "$reference" in
-          diva-player-qdrant:rollback-*) cat "$root/rollback-image-id" ;;
-        esac
+      elif [ "__D__{reference#diva-player-qdrant:rollback-}" != "$reference" ] \
+          && [ -f "$root/rollback-image-id" ]; then
+        cat "$root/rollback-image-id"
+      elif [ "__D__{reference#diva-player-postgres:rollback-}" != "$reference" ] \
+          && [ -f "$root/rollback-postgres-image-id" ]; then
+        cat "$root/rollback-postgres-image-id"
       fi
       exit 0
       ;;
@@ -952,6 +1262,10 @@ if [ "$1" = image ]; then
         diva-player-qdrant:rollback-*)
           [ -f "$root/rollback-image-id" ] || exit 1
           image=$(cat "$root/rollback-image-id")
+          ;;
+        diva-player-postgres:rollback-*)
+          [ -f "$root/rollback-postgres-image-id" ] || exit 1
+          image=$(cat "$root/rollback-postgres-image-id")
           ;;
         alpine:3.23.3@sha256:25109184c71bdad752c8312a8623239686a9a2071e8825f20acb8f2198c3f659|"$audit_base_image")
           image="$audit_base_image"
@@ -1074,6 +1388,9 @@ if [ "$1" = image ]; then
         diva-player-qdrant:rollback-*)
           write_value "$root/rollback-image-id" "$source"
           ;;
+        diva-player-postgres:rollback-*)
+          write_value "$root/rollback-postgres-image-id" "$source"
+          ;;
       esac
       exit 0
       ;;
@@ -1116,7 +1433,13 @@ if [ "$1" = inspect ]; then
         "$id" "$image" "$name" "$status" "$running" "$sequence"
       ;;
     *State.Running*) printf '%s\n' "$running" ;;
-    *'.Config.Image'*) printf '%s\n' qdrant/qdrant:v1.9.4 ;;
+    *'.Config.Image'*)
+      if [ -f "$containers/$name.reference" ]; then
+        cat "$containers/$name.reference"
+      else
+        printf '%s\n' qdrant/qdrant:v1.9.4
+      fi
+      ;;
     *'.Image'*) printf '%s\n' "$image" ;;
     *Config.User*)
       if [ -f "$containers/$name.user" ]; then
@@ -1361,7 +1684,8 @@ case "$1" in
             ;;
           *diva-writer-gate-acquire*)
             if [ "$scenario" = writer-active ] \
-                || [ "$scenario" = indirect-pipeline-login-role ]; then
+                || [ "$scenario" = indirect-pipeline-login-role ] \
+                || [ "$scenario" = bridge-attestation-prep-over-15m ]; then
               exit 0
             fi
             token=""
@@ -1560,14 +1884,17 @@ exit 0
 
 const fakeTrivy = String.raw`#!/bin/sh
 set -eu
+root=__D__{FAKE_STATE:?}
 cache=""
 output=""
+exit_code=0
 previous=""
 last=""
 download=false
 for argument in "$@"; do
   if [ "$previous" = --cache-dir ]; then cache="$argument"; fi
   if [ "$previous" = --output ]; then output="$argument"; fi
+  if [ "$previous" = --exit-code ]; then exit_code="$argument"; fi
   [ "$argument" != --download-db-only ] || download=true
   previous="$argument"
   last="$argument"
@@ -1591,14 +1918,49 @@ case "$last" in
     ;;
   *) os_type=alpine ;;
 esac
-printf '{"SchemaVersion":2,"ArtifactType":"container_image","Metadata":{"ImageID":"%s","ImageConfig":{"architecture":"amd64","os":"linux"},"OS":{"Family":"%s","Name":"fixture"}},"Results":[{"Target":"fixture","Class":"os-pkgs","Type":"%s","Packages":[{"Name":"fixture","Version":"1"}],"Vulnerabilities":null}]}\n' \
-  "$last" "$os_type" "$os_type" > "$output"
+finding=""
+case "__D__{FAKE_SCENARIO:-}:$last" in
+  legacy-scan-calibration:sha256:7777777777777777777777777777777777777777777777777777777777777777|\
+  legacy-scan-reviewed:sha256:7777777777777777777777777777777777777777777777777777777777777777|\
+  legacy-scan-unexpected:sha256:7777777777777777777777777777777777777777777777777777777777777777)
+    finding='{"VulnerabilityID":"CVE-OLD-QDRANT","PkgID":"openssl@1","PkgName":"openssl","PkgPath":"/usr/lib/libssl.so","InstalledVersion":"1","FixedVersion":"2","Severity":"HIGH","Status":"fixed"}'
+    ;;
+  legacy-scan-calibration:sha256:8888888888888888888888888888888888888888888888888888888888888888|\
+  legacy-scan-reviewed:sha256:8888888888888888888888888888888888888888888888888888888888888888|\
+  legacy-scan-unexpected:sha256:8888888888888888888888888888888888888888888888888888888888888888)
+    finding='{"VulnerabilityID":"CVE-OLD-POSTGRES","PkgID":"libcrypto@1","PkgName":"libcrypto","PkgPath":"/lib/libcrypto.so","InstalledVersion":"1","FixedVersion":"2","Severity":"CRITICAL","Status":"fixed"}'
+    ;;
+  candidate-scan-finding:sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc)
+    finding='{"VulnerabilityID":"CVE-CANDIDATE","PkgID":"candidate@1","PkgName":"candidate","PkgPath":"/candidate","InstalledVersion":"1","FixedVersion":"2","Severity":"HIGH","Status":"fixed"}'
+    ;;
+esac
+if [ -n "$finding" ]; then
+  vulnerabilities="[$finding]"
+else
+  vulnerabilities=null
+fi
+printf '%s|%s\n' "$last" "$exit_code" >> "$root/trivy-scan.log"
+printf '{"SchemaVersion":2,"ArtifactType":"container_image","Metadata":{"ImageID":"%s","ImageConfig":{"architecture":"amd64","os":"linux"},"OS":{"Family":"%s","Name":"fixture"}},"Results":[{"Target":"fixture","Class":"os-pkgs","Type":"%s","Packages":[{"Name":"fixture","Version":"1"}],"Vulnerabilities":%s}]}\n' \
+  "$last" "$os_type" "$os_type" "$vulnerabilities" > "$output"
+[ "$finding" = "" ] || [ "$exit_code" = 0 ] || exit "$exit_code"
 `.replaceAll('__D__', '$');
 
 const fakePython = String.raw`#!/bin/sh
 set -eu
 root=__D__{FAKE_STATE:?}
 printf '%s\n' "$*" >> "$root/python.log"
+# The production hardener invokes every standard-library helper with -I -B.
+# Normalize that fixture-only extra flag so the legacy command fixtures below
+# remain focused on their payload behavior.
+if [ "__D__{1:-}" = -I ] && [ "__D__{2:-}" = -B ]; then
+  shift 2
+  set -- -I "$@"
+fi
+case "__D__{3:-}" in
+  *pipeline-runtime-attestation.json.tmp)
+    exec "__D__{FAKE_REAL_PYTHON:?}" "$@"
+    ;;
+esac
 case "__D__{2:-}" in
   *validate-container-image-scan.py)
     if [ "__D__{FAKE_FAST_IMAGE_SCAN:-0}" = 1 ]; then
@@ -1626,6 +1988,19 @@ case "__D__{2:-}" in
     exec "__D__{FAKE_REAL_PYTHON:?}" "$@"
     ;;
   *wsl-dr-api-bridge-receipt.py)
+    field=
+    while [ "__D__#" -gt 0 ]; do
+      if [ "__D__1" = --field ]; then
+        shift
+        field=__D__{1:-}
+      fi
+      shift
+    done
+    if [ "$field" = createdAt ]; then
+      exec "__D__{FAKE_REAL_PYTHON:?}" -I -B -c \
+        'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["receipt"]["createdAt"])' \
+        "__D__{FAKE_API_BRIDGE_WRAPPER:?}"
+    fi
     cat "__D__{FAKE_API_BRIDGE_WRAPPER:?}"
     exit 0
     ;;
@@ -1647,6 +2022,34 @@ if [ "__D__{2:-}" = - ]; then
       exec "__D__{FAKE_REAL_PYTHON:?}" "$@"
       ;;
   esac
+  case "__D__{3:-}" in
+    qdrant-rollback|postgres-rollback)
+      exec "__D__{FAKE_REAL_PYTHON:?}" "$@"
+      ;;
+  esac
+fi
+backup_validation_job=
+case "__D__{3:-}:__D__{4:-}" in
+  postgres_disaster_backup:*|qdrant_disaster_backup:*)
+    backup_validation_job=__D__3
+    ;;
+  -:postgres_disaster_backup|-:qdrant_disaster_backup)
+    backup_validation_job=__D__4
+    ;;
+esac
+if [ -n "$backup_validation_job" ]; then
+    backup_validation_count=0
+    if [ -f "$root/backup-validation-count" ]; then
+      backup_validation_count=$(cat "$root/backup-validation-count")
+    fi
+    backup_validation_count=__D__((backup_validation_count + 1))
+    printf '%s\n' "$backup_validation_count" > "$root/backup-validation-count"
+    if [ "__D__{FAKE_SCENARIO:-}" = backup-expires-before-writer-gate ] \
+        && [ "$backup_validation_count" -ge 5 ]; then
+      DIVA_STATEFUL_TEST_BACKUP_CLOCK_SKEW_HOURS=49
+      export DIVA_STATEFUL_TEST_BACKUP_CLOCK_SKEW_HOURS
+    fi
+    exec "__D__{FAKE_REAL_PYTHON:?}" "$@"
 fi
 case "__D__{3:-}" in
   *api-bridge-receipt-verified-*.json|*source-tree.entries|'['*)
@@ -1679,7 +2082,7 @@ case "__D__{4:-}" in
     ;;
 esac
 case "__D__{3:-}" in
-  postgres_disaster_backup|qdrant_disaster_backup|verify-port-bindings|*backup-payload-attestation.json)
+  verify-port-bindings|*backup-payload-attestation.json)
     exec "__D__{FAKE_REAL_PYTHON:?}" "$@"
     ;;
 esac
@@ -1696,6 +2099,49 @@ if [ "__D__{FAKE_SCENARIO:-}" = qdrant-payload-schema-failure ]; then
   case "$output" in *qdrant-after.json) printf '%s\n' '{"collections":{"songs":{"payloadSchema":{"artist":{"data_type":"keyword"}},"pointsCount":42}}}' > "$output"; exit 0 ;; esac
 fi
 printf '%s\n' '{"collections":{"songs":{"payloadSchema":{},"pointsCount":42}}}' > "$output"
+`.replaceAll('__D__', '$');
+
+// Kept separate from fakePython: the hardener's root-side standard-library
+// controller must never directly execute this pipeline-runtime stub.
+const fakePipelineVenvPython = String.raw`#!/bin/sh
+set -eu
+[ "__D__{1:-}" = -I ] && [ "__D__{2:-}" = -B ] && [ "__D__{3:-}" = - ] || exit 90
+case "__D__{4:-}" in
+  runtime-attestation)
+    printf '%s\n' '{"baseExecutable":"/usr/bin/python3.10","contract":"linux-aarch64","executable":"/fixture/pipeline/ml_pipeline/.venv/bin/python","gid":1000,"lockSha256":"1111111111111111111111111111111111111111111111111111111111111111","patcherSha256":"2222222222222222222222222222222222222222222222222222222222222222","privilegeBoundary":"uid-gid-no-groups-no-caps-nnp","qdrantClientVersion":"1.19.0","qdrantModule":"/fixture/pipeline/ml_pipeline/.venv/lib/python3.10/site-packages/qdrant_client/__init__.py","runtimeReceiptSha256":"3333333333333333333333333333333333333333333333333333333333333333","schema":"diva.pipeline-qdrant-probe-runtime.v1","uid":1000,"verifierSha256":"4444444444444444444444444444444444444444444444444444444444444444"}'
+    ;;
+  qdrant-semantic)
+    printf '%s\n' '{"aliasList":"passed","clientPackageVersion":"1.19.0","queryResultCount":2,"retrieveVectorDimensions":3,"scratchAliasCleanup":"confirmed","scratchCollectionCleanup":"confirmed","scratchSnapshotCleanup":"confirmed","scratchUpsertDelete":"passed"}'
+    ;;
+  *) exit 91 ;;
+esac
+`.replaceAll('__D__', '$');
+
+const fakeSetpriv = String.raw`#!/bin/sh
+set -eu
+while [ "__D__{1:-}" != -- ]; do
+  [ "__D__{1:-}" ] || exit 92
+  shift
+done
+shift
+exec "$@"
+`.replaceAll('__D__', '$');
+
+const fakeFlock = String.raw`#!/bin/sh
+set -eu
+case "__D__{1:-}" in
+  --shared)
+    [ "__D__#" -eq 4 ]
+    [ "__D__2" = --timeout ]
+    [ "__D__3" = 900 ]
+    [ "__D__4" = 9 ]
+    ;;
+  --unlock)
+    [ "__D__#" -eq 2 ]
+    [ "__D__2" = 9 ]
+    ;;
+  *) exit 93 ;;
+esac
 `.replaceAll('__D__', '$');
 
 const fakeQdrantControllerRunner = String.raw`import hashlib
@@ -1922,7 +2368,14 @@ exec "$command" "$@"
 const fakeStat = String.raw`#!/bin/sh
 format=__D__{2:-}
 target=__D__{3:-}
+owner_uid=$(/usr/bin/id -u)
+owner_gid=$(/usr/bin/id -g)
 case "$format:$target" in
+  %u:%g:*/project) printf '%s:%s\n' "$owner_uid" "$owner_gid" ;;
+  %u:%g:%a:%h:*/project/backend/.env*|\
+  %u:%g:%a:%h:*/backend.env.before-qdrant-volume)
+    printf '%s:%s:600:1\n' "$owner_uid" "$owner_gid"
+    ;;
   %a:*/stateful-hardening.lock) printf '%s\n' 700 ;;
   *%u:%g:%a*) printf '%s\n' 0:0:700 ;;
   *%u:%g*) printf '%s\n' 0:0 ;;
@@ -2261,8 +2714,22 @@ async function writeEvidence(root, playerCommit, pipelineCommit, attesterPath, s
     0,
     `backup attester failed:\n${attestationResult.stdout}\n${attestationResult.stderr}`,
   );
-  const attestationBytes = await readFile(attestationPath);
+  let attestationBytes = await readFile(attestationPath);
   const attestation = JSON.parse(attestationBytes.toString('utf8'));
+  // The normal matrix already executes the complete build/scan path for
+  // writer-active. Reuse it for the >15-minute liveness regression instead of
+  // duplicating that expensive path in every full test run.
+  if (scenario === 'bridge-attestation-prep-over-15m' || scenario === 'writer-active') {
+    attestation.verifiedAt = new Date(Date.now() - 20 * 60 * 1000).toISOString();
+    attestationBytes = Buffer.from(`${JSON.stringify(attestation, null, 2)}\n`, 'utf8');
+    await writeFile(attestationPath, attestationBytes);
+  }
+  const bridgeCreatedAt = scenario === 'bridge-attestation-prep-over-15m'
+      || scenario === 'writer-active'
+    ? new Date(Date.parse(attestation.verifiedAt) + 5 * 60 * 1000).toISOString()
+    : scenario === 'bridge-attestation-new-mismatch'
+      ? new Date(Date.parse(attestation.verifiedAt) - 20 * 60 * 1000).toISOString()
+      : undefined;
   return {
     postgres,
     qdrant,
@@ -2272,6 +2739,7 @@ async function writeEvidence(root, playerCommit, pipelineCommit, attesterPath, s
       challenge,
       verifierHost: attestation.verifierHost,
     },
+    bridgeCreatedAt,
   };
 }
 
@@ -2285,6 +2753,13 @@ async function createScenario(name) {
   const fixtureQdrant = join(fixtureProject, 'backend', 'qdrant');
   const fixtureDatabase = join(fixtureProject, 'backend', 'database');
   const fixturePipelineUtils = join(fixturePipeline, 'ml_pipeline', 'utils');
+  const fixturePipelineVenvBin = join(fixturePipeline, 'ml_pipeline', '.venv', 'bin');
+  const fixtureGithubHome = join(root, 'github-home');
+  const fixtureGithubSsh = join(fixtureGithubHome, '.ssh');
+  const fixtureGithubIdentity = join(
+    fixtureGithubSsh,
+    'id_ed25519_diva_data_pipeline_github',
+  );
   const fixtureHardeningScript = join(fixtureScripts, 'harden-sbc-stateful-services.sh');
   const fixtureBackupAttester = join(fixtureScripts, 'attest-disaster-backup-payloads.py');
   const fixtureQdrantUpgradeController = join(fixtureScripts, 'sbc-qdrant-storage-upgrade.py');
@@ -2309,6 +2784,8 @@ async function createScenario(name) {
     mkdir(fixtureDatabase, { recursive: true }),
     mkdir(fixturePipeline, { recursive: true }),
     mkdir(fixturePipelineUtils, { recursive: true }),
+    mkdir(fixturePipelineVenvBin, { recursive: true }),
+    mkdir(fixtureGithubSsh, { recursive: true }),
   ]);
   await Promise.all([
     writeExecutable(fixtureHardeningScript, hardeningSource),
@@ -2333,13 +2810,40 @@ async function createScenario(name) {
     writeFile(join(fixturePipelineUtils, 'pipeline_lock.py'), '# pipeline lock fixture\n', 'utf8'),
     writeFile(join(fixturePipelineUtils, 'runtime_contracts.py'), '# runtime contract fixture\n', 'utf8'),
     writeFile(join(fixturePipelineUtils, 'qdrant_cleanup.py'), '# cleanup fixture\n', 'utf8'),
+    writeFile(join(fixturePipeline, 'ml_pipeline', '.ml-runtime-use.lock'), 'fixture runtime lock\n', 'utf8'),
+    writeFile(join(fixturePipeline, 'ml_pipeline', '.venv', '.diva-runtime-receipt.json'), '{}\n', 'utf8'),
+    writeFile(join(fixturePipeline, 'ml_pipeline', 'requirements.linux-aarch64-cp310.lock.txt'), 'fixture lock\n', 'utf8'),
+    writeFile(join(fixturePipeline, 'ml_pipeline', 'verify_production_ml_runtime.py'), '# verifier fixture\n', 'utf8'),
+    writeFile(join(fixturePipeline, 'ml_pipeline', 'patch_tensorflow_hub_compat.py'), '# patcher fixture\n', 'utf8'),
+    writeFile(join(fakeState, 'trusted-git-player-root'), `${shellPath(fixtureProject)}\n`, 'utf8'),
+    writeFile(join(fakeState, 'trusted-git-pipeline-root'), `${shellPath(fixturePipeline)}\n`, 'utf8'),
+    writeFile(fixtureGithubIdentity, 'fixture-private-identity-material\n', 'utf8'),
+    writeFile(
+      join(fixtureGithubSsh, 'config'),
+      'Host github.com\n  ProxyCommand must-not-run-user-ssh-config\n',
+      'utf8',
+    ),
+    writeFile(join(fixtureGithubSsh, 'known_hosts'), 'must-not-use-user-known-hosts\n', 'utf8'),
+    writeFile(
+      join(fakeState, 'hostile-global-gitconfig'),
+      '[safe]\n\tdirectory = *\n[core]\n\tfsmonitor = true\n',
+      'utf8',
+    ),
   ]);
   // Production only accepts an owner-only persistent Compose binding.  Keep
   // the nominal fixture on that exact POSIX contract so the success case does
   // not rely on the test runner's default umask.
   await chmod(join(fixtureProject, 'backend', '.env'), 0o600);
+  await chmod(fixtureGithubHome, 0o700);
+  await chmod(fixtureGithubSsh, 0o700);
+  await Promise.all([
+    chmod(fixtureGithubIdentity, 0o600),
+    chmod(join(fixtureGithubSsh, 'config'), 0o600),
+    chmod(join(fixtureGithubSsh, 'known_hosts'), 0o600),
+  ]);
 
   const commands = {
+    git: fakeGit,
     docker: fakeDocker,
     curl: fakeCurl,
     python: fakePython,
@@ -2350,17 +2854,32 @@ async function createScenario(name) {
     stat: fakeStat,
     sync: fakeSync,
     sha256sum: fakeSha256sum,
+    flock: fakeFlock,
+    setpriv: fakeSetpriv,
   };
   await Promise.all(Object.entries(commands).map(([command, content]) => (
     writeExecutable(join(bin, command), content)
   )));
+  await writeExecutable(join(fixturePipelineVenvBin, 'python'), fakePipelineVenvPython);
   const validatorPath = join(root, 'validate-evidence.cjs');
   const qdrantControllerRunnerPath = join(root, 'fake-qdrant-controller.py');
   await writeFile(validatorPath, evidenceValidator, 'utf8');
   await writeFile(qdrantControllerRunnerPath, fakeQdrantControllerRunner, 'utf8');
 
-  const playerCommit = initializeFixtureRepository(fixtureProject, 'player fixture');
-  const pipelineCommit = initializeFixtureRepository(fixturePipeline, 'pipeline fixture');
+  const playerCommit = initializeFixtureRepository(
+    fixtureProject,
+    'player fixture',
+    playerOfficialOrigin,
+  );
+  const pipelineCommit = initializeFixtureRepository(
+    fixturePipeline,
+    'pipeline fixture',
+    pipelineOfficialOrigin,
+  );
+  await Promise.all([
+    writeFile(join(fakeState, 'trusted-git-player-head'), `${playerCommit}\n`, 'utf8'),
+    writeFile(join(fakeState, 'trusted-git-pipeline-head'), `${pipelineCommit}\n`, 'utf8'),
+  ]);
   await hardenVerifierPath(fixtureBackupAttester);
 
   const initialContainers = {
@@ -2392,15 +2911,19 @@ async function createScenario(name) {
     'vocadb_api_a.running': 'true',
     'vocadb_api_a.config': '4'.repeat(64),
     'vocadb_api_b.id': '5'.repeat(64),
-    'vocadb_api_b.image': `sha256:${'2'.repeat(64)}`,
+    'vocadb_api_b.image': `sha256:${'1'.repeat(64)}`,
     'vocadb_api_b.running': 'true',
     'vocadb_api_b.config': '6'.repeat(64),
     'vocadb_api_gateway.id': 'c0'.repeat(32),
     'vocadb_api_gateway.image': `sha256:${'3'.repeat(64)}`,
     'vocadb_api_gateway.running': 'true',
+    'vocadb_api_gateway.config': '7'.repeat(64),
+    'vocadb_api_gateway.reference': 'diva-player-api-gateway:local',
     'vocadb_web.id': 'd0'.repeat(32),
     'vocadb_web.image': `sha256:${'5'.repeat(64)}`,
     'vocadb_web.running': 'true',
+    'vocadb_web.config': '8'.repeat(64),
+    'vocadb_web.reference': 'diva-player-web:local',
   };
   await Promise.all(Object.entries(initialContainers).map(([file, value]) => (
     writeFile(join(containers, file), `${value}\n`, 'utf8')
@@ -2427,7 +2950,11 @@ async function createScenario(name) {
     fakeState,
     containers,
     stateRoot,
+    fixtureProject,
     fixturePipeline,
+    fixtureGithubHome,
+    fixtureGithubIdentity,
+    fixturePipelinePython: join(fixturePipelineVenvBin, 'python'),
     validatorPath,
     qdrantControllerRunnerPath,
     evidence,
@@ -2509,6 +3036,23 @@ async function runScenario(name) {
       await writeFile(scenario.evidence.attestation.path, bytes);
       scenario.evidence.attestation.sha = sha256(bytes);
     }
+    if (name === 'bridge-scan-receipt-missing') {
+      await rm(join(scenario.bridge.imageScanRoot, 'gateway.receipt.json'));
+    }
+    if (name === 'bridge-scan-receipt-tampered') {
+      await writeFile(
+        join(scenario.bridge.imageScanRoot, 'web.receipt.json'),
+        '{"imageId":"sha256:tampered","service":"web","status":"passed"}\n',
+        'utf8',
+      );
+    }
+    if (name === 'bridge-stateless-identity-mismatch') {
+      await writeFile(
+        join(scenario.containers, 'vocadb_api_gateway.id'),
+        `${'c1'.repeat(32)}\n`,
+        'utf8',
+      );
+    }
     if (name === 'assume-unchanged-pipeline-source') {
       runFixtureGit(scenario.fixturePipeline, [
         'update-index',
@@ -2523,8 +3067,41 @@ async function runScenario(name) {
         'ml_pipeline/utils/pipeline_lock.py',
       ]);
     }
+    if (name === 'pipeline-origin-alias') {
+      runFixtureGit(scenario.fixturePipeline, [
+        'remote',
+        'set-url',
+        'origin',
+        'git@github-diva-data-pipeline:conei7/diva-data-pipeline.git',
+      ]);
+    }
     const env = {
       ...process.env,
+      HOME: shellPath(join(scenario.root, 'hostile-home')),
+      SSH_AUTH_SOCK: shellPath(join(scenario.root, 'hostile-agent.sock')),
+      SSH_AGENT_PID: '999999',
+      GIT_SSH_COMMAND: 'must-not-run-hostile-git-ssh-command',
+      GIT_SSH_VARIANT: 'plink',
+      GIT_CONFIG_GLOBAL: shellPath(join(scenario.fakeState, 'hostile-global-gitconfig')),
+      GIT_CONFIG: shellPath(join(scenario.fakeState, 'hostile-global-gitconfig')),
+      GIT_CONFIG_COUNT: '1',
+      GIT_CONFIG_KEY_0: 'safe.directory',
+      GIT_CONFIG_VALUE_0: '*',
+      GIT_CONFIG_PARAMETERS: "'safe.directory'='*'",
+      GIT_ASKPASS: shellPath(join(scenario.fakeState, 'must-not-run-askpass')),
+      GIT_TERMINAL_PROMPT: '1',
+      GIT_SSL_NO_VERIFY: 'true',
+      GIT_SSL_CAINFO: shellPath(join(scenario.fakeState, 'hostile-ca.pem')),
+      GIT_SSL_CAPATH: shellPath(join(scenario.fakeState, 'hostile-ca-directory')),
+      GIT_PROXY_COMMAND: shellPath(join(scenario.fakeState, 'hostile-git-proxy')),
+      HTTPS_PROXY: 'http://127.0.0.1:9',
+      https_proxy: 'http://127.0.0.1:9',
+      HTTP_PROXY: 'http://127.0.0.1:9',
+      http_proxy: 'http://127.0.0.1:9',
+      ALL_PROXY: 'socks5://127.0.0.1:9',
+      all_proxy: 'socks5://127.0.0.1:9',
+      NO_PROXY: 'github.com',
+      no_proxy: 'github.com',
       DIVA_STATEFUL_TEST_MODE: '1',
       DIVA_DOCKER_COMMAND: shellPath(join(scenario.bin, 'docker')),
       DIVA_CURL_COMMAND: shellPath(join(scenario.bin, 'curl')),
@@ -2553,8 +3130,13 @@ async function runScenario(name) {
       DIVA_STATEFUL_TEST_CONTROLLER_RUNNER: shellPath(scenario.qdrantControllerRunnerPath),
       DIVA_STATEFUL_TEST_CONTROLLER_STATE: shellPath(scenario.fakeState),
       DIVA_PIPELINE_ROOT: shellPath(scenario.fixturePipeline),
-      DIVA_PIPELINE_PYTHON: shellPath(join(scenario.bin, 'python')),
-      DIVA_PIPELINE_VENV: shellPath(scenario.root),
+      DIVA_PIPELINE_PYTHON: shellPath(scenario.fixturePipelinePython),
+      DIVA_PIPELINE_VENV: shellPath(join(scenario.fixturePipeline, 'ml_pipeline', '.venv')),
+      DIVA_STATEFUL_TEST_GITHUB_USER: 'fixture-owner',
+      DIVA_STATEFUL_TEST_GITHUB_HOME: shellPath(scenario.fixtureGithubHome),
+      DIVA_STATEFUL_TEST_GITHUB_IDENTITY: shellPath(scenario.fixtureGithubIdentity),
+      DIVA_FLOCK_COMMAND: shellPath(join(scenario.bin, 'flock')),
+      DIVA_SETPRIV_COMMAND: shellPath(join(scenario.bin, 'setpriv')),
       DIVA_API_BRIDGE_RECEIPT: shellPath(scenario.bridge.receiptPath),
       DIVA_EXPECTED_BACKUP_SOURCE_HOST: 'test-sbc',
       DIVA_VERIFIED_POSTGRES_BACKUP_RUN_ID: scenario.evidence.postgres.runId,
@@ -2578,11 +3160,26 @@ async function runScenario(name) {
       FAKE_NODE_COMMAND: shellPath(process.execPath),
       FAKE_EVIDENCE_VALIDATOR: shellPath(scenario.validatorPath),
       FAKE_REAL_PYTHON: shellPath(realPythonExecutable),
+      DIVA_STATEFUL_TEST_LEGACY_SCAN_CONTRACT: name === 'legacy-scan-calibration'
+        ? 'unreviewed'
+        : 'reviewed',
+      DIVA_STATEFUL_TEST_QDRANT_FINDING_SHA256: name === 'legacy-scan-reviewed'
+        ? legacyFindingDigests.qdrant
+        : name === 'legacy-scan-unexpected'
+          ? '0'.repeat(64)
+          : '',
+      DIVA_STATEFUL_TEST_POSTGRES_FINDING_SHA256: name === 'legacy-scan-reviewed'
+        ? legacyFindingDigests.postgres
+        : name === 'legacy-scan-unexpected'
+          ? '0'.repeat(64)
+          : '',
       // A focused success run verifies the end-to-end control flow, not the
       // validator's already-separate exact-report contract. Keep the full
       // matrix on the exact path unless its caller explicitly opts into fast
       // validation, while making the Windows-focused smoke bounded by default.
       FAKE_FAST_IMAGE_SCAN: name !== 'success'
+        && name !== 'legacy-scan-reviewed'
+        && name !== 'legacy-scan-unexpected'
         || process.env.DIVA_STATEFUL_TEST_FAST_SUCCESS === '1'
         || (
           process.env.DIVA_STATEFUL_TEST_CASE === 'success'
@@ -2613,9 +3210,28 @@ async function runScenario(name) {
       // leave headroom under the two-minute focused-test budget.
       timeout: process.env.DIVA_STATEFUL_TEST_CASE === 'qdrant-controller-timeout'
         ? 120_000
-        : process.env.DIVA_STATEFUL_TEST_CASE
-          ? 90_000
-          : 600_000,
+        : new Set(['success', 'legacy-scan-reviewed']).has(
+          process.env.DIVA_STATEFUL_TEST_CASE,
+        )
+          ? 600_000
+        : new Set([
+          'backup-expires-before-writer-gate',
+        ]).has(
+          process.env.DIVA_STATEFUL_TEST_CASE,
+        )
+          ? 600_000
+        : new Set([
+          'bridge-attestation-prep-over-15m',
+          'legacy-scan-calibration',
+          'legacy-scan-unexpected',
+          'candidate-scan-finding',
+        ]).has(
+          process.env.DIVA_STATEFUL_TEST_CASE,
+        )
+          ? 240_000
+          : process.env.DIVA_STATEFUL_TEST_CASE
+            ? 90_000
+            : 600_000,
       windowsHide: true,
     });
     await waitForDelayedMutation(scenario.fakeState, name);
@@ -2632,6 +3248,13 @@ async function runScenario(name) {
       containers,
       stableImageId,
       rollbackImageId,
+      rollbackPostgresImageId,
+      qdrantScanCalibration,
+      postgresScanCalibration,
+      trivyScanLog,
+      promotionManifest,
+      trustedGitLog,
+      pipelineRemoteBoundary,
       runtimeContract,
       sensitiveComposeArtifactRemains,
       backendEnvBackupRemains,
@@ -2645,6 +3268,13 @@ async function runScenario(name) {
       readContainers(scenario.containers),
       readFile(join(scenario.fakeState, 'stable-image-id'), 'utf8').then(value => value.trim()).catch(() => 'absent'),
       readFile(join(scenario.fakeState, 'rollback-image-id'), 'utf8').then(value => value.trim()).catch(() => 'absent'),
+      readFile(join(scenario.fakeState, 'rollback-postgres-image-id'), 'utf8').then(value => value.trim()).catch(() => 'absent'),
+      readRunArtifact(runDirectory, join('evidence', 'image-scan-qdrant-rollback.calibration.json')).catch(() => ''),
+      readRunArtifact(runDirectory, join('evidence', 'image-scan-postgres-rollback.calibration.json')).catch(() => ''),
+      readFile(join(scenario.fakeState, 'trivy-scan.log'), 'utf8').catch(() => ''),
+      readRunArtifact(runDirectory, 'promotion-transaction').catch(() => ''),
+      readFile(join(scenario.fakeState, 'trusted-git.log'), 'utf8').catch(() => ''),
+      readFile(join(scenario.fakeState, 'pipeline-remote-boundary.log'), 'utf8').catch(() => ''),
       readFile(join(scenario.stateRoot, 'stateful-runtime-contract'), 'utf8').catch(() => ''),
       sensitiveComposeArtifactsRemain(runDirectory),
       runArtifactRemains(
@@ -2656,12 +3286,19 @@ async function runScenario(name) {
         'qdrant-storage-upgrade-controller-settlement.json',
       ).catch(() => ''),
     ]);
+    const [backendEnvStatus, projectStatus, backendEnvContent] = await Promise.all([
+      lstat(join(scenario.fixtureProject, 'backend', '.env')),
+      lstat(scenario.fixtureProject),
+      readFile(join(scenario.fixtureProject, 'backend', '.env'), 'utf8'),
+    ]);
     const journalPath = join(scenario.stateRoot, 'stateful-hardening-active');
     const journalExists = existsSync(journalPath);
     const journalContent = journalExists ? await readFile(journalPath, 'utf8') : '';
     const interlockExists = existsSync(join(scenario.stateRoot, 'stateful-hardening.lock'));
     const writerGateExists = existsSync(join(scenario.fakeState, 'writer-gate'));
     const writerRolesLocked = existsSync(join(scenario.fakeState, 'writer-roles-locked'));
+    const githubTrustRemains = (await readdir(scenario.stateRoot))
+      .some(entry => entry.startsWith('github-known-hosts-'));
     const run = {
       result,
       runDirectoryExists: runDirectory !== null,
@@ -2673,12 +3310,29 @@ async function runScenario(name) {
       containers,
       stableImageId,
       rollbackImageId,
+      rollbackPostgresImageId,
+      qdrantScanCalibration,
+      postgresScanCalibration,
+      trivyScanLog,
+      promotionManifest,
+      trustedGitLog,
+      pipelineRemoteBoundary,
       runtimeContract,
+      backendEnvContent,
+      backendEnvMetadata: {
+        uid: backendEnvStatus.uid,
+        gid: backendEnvStatus.gid,
+        mode: backendEnvStatus.mode & 0o777,
+        nlink: backendEnvStatus.nlink,
+        repositoryUid: projectStatus.uid,
+        repositoryGid: projectStatus.gid,
+      },
       journalExists,
       journalContent,
       interlockExists,
       writerGateExists,
       writerRolesLocked,
+      githubTrustRemains,
       ephemeralCacheMutated: existsSync(join(scenario.fakeState, 'ephemeral-cache-mutated')),
       sensitiveComposeArtifactRemains,
       privateBackendEnvRemains: existsSync(join(scenario.stateRoot, 'backend.env.private')),
@@ -2713,12 +3367,23 @@ function diagnostic(run) {
     sleepLog: run.sleepLog,
     containers: run.containers,
     stableImageId: run.stableImageId,
+    rollbackImageId: run.rollbackImageId,
+    rollbackPostgresImageId: run.rollbackPostgresImageId,
+    qdrantScanCalibration: run.qdrantScanCalibration,
+    postgresScanCalibration: run.postgresScanCalibration,
+    trivyScanLog: run.trivyScanLog,
+    promotionManifest: run.promotionManifest,
+    trustedGitLog: run.trustedGitLog,
+    pipelineRemoteBoundary: run.pipelineRemoteBoundary,
     runtimeContract: run.runtimeContract,
+    backendEnvContent: run.backendEnvContent,
+    backendEnvMetadata: run.backendEnvMetadata,
     journalExists: run.journalExists,
     journalContent: run.journalContent,
     interlockExists: run.interlockExists,
     writerGateExists: run.writerGateExists,
     writerRolesLocked: run.writerRolesLocked,
+    githubTrustRemains: run.githubTrustRemains,
     ephemeralCacheMutated: run.ephemeralCacheMutated,
     privateBackendEnvRemains: run.privateBackendEnvRemains,
     backendEnvBackupRemains: run.backendEnvBackupRemains,
@@ -2732,6 +3397,59 @@ function assertExactOldTopology(run, { postgres = true } = {}) {
   if (postgres) assert.equal(run.containers.vocadb_postgres, ids.oldPostgres, diagnostic(run));
   assert.ok(!Object.values(run.containers).includes(ids.newQdrant), diagnostic(run));
   if (postgres) assert.ok(!Object.values(run.containers).includes(ids.newPostgres), diagnostic(run));
+}
+
+function assertRollbackImagesRetainedOffline(run) {
+  const qdrantImageId = `sha256:${'7'.repeat(64)}`;
+  const postgresImageId = `sha256:${'8'.repeat(64)}`;
+  assert.equal(run.rollbackImageId, qdrantImageId, diagnostic(run));
+  assert.equal(run.rollbackPostgresImageId, postgresImageId, diagnostic(run));
+  assert.ok(!Object.values(run.containers).includes(ids.oldQdrant), diagnostic(run));
+  assert.ok(!Object.values(run.containers).includes(ids.oldPostgres), diagnostic(run));
+  assert.match(
+    run.state,
+    new RegExp(`qdrant\\.rollback_retained=diva-player-qdrant:rollback-[^:]+:${qdrantImageId}:backend_qdrant_data`),
+  );
+  assert.match(
+    run.state,
+    new RegExp(`postgres\\.rollback_retained=diva-player-postgres:rollback-[^:]+:${postgresImageId}:image-only-no-data-rollback`),
+  );
+  assert.match(run.state, /postgres\.rollback_scan_receipt_sha256=[0-9a-f]{64}/);
+  assert.match(
+    run.promotionManifest,
+    new RegExp(`postgres_rollback_tag=diva-player-postgres:rollback-[^\\n]+\\npostgres_rollback_image_id=${postgresImageId}\\n`),
+  );
+  assert.match(
+    run.promotionManifest,
+    /postgres_rollback_scan_receipt_sha256=[0-9a-f]{64}\npostgres_rollback_scope=image-only-no-data-rollback\n/,
+  );
+  assert.equal(
+    run.backendEnvMetadata.uid,
+    run.backendEnvMetadata.repositoryUid,
+    diagnostic(run),
+  );
+  assert.equal(
+    run.backendEnvMetadata.gid,
+    run.backendEnvMetadata.repositoryGid,
+    diagnostic(run),
+  );
+  assert.equal(run.backendEnvMetadata.nlink, 1, diagnostic(run));
+  if (process.platform !== 'win32') {
+    assert.equal(run.backendEnvMetadata.mode, 0o600, diagnostic(run));
+    assert.notEqual(run.backendEnvMetadata.uid, 0, diagnostic(run));
+  }
+  assert.match(run.backendEnvContent, /DIVA_QDRANT_VOLUME=diva_qdrant_v119_/);
+}
+
+function assertPreWriterScanStop(run) {
+  assert.notEqual(run.result.status, 0, diagnostic(run));
+  assert.equal(run.journalExists, false, diagnostic(run));
+  assert.equal(run.interlockExists, false, diagnostic(run));
+  assert.equal(run.writerGateExists, false, diagnostic(run));
+  assert.equal(run.writerRolesLocked, false, diagnostic(run));
+  assertExactOldTopology(run);
+  assert.equal(run.rollbackImageId, 'absent', diagnostic(run));
+  assert.equal(run.rollbackPostgresImageId, 'absent', diagnostic(run));
 }
 
 function assertPersistentFailStop(run) {
@@ -2853,8 +3571,110 @@ try {
     if (focusedCase === 'success') {
       assert.equal(run.result.status, 0, diagnostic(run));
       assert.equal(run.runDirectoryExists, true, diagnostic(run));
-      assert.equal(run.rollbackImageId, `sha256:${'7'.repeat(64)}`, diagnostic(run));
-      assert.match(run.state, /qdrant\.rollback_retained=diva-player-qdrant:rollback-[^:]+:sha256:[0-9a-f]{64}:backend_qdrant_data/);
+      assert.match(run.trustedGitLog, /safe\.directory=.*project/);
+      assert.match(run.trustedGitLog, /safe\.directory=.*pipeline/);
+      assert.equal(
+        run.pipelineRemoteBoundary.trim(),
+        'config=isolated agent=none host-key=run-specific identity=dedicated owner-boundary=setpriv',
+        diagnostic(run),
+      );
+      assert.equal(run.githubTrustRemains, false, diagnostic(run));
+      assertRollbackImagesRetainedOffline(run);
+    } else if (focusedCase === 'legacy-scan-calibration') {
+      assertPreWriterScanStop(run);
+      const qdrantCalibration = JSON.parse(run.qdrantScanCalibration);
+      const postgresCalibration = JSON.parse(run.postgresScanCalibration);
+      assert.deepEqual(
+        [qdrantCalibration.service, postgresCalibration.service],
+        ['qdrant-rollback', 'postgres-rollback'],
+        diagnostic(run),
+      );
+      assert.equal(qdrantCalibration.imageId, `sha256:${'7'.repeat(64)}`, diagnostic(run));
+      assert.equal(postgresCalibration.imageId, `sha256:${'8'.repeat(64)}`, diagnostic(run));
+      assert.equal(qdrantCalibration.osFamily, 'debian', diagnostic(run));
+      assert.equal(postgresCalibration.osFamily, 'alpine', diagnostic(run));
+      assert.equal(qdrantCalibration.highCriticalCount, 1, diagnostic(run));
+      assert.equal(postgresCalibration.highCriticalCount, 1, diagnostic(run));
+      assert.equal(qdrantCalibration.findings[0].sha256, legacyFindingDigests.qdrant, diagnostic(run));
+      assert.equal(postgresCalibration.findings[0].sha256, legacyFindingDigests.postgres, diagnostic(run));
+      assert.match(run.state, /image_scan\.qdrant-rollback\.calibration_sha256=[0-9a-f]{64}/);
+      assert.match(run.state, /image_scan\.postgres-rollback\.calibration_sha256=[0-9a-f]{64}/);
+      assert.match(
+        run.state,
+        /image_scan\.status=requires-reviewed-exact-inventory-and-finding-contracts/,
+      );
+      assert.match(run.trivyScanLog, new RegExp(`sha256:${'c'.repeat(64)}\\|1`));
+      assert.match(run.trivyScanLog, new RegExp(`sha256:${'7'.repeat(64)}\\|0`));
+      assert.match(run.trivyScanLog, new RegExp(`sha256:${'8'.repeat(64)}\\|0`));
+      assert.match(run.result.stderr, /image inventory\/finding calibration is required/);
+    } else if (focusedCase === 'legacy-scan-reviewed') {
+      assert.equal(run.result.status, 0, diagnostic(run));
+      assertRollbackImagesRetainedOffline(run);
+      assert.match(run.trivyScanLog, new RegExp(`sha256:${'7'.repeat(64)}\\|0`));
+      assert.match(run.trivyScanLog, new RegExp(`sha256:${'8'.repeat(64)}\\|0`));
+      assert.equal(run.qdrantScanCalibration, '', diagnostic(run));
+      assert.equal(run.postgresScanCalibration, '', diagnostic(run));
+    } else if (focusedCase === 'legacy-scan-unexpected') {
+      assertPreWriterScanStop(run);
+      assert.equal(run.qdrantScanCalibration, '', diagnostic(run));
+      assert.equal(run.postgresScanCalibration, '', diagnostic(run));
+      assert.match(run.trivyScanLog, new RegExp(`sha256:${'7'.repeat(64)}\\|0`));
+      assert.doesNotMatch(run.trivyScanLog, new RegExp(`sha256:${'8'.repeat(64)}\\|0`));
+      assert.match(run.result.stderr, /exact retained Qdrant image scan failed/);
+    } else if (focusedCase === 'candidate-scan-finding') {
+      assertPreWriterScanStop(run);
+      assert.equal(run.qdrantScanCalibration, '', diagnostic(run));
+      assert.equal(run.postgresScanCalibration, '', diagnostic(run));
+      assert.match(run.trivyScanLog, new RegExp(`sha256:${'c'.repeat(64)}\\|1`));
+      assert.doesNotMatch(run.trivyScanLog, new RegExp(`sha256:${'7'.repeat(64)}\\|0`));
+      assert.doesNotMatch(run.trivyScanLog, new RegExp(`sha256:${'8'.repeat(64)}\\|0`));
+      assert.match(run.result.stderr, /exact Qdrant runtime image scan failed/);
+    } else if (focusedCase === 'backup-expires-before-writer-gate') {
+      assertPreWriterScanStop(run);
+      assert.match(run.state, /image_scan\.status=all-exact-receipts-verified/);
+      assert.doesNotMatch(run.state, /pipeline_writer\.status=gating/);
+      assert.doesNotMatch(run.state, /backup\.freshness=revalidated-before-writer-quiescence/);
+      assert.match(
+        run.result.stderr,
+        /PostgreSQL backup evidence expired before writer quiescence/,
+      );
+    } else if (focusedCase === 'bridge-attestation-prep-over-15m') {
+      assert.notEqual(run.result.status, 0, diagnostic(run));
+      assert.equal(run.journalExists, false, diagnostic(run));
+      assert.equal(run.interlockExists, false, diagnostic(run));
+      assert.equal(run.writerGateExists, false, diagnostic(run));
+      assert.equal(run.writerRolesLocked, false, diagnostic(run));
+      assert.equal(run.githubTrustRemains, false, diagnostic(run));
+      assertExactOldTopology(run);
+      assert.match(run.state, /api_bridge\.attestation_anchor_created_at=/);
+      assert.match(run.state, /image_scan\.status=all-exact-receipts-verified/);
+      assert.match(run.state, /pipeline_writer\.status=refused-busy/);
+    } else if (focusedCase === 'bridge-attestation-new-mismatch') {
+      assert.notEqual(run.result.status, 0, diagnostic(run));
+      assert.equal(run.journalExists, false, diagnostic(run));
+      assert.equal(run.interlockExists, false, diagnostic(run));
+      assert.equal(run.writerGateExists, false, diagnostic(run));
+      assert.equal(run.writerRolesLocked, false, diagnostic(run));
+      assertExactOldTopology(run);
+      assert.match(
+        run.result.stderr,
+        /not anchored to the API bridge receipt|copied backup payload attestation changed during preflight/,
+      );
+    } else if (new Set([
+      'bridge-scan-receipt-missing',
+      'bridge-scan-receipt-tampered',
+      'bridge-stateless-identity-mismatch',
+    ]).has(focusedCase)) {
+      assert.notEqual(run.result.status, 0, diagnostic(run));
+      assert.equal(run.journalExists, false, diagnostic(run));
+      assert.equal(run.interlockExists, false, diagnostic(run));
+      assert.equal(run.writerGateExists, false, diagnostic(run));
+      assert.equal(run.writerRolesLocked, false, diagnostic(run));
+      assertExactOldTopology(run);
+      assert.match(
+        run.result.stderr,
+        /exact legacy-Qdrant API bridge receipt is invalid|fresh exact API bridge receipt (?:attestation anchor )?is required/,
+      );
     } else if (preRunRejectionScenarios.has(focusedCase)) {
       assert.notEqual(run.result.status, 0, diagnostic(run));
       assert.equal(run.runDirectoryExists, false, diagnostic(run));
@@ -2877,6 +3697,23 @@ try {
       assert.equal(run.backendEnvBackupRemains, false, diagnostic(run));
       assert.equal(run.controllerSettlement, '', diagnostic(run));
       assertExactOldTopology(run);
+      if (focusedCase === 'forged-origin-main') {
+        assert.match(run.result.stderr, /pipeline release must be the live official origin\/main commit/);
+        assert.match(run.trustedGitLog, /ls-remote --exit-code https:\/\/github\.com\/conei7\/diva-player\.git refs\/heads\/main/);
+        assert.match(run.trustedGitLog, /ls-remote --exit-code git@github\.com:conei7\/diva-data-pipeline\.git refs\/heads\/main/);
+      } else if (focusedCase === 'pipeline-origin-alias') {
+        assert.match(run.result.stderr, /pipeline release must be the live official origin\/main commit/);
+        assert.doesNotMatch(
+          run.trustedGitLog,
+          /ls-remote --exit-code git@github\.com:conei7\/diva-data-pipeline\.git/,
+        );
+      } else if (focusedCase === 'github-host-key-drift') {
+        assert.match(run.result.stderr, /pipeline release must be the live official origin\/main commit/);
+        assert.match(run.pipelineRemoteBoundary, /host-key=run-specific/);
+      } else if (focusedCase === 'github-identity-drift') {
+        assert.match(run.result.stderr, /pipeline release must be the live official origin\/main commit/);
+        assert.match(run.pipelineRemoteBoundary, /identity=dedicated/);
+      }
     } else if (focusedCase === 'qdrant-controller-timeout') {
       assertQdrantControllerTimeout(run);
     } else if (new Set([
@@ -2910,13 +3747,18 @@ try {
   } else {
 const success = await runScenario('success');
 assert.equal(success.result.status, 0, diagnostic(success));
+assert.match(success.trustedGitLog, /safe\.directory=.*project/);
+assert.match(success.trustedGitLog, /safe\.directory=.*pipeline/);
+assert.match(success.trustedGitLog, /ls-remote --exit-code git@github\.com:conei7\/diva-data-pipeline\.git refs\/heads\/main/);
+assert.match(success.pipelineRemoteBoundary, /config=isolated agent=none/);
+assert.equal(success.githubTrustRemains, false, diagnostic(success));
 assert.equal(success.runDirectoryExists, true, diagnostic(success));
 assert.equal(success.journalExists, false, diagnostic(success));
 assert.equal(success.writerGateExists, false, diagnostic(success));
 assert.equal(success.writerRolesLocked, false, diagnostic(success));
 assert.equal(success.privateBackendEnvRemains, false, diagnostic(success));
 assert.equal(success.backendEnvBackupRemains, false, diagnostic(success));
-assert.equal(success.rollbackImageId, `sha256:${'7'.repeat(64)}`, diagnostic(success));
+assertRollbackImagesRetainedOffline(success);
 assert.equal(success.containers.vocadb_qdrant, ids.promotedQdrant, diagnostic(success));
 assert.equal(success.containers.vocadb_postgres, ids.promotedPostgres, diagnostic(success));
 assert.match(success.state, /deployment\.status=completed/);
@@ -2984,6 +3826,8 @@ assert.equal(writerActive.interlockExists, false, diagnostic(writerActive));
 assert.equal(writerActive.writerGateExists, false, diagnostic(writerActive));
 assert.equal(writerActive.writerRolesLocked, false, diagnostic(writerActive));
 assertExactOldTopology(writerActive);
+assert.match(writerActive.state, /api_bridge\.attestation_anchor_created_at=/);
+assert.match(writerActive.state, /image_scan\.status=all-exact-receipts-verified/);
 assert.match(writerActive.state, /pipeline_writer\.status=refused-busy/);
 assert.doesNotMatch(writerActive.dockerLog, / stop | rename | compose /);
 
@@ -3019,6 +3863,14 @@ assert.equal(verifierHeadMismatch.interlockExists, false, diagnostic(verifierHea
 assert.equal(verifierHeadMismatch.writerGateExists, false, diagnostic(verifierHeadMismatch));
 assert.equal(verifierHeadMismatch.writerRolesLocked, false, diagnostic(verifierHeadMismatch));
 assertExactOldTopology(verifierHeadMismatch);
+
+const mismatchedNewAttestation = await runScenario('bridge-attestation-new-mismatch');
+assert.notEqual(mismatchedNewAttestation.result.status, 0, diagnostic(mismatchedNewAttestation));
+assert.equal(mismatchedNewAttestation.journalExists, false, diagnostic(mismatchedNewAttestation));
+assert.equal(mismatchedNewAttestation.interlockExists, false, diagnostic(mismatchedNewAttestation));
+assert.equal(mismatchedNewAttestation.writerGateExists, false, diagnostic(mismatchedNewAttestation));
+assert.equal(mismatchedNewAttestation.writerRolesLocked, false, diagnostic(mismatchedNewAttestation));
+assertExactOldTopology(mismatchedNewAttestation);
 
 for (const nonordinaryIndex of [
   'assume-unchanged-pipeline-source',

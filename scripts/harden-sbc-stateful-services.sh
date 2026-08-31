@@ -2,6 +2,11 @@
 set -eu
 umask 077
 
+if [ "$#" -ne 0 ]; then
+    printf 'Usage: %s\n' "$0" >&2
+    exit 64
+fi
+
 TEST_MODE=${DIVA_STATEFUL_TEST_MODE:-0}
 case "$TEST_MODE" in 0|1) ;; *) printf '%s\n' 'ERROR: invalid stateful test mode' >&2; exit 1 ;; esac
 if [ "$TEST_MODE" != "1" ]; then
@@ -10,6 +15,12 @@ if [ "$TEST_MODE" != "1" ]; then
 fi
 ROOT_DIR=$(CDPATH= cd -- "$(/usr/bin/dirname -- "$0")/.." && pwd)
 PIPELINE_ROOT=${DIVA_PIPELINE_ROOT:-"$ROOT_DIR/../diva-data-pipeline"}
+PLAYER_OFFICIAL_ORIGIN=https://github.com/conei7/diva-player.git
+PIPELINE_OFFICIAL_ORIGIN=git@github.com:conei7/diva-data-pipeline.git
+GITHUB_ED25519_HOST_KEY='github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl'
+PIPELINE_GITHUB_USER=${DIVA_STATEFUL_TEST_GITHUB_USER:-orangepi}
+PIPELINE_GITHUB_HOME=${DIVA_STATEFUL_TEST_GITHUB_HOME:-/home/orangepi}
+PIPELINE_GITHUB_IDENTITY=${DIVA_STATEFUL_TEST_GITHUB_IDENTITY:-/home/orangepi/.ssh/id_ed25519_diva_data_pipeline_github}
 COMPOSE_FILE="$ROOT_DIR/backend/docker-compose.yml"
 COMPOSE_PROJECT_DIRECTORY="$ROOT_DIR/backend"
 QDRANT_DOCKERFILE="$ROOT_DIR/backend/qdrant/Dockerfile"
@@ -27,8 +38,15 @@ PYTHON_COMMAND=${DIVA_PYTHON_COMMAND:-python3}
 SLEEP_COMMAND=${DIVA_SLEEP_COMMAND:-sleep}
 TIMEOUT_COMMAND=${DIVA_TIMEOUT_COMMAND:-timeout}
 TRIVY_COMMAND=${DIVA_TRIVY_COMMAND:-trivy}
+FLOCK_COMMAND=${DIVA_FLOCK_COMMAND:-flock}
+SETPRIV_COMMAND=${DIVA_SETPRIV_COMMAND:-setpriv}
 PIPELINE_PYTHON=${DIVA_PIPELINE_PYTHON:-"$PIPELINE_ROOT/ml_pipeline/.venv/bin/python"}
 PIPELINE_VENV=${DIVA_PIPELINE_VENV:-"$PIPELINE_ROOT/ml_pipeline/.venv"}
+PIPELINE_RUNTIME_LOCK="$PIPELINE_ROOT/ml_pipeline/.ml-runtime-use.lock"
+PIPELINE_RUNTIME_RECEIPT="$PIPELINE_VENV/.diva-runtime-receipt.json"
+PIPELINE_RUNTIME_LOCK_FILE="$PIPELINE_ROOT/ml_pipeline/requirements.linux-aarch64-cp310.lock.txt"
+PIPELINE_RUNTIME_VERIFIER="$PIPELINE_ROOT/ml_pipeline/verify_production_ml_runtime.py"
+PIPELINE_RUNTIME_PATCHER="$PIPELINE_ROOT/ml_pipeline/patch_tensorflow_hub_compat.py"
 API_BRIDGE_RECEIPT=${DIVA_API_BRIDGE_RECEIPT:-/var/lib/diva-player-deploy/api-bridge-receipt.json}
 
 if [ "$TEST_MODE" = "1" ]; then
@@ -43,10 +61,15 @@ else
         || [ "${DIVA_SLEEP_COMMAND+x}" = x ] \
         || [ "${DIVA_TIMEOUT_COMMAND+x}" = x ] \
         || [ "${DIVA_TRIVY_COMMAND+x}" = x ] \
+        || [ "${DIVA_FLOCK_COMMAND+x}" = x ] \
+        || [ "${DIVA_SETPRIV_COMMAND+x}" = x ] \
         || [ "${DIVA_TRIVY_CACHE_DIR+x}" = x ] \
         || [ "${DIVA_PIPELINE_ROOT+x}" = x ] \
         || [ "${DIVA_PIPELINE_PYTHON+x}" = x ] \
         || [ "${DIVA_PIPELINE_VENV+x}" = x ] \
+        || [ "${DIVA_STATEFUL_TEST_GITHUB_USER+x}" = x ] \
+        || [ "${DIVA_STATEFUL_TEST_GITHUB_HOME+x}" = x ] \
+        || [ "${DIVA_STATEFUL_TEST_GITHUB_IDENTITY+x}" = x ] \
         || [ "${DIVA_API_BRIDGE_RECEIPT+x}" = x ] \
         || [ "${DIVA_DEPLOY_STATE_DIR+x}" = x ] \
         || [ "${DIVA_STATEFUL_STATE_DIR+x}" = x ]; then
@@ -75,8 +98,18 @@ else
     SLEEP_COMMAND=/usr/bin/sleep
     TIMEOUT_COMMAND=/usr/bin/timeout
     TRIVY_COMMAND=/usr/local/libexec/diva-player/trivy-0.74.0
+    FLOCK_COMMAND=/usr/bin/flock
+    SETPRIV_COMMAND=/usr/bin/setpriv
     PIPELINE_PYTHON="$PIPELINE_ROOT/ml_pipeline/.venv/bin/python"
     PIPELINE_VENV="$PIPELINE_ROOT/ml_pipeline/.venv"
+    PIPELINE_RUNTIME_LOCK="$PIPELINE_ROOT/ml_pipeline/.ml-runtime-use.lock"
+    PIPELINE_RUNTIME_RECEIPT="$PIPELINE_VENV/.diva-runtime-receipt.json"
+    PIPELINE_RUNTIME_LOCK_FILE="$PIPELINE_ROOT/ml_pipeline/requirements.linux-aarch64-cp310.lock.txt"
+    PIPELINE_RUNTIME_VERIFIER="$PIPELINE_ROOT/ml_pipeline/verify_production_ml_runtime.py"
+    PIPELINE_RUNTIME_PATCHER="$PIPELINE_ROOT/ml_pipeline/patch_tensorflow_hub_compat.py"
+    PIPELINE_GITHUB_USER=orangepi
+    PIPELINE_GITHUB_HOME=/home/orangepi
+    PIPELINE_GITHUB_IDENTITY=/home/orangepi/.ssh/id_ed25519_diva_data_pipeline_github
     API_BRIDGE_RECEIPT=/var/lib/diva-player-deploy/api-bridge-receipt.json
 
     validate_trusted_system_directory() {
@@ -127,12 +160,12 @@ else
     }
     for trusted_binary in \
         "$DOCKER_COMMAND" "$CURL_COMMAND" "$PYTHON_COMMAND" \
-        "$SLEEP_COMMAND" "$TIMEOUT_COMMAND" \
+        "$SLEEP_COMMAND" "$TIMEOUT_COMMAND" "$FLOCK_COMMAND" "$SETPRIV_COMMAND" \
         /usr/bin/awk /usr/bin/cat /usr/bin/chmod /usr/bin/cmp /usr/bin/cp \
-        /usr/bin/date /usr/bin/dirname /usr/bin/env /usr/bin/git /usr/bin/grep \
+        /usr/bin/date /usr/bin/dirname /usr/bin/env /usr/bin/getent /usr/bin/git /usr/bin/grep \
         /usr/bin/hostname /usr/bin/id /usr/bin/find /usr/bin/mkdir /usr/bin/mv \
         /usr/bin/od /usr/bin/readlink /usr/bin/rm \
-        /usr/bin/sha256sum /usr/bin/stat /usr/bin/sync /usr/bin/tar /usr/bin/tr \
+        /usr/bin/sha256sum /usr/bin/ssh /usr/bin/stat /usr/bin/sync /usr/bin/tar /usr/bin/tr \
         /usr/bin/uname /usr/bin/wc; do
         validate_trusted_system_binary "$trusted_binary" || {
             printf '%s\n' "ERROR: production binary is not trusted: $trusted_binary" >&2
@@ -198,8 +231,14 @@ ACTIVE_JOURNAL="$STATE_ROOT/stateful-hardening-active"
 ROLLING_ACTIVE_JOURNAL="$STATE_ROOT/rolling-deployment-active"
 RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 RUN_DIR="$STATE_ROOT/stateful-$RUN_ID"
+if [ "$TEST_MODE" = "1" ]; then
+    GITHUB_HOST_KEY_FILE="$STATE_ROOT/github-known-hosts-$RUN_ID"
+else
+    GITHUB_HOST_KEY_FILE="/run/diva-player-github-known-hosts-$RUN_ID"
+fi
 STATE_FILE="$RUN_DIR/state"
 DAEMON_READ_UNRESOLVED_FILE="$RUN_DIR/daemon-read-unresolved"
+PIPELINE_RUNTIME_ATTESTATION_FILE="$RUN_DIR/evidence/pipeline-runtime-attestation.json"
 
 HEALTH_ATTEMPTS=${DIVA_STATEFUL_HEALTH_ATTEMPTS:-60}
 WAIT_SECONDS=${DIVA_STATEFUL_WAIT_SECONDS:-2}
@@ -243,6 +282,7 @@ QDRANT_CONTROLLER_DAEMON_SETTLEMENT="$RUN_DIR/qdrant-storage-upgrade-daemon-sett
 QDRANT_FINAL_UPGRADE_CONTAINER="diva_qfinal_$RUN_ID"
 POSTGRES_IMAGE=diva-player-postgres:16.15-pgvector-0.8.6-hardened-r1
 POSTGRES_CANDIDATE_IMAGE="diva-player-postgres:candidate-$RUN_ID"
+POSTGRES_ROLLBACK_IMAGE="diva-player-postgres:rollback-$RUN_ID"
 POSTGRES_MIGRATE_IMAGE=diva-player-postgres-migrate:16.15-hardened-r1
 POSTGRES_MIGRATE_CANDIDATE_IMAGE="diva-player-postgres-migrate:candidate-$RUN_ID"
 
@@ -285,6 +325,8 @@ OLD_QDRANT_VOLUME_IDENTITY=""
 OLD_QDRANT_VOLUME_IDENTITY_SHA=""
 QDRANT_ROLLBACK_SCAN_RECEIPT_SHA=""
 OLD_POSTGRES_ID=""
+OLD_POSTGRES_IMAGE_ID=""
+POSTGRES_ROLLBACK_SCAN_RECEIPT_SHA=""
 NEW_QDRANT_ID=""
 NEW_QDRANT_AUDIT_ID=""
 AUDIT_BUSYBOX_SHA256=""
@@ -320,9 +362,12 @@ IMAGE_SCAN_VALIDATOR_RELEASE=""
 API_BRIDGE_CONSUMPTION_HELPER_RELEASE=""
 BACKEND_ENV_FILE="$ROOT_DIR/backend/.env"
 BACKEND_ENV_BACKUP="$RUN_DIR/backend.env.before-qdrant-volume"
+BACKEND_ENV_OWNER_UID=""
+BACKEND_ENV_OWNER_GID=""
 BACKEND_ENV_BACKUP_OWNED=false
 BACKEND_ENV_MUTATED=false
 API_BRIDGE_RECEIPT_SHA=""
+API_BRIDGE_RECEIPT_CREATED_AT=""
 API_BRIDGE_COMPATIBILITY_SHA=""
 API_BRIDGE_VERIFY_COUNT=0
 QDRANT_BACKUP_BINDING=""
@@ -336,6 +381,15 @@ TRIVY_EMPTY_CONFIG=""
 TRIVY_EMPTY_IGNORE=""
 TRIVY_SCANNER_SHA=""
 SCAN_CALIBRATION_REQUIRED=false
+PIPELINE_RUNTIME_LOCK_HELD=false
+PIPELINE_RUNTIME_UID=""
+PIPELINE_RUNTIME_GID=""
+PIPELINE_RUNTIME_IDENTITY=""
+PIPELINE_RUNTIME_ATTESTATION=""
+PIPELINE_RUNTIME_ATTESTATION_SHA=""
+PIPELINE_GITHUB_SSH_IDENTITY=""
+GITHUB_HOST_KEY_FILE_IDENTITY=""
+GITHUB_HOST_KEY_FILE_OWNED=false
 
 fail() {
     printf '%s\n' "ERROR: $*" >&2
@@ -389,48 +443,359 @@ prepare_state_root() {
     [ "$mode" = 700 ]
 }
 
-verify_pipeline_venv_provenance() {
-    local expected_python="$PIPELINE_VENV/bin/python" unsafe
+validate_pipeline_runtime_structure() {
+    local expected_python="$PIPELINE_VENV/bin/python" ml_root mode unsafe resolved_python \
+        runtime_path docker_socket_gid
     [ "$PIPELINE_PYTHON" = "$expected_python" ] \
+        && [ -d "$PIPELINE_ROOT" ] && [ ! -L "$PIPELINE_ROOT" ] \
+        && [ -d "$PIPELINE_ROOT/ml_pipeline" ] \
+        && [ ! -L "$PIPELINE_ROOT/ml_pipeline" ] \
         && [ -d "$PIPELINE_VENV" ] && [ ! -L "$PIPELINE_VENV" ] \
-        && [ -f "$PIPELINE_PYTHON" ] && [ ! -L "$PIPELINE_PYTHON" ] \
-        && [ -x "$PIPELINE_PYTHON" ] || return 1
-    [ "$TEST_MODE" != "1" ] || return 0
-    [ "$(stat -c '%u:%g' "$PIPELINE_VENV")" = 0:0 ] \
-        && [ "$(stat -c '%u:%g' "$PIPELINE_PYTHON")" = 0:0 ] || return 1
+        && [ -f "$PIPELINE_PYTHON" ] && [ -x "$PIPELINE_PYTHON" ] \
+        && [ -f "$PIPELINE_RUNTIME_LOCK" ] && [ ! -L "$PIPELINE_RUNTIME_LOCK" ] \
+        && [ -f "$PIPELINE_RUNTIME_RECEIPT" ] \
+        && [ ! -L "$PIPELINE_RUNTIME_RECEIPT" ] || return 1
+    for runtime_path in "$PIPELINE_RUNTIME_LOCK_FILE" "$PIPELINE_RUNTIME_VERIFIER" \
+        "$PIPELINE_RUNTIME_PATCHER"; do
+        [ -f "$runtime_path" ] && [ ! -L "$runtime_path" ] || return 1
+    done
+    ml_root=$(CDPATH= cd -- "$PIPELINE_VENV/.." && pwd -P) || return 1
+    [ "$ml_root" = "$(CDPATH= cd -- "$PIPELINE_ROOT/ml_pipeline" && pwd -P)" ] \
+        || return 1
+
+    if [ "$TEST_MODE" = "1" ]; then
+        PIPELINE_RUNTIME_UID=$(/usr/bin/id -u) || return 1
+        PIPELINE_RUNTIME_GID=$(/usr/bin/id -g) || return 1
+        [ "$PIPELINE_RUNTIME_UID" -ne 0 ] || return 1
+        return 0
+    fi
+
+    PIPELINE_RUNTIME_UID=$(stat -c '%u' "$PIPELINE_ROOT") || return 1
+    PIPELINE_RUNTIME_GID=$(stat -c '%g' "$PIPELINE_ROOT") || return 1
+    case "$PIPELINE_RUNTIME_UID:$PIPELINE_RUNTIME_GID" in
+        ''|*[!0-9:]*) return 1 ;;
+    esac
+    [ "$PIPELINE_RUNTIME_UID" -ne 0 ] || return 1
+    [ "$(stat -c '%u:%g' "$PIPELINE_ROOT/ml_pipeline")" \
+        = "$PIPELINE_RUNTIME_UID:$PIPELINE_RUNTIME_GID" ] \
+        && [ "$(stat -c '%u:%g' "$PIPELINE_VENV")" \
+        = "$PIPELINE_RUNTIME_UID:$PIPELINE_RUNTIME_GID" ] \
+        && [ "$(stat -c '%u:%g' "$PIPELINE_PYTHON")" \
+        = "$PIPELINE_RUNTIME_UID:$PIPELINE_RUNTIME_GID" ] || return 1
+    for runtime_path in "$PIPELINE_RUNTIME_LOCK" "$PIPELINE_RUNTIME_RECEIPT"; do
+        [ "$(stat -c '%u:%g:%a:%h' "$runtime_path")" \
+            = "$PIPELINE_RUNTIME_UID:$PIPELINE_RUNTIME_GID:600:1" ] || return 1
+    done
+    for runtime_path in "$PIPELINE_RUNTIME_LOCK_FILE" "$PIPELINE_RUNTIME_VERIFIER" \
+        "$PIPELINE_RUNTIME_PATCHER"; do
+        [ "$(stat -c '%u:%g' "$runtime_path")" \
+            = "$PIPELINE_RUNTIME_UID:$PIPELINE_RUNTIME_GID" ] || return 1
+        mode=$(stat -c '%a' "$runtime_path") || return 1
+        [ $((0$mode & 022)) -eq 0 ] || return 1
+    done
+    mode=$(stat -c '%a' "$PIPELINE_VENV") || return 1
+    [ $((0$mode & 022)) -eq 0 ] || return 1
     unsafe=$(find "$PIPELINE_VENV" -xdev \
-        \( -type l -o ! -user root -o ! -group root -o -perm /022 \) \
-        -print -quit) || return 1
+        \( ! -uid "$PIPELINE_RUNTIME_UID" -o ! -gid "$PIPELINE_RUNTIME_GID" \
+        -o \( ! -type l -perm /022 \) \) -print -quit) || return 1
     [ -z "$unsafe" ] || return 1
-    "$PIPELINE_PYTHON" -I - "$PIPELINE_VENV" <<'PY'
+    resolved_python=$(readlink -f -- "$PIPELINE_PYTHON") || return 1
+    [ "$resolved_python" = /usr/bin/python3.10 ] \
+        && validate_trusted_system_binary "$resolved_python" || return 1
+    [ -S /var/run/docker.sock ] && [ ! -L /var/run/docker.sock ] || return 1
+    docker_socket_gid=$(stat -c '%g' /var/run/docker.sock) || return 1
+    [ "$PIPELINE_RUNTIME_GID" != "$docker_socket_gid" ]
+}
+
+capture_pipeline_runtime_identity() {
+    local resolved_python runtime_path
+    [ -d "$PIPELINE_VENV" ] && [ ! -L "$PIPELINE_VENV" ] \
+        && [ -f "$PIPELINE_RUNTIME_LOCK" ] && [ ! -L "$PIPELINE_RUNTIME_LOCK" ] \
+        && [ -f "$PIPELINE_RUNTIME_RECEIPT" ] && [ ! -L "$PIPELINE_RUNTIME_RECEIPT" ] \
+        && [ -f "$PIPELINE_RUNTIME_LOCK_FILE" ] && [ ! -L "$PIPELINE_RUNTIME_LOCK_FILE" ] \
+        && [ -f "$PIPELINE_RUNTIME_VERIFIER" ] && [ ! -L "$PIPELINE_RUNTIME_VERIFIER" ] \
+        && [ -f "$PIPELINE_RUNTIME_PATCHER" ] && [ ! -L "$PIPELINE_RUNTIME_PATCHER" ] \
+        || return 1
+    resolved_python=$(readlink -f -- "$PIPELINE_PYTHON") || return 1
+    printf 'venv=%s\n' "$(stat -c '%d:%i:%u:%g:%a' "$PIPELINE_VENV")" \
+        || return 1
+    printf 'python-link=%s\n' "$(stat -c '%d:%i:%u:%g:%a:%s:%Y' "$PIPELINE_PYTHON")" \
+        || return 1
+    printf 'python-target=%s:%s\n' "$resolved_python" \
+        "$(stat -Lc '%d:%i:%u:%g:%a:%s:%Y' "$PIPELINE_PYTHON")" || return 1
+    for runtime_path in "$PIPELINE_RUNTIME_LOCK" "$PIPELINE_RUNTIME_RECEIPT" \
+        "$PIPELINE_RUNTIME_LOCK_FILE" "$PIPELINE_RUNTIME_VERIFIER" \
+        "$PIPELINE_RUNTIME_PATCHER"; do
+        printf '%s=%s:%s\n' "${runtime_path##*/}" \
+            "$(stat -c '%d:%i:%u:%g:%a:%s:%Y' "$runtime_path")" \
+            "$(sha256sum "$runtime_path" | awk '{print $1}')" || return 1
+    done
+}
+
+verify_pipeline_runtime_identity_unchanged() {
+    local current
+    [ "$PIPELINE_RUNTIME_LOCK_HELD" = true ] \
+        && [ -n "$PIPELINE_RUNTIME_IDENTITY" ] || return 1
+    current=$(capture_pipeline_runtime_identity) || return 1
+    [ "$current" = "$PIPELINE_RUNTIME_IDENTITY" ]
+}
+
+acquire_pipeline_runtime_lock() {
+    local lock_identity descriptor_identity
+    validate_pipeline_runtime_structure || return 1
+    exec 9< "$PIPELINE_RUNTIME_LOCK" || return 1
+    if ! "$FLOCK_COMMAND" --shared --timeout 900 9; then
+        exec 9<&-
+        return 1
+    fi
+    PIPELINE_RUNTIME_LOCK_HELD=true
+    if [ "$TEST_MODE" != "1" ]; then
+        lock_identity=$(stat -c '%d:%i' "$PIPELINE_RUNTIME_LOCK") || return 1
+        descriptor_identity=$(stat -Lc '%d:%i' "/proc/$$/fd/9") || return 1
+        [ "$lock_identity" = "$descriptor_identity" ] || return 1
+    fi
+    PIPELINE_RUNTIME_IDENTITY=$(capture_pipeline_runtime_identity) || return 1
+    verify_pipeline_runtime_identity_unchanged
+}
+
+release_pipeline_runtime_lock() {
+    local release_status=0
+    [ "$PIPELINE_RUNTIME_LOCK_HELD" = true ] || return 0
+    "$FLOCK_COMMAND" --unlock 9 || release_status=$?
+    exec 9<&-
+    PIPELINE_RUNTIME_LOCK_HELD=false
+    return "$release_status"
+}
+
+run_pipeline_venv_python() {
+    local probe_status=0 identity_status=0
+    verify_pipeline_runtime_identity_unchanged || return 1
+    (
+        exec 9<&-
+        run_bounded_command "$READ_TIMEOUT_SECONDS" /usr/bin/env -i \
+            HOME=/var/empty PATH=/usr/bin:/bin \
+            PYTHONNOUSERSITE=1 PYTHONDONTWRITEBYTECODE=1 \
+            "$SETPRIV_COMMAND" \
+            --reuid="$PIPELINE_RUNTIME_UID" --regid="$PIPELINE_RUNTIME_GID" \
+            --clear-groups --no-new-privs \
+            --inh-caps=-all --ambient-caps=-all --bounding-set=-all -- \
+            "$PIPELINE_PYTHON" -I -B "$@"
+    ) || probe_status=$?
+    verify_pipeline_runtime_identity_unchanged || identity_status=$?
+    [ "$identity_status" -eq 0 ] || return 125
+    return "$probe_status"
+}
+
+verify_pipeline_venv_provenance() {
+    local attestation normalized
+    attestation=$(run_pipeline_venv_python - runtime-attestation \
+        "$PIPELINE_VENV" "$PIPELINE_RUNTIME_RECEIPT" \
+        "$PIPELINE_RUNTIME_LOCK_FILE" "$PIPELINE_RUNTIME_VERIFIER" \
+        "$PIPELINE_RUNTIME_PATCHER" "$PIPELINE_RUNTIME_UID" \
+        "$PIPELINE_RUNTIME_GID" <<'PY'
+import hashlib
 import importlib.metadata
+import importlib.util
 import json
 import os
+from pathlib import Path
 import site
+import stat
 import sys
+
+(
+    marker, venv_text, receipt_text, lock_text, verifier_text, patcher_text,
+    expected_uid_text, expected_gid_text,
+) = sys.argv[1:]
+if marker != "runtime-attestation":
+    raise SystemExit(2)
+venv = Path(venv_text).resolve(strict=True)
+receipt_path = Path(receipt_text)
+lock_path = Path(lock_text)
+verifier_path = Path(verifier_text)
+patcher_path = Path(patcher_text)
+
+def bounded_regular(path: Path, maximum: int) -> bytes:
+    info = path.lstat()
+    if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_size > maximum:
+        raise SystemExit(3)
+    data = path.read_bytes()
+    if not data or len(data) > maximum:
+        raise SystemExit(4)
+    return data
+
+if Path(sys.prefix).resolve(strict=True) != venv or Path(sys.base_prefix).resolve() == venv:
+    raise SystemExit(5)
+if site.ENABLE_USER_SITE:
+    raise SystemExit(6)
+if (
+    os.getuid() == 0
+    or os.getuid() != int(expected_uid_text)
+    or os.getgid() != int(expected_gid_text)
+):
+    raise SystemExit(7)
+if os.getgroups():
+    raise SystemExit(8)
+status = {}
+for line in Path("/proc/self/status").read_text(encoding="ascii").splitlines():
+    key, separator, value = line.partition(":")
+    if separator:
+        status[key] = value.strip()
+if status.get("NoNewPrivs") != "1" or any(
+    status.get(name) != "0000000000000000"
+    for name in ("CapInh", "CapPrm", "CapEff", "CapBnd", "CapAmb")
+):
+    raise SystemExit(9)
 
 import qdrant_client
 
-root = os.path.realpath(sys.argv[1])
-executable = os.path.realpath(sys.executable)
-module = os.path.realpath(qdrant_client.__file__)
-if os.path.commonpath([root, executable]) != root:
-    raise SystemExit(2)
-if os.path.commonpath([root, module]) != root:
-    raise SystemExit(3)
+module_path = Path(qdrant_client.__file__).resolve(strict=True)
+if os.path.commonpath([str(venv), str(module_path)]) != str(venv):
+    raise SystemExit(10)
 if importlib.metadata.version("qdrant-client") != "1.19.0":
-    raise SystemExit(4)
-if site.ENABLE_USER_SITE:
-    raise SystemExit(5)
-print(json.dumps({"executable": executable, "module": module, "version": "1.19.0"},
-                 ensure_ascii=True, sort_keys=True, separators=(",", ":")))
+    raise SystemExit(11)
+
+verifier_bytes = bounded_regular(verifier_path, 2 * 1024 * 1024)
+lock_bytes = bounded_regular(lock_path, 2 * 1024 * 1024)
+patcher_bytes = bounded_regular(patcher_path, 256 * 1024)
+receipt_bytes = bounded_regular(receipt_path, 2 * 1024 * 1024)
+stored = json.loads(receipt_bytes)
+if receipt_bytes != (json.dumps(stored, sort_keys=True, separators=(",", ":")) + "\n").encode():
+    raise SystemExit(12)
+spec = importlib.util.spec_from_file_location("diva_verified_runtime_contract", verifier_path)
+if spec is None or spec.loader is None:
+    raise SystemExit(13)
+verifier = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = verifier
+spec.loader.exec_module(verifier)
+fresh = verifier.validate_runtime("linux-aarch64", lock_path)
+stored_comparable = dict(stored)
+fresh_comparable = dict(fresh)
+stored_generated = stored_comparable.pop("generatedAt", None)
+fresh_comparable.pop("generatedAt", None)
+if not isinstance(stored_generated, str) or stored_comparable != fresh_comparable:
+    raise SystemExit(14)
+document = {
+    "baseExecutable": str(Path(sys.executable).resolve(strict=True)),
+    "contract": "linux-aarch64",
+    "executable": str(Path(sys.executable).absolute()),
+    "gid": os.getgid(),
+    "lockSha256": hashlib.sha256(lock_bytes).hexdigest(),
+    "patcherSha256": hashlib.sha256(patcher_bytes).hexdigest(),
+    "privilegeBoundary": "uid-gid-no-groups-no-caps-nnp",
+    "qdrantClientVersion": "1.19.0",
+    "qdrantModule": str(module_path),
+    "runtimeReceiptSha256": hashlib.sha256(receipt_bytes).hexdigest(),
+    "schema": "diva.pipeline-qdrant-probe-runtime.v1",
+    "uid": os.getuid(),
+    "verifierSha256": hashlib.sha256(verifier_bytes).hexdigest(),
+}
+print(json.dumps(document, ensure_ascii=True, sort_keys=True, separators=(",", ":")))
 PY
+    ) || return 1
+    [ "${#attestation}" -le 65536 ] || return 1
+    normalized=$(printf '%s\n' "$attestation" | "$PYTHON_COMMAND" -I -B -c '
+import json,re,sys
+raw=sys.stdin.buffer.read(65537)
+if len(raw)>65536: raise SystemExit(2)
+d=json.loads(raw)
+expected={"baseExecutable","contract","executable","gid","lockSha256","patcherSha256",
+"privilegeBoundary","qdrantClientVersion","qdrantModule","runtimeReceiptSha256","schema","uid",
+"verifierSha256"}
+if set(d)!=expected or d["schema"]!="diva.pipeline-qdrant-probe-runtime.v1" \
+or d["contract"]!="linux-aarch64" or d["qdrantClientVersion"]!="1.19.0" \
+or d["privilegeBoundary"]!="uid-gid-no-groups-no-caps-nnp" \
+or not isinstance(d["uid"],int) or d["uid"]<=0 or not isinstance(d["gid"],int) or d["gid"]<0 \
+or any(not isinstance(d[k],str) or re.fullmatch(r"[0-9a-f]{64}",d[k]) is None \
+       for k in ("lockSha256","patcherSha256","runtimeReceiptSha256","verifierSha256")):
+    raise SystemExit(3)
+print(json.dumps(d,ensure_ascii=True,sort_keys=True,separators=(",",":")))
+') || return 1
+    if [ -n "$PIPELINE_RUNTIME_ATTESTATION" ]; then
+        [ "$normalized" = "$PIPELINE_RUNTIME_ATTESTATION" ] || return 1
+    else
+        PIPELINE_RUNTIME_ATTESTATION="$normalized"
+    fi
+}
+
+write_pipeline_runtime_attestation() {
+    local temporary
+    [ "$PIPELINE_RUNTIME_LOCK_HELD" = true ] \
+        && [ -n "$PIPELINE_RUNTIME_ATTESTATION" ] || return 1
+    [ ! -e "$PIPELINE_RUNTIME_ATTESTATION_FILE" ] \
+        && [ ! -L "$PIPELINE_RUNTIME_ATTESTATION_FILE" ] || return 1
+    temporary="$PIPELINE_RUNTIME_ATTESTATION_FILE.tmp"
+    [ ! -e "$temporary" ] && [ ! -L "$temporary" ] || return 1
+    "$PYTHON_COMMAND" -I -B - "$temporary" "$PIPELINE_RUNTIME_ATTESTATION_FILE" \
+        "$PIPELINE_RUNTIME_ATTESTATION" <<'PY' || return 1
+import hashlib
+import json
+import os
+import re
+import stat
+import sys
+from pathlib import Path
+
+temporary, destination = map(Path, sys.argv[1:3])
+raw = sys.argv[3].encode("utf-8") + b"\n"
+if not raw or len(raw) > 65536:
+    raise SystemExit(2)
+document = json.loads(raw)
+expected = {
+    "baseExecutable", "contract", "executable", "gid", "lockSha256", "patcherSha256",
+    "privilegeBoundary", "qdrantClientVersion", "qdrantModule", "runtimeReceiptSha256",
+    "schema", "uid", "verifierSha256",
+}
+if (
+    set(document) != expected
+    or document.get("schema") != "diva.pipeline-qdrant-probe-runtime.v1"
+    or document.get("contract") != "linux-aarch64"
+    or document.get("qdrantClientVersion") != "1.19.0"
+    or document.get("privilegeBoundary") != "uid-gid-no-groups-no-caps-nnp"
+    or not isinstance(document.get("uid"), int) or document["uid"] <= 0
+    or not isinstance(document.get("gid"), int) or document["gid"] < 0
+    or any(not isinstance(document.get(key), str)
+           or re.fullmatch(r"[0-9a-f]{64}", document[key]) is None
+           for key in ("lockSha256", "patcherSha256", "runtimeReceiptSha256", "verifierSha256"))
+):
+    raise SystemExit(3)
+canonical = (json.dumps(document, ensure_ascii=True, sort_keys=True, separators=(",", ":")) + "\n").encode()
+if raw != canonical or temporary.exists() or temporary.is_symlink() or destination.exists() or destination.is_symlink():
+    raise SystemExit(4)
+flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_CLOEXEC", 0)
+descriptor = os.open(temporary, flags, 0o600)
+try:
+    os.write(descriptor, canonical)
+    os.fsync(descriptor)
+finally:
+    os.close(descriptor)
+os.replace(temporary, destination)
+os.chmod(destination, 0o600)
+try:
+    directory = os.open(destination.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+except PermissionError:
+    if os.name != "nt":
+        raise
+else:
+    try:
+        os.fsync(directory)
+    finally:
+        os.close(directory)
+print(hashlib.sha256(canonical).hexdigest())
+PY
+    PIPELINE_RUNTIME_ATTESTATION_SHA=$(sha256sum "$PIPELINE_RUNTIME_ATTESTATION_FILE" | awk '{print $1}') \
+        || return 1
+    case "$PIPELINE_RUNTIME_ATTESTATION_SHA" in
+        ''|*[!0-9a-f]*) return 1 ;;
+    esac
+    [ "${#PIPELINE_RUNTIME_ATTESTATION_SHA}" -eq 64 ] \
+        && verify_pipeline_runtime_identity_unchanged
 }
 
 validate_trivy_db_metadata() {
     local metadata_path="$1" evidence_path="$2"
     [ -f "$metadata_path" ] && [ ! -L "$metadata_path" ] || return 1
-    "$PYTHON_COMMAND" -I - "$metadata_path" "$evidence_path" <<'PY'
+    "$PYTHON_COMMAND" -I -B - "$metadata_path" "$evidence_path" <<'PY'
 import datetime as dt
 import json
 import os
@@ -479,7 +844,7 @@ validate_trivy_scan_report() {
     local report_path="$1" expected_image_id="$2" expected_os="$3"
     case "$expected_os" in alpine|debian) ;; *) return 1 ;; esac
     [ -f "$report_path" ] && [ ! -L "$report_path" ] || return 1
-    "$PYTHON_COMMAND" -I - "$report_path" "$expected_image_id" "$expected_os" <<'PY'
+    "$PYTHON_COMMAND" -I -B - "$report_path" "$expected_image_id" "$expected_os" <<'PY'
 import json
 import os
 import stat
@@ -518,8 +883,14 @@ PY
 }
 
 reviewed_inventory_bounds() {
-    local service="$1" architecture="$2" os_family="$3"
+    local service="$1" architecture="$2" os_family="$3" image_id="$4"
     if [ "$TEST_MODE" = "1" ]; then
+        case "$service" in
+            qdrant-rollback|postgres-rollback)
+                [ "${DIVA_STATEFUL_TEST_LEGACY_SCAN_CONTRACT:-reviewed}" = reviewed ] \
+                    || return 1
+                ;;
+        esac
         printf 'os-pkgs:%s:1:1:1\n' "$os_family"
         return 0
     fi
@@ -538,13 +909,53 @@ reviewed_inventory_bounds() {
         qdrant-runtime:debian) printf '%s\n' 'os-pkgs:debian:8:8:1' ;;
         qdrant-audit:alpine) printf '%s\n' 'os-pkgs:alpine:3:3:1' ;;
         api-a:alpine|api-b:alpine)
-            printf '%s\n' 'os-pkgs:alpine:30:30:1' \
-                'lang-pkgs:dotnet-core:13:13:3'
+            printf '%s\n' 'os-pkgs:alpine:21:21:1' \
+                'lang-pkgs:dotnet-core:13:13:3' \
+                'lang-pkgs:nuget:12:12:1'
             ;;
-        api-gateway:alpine) printf '%s\n' 'os-pkgs:alpine:33:33:1' ;;
+        api-gateway:alpine) printf '%s\n' 'os-pkgs:alpine:24:24:1' ;;
         web:alpine) printf '%s\n' 'os-pkgs:alpine:70:70:1' ;;
-        # Retained legacy images and every arm64 inventory intentionally fail
-        # closed until an exact report is reviewed on the deployment host.
+        # Retained legacy images and every unlisted arm64 inventory
+        # intentionally fail closed until an exact report is reviewed on the
+        # deployment host.  Production rollback entries must include the exact
+        # immutable image ID in this key; never add a service/family wildcard.
+        #
+        # qdrant-rollback:debian:arm64)
+        #     [ "$image_id" = sha256:<reviewed-image-id> ] || return 1
+        #     printf '%s\n' 'os-pkgs:debian:<min>:<max>:<result-count>'
+        #     ;;
+        # postgres-rollback:<family>:arm64) ...
+        *) return 1 ;;
+    esac
+}
+
+reviewed_legacy_finding_sha256() {
+    local service="$1" architecture="$2" os_family="$3" image_id="$4" value
+    case "$service" in qdrant-rollback|postgres-rollback) ;; *) return 1 ;; esac
+    if [ "$TEST_MODE" = "1" ]; then
+        [ "${DIVA_STATEFUL_TEST_LEGACY_SCAN_CONTRACT:-reviewed}" = reviewed ] \
+            || return 1
+        case "$service" in
+            qdrant-rollback) value=${DIVA_STATEFUL_TEST_QDRANT_FINDING_SHA256:-} ;;
+            postgres-rollback) value=${DIVA_STATEFUL_TEST_POSTGRES_FINDING_SHA256:-} ;;
+        esac
+        if [ -n "$value" ]; then
+            case "$value" in *[!0-9a-f]* ) return 1 ;; esac
+            [ "${#value}" -eq 64 ] || return 1
+            printf '%s\n' "$value"
+        fi
+        return 0
+    fi
+    # No production legacy finding contract exists before the first SBC
+    # calibration.  After review, add only exact four-part keys below and emit
+    # one canonical finding SHA-256 per line.  Returning success with no output
+    # is the explicit reviewed-zero-findings contract; returning failure means
+    # calibration remains mandatory.
+    case "$service:$architecture:$os_family:$image_id" in
+        # qdrant-rollback:arm64:debian:sha256:<reviewed-image-id>)
+        #     printf '%s\n' <reviewed-finding-sha256> ...
+        #     ;;
+        # postgres-rollback:arm64:<family>:sha256:<reviewed-image-id>) ...
         *) return 1 ;;
     esac
 }
@@ -565,6 +976,7 @@ prepare_image_scan_database() {
     if [ "$TEST_MODE" = "1" ]; then
         run_bounded_command "$BUILD_TIMEOUT_SECONDS" env -i \
             PATH=/usr/bin:/bin "FAKE_STATE=${FAKE_STATE:-}" \
+            "FAKE_SCENARIO=${FAKE_SCENARIO:-}" \
             "$TRIVY_COMMAND" --config "$TRIVY_EMPTY_CONFIG" \
             --cache-dir "$TRIVY_RUN_CACHE" image --download-db-only \
             || return 1
@@ -596,18 +1008,34 @@ prepare_image_scan_database() {
 
 write_scan_calibration_evidence() {
     local service="$1" report="$2" image_id="$3" architecture="$4" \
-        expected_os="$5" expected_family="$6" output="$7"
-    "$PYTHON_COMMAND" -I - "$service" "$report" "$image_id" "$architecture" \
-        "$expected_os" "$expected_family" "$TRIVY_RUN_CACHE/db/metadata.json" \
+        expected_os="$5" expected_family="$6" allow_findings="$7" output="$8"
+    case "$allow_findings" in 0|1) ;; *) return 1 ;; esac
+    "$PYTHON_COMMAND" -I -B - "$service" "$report" "$image_id" "$architecture" \
+        "$expected_os" "$expected_family" "$allow_findings" \
+        "$IMAGE_SCAN_VALIDATOR_RELEASE" \
+        "$TRIVY_RUN_CACHE/db/metadata.json" \
         "$TRIVY_RUN_CACHE/db/trivy.db" "$output" <<'PY'
 import hashlib
+import importlib.util
 import json
 import os
 import stat
 import sys
 
 (service, report_path, image_id, architecture, expected_os, expected_family,
- metadata_path, database_path, output_path) = sys.argv[1:]
+ allow_findings_text, validator_path, metadata_path, database_path,
+ output_path) = sys.argv[1:]
+allow_findings = allow_findings_text == "1"
+if allow_findings_text not in {"0", "1"}:
+    raise RuntimeError("invalid calibration finding policy")
+if allow_findings and service not in {"qdrant-rollback", "postgres-rollback"}:
+    raise RuntimeError("only rollback images may calibrate vulnerability findings")
+spec = importlib.util.spec_from_file_location("diva_image_scan_validator", validator_path)
+if spec is None or spec.loader is None:
+    raise RuntimeError("image scan validator helper cannot be loaded")
+validator = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = validator
+spec.loader.exec_module(validator)
 
 def open_plain(path, maximum):
     before = os.lstat(path)
@@ -678,15 +1106,19 @@ if expected_family != "auto" and family != expected_family:
     raise RuntimeError("scan report OS family changed")
 inventory = {}
 total = 0
+findings = []
 results = report.get("Results")
 if not isinstance(results, list) or not results:
     raise RuntimeError("scan report results are empty")
 for result in results:
-    if not isinstance(result, dict) or result.get("Vulnerabilities") not in (None, []):
-        raise RuntimeError("scan report contains findings or malformed results")
+    if not isinstance(result, dict):
+        raise RuntimeError("scan result is malformed")
     key = (result.get("Class"), result.get("Type"))
     if not all(isinstance(value, str) and value for value in key):
         raise RuntimeError("scan inventory key is invalid")
+    target = result.get("Target")
+    if not isinstance(target, str) or not target or target == "-" or len(target) > 4096:
+        raise RuntimeError("scan target is invalid")
     packages = result.get("Packages")
     if not isinstance(packages, list) or not packages:
         raise RuntimeError("scan inventory is empty")
@@ -699,11 +1131,30 @@ for result in results:
     row["packageCount"] += len(packages)
     row["resultCount"] += 1
     total += len(packages)
+    vulnerabilities = result.get("Vulnerabilities")
+    if vulnerabilities is None:
+        vulnerabilities = []
+    if not isinstance(vulnerabilities, list):
+        raise RuntimeError("scan findings are malformed")
+    if vulnerabilities and not allow_findings:
+        raise RuntimeError("non-rollback calibration contains a vulnerability finding")
+    for vulnerability in vulnerabilities:
+        projection = validator.canonical_finding_projection(result, vulnerability)
+        findings.append({
+            **projection,
+            "sha256": validator.finding_fingerprint_sha256(result, vulnerability),
+        })
+        if len(findings) > 10000:
+            raise RuntimeError("scan finding count exceeds the calibration safety limit")
 evidence = {
     "architecture": architecture,
     "databaseMetadataSha256": metadata_sha256,
     "databaseSha256": database_sha256,
     "imageId": image_id,
+    "findings": sorted(findings, key=lambda item: (
+        item["sha256"], item["Target"], item.get("PkgName") or ""
+    )),
+    "highCriticalCount": len(findings),
     "inventory": [
         {"class": key[0], "type": key[1], **inventory[key]}
         for key in sorted(inventory)
@@ -713,7 +1164,7 @@ evidence = {
     "packageCount": total,
     "reportSha256": report_sha256,
     "service": service,
-    "status": "requires-reviewed-exact-inventory-bound",
+    "status": "requires-reviewed-exact-inventory-and-finding-contract",
 }
 payload = (json.dumps(evidence, ensure_ascii=True, sort_keys=True,
                       separators=(",", ":")) + "\n").encode()
@@ -734,7 +1185,18 @@ scan_exact_image() {
     local service="$1" source_reference="$2" expected_image_id="$3" \
         expected_family="$4" before_id after_id architecture expected_os report receipt \
         validation_result verification_result started_at completed_at actual_family bounds \
-        inventory_bound receipt_sha calibration
+        inventory_bound receipt_sha calibration scan_exit_code allow_findings \
+        finding_contract_reviewed finding_sha256 allowed_finding
+    case "$service" in
+        qdrant-rollback|postgres-rollback)
+            scan_exit_code=0
+            allow_findings=1
+            ;;
+        *)
+            scan_exit_code=1
+            allow_findings=0
+            ;;
+    esac
     before_id=$(query_image_id "$source_reference") || return 1
     [ "$before_id" = "$expected_image_id" ] || return 1
     architecture=$(run_bounded_docker_read image inspect --format '{{.Architecture}}' \
@@ -758,10 +1220,12 @@ scan_exact_image() {
     if [ "$TEST_MODE" = "1" ]; then
         run_bounded_command "$BUILD_TIMEOUT_SECONDS" env -i \
             PATH=/usr/bin:/bin "FAKE_STATE=${FAKE_STATE:-}" \
+            "FAKE_SCENARIO=${FAKE_SCENARIO:-}" \
             "$TRIVY_COMMAND" --config "$TRIVY_EMPTY_CONFIG" \
             --cache-dir "$TRIVY_RUN_CACHE" image --ignorefile "$TRIVY_EMPTY_IGNORE" \
             --skip-db-update --image-src docker --scanners vuln \
-            --severity HIGH,CRITICAL --format json --list-all-pkgs --exit-code 1 \
+            --severity HIGH,CRITICAL --format json --list-all-pkgs \
+            --exit-code "$scan_exit_code" \
             --output "$report" "$expected_image_id" || return 1
     else
         run_bounded_command "$BUILD_TIMEOUT_SECONDS" env -i \
@@ -770,7 +1234,8 @@ scan_exact_image() {
             "$TRIVY_COMMAND" --config "$TRIVY_EMPTY_CONFIG" \
             --cache-dir "$TRIVY_RUN_CACHE" image --ignorefile "$TRIVY_EMPTY_IGNORE" \
             --skip-db-update --image-src docker --scanners vuln \
-            --severity HIGH,CRITICAL --format json --list-all-pkgs --exit-code 1 \
+            --severity HIGH,CRITICAL --format json --list-all-pkgs \
+            --exit-code "$scan_exit_code" \
             --output "$report" "$expected_image_id" || return 1
     fi
     completed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -778,18 +1243,28 @@ scan_exact_image() {
     durable_sync_path "$report" || return 1
     after_id=$(query_image_id "$source_reference") || return 1
     [ "$after_id" = "$expected_image_id" ] || return 1
-    actual_family=$("$PYTHON_COMMAND" -I -c \
+    actual_family=$("$PYTHON_COMMAND" -I -B -c \
         'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["Metadata"]["OS"]["Family"])' \
         "$report") || return 1
     case "$actual_family" in ''|*[!a-zA-Z0-9_.-]*) return 1 ;; esac
     [ "$expected_family" = auto ] || [ "$actual_family" = "$expected_family" ] || return 1
     bounds=$(reviewed_inventory_bounds "$service" "$architecture" "$actual_family" \
-        2>/dev/null) || bounds=""
-    if [ -z "$bounds" ]; then
+        "$expected_image_id" 2>/dev/null) || bounds=""
+    finding_contract_reviewed=true
+    finding_sha256=""
+    if [ "$allow_findings" = 1 ]; then
+        if ! finding_sha256=$(reviewed_legacy_finding_sha256 "$service" \
+            "$architecture" "$actual_family" "$expected_image_id" 2>/dev/null); then
+            finding_contract_reviewed=false
+            finding_sha256=""
+        fi
+    fi
+    if [ -z "$bounds" ] || [ "$finding_contract_reviewed" != true ]; then
         calibration="$RUN_DIR/evidence/image-scan-$service.calibration.json"
         [ ! -e "$calibration" ] && [ ! -L "$calibration" ] || return 1
         write_scan_calibration_evidence "$service" "$report" "$expected_image_id" \
-            "$architecture" "$expected_os" "$expected_family" "$calibration" || return 1
+            "$architecture" "$expected_os" "$expected_family" "$allow_findings" \
+            "$calibration" || return 1
         chmod 600 "$calibration" || return 1
         durable_sync_path "$calibration" || return 1
         SCAN_CALIBRATION_REQUIRED=true
@@ -797,7 +1272,7 @@ scan_exact_image() {
             "$(sha256sum "$calibration" | awk '{print $1}')"
         return 0
     fi
-    set -- "$PYTHON_COMMAND" -I "$IMAGE_SCAN_VALIDATOR_RELEASE" validate \
+    set -- "$PYTHON_COMMAND" -I -B "$IMAGE_SCAN_VALIDATOR_RELEASE" validate \
         --service "$service" --expected-image-id "$expected_image_id" \
         --expected-architecture "$architecture" --expected-os "$expected_os" \
         --expected-os-family "$actual_family" --report "$report" \
@@ -806,12 +1281,15 @@ scan_exact_image() {
     for inventory_bound in $bounds; do
         set -- "$@" --inventory-bound "$inventory_bound"
     done
+    for allowed_finding in $finding_sha256; do
+        set -- "$@" --allowed-finding-sha256 "$allowed_finding"
+    done
     set -- "$@" --scanner-version 0.74.0 --scanner-sha256 "$TRIVY_SCANNER_SHA" \
         --scan-started-at "$started_at" --scan-completed-at "$completed_at"
     "$@" > "$validation_result" || return 1
     chmod 600 "$receipt" "$validation_result" || return 1
     receipt_sha=$(sha256sum "$receipt" | awk '{print $1}') || return 1
-    "$PYTHON_COMMAND" -I "$IMAGE_SCAN_VALIDATOR_RELEASE" verify \
+    "$PYTHON_COMMAND" -I -B "$IMAGE_SCAN_VALIDATOR_RELEASE" verify \
         --service "$service" --expected-image-id "$expected_image_id" \
         --expected-architecture "$architecture" --expected-os "$expected_os" \
         --expected-os-family "$actual_family" --report "$report" \
@@ -848,10 +1326,10 @@ verify_exact_image_scan_receipt() {
     if [ "$TEST_MODE" != "1" ]; then
         [ "$architecture" = arm64 ] || return 1
     fi
-    actual_family=$("$PYTHON_COMMAND" -I -c \
+    actual_family=$("$PYTHON_COMMAND" -I -B -c \
         'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["Metadata"]["OS"]["Family"])' \
         "$report") || return 1
-    "$PYTHON_COMMAND" -I "$IMAGE_SCAN_VALIDATOR_RELEASE" verify \
+    "$PYTHON_COMMAND" -I -B "$IMAGE_SCAN_VALIDATOR_RELEASE" verify \
         --service "$service" --expected-image-id "$expected_image_id" \
         --expected-architecture "$architecture" --expected-os "$expected_os" \
         --expected-os-family "$actual_family" --report "$report" \
@@ -944,13 +1422,297 @@ run_bounded_docker_health_probe() {
     esac
 }
 
+read_pipeline_github_identity_digest_as_owner() {
+    local digest_record old_ifs
+    digest_record=$(
+        (
+            exec 9<&-
+            if [ "$TEST_MODE" = "1" ]; then
+                run_bounded_command 30 /usr/bin/env -i \
+                    HOME="$PIPELINE_GITHUB_HOME" PATH=/usr/bin:/bin \
+                    "$SETPRIV_COMMAND" \
+                    --reuid="$PIPELINE_RUNTIME_UID" --regid="$PIPELINE_RUNTIME_GID" \
+                    --clear-groups --no-new-privs \
+                    --inh-caps=-all --ambient-caps=-all --bounding-set=-all -- \
+                    /usr/bin/sha256sum -- "$PIPELINE_GITHUB_IDENTITY"
+            else
+                run_bounded_command 30 /usr/bin/env -i \
+                    HOME="$PIPELINE_GITHUB_HOME" PATH=/usr/bin:/bin \
+                    /usr/bin/setpriv \
+                    --reuid="$PIPELINE_RUNTIME_UID" --regid="$PIPELINE_RUNTIME_GID" \
+                    --clear-groups --no-new-privs \
+                    --inh-caps=-all --ambient-caps=-all --bounding-set=-all -- \
+                    /usr/bin/sha256sum -- "$PIPELINE_GITHUB_IDENTITY"
+            fi
+        )
+    ) || return 1
+    old_ifs=$IFS
+    IFS=' '
+    set -- $digest_record
+    IFS=$old_ifs
+    [ "$#" -eq 2 ] \
+        && { [ "$2" = "$PIPELINE_GITHUB_IDENTITY" ] \
+            || [ "$2" = "*$PIPELINE_GITHUB_IDENTITY" ]; } || return 1
+    case "$1" in ''|*[!0-9a-f]*) return 1 ;; esac
+    [ "${#1}" -eq 64 ] || return 1
+    printf '%s\n' "$1"
+}
+
+capture_pipeline_github_ssh_identity() {
+    local identity_digest
+    identity_digest=$(read_pipeline_github_identity_digest_as_owner) || return 1
+    /usr/bin/stat -c 'home=%d:%i:%u:%g:%a' "$PIPELINE_GITHUB_HOME" \
+        && /usr/bin/stat -c 'ssh=%d:%i:%u:%g:%a' "$PIPELINE_GITHUB_HOME/.ssh" \
+        && /usr/bin/stat -c 'key=%d:%i:%u:%g:%a:%h:%s:%Y' \
+            "$PIPELINE_GITHUB_IDENTITY" \
+        && printf 'key-sha256=%s\n' "$identity_digest"
+}
+
+validate_pipeline_github_ssh_identity() {
+    local expected_uid expected_gid expected_home_mode passwd_record old_ifs current_identity
+    case "$PIPELINE_GITHUB_USER:$PIPELINE_GITHUB_HOME:$PIPELINE_GITHUB_IDENTITY" in
+        *[!A-Za-z0-9_./:-]*) fail "pipeline GitHub SSH path contract is invalid"; return 1 ;;
+    esac
+    [ "$PIPELINE_GITHUB_IDENTITY" \
+        = "$PIPELINE_GITHUB_HOME/.ssh/id_ed25519_diva_data_pipeline_github" ] \
+        || { fail "pipeline GitHub SSH identity path is not the fixed dedicated key"; return 1; }
+    if [ "$TEST_MODE" = "1" ]; then
+        expected_uid=$(/usr/bin/id -u) || return 1
+        expected_gid=$(/usr/bin/id -g) || return 1
+        expected_home_mode=700
+    else
+        [ "$PIPELINE_GITHUB_USER" = orangepi ] \
+            && [ "$PIPELINE_GITHUB_HOME" = /home/orangepi ] \
+            || { fail "pipeline GitHub SSH account is not the fixed production account"; return 1; }
+        passwd_record=$(/usr/bin/getent passwd "$PIPELINE_GITHUB_USER") \
+            || { fail "pipeline GitHub SSH account is unavailable"; return 1; }
+        old_ifs=$IFS
+        IFS=:
+        set -- $passwd_record
+        IFS=$old_ifs
+        [ "$#" -eq 7 ] && [ "$1" = "$PIPELINE_GITHUB_USER" ] \
+            && [ "$6" = "$PIPELINE_GITHUB_HOME" ] \
+            || { fail "pipeline GitHub SSH passwd identity is invalid"; return 1; }
+        expected_uid=$3
+        expected_gid=$4
+        expected_home_mode=750
+        [ "$(/usr/bin/readlink -f -- /home)" = /home ] \
+            && [ "$(/usr/bin/stat -c '%u:%g:%a' /home)" = 0:0:755 ] \
+            || { fail "pipeline GitHub SSH /home ancestry is invalid"; return 1; }
+    fi
+    case "$expected_uid:$expected_gid" in
+        *[!0-9:]*|:|*:|*::*|0:*) fail "pipeline GitHub SSH uid/gid is invalid"; return 1 ;;
+    esac
+    [ "$PIPELINE_RUNTIME_UID:$PIPELINE_RUNTIME_GID" = "$expected_uid:$expected_gid" ] \
+        && [ "$(/usr/bin/stat -c '%u:%g' "$PIPELINE_ROOT")" \
+            = "$expected_uid:$expected_gid" ] \
+        || { fail "pipeline GitHub SSH account does not own the pipeline repository"; return 1; }
+    [ "$(/usr/bin/readlink -f -- "$PIPELINE_GITHUB_HOME")" \
+        = "$PIPELINE_GITHUB_HOME" ] \
+        && [ "$(/usr/bin/readlink -f -- "$PIPELINE_GITHUB_HOME/.ssh")" \
+            = "$PIPELINE_GITHUB_HOME/.ssh" ] \
+        && [ "$(/usr/bin/readlink -f -- "$PIPELINE_GITHUB_IDENTITY")" \
+            = "$PIPELINE_GITHUB_IDENTITY" ] \
+        || { fail "pipeline GitHub SSH ancestry contains a link"; return 1; }
+    [ -d "$PIPELINE_GITHUB_HOME" ] && [ ! -L "$PIPELINE_GITHUB_HOME" ] \
+        && [ "$(/usr/bin/stat -c '%u:%g:%a' "$PIPELINE_GITHUB_HOME")" \
+            = "$expected_uid:$expected_gid:$expected_home_mode" ] \
+        || { fail "pipeline GitHub SSH home metadata is invalid"; return 1; }
+    [ -d "$PIPELINE_GITHUB_HOME/.ssh" ] && [ ! -L "$PIPELINE_GITHUB_HOME/.ssh" ] \
+        && [ "$(/usr/bin/stat -c '%u:%g:%a' "$PIPELINE_GITHUB_HOME/.ssh")" \
+            = "$expected_uid:$expected_gid:700" ] \
+        || { fail "pipeline GitHub SSH directory metadata is invalid"; return 1; }
+    [ -f "$PIPELINE_GITHUB_IDENTITY" ] && [ ! -L "$PIPELINE_GITHUB_IDENTITY" ] \
+        && [ "$(/usr/bin/stat -c '%u:%g:%a:%h' "$PIPELINE_GITHUB_IDENTITY")" \
+            = "$expected_uid:$expected_gid:600:1" ] \
+        || { fail "pipeline GitHub SSH private-key metadata is invalid"; return 1; }
+    current_identity=$(capture_pipeline_github_ssh_identity) \
+        || { fail "pipeline GitHub SSH private-key identity could not be captured as owner"; return 1; }
+    if [ -z "$PIPELINE_GITHUB_SSH_IDENTITY" ]; then
+        PIPELINE_GITHUB_SSH_IDENTITY=$current_identity
+    else
+        [ "$current_identity" = "$PIPELINE_GITHUB_SSH_IDENTITY" ] \
+            || { fail "pipeline GitHub SSH private-key identity changed"; return 1; }
+    fi
+}
+
+validate_github_host_key_file() {
+    local expected_owner expected_mode current_identity
+    [ -n "$GITHUB_HOST_KEY_FILE_IDENTITY" ] || return 1
+    if [ "$TEST_MODE" = "1" ]; then
+        expected_owner="$(/usr/bin/id -u):$(/usr/bin/id -g)"
+        expected_mode=400
+    else
+        expected_owner=0:0
+        expected_mode=444
+    fi
+    [ -f "$GITHUB_HOST_KEY_FILE" ] && [ ! -L "$GITHUB_HOST_KEY_FILE" ] \
+        && [ "$(/usr/bin/stat -c '%u:%g:%a:%h' "$GITHUB_HOST_KEY_FILE")" \
+            = "$expected_owner:$expected_mode:1" ] \
+        && [ "$(/usr/bin/cat "$GITHUB_HOST_KEY_FILE")" = "$GITHUB_ED25519_HOST_KEY" ] \
+        && [ "$(/usr/bin/wc -l < "$GITHUB_HOST_KEY_FILE")" -eq 1 ] || return 1
+    current_identity=$(/usr/bin/stat -c '%d:%i' "$GITHUB_HOST_KEY_FILE") || return 1
+    [ "$current_identity" = "$GITHUB_HOST_KEY_FILE_IDENTITY" ]
+}
+
+prepare_github_host_key_file() {
+    local parent
+    parent=${GITHUB_HOST_KEY_FILE%/*}
+    [ -n "$parent" ] || return 1
+    if [ "$TEST_MODE" = "1" ]; then
+        [ "$parent" = "$STATE_ROOT" ] \
+            && [ -d "$parent" ] && [ ! -L "$parent" ] || return 1
+    else
+        [ "$parent" = /run ] \
+            && validate_trusted_system_directory /run \
+            && [ "$(/usr/bin/readlink -f -- /run)" = /run ] || return 1
+    fi
+    [ ! -e "$GITHUB_HOST_KEY_FILE" ] && [ ! -L "$GITHUB_HOST_KEY_FILE" ] \
+        || return 1
+    if ! (set -C; printf '%s\n' "$GITHUB_ED25519_HOST_KEY" \
+        > "$GITHUB_HOST_KEY_FILE") 2>/dev/null; then
+        return 1
+    fi
+    GITHUB_HOST_KEY_FILE_OWNED=true
+    /usr/bin/chmod 444 "$GITHUB_HOST_KEY_FILE" || return 1
+    GITHUB_HOST_KEY_FILE_IDENTITY=$(/usr/bin/stat -c '%d:%i' \
+        "$GITHUB_HOST_KEY_FILE") || return 1
+    validate_github_host_key_file \
+        && durable_sync_path "$GITHUB_HOST_KEY_FILE" \
+        && durable_sync_path "$parent"
+}
+
+release_github_host_key_file() {
+    local parent current_identity expected_owner
+    [ "$GITHUB_HOST_KEY_FILE_OWNED" = "true" ] || return 0
+    [ -n "$GITHUB_HOST_KEY_FILE_IDENTITY" ] || return 1
+    parent=${GITHUB_HOST_KEY_FILE%/*}
+    if [ "$TEST_MODE" = "1" ]; then
+        [ "$parent" = "$STATE_ROOT" ] || return 1
+        expected_owner="$(/usr/bin/id -u):$(/usr/bin/id -g)"
+    else
+        [ "$parent" = /run ] || return 1
+        expected_owner=0:0
+    fi
+    [ -f "$GITHUB_HOST_KEY_FILE" ] && [ ! -L "$GITHUB_HOST_KEY_FILE" ] \
+        && [ "$(/usr/bin/stat -c '%u:%g:%h' "$GITHUB_HOST_KEY_FILE")" \
+            = "$expected_owner:1" ] || return 1
+    current_identity=$(/usr/bin/stat -c '%d:%i' "$GITHUB_HOST_KEY_FILE") || return 1
+    [ "$current_identity" = "$GITHUB_HOST_KEY_FILE_IDENTITY" ] || return 1
+    /usr/bin/rm -f -- "$GITHUB_HOST_KEY_FILE" || return 1
+    [ ! -e "$GITHUB_HOST_KEY_FILE" ] && [ ! -L "$GITHUB_HOST_KEY_FILE" ] \
+        || return 1
+    durable_sync_path "$parent" || return 1
+    GITHUB_HOST_KEY_FILE_OWNED=false
+    GITHUB_HOST_KEY_FILE_IDENTITY=""
+}
+
 trusted_git() {
-    run_bounded_read_command env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE \
-        -u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES \
-        -u GIT_CONFIG_COUNT -u GIT_CONFIG_PARAMETERS \
-        GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
-        GIT_NO_REPLACE_OBJECTS=1 \
-        git -c core.fsmonitor=false -c core.hooksPath=/dev/null "$@"
+    if [ "$TEST_MODE" = "1" ]; then
+        run_bounded_read_command /usr/bin/env -i \
+            HOME="${HOME:-/var/empty}" PATH="$PATH" \
+            FAKE_STATE="${FAKE_STATE:-}" FAKE_SCENARIO="${FAKE_SCENARIO:-}" \
+            GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
+            GIT_NO_REPLACE_OBJECTS=1 GIT_TERMINAL_PROMPT=0 \
+            git -c "safe.directory=$ROOT_DIR" -c "safe.directory=$PIPELINE_ROOT" \
+            -c protocol.allow=never -c protocol.https.allow=always \
+            -c credential.helper= -c core.fsmonitor=false -c core.hooksPath=/dev/null "$@"
+    else
+        run_bounded_read_command /usr/bin/env -i \
+            HOME=/var/empty PATH=/usr/bin:/bin \
+            GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
+            GIT_NO_REPLACE_OBJECTS=1 GIT_TERMINAL_PROMPT=0 \
+            /usr/bin/git -c "safe.directory=$ROOT_DIR" \
+            -c "safe.directory=$PIPELINE_ROOT" \
+            -c protocol.allow=never -c protocol.https.allow=always \
+            -c credential.helper= -c core.fsmonitor=false -c core.hooksPath=/dev/null "$@"
+    fi
+}
+
+trusted_pipeline_remote_git() {
+    local remote_url="$1" remote_ref="$2" ssh_command remote_status=0
+    case "$remote_url:$remote_ref" in
+        git@github.com:conei7/diva-data-pipeline.git:refs/heads/main) ;;
+        *) return 1 ;;
+    esac
+    validate_pipeline_github_ssh_identity \
+        && validate_github_host_key_file || return 1
+    ssh_command="/usr/bin/ssh -F /dev/null -o HostName=github.com -o User=git -o Port=22 -o BatchMode=yes -o IdentitiesOnly=yes -o IdentityAgent=none -o IdentityFile=$PIPELINE_GITHUB_IDENTITY -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$GITHUB_HOST_KEY_FILE -o GlobalKnownHostsFile=/dev/null -o HostKeyAlgorithms=ssh-ed25519 -o CheckHostIP=no -o UpdateHostKeys=no -o PasswordAuthentication=no -o KbdInteractiveAuthentication=no -o PreferredAuthentications=publickey -o ConnectTimeout=20 -o ConnectionAttempts=1 -o ControlMaster=no -o ControlPath=none -o ProxyCommand=none -o ProxyJump=none -o PermitLocalCommand=no -o LogLevel=ERROR"
+    if [ "$TEST_MODE" = "1" ]; then
+        (
+            exec 9<&-
+            run_bounded_command 30 /usr/bin/env -i \
+                HOME="$PIPELINE_GITHUB_HOME" PATH="$PATH" \
+                GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
+                GIT_NO_REPLACE_OBJECTS=1 GIT_TERMINAL_PROMPT=0 \
+                GIT_SSH_VARIANT=ssh GIT_SSH_COMMAND="$ssh_command" \
+                FAKE_STATE="${FAKE_STATE:-}" FAKE_SCENARIO="${FAKE_SCENARIO:-}" \
+                FAKE_GITHUB_HOST_KEY_FILE="$GITHUB_HOST_KEY_FILE" \
+                FAKE_PIPELINE_GITHUB_HOME="$PIPELINE_GITHUB_HOME" \
+                FAKE_PIPELINE_GITHUB_IDENTITY="$PIPELINE_GITHUB_IDENTITY" \
+                "$SETPRIV_COMMAND" \
+                --reuid="$PIPELINE_RUNTIME_UID" --regid="$PIPELINE_RUNTIME_GID" \
+                --clear-groups --no-new-privs \
+                --inh-caps=-all --ambient-caps=-all --bounding-set=-all -- \
+                git -c "safe.directory=$ROOT_DIR" -c "safe.directory=$PIPELINE_ROOT" \
+                -c protocol.allow=never -c protocol.ssh.allow=always \
+                -c credential.helper= -c core.fsmonitor=false \
+                -c core.hooksPath=/dev/null -C / ls-remote --exit-code \
+                "$remote_url" "$remote_ref"
+        ) || remote_status=$?
+    else
+        (
+            exec 9<&-
+            run_bounded_command 30 /usr/bin/env -i \
+                HOME="$PIPELINE_GITHUB_HOME" PATH=/usr/bin:/bin \
+                GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
+                GIT_NO_REPLACE_OBJECTS=1 GIT_TERMINAL_PROMPT=0 \
+                GIT_SSH_VARIANT=ssh GIT_SSH_COMMAND="$ssh_command" \
+                /usr/bin/setpriv \
+                --reuid="$PIPELINE_RUNTIME_UID" --regid="$PIPELINE_RUNTIME_GID" \
+                --clear-groups --no-new-privs \
+                --inh-caps=-all --ambient-caps=-all --bounding-set=-all -- \
+                /usr/bin/git -c "safe.directory=$ROOT_DIR" \
+                -c "safe.directory=$PIPELINE_ROOT" \
+                -c protocol.allow=never -c protocol.ssh.allow=always \
+                -c credential.helper= -c core.fsmonitor=false \
+                -c core.hooksPath=/dev/null -C / ls-remote --exit-code \
+                "$remote_url" "$remote_ref"
+        ) || remote_status=$?
+    fi
+    validate_pipeline_github_ssh_identity \
+        && validate_github_host_key_file || return 1
+    [ "$remote_status" -eq 0 ]
+}
+
+verify_release_repository_provenance() {
+    local repository="$1" expected_origin="$2" expected_head="$3" \
+        branch fetch_url push_url origin_main live_main expected_live
+    branch=$(trusted_git -C "$repository" symbolic-ref --quiet --short HEAD) \
+        || return 1
+    [ "$branch" = main ] || return 1
+    fetch_url=$(trusted_git -C "$repository" remote get-url --all origin) \
+        || return 1
+    push_url=$(trusted_git -C "$repository" remote get-url --push --all origin) \
+        || return 1
+    [ "$fetch_url" = "$expected_origin" ] \
+        && [ "$push_url" = "$expected_origin" ] || return 1
+    origin_main=$(trusted_git -C "$repository" rev-parse --verify \
+        'refs/remotes/origin/main^{commit}') || return 1
+    [ "$origin_main" = "$expected_head" ] || return 1
+    if [ "$repository" = "$PIPELINE_ROOT" ] \
+        && [ "$expected_origin" = "$PIPELINE_OFFICIAL_ORIGIN" ]; then
+        live_main=$(trusted_pipeline_remote_git "$expected_origin" refs/heads/main) \
+            || return 1
+    elif [ "$repository" = "$ROOT_DIR" ] \
+        && [ "$expected_origin" = "$PLAYER_OFFICIAL_ORIGIN" ]; then
+        live_main=$(trusted_git -C / ls-remote --exit-code "$expected_origin" \
+            refs/heads/main) || return 1
+    else
+        return 1
+    fi
+    expected_live=$(printf '%s\trefs/heads/main' "$expected_head") || return 1
+    [ "$live_main" = "$expected_live" ]
 }
 
 verify_tracked_runtime_source() {
@@ -1171,7 +1933,7 @@ verify_container_restart_policy() {
 verify_loopback_port_bindings() {
     local bindings="$1"
     shift
-    run_bounded_read_command "$PYTHON_COMMAND" -I - verify-port-bindings "$bindings" "$@" <<'PY'
+    run_bounded_read_command "$PYTHON_COMMAND" -I -B - verify-port-bindings "$bindings" "$@" <<'PY'
 import json
 import sys
 
@@ -1250,30 +2012,41 @@ run_bounded_data_mutation() {
     run_guarded_docker_mutation "$DATA_MUTATION_TIMEOUT_SECONDS" 30 "$@"
 }
 
+verify_backend_env_metadata() {
+    local path="${1:-$BACKEND_ENV_FILE}"
+    [ -n "$BACKEND_ENV_OWNER_UID" ] && [ -n "$BACKEND_ENV_OWNER_GID" ] \
+        && [ -f "$path" ] && [ ! -L "$path" ] \
+        && [ "$(stat -c '%u:%g:%a:%h' "$path")" \
+            = "$BACKEND_ENV_OWNER_UID:$BACKEND_ENV_OWNER_GID:600:1" ]
+}
+
 write_backend_qdrant_volume_binding() {
     local expected_current="$1" next_volume="$2"
     [ "$BACKEND_ENV_MUTATED" = "false" ] || return 1
-    [ -f "$BACKEND_ENV_FILE" ] && [ ! -L "$BACKEND_ENV_FILE" ] \
-        && [ "$(stat -c '%a' "$BACKEND_ENV_FILE")" = 600 ] || return 1
+    verify_backend_env_metadata || return 1
     [ ! -e "$BACKEND_ENV_BACKUP" ] && [ ! -L "$BACKEND_ENV_BACKUP" ] || return 1
     BACKEND_ENV_BACKUP_OWNED=true
     cp --preserve=mode,ownership,timestamps -- "$BACKEND_ENV_FILE" "$BACKEND_ENV_BACKUP" \
         || return 1
     chmod 600 "$BACKEND_ENV_BACKUP" || return 1
+    verify_backend_env_metadata "$BACKEND_ENV_BACKUP" || return 1
     durable_sync_path "$BACKEND_ENV_BACKUP" || return 1
     record_state qdrant.compose_volume_binding intent-before-env-replace
     # Arm recovery before entering the replace operation.  The helper can fail
     # after os.replace() (for example while syncing the parent directory), so
     # setting this only after it returned would lose the rollback boundary.
     BACKEND_ENV_MUTATED=true
-    "$PIPELINE_PYTHON" -I - "$BACKEND_ENV_FILE" "$expected_current" "$next_volume" <<'PY' \
+    "$PYTHON_COMMAND" -I -B - "$BACKEND_ENV_FILE" "$expected_current" "$next_volume" \
+        "$BACKEND_ENV_OWNER_UID" "$BACKEND_ENV_OWNER_GID" <<'PY' \
         || return 1
 import os
 import re
 import stat
 import sys
 
-path, expected, replacement = sys.argv[1:]
+path, expected, replacement, expected_uid_text, expected_gid_text = sys.argv[1:]
+expected_uid = int(expected_uid_text)
+expected_gid = int(expected_gid_text)
 if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", replacement) is None:
     raise SystemExit(2)
 info = os.lstat(path)
@@ -1282,7 +2055,9 @@ windows_contract_test = (
 )
 if (
     not stat.S_ISREG(info.st_mode)
+    or info.st_nlink != 1
     or (not windows_contract_test and stat.S_IMODE(info.st_mode) != 0o600)
+    or (not windows_contract_test and (info.st_uid, info.st_gid) != (expected_uid, expected_gid))
 ):
     raise SystemExit(3)
 with open(path, "rb") as handle:
@@ -1307,6 +2082,9 @@ flags = (os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_CLOEXEC", 0)
          | getattr(os, "O_BINARY", 0))
 descriptor = os.open(temporary, flags, 0o600)
 try:
+    if not windows_contract_test:
+        os.fchmod(descriptor, 0o600)
+        os.fchown(descriptor, expected_uid, expected_gid)
     with os.fdopen(descriptor, "wb", closefd=False) as handle:
         handle.write(encoded)
         handle.flush()
@@ -1315,6 +2093,17 @@ finally:
     os.close(descriptor)
 os.replace(temporary, path)
 os.chmod(path, 0o600)
+replaced = os.lstat(path)
+if (
+    not stat.S_ISREG(replaced.st_mode)
+    or replaced.st_nlink != 1
+    or (not windows_contract_test and stat.S_IMODE(replaced.st_mode) != 0o600)
+    or (
+        not windows_contract_test
+        and (replaced.st_uid, replaced.st_gid) != (expected_uid, expected_gid)
+    )
+):
+    raise RuntimeError("backend environment ownership contract changed after replacement")
 try:
     directory = os.open(
         os.path.dirname(path), os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
@@ -1333,24 +2122,34 @@ else:
     finally:
         os.close(directory)
 PY
+    verify_backend_env_metadata || return 1
     verify_backend_qdrant_volume_binding "$next_volume" || return 1
     record_state qdrant.compose_volume_binding "$next_volume"
 }
 
 verify_backend_qdrant_volume_binding() {
     local expected="$1"
-    "$PIPELINE_PYTHON" -I - "$BACKEND_ENV_FILE" "$expected" <<'PY' || return 1
+    verify_backend_env_metadata || return 1
+    "$PYTHON_COMMAND" -I -B - "$BACKEND_ENV_FILE" "$expected" \
+        "$BACKEND_ENV_OWNER_UID" "$BACKEND_ENV_OWNER_GID" <<'PY' || return 1
 import os
 import stat
 import sys
-path, expected = sys.argv[1:]
+path, expected, expected_uid_text, expected_gid_text = sys.argv[1:]
+expected_uid = int(expected_uid_text)
+expected_gid = int(expected_gid_text)
 info = os.lstat(path)
 windows_contract_test = (
     os.name == "nt" and os.environ.get("DIVA_STATEFUL_TEST_MODE") == "1"
 )
 if (
     not stat.S_ISREG(info.st_mode)
+    or info.st_nlink != 1
     or (not windows_contract_test and stat.S_IMODE(info.st_mode) != 0o600)
+    or (
+        not windows_contract_test
+        and (info.st_uid, info.st_gid) != (expected_uid, expected_gid)
+    )
 ):
     raise SystemExit(2)
 values = []
@@ -1365,15 +2164,16 @@ PY
 
 restore_backend_qdrant_volume_binding() {
     [ "$BACKEND_ENV_MUTATED" = "true" ] || return 0
-    [ -f "$BACKEND_ENV_BACKUP" ] && [ ! -L "$BACKEND_ENV_BACKUP" ] \
-        && [ "$(stat -c '%a' "$BACKEND_ENV_BACKUP")" = 600 ] || return 1
+    verify_backend_env_metadata "$BACKEND_ENV_BACKUP" || return 1
     record_state qdrant.compose_volume_binding restore-intent
     cp --preserve=mode,ownership,timestamps -- "$BACKEND_ENV_BACKUP" \
         "$BACKEND_ENV_FILE.restore.tmp" || return 1
     chmod 600 "$BACKEND_ENV_FILE.restore.tmp" || return 1
+    verify_backend_env_metadata "$BACKEND_ENV_FILE.restore.tmp" || return 1
     durable_sync_path "$BACKEND_ENV_FILE.restore.tmp" || return 1
     mv -f -- "$BACKEND_ENV_FILE.restore.tmp" "$BACKEND_ENV_FILE" || return 1
     durable_sync_path "$(dirname "$BACKEND_ENV_FILE")" || return 1
+    verify_backend_env_metadata || return 1
     BACKEND_ENV_MUTATED=false
     record_state qdrant.compose_volume_binding restored
     discard_backend_env_backup || return 1
@@ -1481,7 +2281,7 @@ validate_backup_evidence() {
     [ "$actual" = "$status_sha" ] || return 1
     actual=$(sha256sum "$manifest_file" | awk '{print $1}') || return 1
     [ "$actual" = "$manifest_sha" ] || return 1
-    run_bounded_read_command "$PYTHON_COMMAND" -I - "$job" "$run_id" "$status_file" "$status_sha" \
+    run_bounded_read_command "$PYTHON_COMMAND" -I -B - "$job" "$run_id" "$status_file" "$status_sha" \
         "$manifest_file" "$manifest_sha" "$max_age_hours" "$expected_host" <<'PY'
 import datetime as dt
 import hashlib
@@ -1529,6 +2329,11 @@ finished = finished.astimezone(dt.timezone.utc)
 created = created.astimezone(dt.timezone.utc)
 completed = completed.astimezone(dt.timezone.utc)
 now = dt.datetime.now(dt.timezone.utc)
+if os.environ.get("DIVA_STATEFUL_TEST_MODE") == "1":
+    offset_text = os.environ.get("DIVA_STATEFUL_TEST_BACKUP_CLOCK_SKEW_HOURS", "0")
+    require(re.fullmatch(r"[0-9]{1,4}", offset_text) is not None,
+            "invalid deterministic backup clock skew")
+    now += dt.timedelta(hours=int(offset_text))
 finished_age = (now - finished).total_seconds()
 created_age = (now - created).total_seconds()
 completed_age = (now - completed).total_seconds()
@@ -1693,7 +2498,8 @@ validate_backup_payload_attestation() {
         qdrant_status="$7" qdrant_manifest="$8" \
         expected_postgres_status_sha="$9" expected_postgres_manifest_sha="${10}" \
         expected_qdrant_status_sha="${11}" expected_qdrant_manifest_sha="${12}" \
-        expected_postgres_run="${13}" expected_qdrant_run="${14}" actual verifier_sha
+        expected_postgres_run="${13}" expected_qdrant_run="${14}" \
+        bridge_receipt_created_at="${15}" actual verifier_sha
     [ -f "$attestation_file" ] && [ ! -L "$attestation_file" ] || return 1
     [ "$(stat -c '%a' "$attestation_file")" = "600" ] || return 1
     case "$attestation_sha:$challenge" in
@@ -1713,13 +2519,14 @@ validate_backup_payload_attestation() {
     verifier_sha=$EXPECTED_BACKUP_ATTESTER_SHA
     case "$verifier_sha" in ''|*[!0-9a-f]*) return 1 ;; esac
     [ "${#verifier_sha}" -eq 64 ] || return 1
-    run_bounded_read_command "$PYTHON_COMMAND" -I - "$attestation_file" "$attestation_sha" \
+    run_bounded_read_command "$PYTHON_COMMAND" -I -B - "$attestation_file" "$attestation_sha" \
         "$challenge" "$expected_host" "$verifier_sha" \
         "$postgres_status" "$postgres_manifest" \
         "$qdrant_status" "$qdrant_manifest" \
         "$expected_postgres_status_sha" "$expected_postgres_manifest_sha" \
         "$expected_qdrant_status_sha" "$expected_qdrant_manifest_sha" \
-        "$expected_postgres_run" "$expected_qdrant_run" <<'PY'
+        "$expected_postgres_run" "$expected_qdrant_run" \
+        "$bridge_receipt_created_at" <<'PY'
 import datetime as dt
 import hashlib
 import json
@@ -1732,7 +2539,7 @@ import sys
     qdrant_status_path, qdrant_manifest_path,
     expected_postgres_status_sha, expected_postgres_manifest_sha,
     expected_qdrant_status_sha, expected_qdrant_manifest_sha,
-    expected_postgres_run, expected_qdrant_run,
+    expected_postgres_run, expected_qdrant_run, bridge_receipt_created_at,
 ) = sys.argv[1:]
 
 def load(path):
@@ -1767,8 +2574,20 @@ verified_at = dt.datetime.fromisoformat(
     str(attestation.get("verifiedAt") or "").replace("Z", "+00:00")
 )
 require(verified_at.tzinfo is not None, "backup attestation timestamp has no timezone")
-age = (dt.datetime.now(dt.timezone.utc) - verified_at.astimezone(dt.timezone.utc)).total_seconds()
-require(-300 <= age <= 900, "backup payload attestation is not fresh")
+receipt_created_at = dt.datetime.fromisoformat(
+    str(bridge_receipt_created_at or "").replace("Z", "+00:00")
+)
+require(receipt_created_at.tzinfo is not None,
+        "API bridge receipt timestamp has no timezone")
+# The canonical receipt is independently required to remain inside its fixed
+# 24-hour window. Bind the attestation to that immutable commit point so the
+# same exact evidence can be revalidated after long local builds and scans.
+attestation_offset = (
+    receipt_created_at.astimezone(dt.timezone.utc)
+    - verified_at.astimezone(dt.timezone.utc)
+).total_seconds()
+require(-300 <= attestation_offset <= 900,
+        "backup payload attestation is not anchored to the API bridge receipt")
 
 inputs = {
     "postgres": (
@@ -1841,9 +2660,39 @@ for kind, (
 PY
 }
 
+capture_fresh_api_bridge_attestation_anchor() {
+    local before_sha after_sha created_at
+    [ -f "$API_BRIDGE_RECEIPT" ] && [ ! -L "$API_BRIDGE_RECEIPT" ] \
+        && [ "$(stat -c '%a' "$API_BRIDGE_RECEIPT")" = 600 ] \
+        && [ "$(stat -c '%u:%g' "$API_BRIDGE_RECEIPT")" = 0:0 ] || return 1
+    [ -f "$BRIDGE_RECEIPT_HELPER" ] && [ ! -L "$BRIDGE_RECEIPT_HELPER" ] || return 1
+    # Freeze the exact canonical receipt around the isolated verifier read.
+    # Later full topology checks require this same SHA before any mutation.
+    before_sha=$(sha256sum "$API_BRIDGE_RECEIPT" | awk '{print $1}') || return 1
+    case "$before_sha" in ''|*[!0-9a-f]*) return 1 ;; esac
+    [ "${#before_sha}" -eq 64 ] || return 1
+    created_at=$("$PYTHON_COMMAND" -I -B "$BRIDGE_RECEIPT_HELPER" \
+        --path "$API_BRIDGE_RECEIPT" --expect-host-scope sbc-primary \
+        --require-fresh --field createdAt) || return 1
+    case "$created_at" in ''|*[!0-9TZ:+.-]*) return 1 ;; esac
+    [ "${#created_at}" -le 64 ] || return 1
+    after_sha=$(sha256sum "$API_BRIDGE_RECEIPT" | awk '{print $1}') || return 1
+    [ "$after_sha" = "$before_sha" ] || return 1
+    if [ -n "$API_BRIDGE_RECEIPT_SHA" ]; then
+        [ "$API_BRIDGE_RECEIPT_SHA" = "$after_sha" ] || return 1
+    fi
+    if [ -n "$API_BRIDGE_RECEIPT_CREATED_AT" ]; then
+        [ "$API_BRIDGE_RECEIPT_CREATED_AT" = "$created_at" ] || return 1
+    fi
+    API_BRIDGE_RECEIPT_SHA="$after_sha"
+    API_BRIDGE_RECEIPT_CREATED_AT="$created_at"
+    record_state api_bridge.receipt_sha256 "$API_BRIDGE_RECEIPT_SHA"
+    record_state api_bridge.attestation_anchor_created_at "$API_BRIDGE_RECEIPT_CREATED_AT"
+}
+
 validate_backup_source_ancestry() {
     local status_file="$1" commits source_player source_pipeline
-    commits=$(run_bounded_read_command "$PYTHON_COMMAND" -I - "$status_file" <<'PY'
+    commits=$(run_bounded_read_command "$PYTHON_COMMAND" -I -B - "$status_file" <<'PY'
 import json
 import sys
 with open(sys.argv[1], encoding="utf-8") as handle:
@@ -1867,7 +2716,9 @@ verify_api_bridge_receipt() {
         api_a_image api_b_image api_a_config api_b_config extracted deployment_id \
         source_dir source_entries source_root source_manifest_sha source_snapshot_tar \
         source_snapshot_sha expected_entries qdrant_backup volume_labels volume_options \
-        unsafe
+        gateway_id gateway_image gateway_reference gateway_config web_id web_image \
+        web_reference web_config image_scan_dir scan_path scan_metadata api_scan_sha \
+        gateway_scan_sha web_scan_sha unsafe
     [ -f "$API_BRIDGE_RECEIPT" ] && [ ! -L "$API_BRIDGE_RECEIPT" ] \
         && [ "$(stat -c '%a' "$API_BRIDGE_RECEIPT")" = 600 ] \
         && [ "$(stat -c '%u:%g' "$API_BRIDGE_RECEIPT")" = 0:0 ] || return 1
@@ -1877,7 +2728,7 @@ verify_api_bridge_receipt() {
     temporary="$wrapper.tmp"
     [ ! -e "$wrapper" ] && [ ! -L "$wrapper" ] \
         && [ ! -e "$temporary" ] && [ ! -L "$temporary" ] || return 1
-    "$PIPELINE_PYTHON" -I "$BRIDGE_RECEIPT_HELPER" \
+    "$PYTHON_COMMAND" -I -B "$BRIDGE_RECEIPT_HELPER" \
         --path "$API_BRIDGE_RECEIPT" --expect-host-scope sbc-primary \
         --require-fresh --verify-previous-api-rollback > "$temporary" || return 1
     chmod 600 "$temporary" || return 1
@@ -1886,7 +2737,7 @@ verify_api_bridge_receipt() {
     durable_sync_path "$RUN_DIR" || return 1
     helper_sha=$(sha256sum "$BRIDGE_RECEIPT_HELPER" | awk '{print $1}') || return 1
     receipt_sha=$(sha256sum "$API_BRIDGE_RECEIPT" | awk '{print $1}') || return 1
-    deployment_id=$("$PYTHON_COMMAND" -I - "$wrapper" <<'PY'
+    deployment_id=$("$PYTHON_COMMAND" -I -B - "$wrapper" <<'PY'
 import json
 import re
 import sys
@@ -1900,13 +2751,16 @@ PY
     source_dir="$STATE_ROOT/$deployment_id"
     source_entries="$source_dir/source-tree.entries"
     source_root="$source_dir/source-root"
+    image_scan_dir="$source_dir/image-scan"
     [ -d "$source_dir" ] && [ ! -L "$source_dir" ] \
         && [ -f "$source_entries" ] && [ ! -L "$source_entries" ] \
-        && [ -d "$source_root" ] && [ ! -L "$source_root" ] || return 1
+        && [ -d "$source_root" ] && [ ! -L "$source_root" ] \
+        && [ -d "$image_scan_dir" ] && [ ! -L "$image_scan_dir" ] || return 1
     if [ "$TEST_MODE" != "1" ]; then
         [ "$(stat -c '%u:%g:%a' "$source_dir")" = 0:0:700 ] \
             && [ "$(stat -c '%u:%g:%a' "$source_entries")" = 0:0:600 ] \
-            && [ "$(stat -c '%u:%g:%a' "$source_root")" = 0:0:700 ] || return 1
+            && [ "$(stat -c '%u:%g:%a' "$source_root")" = 0:0:700 ] \
+            && [ "$(stat -c '%u:%g:%a' "$image_scan_dir")" = 0:0:700 ] || return 1
         unsafe=$(find "$source_root" -xdev \
             \( -type l -o ! -user root -o ! -group root -o -perm /022 \) \
             -print -quit) || return 1
@@ -1920,7 +2774,7 @@ PY
     cmp -s "$expected_entries" "$source_entries" || return 1
     source_manifest_sha=$(sha256sum "$source_entries" | awk '{print $1}') || return 1
     if [ "$TEST_MODE" != "1" ]; then
-        "$PYTHON_COMMAND" -I - "$source_entries" "$source_root" <<'PY' || return 1
+        "$PYTHON_COMMAND" -I -B - "$source_entries" "$source_root" <<'PY' || return 1
 import hashlib
 import os
 import stat
@@ -2008,7 +2862,38 @@ PY
         '{{index .Config.Labels "com.docker.compose.config-hash"}}' "$api_a_id") || return 1
     api_b_config=$(run_bounded_docker_read inspect --format \
         '{{index .Config.Labels "com.docker.compose.config-hash"}}' "$api_b_id") || return 1
-    extracted=$("$PIPELINE_PYTHON" -I - \
+    gateway_id=$(query_container_id vocadb_api_gateway) || return 1
+    web_id=$(query_container_id vocadb_web) || return 1
+    [ -n "$gateway_id" ] && [ -n "$web_id" ] || return 1
+    gateway_image=$(container_image_id "$gateway_id") || return 1
+    web_image=$(container_image_id "$web_id") || return 1
+    gateway_reference=$(run_bounded_docker_read inspect --format '{{.Config.Image}}' \
+        "$gateway_id") || return 1
+    web_reference=$(run_bounded_docker_read inspect --format '{{.Config.Image}}' \
+        "$web_id") || return 1
+    gateway_config=$(run_bounded_docker_read inspect --format \
+        '{{index .Config.Labels "com.docker.compose.config-hash"}}' "$gateway_id") \
+        || return 1
+    web_config=$(run_bounded_docker_read inspect --format \
+        '{{index .Config.Labels "com.docker.compose.config-hash"}}' "$web_id") \
+        || return 1
+    for scan_service in api gateway web; do
+        scan_path="$image_scan_dir/$scan_service.receipt.json"
+        [ -f "$scan_path" ] && [ ! -L "$scan_path" ] \
+            && [ "$(stat -c '%a:%h' "$scan_path")" = 600:1 ] || return 1
+        if [ "$TEST_MODE" != "1" ]; then
+            [ "$(stat -c '%u:%g' "$scan_path")" = 0:0 ] || return 1
+        fi
+        scan_metadata=$(sha256sum "$scan_path" | awk '{print $1}') || return 1
+        case "$scan_metadata" in ''|*[!0-9a-f]*) return 1 ;; esac
+        [ "${#scan_metadata}" -eq 64 ] || return 1
+        case "$scan_service" in
+            api) api_scan_sha="$scan_metadata" ;;
+            gateway) gateway_scan_sha="$scan_metadata" ;;
+            web) web_scan_sha="$scan_metadata" ;;
+        esac
+    done
+    extracted=$("$PYTHON_COMMAND" -I -B - \
         "$qdrant_volume_json" "$wrapper" "$PLAYER_RELEASE_COMMIT" "$helper_sha" "$receipt_sha" \
         "$source_manifest_sha" "$source_snapshot_sha" "$qdrant_backup" \
         "$volume_labels" "$volume_options" \
@@ -2016,6 +2901,9 @@ PY
         "$qdrant_repo_digests" "$OLD_QDRANT_VOLUME" "$qdrant_device_inode" \
         "$api_a_id" "$api_a_image" "$api_a_config" \
         "$api_b_id" "$api_b_image" "$api_b_config" \
+        "$gateway_id" "$gateway_image" "$gateway_reference" "$gateway_config" \
+        "$web_id" "$web_image" "$web_reference" "$web_config" \
+        "$api_scan_sha" "$gateway_scan_sha" "$web_scan_sha" \
         "$RUN_DIR/evidence/qdrant-manifest.json" <<'PY'
 import hashlib
 import json
@@ -2028,12 +2916,63 @@ import sys
     volume_labels_raw, volume_options_raw,
     old_id, old_image, old_reference, repo_digests_raw, old_volume, device_inode,
     api_a_id, api_a_image, api_a_config, api_b_id, api_b_image, api_b_config,
+    gateway_id, gateway_image, gateway_reference, gateway_config,
+    web_id, web_image, web_reference, web_config,
+    api_scan_sha, gateway_scan_sha, web_scan_sha,
     backup_manifest_path,
 ) = sys.argv[1:]
 with open(wrapper_path, encoding="utf-8") as handle:
     wrapper = json.load(handle)
 if set(wrapper) != {"previousApiRollback", "receipt"}:
     raise SystemExit(2)
+previous = wrapper["previousApiRollback"]
+if (
+    not isinstance(previous, dict)
+    or set(previous) != {
+        "apiSlots", "provenance", "scanReceipts", "schemaVersion", "statelessServices"
+    }
+    or previous.get("schemaVersion") != 2
+    or previous.get("provenance") != "legacy-pre-contract-unattested"
+):
+    raise SystemExit(16)
+stateless = previous.get("statelessServices")
+scans = previous.get("scanReceipts")
+if not isinstance(stateless, dict) or set(stateless) != {"api_gateway", "web"}:
+    raise SystemExit(17)
+if not isinstance(scans, dict) or set(scans) != {"api", "gateway", "web"}:
+    raise SystemExit(18)
+stateless_facts = {
+    "api_gateway": (gateway_id, gateway_image, gateway_reference, gateway_config),
+    "web": (web_id, web_image, web_reference, web_config),
+}
+for service, (container_id, image_id, image_reference, config_hash) in stateless_facts.items():
+    fact = stateless.get(service) or {}
+    if (
+        set(fact) != {
+            "canonicalName", "configHash", "containerId", "imageId", "imageReference"
+        }
+        or fact.get("canonicalName") != f"vocadb_{service}"
+        or fact.get("containerId") != container_id
+        or fact.get("imageId") != image_id
+        or fact.get("imageReference") != image_reference
+        or fact.get("configHash") != config_hash
+    ):
+        raise SystemExit(19)
+scan_facts = {
+    "api": (api_a_image, api_scan_sha),
+    "gateway": (gateway_image, gateway_scan_sha),
+    "web": (web_image, web_scan_sha),
+}
+for service, (image_id, receipt_digest) in scan_facts.items():
+    fact = scans.get(service) or {}
+    if (
+        set(fact) != {"imageId", "sha256"}
+        or fact.get("imageId") != image_id
+        or fact.get("sha256") != receipt_digest
+    ):
+        raise SystemExit(20)
+if api_a_image != api_b_image:
+    raise SystemExit(21)
 receipt = wrapper["receipt"]
 canonical = lambda value: (json.dumps(value, ensure_ascii=True, sort_keys=True,
                                       separators=(",", ":")) + "\n").encode()
@@ -2197,7 +3136,7 @@ print(json.dumps({"apiAContainer": api_a_id, "apiAImage": api_a_image,
                  ensure_ascii=True, sort_keys=True, separators=(",", ":")))
 PY
     ) || return 1
-    set -- $(printf '%s' "$extracted" | "$PIPELINE_PYTHON" -I -c \
+    set -- $(printf '%s' "$extracted" | "$PYTHON_COMMAND" -I -B -c \
         'import json,sys; d=json.load(sys.stdin); print(d["apiAContainer"],d["apiAImage"],d["apiBContainer"],d["apiBImage"],d["seedSongId"],d["receiptSha"],d["compatibilitySha"])') \
         || return 1
     [ "$#" -eq 7 ] || return 1
@@ -2235,7 +3174,7 @@ consume_verified_api_bridge_receipt() {
         && [ -f "$API_BRIDGE_CONSUMPTION_HELPER_RELEASE" ] \
         && [ ! -L "$API_BRIDGE_CONSUMPTION_HELPER_RELEASE" ] || return 1
     settlement="$archive.consumption-settlement.json"
-    "$PYTHON_COMMAND" -I "$API_BRIDGE_CONSUMPTION_HELPER_RELEASE" consume \
+    "$PYTHON_COMMAND" -I -B "$API_BRIDGE_CONSUMPTION_HELPER_RELEASE" consume \
         --canonical "$API_BRIDGE_RECEIPT" \
         --archive "$archive" \
         --intent "$API_BRIDGE_CONSUME_INTENT" \
@@ -2283,7 +3222,7 @@ verify_candidate_api_semantics() {
             "http://127.0.0.1:5000/api/recommend/similar?songId=$API_BRIDGE_SEED_SONG_ID&count=5" \
             > "$output" || return 1
         chmod 600 "$output" || return 1
-        "$PIPELINE_PYTHON" -I - "$output" "$API_BRIDGE_SEED_SONG_ID" <<'PY' || return 1
+        "$PYTHON_COMMAND" -I -B - "$output" "$API_BRIDGE_SEED_SONG_ID" <<'PY' || return 1
 import json
 import sys
 with open(sys.argv[1], encoding="utf-8") as handle:
@@ -2300,20 +3239,24 @@ PY
 }
 
 verify_candidate_python_semantics() {
-    local phase="$1" output
+    local phase="$1" output temporary
     case "$phase" in candidate|promoted) ;; *) return 1 ;; esac
     output="$RUN_DIR/qdrant-$phase-python-semantic.json"
-    [ ! -e "$output" ] && [ ! -L "$output" ] || return 1
-    "$PIPELINE_PYTHON" -I - "$RUN_ID-$phase" "$output" <<'PY'
+    temporary="$output.tmp"
+    [ ! -e "$output" ] && [ ! -L "$output" ] \
+        && [ ! -e "$temporary" ] && [ ! -L "$temporary" ] || return 1
+    if ! (umask 077; ulimit -f 128; run_pipeline_venv_python - \
+        qdrant-semantic "$RUN_ID-$phase" > "$temporary" <<'PY'
 import importlib.metadata
 import json
-import os
 import re
 import sys
 
 from qdrant_client import QdrantClient, models
 
-run_id, output = sys.argv[1:]
+marker, run_id = sys.argv[1:]
+if marker != "qdrant-semantic":
+    raise SystemExit(1)
 if importlib.metadata.version("qdrant-client") != "1.19.0":
     raise SystemExit(2)
 suffix = re.sub(r"[^a-z0-9_]", "_", run_id.lower())[-48:]
@@ -2400,23 +3343,44 @@ document = {
     "scratchSnapshotCleanup": "confirmed",
     "scratchUpsertDelete": "passed",
 }
-encoded = (json.dumps(document, ensure_ascii=True, sort_keys=True,
-                      separators=(",", ":")) + "\n").encode()
-descriptor = os.open(
-    output,
-    os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0),
-    0o600,
-)
-try:
-    with os.fdopen(descriptor, "wb", closefd=False) as handle:
-        handle.write(encoded)
-        handle.flush()
-        os.fsync(handle.fileno())
-finally:
-    os.close(descriptor)
+print(json.dumps(document, ensure_ascii=True, sort_keys=True, separators=(",", ":")))
 PY
-    [ -f "$output" ] && [ ! -L "$output" ] && [ "$(stat -c '%a' "$output")" = 600 ] \
-        || return 1
+    ); then
+        rm -f -- "$temporary"
+        return 1
+    fi
+    [ -f "$temporary" ] && [ ! -L "$temporary" ] \
+        && [ "$(stat -c '%a' "$temporary")" = 600 ] \
+        && [ "$(stat -c '%s' "$temporary")" -le 65536 ] || return 1
+    "$PYTHON_COMMAND" -I -B - "$temporary" <<'PY' || return 1
+import json
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+raw = path.read_bytes()
+if not raw or len(raw) > 65536:
+    raise SystemExit(2)
+document = json.loads(raw)
+expected = {
+    "aliasList": "passed",
+    "clientPackageVersion": "1.19.0",
+    "queryResultCount": 2,
+    "retrieveVectorDimensions": 3,
+    "scratchAliasCleanup": "confirmed",
+    "scratchCollectionCleanup": "confirmed",
+    "scratchSnapshotCleanup": "confirmed",
+    "scratchUpsertDelete": "passed",
+}
+if document != expected:
+    raise SystemExit(3)
+if raw != (json.dumps(document, ensure_ascii=True, sort_keys=True,
+                      separators=(",", ":")) + "\n").encode():
+    raise SystemExit(4)
+PY
+    chmod 600 "$temporary" || return 1
+    mv "$temporary" "$output" || return 1
+    durable_sync_path "$output" || return 1
     record_state "qdrant.${phase}_python_semantic" verified
 }
 
@@ -2874,7 +3838,7 @@ SQL
 }
 
 qdrant_fingerprint() {
-    run_bounded_read_command "$PYTHON_COMMAND" -I - "$1" <<'PY'
+    run_bounded_read_command "$PYTHON_COMMAND" -I -B - "$1" <<'PY'
 import json
 import sys
 import urllib.parse
@@ -2928,7 +3892,7 @@ PY
 }
 
 qdrant_fingerprints_equivalent() {
-    "$PIPELINE_PYTHON" -I - "$1" "$2" <<'PY'
+    "$PYTHON_COMMAND" -I -B - "$1" "$2" <<'PY'
 import json
 import sys
 
@@ -2956,7 +3920,7 @@ PY
 qdrant_volume_identity_json() {
     local volume="$1" output
     output=$(run_bounded_docker_read volume inspect "$volume") || return 1
-    printf '%s' "$output" | "$PIPELINE_PYTHON" -I -c '
+    printf '%s' "$output" | "$PYTHON_COMMAND" -I -B -c '
 import hashlib, json, sys
 rows=json.load(sys.stdin)
 if not isinstance(rows,list) or len(rows)!=1 or not isinstance(rows[0],dict): raise SystemExit(2)
@@ -2991,6 +3955,30 @@ verify_qdrant_rollback_assets() {
     state_receipt_sha=$(awk -F= '$1 == "qdrant.rollback_scan_receipt_sha256" { print $2 }' \
         "$STATE_FILE") || return 1
     [ "$state_receipt_sha" = "$QDRANT_ROLLBACK_SCAN_RECEIPT_SHA" ]
+}
+
+verify_postgres_rollback_assets() {
+    local tag_image_id receipt_sha state_receipt_sha count
+    tag_image_id=$(query_optional_image_id "$POSTGRES_ROLLBACK_IMAGE") || return 1
+    [ "$tag_image_id" = "$OLD_POSTGRES_IMAGE_ID" ] || return 1
+    receipt_sha=$(sha256sum \
+        "$RUN_DIR/evidence/image-scan-postgres-rollback.receipt.json" | awk '{print $1}') \
+        || return 1
+    [ "$receipt_sha" = "$POSTGRES_ROLLBACK_SCAN_RECEIPT_SHA" ] || return 1
+    count=$(grep -Fc 'postgres.rollback_scan_receipt_sha256=' "$STATE_FILE") || return 1
+    [ "$count" -eq 1 ] || return 1
+    state_receipt_sha=$(awk -F= \
+        '$1 == "postgres.rollback_scan_receipt_sha256" { print $2 }' "$STATE_FILE") \
+        || return 1
+    [ "$state_receipt_sha" = "$POSTGRES_ROLLBACK_SCAN_RECEIPT_SHA" ]
+}
+
+verify_retained_image_offline() {
+    local image_id="$1" inventory
+    case "$image_id" in sha256:*) ;; *) return 1 ;; esac
+    inventory=$(run_bounded_docker_read container ls --all --no-trunc \
+        --filter "ancestor=$image_id" --format '{{.ID}}') || return 1
+    [ -z "$inventory" ]
 }
 
 verify_qdrant_previous_container_contract() {
@@ -3433,7 +4421,7 @@ run_qdrant_controller_supervised() {
         set -- "$test_controller_python" "$test_controller_runner" \
             "$test_controller_state" "$@"
     fi
-    "$PYTHON_COMMAND" -I - \
+    "$PYTHON_COMMAND" -I -B - \
         "$RUN_ID" "$QDRANT_CONTROLLER_SETTLEMENT" "$QDRANT_CONTROLLER_LOG" \
         "$QDRANT_UPGRADE_JOURNAL" "$QDRANT_UPGRADE_RESULT" \
         "$QDRANT_UPGRADE_TIMEOUT_SECONDS" "$@" <<'PY'
@@ -3695,7 +4683,7 @@ PY
 verify_qdrant_controller_settlement() {
     local expected_status="$1"
     case "$expected_status" in success|failure) ;; *) return 1 ;; esac
-    "$PYTHON_COMMAND" -I - \
+    "$PYTHON_COMMAND" -I -B - \
         "$expected_status" "$RUN_ID" "$QDRANT_CONTROLLER_SETTLEMENT" \
         "$QDRANT_CONTROLLER_LOG" "$QDRANT_UPGRADE_JOURNAL" \
         "$QDRANT_UPGRADE_RESULT" "$OLD_QDRANT_ID" "$OLD_QDRANT_VOLUME" \
@@ -3845,7 +4833,7 @@ write_qdrant_controller_daemon_settlement() {
     [ ! -e "$QDRANT_CONTROLLER_DAEMON_SETTLEMENT" ] \
         && [ ! -L "$QDRANT_CONTROLLER_DAEMON_SETTLEMENT" ] \
         && [ ! -e "$temporary" ] && [ ! -L "$temporary" ] || return 1
-    "$PYTHON_COMMAND" -I - \
+    "$PYTHON_COMMAND" -I -B - \
         "$temporary" "$RUN_ID" "$OLD_QDRANT_ID" "$final_container_id" \
         "$NEW_QDRANT_ID" "$OLD_QDRANT_VOLUME" "$QDRANT_CANDIDATE_VOLUME" \
         "$QDRANT_UPGRADE_NETWORK" "$network_id" "$old_runtime" "$final_runtime" \
@@ -3904,7 +4892,8 @@ write_promotion_manifest() {
     local temporary="$PROMOTION_MANIFEST.tmp" qdrant_fingerprint_sha postgres_fingerprint_sha \
         pipeline_writer_gate_sha qdrant_scan_receipt_sha qdrant_audit_scan_receipt_sha \
         postgres_scan_receipt_sha postgres_migrate_scan_receipt_sha \
-        qdrant_rollback_scan_receipt_sha qdrant_rollback_volume_identity_sha
+        qdrant_rollback_scan_receipt_sha postgres_rollback_scan_receipt_sha \
+        qdrant_rollback_volume_identity_sha
     if [ -e "$PROMOTION_MANIFEST" ] || [ -L "$PROMOTION_MANIFEST" ] \
         || [ -e "$temporary" ] || [ -L "$temporary" ]; then
         return 1
@@ -3930,12 +4919,17 @@ write_promotion_manifest() {
     qdrant_rollback_scan_receipt_sha=$(sha256sum \
         "$RUN_DIR/evidence/image-scan-qdrant-rollback.receipt.json" | awk '{print $1}') \
         || return 1
+    postgres_rollback_scan_receipt_sha=$(sha256sum \
+        "$RUN_DIR/evidence/image-scan-postgres-rollback.receipt.json" | awk '{print $1}') \
+        || return 1
     qdrant_rollback_volume_identity_sha=$(printf '%s\n' "$OLD_QDRANT_VOLUME_IDENTITY" \
         | sha256sum | awk '{print $1}') || return 1
     [ "$qdrant_rollback_scan_receipt_sha" = "$QDRANT_ROLLBACK_SCAN_RECEIPT_SHA" ] \
+        && [ "$postgres_rollback_scan_receipt_sha" \
+            = "$POSTGRES_ROLLBACK_SCAN_RECEIPT_SHA" ] \
         && [ "$qdrant_rollback_volume_identity_sha" = "$OLD_QDRANT_VOLUME_IDENTITY_SHA" ] \
         || return 1
-    case "$qdrant_fingerprint_sha:$postgres_fingerprint_sha:$pipeline_writer_gate_sha:$qdrant_scan_receipt_sha:$qdrant_audit_scan_receipt_sha:$postgres_scan_receipt_sha:$postgres_migrate_scan_receipt_sha:$qdrant_rollback_scan_receipt_sha:$qdrant_rollback_volume_identity_sha:$OLD_QDRANT_CONFIG_HASH" in
+    case "$qdrant_fingerprint_sha:$postgres_fingerprint_sha:$pipeline_writer_gate_sha:$qdrant_scan_receipt_sha:$qdrant_audit_scan_receipt_sha:$postgres_scan_receipt_sha:$postgres_migrate_scan_receipt_sha:$qdrant_rollback_scan_receipt_sha:$postgres_rollback_scan_receipt_sha:$qdrant_rollback_volume_identity_sha:$OLD_QDRANT_CONFIG_HASH" in
         *[!0-9a-f:]*|:|*:|*::* ) return 1 ;;
     esac
     [ "${#qdrant_fingerprint_sha}" -eq 64 ] \
@@ -3946,6 +4940,7 @@ write_promotion_manifest() {
         && [ "${#postgres_scan_receipt_sha}" -eq 64 ] \
         && [ "${#postgres_migrate_scan_receipt_sha}" -eq 64 ] \
         && [ "${#qdrant_rollback_scan_receipt_sha}" -eq 64 ] \
+        && [ "${#postgres_rollback_scan_receipt_sha}" -eq 64 ] \
         && [ "${#qdrant_rollback_volume_identity_sha}" -eq 64 ] \
         && [ "${#OLD_QDRANT_CONFIG_HASH}" -eq 64 ] || return 1
     if ! (set -C; {
@@ -3970,6 +4965,11 @@ write_promotion_manifest() {
             "$OLD_POSTGRES_ID" "$POSTGRES_FALLBACK_ID" "$NEW_POSTGRES_ID"
         printf 'postgres_candidate_tag=%s\npostgres_stable_tag=%s\n' \
             "$POSTGRES_CANDIDATE_IMAGE" "$POSTGRES_IMAGE"
+        printf 'postgres_rollback_tag=%s\npostgres_rollback_image_id=%s\n' \
+            "$POSTGRES_ROLLBACK_IMAGE" "$OLD_POSTGRES_IMAGE_ID"
+        printf 'postgres_rollback_scan_receipt_sha256=%s\n' \
+            "$postgres_rollback_scan_receipt_sha"
+        printf '%s\n' 'postgres_rollback_scope=image-only-no-data-rollback'
         printf 'postgres_previous_stable_image_id=%s\npostgres_stable_next_image_id=%s\n' \
             "$OLD_STABLE_POSTGRES_IMAGE_ID" "$NEW_POSTGRES_ID"
         printf 'postgres_migrate_candidate_tag=%s\npostgres_migrate_stable_tag=%s\n' \
@@ -3986,7 +4986,7 @@ write_promotion_manifest() {
         printf 'postgres_scan_receipt_sha256=%s\npostgres_migrate_scan_receipt_sha256=%s\n' \
             "$postgres_scan_receipt_sha" "$postgres_migrate_scan_receipt_sha"
         printf '%s\n' \
-            'steps=stable-image-bind-qdrant,stable-image-bind-postgres,stable-image-bind-postgres-migrate,qdrant-fallback,qdrant-original,postgres-fallback,postgres-original,public-verify,promoted-marker,cleanup,completed-marker'
+            'steps=rollback-image-bind-qdrant,rollback-image-bind-postgres,stable-image-bind-qdrant,stable-image-bind-postgres,stable-image-bind-postgres-migrate,qdrant-fallback,qdrant-original,postgres-fallback,postgres-original,public-verify,promoted-marker,cleanup,completed-marker'
     } > "$temporary") 2>/dev/null; then
         return 1
     fi
@@ -4049,7 +5049,7 @@ write_stateful_compose_projection() {
         chmod 600 "$RESOLVED_COMPOSE_PRIVATE" || command_status=$?
     fi
     if [ "$command_status" -eq 0 ]; then
-        run_bounded_read_command "$PYTHON_COMMAND" -I - \
+        run_bounded_read_command "$PYTHON_COMMAND" -I -B - \
             "$RESOLVED_COMPOSE_PRIVATE" "$STATEFUL_PROJECTION" <<'PY' \
             || command_status=$?
 import copy
@@ -4365,6 +5365,14 @@ cleanup() {
     recovery_status=0
     forward_recovery_status=0
     private_cleanup_status=0
+    if [ "$GITHUB_HOST_KEY_FILE_OWNED" = "true" ]; then
+        if ! release_github_host_key_file; then
+            printf '%s\n' \
+                "Run-specific GitHub host-key trust file could not be removed exactly." >&2
+            private_cleanup_status=1
+            recovery_status=1
+        fi
+    fi
     if [ "$RESOLVED_COMPOSE_PRIVATE_OWNED" = "true" ]; then
         durable_unlink_exact "$RESOLVED_COMPOSE_PRIVATE" 2>/dev/null \
             || private_cleanup_status=1
@@ -4476,6 +5484,16 @@ cleanup() {
         fi
         set -e
     fi
+    if [ "$PIPELINE_RUNTIME_LOCK_HELD" = "true" ]; then
+        if ! verify_pipeline_runtime_identity_unchanged; then
+            printf '%s\n' "Pipeline virtual-environment identity changed while the shared lock was held." >&2
+            recovery_status=1
+        fi
+        if ! release_pipeline_runtime_lock; then
+            printf '%s\n' "Pipeline virtual-environment shared lock could not be released." >&2
+            recovery_status=1
+        fi
+    fi
     if [ "$LOCK_HELD" = "true" ]; then
         if [ "$recovery_status" -eq 0 ]; then
             if ! release_stateful_lock_exact; then
@@ -4536,7 +5554,7 @@ done
 [ -f "$IMAGE_SCAN_VALIDATOR" ] && [ ! -L "$IMAGE_SCAN_VALIDATOR" ] \
     || { fail "image scan validator is unsafe"; exit 1; }
 [ "$(sha256sum "$IMAGE_SCAN_VALIDATOR" | awk '{print $1}')" \
-    = 7f61d3818b6c9e38078eb2f7217268fe05784ca5672cebd7f7384f19c76b57d5 ] \
+    = f130fd9559791e907f724e334263a42cec3e6565e62e5d347afc03a9dd7e5b4a ] \
     || { fail "image scan validator digest is not the frozen reviewed contract"; exit 1; }
 [ -f "$ROOT_DIR/scripts/wsl-dr-api-bridge-receipt.py" ] \
     && [ ! -L "$ROOT_DIR/scripts/wsl-dr-api-bridge-receipt.py" ] \
@@ -4544,10 +5562,23 @@ done
 [ -f "$API_BRIDGE_CONSUMPTION_HELPER" ] \
     && [ ! -L "$API_BRIDGE_CONSUMPTION_HELPER" ] \
     || { fail "API bridge receipt consumption helper is unsafe"; exit 1; }
+acquire_pipeline_runtime_lock \
+    || { fail "pipeline virtual-environment shared lock could not be acquired"; exit 1; }
 verify_pipeline_venv_provenance \
     || { fail "pipeline qdrant-client 1.19 virtual-environment provenance is unsafe"; exit 1; }
-[ -f "$ROOT_DIR/backend/.env" ] && [ ! -L "$ROOT_DIR/backend/.env" ] || { fail "backend/.env is missing or unsafe"; exit 1; }
-[ "$(stat -c '%a' "$ROOT_DIR/backend/.env")" = "600" ] || { fail "backend/.env must remain mode 600"; exit 1; }
+[ -d "$ROOT_DIR" ] && [ ! -L "$ROOT_DIR" ] \
+    || { fail "player repository root is unsafe"; exit 1; }
+backend_repo_owner=$(stat -c '%u:%g' "$ROOT_DIR") \
+    || { fail "player repository ownership is unavailable"; exit 1; }
+case "$backend_repo_owner" in
+    *[!0-9:]*|:|*:|*::* ) fail "player repository ownership is invalid"; exit 1 ;;
+esac
+BACKEND_ENV_OWNER_UID=${backend_repo_owner%%:*}
+BACKEND_ENV_OWNER_GID=${backend_repo_owner#*:}
+[ -f "$BACKEND_ENV_FILE" ] && [ ! -L "$BACKEND_ENV_FILE" ] \
+    || { fail "backend/.env is missing or unsafe"; exit 1; }
+verify_backend_env_metadata \
+    || { fail "backend/.env must be a single-link mode-600 file owned by the player repository owner"; exit 1; }
 [ "$(trusted_git -C "$ROOT_DIR" rev-parse --is-inside-work-tree 2>/dev/null)" = "true" ] \
     || { fail "player Git worktree is unavailable"; exit 1; }
 [ "$(trusted_git -C "$PIPELINE_ROOT" rev-parse --is-inside-work-tree 2>/dev/null)" = "true" ] \
@@ -4561,6 +5592,18 @@ case "$PLAYER_RELEASE_COMMIT:$PIPELINE_RELEASE_COMMIT" in
 esac
 [ "${#PLAYER_RELEASE_COMMIT}" -eq 40 ] && [ "${#PIPELINE_RELEASE_COMMIT}" -eq 40 ] \
     || { fail "release commit identities are not full SHA-1 values"; exit 1; }
+validate_pipeline_github_ssh_identity \
+    || { fail "pipeline GitHub SSH user, home, identity, or ancestry is unsafe"; exit 1; }
+prepare_github_host_key_file \
+    || { fail "run-specific GitHub Ed25519 host-key trust could not be prepared"; exit 1; }
+verify_release_repository_provenance "$ROOT_DIR" "$PLAYER_OFFICIAL_ORIGIN" \
+    "$PLAYER_RELEASE_COMMIT" \
+    || { fail "player release must be the live official origin/main commit"; exit 1; }
+verify_release_repository_provenance "$PIPELINE_ROOT" "$PIPELINE_OFFICIAL_ORIGIN" \
+    "$PIPELINE_RELEASE_COMMIT" \
+    || { fail "pipeline release must be the live official origin/main commit"; exit 1; }
+release_github_host_key_file \
+    || { fail "run-specific GitHub host-key trust could not be removed exactly"; exit 1; }
 verify_release_sources_unchanged \
     || { fail "stateful runtime sources differ from their captured release commits"; exit 1; }
 
@@ -4623,7 +5666,7 @@ if [ -e "$API_BRIDGE_CONSUME_INTENT" ] \
     || [ -L "$API_BRIDGE_CONSUME_INTENT.prepared" ] \
     || [ -e "$ACTIVE_JOURNAL" ] || [ -L "$ACTIVE_JOURNAL" ] \
     || [ -e "$LOCK_DIR" ] || [ -L "$LOCK_DIR" ]; then
-    API_BRIDGE_RECONCILIATION=$("$PYTHON_COMMAND" -I \
+    API_BRIDGE_RECONCILIATION=$("$PYTHON_COMMAND" -I -B \
         "$API_BRIDGE_CONSUMPTION_HELPER" startup-reconcile \
         --canonical "$API_BRIDGE_RECEIPT" \
         --intent "$API_BRIDGE_CONSUME_INTENT" \
@@ -4701,6 +5744,8 @@ fi
 chmod 700 "$RUN_DIR"
 mkdir "$RUN_DIR/evidence"
 chmod 700 "$RUN_DIR/evidence"
+write_pipeline_runtime_attestation \
+    || { fail "pipeline virtual-environment attestation could not be durably captured"; exit 1; }
 EXPECTED_ATTESTER_BLOB="$RUN_DIR/evidence/attester-head.expected"
 if ! (set -C; trusted_git -C "$ROOT_DIR" cat-file blob \
     "${PLAYER_RELEASE_COMMIT}:scripts/attest-disaster-backup-payloads.py" \
@@ -4810,6 +5855,8 @@ COPIED_QDRANT_PUBLICATION=$(validate_backup_evidence qdrant_disaster_backup "$QD
     && [ "$COPIED_QDRANT_PUBLICATION" = "$QDRANT_BACKUP_PUBLICATION" ] \
     && [ "$COPIED_POSTGRES_PUBLICATION" = "$COPIED_QDRANT_PUBLICATION" ] \
     || { fail "copied backup publication binding changed during preflight"; exit 1; }
+capture_fresh_api_bridge_attestation_anchor \
+    || { fail "fresh exact API bridge receipt attestation anchor is required"; exit 1; }
 validate_backup_payload_attestation "$RUN_DIR/evidence/backup-payload-attestation.json" \
     "$BACKUP_ATTESTATION_SHA" "$BACKUP_ATTESTATION_CHALLENGE" "$BACKUP_VERIFIER_HOST" \
     "$RUN_DIR/evidence/postgres-status.json" "$RUN_DIR/evidence/postgres-manifest.json" \
@@ -4817,6 +5864,7 @@ validate_backup_payload_attestation "$RUN_DIR/evidence/backup-payload-attestatio
     "$POSTGRES_BACKUP_STATUS_SHA" "$POSTGRES_BACKUP_MANIFEST_SHA" \
     "$QDRANT_BACKUP_STATUS_SHA" "$QDRANT_BACKUP_MANIFEST_SHA" \
     "$POSTGRES_BACKUP_RUN" "$QDRANT_BACKUP_RUN" \
+    "$API_BRIDGE_RECEIPT_CREATED_AT" \
     || { fail "copied backup payload attestation changed during preflight"; exit 1; }
 validate_backup_source_ancestry "$RUN_DIR/evidence/postgres-status.json" \
     || { fail "PostgreSQL backup source commits are not ancestors of deployed code"; exit 1; }
@@ -4921,9 +5969,18 @@ esac
     || { fail "current Qdrant image digest has an invalid length"; exit 1; }
 verify_image_linux_native "$OLD_QDRANT_IMAGE_ID" \
     || { fail "current Qdrant image is not linux/arm64"; exit 1; }
-old_postgres_preflight_image_id=$(container_image_id "$OLD_POSTGRES_ID") \
+OLD_POSTGRES_IMAGE_ID=$(container_image_id "$OLD_POSTGRES_ID") \
     || { fail "current PostgreSQL image identity is unavailable"; exit 1; }
-verify_image_linux_native "$old_postgres_preflight_image_id" \
+case "$OLD_POSTGRES_IMAGE_ID" in sha256:*) ;;
+    *) fail "current PostgreSQL image identity is invalid"; exit 1 ;;
+esac
+old_postgres_image_digest=${OLD_POSTGRES_IMAGE_ID#sha256:}
+case "$old_postgres_image_digest" in ''|*[!0-9a-f]*)
+    fail "current PostgreSQL image digest is invalid"; exit 1 ;;
+esac
+[ "${#old_postgres_image_digest}" -eq 64 ] \
+    || { fail "current PostgreSQL image digest has an invalid length"; exit 1; }
+verify_image_linux_native "$OLD_POSTGRES_IMAGE_ID" \
     || { fail "current PostgreSQL image is not linux/arm64"; exit 1; }
 OLD_QDRANT_VOLUME_IDENTITY=$(qdrant_volume_identity_json "$OLD_QDRANT_VOLUME") \
     || { fail "current Qdrant volume identity cannot be frozen"; exit 1; }
@@ -4931,6 +5988,7 @@ OLD_QDRANT_VOLUME_IDENTITY_SHA=$(printf '%s\n' "$OLD_QDRANT_VOLUME_IDENTITY" \
     | sha256sum | awk '{print $1}') \
     || { fail "current Qdrant volume identity cannot be hashed"; exit 1; }
 record_state qdrant.rollback_image_id "$OLD_QDRANT_IMAGE_ID"
+record_state postgres.rollback_image_id "$OLD_POSTGRES_IMAGE_ID"
 record_state qdrant.rollback_compose_config_hash "$OLD_QDRANT_CONFIG_HASH"
 record_state qdrant.rollback_volume_identity_sha256 "$OLD_QDRANT_VOLUME_IDENTITY_SHA"
 old_qdrant_user=$(run_bounded_docker_read inspect --format '{{.Config.User}}' "$OLD_QDRANT_ID") \
@@ -4974,6 +6032,10 @@ rollback_image_before=$(query_optional_image_id "$QDRANT_ROLLBACK_IMAGE") \
     || { fail "deployment-unique Qdrant rollback image inventory is ambiguous"; exit 1; }
 [ "$rollback_image_before" = "absent" ] \
     || { fail "deployment-unique Qdrant rollback image tag already exists"; exit 1; }
+rollback_image_before=$(query_optional_image_id "$POSTGRES_ROLLBACK_IMAGE") \
+    || { fail "deployment-unique PostgreSQL rollback image inventory is ambiguous"; exit 1; }
+[ "$rollback_image_before" = "absent" ] \
+    || { fail "deployment-unique PostgreSQL rollback image tag already exists"; exit 1; }
 
 {
     printf '%s\n' 'services:' '  qdrant:'
@@ -5342,6 +6404,8 @@ old_qdrant_scan_image_id=$(container_image_id "$OLD_QDRANT_ID") \
     || { fail "current Qdrant image changed before rollback scanning"; exit 1; }
 old_postgres_scan_image_id=$(container_image_id "$OLD_POSTGRES_ID") \
     || { fail "current PostgreSQL image ID is unavailable for scanning"; exit 1; }
+[ "$old_postgres_scan_image_id" = "$OLD_POSTGRES_IMAGE_ID" ] \
+    || { fail "current PostgreSQL image changed before rollback scanning"; exit 1; }
 api_gateway_container_id=$(query_container_id vocadb_api_gateway) \
     || { fail "API gateway container inventory is ambiguous"; exit 1; }
 [ -n "$api_gateway_container_id" ] \
@@ -5392,14 +6456,14 @@ scan_exact_image web "$web_image_id" "$web_image_id" alpine \
         = "$NEW_POSTGRES_MIGRATE_ID" ] \
     || { fail "candidate image tags changed during exact image scanning"; exit 1; }
 if [ "$SCAN_CALIBRATION_REQUIRED" = "true" ]; then
-    record_state image_scan.status requires-reviewed-exact-inventory-bounds
+    record_state image_scan.status requires-reviewed-exact-inventory-and-finding-contracts
     consume_verified_api_bridge_receipt calibration \
         || {
             MANAGEMENT_RECONCILIATION_REQUIRED=true
             fail "calibration receipt could not be durably archived; migration remains forbidden"
             exit 1
         }
-    fail "image inventory calibration is required before any writer or container switch; review $RUN_DIR/evidence/image-scan-*.calibration.json"
+    fail "image inventory/finding calibration is required before any writer or container switch; review $RUN_DIR/evidence/image-scan-*.calibration.json"
     exit 1
 fi
 QDRANT_ROLLBACK_SCAN_RECEIPT_SHA=$(sha256sum \
@@ -5411,9 +6475,33 @@ esac
 [ "${#QDRANT_ROLLBACK_SCAN_RECEIPT_SHA}" -eq 64 ] \
     || { fail "Qdrant rollback scan receipt digest has an invalid length"; exit 1; }
 record_state qdrant.rollback_scan_receipt_sha256 "$QDRANT_ROLLBACK_SCAN_RECEIPT_SHA"
+POSTGRES_ROLLBACK_SCAN_RECEIPT_SHA=$(sha256sum \
+    "$RUN_DIR/evidence/image-scan-postgres-rollback.receipt.json" | awk '{print $1}') \
+    || { fail "PostgreSQL rollback scan receipt cannot be frozen"; exit 1; }
+case "$POSTGRES_ROLLBACK_SCAN_RECEIPT_SHA" in ''|*[!0-9a-f]*)
+    fail "PostgreSQL rollback scan receipt digest is invalid"; exit 1 ;;
+esac
+[ "${#POSTGRES_ROLLBACK_SCAN_RECEIPT_SHA}" -eq 64 ] \
+    || { fail "PostgreSQL rollback scan receipt digest has an invalid length"; exit 1; }
+record_state postgres.rollback_scan_receipt_sha256 "$POSTGRES_ROLLBACK_SCAN_RECEIPT_SHA"
 record_state image_scan.status all-exact-receipts-verified
 
 record_state deployment.status quiescing-pipeline-writers
+FINAL_POSTGRES_BACKUP_PUBLICATION=$(validate_backup_evidence postgres_disaster_backup \
+    "$POSTGRES_BACKUP_RUN" "$RUN_DIR/evidence/postgres-status.json" \
+    "$POSTGRES_BACKUP_STATUS_SHA" "$RUN_DIR/evidence/postgres-manifest.json" \
+    "$POSTGRES_BACKUP_MANIFEST_SHA" 48 "$BACKUP_SOURCE_HOST") \
+    || { fail "PostgreSQL backup evidence expired before writer quiescence"; exit 1; }
+FINAL_QDRANT_BACKUP_PUBLICATION=$(validate_backup_evidence qdrant_disaster_backup \
+    "$QDRANT_BACKUP_RUN" "$RUN_DIR/evidence/qdrant-status.json" \
+    "$QDRANT_BACKUP_STATUS_SHA" "$RUN_DIR/evidence/qdrant-manifest.json" \
+    "$QDRANT_BACKUP_MANIFEST_SHA" 192 "$BACKUP_SOURCE_HOST") \
+    || { fail "Qdrant backup evidence expired before writer quiescence"; exit 1; }
+[ "$FINAL_POSTGRES_BACKUP_PUBLICATION" = "$COPIED_POSTGRES_PUBLICATION" ] \
+    && [ "$FINAL_QDRANT_BACKUP_PUBLICATION" = "$COPIED_QDRANT_PUBLICATION" ] \
+    && [ "$FINAL_POSTGRES_BACKUP_PUBLICATION" = "$FINAL_QDRANT_BACKUP_PUBLICATION" ] \
+    || { fail "backup publication binding changed before writer quiescence"; exit 1; }
+record_state backup.freshness revalidated-before-writer-quiescence
 validate_backup_payload_attestation "$RUN_DIR/evidence/backup-payload-attestation.json" \
     "$BACKUP_ATTESTATION_SHA" "$BACKUP_ATTESTATION_CHALLENGE" "$BACKUP_VERIFIER_HOST" \
     "$RUN_DIR/evidence/postgres-status.json" "$RUN_DIR/evidence/postgres-manifest.json" \
@@ -5421,7 +6509,8 @@ validate_backup_payload_attestation "$RUN_DIR/evidence/backup-payload-attestatio
     "$POSTGRES_BACKUP_STATUS_SHA" "$POSTGRES_BACKUP_MANIFEST_SHA" \
     "$QDRANT_BACKUP_STATUS_SHA" "$QDRANT_BACKUP_MANIFEST_SHA" \
     "$POSTGRES_BACKUP_RUN" "$QDRANT_BACKUP_RUN" \
-    || { fail "backup payload attestation expired or changed before writer quiescence"; exit 1; }
+    "$API_BRIDGE_RECEIPT_CREATED_AT" \
+    || { fail "backup payload attestation or its bridge anchor changed before writer quiescence"; exit 1; }
 verify_release_sources_unchanged \
     || { fail "release sources changed before writer quiescence"; exit 1; }
 gate_pipeline_writers \
@@ -5462,7 +6551,7 @@ probe_slots=$(printf '{"api_a":"%s","api_b":"%s"}' \
 QDRANT_MUTATED=true
 record_state qdrant.storage_upgrade intent-before-controller
 controller_status=0
-run_qdrant_controller_supervised "$PIPELINE_PYTHON" -I \
+run_qdrant_controller_supervised "$PYTHON_COMMAND" -I -B \
     "$QDRANT_RELEASE_CONTROLLER" \
     --journal "$QDRANT_UPGRADE_JOURNAL" \
     --output "$QDRANT_UPGRADE_RESULT" \
@@ -5478,8 +6567,7 @@ run_qdrant_controller_supervised "$PIPELINE_PYTHON" -I \
     --publication-generation "$publication_generation" \
     --probe-slots "$probe_slots" \
     --seed-song-id "$API_BRIDGE_SEED_SONG_ID" \
-    --pipeline-python "$PIPELINE_PYTHON" \
-    --pipeline-venv "$PIPELINE_VENV" \
+    --runtime-attestation "$PIPELINE_RUNTIME_ATTESTATION_FILE" \
     --final-image-id "$NEW_QDRANT_ID" \
     --audit-image-id "$NEW_QDRANT_AUDIT_ID" \
     --audit-architecture "$AUDIT_APK_ARCH" \
@@ -5710,6 +6798,18 @@ verify_qdrant_rollback_assets \
     || { fail "exact Qdrant rollback image/volume/scan contract did not bind"; exit 1; }
 record_state qdrant.rollback_tag "$QDRANT_ROLLBACK_IMAGE"
 record_state qdrant.rollback_tag_image_id "$OLD_QDRANT_IMAGE_ID"
+rollback_image_before=$(query_optional_image_id "$POSTGRES_ROLLBACK_IMAGE") \
+    || { fail "PostgreSQL rollback image tag inventory became ambiguous"; exit 1; }
+[ "$rollback_image_before" = absent ] \
+    || { fail "PostgreSQL rollback image tag appeared before its immutable bind"; exit 1; }
+run_bounded_docker_mutation image tag "$OLD_POSTGRES_IMAGE_ID" \
+    "$POSTGRES_ROLLBACK_IMAGE" \
+    || { fail "exact PostgreSQL rollback image tag bind failed or timed out"; exit 1; }
+verify_postgres_rollback_assets \
+    || { fail "exact PostgreSQL rollback image/scan contract did not bind"; exit 1; }
+record_state postgres.rollback_tag "$POSTGRES_ROLLBACK_IMAGE"
+record_state postgres.rollback_tag_image_id "$OLD_POSTGRES_IMAGE_ID"
+record_state postgres.rollback_scope image-only-no-data-rollback
 STABLE_QDRANT_TAG_MUTATED=true
 record_state qdrant.stable_tag_recovery armed-before-tag-mutation
 run_bounded_docker_mutation image tag "$NEW_QDRANT_ID" "$QDRANT_IMAGE" \
@@ -5739,6 +6839,8 @@ verify_qdrant_previous_container_contract \
     || { fail "legacy Qdrant rollback container contract changed before forward-only promotion"; exit 1; }
 verify_qdrant_rollback_assets \
     || { fail "Qdrant rollback image/volume/scan contract changed before promotion"; exit 1; }
+verify_postgres_rollback_assets \
+    || { fail "PostgreSQL rollback image/scan contract changed before promotion"; exit 1; }
 run_bounded_docker_mutation stop --time 120 "$QDRANT_FALLBACK_ID" >/dev/null
 wait_container_running_id "$QDRANT_FALLBACK_ID" false \
     || { fail "verified Qdrant candidate did not stop for promotion"; exit 1; }
@@ -5772,6 +6874,8 @@ verify_compose_resource_identity "$NEW_QDRANT_CONTAINER_ID" "$ORIGINAL_PROJECT" 
     || { fail "promoted Qdrant Compose ownership contract failed"; exit 1; }
 verify_qdrant_rollback_assets \
     || { fail "Qdrant rollback image/volume/scan contract changed during promotion"; exit 1; }
+verify_postgres_rollback_assets \
+    || { fail "PostgreSQL rollback image/scan contract changed during promotion"; exit 1; }
 qdrant_fingerprint "$RUN_DIR/qdrant-promoted.json"
 cmp -s "$RUN_DIR/qdrant-after.json" "$RUN_DIR/qdrant-promoted.json" \
     || { fail "Qdrant structural fingerprint changed during promotion"; exit 1; }
@@ -5853,6 +6957,8 @@ wait_container_mapping "$POSTGRES_CONTAINER" "$NEW_POSTGRES_CONTAINER_ID" \
     || { fail "original Compose ownership check replaced PostgreSQL"; exit 1; }
 verify_qdrant_rollback_assets \
     || { fail "Qdrant rollback image/volume/scan contract changed before commit"; exit 1; }
+verify_postgres_rollback_assets \
+    || { fail "PostgreSQL rollback image/scan contract changed before commit"; exit 1; }
 PROMOTION_COMMITTED=true
 write_promoted_marker \
     || { fail "durable promoted marker could not be committed"; exit 1; }
@@ -5877,6 +6983,16 @@ fi
 wait_container_mapping "$POSTGRES_PREVIOUS_CONTAINER" "" \
     || { fail "legacy PostgreSQL cleanup did not stabilize"; exit 1; }
 POSTGRES_PREVIOUS_PRESERVED=false
+verify_qdrant_rollback_assets \
+    || { fail "Qdrant rollback assets changed after all legacy container cleanup"; exit 1; }
+verify_postgres_rollback_assets \
+    || { fail "PostgreSQL rollback image/scan contract changed after legacy cleanup"; exit 1; }
+verify_retained_image_offline "$OLD_QDRANT_IMAGE_ID" \
+    || { fail "retained Qdrant rollback image is still referenced by a container"; exit 1; }
+verify_retained_image_offline "$OLD_POSTGRES_IMAGE_ID" \
+    || { fail "retained PostgreSQL rollback image is still referenced by a container"; exit 1; }
+record_state postgres.rollback_retained \
+    "$POSTGRES_ROLLBACK_IMAGE:$OLD_POSTGRES_IMAGE_ID:image-only-no-data-rollback"
 
 run_bounded_docker_mutation rm "$QDRANT_FALLBACK_ID" >/dev/null
 wait_container_mapping "$QDRANT_FALLBACK_CONTAINER" "" \
@@ -5902,6 +7018,10 @@ verify_pipeline_writer_gate \
     || { fail "pipeline writer gate changed before release"; exit 1; }
 release_pipeline_writers \
     || { fail "pipeline writer gate could not be released exactly"; exit 1; }
+verify_pipeline_runtime_identity_unchanged \
+    || { fail "pipeline virtual-environment identity changed during the semantic-probe interval"; exit 1; }
+release_pipeline_runtime_lock \
+    || { fail "pipeline virtual-environment shared lock could not be released"; exit 1; }
 [ "$DAEMON_READ_UNRESOLVED" = "false" ] \
     && [ ! -f "$DAEMON_READ_UNRESOLVED_FILE" ] \
     || { fail "daemon read state became unresolved before completion"; exit 1; }

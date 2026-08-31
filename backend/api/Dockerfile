@@ -1,4 +1,9 @@
 FROM mcr.microsoft.com/dotnet/aspnet:8.0-alpine-extra@sha256:bfb8d74a4b0130c7e4abf88a4dede4f51929b91e26d76ae8ccf3f571a21db3b9 AS base
+USER root
+# The immutable base predates the Alpine fix for CVE-2026-14456.
+RUN apk add --no-cache \
+      libcrypto3=3.5.8-r0 \
+      libssl3=3.5.8-r0
 WORKDIR /app
 EXPOSE 5000
 

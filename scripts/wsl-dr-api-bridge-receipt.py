@@ -452,12 +452,16 @@ def _read_previous_api_rollback_v1(
         lines = raw.decode("utf-8").splitlines()
     except UnicodeError as error:
         raise ReceiptError("previous API rollback receipt is not UTF-8") from error
-    _require(lines[:2] == ["schema\t1", "provenance\tlegacy-pre-contract-unattested"]
-             and len(lines) == 4,
+    _require(len(lines) >= 2
+             and lines[0] in {"schema\t1", "schema\t2"}
+             and lines[1] == "provenance\tlegacy-pre-contract-unattested",
              "previous API rollback receipt header is invalid")
+    schema_version = int(lines[0].split("\t", 1)[1])
+    _require(len(lines) == (4 if schema_version == 1 else 9),
+             "previous API rollback receipt row count is invalid")
     expected_prefix = "diva_dr" if receipt["hostScope"] == "wsl-dr-standby" else "vocadb"
     slots: dict[str, Any] = {}
-    for line, expected_service in zip(lines[2:], ("api_a", "api_b"), strict=True):
+    for line, expected_service in zip(lines[2:4], ("api_a", "api_b"), strict=True):
         fields = line.split("\t")
         _require(len(fields) == 8 and fields[0] == expected_service,
                  "previous API rollback receipt slot row is invalid")
@@ -480,11 +484,63 @@ def _read_previous_api_rollback_v1(
             "imageReference": image_reference,
             "rollbackTag": rollback_tag,
         }
-    return {
+    result: dict[str, Any] = {
         "apiSlots": slots,
         "provenance": "legacy-pre-contract-unattested",
-        "schemaVersion": 1,
+        "schemaVersion": schema_version,
     }
+    if schema_version == 1:
+        return result
+
+    scans: dict[str, Any] = {}
+    for line, expected_service in zip(
+        lines[4:7], ("api", "gateway", "web"), strict=True
+    ):
+        fields = line.split("\t")
+        _require(len(fields) == 4 and fields[:2] == ["scan", expected_service],
+                 "previous API rollback scan row is invalid")
+        image_id, receipt_sha = fields[2:]
+        _safe_string(image_id, f"previousApiRollback.scans.{expected_service}.imageId")
+        _safe_string(receipt_sha, f"previousApiRollback.scans.{expected_service}.sha256", HEX64)
+        scans[expected_service] = {"imageId": image_id, "sha256": receipt_sha}
+
+    stateless: dict[str, Any] = {}
+    for line, expected_service in zip(
+        lines[7:9], ("api_gateway", "web"), strict=True
+    ):
+        fields = line.split("\t")
+        _require(len(fields) == 7
+                 and fields[:3] == ["stateless", expected_service,
+                                    f"{expected_prefix}_{expected_service}"],
+                 "previous API rollback stateless row is invalid")
+        _, _, canonical_name, container_id, image_id, image_reference, config_hash = fields
+        for value, label in (
+            (container_id, "containerId"), (image_id, "imageId"),
+            (image_reference, "imageReference"),
+        ):
+            _safe_string(value,
+                         f"previousApiRollback.statelessServices.{expected_service}.{label}")
+        _safe_string(
+            config_hash,
+            f"previousApiRollback.statelessServices.{expected_service}.configHash",
+            HEX64,
+        )
+        stateless[expected_service] = {
+            "canonicalName": canonical_name,
+            "configHash": config_hash,
+            "containerId": container_id,
+            "imageId": image_id,
+            "imageReference": image_reference,
+        }
+    _require(scans["api"]["imageId"] == receipt["apiSlots"]["api_a"]["imageId"]
+             == receipt["apiSlots"]["api_b"]["imageId"],
+             "previous API rollback API scan image differs from the main receipt")
+    _require(scans["gateway"]["imageId"] == stateless["api_gateway"]["imageId"]
+             and scans["web"]["imageId"] == stateless["web"]["imageId"],
+             "previous API rollback stateless scan image binding is invalid")
+    result["scanReceipts"] = scans
+    result["statelessServices"] = stateless
+    return result
 
 
 def _read_previous_api_rollback_v2(

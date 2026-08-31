@@ -63,6 +63,15 @@ if [ "$TEST_MODE" = "1" ]; then
         exit 1
     }
 else
+    if [ "${DIVA_DEPLOY_STATE_DIR+x}" = x ] \
+        || [ "${DIVA_STATEFUL_STATE_DIR+x}" = x ]; then
+        printf '%s\n' 'ERROR: production deployment state-root overrides are forbidden' >&2
+        exit 1
+    fi
+    [ "$(/usr/bin/id -u)" -eq 0 ] || {
+        printf '%s\n' 'ERROR: production rolling deployment requires uid 0' >&2
+        exit 1
+    }
     [ -z "${DIVA_DEPLOY_TEST_BACKEND_ENV_SOURCE+x}" ] || {
         printf '%s\n' 'ERROR: production backend environment source override is forbidden' >&2
         exit 1
@@ -192,12 +201,20 @@ else
     BACKEND_ENV_SOURCE="$ORIGINAL_ROOT_DIR/backend/.env"
 fi
 
-if [ -n "${DIVA_DEPLOY_STATE_DIR:-}" ] && [ -n "${DIVA_STATEFUL_STATE_DIR:-}" ] \
-    && [ "$DIVA_DEPLOY_STATE_DIR" != "$DIVA_STATEFUL_STATE_DIR" ]; then
-    printf '%s\n' 'ERROR: deploy and stateful state-root overrides must be identical' >&2
-    exit 1
+if [ "$TEST_MODE" = "1" ]; then
+    if [ -n "${DIVA_DEPLOY_STATE_DIR:-}" ] && [ -n "${DIVA_STATEFUL_STATE_DIR:-}" ] \
+        && [ "$DIVA_DEPLOY_STATE_DIR" != "$DIVA_STATEFUL_STATE_DIR" ]; then
+        printf '%s\n' 'ERROR: deploy and stateful state-root overrides must be identical' >&2
+        exit 1
+    fi
+    STATE_ROOT=${DIVA_DEPLOY_STATE_DIR:-${DIVA_STATEFUL_STATE_DIR:-"$ROOT_DIR/.deploy-state"}}
+else
+    # This is also the hardener's fixed state root.  Both the one-time bridge
+    # bootstrap and every later normal rolling run therefore consume the same
+    # receipt, locks, journals, and completed stateful runtime contract without
+    # relying on a caller-controlled command-scoped environment variable.
+    STATE_ROOT=/var/lib/diva-player-deploy
 fi
-STATE_ROOT=${DIVA_DEPLOY_STATE_DIR:-${DIVA_STATEFUL_STATE_DIR:-"$ROOT_DIR/.deploy-state"}}
 STATE_ROOT_ID=""
 DEPLOY_LOCK_DIR="$STATE_ROOT/deploy.lock"
 STATEFUL_LOCK_DIR="$STATE_ROOT/stateful-hardening.lock"
@@ -239,6 +256,7 @@ TRIVY_RUN_CACHE="$IMAGE_SCAN_ROOT/trivy-cache"
 TRIVY_EMPTY_CONFIG="$IMAGE_SCAN_ROOT/trivy-empty.yaml"
 TRIVY_EMPTY_IGNORE="$IMAGE_SCAN_ROOT/trivy-empty.ignore"
 TRIVY_SCANNER_SHA=""
+IMAGE_SCAN_BATCH_STARTED_AT=""
 API_SCAN_RECEIPT_SHA=""
 GATEWAY_SCAN_RECEIPT_SHA=""
 WEB_SCAN_RECEIPT_SHA=""
@@ -251,6 +269,11 @@ API_A_BRIDGE_ROLLBACK_IMAGE="diva-player-api:bridge-rollback-api-a-$DEPLOYMENT_I
 API_B_BRIDGE_ROLLBACK_IMAGE="diva-player-api:bridge-rollback-api-b-$DEPLOYMENT_ID"
 API_BRIDGE_PREVIOUS_RECEIPT="$DEPLOYMENT_DIR/api-bridge-previous-api-rollback.receipt"
 API_BRIDGE_PREPARED_RECEIPT="$DEPLOYMENT_DIR/api-bridge-receipt.prepared.json"
+BRIDGE_LIVE_PUBLICATION_EVIDENCE="$DEPLOYMENT_DIR/bridge-live-publication.json"
+BRIDGE_PUBLICATION_WRITER_BARRIER_FIFO="$PRIVATE_RUNTIME_ROOT/bridge-publication-writer-barrier.fifo"
+BRIDGE_PUBLICATION_WRITER_BARRIER_RESULT="$DEPLOYMENT_DIR/bridge-publication-writer-barrier.result"
+BRIDGE_PUBLICATION_WRITER_BARRIER_ERROR="$DEPLOYMENT_DIR/bridge-publication-writer-barrier.error"
+BRIDGE_PUBLICATION_WRITER_BARRIER_EXIT="$DEPLOYMENT_DIR/bridge-publication-writer-barrier.exit"
 GATEWAY_CANDIDATE_IMAGE="diva-player-api-gateway:candidate-$DEPLOYMENT_ID"
 WEB_CANDIDATE_IMAGE="diva-player-web:candidate-$DEPLOYMENT_ID"
 CANDIDATE_CONTAINER="diva_api_gateway_candidate_$DEPLOYMENT_ID"
@@ -285,10 +308,21 @@ API_B_BRIDGE_ROLLBACK_TAG_CREATED=false
 API_BRIDGE_PUBLISHED=false
 API_BRIDGE_PUBLICATION_ARMED=false
 API_BRIDGE_PREPARED_SHA=""
+BRIDGE_LIVE_MUTATION_STARTED=false
+BRIDGE_PUBLICATION_WRITER_BARRIER_TOKEN="diva-bridge-$DEPLOYMENT_ID"
+BRIDGE_PUBLICATION_WRITER_BARRIER_APPLICATION="diva_bridge_$DEPLOYMENT_ID"
+BRIDGE_PUBLICATION_WRITER_BARRIER_ACTIVE=false
+BRIDGE_PUBLICATION_WRITER_BARRIER_UNRESOLVED=false
+BRIDGE_PUBLICATION_WRITER_BARRIER_PID=""
+BRIDGE_PUBLICATION_WRITER_BARRIER_FD_OPEN=false
 BRIDGE_QDRANT_ID=""
 BRIDGE_POSTGRES_ID=""
 BRIDGE_QDRANT_IMAGE_ID=""
 BRIDGE_POSTGRES_IMAGE_ID=""
+BRIDGE_QDRANT_MOUNTS_JSON=""
+BRIDGE_POSTGRES_MOUNTS_JSON=""
+BRIDGE_MIGRATE_IMAGE_STATE=""
+BRIDGE_MIGRATE_SERVICE_IDS=""
 BRIDGE_GATEWAY_IMAGE_ID=""
 BRIDGE_WEB_IMAGE_ID=""
 BRIDGE_QDRANT_CONFIG_HASH=""
@@ -297,6 +331,16 @@ BRIDGE_GATEWAY_CONFIG_HASH=""
 BRIDGE_WEB_CONFIG_HASH=""
 BRIDGE_QDRANT_BACKUP_BINDING=""
 BRIDGE_QDRANT_PUBLICATION_GENERATION=""
+BRIDGE_QDRANT_PUBLICATION_SHA256=""
+BRIDGE_BACKUP_EVIDENCE_SELECTION_SHA256=""
+BRIDGE_BACKUP_CONTRACT_FAILED=false
+BRIDGE_BACKUP_ANCHOR_UTC_EPOCH=""
+BRIDGE_BACKUP_ANCHOR_BOOT_ID=""
+BRIDGE_BACKUP_ANCHOR_BOOTTIME_NS=""
+BRIDGE_BACKUP_LAST_UTC_EPOCH=""
+BRIDGE_BACKUP_LAST_BOOTTIME_NS=""
+BRIDGE_BACKUP_LIFETIME_FAILED=false
+BRIDGE_BACKUP_MAX_ELAPSED_SECONDS=14400
 CANONICAL_IMAGE_STATE_CAPTURED=false
 CANONICAL_IMAGES_COMMITTED=false
 OLD_CANONICAL_API_PRESENT=false
@@ -367,12 +411,33 @@ API_B_RUNTIME_ENV_FILE="$PRIVATE_RUNTIME_ROOT/api_b.candidate.env"
 GATEWAY_RUNTIME_ENV_FILE="$PRIVATE_RUNTIME_ROOT/api_gateway.candidate.env"
 WEB_RUNTIME_ENV_FILE="$PRIVATE_RUNTIME_ROOT/web.candidate.env"
 
-mkdir -p "$STATE_ROOT"
-if [ ! -d "$STATE_ROOT" ] || [ -L "$STATE_ROOT" ]; then
+prepare_deployment_state_root() {
+    local mode
+    if [ "$TEST_MODE" = "1" ]; then
+        mkdir -p "$STATE_ROOT" || return 1
+        [ -d "$STATE_ROOT" ] && [ ! -L "$STATE_ROOT" ] || return 1
+        chmod 700 "$STATE_ROOT" || return 1
+        return 0
+    fi
+
+    [ "$STATE_ROOT" = /var/lib/diva-player-deploy ] || return 1
+    validate_trusted_system_directory / \
+        && validate_trusted_system_directory /var \
+        && validate_trusted_system_directory /var/lib || return 1
+    if [ ! -e "$STATE_ROOT" ] && [ ! -L "$STATE_ROOT" ]; then
+        /usr/bin/mkdir --mode=700 "$STATE_ROOT" || return 1
+        /usr/bin/sync -f /var/lib 2>/dev/null || /usr/bin/sync
+    fi
+    [ -d "$STATE_ROOT" ] && [ ! -L "$STATE_ROOT" ] \
+        && [ "$(/usr/bin/stat -c '%u:%g' "$STATE_ROOT")" = 0:0 ] || return 1
+    mode=$(/usr/bin/stat -c '%a' "$STATE_ROOT") || return 1
+    [ "$mode" = 700 ]
+}
+
+if ! prepare_deployment_state_root; then
     printf '%s\n' "ERROR: deployment state root is not a safe directory: $STATE_ROOT" >&2
     exit 1
 fi
-chmod 700 "$STATE_ROOT"
 STATE_ROOT_ID=$(stat -c '%d:%i' "$STATE_ROOT") || exit 1
 
 record_state() {
@@ -1011,6 +1076,42 @@ terminal_secret_cleanup() {
     exit "$terminal_exit_code"
 }
 
+cleanup_unpublished_bridge_rollback_tags() {
+    local recovery_result="$1"
+    case "$recovery_result" in ''|*[!0-9]*) return 1 ;; esac
+    if [ "$DEPLOYMENT_SUCCEEDED" = "true" ] \
+        || [ "$API_BRIDGE_PUBLISHED" = "true" ]; then
+        return 0
+    fi
+    # Once any live bridge replacement was attempted, the deployment-unique
+    # rollback image references are part of the durable recovery evidence.
+    # They must also remain when recovery was incomplete, even if no canonical
+    # bridge receipt was published.
+    if [ "$BRIDGE_LIVE_MUTATION_STARTED" = "true" ] \
+        || [ "$recovery_result" -ne 0 ]; then
+        if [ "$API_A_BRIDGE_ROLLBACK_TAG_CREATED" = "true" ] \
+            || [ "$API_B_BRIDGE_ROLLBACK_TAG_CREATED" = "true" ]; then
+            record_state bridge.rollback_image_tags \
+                "retained-live-mutation-or-incomplete-recovery" || true
+        fi
+        return 0
+    fi
+    if [ "$API_A_BRIDGE_ROLLBACK_TAG_CREATED" = "true" ]; then
+        if remove_owned_image_ref "$API_A_BRIDGE_ROLLBACK_IMAGE" "$OLD_API_A_IMAGE"; then
+            API_A_BRIDGE_ROLLBACK_TAG_CREATED=false
+        else
+            return 1
+        fi
+    fi
+    if [ "$API_B_BRIDGE_ROLLBACK_TAG_CREATED" = "true" ]; then
+        if remove_owned_image_ref "$API_B_BRIDGE_ROLLBACK_IMAGE" "$OLD_API_B_IMAGE"; then
+            API_B_BRIDGE_ROLLBACK_TAG_CREATED=false
+        else
+            return 1
+        fi
+    fi
+}
+
 cleanup() {
     local original_exit_code="$1"
     local recovery_result=0
@@ -1068,6 +1169,9 @@ cleanup() {
             DEPLOYMENT_SUCCEEDED=true
             CANONICAL_IMAGES_COMMITTED=true
             RECOVERY_ARMED=false
+            API_CANDIDATE_TAG_CREATED=false
+            GATEWAY_CANDIDATE_TAG_CREATED=false
+            WEB_CANDIDATE_TAG_CREATED=false
             record_state "bridge.receipt_reconciled" \
                 "$API_BRIDGE_PREPARED_SHA" || true
         elif [ -e "$API_BRIDGE_RECEIPT" ] || [ -L "$API_BRIDGE_RECEIPT" ]; then
@@ -1077,6 +1181,9 @@ cleanup() {
             DEPLOYMENT_SUCCEEDED=true
             CANONICAL_IMAGES_COMMITTED=true
             RECOVERY_ARMED=false
+            API_CANDIDATE_TAG_CREATED=false
+            GATEWAY_CANDIDATE_TAG_CREATED=false
+            WEB_CANDIDATE_TAG_CREATED=false
             TOPOLOGY_DRIFT_UNRESOLVED=true
             recovery_result=1
             record_state "bridge.receipt_reconciliation" \
@@ -1085,8 +1192,21 @@ cleanup() {
             API_BRIDGE_PUBLICATION_ARMED=false
         fi
     fi
+    if [ "$BRIDGE_PUBLICATION_WRITER_BARRIER_ACTIVE" = "true" ] \
+        && [ "$DEPLOYMENT_SUCCEEDED" = "true" ]; then
+        if ! release_bridge_publication_writer_barrier; then
+            BRIDGE_PUBLICATION_WRITER_BARRIER_UNRESOLVED=true
+            recovery_result=1
+            record_state bridge.publication_writer_barrier \
+                "cleanup-release-unresolved:$BRIDGE_PUBLICATION_WRITER_BARRIER_TOKEN" || true
+        fi
+    fi
     if [ "$DAEMON_MUTATION_UNRESOLVED" = "true" ] \
         || [ -e "$DAEMON_UNRESOLVED_FILE" ] || [ -L "$DAEMON_UNRESOLVED_FILE" ]; then
+        if [ "$BRIDGE_PUBLICATION_WRITER_BARRIER_ACTIVE" = "true" ]; then
+            preserve_bridge_publication_writer_gate \
+                "daemon-unresolved-before-rollback" || true
+        fi
         record_state "deployment.status" \
             "daemon-unresolved-fail-stop-manual-reconciliation-required" || true
         record_state "recovery.status" \
@@ -1252,6 +1372,17 @@ cleanup() {
         && [ "$CANONICAL_IMAGES_COMMITTED" != "true" ]; then
         restore_canonical_image_state || recovery_result=1
     fi
+    if [ "$BRIDGE_PUBLICATION_WRITER_BARRIER_ACTIVE" = "true" ]; then
+        if [ "$recovery_result" -eq 0 ]; then
+            if ! release_bridge_publication_writer_barrier; then
+                BRIDGE_PUBLICATION_WRITER_BARRIER_UNRESOLVED=true
+                recovery_result=1
+            fi
+        else
+            preserve_bridge_publication_writer_gate \
+                "incomplete-stateless-rollback" || true
+        fi
+    fi
     if [ "$WEB_CANDIDATE_TAG_CREATED" = "true" ]; then
         if remove_owned_image_ref "$WEB_CANDIDATE_IMAGE" "$NEW_WEB_IMAGE"; then
             WEB_CANDIDATE_TAG_CREATED=false
@@ -1273,27 +1404,18 @@ cleanup() {
             recovery_result=1
         fi
     fi
-    if [ "$DEPLOYMENT_SUCCEEDED" != "true" ] \
-        && [ "$API_BRIDGE_PUBLISHED" != "true" ]; then
-        if [ "$API_A_BRIDGE_ROLLBACK_TAG_CREATED" = "true" ]; then
-            if remove_owned_image_ref "$API_A_BRIDGE_ROLLBACK_IMAGE" "$OLD_API_A_IMAGE"; then
-                API_A_BRIDGE_ROLLBACK_TAG_CREATED=false
-            else
-                recovery_result=1
-            fi
-        fi
-        if [ "$API_B_BRIDGE_ROLLBACK_TAG_CREATED" = "true" ]; then
-            if remove_owned_image_ref "$API_B_BRIDGE_ROLLBACK_IMAGE" "$OLD_API_B_IMAGE"; then
-                API_B_BRIDGE_ROLLBACK_TAG_CREATED=false
-            else
-                recovery_result=1
-            fi
-        fi
-    fi
+    cleanup_unpublished_bridge_rollback_tags "$recovery_result" \
+        || recovery_result=1
     if [ "$DAEMON_MUTATION_UNRESOLVED" = "true" ] \
         || [ -e "$DAEMON_UNRESOLVED_FILE" ] || [ -L "$DAEMON_UNRESOLVED_FILE" ]; then
         record_state "deployment.status" \
             "daemon-unresolved-during-final-cleanup-manual-reconciliation-required" || true
+        retire_private_backend_environment_or_mark || true
+        exit 1
+    fi
+    if [ "$BRIDGE_PUBLICATION_WRITER_BARRIER_UNRESOLVED" = "true" ]; then
+        record_state "deployment.interlock" \
+            "active-journal-and-deploy-lock-retained-after-writer-barrier-release-failure" || true
         retire_private_backend_environment_or_mark || true
         exit 1
     fi
@@ -1894,6 +2016,9 @@ prepare_candidate_image_scan_database() {
     : > "$TRIVY_EMPTY_CONFIG"
     : > "$TRIVY_EMPTY_IGNORE"
     chmod 600 "$TRIVY_EMPTY_CONFIG" "$TRIVY_EMPTY_IGNORE" || return 1
+    [ -z "$IMAGE_SCAN_BATCH_STARTED_AT" ] || return 1
+    IMAGE_SCAN_BATCH_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ) || return 1
+    [ -n "$IMAGE_SCAN_BATCH_STARTED_AT" ] || return 1
     if [ "$TEST_MODE" = "1" ]; then
         "$TRIVY_COMMAND" prepare "$TRIVY_RUN_CACHE" || return 1
         TRIVY_SCANNER_SHA=$(sha256sum "$TRIVY_COMMAND" | awk '{print $1}') \
@@ -1924,6 +2049,7 @@ prepare_candidate_image_scan_database() {
     [ "${#TRIVY_SCANNER_SHA}" -eq 64 ] || return 1
     "$SYNC_COMMAND" -f "$IMAGE_SCAN_ROOT" 2>/dev/null || "$SYNC_COMMAND" \
         || return 1
+    record_state "image_scan.batch_started_at" "$IMAGE_SCAN_BATCH_STARTED_AT"
     record_state "image_scan.database" "prepared-private-fresh"
 }
 
@@ -1949,7 +2075,8 @@ scan_exact_candidate_image() {
         [ -f "$receipt" ] && [ ! -L "$receipt" ] || return 1
         chmod 600 "$receipt" || return 1
     else
-        started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+        started_at="$IMAGE_SCAN_BATCH_STARTED_AT"
+        [ -n "$started_at" ] || return 1
         run_with_timeout "$BUILD_TIMEOUT_SECONDS" env -i \
             PATH=/usr/bin:/bin HOME="$IMAGE_SCAN_ROOT/home" \
             XDG_CACHE_HOME="$IMAGE_SCAN_ROOT/xdg-cache" \
@@ -2030,21 +2157,14 @@ verify_exact_candidate_scan_receipt() {
 scan_all_rolling_candidate_images() {
     prepare_candidate_image_scan_database || return 1
     scan_exact_candidate_image api "$API_CANDIDATE_IMAGE" "$NEW_API_IMAGE" \
-        'os-pkgs:alpine:30:30:1' 'lang-pkgs:dotnet-core:13:13:3' \
+        'os-pkgs:alpine:21:21:1' 'lang-pkgs:dotnet-core:13:13:3' \
+        'lang-pkgs:nuget:12:12:1' \
         || return 1
     scan_exact_candidate_image gateway "$GATEWAY_CANDIDATE_IMAGE" \
-        "$NEW_GATEWAY_IMAGE" 'os-pkgs:alpine:33:33:1' || return 1
+        "$NEW_GATEWAY_IMAGE" 'os-pkgs:alpine:24:24:1' || return 1
     scan_exact_candidate_image web "$WEB_CANDIDATE_IMAGE" "$NEW_WEB_IMAGE" \
         'os-pkgs:alpine:70:70:1' || return 1
     record_state "image_scan.status" "all-exact-receipts-verified"
-}
-
-scan_bridge_api_candidate_image() {
-    prepare_candidate_image_scan_database || return 1
-    scan_exact_candidate_image api "$API_CANDIDATE_IMAGE" "$NEW_API_IMAGE" \
-        'os-pkgs:alpine:30:30:1' 'lang-pkgs:dotnet-core:13:13:3' \
-        || return 1
-    record_state "image_scan.status" "bridge-api-exact-receipt-verified"
 }
 
 verify_all_rolling_candidate_scan_receipts() {
@@ -2055,13 +2175,6 @@ verify_all_rolling_candidate_scan_receipts() {
     verify_exact_candidate_scan_receipt web "$WEB_CANDIDATE_IMAGE" \
         "$NEW_WEB_IMAGE" "$WEB_SCAN_RECEIPT_SHA" || return 1
     record_state "image_scan.status" "all-exact-receipts-reverified-before-promotion"
-}
-
-verify_bridge_api_candidate_scan_receipt() {
-    verify_exact_candidate_scan_receipt api "$API_CANDIDATE_IMAGE" \
-        "$NEW_API_IMAGE" "$API_SCAN_RECEIPT_SHA" || return 1
-    record_state "image_scan.status" \
-        "bridge-api-exact-receipt-reverified-before-promotion"
 }
 
 capture_one_image_ref_state() {
@@ -3613,19 +3726,6 @@ commit_published_restart_policies() {
     record_state "runtime.restart_policy" "committed-exact-container-ids"
 }
 
-commit_bridge_api_restart_policies() {
-    local id policy
-    for id in "$NEW_API_A_CONTAINER_ID" "$NEW_API_B_CONTAINER_ID"; do
-        [ -n "$id" ] || return 1
-        run_bounded_docker_mutation update --restart unless-stopped "$id" \
-            >/dev/null || return 1
-        policy=$(container_inspect_value "$id" '{{.HostConfig.RestartPolicy.Name}}') \
-            || return 1
-        [ "$policy" = unless-stopped ] || return 1
-    done
-    record_state "bridge.api_restart_policy" "committed-exact-api-container-ids"
-}
-
 verify_published_web() {
     local expected_restart="${1:-no}"
     local current_id current_image current_config
@@ -3881,12 +3981,165 @@ rollback_updated_slots() {
     return "$result"
 }
 
+verify_bridge_attester_source() {
+    local snapshot_file="$1" current_file snapshot_metadata current_metadata \
+        expected_owner snapshot_sha current_sha
+    current_file="$ORIGINAL_ROOT_DIR/scripts/attest-disaster-backup-payloads.py"
+    [ -f "$snapshot_file" ] && [ ! -L "$snapshot_file" ] \
+        && [ -f "$current_file" ] && [ ! -L "$current_file" ] || return 1
+    snapshot_metadata=$(stat -c '%u:%g:%a:%h' "$snapshot_file") || return 1
+    current_metadata=$(stat -c '%a:%h' "$current_file") || return 1
+    [ "$current_metadata" = 644:1 ] || return 1
+    if [ "$TEST_MODE" = "1" ]; then
+        expected_owner="$(/usr/bin/id -u):$(/usr/bin/id -g)"
+    else
+        expected_owner=0:0
+    fi
+    [ "$snapshot_metadata" = "$expected_owner:644:1" ] || return 1
+    snapshot_sha=$(sha256sum "$snapshot_file" | awk '{print $1}') || return 1
+    current_sha=$(sha256sum "$current_file" | awk '{print $1}') || return 1
+    case "$snapshot_sha:$current_sha" in
+        *[!0-9a-f:]*|:|*:|*::* ) return 1 ;;
+    esac
+    [ "${#snapshot_sha}" -eq 64 ] && [ "$snapshot_sha" = "$current_sha" ] \
+        || return 1
+    printf '%s\n' "$snapshot_sha"
+}
+
+mark_bridge_backup_contract_failed() {
+    local reason="$1"
+    BRIDGE_BACKUP_CONTRACT_FAILED=true
+    record_state bridge.backup_contract_failure "$reason" || true
+    return 1
+}
+
+read_bridge_backup_clock() {
+    local observed
+    observed=$(run_with_timeout "$DOCKER_READ_TIMEOUT_SECONDS" \
+        "$PYTHON_COMMAND" -I - <<'PY'
+import re
+import time
+
+with open("/proc/sys/kernel/random/boot_id", encoding="ascii") as handle:
+    boot_id = handle.read(64)
+if re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\n?", boot_id) is None:
+    raise RuntimeError("kernel boot ID is invalid")
+boot_id = boot_id.strip()
+if not hasattr(time, "CLOCK_BOOTTIME") or not hasattr(time, "clock_gettime_ns"):
+    raise RuntimeError("CLOCK_BOOTTIME is unavailable")
+print(int(time.time()), boot_id, time.clock_gettime_ns(time.CLOCK_BOOTTIME))
+PY
+    ) || return 1
+    set -- $observed
+    [ "$#" -eq 3 ] || return 1
+    case "$1:$3" in
+        *[!0-9:]*|:*|*:|*::* ) return 1 ;;
+    esac
+    printf '%s\n%s\n%s\n' "$1" "$2" "$3"
+}
+
+initialize_bridge_backup_lifetime() {
+    local observed anchor_utc anchor_boot anchor_boottime
+    [ "$BRIDGE_BACKUP_LIFETIME_FAILED" != true ] \
+        && [ -z "$BRIDGE_BACKUP_ANCHOR_UTC_EPOCH" ] \
+        && [ -z "$BRIDGE_BACKUP_ANCHOR_BOOT_ID" ] \
+        && [ -z "$BRIDGE_BACKUP_ANCHOR_BOOTTIME_NS" ] || return 1
+    observed=$(read_bridge_backup_clock) || {
+        BRIDGE_BACKUP_LIFETIME_FAILED=true
+        return 1
+    }
+    anchor_utc=$(printf '%s\n' "$observed" | awk 'NR == 1 { print; exit }') || return 1
+    anchor_boot=$(printf '%s\n' "$observed" | awk 'NR == 2 { print; exit }') || return 1
+    anchor_boottime=$(printf '%s\n' "$observed" | awk 'NR == 3 { print; exit }') || return 1
+    case "$anchor_utc:$anchor_boottime" in
+        *[!0-9:]*|:*|*:|*::* ) BRIDGE_BACKUP_LIFETIME_FAILED=true; return 1 ;;
+    esac
+    printf '%s\n' "$anchor_boot" \
+        | grep -Eq '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' \
+        || { BRIDGE_BACKUP_LIFETIME_FAILED=true; return 1; }
+    BRIDGE_BACKUP_ANCHOR_UTC_EPOCH="$anchor_utc"
+    BRIDGE_BACKUP_ANCHOR_BOOT_ID="$anchor_boot"
+    BRIDGE_BACKUP_ANCHOR_BOOTTIME_NS="$anchor_boottime"
+    BRIDGE_BACKUP_LAST_UTC_EPOCH="$anchor_utc"
+    BRIDGE_BACKUP_LAST_BOOTTIME_NS="$anchor_boottime"
+    record_state bridge.backup_anchor_utc_epoch "$anchor_utc" \
+        && record_state bridge.backup_anchor_boot_id "$anchor_boot" \
+        && record_state bridge.backup_anchor_boottime_ns "$anchor_boottime" \
+        && record_state bridge.backup_max_elapsed_seconds \
+            "$BRIDGE_BACKUP_MAX_ELAPSED_SECONDS" || {
+        BRIDGE_BACKUP_LIFETIME_FAILED=true
+        return 1
+    }
+}
+
+verify_bridge_backup_lifetime() {
+    local phase="$1" observed current_utc current_boot current_boottime \
+        elapsed_ns maximum_ns
+    case "$phase" in
+        after-build|after-scan|before-first-live-mutation|before-receipt-preparation|before-receipt-publication|after-live-publication-probe) ;;
+        *) return 1 ;;
+    esac
+    [ "$BRIDGE_BACKUP_LIFETIME_FAILED" != true ] \
+        && [ -n "$BRIDGE_BACKUP_ANCHOR_UTC_EPOCH" ] \
+        && [ -n "$BRIDGE_BACKUP_ANCHOR_BOOT_ID" ] \
+        && [ -n "$BRIDGE_BACKUP_ANCHOR_BOOTTIME_NS" ] \
+        && [ -n "$BRIDGE_BACKUP_LAST_UTC_EPOCH" ] \
+        && [ -n "$BRIDGE_BACKUP_LAST_BOOTTIME_NS" ] || return 1
+    observed=$(read_bridge_backup_clock) || {
+        BRIDGE_BACKUP_LIFETIME_FAILED=true
+        return 1
+    }
+    current_utc=$(printf '%s\n' "$observed" | awk 'NR == 1 { print; exit }') || return 1
+    current_boot=$(printf '%s\n' "$observed" | awk 'NR == 2 { print; exit }') || return 1
+    current_boottime=$(printf '%s\n' "$observed" | awk 'NR == 3 { print; exit }') || return 1
+    case "$current_utc:$current_boottime" in
+        *[!0-9:]*|:*|*:|*::* ) BRIDGE_BACKUP_LIFETIME_FAILED=true; return 1 ;;
+    esac
+    maximum_ns=$((BRIDGE_BACKUP_MAX_ELAPSED_SECONDS * 1000000000))
+    if [ "$current_boot" != "$BRIDGE_BACKUP_ANCHOR_BOOT_ID" ] \
+        || [ "$current_boottime" -lt "$BRIDGE_BACKUP_ANCHOR_BOOTTIME_NS" ] \
+        || [ "$current_boottime" -lt "$BRIDGE_BACKUP_LAST_BOOTTIME_NS" ]; then
+        BRIDGE_BACKUP_LIFETIME_FAILED=true
+        record_state bridge.backup_lifetime_failure "$phase-clock-or-boot-regression" || true
+        return 1
+    fi
+    elapsed_ns=$((current_boottime - BRIDGE_BACKUP_ANCHOR_BOOTTIME_NS))
+    if [ "$elapsed_ns" -ge "$maximum_ns" ]; then
+        BRIDGE_BACKUP_LIFETIME_FAILED=true
+        record_state bridge.backup_lifetime_failure "$phase-expired-$elapsed_ns" || true
+        return 1
+    fi
+    BRIDGE_BACKUP_LAST_UTC_EPOCH="$current_utc"
+    BRIDGE_BACKUP_LAST_BOOTTIME_NS="$current_boottime"
+    record_state bridge.backup_lifetime_verified "$phase:$elapsed_ns" || {
+        BRIDGE_BACKUP_LIFETIME_FAILED=true
+        return 1
+    }
+}
+
 prepare_bridge_backup_contract() {
     local postgres_run postgres_status postgres_status_sha postgres_manifest \
         postgres_manifest_sha qdrant_run qdrant_status qdrant_status_sha \
         qdrant_manifest qdrant_manifest_sha attestation_file attestation_sha \
         challenge verifier_host source_host attester_file attester_sha extracted \
-        publication_sha binding_sha
+        publication_sha binding_sha expected_binding expected_generation phase \
+        computed_binding computed_generation evidence_selection_sha
+    expected_binding=${1:-}
+    expected_generation=${2:-}
+    phase=${3:-initial}
+    case "$phase" in
+        initial)
+            [ -z "$expected_binding" ] && [ -z "$expected_generation" ] || return 1
+            ;;
+        after-build|after-scan|before-first-live-mutation|before-receipt-preparation|before-receipt-publication)
+            case "$expected_binding:$expected_generation" in
+                off-host-evidence-sha256-*:* ) ;;
+                *) return 1 ;;
+            esac
+            ;;
+        *) return 1 ;;
+    esac
+    [ "$BRIDGE_BACKUP_CONTRACT_FAILED" != true ] || return 1
     postgres_run=${DIVA_VERIFIED_POSTGRES_BACKUP_RUN_ID:-}
     postgres_status=${DIVA_VERIFIED_POSTGRES_BACKUP_STATUS_FILE:-}
     postgres_status_sha=${DIVA_VERIFIED_POSTGRES_BACKUP_STATUS_SHA256:-}
@@ -3915,6 +4168,25 @@ prepare_bridge_backup_contract() {
         && [ "${#qdrant_manifest_sha}" -eq 64 ] \
         && [ "${#attestation_sha}" -eq 64 ] && [ "${#challenge}" -eq 64 ] \
         || return 1
+    evidence_selection_sha=$(printf '%s\n' \
+        "postgres_run=$postgres_run" "postgres_status=$postgres_status" \
+        "postgres_status_sha256=$postgres_status_sha" \
+        "postgres_manifest=$postgres_manifest" \
+        "postgres_manifest_sha256=$postgres_manifest_sha" \
+        "qdrant_run=$qdrant_run" "qdrant_status=$qdrant_status" \
+        "qdrant_status_sha256=$qdrant_status_sha" \
+        "qdrant_manifest=$qdrant_manifest" \
+        "qdrant_manifest_sha256=$qdrant_manifest_sha" \
+        "attestation=$attestation_file" "attestation_sha256=$attestation_sha" \
+        "challenge=$challenge" "verifier_host=$verifier_host" \
+        "source_host=$source_host" | sha256sum | awk '{print $1}') || return 1
+    case "$evidence_selection_sha" in ''|*[!0-9a-f]*) return 1 ;; esac
+    [ "${#evidence_selection_sha}" -eq 64 ] || return 1
+    if [ "$phase" != initial ] \
+        && [ "$evidence_selection_sha" != "$BRIDGE_BACKUP_EVIDENCE_SELECTION_SHA256" ]; then
+        mark_bridge_backup_contract_failed "$phase-evidence-selection-changed"
+        return 1
+    fi
     for evidence in "$postgres_status" "$postgres_manifest" "$qdrant_status" \
         "$qdrant_manifest" "$attestation_file"; do
         [ -f "$evidence" ] && [ ! -L "$evidence" ] || return 1
@@ -3926,16 +4198,14 @@ prepare_bridge_backup_contract() {
         && [ "$(sha256sum "$qdrant_manifest" | awk '{print $1}')" = "$qdrant_manifest_sha" ] \
         && [ "$(sha256sum "$attestation_file" | awk '{print $1}')" = "$attestation_sha" ] \
         || return 1
-    attester_sha=$(sha256sum "$attester_file" | awk '{print $1}') || return 1
-    case "$attester_sha" in ''|*[!0-9a-f]*) return 1 ;; esac
-    [ "${#attester_sha}" -eq 64 ] || return 1
+    attester_sha=$(verify_bridge_attester_source "$attester_file") || return 1
     extracted=$(run_with_timeout "$DOCKER_READ_TIMEOUT_SECONDS" "$PYTHON_COMMAND" -I - \
         "$source_host" "$verifier_host" "$attester_sha" "$challenge" \
         "$postgres_run" "$postgres_status" "$postgres_status_sha" \
         "$postgres_manifest" "$postgres_manifest_sha" \
         "$qdrant_run" "$qdrant_status" "$qdrant_status_sha" \
         "$qdrant_manifest" "$qdrant_manifest_sha" \
-        "$attestation_file" "$attestation_sha" <<'PY'
+        "$attestation_file" "$attestation_sha" "$phase" <<'PY'
 import datetime as dt
 import hashlib
 import json
@@ -3949,7 +4219,7 @@ import sys
     postgres_manifest_path, postgres_manifest_sha,
     qdrant_run, qdrant_status_path, qdrant_status_sha,
     qdrant_manifest_path, qdrant_manifest_sha,
-    attestation_path, attestation_sha,
+    attestation_path, attestation_sha, phase,
 ) = sys.argv[1:]
 
 def require(condition, message):
@@ -3997,8 +4267,9 @@ def validate_backup(kind, execution_run, status_path, status_sha,
     now = dt.datetime.now(dt.timezone.utc)
     ages = [(now - value.astimezone(dt.timezone.utc)).total_seconds()
             for value in (finished, created, completed)]
-    require(all(-900 <= age <= max_age_hours * 3600 for age in ages),
-            f"{kind} evidence is stale or future-dated")
+    if phase == "initial":
+        require(all(-900 <= age <= max_age_hours * 3600 for age in ages),
+                f"{kind} evidence is stale or future-dated")
     require(created <= completed <= finished + dt.timedelta(seconds=900),
             f"{kind} timestamp ordering is invalid")
     export_run = str(manifest.get("runId") or "")
@@ -4119,7 +4390,12 @@ verified_at = dt.datetime.fromisoformat(str(attestation.get("verifiedAt") or "")
 require(verified_at.tzinfo is not None, "backup attestation timestamp has no timezone")
 attestation_age = (dt.datetime.now(dt.timezone.utc)
                    - verified_at.astimezone(dt.timezone.utc)).total_seconds()
-require(-300 <= attestation_age <= 900, "backup attestation is not fresh")
+require(phase in {
+    "initial", "after-build", "after-scan", "before-first-live-mutation",
+    "before-receipt-preparation", "before-receipt-publication",
+}, "backup validation phase is invalid")
+if phase == "initial":
+    require(-300 <= attestation_age <= 900, "backup attestation is not fresh")
 inputs = {
     "postgres": (postgres_status, postgres_manifest, postgres_status_sha,
                  postgres_manifest_sha, postgres_run),
@@ -4165,7 +4441,7 @@ PY
     ) || return 1
     set -- $extracted
     [ "$#" -eq 2 ] || return 1
-    BRIDGE_QDRANT_PUBLICATION_GENERATION="$1"
+    computed_generation="$1"
     publication_sha="$2"
     case "$publication_sha" in ''|*[!0-9a-f]*) return 1 ;; esac
     [ "${#publication_sha}" -eq 64 ] || return 1
@@ -4176,12 +4452,79 @@ PY
         "backup_attestation_sha256=$attestation_sha" \
         "publication_sha256=$publication_sha" | sha256sum | awk '{print $1}') \
         || return 1
-    BRIDGE_QDRANT_BACKUP_BINDING="off-host-evidence-sha256-$binding_sha"
-    record_state bridge.qdrant_backup_binding "$BRIDGE_QDRANT_BACKUP_BINDING"
-    record_state bridge.qdrant_publication_generation "$BRIDGE_QDRANT_PUBLICATION_GENERATION"
+    computed_binding="off-host-evidence-sha256-$binding_sha"
+    if [ "$phase" != initial ]; then
+        [ "$computed_binding" = "$expected_binding" ] \
+            && [ "$computed_generation" = "$expected_generation" ] \
+            && [ "$publication_sha" = "$BRIDGE_QDRANT_PUBLICATION_SHA256" ] || {
+            mark_bridge_backup_contract_failed "$phase-binding-generation-or-projection-changed"
+            return 1
+        }
+    fi
+    BRIDGE_QDRANT_BACKUP_BINDING="$computed_binding"
+    BRIDGE_QDRANT_PUBLICATION_GENERATION="$computed_generation"
+    BRIDGE_QDRANT_PUBLICATION_SHA256="$publication_sha"
+    case "$phase" in
+        initial)
+            BRIDGE_BACKUP_EVIDENCE_SELECTION_SHA256="$evidence_selection_sha"
+            initialize_bridge_backup_lifetime || return 1
+            record_state bridge.qdrant_backup_binding \
+                "$BRIDGE_QDRANT_BACKUP_BINDING"
+            record_state bridge.qdrant_publication_generation \
+                "$BRIDGE_QDRANT_PUBLICATION_GENERATION"
+            record_state bridge.qdrant_publication_sha256 \
+                "$BRIDGE_QDRANT_PUBLICATION_SHA256"
+            record_state bridge.backup_evidence_selection_sha256 \
+                "$BRIDGE_BACKUP_EVIDENCE_SELECTION_SHA256"
+            ;;
+        after-build|after-scan|before-first-live-mutation)
+            verify_bridge_backup_lifetime "$phase" || return 1
+            record_state bridge.backup_contract_reverified \
+                "$phase:$BRIDGE_QDRANT_BACKUP_BINDING:$BRIDGE_QDRANT_PUBLICATION_GENERATION"
+            ;;
+        before-receipt-preparation)
+            verify_bridge_backup_lifetime "$phase" || return 1
+            record_state bridge.backup_contract_reverified_before_receipt_preparation \
+                "$BRIDGE_QDRANT_BACKUP_BINDING:$BRIDGE_QDRANT_PUBLICATION_GENERATION"
+            ;;
+        before-receipt-publication)
+            verify_bridge_backup_lifetime "$phase" || return 1
+            record_state bridge.backup_contract_reverified_before_receipt_publication \
+                "$BRIDGE_QDRANT_BACKUP_BINDING:$BRIDGE_QDRANT_PUBLICATION_GENERATION"
+            ;;
+    esac
+}
+
+compose_service_container_ids() {
+    local service="$1" output line
+    run_bounded_docker_query container ls --all --quiet --no-trunc \
+        --filter "label=com.docker.compose.project=$COMPOSE_PROJECT" \
+        --filter "label=com.docker.compose.service=$service" || return 1
+    output="$DOCKER_QUERY_OUTPUT"
+    [ -z "$output" ] && return 0
+    while IFS= read -r line; do
+        printf '%s\n' "$line" | grep -Eq '^[0-9a-f]{64}$' || return 1
+    done <<EOF
+$output
+EOF
+    printf '%s\n' "$output"
+}
+
+capture_optional_image_reference_state() {
+    local reference="$1" rc=0 image_id
+    image_ref_presence "$reference" || rc=$?
+    case "$rc" in
+        0)
+            image_id=$(image_ref_id "$reference") || return 1
+            printf 'present:%s\n' "$image_id"
+            ;;
+        1) printf '%s\n' absent ;;
+        *) return 1 ;;
+    esac
 }
 
 capture_bridge_legacy_contract() {
+    local mounts_sha
     BRIDGE_QDRANT_ID=$(container_id vocadb_qdrant) || return 1
     BRIDGE_POSTGRES_ID=$(container_id vocadb_postgres) || return 1
     [ -n "$BRIDGE_QDRANT_ID" ] && [ -n "$BRIDGE_POSTGRES_ID" ] \
@@ -4189,6 +4532,16 @@ capture_bridge_legacy_contract() {
         || return 1
     BRIDGE_QDRANT_IMAGE_ID=$(container_inspect_value "$BRIDGE_QDRANT_ID" '{{.Image}}') || return 1
     BRIDGE_POSTGRES_IMAGE_ID=$(container_inspect_value "$BRIDGE_POSTGRES_ID" '{{.Image}}') || return 1
+    BRIDGE_QDRANT_MOUNTS_JSON=$(container_inspect_value "$BRIDGE_QDRANT_ID" '{{json .Mounts}}') \
+        || return 1
+    BRIDGE_POSTGRES_MOUNTS_JSON=$(container_inspect_value "$BRIDGE_POSTGRES_ID" '{{json .Mounts}}') \
+        || return 1
+    [ -n "$BRIDGE_QDRANT_MOUNTS_JSON" ] && [ -n "$BRIDGE_POSTGRES_MOUNTS_JSON" ] \
+        || return 1
+    BRIDGE_MIGRATE_SERVICE_IDS=$(compose_service_container_ids migrate) || return 1
+    [ -z "$BRIDGE_MIGRATE_SERVICE_IDS" ] || return 1
+    BRIDGE_MIGRATE_IMAGE_STATE=$(capture_optional_image_reference_state \
+        "$POSTGRES_MIGRATE_STABLE_IMAGE") || return 1
     BRIDGE_GATEWAY_IMAGE_ID=$(container_inspect_value "$OLD_GATEWAY_CONTAINER_ID" '{{.Image}}') || return 1
     BRIDGE_WEB_IMAGE_ID=$(container_inspect_value "$OLD_WEB_CONTAINER_ID" '{{.Image}}') || return 1
     for native_container_id in "$BRIDGE_QDRANT_ID" "$BRIDGE_POSTGRES_ID" \
@@ -4211,25 +4564,586 @@ capture_bridge_legacy_contract() {
     prepare_bridge_backup_contract || return 1
     record_state bridge.legacy_contract \
         "$BRIDGE_QDRANT_ID:$BRIDGE_POSTGRES_ID:$OLD_GATEWAY_CONTAINER_ID:$OLD_WEB_CONTAINER_ID"
+    mounts_sha=$(printf '%s\n%s\n' "$BRIDGE_QDRANT_MOUNTS_JSON" \
+        "$BRIDGE_POSTGRES_MOUNTS_JSON" | sha256sum | awk '{print $1}') \
+        || return 1
+    printf '%s\n' "$mounts_sha" | grep -Eq '^[0-9a-f]{64}$' || return 1
+    record_state bridge.stateful_mounts_sha256 "$mounts_sha"
+    record_state bridge.migration_runner \
+        "service-containers-absent:image-$BRIDGE_MIGRATE_IMAGE_STATE"
+}
+
+verify_bridge_stateful_contract() {
+    local migrate_ids migrate_image_state
+    migrate_ids=$(compose_service_container_ids migrate) || return 1
+    [ -z "$migrate_ids" ] || return 1
+    migrate_image_state=$(capture_optional_image_reference_state \
+        "$POSTGRES_MIGRATE_STABLE_IMAGE") || return 1
+    [ "$migrate_image_state" = "$BRIDGE_MIGRATE_IMAGE_STATE" ] || return 1
+    require_exact_running_mapping vocadb_qdrant "$BRIDGE_QDRANT_ID" \
+        && require_exact_running_mapping vocadb_postgres "$BRIDGE_POSTGRES_ID" \
+        && [ "$(container_id vocadb_qdrant)" = "$BRIDGE_QDRANT_ID" ] \
+        && [ "$(container_id vocadb_postgres)" = "$BRIDGE_POSTGRES_ID" ] \
+        && [ "$(container_inspect_value "$BRIDGE_QDRANT_ID" '{{.Image}}')" = "$BRIDGE_QDRANT_IMAGE_ID" ] \
+        && [ "$(container_inspect_value "$BRIDGE_POSTGRES_ID" '{{.Image}}')" = "$BRIDGE_POSTGRES_IMAGE_ID" ] \
+        && [ "$(container_inspect_value "$BRIDGE_QDRANT_ID" '{{json .Mounts}}')" = "$BRIDGE_QDRANT_MOUNTS_JSON" ] \
+        && [ "$(container_inspect_value "$BRIDGE_POSTGRES_ID" '{{json .Mounts}}')" = "$BRIDGE_POSTGRES_MOUNTS_JSON" ] \
+        && [ "$(container_inspect_value "$BRIDGE_QDRANT_ID" '{{index .Config.Labels "com.docker.compose.config-hash"}}')" = "$BRIDGE_QDRANT_CONFIG_HASH" ] \
+        && [ "$(container_inspect_value "$BRIDGE_POSTGRES_ID" '{{index .Config.Labels "com.docker.compose.config-hash"}}')" = "$BRIDGE_POSTGRES_CONFIG_HASH" ] \
+        && verify_container_image_linux_arm64 "$BRIDGE_QDRANT_ID" \
+        && verify_container_image_linux_arm64 "$BRIDGE_POSTGRES_ID"
 }
 
 verify_bridge_legacy_contract() {
-    [ "$(container_id vocadb_qdrant)" = "$BRIDGE_QDRANT_ID" ] \
-        && [ "$(container_id vocadb_postgres)" = "$BRIDGE_POSTGRES_ID" ] \
+    verify_bridge_stateful_contract \
         && [ "$(container_id "$GATEWAY_CONTAINER")" = "$OLD_GATEWAY_CONTAINER_ID" ] \
         && [ "$(container_id "$WEB_CONTAINER")" = "$OLD_WEB_CONTAINER_ID" ] \
-        && [ "$(container_inspect_value "$BRIDGE_QDRANT_ID" '{{.Image}}')" = "$BRIDGE_QDRANT_IMAGE_ID" ] \
-        && [ "$(container_inspect_value "$BRIDGE_POSTGRES_ID" '{{.Image}}')" = "$BRIDGE_POSTGRES_IMAGE_ID" ] \
         && [ "$(container_inspect_value "$OLD_GATEWAY_CONTAINER_ID" '{{.Image}}')" = "$BRIDGE_GATEWAY_IMAGE_ID" ] \
         && [ "$(container_inspect_value "$OLD_WEB_CONTAINER_ID" '{{.Image}}')" = "$BRIDGE_WEB_IMAGE_ID" ] \
-        && [ "$(container_inspect_value "$BRIDGE_QDRANT_ID" '{{index .Config.Labels "com.docker.compose.config-hash"}}')" = "$BRIDGE_QDRANT_CONFIG_HASH" ] \
-        && [ "$(container_inspect_value "$BRIDGE_POSTGRES_ID" '{{index .Config.Labels "com.docker.compose.config-hash"}}')" = "$BRIDGE_POSTGRES_CONFIG_HASH" ] \
         && [ "$(container_inspect_value "$OLD_GATEWAY_CONTAINER_ID" '{{index .Config.Labels "com.docker.compose.config-hash"}}')" = "$BRIDGE_GATEWAY_CONFIG_HASH" ] \
         && [ "$(container_inspect_value "$OLD_WEB_CONTAINER_ID" '{{index .Config.Labels "com.docker.compose.config-hash"}}')" = "$BRIDGE_WEB_CONFIG_HASH" ] \
-        && verify_container_image_linux_arm64 "$BRIDGE_QDRANT_ID" \
-        && verify_container_image_linux_arm64 "$BRIDGE_POSTGRES_ID" \
         && verify_container_image_linux_arm64 "$OLD_GATEWAY_CONTAINER_ID" \
         && verify_container_image_linux_arm64 "$OLD_WEB_CONTAINER_ID"
+}
+
+verify_bridge_live_publication_evidence() {
+    local producer="$1" expected_owner validation evidence_sha
+    [ -f "$producer" ] && [ ! -L "$producer" ] \
+        && [ ! -e "$BRIDGE_LIVE_PUBLICATION_EVIDENCE" ] \
+        && [ ! -L "$BRIDGE_LIVE_PUBLICATION_EVIDENCE" ] || return 1
+    (umask 077; set -C
+        "$PYTHON_COMMAND" -I "$producer" verify-live-publication \
+            --docker "$DOCKER_COMMAND" --gateway-id "$NEW_GATEWAY_CONTAINER_ID" \
+            --api-a-id "$NEW_API_A_CONTAINER_ID" --api-b-id "$NEW_API_B_CONTAINER_ID" \
+            --publication-generation "$BRIDGE_QDRANT_PUBLICATION_GENERATION" \
+            > "$BRIDGE_LIVE_PUBLICATION_EVIDENCE") || return 1
+    chmod 600 "$BRIDGE_LIVE_PUBLICATION_EVIDENCE" || return 1
+    if [ "$TEST_MODE" = "1" ]; then
+        expected_owner="$(/usr/bin/id -u):$(/usr/bin/id -g)"
+    else
+        expected_owner=0:0
+    fi
+    [ -f "$BRIDGE_LIVE_PUBLICATION_EVIDENCE" ] \
+        && [ ! -L "$BRIDGE_LIVE_PUBLICATION_EVIDENCE" ] \
+        && [ "$(stat -c '%u:%g:%a:%h' "$BRIDGE_LIVE_PUBLICATION_EVIDENCE")" \
+            = "$expected_owner:600:1" ] || return 1
+    "$SYNC_COMMAND" -f "$BRIDGE_LIVE_PUBLICATION_EVIDENCE" 2>/dev/null \
+        || "$SYNC_COMMAND" || return 1
+    validation=$(run_with_timeout "$DOCKER_READ_TIMEOUT_SECONDS" \
+        "$PYTHON_COMMAND" -I - "$BRIDGE_LIVE_PUBLICATION_EVIDENCE" \
+        "$BRIDGE_QDRANT_PUBLICATION_GENERATION" \
+        "$BRIDGE_QDRANT_PUBLICATION_SHA256" <<'PY'
+import hashlib
+import json
+import os
+import re
+import stat
+import sys
+
+path, expected_generation, expected_projection_sha = sys.argv[1:]
+before = os.lstat(path)
+if (not stat.S_ISREG(before.st_mode) or before.st_nlink != 1
+        or before.st_size <= 0 or before.st_size > 1024 * 1024):
+    raise RuntimeError("live publication evidence has unsafe metadata")
+with open(path, "rb") as handle:
+    raw = handle.read(1024 * 1024 + 1)
+after = os.lstat(path)
+if ((before.st_dev, before.st_ino, before.st_size, before.st_nlink)
+        != (after.st_dev, after.st_ino, after.st_size, after.st_nlink)):
+    raise RuntimeError("live publication evidence changed while reading")
+if len(raw) != before.st_size:
+    raise RuntimeError("live publication evidence size changed")
+document = json.loads(raw)
+canonical = (json.dumps(document, ensure_ascii=True, sort_keys=True,
+                        separators=(",", ":")) + "\n").encode()
+if raw != canonical or not isinstance(document, dict) or set(document) != {
+    "kind", "projection", "projectionSha256", "readMatrixSha256",
+    "schemaVersion", "slots",
+}:
+    raise RuntimeError("live publication evidence is not exact canonical JSON")
+projection = document.get("projection")
+if (document.get("kind") != "diva.sbc-api-bridge-live-publication.v1"
+        or document.get("schemaVersion") != 1
+        or not isinstance(projection, dict)
+        or set(projection) != {"aliases", "collections", "generation"}
+        or projection.get("generation") != expected_generation
+        or document.get("projectionSha256") != expected_projection_sha):
+    raise RuntimeError("live publication projection differs from backup evidence")
+read_matrix_sha = document.get("readMatrixSha256")
+slots = document.get("slots")
+if (re.fullmatch(r"[0-9a-f]{64}", str(read_matrix_sha or "")) is None
+        or not isinstance(slots, dict) or set(slots) != {"api_a", "api_b"}
+        or slots.get("api_a") != read_matrix_sha
+        or slots.get("api_b") != read_matrix_sha):
+    raise RuntimeError("API slot publication matrices are not exactly identical")
+print(hashlib.sha256(raw).hexdigest(), read_matrix_sha)
+PY
+    ) || return 1
+    set -- $validation
+    [ "$#" -eq 2 ] || return 1
+    evidence_sha="$1"
+    case "$evidence_sha:$2" in ''|*[!0-9a-f:]*|*:|*:) return 1 ;; esac
+    [ "${#evidence_sha}" -eq 64 ] && [ "${#2}" -eq 64 ] || return 1
+    "$SYNC_COMMAND" -f "$DEPLOYMENT_DIR" 2>/dev/null || "$SYNC_COMMAND" \
+        || return 1
+    record_state bridge.live_publication_evidence_sha256 "$evidence_sha" \
+        && record_state bridge.live_publication_read_matrix_sha256 "$2"
+}
+
+observe_bridge_publication_writer_barrier() {
+    local observed
+    [ -n "$BRIDGE_POSTGRES_ID" ] \
+        && [ -n "$BRIDGE_PUBLICATION_WRITER_BARRIER_TOKEN" ] \
+        && [ -n "$BRIDGE_PUBLICATION_WRITER_BARRIER_APPLICATION" ] || return 1
+    observed=$(run_with_timeout "$DOCKER_READ_TIMEOUT_SECONDS" \
+        "$DOCKER_COMMAND" exec -i "$BRIDGE_POSTGRES_ID" sh -ec \
+        'exec psql -X -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v "token=$1" -v "application=$2" -qAt' \
+        sh "$BRIDGE_PUBLICATION_WRITER_BARRIER_TOKEN" \
+        "$BRIDGE_PUBLICATION_WRITER_BARRIER_APPLICATION" <<'SQL'
+WITH locks AS MATERIALIZED (
+    SELECT
+        pg_try_advisory_xact_lock(hashtext('diva-data-pipeline-publication-v1')) AS pipeline,
+        pg_try_advisory_xact_lock(hashtext('diva-data-pipeline-child-v1')) AS child,
+        pg_try_advisory_xact_lock(hashtextextended('diva-recommendation-publication-v1', 0)) AS publication
+)
+SELECT
+    COALESCE((SELECT value FROM sync_state
+              WHERE key = 'diva_stateful_maintenance_gate'), '')
+    || '|' || pipeline::text
+    || '|' || child::text
+    || '|' || publication::text
+    || '|' || (SELECT count(*) FROM pg_stat_activity
+                WHERE application_name = :'application'
+                  AND pid <> pg_backend_pid())::text
+    || '|' || (SELECT count(*) FROM sync_state WHERE key IN (
+        'diva_pipeline_lock_owner',
+        'recommendation_publication_in_progress',
+        'diva_stateful_maintenance_login_roles'
+    ))::text
+    || '|' || (SELECT count(*)
+        FROM pg_stat_activity AS activity
+        JOIN pg_roles AS role ON role.rolname = activity.usename
+        WHERE activity.pid <> pg_backend_pid()
+          AND pg_has_role(role.oid, 'diva_pipeline_runtime', 'MEMBER'))::text
+FROM locks;
+SQL
+    ) || return 1
+    [ "$observed" = "$BRIDGE_PUBLICATION_WRITER_BARRIER_TOKEN|false|false|false|1|0|0" ]
+}
+
+settle_bridge_publication_writer_barrier_refusal() {
+    local process_status=0 barrier_exit actual_result observed
+    [ "$BRIDGE_PUBLICATION_WRITER_BARRIER_ACTIVE" = "true" ] \
+        && [ "$BRIDGE_PUBLICATION_WRITER_BARRIER_FD_OPEN" = "true" ] \
+        && [ -n "$BRIDGE_PUBLICATION_WRITER_BARRIER_PID" ] \
+        && [ -s "$BRIDGE_PUBLICATION_WRITER_BARRIER_EXIT" ] || return 1
+    exec 9>&-
+    BRIDGE_PUBLICATION_WRITER_BARRIER_FD_OPEN=false
+    wait "$BRIDGE_PUBLICATION_WRITER_BARRIER_PID" || process_status=$?
+    barrier_exit=$(cat "$BRIDGE_PUBLICATION_WRITER_BARRIER_EXIT") || return 1
+    actual_result=$(cat "$BRIDGE_PUBLICATION_WRITER_BARRIER_RESULT") || return 1
+    [ "$process_status" -eq 0 ] && [ "$barrier_exit" = 3 ] \
+        && [ "$actual_result" = refused ] || return 1
+    # A busy writer or a pre-existing maintenance gate is a clean refusal, not
+    # an ambiguous mutation. Prove that this deployment owns neither its token
+    # nor a still-live lock session before clearing the in-memory barrier state.
+    observed=$(run_with_timeout "$DOCKER_READ_TIMEOUT_SECONDS" \
+        "$DOCKER_COMMAND" exec -i "$BRIDGE_POSTGRES_ID" sh -ec \
+        'exec psql -X -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v "token=$1" -v "application=$2" -qAt' \
+        sh "$BRIDGE_PUBLICATION_WRITER_BARRIER_TOKEN" \
+        "$BRIDGE_PUBLICATION_WRITER_BARRIER_APPLICATION" <<'SQL'
+SELECT CASE WHEN EXISTS (
+        SELECT 1 FROM sync_state
+        WHERE key = 'diva_stateful_maintenance_gate' AND value = :'token'
+    ) THEN 'owned' ELSE 'not-owned' END
+    || '|' || (SELECT count(*) FROM pg_stat_activity
+                WHERE application_name = :'application')::text;
+SQL
+    ) || return 1
+    [ "$observed" = "not-owned|0" ] || return 1
+    BRIDGE_PUBLICATION_WRITER_BARRIER_ACTIVE=false
+    BRIDGE_PUBLICATION_WRITER_BARRIER_UNRESOLVED=false
+    BRIDGE_PUBLICATION_WRITER_BARRIER_PID=""
+    rm -f -- "$BRIDGE_PUBLICATION_WRITER_BARRIER_FIFO" || return 1
+    "$SYNC_COMMAND" -f "$PRIVATE_RUNTIME_ROOT" 2>/dev/null || "$SYNC_COMMAND" || return 1
+    record_state bridge.publication_writer_barrier \
+        "refused-busy:$BRIDGE_PUBLICATION_WRITER_BARRIER_TOKEN"
+}
+
+acquire_bridge_publication_writer_barrier() {
+    local expected_owner attempts=0
+    [ "$BRIDGE_PUBLICATION_WRITER_BARRIER_ACTIVE" = "false" ] \
+        && [ "$BRIDGE_PUBLICATION_WRITER_BARRIER_UNRESOLVED" = "false" ] \
+        && [ "$BRIDGE_PUBLICATION_WRITER_BARRIER_FD_OPEN" = "false" ] \
+        && [ -z "$BRIDGE_PUBLICATION_WRITER_BARRIER_PID" ] || return 1
+    case "$BRIDGE_PUBLICATION_WRITER_BARRIER_TOKEN:$BRIDGE_PUBLICATION_WRITER_BARRIER_APPLICATION" in
+        ''|*[!A-Za-z0-9_.:-]*) return 1 ;;
+    esac
+    [ "${#BRIDGE_PUBLICATION_WRITER_BARRIER_TOKEN}" -le 63 ] \
+        && [ "${#BRIDGE_PUBLICATION_WRITER_BARRIER_APPLICATION}" -le 63 ] \
+        && require_exact_running_mapping vocadb_postgres "$BRIDGE_POSTGRES_ID" \
+        || return 1
+    for barrier_path in "$BRIDGE_PUBLICATION_WRITER_BARRIER_FIFO" \
+        "$BRIDGE_PUBLICATION_WRITER_BARRIER_RESULT" \
+        "$BRIDGE_PUBLICATION_WRITER_BARRIER_ERROR" \
+        "$BRIDGE_PUBLICATION_WRITER_BARRIER_EXIT"; do
+        [ ! -e "$barrier_path" ] && [ ! -L "$barrier_path" ] || return 1
+    done
+    if [ "$TEST_MODE" = "1" ]; then
+        expected_owner="$(/usr/bin/id -u):$(/usr/bin/id -g)"
+    else
+        expected_owner=0:0
+    fi
+    run_with_timeout "$DOCKER_READ_TIMEOUT_SECONDS" "$EXACT_PYTHON_COMMAND" -I - \
+        "$BRIDGE_PUBLICATION_WRITER_BARRIER_FIFO" "$PRIVATE_RUNTIME_ROOT" \
+        "$expected_owner" <<'PY'
+import os
+import stat
+import sys
+
+path, parent, expected_owner_raw = sys.argv[1:]
+expected_owner = tuple(int(item) for item in expected_owner_raw.split(':'))
+parent_stat = os.lstat(parent)
+if (not stat.S_ISDIR(parent_stat.st_mode) or stat.S_ISLNK(parent_stat.st_mode)
+        or (parent_stat.st_uid, parent_stat.st_gid) != expected_owner
+        or stat.S_IMODE(parent_stat.st_mode) != 0o700):
+    raise SystemExit(2)
+os.mkfifo(path, 0o600)
+created = os.lstat(path)
+if (not stat.S_ISFIFO(created.st_mode) or created.st_nlink != 1
+        or (created.st_uid, created.st_gid) != expected_owner
+        or stat.S_IMODE(created.st_mode) != 0o600):
+    raise SystemExit(3)
+PY
+    (umask 077; set -C
+        : > "$BRIDGE_PUBLICATION_WRITER_BARRIER_RESULT"
+        : > "$BRIDGE_PUBLICATION_WRITER_BARRIER_ERROR") || return 1
+    chmod 600 "$BRIDGE_PUBLICATION_WRITER_BARRIER_RESULT" \
+        "$BRIDGE_PUBLICATION_WRITER_BARRIER_ERROR" || return 1
+    for evidence in "$BRIDGE_PUBLICATION_WRITER_BARRIER_RESULT" \
+        "$BRIDGE_PUBLICATION_WRITER_BARRIER_ERROR"; do
+        [ -f "$evidence" ] && [ ! -L "$evidence" ] \
+            && [ "$(stat -c '%u:%g:%a:%h' "$evidence")" = "$expected_owner:600:1" ] \
+            || return 1
+    done
+    "$SYNC_COMMAND" -f "$PRIVATE_RUNTIME_ROOT" 2>/dev/null || "$SYNC_COMMAND" || return 1
+    "$SYNC_COMMAND" -f "$DEPLOYMENT_DIR" 2>/dev/null || "$SYNC_COMMAND" || return 1
+    record_state bridge.publication_writer_barrier \
+        "starting:$BRIDGE_PUBLICATION_WRITER_BARRIER_TOKEN" || return 1
+    BRIDGE_PUBLICATION_WRITER_BARRIER_ACTIVE=true
+    BRIDGE_PUBLICATION_WRITER_BARRIER_UNRESOLVED=true
+    (
+        barrier_exit=0
+        "$DOCKER_COMMAND" exec -i "$BRIDGE_POSTGRES_ID" sh -ec \
+            'PGAPPNAME=$2; export PGAPPNAME; exec psql -X -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v "token=$1" -qAt' \
+            sh "$BRIDGE_PUBLICATION_WRITER_BARRIER_TOKEN" \
+            "$BRIDGE_PUBLICATION_WRITER_BARRIER_APPLICATION" \
+            || barrier_exit=$?
+        (umask 077; set -C
+            printf '%s\n' "$barrier_exit" \
+                > "$BRIDGE_PUBLICATION_WRITER_BARRIER_EXIT") || exit 125
+    ) < "$BRIDGE_PUBLICATION_WRITER_BARRIER_FIFO" \
+        > "$BRIDGE_PUBLICATION_WRITER_BARRIER_RESULT" \
+        2> "$BRIDGE_PUBLICATION_WRITER_BARRIER_ERROR" &
+    BRIDGE_PUBLICATION_WRITER_BARRIER_PID=$!
+    exec 9> "$BRIDGE_PUBLICATION_WRITER_BARRIER_FIFO" || return 1
+    BRIDGE_PUBLICATION_WRITER_BARRIER_FD_OPEN=true
+    cat >&9 <<'SQL'
+\set inserted_gate ''
+BEGIN;
+WITH locks AS MATERIALIZED (
+    SELECT
+        pg_try_advisory_lock(hashtext('diva-data-pipeline-publication-v1')) AS pipeline,
+        pg_try_advisory_lock(hashtext('diva-data-pipeline-child-v1')) AS child,
+        pg_try_advisory_lock(hashtextextended('diva-recommendation-publication-v1', 0)) AS publication
+)
+SELECT pipeline, child, publication FROM locks
+\gset
+WITH idle AS MATERIALIZED (
+    SELECT
+        NOT EXISTS (SELECT 1 FROM sync_state WHERE key IN (
+            'diva_pipeline_lock_owner',
+            'recommendation_publication_in_progress',
+            'diva_stateful_maintenance_gate',
+            'diva_stateful_maintenance_login_roles'
+        ))
+        AND NOT EXISTS (
+            SELECT 1
+            FROM pg_stat_activity AS activity
+            JOIN pg_roles AS role ON role.rolname = activity.usename
+            WHERE activity.pid <> pg_backend_pid()
+              AND pg_has_role(role.oid, 'diva_pipeline_runtime', 'MEMBER')
+        ) AS state_idle
+), inserted AS (
+    INSERT INTO sync_state(key, value, updated_at)
+    SELECT 'diva_stateful_maintenance_gate', :'token', now()
+    FROM idle
+    WHERE :'pipeline'::boolean AND :'child'::boolean
+      AND :'publication'::boolean AND state_idle
+    ON CONFLICT DO NOTHING
+    RETURNING value
+)
+SELECT COALESCE((SELECT value FROM inserted), '') AS inserted_gate
+\gset
+SELECT CASE WHEN :'inserted_gate' = :'token' THEN 'true' ELSE 'false' END AS armed
+\gset
+\if :armed
+COMMIT;
+SELECT 'ready|' || :'token';
+\else
+ROLLBACK;
+SELECT
+    CASE WHEN :'pipeline'::boolean
+         THEN pg_advisory_unlock(hashtext('diva-data-pipeline-publication-v1'))
+         ELSE true END AS pipeline_released,
+    CASE WHEN :'child'::boolean
+         THEN pg_advisory_unlock(hashtext('diva-data-pipeline-child-v1'))
+         ELSE true END AS child_released,
+    CASE WHEN :'publication'::boolean
+         THEN pg_advisory_unlock(hashtextextended('diva-recommendation-publication-v1', 0))
+         ELSE true END AS publication_released
+\gset
+SELECT 'refused';
+\quit 3
+\endif
+SQL
+    while [ "$attempts" -lt "$ROUTE_ATTEMPTS" ]; do
+        if observe_bridge_publication_writer_barrier; then
+            BRIDGE_PUBLICATION_WRITER_BARRIER_UNRESOLVED=false
+            record_state bridge.publication_writer_barrier \
+                "held:$BRIDGE_PUBLICATION_WRITER_BARRIER_TOKEN" || {
+                BRIDGE_PUBLICATION_WRITER_BARRIER_UNRESOLVED=true
+                return 1
+            }
+            return 0
+        fi
+        [ ! -s "$BRIDGE_PUBLICATION_WRITER_BARRIER_EXIT" ] || break
+        attempts=$((attempts + 1))
+        wait_once
+    done
+    if [ -s "$BRIDGE_PUBLICATION_WRITER_BARRIER_EXIT" ] \
+        && settle_bridge_publication_writer_barrier_refusal; then
+        return 1
+    fi
+    record_state bridge.publication_writer_barrier \
+        "acquire-unresolved:$BRIDGE_PUBLICATION_WRITER_BARRIER_TOKEN" || true
+    return 1
+}
+
+verify_bridge_publication_writer_barrier() {
+    [ "$BRIDGE_PUBLICATION_WRITER_BARRIER_ACTIVE" = "true" ] \
+        && [ "$BRIDGE_PUBLICATION_WRITER_BARRIER_UNRESOLVED" = "false" ] \
+        && [ "$BRIDGE_PUBLICATION_WRITER_BARRIER_FD_OPEN" = "true" ] \
+        && [ -n "$BRIDGE_PUBLICATION_WRITER_BARRIER_PID" ] \
+        && [ ! -s "$BRIDGE_PUBLICATION_WRITER_BARRIER_EXIT" ] \
+        && observe_bridge_publication_writer_barrier
+}
+
+release_bridge_publication_writer_barrier() {
+    local attempts=0 actual_result expected_result barrier_exit process_status=0
+    [ "$BRIDGE_PUBLICATION_WRITER_BARRIER_ACTIVE" = "true" ] || return 0
+    if [ "$BRIDGE_PUBLICATION_WRITER_BARRIER_FD_OPEN" != "true" ] \
+        || [ -z "$BRIDGE_PUBLICATION_WRITER_BARRIER_PID" ]; then
+        BRIDGE_PUBLICATION_WRITER_BARRIER_UNRESOLVED=true
+        return 1
+    fi
+    if ! cat >&9 <<'SQL'
+BEGIN;
+SELECT CASE WHEN
+    (SELECT value FROM sync_state WHERE key = 'diva_stateful_maintenance_gate') = :'token'
+    AND NOT EXISTS (SELECT 1 FROM sync_state WHERE key IN (
+        'diva_pipeline_lock_owner',
+        'recommendation_publication_in_progress',
+        'diva_stateful_maintenance_login_roles'
+    ))
+    AND NOT EXISTS (
+        SELECT 1
+        FROM pg_stat_activity AS activity
+        JOIN pg_roles AS role ON role.rolname = activity.usename
+        WHERE activity.pid <> pg_backend_pid()
+          AND pg_has_role(role.oid, 'diva_pipeline_runtime', 'MEMBER')
+    )
+    AND (SELECT count(*) FROM pg_locks
+         WHERE pid = pg_backend_pid() AND locktype = 'advisory' AND granted) = 3
+    THEN 'true' ELSE 'false' END AS releasable
+\gset
+\if :releasable
+WITH deleted AS (
+    DELETE FROM sync_state
+    WHERE key = 'diva_stateful_maintenance_gate' AND value = :'token'
+    RETURNING value
+)
+SELECT COALESCE((SELECT value FROM deleted), '') AS released_gate,
+       COALESCE((SELECT value FROM deleted), '') = :'token' AS gate_deleted
+\gset
+\if :gate_deleted
+COMMIT;
+WITH unlocked AS MATERIALIZED (
+    SELECT
+        pg_advisory_unlock(hashtext('diva-data-pipeline-publication-v1')) AS pipeline,
+        pg_advisory_unlock(hashtext('diva-data-pipeline-child-v1')) AS child,
+        pg_advisory_unlock(hashtextextended('diva-recommendation-publication-v1', 0)) AS publication
+)
+SELECT CASE WHEN pipeline AND child AND publication
+       AND :'released_gate' = :'token'
+    THEN 'released|' || :'token' ELSE 'release-refused' END
+FROM unlocked;
+\else
+ROLLBACK;
+SELECT 'release-refused';
+\quit 4
+\endif
+\else
+ROLLBACK;
+SELECT 'release-refused';
+\quit 4
+\endif
+\quit
+SQL
+    then
+        BRIDGE_PUBLICATION_WRITER_BARRIER_UNRESOLVED=true
+        return 1
+    fi
+    exec 9>&-
+    BRIDGE_PUBLICATION_WRITER_BARRIER_FD_OPEN=false
+    while [ "$attempts" -lt "$DAEMON_SETTLE_ATTEMPTS" ]; do
+        [ -s "$BRIDGE_PUBLICATION_WRITER_BARRIER_EXIT" ] && break
+        attempts=$((attempts + 1))
+        wait_once
+    done
+    if [ ! -s "$BRIDGE_PUBLICATION_WRITER_BARRIER_EXIT" ]; then
+        BRIDGE_PUBLICATION_WRITER_BARRIER_UNRESOLVED=true
+        record_state bridge.publication_writer_barrier \
+            "release-process-unresolved:$BRIDGE_PUBLICATION_WRITER_BARRIER_TOKEN" || true
+        return 1
+    fi
+    wait "$BRIDGE_PUBLICATION_WRITER_BARRIER_PID" || process_status=$?
+    barrier_exit=$(cat "$BRIDGE_PUBLICATION_WRITER_BARRIER_EXIT") || return 1
+    actual_result=$(cat "$BRIDGE_PUBLICATION_WRITER_BARRIER_RESULT") || return 1
+    expected_result=$(printf 'ready|%s\nreleased|%s' \
+        "$BRIDGE_PUBLICATION_WRITER_BARRIER_TOKEN" \
+        "$BRIDGE_PUBLICATION_WRITER_BARRIER_TOKEN") || return 1
+    if [ "$process_status" -ne 0 ] || [ "$barrier_exit" != 0 ] \
+        || [ "$actual_result" != "$expected_result" ]; then
+        BRIDGE_PUBLICATION_WRITER_BARRIER_UNRESOLVED=true
+        record_state bridge.publication_writer_barrier \
+            "release-unresolved:$BRIDGE_PUBLICATION_WRITER_BARRIER_TOKEN" || true
+        return 1
+    fi
+    BRIDGE_PUBLICATION_WRITER_BARRIER_ACTIVE=false
+    BRIDGE_PUBLICATION_WRITER_BARRIER_UNRESOLVED=false
+    BRIDGE_PUBLICATION_WRITER_BARRIER_PID=""
+    rm -f -- "$BRIDGE_PUBLICATION_WRITER_BARRIER_FIFO" || return 1
+    "$SYNC_COMMAND" -f "$PRIVATE_RUNTIME_ROOT" 2>/dev/null || "$SYNC_COMMAND" || return 1
+    record_state bridge.publication_writer_barrier \
+        "released:$BRIDGE_PUBLICATION_WRITER_BARRIER_TOKEN"
+}
+
+preserve_bridge_publication_writer_gate() {
+    local reason="$1" attempts=0 barrier_exit process_status=0 actual_result
+    [ "$BRIDGE_PUBLICATION_WRITER_BARRIER_ACTIVE" = "true" ] || return 0
+    case "$reason" in ''|*[!A-Za-z0-9_.:-]*) return 1 ;; esac
+    BRIDGE_PUBLICATION_WRITER_BARRIER_UNRESOLVED=true
+    if [ "$BRIDGE_PUBLICATION_WRITER_BARRIER_FD_OPEN" != "true" ] \
+        || [ -z "$BRIDGE_PUBLICATION_WRITER_BARRIER_PID" ]; then
+        return 1
+    fi
+    # End only this exact lock-owning psql connection. The committed
+    # maintenance token is intentionally not deleted, so cooperating writers
+    # remain stopped when stateless rollback or daemon settlement is incomplete.
+    if ! cat >&9 <<'SQL'
+\quit 5
+SQL
+    then
+        return 1
+    fi
+    exec 9>&-
+    BRIDGE_PUBLICATION_WRITER_BARRIER_FD_OPEN=false
+    while [ "$attempts" -lt "$DAEMON_SETTLE_ATTEMPTS" ]; do
+        [ -s "$BRIDGE_PUBLICATION_WRITER_BARRIER_EXIT" ] && break
+        attempts=$((attempts + 1))
+        wait_once
+    done
+    [ -s "$BRIDGE_PUBLICATION_WRITER_BARRIER_EXIT" ] || return 1
+    wait "$BRIDGE_PUBLICATION_WRITER_BARRIER_PID" || process_status=$?
+    barrier_exit=$(cat "$BRIDGE_PUBLICATION_WRITER_BARRIER_EXIT") || return 1
+    actual_result=$(cat "$BRIDGE_PUBLICATION_WRITER_BARRIER_RESULT") || return 1
+    [ "$process_status" -eq 0 ] \
+        && [ "$barrier_exit" = 5 ] \
+        && [ "$actual_result" = "ready|$BRIDGE_PUBLICATION_WRITER_BARRIER_TOKEN" ] \
+        || return 1
+    BRIDGE_PUBLICATION_WRITER_BARRIER_ACTIVE=false
+    BRIDGE_PUBLICATION_WRITER_BARRIER_PID=""
+    rm -f -- "$BRIDGE_PUBLICATION_WRITER_BARRIER_FIFO" || return 1
+    "$SYNC_COMMAND" -f "$PRIVATE_RUNTIME_ROOT" 2>/dev/null || "$SYNC_COMMAND" || return 1
+    record_state bridge.publication_writer_barrier \
+        "maintenance-token-preserved:$reason:$BRIDGE_PUBLICATION_WRITER_BARRIER_TOKEN"
+}
+
+verify_bridge_backup_post_probe_boundary() {
+    local phase=after-live-publication-probe evidence_selection_sha
+    local postgres_run postgres_status postgres_status_sha postgres_manifest \
+        postgres_manifest_sha qdrant_run qdrant_status qdrant_status_sha \
+        qdrant_manifest qdrant_manifest_sha attestation_file attestation_sha \
+        challenge verifier_host source_host
+    [ "$BRIDGE_BACKUP_CONTRACT_FAILED" != true ] \
+        && [ "$BRIDGE_BACKUP_LIFETIME_FAILED" != true ] \
+        && verify_bridge_publication_writer_barrier || return 1
+    postgres_run=${DIVA_VERIFIED_POSTGRES_BACKUP_RUN_ID:-}
+    postgres_status=${DIVA_VERIFIED_POSTGRES_BACKUP_STATUS_FILE:-}
+    postgres_status_sha=${DIVA_VERIFIED_POSTGRES_BACKUP_STATUS_SHA256:-}
+    postgres_manifest=${DIVA_VERIFIED_POSTGRES_BACKUP_MANIFEST_FILE:-}
+    postgres_manifest_sha=${DIVA_VERIFIED_POSTGRES_BACKUP_MANIFEST_SHA256:-}
+    qdrant_run=${DIVA_VERIFIED_QDRANT_BACKUP_RUN_ID:-}
+    qdrant_status=${DIVA_VERIFIED_QDRANT_BACKUP_STATUS_FILE:-}
+    qdrant_status_sha=${DIVA_VERIFIED_QDRANT_BACKUP_STATUS_SHA256:-}
+    qdrant_manifest=${DIVA_VERIFIED_QDRANT_BACKUP_MANIFEST_FILE:-}
+    qdrant_manifest_sha=${DIVA_VERIFIED_QDRANT_BACKUP_MANIFEST_SHA256:-}
+    attestation_file=${DIVA_VERIFIED_BACKUP_PAYLOAD_ATTESTATION_FILE:-}
+    attestation_sha=${DIVA_VERIFIED_BACKUP_PAYLOAD_ATTESTATION_SHA256:-}
+    challenge=${DIVA_VERIFIED_BACKUP_PAYLOAD_ATTESTATION_CHALLENGE:-}
+    verifier_host=${DIVA_EXPECTED_BACKUP_VERIFIER_HOST:-}
+    source_host=${DIVA_EXPECTED_BACKUP_SOURCE_HOST:-}
+    evidence_selection_sha=$(printf '%s\n' \
+        "postgres_run=$postgres_run" "postgres_status=$postgres_status" \
+        "postgres_status_sha256=$postgres_status_sha" \
+        "postgres_manifest=$postgres_manifest" \
+        "postgres_manifest_sha256=$postgres_manifest_sha" \
+        "qdrant_run=$qdrant_run" "qdrant_status=$qdrant_status" \
+        "qdrant_status_sha256=$qdrant_status_sha" \
+        "qdrant_manifest=$qdrant_manifest" \
+        "qdrant_manifest_sha256=$qdrant_manifest_sha" \
+        "attestation=$attestation_file" "attestation_sha256=$attestation_sha" \
+        "challenge=$challenge" "verifier_host=$verifier_host" \
+        "source_host=$source_host" | sha256sum | awk '{print $1}') || return 1
+    if [ "$evidence_selection_sha" != "$BRIDGE_BACKUP_EVIDENCE_SELECTION_SHA256" ]; then
+        mark_bridge_backup_contract_failed "$phase-evidence-selection-changed"
+        return 1
+    fi
+    for evidence in "$postgres_status" "$postgres_manifest" "$qdrant_status" \
+        "$qdrant_manifest" "$attestation_file"; do
+        [ -f "$evidence" ] && [ ! -L "$evidence" ] || {
+            mark_bridge_backup_contract_failed "$phase-evidence-missing-or-unsafe"
+            return 1
+        }
+    done
+    [ "$(sha256sum "$postgres_status" | awk '{print $1}')" = "$postgres_status_sha" ] \
+        && [ "$(sha256sum "$postgres_manifest" | awk '{print $1}')" = "$postgres_manifest_sha" ] \
+        && [ "$(sha256sum "$qdrant_status" | awk '{print $1}')" = "$qdrant_status_sha" ] \
+        && [ "$(sha256sum "$qdrant_manifest" | awk '{print $1}')" = "$qdrant_manifest_sha" ] \
+        && [ "$(sha256sum "$attestation_file" | awk '{print $1}')" = "$attestation_sha" ] \
+        || {
+            mark_bridge_backup_contract_failed "$phase-evidence-content-changed"
+            return 1
+        }
+    case "$BRIDGE_QDRANT_BACKUP_BINDING:$BRIDGE_QDRANT_PUBLICATION_GENERATION:$BRIDGE_QDRANT_PUBLICATION_SHA256" in
+        off-host-evidence-sha256-[0-9a-f]*:*:[0-9a-f]*) ;;
+        *) mark_bridge_backup_contract_failed "$phase-binding-invalid"; return 1 ;;
+    esac
+    [ "${#BRIDGE_QDRANT_PUBLICATION_SHA256}" -eq 64 ] \
+        && verify_bridge_backup_lifetime "$phase" || return 1
+    record_state bridge.backup_contract_reverified_after_live_probe \
+        "$BRIDGE_QDRANT_BACKUP_BINDING:$BRIDGE_QDRANT_PUBLICATION_GENERATION"
 }
 
 prepare_and_publish_bridge_receipt() {
@@ -4242,10 +5156,23 @@ prepare_and_publish_bridge_receipt() {
         && [ -f "$publisher" ] && [ ! -L "$publisher" ] || return 1
     [ ! -e "$API_BRIDGE_RECEIPT" ] && [ ! -L "$API_BRIDGE_RECEIPT" ] \
         && [ ! -e "$API_BRIDGE_PREPARED_RECEIPT" ] \
-        && [ ! -e "$API_BRIDGE_PREVIOUS_RECEIPT" ] || return 1
-    verify_bridge_legacy_contract || return 1
+        && [ ! -e "$API_BRIDGE_PREVIOUS_RECEIPT" ] \
+        && [ ! -e "$BRIDGE_LIVE_PUBLICATION_EVIDENCE" ] \
+        && [ ! -L "$BRIDGE_LIVE_PUBLICATION_EVIDENCE" ] || return 1
+    verify_bridge_stateful_contract || return 1
+    verify_exact_rolling_topology || return 1
+    verify_published_web unless-stopped || return 1
+    verify_all_rolling_candidate_scan_receipts || return 1
+    # Re-read and re-hash every pinned evidence file and require the exact
+    # binding/publication generation captured before any build. The short UTC
+    # freshness window is an initial admission check; later phases use the
+    # fixed CLOCK_BOOTTIME lifetime and still reject any substituted evidence.
+    prepare_bridge_backup_contract "$BRIDGE_QDRANT_BACKUP_BINDING" \
+        "$BRIDGE_QDRANT_PUBLICATION_GENERATION" before-receipt-preparation \
+        || return 1
     "$PYTHON_COMMAND" -I "$producer" \
-        --docker "$DOCKER_COMMAND" --gateway-id "$OLD_GATEWAY_CONTAINER_ID" \
+        --docker "$DOCKER_COMMAND" --gateway-id "$NEW_GATEWAY_CONTAINER_ID" \
+        --web-id "$NEW_WEB_CONTAINER_ID" \
         --api-a-id "$NEW_API_A_CONTAINER_ID" --api-b-id "$NEW_API_B_CONTAINER_ID" \
         --old-api-a-id "$OLD_API_A_CONTAINER_ID" --old-api-b-id "$OLD_API_B_CONTAINER_ID" \
         --qdrant-id "$BRIDGE_QDRANT_ID" --deployment-id "$DEPLOYMENT_ID" \
@@ -4256,6 +5183,12 @@ prepare_and_publish_bridge_receipt() {
         --publication-generation "$BRIDGE_QDRANT_PUBLICATION_GENERATION" \
         --api-a-rollback-tag "$API_A_BRIDGE_ROLLBACK_IMAGE" \
         --api-b-rollback-tag "$API_B_BRIDGE_ROLLBACK_IMAGE" \
+        --api-scan-receipt "$IMAGE_SCAN_ROOT/api.receipt.json" \
+        --api-scan-receipt-sha256 "$API_SCAN_RECEIPT_SHA" \
+        --gateway-scan-receipt "$IMAGE_SCAN_ROOT/gateway.receipt.json" \
+        --gateway-scan-receipt-sha256 "$GATEWAY_SCAN_RECEIPT_SHA" \
+        --web-scan-receipt "$IMAGE_SCAN_ROOT/web.receipt.json" \
+        --web-scan-receipt-sha256 "$WEB_SCAN_RECEIPT_SHA" \
         --previous-output "$API_BRIDGE_PREVIOUS_RECEIPT" \
         --receipt-output "$API_BRIDGE_PREPARED_RECEIPT" || return 1
     chmod 600 "$API_BRIDGE_PREPARED_RECEIPT" "$API_BRIDGE_PREVIOUS_RECEIPT" || return 1
@@ -4266,8 +5199,10 @@ prepare_and_publish_bridge_receipt() {
     [ "$TEST_MODE" != "1" ] || set -- "$@" --allow-current-owner-for-test
     "$@" > "$DEPLOYMENT_DIR/api-bridge-receipt.validation.json" || return 1
     prepared_sha=$(sha256sum "$API_BRIDGE_PREPARED_RECEIPT" | awk '{print $1}') || return 1
-    verify_bridge_legacy_contract || return 1
+    verify_bridge_stateful_contract || return 1
     verify_exact_rolling_topology || return 1
+    verify_published_web unless-stopped || return 1
+    verify_all_rolling_candidate_scan_receipts || return 1
     verify_private_source_snapshot || return 1
     [ "$(image_ref_id "$API_A_BRIDGE_ROLLBACK_IMAGE")" = "$OLD_API_A_IMAGE" ] \
         && [ "$(image_ref_id "$API_B_BRIDGE_ROLLBACK_IMAGE")" = "$OLD_API_B_IMAGE" ] \
@@ -4275,6 +5210,28 @@ prepare_and_publish_bridge_receipt() {
     API_BRIDGE_PREPARED_SHA="$prepared_sha"
     record_state bridge.receipt_publication_intent "$prepared_sha" || return 1
     run_test_hook "before-bridge-receipt-publication"
+    # Recheck at the final one-way publication boundary as well. No producer
+    # output may be published if the exact evidence or binding changed while
+    # the prepared receipt itself was being verified.
+    prepare_bridge_backup_contract "$BRIDGE_QDRANT_BACKUP_BINDING" \
+        "$BRIDGE_QDRANT_PUBLICATION_GENERATION" before-receipt-publication \
+        || return 1
+    verify_bridge_stateful_contract || return 1
+    verify_exact_rolling_topology || return 1
+    verify_published_web unless-stopped || return 1
+    verify_all_rolling_candidate_scan_receipts || return 1
+    verify_private_source_snapshot || return 1
+    # Commit the exact maintenance token only after proving no existing writer,
+    # then retain all three advisory locks in one psql session. The gate keeps
+    # new cooperating writers out while the held locks exclude an already
+    # admitted publisher through the final probe and filesystem commit.
+    acquire_bridge_publication_writer_barrier || return 1
+    verify_bridge_publication_writer_barrier || return 1
+    verify_bridge_live_publication_evidence "$producer" || return 1
+    # The dual-slot live probe can itself cross the fixed four-hour window.
+    # Under the same writer barrier, re-hash the exact evidence and recheck the
+    # monotonic lifetime once more; only then may canonical publication begin.
+    verify_bridge_backup_post_probe_boundary || return 1
     API_BRIDGE_PUBLICATION_ARMED=true
     trap '' HUP INT TERM
     if ! publish_result=$("$PYTHON_COMMAND" -I "$publisher" publish \
@@ -4303,7 +5260,19 @@ prepare_and_publish_bridge_receipt() {
     DEPLOYMENT_SUCCEEDED=true
     CANONICAL_IMAGES_COMMITTED=true
     RECOVERY_ARMED=false
+    # Receipt publication is the one-way commit.  Retain all deployment-unique
+    # candidate tags as evidence and forbid EXIT cleanup from issuing a Docker
+    # mutation after the canonical receipt exists.
+    API_CANDIDATE_TAG_CREATED=false
+    GATEWAY_CANDIDATE_TAG_CREATED=false
+    WEB_CANDIDATE_TAG_CREATED=false
     API_BRIDGE_PUBLICATION_ARMED=false
+    if ! release_bridge_publication_writer_barrier; then
+        trap 'handle_signal HUP 129' HUP
+        trap 'handle_signal INT 130' INT
+        trap 'handle_signal TERM 143' TERM
+        return 1
+    fi
     trap 'handle_signal HUP 129' HUP
     trap 'handle_signal INT 130' INT
     trap 'handle_signal TERM 143' TERM
@@ -4980,29 +5949,16 @@ if ! capture_canonical_image_state; then
     fail "Canonical image-tag prestate could not be captured before build"
     exit 1
 fi
-if [ "$BRIDGE_BOOTSTRAP_MODE" = "true" ]; then
-    bounded_compose "$BUILD_TIMEOUT_SECONDS" build api_a
-else
-    bounded_compose "$BUILD_TIMEOUT_SECONDS" build api_a api_gateway web
-fi
+bounded_compose "$BUILD_TIMEOUT_SECONDS" build api_a api_gateway web
 NEW_API_IMAGE=$(image_ref_id "$API_IMAGE")
 NEW_GATEWAY_IMAGE=$(image_ref_id "$GATEWAY_IMAGE")
 NEW_WEB_IMAGE=$(image_ref_id "$WEB_IMAGE")
-if [ "$BRIDGE_BOOTSTRAP_MODE" = "true" ]; then
-    verify_image_linux_arm64 "$NEW_API_IMAGE" \
-        || { fail "API bridge candidate is not a native linux/arm64 image"; exit 1; }
-else
-    verify_image_linux_arm64 "$NEW_API_IMAGE" \
-        && verify_image_linux_arm64 "$NEW_GATEWAY_IMAGE" \
-        && verify_image_linux_arm64 "$NEW_WEB_IMAGE" \
-        || { fail "A normal rolling candidate is not a native linux/arm64 image"; exit 1; }
-    record_state "candidate_images.platform" "all-exact-linux-arm64"
-fi
-if [ "$BRIDGE_BOOTSTRAP_MODE" = "true" ]; then
-    candidate_references="$API_CANDIDATE_IMAGE"
-else
-    candidate_references="$API_CANDIDATE_IMAGE $GATEWAY_CANDIDATE_IMAGE $WEB_CANDIDATE_IMAGE"
-fi
+verify_image_linux_arm64 "$NEW_API_IMAGE" \
+    && verify_image_linux_arm64 "$NEW_GATEWAY_IMAGE" \
+    && verify_image_linux_arm64 "$NEW_WEB_IMAGE" \
+    || { fail "A rolling candidate is not a native linux/arm64 image"; exit 1; }
+record_state "candidate_images.platform" "all-exact-linux-arm64"
+candidate_references="$API_CANDIDATE_IMAGE $GATEWAY_CANDIDATE_IMAGE $WEB_CANDIDATE_IMAGE"
 for candidate_reference in $candidate_references; do
     candidate_presence_status=0
     require_image_ref_absent "$candidate_reference" || candidate_presence_status=$?
@@ -5020,25 +5976,27 @@ for candidate_reference in $candidate_references; do
 done
 run_bounded_docker_mutation image tag "$NEW_API_IMAGE" "$API_CANDIDATE_IMAGE"
 API_CANDIDATE_TAG_CREATED=true
-if [ "$BRIDGE_BOOTSTRAP_MODE" != "true" ]; then
-    run_bounded_docker_mutation image tag "$NEW_GATEWAY_IMAGE" "$GATEWAY_CANDIDATE_IMAGE"
-    GATEWAY_CANDIDATE_TAG_CREATED=true
-    run_bounded_docker_mutation image tag "$NEW_WEB_IMAGE" "$WEB_CANDIDATE_IMAGE"
-    WEB_CANDIDATE_TAG_CREATED=true
-fi
+run_bounded_docker_mutation image tag "$NEW_GATEWAY_IMAGE" "$GATEWAY_CANDIDATE_IMAGE"
+GATEWAY_CANDIDATE_TAG_CREATED=true
+run_bounded_docker_mutation image tag "$NEW_WEB_IMAGE" "$WEB_CANDIDATE_IMAGE"
+WEB_CANDIDATE_TAG_CREATED=true
 if [ "$(image_ref_id "$API_CANDIDATE_IMAGE")" != "$NEW_API_IMAGE" ]; then
     fail "A deployment-unique candidate tag did not pin its built image"
     exit 1
 fi
-if [ "$BRIDGE_BOOTSTRAP_MODE" != "true" ] \
-    && { [ "$(image_ref_id "$GATEWAY_CANDIDATE_IMAGE")" != "$NEW_GATEWAY_IMAGE" ] \
-        || [ "$(image_ref_id "$WEB_CANDIDATE_IMAGE")" != "$NEW_WEB_IMAGE" ]; }; then
+if [ "$(image_ref_id "$GATEWAY_CANDIDATE_IMAGE")" != "$NEW_GATEWAY_IMAGE" ] \
+    || [ "$(image_ref_id "$WEB_CANDIDATE_IMAGE")" != "$NEW_WEB_IMAGE" ]; then
     fail "A gateway/Web candidate tag did not pin its built image"
     exit 1
 fi
 record_state "api.new_image" "$NEW_API_IMAGE"
 record_state "gateway.new_image" "$NEW_GATEWAY_IMAGE"
 record_state "web.new_image" "$NEW_WEB_IMAGE"
+if [ "$BRIDGE_BOOTSTRAP_MODE" = "true" ]; then
+    prepare_bridge_backup_contract "$BRIDGE_QDRANT_BACKUP_BINDING" \
+        "$BRIDGE_QDRANT_PUBLICATION_GENERATION" after-build \
+        || { fail "Backup/attestation contract expired or changed after candidate build"; exit 1; }
+fi
 # Deployment-unique tags are retained as immutable evidence/fallback, while
 # runtime containers use the canonical references expected by future Compose
 # convergence. Every create is followed by an exact image-ID verification.
@@ -5049,26 +6007,26 @@ if [ "$(image_ref_id "$API_IMAGE")" != "$NEW_API_IMAGE" ] \
     exit 1
 fi
 log "Scanning exact rolling candidates with the reviewed Trivy receipt gate"
-if [ "$BRIDGE_BOOTSTRAP_MODE" = "true" ]; then
-    if ! scan_bridge_api_candidate_image; then
-        fail "The exact bridge API candidate failed the local Trivy receipt gate"
-        exit 1
-    fi
-elif ! scan_all_rolling_candidate_images; then
+if ! scan_all_rolling_candidate_images; then
     fail "An exact rolling candidate failed the local Trivy receipt gate"
     exit 1
+fi
+if [ "$BRIDGE_BOOTSTRAP_MODE" = "true" ]; then
+    prepare_bridge_backup_contract "$BRIDGE_QDRANT_BACKUP_BINDING" \
+        "$BRIDGE_QDRANT_PUBLICATION_GENERATION" after-scan \
+        || { fail "Backup/attestation contract expired or changed after candidate scans"; exit 1; }
 fi
 if ! capture_resolved_compose_contract; then
     fail "Resolved Compose/environment contract could not be frozen privately"
     exit 1
 fi
 
-if [ "$BRIDGE_BOOTSTRAP_MODE" != "true" ]; then
-    log "Validating the built HAProxy configuration"
-    bounded_compose "$MUTATION_TIMEOUT_SECONDS" run --rm --no-deps api_gateway \
-        haproxy -c -f /usr/local/etc/haproxy/haproxy.cfg
-    record_state "gateway.config_validation" "passed"
+log "Validating the built HAProxy configuration"
+bounded_compose "$MUTATION_TIMEOUT_SECONDS" run --rm --no-deps api_gateway \
+    haproxy -c -f /usr/local/etc/haproxy/haproxy.cfg
+record_state "gateway.config_validation" "passed"
 
+if [ "$BRIDGE_BOOTSTRAP_MODE" != "true" ]; then
 # Migrations are deliberately a separate, forward-only phase. Binary rollback
 # below never claims to undo schema changes; migrations must remain compatible
 # with the prior API image for the duration of a rolling deployment.
@@ -5103,9 +6061,9 @@ if ! restore_migration_publication; then
     exit 1
 fi
 else
-    record_state "migration.status" "forbidden-by-legacy-qdrant-bridge-bootstrap"
+    record_state "migration.status" "forbidden-by-pre-stateful-stateless-bootstrap"
     verify_bridge_legacy_contract \
-        || { fail "Stateful/gateway/Web contract drifted during API-only build"; exit 1; }
+        || { fail "Frozen stateful/stateless prestate drifted during candidate build"; exit 1; }
 fi
 
 # Validate the exact runtime credentials/configuration before draining or
@@ -5114,17 +6072,26 @@ fi
 if ! validate_candidate_api; then
     exit 1
 fi
-if [ "$BRIDGE_BOOTSTRAP_MODE" = "true" ]; then
-    if ! verify_bridge_api_candidate_scan_receipt; then
-        fail "Bridge API candidate image or Trivy receipt changed before promotion"
-        exit 1
-    fi
-elif ! verify_all_rolling_candidate_scan_receipts; then
+if ! verify_all_rolling_candidate_scan_receipts; then
     fail "Rolling candidate image or Trivy receipt changed before promotion"
     exit 1
 fi
 
+if [ "$BRIDGE_BOOTSTRAP_MODE" = "true" ]; then
+    prepare_bridge_backup_contract "$BRIDGE_QDRANT_BACKUP_BINDING" \
+        "$BRIDGE_QDRANT_PUBLICATION_GENERATION" before-first-live-mutation \
+        || { fail "Backup/attestation contract expired or changed before live replacement"; exit 1; }
+fi
+
 if [ "$GATEWAY_WAS_RUNNING" = "true" ]; then
+    if [ "$BRIDGE_BOOTSTRAP_MODE" = "true" ]; then
+        # From this point onward a failure can require the deployment-unique
+        # API rollback images. Latch this before the first route/container
+        # mutation and never clear it merely because rollback appeared to
+        # complete.
+        BRIDGE_LIVE_MUTATION_STARTED=true
+        record_state bridge.live_mutation "armed-before-first-api-slot-mutation"
+    fi
     RECOVERY_ARMED=true
     record_state "deployment.status" "rolling-api"
 
@@ -5139,53 +6106,11 @@ if [ "$GATEWAY_WAS_RUNNING" = "true" ]; then
     API_B_UPDATED=true
 
     if [ "$BRIDGE_BOOTSTRAP_MODE" = "true" ]; then
-        # The explicit bridge bootstrap is intentionally API-only.  Qdrant,
-        # PostgreSQL, HAProxy, Web, and migrations remain frozen at the exact
-        # preflight identities while the two new API slots prove compatibility
-        # with legacy Qdrant 1.9.4.  Receipt publication is the final commit.
-        record_state "deployment.status" "verifying-api-only-bridge"
-        wait_http http://127.0.0.1:5000/api/ready 10 \
-            || { fail "API-only bridge readiness did not stabilize"; exit 1; }
-        wait_http http://127.0.0.1:5000/api/health 30 \
-            || { fail "API-only bridge health did not stabilize"; exit 1; }
+        # The explicit pre-stateful path must prove that API replacement did
+        # not mutate Qdrant, PostgreSQL, volumes, migration inventory, or the
+        # still-old gateway/Web before those stateless services are replaced.
         verify_bridge_legacy_contract \
-            || { fail "Stateful/gateway/Web contract drifted during API A/B update"; exit 1; }
-        verify_container_image_linux_arm64 "$NEW_API_A_CONTAINER_ID" \
-            || { fail "Published api_a image is not native linux/arm64"; exit 1; }
-        verify_container_image_linux_arm64 "$NEW_API_B_CONTAINER_ID" \
-            || { fail "Published api_b image is not native linux/arm64"; exit 1; }
-        commit_bridge_api_restart_policies \
-            || { fail "API-only bridge restart policies could not be committed"; exit 1; }
-        verify_exact_rolling_topology \
-            || { fail "API-only bridge topology changed before receipt preparation"; exit 1; }
-        verify_bridge_legacy_contract \
-            || { fail "Frozen stateful/gateway/Web identities changed before receipt preparation"; exit 1; }
-        verify_resolved_compose_contract \
-            || { fail "Private resolved Compose contract changed before bridge commit"; exit 1; }
-        verify_private_source_snapshot \
-            || { fail "Private source snapshot changed before bridge commit"; exit 1; }
-        [ "$(image_ref_id "$API_IMAGE")" = "$NEW_API_IMAGE" ] \
-            && [ "$(image_ref_id "$API_A_BRIDGE_ROLLBACK_IMAGE")" = "$OLD_API_A_IMAGE" ] \
-            && [ "$(image_ref_id "$API_B_BRIDGE_ROLLBACK_IMAGE")" = "$OLD_API_B_IMAGE" ] \
-            || { fail "API or bridge rollback image tags drifted before receipt preparation"; exit 1; }
-        run_test_hook "bridge-api-only-verified"
-        prepare_and_publish_bridge_receipt \
-            || { fail "Verified API bridge receipt could not be durably published"; exit 1; }
-        # prepare_and_publish_bridge_receipt atomically establishes the
-        # forward-only commit flags before restoring signal handlers. No
-        # service/container/image mutation is permitted after this point.
-        # Retain the deployment-unique candidate tag as immutable evidence;
-        # EXIT cleanup must not issue a post-receipt Docker mutation.
-        API_CANDIDATE_TAG_CREATED=false
-        record_state "bridge.api_candidate_image" \
-            "$API_CANDIDATE_IMAGE=$NEW_API_IMAGE" || true
-        record_state "deployment.status" "completed-api-only-bridge" || true
-        record_state "bridge.previous_api_containers" \
-            "retained-exact-for-explicit-later-cleanup" || true
-        log "API-only legacy-Qdrant bridge bootstrap completed."
-        log "Canonical bridge receipt: $API_BRIDGE_RECEIPT"
-        log "Deployment state: $STATE_FILE"
-        exit 0
+            || { fail "Frozen stateful/stateless prestate drifted during API A/B update"; exit 1; }
     fi
 
     record_state "deployment.status" "updating-gateway"
@@ -5326,6 +6251,35 @@ if [ "$(image_ref_id "$API_IMAGE")" != "$NEW_API_IMAGE" ] \
     || [ "$(image_ref_id "$WEB_IMAGE")" != "$NEW_WEB_IMAGE" ]; then
     fail "Canonical image tags changed before deployment commit"
     exit 1
+fi
+
+if [ "$BRIDGE_BOOTSTRAP_MODE" = "true" ]; then
+    # The explicit bootstrap is the only path permitted before the completed
+    # stateful-runtime-contract exists.  Migrations and every stateful identity
+    # stayed frozen while API A/B, HAProxy, and Web were refreshed.  Publish
+    # the bridge receipt only after the whole stateless topology and all three
+    # exact scan receipts have been re-proved; publication is the final commit.
+    record_state "deployment.status" "verifying-pre-stateful-stateless-bridge"
+    verify_bridge_stateful_contract \
+        || { fail "Frozen stateful resources changed during stateless refresh"; exit 1; }
+    verify_all_rolling_candidate_scan_receipts \
+        || { fail "Stateless candidate image or scan receipt changed before bridge publication"; exit 1; }
+    [ "$(image_ref_id "$API_A_BRIDGE_ROLLBACK_IMAGE")" = "$OLD_API_A_IMAGE" ] \
+        && [ "$(image_ref_id "$API_B_BRIDGE_ROLLBACK_IMAGE")" = "$OLD_API_B_IMAGE" ] \
+        || { fail "API bridge rollback image tags drifted before receipt preparation"; exit 1; }
+    run_test_hook "bridge-stateless-verified"
+    prepare_and_publish_bridge_receipt \
+        || { fail "Verified stateless bridge receipt could not be durably published"; exit 1; }
+    record_state "bridge.stateless_candidate_images" \
+        "$API_CANDIDATE_IMAGE=$NEW_API_IMAGE:$GATEWAY_CANDIDATE_IMAGE=$NEW_GATEWAY_IMAGE:$WEB_CANDIDATE_IMAGE=$NEW_WEB_IMAGE" \
+        || true
+    record_state "deployment.status" "completed-pre-stateful-stateless-bridge" || true
+    record_state "bridge.previous_stateless_containers" \
+        "retained-exact-for-explicit-later-cleanup" || true
+    log "Pre-stateful API/gateway/Web bridge bootstrap completed."
+    log "Canonical bridge receipt: $API_BRIDGE_RECEIPT"
+    log "Deployment state: $STATE_FILE"
+    exit 0
 fi
 
 # The new API/gateway/Web topology is fully verified. This is the deployment

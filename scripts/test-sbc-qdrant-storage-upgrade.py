@@ -7,8 +7,10 @@ import copy
 import importlib.util
 import json
 import os
+import stat
 import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -48,6 +50,118 @@ class UpgradeContractTests(unittest.TestCase):
                 "seedSongId": 42,
             },
         }
+
+    def test_standalone_process_boundary_is_root_only_and_rejects_docker_routing(self) -> None:
+        for key in (
+            "DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_CERT_PATH", "DOCKER_TLS_VERIFY",
+            "DOCKER_TLS_FUTURE_ENDPOINT",
+        ):
+            with self.subTest(key=key), self.assertRaises(MODULE.UpgradeError):
+                MODULE.establish_standalone_boundary(
+                    {key: ""}, effective_uid=0, effective_gid=0
+                )
+        with self.assertRaises(MODULE.UpgradeError):
+            MODULE.establish_standalone_boundary({}, effective_uid=1000, effective_gid=1000)
+        with self.assertRaises(MODULE.UpgradeError):
+            MODULE.establish_standalone_boundary(
+                {MODULE.TEST_MODE_ENV: "1", MODULE.TEST_STATE_ROOT_ENV: "/tmp/qdrant-test"},
+                effective_uid=0,
+                effective_gid=0,
+            )
+        for incomplete in (
+            {MODULE.TEST_MODE_ENV: "1"},
+            {MODULE.TEST_STATE_ROOT_ENV: "/tmp/qdrant-test"},
+            {MODULE.TEST_MODE_ENV: "0", MODULE.TEST_STATE_ROOT_ENV: "/tmp/qdrant-test"},
+        ):
+            with self.subTest(incomplete=incomplete), self.assertRaises(MODULE.UpgradeError):
+                MODULE.establish_standalone_boundary(
+                    incomplete, effective_uid=1000, effective_gid=1000
+                )
+
+    def test_standalone_paths_are_exact_and_never_create_or_chmod_the_parent(self) -> None:
+        run_id = "20260831T010203Z-123"
+        with tempfile.TemporaryDirectory() as temporary:
+            state_root = Path(temporary) / "state"
+            run_directory = state_root / f"stateful-{run_id}"
+            state_root.mkdir(mode=0o700)
+            run_directory.mkdir(mode=0o700)
+            os.chmod(state_root, 0o700)
+            os.chmod(run_directory, 0o700)
+            boundary = MODULE.establish_standalone_boundary(
+                {
+                    MODULE.TEST_MODE_ENV: "1",
+                    MODULE.TEST_STATE_ROOT_ENV: str(state_root),
+                },
+                effective_uid=1000,
+                effective_gid=1000,
+            )
+            arguments = types.SimpleNamespace(
+                run_id=run_id,
+                journal=str(run_directory / MODULE.JOURNAL_BASENAME),
+                output=str(run_directory / MODULE.RESULT_BASENAME),
+                docker="fake-docker",
+            )
+            MODULE.validate_standalone_paths(arguments, boundary)
+            before_mode = stat.S_IMODE(run_directory.stat().st_mode)
+            arguments.output = str(state_root / MODULE.RESULT_BASENAME)
+            with self.assertRaises(MODULE.UpgradeError):
+                MODULE.validate_standalone_paths(arguments, boundary)
+            self.assertEqual(stat.S_IMODE(run_directory.stat().st_mode), before_mode)
+
+        controller_init = SOURCE[
+            SOURCE.index("    def __init__(self, arguments: argparse.Namespace) -> None:"):
+            SOURCE.index("    def mutation(")
+        ]
+        self.assertNotIn("mkdir", controller_init)
+        self.assertNotIn("chmod", controller_init)
+
+    def test_production_standalone_paths_use_only_the_fixed_root_and_children(self) -> None:
+        run_id = "20260831T010203Z-123"
+        run_directory = MODULE.PRODUCTION_STATE_ROOT / f"stateful-{run_id}"
+        boundary = MODULE.establish_standalone_boundary(
+            {}, effective_uid=0, effective_gid=0
+        )
+        arguments = types.SimpleNamespace(
+            run_id=run_id,
+            journal=str(run_directory / MODULE.JOURNAL_BASENAME),
+            output=str(run_directory / MODULE.RESULT_BASENAME),
+            docker="/usr/bin/docker",
+        )
+        with mock.patch.object(MODULE, "_require_trusted_system_directory") as ancestry, \
+                mock.patch.object(MODULE, "_require_secure_directory") as directory, \
+                mock.patch.object(MODULE, "_require_secure_regular_or_absent") as output:
+            MODULE.validate_standalone_paths(arguments, boundary)
+        self.assertEqual(
+            [call.args[0] for call in ancestry.call_args_list],
+            [Path("/"), Path("/var"), Path("/var/lib")],
+        )
+        self.assertEqual(
+            [call.args[0] for call in directory.call_args_list],
+            [MODULE.PRODUCTION_STATE_ROOT, run_directory],
+        )
+        self.assertEqual(
+            [call.args[0] for call in output.call_args_list],
+            [
+                run_directory / MODULE.JOURNAL_BASENAME,
+                run_directory / MODULE.RESULT_BASENAME,
+            ],
+        )
+        for changed in (
+            {"journal": "/tmp/qdrant-storage-upgrade.json"},
+            {"output": "/tmp/qdrant-storage-upgrade-result.json"},
+            {"docker": "docker"},
+        ):
+            candidate = types.SimpleNamespace(**vars(arguments))
+            for key, value in changed.items():
+                setattr(candidate, key, value)
+            with self.subTest(changed=changed), self.assertRaises(MODULE.UpgradeError):
+                MODULE.validate_standalone_paths(candidate, boundary)
+
+        main_source = SOURCE[SOURCE.index("def main("):SOURCE.index("if __name__ ==")]
+        self.assertLess(
+            main_source.index("boundary = establish_standalone_boundary()"),
+            main_source.index("build_parser().parse_args(argv)"),
+        )
 
     def test_upgrade_chain_is_exact_and_cannot_skip_a_minor(self) -> None:
         self.assertEqual(
@@ -102,6 +216,38 @@ class UpgradeContractTests(unittest.TestCase):
             os.chmod(path, 0o600)
             with self.assertRaises(MODULE.UpgradeError):
                 MODULE.DurableJournal(path, copy.deepcopy(initial))
+
+    def test_root_attested_runtime_is_bounded_canonical_and_never_spawns_a_venv(self) -> None:
+        document = {
+            "baseExecutable": "/usr/bin/python3.10",
+            "contract": "linux-aarch64",
+            "executable": "/srv/diva-data-pipeline/ml_pipeline/.venv/bin/python",
+            "gid": 1000,
+            "lockSha256": "1" * 64,
+            "patcherSha256": "2" * 64,
+            "privilegeBoundary": "uid-gid-no-groups-no-caps-nnp",
+            "qdrantClientVersion": "1.19.0",
+            "qdrantModule": "/srv/diva-data-pipeline/ml_pipeline/.venv/lib/qdrant_client/__init__.py",
+            "runtimeReceiptSha256": "3" * 64,
+            "schema": "diva.pipeline-qdrant-probe-runtime.v1",
+            "uid": 1000,
+            "verifierSha256": "4" * 64,
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "runtime-attestation.json"
+            path.write_bytes(MODULE.canonical_bytes(document))
+            os.chmod(path, 0o600)
+            loaded, digest = MODULE.load_runtime_attestation(str(path))
+            self.assertEqual(loaded, document)
+            self.assertEqual(digest, MODULE.sha256_bytes(MODULE.canonical_bytes(document)))
+            path.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
+            os.chmod(path, 0o600)
+            with self.assertRaises(MODULE.UpgradeError):
+                MODULE.load_runtime_attestation(str(path))
+        self.assertIn('parser.add_argument("--runtime-attestation", required=True)', SOURCE)
+        self.assertNotIn("pipeline_python", SOURCE)
+        self.assertNotIn("pipeline_venv", SOURCE)
+        self.assertNotIn("qdrant_client", SOURCE)
 
     def test_volume_projection_binds_storage_identity(self) -> None:
         item = {

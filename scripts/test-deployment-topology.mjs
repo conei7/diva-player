@@ -189,7 +189,9 @@ assert.match(apiDockerfile, /aspnet:8\.0-alpine-extra@sha256:bfb8d74a4b0130c7e4a
 assert.match(apiDockerfile, /sdk:8\.0-alpine@sha256:8a80a27ddac789b4cb6d09d244f9c8d840da599c5ad22f7233c04be470e55261/);
 assert.match(gatewayDockerfile, /haproxy:3\.0-alpine@sha256:34cc7d1f6142464d7d2b73e2a1eef7392556dbf304160aef543e513cfd9e5162/);
 assert.doesNotMatch(webDockerfile, /apk upgrade/u);
-assert.doesNotMatch(apiDockerfile, /apk (?:add|upgrade)/u);
+assert.match(webDockerfile, /apk add --no-cache[\s\S]*libcrypto3=3\.5\.8-r0[\s\S]*libssl3=3\.5\.8-r0/u);
+assert.doesNotMatch(apiDockerfile, /apk upgrade/u);
+assert.match(apiDockerfile, /apk add --no-cache[\s\S]*libcrypto3=3\.5\.8-r0[\s\S]*libssl3=3\.5\.8-r0/u);
 assert.match(apiDockerfile, /test "\$\(dotnet --version\)" = "8\.0\.424"/u);
 assert.match(apiDockerfile, /COPY \["VocadbRecommender\/VocadbRecommender\.csproj", "VocadbRecommender\/packages\.lock\.json"/u);
 assert.match(apiDockerfile, /dotnet restore [^\n]* --locked-mode/u);
@@ -352,21 +354,78 @@ assert.match(deploy, /rollback_updated_slots/);
 assert.match(deploy, /DEPLOY_LOCK_DIR="\$STATE_ROOT\/deploy\.lock"/);
 assert.match(deploy, /acquire_deploy_lock/);
 assert.match(deploy, /STATEFUL_LOCK_DIR="\$STATE_ROOT\/stateful-hardening\.lock"/);
+assert.match(deploy, /deterministic deployment test mode refuses uid 0/u);
+assert.match(
+  deploy,
+  /\[ "\$\{DIVA_DEPLOY_STATE_DIR\+x\}" = x \][\s\S]*\[ "\$\{DIVA_STATEFUL_STATE_DIR\+x\}" = x \][\s\S]*production deployment state-root overrides are forbidden/u,
+);
+assert.match(deploy, /production rolling deployment requires uid 0/u);
+assert.match(
+  deploy,
+  /STATE_ROOT=\/var\/lib\/diva-player-deploy[\s\S]*DEPLOY_LOCK_DIR="\$STATE_ROOT\/deploy\.lock"[\s\S]*STATEFUL_RUNTIME_CONTRACT="\$STATE_ROOT\/stateful-runtime-contract"[\s\S]*API_BRIDGE_RECEIPT="\$STATE_ROOT\/api-bridge-receipt\.json"/u,
+);
+assert.match(
+  deploy,
+  /prepare_deployment_state_root\(\)[\s\S]*validate_trusted_system_directory \/var\/lib[\s\S]*\[ "\$\(\/usr\/bin\/stat -c '%u:%g' "\$STATE_ROOT"\)" = 0:0 \][\s\S]*\[ "\$mode" = 700 \]/u,
+);
 assert.match(deploy, /HEALTH_ATTEMPTS=\$\{DIVA_DEPLOY_HEALTH_ATTEMPTS:-180\}/);
 assert.match(deploy, /Refusing to enable unhealthy \$slot/);
 assert.match(deploy, /apply_gateway_image "\$OLD_GATEWAY_IMAGE" "\$NEW_GATEWAY_IMAGE"/);
 assert.match(deploy, /--bootstrap-legacy-qdrant-bridge/u);
 assert.match(deploy, /canonical API bridge receipt already exists; bootstrap is one-time/u);
-const bridgeCommitStart = deploy.indexOf('The explicit bridge bootstrap is intentionally API-only.');
-const normalGatewayUpdate = deploy.indexOf('record_state "deployment.status" "updating-gateway"', bridgeCommitStart);
-assert.ok(bridgeCommitStart > 0 && normalGatewayUpdate > bridgeCommitStart);
-const bridgeCommitBranch = deploy.slice(bridgeCommitStart, normalGatewayUpdate);
-assert.match(bridgeCommitBranch, /verify_bridge_legacy_contract/u);
-assert.match(bridgeCommitBranch, /commit_bridge_api_restart_policies/u);
+const bridgeCommitStart = deploy.indexOf(
+  'record_state "deployment.status" "verifying-pre-stateful-stateless-bridge"',
+);
+const normalCommitStart = deploy.indexOf(
+  '# The new API/gateway/Web topology is fully verified.',
+  bridgeCommitStart,
+);
+assert.ok(bridgeCommitStart > 0 && normalCommitStart > bridgeCommitStart);
+const bridgeCommitBranch = deploy.slice(bridgeCommitStart, normalCommitStart);
+assert.match(bridgeCommitBranch, /verify_bridge_stateful_contract/u);
+assert.match(bridgeCommitBranch, /verify_all_rolling_candidate_scan_receipts/u);
 assert.match(bridgeCommitBranch, /prepare_and_publish_bridge_receipt/u);
-assert.match(bridgeCommitBranch, /API_CANDIDATE_TAG_CREATED=false/u);
 assert.match(bridgeCommitBranch, /exit 0/u);
-assert.doesNotMatch(bridgeCommitBranch, /apply_gateway_image|validate_candidate_web|replace_web|migrat(?:e|ion) container/iu);
+assert.doesNotMatch(bridgeCommitBranch, /migrat(?:e|ion) container/iu);
+const bridgeReceiptStart = deploy.indexOf('prepare_and_publish_bridge_receipt() {');
+const bridgeReceiptEnd = deploy.indexOf('\nrelease_active_journal() {', bridgeReceiptStart);
+assert.ok(bridgeReceiptStart > 0 && bridgeReceiptEnd > bridgeReceiptStart);
+const bridgeReceiptFunction = deploy.slice(bridgeReceiptStart, bridgeReceiptEnd);
+const backupBeforePreparation = bridgeReceiptFunction.indexOf('before-receipt-preparation');
+const receiptProducerCall = bridgeReceiptFunction.indexOf('"$PYTHON_COMMAND" -I "$producer"');
+const backupBeforePublication = bridgeReceiptFunction.indexOf(
+  'before-receipt-publication',
+  backupBeforePreparation + 1,
+);
+const receiptPublisherCall = bridgeReceiptFunction.indexOf(
+  '"$PYTHON_COMMAND" -I "$publisher" publish',
+);
+assert.ok(
+  backupBeforePreparation >= 0 && backupBeforePreparation < receiptProducerCall
+    && receiptProducerCall < backupBeforePublication
+    && backupBeforePublication < receiptPublisherCall,
+  'fresh exact backup evidence must gate both bridge receipt preparation and publication',
+);
+assert.match(
+  deploy,
+  /\[ "\$computed_binding" = "\$expected_binding" \][\s\S]*\[ "\$computed_generation" = "\$expected_generation" \][\s\S]*before-receipt-publication/u,
+);
+assert.match(
+  deploy,
+  /verify_bridge_attester_source\(\)[\s\S]*\[ "\$current_metadata" = 644:1 \][\s\S]*expected_owner=0:0[\s\S]*\[ "\$snapshot_metadata" = "\$expected_owner:644:1" \][\s\S]*\[ "\$snapshot_sha" = "\$current_sha" \]/u,
+);
+assert.match(
+  deploy,
+  /\[ "\$\(stat -c '%a' "\$attestation_file"\)" = 600 \] \|\| return 1/u,
+);
+const statelessUpdateStart = deploy.lastIndexOf(
+  'if [ "$GATEWAY_WAS_RUNNING" = "true" ]; then',
+  bridgeCommitStart,
+);
+const statelessUpdateBranch = deploy.slice(statelessUpdateStart, bridgeCommitStart);
+assert.match(statelessUpdateBranch, /update_slot api_a[\s\S]*update_slot api_b/u);
+assert.match(statelessUpdateBranch, /apply_gateway_image[\s\S]*validate_candidate_web[\s\S]*replace_web/u);
+assert.doesNotMatch(deploy, /commit_bridge_api_restart_policies/u);
 assert.match(deploy, /production host\/daemon platform is not native linux\/aarch64/u);
 assert.match(deploy, /DOCKER_DEFAULT_PLATFORM/u);
 assert.match(sbcBridgePublisher, /os\.link\(prepared, canonical, follow_symlinks=False\)/u);
@@ -388,7 +447,8 @@ assert.match(qdrantDockerfile, /QDRANT__STORAGE__SNAPSHOTS_PATH="\/qdrant\/stora
 assert.match(qdrantDockerfile, /QDRANT__TELEMETRY_DISABLED="true"/);
 assert.match(qdrantDockerfile, /ENTRYPOINT \["\/qdrant\/qdrant"\]/);
 assert.match(qdrantDockerfile, /CMD \["--config-path", "\/qdrant\/config\/production\.yaml"\]/);
-assert.doesNotMatch(qdrantDockerfile, /apt-get|dpkg-inventory\.tsv/);
+assert.match(qdrantDockerfile, /apt-get install --yes --no-install-recommends --only-upgrade[\s\S]*libssl3t64=3\.5\.7-1~deb13u2[\s\S]*openssl-provider-legacy=3\.5\.7-1~deb13u2/u);
+assert.doesNotMatch(qdrantDockerfile, /apt-get (?:dist-upgrade|upgrade)|dpkg-inventory\.tsv/u);
 assert.match(qdrantDockerfile, /USER 1000:1000/);
 assert.match(workflow, /docker volume create[\s\S]*diva-player-ci-qdrant-audit:current[\s\S]*--user 1000:1000[\s\S]*--read-only/);
 assert.match(workflow, /\/collections\/diva_ci_smoke\/points\?wait=true/);
@@ -477,7 +537,9 @@ assert.match(statefulHardening, /QDRANT_AUDIT_TOOL_IMAGE="diva-player-qdrant-aud
 assert.match(statefulHardening, /--audit-image-id "\$NEW_QDRANT_AUDIT_ID"/);
 assert.match(statefulHardening, /trivy-0\.74\.0/);
 assert.match(statefulHardening, /--scanners vuln/);
-assert.match(statefulHardening, /--severity HIGH,CRITICAL --format json --list-all-pkgs --exit-code 1/);
+assert.match(statefulHardening, /qdrant-rollback\|postgres-rollback\)\s*scan_exit_code=0/);
+assert.match(statefulHardening, /\*\)\s*scan_exit_code=1\s*allow_findings=0/);
+assert.match(statefulHardening, /--severity HIGH,CRITICAL --format json --list-all-pkgs \\\s*--exit-code "\$scan_exit_code"/);
 assert.match(statefulHardening, /validate_trivy_scan_report/);
 assert.match(statefulHardening, /wait_stateful_daemon_stable/);
 assert.match(statefulHardening, /daemon\.reconciliation fail-stop-manual-intervention-required/);
