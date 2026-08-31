@@ -103,6 +103,16 @@ jobs:
           test "$(docker image inspect --format '{{.Config.User}}' "$migrate_image_id")" = 65534:65534
           test "$(docker image inspect --format '{{json .Config.Entrypoint}}' "$migrate_image_id")" = '["psql"]'
 
+          run_ci_psql() {
+            docker run --rm --network host --read-only --cap-drop ALL \
+              --security-opt no-new-privileges --pids-limit 64 \
+              --tmpfs /tmp:rw,noexec,nosuid,nodev,size=16m,mode=1777 \
+              --env PGHOST=127.0.0.1 --env PGPORT=5432 \
+              --env PGDATABASE=vocadb_recommender --env PGUSER=vocadb \
+              --env PGPASSWORD=diva-ci-password --env PGCONNECT_TIMEOUT=5 \
+              "$migrate_image_id" -X -v ON_ERROR_STOP=1 "$@"
+          }
+
           postgres_container="diva-player-ci-postgres-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           postgres_volume="${postgres_container}-data"
           ! docker container inspect "$postgres_container" >/dev/null 2>&1
@@ -140,7 +150,49 @@ jobs:
             exit 1
           fi
 
-          docker run --rm --network host --read-only --cap-drop ALL \
+          # The official entrypoint starts a temporary Unix-socket server while
+          # running initdb scripts. Its in-container pg_isready healthcheck can
+          # turn healthy before that server is stopped and the final TCP server
+          # is stable. Require PID 1 to have exec'd the final postgres process,
+          # two matching external postmaster identities, and the final schema
+          # sentinel before starting the fail-stop migration.
+          postgres_endpoint_stable=false
+          postgres_postmaster_identity=""
+          postgres_stable_samples=0
+          for attempt in $(seq 1 90); do
+            if [[ $(docker container inspect --format '{{.State.Running}}' "$postgres_container") != true ]]; then
+              break
+            fi
+            postgres_main_process=$(docker exec "$postgres_container" cat /proc/1/comm 2>/dev/null || true)
+            if [[ "$postgres_main_process" == postgres ]] \
+              && postgres_probe=$(run_ci_psql -Atc \
+                "SELECT pg_postmaster_start_time()::text || '|' || (SELECT COUNT(*)::text FROM sync_state WHERE key IN ('last_daily_sync', 'dump_imported'))" \
+                2>/dev/null) \
+              && [[ "$postgres_probe" == *'|2' ]]; then
+              postgres_identity=${postgres_probe%|*}
+              if [[ "$postgres_identity" == "$postgres_postmaster_identity" ]]; then
+                postgres_stable_samples=$((postgres_stable_samples + 1))
+              else
+                postgres_postmaster_identity="$postgres_identity"
+                postgres_stable_samples=1
+              fi
+              if [[ "$postgres_stable_samples" -ge 2 \
+                && $(docker container inspect --format '{{.State.Health.Status}}' "$postgres_container") == healthy ]]; then
+                postgres_endpoint_stable=true
+                break
+              fi
+            else
+              postgres_postmaster_identity=""
+              postgres_stable_samples=0
+            fi
+            sleep 2
+          done
+          if [[ "$postgres_endpoint_stable" != true ]]; then
+            docker logs "$postgres_container" || true
+            exit 1
+          fi
+
+          if ! docker run --rm --network host --read-only --cap-drop ALL \
             --security-opt no-new-privileges --pids-limit 128 \
             --tmpfs /tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777 \
             --env PGHOST=127.0.0.1 --env PGPORT=5432 \
@@ -148,19 +200,13 @@ jobs:
             --env PGPASSWORD=diva-ci-password \
             --mount "type=bind,src=$GITHUB_WORKSPACE/backend/database/migrate.sh,dst=/migrations/migrate.sh,readonly" \
             --mount "type=bind,src=$GITHUB_WORKSPACE/backend/database/migrations,dst=/migrations/sql,readonly" \
-            --entrypoint /bin/sh "$migrate_image_id" /migrations/migrate.sh
+            --entrypoint /bin/sh "$migrate_image_id" /migrations/migrate.sh; then
+            docker logs "$postgres_container" || true
+            exit 1
+          fi
 
           test "$(docker exec --user 0:0 "$postgres_container" \
             stat -c '%u:%g' /var/lib/postgresql/data)" = 999:999
-          run_ci_psql() {
-            docker run --rm --network host --read-only --cap-drop ALL \
-              --security-opt no-new-privileges --pids-limit 64 \
-              --tmpfs /tmp:rw,noexec,nosuid,nodev,size=16m,mode=1777 \
-              --env PGHOST=127.0.0.1 --env PGPORT=5432 \
-              --env PGDATABASE=vocadb_recommender --env PGUSER=vocadb \
-              --env PGPASSWORD=diva-ci-password \
-              "$migrate_image_id" -X -v ON_ERROR_STOP=1 "$@"
-          }
           run_ci_psql -c 'CREATE TABLE IF NOT EXISTS diva_ci_vector_smoke (id INTEGER PRIMARY KEY, embedding vector(3) NOT NULL)'
           run_ci_psql -c "INSERT INTO diva_ci_vector_smoke (id, embedding) VALUES (1, '[1,0,0]'), (2, '[0,1,0]') ON CONFLICT (id) DO UPDATE SET embedding = EXCLUDED.embedding"
           run_ci_psql -c 'CREATE INDEX IF NOT EXISTS diva_ci_vector_smoke_hnsw ON diva_ci_vector_smoke USING hnsw (embedding vector_l2_ops)'

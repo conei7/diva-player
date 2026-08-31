@@ -199,11 +199,39 @@ class PostgresContainerContractTests(unittest.TestCase):
             self.assertIn(f"--file {dockerfile}", self.workflow)
             self.assertIn(f"--tag {tag} backend/database", self.workflow)
         self.assertIn('"$postgres_image_id")', self.workflow)
-        self.assertIn('--entrypoint /bin/sh "$migrate_image_id" /migrations/migrate.sh', self.workflow)
+        self.assertEqual(
+            self.workflow.count(
+                '--entrypoint /bin/sh "$migrate_image_id" /migrations/migrate.sh'
+            ),
+            1,
+        )
         self.assertIn("type=bind,src=$GITHUB_WORKSPACE/backend/database/migrate.sh", self.workflow)
         self.assertIn("type=bind,src=$GITHUB_WORKSPACE/backend/database/migrations", self.workflow)
         self.assertIn("--read-only --cap-drop ALL", self.workflow)
         self.assertIn("--security-opt no-new-privileges", self.workflow)
+        stable_gate = self.workflow.index("postgres_endpoint_stable=false")
+        migration = self.workflow.index(
+            'if ! docker run --rm --network host --read-only --cap-drop ALL'
+        )
+        self.assertLess(stable_gate, migration)
+        self.assertIn("SELECT pg_postmaster_start_time()::text", self.workflow)
+        self.assertIn("--env PGCONNECT_TIMEOUT=5", self.workflow)
+        self.assertIn(
+            'docker exec "$postgres_container" cat /proc/1/comm', self.workflow
+        )
+        self.assertIn('[[ "$postgres_main_process" == postgres ]]', self.workflow)
+        self.assertIn(
+            "SELECT COUNT(*)::text FROM sync_state WHERE key IN "
+            "('last_daily_sync', 'dump_imported')",
+            self.workflow,
+        )
+        self.assertIn('[[ "$postgres_stable_samples" -ge 2', self.workflow)
+        self.assertRegex(
+            self.workflow,
+            r'(?s)if ! docker run --rm --network host --read-only --cap-drop ALL '
+            r'.*?--entrypoint /bin/sh "\$migrate_image_id" /migrations/migrate\.sh; then'
+            r'.*?docker logs "\$postgres_container" \|\| true.*?exit 1',
+        )
         self.assertGreaterEqual(
             self.workflow.count("stat -c '%u:%g' /var/lib/postgresql/data)\" = 999:999"),
             2,
