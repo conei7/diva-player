@@ -100,6 +100,10 @@ const timeoutFaultScenarios = new Set([
   'daemon-read-timeout-once-after-gate',
   'projection-config-timeout',
 ]);
+const preRunRejectionScenarios = new Set([
+  'assume-unchanged-pipeline-source',
+  'skip-worktree-pipeline-source',
+]);
 
 const ids = Object.freeze({
   oldQdrant: 'a'.repeat(64),
@@ -2389,29 +2393,33 @@ async function createScenario(name) {
   };
 }
 
-async function findRunDirectory(stateRoot) {
+async function findRunDirectory(stateRoot, { allowAbsent = false } = {}) {
   const entries = await readdir(stateRoot, { withFileTypes: true });
   const runs = entries.filter(entry => (
     entry.isDirectory() && /^stateful-[0-9]{8}T[0-9]{6}Z-[0-9]+$/u.test(entry.name)
   ));
+  if (allowAbsent && runs.length === 0) return null;
   assert.equal(runs.length, 1, 'expected one stateful run directory');
   return join(stateRoot, runs[0].name);
 }
 
-async function readRunState(stateRoot) {
-  return readFile(join(await findRunDirectory(stateRoot), 'state'), 'utf8');
+async function readRunState(stateRoot, options) {
+  const runDirectory = await findRunDirectory(stateRoot, options);
+  return runDirectory ? readFile(join(runDirectory, 'state'), 'utf8') : '';
 }
 
-async function runArtifactRemains(stateRoot, name) {
-  return existsSync(join(await findRunDirectory(stateRoot), name));
+async function runArtifactRemains(stateRoot, name, options) {
+  const runDirectory = await findRunDirectory(stateRoot, options);
+  return runDirectory ? existsSync(join(runDirectory, name)) : false;
 }
 
-async function readRunArtifact(stateRoot, name) {
-  return readFile(join(await findRunDirectory(stateRoot), name), 'utf8');
+async function readRunArtifact(stateRoot, name, options) {
+  const runDirectory = await findRunDirectory(stateRoot, options);
+  return runDirectory ? readFile(join(runDirectory, name), 'utf8') : '';
 }
 
-async function sensitiveComposeArtifactsRemain(stateRoot) {
-  return runArtifactRemains(stateRoot, 'resolved-compose.private.json');
+async function sensitiveComposeArtifactsRemain(stateRoot, options) {
+  return runArtifactRemains(stateRoot, 'resolved-compose.private.json', options);
 }
 
 async function readContainers(directory) {
@@ -2436,6 +2444,9 @@ async function waitForDelayedMutation(fakeState, scenario) {
 async function runScenario(name) {
   console.log(`CASE ${name}`);
   const scenario = await createScenario(name);
+  const runDirectoryOptions = {
+    allowAbsent: preRunRejectionScenarios.has(name),
+  };
   try {
     const existingJournal = name === 'invalid-evidence-existing-journal'
       ? 'existing-stateful-run-owned-by-another-process\n'
@@ -2581,7 +2592,7 @@ async function runScenario(name) {
       backendEnvBackupRemains,
       controllerSettlement,
     ] = await Promise.all([
-      readRunState(scenario.stateRoot).catch(() => ''),
+      readRunState(scenario.stateRoot, runDirectoryOptions).catch(() => ''),
       readFile(join(scenario.fakeState, 'docker.log'), 'utf8').catch(() => ''),
       readFile(join(scenario.fakeState, 'timeout.log'), 'utf8').catch(() => ''),
       readFile(join(scenario.fakeState, 'sleep.log'), 'utf8').catch(() => ''),
@@ -2590,11 +2601,16 @@ async function runScenario(name) {
       readFile(join(scenario.fakeState, 'stable-image-id'), 'utf8').then(value => value.trim()).catch(() => 'absent'),
       readFile(join(scenario.fakeState, 'rollback-image-id'), 'utf8').then(value => value.trim()).catch(() => 'absent'),
       readFile(join(scenario.stateRoot, 'stateful-runtime-contract'), 'utf8').catch(() => ''),
-      sensitiveComposeArtifactsRemain(scenario.stateRoot),
-      runArtifactRemains(scenario.stateRoot, 'backend.env.before-qdrant-volume'),
+      sensitiveComposeArtifactsRemain(scenario.stateRoot, runDirectoryOptions),
+      runArtifactRemains(
+        scenario.stateRoot,
+        'backend.env.before-qdrant-volume',
+        runDirectoryOptions,
+      ),
       readRunArtifact(
         scenario.stateRoot,
         'qdrant-storage-upgrade-controller-settlement.json',
+        runDirectoryOptions,
       ).catch(() => ''),
     ]);
     const journalPath = join(scenario.stateRoot, 'stateful-hardening-active');
@@ -2764,6 +2780,16 @@ try {
       assert.equal(run.result.status, 0, diagnostic(run));
       assert.equal(run.rollbackImageId, `sha256:${'7'.repeat(64)}`, diagnostic(run));
       assert.match(run.state, /qdrant\.rollback_retained=diva-player-qdrant:rollback-[^:]+:sha256:[0-9a-f]{64}:backend_qdrant_data/);
+    } else if (preRunRejectionScenarios.has(focusedCase)) {
+      assert.notEqual(run.result.status, 0, diagnostic(run));
+      assert.equal(run.dockerLog, '', diagnostic(run));
+      assert.equal(run.state, '', diagnostic(run));
+      assert.equal(run.journalExists, false, diagnostic(run));
+      assert.equal(run.interlockExists, false, diagnostic(run));
+      assert.equal(run.sensitiveComposeArtifactRemains, false, diagnostic(run));
+      assert.equal(run.backendEnvBackupRemains, false, diagnostic(run));
+      assert.equal(run.controllerSettlement, '', diagnostic(run));
+      assertExactOldTopology(run);
     } else if (new Set([
       'rollback-tag-retag-drift',
       'rollback-tag-missing',
