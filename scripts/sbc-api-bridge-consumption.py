@@ -852,7 +852,7 @@ def main() -> int:
             intent_path=arguments.intent, reason=arguments.reason,
             run_id=arguments.run_id, state_root=arguments.state_root,
             active=arguments.active_journal, lock_dir=arguments.lock_dir,
-            expected_sha=arguments.expected_sha,
+            expected_sha=arguments.expected_sha256,
         )
         print(json.dumps(settlement, ensure_ascii=True, separators=(",", ":"),
                          sort_keys=True))

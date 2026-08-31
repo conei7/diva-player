@@ -5,9 +5,13 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import io
+import json
 import os
 import stat
+import sys
 import tempfile
+from contextlib import redirect_stdout
 from pathlib import Path
 
 
@@ -142,6 +146,36 @@ def consume(module, fixture: dict[str, object], checkpoint=lambda _phase: None):
         expected_sha=fixture["receipt_sha"],
         checkpoint=checkpoint,
     )
+
+
+def exercise_consume_cli(module) -> None:
+    with tempfile.TemporaryDirectory(prefix="diva-sbc-bridge-consume-cli.") as temporary:
+        fixture = build_fixture(module, Path(temporary), reason="calibration")
+        previous_argv = sys.argv
+        output = io.StringIO()
+        try:
+            sys.argv = [
+                str(HELPER),
+                "consume",
+                "--canonical", str(fixture["receipt"]),
+                "--archive", str(fixture["archive"]),
+                "--intent", str(fixture["intent"]),
+                "--reason", str(fixture["reason"]),
+                "--run-id", str(fixture["run_id"]),
+                "--state-root", str(fixture["state_root"]),
+                "--active-journal", str(fixture["active"]),
+                "--lock-dir", str(fixture["lock_dir"]),
+                "--expected-sha256", str(fixture["receipt_sha"]),
+            ]
+            with redirect_stdout(output):
+                assert module.main() == 0
+        finally:
+            sys.argv = previous_argv
+        settlement = json.loads(output.getvalue())
+        assert settlement["receiptSha256"] == fixture["receipt_sha"]
+        assert settlement["status"] == "consumed-single-link-archive"
+        assert reconcile(module, fixture) == "calibration"
+        assert_settled(module, fixture)
 
 
 def reconcile(module, fixture: dict[str, object], checkpoint=lambda _phase: None) -> str:
@@ -462,6 +496,7 @@ def exercise_fail_closed_cases(module) -> None:
 
 def main() -> int:
     module = load_helper()
+    exercise_consume_cli(module)
     exercise_fault_matrix(module)
     exercise_completed_boundary(module)
     exercise_release_fault_matrix(module)
