@@ -1797,7 +1797,7 @@ assertMigrationFailureStopsWithUnresolvedDaemonMutation(migrationFailure);
 
 const credentialFailure = await runScenario('api-credential', 'api_candidate_health');
 assert.notEqual(credentialFailure.result.status, 0);
-assert.match(credentialFailure.state, /Candidate API could not become ready/);
+assert.match(credentialFailure.state, /Candidate api_a API could not become ready/);
 assert.doesNotMatch(credentialFailure.dockerLog, /force-recreate api_a/);
 assert.doesNotMatch(credentialFailure.dockerLog, /force-recreate api_b/);
 assert.doesNotMatch(credentialFailure.dockerLog, /force-recreate api_gateway/);
