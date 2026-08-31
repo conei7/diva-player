@@ -1291,6 +1291,26 @@ function testBridgeTrivyAndExactImageContract() {
   );
 }
 
+function assertMigrationFailureStopsWithUnresolvedDaemonMutation(result) {
+  assert.notEqual(result.result.status, 0);
+  assert.match(
+    result.state,
+    /daemon_mutation\.(\d+)\.intent=compose-run\ndaemon_mutation\.\1\.phase=submitted-possible\ndaemon_mutation\.terminal_release=forbidden-compose-run-client-exit-1\ndaemon_mutation\.\1\.phase=unresolved-client-exit-1-terminal-release-forbidden/u,
+  );
+  assert.match(result.state, /migration\.acl_reconciliation=failed/);
+  assert.match(
+    result.state,
+    /deployment\.status=daemon-unresolved-fail-stop-manual-reconciliation-required/,
+  );
+  assert.match(result.state, /recovery\.status=forbidden-no-conflicting-daemon-mutation/);
+  assert.notEqual(result.activeJournal, '');
+  assert.match(result.lockOwner, /^pid=/u);
+  assert.equal(result.apiARoute, 'MAINT');
+  assert.equal(result.apiBRoute, 'MAINT');
+  assert.doesNotMatch(result.dockerLog, /force-recreate api_a/);
+  assert.doesNotMatch(result.dockerLog, /force-recreate api_b/);
+}
+
 async function testCandidateTrivyScanFailsClosed() {
   const result = await runScenario('candidate-trivy-scan', 'trivy_gateway_scan');
   assert.notEqual(result.result.status, 0);
@@ -1596,6 +1616,12 @@ if (process.env.DIVA_ROLLING_TEST_ONLY === 'lock-cleanup') {
   console.log('PASS deploy lock cleanup failure interlock');
   process.exit(0);
 }
+if (process.env.DIVA_ROLLING_TEST_ONLY === 'migration') {
+  const migrationFailure = await runScenario('migration', 'migration');
+  assertMigrationFailureStopsWithUnresolvedDaemonMutation(migrationFailure);
+  console.log('PASS migration unresolved daemon mutation fail-stop');
+  process.exit(0);
+}
 
 const successful = await runScenario('success');
 assert.equal(successful.result.status, 0, JSON.stringify({
@@ -1767,17 +1793,7 @@ assert.match(unchanged.state, /gateway\.update=unchanged/);
 assert.doesNotMatch(unchanged.dockerLog, /create --name vocadb_api_gateway /u);
 
 const migrationFailure = await runScenario('migration', 'migration');
-assert.notEqual(migrationFailure.result.status, 0);
-assert.match(migrationFailure.state, /daemon_mutation\.11\.phase=unresolved-client-exit-1-terminal-release-forbidden/);
-assert.match(migrationFailure.state, /migration\.acl_reconciliation=failed/);
-assert.match(migrationFailure.state, /deployment\.status=daemon-unresolved-fail-stop-manual-reconciliation-required/);
-assert.match(migrationFailure.state, /recovery\.status=forbidden-no-conflicting-daemon-mutation/);
-assert.notEqual(migrationFailure.activeJournal, '');
-assert.match(migrationFailure.lockOwner, /^pid=/u);
-assert.equal(migrationFailure.apiARoute, 'MAINT');
-assert.equal(migrationFailure.apiBRoute, 'MAINT');
-assert.doesNotMatch(migrationFailure.dockerLog, /force-recreate api_a/);
-assert.doesNotMatch(migrationFailure.dockerLog, /force-recreate api_b/);
+assertMigrationFailureStopsWithUnresolvedDaemonMutation(migrationFailure);
 
 const credentialFailure = await runScenario('api-credential', 'api_candidate_health');
 assert.notEqual(credentialFailure.result.status, 0);
