@@ -2280,6 +2280,10 @@ async function createScenario(name) {
     writeFile(join(fixturePipelineUtils, 'runtime_contracts.py'), '# runtime contract fixture\n', 'utf8'),
     writeFile(join(fixturePipelineUtils, 'qdrant_cleanup.py'), '# cleanup fixture\n', 'utf8'),
   ]);
+  // Production only accepts an owner-only persistent Compose binding.  Keep
+  // the nominal fixture on that exact POSIX contract so the success case does
+  // not rely on the test runner's default umask.
+  await chmod(join(fixtureProject, 'backend', '.env'), 0o600);
 
   const commands = {
     docker: fakeDocker,
