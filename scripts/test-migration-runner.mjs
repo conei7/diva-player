@@ -32,7 +32,7 @@ const entries = manifestText.trimEnd().split('\n').map((line, index) => {
   return { migrationId, executionMode, contentSha256 };
 });
 
-assert.equal(entries.length, 24, 'all existing migrations must be pinned in the manifest');
+assert.equal(entries.length, 25, 'all existing migrations must be pinned in the manifest');
 assert.deepEqual(
   entries.map(entry => entry.migrationId),
   [...entries.map(entry => entry.migrationId)].sort(),
@@ -67,6 +67,42 @@ for (const entry of entries) {
     assert.doesNotMatch(withoutBoundaries, transactionIncompatible);
   }
 }
+
+const runtimeRoleAclReconciliation = await readFile(
+  path.join(migrationsDir, '0025_reconcile_runtime_role_migration_history_acl.sql'),
+  'utf8',
+);
+assert.match(
+  runtimeRoleAclReconciliation,
+  /FOREACH runtime_role_name IN ARRAY ARRAY\[[\s\S]*'diva_api_runtime'[\s\S]*'diva_pipeline_runtime'[\s\S]*\] LOOP/,
+);
+assert.match(
+  runtimeRoleAclReconciliation,
+  /FOREACH relation_name IN ARRAY ARRAY\[[\s\S]*'schema_migrations'[\s\S]*'schema_migration_attempts'[\s\S]*\] LOOP/,
+);
+assert.match(
+  runtimeRoleAclReconciliation,
+  /REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON TABLE %s FROM %I/,
+);
+assert.match(
+  runtimeRoleAclReconciliation,
+  /REVOKE ALL PRIVILEGES ON SEQUENCE %s FROM %I/,
+);
+assert.match(
+  runtimeRoleAclReconciliation,
+  /CONTINUE WHEN NOT EXISTS \([\s\S]*FROM pg_roles WHERE rolname = runtime_role_name[\s\S]*\)/,
+);
+assert.match(
+  runtimeRoleAclReconciliation,
+  /relation_oid := to_regclass\('public\.' \|\| relation_name\);[\s\S]*CONTINUE WHEN relation_oid IS NULL/,
+);
+assert.match(
+  runtimeRoleAclReconciliation,
+  /attempt_sequence_oid REGCLASS :=[\s\S]*to_regclass\('public\.schema_migration_attempts_attempt_id_seq'\)[\s\S]*IF attempt_sequence_oid IS NOT NULL THEN/,
+);
+assert.doesNotMatch(runtimeRoleAclReconciliation, /\bGRANT\b/);
+assert.match(runtimeRoleAclReconciliation, /has_table_privilege\(/);
+assert.match(runtimeRoleAclReconciliation, /has_sequence_privilege\(/);
 
 const runner = await readFile(runnerPath, 'utf8');
 assert.match(runner, /pg_try_advisory_lock\([\s\S]*diva-player-schema-migration-runner-v1/);

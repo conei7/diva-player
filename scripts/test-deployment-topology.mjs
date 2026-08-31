@@ -659,6 +659,35 @@ assert.match(workflow, /npm run test:runtime-health:python/);
 assert.match(workflow, /npm run test:db-role-provisioning/);
 assert.match(workflow, /0018_runtime_database_roles\.sql/);
 assert.match(workflow, /test-database-role-contract\.sql/);
+const databaseRoleContractStep = workflow.match(
+  /      - name: Database schema and model guard contract[\s\S]*?      - name: Remove PostgreSQL CI runtime/u,
+)?.[0] ?? '';
+assert.equal(
+  (databaseRoleContractStep.match(/0018_runtime_database_roles\.sql/g) ?? []).length,
+  2,
+  'the runtime-role migration must be reapplied twice before ACL reconciliation',
+);
+assert.equal(
+  (databaseRoleContractStep.match(/0025_reconcile_runtime_role_migration_history_acl\.sql/g) ?? []).length,
+  1,
+  'the migration-history ACL reconciliation must run once after role reapplication',
+);
+assert.match(databaseRoleContractStep, /grep -qx '25\|25\|0'/);
+const secondRuntimeRoleReapply = databaseRoleContractStep.lastIndexOf(
+  '0018_runtime_database_roles.sql',
+);
+const runtimeRoleAclReconciliation = databaseRoleContractStep.indexOf(
+  '0025_reconcile_runtime_role_migration_history_acl.sql',
+);
+const runtimeRoleContract = databaseRoleContractStep.indexOf(
+  'test-database-role-contract.sql',
+);
+assert.ok(
+  secondRuntimeRoleReapply >= 0
+    && runtimeRoleAclReconciliation > secondRuntimeRoleReapply
+    && runtimeRoleContract > runtimeRoleAclReconciliation,
+  'role reapplication must converge before the database role contract runs',
+);
 assert.match(workflow, /Validate Cloudflare credentials/);
 assert.match(workflow, /Cloudflare deployment requires CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID/);
 assert.doesNotMatch(workflow, /Cloudflare deployment skipped/);
