@@ -2261,7 +2261,10 @@ limit=__D__{1:?}
 shift
 command=__D__{1:?}
 shift
-printf '%s|%s|%s\n' "$limit" "$command" "$*" >> "$root/timeout.log"
+# This fixture also runs beneath the hardener's 64 KiB RLIMIT_FSIZE semantic
+# probe.  Keep its cumulative diagnostics bounded so the fixture cannot fail
+# before the command whose timeout behavior it is meant to model.
+printf '%s|%s|argc=%s\n' "$limit" "__D__{command##*/}" "__D__#" >> "$root/timeout.log"
 if [ "$scenario" = daemon-read-timeout-after-gate ] \
     && [ -f "$root/writer-gate" ]; then
   case "$*" in
@@ -3210,7 +3213,7 @@ async function runScenario(name) {
       // leave headroom under the two-minute focused-test budget.
       timeout: process.env.DIVA_STATEFUL_TEST_CASE === 'qdrant-controller-timeout'
         ? 120_000
-        : new Set(['success', 'legacy-scan-reviewed']).has(
+        : new Set(['success', 'legacy-scan-reviewed', 'gate-release-timeout']).has(
           process.env.DIVA_STATEFUL_TEST_CASE,
         )
           ? 600_000
@@ -3459,6 +3462,21 @@ function assertPersistentFailStop(run) {
   assert.match(run.state, /daemon\.reconciliation=fail-stop-manual-intervention-required/);
   assert.doesNotMatch(run.state, /rollback=completed/);
   assert.equal(run.privateBackendEnvRemains, false, diagnostic(run));
+}
+
+function assertGateReleaseTimeout(run) {
+  assertPersistentFailStop(run);
+  assert.equal(run.writerGateExists, false, diagnostic(run));
+  assert.equal(run.writerRolesLocked, false, diagnostic(run));
+  assert.equal(run.containers.vocadb_qdrant, ids.promotedQdrant, diagnostic(run));
+  assert.equal(run.containers.vocadb_postgres, ids.promotedPostgres, diagnostic(run));
+  assert.match(run.state, /qdrant\.candidate_python_semantic=verified/);
+  assert.match(run.state, /qdrant\.promoted_python_semantic=verified/);
+  assert.match(run.state, /deployment\.status=verified/);
+  assert.match(run.state, /daemon\.mutation_uncertain_exit=124/);
+  assert.doesNotMatch(run.state, /compose\.management=/);
+  assert.match(run.result.stderr, /pipeline writer gate could not be released exactly/);
+  assert.ok(Buffer.byteLength(run.timeoutLog, 'utf8') < 32768, diagnostic(run));
 }
 
 function assertQdrantControllerTimeout(run) {
@@ -3716,6 +3734,8 @@ try {
       }
     } else if (focusedCase === 'qdrant-controller-timeout') {
       assertQdrantControllerTimeout(run);
+    } else if (focusedCase === 'gate-release-timeout') {
+      assertGateReleaseTimeout(run);
     } else if (new Set([
       'rollback-tag-retag-drift',
       'rollback-tag-missing',
@@ -3916,11 +3936,7 @@ assert.equal(gateAcquireTimeout.writerRolesLocked, true, diagnostic(gateAcquireT
 assertExactOldTopology(gateAcquireTimeout);
 
 const gateReleaseTimeout = await runScenario('gate-release-timeout');
-assertPersistentFailStop(gateReleaseTimeout);
-assert.equal(gateReleaseTimeout.writerGateExists, false, diagnostic(gateReleaseTimeout));
-assert.equal(gateReleaseTimeout.writerRolesLocked, false, diagnostic(gateReleaseTimeout));
-assert.equal(gateReleaseTimeout.containers.vocadb_qdrant, ids.promotedQdrant, diagnostic(gateReleaseTimeout));
-assert.equal(gateReleaseTimeout.containers.vocadb_postgres, ids.promotedPostgres, diagnostic(gateReleaseTimeout));
+assertGateReleaseTimeout(gateReleaseTimeout);
 
 const daemonReadTimeout = await runScenario('daemon-read-timeout-after-gate');
 assert.notEqual(daemonReadTimeout.result.status, 0, diagnostic(daemonReadTimeout));
