@@ -85,15 +85,27 @@ class UpgradeContractTests(unittest.TestCase):
             run_directory = state_root / f"stateful-{run_id}"
             state_root.mkdir(mode=0o700)
             run_directory.mkdir(mode=0o700)
+            fixture_uid = getattr(os, "geteuid", lambda: 1000)()
+            fixture_gid = getattr(os, "getegid", lambda: 1000)()
+            if os.name == "posix" and fixture_uid == 0:
+                fixture_uid = 1000
+                fixture_gid = 1000
+                os.chown(state_root, fixture_uid, fixture_gid)
+                os.chown(run_directory, fixture_uid, fixture_gid)
             os.chmod(state_root, 0o700)
             os.chmod(run_directory, 0o700)
+            if os.name == "posix":
+                for path in (state_root, run_directory):
+                    info = path.stat()
+                    self.assertEqual((info.st_uid, info.st_gid), (fixture_uid, fixture_gid))
+                    self.assertEqual(stat.S_IMODE(info.st_mode), 0o700)
             boundary = MODULE.establish_standalone_boundary(
                 {
                     MODULE.TEST_MODE_ENV: "1",
                     MODULE.TEST_STATE_ROOT_ENV: str(state_root),
                 },
-                effective_uid=1000,
-                effective_gid=1000,
+                effective_uid=fixture_uid,
+                effective_gid=fixture_gid,
             )
             arguments = types.SimpleNamespace(
                 run_id=run_id,
@@ -102,6 +114,14 @@ class UpgradeContractTests(unittest.TestCase):
                 docker="fake-docker",
             )
             MODULE.validate_standalone_paths(arguments, boundary)
+            if os.name == "posix":
+                wrong_owner = MODULE.StandaloneBoundary(
+                    state_root, fixture_uid + 1, fixture_gid, True
+                )
+                with self.assertRaisesRegex(
+                    MODULE.UpgradeError, "private state directory metadata is unsafe"
+                ):
+                    MODULE.validate_standalone_paths(arguments, wrong_owner)
             before_mode = stat.S_IMODE(run_directory.stat().st_mode)
             arguments.output = str(state_root / MODULE.RESULT_BASENAME)
             with self.assertRaises(MODULE.UpgradeError):
