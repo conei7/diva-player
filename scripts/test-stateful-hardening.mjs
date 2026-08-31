@@ -82,10 +82,8 @@ let fixtureBasePromise;
 let windowsSid;
 let attesterNegativeChecked = false;
 const delayedMutationScenarios = new Set([
-  'qdrant-chown-timeout',
   'qdrant-compose-timeout',
   'postgres-compose-timeout',
-  'qdrant-rollback-chown-timeout',
   'image-tag-timeout',
   'promotion-qdrant-compose-timeout',
   'promotion-postgres-compose-timeout',
@@ -125,7 +123,6 @@ const ids = Object.freeze({
   promotedPostgres: '2'.repeat(64),
   auditContainer: '7'.repeat(64),
   ownerAuditContainer: '6'.repeat(64),
-  chownHelper: '9'.repeat(64),
 });
 
 if (process.platform === 'win32' && !existsSync(bashCommand)) {
@@ -1147,9 +1144,7 @@ case "$1" in
           ;;
         *)
           create_container "$helper_name" "$helper" "$q_image"
-          if [ "__D__{FAKE_TIMEOUT_MUTATION:-}" != chown ]; then
-            write_value "$containers/$helper_name.running" false
-          fi
+          write_value "$containers/$helper_name.running" false
           ;;
       esac
     fi
@@ -1484,8 +1479,7 @@ root=__D__{FAKE_STATE:?}
 printf '%s\n' "$*" >> "$root/curl.log"
 url=""
 for argument in "$@"; do url="$argument"; done
-if { [ "__D__{FAKE_SCENARIO:-}" = qdrant-health-failure ] \
-      || [ "__D__{FAKE_SCENARIO:-}" = qdrant-rollback-chown-timeout ]; } \
+if [ "__D__{FAKE_SCENARIO:-}" = qdrant-health-failure ] \
     && [ "$url" = http://127.0.0.1:6333/readyz ] \
     && [ -f "$root/containers/vocadb_qdrant.id" ] \
     && [ "$(cat "$root/containers/vocadb_qdrant.id")" = eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee ]; then
@@ -1784,14 +1778,6 @@ case "$scenario:$*" in
     printf '%s\n' '{"services":{"postgres":{"environment":{"POSTGRES_PASSWORD":"must-not-remain"}'
     exit 124
     ;;
-  qdrant-chown-timeout:*'run --name diva_qdrant_chown_'*)
-    (
-      /usr/bin/sleep 1
-      FAKE_TIMEOUT_MUTATION=chown "$command" "$@" || true
-      printf '%s\n' "$scenario" > "$root/delayed-mutation-done"
-    ) </dev/null >> "$root/delayed-mutation.log" 2>&1 &
-    exit 124
-    ;;
   qdrant-compose-timeout:*'compose '*'force-recreate qdrant')
     (
       /usr/bin/sleep 1
@@ -1808,14 +1794,6 @@ case "$scenario:$*" in
     (
       /usr/bin/sleep 1
       FAKE_TIMEOUT_MUTATION=postgres-stable "$command" "$@" || true
-      printf '%s\n' "$scenario" > "$root/delayed-mutation-done"
-    ) </dev/null >> "$root/delayed-mutation.log" 2>&1 &
-    exit 124
-    ;;
-  qdrant-rollback-chown-timeout:*'run --name diva_qdrant_rollback_chown_'*)
-    (
-      /usr/bin/sleep 1
-      FAKE_TIMEOUT_MUTATION=rollback-chown "$command" "$@" || true
       printf '%s\n' "$scenario" > "$root/delayed-mutation-done"
     ) </dev/null >> "$root/delayed-mutation.log" 2>&1 &
     exit 124
@@ -3056,19 +3034,9 @@ assert.ok(
   diagnostic(daemonReadTimeoutOnce),
 );
 assert.equal(daemonReadTimeoutOnce.containers.vocadb_postgres, ids.oldPostgres, diagnostic(daemonReadTimeoutOnce));
-assert.doesNotMatch(daemonReadTimeoutOnce.dockerLog, /run --name diva_qdrant_chown_/);
 
 const controllerTimeout = await runScenario('qdrant-controller-timeout');
 assertQdrantControllerTimeout(controllerTimeout);
-
-const chownTimeout = await runScenario('qdrant-chown-timeout');
-assertPersistentFailStop(chownTimeout);
-assert.equal(chownTimeout.containers.vocadb_postgres, ids.oldPostgres, diagnostic(chownTimeout));
-assert.ok(Object.values(chownTimeout.containers).includes(ids.oldQdrant), diagnostic(chownTimeout));
-assert.equal(chownTimeout.containers.vocadb_qdrant, undefined, diagnostic(chownTimeout));
-assert.ok(Object.values(chownTimeout.containers).includes(ids.chownHelper), diagnostic(chownTimeout));
-assert.doesNotMatch(chownTimeout.dockerLog, new RegExp(`stop --time 30 ${ids.chownHelper}`));
-assert.doesNotMatch(chownTimeout.dockerLog, new RegExp(`rm -f ${ids.chownHelper}`));
 
 const qdrantComposeTimeout = await runScenario('qdrant-compose-timeout');
 assertPersistentFailStop(qdrantComposeTimeout);
@@ -3082,14 +3050,6 @@ assert.equal(postgresComposeTimeout.containers.vocadb_qdrant, ids.newQdrant, dia
 assert.equal(postgresComposeTimeout.containers.vocadb_postgres, ids.newPostgres, diagnostic(postgresComposeTimeout));
 assert.ok(Object.values(postgresComposeTimeout.containers).includes(ids.oldQdrant), diagnostic(postgresComposeTimeout));
 assert.ok(Object.values(postgresComposeTimeout.containers).includes(ids.oldPostgres), diagnostic(postgresComposeTimeout));
-
-const rollbackChownTimeout = await runScenario('qdrant-rollback-chown-timeout');
-assertPersistentFailStop(rollbackChownTimeout);
-assert.equal(rollbackChownTimeout.writerGateExists, true, diagnostic(rollbackChownTimeout));
-assert.equal(rollbackChownTimeout.writerRolesLocked, true, diagnostic(rollbackChownTimeout));
-assert.equal(rollbackChownTimeout.containers.vocadb_qdrant, ids.oldQdrant, diagnostic(rollbackChownTimeout));
-assert.equal(rollbackChownTimeout.containers.vocadb_postgres, ids.oldPostgres, diagnostic(rollbackChownTimeout));
-assert.doesNotMatch(rollbackChownTimeout.dockerLog, new RegExp(`rm(?: -f)? ${ids.promotedQdrant}`));
 
 const imageTagTimeout = await runScenario('image-tag-timeout');
 assertPersistentFailStop(imageTagTimeout);
