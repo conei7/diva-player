@@ -2501,7 +2501,7 @@ async function runScenario(name) {
       DIVA_STATEFUL_READ_TIMEOUT_SECONDS: '10',
       DIVA_STATEFUL_FINGERPRINT_TIMEOUT_SECONDS: '10',
       DIVA_STATEFUL_MUTATION_TIMEOUT_SECONDS: '10',
-      DIVA_STATEFUL_QDRANT_UPGRADE_TIMEOUT_SECONDS: name === 'qdrant-controller-timeout'
+      DIVA_QDRANT_UPGRADE_TIMEOUT_SECONDS: name === 'qdrant-controller-timeout'
         ? '2'
         : '21600',
       DIVA_STATEFUL_DATA_MUTATION_TIMEOUT_SECONDS: '10',
@@ -2571,7 +2571,11 @@ async function runScenario(name) {
       // The full fault matrix retains its larger exact-scan allowance.
       // Fixture construction and ACL restoration also consume wall time, so
       // leave headroom under the two-minute focused-test budget.
-      timeout: process.env.DIVA_STATEFUL_TEST_CASE ? 90_000 : 600_000,
+      timeout: process.env.DIVA_STATEFUL_TEST_CASE === 'qdrant-controller-timeout'
+        ? 120_000
+        : process.env.DIVA_STATEFUL_TEST_CASE
+          ? 90_000
+          : 600_000,
       windowsHide: true,
     });
     await waitForDelayedMutation(scenario.fakeState, name);
@@ -2699,6 +2703,29 @@ function assertPersistentFailStop(run) {
   assert.equal(run.privateBackendEnvRemains, false, diagnostic(run));
 }
 
+function assertQdrantControllerTimeout(run) {
+  assertPersistentFailStop(run);
+  assertExactOldTopology(run);
+  assert.equal(run.writerGateExists, true, diagnostic(run));
+  assert.equal(run.writerRolesLocked, true, diagnostic(run));
+  assert.match(run.state, /qdrant\.controller_exit=124/);
+  assert.match(
+    run.state,
+    /qdrant\.controller_process_settlement_sha256=[0-9a-f]{64}/,
+  );
+  assert.match(
+    run.state,
+    /qdrant\.controller_daemon_reconciliation=observed-stable-but-unresolved/,
+  );
+  const settlement = JSON.parse(run.controllerSettlement);
+  assert.equal(settlement.status, 'timed-out-drained', diagnostic(run));
+  assert.equal(settlement.timedOut, true, diagnostic(run));
+  assert.equal(settlement.processGroupDrained, true, diagnostic(run));
+  assert.equal(settlement.log.status, 'captured', diagnostic(run));
+  assert.equal(run.lateControllerMutation, false, diagnostic(run));
+  assert.equal(run.backendEnvBackupRemains, false, diagnostic(run));
+}
+
 function assertManagementReconciliationInterlock(run) {
   assert.notEqual(run.result.status, 0, diagnostic(run));
   assert.equal(run.journalExists, true, diagnostic(run));
@@ -2810,6 +2837,8 @@ try {
       assert.equal(run.backendEnvBackupRemains, false, diagnostic(run));
       assert.equal(run.controllerSettlement, '', diagnostic(run));
       assertExactOldTopology(run);
+    } else if (focusedCase === 'qdrant-controller-timeout') {
+      assertQdrantControllerTimeout(run);
     } else if (new Set([
       'rollback-tag-retag-drift',
       'rollback-tag-missing',
@@ -3030,24 +3059,7 @@ assert.equal(daemonReadTimeoutOnce.containers.vocadb_postgres, ids.oldPostgres, 
 assert.doesNotMatch(daemonReadTimeoutOnce.dockerLog, /run --name diva_qdrant_chown_/);
 
 const controllerTimeout = await runScenario('qdrant-controller-timeout');
-assertPersistentFailStop(controllerTimeout);
-assertExactOldTopology(controllerTimeout);
-assert.match(controllerTimeout.state, /qdrant\.controller_exit=124/);
-assert.match(
-  controllerTimeout.state,
-  /qdrant\.controller_process_settlement_sha256=[0-9a-f]{64}/,
-);
-assert.match(
-  controllerTimeout.state,
-  /qdrant\.controller_daemon_reconciliation=observed-stable-but-unresolved/,
-);
-const controllerTimeoutSettlement = JSON.parse(controllerTimeout.controllerSettlement);
-assert.equal(controllerTimeoutSettlement.status, 'timed-out-drained', diagnostic(controllerTimeout));
-assert.equal(controllerTimeoutSettlement.timedOut, true, diagnostic(controllerTimeout));
-assert.equal(controllerTimeoutSettlement.processGroupDrained, true, diagnostic(controllerTimeout));
-assert.equal(controllerTimeoutSettlement.log.status, 'captured', diagnostic(controllerTimeout));
-assert.equal(controllerTimeout.lateControllerMutation, false, diagnostic(controllerTimeout));
-assert.equal(controllerTimeout.backendEnvBackupRemains, false, diagnostic(controllerTimeout));
+assertQdrantControllerTimeout(controllerTimeout);
 
 const chownTimeout = await runScenario('qdrant-chown-timeout');
 assertPersistentFailStop(chownTimeout);
