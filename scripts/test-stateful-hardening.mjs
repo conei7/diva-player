@@ -1869,7 +1869,10 @@ exec "$command" "$@"
 `.replaceAll('__D__', '$');
 
 const fakeStat = String.raw`#!/bin/sh
-case "__D__{2:-}" in
+format=__D__{2:-}
+target=__D__{3:-}
+case "$format:$target" in
+  %a:*/stateful-hardening.lock) printf '%s\n' 700 ;;
   *%u:%g:%a*) printf '%s\n' 0:0:700 ;;
   *%u:%g*) printf '%s\n' 0:0 ;;
   *%a:%h*) printf '%s\n' 600:1 ;;
