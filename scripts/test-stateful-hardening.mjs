@@ -3053,7 +3053,7 @@ assert.ok(Object.values(postgresComposeTimeout.containers).includes(ids.oldPostg
 
 const imageTagTimeout = await runScenario('image-tag-timeout');
 assertPersistentFailStop(imageTagTimeout);
-assert.equal(imageTagTimeout.stableImageId, ids.qdrantImage, diagnostic(imageTagTimeout));
+assert.equal(imageTagTimeout.stableImageId, ids.oldStableQdrantImage, diagnostic(imageTagTimeout));
 assert.equal(imageTagTimeout.writerGateExists, true, diagnostic(imageTagTimeout));
 assert.equal(imageTagTimeout.containers.vocadb_qdrant, ids.newQdrant, diagnostic(imageTagTimeout));
 assert.equal(imageTagTimeout.containers.vocadb_postgres, ids.newPostgres, diagnostic(imageTagTimeout));
