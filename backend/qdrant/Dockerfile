@@ -111,6 +111,7 @@ RUN set -eux; \
     install -d -m 0755 "$root/qdrant" "$root/etc/ssl/certs" "$root/usr/share/zoneinfo"; \
     record_named_package() { \
       binary_package="$1"; package_list="$2"; \
+      case "$binary_package" in ''|*[!a-z0-9+.-]*) exit 1 ;; esac; \
       [ "$(dpkg-query -W -f='${Status}' "$binary_package")" = 'install ok installed' ]; \
       printf '%s\n' "$binary_package" >> "$package_list"; \
     }; \
@@ -131,10 +132,27 @@ RUN set -eux; \
       [ -n "$ownership" ]; \
       ownership_lines=$(printf '%s\n' "$ownership" | wc -l | tr -d '[:space:]'); \
       if [ "$ownership_lines" = 1 ]; then \
-        binary_package=$(printf '%s\n' "$ownership" | awk -F ': ' 'NF == 2 { print $1 }'); \
-        owned_path=$(printf '%s\n' "$ownership" | awk -F ': ' 'NF == 2 { print $2 }'); \
-        [ -n "$binary_package" ] && [ "$owned_path" = "$queried_path" ]; \
-        binary_package=${binary_package%%:*}; \
+        binary_packages=$(printf '%s\n' "$ownership" \
+          | awk -F ': ' -v expected_path="$queried_path" ' \
+              NF != 2 || $2 != expected_path { exit 1 } \
+              { \
+                owner_field = $1; \
+                if (owner_field !~ /^[a-z0-9][a-z0-9+.-]*(:[a-z0-9][a-z0-9-]*)?(, [a-z0-9][a-z0-9+.-]*(:[a-z0-9][a-z0-9-]*)?)*$/) exit 1; \
+                package_count = split(owner_field, package_names, ", "); \
+                if (package_count < 1) exit 1; \
+                for (package_index = 1; package_index <= package_count; package_index++) { \
+                  sub(/:[a-z0-9][a-z0-9-]*$/, "", package_names[package_index]); \
+                  if (package_names[package_index] !~ /^[a-z0-9][a-z0-9+.-]*$/) exit 1; \
+                  if (package_names[package_index] in seen_packages) exit 1; \
+                  seen_packages[package_names[package_index]] = 1; \
+                  print package_names[package_index]; \
+                } \
+              }'); \
+        [ -n "$binary_packages" ]; \
+        package_count=$(printf '%s\n' "$binary_packages" | wc -l | tr -d '[:space:]'); \
+        unique_package_count=$(printf '%s\n' "$binary_packages" \
+          | LC_ALL=C sort -u | wc -l | tr -d '[:space:]'); \
+        [ "$package_count" = "$unique_package_count" ]; \
       else \
         # Debian usrmerge represents the dynamic loader with one exact dpkg \
         # diversion pair.  Accept only that pair, and only when its resolved \
@@ -160,10 +178,12 @@ RUN set -eux; \
         resolved_package=$(printf '%s\n' "$resolved_ownership" | awk -F ': ' 'NF == 2 { print $1 }'); \
         resolved_owned_path=$(printf '%s\n' "$resolved_ownership" | awk -F ': ' 'NF == 2 { print $2 }'); \
         [ -n "$resolved_package" ] && [ "$resolved_owned_path" = "$resolved_path" ]; \
-        binary_package=${diversion_package%%:*}; \
-        [ "${resolved_package%%:*}" = "$binary_package" ]; \
+        binary_packages=${diversion_package%%:*}; \
+        [ "${resolved_package%%:*}" = "$binary_packages" ]; \
       fi; \
-      record_named_package "$binary_package" "$package_list"; \
+      for binary_package in $binary_packages; do \
+        record_named_package "$binary_package" "$package_list"; \
+      done; \
     }; \
     copy_library() { \
       library="$1"; target_root="$2"; package_list="$3"; \

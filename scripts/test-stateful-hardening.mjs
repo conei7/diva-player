@@ -185,6 +185,68 @@ assert.match(
 assert.match(qdrantDockerfileSource, /install_usrmerge_link \/lib usr\/lib/);
 assert.match(qdrantDockerfileSource, /install_usrmerge_link \/lib64 usr\/lib64/);
 assert.match(qdrantDockerfileSource, /resolved_interpreter/);
+assert.match(
+  qdrantDockerfileSource,
+  /case "\$binary_package" in ''\|\*\[!a-z0-9\+\.\-\]\*\) exit 1/,
+);
+assert.match(
+  qdrantDockerfileSource,
+  /owner_field !~ \/\^\[a-z0-9\]\[a-z0-9\+\.\-\]\*\(\:\[a-z0-9\]\[a-z0-9-\]\*\)\?\(, /,
+);
+assert.match(qdrantDockerfileSource, /split\(owner_field, package_names, ", "\)/);
+assert.match(
+  qdrantDockerfileSource,
+  /sub\(\/\:\[a-z0-9\]\[a-z0-9-\]\*\$\/, "", package_names\[package_index\]\)/,
+);
+assert.match(qdrantDockerfileSource, /package_names\[package_index\] in seen_packages/);
+assert.match(qdrantDockerfileSource, /\[ "\$package_count" = "\$unique_package_count" \]/);
+assert.match(qdrantDockerfileSource, /for binary_package in \$binary_packages; do/);
+
+const ownerParserMatch = qdrantDockerfileSource.match(
+  /\| awk -F ': ' -v expected_path="\$queried_path" ' \\\r?\n([\s\S]*?)'\); \\/,
+);
+assert.ok(ownerParserMatch, 'Qdrant dpkg owner parser was not found');
+const ownerParserProgram = ownerParserMatch[1].replace(/ \\\r?\n/g, '\n');
+
+function parseDpkgPathOwners(ownership, expectedPath = '/usr/lib') {
+  return spawnSync(bashCommand, [
+    '-c',
+    'exec awk -F ": " -v expected_path="$1" "$2"',
+    'qdrant-dpkg-owner-parser',
+    expectedPath,
+    ownerParserProgram,
+  ], {
+    input: ownership,
+    encoding: 'utf8',
+    windowsHide: true,
+  });
+}
+
+for (const [ownership, expectedPackages] of [
+  ['openssl: /usr/lib\n', ['openssl']],
+  ['openssl, libunwind8: /usr/lib\n', ['openssl', 'libunwind8']],
+  ['openssl:amd64, libunwind8:amd64: /usr/lib\n', ['openssl', 'libunwind8']],
+]) {
+  const parsed = parseDpkgPathOwners(ownership);
+  assert.equal(parsed.status, 0, parsed.stderr);
+  assert.deepEqual(parsed.stdout.trim().split('\n'), expectedPackages);
+}
+
+for (const malformedOwnership of [
+  'openssl: /usr/share/not-lib\n',
+  'openssl,libunwind8: /usr/lib\n',
+  'openssl, : /usr/lib\n',
+  'openssl, openssl: /usr/lib\n',
+  ', openssl: /usr/lib\n',
+  'OpenSSL: /usr/lib\n',
+]) {
+  const parsed = parseDpkgPathOwners(malformedOwnership);
+  assert.notEqual(parsed.status, 0, `accepted malformed ownership: ${malformedOwnership}`);
+}
+if (process.env.DIVA_STATEFUL_TEST_PARSER_ONLY === '1') {
+  console.log('PASS Qdrant dpkg owner parser contract');
+  process.exit(0);
+}
 
 const gateVerifyContract = hardeningSource.slice(
   hardeningSource.indexOf('verify_pipeline_writer_gate()'),
