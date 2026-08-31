@@ -1556,7 +1556,7 @@ validate_github_host_key_file() {
 }
 
 prepare_github_host_key_file() {
-    local parent
+    local parent mode
     parent=${GITHUB_HOST_KEY_FILE%/*}
     [ -n "$parent" ] || return 1
     if [ "$TEST_MODE" = "1" ]; then
@@ -1574,7 +1574,12 @@ prepare_github_host_key_file() {
         return 1
     fi
     GITHUB_HOST_KEY_FILE_OWNED=true
-    /usr/bin/chmod 444 "$GITHUB_HOST_KEY_FILE" || return 1
+    if [ "$TEST_MODE" = "1" ]; then
+        mode=400
+    else
+        mode=444
+    fi
+    /usr/bin/chmod "$mode" "$GITHUB_HOST_KEY_FILE" || return 1
     GITHUB_HOST_KEY_FILE_IDENTITY=$(/usr/bin/stat -c '%d:%i' \
         "$GITHUB_HOST_KEY_FILE") || return 1
     validate_github_host_key_file \
