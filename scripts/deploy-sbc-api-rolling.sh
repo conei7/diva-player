@@ -63,6 +63,10 @@ if [ "$TEST_MODE" = "1" ]; then
         exit 1
     }
 else
+    [ -z "${DIVA_DEPLOY_TEST_BACKEND_ENV_SOURCE+x}" ] || {
+        printf '%s\n' 'ERROR: production backend environment source override is forbidden' >&2
+        exit 1
+    }
     for forbidden_docker_setting in DOCKER_DEFAULT_PLATFORM DOCKER_HOST DOCKER_CONTEXT \
         DOCKER_API_VERSION DOCKER_TLS DOCKER_TLS_VERIFY DOCKER_CERT_PATH BUILDX_BUILDER; do
         eval "forbidden_docker_value=\${$forbidden_docker_setting-}"
@@ -176,6 +180,16 @@ else
         printf '%s\n' 'ERROR: reviewed native ARM64 Trivy installation is unavailable or changed' >&2
         exit 1
     }
+fi
+
+if [ "$TEST_MODE" = "1" ]; then
+    [ -n "${DIVA_DEPLOY_TEST_BACKEND_ENV_SOURCE:-}" ] || {
+        printf '%s\n' 'ERROR: deterministic deployment test backend environment source is required' >&2
+        exit 1
+    }
+    BACKEND_ENV_SOURCE=$DIVA_DEPLOY_TEST_BACKEND_ENV_SOURCE
+else
+    BACKEND_ENV_SOURCE="$ORIGINAL_ROOT_DIR/backend/.env"
 fi
 
 if [ -n "${DIVA_DEPLOY_STATE_DIR:-}" ] && [ -n "${DIVA_STATEFUL_STATE_DIR:-}" ] \
@@ -1404,7 +1418,7 @@ EOF
 }
 
 capture_private_backend_environment() {
-    local source="$ORIGINAL_ROOT_DIR/backend/.env"
+    local source="$BACKEND_ENV_SOURCE"
     [ -f "$source" ] && [ ! -L "$source" ] \
         && [ ! -e "$PRIVATE_BACKEND_ENV_FILE" ] || return 1
     if [ "$TEST_MODE" = "1" ]; then

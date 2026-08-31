@@ -50,6 +50,11 @@ const newApiImageId = `sha256:${'e'.repeat(64)}`;
 const newGatewayImageId = `sha256:${'f'.repeat(64)}`;
 const newWebImageId = `sha256:${'9'.repeat(64)}`;
 const legacyApiImageId = `sha256:${'8'.repeat(64)}`;
+const backendEnvironmentFixture = [
+  'POSTGRES_PASSWORD=deterministic-test-only',
+  'PAGES_PROXY_KEY=deterministic-test-only',
+  '',
+].join('\n');
 const postgresImageReference = 'diva-player-postgres:16.15-pgvector-0.8.6-hardened-r1';
 const postgresMigrateImageReference = 'diva-player-postgres-migrate:16.15-hardened-r1';
 const fakeStatefulComposeConfig = {
@@ -820,6 +825,7 @@ async function createScenario(name) {
   const containers = join(fakeState, 'containers');
   const deploymentState = join(root, 'deploy-state');
   const privateRuntime = join(root, 'runtime-private');
+  const backendEnvironmentSource = join(root, 'backend.env.source');
   await Promise.all([mkdir(bin), mkdir(containers, { recursive: true }), mkdir(deploymentState)]);
 
   const dockerPath = join(bin, 'docker');
@@ -916,10 +922,16 @@ async function createScenario(name) {
   const runtimeContractPath = join(deploymentState, 'stateful-runtime-contract');
   await writeFile(runtimeContractPath, runtimeContract, 'utf8');
   await chmod(runtimeContractPath, 0o600);
+  await writeFile(
+    backendEnvironmentSource,
+    backendEnvironmentFixture,
+    { encoding: 'utf8', mode: 0o600 },
+  );
+  await chmod(backendEnvironmentSource, 0o600);
 
   return {
     root, fakeState, deploymentState, privateRuntime, dockerPath, curlPath, sleepPath,
-    syncPath, pythonPath, trivyPath, hookPath,
+    syncPath, pythonPath, trivyPath, hookPath, backendEnvironmentSource,
   };
 }
 
@@ -954,6 +966,7 @@ function scenarioEnvironment(
     DIVA_DEPLOY_HOOK_COMMAND: shellPath(scenario.hookPath),
     DIVA_DEPLOY_STATE_DIR: shellPath(scenario.deploymentState),
     DIVA_DEPLOY_PRIVATE_RUNTIME_DIR: shellPath(scenario.privateRuntime),
+    DIVA_DEPLOY_TEST_BACKEND_ENV_SOURCE: shellPath(scenario.backendEnvironmentSource),
     DIVA_DEPLOY_HEALTH_ATTEMPTS: '1',
     DIVA_DEPLOY_DRAIN_ATTEMPTS: '1',
     DIVA_DEPLOY_ROUTE_ATTEMPTS: '3',
@@ -1250,6 +1263,18 @@ async function testPrivateRuntimeSignalCleanup() {
 function testBridgeTrivyAndExactImageContract() {
   assert.match(
     deploymentSource,
+    /\[ -z "\$\{DIVA_DEPLOY_TEST_BACKEND_ENV_SOURCE\+x\}" \] \|\| \{\s+printf '%s\\n' 'ERROR: production backend environment source override is forbidden'/u,
+  );
+  assert.match(
+    deploymentSource,
+    /\[ -n "\$\{DIVA_DEPLOY_TEST_BACKEND_ENV_SOURCE:-\}" \] \|\| \{\s+printf '%s\\n' 'ERROR: deterministic deployment test backend environment source is required'/u,
+  );
+  assert.match(
+    deploymentSource,
+    /capture_private_backend_environment\(\) \{\s+local source="\$BACKEND_ENV_SOURCE"/u,
+  );
+  assert.match(
+    deploymentSource,
     /if \[ "\$BRIDGE_BOOTSTRAP_MODE" = "true" \]; then\s+if ! scan_bridge_api_candidate_image;/u,
   );
   assert.match(
@@ -1397,9 +1422,9 @@ async function testSigkillStartupReconciliation() {
       readDeploymentState(scenario.deploymentState),
       readdir(scenario.privateRuntime),
     ]);
-    assert.match(
+    assert.equal(
       staleSecret,
-      /^PG_PASSWORD=vocadb_secret$/mu,
+      backendEnvironmentFixture,
       'crash fixture did not retain the captured secret',
     );
     assert.deepEqual(staleRuntimeEntries, ['backend.env.private']);
