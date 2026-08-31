@@ -48,6 +48,10 @@ RUN set -eux; \
       libcrypto3=3.5.8-r0 \
       libssl3=3.5.8-r0 \
       su-exec=0.3-r0; \
+    test -L /usr/local/bin/su-exec; \
+    [ "$(readlink /usr/local/bin/su-exec)" = gosu ]; \
+    [ "$(stat -c '%u:%g' /usr/local/bin/su-exec)" = 0:0 ]; \
+    rm /usr/local/bin/su-exec; \
     [ "$(command -v su-exec)" = /sbin/su-exec ]; \
     test -f /sbin/su-exec; \
     test ! -L /sbin/su-exec; \
@@ -75,6 +79,9 @@ RUN set -eux; \
     [ "$(stat -c '%u:%g:%a' /usr/local/bin/docker-entrypoint.sh)" = 0:0:755 ]; \
     rm -f /usr/local/bin/gosu; \
     ! command -v gosu; \
+    test ! -L /usr/local/bin/gosu; \
+    test ! -e /usr/local/bin/su-exec; \
+    test ! -L /usr/local/bin/su-exec; \
     sed -i 's/^postgres:x:70:70:/postgres:x:999:999:/' /etc/passwd; \
     sed -i 's/^postgres:x:70:/postgres:x:999:/' /etc/group; \
     [ "$(id -u postgres):$(id -g postgres)" = 999:999 ]; \

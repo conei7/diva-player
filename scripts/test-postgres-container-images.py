@@ -96,6 +96,27 @@ class PostgresContainerContractTests(unittest.TestCase):
         ):
             self.assertIn(f"test -f {path}", self.postgres)
             self.assertIn(f"test ! -L {path}", self.postgres)
+        self.assertIn("test -L /usr/local/bin/su-exec", self.postgres)
+        self.assertIn(
+            '[ "$(readlink /usr/local/bin/su-exec)" = gosu ]',
+            self.postgres,
+        )
+        self.assertIn(
+            '[ "$(stat -c \'%u:%g\' /usr/local/bin/su-exec)" = 0:0 ]',
+            self.postgres,
+        )
+        self.assertIn("rm /usr/local/bin/su-exec", self.postgres)
+        self.assertIn("test ! -e /usr/local/bin/su-exec", self.postgres)
+        self.assertIn("test ! -L /usr/local/bin/su-exec", self.postgres)
+        self.assertIn("test ! -L /usr/local/bin/gosu", self.postgres)
+        self.assertLess(
+            self.postgres.index("test -L /usr/local/bin/su-exec"),
+            self.postgres.index("rm /usr/local/bin/su-exec"),
+        )
+        self.assertLess(
+            self.postgres.index("rm /usr/local/bin/su-exec"),
+            self.postgres.index('[ "$(command -v su-exec)" = /sbin/su-exec ]'),
+        )
         self.assertIn("exec su-exec postgres", self.postgres)
         self.assertIn("! command -v gosu", self.postgres)
         self.assertIn("\\( -user 70 -o -group 70 \\)", self.postgres)
