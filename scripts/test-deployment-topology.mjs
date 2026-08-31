@@ -394,7 +394,60 @@ assert.match(workflow, /docker volume create[\s\S]*diva-player-ci-qdrant-audit:c
 assert.match(workflow, /\/collections\/diva_ci_smoke\/points\?wait=true/);
 assert.match(workflow, /\/collections\/diva_ci_smoke\/points\/query/);
 assert.match(workflow, /\/collections\/diva_ci_smoke\/snapshots\?wait=true/);
-assert.match(workflow, /docker stop --time 30 "\$qdrant_smoke_container"[\s\S]*docker start "\$qdrant_smoke_container"/);
+const qdrantImageSmokeStep = workflow.match(
+  /      - name: Build deployable container images[\s\S]*?      - name: Install pinned Trivy scanner/u,
+)?.[0] ?? '';
+assert.match(
+  qdrantImageSmokeStep,
+  /resolve_qdrant_smoke_url\(\) \{[\s\S]*port_binding=\$\(docker port "\$qdrant_smoke_container" 6333\/tcp\)[\s\S]*\[\[ "\$port_binding" =~ \^127\\\.0\\\.0\\\.1:\(\[0-9\]\+\)\$ \]\][\s\S]*qdrant_smoke_url="http:\/\/127\.0\.0\.1:\$port"/u,
+);
+assert.equal(
+  (qdrantImageSmokeStep.match(/^          resolve_qdrant_smoke_url$/gm) ?? []).length,
+  2,
+  'the dynamic Qdrant endpoint must be resolved after both container starts',
+);
+assert.equal(
+  (qdrantImageSmokeStep.match(/docker port "\$qdrant_smoke_container" 6333\/tcp/g) ?? []).length,
+  1,
+  'dynamic port lookup must stay centralized in the endpoint helper',
+);
+const firstQdrantStart = qdrantImageSmokeStep.indexOf(
+  'docker start "$qdrant_smoke_container"',
+);
+const firstQdrantEndpointResolution = qdrantImageSmokeStep.indexOf(
+  'resolve_qdrant_smoke_url',
+  firstQdrantStart,
+);
+const firstQdrantReadiness = qdrantImageSmokeStep.indexOf(
+  '"$qdrant_smoke_url/readyz"',
+  firstQdrantEndpointResolution,
+);
+const qdrantPersistenceStop = qdrantImageSmokeStep.indexOf(
+  'docker stop --time 30 "$qdrant_smoke_container"',
+  firstQdrantReadiness,
+);
+const secondQdrantStart = qdrantImageSmokeStep.indexOf(
+  'docker start "$qdrant_smoke_container"',
+  qdrantPersistenceStop,
+);
+const secondQdrantEndpointResolution = qdrantImageSmokeStep.indexOf(
+  'resolve_qdrant_smoke_url',
+  secondQdrantStart,
+);
+const secondQdrantReadiness = qdrantImageSmokeStep.indexOf(
+  '"$qdrant_smoke_url/readyz"',
+  secondQdrantEndpointResolution,
+);
+assert.ok(
+  firstQdrantStart >= 0
+    && firstQdrantEndpointResolution > firstQdrantStart
+    && firstQdrantReadiness > firstQdrantEndpointResolution
+    && qdrantPersistenceStop > firstQdrantReadiness
+    && secondQdrantStart > qdrantPersistenceStop
+    && secondQdrantEndpointResolution > secondQdrantStart
+    && secondQdrantReadiness > secondQdrantEndpointResolution,
+  'each Qdrant start must refresh its dynamic endpoint before readiness checks',
+);
 assert.match(workflow, /\.result\.points_count == 2/);
 assert.match(statefulHardening, /DIVA_VERIFIED_POSTGRES_BACKUP_RUN_ID/);
 assert.match(statefulHardening, /DIVA_VERIFIED_QDRANT_BACKUP_RUN_ID/);

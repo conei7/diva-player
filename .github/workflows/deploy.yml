@@ -408,6 +408,18 @@ jobs:
               docker volume rm "$qdrant_smoke_volume" >/dev/null 2>&1 || true
             fi
           }
+          resolve_qdrant_smoke_url() {
+            local port_binding
+            local port
+            port_binding=$(docker port "$qdrant_smoke_container" 6333/tcp)
+            if [[ "$port_binding" =~ ^127\.0\.0\.1:([0-9]+)$ ]]; then
+              port=${BASH_REMATCH[1]}
+            else
+              echo "unexpected Qdrant smoke port binding: $port_binding" >&2
+              return 1
+            fi
+            qdrant_smoke_url="http://127.0.0.1:$port"
+          }
           trap cleanup_qdrant_smoke EXIT
           ! docker container inspect "$qdrant_smoke_init" >/dev/null 2>&1
           ! docker container inspect "$qdrant_smoke_container" >/dev/null 2>&1
@@ -438,16 +450,11 @@ jobs:
           test "$(docker container inspect --format '{{.Image}}' "$qdrant_smoke_container")" \
             = "$qdrant_smoke_image_id"
           docker start "$qdrant_smoke_container" >/dev/null
-          qdrant_smoke_port_binding=$(docker port "$qdrant_smoke_container" 6333/tcp)
-          case "$qdrant_smoke_port_binding" in
-            127.0.0.1:[0-9]*) qdrant_smoke_port=${qdrant_smoke_port_binding##*:} ;;
-            *) echo "unexpected Qdrant smoke port binding: $qdrant_smoke_port_binding" >&2; exit 1 ;;
-          esac
-          case "$qdrant_smoke_port" in ''|*[!0-9]*) exit 1 ;; esac
+          resolve_qdrant_smoke_url
           qdrant_smoke_ready=false
           for attempt in $(seq 1 60); do
             if curl --fail --silent --show-error --connect-timeout 1 --max-time 2 \
-              "http://127.0.0.1:$qdrant_smoke_port/readyz" >/dev/null; then
+              "$qdrant_smoke_url/readyz" >/dev/null; then
               qdrant_smoke_ready=true
               break
             fi
@@ -464,7 +471,6 @@ jobs:
           test "$(docker container inspect --format '{{.State.Running}}' \
             "$qdrant_smoke_container")" = true
           command -v jq >/dev/null
-          qdrant_smoke_url="http://127.0.0.1:$qdrant_smoke_port"
           curl --fail --silent --show-error --connect-timeout 2 --max-time 30 \
             --request PUT --header 'content-type: application/json' \
             --data-binary '{"vectors":{"size":4,"distance":"Cosine"}}' \
@@ -503,6 +509,7 @@ jobs:
           test "$(docker container inspect --format '{{.State.Running}}' \
             "$qdrant_smoke_container")" = false
           docker start "$qdrant_smoke_container" >/dev/null
+          resolve_qdrant_smoke_url
           qdrant_smoke_ready=false
           for attempt in $(seq 1 60); do
             if curl --fail --silent --show-error --connect-timeout 1 --max-time 2 \
