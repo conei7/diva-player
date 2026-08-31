@@ -8,8 +8,12 @@ PYTHON_COMMAND="${DIVA_PYTHON_COMMAND:-python3}"
 SYNC_HELPER="${DIVA_SYNC_HELPER:-$SCRIPT_DIR/sync-quick-tunnel-to-cloudflare.py}"
 origin_role="${DIVA_TUNNEL_ORIGIN_ROLE:-primary}"
 case "$origin_role" in
-  primary|standby) ;;
-  *) echo "DIVA_TUNNEL_ORIGIN_ROLE must be primary or standby" >&2; exit 1 ;;
+  primary) ;;
+  standby)
+    echo "The standby Quick Tunnel origin is retired; only primary is accepted" >&2
+    exit 78
+    ;;
+  *) echo "DIVA_TUNNEL_ORIGIN_ROLE must be primary" >&2; exit 64 ;;
 esac
 
 attempt=0

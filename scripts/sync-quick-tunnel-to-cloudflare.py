@@ -196,7 +196,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--env-file", required=True, type=Path)
     parser.add_argument("--tunnel-url", required=True)
-    parser.add_argument("--origin-role", required=True, choices=("primary", "standby"))
+    parser.add_argument("--origin-role", required=True, choices=("primary",))
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args()
 

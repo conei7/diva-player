@@ -1,0 +1,13 @@
+.env*
+.vs
+.trivy-cache
+.trivy-tool
+**/bin
+**/obj
+*.user
+*.suo
+TestResults
+coverage
+coverage.*
+*.tmp
+*.log

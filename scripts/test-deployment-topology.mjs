@@ -9,6 +9,7 @@ const [
   nginx,
   deploy,
   program,
+  qdrantBridgeTokenStore,
   publicationMiddleware,
   publicationGuard,
   healthEndpoints,
@@ -29,6 +30,7 @@ const [
   nicoPlaylistService,
   appsettings,
   workflow,
+  apiProject,
   apiTestsProject,
   schema,
   modelGuardMigration,
@@ -52,12 +54,16 @@ const [
   spaFallback,
   startDevSbc,
   bulkheadProbe,
+  statefulHardening,
+  backupAttester,
+  qdrantDockerfile,
 ] = (await Promise.all([
   readFile(new URL('../backend/docker-compose.yml', import.meta.url), 'utf8'),
   readFile(new URL('../backend/api-gateway/haproxy.cfg', import.meta.url), 'utf8'),
   readFile(new URL('../nginx.conf', import.meta.url), 'utf8'),
   readFile(new URL('./deploy-sbc-api-rolling.sh', import.meta.url), 'utf8'),
   readFile(new URL('../backend/api/VocadbRecommender/Program.cs', import.meta.url), 'utf8'),
+  readFile(new URL('../backend/api/VocadbRecommender/QdrantBridgeProbeTokenStore.cs', import.meta.url), 'utf8'),
   readFile(new URL('../backend/api/VocadbRecommender/RecommendationPublicationMiddleware.cs', import.meta.url), 'utf8'),
   readFile(new URL('../backend/api/VocadbRecommender/Services/RecommendationPublicationGuard.cs', import.meta.url), 'utf8'),
   readFile(new URL('../backend/api/VocadbRecommender/Endpoints/HealthEndpoints.cs', import.meta.url), 'utf8'),
@@ -78,6 +84,7 @@ const [
   readFile(new URL('../backend/api/VocadbRecommender/Services/NicoPlaylistService.cs', import.meta.url), 'utf8'),
   readFile(new URL('../backend/api/VocadbRecommender/appsettings.json', import.meta.url), 'utf8'),
   readFile(new URL('../.github/workflows/deploy.yml', import.meta.url), 'utf8'),
+  readFile(new URL('../backend/api/VocadbRecommender/VocadbRecommender.csproj', import.meta.url), 'utf8'),
   readFile(new URL('../backend/api/VocadbRecommender.Tests/VocadbRecommender.Tests.csproj', import.meta.url), 'utf8'),
   readFile(new URL('../backend/database/schema.sql', import.meta.url), 'utf8'),
   readFile(new URL('../backend/database/migrations/0017_discovery_quality_model_guard.sql', import.meta.url), 'utf8'),
@@ -101,12 +108,104 @@ const [
   readFile(new URL('../functions/[[path]].js', import.meta.url), 'utf8'),
   readFile(new URL('./start-dev-sbc.ps1', import.meta.url), 'utf8'),
   readFile(new URL('./probe-api-bulkhead.mjs', import.meta.url), 'utf8'),
+  readFile(new URL('./harden-sbc-stateful-services.sh', import.meta.url), 'utf8'),
+  readFile(new URL('./attest-disaster-backup-payloads.py', import.meta.url), 'utf8'),
+  readFile(new URL('../backend/qdrant/Dockerfile', import.meta.url), 'utf8'),
 ])).map(normalizeNewlines);
 const staticHeaders = normalizeNewlines(await readFile(new URL('../public/_headers', import.meta.url), 'utf8'));
+const sbcTrivyInstaller = normalizeNewlines(await readFile(
+  new URL('./install-sbc-trivy.sh', import.meta.url),
+  'utf8',
+));
+const sbcBridgePublisher = normalizeNewlines(await readFile(
+  new URL('./sbc-api-bridge-publication.py', import.meta.url),
+  'utf8',
+));
+const sbcBridgeProducer = normalizeNewlines(await readFile(
+  new URL('./sbc-api-bridge-receipt.py', import.meta.url),
+  'utf8',
+));
+const [
+  webDockerfile,
+  apiDockerfile,
+  gatewayDockerfile,
+  postgresDockerfile,
+  postgresMigrateDockerfile,
+  databaseDockerignore,
+] = (await Promise.all([
+  readFile(new URL('../Dockerfile.web', import.meta.url), 'utf8'),
+  readFile(new URL('../backend/api/Dockerfile', import.meta.url), 'utf8'),
+  readFile(new URL('../backend/api-gateway/Dockerfile', import.meta.url), 'utf8'),
+  readFile(new URL('../backend/database/Dockerfile.pgvector', import.meta.url), 'utf8'),
+  readFile(new URL('../backend/database/Dockerfile.migrate', import.meta.url), 'utf8'),
+  readFile(new URL('../backend/database/.dockerignore', import.meta.url), 'utf8'),
+])).map(normalizeNewlines);
+const [sdkContract, apiPackagesLock, apiTestPackagesLock] = await Promise.all([
+  readFile(new URL('../global.json', import.meta.url), 'utf8'),
+  readFile(new URL('../backend/api/VocadbRecommender/packages.lock.json', import.meta.url), 'utf8'),
+  readFile(new URL('../backend/api/VocadbRecommender.Tests/packages.lock.json', import.meta.url), 'utf8'),
+]);
 
 assert.match(compose, /api_a:/);
 assert.match(compose, /api_b:/);
 assert.match(compose, /api_gateway:/);
+assert.ok((compose.match(/cap_drop:\s*\n\s+- ALL/g) ?? []).length >= 5);
+assert.ok((compose.match(/no-new-privileges=true/g) ?? []).length >= 6);
+assert.ok((compose.match(/read_only: true/g) ?? []).length >= 5);
+assert.match(compose, /web:[\s\S]*user: "101:101"[\s\S]*"8080:8080"/);
+assert.match(compose, /http:\/\/127\.0\.0\.1:8080\/backend-api\/api\/ready/);
+assert.match(compose, /image: "\$\{DIVA_POSTGRES_IMAGE:-diva-player-postgres:16\.15-pgvector-0\.8\.6-hardened-r1\}"/);
+assert.match(compose, /postgres:[\s\S]*pull_policy: never/);
+assert.doesNotMatch(compose, /pgvector\/pgvector|ccc6e83d/);
+assert.match(compose, /postgres:[\s\S]*cap_drop:\s*- ALL[\s\S]*cap_add:[\s\S]*- CHOWN[\s\S]*- DAC_OVERRIDE[\s\S]*- FOWNER[\s\S]*- SETGID[\s\S]*- SETUID/);
+assert.doesNotMatch(compose, /schema\.sql:\/docker-entrypoint-initdb\.d/);
+assert.match(compose, /qdrant:[\s\S]*image: diva-player-qdrant:v1\.19\.0-hardened-r1[\s\S]*user: "1000:1000"[\s\S]*QDRANT__STORAGE__SNAPSHOTS_PATH: \/qdrant\/storage\/snapshots[\s\S]*QDRANT__TELEMETRY_DISABLED: "true"[\s\S]*read_only: true[\s\S]*pids_limit: 512/);
+assert.match(compose, /qdrant_data:\s*\n\s+name: "\$\{DIVA_QDRANT_VOLUME:-backend_qdrant_data\}"/);
+assert.match(compose, /migrate:[\s\S]*image: "\$\{DIVA_POSTGRES_MIGRATE_IMAGE:-diva-player-postgres-migrate:16\.15-hardened-r1\}"[\s\S]*pull_policy: never[\s\S]*user: "65534:65534"[\s\S]*\.\/database\/migrate\.sh:\/migrations\/migrate\.sh:ro[\s\S]*\.\/database\/migrations:\/migrations\/sql:ro[\s\S]*entrypoint: \["sh", "\/migrations\/migrate\.sh"\][\s\S]*read_only: true[\s\S]*pids_limit: 128/);
+assert.doesNotMatch(compose, /postgres:16-alpine@sha256|cf78e766/);
+assert.match(postgresDockerfile, /postgres:16-alpine3\.23@sha256:421b84e07a72bb8f3715f20501a1fdbe1219aad1fa4af7786a49d9a3f2480296/);
+assert.match(postgresDockerfile, /PGVECTOR_COMMIT=8ee86c96f0fd72390f890aa8a336fda6d3ab4c6c/);
+assert.match(postgresDockerfile, /PGVECTOR_ARCHIVE_SHA256=d076a3098010905fd60256649327809651f6288327db6413f0938305f62ea299/);
+assert.match(postgresDockerfile, /DIVA_POSTGRES_SOURCE_BUNDLE_SHA256/);
+assert.match(postgresDockerfile, /COPY --chown=0:0 schema\.sql \/docker-entrypoint-initdb\.d\/01_schema\.sql/);
+assert.match(postgresDockerfile, /sed -i 's\/\^postgres:x:70:70:\/postgres:x:999:999:\/' \/etc\/passwd/);
+assert.match(postgresDockerfile, /runtime-contract="alpine-root-init-su-exec-uid999-v1"/);
+assert.doesNotMatch(postgresDockerfile, /apk upgrade/);
+assert.match(postgresMigrateDockerfile, /alpine:3\.23\.3@sha256:25109184c71bdad752c8312a8623239686a9a2071e8825f20acb8f2198c3f659/);
+assert.match(postgresMigrateDockerfile, /postgresql16-client=16\.15-r0/);
+assert.match(postgresMigrateDockerfile, /USER 65534:65534/);
+assert.match(postgresMigrateDockerfile, /ENTRYPOINT \["psql"\]/);
+assert.doesNotMatch(postgresMigrateDockerfile, /COPY|apk upgrade/);
+assert.match(postgresMigrateDockerfile, /test ! -e \/usr\/local\/bin\/gosu/);
+assert.deepEqual(databaseDockerignore.trim().split('\n'), [
+  '*',
+  '!Dockerfile.pgvector',
+  '!Dockerfile.migrate',
+  '!schema.sql',
+]);
+assert.match(webDockerfile, /node:22\.22\.2-alpine@sha256:8ea2348b068a9544dae7317b4f3aafcdc032df1647bb7d768a05a5cad1a7683f/);
+assert.match(webDockerfile, /nginxinc\/nginx-unprivileged:alpine@sha256:901e944d1f4fc2bd077e8f5568b98c1f6f8cdacf6b97a87747c43134a339b9a7/);
+assert.match(apiDockerfile, /aspnet:8\.0-alpine-extra@sha256:bfb8d74a4b0130c7e4abf88a4dede4f51929b91e26d76ae8ccf3f571a21db3b9/);
+assert.match(apiDockerfile, /sdk:8\.0-alpine@sha256:8a80a27ddac789b4cb6d09d244f9c8d840da599c5ad22f7233c04be470e55261/);
+assert.match(gatewayDockerfile, /haproxy:3\.0-alpine@sha256:34cc7d1f6142464d7d2b73e2a1eef7392556dbf304160aef543e513cfd9e5162/);
+assert.doesNotMatch(webDockerfile, /apk upgrade/u);
+assert.doesNotMatch(apiDockerfile, /apk (?:add|upgrade)/u);
+assert.match(apiDockerfile, /test "\$\(dotnet --version\)" = "8\.0\.424"/u);
+assert.match(apiDockerfile, /COPY \["VocadbRecommender\/VocadbRecommender\.csproj", "VocadbRecommender\/packages\.lock\.json"/u);
+assert.match(apiDockerfile, /dotnet restore [^\n]* --locked-mode/u);
+assert.doesNotMatch(gatewayDockerfile, /apk upgrade/u);
+assert.match(gatewayDockerfile, /apk add --no-cache socat=1\.8\.1\.3-r0/u);
+assert.doesNotMatch(gatewayDockerfile, /\bcurl\b/u);
+assert.match(compose, /wget -q -T 5 -O \/dev\/null http:\/\/127\.0\.0\.1:5000\/api\/ready/u);
+assert.deepEqual(JSON.parse(sdkContract), {
+  sdk: { version: '8.0.424', rollForward: 'disable', allowPrerelease: false },
+});
+assert.equal(JSON.parse(apiPackagesLock).version, 1);
+assert.equal(JSON.parse(apiTestPackagesLock).version, 1);
+assert.match(apiProject, /<RestorePackagesWithLockFile>true<\/RestorePackagesWithLockFile>/u);
+assert.match(apiProject, /<RestoreLockedMode>true<\/RestoreLockedMode>/u);
+assert.match(apiTestsProject, /<RestorePackagesWithLockFile>true<\/RestorePackagesWithLockFile>/u);
+assert.match(apiTestsProject, /<RestoreLockedMode>true<\/RestoreLockedMode>/u);
 assert.doesNotMatch(compose, /\n  api:\s*\n/);
 assert.match(compose, /image: "\$\{DIVA_API_IMAGE:-diva-player-api:local\}"/);
 assert.match(compose, /image: "\$\{DIVA_GATEWAY_IMAGE:-diva-player-api-gateway:local\}"/);
@@ -151,6 +250,23 @@ assert.match(qdrantService, /RecommendationAliasGenerationMismatch/);
 assert.match(qdrantService, /db\.ReadRecommendationPublicationGenerationUncachedAsync/);
 assert.match(qdrantService, /RecommendationPublicationGenerationInvalid/);
 assert.match(qdrantService, /_opts\.CollectionNamed[\s\S]*_opts\.CollectionHybrid[\s\S]*_opts\.CollectionMetadata[\s\S]*_opts\.CollectionAudio/);
+assert.match(apiProject, /PackageReference Include="Qdrant\.Client" Version="1\.19\.0"/);
+assert.match(qdrantService, /GetDenseVector\(\)/);
+assert.match(
+  qdrantService,
+  /var points = await _client\.QueryAsync\([\s\S]*?return \(points, "query"\);/,
+);
+assert.match(
+  qdrantService,
+  /catch \(RpcException exception\) when \(IsLegacyQueryApiUnavailable\(exception\)\)[\s\S]*?var points = await _client\.SearchAsync\([\s\S]*?return \(points, "legacy-search-fallback"\);/,
+);
+assert.match(qdrantService, /exception\.StatusCode == StatusCode\.Unimplemented/);
+assert.match(qdrantService, /ProbeReadCompatibilityAsync/);
+assert.match(qdrantService, /ListCollectionsAsync\(cancellationToken\)/);
+assert.match(qdrantService, /ListAliasesAsync\(cancellationToken\)/);
+assert.match(qdrantService, /GetCollectionInfoAsync\(collection, cancellationToken\)/);
+assert.match(qdrantService, /withoutPayloadFieldCount/i);
+assert.match(qdrantService, /"named-audio"[\s\S]*"named-meta"[\s\S]*"hybrid-default"[\s\S]*"metadata-default"[\s\S]*"audio-default"/);
 const audioOnlySearch = qdrantService.match(
   /public async Task<List<\(int SongId, double Score\)>> SearchAudioOnlyAsync[\s\S]*?public async Task<List<\(int SongId, double Score\)>> SearchMetadataSimilarAsync/,
 )?.[0];
@@ -198,6 +314,7 @@ assert.match(gateway, /frontend api_front[\s\S]*maxconn 256/);
 assert.match(gateway, /balance hdr\(X-Diva-Balance-Key\)/);
 assert.match(gateway, /X-Diva-Api-Slot/);
 assert.match(nginx, /proxy_pass http:\/\/api_gateway:5000\//);
+assert.match(nginx, /listen 8080/);
 assert.match(nginx, /location \^~ \/diva-player\/assets\//);
 assert.match(nginx, /Cache-Control "public, max-age=31536000, immutable"/);
 assert.match(nginx, /location = \/diva-player\/index\.html[\s\S]*Cache-Control "no-cache"/);
@@ -206,7 +323,9 @@ assert.match(staticHeaders, /\/index\.html[\s\S]*Cache-Control: no-cache/);
 assert.match(deploy, /disable server api_nodes\/\$slot/);
 assert.match(deploy, /wait_slot_sessions "\$slot"/);
 assert.match(deploy, /enable server api_nodes\/\$slot/);
-assert.match(deploy, /--force-recreate "\$slot"/);
+assert.match(deploy, /create_managed_service_container "\$slot" "\$expected_config_hash"/);
+assert.match(deploy, /docker-create-\$service-returned-invalid-container-id/);
+assert.doesNotMatch(deploy, /--force-recreate "\$slot"/);
 assert.match(deploy, /haproxy -c -f \/usr\/local\/etc\/haproxy\/haproxy\.cfg/);
 assert.match(deploy, /API_A_ROLLBACK_IMAGE="diva-player-api:rollback-api-a"/);
 assert.match(deploy, /GATEWAY_ROLLBACK_IMAGE="diva-player-api-gateway:rollback"/);
@@ -214,18 +333,127 @@ assert.match(deploy, /api_a\.old_image/);
 assert.match(deploy, /migration\.rollback.*not-attempted-forward-only/);
 assert.match(deploy, /validate_candidate_gateway/);
 assert.match(deploy, /validate_candidate_api/);
-assert.match(deploy, /api\.candidate/);
+assert.match(deploy, /api_a\.candidate/);
+assert.match(deploy, /api_b\.candidate/);
 assert.match(deploy, /validate_candidate_web/);
 assert.match(deploy, /rollback_web/);
+assert.match(deploy, /WEB_PREVIOUS_CONTAINER="diva_web_previous_\$DEPLOYMENT_ID"/);
+assert.match(deploy, /API_CANDIDATE_IMAGE="diva-player-api:candidate-\$DEPLOYMENT_ID"/);
+assert.match(deploy, /GATEWAY_CANDIDATE_IMAGE="diva-player-api-gateway:candidate-\$DEPLOYMENT_ID"/);
+assert.match(deploy, /Candidate \$service API image changed during validation/);
+assert.match(deploy, /Candidate \$service API config changed during validation/);
+assert.match(deploy, /New gateway image\/config changed after readiness/);
+assert.match(deploy, /query_container_id|container ls -a --no-trunc/);
+assert.match(deploy, /rename "\$OLD_WEB_CONTAINER_ID" "\$WEB_CONTAINER"/);
+assert.doesNotMatch(deploy, /WEB_ROLLBACK_IMAGE/);
 assert.match(deploy, /container_compose_config_hash/);
 assert.match(deploy, /gateway\.candidate_config_hash/);
 assert.match(deploy, /rollback_updated_slots/);
 assert.match(deploy, /DEPLOY_LOCK_DIR="\$STATE_ROOT\/deploy\.lock"/);
 assert.match(deploy, /acquire_deploy_lock/);
+assert.match(deploy, /STATEFUL_LOCK_DIR="\$STATE_ROOT\/stateful-hardening\.lock"/);
 assert.match(deploy, /HEALTH_ATTEMPTS=\$\{DIVA_DEPLOY_HEALTH_ATTEMPTS:-180\}/);
 assert.match(deploy, /Refusing to enable unhealthy \$slot/);
 assert.match(deploy, /apply_gateway_image "\$OLD_GATEWAY_IMAGE" "\$NEW_GATEWAY_IMAGE"/);
+assert.match(deploy, /--bootstrap-legacy-qdrant-bridge/u);
+assert.match(deploy, /canonical API bridge receipt already exists; bootstrap is one-time/u);
+const bridgeCommitStart = deploy.indexOf('The explicit bridge bootstrap is intentionally API-only.');
+const normalGatewayUpdate = deploy.indexOf('record_state "deployment.status" "updating-gateway"', bridgeCommitStart);
+assert.ok(bridgeCommitStart > 0 && normalGatewayUpdate > bridgeCommitStart);
+const bridgeCommitBranch = deploy.slice(bridgeCommitStart, normalGatewayUpdate);
+assert.match(bridgeCommitBranch, /verify_bridge_legacy_contract/u);
+assert.match(bridgeCommitBranch, /commit_bridge_api_restart_policies/u);
+assert.match(bridgeCommitBranch, /prepare_and_publish_bridge_receipt/u);
+assert.match(bridgeCommitBranch, /API_CANDIDATE_TAG_CREATED=false/u);
+assert.match(bridgeCommitBranch, /exit 0/u);
+assert.doesNotMatch(bridgeCommitBranch, /apply_gateway_image|validate_candidate_web|replace_web|migrat(?:e|ion) container/iu);
+assert.match(deploy, /production host\/daemon platform is not native linux\/aarch64/u);
+assert.match(deploy, /DOCKER_DEFAULT_PLATFORM/u);
+assert.match(sbcBridgePublisher, /os\.link\(prepared, canonical, follow_symlinks=False\)/u);
+assert.match(sbcBridgePublisher, /os\.unlink\(prepared\)/u);
+assert.match(sbcBridgePublisher, /info\.st_nlink not in links/u);
+assert.match(sbcBridgePublisher, /links=\{1\}/u);
+assert.match(sbcBridgePublisher, /prepared_info\.st_dev, prepared_info\.st_ino/u);
+assert.match(sbcBridgeProducer, /old Qdrant is not version 1\.9\.4/u);
+assert.match(sbcBridgeProducer, /API A\/B semantics differ/u);
+assert.match(sbcBridgeProducer, /linux\|arm64/u);
+assert.match(qdrantDockerfile, /qdrant\/qdrant:v1\.19\.0-unprivileged@sha256:a0e04fe623cb064502cd869cefc1dc7ce359d8edd481063b5bd351c0a0a2c91e/);
+assert.match(qdrantDockerfile, /FROM scratch AS audit-tools/);
+assert.match(qdrantDockerfile, /FROM scratch AS runtime/);
+assert.match(qdrantDockerfile, /runtime-packages\.tsv/);
+assert.match(qdrantDockerfile, /qdrant-binary\.sha256/);
+assert.match(qdrantDockerfile, /qdrant-config-tree\.sha256/);
+assert.match(qdrantDockerfile, /rootless-readonly-scratch-v3/);
+assert.match(qdrantDockerfile, /QDRANT__STORAGE__SNAPSHOTS_PATH="\/qdrant\/storage\/snapshots"/);
+assert.match(qdrantDockerfile, /QDRANT__TELEMETRY_DISABLED="true"/);
+assert.match(qdrantDockerfile, /ENTRYPOINT \["\/qdrant\/qdrant"\]/);
+assert.match(qdrantDockerfile, /CMD \["--config-path", "\/qdrant\/config\/production\.yaml"\]/);
+assert.doesNotMatch(qdrantDockerfile, /apt-get|dpkg-inventory\.tsv/);
+assert.match(qdrantDockerfile, /USER 1000:1000/);
+assert.match(workflow, /docker volume create[\s\S]*diva-player-ci-qdrant-audit:current[\s\S]*--user 1000:1000[\s\S]*--read-only/);
+assert.match(workflow, /\/collections\/diva_ci_smoke\/points\?wait=true/);
+assert.match(workflow, /\/collections\/diva_ci_smoke\/points\/query/);
+assert.match(workflow, /\/collections\/diva_ci_smoke\/snapshots\?wait=true/);
+assert.match(workflow, /docker stop --time 30 "\$qdrant_smoke_container"[\s\S]*docker start "\$qdrant_smoke_container"/);
+assert.match(workflow, /\.result\.points_count == 2/);
+assert.match(statefulHardening, /DIVA_VERIFIED_POSTGRES_BACKUP_RUN_ID/);
+assert.match(statefulHardening, /DIVA_VERIFIED_QDRANT_BACKUP_RUN_ID/);
+assert.match(statefulHardening, /DIVA_VERIFIED_POSTGRES_BACKUP_STATUS_SHA256/);
+assert.match(statefulHardening, /DIVA_VERIFIED_QDRANT_BACKUP_MANIFEST_SHA256/);
+assert.match(statefulHardening, /DIVA_VERIFIED_BACKUP_PAYLOAD_ATTESTATION_SHA256/);
+assert.match(statefulHardening, /payloadBytesRehashed/);
+assert.match(statefulHardening, /diva_stateful_maintenance_login_roles/);
+assert.match(statefulHardening, /ALTER ROLE %I NOLOGIN/);
+assert.match(statefulHardening, /Qdrant collection is not green/);
+assert.match(statefulHardening, /"pointsCount": points_count/);
+assert.match(backupAttester, /os\.fstat\(descriptor\)/);
+assert.match(backupAttester, /_reject_reparse_ancestors/);
+assert.match(backupAttester, /payloadBytesRehashed/);
+assert.match(backupAttester, /--postgres-root/);
+assert.match(statefulHardening, /validate_backup_evidence postgres_disaster_backup/);
+assert.match(statefulHardening, /manifest digest is not bound to status/);
+assert.match(statefulHardening, /QDRANT_PREVIOUS_CONTAINER="diva_qdrant_previous_\$RUN_ID"/);
+assert.match(statefulHardening, /POSTGRES_PREVIOUS_CONTAINER="diva_postgres_previous_\$RUN_ID"/);
+assert.match(statefulHardening, /qdrant_fingerprint/);
+assert.match(statefulHardening, /postgres_fingerprint/);
+assert.match(statefulHardening, /verify_qdrant_runtime/);
+assert.match(statefulHardening, /verify_postgres_runtime/);
+assert.match(statefulHardening, /com\.diva\.qdrant\.dockerfile-sha256/);
+assert.match(statefulHardening, /run_bounded_data_mutation/);
+assert.match(statefulHardening, /QDRANT_AUDIT_TOOL_IMAGE="diva-player-qdrant-audit:candidate-\$RUN_ID"/);
+assert.match(statefulHardening, /--audit-image-id "\$NEW_QDRANT_AUDIT_ID"/);
+assert.match(statefulHardening, /trivy-0\.74\.0/);
+assert.match(statefulHardening, /--scanners vuln/);
+assert.match(statefulHardening, /--severity HIGH,CRITICAL --format json --list-all-pkgs --exit-code 1/);
+assert.match(statefulHardening, /validate_trivy_scan_report/);
+assert.match(statefulHardening, /wait_stateful_daemon_stable/);
+assert.match(statefulHardening, /daemon\.reconciliation fail-stop-manual-intervention-required/);
+assert.match(statefulHardening, /DAEMON_MUTATION_IN_FLIGHT=true/);
+assert.match(statefulHardening, /backup evidence is stale/);
+assert.match(statefulHardening, /merge-base --is-ancestor/);
+assert.match(statefulHardening, /wait_container_mapping "\$QDRANT_CONTAINER" "\$NEW_QDRANT_CONTAINER_ID"/);
+assert.match(statefulHardening, /rename "\$OLD_QDRANT_ID" "\$QDRANT_CONTAINER"/);
+assert.match(statefulHardening, /rename "\$recovery_id" "\$POSTGRES_CONTAINER"/);
+assert.match(statefulHardening, /QDRANT_ROLLBACK_IMAGE="diva-player-qdrant:rollback-\$RUN_ID"/u);
+assert.match(statefulHardening, /verify_qdrant_rollback_assets/u);
+assert.match(statefulHardening, /remove_verified_qdrant_previous_container_if_present/u);
+assert.match(statefulHardening, /\[ "\$current" = "\$OLD_QDRANT_ID" \] \|\| return 1/u);
+assert.match(statefulHardening, /qdrant\.rollback_retained/u);
 assert.match(program, /MapHealthEndpoints\(\)/);
+assert.match(program, /const string qdrantBridgeProbeTokenPath = "\/tmp\/\.diva-qdrant-bridge-probe-token"/u);
+assert.match(program, /QdrantBridgeProbeTokenStore\.CleanupStaleClaim\(qdrantBridgeProbeTokenPath\)/u);
+assert.match(program, /MapGet\("\/api\/internal\/qdrant-compatibility-token-status"/u);
+assert.match(program, /MapDelete\("\/api\/internal\/qdrant-compatibility-token"/u);
+assert.match(program, /MapGet\("\/api\/internal\/qdrant-compatibility-matrix"/u);
+assert.match(program, /QdrantBridgeProbeTokenStore\.TryConsume\(qdrantBridgeProbeTokenPath, suppliedToken\)/u);
+assert.doesNotMatch(program, /qdrant-compatibility-matrix[\s\S]{0,400}\.DisableRateLimiting\(\)/u);
+assert.doesNotMatch(compose, /DIVA_QDRANT_BRIDGE_PROBE_TOKEN/u);
+assert.match(qdrantBridgeTokenStore, /private static readonly object ConsumeGate = new\(\)/u);
+assert.match(qdrantBridgeTokenStore, /File\.Move\(path, claimPath, overwrite: false\)/u);
+assert.match(qdrantBridgeTokenStore, /File\.GetUnixFileMode\(path\) != UnixFileMode\.UserRead/u);
+assert.match(qdrantBridgeTokenStore, /enforceUnixFileContract && !OperatingSystem\.IsLinux\(\)/u);
+assert.match(qdrantBridgeTokenStore, /CleanupStaleClaim/u);
+assert.match(qdrantBridgeTokenStore, /DeleteExactClaim/u);
 assert.match(healthEndpoints, /MapGet\("\/api\/ready"/);
 assert.match(healthEndpoints, /DisableRateLimiting\(\)/);
 assert.match(healthEndpoints, /warmupSnapshot\.Failures\.Count == 0/);
@@ -394,6 +622,28 @@ assert.match(program, /!double\.IsFinite\(bpmFrom\.Value\)/);
 assert.match(program, /!double\.IsFinite\(bpmTo\.Value\)/);
 assert.match(apiTestsProject, /PackageReference Include="xunit"/);
 assert.match(workflow, /dotnet test backend\/api\/VocadbRecommender\.Tests\/VocadbRecommender\.Tests\.csproj --configuration Release/);
+assert.match(workflow, /dotnet-version: '8\.0\.424'/u);
+assert.match(workflow, /dotnet restore diva-player\.sln --locked-mode/u);
+assert.match(workflow, /dotnet build backend\/api\/VocadbRecommender\/VocadbRecommender\.csproj --configuration Release --no-restore/u);
+assert.match(workflow, /dotnet test backend\/api\/VocadbRecommender\.Tests\/VocadbRecommender\.Tests\.csproj --configuration Release --no-restore/u);
+assert.match(workflow, /python -B scripts\/test-container-image-scan-validator\.py/u);
+assert.match(workflow, /trivy_\$\{TRIVY_VERSION\}_Linux-64bit\.tar\.gz/u);
+assert.match(workflow, /2ae6fe3ee734b7fdf11335663e18c75ea12dccc76062f09f164a3b0f8be4371a/u);
+assert.match(workflow, /d89bcc6510a267f11b773398cbf1be5520ce39f9e8b6633178c4487f05b7d791/u);
+assert.match(
+  workflow,
+  /name: Preserve deployable image scan evidence\s+if: always\(\)\s+uses: actions\/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a[\s\S]*?scanner\.identity[\s\S]*?cache\/db\/metadata\.json[\s\S]*?\/report\.json[\s\S]*?\/receipt\.json[\s\S]*?retention-days: 30/u,
+);
+assert.doesNotMatch(
+  workflow.match(/name: Preserve deployable image scan evidence[\s\S]*?retention-days: 30/u)?.[0] ?? '',
+  /trivy\.db/u,
+);
+assert.match(sbcTrivyInstaller, /trivy_0\.74\.0_Linux-ARM64\.tar\.gz/u);
+assert.match(sbcTrivyInstaller, /b94ce1976bbf3c15b514b605ee88be7c6d94a29be2302847ff01cb794d47aad5/u);
+assert.match(sbcTrivyInstaller, /fed2c9ca7d27191ada34524b5eaf5216a845c6d6f3246143c3b475552ffe5358/u);
+assert.match(sbcTrivyInstaller, /02:00:b7:00/u);
+assert.match(statefulHardening, /Docker daemon must be linux\/arm64/u);
+assert.match(statefulHardening, /\[ "\$architecture" = arm64 \]/u);
 assert.match(workflow, /npm run test:rolling-deployment/);
 assert.match(workflow, /npm run test:runtime-health/);
 assert.match(workflow, /actions\/setup-python@[0-9a-f]{40} # v7\.0\.0/);

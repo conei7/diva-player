@@ -48,25 +48,149 @@ jobs:
     if: github.ref == 'refs/heads/main'
     needs: cloudflare_contract
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    # Stateful/DR fault matrices intentionally exercise bounded timeout,
+    # rollback, and daemon-settlement paths before the container scans and E2E
+    # release gates. Keep a finite ceiling without turning a healthy, complete
+    # security run into a false timeout on a slower hosted runner.
+    timeout-minutes: 240
     outputs:
       release_sha256: ${{ steps.release_artifact.outputs.release_sha256 }}
-    services:
-      postgres:
-        image: pgvector/pgvector:pg16
-        env:
-          POSTGRES_USER: vocadb
-          POSTGRES_PASSWORD: diva-ci-password
-          POSTGRES_DB: vocadb_recommender
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U vocadb -d vocadb_recommender"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build and start exact PostgreSQL CI artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          postgres_dockerfile_sha256=$(sha256sum backend/database/Dockerfile.pgvector | awk '{print $1}')
+          postgres_schema_sha256=$(sha256sum backend/database/schema.sql | awk '{print $1}')
+          postgres_build_timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          postgres_attestation="$RUNNER_TEMP/postgres-source-bundle.attestation"
+          printf '%s\n' \
+            "dockerfile.sha256=$postgres_dockerfile_sha256" \
+            'pgvector.archive.sha256=d076a3098010905fd60256649327809651f6288327db6413f0938305f62ea299' \
+            'pgvector.commit=8ee86c96f0fd72390f890aa8a336fda6d3ab4c6c' \
+            "schema.sha256=$postgres_schema_sha256" \
+            > "$postgres_attestation"
+          postgres_source_bundle_sha256=$(sha256sum "$postgres_attestation" | awk '{print $1}')
+          migrate_dockerfile_sha256=$(sha256sum backend/database/Dockerfile.migrate | awk '{print $1}')
+          migrate_build_timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+          docker build --pull --file backend/database/Dockerfile.pgvector \
+            --build-arg "DIVA_POSTGRES_DOCKERFILE_SHA256=$postgres_dockerfile_sha256" \
+            --build-arg "DIVA_POSTGRES_BUILD_TIMESTAMP=$postgres_build_timestamp" \
+            --build-arg "DIVA_POSTGRES_SCHEMA_SHA256=$postgres_schema_sha256" \
+            --build-arg "DIVA_POSTGRES_SOURCE_BUNDLE_SHA256=$postgres_source_bundle_sha256" \
+            --tag diva-player-ci-postgres:current backend/database
+          docker build --pull --file backend/database/Dockerfile.migrate \
+            --build-arg "DIVA_POSTGRES_MIGRATE_DOCKERFILE_SHA256=$migrate_dockerfile_sha256" \
+            --build-arg "DIVA_POSTGRES_MIGRATE_BUILD_TIMESTAMP=$migrate_build_timestamp" \
+            --tag diva-player-ci-postgres-migrate:current backend/database
+
+          postgres_image_id=$(docker image inspect --format '{{.Id}}' diva-player-ci-postgres:current)
+          migrate_image_id=$(docker image inspect --format '{{.Id}}' diva-player-ci-postgres-migrate:current)
+          [[ "$postgres_image_id" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "$migrate_image_id" =~ ^sha256:[0-9a-f]{64}$ ]]
+          test "$(docker image inspect --format '{{.Architecture}}/{{.Os}}' "$postgres_image_id")" = amd64/linux
+          test "$(docker image inspect --format '{{.Architecture}}/{{.Os}}' "$migrate_image_id")" = amd64/linux
+          test "$(docker image inspect --format '{{index .Config.Labels "com.diva.postgres.dockerfile-sha256"}}' "$postgres_image_id")" = "$postgres_dockerfile_sha256"
+          test "$(docker image inspect --format '{{index .Config.Labels "com.diva.postgres.schema-sha256"}}' "$postgres_image_id")" = "$postgres_schema_sha256"
+          test "$(docker image inspect --format '{{index .Config.Labels "com.diva.postgres.source-bundle-sha256"}}' "$postgres_image_id")" = "$postgres_source_bundle_sha256"
+          test "$(docker image inspect --format '{{index .Config.Labels "com.diva.postgres.runtime-contract"}}' "$postgres_image_id")" = alpine-root-init-su-exec-uid999-v1
+          test "$(docker image inspect --format '{{index .Config.Labels "com.diva.postgres-migrate.dockerfile-sha256"}}' "$migrate_image_id")" = "$migrate_dockerfile_sha256"
+          test "$(docker image inspect --format '{{index .Config.Labels "com.diva.postgres-migrate.runtime-contract"}}' "$migrate_image_id")" = rootless-readonly-psql-client-v1
+          test "$(docker image inspect --format '{{.Config.User}}' "$migrate_image_id")" = 65534:65534
+          test "$(docker image inspect --format '{{json .Config.Entrypoint}}' "$migrate_image_id")" = '["psql"]'
+
+          postgres_container="diva-player-ci-postgres-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          postgres_volume="${postgres_container}-data"
+          ! docker container inspect "$postgres_container" >/dev/null 2>&1
+          ! docker volume inspect "$postgres_volume" >/dev/null 2>&1
+          test "$(docker volume create "$postgres_volume")" = "$postgres_volume"
+          postgres_container_id=$(docker run --detach --name "$postgres_container" \
+            --read-only --cap-drop ALL --cap-add CHOWN --cap-add DAC_OVERRIDE \
+            --cap-add FOWNER --cap-add SETGID --cap-add SETUID \
+            --security-opt no-new-privileges --pids-limit 512 \
+            --tmpfs /tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777 \
+            --tmpfs /var/run/postgresql:rw,nosuid,nodev,size=16m,mode=3777,uid=999,gid=999 \
+            --mount "type=volume,src=$postgres_volume,dst=/var/lib/postgresql/data" \
+            --publish 127.0.0.1:5432:5432 \
+            --env POSTGRES_USER=vocadb \
+            --env POSTGRES_PASSWORD=diva-ci-password \
+            --env POSTGRES_DB=vocadb_recommender \
+            --health-cmd 'pg_isready -U vocadb -d vocadb_recommender' \
+            --health-interval 2s --health-timeout 5s --health-retries 60 \
+            "$postgres_image_id")
+          test "$(docker container inspect --format '{{.Id}}' "$postgres_container")" = "$postgres_container_id"
+          test "$(docker container inspect --format '{{.Image}}' "$postgres_container")" = "$postgres_image_id"
+          postgres_healthy=false
+          for attempt in $(seq 1 90); do
+            if [[ $(docker container inspect --format '{{.State.Health.Status}}' "$postgres_container") == healthy ]]; then
+              postgres_healthy=true
+              break
+            fi
+            if [[ $(docker container inspect --format '{{.State.Running}}' "$postgres_container") != true ]]; then
+              break
+            fi
+            sleep 2
+          done
+          if [[ "$postgres_healthy" != true ]]; then
+            docker logs "$postgres_container" || true
+            exit 1
+          fi
+
+          docker run --rm --network host --read-only --cap-drop ALL \
+            --security-opt no-new-privileges --pids-limit 128 \
+            --tmpfs /tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777 \
+            --env PGHOST=127.0.0.1 --env PGPORT=5432 \
+            --env PGDATABASE=vocadb_recommender --env PGUSER=vocadb \
+            --env PGPASSWORD=diva-ci-password \
+            --mount "type=bind,src=$GITHUB_WORKSPACE/backend/database/migrate.sh,dst=/migrations/migrate.sh,readonly" \
+            --mount "type=bind,src=$GITHUB_WORKSPACE/backend/database/migrations,dst=/migrations/sql,readonly" \
+            --entrypoint /bin/sh "$migrate_image_id" /migrations/migrate.sh
+
+          test "$(docker exec --user 0:0 "$postgres_container" \
+            stat -c '%u:%g' /var/lib/postgresql/data)" = 999:999
+          run_ci_psql() {
+            docker run --rm --network host --read-only --cap-drop ALL \
+              --security-opt no-new-privileges --pids-limit 64 \
+              --tmpfs /tmp:rw,noexec,nosuid,nodev,size=16m,mode=1777 \
+              --env PGHOST=127.0.0.1 --env PGPORT=5432 \
+              --env PGDATABASE=vocadb_recommender --env PGUSER=vocadb \
+              --env PGPASSWORD=diva-ci-password \
+              "$migrate_image_id" -X -v ON_ERROR_STOP=1 "$@"
+          }
+          run_ci_psql -c 'CREATE TABLE IF NOT EXISTS diva_ci_vector_smoke (id INTEGER PRIMARY KEY, embedding vector(3) NOT NULL)'
+          run_ci_psql -c "INSERT INTO diva_ci_vector_smoke (id, embedding) VALUES (1, '[1,0,0]'), (2, '[0,1,0]') ON CONFLICT (id) DO UPDATE SET embedding = EXCLUDED.embedding"
+          run_ci_psql -c 'CREATE INDEX IF NOT EXISTS diva_ci_vector_smoke_hnsw ON diva_ci_vector_smoke USING hnsw (embedding vector_l2_ops)'
+          run_ci_psql -c 'ANALYZE diva_ci_vector_smoke'
+          test "$(run_ci_psql -Atc "SELECT id || '|' || round((embedding <-> '[1,0,0]')::numeric, 6) FROM diva_ci_vector_smoke ORDER BY embedding <-> '[1,0,0]' LIMIT 1")" = '1|0.000000'
+          run_ci_psql -Atc "SET enable_seqscan = off; EXPLAIN (COSTS OFF) SELECT id FROM diva_ci_vector_smoke ORDER BY embedding <-> '[1,0,0]' LIMIT 1" \
+            | grep -F 'Index Scan using diva_ci_vector_smoke_hnsw'
+
+          docker restart --time 30 "$postgres_container" >/dev/null
+          postgres_healthy=false
+          for attempt in $(seq 1 90); do
+            if [[ $(docker container inspect --format '{{.State.Health.Status}}' "$postgres_container") == healthy ]]; then
+              postgres_healthy=true
+              break
+            fi
+            if [[ $(docker container inspect --format '{{.State.Running}}' "$postgres_container") != true ]]; then
+              break
+            fi
+            sleep 2
+          done
+          if [[ "$postgres_healthy" != true ]]; then
+            docker logs "$postgres_container" || true
+            exit 1
+          fi
+          test "$(docker container inspect --format '{{.Image}}' "$postgres_container")" = "$postgres_image_id"
+          test "$(docker exec --user 0:0 "$postgres_container" \
+            stat -c '%u:%g' /var/lib/postgresql/data)" = 999:999
+          test "$(run_ci_psql -Atc "SELECT id || '|' || round((embedding <-> '[1,0,0]')::numeric, 6) FROM diva_ci_vector_smoke ORDER BY embedding <-> '[1,0,0]' LIMIT 1")" = '1|0.000000'
+          run_ci_psql -Atc "SET enable_seqscan = off; EXPLAIN (COSTS OFF) SELECT id FROM diva_ci_vector_smoke ORDER BY embedding <-> '[1,0,0]' LIMIT 1" \
+            | grep -F 'Index Scan using diva_ci_vector_smoke_hnsw'
+          test "$(docker image inspect --format '{{.Id}}' diva-player-ci-postgres:current)" = "$postgres_image_id"
+          test "$(docker image inspect --format '{{.Id}}' diva-player-ci-postgres-migrate:current)" = "$migrate_image_id"
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '22.22.0'
@@ -76,7 +200,7 @@ jobs:
           python-version: '3.10'
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
-          dotnet-version: '8.0.x'
+          dotnet-version: '8.0.424'
       - name: Install dependencies
         run: npm ci
       - name: Audit JavaScript dependencies
@@ -85,8 +209,10 @@ jobs:
         run: npm run lint
       - name: Test
         run: npm run test
+      - name: Restore locked API dependencies
+        run: dotnet restore diva-player.sln --locked-mode
       - name: Build API
-        run: dotnet build backend/api/VocadbRecommender/VocadbRecommender.csproj --configuration Release
+        run: dotnet build backend/api/VocadbRecommender/VocadbRecommender.csproj --configuration Release --no-restore
       - name: Audit API dependencies
         shell: bash
         run: |
@@ -96,13 +222,25 @@ jobs:
             exit 1
           fi
       - name: Test API
-        run: dotnet test backend/api/VocadbRecommender.Tests/VocadbRecommender.Tests.csproj --configuration Release
+        run: dotnet test backend/api/VocadbRecommender.Tests/VocadbRecommender.Tests.csproj --configuration Release --no-restore
       - name: Deployment topology contract
         run: npm run test:deployment-topology
-      - name: Isolated DR standby topology contract
-        run: npm run test:dr-standby-topology
+      - name: Primary-only public topology contract
+        run: npm run test:primary-topology
       - name: Transactional rolling deployment failures
         run: npm run test:rolling-deployment
+      - name: Stateful service hardening transaction failures
+        run: npm run test:stateful-hardening
+      - name: SBC runtime contract
+        run: python -B scripts/test-sbc-runtime-contract.py
+      - name: Container image scan receipt contract
+        run: python -B scripts/test-container-image-scan-validator.py
+      - name: PostgreSQL container image contract
+        run: python -B scripts/test-postgres-container-images.py
+      - name: SBC Qdrant upgrade controller contract
+        run: python -B scripts/test-sbc-qdrant-storage-upgrade.py
+      - name: SBC API bridge receipt consumption crash recovery
+        run: python -B scripts/test-sbc-api-bridge-consumption.py
       - name: Runtime health collector contract
         run: npm run test:runtime-health
       - name: Python runtime health collector contract
@@ -122,6 +260,8 @@ jobs:
           PGDATABASE: vocadb_recommender
           PGPASSWORD: diva-ci-password
         run: |
+          psql -v ON_ERROR_STOP=1 -h 127.0.0.1 -U vocadb -d vocadb_recommender -Atc "SELECT extversion FROM pg_extension WHERE extname = 'vector'" | grep -qx '0.8.6'
+          psql -v ON_ERROR_STOP=1 -h 127.0.0.1 -U vocadb -d vocadb_recommender -Atc "SELECT to_regclass('public.songs') IS NOT NULL" | grep -qx t
           psql -v ON_ERROR_STOP=1 -h 127.0.0.1 -U vocadb -d vocadb_recommender -f backend/database/schema.sql
           psql -v ON_ERROR_STOP=1 -h 127.0.0.1 -U vocadb -d vocadb_recommender -c "DROP INDEX song_discovery_eligible_song_idx"
           psql -v ON_ERROR_STOP=1 -h 127.0.0.1 -U vocadb -d vocadb_recommender -f backend/database/migrations/0021_discovery_eligible_song_lookup.sql
@@ -153,8 +293,436 @@ jobs:
           MIGRATIONS_SQL_DIR="$GITHUB_WORKSPACE/backend/database/migrations" sh backend/database/migrate.sh
           psql -v ON_ERROR_STOP=1 -h 127.0.0.1 -U vocadb -d vocadb_recommender -f scripts/test-database-role-contract.sql
           psql -v ON_ERROR_STOP=1 -h 127.0.0.1 -U vocadb -d vocadb_recommender -Atc "SELECT COUNT(*) || '|' || COUNT(*) FILTER (WHERE content_sha256 ~ '^[0-9a-f]{64}$') || '|' || (SELECT COUNT(*) FROM schema_migration_attempts WHERE status = 'running') FROM schema_migrations" | grep -qx '24|24|0'
+      - name: Remove PostgreSQL CI runtime
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          postgres_container="diva-player-ci-postgres-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          postgres_volume="${postgres_container}-data"
+          docker rm --force "$postgres_container" >/dev/null 2>&1 || true
+          docker volume rm "$postgres_volume" >/dev/null 2>&1 || true
       - name: Build
         run: npm run build
+      - name: Build deployable container images
+        shell: bash
+        run: |
+          qdrant_dockerfile_sha256=$(sha256sum backend/qdrant/Dockerfile | awk '{print $1}')
+          qdrant_build_timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          qdrant_audit_arch=x86_64
+          qdrant_busybox_sha256=f3547b3d78d08a028a4833ddb83b77cf012838c078bfd2b76355f53d1d8bba62
+          qdrant_audit_contract_helper_sha256=$(sha256sum backend/qdrant/audit-contract.sh | awk '{print $1}')
+          test "$qdrant_audit_contract_helper_sha256" = 05da48154d8001f2f97d707b98f4c5870c66a0909ad204adc3c6a34f7de4b6d8
+          qdrant_audit_contract_sha256=$(sh backend/qdrant/audit-contract.sh \
+            "$qdrant_audit_arch" "$qdrant_busybox_sha256" | sha256sum | awk '{print $1}')
+          test "$qdrant_audit_contract_sha256" = ecf630ad651e1e3b53d257b0d19e1aa2e2f28e543442218f4c3992b073425a61
+          docker build --pull --tag diva-player-ci-api:current backend/api
+          docker build --pull --tag diva-player-ci-gateway:current backend/api-gateway
+          docker build --pull --file Dockerfile.web --tag diva-player-ci-web:current .
+          docker build --pull --file backend/qdrant/Dockerfile --target runtime \
+            --build-arg "DIVA_QDRANT_DOCKERFILE_SHA256=$qdrant_dockerfile_sha256" \
+            --build-arg "DIVA_QDRANT_BUILD_TIMESTAMP=$qdrant_build_timestamp" \
+            --build-arg "DIVA_AUDIT_ARCH=$qdrant_audit_arch" \
+            --build-arg "DIVA_BUSYBOX_BINARY_SHA256=$qdrant_busybox_sha256" \
+            --build-arg "DIVA_AUDIT_CONTRACT_SHA256=$qdrant_audit_contract_sha256" \
+            --build-arg "DIVA_AUDIT_CONTRACT_HELPER_SHA256=$qdrant_audit_contract_helper_sha256" \
+            --tag diva-player-ci-qdrant:current backend/qdrant
+          docker build --pull --file backend/qdrant/Dockerfile --target audit-tools \
+            --build-arg "DIVA_QDRANT_DOCKERFILE_SHA256=$qdrant_dockerfile_sha256" \
+            --build-arg "DIVA_QDRANT_BUILD_TIMESTAMP=$qdrant_build_timestamp" \
+            --build-arg "DIVA_AUDIT_ARCH=$qdrant_audit_arch" \
+            --build-arg "DIVA_BUSYBOX_BINARY_SHA256=$qdrant_busybox_sha256" \
+            --build-arg "DIVA_AUDIT_CONTRACT_SHA256=$qdrant_audit_contract_sha256" \
+            --build-arg "DIVA_AUDIT_CONTRACT_HELPER_SHA256=$qdrant_audit_contract_helper_sha256" \
+            --tag diva-player-ci-qdrant-audit:current backend/qdrant
+          docker run --rm --network none --read-only --cap-drop ALL \
+            --security-opt no-new-privileges --user 1000:1000 \
+            diva-player-ci-qdrant:current --version \
+            | grep -Fx 'qdrant 1.19.0'
+          test "$(docker image inspect --format '{{index .Config.Labels "com.diva.qdrant.runtime-contract"}}' \
+            diva-player-ci-qdrant:current)" = rootless-readonly-scratch-v3
+          test "$(docker image inspect --format '{{json .Config.Cmd}}' \
+            diva-player-ci-qdrant:current)" = '["--config-path","/qdrant/config/production.yaml"]'
+          test "$(docker image inspect --format '{{json .Config.Env}}' \
+            diva-player-ci-qdrant:current)" = '["PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin","QDRANT__STORAGE__SNAPSHOTS_PATH=/qdrant/storage/snapshots","QDRANT__TELEMETRY_DISABLED=true"]'
+
+          qdrant_smoke_volume="diva-player-ci-qdrant-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          qdrant_smoke_init="${qdrant_smoke_volume}-init"
+          qdrant_smoke_container="${qdrant_smoke_volume}-runtime"
+          cleanup_qdrant_smoke() {
+            if [ -n "${qdrant_smoke_container:-}" ]; then
+              docker rm --force "$qdrant_smoke_container" >/dev/null 2>&1 || true
+            fi
+            if [ -n "${qdrant_smoke_init:-}" ]; then
+              docker rm --force "$qdrant_smoke_init" >/dev/null 2>&1 || true
+            fi
+            if [ -n "${qdrant_smoke_volume:-}" ]; then
+              docker volume rm "$qdrant_smoke_volume" >/dev/null 2>&1 || true
+            fi
+          }
+          trap cleanup_qdrant_smoke EXIT
+          ! docker container inspect "$qdrant_smoke_init" >/dev/null 2>&1
+          ! docker container inspect "$qdrant_smoke_container" >/dev/null 2>&1
+          ! docker volume inspect "$qdrant_smoke_volume" >/dev/null 2>&1
+          test "$(docker volume create \
+            --label com.diva.qdrant.ci-smoke="$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" \
+            "$qdrant_smoke_volume")" = "$qdrant_smoke_volume"
+          docker run --name "$qdrant_smoke_init" --network none --read-only \
+            --cap-drop ALL --cap-add CHOWN --security-opt no-new-privileges \
+            --user 0:0 --mount "type=volume,src=$qdrant_smoke_volume,dst=/qdrant/storage" \
+            --entrypoint /bin/chown diva-player-ci-qdrant-audit:current \
+            1000:1000 /qdrant/storage
+          test "$(docker run --rm --network none --read-only --cap-drop ALL \
+            --security-opt no-new-privileges --user 65534:65534 \
+            --mount "type=volume,src=$qdrant_smoke_volume,dst=/qdrant/storage,readonly" \
+            --entrypoint /bin/stat diva-player-ci-qdrant-audit:current \
+            -c '%u:%g:%a' /qdrant/storage)" = 1000:1000:755
+          qdrant_smoke_image_id=$(docker image inspect --format '{{.Id}}' \
+            diva-player-ci-qdrant:current)
+          qdrant_smoke_id=$(docker create --name "$qdrant_smoke_container" \
+            --read-only --cap-drop ALL --security-opt no-new-privileges \
+            --user 1000:1000 --pids-limit 512 \
+            --tmpfs /tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777 \
+            --mount "type=volume,src=$qdrant_smoke_volume,dst=/qdrant/storage" \
+            --publish 127.0.0.1::6333 diva-player-ci-qdrant:current)
+          test "$(docker container inspect --format '{{.Id}}' "$qdrant_smoke_container")" \
+            = "$qdrant_smoke_id"
+          test "$(docker container inspect --format '{{.Image}}' "$qdrant_smoke_container")" \
+            = "$qdrant_smoke_image_id"
+          docker start "$qdrant_smoke_container" >/dev/null
+          qdrant_smoke_port_binding=$(docker port "$qdrant_smoke_container" 6333/tcp)
+          case "$qdrant_smoke_port_binding" in
+            127.0.0.1:[0-9]*) qdrant_smoke_port=${qdrant_smoke_port_binding##*:} ;;
+            *) echo "unexpected Qdrant smoke port binding: $qdrant_smoke_port_binding" >&2; exit 1 ;;
+          esac
+          case "$qdrant_smoke_port" in ''|*[!0-9]*) exit 1 ;; esac
+          qdrant_smoke_ready=false
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent --show-error --connect-timeout 1 --max-time 2 \
+              "http://127.0.0.1:$qdrant_smoke_port/readyz" >/dev/null; then
+              qdrant_smoke_ready=true
+              break
+            fi
+            if [ "$(docker container inspect --format '{{.State.Running}}' \
+              "$qdrant_smoke_container")" != true ]; then
+              break
+            fi
+            sleep 1
+          done
+          if [ "$qdrant_smoke_ready" != true ]; then
+            docker logs "$qdrant_smoke_container" || true
+            exit 1
+          fi
+          test "$(docker container inspect --format '{{.State.Running}}' \
+            "$qdrant_smoke_container")" = true
+          command -v jq >/dev/null
+          qdrant_smoke_url="http://127.0.0.1:$qdrant_smoke_port"
+          curl --fail --silent --show-error --connect-timeout 2 --max-time 30 \
+            --request PUT --header 'content-type: application/json' \
+            --data-binary '{"vectors":{"size":4,"distance":"Cosine"}}' \
+            "$qdrant_smoke_url/collections/diva_ci_smoke" \
+            | jq --exit-status '.status == "ok"' >/dev/null
+          curl --fail --silent --show-error --connect-timeout 2 --max-time 30 \
+            --request PUT --header 'content-type: application/json' \
+            --data-binary '{"points":[{"id":1,"vector":[1,0,0,0],"payload":{"probe":"primary"}},{"id":2,"vector":[0,1,0,0],"payload":{"probe":"secondary"}}]}' \
+            "$qdrant_smoke_url/collections/diva_ci_smoke/points?wait=true" \
+            | jq --exit-status '.status == "ok"' >/dev/null
+          curl --fail --silent --show-error --connect-timeout 2 --max-time 30 \
+            --request POST --header 'content-type: application/json' \
+            --data-binary '{"query":[1,0,0,0],"limit":2,"with_payload":true}' \
+            "$qdrant_smoke_url/collections/diva_ci_smoke/points/query" \
+            | jq --exit-status \
+              '.status == "ok" and (.result.points | length) == 2 and .result.points[0].id == 1' \
+              >/dev/null
+          qdrant_snapshot_name=$(curl --fail --silent --show-error \
+            --connect-timeout 2 --max-time 60 --request POST \
+            "$qdrant_smoke_url/collections/diva_ci_smoke/snapshots?wait=true" \
+            | jq --exit-status --raw-output \
+              'select(.status == "ok") | .result.name | select(type == "string" and length > 0)')
+          case "$qdrant_snapshot_name" in
+            ''|*[!A-Za-z0-9._-]*) echo "unsafe Qdrant snapshot name" >&2; exit 1 ;;
+          esac
+          qdrant_snapshot_path=$(docker run --rm --network none --read-only \
+            --cap-drop ALL --security-opt no-new-privileges --user 0:0 \
+            --mount "type=volume,src=$qdrant_smoke_volume,dst=/qdrant/storage,readonly" \
+            --entrypoint /bin/find diva-player-ci-qdrant-audit:current \
+            /qdrant/storage/snapshots -type f -name "$qdrant_snapshot_name" -print)
+          case "$qdrant_snapshot_path" in
+            /qdrant/storage/snapshots/*/"$qdrant_snapshot_name"|/qdrant/storage/snapshots/"$qdrant_snapshot_name") ;;
+            *) echo "Qdrant snapshot was not persisted under the configured path" >&2; exit 1 ;;
+          esac
+          docker stop --time 30 "$qdrant_smoke_container" >/dev/null
+          test "$(docker container inspect --format '{{.State.Running}}' \
+            "$qdrant_smoke_container")" = false
+          docker start "$qdrant_smoke_container" >/dev/null
+          qdrant_smoke_ready=false
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent --show-error --connect-timeout 1 --max-time 2 \
+              "$qdrant_smoke_url/readyz" >/dev/null; then
+              qdrant_smoke_ready=true
+              break
+            fi
+            if [ "$(docker container inspect --format '{{.State.Running}}' \
+              "$qdrant_smoke_container")" != true ]; then
+              break
+            fi
+            sleep 1
+          done
+          if [ "$qdrant_smoke_ready" != true ]; then
+            docker logs "$qdrant_smoke_container" || true
+            exit 1
+          fi
+          curl --fail --silent --show-error --connect-timeout 2 --max-time 30 \
+            "$qdrant_smoke_url/collections/diva_ci_smoke" \
+            | jq --exit-status '.status == "ok" and .result.points_count == 2' >/dev/null
+          test "$(docker container inspect --format '{{.State.Running}}' \
+            "$qdrant_smoke_container")" = true
+          docker stop --time 30 "$qdrant_smoke_container" >/dev/null
+          docker rm "$qdrant_smoke_container" >/dev/null
+          qdrant_smoke_container=
+          docker rm "$qdrant_smoke_init" >/dev/null
+          qdrant_smoke_init=
+          docker volume rm "$qdrant_smoke_volume" >/dev/null
+          qdrant_smoke_volume=
+          trap - EXIT
+      - name: Install pinned Trivy scanner
+        shell: bash
+        env:
+          TRIVY_VERSION: 0.74.0
+          TRIVY_ARCHIVE_SHA256: 2ae6fe3ee734b7fdf11335663e18c75ea12dccc76062f09f164a3b0f8be4371a
+          TRIVY_BINARY_SHA256: d89bcc6510a267f11b773398cbf1be5520ce39f9e8b6633178c4487f05b7d791
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/trivy.tar.gz"
+          install_dir="$RUNNER_TEMP/trivy"
+          test ! -e "$archive"
+          test ! -e "$install_dir"
+          curl --fail --show-error --silent --location \
+            "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" \
+            --output "$archive"
+          printf '%s  %s\n' "$TRIVY_ARCHIVE_SHA256" "$archive" | sha256sum --check --strict
+          mkdir --mode=0700 "$install_dir"
+          tar --extract --gzip --file "$archive" --directory "$install_dir" trivy
+          chmod 0555 "$install_dir/trivy"
+          test "$(sha256sum "$install_dir/trivy" | awk '{print $1}')" = "$TRIVY_BINARY_SHA256"
+          version_output=$("$install_dir/trivy" --version)
+          printf '%s\n' "$version_output"
+          grep --fixed-strings --line-regexp "Version: ${TRIVY_VERSION}" <<< "$version_output"
+      - name: Attest exact deployable image vulnerability scans
+        shell: bash
+        env:
+          TRIVY_VERSION: 0.74.0
+          TRIVY_ARCHIVE_SHA256: 2ae6fe3ee734b7fdf11335663e18c75ea12dccc76062f09f164a3b0f8be4371a
+          TRIVY_BINARY_SHA256: d89bcc6510a267f11b773398cbf1be5520ce39f9e8b6633178c4487f05b7d791
+        run: |
+          set -euo pipefail
+          umask 077
+          scanner="$RUNNER_TEMP/trivy/trivy"
+          actual_scanner_sha256=$(sha256sum "$scanner" | awk '{print $1}')
+          if [[ "$actual_scanner_sha256" != "$TRIVY_BINARY_SHA256" ]]; then
+            echo "::error::The installed Trivy binary no longer matches its reviewed SHA-256."
+            exit 1
+          fi
+          version_output=$("$scanner" --version)
+          grep --fixed-strings --line-regexp "Version: ${TRIVY_VERSION}" <<< "$version_output"
+
+          evidence_root="$RUNNER_TEMP/trivy-deploy-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          cache_dir="$evidence_root/cache"
+          scanner_home="$evidence_root/home"
+          empty_config="$evidence_root/empty-config.yaml"
+          empty_ignore="$evidence_root/empty.ignore"
+          test ! -e "$evidence_root"
+          install -d -m 0700 "$evidence_root" "$cache_dir" "$scanner_home"
+          install -m 0600 /dev/null "$empty_config"
+          install -m 0600 /dev/null "$empty_ignore"
+          printf '%s\n' \
+            "version=$TRIVY_VERSION" \
+            "archive.sha256=$TRIVY_ARCHIVE_SHA256" \
+            "binary.sha256=$actual_scanner_sha256" \
+            'os=linux' \
+            'architecture=amd64' \
+            > "$evidence_root/scanner.identity"
+          chmod 0600 "$evidence_root/scanner.identity"
+
+          # Each record is service|locally built source reference|OS family|reviewed inventory bounds.
+          # Bounds aggregate package counts and also pin the number of Trivy Results per class/type.
+          image_specs=(
+            "api|diva-player-ci-api:current|alpine|os-pkgs:alpine:30:30:1,lang-pkgs:dotnet-core:13:13:3"
+            "gateway|diva-player-ci-gateway:current|alpine|os-pkgs:alpine:33:33:1"
+            "web|diva-player-ci-web:current|alpine|os-pkgs:alpine:70:70:1"
+            "qdrant-runtime|diva-player-ci-qdrant:current|debian|os-pkgs:debian:8:8:1"
+            "qdrant-audit-tool|diva-player-ci-qdrant-audit:current|alpine|os-pkgs:alpine:3:3:1"
+            "pgvector-runtime|diva-player-ci-postgres:current|alpine|os-pkgs:alpine:46:46:1"
+            "postgres-migrate-helper|diva-player-ci-postgres-migrate:current|alpine|os-pkgs:alpine:24:24:1"
+          )
+          scan_batch_started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          overall_failure=0
+
+          for spec in "${image_specs[@]}"; do
+            IFS='|' read -r service source_reference os_family inventory_csv <<< "$spec"
+            service_dir="$evidence_root/$service"
+            install -d -m 0700 "$service_dir"
+            report="$service_dir/report.json"
+            receipt="$service_dir/receipt.json"
+
+            if ! image_id=$(docker image inspect --format '{{.Id}}' "$source_reference" 2>/dev/null); then
+              echo "::error::Unable to resolve the $service source reference."
+              overall_failure=1
+              continue
+            fi
+            if [[ ! "$image_id" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+              echo "::error::$service did not resolve to an exact local image ID."
+              overall_failure=1
+              continue
+            fi
+            if [[ $(docker image inspect --format '{{.Id}}' "$image_id" 2>/dev/null) != "$image_id" ]]; then
+              echo "::error::$service exact image ID cannot be resolved locally."
+              overall_failure=1
+              continue
+            fi
+            architecture=$(docker image inspect --format '{{.Architecture}}' "$image_id")
+            container_os=$(docker image inspect --format '{{.Os}}' "$image_id")
+            if [[ "$architecture" != amd64 || "$container_os" != linux ]]; then
+              echo "::error::$service is not the reviewed linux/amd64 artifact."
+              overall_failure=1
+              continue
+            fi
+
+            scan_status=0
+            env -i \
+              HOME="$scanner_home" \
+              PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+              "$scanner" image \
+              --config "$empty_config" \
+              --ignorefile "$empty_ignore" \
+              --cache-dir "$cache_dir" \
+              --image-src docker \
+              --scanners vuln \
+              --severity HIGH,CRITICAL \
+              --format json \
+              --list-all-pkgs \
+              --output "$report" \
+              --exit-code 1 \
+              --timeout 30m \
+              "$image_id" || scan_status=$?
+            scan_completed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+            if [[ $(docker image inspect --format '{{.Id}}' "$source_reference" 2>/dev/null) != "$image_id" ]]; then
+              echo "::error::$service source reference moved while its exact image ID was scanned."
+              overall_failure=1
+              continue
+            fi
+            if [[ ! -f "$report" || -L "$report" ]]; then
+              echo "::error::Trivy did not create a regular $service report."
+              overall_failure=1
+              continue
+            fi
+
+            if [[ "$service" == qdrant-audit-tool ]]; then
+              if ! python -B - "$report" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          report = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          actual = sorted(
+              f"{package['Name']}={package['Version']}"
+              for result in report.get("Results", [])
+              for package in result.get("Packages", [])
+          )
+          expected = sorted([
+              "busybox-binsh=1.37.0-r30",
+              "busybox=1.37.0-r30",
+              "musl=1.2.5-r23",
+          ])
+          raise SystemExit(0 if actual == expected else 1)
+          PY
+              then
+                echo "::error::Qdrant audit image package inventory is not the exact three-package contract."
+                overall_failure=1
+                continue
+              fi
+            fi
+
+            inventory_arguments=()
+            IFS=',' read -ra inventory_bounds <<< "$inventory_csv"
+            for inventory_bound in "${inventory_bounds[@]}"; do
+              inventory_arguments+=(--inventory-bound "$inventory_bound")
+            done
+
+            validation_summary=
+            if validation_summary=$(python -B scripts/validate-container-image-scan.py validate \
+              --service "$service" \
+              --expected-image-id "$image_id" \
+              --expected-architecture amd64 \
+              --expected-os linux \
+              --expected-os-family "$os_family" \
+              --report "$report" \
+              --db-metadata "$cache_dir/db/metadata.json" \
+              --db "$cache_dir/db/trivy.db" \
+              --receipt "$receipt" \
+              "${inventory_arguments[@]}" \
+              --scanner-version "$TRIVY_VERSION" \
+              --scanner-sha256 "$actual_scanner_sha256" \
+              --scan-started-at "$scan_batch_started_at" \
+              --scan-completed-at "$scan_completed_at"); then
+              printf '%s\n' "$validation_summary"
+            else
+              echo "::error::$service scan report or receipt contract validation failed."
+              overall_failure=1
+              continue
+            fi
+
+            receipt_sha256=$(python -c 'import json, sys; print(json.load(sys.stdin)["receiptSha256"])' \
+              <<< "$validation_summary")
+            independent_receipt_sha256=$(sha256sum "$receipt" | awk '{print $1}')
+            if [[ ! "$receipt_sha256" =~ ^[0-9a-f]{64}$ \
+              || "$receipt_sha256" != "$independent_receipt_sha256" ]]; then
+              echo "::error::$service receipt SHA-256 did not survive independent verification."
+              overall_failure=1
+              continue
+            fi
+            if [[ "$scan_status" -ne 0 ]]; then
+              echo "::error::Trivy returned status $scan_status for $service despite a validated report."
+              overall_failure=1
+              continue
+            fi
+
+            if ! python -B scripts/validate-container-image-scan.py verify \
+              --service "$service" \
+              --expected-image-id "$image_id" \
+              --expected-architecture amd64 \
+              --expected-os linux \
+              --expected-os-family "$os_family" \
+              --report "$report" \
+              --db-metadata "$cache_dir/db/metadata.json" \
+              --db "$cache_dir/db/trivy.db" \
+              --receipt "$receipt" \
+              --expected-receipt-sha256 "$receipt_sha256"; then
+              echo "::error::$service receipt revalidation failed."
+              overall_failure=1
+              continue
+            fi
+            if [[ $(docker image inspect --format '{{.Id}}' "$source_reference" 2>/dev/null) != "$image_id" ]]; then
+              echo "::error::$service source reference moved before the receipt gate completed."
+              overall_failure=1
+              continue
+            fi
+            printf 'Validated %s as %s with receipt %s\n' \
+              "$service" "$image_id" "$receipt_sha256"
+          done
+          exit "$overall_failure"
+      - name: Preserve deployable image scan evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: deployable-image-scan-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/trivy-deploy-${{ github.run_id }}-${{ github.run_attempt }}/scanner.identity
+            ${{ runner.temp }}/trivy-deploy-${{ github.run_id }}-${{ github.run_attempt }}/cache/db/metadata.json
+            ${{ runner.temp }}/trivy-deploy-${{ github.run_id }}-${{ github.run_attempt }}/*/report.json
+            ${{ runner.temp }}/trivy-deploy-${{ github.run_id }}-${{ github.run_attempt }}/*/receipt.json
+          if-no-files-found: warn
+          retention-days: 30
       - name: Start preview server for E2E
         run: |
           npm run preview -- --host 127.0.0.1 > "$RUNNER_TEMP/diva-player-preview.log" 2>&1 &
@@ -353,7 +921,7 @@ jobs:
       - name: Verify preview root, ready, health, and origin headers
         env:
           PREVIEW_URL: ${{ steps.preview_deployment.outputs.preview_url }}
-        run: npm run check:public-dr-health -- --base-url "$PREVIEW_URL" --timeout-ms 15000 --interval-ms 5000
+        run: npm run check:public-primary-health -- --base-url "$PREVIEW_URL" --timeout-ms 15000 --interval-ms 5000
       - name: Verify preview Nico autoplay smoke
         env:
           PREVIEW_URL: ${{ steps.preview_deployment.outputs.preview_url }}
@@ -376,7 +944,7 @@ jobs:
             --github-output "$GITHUB_OUTPUT"
       - name: Verify rollback candidate through production URLs
         run: |
-          npm run check:public-dr-health -- \
+          npm run check:public-primary-health -- \
             --base-url https://diva-player.pages.dev \
             --timeout-ms 15000 \
             --interval-ms 5000
@@ -452,7 +1020,7 @@ jobs:
             verification_failed=1
           fi
 
-          npm run check:public-dr-health -- \
+          npm run check:public-primary-health -- \
             --base-url https://diva-player.pages.dev \
             --timeout-ms 15000 \
             --interval-ms 5000 || verification_failed=1
@@ -491,7 +1059,7 @@ jobs:
           fi
 
           rollback_verification_failed=0
-          npm run check:public-dr-health -- \
+          npm run check:public-primary-health -- \
             --base-url https://diva-player.pages.dev \
             --timeout-ms 15000 \
             --interval-ms 5000 || rollback_verification_failed=1

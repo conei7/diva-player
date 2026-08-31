@@ -1,0 +1,32 @@
+FROM alpine:3.23.3@sha256:25109184c71bdad752c8312a8623239686a9a2071e8825f20acb8f2198c3f659
+
+ARG DIVA_POSTGRES_MIGRATE_DOCKERFILE_SHA256
+ARG DIVA_POSTGRES_MIGRATE_BUILD_TIMESTAMP
+RUN set -eux; \
+    printf '%s\n' "$DIVA_POSTGRES_MIGRATE_DOCKERFILE_SHA256" \
+      | grep -Eq '^[0-9a-f]{64}$'; \
+    printf '%s\n' "$DIVA_POSTGRES_MIGRATE_BUILD_TIMESTAMP" \
+      | grep -Eq '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$'; \
+    apk add --no-cache \
+      libcrypto3=3.5.8-r0 \
+      libssl3=3.5.8-r0 \
+      musl=1.2.5-r23 \
+      musl-utils=1.2.5-r23 \
+      postgresql16-client=16.15-r0 \
+      zlib=1.3.2-r0; \
+    install -d -o 0 -g 0 -m 0755 /usr/share/diva-postgres-migrate; \
+    apk info -vv | LC_ALL=C sort \
+      > /usr/share/diva-postgres-migrate/runtime-packages.txt; \
+    chmod 0444 /usr/share/diva-postgres-migrate/runtime-packages.txt; \
+    test "$(psql --version)" = 'psql (PostgreSQL) 16.15'; \
+    test ! -e /usr/local/bin/gosu; \
+    case "$(apk --print-arch)" in x86_64|aarch64) ;; *) exit 1 ;; esac
+ENV HOME=/tmp
+USER 65534:65534
+ENTRYPOINT ["psql"]
+LABEL com.diva.postgres-migrate.base-digest="sha256:25109184c71bdad752c8312a8623239686a9a2071e8825f20acb8f2198c3f659" \
+      com.diva.postgres-migrate.pg-major="16" \
+      com.diva.postgres-migrate.pg-version="16.15" \
+      com.diva.postgres-migrate.dockerfile-sha256="${DIVA_POSTGRES_MIGRATE_DOCKERFILE_SHA256}" \
+      com.diva.postgres-migrate.build-timestamp="${DIVA_POSTGRES_MIGRATE_BUILD_TIMESTAMP}" \
+      com.diva.postgres-migrate.runtime-contract="rootless-readonly-psql-client-v1"

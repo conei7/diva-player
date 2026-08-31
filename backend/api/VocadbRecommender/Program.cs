@@ -30,6 +30,9 @@ builder.Services.AddSingleton(serviceProvider => new ApiDatabaseConnectionBudget
 // --- サービス登録 ---
 
 var pagesProxyKey = builder.Configuration["Recommender:PagesProxyKey"]?.Trim() ?? string.Empty;
+const string qdrantBridgeProbeTokenPath = "/tmp/.diva-qdrant-bridge-probe-token";
+if (!QdrantBridgeProbeTokenStore.CleanupStaleClaim(qdrantBridgeProbeTokenPath))
+    throw new InvalidOperationException("Unsafe stale Qdrant bridge probe token claim requires manual removal.");
 
 var allowedOrigins = builder.Configuration
     .GetSection("Recommender:AllowedOrigins")
@@ -162,6 +165,38 @@ const int maxSearchArtistIds = 100;
 const int maxSearchArtistGroups = 20;
 
 app.MapHealthEndpoints();
+app.MapGet("/api/internal/qdrant-compatibility-token-status", () =>
+    QdrantBridgeProbeTokenStore.Read(qdrantBridgeProbeTokenPath) is null
+        ? Results.NotFound()
+        : Results.NoContent());
+app.MapDelete("/api/internal/qdrant-compatibility-token", (HttpContext context) =>
+    QdrantBridgeProbeTokenStore.TryConsume(
+        qdrantBridgeProbeTokenPath,
+        context.Request.Headers["X-Diva-Qdrant-Bridge-Token"].ToString())
+            ? Results.NoContent()
+            : Results.NotFound());
+app.MapGet("/api/internal/qdrant-compatibility-matrix", async (
+    HttpContext context,
+    int seedSongId,
+    QdrantService qdrant,
+    CancellationToken cancellationToken) =>
+{
+    var suppliedToken = context.Request.Headers["X-Diva-Qdrant-Bridge-Token"].ToString();
+    if (!QdrantBridgeProbeTokenStore.TryConsume(qdrantBridgeProbeTokenPath, suppliedToken))
+        return Results.NotFound();
+    try
+    {
+        return Results.Ok(await qdrant.ProbeReadCompatibilityAsync(seedSongId, cancellationToken));
+    }
+    catch (Exception exception) when (exception is not OperationCanceledException)
+    {
+        return Results.UnprocessableEntity(new
+        {
+            error = "qdrant compatibility matrix failed",
+            reason = exception.GetType().Name,
+        });
+    }
+});
 app.MapSongReadEndpoints();
 app.MapKnowledgeMapEndpoints();
 

@@ -3,6 +3,14 @@ set -eu
 
 umask 077
 
+run_mode=full
+case "${1:-}" in
+  '') ;;
+  --reconcile-migration-acl-only) run_mode=reconcile-acl; shift ;;
+  *) echo "[migrate] ERROR: unsupported argument: $1" >&2; exit 2 ;;
+esac
+[ "$#" -eq 0 ] || { echo "[migrate] ERROR: unexpected extra arguments" >&2; exit 2; }
+
 migrations_sql_dir="${MIGRATIONS_SQL_DIR:-/migrations/sql}"
 migrations_manifest="${MIGRATIONS_MANIFEST_FILE:-$migrations_sql_dir/migration-manifest.tsv}"
 task_temp_dir="${TMPDIR:-/tmp}"
@@ -13,6 +21,66 @@ fail() {
 }
 
 command -v psql >/dev/null 2>&1 || fail "psql is required"
+
+reconcile_migration_acl() {
+  psql -X -v ON_ERROR_STOP=1 <<'SQL'
+SET search_path = pg_catalog, public;
+
+DO $reconcile_migration_acl$
+DECLARE
+    target_role_name TEXT;
+    relation_name TEXT;
+    relation_oid REGCLASS;
+    sequence_oid REGCLASS;
+    privilege_name TEXT;
+BEGIN
+    FOREACH target_role_name IN ARRAY ARRAY['diva_api_runtime', 'diva_pipeline_runtime'] LOOP
+        CONTINUE WHEN NOT EXISTS (
+            SELECT 1 FROM pg_roles roles WHERE roles.rolname = target_role_name
+        );
+
+        FOREACH relation_name IN ARRAY ARRAY['schema_migrations', 'schema_migration_attempts'] LOOP
+            relation_oid := to_regclass('public.' || relation_name);
+            IF relation_oid IS NOT NULL THEN
+                EXECUTE format(
+                    'REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON TABLE %s FROM %I',
+                    relation_oid,
+                    target_role_name
+                );
+            END IF;
+        END LOOP;
+
+        sequence_oid := to_regclass('public.schema_migration_attempts_attempt_id_seq');
+        IF sequence_oid IS NOT NULL THEN
+            EXECUTE format('REVOKE ALL ON SEQUENCE %s FROM %I', sequence_oid, target_role_name);
+        END IF;
+
+        FOREACH relation_name IN ARRAY ARRAY['schema_migrations', 'schema_migration_attempts'] LOOP
+            relation_oid := to_regclass('public.' || relation_name);
+            CONTINUE WHEN relation_oid IS NULL;
+            FOREACH privilege_name IN ARRAY ARRAY['INSERT', 'UPDATE', 'DELETE', 'TRUNCATE'] LOOP
+                IF has_table_privilege(target_role_name, relation_oid, privilege_name) THEN
+                    RAISE EXCEPTION '% retains effective % on %', target_role_name, privilege_name, relation_oid;
+                END IF;
+            END LOOP;
+        END LOOP;
+
+        IF sequence_oid IS NOT NULL
+           AND (has_sequence_privilege(target_role_name, sequence_oid, 'USAGE')
+                OR has_sequence_privilege(target_role_name, sequence_oid, 'UPDATE')) THEN
+            RAISE EXCEPTION '% retains effective mutation privilege on %', target_role_name, sequence_oid;
+        END IF;
+    END LOOP;
+END;
+$reconcile_migration_acl$;
+SQL
+}
+
+if [ "$run_mode" = "reconcile-acl" ]; then
+  reconcile_migration_acl
+  exit 0
+fi
+
 command -v sha256sum >/dev/null 2>&1 || fail "sha256sum is required"
 command -v mktemp >/dev/null 2>&1 || fail "mktemp is required"
 [ -d "$migrations_sql_dir" ] || fail "migration directory does not exist: $migrations_sql_dir"
@@ -39,7 +107,19 @@ cleanup() {
   rmdir -- "$validated_dir" 2>/dev/null || true
   rmdir -- "$runner_temp_dir" 2>/dev/null || true
 }
-trap cleanup EXIT HUP INT TERM
+requested_exit_code=0
+database_execution_started=false
+request_exit() {
+  requested_exit_code="$1"
+  if [ "$database_execution_started" = false ]; then
+    echo "[migrate] signal received before database execution; PostgreSQL was not contacted" >&2
+    exit "$requested_exit_code"
+  fi
+}
+trap cleanup EXIT
+trap 'request_exit 129' HUP
+trap 'request_exit 130' INT
+trap 'request_exit 143' TERM
 
 : >"$manifest_ids"
 sed 's/\r$//' "$migrations_manifest" >"$normalized_manifest"
@@ -458,4 +538,29 @@ END;
 $migration_runner_unlock$;
 SQL
 
-psql -X -v ON_ERROR_STOP=1 -f "$driver"
+migration_status=0
+case "${DIVA_MIGRATION_TEST_SIGNAL_BEFORE_PSQL:-}" in
+  '') ;;
+  TERM) request_exit 143 ;;
+  *) fail "unsupported migration signal fixture" ;;
+esac
+if [ "$requested_exit_code" -ne 0 ]; then
+  exit "$requested_exit_code"
+fi
+database_execution_started=true
+psql -X -v ON_ERROR_STOP=1 -f "$driver" || migration_status=$?
+
+# Migration 0018 can grant broad defaults before a later migration or the
+# runner fails. Reconcile in a separate transaction on every terminal path so
+# the two migration-control tables and their identity sequence never remain
+# writable by application roles after a partial run.
+acl_status=0
+reconcile_migration_acl || acl_status=$?
+if [ "$acl_status" -ne 0 ]; then
+  echo "[migrate] ERROR: migration ACL reconciliation failed" >&2
+  exit 1
+fi
+if [ "$requested_exit_code" -ne 0 ]; then
+  exit "$requested_exit_code"
+fi
+exit "$migration_status"

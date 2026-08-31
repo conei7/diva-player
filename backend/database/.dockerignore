@@ -1,0 +1,4 @@
+*
+!Dockerfile.pgvector
+!Dockerfile.migrate
+!schema.sql

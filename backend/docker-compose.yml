@@ -48,7 +48,7 @@ x-api-common: &api-common
     qdrant:
       condition: service_started
   healthcheck:
-    test: ["CMD", "curl", "-fsS", "--max-time", "5", "http://127.0.0.1:5000/api/ready"]
+    test: ["CMD-SHELL", "wget -q -T 5 -O /dev/null http://127.0.0.1:5000/api/ready"]
     interval: 5s
     timeout: 6s
     retries: 12
@@ -57,6 +57,13 @@ x-api-common: &api-common
     # same 180-second fail-closed deadline and accepts success immediately.
     start_period: 180s
   stop_grace_period: 30s
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges=true
+  read_only: true
+  tmpfs:
+    - /tmp:size=64m,mode=1777
   # API RSS has remained below 140 MiB in production observations. Reserve
   # headroom without allowing a runaway process to consume the SBC with the
   # database and vector store.
@@ -68,7 +75,11 @@ x-api-common: &api-common
 
 services:
   postgres:
-    image: pgvector/pgvector:pg16
+    # The stateful hardener publishes this locally only after the exact image
+    # ID passes the vulnerability and runtime-contract gates.  Ordinary
+    # deployments must never pull or rebuild a stateful image implicitly.
+    image: "${DIVA_POSTGRES_IMAGE:-diva-player-postgres:16.15-pgvector-0.8.6-hardened-r1}"
+    pull_policy: never
     container_name: vocadb_postgres
     # VACUUM and vector operations can exceed Docker's 64 MiB default /dev/shm.
     shm_size: "1gb"
@@ -80,18 +91,36 @@ services:
       - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./database/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DIVA_DB_ADMIN_USER:-vocadb} -d vocadb_recommender"]
       interval: 5s
       timeout: 5s
       retries: 10
     restart: unless-stopped
+    cap_drop:
+      - ALL
+    cap_add:
+      # Required only by the image entrypoint while it fixes data-directory
+      # ownership and drops from root to the configured database account.
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
+    security_opt:
+      - no-new-privileges=true
+    stop_grace_period: 60s
+    pids_limit: 512
     logging: *default-logging
 
   qdrant:
-    image: qdrant/qdrant:v1.9.4
+    # This tag is published once by scripts/harden-sbc-stateful-services.sh.
+    # Compose intentionally has no build block so an ordinary deployment
+    # cannot replace the audited image through a mutable APT result.
+    image: diva-player-qdrant:v1.19.0-hardened-r1
+    pull_policy: never
     container_name: vocadb_qdrant
+    user: "1000:1000"
     ports:
       - "127.0.0.1:6333:6333"   # HTTP REST API
       - "127.0.0.1:6334:6334"   # gRPC
@@ -99,11 +128,29 @@ services:
       - qdrant_data:/qdrant/storage
     environment:
       QDRANT__SERVICE__GRPC_PORT: 6334
+      QDRANT__STORAGE__SNAPSHOTS_PATH: /qdrant/storage/snapshots
+      QDRANT__TELEMETRY_DISABLED: "true"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges=true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777
+    mem_limit: "8g"
+    pids_limit: 512
+    stop_grace_period: 120s
     restart: unless-stopped
     logging: *default-logging
 
   migrate:
-    image: postgres:16-alpine
+    # Production deployment resolves these read-only mounts from a private,
+    # root-owned snapshot of the reviewed Git tree.  Keeping SQL outside the
+    # generic audited psql image avoids rebuilding a stateful helper for every
+    # forward-compatible schema migration.
+    image: "${DIVA_POSTGRES_MIGRATE_IMAGE:-diva-player-postgres-migrate:16.15-hardened-r1}"
+    pull_policy: never
+    user: "65534:65534"
     environment:
       PGHOST: postgres
       PGPORT: 5432
@@ -117,6 +164,15 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges=true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777
+    mem_limit: "256m"
+    pids_limit: 128
     restart: "no"
     logging: *default-logging
 
@@ -153,11 +209,18 @@ services:
       api_b:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "--max-time", "5", "http://127.0.0.1:5000/api/ready"]
+      test: ["CMD-SHELL", "wget -q -T 5 -O /dev/null http://127.0.0.1:5000/api/ready"]
       interval: 5s
       timeout: 6s
       retries: 12
       start_period: 5s
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges=true
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
     mem_reservation: "64m"
     mem_limit: "256m"
     pids_limit: 128
@@ -170,16 +233,24 @@ services:
       context: ../
       dockerfile: Dockerfile.web
     container_name: vocadb_web
+    user: "101:101"
     ports:
-      - "8080:80"
+      - "8080:8080"
     depends_on:
       - api_gateway
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/backend-api/api/ready"]
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/backend-api/api/ready"]
       interval: 5s
       timeout: 6s
       retries: 12
       start_period: 5s
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges=true
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
     mem_reservation: "64m"
     mem_limit: "256m"
     pids_limit: 128
@@ -188,4 +259,9 @@ services:
 
 volumes:
   postgres_data:
+  # The one-time v1.9 -> v1.19 stateful upgrade writes the exact, verified
+  # run-unique candidate volume into owner-only backend/.env.  A default keeps
+  # fresh development checkouts usable, while production is durably pinned
+  # and cannot silently fall back to the byte-preserved v1.9 rollback volume.
   qdrant_data:
+    name: "${DIVA_QDRANT_VOLUME:-backend_qdrant_data}"

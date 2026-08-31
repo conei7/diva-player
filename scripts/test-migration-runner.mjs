@@ -78,6 +78,10 @@ assert.match(runner, /schema_migration_attempts/);
 assert.match(runner, /has incomplete attempt/);
 assert.match(runner, /status = 'succeeded'/);
 assert.match(runner, /psql -X -v ON_ERROR_STOP=1 -f "\$driver"/);
+assert.match(runner, /--reconcile-migration-acl-only/);
+assert.match(runner, /reconcile_migration_acl \|\| acl_status=\$\?/);
+assert.match(runner, /has_table_privilege\(target_role_name, relation_oid, privilege_name\)/);
+assert.match(runner, /has_sequence_privilege\(target_role_name, sequence_oid, 'UPDATE'\)/);
 const migrationHistoryNotNull = runner.indexOf('ALTER COLUMN content_sha256 SET NOT NULL');
 const preflightPrivilegeRevoke = runner.indexOf(
   'DO $migration_history_privileges$',
@@ -102,7 +106,7 @@ const toShellPath = value => {
     .replaceAll('\\', '/');
 };
 
-const runWithFakePsql = sqlDir => spawnSync(
+const runWithFakePsql = (sqlDir, extraEnv = {}) => spawnSync(
   'sh',
   [
     '-c',
@@ -112,12 +116,19 @@ const runWithFakePsql = sqlDir => spawnSync(
     toShellPath(sqlDir),
     toShellPath(runnerPath),
   ],
-  { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 },
+  {
+    encoding: 'utf8',
+    maxBuffer: 16 * 1024 * 1024,
+    env: { ...process.env, ...extraEnv },
+  },
 );
 
 try {
   await mkdir(fakeBin);
   await writeFile(fakePsql, `#!/bin/sh
+if [ -n "\${DIVA_TEST_PSQL_MARKER:-}" ]; then
+  printf 'invoked\n' >"$DIVA_TEST_PSQL_MARKER"
+fi
 driver=''
 while [ "$#" -gt 0 ]; do
   if [ "$1" = '-f' ]; then
@@ -126,8 +137,11 @@ while [ "$#" -gt 0 ]; do
   fi
   shift
 done
-[ -n "$driver" ] || exit 91
-cat "$driver"
+if [ -n "$driver" ]; then
+  cat "$driver"
+else
+  cat >/dev/null
+fi
 `, 'utf8');
   await chmod(fakePsql, 0o755);
 
@@ -202,6 +216,19 @@ cat "$driver"
   const tampered = runWithFakePsql(tamperedDir);
   assert.notEqual(tampered.status, 0, 'checksum drift must stop before psql runs');
   assert.match(tampered.stderr, /checksum mismatch for 0024_view_history_observation_flags\.sql/);
+
+  const psqlMarker = path.join(tempRoot, 'psql-invoked');
+  const interrupted = runWithFakePsql(migrationsDir, {
+    DIVA_MIGRATION_TEST_SIGNAL_BEFORE_PSQL: 'TERM',
+    DIVA_TEST_PSQL_MARKER: toShellPath(psqlMarker),
+  });
+  assert.equal(interrupted.status, 143, interrupted.stderr);
+  assert.match(interrupted.stderr, /signal received before database execution/);
+  await assert.rejects(
+    readFile(psqlMarker, 'utf8'),
+    { code: 'ENOENT' },
+    'TERM during manifest validation must not invoke psql',
+  );
 } finally {
   await rm(tempRoot, { recursive: true, force: true });
 }

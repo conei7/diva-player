@@ -8,6 +8,8 @@ const PROBE_PATHS = ['/', '/backend-api/api/ready', '/backend-api/api/health'];
 const API_PATHS = PROBE_PATHS.filter(path => path !== '/');
 const ORIGIN_ROLES = new Set(['primary', 'standby', 'named']);
 const STANDBY_STATES = new Set(['fresh', 'stale', 'missing', 'unknown']);
+const EXPECTED_ORIGIN_ROLE = 'primary';
+const EXPECTED_STANDBY_STATE = 'missing';
 const MAX_API_RESPONSE_BYTES = 1024 * 1024;
 
 function positiveInteger(value, option) {
@@ -88,7 +90,7 @@ async function probeEndpoint(baseUrl, path, round, timeoutMs) {
   const startedAt = Date.now();
   try {
     const response = await fetch(new URL(path, baseUrl), {
-      headers: { 'user-agent': 'diva-player-public-dr-monitor/1' },
+      headers: { 'user-agent': 'diva-player-public-primary-monitor/1' },
       redirect: 'manual',
       signal: AbortSignal.timeout(timeoutMs),
     });
@@ -134,7 +136,7 @@ async function probeEndpoint(baseUrl, path, round, timeoutMs) {
   }
 }
 
-export function evaluatePublicDrHealth(probes) {
+export function evaluatePublicPrimaryHealth(probes) {
   const issues = [];
   for (const path of PROBE_PATHS) {
     const pathProbes = probes.filter(probe => probe.path === path);
@@ -144,24 +146,30 @@ export function evaluatePublicDrHealth(probes) {
     }
   }
 
+  // The root is a static Pages asset. Routing headers are authoritative only
+  // on backend API Function responses, so enforce the primary-only contract
+  // on ready and health while the root remains an HTTP availability probe.
   for (const path of API_PATHS) {
     const pathProbes = probes
       .filter(probe => probe.path === path && probe.ok)
       .sort((left, right) => left.round - right.round);
     for (const probe of pathProbes) {
-      if (!probe.originRole) issues.push(`${path}: authoritative origin role header is missing`);
-      if (probe.originRole !== 'named' && probe.standbyState !== 'fresh') {
-        issues.push(`${path}: standby registration is not fresh (${probe.standbyState ?? 'missing-header'})`);
+      if (probe.originRole !== EXPECTED_ORIGIN_ROLE) {
+        issues.push(
+          `${path}: expected primary origin role (${probe.originRole ?? 'missing-header'})`,
+        );
       }
-    }
-    if (pathProbes.length === 2 && pathProbes.every(probe => probe.originRole === 'standby')) {
-      issues.push(`${path}: standby served two consecutive rounds`);
+      if (probe.standbyState !== EXPECTED_STANDBY_STATE) {
+        issues.push(
+          `${path}: expected primary-only standby state (${probe.standbyState ?? 'missing-header'})`,
+        );
+      }
     }
   }
   return { ok: issues.length === 0, issues: [...new Set(issues)] };
 }
 
-export async function runPublicDrHealth(options) {
+export async function runPublicPrimaryHealth(options) {
   const probes = [];
   for (let round = 1; round <= 2; round += 1) {
     probes.push(...await Promise.all(PROBE_PATHS.map(path => (
@@ -171,10 +179,15 @@ export async function runPublicDrHealth(options) {
       await new Promise(resolve => setTimeout(resolve, options.intervalMs));
     }
   }
-  const evaluation = evaluatePublicDrHealth(probes);
+  const evaluation = evaluatePublicPrimaryHealth(probes);
   return {
     checkedAt: new Date().toISOString(),
     baseOrigin: new URL(options.baseUrl).origin,
+    routingContract: {
+      mode: 'primary-only',
+      originRole: EXPECTED_ORIGIN_ROLE,
+      standbyState: EXPECTED_STANDBY_STATE,
+    },
     ok: evaluation.ok,
     issues: evaluation.issues,
     probes,
@@ -183,7 +196,7 @@ export async function runPublicDrHealth(options) {
 
 async function main() {
   const options = parseArguments(process.argv.slice(2));
-  const report = await runPublicDrHealth(options);
+  const report = await runPublicPrimaryHealth(options);
   if (options.reportFile) {
     await writeFile(options.reportFile, `${JSON.stringify(report, null, 2)}\n`, 'utf8');
   }
@@ -193,7 +206,7 @@ async function main() {
 
 if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) {
   main().catch(error => {
-    console.error(`Public DR health check failed: ${error.message}`);
+    console.error(`Public primary health check failed: ${error.message}`);
     process.exitCode = 1;
   });
 }

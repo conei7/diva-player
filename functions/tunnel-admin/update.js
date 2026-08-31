@@ -1,8 +1,6 @@
 const QUICK_TUNNEL_PATTERN = /^https:\/\/[a-z0-9-]+\.trycloudflare\.com$/i;
-const ORIGIN_KEYS = {
-  primary: 'quick_tunnel_primary_url',
-  standby: 'quick_tunnel_standby_url',
-};
+const PRIMARY_TUNNEL_KEY = 'quick_tunnel_primary_url';
+const RETIRED_STANDBY_TUNNEL_KEY = 'quick_tunnel_standby_url';
 
 function unauthorized() {
   return Response.json({ error: 'unauthorized' }, { status: 401 });
@@ -58,7 +56,10 @@ export async function onRequest({ request, env }) {
   const tunnelUrl = typeof body?.tunnelUrl === 'string' ? body.tunnelUrl.trim() : '';
   const legacyRequest = body?.originRole == null;
   const originRole = legacyRequest ? 'primary' : body?.originRole;
-  if (!Object.hasOwn(ORIGIN_KEYS, originRole)) {
+  if (originRole === 'standby') {
+    return Response.json({ error: 'standby origin is retired' }, { status: 410 });
+  }
+  if (originRole !== 'primary') {
     return Response.json({ error: 'invalid origin role' }, { status: 400 });
   }
   if (!QUICK_TUNNEL_PATTERN.test(tunnelUrl)) {
@@ -93,11 +94,13 @@ export async function onRequest({ request, env }) {
   }
 
   const metadata = { checkedAt: new Date().toISOString() };
-  await env.TUNNEL_CONFIG.put(ORIGIN_KEYS[originRole], tunnelUrl, { metadata });
+  // Remove the retired route before publishing the primary registration. The
+  // Pages proxy no longer reads this key, but deleting it prevents an older
+  // deployment from silently reviving public failover during rollback.
+  await env.TUNNEL_CONFIG.delete(RETIRED_STANDBY_TUNNEL_KEY);
+  await env.TUNNEL_CONFIG.put(PRIMARY_TUNNEL_KEY, tunnelUrl, { metadata });
   // Preserve the legacy primary key while older deployments and rollback
-  // builds may still read it. Standby registration never changes it.
-  if (originRole === 'primary') {
-    await env.TUNNEL_CONFIG.put('quick_tunnel_url', tunnelUrl, { metadata });
-  }
+  // builds may still read it.
+  await env.TUNNEL_CONFIG.put('quick_tunnel_url', tunnelUrl, { metadata });
   return Response.json({ success: true, originRole });
 }

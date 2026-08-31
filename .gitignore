@@ -9,6 +9,7 @@ lerna-debug.log*
 
 # Dependencies
 node_modules
+node-compile-cache/
 .pnp
 .pnp.js
 
@@ -17,13 +18,18 @@ dist
 dist-ssr
 build
 *.local
+__pycache__/
+*.py[cod]
 .deploy-state/
 scripts/.rolling-deployment-test-*/
 scripts/.quick-tunnel-sync-test-*/
 scripts/.cloudflare-release-test-*/
+scripts/.stateful-hardening-test-*/
 .cloudflare-release/
 .cloudflare-functions-build*/
 cloudflare-pages-release.tar
+.trivy-cache/
+.trivy-tool/
 
 # Editor
 .vscode/*

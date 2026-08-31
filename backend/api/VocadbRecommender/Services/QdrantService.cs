@@ -72,14 +72,31 @@ public class QdrantService
         CancellationToken cancellationToken,
         string? vectorName = null)
     {
+        var (points, _) = await QueryCompatibleWithPathAsync(
+            collectionName,
+            vector,
+            limit,
+            cancellationToken,
+            vectorName);
+        return points;
+    }
+
+    private async Task<(IReadOnlyList<ScoredPoint> Points, string Path)> QueryCompatibleWithPathAsync(
+        string collectionName,
+        float[] vector,
+        ulong limit,
+        CancellationToken cancellationToken,
+        string? vectorName = null)
+    {
         try
         {
-            return await _client.QueryAsync(
+            var points = await _client.QueryAsync(
                 collectionName: collectionName,
                 query: vector,
                 usingVector: vectorName,
                 limit: limit,
                 cancellationToken: cancellationToken);
+            return (points, "query");
         }
         catch (RpcException exception) when (IsLegacyQueryApiUnavailable(exception))
         {
@@ -88,14 +105,136 @@ public class QdrantService
             // current API first, then migrate Qdrant through every minor. Do
             // not hide transport, authorization, cancellation, or data errors.
 #pragma warning disable CS0618 // Deliberate, bounded compatibility with Qdrant 1.9 rollback.
-            return await _client.SearchAsync(
+            var points = await _client.SearchAsync(
                 collectionName: collectionName,
                 vector: vector,
                 vectorName: vectorName,
                 limit: limit,
                 cancellationToken: cancellationToken);
 #pragma warning restore CS0618
+            return (points, "legacy-search-fallback");
         }
+    }
+
+    public async Task<QdrantReadCompatibilityMatrix> ProbeReadCompatibilityAsync(
+        int seedSongId,
+        CancellationToken cancellationToken)
+    {
+        if (seedSongId <= 0)
+            throw new ArgumentOutOfRangeException(nameof(seedSongId));
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var health = await CheckHealthAsync(cancellationToken);
+        if (!health.Ok)
+            throw new InvalidOperationException($"Qdrant health contract failed: {health.Error}");
+
+        var collectionNames = (await _client.ListCollectionsAsync(cancellationToken))
+            .OrderBy(name => name, StringComparer.Ordinal)
+            .ToArray();
+        var aliases = (await _client.ListAliasesAsync(cancellationToken))
+            .OrderBy(alias => alias.AliasName, StringComparer.Ordinal)
+            .Select(alias => new QdrantCompatibilityAlias(alias.AliasName, alias.CollectionName))
+            .ToArray();
+        var requiredCollections = new[]
+        {
+            _opts.CollectionNamed,
+            _opts.CollectionHybrid,
+            _opts.CollectionMetadata,
+            _opts.CollectionAudio,
+        }
+        .Distinct(StringComparer.Ordinal)
+        .OrderBy(name => name, StringComparer.Ordinal)
+        .ToArray();
+        var collectionInfo = new List<QdrantCompatibilityCollection>(requiredCollections.Length);
+        foreach (var collection in requiredCollections)
+        {
+            var info = await _client.GetCollectionInfoAsync(collection, cancellationToken);
+            collectionInfo.Add(new QdrantCompatibilityCollection(
+                collection,
+                info.Status.ToString(),
+                info.PointsCount,
+                info.IndexedVectorsCount,
+                info.SegmentsCount));
+        }
+
+        async Task<QdrantCompatibilityOperation> ProbeAsync(
+            string operation,
+            string collection,
+            string? vectorName)
+        {
+            var identifiers = new[] { new PointId { Num = (ulong)seedSongId } };
+            var withoutPayload = await _client.RetrieveAsync(
+                collectionName: collection,
+                ids: identifiers,
+                withPayload: false,
+                withVectors: true,
+                cancellationToken: cancellationToken);
+            var withPayload = await _client.RetrieveAsync(
+                collectionName: collection,
+                ids: identifiers,
+                withPayload: true,
+                withVectors: true,
+                cancellationToken: cancellationToken);
+            var point = withoutPayload.SingleOrDefault()
+                ?? throw new InvalidOperationException($"Compatibility seed is absent from {collection}");
+            var payloadPoint = withPayload.SingleOrDefault()
+                ?? throw new InvalidOperationException($"Payload retrieve failed for {collection}");
+            float[] vector;
+            if (vectorName is null)
+            {
+                vector = ReadDenseVector(point.Vectors?.Vector);
+            }
+            else if (point.Vectors?.Vectors?.Vectors.TryGetValue(vectorName, out var named) == true)
+            {
+                vector = ReadDenseVector(named);
+            }
+            else
+            {
+                vector = [];
+            }
+            if (vector.Length == 0 || !vector.Any(value => value != 0f))
+                throw new InvalidOperationException($"Compatibility vector is empty for {operation}");
+            var (points, path) = await QueryCompatibleWithPathAsync(
+                collection,
+                vector,
+                8,
+                cancellationToken,
+                vectorName);
+            var hits = points
+                .Where(result => result.Id.Num != (ulong)seedSongId)
+                .Take(5)
+                .Select(result => new QdrantCompatibilityHit(
+                    checked((long)result.Id.Num),
+                    Math.Round(result.Score, 8, MidpointRounding.AwayFromZero)))
+                .ToArray();
+            if (hits.Length == 0)
+                throw new InvalidOperationException($"Compatibility search returned no hits for {operation}");
+            return new QdrantCompatibilityOperation(
+                operation,
+                collection,
+                vectorName ?? "default",
+                vector.Length,
+                withoutPayload.Single().Payload.Count,
+                payloadPoint.Payload.Keys.OrderBy(key => key, StringComparer.Ordinal).ToArray(),
+                path,
+                hits);
+        }
+
+        var operations = new[]
+        {
+            await ProbeAsync("named-audio", _opts.CollectionNamed, "audio"),
+            await ProbeAsync("named-meta", _opts.CollectionNamed, "meta"),
+            await ProbeAsync("hybrid-default", _opts.CollectionHybrid, null),
+            await ProbeAsync("metadata-default", _opts.CollectionMetadata, null),
+            await ProbeAsync("audio-default", _opts.CollectionAudio, null),
+        };
+        return new QdrantReadCompatibilityMatrix(
+            1,
+            seedSongId,
+            collectionNames,
+            aliases,
+            collectionInfo,
+            operations);
     }
 
     public async Task<DependencyHealth> CheckHealthAsync(CancellationToken cancellationToken)
@@ -522,3 +661,32 @@ public class QdrantService
             .ToList();
     }
 }
+
+public sealed record QdrantCompatibilityAlias(string Alias, string Collection);
+
+public sealed record QdrantCompatibilityCollection(
+    string Collection,
+    string Status,
+    ulong PointsCount,
+    ulong IndexedVectorsCount,
+    ulong SegmentsCount);
+
+public sealed record QdrantCompatibilityHit(long SongId, double Score);
+
+public sealed record QdrantCompatibilityOperation(
+    string Operation,
+    string Collection,
+    string VectorName,
+    int VectorDimensions,
+    int WithoutPayloadFieldCount,
+    IReadOnlyList<string> PayloadKeys,
+    string QueryPath,
+    IReadOnlyList<QdrantCompatibilityHit> Hits);
+
+public sealed record QdrantReadCompatibilityMatrix(
+    int SchemaVersion,
+    int SeedSongId,
+    IReadOnlyList<string> Collections,
+    IReadOnlyList<QdrantCompatibilityAlias> Aliases,
+    IReadOnlyList<QdrantCompatibilityCollection> CollectionInfo,
+    IReadOnlyList<QdrantCompatibilityOperation> Operations);

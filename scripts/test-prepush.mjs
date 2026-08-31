@@ -105,15 +105,27 @@ const npmScripts = async scripts => {
 
 async function main() {
   await npmScripts(['lint', 'test']);
-  await run('dotnet', ['build', 'backend/api/VocadbRecommender/VocadbRecommender.csproj', '--configuration', 'Release'], { label: 'Build API', env: dotnetEnvironment });
-  await run('dotnet', ['test', 'backend/api/VocadbRecommender.Tests/VocadbRecommender.Tests.csproj', '--configuration', 'Release'], { label: 'Test API', env: dotnetEnvironment });
+  await run('dotnet', ['restore', 'diva-player.sln', '--locked-mode'], { label: 'Restore locked API dependencies', env: dotnetEnvironment });
+  await run('dotnet', ['build', 'backend/api/VocadbRecommender/VocadbRecommender.csproj', '--configuration', 'Release', '--no-restore'], { label: 'Build API', env: dotnetEnvironment });
+  await run('dotnet', ['test', 'backend/api/VocadbRecommender.Tests/VocadbRecommender.Tests.csproj', '--configuration', 'Release', '--no-restore'], { label: 'Test API', env: dotnetEnvironment });
   await npmScripts([
     'test:deployment-topology',
-    'test:dr-standby-topology',
+    'test:primary-topology',
     'test:rolling-deployment',
+    'test:stateful-hardening',
     'test:runtime-health',
   ]);
   const python = resolvePython();
+  const pythonContracts = [
+    ['scripts/test-container-image-scan-validator.py', 'Container image scan receipt contract'],
+    ['scripts/test-postgres-container-images.py', 'PostgreSQL container image contract'],
+    ['scripts/test-sbc-runtime-contract.py', 'Python SBC runtime contract'],
+    ['scripts/test-sbc-qdrant-storage-upgrade.py', 'Python SBC Qdrant upgrade controller'],
+    ['scripts/test-sbc-api-bridge-consumption.py', 'Python SBC API bridge receipt consumption'],
+  ];
+  for (const [script, label] of pythonContracts) {
+    await run(python.command, [...python.prefix, '-B', script], { label });
+  }
   await run(python.command, [...python.prefix, '-B', 'scripts/test-runtime-health-collector.py'], { label: 'Python runtime health collector contract' });
   await npmScripts([
     'test:db-role-provisioning',
