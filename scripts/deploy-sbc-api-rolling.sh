@@ -208,6 +208,7 @@ API_BRIDGE_RECEIPT="$STATE_ROOT/api-bridge-receipt.json"
 DEPLOYMENT_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 DEPLOYMENT_DIR="$STATE_ROOT/$DEPLOYMENT_ID"
 DEPLOYMENT_DIR_ID=""
+DEPLOYMENT_STATE_INITIALIZED=false
 if [ "$TEST_MODE" = "1" ]; then
     PRIVATE_RUNTIME_ROOT=${DIVA_DEPLOY_PRIVATE_RUNTIME_DIR:-"$DEPLOYMENT_DIR/runtime-private"}
 else
@@ -390,6 +391,7 @@ create_deployment_state_directory() {
     DEPLOYMENT_DIR_ID=$(stat -c '%d:%i' "$DEPLOYMENT_DIR") || return 1
     record_state "deployment.id" "$DEPLOYMENT_ID" || return 1
     record_state "deployment.directory_identity" "$DEPLOYMENT_DIR_ID" || return 1
+    DEPLOYMENT_STATE_INITIALIZED=true
 }
 
 create_private_runtime_root() {
@@ -1014,11 +1016,22 @@ cleanup() {
     local recovery_result=0
     local bootstrap_gateway_current_id=""
     trap - 0
+    trap '' HUP INT TERM
+    # Validation and stale-run reconciliation happen before this deployment
+    # owns a state directory, credential inode, journal, lock, or live
+    # topology. Preserve pre-existing evidence and the caller's deliberate
+    # exit code without invoking recovery that requires this run's state file.
+    if [ "$DEPLOYMENT_STATE_INITIALIZED" != "true" ] \
+        && [ -z "$PRIVATE_BACKEND_ENV_ID" ] \
+        && [ -z "$PRIVATE_RUNTIME_ROOT_ID" ] \
+        && [ "$DEPLOY_LOCK_HELD" = "false" ] \
+        && [ "$ACTIVE_JOURNAL_CREATED" = "false" ]; then
+        exit "$original_exit_code"
+    fi
     # cleanup itself is deliberately complex recovery code. This secondary
     # EXIT guard guarantees that an unexpected error/exit in any recovery
     # helper still retires the captured credential inode before termination.
     trap 'terminal_secret_cleanup $?' 0
-    trap '' HUP INT TERM
 
     # Resolved Compose environment contains database/API credentials.  It is
     # needed only while docker create reads it and must never survive success,
@@ -4772,9 +4785,10 @@ if startup_reconcile_stale_run; then
 else
     reconciliation_result=$?
     if [ "$reconciliation_result" -eq 2 ]; then
-        fail "A live rolling deployment owns $DEPLOY_LOCK_DIR"
+        fail "A live rolling deployment owns $DEPLOY_LOCK_DIR" || true
     else
-        fail "Stale rolling deployment evidence could not be reconciled exactly; journal and lock were preserved"
+        fail "Stale rolling deployment evidence could not be reconciled exactly; journal and lock were preserved" \
+            || true
     fi
     exit 75
 fi
@@ -4784,7 +4798,7 @@ if [ "$TEST_MODE" = "1" ] \
     exit 0
 fi
 if [ -e "$STATEFUL_ACTIVE_JOURNAL" ] || [ -L "$STATEFUL_ACTIVE_JOURNAL" ]; then
-    fail "unfinished stateful hardening journal exists: $STATEFUL_ACTIVE_JOURNAL"
+    fail "unfinished stateful hardening journal exists: $STATEFUL_ACTIVE_JOURNAL" || true
     exit 75
 fi
 if ! create_deployment_state_directory; then
@@ -4795,15 +4809,15 @@ if ! acquire_deploy_lock; then
     exit 75
 fi
 if [ -e "$STATEFUL_LOCK_DIR" ]; then
-    fail "Stateful service hardening holds $STATEFUL_LOCK_DIR"
+    fail "Stateful service hardening holds $STATEFUL_LOCK_DIR" || true
     exit 75
 fi
 if [ -e "$STATEFUL_ACTIVE_JOURNAL" ] || [ -L "$STATEFUL_ACTIVE_JOURNAL" ]; then
-    fail "stateful hardening journal appeared during rolling deployment preflight"
+    fail "stateful hardening journal appeared during rolling deployment preflight" || true
     exit 75
 fi
 if ! (umask 077; set -C; printf '%s\n' "$DEPLOYMENT_DIR" > "$ACTIVE_JOURNAL") 2>/dev/null; then
-    fail "rolling deployment journal appeared concurrently: $ACTIVE_JOURNAL"
+    fail "rolling deployment journal appeared concurrently: $ACTIVE_JOURNAL" || true
     exit 75
 fi
 ACTIVE_JOURNAL_CREATED=true

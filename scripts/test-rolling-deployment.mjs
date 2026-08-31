@@ -1263,6 +1263,15 @@ async function testPrivateRuntimeSignalCleanup() {
 function testBridgeTrivyAndExactImageContract() {
   assert.match(
     deploymentSource,
+    /if \[ "\$DEPLOYMENT_STATE_INITIALIZED" != "true" \][\s\S]*?exit "\$original_exit_code"\s+fi/u,
+  );
+  assert.doesNotMatch(
+    deploymentSource,
+    /fail "[^"\n]+"\n\s+exit 75/u,
+    'fail returns nonzero, so deliberate temporary-failure exits must preserve 75 explicitly',
+  );
+  assert.match(
+    deploymentSource,
     /\[ -z "\$\{DIVA_DEPLOY_TEST_BACKEND_ENV_SOURCE\+x\}" \] \|\| \{\s+printf '%s\\n' 'ERROR: production backend environment source override is forbidden'/u,
   );
   assert.match(
@@ -1530,6 +1539,25 @@ async function testSigkillStartupReconciliation() {
   }
 }
 
+async function testUnverifiableDeploymentLockFailsClosed() {
+  const lockFailure = await runScenario('lock-held', '', '', '', true);
+  assert.equal(lockFailure.result.status, 75, JSON.stringify({
+    error: lockFailure.result.error?.message,
+    signal: lockFailure.result.signal,
+    stdout: lockFailure.result.stdout,
+    stderr: lockFailure.result.stderr,
+    state: lockFailure.state,
+    dockerLog: lockFailure.dockerLog,
+  }, null, 2));
+  assert.match(
+    lockFailure.result.stderr,
+    /Stale rolling deployment evidence could not be reconciled exactly; journal and lock were preserved/u,
+  );
+  assert.equal(lockFailure.state, '');
+  assert.equal(lockFailure.lockOwner, 'pid=existing started=2026-08-10T00:00:00Z');
+  assert.equal(lockFailure.dockerLog, '');
+}
+
 if (process.env.DIVA_ROLLING_TEST_ONLY === 'crash-reconcile') {
   await testSigkillStartupReconciliation();
   console.log('PASS SIGKILL stale secret/journal/lock exact startup reconciliation');
@@ -1620,6 +1648,11 @@ if (process.env.DIVA_ROLLING_TEST_ONLY === 'migration') {
   const migrationFailure = await runScenario('migration', 'migration');
   assertMigrationFailureStopsWithUnresolvedDaemonMutation(migrationFailure);
   console.log('PASS migration unresolved daemon mutation fail-stop');
+  process.exit(0);
+}
+if (process.env.DIVA_ROLLING_TEST_ONLY === 'lock-held') {
+  await testUnverifiableDeploymentLockFailsClosed();
+  console.log('PASS unverifiable rolling deployment lock evidence fail-stop');
   process.exit(0);
 }
 
@@ -1812,10 +1845,7 @@ assert.match(
 assert.match(runtimeContractDrift.state, /api_a\.rollback=completed/u);
 assertExactOldRollingIdentities(runtimeContractDrift);
 
-const lockFailure = await runScenario('lock-held', '', '', '', true);
-assert.equal(lockFailure.result.status, 75);
-assert.match(lockFailure.state, /Another rolling deployment holds/);
-assert.equal(lockFailure.dockerLog, '');
+await testUnverifiableDeploymentLockFailsClosed();
 
 const webInventoryFailure = await runScenario('web-inventory', 'web_inventory');
 assert.notEqual(webInventoryFailure.result.status, 0);
