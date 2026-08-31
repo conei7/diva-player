@@ -622,6 +622,10 @@ assert.match(program, /!double\.IsFinite\(bpmFrom\.Value\)/);
 assert.match(program, /!double\.IsFinite\(bpmTo\.Value\)/);
 assert.match(apiTestsProject, /PackageReference Include="xunit"/);
 assert.match(workflow, /dotnet test backend\/api\/VocadbRecommender\.Tests\/VocadbRecommender\.Tests\.csproj --configuration Release/);
+assert.match(
+  workflow,
+  /  build:\n[\s\S]*?      - uses: actions\/checkout@[0-9a-f]{40}[^\n]*\n        with:\n          fetch-depth: 2\n/u,
+);
 assert.match(workflow, /dotnet-version: '8\.0\.424'/u);
 assert.match(workflow, /dotnet restore diva-player\.sln --locked-mode/u);
 assert.match(workflow, /dotnet build backend\/api\/VocadbRecommender\/VocadbRecommender\.csproj --configuration Release --no-restore/u);

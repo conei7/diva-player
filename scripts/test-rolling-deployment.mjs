@@ -23,10 +23,21 @@ const playerCommit = spawnSync('git', ['rev-parse', 'HEAD'], {
   encoding: 'utf8',
 }).stdout.trim();
 assert.match(playerCommit, /^[0-9a-f]{40}$/u);
-const playerAncestorCommit = spawnSync('git', ['rev-parse', 'HEAD^'], {
+const playerAncestorResult = spawnSync('git', ['rev-parse', '--verify', 'HEAD^'], {
   cwd: projectDirectory,
   encoding: 'utf8',
-}).stdout.trim();
+});
+assert.equal(
+  playerAncestorResult.status,
+  0,
+  `git rev-parse --verify HEAD^ failed: ${playerAncestorResult.stderr.trim() || 'no stderr'}`,
+);
+assert.equal(
+  playerAncestorResult.stderr,
+  '',
+  `git rev-parse --verify HEAD^ wrote stderr: ${playerAncestorResult.stderr.trim()}`,
+);
+const playerAncestorCommit = playerAncestorResult.stdout.trim();
 assert.match(playerAncestorCommit, /^[0-9a-f]{40}$/u);
 const qdrantImageId = `sha256:${'1'.repeat(64)}`;
 const postgresImageId = `sha256:${'2'.repeat(64)}`;
