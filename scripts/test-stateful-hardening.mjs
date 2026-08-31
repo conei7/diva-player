@@ -100,9 +100,16 @@ const timeoutFaultScenarios = new Set([
   'daemon-read-timeout-once-after-gate',
   'projection-config-timeout',
 ]);
+// These fixtures are rejected by production checks that precede creation of
+// RUN_DIR. Keep them in production control-flow order: tracked-source index
+// validation, PostgreSQL backup evidence validation, then Qdrant backup
+// evidence validation. Every other scenario must publish exactly one RUN_DIR.
 const preRunRejectionScenarios = new Set([
   'assume-unchanged-pipeline-source',
   'skip-worktree-pipeline-source',
+  'status-swap-after-shell-hash',
+  'invalid-evidence-existing-journal',
+  'zero-point-backup-evidence',
 ]);
 
 const ids = Object.freeze({
@@ -2393,33 +2400,29 @@ async function createScenario(name) {
   };
 }
 
-async function findRunDirectory(stateRoot, { allowAbsent = false } = {}) {
+async function findRunDirectory(stateRoot) {
   const entries = await readdir(stateRoot, { withFileTypes: true });
   const runs = entries.filter(entry => (
     entry.isDirectory() && /^stateful-[0-9]{8}T[0-9]{6}Z-[0-9]+$/u.test(entry.name)
   ));
-  if (allowAbsent && runs.length === 0) return null;
-  assert.equal(runs.length, 1, 'expected one stateful run directory');
-  return join(stateRoot, runs[0].name);
+  assert.ok(runs.length <= 1, 'expected at most one stateful run directory');
+  return runs.length === 1 ? join(stateRoot, runs[0].name) : null;
 }
 
-async function readRunState(stateRoot, options) {
-  const runDirectory = await findRunDirectory(stateRoot, options);
+async function readRunState(runDirectory) {
   return runDirectory ? readFile(join(runDirectory, 'state'), 'utf8') : '';
 }
 
-async function runArtifactRemains(stateRoot, name, options) {
-  const runDirectory = await findRunDirectory(stateRoot, options);
+function runArtifactRemains(runDirectory, name) {
   return runDirectory ? existsSync(join(runDirectory, name)) : false;
 }
 
-async function readRunArtifact(stateRoot, name, options) {
-  const runDirectory = await findRunDirectory(stateRoot, options);
+async function readRunArtifact(runDirectory, name) {
   return runDirectory ? readFile(join(runDirectory, name), 'utf8') : '';
 }
 
-async function sensitiveComposeArtifactsRemain(stateRoot, options) {
-  return runArtifactRemains(stateRoot, 'resolved-compose.private.json', options);
+function sensitiveComposeArtifactsRemain(runDirectory) {
+  return runArtifactRemains(runDirectory, 'resolved-compose.private.json');
 }
 
 async function readContainers(directory) {
@@ -2444,9 +2447,6 @@ async function waitForDelayedMutation(fakeState, scenario) {
 async function runScenario(name) {
   console.log(`CASE ${name}`);
   const scenario = await createScenario(name);
-  const runDirectoryOptions = {
-    allowAbsent: preRunRejectionScenarios.has(name),
-  };
   try {
     const existingJournal = name === 'invalid-evidence-existing-journal'
       ? 'existing-stateful-run-owned-by-another-process\n'
@@ -2578,6 +2578,7 @@ async function runScenario(name) {
     if (name === 'qdrant-controller-timeout' && process.platform !== 'win32') {
       await new Promise(resolve => setTimeout(resolve, 4_000));
     }
+    const runDirectory = await findRunDirectory(scenario.stateRoot);
     const [
       state,
       dockerLog,
@@ -2592,7 +2593,7 @@ async function runScenario(name) {
       backendEnvBackupRemains,
       controllerSettlement,
     ] = await Promise.all([
-      readRunState(scenario.stateRoot, runDirectoryOptions).catch(() => ''),
+      readRunState(runDirectory).catch(() => ''),
       readFile(join(scenario.fakeState, 'docker.log'), 'utf8').catch(() => ''),
       readFile(join(scenario.fakeState, 'timeout.log'), 'utf8').catch(() => ''),
       readFile(join(scenario.fakeState, 'sleep.log'), 'utf8').catch(() => ''),
@@ -2601,16 +2602,14 @@ async function runScenario(name) {
       readFile(join(scenario.fakeState, 'stable-image-id'), 'utf8').then(value => value.trim()).catch(() => 'absent'),
       readFile(join(scenario.fakeState, 'rollback-image-id'), 'utf8').then(value => value.trim()).catch(() => 'absent'),
       readFile(join(scenario.stateRoot, 'stateful-runtime-contract'), 'utf8').catch(() => ''),
-      sensitiveComposeArtifactsRemain(scenario.stateRoot, runDirectoryOptions),
+      sensitiveComposeArtifactsRemain(runDirectory),
       runArtifactRemains(
-        scenario.stateRoot,
+        runDirectory,
         'backend.env.before-qdrant-volume',
-        runDirectoryOptions,
       ),
       readRunArtifact(
-        scenario.stateRoot,
+        runDirectory,
         'qdrant-storage-upgrade-controller-settlement.json',
-        runDirectoryOptions,
       ).catch(() => ''),
     ]);
     const journalPath = join(scenario.stateRoot, 'stateful-hardening-active');
@@ -2619,8 +2618,9 @@ async function runScenario(name) {
     const interlockExists = existsSync(join(scenario.stateRoot, 'stateful-hardening.lock'));
     const writerGateExists = existsSync(join(scenario.fakeState, 'writer-gate'));
     const writerRolesLocked = existsSync(join(scenario.fakeState, 'writer-roles-locked'));
-    return {
+    const run = {
       result,
+      runDirectoryExists: runDirectory !== null,
       state,
       dockerLog,
       timeoutLog,
@@ -2642,6 +2642,12 @@ async function runScenario(name) {
       controllerSettlement,
       lateControllerMutation: existsSync(join(scenario.fakeState, 'late-controller-mutation')),
     };
+    assert.equal(
+      run.runDirectoryExists,
+      !preRunRejectionScenarios.has(name),
+      `unexpected RUN_DIR presence for ${name}:\n${diagnostic(run)}`,
+    );
+    return run;
   } finally {
     // Git Bash can retain transient Windows handles briefly.  The pre-push
     // harness removes these isolated, uniquely named fixtures after Node exits.
@@ -2655,6 +2661,7 @@ function diagnostic(run) {
     error: run.result.error?.message,
     stdout: run.result.stdout,
     stderr: run.result.stderr,
+    runDirectoryExists: run.runDirectoryExists,
     state: run.state,
     dockerLog: run.dockerLog,
     pythonLog: run.pythonLog,
@@ -2778,14 +2785,27 @@ try {
     const run = await runScenario(focusedCase);
     if (focusedCase === 'success') {
       assert.equal(run.result.status, 0, diagnostic(run));
+      assert.equal(run.runDirectoryExists, true, diagnostic(run));
       assert.equal(run.rollbackImageId, `sha256:${'7'.repeat(64)}`, diagnostic(run));
       assert.match(run.state, /qdrant\.rollback_retained=diva-player-qdrant:rollback-[^:]+:sha256:[0-9a-f]{64}:backend_qdrant_data/);
     } else if (preRunRejectionScenarios.has(focusedCase)) {
       assert.notEqual(run.result.status, 0, diagnostic(run));
+      assert.equal(run.runDirectoryExists, false, diagnostic(run));
       assert.equal(run.dockerLog, '', diagnostic(run));
       assert.equal(run.state, '', diagnostic(run));
-      assert.equal(run.journalExists, false, diagnostic(run));
+      if (focusedCase === 'invalid-evidence-existing-journal') {
+        assert.equal(run.journalExists, true, diagnostic(run));
+        assert.equal(
+          run.journalContent,
+          'existing-stateful-run-owned-by-another-process\n',
+          diagnostic(run),
+        );
+      } else {
+        assert.equal(run.journalExists, false, diagnostic(run));
+      }
       assert.equal(run.interlockExists, false, diagnostic(run));
+      assert.equal(run.writerGateExists, false, diagnostic(run));
+      assert.equal(run.writerRolesLocked, false, diagnostic(run));
       assert.equal(run.sensitiveComposeArtifactRemains, false, diagnostic(run));
       assert.equal(run.backendEnvBackupRemains, false, diagnostic(run));
       assert.equal(run.controllerSettlement, '', diagnostic(run));
@@ -2821,6 +2841,7 @@ try {
   } else {
 const success = await runScenario('success');
 assert.equal(success.result.status, 0, diagnostic(success));
+assert.equal(success.runDirectoryExists, true, diagnostic(success));
 assert.equal(success.journalExists, false, diagnostic(success));
 assert.equal(success.writerGateExists, false, diagnostic(success));
 assert.equal(success.writerRolesLocked, false, diagnostic(success));
@@ -2936,6 +2957,7 @@ for (const nonordinaryIndex of [
 ]) {
   const run = await runScenario(nonordinaryIndex);
   assert.notEqual(run.result.status, 0, diagnostic(run));
+  assert.equal(run.runDirectoryExists, false, diagnostic(run));
   assert.equal(run.dockerLog, '', diagnostic(run));
   assert.equal(run.journalExists, false, diagnostic(run));
   assert.equal(run.interlockExists, false, diagnostic(run));
@@ -2944,18 +2966,21 @@ for (const nonordinaryIndex of [
 
 const zeroPointBackup = await runScenario('zero-point-backup-evidence');
 assert.notEqual(zeroPointBackup.result.status, 0, diagnostic(zeroPointBackup));
+assert.equal(zeroPointBackup.runDirectoryExists, false, diagnostic(zeroPointBackup));
 assert.equal(zeroPointBackup.dockerLog, '', diagnostic(zeroPointBackup));
 assert.equal(zeroPointBackup.journalExists, false, diagnostic(zeroPointBackup));
 assert.match(zeroPointBackup.result.stderr, /Qdrant off-host backup evidence is invalid/);
 
 const swappedStatus = await runScenario('status-swap-after-shell-hash');
 assert.notEqual(swappedStatus.result.status, 0, diagnostic(swappedStatus));
+assert.equal(swappedStatus.runDirectoryExists, false, diagnostic(swappedStatus));
 assert.equal(swappedStatus.dockerLog, '', diagnostic(swappedStatus));
 assert.equal(swappedStatus.journalExists, false, diagnostic(swappedStatus));
 assert.match(swappedStatus.result.stderr, /evidence is invalid/);
 
 const swappedAttestation = await runScenario('attestation-swap-after-shell-hash');
 assert.notEqual(swappedAttestation.result.status, 0, diagnostic(swappedAttestation));
+assert.equal(swappedAttestation.runDirectoryExists, true, diagnostic(swappedAttestation));
 assert.equal(swappedAttestation.dockerLog, '', diagnostic(swappedAttestation));
 assert.equal(swappedAttestation.journalExists, false, diagnostic(swappedAttestation));
 assert.match(
@@ -3123,6 +3148,7 @@ for (const projectionFailure of ['projection-config-failure', 'projection-config
 
 const existingJournal = await runScenario('invalid-evidence-existing-journal');
 assert.notEqual(existingJournal.result.status, 0, diagnostic(existingJournal));
+assert.equal(existingJournal.runDirectoryExists, false, diagnostic(existingJournal));
 assert.equal(existingJournal.journalExists, true, diagnostic(existingJournal));
 assert.equal(
   existingJournal.journalContent,
