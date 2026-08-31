@@ -605,7 +605,7 @@ jobs:
             "api|diva-player-ci-api:current|alpine|os-pkgs:alpine:21:21:1,lang-pkgs:dotnet-core:13:13:3,lang-pkgs:nuget:12:12:1"
             "gateway|diva-player-ci-gateway:current|alpine|os-pkgs:alpine:24:24:1"
             "web|diva-player-ci-web:current|alpine|os-pkgs:alpine:70:70:1"
-            "qdrant-runtime|diva-player-ci-qdrant:current|debian|os-pkgs:debian:8:8:1"
+            "qdrant-runtime|diva-player-ci-qdrant:current|debian|os-pkgs:debian:7:7:1"
             "qdrant-audit-tool|diva-player-ci-qdrant-audit:current|alpine|os-pkgs:alpine:3:3:1"
             "pgvector-runtime|diva-player-ci-postgres:current|alpine|os-pkgs:alpine:46:46:1"
             "postgres-migrate-helper|diva-player-ci-postgres-migrate:current|alpine|os-pkgs:alpine:24:24:1"

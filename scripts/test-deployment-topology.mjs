@@ -537,6 +537,10 @@ assert.match(statefulHardening, /QDRANT_AUDIT_TOOL_IMAGE="diva-player-qdrant-aud
 assert.match(statefulHardening, /--audit-image-id "\$NEW_QDRANT_AUDIT_ID"/);
 assert.match(statefulHardening, /trivy-0\.74\.0/);
 assert.match(statefulHardening, /--scanners vuln/);
+assert.match(
+  statefulHardening,
+  /\[ "\$architecture" = amd64 \] \|\| return 1\s+case "\$service:\$os_family" in\s+qdrant-runtime:debian\) printf '%s\\n' 'os-pkgs:debian:7:7:1'/u,
+);
 assert.match(statefulHardening, /qdrant-rollback\|postgres-rollback\)\s*scan_exit_code=0/);
 assert.match(statefulHardening, /\*\)\s*scan_exit_code=1\s*allow_findings=0/);
 assert.match(statefulHardening, /--severity HIGH,CRITICAL --format json --list-all-pkgs \\\s*--exit-code "\$scan_exit_code"/);

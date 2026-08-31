@@ -778,13 +778,18 @@ class DeployImageScanWorkflowContractTests(unittest.TestCase):
         self.assertNotIn(".trivyignore", self.gate)
 
     def test_reviewed_inventory_and_receipt_contracts_are_fail_closed(self) -> None:
+        qdrant_runtime_contract = (
+            '"qdrant-runtime|diva-player-ci-qdrant:current|debian|'
+            'os-pkgs:debian:7:7:1"'
+        )
+        self.assertEqual(self.gate.count(qdrant_runtime_contract), 1)
         expected_bounds = (
             "os-pkgs:alpine:21:21:1",
             "lang-pkgs:dotnet-core:13:13:3",
             "lang-pkgs:nuget:12:12:1",
             "os-pkgs:alpine:24:24:1",
             "os-pkgs:alpine:70:70:1",
-            "os-pkgs:debian:8:8:1",
+            "os-pkgs:debian:7:7:1",
             "os-pkgs:alpine:3:3:1",
             "os-pkgs:alpine:46:46:1",
             "os-pkgs:alpine:24:24:1",

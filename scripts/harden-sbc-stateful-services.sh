@@ -906,7 +906,7 @@ reviewed_inventory_bounds() {
     esac
     [ "$architecture" = amd64 ] || return 1
     case "$service:$os_family" in
-        qdrant-runtime:debian) printf '%s\n' 'os-pkgs:debian:8:8:1' ;;
+        qdrant-runtime:debian) printf '%s\n' 'os-pkgs:debian:7:7:1' ;;
         qdrant-audit:alpine) printf '%s\n' 'os-pkgs:alpine:3:3:1' ;;
         api-a:alpine|api-b:alpine)
             printf '%s\n' 'os-pkgs:alpine:21:21:1' \
