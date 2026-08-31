@@ -1320,6 +1320,55 @@ function assertMigrationFailureStopsWithUnresolvedDaemonMutation(result) {
   assert.doesNotMatch(result.dockerLog, /force-recreate api_b/);
 }
 
+function assertContainerQueryFailureStopsWithUnresolvedDaemonMutation(result, failurePattern) {
+  assert.notEqual(result.result.status, 0);
+  assert.match(result.state, failurePattern);
+  assert.match(
+    result.state,
+    /daemon_mutation\.terminal_release=forbidden-docker-container-query-exit-1/u,
+  );
+  assert.match(
+    result.state,
+    /deployment\.status=daemon-unresolved-fail-stop-manual-reconciliation-required/u,
+  );
+  assert.match(result.state, /recovery\.status=forbidden-no-conflicting-daemon-mutation/u);
+  assert.match(
+    result.state,
+    /deployment\.interlock=active-journal-and-deploy-lock-retained/u,
+  );
+  assert.match(result.state, /backend_env\.private_cleanup=durable-exact-inode-unlink/u);
+  assert.match(
+    result.state,
+    /backend_env\.private_runtime_cleanup=durable-tmpfs-dirfd-release/u,
+  );
+  assert.notEqual(result.activeJournal, '');
+  assert.match(result.lockOwner, /^pid=/u);
+  assert.equal(result.privateBackendEnvironment, '');
+  assert.equal(result.privateRuntimeEntries, null);
+}
+
+async function testWebInventoryQueryFailureFailsClosed() {
+  const result = await runScenario('web-inventory', 'web_inventory');
+  assertContainerQueryFailureStopsWithUnresolvedDaemonMutation(
+    result,
+    /failure=Container inventory query failed while reading the image for vocadb_web/u,
+  );
+  assert.doesNotMatch(result.dockerLog, /compose .* build /u);
+  assert.doesNotMatch(result.dockerLog, /force-recreate web/u);
+  assertExactOldRollingIdentities(result);
+}
+
+async function testGatewayInventoryQueryFailureFailsClosed() {
+  const result = await runScenario('gateway-inventory', 'gateway_inventory');
+  assertContainerQueryFailureStopsWithUnresolvedDaemonMutation(
+    result,
+    /failure=gateway inventory could not be read during preflight/u,
+  );
+  assert.doesNotMatch(result.dockerLog, /compose .* build /u);
+  assert.doesNotMatch(result.dockerLog, /force-recreate api_gateway/u);
+  assertExactOldRollingIdentities(result);
+}
+
 async function testCandidateTrivyScanFailsClosed() {
   const result = await runScenario('candidate-trivy-scan', 'trivy_gateway_scan');
   assert.notEqual(result.result.status, 0);
@@ -1655,6 +1704,16 @@ if (process.env.DIVA_ROLLING_TEST_ONLY === 'lock-held') {
   console.log('PASS unverifiable rolling deployment lock evidence fail-stop');
   process.exit(0);
 }
+if (process.env.DIVA_ROLLING_TEST_ONLY === 'gateway-inventory') {
+  await testGatewayInventoryQueryFailureFailsClosed();
+  console.log('PASS gateway inventory unresolved Docker query fail-stop');
+  process.exit(0);
+}
+if (process.env.DIVA_ROLLING_TEST_ONLY === 'web-inventory') {
+  await testWebInventoryQueryFailureFailsClosed();
+  console.log('PASS Web inventory unresolved Docker query fail-stop');
+  process.exit(0);
+}
 
 const successful = await runScenario('success');
 assert.equal(successful.result.status, 0, JSON.stringify({
@@ -1847,17 +1906,8 @@ assertExactOldRollingIdentities(runtimeContractDrift);
 
 await testUnverifiableDeploymentLockFailsClosed();
 
-const webInventoryFailure = await runScenario('web-inventory', 'web_inventory');
-assert.notEqual(webInventoryFailure.result.status, 0);
-assert.match(webInventoryFailure.state, /inventory query failed while reading the image for vocadb_web/);
-assert.doesNotMatch(webInventoryFailure.dockerLog, /compose .* build /);
-assert.doesNotMatch(webInventoryFailure.dockerLog, /force-recreate web/);
-
-const gatewayInventoryFailure = await runScenario('gateway-inventory', 'gateway_inventory');
-assert.notEqual(gatewayInventoryFailure.result.status, 0);
-assert.match(gatewayInventoryFailure.state, /inventory query failed while reading the image for vocadb_api_gateway/);
-assert.doesNotMatch(gatewayInventoryFailure.dockerLog, /compose .* build /);
-assert.doesNotMatch(gatewayInventoryFailure.dockerLog, /force-recreate api_gateway/);
+await testWebInventoryQueryFailureFailsClosed();
+await testGatewayInventoryQueryFailureFailsClosed();
 
 const drainFailure = await runScenario('drain', 'drain');
 assert.notEqual(drainFailure.result.status, 0);
