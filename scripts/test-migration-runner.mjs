@@ -20,6 +20,7 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'
 const migrationsDir = path.join(repoRoot, 'backend', 'database', 'migrations');
 const manifestPath = path.join(migrationsDir, 'migration-manifest.tsv');
 const runnerPath = path.join(repoRoot, 'backend', 'database', 'migrate.sh');
+const songAlbumHarnessPath = path.join(repoRoot, 'scripts', 'test-song-album-normalization.sh');
 
 const manifestText = await readFile(manifestPath, 'utf8');
 const entries = manifestText.trimEnd().split('\n').map((line, index) => {
@@ -103,6 +104,30 @@ assert.match(
 assert.doesNotMatch(runtimeRoleAclReconciliation, /\bGRANT\b/);
 assert.match(runtimeRoleAclReconciliation, /has_table_privilege\(/);
 assert.match(runtimeRoleAclReconciliation, /has_sequence_privilege\(/);
+
+const songAlbumHarness = await readFile(songAlbumHarnessPath, 'utf8');
+assert.match(
+  songAlbumHarness,
+  /cp "\$repo_root\/backend\/database\/migrations\/"\*\.sql "\$migration_test_dir\/sql\/"/,
+);
+assert.match(
+  songAlbumHarness,
+  /cp "\$manifest" "\$migration_test_dir\/sql\/migration-manifest\.tsv"/,
+);
+assert.ok(
+  songAlbumHarness.indexOf('trap cleanup EXIT')
+    < songAlbumHarness.indexOf('cp "$repo_root/backend/database/migrations/"*.sql'),
+  'the temp-fixture cleanup trap must be armed before copying migrations',
+);
+assert.doesNotMatch(
+  songAlbumHarness,
+  /grep '\^0023_normalize_song_album_links\\\.sql\|'/,
+);
+assert.match(
+  songAlbumHarness,
+  /\[\[ "\$migration_test_dir" == "\$task_temp_dir\/diva-album-migrations-"\* \]\][\s\S]*rm -f -- "\$migration_test_dir\/sql\/"\*\.sql[\s\S]*rm -f -- "\$migration_test_dir\/sql\/migration-manifest\.tsv"[\s\S]*rmdir -- "\$migration_test_dir\/sql"[\s\S]*rmdir -- "\$migration_test_dir"/,
+);
+assert.doesNotMatch(songAlbumHarness, /rm -rf/);
 
 const runner = await readFile(runnerPath, 'utf8');
 assert.match(runner, /pg_try_advisory_lock\([\s\S]*diva-player-schema-migration-runner-v1/);

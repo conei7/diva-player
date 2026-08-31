@@ -25,9 +25,6 @@ lock_log="$(mktemp "$task_temp_dir/diva-album-migration-lock-XXXXXX.log")"
 lock_pid=""
 migration_test_dir="$(mktemp -d "$task_temp_dir/diva-album-migrations-XXXXXX")"
 mkdir "$migration_test_dir/sql"
-cp "$migration" "$migration_test_dir/sql/0023_normalize_song_album_links.sql"
-grep '^0023_normalize_song_album_links\.sql|' "$manifest" \
-  >"$migration_test_dir/sql/migration-manifest.tsv"
 
 cleanup() {
   if [[ -n "$lock_pid" ]]; then
@@ -54,13 +51,20 @@ ALTER DEFAULT PRIVILEGES REVOKE SELECT ON TABLES FROM pg_monitor;
 ALTER DEFAULT PRIVILEGES REVOKE EXECUTE ON FUNCTIONS FROM pg_monitor;
 DELETE FROM public.songs WHERE id BETWEEN 930000001 AND 930005004;
 SQL
-  rm -f -- "$migration_test_dir/sql/0023_normalize_song_album_links.sql"
-  rm -f -- "$migration_test_dir/sql/migration-manifest.tsv"
-  rmdir -- "$migration_test_dir/sql" 2>/dev/null || true
-  rmdir -- "$migration_test_dir" 2>/dev/null || true
+  if [[ "$migration_test_dir" == "$task_temp_dir/diva-album-migrations-"* ]]; then
+    rm -f -- "$migration_test_dir/sql/"*.sql
+    rm -f -- "$migration_test_dir/sql/migration-manifest.tsv"
+    rmdir -- "$migration_test_dir/sql" 2>/dev/null || true
+    rmdir -- "$migration_test_dir" 2>/dev/null || true
+  else
+    echo "refusing to remove unexpected migration fixture: $migration_test_dir" >&2
+  fi
   rm -f -- "$failure_log" "$lock_log"
 }
 trap cleanup EXIT
+
+cp "$repo_root/backend/database/migrations/"*.sql "$migration_test_dir/sql/"
+cp "$manifest" "$migration_test_dir/sql/migration-manifest.tsv"
 
 fail() {
   echo "song album normalization contract failed: $*" >&2
