@@ -219,6 +219,8 @@ def test_producer_token_file_contract(producer: object) -> None:
     assert len(calls) == 2
     install_command, install_input = calls[1]
     assert install_command[1:5] == ["exec", "-i", "--user", "1654"]
+    assert "printf '%s\\n'" in install_command[-1]
+    assert "printf '%s' " not in install_command[-1]
     assert "chmod 400" in install_command[-1]
     assert "= 400" in install_command[-1]
     assert "chmod 600" not in install_command[-1]

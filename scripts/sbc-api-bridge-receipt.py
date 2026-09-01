@@ -139,7 +139,7 @@ def install_token(docker: str, container: str, token: str) -> None:
     script = (
         "set -eu; umask 077; test ! -e '" + TOKEN_PATH + "'; "
         "IFS= read -r token; case \"$token\" in ''|*[!0-9a-f]* ) exit 2;; esac; "
-        "test \"${#token}\" -eq 64; printf '%s' \"$token\" > '" + TOKEN_PATH + "'; "
+        "test \"${#token}\" -eq 64; printf '%s\\n' \"$token\" > '" + TOKEN_PATH + "'; "
         "chmod 400 '" + TOKEN_PATH + "'; test \"$(stat -c '%a' '" + TOKEN_PATH + "')\" = 400"
     )
     run([docker, "exec", "-i", "--user", user, container, "/bin/sh", "-ec", script],
