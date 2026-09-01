@@ -175,6 +175,26 @@ assert.ok(
   'stateful hardener must freeze the exact image-scan validator SHA-256',
 );
 
+const productionPathContract = hardeningSource.slice(
+  hardeningSource.indexOf('else\n    if [ "${DIVA_DOCKER_COMMAND+x}"'),
+  hardeningSource.indexOf('    validate_trusted_system_directory()'),
+);
+assert.match(
+  productionPathContract,
+  /PIPELINE_ROOT=\$\(CDPATH= cd -- "\$ROOT_DIR\/\.\.\/diva-data-pipeline" && pwd -P\) \|\| \{/,
+  'production must resolve the pipeline repository to its physical canonical path',
+);
+assert.doesNotMatch(
+  productionPathContract,
+  /PIPELINE_ROOT="\$ROOT_DIR\/\.\.\/diva-data-pipeline"/,
+  'production must not pass a lexical parent-directory path to Git safe.directory',
+);
+assert.match(
+  productionPathContract,
+  /production pipeline repository path could not be canonicalized/,
+  'production must fail closed when the canonical pipeline repository is unavailable',
+);
+
 const trustedGitContract = hardeningSource.slice(
   hardeningSource.indexOf('trusted_git()'),
   hardeningSource.indexOf('verify_tracked_runtime_source()'),

@@ -92,7 +92,10 @@ else
         printf '%s\n' 'ERROR: production stateful hardening requires uid 0' >&2
         exit 1
     }
-    PIPELINE_ROOT="$ROOT_DIR/../diva-data-pipeline"
+    PIPELINE_ROOT=$(CDPATH= cd -- "$ROOT_DIR/../diva-data-pipeline" && pwd -P) || {
+        printf '%s\n' 'ERROR: production pipeline repository path could not be canonicalized' >&2
+        exit 1
+    }
     DOCKER_COMMAND=/usr/bin/docker
     CURL_COMMAND=/usr/bin/curl
     PYTHON_COMMAND=/usr/bin/python3
