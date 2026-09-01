@@ -189,7 +189,10 @@ assert.match(apiDockerfile, /aspnet:8\.0-alpine-extra@sha256:bfb8d74a4b0130c7e4a
 assert.match(apiDockerfile, /sdk:8\.0-alpine@sha256:8a80a27ddac789b4cb6d09d244f9c8d840da599c5ad22f7233c04be470e55261/);
 assert.match(gatewayDockerfile, /haproxy:3\.0-alpine@sha256:34cc7d1f6142464d7d2b73e2a1eef7392556dbf304160aef543e513cfd9e5162/);
 assert.doesNotMatch(webDockerfile, /apk upgrade/u);
-assert.match(webDockerfile, /apk add --no-cache[\s\S]*libcrypto3=3\.5\.8-r0[\s\S]*libssl3=3\.5\.8-r0/u);
+assert.match(
+  webDockerfile,
+  /apk add --no-cache[\s\S]*libcrypto3=3\.5\.8-r0[\s\S]*libssl3=3\.5\.8-r0[\s\S]*libexpat=2\.8\.4-r0/u,
+);
 assert.doesNotMatch(apiDockerfile, /apk upgrade/u);
 assert.match(apiDockerfile, /apk add --no-cache[\s\S]*libcrypto3=3\.5\.8-r0[\s\S]*libssl3=3\.5\.8-r0/u);
 assert.match(apiDockerfile, /test "\$\(dotnet --version\)" = "8\.0\.424"/u);
