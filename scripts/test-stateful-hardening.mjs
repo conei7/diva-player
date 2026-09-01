@@ -379,8 +379,23 @@ assert.match(qdrantDockerfileSource, /\[ "\$package_count" = "\$unique_package_c
 assert.match(qdrantDockerfileSource, /for binary_package in \$binary_packages; do/);
 
 const usrmergeDiversionContract = qdrantDockerfileSource.slice(
-  qdrantDockerfileSource.indexOf('diversion_directory=${queried_path%/*}'),
+  qdrantDockerfileSource.indexOf('diversion_package=$(printf'),
   qdrantDockerfileSource.indexOf('resolved_path=$(readlink -f "$queried_path")'),
+);
+assert.match(
+  qdrantDockerfileSource,
+  /\[ "\$ownership_lines" = 2 \]/,
+  'usrmerge diversion ownership must be one exact from/to pair',
+);
+assert.match(
+  usrmergeDiversionContract,
+  /diversion_binary_package=\$\{diversion_package%%:\*\}/,
+  'usrmerge diversion package must be normalized before allow-listing',
+);
+assert.match(
+  usrmergeDiversionContract,
+  /\[ "\$diversion_package" = "\$diversion_binary_package:\$diversion_architecture" \]/,
+  'usrmerge diversion package architecture must have one canonical separator',
 );
 assert.match(
   usrmergeDiversionContract,
@@ -399,8 +414,18 @@ assert.match(
 );
 assert.match(
   usrmergeDiversionContract,
-  /expected_diversion_path="\$diversion_directory\/\.\$diversion_basename\.usr-is-merged"/,
-  'usrmerge diversion must use Debian trixie\'s hidden sibling path',
+  /case "\$queried_path" in[\s\S]*\/lib\|\/lib64\)[\s\S]*expected_diversion_path="\/\.\$diversion_basename\.usr-is-merged"/u,
+  'top-level usrmerge links must use Debian trixie\'s leading-dot sibling',
+);
+assert.match(
+  usrmergeDiversionContract,
+  /\/lib\/\*\|\/lib64\/\*\)[\s\S]*case "\$diversion_directory" in \/lib\|\/lib64\)[\s\S]*expected_diversion_path="\$queried_path\.usr-is-merged"/u,
+  'direct legacy loader links must use Debian trixie\'s suffix sibling',
+);
+assert.match(
+  usrmergeDiversionContract,
+  /expected_diversion_package=base-files;[\s\S]*expected_diversion_package=libc6;/u,
+  'each usrmerge layout must retain its exact Debian package owner',
 );
 assert.equal(
   usrmergeDiversionContract.split('$expected_diversion_path').length - 1,
@@ -409,43 +434,48 @@ assert.equal(
 );
 assert.doesNotMatch(
   usrmergeDiversionContract,
-  /\$queried_path\.usr-is-merged/,
-  'the obsolete non-hidden usrmerge diversion path must not be accepted',
+  /expected_diversion_path="\$diversion_directory\/\.\$diversion_basename\.usr-is-merged"/,
+  'direct legacy links must not be mistaken for top-level leading-dot diversions',
 );
 
 const usrmergeResolvedTargetContract = qdrantDockerfileSource.slice(
-  qdrantDockerfileSource.indexOf('case "$queried_path" in /lib|/lib64)'),
+  qdrantDockerfileSource.indexOf('case "$diversion_object_type" in'),
   qdrantDockerfileSource.indexOf('      for binary_package in $binary_packages; do'),
 );
 assert.match(
   usrmergeResolvedTargetContract,
-  /case "\$queried_path" in \/lib\|\/lib64\) ;; \*\) exit 1 ;; esac/,
-  'usrmerge diversion handling must be limited to the two legacy top-level library links',
+  /directory\)[\s\S]*\[ "\$resolved_path" = "\/usr\$queried_path" \][\s\S]*\[ -d "\$resolved_path" \] && \[ ! -L "\$resolved_path" \]/u,
+  'top-level usrmerge links must resolve to the exact non-symlink /usr directory',
 );
 assert.match(
   usrmergeResolvedTargetContract,
-  /\[ "\$resolved_path" = "\/usr\$queried_path" \]/,
-  'usrmerge diversion must resolve to the corresponding /usr directory',
+  /file\)[\s\S]*normalized_legacy_path=\/usr\$queried_path;[\s\S]*\[ -L "\$queried_path" \] && \[ -L "\$normalized_legacy_path" \]/u,
+  'legacy loader diversion must retain both lexical symlink aliases',
 );
 assert.match(
   usrmergeResolvedTargetContract,
-  /\[ -d "\$resolved_path" \] && \[ ! -L "\$resolved_path" \]/,
-  'usrmerge diversion target must be a non-symlink directory',
+  /stat -c '%u:%g:%a:%h' "\$queried_path"\)" = '0:0:777:1'/,
+  'legacy loader source link metadata must be exact',
 );
 assert.match(
   usrmergeResolvedTargetContract,
-  /stat -c '%u:%g:%a' "\$resolved_path"\)" = '0:0:755'/,
-  'usrmerge diversion target must be an exact root-owned system directory',
+  /case "\$resolved_path" in \/usr\/lib\/\*\|\/usr\/lib64\/\*\) ;; \*\) exit 1 ;; esac/,
+  'legacy loader must canonically resolve below a system /usr library root',
 );
 assert.match(
   usrmergeResolvedTargetContract,
-  /\[ "\$binary_packages" = base-files \]/,
-  'usrmerge diversion and resolved target must be owned by base-files',
+  /\[ -f "\$resolved_path" \] && \[ ! -L "\$resolved_path" \][\s\S]*stat -c '%u:%g:%a:%h' "\$resolved_path"\)" = '0:0:755:1'/u,
+  'legacy loader must resolve to one exact root-owned executable file',
 );
-assert.doesNotMatch(
+assert.match(
   usrmergeResolvedTargetContract,
-  /\[ -f "\$resolved_path" \]/,
-  'usrmerge top-level library links must not require their directory target to be a file',
+  /awk -F ': ' -v expected_path="\$resolved_path"[\s\S]*NF != 2 \|\| \$2 != expected_path \{ exit 1 \}[\s\S]*\$1 !~ \/\^\[a-z0-9\]/u,
+  'resolved object owner must be parsed as one exact dpkg package/path record',
+);
+assert.match(
+  usrmergeResolvedTargetContract,
+  /binary_packages=\$diversion_binary_package;[\s\S]*\[ "\$\{resolved_package%%:\*\}" = "\$binary_packages" \]/u,
+  'diversion and resolved object must have the same binary package owner',
 );
 
 function deriveUsrmergeDiversion(queriedPath) {
@@ -458,26 +488,109 @@ function deriveUsrmergeDiversion(queriedPath) {
       'diversion_basename=${queried_path##*/}',
       '[ -n "$diversion_basename" ]',
       '[ "$diversion_directory/$diversion_basename" = "$queried_path" ]',
-      'printf "%s\\n" "$diversion_directory/.$diversion_basename.usr-is-merged"',
-    ].join('; '),
+      'case "$queried_path" in',
+      '  /lib|/lib64)',
+      '    [ -z "$diversion_directory" ]',
+      '    expected_diversion_path="/.$diversion_basename.usr-is-merged"',
+      '    expected_diversion_package=base-files',
+      '    diversion_object_type=directory',
+      '    ;;',
+      '  /lib/*|/lib64/*)',
+      '    case "$diversion_directory" in /lib|/lib64) ;; *) exit 1 ;; esac',
+      '    case "$diversion_basename" in [a-zA-Z0-9]*) ;; *) exit 1 ;; esac',
+      '    case "$diversion_basename" in *[!a-zA-Z0-9+._-]*) exit 1 ;; esac',
+      '    expected_diversion_path="$queried_path.usr-is-merged"',
+      '    expected_diversion_package=libc6',
+      '    diversion_object_type=file',
+      '    ;;',
+      '  *) exit 1 ;;',
+      'esac',
+      'printf "%s\\t%s\\t%s\\n" "$expected_diversion_path" "$expected_diversion_package" "$diversion_object_type"',
+    ].join('\n'),
     'qdrant-usrmerge-diversion',
     queriedPath,
   ], { encoding: 'utf8', windowsHide: true });
 }
 
-for (const [queriedPath, expectedDiversion] of [
-  ['/lib', '/.lib.usr-is-merged'],
-  ['/lib64', '/.lib64.usr-is-merged'],
+for (const [queriedPath, expectedContract] of [
+  ['/lib', '/.lib.usr-is-merged\tbase-files\tdirectory'],
+  ['/lib64', '/.lib64.usr-is-merged\tbase-files\tdirectory'],
+  [
+    '/lib/ld-linux-aarch64.so.1',
+    '/lib/ld-linux-aarch64.so.1.usr-is-merged\tlibc6\tfile',
+  ],
+  [
+    '/lib64/ld-linux-x86-64.so.2',
+    '/lib64/ld-linux-x86-64.so.2.usr-is-merged\tlibc6\tfile',
+  ],
 ]) {
   const derived = deriveUsrmergeDiversion(queriedPath);
   assert.equal(derived.status, 0, derived.stderr);
-  assert.equal(derived.stdout.trim(), expectedDiversion);
+  assert.equal(derived.stdout.trim(), expectedContract);
 }
-assert.notEqual(
-  deriveUsrmergeDiversion('lib64').status,
-  0,
-  'a relative dpkg diversion source path must be rejected',
+for (const malformedPath of [
+  'lib64',
+  '/usr/lib',
+  '/lib/',
+  '/lib/.hidden-loader',
+  '/lib/../ld-linux-aarch64.so.1',
+  '/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1',
+  '/lib/ld linux-aarch64.so.1',
+]) {
+  assert.notEqual(
+    deriveUsrmergeDiversion(malformedPath).status,
+    0,
+    `accepted malformed usrmerge diversion source: ${malformedPath}`,
+  );
+}
+
+const resolvedOwnerParserMatch = qdrantDockerfileSource.match(
+  /resolved_package=\$\(printf '%s\\n' "\$resolved_ownership" \\\r?\n\s*\| awk -F ': ' -v expected_path="\$resolved_path" ' \\\r?\n([\s\S]*?)'\); \\/u,
 );
+assert.ok(resolvedOwnerParserMatch, 'Qdrant resolved diversion owner parser was not found');
+const resolvedOwnerParserProgram = resolvedOwnerParserMatch[1].replace(/ \\\r?\n/g, '\n');
+
+function parseResolvedDpkgOwner(ownership, expectedPath) {
+  return spawnSync(bashCommand, [
+    '-c',
+    [
+      'set -e',
+      'ownership=$(cat)',
+      '[ "$(printf "%s\\n" "$ownership" | wc -l | tr -d "[:space:]")" = 1 ]',
+      'printf "%s\\n" "$ownership" | awk -F ": " -v expected_path="$1" "$2"',
+    ].join('\n'),
+    'qdrant-resolved-diversion-owner-parser',
+    expectedPath,
+    resolvedOwnerParserProgram,
+  ], {
+    input: ownership,
+    encoding: 'utf8',
+    windowsHide: true,
+  });
+}
+
+for (const [ownership, expectedPath, expectedPackage] of [
+  ['base-files: /usr/lib64\n', '/usr/lib64', 'base-files'],
+  [
+    'libc6:arm64: /usr/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1\n',
+    '/usr/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1',
+    'libc6:arm64',
+  ],
+]) {
+  const parsed = parseResolvedDpkgOwner(ownership, expectedPath);
+  assert.equal(parsed.status, 0, parsed.stderr);
+  assert.equal(parsed.stdout.trim(), expectedPackage);
+}
+for (const [ownership, expectedPath] of [
+  ['libc6:arm64: /usr/lib/not-the-loader\n', '/usr/lib/ld-linux-aarch64.so.1'],
+  ['libc6, base-files: /usr/lib64\n', '/usr/lib64'],
+  ['libc6:arm64: /usr/lib/loader\nbase-files: /usr/lib/loader\n', '/usr/lib/loader'],
+  ['Libc6:arm64: /usr/lib/loader\n', '/usr/lib/loader'],
+  ['libc6:arm64: /usr/lib/loader: forged\n', '/usr/lib/loader'],
+]) {
+  const parsed = parseResolvedDpkgOwner(ownership, expectedPath);
+  assert.notEqual(parsed.status, 0, `accepted malformed resolved ownership: ${ownership}`);
+}
 
 const ownerParserMatch = qdrantDockerfileSource.match(
   /\| awk -F ': ' -v expected_path="\$queried_path" ' \\\r?\n([\s\S]*?)'\); \\/,

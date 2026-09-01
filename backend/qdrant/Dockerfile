@@ -164,21 +164,59 @@ RUN set -eux; \
           | LC_ALL=C sort -u | wc -l | tr -d '[:space:]'); \
         [ "$package_count" = "$unique_package_count" ]; \
       else \
-        # Debian usrmerge represents a legacy top-level library link with one \
-        # exact base-files diversion pair.  Accept only /lib or /lib64, and \
-        # require its resolved /usr directory to have the same package owner. \
+        # Debian usrmerge represents both a legacy top-level library link and \
+        # its direct dynamic-loader link with one exact diversion pair.  The \
+        # two layouts use different hidden sibling names, object types, and \
+        # package owners; derive and verify every one of those properties. \
         [ "$ownership_lines" = 2 ]; \
-        case "$queried_path" in /lib|/lib64) ;; *) exit 1 ;; esac; \
         diversion_package=$(printf '%s\n' "$ownership" \
           | awk '/^diversion by [^ ]+ from: / { sub(/^diversion by /, ""); sub(/ from: .*/, ""); print }'); \
         diversion_to_package=$(printf '%s\n' "$ownership" \
           | awk '/^diversion by [^ ]+ to: / { sub(/^diversion by /, ""); sub(/ to: .*/, ""); print }'); \
         [ -n "$diversion_package" ] && [ "$diversion_to_package" = "$diversion_package" ]; \
+        diversion_binary_package=${diversion_package%%:*}; \
+        case "$diversion_binary_package" in \
+          [a-z0-9]*) ;; \
+          *) exit 1 ;; \
+        esac; \
+        case "$diversion_binary_package" in *[!a-z0-9+.-]*) exit 1 ;; esac; \
+        case "$diversion_package" in \
+          *:*) \
+            diversion_architecture=${diversion_package#*:}; \
+            case "$diversion_architecture" in \
+              [a-z0-9]*) ;; \
+              *) exit 1 ;; \
+            esac; \
+            case "$diversion_architecture" in *[!a-z0-9-]*) exit 1 ;; esac; \
+            [ "$diversion_package" = "$diversion_binary_package:$diversion_architecture" ]; \
+            ;; \
+          *) ;; \
+        esac; \
         diversion_directory=${queried_path%/*}; \
         diversion_basename=${queried_path##*/}; \
         [ -n "$diversion_basename" ] \
           && [ "$diversion_directory/$diversion_basename" = "$queried_path" ]; \
-        expected_diversion_path="$diversion_directory/.$diversion_basename.usr-is-merged"; \
+        case "$queried_path" in \
+          /lib|/lib64) \
+            [ -z "$diversion_directory" ]; \
+            expected_diversion_path="/.$diversion_basename.usr-is-merged"; \
+            expected_diversion_package=base-files; \
+            diversion_object_type=directory; \
+            ;; \
+          /lib/*|/lib64/*) \
+            case "$diversion_directory" in /lib|/lib64) ;; *) exit 1 ;; esac; \
+            case "$diversion_basename" in \
+              [a-zA-Z0-9]*) ;; \
+              *) exit 1 ;; \
+            esac; \
+            case "$diversion_basename" in *[!a-zA-Z0-9+._-]*) exit 1 ;; esac; \
+            expected_diversion_path="$queried_path.usr-is-merged"; \
+            expected_diversion_package=libc6; \
+            diversion_object_type=file; \
+            ;; \
+          *) exit 1 ;; \
+        esac; \
+        [ "$diversion_binary_package" = "$expected_diversion_package" ]; \
         [ "$(printf '%s\n' "$ownership" | grep -Fxc \
           "diversion by $diversion_package from: $queried_path")" = 1 ]; \
         [ "$(printf '%s\n' "$ownership" | grep -Fxc \
@@ -188,16 +226,34 @@ RUN set -eux; \
         [ "$divert_owner" = "$diversion_package" ]; \
         [ "$divert_truename" = "$expected_diversion_path" ]; \
         resolved_path=$(readlink -f "$queried_path"); \
-        [ "$resolved_path" = "/usr$queried_path" ]; \
-        [ -d "$resolved_path" ] && [ ! -L "$resolved_path" ]; \
-        [ "$(stat -c '%u:%g:%a' "$resolved_path")" = '0:0:755' ]; \
+        case "$diversion_object_type" in \
+          directory) \
+            [ "$resolved_path" = "/usr$queried_path" ]; \
+            [ -d "$resolved_path" ] && [ ! -L "$resolved_path" ]; \
+            [ "$(stat -c '%u:%g:%a' "$resolved_path")" = '0:0:755' ]; \
+            ;; \
+          file) \
+            normalized_legacy_path=/usr$queried_path; \
+            [ -L "$queried_path" ] && [ -L "$normalized_legacy_path" ]; \
+            [ "$(stat -c '%u:%g:%a:%h' "$queried_path")" = '0:0:777:1' ]; \
+            [ "$(stat -c '%u:%g:%a:%h' "$normalized_legacy_path")" = '0:0:777:1' ]; \
+            [ "$(readlink "$queried_path")" = "$(readlink "$normalized_legacy_path")" ]; \
+            [ "$(readlink -f "$normalized_legacy_path")" = "$resolved_path" ]; \
+            case "$resolved_path" in /usr/lib/*|/usr/lib64/*) ;; *) exit 1 ;; esac; \
+            [ -f "$resolved_path" ] && [ ! -L "$resolved_path" ]; \
+            [ "$(stat -c '%u:%g:%a:%h' "$resolved_path")" = '0:0:755:1' ]; \
+            ;; \
+          *) exit 1 ;; \
+        esac; \
         resolved_ownership=$(dpkg-query -S -- "$resolved_path" 2>/dev/null); \
         [ "$(printf '%s\n' "$resolved_ownership" | wc -l | tr -d '[:space:]')" = 1 ]; \
-        resolved_package=$(printf '%s\n' "$resolved_ownership" | awk -F ': ' 'NF == 2 { print $1 }'); \
-        resolved_owned_path=$(printf '%s\n' "$resolved_ownership" | awk -F ': ' 'NF == 2 { print $2 }'); \
-        [ -n "$resolved_package" ] && [ "$resolved_owned_path" = "$resolved_path" ]; \
-        binary_packages=${diversion_package%%:*}; \
-        [ "$binary_packages" = base-files ]; \
+        resolved_package=$(printf '%s\n' "$resolved_ownership" \
+          | awk -F ': ' -v expected_path="$resolved_path" ' \
+              NF != 2 || $2 != expected_path { exit 1 } \
+              $1 !~ /^[a-z0-9][a-z0-9+.-]*(:[a-z0-9][a-z0-9-]*)?$/ { exit 1 } \
+              { print $1 }'); \
+        [ -n "$resolved_package" ]; \
+        binary_packages=$diversion_binary_package; \
         [ "${resolved_package%%:*}" = "$binary_packages" ]; \
       fi; \
       for binary_package in $binary_packages; do \
