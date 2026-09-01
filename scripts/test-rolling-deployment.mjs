@@ -320,7 +320,7 @@ if [ "$1" = "inspect" ]; then
                 running=$(read_value "$containers/$container.running" true)
                 image=$(read_value "$containers/$container.image" unknown)
                 config_hash=$(read_value "$containers/$container.config_hash" unknown-config)
-                printf '%s|/%s|%s|2026-08-28T09:51:08.000000000Z|0|%s|[]|%s\n' \
+                printf '%s|/%s|%s|2026-08-28T09:51:08.000000000Z|0|%s|%s\n' \
                     "$value" "$container" "$running" "$image" "$config_hash"
             done
             exit 0
@@ -349,6 +349,7 @@ if [ "$1" = "inspect" ]; then
         *HostConfig.CapDrop*) printf '%s\n' '["ALL"]' ;;
         *HostConfig.SecurityOpt*) printf '%s\n' '["no-new-privileges=true"]' ;;
         *HostConfig.Tmpfs*) printf '%s\n' 'size=16m,mode=1777' ;;
+        *'.Mounts'*) printf '%s\n' '[]' ;;
         *'com.diva.role'*) read_value "$containers/$container.role" "" ;;
         *'com.diva.deployment'*) read_value "$containers/$container.deployment" "" ;;
         *Config.Cmd*) read_value "$containers/$container.command" '[]' ;;
@@ -1840,7 +1841,15 @@ function testBridgeTrivyAndExactImageContract() {
   );
   assert.match(
     deploymentSource,
-    /capture_bridge_stateful_runtime_snapshot\(\)[\s\S]*\.State\.StartedAt[\s\S]*\.RestartCount[\s\S]*json \.Mounts[\s\S]*com\.docker\.compose\.config-hash/u,
+    /capture_bridge_stateful_runtime_snapshot\(\)[\s\S]*\.State\.StartedAt[\s\S]*\.RestartCount[\s\S]*com\.docker\.compose\.config-hash/u,
+  );
+  assert.match(
+    deploymentSource,
+    /canonicalize_bridge_mounts_json\(\)[\s\S]*json\.load\(sys\.stdin\)[\s\S]*encoded = sorted[\s\S]*sort_keys=True[\s\S]*capture_bridge_stateful_mounts_snapshot/u,
+  );
+  assert.match(
+    deploymentSource,
+    /BRIDGE_STATEFUL_MOUNTS_SNAPSHOT=\$\(printf[\s\S]*BRIDGE_QDRANT_MOUNTS_JSON[\s\S]*mounts_snapshot=.*capture_bridge_stateful_mounts_snapshot[\s\S]*mounts-snapshot-changed/u,
   );
   assert.match(
     deploymentSource,
