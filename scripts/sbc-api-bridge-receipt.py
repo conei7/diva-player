@@ -71,10 +71,20 @@ def file_sha(path: Path) -> str:
 
 def run(command: list[str], *, stdin: bytes | None = None,
         check: bool = True, timeout: int = 60) -> bytes:
-    result = subprocess.run(
-        command, input=stdin, stdin=subprocess.PIPE if stdin is not None else subprocess.DEVNULL,
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False, timeout=timeout,
-    )
+    options: dict[str, object] = {
+        "stdout": subprocess.PIPE,
+        "stderr": subprocess.PIPE,
+        "check": False,
+        "timeout": timeout,
+    }
+    if stdin is None:
+        options["stdin"] = subprocess.DEVNULL
+    else:
+        # subprocess.run wires input= to a pipe itself. Passing stdin=PIPE as
+        # well raises ValueError before Docker is invoked, so these options
+        # must remain mutually exclusive.
+        options["input"] = stdin
+    result = subprocess.run(command, **options)
     if check and result.returncode != 0:
         raise RuntimeError(
             f"command failed ({result.returncode}): {command!r}: "

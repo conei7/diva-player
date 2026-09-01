@@ -160,6 +160,20 @@ def require_runtime_failure(action, label: str) -> None:
     raise AssertionError(f"unsafe live publication matrix was accepted: {label}")
 
 
+def test_producer_command_input(producer: object) -> None:
+    payload = b"bridge-live-probe-token\n"
+    echoed = producer.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys; sys.stdout.buffer.write(sys.stdin.buffer.read())",
+        ],
+        stdin=payload,
+        timeout=15,
+    )
+    assert echoed == payload
+
+
 def test_live_publication_binding(producer: object) -> None:
     seed = 3022
     generation = f"{'a' * 64}:{'b' * 32}"
@@ -454,6 +468,7 @@ def convert_sbc_fixture_to_stateless_schema2(
 def main() -> int:
     helper = load_helper()
     producer = load_producer()
+    test_producer_command_input(producer)
     test_live_publication_binding(producer)
     with tempfile.TemporaryDirectory(prefix="diva-wsl-dr-api-bridge-receipt.") as temporary:
         root = Path(temporary)
