@@ -39,6 +39,12 @@ def runtime_projection(item: dict[str, Any]) -> dict[str, Any]:
     config.pop("Hostname", None)
     config.pop("Domainname", None)
     config.pop("Labels", None)
+    # A frozen Compose candidate preserves the reviewed tag in Config.Image,
+    # while the exact manual replacement records the equivalent immutable
+    # image ID.  Top-level Image and Config.Image are both verified explicitly
+    # for the published container, so the reference spelling is not runtime
+    # configuration and must not split otherwise identical fingerprints.
+    config.pop("Image", None)
     environment = config.get("Env")
     if not isinstance(environment, list) or not all(
         isinstance(value, str) for value in environment

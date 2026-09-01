@@ -45,6 +45,8 @@ def inspect_document(service: str, *, published: bool = True) -> dict:
         "api_gateway": "diva-player-api-gateway:local",
         "web": "diva-player-web:local",
     }[service]
+    if published:
+        reference = IMAGE_ID
     health_command = (
         "wget -q -O /dev/null http://127.0.0.1:8080/backend-api/api/ready"
         if service == "web"
@@ -134,7 +136,7 @@ class RuntimeContractTests(unittest.TestCase):
             document,
             service=service,
             expected_id=CONTAINER_ID,
-            expected_reference=document["Config"]["Image"],
+            expected_reference=IMAGE_ID,
             expected_image_id=IMAGE_ID,
             expected_config_hash=f"{service}-config",
             environment_path=str(environment),
@@ -185,6 +187,9 @@ class RuntimeContractTests(unittest.TestCase):
     def test_security_and_runtime_drift_is_rejected(self) -> None:
         mutations = {
             "environment": lambda value: value["Config"].__setitem__("Env", ["DIVA_SLOT=tampered"]),
+            "image-reference": lambda value: value["Config"].__setitem__(
+                "Image", "diva-player-api:mutable"
+            ),
             "health-form": lambda value: value["Config"]["Healthcheck"].__setitem__(
                 "Test", ["CMD", "curl", "-f", "http://127.0.0.1:5000/api/ready"]
             ),
