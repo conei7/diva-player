@@ -417,6 +417,7 @@ function deriveUsrmergeDiversion(queriedPath) {
   return spawnSync(bashCommand, [
     '-c',
     [
+      'set -e',
       'queried_path="$1"',
       'diversion_directory=${queried_path%/*}',
       'diversion_basename=${queried_path##*/}',
