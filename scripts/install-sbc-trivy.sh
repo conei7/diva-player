@@ -29,9 +29,44 @@ verify_aarch64_elf() {
     [ "$1:$2:$3:$4" = "02:00:b7:00" ]
 }
 
+verify_binary_file_contract() {
+    path="$1"
+    expected_sha="$2"
+    expected_metadata="$3"
+    verify_aarch64_elf "$path" "$expected_sha" || return 1
+    [ "$(/usr/bin/stat -c '%u:%g:%a:%h' "$path")" = "$expected_metadata" ]
+}
+
+publish_staged_binary() {
+    staged_path="$1"
+    target_path="$2"
+    target_directory="$3"
+    [ -f "$staged_path" ] && [ ! -L "$staged_path" ] || return 1
+    [ ! -e "$target_path" ] && [ ! -L "$target_path" ] || return 1
+    # Same-filesystem hard-link publication is atomic and refuses a target
+    # created by a concurrent installer instead of overwriting it.
+    /usr/bin/ln -- "$staged_path" "$target_path" || return 1
+    /usr/bin/sync -f "$target_path" || return 1
+    /usr/bin/rm -f -- "$staged_path" || return 1
+    /usr/bin/sync -f "$target_directory"
+}
+
 if [ "$TEST_MODE" = 1 ]; then
-    [ "$#" -eq 3 ] && [ "$1" = --test-verify-elf ] || exit 64
-    verify_aarch64_elf "$2" "$3"
+    case "${1:-}" in
+        --test-verify-elf)
+            [ "$#" -eq 3 ] || exit 64
+            verify_aarch64_elf "$2" "$3"
+            ;;
+        --test-verify-file-contract)
+            [ "$#" -eq 4 ] || exit 64
+            verify_binary_file_contract "$2" "$3" "$4"
+            ;;
+        --test-publish)
+            [ "$#" -eq 4 ] || exit 64
+            publish_staged_binary "$2" "$3" "$4"
+            ;;
+        *) exit 64 ;;
+    esac
     exit $?
 fi
 [ "$TEST_MODE" = 0 ] || {
@@ -73,8 +108,8 @@ ensure_install_directory() {
 }
 
 verify_installed_binary() {
-    verify_aarch64_elf "$INSTALL_PATH" "$TRIVY_BINARY_SHA256" || return 1
-    [ "$(/usr/bin/stat -c '%u:%g:%a' "$INSTALL_PATH")" = 0:0:555 ] || return 1
+    verify_binary_file_contract "$INSTALL_PATH" "$TRIVY_BINARY_SHA256" \
+        0:0:555:1 || return 1
     version_output=$(/usr/bin/env -i HOME=/var/empty PATH=/usr/bin:/bin \
         "$INSTALL_PATH" --version) || return 1
     printf '%s\n' "$version_output" | /usr/bin/grep -Fx \
@@ -158,13 +193,9 @@ printf '%s\n' "$version_output" | /usr/bin/grep -Fx \
 
 /usr/bin/install --owner=0 --group=0 --mode=0555 -- "$extract/trivy" "$staged"
 /usr/bin/sync -f "$staged"
-# Hard-link publication is same-filesystem, atomic, and refuses an existing
-# destination.  This prevents an installer race from overwriting any target.
-/usr/bin/ln -- "$staged" "$INSTALL_PATH"
-/usr/bin/sync -f "$INSTALL_PATH"
-/usr/bin/rm -f -- "$staged"
+verify_binary_file_contract "$staged" "$TRIVY_BINARY_SHA256" 0:0:555:1
+publish_staged_binary "$staged" "$INSTALL_PATH" "$INSTALL_DIR"
 staged=
-/usr/bin/sync -f "$INSTALL_DIR"
 verify_installed_binary || {
     printf '%s\n' 'ERROR: published Trivy ARM64 binary failed final verification' >&2
     exit 1

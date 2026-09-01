@@ -271,8 +271,12 @@ jobs:
           fi
       - name: Test API
         run: dotnet test backend/api/VocadbRecommender.Tests/VocadbRecommender.Tests.csproj --configuration Release --no-restore
+      - name: Backup payload attester trustee policy
+        run: python -B scripts/test-attest-disaster-backup-payloads.py
       - name: Deployment topology contract
         run: npm run test:deployment-topology
+      - name: SBC Trivy installer contract
+        run: npm run test:sbc-trivy-installer
       - name: Primary-only public topology contract
         run: npm run test:primary-topology
       - name: Transactional rolling deployment failures
@@ -977,7 +981,13 @@ jobs:
       - name: Verify preview root, ready, health, and origin headers
         env:
           PREVIEW_URL: ${{ steps.preview_deployment.outputs.preview_url }}
-        run: npm run check:public-primary-health -- --base-url "$PREVIEW_URL" --timeout-ms 15000 --interval-ms 5000
+        run: |
+          if npm run check:public-primary-health -- --base-url "$PREVIEW_URL" --timeout-ms 15000 --interval-ms 5000; then
+            exit 0
+          fi
+          echo 'Preview edge routes are not converged yet; retrying the complete health contract once after 30 seconds.' >&2
+          sleep 30
+          npm run check:public-primary-health -- --base-url "$PREVIEW_URL" --timeout-ms 15000 --interval-ms 5000
       - name: Verify preview Nico autoplay smoke
         env:
           PREVIEW_URL: ${{ steps.preview_deployment.outputs.preview_url }}

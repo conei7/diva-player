@@ -16,7 +16,7 @@ import stat
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import AbstractSet, Any
 
 
 SCHEMA_VERSION = 1
@@ -24,6 +24,7 @@ REPARSE_POINT = 0x400
 CHUNK_SIZE = 8 * 1024 * 1024
 WINDOWS_SYSTEM_SID = "S-1-5-18"
 WINDOWS_ADMINISTRATORS_SID = "S-1-5-32-544"
+WINDOWS_OWNER_RIGHTS_SID = "S-1-3-4"
 WINDOWS_TRUSTED_INSTALLER_SID = (
     "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464"
 )
@@ -202,6 +203,8 @@ def _normalize_allowed_writer_sid(value: str) -> str:
     sid = value.strip().upper()
     if not re.fullmatch(r"S-[0-9]+(?:-[0-9]+)+", sid):
         raise RuntimeError(f"Allowed writer SID is malformed: {value!r}")
+    if sid.startswith("S-1-3-"):
+        raise RuntimeError(f"Allowed writer SID names a dynamic principal: {sid}")
     if sid in WINDOWS_BROAD_PRINCIPAL_SIDS:
         raise RuntimeError(f"Allowed writer SID names a broad principal: {sid}")
     if sid in {
@@ -233,6 +236,33 @@ def _normalize_allowed_writer_sid(value: str) -> str:
         finally:
             kernel32.LocalFree(native_sid)
     return sid
+
+
+def _windows_owner_is_trusted(
+    owner_sid: str,
+    trusted_sids: AbstractSet[str],
+) -> bool:
+    if owner_sid.startswith("S-1-3-"):
+        return False
+    return owner_sid in trusted_sids
+
+
+def _windows_grantee_is_trusted(
+    grantee_sid: str,
+    *,
+    owner_sid: str,
+    trusted_sids: AbstractSet[str],
+) -> bool:
+    # OWNER RIGHTS is a dynamic trustee for this object's actual owner.  It is
+    # safe only after that owner has passed the same explicit trusted-owner
+    # policy as every other managed backup path.  Other S-1-3-* creator or
+    # dynamic trustees must never become trusted merely by entering a caller's
+    # allow-list because they do not identify a stable account.
+    if grantee_sid == WINDOWS_OWNER_RIGHTS_SID:
+        return _windows_owner_is_trusted(owner_sid, trusted_sids)
+    if grantee_sid.startswith("S-1-3-"):
+        return False
+    return grantee_sid in trusted_sids
 
 
 def _windows_security_descriptor(
@@ -321,7 +351,8 @@ def _windows_security_descriptor(
     }
     if include_allowed_writers:
         trusted_sids.update(WINDOWS_ALLOWED_WRITER_SIDS)
-    if (reject_broad_access or reject_untrusted_writes) and owner_sid not in trusted_sids:
+    owner_is_trusted = _windows_owner_is_trusted(owner_sid, trusted_sids)
+    if (reject_broad_access or reject_untrusted_writes) and not owner_is_trusted:
         raise RuntimeError(f"Windows backup path has an unexpected owner {owner_sid}: {path}")
 
     dacl_present = wintypes.BOOL()
@@ -386,15 +417,24 @@ def _windows_security_descriptor(
             # inheritance template on its parent.
             if ace_flags & 0x08:  # INHERIT_ONLY_ACE
                 continue
-            if sid not in trusted_sids and reject_broad_access:
+            grantee_is_trusted = _windows_grantee_is_trusted(
+                sid,
+                owner_sid=owner_sid,
+                trusted_sids=trusted_sids,
+            )
+            if not grantee_is_trusted and reject_broad_access:
                 raise RuntimeError(
                     f"Windows backup path grants access to a broad or unexpected principal {sid}: {path}"
                 )
-            if sid not in trusted_sids and reject_untrusted_writes and access_mask & write_mask:
+            if (
+                not grantee_is_trusted
+                and reject_untrusted_writes
+                and access_mask & write_mask
+            ):
                 raise RuntimeError(
                     f"Windows trusted path grants write access to an unexpected principal {sid}: {path}"
                 )
-            if sid in trusted_sids:
+            if grantee_is_trusted:
                 trusted_allow_count += 1
         if reject_broad_access and trusted_allow_count <= 0:
             raise RuntimeError(f"Windows backup path DACL has no trusted allow entry: {path}")

@@ -110,6 +110,7 @@ async function main() {
   await run('dotnet', ['test', 'backend/api/VocadbRecommender.Tests/VocadbRecommender.Tests.csproj', '--configuration', 'Release', '--no-restore'], { label: 'Test API', env: dotnetEnvironment });
   await npmScripts([
     'test:deployment-topology',
+    'test:sbc-trivy-installer',
     'test:primary-topology',
     'test:rolling-deployment',
     'test:stateful-hardening',
@@ -117,6 +118,7 @@ async function main() {
   ]);
   const python = resolvePython();
   const pythonContracts = [
+    ['scripts/test-attest-disaster-backup-payloads.py', 'Backup payload attester trustee policy'],
     ['scripts/test-container-image-scan-validator.py', 'Container image scan receipt contract'],
     ['scripts/test-postgres-container-images.py', 'PostgreSQL container image contract'],
     ['scripts/test-sbc-runtime-contract.py', 'Python SBC runtime contract'],
