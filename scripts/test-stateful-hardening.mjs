@@ -424,7 +424,7 @@ for (const [label, contract, expectedActivityChecks] of [
   assert.match(
     contract,
     /pg_has_role\([^)]*'diva_pipeline_runtime', 'MEMBER'/,
-    `${label} gate SQL does not inspect transitive runtime-role membership`,
+    `${label} gate SQL does not validate effective runtime-role membership`,
   );
   const activityChecks = [...contract.matchAll(/FROM pg_stat_activity AS activity/g)].length;
   assert.equal(
@@ -436,6 +436,13 @@ for (const [label, contract, expectedActivityChecks] of [
     [...contract.matchAll(/activity\.backend_type = 'client backend'/g)].length,
     activityChecks,
     `${label} gate SQL must exclude PostgreSQL auxiliary processes`,
+  );
+  assert.equal(
+    [...contract.matchAll(
+      /JOIN pg_roles AS parent_role ON parent_role\.oid = membership\.roleid/g,
+    )].length,
+    activityChecks,
+    `${label} gate SQL must identify sessions by direct pipeline-role membership`,
   );
 }
 assert.match(gateAcquireContract, /count\(\*\) = \(\s*SELECT count\(\*\)[\s\S]*pg_has_role/);

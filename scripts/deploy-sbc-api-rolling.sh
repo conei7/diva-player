@@ -417,6 +417,8 @@ BRIDGE_PUBLICATION_WRITER_BARRIER_ACTIVE=false
 BRIDGE_PUBLICATION_WRITER_BARRIER_UNRESOLVED=false
 BRIDGE_PUBLICATION_WRITER_BARRIER_PID=""
 BRIDGE_PUBLICATION_WRITER_BARRIER_FD_OPEN=false
+BRIDGE_PUBLICATION_WRITER_BARRIER_REFUSAL_RETRYABLE=false
+BRIDGE_PUBLICATION_WRITER_BARRIER_REFUSAL_REASON=""
 BRIDGE_QDRANT_ID=""
 BRIDGE_POSTGRES_ID=""
 BRIDGE_QDRANT_IMAGE_ID=""
@@ -5799,7 +5801,13 @@ SELECT
         JOIN pg_roles AS role ON role.rolname = activity.usename
         WHERE activity.pid <> pg_backend_pid()
           AND activity.backend_type = 'client backend'
-          AND pg_has_role(role.oid, 'diva_pipeline_runtime', 'MEMBER'))::text
+          AND EXISTS (
+              SELECT 1
+              FROM pg_auth_members AS membership
+              JOIN pg_roles AS parent_role ON parent_role.oid = membership.roleid
+              WHERE membership.member = role.oid
+                AND parent_role.rolname = 'diva_pipeline_runtime'
+          ))::text
 FROM locks;
 SQL
     ) || return 1
@@ -5807,7 +5815,11 @@ SQL
 }
 
 settle_bridge_publication_writer_barrier_refusal() {
-    local process_status=0 barrier_exit actual_result observed
+    local process_status=0 barrier_exit actual_result observed saved_ifs
+    local pipeline_lock child_lock recommendation_lock pipeline_marker
+    local recommendation_marker maintenance_gate login_roles runtime_clients
+    BRIDGE_PUBLICATION_WRITER_BARRIER_REFUSAL_RETRYABLE=false
+    BRIDGE_PUBLICATION_WRITER_BARRIER_REFUSAL_REASON=""
     [ "$BRIDGE_PUBLICATION_WRITER_BARRIER_ACTIVE" = "true" ] \
         && [ "$BRIDGE_PUBLICATION_WRITER_BARRIER_FD_OPEN" = "true" ] \
         && [ -n "$BRIDGE_PUBLICATION_WRITER_BARRIER_PID" ] \
@@ -5817,8 +5829,37 @@ settle_bridge_publication_writer_barrier_refusal() {
     wait "$BRIDGE_PUBLICATION_WRITER_BARRIER_PID" || process_status=$?
     barrier_exit=$(cat "$BRIDGE_PUBLICATION_WRITER_BARRIER_EXIT") || return 1
     actual_result=$(cat "$BRIDGE_PUBLICATION_WRITER_BARRIER_RESULT") || return 1
+    [ ! -s "$BRIDGE_PUBLICATION_WRITER_BARRIER_ERROR" ] || return 1
     [ "$process_status" -eq 0 ] && [ "$barrier_exit" = 0 ] \
-        && [ "$actual_result" = refused ] || return 1
+        || return 1
+    saved_ifs=$IFS
+    IFS='|'
+    set -- $actual_result
+    IFS=$saved_ifs
+    [ "$#" -eq 9 ] && [ "$1" = refused ] || return 1
+    pipeline_lock=${2#pl=}
+    child_lock=${3#cl=}
+    recommendation_lock=${4#rl=}
+    pipeline_marker=${5#pm=}
+    recommendation_marker=${6#rm=}
+    maintenance_gate=${7#mg=}
+    login_roles=${8#lr=}
+    runtime_clients=${9#rc=}
+    [ "$2" = "pl=$pipeline_lock" ] && [ "$3" = "cl=$child_lock" ] \
+        && [ "$4" = "rl=$recommendation_lock" ] \
+        && [ "$5" = "pm=$pipeline_marker" ] \
+        && [ "$6" = "rm=$recommendation_marker" ] \
+        && [ "$7" = "mg=$maintenance_gate" ] \
+        && [ "$8" = "lr=$login_roles" ] \
+        && [ "$9" = "rc=$runtime_clients" ] || return 1
+    for lock_result in "$pipeline_lock" "$child_lock" "$recommendation_lock"; do
+        case "$lock_result" in true|false) ;; *) return 1 ;; esac
+    done
+    for marker_count in "$pipeline_marker" "$recommendation_marker" \
+        "$maintenance_gate" "$login_roles"; do
+        case "$marker_count" in 0|1) ;; *) return 1 ;; esac
+    done
+    case "$runtime_clients" in ''|*[!0-9]*) return 1 ;; esac
     # A busy writer or a pre-existing maintenance gate is a clean refusal, not
     # an ambiguous mutation. Prove that this deployment owns neither its token
     # nor a still-live lock session before clearing the in-memory barrier state.
@@ -5836,17 +5877,33 @@ SELECT CASE WHEN EXISTS (
 SQL
     ) || return 1
     [ "$observed" = "not-owned|0" ] || return 1
+    BRIDGE_PUBLICATION_WRITER_BARRIER_REFUSAL_REASON="$actual_result"
+    record_state bridge.publication_writer_barrier \
+        "refused-busy:$BRIDGE_PUBLICATION_WRITER_BARRIER_TOKEN:$actual_result" \
+        || return 1
+    rm -f -- "$BRIDGE_PUBLICATION_WRITER_BARRIER_FIFO" \
+        "$BRIDGE_PUBLICATION_WRITER_BARRIER_RESULT" \
+        "$BRIDGE_PUBLICATION_WRITER_BARRIER_ERROR" \
+        "$BRIDGE_PUBLICATION_WRITER_BARRIER_EXIT" || return 1
+    "$SYNC_COMMAND" -f "$PRIVATE_RUNTIME_ROOT" 2>/dev/null || "$SYNC_COMMAND" || return 1
+    "$SYNC_COMMAND" -f "$DEPLOYMENT_DIR" 2>/dev/null || "$SYNC_COMMAND" || return 1
     BRIDGE_PUBLICATION_WRITER_BARRIER_ACTIVE=false
     BRIDGE_PUBLICATION_WRITER_BARRIER_UNRESOLVED=false
     BRIDGE_PUBLICATION_WRITER_BARRIER_PID=""
-    rm -f -- "$BRIDGE_PUBLICATION_WRITER_BARRIER_FIFO" || return 1
-    "$SYNC_COMMAND" -f "$PRIVATE_RUNTIME_ROOT" 2>/dev/null || "$SYNC_COMMAND" || return 1
-    record_state bridge.publication_writer_barrier \
-        "refused-busy:$BRIDGE_PUBLICATION_WRITER_BARRIER_TOKEN"
+    if [ "$maintenance_gate" = 0 ] && [ "$login_roles" = 0 ] \
+        && { [ "$pipeline_lock" = false ] || [ "$child_lock" = false ] \
+            || [ "$recommendation_lock" = false ] \
+            || [ "$pipeline_marker" = 1 ] \
+            || [ "$recommendation_marker" = 1 ] \
+            || [ "$runtime_clients" -gt 0 ]; }; then
+        BRIDGE_PUBLICATION_WRITER_BARRIER_REFUSAL_RETRYABLE=true
+    fi
 }
 
 acquire_bridge_publication_writer_barrier() {
     local expected_owner attempts=0
+    BRIDGE_PUBLICATION_WRITER_BARRIER_REFUSAL_RETRYABLE=false
+    BRIDGE_PUBLICATION_WRITER_BARRIER_REFUSAL_REASON=""
     [ "$BRIDGE_PUBLICATION_WRITER_BARRIER_ACTIVE" = "false" ] \
         && [ "$BRIDGE_PUBLICATION_WRITER_BARRIER_UNRESOLVED" = "false" ] \
         && [ "$BRIDGE_PUBLICATION_WRITER_BARRIER_FD_OPEN" = "false" ] \
@@ -5924,7 +5981,6 @@ PY
     exec 9> "$BRIDGE_PUBLICATION_WRITER_BARRIER_FIFO" || return 1
     BRIDGE_PUBLICATION_WRITER_BARRIER_FD_OPEN=true
     cat >&9 <<'SQL'
-\set inserted_gate ''
 BEGIN;
 WITH locks AS MATERIALIZED (
     SELECT
@@ -5934,32 +5990,43 @@ WITH locks AS MATERIALIZED (
 )
 SELECT pipeline, child, publication FROM locks
 \gset
-WITH idle AS MATERIALIZED (
+WITH blocker_state AS MATERIALIZED (
     SELECT
-        NOT EXISTS (SELECT 1 FROM sync_state WHERE key IN (
-            'diva_pipeline_lock_owner',
-            'recommendation_publication_in_progress',
-            'diva_stateful_maintenance_gate',
-            'diva_stateful_maintenance_login_roles'
-        ))
-        AND NOT EXISTS (
-            SELECT 1
-            FROM pg_stat_activity AS activity
-            JOIN pg_roles AS role ON role.rolname = activity.usename
-            WHERE activity.pid <> pg_backend_pid()
-              AND activity.backend_type = 'client backend'
-              AND pg_has_role(role.oid, 'diva_pipeline_runtime', 'MEMBER')
-        ) AS state_idle
+        count(*) FILTER (WHERE key = 'diva_pipeline_lock_owner') AS pipeline_marker,
+        count(*) FILTER (WHERE key = 'recommendation_publication_in_progress') AS recommendation_marker,
+        count(*) FILTER (WHERE key = 'diva_stateful_maintenance_gate') AS maintenance_gate,
+        count(*) FILTER (WHERE key = 'diva_stateful_maintenance_login_roles') AS login_roles
+    FROM sync_state
+), runtime_state AS MATERIALIZED (
+    SELECT count(*) AS runtime_clients
+    FROM pg_stat_activity AS activity
+    JOIN pg_roles AS role ON role.rolname = activity.usename
+    WHERE activity.pid <> pg_backend_pid()
+      AND activity.backend_type = 'client backend'
+      AND EXISTS (
+          SELECT 1
+          FROM pg_auth_members AS membership
+          JOIN pg_roles AS parent_role ON parent_role.oid = membership.roleid
+          WHERE membership.member = role.oid
+            AND parent_role.rolname = 'diva_pipeline_runtime'
+      )
 ), inserted AS (
     INSERT INTO sync_state(key, value, updated_at)
     SELECT 'diva_stateful_maintenance_gate', :'token', now()
-    FROM idle
+    FROM blocker_state, runtime_state
     WHERE :'pipeline'::boolean AND :'child'::boolean
-      AND :'publication'::boolean AND state_idle
+      AND :'publication'::boolean
+      AND pipeline_marker = 0 AND recommendation_marker = 0
+      AND maintenance_gate = 0 AND login_roles = 0
+      AND runtime_clients = 0
     ON CONFLICT DO NOTHING
     RETURNING value
 )
-SELECT COALESCE((SELECT value FROM inserted), '') AS inserted_gate
+SELECT blocker_state.pipeline_marker, blocker_state.recommendation_marker,
+       blocker_state.maintenance_gate, blocker_state.login_roles,
+       runtime_state.runtime_clients,
+       COALESCE((SELECT value FROM inserted), '') AS inserted_gate
+FROM blocker_state, runtime_state
 \gset
 SELECT CASE WHEN :'inserted_gate' = :'token' THEN 'true' ELSE 'false' END AS armed
 \gset
@@ -5979,7 +6046,14 @@ SELECT
          THEN pg_advisory_unlock(hashtextextended('diva-recommendation-publication-v1', 0))
          ELSE true END AS publication_released
 \gset
-SELECT 'refused';
+SELECT 'refused|pl=' || (:'pipeline'::boolean)::text
+    || '|cl=' || (:'child'::boolean)::text
+    || '|rl=' || (:'publication'::boolean)::text
+    || '|pm=' || :'pipeline_marker'
+    || '|rm=' || :'recommendation_marker'
+    || '|mg=' || :'maintenance_gate'
+    || '|lr=' || :'login_roles'
+    || '|rc=' || :'runtime_clients';
 \quit
 \endif
 SQL
@@ -5999,10 +6073,43 @@ SQL
     done
     if [ -s "$BRIDGE_PUBLICATION_WRITER_BARRIER_EXIT" ] \
         && settle_bridge_publication_writer_barrier_refusal; then
+        [ "$BRIDGE_PUBLICATION_WRITER_BARRIER_REFUSAL_RETRYABLE" = true ] \
+            && return 2
         return 1
     fi
     record_state bridge.publication_writer_barrier \
         "acquire-unresolved:$BRIDGE_PUBLICATION_WRITER_BARRIER_TOKEN" || true
+    return 1
+}
+
+acquire_bridge_publication_writer_barrier_with_retry() {
+    local attempt=1 acquire_status
+    while [ "$attempt" -le "$ROUTE_ATTEMPTS" ]; do
+        acquire_status=0
+        acquire_bridge_publication_writer_barrier || acquire_status=$?
+        if [ "$acquire_status" -eq 0 ]; then
+            record_state bridge.publication_writer_barrier_retry \
+                "acquired:$attempt" || {
+                BRIDGE_PUBLICATION_WRITER_BARRIER_UNRESOLVED=true
+                return 1
+            }
+            return 0
+        fi
+        [ "$acquire_status" -eq 2 ] \
+            && [ "$BRIDGE_PUBLICATION_WRITER_BARRIER_REFUSAL_RETRYABLE" = true ] \
+            || return 1
+        if [ "$attempt" -ge "$ROUTE_ATTEMPTS" ]; then
+            record_state bridge.publication_writer_barrier_retry \
+                "exhausted:$attempt:$BRIDGE_PUBLICATION_WRITER_BARRIER_REFUSAL_REASON" \
+                || true
+            return 1
+        fi
+        record_state bridge.publication_writer_barrier_retry \
+            "waiting:$attempt:$BRIDGE_PUBLICATION_WRITER_BARRIER_REFUSAL_REASON" \
+            || return 1
+        attempt=$((attempt + 1))
+        wait_once
+    done
     return 1
 }
 
@@ -6038,7 +6145,13 @@ SELECT CASE WHEN
         JOIN pg_roles AS role ON role.rolname = activity.usename
         WHERE activity.pid <> pg_backend_pid()
           AND activity.backend_type = 'client backend'
-          AND pg_has_role(role.oid, 'diva_pipeline_runtime', 'MEMBER')
+          AND EXISTS (
+              SELECT 1
+              FROM pg_auth_members AS membership
+              JOIN pg_roles AS parent_role ON parent_role.oid = membership.roleid
+              WHERE membership.member = role.oid
+                AND parent_role.rolname = 'diva_pipeline_runtime'
+          )
     )
     AND (SELECT count(*) FROM pg_locks
          WHERE pid = pg_backend_pid() AND locktype = 'advisory' AND granted) = 3
@@ -6302,7 +6415,18 @@ prepare_and_publish_bridge_receipt() {
     # then retain all three advisory locks in one psql session. The gate keeps
     # new cooperating writers out while the held locks exclude an already
     # admitted publisher through the final probe and filesystem commit.
-    acquire_bridge_publication_writer_barrier || return 1
+    acquire_bridge_publication_writer_barrier_with_retry || return 1
+    verify_bridge_publication_writer_barrier || return 1
+    # A clean refusal can mean a short-lived API reader or runtime monitor.
+    # Once the bounded retry owns all three locks and the maintenance token,
+    # re-prove every mutable input before running the final live read matrix.
+    verify_bridge_stateful_contract || return 1
+    verify_exact_rolling_topology || return 1
+    verify_published_web unless-stopped || return 1
+    verify_all_rolling_candidate_scan_receipts || return 1
+    verify_private_source_snapshot || return 1
+    [ "$(sha256sum "$API_BRIDGE_PREPARED_RECEIPT" | awk '{print $1}')" \
+        = "$API_BRIDGE_PREPARED_SHA" ] || return 1
     verify_bridge_publication_writer_barrier || return 1
     verify_bridge_live_publication_evidence "$producer" || return 1
     # The dual-slot live probe can itself cross the fixed four-hour window.

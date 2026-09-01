@@ -3466,7 +3466,13 @@ SELECT
         JOIN pg_roles AS role ON role.rolname = activity.usename
         WHERE activity.pid <> pg_backend_pid()
           AND activity.backend_type = 'client backend'
-          AND pg_has_role(role.oid, 'diva_pipeline_runtime', 'MEMBER')
+          AND EXISTS (
+              SELECT 1
+              FROM pg_auth_members AS membership
+              JOIN pg_roles AS parent_role ON parent_role.oid = membership.roleid
+              WHERE membership.member = role.oid
+                AND parent_role.rolname = 'diva_pipeline_runtime'
+          )
     )::text
     || '|' || (
         SELECT (
@@ -3554,7 +3560,13 @@ WITH locks AS MATERIALIZED (
             JOIN pg_roles AS role ON role.rolname = activity.usename
             WHERE activity.pid <> pg_backend_pid()
               AND activity.backend_type = 'client backend'
-              AND pg_has_role(role.oid, 'diva_pipeline_runtime', 'MEMBER')
+              AND EXISTS (
+                  SELECT 1
+                  FROM pg_auth_members AS membership
+                  JOIN pg_roles AS parent_role ON parent_role.oid = membership.roleid
+                  WHERE membership.member = role.oid
+                    AND parent_role.rolname = 'diva_pipeline_runtime'
+              )
         ) AS state_idle
 )
 ,
@@ -3642,7 +3654,13 @@ SELECT CASE WHEN
         JOIN pg_roles AS role ON role.rolname = activity.usename
         WHERE activity.pid <> pg_backend_pid()
           AND activity.backend_type = 'client backend'
-          AND pg_has_role(role.oid, 'diva_pipeline_runtime', 'MEMBER')
+          AND EXISTS (
+              SELECT 1
+              FROM pg_auth_members AS membership
+              JOIN pg_roles AS parent_role ON parent_role.oid = membership.roleid
+              WHERE membership.member = role.oid
+                AND parent_role.rolname = 'diva_pipeline_runtime'
+          )
     )
     THEN 'true' ELSE 'false' END AS lockdown_ok
 \gset
@@ -3733,7 +3751,13 @@ SELECT CASE WHEN
         JOIN pg_roles AS role ON role.rolname = activity.usename
         WHERE activity.pid <> pg_backend_pid()
           AND activity.backend_type = 'client backend'
-          AND pg_has_role(role.oid, 'diva_pipeline_runtime', 'MEMBER')
+          AND EXISTS (
+              SELECT 1
+              FROM pg_auth_members AS membership
+              JOIN pg_roles AS parent_role ON parent_role.oid = membership.roleid
+              WHERE membership.member = role.oid
+                AND parent_role.rolname = 'diva_pipeline_runtime'
+          )
     )
     AND NOT EXISTS (
         SELECT 1
@@ -3811,7 +3835,13 @@ SELECT CASE WHEN
         JOIN pg_roles AS role ON role.rolname = activity.usename
         WHERE activity.pid <> pg_backend_pid()
           AND activity.backend_type = 'client backend'
-          AND pg_has_role(role.oid, 'diva_pipeline_runtime', 'MEMBER')
+          AND EXISTS (
+              SELECT 1
+              FROM pg_auth_members AS membership
+              JOIN pg_roles AS parent_role ON parent_role.oid = membership.roleid
+              WHERE membership.member = role.oid
+                AND parent_role.rolname = 'diva_pipeline_runtime'
+          )
     )
     THEN 'true' ELSE 'false' END AS released_roles_ok
 \gset

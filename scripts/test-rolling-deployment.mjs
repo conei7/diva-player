@@ -2513,6 +2513,18 @@ async function testBridgePublicationWriterBarrierContract() {
     pipelineActivityChecks,
     'every pipeline-session check excludes PostgreSQL auxiliary processes',
   );
+  assert.equal(
+    [...barrierFunctions.matchAll(
+      /JOIN pg_roles AS parent_role ON parent_role\.oid = membership\.roleid/g,
+    )].length,
+    pipelineActivityChecks,
+    'pipeline sessions are identified by exact direct runtime-role membership',
+  );
+  assert.doesNotMatch(
+    barrierFunctions,
+    /pg_has_role\(role\.oid, 'diva_pipeline_runtime', 'MEMBER'\)/u,
+    'superuser monitoring sessions must not impersonate pipeline writers',
+  );
   assert.doesNotMatch(
     barrierFunctions,
     /\\quit\s+[0-9]+/u,
@@ -2535,8 +2547,18 @@ async function testBridgePublicationWriterBarrierContract() {
   );
   assert.match(
     barrierFunctions,
-    /actual_result" = refused[\s\S]*WHERE key = 'diva_stateful_maintenance_gate' AND value = :'token'[\s\S]*"not-owned\|0"/u,
-    'a clean busy refusal is reaped only after proving no owned token/session remains',
+    /actual_result[\s\S]*pl=[\s\S]*WHERE key = 'diva_stateful_maintenance_gate' AND value = :'token'[\s\S]*"not-owned\|0"/u,
+    'a reasoned clean refusal is reaped only after proving no owned token/session remains',
+  );
+  assert.match(
+    barrierFunctions,
+    /'refused\|pl=' \|\| \(:'pipeline'::boolean\)::text[\s\S]*'\|cl=' \|\| \(:'child'::boolean\)::text[\s\S]*'\|rl=' \|\| \(:'publication'::boolean\)::text/u,
+    'psql t/f variables are normalized to strict true/false refusal evidence',
+  );
+  assert.match(
+    barrierFunctions,
+    /acquire_bridge_publication_writer_barrier_with_retry\(\)[\s\S]*ROUTE_ATTEMPTS[\s\S]*acquire_status" -eq 2[\s\S]*REFUSAL_RETRYABLE" = true/u,
+    'only exact clean transient refusals receive a bounded retry',
   );
   assert.match(
     barrierFunctions,
@@ -2549,7 +2571,7 @@ async function testBridgePublicationWriterBarrierContract() {
   const receiptFunction = deploymentSource.slice(receiptStart, receiptEnd)
     .replaceAll('\r\n', '\n');
   const finalFullRehash = receiptFunction.indexOf('before-receipt-publication');
-  const acquire = receiptFunction.indexOf('acquire_bridge_publication_writer_barrier');
+  const acquire = receiptFunction.indexOf('acquire_bridge_publication_writer_barrier_with_retry');
   const liveProbe = receiptFunction.indexOf('verify_bridge_live_publication_evidence');
   const postProbe = receiptFunction.indexOf('verify_bridge_backup_post_probe_boundary');
   const publisher = receiptFunction.indexOf('"$publisher" publish');
@@ -2558,6 +2580,12 @@ async function testBridgePublicationWriterBarrierContract() {
     finalFullRehash >= 0 && finalFullRehash < acquire && acquire < liveProbe
       && liveProbe < postProbe && postProbe < publisher && publisher < release,
     'full evidence rehash, held-lock probe, lifetime boundary, atomic publish, and release are ordered',
+  );
+  const heldBoundary = receiptFunction.slice(acquire, liveProbe);
+  assert.match(
+    heldBoundary,
+    /verify_bridge_publication_writer_barrier[\s\S]*verify_bridge_stateful_contract[\s\S]*verify_exact_rolling_topology[\s\S]*verify_published_web[\s\S]*verify_all_rolling_candidate_scan_receipts[\s\S]*verify_private_source_snapshot[\s\S]*API_BRIDGE_PREPARED_SHA[\s\S]*verify_bridge_publication_writer_barrier/u,
+    'mutable receipt inputs are re-proved while the acquired barrier is held',
   );
   assert.doesNotMatch(
     receiptFunction,
@@ -2596,6 +2624,7 @@ async function testBridgePublicationWriterBarrierContract() {
   try {
     const fifo = join(refusalRoot, 'barrier.fifo');
     const resultPath = join(refusalRoot, 'barrier.result');
+    const errorPath = join(refusalRoot, 'barrier.error');
     const exitPath = join(refusalRoot, 'barrier.exit');
     const statePath = join(refusalRoot, 'state.log');
     const harness = `#!/bin/sh
@@ -2607,14 +2636,18 @@ BRIDGE_PUBLICATION_WRITER_BARRIER_TOKEN=diva-bridge-test
 BRIDGE_PUBLICATION_WRITER_BARRIER_APPLICATION=diva_bridge_test
 BRIDGE_PUBLICATION_WRITER_BARRIER_FIFO="${shellPath(fifo)}"
 BRIDGE_PUBLICATION_WRITER_BARRIER_RESULT="${shellPath(resultPath)}"
+BRIDGE_PUBLICATION_WRITER_BARRIER_ERROR="${shellPath(errorPath)}"
 BRIDGE_PUBLICATION_WRITER_BARRIER_EXIT="${shellPath(exitPath)}"
 PRIVATE_RUNTIME_ROOT="${shellPath(refusalRoot)}"
+DEPLOYMENT_DIR="${shellPath(refusalRoot)}"
 BRIDGE_POSTGRES_ID=${'1'.repeat(64)}
 DOCKER_READ_TIMEOUT_SECONDS=30
 DOCKER_COMMAND=docker
 SYNC_COMMAND=true
 printf '%s\n' fifo > "$BRIDGE_PUBLICATION_WRITER_BARRIER_FIFO"
-printf '%s\n' refused > "$BRIDGE_PUBLICATION_WRITER_BARRIER_RESULT"
+printf '%s\n' 'refused|pl=true|cl=true|rl=false|pm=0|rm=0|mg=0|lr=0|rc=0' \
+    > "$BRIDGE_PUBLICATION_WRITER_BARRIER_RESULT"
+: > "$BRIDGE_PUBLICATION_WRITER_BARRIER_ERROR"
 printf '%s\n' 0 > "$BRIDGE_PUBLICATION_WRITER_BARRIER_EXIT"
 (exit 0) &
 BRIDGE_PUBLICATION_WRITER_BARRIER_PID=$!
@@ -2626,10 +2659,31 @@ settle_bridge_publication_writer_barrier_refusal
 [ "$BRIDGE_PUBLICATION_WRITER_BARRIER_ACTIVE" = false ]
 [ "$BRIDGE_PUBLICATION_WRITER_BARRIER_UNRESOLVED" = false ]
 [ "$BRIDGE_PUBLICATION_WRITER_BARRIER_FD_OPEN" = false ]
+[ "$BRIDGE_PUBLICATION_WRITER_BARRIER_REFUSAL_RETRYABLE" = true ]
+[ "$BRIDGE_PUBLICATION_WRITER_BARRIER_REFUSAL_REASON" = \
+    'refused|pl=true|cl=true|rl=false|pm=0|rm=0|mg=0|lr=0|rc=0' ]
 [ -z "$BRIDGE_PUBLICATION_WRITER_BARRIER_PID" ]
 [ ! -e "$BRIDGE_PUBLICATION_WRITER_BARRIER_FIFO" ]
-grep -Fx 'bridge.publication_writer_barrier=refused-busy:diva-bridge-test' \
+[ ! -e "$BRIDGE_PUBLICATION_WRITER_BARRIER_RESULT" ]
+[ ! -e "$BRIDGE_PUBLICATION_WRITER_BARRIER_ERROR" ]
+[ ! -e "$BRIDGE_PUBLICATION_WRITER_BARRIER_EXIT" ]
+grep -Fx 'bridge.publication_writer_barrier=refused-busy:diva-bridge-test:refused|pl=true|cl=true|rl=false|pm=0|rm=0|mg=0|lr=0|rc=0' \
     "${shellPath(statePath)}" >/dev/null
+BRIDGE_PUBLICATION_WRITER_BARRIER_ACTIVE=true
+BRIDGE_PUBLICATION_WRITER_BARRIER_UNRESOLVED=true
+BRIDGE_PUBLICATION_WRITER_BARRIER_FD_OPEN=true
+printf '%s\n' fifo > "$BRIDGE_PUBLICATION_WRITER_BARRIER_FIFO"
+printf '%s\n' 'refused|pl=true|cl=true|rl=true|pm=0|rm=0|mg=1|lr=0|rc=0' \
+    > "$BRIDGE_PUBLICATION_WRITER_BARRIER_RESULT"
+: > "$BRIDGE_PUBLICATION_WRITER_BARRIER_ERROR"
+printf '%s\n' 0 > "$BRIDGE_PUBLICATION_WRITER_BARRIER_EXIT"
+(exit 0) &
+BRIDGE_PUBLICATION_WRITER_BARRIER_PID=$!
+exec 9>/dev/null
+settle_bridge_publication_writer_barrier_refusal
+[ "$BRIDGE_PUBLICATION_WRITER_BARRIER_REFUSAL_RETRYABLE" = false ]
+[ "$BRIDGE_PUBLICATION_WRITER_BARRIER_REFUSAL_REASON" = \
+    'refused|pl=true|cl=true|rl=true|pm=0|rm=0|mg=1|lr=0|rc=0' ]
 `;
     await writeFile(refusalHarness, harness, 'utf8');
     await chmod(refusalHarness, 0o755);
@@ -2645,6 +2699,80 @@ grep -Fx 'bridge.publication_writer_barrier=refused-busy:diva-bridge-test' \
     }));
   } finally {
     await rm(refusalRoot, { recursive: true, force: true });
+  }
+
+  const retryStart = barrierFunctions.indexOf(
+    'acquire_bridge_publication_writer_barrier_with_retry() {',
+  );
+  const retryEnd = barrierFunctions.indexOf(
+    '\nverify_bridge_publication_writer_barrier() {',
+    retryStart,
+  );
+  assert.ok(retryStart >= 0 && retryEnd > retryStart);
+  const retryFunction = barrierFunctions.slice(retryStart, retryEnd);
+  const retryRoot = await mkdtemp(join(scriptsDirectory, '.bridge-writer-retry-'));
+  const retryHarness = join(retryRoot, 'harness.sh');
+  try {
+    const countPath = join(retryRoot, 'count');
+    const waitPath = join(retryRoot, 'wait');
+    const statePath = join(retryRoot, 'state');
+    const harness = `#!/bin/sh
+set -eu
+ROUTE_ATTEMPTS=3
+BRIDGE_PUBLICATION_WRITER_BARRIER_UNRESOLVED=false
+BRIDGE_PUBLICATION_WRITER_BARRIER_REFUSAL_RETRYABLE=false
+BRIDGE_PUBLICATION_WRITER_BARRIER_REFUSAL_REASON=
+SCENARIO=eventual
+acquire_bridge_publication_writer_barrier() {
+    count=0
+    [ ! -f "${shellPath(countPath)}" ] || count=$(cat "${shellPath(countPath)}")
+    count=$((count + 1))
+    printf '%s\n' "$count" > "${shellPath(countPath)}"
+    if [ "$SCENARIO" = fatal ]; then return 1; fi
+    if [ "$SCENARIO" = exhausted ] || [ "$count" -eq 1 ]; then
+        BRIDGE_PUBLICATION_WRITER_BARRIER_REFUSAL_RETRYABLE=true
+        BRIDGE_PUBLICATION_WRITER_BARRIER_REFUSAL_REASON=transient
+        return 2
+    fi
+    return 0
+}
+record_state() { printf '%s=%s\n' "$1" "$2" >> "${shellPath(statePath)}"; }
+wait_once() { printf '%s\n' wait >> "${shellPath(waitPath)}"; }
+${retryFunction}
+acquire_bridge_publication_writer_barrier_with_retry
+[ "$(cat "${shellPath(countPath)}")" = 2 ]
+[ "$(wc -l < "${shellPath(waitPath)}")" = 1 ]
+grep -Fx 'bridge.publication_writer_barrier_retry=waiting:1:transient' \
+    "${shellPath(statePath)}" >/dev/null
+grep -Fx 'bridge.publication_writer_barrier_retry=acquired:2' \
+    "${shellPath(statePath)}" >/dev/null
+rm -f "${shellPath(countPath)}" "${shellPath(waitPath)}" "${shellPath(statePath)}"
+SCENARIO=exhausted
+if acquire_bridge_publication_writer_barrier_with_retry; then exit 71; fi
+[ "$(cat "${shellPath(countPath)}")" = 3 ]
+[ "$(wc -l < "${shellPath(waitPath)}")" = 2 ]
+grep -Fx 'bridge.publication_writer_barrier_retry=exhausted:3:transient' \
+    "${shellPath(statePath)}" >/dev/null
+rm -f "${shellPath(countPath)}" "${shellPath(waitPath)}" "${shellPath(statePath)}"
+SCENARIO=fatal
+if acquire_bridge_publication_writer_barrier_with_retry; then exit 72; fi
+[ "$(cat "${shellPath(countPath)}")" = 1 ]
+[ ! -e "${shellPath(waitPath)}" ]
+`;
+    await writeFile(retryHarness, harness, 'utf8');
+    await chmod(retryHarness, 0o755);
+    const result = spawnSync('sh', [shellPath(retryHarness)], {
+      cwd: projectDirectory,
+      encoding: 'utf8',
+      timeout: 30_000,
+    });
+    assert.equal(result.error, undefined);
+    assert.equal(result.status, 0, JSON.stringify({
+      stdout: result.stdout,
+      stderr: result.stderr,
+    }));
+  } finally {
+    await rm(retryRoot, { recursive: true, force: true });
   }
 
   const root = await mkdtemp(join(scriptsDirectory, '.bridge-post-probe-binding-'));
@@ -2931,7 +3059,7 @@ verify_bridge_live_publication_evidence() {
     printf '%s\n' '{"probe":"passed"}' > "$BRIDGE_LIVE_PUBLICATION_EVIDENCE"
     [ "$FAIL_AT" != 5 ]
 }
-acquire_bridge_publication_writer_barrier() {
+acquire_bridge_publication_writer_barrier_with_retry() {
     printf '%s\n' gate-acquire >> "$BRIDGE_HARNESS_LOG"
     BRIDGE_PUBLICATION_WRITER_BARRIER_ACTIVE=true
 }
@@ -2998,7 +3126,7 @@ if [ "$FAIL_AT" = 0 ]; then
     [ "$BRIDGE_PUBLICATION_WRITER_BARRIER_ACTIVE" = false ]
     [ "$ALIAS_STATE" = expected ]
     actual=$(cat "$BRIDGE_HARNESS_LOG")
-    expected=$(printf '%s\n' producer helper gate-acquire gate-verify \
+    expected=$(printf '%s\n' producer helper gate-acquire gate-verify gate-verify \
         alias-writer-blocked live-probe post-probe-boundary publisher gate-release)
     [ "$actual" = "$expected" ]
     exit 0
