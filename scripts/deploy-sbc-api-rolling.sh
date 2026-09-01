@@ -3852,7 +3852,7 @@ create_managed_service_container() {
                 --label "com.docker.compose.service=$service" \
                 --network backend_default --network-alias "$service" --network-alias "$name" \
                 --env-file "$environment_file" --expose 5000 \
-                --health-cmd 'curl -fsS --max-time 5 http://127.0.0.1:5000/api/ready' \
+                --health-cmd 'wget -q -T 5 -O /dev/null http://127.0.0.1:5000/api/ready' \
                 --health-interval 5s --health-timeout 6s --health-retries 12 \
                 --health-start-period 180s --stop-timeout 30 \
                 --cap-drop ALL --security-opt no-new-privileges=true --read-only \
@@ -3874,7 +3874,7 @@ create_managed_service_container() {
                 --label "com.docker.compose.service=$service" \
                 --network backend_default --network-alias api_gateway --network-alias "$name" \
                 --env-file "$environment_file" --publish 5000:5000 \
-                --health-cmd 'curl -fsS --max-time 5 http://127.0.0.1:5000/api/ready' \
+                --health-cmd 'wget -q -T 5 -O /dev/null http://127.0.0.1:5000/api/ready' \
                 --health-interval 5s --health-timeout 6s --health-retries 12 \
                 --health-start-period 5s --stop-timeout 30 \
                 --cap-drop ALL --security-opt no-new-privileges=true --read-only \

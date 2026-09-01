@@ -206,6 +206,14 @@ assert.doesNotMatch(gatewayDockerfile, /apk upgrade/u);
 assert.match(gatewayDockerfile, /apk add --no-cache socat=1\.8\.1\.3-r0/u);
 assert.doesNotMatch(gatewayDockerfile, /\bcurl\b/u);
 assert.match(compose, /wget -q -T 5 -O \/dev\/null http:\/\/127\.0\.0\.1:5000\/api\/ready/u);
+assert.equal(
+  (deploy.match(/--health-cmd 'wget -q -T 5 -O \/dev\/null http:\/\/127\.0\.0\.1:5000\/api\/ready'/gu) ?? []).length,
+  2,
+);
+assert.doesNotMatch(
+  deploy,
+  /--health-cmd 'curl [^']*http:\/\/127\.0\.0\.1:5000\/api\/ready'/u,
+);
 assert.deepEqual(JSON.parse(sdkContract), {
   sdk: { version: '8.0.424', rollForward: 'disable', allowPrerelease: false },
 });

@@ -39,6 +39,19 @@ def runtime_projection(item: dict[str, Any]) -> dict[str, Any]:
     config.pop("Hostname", None)
     config.pop("Domainname", None)
     config.pop("Labels", None)
+    environment = config.get("Env")
+    if not isinstance(environment, list) or not all(
+        isinstance(value, str) for value in environment
+    ):
+        raise ValueError("Docker inspect environment is invalid")
+    # Compose and `docker create --env-file` preserve equivalent environment
+    # sets in different orders.  The published verifier checks the normalized
+    # environment against the candidate-bound file separately.
+    config["Env"] = _load_environment_lines(environment)
+    # `docker compose run` enables stdin bookkeeping even in detached mode.
+    # Published containers must explicitly disable it in verify_published().
+    for field in ("AttachStdin", "OpenStdin", "StdinOnce"):
+        config.pop(field, None)
     host.pop("NetworkMode", None)
     host.pop("PortBindings", None)
     # Candidate containers are intentionally created with restart=no.  The
@@ -46,6 +59,24 @@ def runtime_projection(item: dict[str, Any]) -> dict[str, Any]:
     # pass their final checks, so restart policy is verified explicitly at
     # each phase instead of weakening the rest of the runtime fingerprint.
     host.pop("RestartPolicy", None)
+    # Docker Compose serializes safe empty host settings as [] while the
+    # equivalent `docker create` result uses null.  Canonicalize only those
+    # empty values; non-empty device, DNS, blkio, or ulimit settings remain in
+    # the fingerprint and are also rejected for published containers.
+    for field in (
+        "BlkioDeviceReadBps",
+        "BlkioDeviceReadIOps",
+        "BlkioDeviceWriteBps",
+        "BlkioDeviceWriteIOps",
+        "BlkioWeightDevice",
+        "Devices",
+        "DnsOptions",
+        "DnsSearch",
+        "ExtraHosts",
+        "Ulimits",
+    ):
+        host[field] = host.get(field) or []
+    host["OomKillDisable"] = bool(host.get("OomKillDisable"))
     return {"Config": config, "HostConfig": host}
 
 
@@ -187,6 +218,9 @@ def verify_published(
         or not isinstance(labels, dict)
         or any(labels.get(key) != value for key, value in expected_labels.items())
         or config.get("User", "") != service_contract["user"]
+        or config.get("AttachStdin") is not False
+        or config.get("OpenStdin") is not False
+        or config.get("StdinOnce") is not False
     ):
         raise ValueError("identity/image/label/user contract mismatch")
     expected_env = _load_environment(environment_path)
@@ -202,6 +236,22 @@ def verify_published(
         or host.get("Memory") != service_contract["memory"]
         or host.get("MemoryReservation") != service_contract["reservation"]
         or host.get("PidsLimit") != service_contract["pids"]
+        or host.get("OomKillDisable") not in (None, False)
+        or any(
+            host.get(field)
+            for field in (
+                "BlkioDeviceReadBps",
+                "BlkioDeviceReadIOps",
+                "BlkioDeviceWriteBps",
+                "BlkioDeviceWriteIOps",
+                "BlkioWeightDevice",
+                "Devices",
+                "DnsOptions",
+                "DnsSearch",
+                "ExtraHosts",
+                "Ulimits",
+            )
+        )
     ):
         raise ValueError("host security/resource contract mismatch")
     tmpfs = host.get("Tmpfs") or {}

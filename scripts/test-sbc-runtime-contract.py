@@ -60,6 +60,9 @@ def inspect_document(service: str, *, published: bool = True) -> dict:
         "Config": {
             "Hostname": name if published else "candidate",
             "Domainname": "",
+            "AttachStdin": False,
+            "OpenStdin": False,
+            "StdinOnce": False,
             "User": user,
             "Env": [f"DIVA_SLOT={service}", "TZ=Asia/Tokyo"],
             "Image": reference,
@@ -96,6 +99,17 @@ def inspect_document(service: str, *, published: bool = True) -> dict:
             "NetworkMode": "backend_default" if published else "candidate_default",
             "PortBindings": bindings,
             "LogConfig": {"Type": "json-file", "Config": {"max-file": "5", "max-size": "10m"}},
+            "BlkioDeviceReadBps": None,
+            "BlkioDeviceReadIOps": None,
+            "BlkioDeviceWriteBps": None,
+            "BlkioDeviceWriteIOps": None,
+            "BlkioWeightDevice": None,
+            "Devices": None,
+            "DnsOptions": None,
+            "DnsSearch": None,
+            "ExtraHosts": None,
+            "OomKillDisable": None,
+            "Ulimits": None,
         },
         "NetworkSettings": {
             "Networks": {
@@ -130,6 +144,24 @@ class RuntimeContractTests(unittest.TestCase):
     def test_candidate_and_published_runtime_projection_match(self) -> None:
         candidate = inspect_document("api_gateway", published=False)
         published = inspect_document("api_gateway", published=True)
+        candidate["Config"]["AttachStdin"] = True
+        candidate["Config"]["OpenStdin"] = True
+        candidate["Config"]["StdinOnce"] = True
+        candidate["Config"]["Env"].reverse()
+        for field in (
+            "BlkioDeviceReadBps",
+            "BlkioDeviceReadIOps",
+            "BlkioDeviceWriteBps",
+            "BlkioDeviceWriteIOps",
+            "BlkioWeightDevice",
+            "Devices",
+            "DnsOptions",
+            "DnsSearch",
+            "ExtraHosts",
+            "Ulimits",
+        ):
+            candidate["HostConfig"][field] = []
+        candidate["HostConfig"]["OomKillDisable"] = False
         self.assertEqual(
             CONTRACT.runtime_fingerprint(candidate),
             CONTRACT.runtime_fingerprint(published),
@@ -163,6 +195,16 @@ class RuntimeContractTests(unittest.TestCase):
                 "RestartPolicy", {"Name": "always", "MaximumRetryCount": 0}
             ),
             "cap-drop": lambda value: value["HostConfig"].__setitem__("CapDrop", []),
+            "stdin": lambda value: value["Config"].__setitem__("OpenStdin", True),
+            "device": lambda value: value["HostConfig"].__setitem__(
+                "Devices", [{"PathOnHost": "/dev/null", "PathInContainer": "/dev/null"}]
+            ),
+            "ulimit": lambda value: value["HostConfig"].__setitem__(
+                "Ulimits", [{"Name": "nofile", "Soft": 1024, "Hard": 1024}]
+            ),
+            "oom-kill-disable": lambda value: value["HostConfig"].__setitem__(
+                "OomKillDisable", True
+            ),
         }
         baseline = inspect_document("api_gateway")
         expected_runtime = CONTRACT.runtime_fingerprint(baseline)
