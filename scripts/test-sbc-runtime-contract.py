@@ -79,6 +79,7 @@ def inspect_document(service: str, *, published: bool = True) -> dict:
                 "Retries": 12,
                 "StartPeriod": 5_000_000_000,
             },
+            "StopTimeout": 30,
             "Labels": {
                 "com.docker.compose.config-hash": f"{service}-config",
                 "com.docker.compose.container-number": "1",
@@ -191,6 +192,7 @@ class RuntimeContractTests(unittest.TestCase):
                 "Image", "diva-player-api:mutable"
             ),
             "root-user": lambda value: value["Config"].__setitem__("User", "0"),
+            "stop-timeout": lambda value: value["Config"].__setitem__("StopTimeout", 10),
             "health-form": lambda value: value["Config"]["Healthcheck"].__setitem__(
                 "Test", ["CMD", "curl", "-f", "http://127.0.0.1:5000/api/ready"]
             ),

@@ -207,6 +207,11 @@ assert.match(gatewayDockerfile, /apk add --no-cache socat=1\.8\.1\.3-r0/u);
 assert.doesNotMatch(gatewayDockerfile, /\bcurl\b/u);
 assert.match(compose, /wget -q -T 5 -O \/dev\/null http:\/\/127\.0\.0\.1:5000\/api\/ready/u);
 assert.equal(
+  (compose.match(/^\s*stop_grace_period:\s*30s\s*$/gmu) ?? []).length,
+  3,
+  'API, gateway, and Web must share the exact 30-second stop contract',
+);
+assert.equal(
   (deploy.match(/--health-cmd 'wget -q -T 5 -O \/dev\/null http:\/\/127\.0\.0\.1:5000\/api\/ready'/gu) ?? []).length,
   2,
 );
