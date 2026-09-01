@@ -29,6 +29,7 @@ WINDOWS_TRUSTED_INSTALLER_SID = (
     "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464"
 )
 WINDOWS_ALLOWED_WRITER_SIDS: frozenset[str] = frozenset()
+WINDOWS_ALLOWED_READER_SIDS: frozenset[str] = frozenset()
 WINDOWS_UNTRUSTED_FILE_WRITE_MASK = (
     0x10000000  # GENERIC_ALL
     | 0x40000000  # GENERIC_WRITE
@@ -199,20 +200,20 @@ def _windows_task_sid() -> str:
         kernel32.CloseHandle(token)
 
 
-def _normalize_allowed_writer_sid(value: str) -> str:
+def _normalize_allowed_sid(value: str, role: str) -> str:
     sid = value.strip().upper()
     if not re.fullmatch(r"S-[0-9]+(?:-[0-9]+)+", sid):
-        raise RuntimeError(f"Allowed writer SID is malformed: {value!r}")
+        raise RuntimeError(f"Allowed {role} SID is malformed: {value!r}")
     if sid.startswith("S-1-3-"):
-        raise RuntimeError(f"Allowed writer SID names a dynamic principal: {sid}")
+        raise RuntimeError(f"Allowed {role} SID names a dynamic principal: {sid}")
     if sid in WINDOWS_BROAD_PRINCIPAL_SIDS:
-        raise RuntimeError(f"Allowed writer SID names a broad principal: {sid}")
+        raise RuntimeError(f"Allowed {role} SID names a broad principal: {sid}")
     if sid in {
         WINDOWS_SYSTEM_SID,
         WINDOWS_ADMINISTRATORS_SID,
         WINDOWS_TRUSTED_INSTALLER_SID,
     }:
-        raise RuntimeError(f"Allowed writer SID is already trusted without an override: {sid}")
+        raise RuntimeError(f"Allowed {role} SID is already trusted without an override: {sid}")
     if os.name == "nt":
         from ctypes import wintypes
 
@@ -227,15 +228,23 @@ def _normalize_allowed_writer_sid(value: str) -> str:
         kernel32.LocalFree.restype = wintypes.LPVOID
         native_sid = wintypes.LPVOID()
         if not advapi32.ConvertStringSidToSidW(sid, ctypes.byref(native_sid)):
-            raise RuntimeError(f"Allowed writer SID is invalid: {sid}") from ctypes.WinError(
+            raise RuntimeError(f"Allowed {role} SID is invalid: {sid}") from ctypes.WinError(
                 ctypes.get_last_error()
             )
         try:
             if _sid_text(native_sid) != sid:
-                raise RuntimeError(f"Allowed writer SID is not canonical: {sid}")
+                raise RuntimeError(f"Allowed {role} SID is not canonical: {sid}")
         finally:
             kernel32.LocalFree(native_sid)
     return sid
+
+
+def _normalize_allowed_writer_sid(value: str) -> str:
+    return _normalize_allowed_sid(value, "writer")
+
+
+def _normalize_allowed_reader_sid(value: str) -> str:
+    return _normalize_allowed_sid(value, "reader")
 
 
 def _windows_owner_is_trusted(
@@ -263,6 +272,20 @@ def _windows_grantee_is_trusted(
     if grantee_sid.startswith("S-1-3-"):
         return False
     return grantee_sid in trusted_sids
+
+
+def _windows_grantee_is_allowed_reader(
+    grantee_sid: str,
+    *,
+    access_mask: int,
+    write_mask: int,
+    allowed_reader_sids: AbstractSet[str],
+) -> bool:
+    return (
+        not grantee_sid.startswith("S-1-3-")
+        and grantee_sid in allowed_reader_sids
+        and access_mask & write_mask == 0
+    )
 
 
 def _windows_security_descriptor(
@@ -422,7 +445,17 @@ def _windows_security_descriptor(
                 owner_sid=owner_sid,
                 trusted_sids=trusted_sids,
             )
-            if not grantee_is_trusted and reject_broad_access:
+            grantee_is_allowed_reader = _windows_grantee_is_allowed_reader(
+                sid,
+                access_mask=access_mask,
+                write_mask=write_mask,
+                allowed_reader_sids=WINDOWS_ALLOWED_READER_SIDS,
+            )
+            if (
+                not grantee_is_trusted
+                and not grantee_is_allowed_reader
+                and reject_broad_access
+            ):
                 raise RuntimeError(
                     f"Windows backup path grants access to a broad or unexpected principal {sid}: {path}"
                 )
@@ -821,7 +854,7 @@ def _write_attestation(path: Path, payload: dict[str, Any]) -> None:
 
 
 def main() -> int:
-    global WINDOWS_ALLOWED_WRITER_SIDS
+    global WINDOWS_ALLOWED_READER_SIDS, WINDOWS_ALLOWED_WRITER_SIDS
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--postgres-status", type=Path, required=True)
@@ -840,11 +873,25 @@ def main() -> int:
             "dedicated writer identity"
         ),
     )
+    parser.add_argument(
+        "--allowed-reader-sid",
+        action="append",
+        default=[],
+        help=(
+            "Windows SID of an expected read-only verifier principal; repeat for "
+            "each identity. Any write-capable ACE for this SID is still rejected"
+        ),
+    )
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     WINDOWS_ALLOWED_WRITER_SIDS = frozenset(
         _normalize_allowed_writer_sid(value) for value in args.allowed_writer_sid
     )
+    WINDOWS_ALLOWED_READER_SIDS = frozenset(
+        _normalize_allowed_reader_sid(value) for value in args.allowed_reader_sid
+    )
+    if WINDOWS_ALLOWED_WRITER_SIDS & WINDOWS_ALLOWED_READER_SIDS:
+        raise RuntimeError("A Windows SID cannot be both an allowed reader and writer")
     if not re.fullmatch(r"[0-9a-f]{64}", args.challenge):
         raise RuntimeError("Attestation challenge must be 64 lowercase hexadecimal characters")
     for label, path in (
@@ -905,6 +952,7 @@ def main() -> int:
         "verifierSha256": verifier_digest,
         "verifierSecurityBinding": _binding_record(verifier_binding),
         "allowedWriterSids": sorted(WINDOWS_ALLOWED_WRITER_SIDS),
+        "allowedReaderSids": sorted(WINDOWS_ALLOWED_READER_SIDS),
         "backups": backups,
     }
     _write_attestation(args.output, payload)

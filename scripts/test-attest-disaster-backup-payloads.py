@@ -68,6 +68,40 @@ class WindowsTrusteePolicyTests(unittest.TestCase):
                     )
                 )
 
+    def test_allowed_reader_sid_rejects_dynamic_and_broad_principals(self) -> None:
+        for sid in ("S-1-3-0", "S-1-5-11"):
+            with self.subTest(sid=sid):
+                with self.assertRaises(RuntimeError):
+                    ATTESTER._normalize_allowed_reader_sid(sid)
+
+    def test_allowed_reader_must_match_and_remain_write_incapable(self) -> None:
+        reader_sid = "S-1-5-21-111-222-333-1004"
+        readers = {reader_sid}
+        self.assertTrue(
+            ATTESTER._windows_grantee_is_allowed_reader(
+                reader_sid,
+                access_mask=0x001200A9,
+                write_mask=ATTESTER.WINDOWS_UNTRUSTED_FILE_WRITE_MASK,
+                allowed_reader_sids=readers,
+            )
+        )
+        self.assertFalse(
+            ATTESTER._windows_grantee_is_allowed_reader(
+                reader_sid,
+                access_mask=0x001200A9 | 0x00000002,
+                write_mask=ATTESTER.WINDOWS_UNTRUSTED_FILE_WRITE_MASK,
+                allowed_reader_sids=readers,
+            )
+        )
+        self.assertFalse(
+            ATTESTER._windows_grantee_is_allowed_reader(
+                self.UNTRUSTED_OWNER,
+                access_mask=0x001200A9,
+                write_mask=ATTESTER.WINDOWS_UNTRUSTED_FILE_WRITE_MASK,
+                allowed_reader_sids=readers,
+            )
+        )
+
     def test_other_creator_or_dynamic_sid_remains_untrusted(self) -> None:
         creator_owner_sid = "S-1-3-0"
         accidentally_listed = {*self.trusted_sids, creator_owner_sid}
