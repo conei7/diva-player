@@ -29,6 +29,11 @@ const LOOP_MODE_KEY = 'loopMode';
 const PLAYER_QUEUE_KEY = 'playerQueue';
 const DEFAULT_VOLUME = 50;
 
+// Startup restoration is asynchronous. Every intentional persistence change
+// invalidates the snapshot being restored so a late response cannot resurrect
+// a queue that the user closed, cleared, or replaced in the meantime.
+let playerQueuePersistenceRevision = 0;
+
 type LoopMode = 'none' | 'all' | 'one';
 export type PlaybackSource = 'manual' | 'auto' | 'discovery';
 
@@ -239,6 +244,7 @@ function savePlayerQueue(
   queueTitle?: string,
   rootSeed?: Song | null,
 ): void {
+  playerQueuePersistenceRevision += 1;
   const normalizedSources = normalizeQueueSources(queue.length, queueSources);
   const storedQueue = storage.get<StoredPlayerQueue>(PLAYER_QUEUE_KEY);
   storage.set(PLAYER_QUEUE_KEY, {
@@ -267,6 +273,7 @@ function mapSourcesBySongId(
 }
 
 function clearStoredPlayerQueue(): void {
+  playerQueuePersistenceRevision += 1;
   storage.remove(PLAYER_QUEUE_KEY);
 }
 
@@ -376,8 +383,14 @@ const storedPlayerQueue = getStoredPlayerQueue();
 const initialCurrentSong = storedPlayerQueue?.currentSong ?? null;
 
 async function restoreStoredPlayerQueue(): Promise<void> {
+  const restoreRevision = playerQueuePersistenceRevision;
   const stored = getStoredPlayerQueue();
   if (!stored) return;
+  const storedSnapshot = JSON.stringify(stored);
+  const canCommitRestore = (): boolean => (
+    playerQueuePersistenceRevision === restoreRevision
+    && JSON.stringify(getStoredPlayerQueue()) === storedSnapshot
+  );
 
   const persistedRootSeedId = stored.rootSeedId
     ?? useAutoPlaySessionStore.getState().session?.rootSeedId
@@ -395,6 +408,7 @@ async function restoreStoredPlayerQueue(): Promise<void> {
 
   if (stored.queue && stored.queue.length > 0) {
     const rootSeed = await resolveRootSeed(stored.queue);
+    if (!canCommitRestore()) return;
     if (rootSeed) usePlayerStore.setState({ rootSeed });
     savePlayerQueue(
       stored.queue,
@@ -424,6 +438,8 @@ async function restoreStoredPlayerQueue(): Promise<void> {
     }
   }));
 
+  if (!canCommitRestore()) return;
+
   const queueItems = restored.filter((item): item is { song: Song; source: PlaybackSource } => item !== null);
   if (queueItems.length === 0) {
     clearStoredPlayerQueue();
@@ -444,6 +460,10 @@ async function restoreStoredPlayerQueue(): Promise<void> {
   const currentSong = queue[queueIndex] ?? null;
   const currentPlaybackSource = stored.currentPlaybackSource ?? queueSources[queueIndex] ?? 'manual';
   const rootSeed = await resolveRootSeed(queue);
+
+  if (!canCommitRestore()) return;
+  const latestState = usePlayerStore.getState();
+  if (latestState.queue.length > 0 || latestState.currentSong) return;
 
   usePlayerStore.setState({
     queue,

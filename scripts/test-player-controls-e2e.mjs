@@ -23,6 +23,10 @@ const fixtureSong = {
 try {
   const first = await browser.newPage();
   await first.evaluateOnNewDocument((song) => {
+    // Puppeteer installs this callback in every new document, including
+    // about:blank documents created while YouTube builds its child iframe.
+    // Only the application frame may seed the shared origin's storage.
+    if (window !== window.top) return;
     const tabId = 'player-controls-fixture-tab';
     sessionStorage.setItem('diva-playback-tab-v1', tabId);
     localStorage.setItem('diva-playback-owner-v1', JSON.stringify({
@@ -52,6 +56,19 @@ try {
   // especially while the startup shell and route chunks are initializing.
   // Verify the durable contract without sampling that transient boundary.
   await first.waitForFunction(() => localStorage.getItem('diva_playerQueue') === null);
+  // A late YouTube child document must not rerun the top-frame fixture and
+  // resurrect the shared-origin queue after the player has been closed.
+  await first.evaluate(() => new Promise((resolve) => {
+    const frame = document.createElement('iframe');
+    frame.addEventListener('load', () => {
+      frame.remove();
+      resolve(undefined);
+    }, { once: true });
+    frame.src = 'about:blank';
+    document.body.appendChild(frame);
+  }));
+  const queueRemainedCleared = await first.evaluate(() => localStorage.getItem('diva_playerQueue') === null);
+  if (!queueRemainedCleared) throw new Error('A child document restored the closed player queue.');
   console.log('PASS mini-player close control');
 } finally {
   await browser.close();
