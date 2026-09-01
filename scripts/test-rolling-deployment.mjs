@@ -2504,6 +2504,25 @@ async function testBridgePublicationWriterBarrierContract() {
     /INSERT INTO sync_state\(key, value, updated_at\)[\s\S]*'diva_stateful_maintenance_gate', :'token'[\s\S]*pg_stat_activity/u,
     'writer idleness and the exact maintenance token are established together',
   );
+  const pipelineActivityChecks = [
+    ...barrierFunctions.matchAll(/FROM pg_stat_activity AS activity/g),
+  ].length;
+  assert.equal(pipelineActivityChecks, 3, 'all three pipeline-session checks remain present');
+  assert.equal(
+    [...barrierFunctions.matchAll(/activity\.backend_type = 'client backend'/g)].length,
+    pipelineActivityChecks,
+    'every pipeline-session check excludes PostgreSQL auxiliary processes',
+  );
+  assert.doesNotMatch(
+    barrierFunctions,
+    /\\quit\s+[0-9]+/u,
+    'psql meta-command quit does not accept a numeric exit status',
+  );
+  assert.match(
+    barrierFunctions,
+    /preserve_bridge_publication_writer_gate\(\)[\s\S]*\[ "\$barrier_exit" = 0 \][\s\S]*"ready\|\$BRIDGE_PUBLICATION_WRITER_BARRIER_TOKEN"/u,
+    'preserving the gate accepts only normal psql exit plus the exact ready evidence',
+  );
   assert.match(
     barrierFunctions,
     /\) < "\$BRIDGE_PUBLICATION_WRITER_BARRIER_FIFO"[\s\S]*&[\s\S]*exec 9> "\$BRIDGE_PUBLICATION_WRITER_BARRIER_FIFO"/u,
@@ -2596,7 +2615,7 @@ DOCKER_COMMAND=docker
 SYNC_COMMAND=true
 printf '%s\n' fifo > "$BRIDGE_PUBLICATION_WRITER_BARRIER_FIFO"
 printf '%s\n' refused > "$BRIDGE_PUBLICATION_WRITER_BARRIER_RESULT"
-printf '%s\n' 3 > "$BRIDGE_PUBLICATION_WRITER_BARRIER_EXIT"
+printf '%s\n' 0 > "$BRIDGE_PUBLICATION_WRITER_BARRIER_EXIT"
 (exit 0) &
 BRIDGE_PUBLICATION_WRITER_BARRIER_PID=$!
 exec 9>/dev/null

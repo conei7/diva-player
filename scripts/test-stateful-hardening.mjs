@@ -416,15 +416,26 @@ const gateReleaseContract = hardeningSource.slice(
   hardeningSource.indexOf('release_pipeline_writers()'),
   hardeningSource.indexOf('qdrant_fingerprint()'),
 );
-for (const [label, contract] of [
-  ['verify', gateVerifyContract],
-  ['acquire', gateAcquireContract],
-  ['release', gateReleaseContract],
+for (const [label, contract, expectedActivityChecks] of [
+  ['verify', gateVerifyContract, 1],
+  ['acquire', gateAcquireContract, 2],
+  ['release', gateReleaseContract, 2],
 ]) {
   assert.match(
     contract,
     /pg_has_role\([^)]*'diva_pipeline_runtime', 'MEMBER'/,
     `${label} gate SQL does not inspect transitive runtime-role membership`,
+  );
+  const activityChecks = [...contract.matchAll(/FROM pg_stat_activity AS activity/g)].length;
+  assert.equal(
+    activityChecks,
+    expectedActivityChecks,
+    `${label} gate SQL must retain every client-session check`,
+  );
+  assert.equal(
+    [...contract.matchAll(/activity\.backend_type = 'client backend'/g)].length,
+    activityChecks,
+    `${label} gate SQL must exclude PostgreSQL auxiliary processes`,
   );
 }
 assert.match(gateAcquireContract, /count\(\*\) = \(\s*SELECT count\(\*\)[\s\S]*pg_has_role/);

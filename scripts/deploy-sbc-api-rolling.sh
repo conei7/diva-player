@@ -5798,6 +5798,7 @@ SELECT
         FROM pg_stat_activity AS activity
         JOIN pg_roles AS role ON role.rolname = activity.usename
         WHERE activity.pid <> pg_backend_pid()
+          AND activity.backend_type = 'client backend'
           AND pg_has_role(role.oid, 'diva_pipeline_runtime', 'MEMBER'))::text
 FROM locks;
 SQL
@@ -5816,7 +5817,7 @@ settle_bridge_publication_writer_barrier_refusal() {
     wait "$BRIDGE_PUBLICATION_WRITER_BARRIER_PID" || process_status=$?
     barrier_exit=$(cat "$BRIDGE_PUBLICATION_WRITER_BARRIER_EXIT") || return 1
     actual_result=$(cat "$BRIDGE_PUBLICATION_WRITER_BARRIER_RESULT") || return 1
-    [ "$process_status" -eq 0 ] && [ "$barrier_exit" = 3 ] \
+    [ "$process_status" -eq 0 ] && [ "$barrier_exit" = 0 ] \
         && [ "$actual_result" = refused ] || return 1
     # A busy writer or a pre-existing maintenance gate is a clean refusal, not
     # an ambiguous mutation. Prove that this deployment owns neither its token
@@ -5946,6 +5947,7 @@ WITH idle AS MATERIALIZED (
             FROM pg_stat_activity AS activity
             JOIN pg_roles AS role ON role.rolname = activity.usename
             WHERE activity.pid <> pg_backend_pid()
+              AND activity.backend_type = 'client backend'
               AND pg_has_role(role.oid, 'diva_pipeline_runtime', 'MEMBER')
         ) AS state_idle
 ), inserted AS (
@@ -5978,7 +5980,7 @@ SELECT
          ELSE true END AS publication_released
 \gset
 SELECT 'refused';
-\quit 3
+\quit
 \endif
 SQL
     while [ "$attempts" -lt "$ROUTE_ATTEMPTS" ]; do
@@ -6035,6 +6037,7 @@ SELECT CASE WHEN
         FROM pg_stat_activity AS activity
         JOIN pg_roles AS role ON role.rolname = activity.usename
         WHERE activity.pid <> pg_backend_pid()
+          AND activity.backend_type = 'client backend'
           AND pg_has_role(role.oid, 'diva_pipeline_runtime', 'MEMBER')
     )
     AND (SELECT count(*) FROM pg_locks
@@ -6065,12 +6068,12 @@ FROM unlocked;
 \else
 ROLLBACK;
 SELECT 'release-refused';
-\quit 4
+\quit
 \endif
 \else
 ROLLBACK;
 SELECT 'release-refused';
-\quit 4
+\quit
 \endif
 \quit
 SQL
@@ -6126,7 +6129,7 @@ preserve_bridge_publication_writer_gate() {
     # maintenance token is intentionally not deleted, so cooperating writers
     # remain stopped when stateless rollback or daemon settlement is incomplete.
     if ! cat >&9 <<'SQL'
-\quit 5
+\quit
 SQL
     then
         return 1
@@ -6143,7 +6146,7 @@ SQL
     barrier_exit=$(cat "$BRIDGE_PUBLICATION_WRITER_BARRIER_EXIT") || return 1
     actual_result=$(cat "$BRIDGE_PUBLICATION_WRITER_BARRIER_RESULT") || return 1
     [ "$process_status" -eq 0 ] \
-        && [ "$barrier_exit" = 5 ] \
+        && [ "$barrier_exit" = 0 ] \
         && [ "$actual_result" = "ready|$BRIDGE_PUBLICATION_WRITER_BARRIER_TOKEN" ] \
         || return 1
     BRIDGE_PUBLICATION_WRITER_BARRIER_ACTIVE=false

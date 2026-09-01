@@ -3465,6 +3465,7 @@ SELECT
         FROM pg_stat_activity AS activity
         JOIN pg_roles AS role ON role.rolname = activity.usename
         WHERE activity.pid <> pg_backend_pid()
+          AND activity.backend_type = 'client backend'
           AND pg_has_role(role.oid, 'diva_pipeline_runtime', 'MEMBER')
     )::text
     || '|' || (
@@ -3552,6 +3553,7 @@ WITH locks AS MATERIALIZED (
             FROM pg_stat_activity AS activity
             JOIN pg_roles AS role ON role.rolname = activity.usename
             WHERE activity.pid <> pg_backend_pid()
+              AND activity.backend_type = 'client backend'
               AND pg_has_role(role.oid, 'diva_pipeline_runtime', 'MEMBER')
         ) AS state_idle
 )
@@ -3639,6 +3641,7 @@ SELECT CASE WHEN
         FROM pg_stat_activity AS activity
         JOIN pg_roles AS role ON role.rolname = activity.usename
         WHERE activity.pid <> pg_backend_pid()
+          AND activity.backend_type = 'client backend'
           AND pg_has_role(role.oid, 'diva_pipeline_runtime', 'MEMBER')
     )
     THEN 'true' ELSE 'false' END AS lockdown_ok
@@ -3729,6 +3732,7 @@ SELECT CASE WHEN
         FROM pg_stat_activity AS activity
         JOIN pg_roles AS role ON role.rolname = activity.usename
         WHERE activity.pid <> pg_backend_pid()
+          AND activity.backend_type = 'client backend'
           AND pg_has_role(role.oid, 'diva_pipeline_runtime', 'MEMBER')
     )
     AND NOT EXISTS (
@@ -3806,6 +3810,7 @@ SELECT CASE WHEN
         FROM pg_stat_activity AS activity
         JOIN pg_roles AS role ON role.rolname = activity.usename
         WHERE activity.pid <> pg_backend_pid()
+          AND activity.backend_type = 'client backend'
           AND pg_has_role(role.oid, 'diva_pipeline_runtime', 'MEMBER')
     )
     THEN 'true' ELSE 'false' END AS released_roles_ok
