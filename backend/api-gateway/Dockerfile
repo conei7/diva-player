@@ -8,3 +8,5 @@ RUN chmod 0644 /usr/local/etc/haproxy/haproxy.cfg
 
 EXPOSE 5000
 USER haproxy
+RUN GATEWAY_PROXY_KEY=build-time-config-validation-only \
+    haproxy -c -f /usr/local/etc/haproxy/haproxy.cfg

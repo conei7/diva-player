@@ -376,6 +376,13 @@ CANDIDATE_GATEWAY_ID=""
 CANDIDATE_GATEWAY_IMAGE_ID=""
 CANDIDATE_CONFIG_HASH=""
 CANDIDATE_GATEWAY_RUNTIME_SHA256=""
+GATEWAY_CONFIG_VALIDATION_CONTAINER="diva_gateway_config_validation_$DEPLOYMENT_ID"
+GATEWAY_CONFIG_VALIDATION_ID=""
+GATEWAY_CONFIG_VALIDATION_OWNED=false
+GATEWAY_CONFIG_VALIDATION_STATUS=""
+GATEWAY_CONFIG_VALIDATION_EXIT_CODE=""
+GATEWAY_CONFIG_VALIDATION_OOM_KILLED=""
+GATEWAY_CONFIG_VALIDATION_RUNTIME_ERROR=""
 CANDIDATE_API_A_CONTAINER="diva_api_a_candidate_$DEPLOYMENT_ID"
 CANDIDATE_API_B_CONTAINER="diva_api_b_candidate_$DEPLOYMENT_ID"
 CANDIDATE_API_A_STARTED=false
@@ -989,10 +996,15 @@ mark_daemon_unresolved() {
         "forbidden-$reason" || true
 }
 
-complete_daemon_mutation() {
-    record_state "daemon_mutation.$DAEMON_MUTATION_SEQUENCE.phase" "client-exit-zero"
+settle_daemon_mutation() {
+    local phase="$1"
+    record_state "daemon_mutation.$DAEMON_MUTATION_SEQUENCE.phase" "$phase"
     DAEMON_MUTATION_IN_FLIGHT=false
     DAEMON_MUTATION_INTENT=""
+}
+
+complete_daemon_mutation() {
+    settle_daemon_mutation "client-exit-zero"
 }
 
 fail_daemon_mutation() {
@@ -1410,6 +1422,13 @@ cleanup() {
             record_state bridge.publication_writer_barrier \
                 "cleanup-release-unresolved:$BRIDGE_PUBLICATION_WRITER_BARRIER_TOKEN" || true
         fi
+    fi
+    if [ "$GATEWAY_CONFIG_VALIDATION_OWNED" = "true" ] \
+        && [ "$DAEMON_MUTATION_IN_FLIGHT" = "false" ] \
+        && [ "$DAEMON_MUTATION_UNRESOLVED" = "false" ] \
+        && [ ! -e "$DAEMON_UNRESOLVED_FILE" ] \
+        && [ ! -L "$DAEMON_UNRESOLVED_FILE" ]; then
+        remove_gateway_config_validation_container || recovery_result=1
     fi
     if [ "$DAEMON_MUTATION_UNRESOLVED" = "true" ] \
         || [ -e "$DAEMON_UNRESOLVED_FILE" ] || [ -L "$DAEMON_UNRESOLVED_FILE" ]; then
@@ -2815,6 +2834,451 @@ wait_container_running_id() {
         wait_once
     done
     return 1
+}
+
+container_by_exact_id() {
+    local expected_id="$1" output
+    if ! run_bounded_docker_query container ls -a --no-trunc \
+        --filter "id=$expected_id" --format '{{.ID}}'; then
+        return 1
+    fi
+    output="$DOCKER_QUERY_OUTPUT"
+    case "$output" in
+        "") ;;
+        "$expected_id") ;;
+        *)
+            mark_topology_drift_unresolved \
+                "container-id-filter-$expected_id-observed-${output:-absent}"
+            return 1
+            ;;
+    esac
+    printf '%s\n' "$output"
+}
+
+wait_exact_container_absent() {
+    local name="$1" expected_id="$2" attempts=0 stable=0 mapped_id exact_id
+    while [ "$attempts" -lt "$DAEMON_SETTLE_ATTEMPTS" ]; do
+        mapped_id=$(container_id "$name") || return 1
+        exact_id=$(container_by_exact_id "$expected_id") || return 1
+        if [ -z "$mapped_id" ] && [ -z "$exact_id" ]; then
+            stable=$((stable + 1))
+            [ "$stable" -ge "$DAEMON_STABLE_SAMPLES" ] && return 0
+        else
+            stable=0
+        fi
+        attempts=$((attempts + 1))
+        wait_once
+    done
+    return 1
+}
+
+mark_active_daemon_mutation_unresolved() {
+    local reason="$1"
+    mark_daemon_unresolved "$reason"
+    record_state "daemon_mutation.$DAEMON_MUTATION_SEQUENCE.phase" \
+        "unresolved-$reason-terminal-release-forbidden" || true
+    DAEMON_MUTATION_IN_FLIGHT=false
+    DAEMON_MUTATION_INTENT=""
+    return 1
+}
+
+verify_gateway_config_validation_container() {
+    local id="$1" mapped_id exact_id image role deployment command user
+    local read_only auto_remove memory reservation pids network restart cap_drop
+    local security tmpfs
+    [ -n "$id" ] || return 1
+    mapped_id=$(container_id "$GATEWAY_CONFIG_VALIDATION_CONTAINER") || return 1
+    exact_id=$(container_by_exact_id "$id") || return 1
+    [ "$mapped_id" = "$id" ] && [ "$exact_id" = "$id" ] || return 1
+    image=$(container_inspect_value "$id" '{{.Image}}') || return 1
+    role=$(container_inspect_value "$id" \
+        '{{index .Config.Labels "com.diva.role"}}') || return 1
+    deployment=$(container_inspect_value "$id" \
+        '{{index .Config.Labels "com.diva.deployment"}}') || return 1
+    command=$(container_inspect_value "$id" '{{json .Config.Cmd}}') || return 1
+    user=$(container_inspect_value "$id" '{{.Config.User}}') || return 1
+    read_only=$(container_inspect_value "$id" '{{.HostConfig.ReadonlyRootfs}}') \
+        || return 1
+    auto_remove=$(container_inspect_value "$id" '{{.HostConfig.AutoRemove}}') \
+        || return 1
+    memory=$(container_inspect_value "$id" '{{.HostConfig.Memory}}') || return 1
+    reservation=$(container_inspect_value "$id" \
+        '{{.HostConfig.MemoryReservation}}') || return 1
+    pids=$(container_inspect_value "$id" '{{.HostConfig.PidsLimit}}') || return 1
+    network=$(container_inspect_value "$id" '{{.HostConfig.NetworkMode}}') || return 1
+    restart=$(container_inspect_value "$id" \
+        '{{.HostConfig.RestartPolicy.Name}}') || return 1
+    cap_drop=$(container_inspect_value "$id" '{{json .HostConfig.CapDrop}}') || return 1
+    security=$(container_inspect_value "$id" '{{json .HostConfig.SecurityOpt}}') \
+        || return 1
+    tmpfs=$(container_inspect_value "$id" '{{index .HostConfig.Tmpfs "/tmp"}}') \
+        || return 1
+    [ "$image" = "$NEW_GATEWAY_IMAGE" ] \
+        && [ "$role" = gateway-config-validation ] \
+        && [ "$deployment" = "$DEPLOYMENT_ID" ] \
+        && [ "$command" = '["-c","-f","/usr/local/etc/haproxy/haproxy.cfg"]' ] \
+        && [ "$user" = haproxy ] \
+        && [ "$read_only" = true ] \
+        && [ "$auto_remove" = false ] \
+        && [ "$memory" = 268435456 ] \
+        && [ "$reservation" = 67108864 ] \
+        && [ "$pids" = 128 ] \
+        && [ "$network" = none ] \
+        && { [ "$restart" = no ] || [ -z "$restart" ]; } \
+        && [ "$cap_drop" = '["ALL"]' ] \
+        && { [ "$security" = '["no-new-privileges"]' ] \
+            || [ "$security" = '["no-new-privileges=true"]' ] \
+            || [ "$security" = '["no-new-privileges:true"]' ]; } \
+        && { case "$tmpfs" in
+                *size=16m*mode=1777*|*mode=1777*size=16m*) true ;;
+                *) false ;;
+            esac; }
+}
+
+create_gateway_config_validation_container() {
+    local rc=0 output mapped_id attempts=0 stable=0
+    mapped_id=$(container_id "$GATEWAY_CONFIG_VALIDATION_CONTAINER") || return 1
+    [ -z "$mapped_id" ] || {
+        mark_topology_drift_unresolved \
+            "gateway-config-validation-name-preoccupied-$mapped_id"
+        return 1
+    }
+    record_state "gateway.config_validation_name" \
+        "$GATEWAY_CONFIG_VALIDATION_CONTAINER"
+    record_state "gateway.config_validation_image" "$NEW_GATEWAY_IMAGE"
+    record_state "gateway.config_validation_phase" "create-intent"
+    begin_daemon_mutation "docker-create-gateway-config-validation" || return $?
+    : > "$DOCKER_QUERY_FILE" || {
+        mark_active_daemon_mutation_unresolved \
+            "docker-create-gateway-config-validation-output-create-failed"
+        return 1
+    }
+    run_with_timeout "$MUTATION_TIMEOUT_SECONDS" "$DOCKER_COMMAND" create \
+        --name "$GATEWAY_CONFIG_VALIDATION_CONTAINER" \
+        --label com.diva.role=gateway-config-validation \
+        --label "com.diva.deployment=$DEPLOYMENT_ID" \
+        --network none --user haproxy --read-only \
+        --tmpfs /tmp:size=16m,mode=1777 \
+        --memory-reservation 64m --memory 256m --pids-limit 128 \
+        --cap-drop ALL --security-opt no-new-privileges=true --restart no \
+        --log-driver json-file --log-opt max-size=10m --log-opt max-file=5 \
+        --env GATEWAY_PROXY_KEY=config-validation-only \
+        "$GATEWAY_CANDIDATE_IMAGE" \
+        -c -f /usr/local/etc/haproxy/haproxy.cfg > "$DOCKER_QUERY_FILE" || rc=$?
+    output=$(cat "$DOCKER_QUERY_FILE") || output=""
+    rm -f -- "$DOCKER_QUERY_FILE" >/dev/null 2>&1 || {
+        mark_active_daemon_mutation_unresolved \
+            "docker-create-gateway-config-validation-output-remove-failed"
+        return 1
+    }
+    while [ "$attempts" -lt "$DAEMON_SETTLE_ATTEMPTS" ]; do
+        mapped_id=$(container_id "$GATEWAY_CONFIG_VALIDATION_CONTAINER") || return 1
+        if [ -n "$mapped_id" ]; then
+            break
+        fi
+        stable=$((stable + 1))
+        [ "$stable" -ge "$DAEMON_STABLE_SAMPLES" ] && break
+        attempts=$((attempts + 1))
+        wait_once
+    done
+    if [ -z "$mapped_id" ]; then
+        if [ "$rc" -ne 0 ] && [ "$stable" -ge "$DAEMON_STABLE_SAMPLES" ]; then
+            settle_daemon_mutation \
+                "settled-client-exit-$rc-stable-absent-noop"
+            record_state "gateway.config_validation_create" \
+                "client-exit-$rc-stable-absent"
+            fail "HAProxy validation container create did not apply (client exit $rc)"
+            return 1
+        fi
+        mark_active_daemon_mutation_unresolved \
+            "docker-create-gateway-config-validation-result-ambiguous"
+        return 1
+    fi
+    case "$mapped_id" in
+        *[!0-9a-f]*|"")
+            mark_active_daemon_mutation_unresolved \
+                "docker-create-gateway-config-validation-invalid-id"
+            return 1
+            ;;
+    esac
+    [ "${#mapped_id}" -eq 64 ] || {
+        mark_active_daemon_mutation_unresolved \
+            "docker-create-gateway-config-validation-invalid-id"
+        return 1
+    }
+    if { [ "$rc" -eq 0 ] && [ "$output" != "$mapped_id" ]; } \
+        || { [ -n "$output" ] && [ "$output" != "$mapped_id" ]; }; then
+        mark_active_daemon_mutation_unresolved \
+            "docker-create-gateway-config-validation-output-identity-mismatch"
+        return 1
+    fi
+    record_state "gateway.config_validation_observed_id" "$mapped_id"
+    if ! verify_gateway_config_validation_container "$mapped_id"; then
+        mark_active_daemon_mutation_unresolved \
+            "docker-create-gateway-config-validation-contract-mismatch"
+        return 1
+    fi
+    GATEWAY_CONFIG_VALIDATION_ID="$mapped_id"
+    GATEWAY_CONFIG_VALIDATION_OWNED=true
+    record_state "gateway.config_validation_container_id" "$mapped_id"
+    settle_daemon_mutation "settled-client-exit-$rc-exact-created"
+    record_state "gateway.config_validation_phase" "created-exact"
+}
+
+settle_gateway_config_validation_start() {
+    local client_rc="$1" attempts=0 stable_created=0 mapped_id running status
+    local exit_code oom_killed runtime_error
+    if ! verify_gateway_config_validation_container \
+        "$GATEWAY_CONFIG_VALIDATION_ID"; then
+        mark_active_daemon_mutation_unresolved \
+            "docker-start-gateway-config-validation-initial-contract-drift"
+        return 1
+    fi
+    while [ "$attempts" -lt "$DAEMON_SETTLE_ATTEMPTS" ]; do
+        mapped_id=$(container_id "$GATEWAY_CONFIG_VALIDATION_CONTAINER") || return 1
+        if [ "$mapped_id" != "$GATEWAY_CONFIG_VALIDATION_ID" ]; then
+            mark_active_daemon_mutation_unresolved \
+                "docker-start-gateway-config-validation-identity-drift"
+            return 1
+        fi
+        running=$(container_inspect_value "$GATEWAY_CONFIG_VALIDATION_ID" \
+            '{{.State.Running}}') || return 1
+        status=$(container_inspect_value "$GATEWAY_CONFIG_VALIDATION_ID" \
+            '{{.State.Status}}') || return 1
+        case "$running:$status" in
+            true:running)
+                stable_created=0
+                ;;
+            false:created)
+                stable_created=$((stable_created + 1))
+                if [ "$stable_created" -ge "$DAEMON_STABLE_SAMPLES" ]; then
+                    if ! verify_gateway_config_validation_container \
+                        "$GATEWAY_CONFIG_VALIDATION_ID"; then
+                        mark_active_daemon_mutation_unresolved \
+                            "docker-start-gateway-config-validation-created-contract-drift"
+                        return 1
+                    fi
+                    if [ "$client_rc" -eq 0 ]; then
+                        mark_active_daemon_mutation_unresolved \
+                            "docker-start-gateway-config-validation-success-without-start"
+                        return 1
+                    fi
+                    GATEWAY_CONFIG_VALIDATION_STATUS=created
+                    GATEWAY_CONFIG_VALIDATION_EXIT_CODE=""
+                    GATEWAY_CONFIG_VALIDATION_OOM_KILLED=false
+                    GATEWAY_CONFIG_VALIDATION_RUNTIME_ERROR=""
+                    settle_daemon_mutation \
+                        "settled-client-exit-$client_rc-exact-created-noop"
+                    return 0
+                fi
+                ;;
+            false:exited|false:dead)
+                if ! verify_gateway_config_validation_container \
+                    "$GATEWAY_CONFIG_VALIDATION_ID"; then
+                    mark_active_daemon_mutation_unresolved \
+                        "docker-start-gateway-config-validation-terminal-contract-drift"
+                    return 1
+                fi
+                exit_code=$(container_inspect_value \
+                    "$GATEWAY_CONFIG_VALIDATION_ID" '{{.State.ExitCode}}') || return 1
+                oom_killed=$(container_inspect_value \
+                    "$GATEWAY_CONFIG_VALIDATION_ID" '{{.State.OOMKilled}}') || return 1
+                runtime_error=$(container_inspect_value \
+                    "$GATEWAY_CONFIG_VALIDATION_ID" '{{.State.Error}}') || return 1
+                case "$exit_code" in
+                    ''|*[!0-9]*)
+                        mark_active_daemon_mutation_unresolved \
+                            "docker-start-gateway-config-validation-invalid-exit"
+                        return 1
+                        ;;
+                esac
+                if [ "$exit_code" -gt 255 ]; then
+                    mark_active_daemon_mutation_unresolved \
+                        "docker-start-gateway-config-validation-exit-out-of-range"
+                    return 1
+                fi
+                case "$oom_killed" in true|false) ;; *) return 1 ;; esac
+                [ "${#runtime_error}" -le 512 ] || {
+                    mark_active_daemon_mutation_unresolved \
+                        "docker-start-gateway-config-validation-runtime-error-too-large"
+                    return 1
+                }
+                GATEWAY_CONFIG_VALIDATION_STATUS="$status"
+                GATEWAY_CONFIG_VALIDATION_EXIT_CODE="$exit_code"
+                GATEWAY_CONFIG_VALIDATION_OOM_KILLED="$oom_killed"
+                GATEWAY_CONFIG_VALIDATION_RUNTIME_ERROR="$runtime_error"
+                settle_daemon_mutation \
+                    "settled-client-exit-$client_rc-container-$status-$exit_code"
+                return 0
+                ;;
+            *)
+                mark_active_daemon_mutation_unresolved \
+                    "docker-start-gateway-config-validation-invalid-state"
+                return 1
+                ;;
+        esac
+        attempts=$((attempts + 1))
+        wait_once
+    done
+    mark_active_daemon_mutation_unresolved \
+        "docker-start-gateway-config-validation-not-terminal"
+}
+
+remove_gateway_config_validation_container() {
+    local mapped_id exact_id running rc=0
+    [ "$GATEWAY_CONFIG_VALIDATION_OWNED" = true ] || return 0
+    mapped_id=$(container_id "$GATEWAY_CONFIG_VALIDATION_CONTAINER") || return 1
+    exact_id=$(container_by_exact_id "$GATEWAY_CONFIG_VALIDATION_ID") || return 1
+    if [ -z "$mapped_id" ] && [ -z "$exact_id" ]; then
+        record_state "gateway.config_validation_cleanup" "already-exact-absent"
+        GATEWAY_CONFIG_VALIDATION_OWNED=false
+        GATEWAY_CONFIG_VALIDATION_ID=""
+        return 0
+    fi
+    if [ "$mapped_id" != "$GATEWAY_CONFIG_VALIDATION_ID" ] \
+        || [ "$exact_id" != "$GATEWAY_CONFIG_VALIDATION_ID" ] \
+        || ! verify_gateway_config_validation_container \
+            "$GATEWAY_CONFIG_VALIDATION_ID"; then
+        mark_topology_drift_unresolved \
+            "gateway-config-validation-cleanup-identity-drift"
+        return 1
+    fi
+    running=$(container_inspect_value "$GATEWAY_CONFIG_VALIDATION_ID" \
+        '{{.State.Running}}') || return 1
+    if [ "$running" != false ]; then
+        mark_daemon_unresolved \
+            "gateway-config-validation-cleanup-container-running"
+        return 1
+    fi
+    record_state "gateway.config_validation_phase" "cleanup-intent"
+    begin_daemon_mutation "docker-rm-gateway-config-validation" || return $?
+    run_with_timeout "$MUTATION_TIMEOUT_SECONDS" "$DOCKER_COMMAND" rm \
+        "$GATEWAY_CONFIG_VALIDATION_ID" >/dev/null || rc=$?
+    if wait_exact_container_absent "$GATEWAY_CONFIG_VALIDATION_CONTAINER" \
+        "$GATEWAY_CONFIG_VALIDATION_ID"; then
+        settle_daemon_mutation "settled-client-exit-$rc-exact-absent"
+        record_state "gateway.config_validation_cleanup" \
+            "exact-removed-client-exit-$rc"
+        record_state "gateway.config_validation_phase" "cleaned-exact"
+        GATEWAY_CONFIG_VALIDATION_OWNED=false
+        GATEWAY_CONFIG_VALIDATION_ID=""
+        return 0
+    fi
+    mark_active_daemon_mutation_unresolved \
+        "docker-rm-gateway-config-validation-not-absent"
+}
+
+validate_built_gateway_configuration() {
+    local start_rc=0 start_output wait_rc=0 wait_output wait_line_count
+    local wait_output_valid=false
+    local status exit_code oom_killed runtime_error
+    local post_status post_exit_code post_oom_killed post_runtime_error
+    create_gateway_config_validation_container || return 1
+    record_state "gateway.config_validation_phase" "start-intent"
+    begin_daemon_mutation "docker-start-gateway-config-validation" || return $?
+    : > "$DOCKER_QUERY_FILE" || {
+        mark_active_daemon_mutation_unresolved \
+            "docker-start-gateway-config-validation-output-create-failed"
+        return 1
+    }
+    run_with_timeout "$MUTATION_TIMEOUT_SECONDS" "$DOCKER_COMMAND" start \
+        "$GATEWAY_CONFIG_VALIDATION_ID" > "$DOCKER_QUERY_FILE" || start_rc=$?
+    start_output=$(cat "$DOCKER_QUERY_FILE") || start_output=""
+    rm -f -- "$DOCKER_QUERY_FILE" >/dev/null 2>&1 || {
+        mark_active_daemon_mutation_unresolved \
+            "docker-start-gateway-config-validation-output-remove-failed"
+        return 1
+    }
+    if { [ "$start_rc" -eq 0 ] \
+            && [ "$start_output" != "$GATEWAY_CONFIG_VALIDATION_ID" ]; } \
+        || { [ -n "$start_output" ] \
+            && [ "$start_output" != "$GATEWAY_CONFIG_VALIDATION_ID" ]; }; then
+        mark_active_daemon_mutation_unresolved \
+            "docker-start-gateway-config-validation-output-identity-mismatch"
+        return 1
+    fi
+    settle_gateway_config_validation_start "$start_rc" || return 1
+    status="$GATEWAY_CONFIG_VALIDATION_STATUS"
+    exit_code="$GATEWAY_CONFIG_VALIDATION_EXIT_CODE"
+    oom_killed="$GATEWAY_CONFIG_VALIDATION_OOM_KILLED"
+    runtime_error="$GATEWAY_CONFIG_VALIDATION_RUNTIME_ERROR"
+    record_state "gateway.config_validation_phase" "settled-$status"
+    record_state "gateway.config_validation_client_exit" "$start_rc"
+    record_state "gateway.config_validation_start_output" \
+        "${start_output:-none}"
+    record_state "gateway.config_validation_runtime" \
+        "status-$status-exit-${exit_code:-none}-oom-$oom_killed"
+    if [ -n "$runtime_error" ]; then
+        record_state "gateway.config_validation_runtime_error" "present"
+    else
+        record_state "gateway.config_validation_runtime_error" "none"
+    fi
+    if [ "$status" != exited ]; then
+        remove_gateway_config_validation_container || return 1
+        fail "HAProxy validation container did not reach the exact exited state (status $status)"
+        return 1
+    fi
+    : > "$DOCKER_QUERY_FILE" || return 1
+    run_with_timeout "$DOCKER_READ_TIMEOUT_SECONDS" "$DOCKER_COMMAND" wait \
+        "$GATEWAY_CONFIG_VALIDATION_ID" > "$DOCKER_QUERY_FILE" || wait_rc=$?
+    wait_line_count=$(wc -l < "$DOCKER_QUERY_FILE") || wait_line_count=""
+    wait_output=$(cat "$DOCKER_QUERY_FILE") || wait_output=""
+    rm -f -- "$DOCKER_QUERY_FILE" >/dev/null 2>&1 || return 1
+    record_state "gateway.config_validation_wait_observed" \
+        "client-exit-$wait_rc-lines-${wait_line_count:-invalid}"
+    if ! verify_gateway_config_validation_container \
+        "$GATEWAY_CONFIG_VALIDATION_ID"; then
+        mark_topology_drift_unresolved \
+            "gateway-config-validation-post-wait-contract-drift"
+        return 1
+    fi
+    post_status=$(container_inspect_value "$GATEWAY_CONFIG_VALIDATION_ID" \
+        '{{.State.Status}}') || return 1
+    post_exit_code=$(container_inspect_value "$GATEWAY_CONFIG_VALIDATION_ID" \
+        '{{.State.ExitCode}}') || return 1
+    post_oom_killed=$(container_inspect_value "$GATEWAY_CONFIG_VALIDATION_ID" \
+        '{{.State.OOMKilled}}') || return 1
+    post_runtime_error=$(container_inspect_value "$GATEWAY_CONFIG_VALIDATION_ID" \
+        '{{.State.Error}}') || return 1
+    if [ "$post_status" != "$status" ] \
+        || [ "$post_exit_code" != "$exit_code" ] \
+        || [ "$post_oom_killed" != "$oom_killed" ] \
+        || [ "$post_runtime_error" != "$runtime_error" ]; then
+        mark_topology_drift_unresolved \
+            "gateway-config-validation-post-wait-state-drift"
+        return 1
+    fi
+    case "$wait_output" in
+        ''|*[!0-9]*) wait_output_valid=false ;;
+        *) wait_output_valid=true ;;
+    esac
+    if [ "$wait_rc" -ne 0 ] || [ "$wait_line_count" != 1 ] \
+        || [ "$wait_output_valid" != true ] \
+        || [ "$wait_output" != "$exit_code" ]; then
+        remove_gateway_config_validation_container || return 1
+        fail "HAProxy validation wait receipt was not an exact one-line exit-code receipt"
+        return 1
+    fi
+    record_state "gateway.config_validation_wait" \
+        "exact-one-line-exit-$wait_output"
+    if [ "$exit_code" -ne 0 ] || [ "$oom_killed" != false ] \
+        || [ -n "$runtime_error" ]; then
+        run_bounded_docker_observe logs --tail 100 \
+            "$GATEWAY_CONFIG_VALIDATION_ID" >&2 || true
+        remove_gateway_config_validation_container || return 1
+        if [ "$oom_killed" = true ]; then
+            fail "HAProxy configuration validation was OOM-killed (exit $exit_code)"
+        elif [ -n "$runtime_error" ]; then
+            fail "HAProxy configuration validation reported a runtime error (exit $exit_code)"
+        else
+            fail "HAProxy configuration validation failed with exit $exit_code"
+        fi
+        return 1
+    fi
+    remove_gateway_config_validation_container || return 1
+    record_state "gateway.config_validation" \
+        "passed-exact-container-client-exit-$start_rc"
+    return 0
 }
 
 require_exact_running_mapping() {
@@ -6520,9 +6984,7 @@ if ! capture_resolved_compose_contract; then
 fi
 
 log "Validating the built HAProxy configuration"
-bounded_compose "$MUTATION_TIMEOUT_SECONDS" run --rm --no-deps api_gateway \
-    haproxy -c -f /usr/local/etc/haproxy/haproxy.cfg
-record_state "gateway.config_validation" "passed"
+validate_built_gateway_configuration || exit 1
 
 if [ "$BRIDGE_BOOTSTRAP_MODE" != "true" ]; then
 # Migrations are deliberately a separate, forward-only phase. Binary rollback

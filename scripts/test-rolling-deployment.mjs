@@ -320,8 +320,24 @@ if [ "$1" = "inspect" ]; then
             ;;
         *State.Running*) read_value "$containers/$container.running" true ;;
         *State.Health*) container_health "$container" ;;
+        *State.Status*) read_value "$containers/$container.status" running ;;
+        *State.ExitCode*) read_value "$containers/$container.exit_code" 0 ;;
+        *State.OOMKilled*) read_value "$containers/$container.oom_killed" false ;;
+        *State.Error*) read_value "$containers/$container.runtime_error" "" ;;
+        *HostConfig.MemoryReservation*) read_value "$containers/$container.memory_reservation" 67108864 ;;
+        *HostConfig.Memory*) read_value "$containers/$container.memory" 268435456 ;;
+        *HostConfig.PidsLimit*) read_value "$containers/$container.pids_limit" 128 ;;
+        *HostConfig.NetworkMode*) read_value "$containers/$container.network" none ;;
+        *HostConfig.AutoRemove*) read_value "$containers/$container.auto_remove" false ;;
         *HostConfig.RestartPolicy.Name*) read_value "$containers/$container.restart_policy" unless-stopped ;;
         *HostConfig.ReadonlyRootfs*) read_value "$containers/$container.read_only" true ;;
+        *HostConfig.CapDrop*) printf '%s\n' '["ALL"]' ;;
+        *HostConfig.SecurityOpt*) printf '%s\n' '["no-new-privileges=true"]' ;;
+        *HostConfig.Tmpfs*) printf '%s\n' 'size=16m,mode=1777' ;;
+        *'com.diva.role'*) read_value "$containers/$container.role" "" ;;
+        *'com.diva.deployment'*) read_value "$containers/$container.deployment" "" ;;
+        *Config.Cmd*) read_value "$containers/$container.command" '[]' ;;
+        *Config.User*) read_value "$containers/$container.user" "" ;;
         *Config.Labels*) read_value "$containers/$container.config_hash" unknown-config ;;
         *Image*) read_value "$containers/$container.image" unknown ;;
         *) exit 1 ;;
@@ -331,10 +347,16 @@ fi
 
 if [ "$1" = "container" ] && [ "__DOLLAR__{2:-}" = "ls" ]; then
     target=""
+    exact_id=""
     while [ "$#" -gt 0 ]; do
         if [ "$1" = "--filter" ]; then
-            target=__DOLLAR__{2#name=^/}
-            target=__DOLLAR__{target%\$}
+            case "$2" in
+                name=^/*)
+                    target=__DOLLAR__{2#name=^/}
+                    target=__DOLLAR__{target%\$}
+                    ;;
+                id=*) exact_id=__DOLLAR__{2#id=} ;;
+            esac
             shift 2
         else
             shift
@@ -343,6 +365,15 @@ if [ "$1" = "container" ] && [ "__DOLLAR__{2:-}" = "ls" ]; then
     if { [ "__DOLLAR__{FAKE_FAIL_STAGE:-}" = "web_inventory" ] && [ "$target" = "vocadb_web" ]; } \
         || { [ "__DOLLAR__{FAKE_FAIL_STAGE:-}" = "gateway_inventory" ] && [ "$target" = "vocadb_api_gateway" ]; }; then
         exit 1
+    fi
+    if [ -n "$exact_id" ]; then
+        for id_file in "$containers"/*.id; do
+            [ -f "$id_file" ] || continue
+            [ "$(cat "$id_file")" = "$exact_id" ] || continue
+            printf '%s\n' "$exact_id"
+            break
+        done
+        exit 0
     fi
     if [ -n "$target" ] && [ -f "$containers/$target.id" ]; then
         cat "$containers/$target.id"
@@ -483,37 +514,96 @@ case "$1" in
         shift
         name=""
         config_hash=""
+        role=""
+        deployment=""
         restart_policy=no
         read_only=false
+        user=""
+        network=""
+        tmpfs=""
+        memory_reservation=""
+        memory=""
+        pids_limit=""
+        cap_drop=""
+        security_opt=""
+        validation_key=false
         image=""
+        command='[]'
         while [ "$#" -gt 0 ]; do
             case "$1" in
                 --name) name="$2"; shift 2 ;;
                 --label)
                     case "$2" in
                         com.docker.compose.config-hash=*) config_hash=__DOLLAR__{2#*=} ;;
+                        com.diva.role=*) role=__DOLLAR__{2#*=} ;;
+                        com.diva.deployment=*) deployment=__DOLLAR__{2#*=} ;;
                     esac
                     shift 2
                     ;;
                 --restart) restart_policy="$2"; shift 2 ;;
                 --read-only) read_only=true; shift ;;
-                --user|--network|--network-alias|--env-file|--expose|--publish|--health-cmd|--health-interval|--health-timeout|--health-retries|--health-start-period|--stop-timeout|--cap-drop|--security-opt|--tmpfs|--memory-reservation|--memory|--pids-limit|--log-driver|--log-opt)
+                --user) user="$2"; shift 2 ;;
+                --network) network="$2"; shift 2 ;;
+                --tmpfs) tmpfs="$2"; shift 2 ;;
+                --memory-reservation) memory_reservation="$2"; shift 2 ;;
+                --memory) memory="$2"; shift 2 ;;
+                --pids-limit) pids_limit="$2"; shift 2 ;;
+                --cap-drop) cap_drop="$2"; shift 2 ;;
+                --security-opt) security_opt="$2"; shift 2 ;;
+                --env)
+                    [ "$2" != GATEWAY_PROXY_KEY=config-validation-only ] \
+                        || validation_key=true
                     shift 2
                     ;;
-                *) image="$1"; shift ;;
+                --network-alias|--env-file|--expose|--publish|--health-cmd|--health-interval|--health-timeout|--health-retries|--health-start-period|--stop-timeout|--log-driver|--log-opt)
+                    shift 2
+                    ;;
+                diva-player-*:*|sha256:*) image="$1"; shift ;;
+                -c)
+                    [ "__DOLLAR__{2:-}" = -f ] \
+                        && [ "__DOLLAR__{3:-}" = /usr/local/etc/haproxy/haproxy.cfg ] \
+                        || exit 64
+                    command='["-c","-f","/usr/local/etc/haproxy/haproxy.cfg"]'
+                    shift 3
+                    ;;
+                *) shift ;;
             esac
         done
-        [ -n "$name" ] && [ -n "$image" ] && [ -n "$config_hash" ] || exit 64
         case "$name" in
             vocadb_api_a) id=4444444444444444444444444444444444444444444444444444444444444444 ;;
             vocadb_api_b) id=5555555555555555555555555555555555555555555555555555555555555555 ;;
             vocadb_api_gateway) id=6666666666666666666666666666666666666666666666666666666666666666 ;;
             vocadb_web) id=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb ;;
+            diva_gateway_config_validation_*)
+                [ -n "$image" ] && [ "$role" = gateway-config-validation ] \
+                    && [ -n "$deployment" ] && [ "$user" = haproxy ] \
+                    && [ "$network" = none ] && [ "$read_only" = true ] \
+                    && [ "$tmpfs" = /tmp:size=16m,mode=1777 ] \
+                    && [ "$memory_reservation" = 64m ] && [ "$memory" = 256m ] \
+                    && [ "$pids_limit" = 128 ] && [ "$cap_drop" = ALL ] \
+                    && [ "$security_opt" = no-new-privileges=true ] \
+                    && [ "$validation_key" = true ] \
+                    && [ "$command" = '["-c","-f","/usr/local/etc/haproxy/haproxy.cfg"]' ] \
+                    || exit 64
+                if [ "__DOLLAR__{FAKE_FAIL_STAGE:-}" = gateway_validation_create_absent ]; then
+                    exit 137
+                fi
+                id=7777777777777777777777777777777777777777777777777777777777777777
+                ;;
             *) exit 64 ;;
+        esac
+        [ -n "$name" ] && [ -n "$image" ] || exit 64
+        case "$name" in
+            diva_gateway_config_validation_*) ;;
+            *) [ -n "$config_hash" ] || exit 64 ;;
         esac
         write_value "$containers/$name.id" "$id"
         write_value "$containers/$name.image" "$(image_id "$image")"
         write_value "$containers/$name.config_hash" "$config_hash"
+        write_value "$containers/$name.role" "$role"
+        write_value "$containers/$name.deployment" "$deployment"
+        write_value "$containers/$name.command" "$command"
+        write_value "$containers/$name.user" "$user"
         write_value "$containers/$name.restart_policy" "$restart_policy"
         if [ "__DOLLAR__{FAKE_FAIL_STAGE:-}" = runtime_contract_drift ] \
             && [ "$name" = vocadb_api_a ]; then
@@ -521,15 +611,41 @@ case "$1" in
         fi
         write_value "$containers/$name.read_only" "$read_only"
         write_value "$containers/$name.running" false
+        write_value "$containers/$name.status" created
+        write_value "$containers/$name.exit_code" 0
+        write_value "$containers/$name.oom_killed" false
+        write_value "$containers/$name.runtime_error" ""
+        write_value "$containers/$name.memory_reservation" 67108864
+        write_value "$containers/$name.memory" 268435456
+        write_value "$containers/$name.pids_limit" 128
+        write_value "$containers/$name.network" "__DOLLAR__{network:-none}"
+        write_value "$containers/$name.auto_remove" false
         write_value "$containers/$name.health" healthy
         [ "$name" != vocadb_web ] || : > "$fake_root/published-platform-active"
         printf '%s\n' "$id"
+        case "__DOLLAR__{FAKE_FAIL_STAGE:-}" in
+            gateway_validation_create_client_137|gateway_validation_clients_137) exit 137 ;;
+        esac
         exit 0
         ;;
     update)
         [ "__DOLLAR__{2:-}" = --restart ] || exit 64
         target=$(resolve_container_name "$4")
         write_value "$containers/$target.restart_policy" "$3"
+        exit 0
+        ;;
+    wait)
+        target=$(resolve_container_name "$2")
+        case "$target" in
+            diva_gateway_config_validation_*) ;;
+            *) exit 64 ;;
+        esac
+        case "__DOLLAR__{FAKE_FAIL_STAGE:-}" in
+            gateway_validation_wait_client_137) exit 137 ;;
+            gateway_validation_wait_mismatch) printf '%s\n' 1; exit 0 ;;
+            gateway_validation_wait_multiline) printf '%s\n' 0 0; exit 0 ;;
+        esac
+        read_value "$containers/$target.exit_code" 0
         exit 0
         ;;
     rm)
@@ -540,7 +656,11 @@ case "$1" in
             case "$target" in
                 diva_web_previous_*)
                     (
-                        sleep 1
+                        # Keep the daemon-side removal later than the bounded
+                        # two-sample settlement window even on a loaded CI
+                        # host. The test must deterministically exercise the
+                        # unresolved post-commit retention branch.
+                        sleep 5
                         rm -f "$containers/$target".*
                         printf '%s\n' "$target" > "$fake_root/late-old-web-rm"
                     ) >/dev/null 2>&1 &
@@ -549,6 +669,10 @@ case "$1" in
             esac
         fi
         rm -f "$containers/$target".*
+        case "__DOLLAR__{FAKE_FAIL_STAGE:-}:$target" in
+            gateway_validation_remove_client_137:diva_gateway_config_validation_* \
+                |gateway_validation_clients_137:diva_gateway_config_validation_*) exit 137 ;;
+        esac
         exit 0
         ;;
     stop)
@@ -559,8 +683,66 @@ case "$1" in
         exit 0
         ;;
     start)
-        target=$(resolve_container_name "$2")
+        requested="$2"
+        target=$(resolve_container_name "$requested")
+        case "$target" in
+            diva_gateway_config_validation_*)
+                case "__DOLLAR__{FAKE_FAIL_STAGE:-}" in
+                    gateway_validation_identity_swap)
+                        write_value "$containers/$target.id" 9999999999999999999999999999999999999999999999999999999999999999
+                        printf '%s\n' "$requested"
+                        exit 0
+                        ;;
+                    gateway_validation_created_noop)
+                        write_value "$containers/$target.running" false
+                        write_value "$containers/$target.status" created
+                        exit 137
+                        ;;
+                    gateway_validation_running)
+                        write_value "$containers/$target.running" true
+                        write_value "$containers/$target.status" running
+                        exit 137
+                        ;;
+                    gateway_validation_oom)
+                        write_value "$containers/$target.running" false
+                        write_value "$containers/$target.status" exited
+                        write_value "$containers/$target.exit_code" 137
+                        write_value "$containers/$target.oom_killed" true
+                        ;;
+                    gateway_validation_config_error)
+                        write_value "$containers/$target.running" false
+                        write_value "$containers/$target.status" exited
+                        write_value "$containers/$target.exit_code" 1
+                        write_value "$containers/$target.oom_killed" false
+                        ;;
+                    gateway_validation_dead)
+                        write_value "$containers/$target.running" false
+                        write_value "$containers/$target.status" dead
+                        write_value "$containers/$target.exit_code" 0
+                        ;;
+                    gateway_validation_runtime_error)
+                        write_value "$containers/$target.running" false
+                        write_value "$containers/$target.status" exited
+                        write_value "$containers/$target.exit_code" 0
+                        write_value "$containers/$target.runtime_error" daemon-error
+                        ;;
+                    *)
+                        write_value "$containers/$target.running" false
+                        write_value "$containers/$target.status" exited
+                        write_value "$containers/$target.exit_code" 0
+                        write_value "$containers/$target.oom_killed" false
+                        write_value "$containers/$target.runtime_error" ""
+                        ;;
+                esac
+                case "__DOLLAR__{FAKE_FAIL_STAGE:-}" in
+                    gateway_validation_start_client_137|gateway_validation_clients_137) exit 137 ;;
+                esac
+                printf '%s\n' "$requested"
+                exit 0
+                ;;
+        esac
         write_value "$containers/$target.running" true
+        write_value "$containers/$target.status" running
         exit 0
         ;;
     rename)
@@ -1071,7 +1253,7 @@ async function runScenario(name, failStage = '', hookPhase = '', hookAction = ''
     assert.equal(result.error, undefined, `rolling scenario ${name} failed to execute`);
     assert.notEqual(result.status, null, `rolling scenario ${name} ended without an exit status`);
     if (failStage === 'web_old_rm_timeout') {
-      await new Promise(resolve => setTimeout(resolve, 1_500));
+      await new Promise(resolve => setTimeout(resolve, 5_500));
     }
     const [
       dockerLog, state, apiARoute, apiBRoute, webId, webImage, webRunning,
@@ -1133,6 +1315,148 @@ function assertExactOldRollingIdentities(result) {
   assert.equal(result.apiBId, 'e'.repeat(64));
   assert.equal(result.gatewayId, 'f'.repeat(64));
   assert.equal(result.containerEntries.some(entry => entry.includes('_previous_')), false);
+}
+
+function assertGatewayValidationCleanlyRemoved(result) {
+  assertExactOldRollingIdentities(result);
+  assert.equal(
+    result.containerEntries.some(entry => entry.includes('diva_gateway_config_validation_')),
+    false,
+    'exact HAProxy validation container residue remained after a settled result',
+  );
+  assert.equal(result.activeJournal, '');
+  assert.equal(result.lockOwner, '');
+  assert.doesNotMatch(result.state, /daemon_mutation\.terminal_release=forbidden/u);
+}
+
+async function testGatewayConfigValidationSettlementContract() {
+  const clientKilled = await runScenario(
+    'gateway-validation-clients-killed',
+    'gateway_validation_clients_137',
+    'before-migration-publication-quiesce',
+    'fail',
+  );
+  assert.equal(clientKilled.result.status, 97, JSON.stringify({
+    stdout: clientKilled.result.stdout,
+    stderr: clientKilled.result.stderr,
+    state: clientKilled.state,
+  }, null, 2));
+  assert.match(
+    clientKilled.state,
+    /daemon_mutation\.\d+\.phase=settled-client-exit-137-exact-created/u,
+  );
+  assert.match(clientKilled.state, /gateway\.config_validation_client_exit=137/u);
+  assert.match(
+    clientKilled.state,
+    /gateway\.config_validation_cleanup=exact-removed-client-exit-137/u,
+  );
+  assert.match(
+    clientKilled.state,
+    /gateway\.config_validation=passed-exact-container-client-exit-137/u,
+  );
+  assert.match(clientKilled.state, /gateway\.config_validation_wait=exact-one-line-exit-0/u);
+  assert.match(clientKilled.state, /hook\.failure=before-migration-publication-quiesce/u);
+  assertGatewayValidationCleanlyRemoved(clientKilled);
+
+  const oomKilled = await runScenario(
+    'gateway-validation-oom',
+    'gateway_validation_oom',
+  );
+  assert.notEqual(oomKilled.result.status, 0);
+  assert.match(oomKilled.result.stderr, /validation was OOM-killed \(exit 137\)/u);
+  assert.match(
+    oomKilled.state,
+    /gateway\.config_validation_runtime=status-exited-exit-137-oom-true/u,
+  );
+  assert.doesNotMatch(oomKilled.state, /gateway\.config_validation=passed/u);
+  assertGatewayValidationCleanlyRemoved(oomKilled);
+
+  const configError = await runScenario(
+    'gateway-validation-config-error',
+    'gateway_validation_config_error',
+  );
+  assert.notEqual(configError.result.status, 0);
+  assert.match(
+    configError.result.stderr,
+    /configuration validation failed with exit 1/u,
+  );
+  assert.match(
+    configError.state,
+    /gateway\.config_validation_runtime=status-exited-exit-1-oom-false/u,
+  );
+  assert.doesNotMatch(configError.state, /gateway\.config_validation=passed/u);
+  assert.doesNotMatch(configError.dockerLog, /compose .* run .* migrate/u);
+  assertGatewayValidationCleanlyRemoved(configError);
+
+  const dead = await runScenario(
+    'gateway-validation-dead',
+    'gateway_validation_dead',
+  );
+  assert.notEqual(dead.result.status, 0);
+  assert.match(
+    dead.result.stderr,
+    /did not reach the exact exited state \(status dead\)/u,
+  );
+  assert.match(
+    dead.state,
+    /gateway\.config_validation_runtime=status-dead-exit-0-oom-false/u,
+  );
+  assert.doesNotMatch(dead.state, /gateway\.config_validation=passed/u);
+  assertGatewayValidationCleanlyRemoved(dead);
+
+  const waitKilled = await runScenario(
+    'gateway-validation-wait-killed',
+    'gateway_validation_wait_client_137',
+  );
+  assert.notEqual(waitKilled.result.status, 0);
+  assert.match(waitKilled.result.stderr, /wait receipt was not an exact one-line/u);
+  assert.match(
+    waitKilled.state,
+    /gateway\.config_validation_wait_observed=client-exit-137-lines-0/u,
+  );
+  assert.doesNotMatch(waitKilled.state, /gateway\.config_validation=passed/u);
+  assertGatewayValidationCleanlyRemoved(waitKilled);
+
+  const identityDrift = await runScenario(
+    'gateway-validation-identity-drift',
+    'gateway_validation_identity_swap',
+  );
+  assert.notEqual(identityDrift.result.status, 0);
+  assertExactOldRollingIdentities(identityDrift);
+  assert.match(
+    identityDrift.state,
+    /daemon_mutation\.terminal_release=forbidden-docker-start-gateway-config-validation-initial-contract-drift/u,
+  );
+  assert.equal(identityDrift.activeJournal.length > 0, true);
+  assert.equal(identityDrift.lockOwner.length > 0, true);
+  assert.equal(
+    identityDrift.containerEntries.some(
+      entry => entry.includes('diva_gateway_config_validation_'),
+    ),
+    true,
+    'identity drift evidence must be retained',
+  );
+  assert.doesNotMatch(identityDrift.dockerLog, /rm 7777777777777777777777777777777777777777777777777777777777777777/u);
+  assert.doesNotMatch(identityDrift.dockerLog, /rm 9999999999999999999999999999999999999999999999999999999999999999/u);
+}
+
+async function testWebOldRemovalTimeout() {
+  const result = await runScenario('web-old-rm-timeout', 'web_old_rm_timeout');
+  assert.notEqual(result.result.status, 0);
+  assert.match(
+    result.state,
+    /deployment\.status=committed-daemon-cleanup-unresolved-manual-reconciliation-required/u,
+  );
+  assert.match(result.state, /web\.previous_cleanup=deferred-safe-retention/u);
+  assert.doesNotMatch(result.state, /web\.rollback=/u);
+  assert.equal(result.webId, 'b'.repeat(64));
+  assert.equal(result.webImage, newWebImageId);
+  assert.notEqual(result.activeJournal, '');
+  assert.match(result.lockOwner, /^pid=/u);
+  assert.match(result.lateOldWebRemoval, /^diva_web_previous_/u);
+  assert.equal(result.apiAId, '4'.repeat(64));
+  assert.equal(result.apiBId, '5'.repeat(64));
+  assert.equal(result.gatewayId, '6'.repeat(64));
 }
 
 async function testBootstrapGatewayPublishedFailure() {
@@ -3123,6 +3447,16 @@ if (process.env.DIVA_ROLLING_TEST_ONLY === 'crash-reconcile') {
   console.log('PASS SIGKILL stale secret/journal/lock exact startup reconciliation');
   process.exit(0);
 }
+if (process.env.DIVA_ROLLING_TEST_ONLY === 'gateway-config-validation') {
+  await testGatewayConfigValidationSettlementContract();
+  console.log('PASS exact gateway configuration validation settlement contract');
+  process.exit(0);
+}
+if (process.env.DIVA_ROLLING_TEST_ONLY === 'web-old-rm-timeout') {
+  await testWebOldRemovalTimeout();
+  console.log('PASS deferred old Web cleanup timeout contract');
+  process.exit(0);
+}
 if (process.env.DIVA_ROLLING_TEST_ONLY === 'state-root') {
   await testStateRootAndPrivilegeModeContract();
   console.log('PASS rolling production/test state-root and uid mode contract');
@@ -3253,6 +3587,7 @@ if (process.env.DIVA_ROLLING_TEST_ONLY === 'web-inventory') {
 }
 
 await testStateRootAndPrivilegeModeContract();
+await testGatewayConfigValidationSettlementContract();
 const successful = await runScenario('success');
 assert.equal(successful.result.status, 0, JSON.stringify({
   error: successful.result.error?.message,
@@ -3335,19 +3670,7 @@ if (process.env.DIVA_ROLLING_TEST_ONLY === 'success') {
   console.log('PASS transactional rolling deployment success scenario');
   process.exit(0);
 }
-const webOldRemovalTimeout = await runScenario('web-old-rm-timeout', 'web_old_rm_timeout');
-assert.notEqual(webOldRemovalTimeout.result.status, 0);
-assert.match(webOldRemovalTimeout.state, /deployment\.status=committed-daemon-cleanup-unresolved-manual-reconciliation-required/);
-assert.match(webOldRemovalTimeout.state, /web\.previous_cleanup=deferred-safe-retention/);
-assert.doesNotMatch(webOldRemovalTimeout.state, /web\.rollback=/);
-assert.equal(webOldRemovalTimeout.webId, 'b'.repeat(64));
-assert.equal(webOldRemovalTimeout.webImage, newWebImageId);
-assert.notEqual(webOldRemovalTimeout.activeJournal, '');
-assert.match(webOldRemovalTimeout.lockOwner, /^pid=/u);
-assert.match(webOldRemovalTimeout.lateOldWebRemoval, /^diva_web_previous_/u);
-assert.equal(webOldRemovalTimeout.apiAId, '4'.repeat(64));
-assert.equal(webOldRemovalTimeout.apiBId, '5'.repeat(64));
-assert.equal(webOldRemovalTimeout.gatewayId, '6'.repeat(64));
+await testWebOldRemovalTimeout();
 
 const candidateTagPresenceError = await runScenario(
   'candidate-tag-presence-error',

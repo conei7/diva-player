@@ -188,6 +188,10 @@ assert.match(webDockerfile, /nginxinc\/nginx-unprivileged:alpine@sha256:901e944d
 assert.match(apiDockerfile, /aspnet:8\.0-alpine-extra@sha256:bfb8d74a4b0130c7e4abf88a4dede4f51929b91e26d76ae8ccf3f571a21db3b9/);
 assert.match(apiDockerfile, /sdk:8\.0-alpine@sha256:8a80a27ddac789b4cb6d09d244f9c8d840da599c5ad22f7233c04be470e55261/);
 assert.match(gatewayDockerfile, /haproxy:3\.0-alpine@sha256:34cc7d1f6142464d7d2b73e2a1eef7392556dbf304160aef543e513cfd9e5162/);
+assert.match(
+  gatewayDockerfile,
+  /USER haproxy\s+RUN GATEWAY_PROXY_KEY=build-time-config-validation-only \\\s+haproxy -c -f \/usr\/local\/etc\/haproxy\/haproxy\.cfg/u,
+);
 assert.doesNotMatch(webDockerfile, /apk upgrade/u);
 assert.match(
   webDockerfile,
@@ -331,7 +335,22 @@ assert.match(deploy, /enable server api_nodes\/\$slot/);
 assert.match(deploy, /create_managed_service_container "\$slot" "\$expected_config_hash"/);
 assert.match(deploy, /docker-create-\$service-returned-invalid-container-id/);
 assert.doesNotMatch(deploy, /--force-recreate "\$slot"/);
-assert.match(deploy, /haproxy -c -f \/usr\/local\/etc\/haproxy\/haproxy\.cfg/);
+assert.match(deploy, /"\$GATEWAY_CANDIDATE_IMAGE" \\\s+-c -f \/usr\/local\/etc\/haproxy\/haproxy\.cfg/u);
+assert.match(deploy, /GATEWAY_CONFIG_VALIDATION_CONTAINER="diva_gateway_config_validation_\$DEPLOYMENT_ID"/u);
+assert.match(deploy, /create_gateway_config_validation_container\(\)/u);
+assert.match(deploy, /settle_gateway_config_validation_start\(\)/u);
+assert.match(deploy, /remove_gateway_config_validation_container\(\)/u);
+assert.match(deploy, /"\$DOCKER_COMMAND" create[\s\S]*--network none --user haproxy --read-only[\s\S]*--env GATEWAY_PROXY_KEY=config-validation-only[\s\S]*"\$GATEWAY_CANDIDATE_IMAGE"/u);
+assert.match(deploy, /"\$DOCKER_COMMAND" start[\s\\]*\n\s*"\$GATEWAY_CONFIG_VALIDATION_ID"/u);
+assert.match(deploy, /"\$DOCKER_COMMAND" wait[\s\\]*\n\s*"\$GATEWAY_CONFIG_VALIDATION_ID"/u);
+assert.match(deploy, /\{\{\.State\.Status\}\}/u);
+assert.match(deploy, /\{\{\.State\.ExitCode\}\}/u);
+assert.match(deploy, /\{\{\.State\.OOMKilled\}\}/u);
+assert.match(deploy, /\{\{\.State\.Error\}\}/u);
+assert.match(deploy, /gateway\.config_validation_observed_id/u);
+assert.match(deploy, /wait_exact_container_absent/u);
+assert.match(deploy, /post-wait-state-drift/u);
+assert.doesNotMatch(deploy, /run --rm --no-deps api_gateway[\s\\\n]+haproxy -c/u);
 assert.match(deploy, /API_A_ROLLBACK_IMAGE="diva-player-api:rollback-api-a"/);
 assert.match(deploy, /GATEWAY_ROLLBACK_IMAGE="diva-player-api-gateway:rollback"/);
 assert.match(deploy, /api_a\.old_image/);
