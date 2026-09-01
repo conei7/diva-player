@@ -168,8 +168,8 @@ def verify_published(
             "reservation": 268435456,
             "pids": 256,
             "published": "",
-            "tmpfs": "/tmp:size=64m,mode=1777",
-            "user": "",
+            "tmpfs": "size=64m,mode=1777",
+            "user": "1654",
         },
         "api_b": {
             "name": "vocadb_api_b",
@@ -177,8 +177,8 @@ def verify_published(
             "reservation": 268435456,
             "pids": 256,
             "published": "",
-            "tmpfs": "/tmp:size=64m,mode=1777",
-            "user": "",
+            "tmpfs": "size=64m,mode=1777",
+            "user": "1654",
         },
         "api_gateway": {
             "name": "vocadb_api_gateway",
@@ -186,8 +186,8 @@ def verify_published(
             "reservation": 67108864,
             "pids": 128,
             "published": "5000",
-            "tmpfs": "/tmp:size=16m,mode=1777",
-            "user": "",
+            "tmpfs": "size=16m,mode=1777",
+            "user": "haproxy",
         },
         "web": {
             "name": "vocadb_web",
@@ -195,7 +195,7 @@ def verify_published(
             "reservation": 67108864,
             "pids": 128,
             "published": "8080",
-            "tmpfs": "/tmp:size=16m,mode=1777",
+            "tmpfs": "size=16m,mode=1777",
             "user": "101:101",
         },
     }.get(service)
@@ -216,19 +216,22 @@ def verify_published(
         "com.docker.compose.project": "backend",
         "com.docker.compose.service": service,
     }
+    if item.get("Id") != expected_id or item.get("Name") != "/" + name:
+        raise ValueError("container identity contract mismatch")
+    if item.get("Image") != expected_image_id or config.get("Image") != expected_reference:
+        raise ValueError("immutable image contract mismatch")
+    if not isinstance(labels, dict) or any(
+        labels.get(key) != value for key, value in expected_labels.items()
+    ):
+        raise ValueError("Compose label contract mismatch")
+    if config.get("User", "") != service_contract["user"]:
+        raise ValueError("non-root user contract mismatch")
     if (
-        item.get("Id") != expected_id
-        or item.get("Name") != "/" + name
-        or item.get("Image") != expected_image_id
-        or config.get("Image") != expected_reference
-        or not isinstance(labels, dict)
-        or any(labels.get(key) != value for key, value in expected_labels.items())
-        or config.get("User", "") != service_contract["user"]
-        or config.get("AttachStdin") is not False
+        config.get("AttachStdin") is not False
         or config.get("OpenStdin") is not False
         or config.get("StdinOnce") is not False
     ):
-        raise ValueError("identity/image/label/user contract mismatch")
+        raise ValueError("stdin isolation contract mismatch")
     expected_env = _load_environment(environment_path)
     actual_env = config.get("Env")
     if not isinstance(actual_env, list) or _load_environment_lines(actual_env) != expected_env:
@@ -317,5 +320,8 @@ def main(argv: list[str]) -> int:
 if __name__ == "__main__":
     try:
         raise SystemExit(main(sys.argv))
-    except (OSError, ValueError, json.JSONDecodeError):
+    except ValueError as error:
+        print(f"ERROR: runtime contract verification failed: {error}", file=sys.stderr)
+        raise SystemExit(2)
+    except (OSError, json.JSONDecodeError):
         raise SystemExit(2)

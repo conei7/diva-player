@@ -25,8 +25,8 @@ CONTAINER_ID = "b" * 64
 
 def inspect_document(service: str, *, published: bool = True) -> dict:
     contract = {
-        "api_a": ("vocadb_api_a", "", 805306368, 268435456, 256, "64m", ""),
-        "api_b": ("vocadb_api_b", "", 805306368, 268435456, 256, "64m", ""),
+        "api_a": ("vocadb_api_a", "", 805306368, 268435456, 256, "64m", "1654"),
+        "api_b": ("vocadb_api_b", "", 805306368, 268435456, 256, "64m", "1654"),
         "api_gateway": (
             "vocadb_api_gateway",
             "5000",
@@ -34,7 +34,7 @@ def inspect_document(service: str, *, published: bool = True) -> dict:
             67108864,
             128,
             "16m",
-            "",
+            "haproxy",
         ),
         "web": ("vocadb_web", "8080", 268435456, 67108864, 128, "16m", "101:101"),
     }[service]
@@ -97,7 +97,7 @@ def inspect_document(service: str, *, published: bool = True) -> dict:
             "Memory": memory,
             "MemoryReservation": reservation,
             "PidsLimit": pids,
-            "Tmpfs": {"/tmp": f"/tmp:size={tmpfs_size},mode=1777"},
+            "Tmpfs": {"/tmp": f"size={tmpfs_size},mode=1777"},
             "NetworkMode": "backend_default" if published else "candidate_default",
             "PortBindings": bindings,
             "LogConfig": {"Type": "json-file", "Config": {"max-file": "5", "max-size": "10m"}},
@@ -190,6 +190,7 @@ class RuntimeContractTests(unittest.TestCase):
             "image-reference": lambda value: value["Config"].__setitem__(
                 "Image", "diva-player-api:mutable"
             ),
+            "root-user": lambda value: value["Config"].__setitem__("User", "0"),
             "health-form": lambda value: value["Config"]["Healthcheck"].__setitem__(
                 "Test", ["CMD", "curl", "-f", "http://127.0.0.1:5000/api/ready"]
             ),
