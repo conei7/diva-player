@@ -1865,6 +1865,10 @@ function testBridgeTrivyAndExactImageContract() {
   );
   assert.match(
     deploymentSource,
+    /CANDIDATE_SCAN_REVERIFY_SEQUENCE=0[\s\S]*verification="\$IMAGE_SCAN_ROOT\/\$service\.reverification\.\$sequence\.json"[\s\S]*CANDIDATE_SCAN_REVERIFY_SEQUENCE=\$\(\(CANDIDATE_SCAN_REVERIFY_SEQUENCE \+ 1\)\)[\s\S]*image_scan\.reverification\.\$sequence/u,
+  );
+  assert.match(
+    deploymentSource,
     /create_managed_service_container "\$slot" "\$expected_config_hash" \\\s+"\$CANDIDATE_API_IMAGE_ID" "\$CANDIDATE_API_IMAGE_ID"/u,
   );
   assert.match(

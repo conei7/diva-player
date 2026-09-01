@@ -404,6 +404,7 @@ CANDIDATE_WEB_RUNTIME_SHA256=""
 WEB_CANDIDATE_TAG_CREATED=false
 API_CANDIDATE_TAG_CREATED=false
 GATEWAY_CANDIDATE_TAG_CREATED=false
+CANDIDATE_SCAN_REVERIFY_SEQUENCE=0
 API_A_BRIDGE_ROLLBACK_TAG_CREATED=false
 API_B_BRIDGE_ROLLBACK_TAG_CREATED=false
 API_BRIDGE_PUBLISHED=false
@@ -2647,12 +2648,14 @@ scan_exact_candidate_image() {
 
 verify_exact_candidate_scan_receipt() {
     local service="$1" reference="$2" expected_image_id="$3" expected_receipt_sha="$4"
-    local report receipt verification actual_receipt_sha
+    local sequence="$5" report receipt verification actual_receipt_sha
+    case "$sequence" in ''|*[!0-9]*) return 1 ;; esac
+    [ "$sequence" -ge 1 ] && [ "$sequence" -le 16 ] || return 1
     [ "$(image_ref_id "$reference")" = "$expected_image_id" ] || return 1
     verify_image_linux_arm64 "$expected_image_id" || return 1
     report="$IMAGE_SCAN_ROOT/$service.report.json"
     receipt="$IMAGE_SCAN_ROOT/$service.receipt.json"
-    verification="$IMAGE_SCAN_ROOT/$service.reverification.json"
+    verification="$IMAGE_SCAN_ROOT/$service.reverification.$sequence.json"
     actual_receipt_sha=$(sha256sum "$receipt" | awk '{print $1}') || return 1
     [ "$actual_receipt_sha" = "$expected_receipt_sha" ] || return 1
     if [ "$TEST_MODE" = "1" ]; then
@@ -2689,12 +2692,18 @@ scan_all_rolling_candidate_images() {
 }
 
 verify_all_rolling_candidate_scan_receipts() {
+    local sequence
+    CANDIDATE_SCAN_REVERIFY_SEQUENCE=$((CANDIDATE_SCAN_REVERIFY_SEQUENCE + 1))
+    sequence="$CANDIDATE_SCAN_REVERIFY_SEQUENCE"
+    [ "$sequence" -le 16 ] || return 1
     verify_exact_candidate_scan_receipt api "$API_CANDIDATE_IMAGE" \
-        "$NEW_API_IMAGE" "$API_SCAN_RECEIPT_SHA" || return 1
+        "$NEW_API_IMAGE" "$API_SCAN_RECEIPT_SHA" "$sequence" || return 1
     verify_exact_candidate_scan_receipt gateway "$GATEWAY_CANDIDATE_IMAGE" \
-        "$NEW_GATEWAY_IMAGE" "$GATEWAY_SCAN_RECEIPT_SHA" || return 1
+        "$NEW_GATEWAY_IMAGE" "$GATEWAY_SCAN_RECEIPT_SHA" "$sequence" || return 1
     verify_exact_candidate_scan_receipt web "$WEB_CANDIDATE_IMAGE" \
-        "$NEW_WEB_IMAGE" "$WEB_SCAN_RECEIPT_SHA" || return 1
+        "$NEW_WEB_IMAGE" "$WEB_SCAN_RECEIPT_SHA" "$sequence" || return 1
+    record_state "image_scan.reverification.$sequence" \
+        "all-exact-receipts-verified"
     record_state "image_scan.status" "all-exact-receipts-reverified-before-promotion"
 }
 
