@@ -311,6 +311,21 @@ if [ "$1" = "inspect" ]; then
     shift
     format=""
     if [ "__DOLLAR__{1:-}" = "--format" ]; then format="$2"; shift 2; fi
+    case "$format" in
+        *State.StartedAt*RestartCount*)
+            for requested_container in "$@"; do
+                container=$(resolve_container_name "$requested_container")
+                value=$(read_value "$containers/$container.id" "")
+                [ -n "$value" ] || exit 1
+                running=$(read_value "$containers/$container.running" true)
+                image=$(read_value "$containers/$container.image" unknown)
+                config_hash=$(read_value "$containers/$container.config_hash" unknown-config)
+                printf '%s|/%s|%s|2026-08-28T09:51:08.000000000Z|0|%s|[]|%s\n' \
+                    "$value" "$container" "$running" "$image" "$config_hash"
+            done
+            exit 0
+            ;;
+    esac
     container=$(resolve_container_name "$1")
     case "$format" in
         *'{{.Id}}'*)
@@ -425,11 +440,16 @@ if [ "$1" = "image" ]; then
         inspect)
             format=""
             image=""
+            images=""
             shift 2
             while [ "$#" -gt 0 ]; do
                 case "$1" in
                     --format) format="$2"; shift 2 ;;
-                    *) image="$1"; shift ;;
+                    *)
+                        image="$1"
+                        images="$images $1"
+                        shift
+                        ;;
                 esac
             done
             if [ "__DOLLAR__{FAKE_FAIL_STAGE:-}" = "stateful_contract_image_error" ] \
@@ -448,6 +468,11 @@ if [ "$1" = "image" ]; then
                     ;;
             esac
             case "$format" in
+                *'.Id}'*Architecture*)
+                    for observed_image in $images; do
+                        printf '%s|linux/arm64\n' "$(image_id "$observed_image")"
+                    done
+                    ;;
                 *Architecture*/*Os*|*Os*/*Architecture*)
                     if { [ "__DOLLAR__{FAKE_FAIL_STAGE:-}" = candidate_platform ] \
                         && [ "$image" = __NEW_API_ID__ ]; } \
@@ -1811,7 +1836,19 @@ function testBridgeTrivyAndExactImageContract() {
   );
   assert.match(
     deploymentSource,
-    /verify_bridge_stateful_contract\(\)[\s\S]*compose_service_container_ids migrate[\s\S]*BRIDGE_QDRANT_MOUNTS_JSON[\s\S]*BRIDGE_POSTGRES_MOUNTS_JSON/u,
+    /verify_bridge_stateful_contract\(\)[\s\S]*compose_service_container_ids migrate[\s\S]*capture_bridge_stateful_runtime_snapshot[\s\S]*capture_bridge_stateful_platform_snapshot/u,
+  );
+  assert.match(
+    deploymentSource,
+    /capture_bridge_stateful_runtime_snapshot\(\)[\s\S]*\.State\.StartedAt[\s\S]*\.RestartCount[\s\S]*json \.Mounts[\s\S]*com\.docker\.compose\.config-hash/u,
+  );
+  assert.match(
+    deploymentSource,
+    /BRIDGE_STATEFUL_RUNTIME_SNAPSHOT=.*capture_bridge_stateful_runtime_snapshot[\s\S]*runtime_snapshot=.*capture_bridge_stateful_runtime_snapshot[\s\S]*runtime-snapshot-changed/u,
+  );
+  assert.match(
+    deploymentSource,
+    /capture_bridge_stateful_platform_snapshot\(\)[\s\S]*image inspect[\s\S]*\.Os[\s\S]*\.Architecture[\s\S]*platform-snapshot-changed/u,
   );
   assert.match(
     deploymentSource,

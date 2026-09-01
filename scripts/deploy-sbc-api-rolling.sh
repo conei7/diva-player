@@ -430,6 +430,8 @@ BRIDGE_QDRANT_CONFIG_HASH=""
 BRIDGE_POSTGRES_CONFIG_HASH=""
 BRIDGE_GATEWAY_CONFIG_HASH=""
 BRIDGE_WEB_CONFIG_HASH=""
+BRIDGE_STATEFUL_RUNTIME_SNAPSHOT=""
+BRIDGE_STATEFUL_PLATFORM_SNAPSHOT=""
 BRIDGE_QDRANT_BACKUP_BINDING=""
 BRIDGE_QDRANT_PUBLICATION_GENERATION=""
 BRIDGE_QDRANT_PUBLICATION_SHA256=""
@@ -5486,8 +5488,35 @@ capture_optional_image_reference_state() {
     esac
 }
 
+capture_bridge_stateful_runtime_snapshot() {
+    [ -n "$BRIDGE_QDRANT_ID" ] && [ -n "$BRIDGE_POSTGRES_ID" ] || return 1
+    run_bounded_docker_query inspect --format \
+        '{{.Id}}|{{.Name}}|{{.State.Running}}|{{.State.StartedAt}}|{{.RestartCount}}|{{.Image}}|{{json .Mounts}}|{{index .Config.Labels "com.docker.compose.config-hash"}}' \
+        "$BRIDGE_QDRANT_ID" "$BRIDGE_POSTGRES_ID" || return 1
+    [ -n "$DOCKER_QUERY_OUTPUT" ] || return 1
+    printf '%s\n' "$DOCKER_QUERY_OUTPUT"
+}
+
+capture_bridge_stateful_platform_snapshot() {
+    [ -n "$BRIDGE_QDRANT_IMAGE_ID" ] && [ -n "$BRIDGE_POSTGRES_IMAGE_ID" ] \
+        || return 1
+    run_bounded_docker_query image inspect --format \
+        '{{.Id}}|{{.Os}}/{{.Architecture}}' \
+        "$BRIDGE_QDRANT_IMAGE_ID" "$BRIDGE_POSTGRES_IMAGE_ID" || return 1
+    [ -n "$DOCKER_QUERY_OUTPUT" ] || return 1
+    printf '%s\n' "$DOCKER_QUERY_OUTPUT"
+}
+
+record_bridge_stateful_snapshot_hash() {
+    local key="$1" snapshot="$2" snapshot_sha
+    snapshot_sha=$(printf '%s\n' "$snapshot" | sha256sum | awk '{print $1}') \
+        || return 1
+    printf '%s\n' "$snapshot_sha" | grep -Eq '^[0-9a-f]{64}$' || return 1
+    record_state "$key" "$snapshot_sha"
+}
+
 capture_bridge_legacy_contract() {
-    local mounts_sha
+    local mounts_sha platform_line_count
     BRIDGE_QDRANT_ID=$(container_id vocadb_qdrant) || return 1
     BRIDGE_POSTGRES_ID=$(container_id vocadb_postgres) || return 1
     [ -n "$BRIDGE_QDRANT_ID" ] && [ -n "$BRIDGE_POSTGRES_ID" ] \
@@ -5524,6 +5553,19 @@ capture_bridge_legacy_contract() {
         "$BRIDGE_GATEWAY_CONFIG_HASH" "$BRIDGE_WEB_CONFIG_HASH"; do
         printf '%s\n' "$hash" | grep -Eq '^[0-9a-f]{64}$' || return 1
     done
+    require_exact_running_mapping vocadb_qdrant "$BRIDGE_QDRANT_ID" || return 1
+    require_exact_running_mapping vocadb_postgres "$BRIDGE_POSTGRES_ID" || return 1
+    BRIDGE_STATEFUL_RUNTIME_SNAPSHOT=$(capture_bridge_stateful_runtime_snapshot) \
+        || return 1
+    BRIDGE_STATEFUL_PLATFORM_SNAPSHOT=$(capture_bridge_stateful_platform_snapshot) \
+        || return 1
+    platform_line_count=$(printf '%s\n' "$BRIDGE_STATEFUL_PLATFORM_SNAPSHOT" \
+        | wc -l | tr -d '[:space:]') || return 1
+    [ "$platform_line_count" = 2 ] || return 1
+    if printf '%s\n' "$BRIDGE_STATEFUL_PLATFORM_SNAPSHOT" \
+        | grep -Ev '^sha256:[0-9a-f]{64}\|linux/arm64$' | grep -q .; then
+        return 1
+    fi
     prepare_bridge_backup_contract || return 1
     record_state bridge.legacy_contract \
         "$BRIDGE_QDRANT_ID:$BRIDGE_POSTGRES_ID:$OLD_GATEWAY_CONTAINER_ID:$OLD_WEB_CONTAINER_ID"
@@ -5532,29 +5574,43 @@ capture_bridge_legacy_contract() {
         || return 1
     printf '%s\n' "$mounts_sha" | grep -Eq '^[0-9a-f]{64}$' || return 1
     record_state bridge.stateful_mounts_sha256 "$mounts_sha"
+    record_bridge_stateful_snapshot_hash bridge.stateful_runtime_snapshot_sha256 \
+        "$BRIDGE_STATEFUL_RUNTIME_SNAPSHOT" || return 1
+    record_bridge_stateful_snapshot_hash bridge.stateful_platform_snapshot_sha256 \
+        "$BRIDGE_STATEFUL_PLATFORM_SNAPSHOT" || return 1
     record_state bridge.migration_runner \
         "service-containers-absent:image-$BRIDGE_MIGRATE_IMAGE_STATE"
 }
 
 verify_bridge_stateful_contract() {
-    local migrate_ids migrate_image_state
+    local migrate_ids migrate_image_state runtime_snapshot platform_snapshot
     migrate_ids=$(compose_service_container_ids migrate) || return 1
-    [ -z "$migrate_ids" ] || return 1
+    if [ -n "$migrate_ids" ]; then
+        record_state bridge.stateful_contract_mismatch migration-service-container-present \
+            || true
+        return 1
+    fi
     migrate_image_state=$(capture_optional_image_reference_state \
         "$POSTGRES_MIGRATE_STABLE_IMAGE") || return 1
-    [ "$migrate_image_state" = "$BRIDGE_MIGRATE_IMAGE_STATE" ] || return 1
-    require_exact_running_mapping vocadb_qdrant "$BRIDGE_QDRANT_ID" \
-        && require_exact_running_mapping vocadb_postgres "$BRIDGE_POSTGRES_ID" \
-        && [ "$(container_id vocadb_qdrant)" = "$BRIDGE_QDRANT_ID" ] \
-        && [ "$(container_id vocadb_postgres)" = "$BRIDGE_POSTGRES_ID" ] \
-        && [ "$(container_inspect_value "$BRIDGE_QDRANT_ID" '{{.Image}}')" = "$BRIDGE_QDRANT_IMAGE_ID" ] \
-        && [ "$(container_inspect_value "$BRIDGE_POSTGRES_ID" '{{.Image}}')" = "$BRIDGE_POSTGRES_IMAGE_ID" ] \
-        && [ "$(container_inspect_value "$BRIDGE_QDRANT_ID" '{{json .Mounts}}')" = "$BRIDGE_QDRANT_MOUNTS_JSON" ] \
-        && [ "$(container_inspect_value "$BRIDGE_POSTGRES_ID" '{{json .Mounts}}')" = "$BRIDGE_POSTGRES_MOUNTS_JSON" ] \
-        && [ "$(container_inspect_value "$BRIDGE_QDRANT_ID" '{{index .Config.Labels "com.docker.compose.config-hash"}}')" = "$BRIDGE_QDRANT_CONFIG_HASH" ] \
-        && [ "$(container_inspect_value "$BRIDGE_POSTGRES_ID" '{{index .Config.Labels "com.docker.compose.config-hash"}}')" = "$BRIDGE_POSTGRES_CONFIG_HASH" ] \
-        && verify_container_image_linux_arm64 "$BRIDGE_QDRANT_ID" \
-        && verify_container_image_linux_arm64 "$BRIDGE_POSTGRES_ID"
+    if [ "$migrate_image_state" != "$BRIDGE_MIGRATE_IMAGE_STATE" ]; then
+        record_state bridge.stateful_contract_mismatch migration-image-reference-changed \
+            || true
+        return 1
+    fi
+    runtime_snapshot=$(capture_bridge_stateful_runtime_snapshot) || return 1
+    if [ "$runtime_snapshot" != "$BRIDGE_STATEFUL_RUNTIME_SNAPSHOT" ]; then
+        record_bridge_stateful_snapshot_hash \
+            bridge.stateful_runtime_observed_mismatch_sha256 "$runtime_snapshot" || true
+        record_state bridge.stateful_contract_mismatch runtime-snapshot-changed || true
+        return 1
+    fi
+    platform_snapshot=$(capture_bridge_stateful_platform_snapshot) || return 1
+    if [ "$platform_snapshot" != "$BRIDGE_STATEFUL_PLATFORM_SNAPSHOT" ]; then
+        record_bridge_stateful_snapshot_hash \
+            bridge.stateful_platform_observed_mismatch_sha256 "$platform_snapshot" || true
+        record_state bridge.stateful_contract_mismatch platform-snapshot-changed || true
+        return 1
+    fi
 }
 
 verify_bridge_legacy_contract() {
