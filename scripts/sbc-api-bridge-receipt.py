@@ -86,9 +86,21 @@ def run(command: list[str], *, stdin: bytes | None = None,
         options["input"] = stdin
     result = subprocess.run(command, **options)
     if check and result.returncode != 0:
+        stderr = result.stderr.decode("utf-8", "replace")[:1000]
+        for argument in command:
+            if argument.lower().startswith("--header=x-diva-qdrant-bridge-token:"):
+                token = argument.split(":", 1)[1].strip()
+                if token:
+                    stderr = stderr.replace(token, "<redacted>")
+        redacted_command = [
+            "--header=X-Diva-Qdrant-Bridge-Token: <redacted>"
+            if argument.lower().startswith("--header=x-diva-qdrant-bridge-token:")
+            else argument
+            for argument in command
+        ]
         raise RuntimeError(
-            f"command failed ({result.returncode}): {command!r}: "
-            f"{result.stderr.decode('utf-8', 'replace')[:1000]}"
+            f"command failed ({result.returncode}): {redacted_command!r}: "
+            f"{stderr}"
         )
     return result.stdout
 
@@ -128,7 +140,7 @@ def install_token(docker: str, container: str, token: str) -> None:
         "set -eu; umask 077; test ! -e '" + TOKEN_PATH + "'; "
         "IFS= read -r token; case \"$token\" in ''|*[!0-9a-f]* ) exit 2;; esac; "
         "test \"${#token}\" -eq 64; printf '%s' \"$token\" > '" + TOKEN_PATH + "'; "
-        "chmod 600 '" + TOKEN_PATH + "'; test \"$(stat -c '%a' '" + TOKEN_PATH + "')\" = 600"
+        "chmod 400 '" + TOKEN_PATH + "'; test \"$(stat -c '%a' '" + TOKEN_PATH + "')\" = 400"
     )
     run([docker, "exec", "-i", "--user", user, container, "/bin/sh", "-ec", script],
         stdin=(token + "\n").encode("ascii"), timeout=30)

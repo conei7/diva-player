@@ -174,6 +174,57 @@ def test_producer_command_input(producer: object) -> None:
     assert echoed == payload
 
 
+def test_producer_command_redaction(producer: object) -> None:
+    token = "a" * 64
+    try:
+        producer.run(
+            [
+                sys.executable,
+                "-c",
+                "import sys; sys.stderr.write(sys.argv[1]); sys.exit(1)",
+                f"--header=X-Diva-Qdrant-Bridge-Token: {token}",
+            ],
+            timeout=15,
+        )
+    except RuntimeError as error:
+        message = str(error)
+        assert token not in message
+        assert "X-Diva-Qdrant-Bridge-Token: <redacted>" in message
+    else:
+        raise AssertionError("failing producer command unexpectedly succeeded")
+
+
+def test_producer_token_file_contract(producer: object) -> None:
+    calls: list[tuple[list[str], bytes | None]] = []
+
+    def fake_run(
+        command: list[str],
+        *,
+        stdin: bytes | None = None,
+        check: bool = True,
+        timeout: int = 60,
+    ) -> bytes:
+        del check, timeout
+        calls.append((command, stdin))
+        return b"1654\n" if command[1] == "inspect" else b""
+
+    original_run = producer.run
+    producer.run = fake_run
+    token = "b" * 64
+    try:
+        producer.install_token("/usr/bin/docker", "c" * 64, token)
+    finally:
+        producer.run = original_run
+
+    assert len(calls) == 2
+    install_command, install_input = calls[1]
+    assert install_command[1:5] == ["exec", "-i", "--user", "1654"]
+    assert "chmod 400" in install_command[-1]
+    assert "= 400" in install_command[-1]
+    assert "chmod 600" not in install_command[-1]
+    assert install_input == (token + "\n").encode("ascii")
+
+
 def test_live_publication_binding(producer: object) -> None:
     seed = 3022
     generation = f"{'a' * 64}:{'b' * 32}"
@@ -469,6 +520,8 @@ def main() -> int:
     helper = load_helper()
     producer = load_producer()
     test_producer_command_input(producer)
+    test_producer_command_redaction(producer)
+    test_producer_token_file_contract(producer)
     test_live_publication_binding(producer)
     with tempfile.TemporaryDirectory(prefix="diva-wsl-dr-api-bridge-receipt.") as temporary:
         root = Path(temporary)
