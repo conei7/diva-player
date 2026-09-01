@@ -61,6 +61,44 @@ const elfHeader = machine => Buffer.from([
 ]);
 
 try {
+  const directoryFunctionsStart = installerSource.indexOf('validate_root_directory()');
+  const directoryFunctionsEnd = installerSource.indexOf(
+    'verify_installed_binary()',
+    directoryFunctionsStart,
+  );
+  assert.ok(directoryFunctionsStart >= 0, 'root directory validator must remain explicit');
+  assert.ok(
+    directoryFunctionsEnd > directoryFunctionsStart,
+    'install directory helper must precede installed binary verification',
+  );
+  const directoryFunctions = installerSource.slice(
+    directoryFunctionsStart,
+    directoryFunctionsEnd,
+  );
+  const directoryScopeHarness = join(fixture, 'directory-scope.sh');
+  await writeFile(directoryScopeHarness, `#!/bin/sh
+set -eu
+${directoryFunctions}
+directory=outer-directory
+parent=outer-parent
+validate_root_directory "$1" || :
+[ "$directory" = outer-directory ]
+[ "$parent" = outer-parent ]
+ensure_install_directory "$1/child" || :
+[ "$directory" = outer-directory ]
+[ "$parent" = outer-parent ]
+`);
+  const directoryScope = spawnSync(
+    bash,
+    [shellPath(directoryScopeHarness), shellPath(join(fixture, 'missing-parent'))],
+    { encoding: 'utf8', windowsHide: true },
+  );
+  assert.equal(
+    directoryScope.status,
+    0,
+    `directory trust helpers must not clobber caller variables\n${directoryScope.stderr}`,
+  );
+
   const existingTargetBranch = installerSource.indexOf('if [ -e "$INSTALL_PATH" ] || [ -L "$INSTALL_PATH" ]; then');
   const downloadStart = installerSource.indexOf('temporary=$(/usr/bin/mktemp');
   assert.ok(existingTargetBranch >= 0, 'existing target branch must remain explicit');

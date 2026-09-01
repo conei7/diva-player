@@ -86,26 +86,26 @@ case "$(/usr/bin/uname -m)" in
     *) printf '%s\n' 'ERROR: the SBC Trivy installer requires an AArch64 host' >&2; exit 1 ;;
 esac
 
-validate_root_directory() {
+validate_root_directory() (
     directory="$1"
     [ -d "$directory" ] && [ ! -L "$directory" ] \
-        && [ "$(/usr/bin/stat -c '%u:%g' "$directory")" = 0:0 ] || return 1
-    mode=$(/usr/bin/stat -c '%a' "$directory") || return 1
+        && [ "$(/usr/bin/stat -c '%u:%g' "$directory")" = 0:0 ] || exit 1
+    mode=$(/usr/bin/stat -c '%a' "$directory") || exit 1
     [ $((0$mode & 022)) -eq 0 ]
-}
+)
 
-ensure_install_directory() {
+ensure_install_directory() (
     directory="$1"
     parent=${directory%/*}
     if [ ! -e "$directory" ] && [ ! -L "$directory" ]; then
-        validate_root_directory "$parent" || return 1
-        /usr/bin/mkdir --mode=0755 -- "$directory" || return 1
-        /usr/bin/chown 0:0 "$directory" || return 1
-        /usr/bin/chmod 0755 "$directory" || return 1
-        /usr/bin/sync -f "$parent" || return 1
+        validate_root_directory "$parent" || exit 1
+        /usr/bin/mkdir --mode=0755 -- "$directory" || exit 1
+        /usr/bin/chown 0:0 "$directory" || exit 1
+        /usr/bin/chmod 0755 "$directory" || exit 1
+        /usr/bin/sync -f "$parent" || exit 1
     fi
     validate_root_directory "$directory"
-}
+)
 
 verify_installed_binary() {
     verify_binary_file_contract "$INSTALL_PATH" "$TRIVY_BINARY_SHA256" \
