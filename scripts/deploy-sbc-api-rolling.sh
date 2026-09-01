@@ -76,6 +76,10 @@ else
         printf '%s\n' 'ERROR: production backend environment source override is forbidden' >&2
         exit 1
     }
+    [ -z "${DIVA_DEPLOY_TEST_PLATFORM_PROBE+x}" ] || {
+        printf '%s\n' 'ERROR: production platform test probe is forbidden' >&2
+        exit 1
+    }
     for forbidden_docker_setting in DOCKER_DEFAULT_PLATFORM DOCKER_HOST DOCKER_CONTEXT \
         DOCKER_API_VERSION DOCKER_TLS DOCKER_TLS_VERIFY DOCKER_CERT_PATH BUILDX_BUILDER; do
         eval "forbidden_docker_value=\${$forbidden_docker_setting-}"
@@ -1118,9 +1122,9 @@ cleanup() {
     local bootstrap_gateway_current_id=""
     trap - 0
     trap '' HUP INT TERM
-    # Validation and stale-run reconciliation happen before this deployment
-    # owns a state directory, credential inode, journal, lock, or live
-    # topology. Preserve pre-existing evidence and the caller's deliberate
+    # Early validation and stale-run reconciliation can finish before this
+    # deployment owns a state directory, credential inode, journal, lock, or
+    # live topology. Preserve pre-existing evidence and the caller's deliberate
     # exit code without invoking recovery that requires this run's state file.
     if [ "$DEPLOYMENT_STATE_INITIALIZED" != "true" ] \
         && [ -z "$PRIVATE_BACKEND_ENV_ID" ] \
@@ -1894,6 +1898,34 @@ run_bounded_docker_mutation() {
 }
 
 DOCKER_QUERY_OUTPUT=""
+run_bounded_docker_preflight_query() {
+    local rc=0
+    DOCKER_QUERY_OUTPUT=""
+    [ "$DEPLOYMENT_STATE_INITIALIZED" = "true" ] \
+        && [ -n "$DEPLOYMENT_DIR_ID" ] \
+        && [ -d "$DEPLOYMENT_DIR" ] && [ ! -L "$DEPLOYMENT_DIR" ] \
+        && [ "$(stat -c '%d:%i' "$DEPLOYMENT_DIR")" = "$DEPLOYMENT_DIR_ID" ] \
+        && [ "$DAEMON_MUTATION_SEQUENCE" -eq 0 ] \
+        && [ "$DAEMON_MUTATION_IN_FLIGHT" = "false" ] \
+        && [ "$DEPLOY_LOCK_HELD" = "false" ] \
+        && [ "$ACTIVE_JOURNAL_CREATED" = "false" ] \
+        || return 125
+    : > "$DOCKER_QUERY_FILE" || return 125
+    run_with_timeout "$DOCKER_READ_TIMEOUT_SECONDS" \
+        "$DOCKER_COMMAND" "$@" \
+        > "$DOCKER_QUERY_FILE" || rc=$?
+    if [ "$rc" -ne 0 ]; then
+        rm -f "$DOCKER_QUERY_FILE" >/dev/null 2>&1 || true
+        return "$rc"
+    fi
+    DOCKER_QUERY_OUTPUT=$(cat "$DOCKER_QUERY_FILE") || {
+        rm -f "$DOCKER_QUERY_FILE" >/dev/null 2>&1 || true
+        return 125
+    }
+    rm -f "$DOCKER_QUERY_FILE" >/dev/null 2>&1 || return 125
+    return 0
+}
+
 run_bounded_docker_query() {
     local rc=0 query_kind="${1:-missing}"
     DOCKER_QUERY_OUTPUT=""
@@ -1992,13 +2024,26 @@ verify_container_image_linux_arm64() {
 
 verify_production_docker_platform() {
     local host_machine daemon_platform context_name
-    [ "$TEST_MODE" = "1" ] && return 0
-    host_machine=$(/usr/bin/uname -m) || return 1
+    [ "$DEPLOYMENT_STATE_INITIALIZED" = "true" ] \
+        && [ -n "$DEPLOYMENT_DIR_ID" ] \
+        && [ -d "$DEPLOYMENT_DIR" ] && [ ! -L "$DEPLOYMENT_DIR" ] \
+        && [ "$(stat -c '%d:%i' "$DEPLOYMENT_DIR")" = "$DEPLOYMENT_DIR_ID" ] \
+        || return 1
+    if [ "$TEST_MODE" = "1" ]; then
+        case "${DIVA_DEPLOY_TEST_PLATFORM_PROBE:-skip}" in
+            skip) return 0 ;;
+            native) host_machine=aarch64 ;;
+            *) return 1 ;;
+        esac
+    else
+        host_machine=$(/usr/bin/uname -m) || return 1
+    fi
     [ "$host_machine" = "aarch64" ] || return 1
-    run_bounded_docker_query context show || return 1
+    run_bounded_docker_preflight_query context show || return 1
     context_name=$DOCKER_QUERY_OUTPUT
     [ "$context_name" = "default" ] || return 1
-    run_bounded_docker_query info --format '{{.OSType}}/{{.Architecture}}' || return 1
+    run_bounded_docker_preflight_query info \
+        --format '{{.OSType}}/{{.Architecture}}' || return 1
     daemon_platform=$DOCKER_QUERY_OUTPUT
     # Docker reports the ARM64 daemon architecture as aarch64 while image
     # metadata uses arm64.  Keep the mapping explicit and reject emulation.
@@ -5740,9 +5785,6 @@ done
     || { fail "SBC API bridge receipt publisher is unavailable"; exit 1; }
 [ -f "$IMAGE_SCAN_VALIDATOR" ] && [ ! -L "$IMAGE_SCAN_VALIDATOR" ] \
     || { fail "container image scan validator is unavailable"; exit 1; }
-verify_production_docker_platform \
-    || { fail "production host/daemon platform is not native linux/aarch64"; exit 1; }
-
 if [ "$BRIDGE_BOOTSTRAP_MODE" = "true" ] \
     && { [ -e "$API_BRIDGE_RECEIPT" ] || [ -L "$API_BRIDGE_RECEIPT" ]; }; then
     fail "A canonical API bridge receipt already exists; bootstrap is one-time and never overwrites it"
@@ -5774,6 +5816,8 @@ if ! create_deployment_state_directory; then
     fail "deployment state directory could not be created"
     exit 1
 fi
+verify_production_docker_platform \
+    || { fail "production host/daemon platform is not native linux/aarch64"; exit 1; }
 if ! acquire_deploy_lock; then
     exit 75
 fi

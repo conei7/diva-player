@@ -277,6 +277,26 @@ container_health() {
     esac
 }
 
+if [ "$1" = "context" ] && [ "__DOLLAR__{2:-}" = "show" ]; then
+    [ "__DOLLAR__{FAKE_FAIL_STAGE:-}" != "platform_context_error" ] || exit 42
+    if [ "__DOLLAR__{FAKE_FAIL_STAGE:-}" = "platform_context_remote" ]; then
+        printf '%s\n' remote
+    else
+        printf '%s\n' default
+    fi
+    exit 0
+fi
+
+if [ "$1" = "info" ]; then
+    [ "__DOLLAR__{FAKE_FAIL_STAGE:-}" != "platform_info_error" ] || exit 42
+    if [ "__DOLLAR__{FAKE_FAIL_STAGE:-}" = "platform_daemon" ]; then
+        printf '%s\n' linux/amd64
+    else
+        printf '%s\n' linux/aarch64
+    fi
+    exit 0
+fi
+
 if [ "$1" = "inspect" ]; then
     shift
     format=""
@@ -967,6 +987,7 @@ function scenarioEnvironment(
     DIVA_DEPLOY_STATE_DIR: shellPath(scenario.deploymentState),
     DIVA_DEPLOY_PRIVATE_RUNTIME_DIR: shellPath(scenario.privateRuntime),
     DIVA_DEPLOY_TEST_BACKEND_ENV_SOURCE: shellPath(scenario.backendEnvironmentSource),
+    DIVA_DEPLOY_TEST_PLATFORM_PROBE: 'skip',
     DIVA_DEPLOY_HEALTH_ATTEMPTS: '1',
     DIVA_DEPLOY_DRAIN_ATTEMPTS: '1',
     DIVA_DEPLOY_ROUTE_ATTEMPTS: '3',
@@ -1260,6 +1281,85 @@ async function testPrivateRuntimeSignalCleanup() {
   assertExactOldRollingIdentities(result);
 }
 
+async function testDockerPlatformPreflightFailureCleanup() {
+  for (const failStage of [
+    'platform_context_error',
+    'platform_context_remote',
+    'platform_info_error',
+    'platform_daemon',
+  ]) {
+    const name = `platform-preflight-${failStage}`;
+    const scenario = await createScenario(name);
+    try {
+      const result = executeScenario(scenario, name, {
+        failStage,
+        environment: { DIVA_DEPLOY_TEST_PLATFORM_PROBE: 'native' },
+      });
+      assert.equal(result.error, undefined, `${name} failed to execute`);
+      assert.notEqual(result.status, 0, `${name} unexpectedly passed`);
+      assert.match(
+        result.stderr,
+        /production host\/daemon platform is not native linux\/aarch64/u,
+      );
+      const state = await readDeploymentState(scenario.deploymentState);
+      assert.match(
+        state,
+        /failure=production host\/daemon platform is not native linux\/aarch64/u,
+      );
+      assert.match(state, /deployment\.status=failed/u);
+      assert.doesNotMatch(state, /daemon_mutation\.terminal_release/u);
+      assert.doesNotMatch(state, /deployment\.interlock/u);
+
+      const dockerLog = await readFile(join(scenario.fakeState, 'docker.log'), 'utf8');
+      assert.match(dockerLog, /^context show\|/mu);
+      if (
+        failStage === 'platform_context_error'
+        || failStage === 'platform_context_remote'
+      ) {
+        assert.doesNotMatch(dockerLog, /^info /mu);
+      } else {
+        assert.match(dockerLog, /^info --format /mu);
+      }
+      const dockerCommands = dockerLog.trim().split('\n').map(line => line.split('|', 1)[0]);
+      assert.deepEqual(
+        dockerCommands,
+        failStage === 'platform_context_error' || failStage === 'platform_context_remote'
+          ? ['context show']
+          : ['context show', 'info --format {{.OSType}}/{{.Architecture}}'],
+      );
+
+      const deploymentEntries = await readdir(scenario.deploymentState, {
+        withFileTypes: true,
+      });
+      assert.ok(!deploymentEntries.some(entry => entry.name === 'deploy.lock'));
+      assert.ok(!deploymentEntries.some(entry => entry.name === 'rolling-deployment-active'));
+      const deployment = deploymentEntries.find(
+        entry => entry.isDirectory() && entry.name !== 'deploy.lock',
+      );
+      assert.ok(deployment);
+      const runEntries = await readdir(join(scenario.deploymentState, deployment.name));
+      assert.ok(!runEntries.includes('docker-query-output'));
+      assert.equal(
+        await readFile(
+          join(scenario.deploymentState, 'rolling-deployment-active'),
+          'utf8',
+        ).catch(() => ''),
+        '',
+      );
+      assert.equal(
+        await readFile(
+          join(scenario.deploymentState, 'deploy.lock', 'owner'),
+          'utf8',
+        ).catch(() => ''),
+        '',
+      );
+      assert.equal(await readdir(scenario.privateRuntime).catch(() => null), null);
+    } finally {
+      await rm(scenario.root, { recursive: true, force: true });
+    }
+  }
+}
+
 function testBridgeTrivyAndExactImageContract() {
   assert.match(
     deploymentSource,
@@ -1297,6 +1397,52 @@ function testBridgeTrivyAndExactImageContract() {
   assert.match(
     deploymentSource,
     /if ! scan_all_rolling_candidate_images; then/u,
+  );
+  assert.match(
+    deploymentSource,
+    /verify_production_docker_platform\(\) \{[\s\S]*?\[ "\$DEPLOYMENT_STATE_INITIALIZED" = "true" \][\s\S]*?stat -c '%d:%i' "\$DEPLOYMENT_DIR"[\s\S]*?run_bounded_docker_preflight_query context show/u,
+    'production Docker queries must require an initialized, identity-pinned deployment directory',
+  );
+  const preflightQueryStart = deploymentSource.indexOf(
+    'run_bounded_docker_preflight_query() {',
+  );
+  const boundedQueryStart = deploymentSource.indexOf(
+    'run_bounded_docker_query() {',
+    preflightQueryStart,
+  );
+  const preflightQueryContract = deploymentSource.slice(
+    preflightQueryStart,
+    boundedQueryStart,
+  );
+  assert.match(
+    preflightQueryContract,
+    /DAEMON_MUTATION_SEQUENCE" -eq 0[\s\S]*DEPLOY_LOCK_HELD" = "false"[\s\S]*ACTIVE_JOURNAL_CREATED" = "false"/u,
+    'platform capture must remain a pre-mutation, pre-lock, pre-journal read',
+  );
+  assert.doesNotMatch(
+    preflightQueryContract,
+    /mark_daemon_unresolved/u,
+    'a failed read-only platform capture must not claim an unresolved Docker mutation',
+  );
+  const mainPreflightStart = deploymentSource.lastIndexOf(
+    'for positive_setting in "$HEALTH_ATTEMPTS"',
+  );
+  const mainPreflight = deploymentSource.slice(
+    mainPreflightStart,
+    deploymentSource.indexOf('if ! create_private_runtime_root; then', mainPreflightStart),
+  );
+  const stateDirectoryCreation = mainPreflight.indexOf(
+    'if ! create_deployment_state_directory; then',
+  );
+  const deployLockAcquisition = mainPreflight.indexOf('if ! acquire_deploy_lock; then');
+  const activeJournalCreation = mainPreflight.indexOf('ACTIVE_JOURNAL_CREATED=true');
+  const platformVerification = mainPreflight.indexOf('verify_production_docker_platform');
+  assert.ok(
+    stateDirectoryCreation >= 0
+      && stateDirectoryCreation < platformVerification
+      && platformVerification < deployLockAcquisition
+      && deployLockAcquisition < activeJournalCreation,
+    'production Docker platform queries must run after state initialization but before mutation ownership',
   );
   assert.match(
     deploymentSource,
@@ -1881,8 +2027,15 @@ ORIGINAL_ROOT_DIR="${shellPath(currentRoot)}"
 SNAPSHOT_FILE="${shellPath(snapshotAttester)}"
 TEST_MODE=1
 SIMULATED_MODE="${'${1:-real}'}"
+CURRENT_FILE="$ORIGINAL_ROOT_DIR/scripts/attest-disaster-backup-payloads.py"
 stat() {
-    if [ "$SIMULATED_MODE" != real ] \
+    if [ "$SIMULATED_MODE" = current-664 ] \
+        && [ "$1" = -c ] && [ "$2" = '%a:%h' ] \
+        && [ "$3" = "$CURRENT_FILE" ]; then
+        printf '%s\n' '664:1'
+        return 0
+    fi
+    if [ "$SIMULATED_MODE" != real ] && [ "$SIMULATED_MODE" != current-664 ] \
         && [ "$1" = -c ] && [ "$2" = '%u:%g:%a:%h' ] \
         && [ "$3" = "$SNAPSHOT_FILE" ]; then
         owner=$(/usr/bin/stat -c '%u:%g' "$3")
@@ -1896,7 +2049,7 @@ case "$SIMULATED_MODE" in
     real)
         [ "$(verify_bridge_attester_source "$SNAPSHOT_FILE")" = "${expectedSha}" ]
         ;;
-    646|664)
+    646|664|current-664)
         if verify_bridge_attester_source "$SNAPSHOT_FILE" >/dev/null; then
             exit 91
         fi
@@ -1906,7 +2059,7 @@ esac
 `;
     await writeFile(harnessPath, harness, 'utf8');
     await chmod(harnessPath, 0o755);
-    for (const mode of ['real', '646', '664']) {
+    for (const mode of ['real', '646', '664', 'current-664']) {
       const result = spawnSync('sh', [shellPath(harnessPath), mode], {
         cwd: projectDirectory,
         encoding: 'utf8',
@@ -2829,6 +2982,10 @@ async function testStateRootAndPrivilegeModeContract() {
   );
   assert.match(
     privilegeModeContract,
+    /\[ -z "\$\{DIVA_DEPLOY_TEST_PLATFORM_PROBE\+x\}" \][\s\S]*production platform test probe is forbidden/u,
+  );
+  assert.match(
+    privilegeModeContract,
     /\[ "\$\(\/usr\/bin\/id -u\)" -eq 0 \][\s\S]*production rolling deployment requires uid 0/u,
   );
   assert.match(
@@ -3345,6 +3502,7 @@ await testUnownedWebReplacementIsPreserved();
 await testGatewayAndRouteIdentitySwapsFailClosed();
 await testNormalCandidatePlatformFailsClosed();
 await testPrivateRuntimeSignalCleanup();
+await testDockerPlatformPreflightFailureCleanup();
 testBridgeTrivyAndExactImageContract();
 await testBridgeBackupLifetimeContract();
 await testBridgeLivePublicationEvidenceContract();
