@@ -354,7 +354,71 @@ assert.match(deploy, /rollback_updated_slots/);
 assert.match(deploy, /DEPLOY_LOCK_DIR="\$STATE_ROOT\/deploy\.lock"/);
 assert.match(deploy, /acquire_deploy_lock/);
 assert.match(deploy, /STATEFUL_LOCK_DIR="\$STATE_ROOT\/stateful-hardening\.lock"/);
+const sourceSnapshotStart = deploy.indexOf('create_private_source_snapshot() {');
+const sourceSnapshotEnd = deploy.indexOf(
+  '\nverify_private_source_snapshot() {',
+  sourceSnapshotStart,
+);
+assert.ok(sourceSnapshotStart > 0 && sourceSnapshotEnd > sourceSnapshotStart);
+const sourceSnapshotFunction = deploy.slice(sourceSnapshotStart, sourceSnapshotEnd);
+assert.match(
+  sourceSnapshotFunction,
+  /SOURCE_TREE_ID=\$\(trusted_git rev-parse "\$GIT_COMMIT\^\{tree\}"\)/u,
+);
+assert.match(
+  sourceSnapshotFunction,
+  /trusted_git ls-tree -rz --full-tree "\$GIT_COMMIT"/u,
+);
+assert.match(
+  sourceSnapshotFunction,
+  /trusted_git -c tar\.umask=0022 archive --format=tar "\$GIT_COMMIT"[\s\\]*> "\$SOURCE_ARCHIVE_FILE"/u,
+);
+assert.match(
+  sourceSnapshotFunction,
+  /current_head=\$\(trusted_git rev-parse --verify 'HEAD\^\{commit\}'\)[\s\S]*current_remote_main=\$\(trusted_git rev-parse --verify[\s\S]*'refs\/remotes\/origin\/main\^\{commit\}'\)[\s\S]*current_tree=\$\(trusted_git rev-parse "\$GIT_COMMIT\^\{tree\}"\)[\s\S]*\[ "\$current_head" = "\$GIT_COMMIT" \][\s\S]*\[ "\$current_remote_main" = "\$GIT_COMMIT" \][\s\S]*\[ "\$current_tree" = "\$SOURCE_TREE_ID" \]/u,
+);
+assert.match(
+  sourceSnapshotFunction,
+  /current_status=\$\(trusted_git status --porcelain=v1 --untracked-files=all\)[\s\S]*\|\| return 1[\s\S]*\[ -z "\$current_status" \]/u,
+);
+assert.match(
+  sourceSnapshotFunction,
+  /trusted_git diff-index --cached --quiet "\$GIT_COMMIT" --/u,
+);
+assert.doesNotMatch(
+  sourceSnapshotFunction,
+  /trusted_git ls-tree -rz --full-tree HEAD/u,
+);
+assert.doesNotMatch(
+  sourceSnapshotFunction,
+  /trusted_git archive --format=tar HEAD/u,
+);
+assert.match(
+  sourceSnapshotFunction,
+  /object_header = b"blob "[\s\S]*hashlib\.sha1 if len\(expected_object_id\) == 40 else hashlib\.sha256[\s\S]*set\(actual\) != set\(expected\)/u,
+);
+assert.match(
+  sourceSnapshotFunction,
+  /with tarfile\.open\(archive_file, mode="r:"\)[\s\S]*not member\.isreg\(\)[\s\S]*member\.mode not in \(0o644, 0o755\)[\s\S]*seen != set\(expected\)/u,
+);
+assert.match(
+  sourceSnapshotFunction,
+  /expected_directories = set\(\)[\s\S]*actual_directories = set\(\)[\s\S]*relative not in expected_directories[\s\S]*stat\.S_IMODE\(info\.st_mode\) != 0o755[\s\S]*info\.st_uid != expected_uid or info\.st_gid != expected_gid[\s\S]*actual_directories != expected_directories/u,
+);
+assert.match(
+  sourceSnapshotFunction,
+  /before\.st_uid != expected_uid or before\.st_gid != expected_gid[\s\S]*"\$SOURCE_TREE_ENTRIES_FILE" "\$SOURCE_SNAPSHOT_ROOT" 0 0/u,
+);
+assert.match(
+  deploy,
+  /trusted_git\(\)[\s\S]*\/usr\/bin\/setpriv[\s\S]*--reuid="\$SOURCE_REPOSITORY_UID" --regid="\$SOURCE_REPOSITORY_GID"[\s\S]*--clear-groups --no-new-privs[\s\S]*\/usr\/bin\/git/u,
+);
+assert.match(
+  deploy,
+  /origin=\$\(trusted_git config --no-includes --local --get-all remote\.origin\.url\)/u,
+);
 assert.match(deploy, /deterministic deployment test mode refuses uid 0/u);
+assert.match(deploy, /ROOT_DIR=\$\(CDPATH= cd -- "\$\(\/usr\/bin\/dirname -- "\$0"\)\/\.\." && pwd\)/u);
 assert.match(
   deploy,
   /\[ "\$\{DIVA_DEPLOY_STATE_DIR\+x\}" = x \][\s\S]*\[ "\$\{DIVA_STATEFUL_STATE_DIR\+x\}" = x \][\s\S]*production deployment state-root overrides are forbidden/u,
@@ -426,7 +490,61 @@ const statelessUpdateBranch = deploy.slice(statelessUpdateStart, bridgeCommitSta
 assert.match(statelessUpdateBranch, /update_slot api_a[\s\S]*update_slot api_b/u);
 assert.match(statelessUpdateBranch, /apply_gateway_image[\s\S]*validate_candidate_web[\s\S]*replace_web/u);
 assert.doesNotMatch(deploy, /commit_bridge_api_restart_policies/u);
-assert.match(deploy, /production host\/daemon platform is not native linux\/aarch64/u);
+assert.match(
+  deploy,
+  /production host\/Docker endpoint\/daemon platform is not trusted native linux\/aarch64/u,
+);
+assert.match(deploy, /COMPOSE_VERSION=5\.3\.1/u);
+assert.match(
+  deploy,
+  /COMPOSE_BINARY_SHA256=aa611e811d0ea25897839c404bfb5bf93ce706dc51c500a4457890f5d0606a86/u,
+);
+assert.match(
+  deploy,
+  /COMPOSE_BINARY=\/usr\/libexec\/docker\/cli-plugins\/docker-compose[\s\S]*COMPOSE_COMMAND=\$COMPOSE_BINARY/u,
+);
+assert.match(
+  deploy,
+  /verify_reviewed_compose\(\)[\s\S]*\/usr\/local\/lib\/docker\/cli-plugins[\s\S]*\/usr\/local\/libexec\/docker\/cli-plugins[\s\S]*\/usr\/lib\/docker\/cli-plugins[\s\S]*entry_count[\s\S]*COMPOSE_BINARY_SHA256[\s\S]*02:00:b7:00[\s\S]*version --short[\s\S]*COMPOSE_VERSION/u,
+);
+assert.doesNotMatch(deploy, /"\$DOCKER_COMMAND" compose/u);
+assert.ok(
+  (deploy.match(/"\$COMPOSE_COMMAND" --env-file "\$PRIVATE_BACKEND_ENV_FILE"/gu) ?? [])
+    .length >= 2,
+);
+assert.match(
+  deploy,
+  /PRIVATE_DOCKER_CONFIG="\$DEPLOYMENT_DIR\/docker-cli-config"[\s\S]*printf '\{\}\\n' > "\$PRIVATE_DOCKER_CONFIG_FILE"[\s\S]*DOCKER_CONFIG="\$PRIVATE_DOCKER_CONFIG"[\s\S]*export DOCKER_CONFIG/u,
+);
+assert.match(
+  deploy,
+  /verify_private_docker_config\(\)[\s\S]*DOCKER_CONFIG_FILE_SHA256[\s\S]*config_entry_count[\s\S]*command_entry_count[\s\S]*verify_production_docker_platform\(\)[\s\S]*verify_private_docker_config \|\| return 1/u,
+);
+assert.match(
+  deploy,
+  /PRIVATE_COMMAND_DIR="\$DEPLOYMENT_DIR\/command-wrappers"[\s\S]*os\.O_EXCL[\s\S]*os\.O_NOFOLLOW[\s\S]*stat\.S_ISREG[\s\S]*metadata\.st_nlink != 1[\s\S]*metadata\.st_uid != 0 or metadata\.st_gid != 0/u,
+);
+assert.match(
+  deploy,
+  /os\.execve\("\/usr\/bin\/docker", \["\/usr\/bin\/docker", \*sys\.argv\[1:\]\], %s\)/u,
+);
+assert.match(
+  deploy,
+  /for name in \("DIVA_API_IMAGE", "DIVA_GATEWAY_IMAGE", "DIVA_WEB_IMAGE"\):[\s\S]*os\.execve\([\s\S]*"\/usr\/libexec\/docker\/cli-plugins\/docker-compose"/u,
+);
+assert.match(
+  deploy,
+  /compose, project, compose_file, backend_env_file = sys\.argv\[1:\][\s\S]*\[compose, "--env-file", backend_env_file,/u,
+);
+assert.match(deploy, /production tar environment override is forbidden: TAR_OPTIONS/u);
+assert.ok(
+  (deploy.match(/\/usr\/bin\/env -i[\s\\]*\n[\s\S]{0,160}?\/usr\/bin\/tar/gu) ?? [])
+    .length >= 2,
+);
+assert.match(
+  deploy,
+  /run_bounded_docker_preflight_query context inspect[\s\S]*--format '\{\{\.Endpoints\.docker\.Host\}\}' default[\s\S]*\[ "\$context_endpoint" = "unix:\/\/\/var\/run\/docker\.sock" \]/u,
+);
 assert.match(deploy, /DOCKER_DEFAULT_PLATFORM/u);
 assert.match(sbcBridgePublisher, /os\.link\(prepared, canonical, follow_symlinks=False\)/u);
 assert.match(sbcBridgePublisher, /os\.unlink\(prepared\)/u);

@@ -110,6 +110,8 @@ async function main() {
   await run('dotnet', ['test', 'backend/api/VocadbRecommender.Tests/VocadbRecommender.Tests.csproj', '--configuration', 'Release', '--no-restore'], { label: 'Test API', env: dotnetEnvironment });
   await npmScripts([
     'test:deployment-topology',
+    'test:source-snapshot-validation',
+    'test:production-command-wrappers',
     'test:sbc-trivy-installer',
     'test:primary-topology',
     'test:rolling-deployment',

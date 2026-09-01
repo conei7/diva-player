@@ -275,6 +275,10 @@ jobs:
         run: python -B scripts/test-attest-disaster-backup-payloads.py
       - name: Deployment topology contract
         run: npm run test:deployment-topology
+      - name: Source snapshot archive validation
+        run: npm run test:source-snapshot-validation
+      - name: Production Docker and Compose environment isolation
+        run: npm run test:production-command-wrappers
       - name: SBC Trivy installer contract
         run: npm run test:sbc-trivy-installer
       - name: Primary-only public topology contract

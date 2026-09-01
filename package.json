@@ -41,6 +41,8 @@
     "test:e2e:multi-tab-player": "node scripts/test-multi-tab-player-e2e.mjs",
     "test:e2e:hidden-songs": "node scripts/test-hidden-songs-e2e.mjs",
     "test:deployment-topology": "node scripts/test-deployment-topology.mjs",
+    "test:source-snapshot-validation": "node scripts/test-source-snapshot-validation.mjs",
+    "test:production-command-wrappers": "node scripts/test-production-command-wrappers.mjs",
     "test:sbc-trivy-installer": "node scripts/test-sbc-trivy-installer.mjs",
     "test:primary-topology": "node scripts/test-primary-topology.mjs",
     "check:public-primary-health": "node scripts/check-public-dr-health.mjs",

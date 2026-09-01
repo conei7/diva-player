@@ -9,7 +9,7 @@ case "$#:${1:-}" in
     *) printf '%s\n' 'usage: deploy-sbc-api-rolling.sh [--bootstrap-legacy-qdrant-bridge]' >&2; exit 64 ;;
 esac
 
-ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+ROOT_DIR=$(CDPATH= cd -- "$(/usr/bin/dirname -- "$0")/.." && pwd)
 ORIGINAL_ROOT_DIR="$ROOT_DIR"
 OFFICIAL_GIT_REMOTE_URL='https://github.com/conei7/diva-player.git'
 COMPOSE_FILE="$ROOT_DIR/backend/docker-compose.yml"
@@ -27,6 +27,9 @@ BRIDGE_RECEIPT_PUBLISHER="$ROOT_DIR/scripts/sbc-api-bridge-publication.py"
 IMAGE_SCAN_VALIDATOR="$ROOT_DIR/scripts/validate-container-image-scan.py"
 TRIVY_VERSION=0.74.0
 TRIVY_BINARY_SHA256=fed2c9ca7d27191ada34524b5eaf5216a845c6d6f3246143c3b475552ffe5358
+COMPOSE_VERSION=5.3.1
+COMPOSE_BINARY_SHA256=aa611e811d0ea25897839c404bfb5bf93ce706dc51c500a4457890f5d0606a86
+DOCKER_CONFIG_FILE_SHA256=ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356
 API_A_ROLLBACK_IMAGE="diva-player-api:rollback-api-a"
 API_B_ROLLBACK_IMAGE="diva-player-api:rollback-api-b"
 GATEWAY_ROLLBACK_IMAGE="diva-player-api-gateway:rollback"
@@ -35,6 +38,9 @@ WEB_CONTAINER="vocadb_web"
 # Command overrides make the real deployment state machine executable against
 # deterministic fakes. Production uses the defaults.
 DOCKER_COMMAND=${DIVA_DOCKER_COMMAND:-docker}
+COMPOSE_COMMAND=${DIVA_COMPOSE_COMMAND:-docker-compose}
+DOCKER_BINARY=$DOCKER_COMMAND
+COMPOSE_BINARY=$COMPOSE_COMMAND
 CURL_COMMAND=${DIVA_CURL_COMMAND:-curl}
 SLEEP_COMMAND=${DIVA_SLEEP_COMMAND:-sleep}
 TIMEOUT_COMMAND=${DIVA_TIMEOUT_COMMAND:-timeout}
@@ -54,6 +60,8 @@ MIGRATION_TIMEOUT_SECONDS=${DIVA_DEPLOY_MIGRATION_TIMEOUT_SECONDS:-600}
 DOCKER_READ_TIMEOUT_SECONDS=${DIVA_DEPLOY_DOCKER_READ_TIMEOUT_SECONDS:-30}
 DAEMON_SETTLE_ATTEMPTS=${DIVA_DEPLOY_DAEMON_SETTLE_ATTEMPTS:-30}
 DAEMON_STABLE_SAMPLES=${DIVA_DEPLOY_DAEMON_STABLE_SAMPLES:-10}
+SOURCE_REPOSITORY_UID=""
+SOURCE_REPOSITORY_GID=""
 
 if [ "$TEST_MODE" = "1" ]; then
     # Test mode permits command fakes, so it must never be selectable by a
@@ -81,13 +89,23 @@ else
         exit 1
     }
     for forbidden_docker_setting in DOCKER_DEFAULT_PLATFORM DOCKER_HOST DOCKER_CONTEXT \
-        DOCKER_API_VERSION DOCKER_TLS DOCKER_TLS_VERIFY DOCKER_CERT_PATH BUILDX_BUILDER; do
+        DOCKER_CONFIG DOCKER_API_VERSION DOCKER_TLS DOCKER_TLS_VERIFY DOCKER_CERT_PATH \
+        DOCKER_CLI_PLUGIN_EXTRA_DIRS DOCKER_CLI_PLUGIN_ORIGINAL_CLI_COMMAND \
+        BUILDX_BUILDER; do
         eval "forbidden_docker_value=\${$forbidden_docker_setting-}"
         [ -z "$forbidden_docker_value" ] || {
             printf '%s\n' "ERROR: production Docker override is forbidden: $forbidden_docker_setting" >&2
             exit 1
         }
     done
+    [ -z "${TAR_OPTIONS+x}" ] || {
+        printf '%s\n' 'ERROR: production tar environment override is forbidden: TAR_OPTIONS' >&2
+        exit 1
+    }
+    [ -z "${DIVA_COMPOSE_COMMAND+x}" ] || {
+        printf '%s\n' 'ERROR: production Compose command override is forbidden' >&2
+        exit 1
+    }
     case "${DIVA_DOCKER_COMMAND+x}:${DIVA_CURL_COMMAND+x}:${DIVA_SLEEP_COMMAND+x}:${DIVA_TIMEOUT_COMMAND+x}:${DIVA_SYNC_COMMAND+x}:${DIVA_DEPLOY_PYTHON_COMMAND+x}:${DIVA_DEPLOY_EXACT_PYTHON_COMMAND+x}:${DIVA_TRIVY_COMMAND+x}:${DIVA_DEPLOY_HOOK_COMMAND+x}:${DIVA_DEPLOY_PRIVATE_RUNTIME_DIR+x}" in
         ::::::::: ) ;;
         *)
@@ -97,7 +115,10 @@ else
     esac
     PATH=/usr/sbin:/usr/bin:/sbin:/bin
     export PATH
-    DOCKER_COMMAND=/usr/bin/docker
+    DOCKER_BINARY=/usr/bin/docker
+    COMPOSE_BINARY=/usr/libexec/docker/cli-plugins/docker-compose
+    DOCKER_COMMAND=$DOCKER_BINARY
+    COMPOSE_COMMAND=$COMPOSE_BINARY
     CURL_COMMAND=/usr/bin/curl
     SLEEP_COMMAND=/usr/bin/sleep
     TIMEOUT_COMMAND=/usr/bin/timeout
@@ -155,11 +176,11 @@ else
         [ $((0$mode & 022)) -eq 0 ]
     }
     for trusted_binary in \
-        "$DOCKER_COMMAND" "$CURL_COMMAND" "$SLEEP_COMMAND" \
+        "$DOCKER_BINARY" "$CURL_COMMAND" "$SLEEP_COMMAND" \
         "$TIMEOUT_COMMAND" "$SYNC_COMMAND" "$PYTHON_COMMAND" \
-        /usr/bin/awk /usr/bin/cat /usr/bin/chmod /usr/bin/env /usr/bin/git \
+        /usr/bin/awk /usr/bin/cat /usr/bin/chmod /usr/bin/dirname /usr/bin/env /usr/bin/git \
         /usr/bin/grep /usr/bin/id /usr/bin/od /usr/bin/readlink /usr/bin/sha256sum \
-        /usr/bin/mkdir /usr/bin/rm /usr/bin/rmdir /usr/bin/stat /usr/bin/tar \
+        /usr/bin/mkdir /usr/bin/rm /usr/bin/rmdir /usr/bin/setpriv /usr/bin/stat /usr/bin/tar \
         /usr/bin/uname /usr/bin/wc; do
         validate_trusted_system_binary "$trusted_binary" || {
                 printf '%s\n' "ERROR: production binary is not trusted: $trusted_binary" >&2
@@ -193,6 +214,63 @@ else
         printf '%s\n' 'ERROR: reviewed native ARM64 Trivy installation is unavailable or changed' >&2
         exit 1
     }
+    verify_reviewed_compose() {
+        local actual_sha entry_count=0 plugin version_output
+        for absent_plugin_directory in \
+            /usr/local/lib/docker/cli-plugins \
+            /usr/local/libexec/docker/cli-plugins \
+            /usr/lib/docker/cli-plugins; do
+            [ ! -e "$absent_plugin_directory" ] \
+                && [ ! -L "$absent_plugin_directory" ] || return 1
+        done
+        validate_trusted_system_ancestry "$COMPOSE_BINARY" || return 1
+        [ -d /usr/libexec/docker/cli-plugins ] \
+            && [ ! -L /usr/libexec/docker/cli-plugins ] \
+            && [ "$(/usr/bin/stat -c '%u:%g:%a' \
+                /usr/libexec/docker/cli-plugins)" = 0:0:755 ] || return 1
+        for plugin in \
+            /usr/libexec/docker/cli-plugins/* \
+            /usr/libexec/docker/cli-plugins/.[!.]* \
+            /usr/libexec/docker/cli-plugins/..?*; do
+            [ -e "$plugin" ] || [ -L "$plugin" ] || continue
+            entry_count=$((entry_count + 1))
+            [ "$plugin" = "$COMPOSE_BINARY" ] || return 1
+        done
+        [ "$entry_count" -eq 1 ] || return 1
+        [ -f "$COMPOSE_BINARY" ] && [ ! -L "$COMPOSE_BINARY" ] \
+            && [ -x "$COMPOSE_BINARY" ] \
+            && [ "$(/usr/bin/stat -c '%u:%g:%a:%h' \
+                "$COMPOSE_BINARY")" = 0:0:755:1 ] || return 1
+        actual_sha=$(/usr/bin/sha256sum "$COMPOSE_BINARY" \
+            | /usr/bin/awk '{print $1}') || return 1
+        [ "$actual_sha" = "$COMPOSE_BINARY_SHA256" ] || return 1
+        set -- $(/usr/bin/od -An -tx1 -N20 "$COMPOSE_BINARY")
+        [ "$#" -eq 20 ] \
+            && [ "$1:$2:$3:$4" = 7f:45:4c:46 ] \
+            && [ "$5:$6:$7" = 02:01:01 ] || return 1
+        shift 16
+        [ "$1:$2:$3:$4" = 02:00:b7:00 ] || return 1
+        version_output=$(/usr/bin/env -i HOME=/var/empty PATH=/usr/bin:/bin \
+            DOCKER_CONFIG=/var/empty "$COMPOSE_BINARY" version --short) \
+            || return 1
+        [ "$version_output" = "$COMPOSE_VERSION" ]
+    }
+    verify_reviewed_compose || {
+        printf '%s\n' 'ERROR: reviewed native ARM64 Docker Compose installation is unavailable or changed' >&2
+        exit 1
+    }
+    source_repository_metadata=$(/usr/bin/stat -c '%u:%g:%a' \
+        "$ORIGINAL_ROOT_DIR") || exit 1
+    [ "$source_repository_metadata" = 1000:1000:755 ] \
+        && [ -d "$ORIGINAL_ROOT_DIR/.git" ] \
+        && [ ! -L "$ORIGINAL_ROOT_DIR/.git" ] \
+        && [ "$(/usr/bin/stat -c '%u:%g' "$ORIGINAL_ROOT_DIR/.git")" = 1000:1000 ] \
+        || {
+            printf '%s\n' 'ERROR: production source repository ownership is not trusted' >&2
+            exit 1
+        }
+    SOURCE_REPOSITORY_UID=1000
+    SOURCE_REPOSITORY_GID=1000
 fi
 
 if [ "$TEST_MODE" = "1" ]; then
@@ -230,6 +308,18 @@ DEPLOYMENT_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 DEPLOYMENT_DIR="$STATE_ROOT/$DEPLOYMENT_ID"
 DEPLOYMENT_DIR_ID=""
 DEPLOYMENT_STATE_INITIALIZED=false
+PRIVATE_DOCKER_CONFIG="$DEPLOYMENT_DIR/docker-cli-config"
+PRIVATE_DOCKER_CONFIG_ID=""
+PRIVATE_DOCKER_CONFIG_FILE="$PRIVATE_DOCKER_CONFIG/config.json"
+PRIVATE_DOCKER_CONFIG_FILE_ID=""
+PRIVATE_COMMAND_DIR="$DEPLOYMENT_DIR/command-wrappers"
+PRIVATE_COMMAND_DIR_ID=""
+PRIVATE_DOCKER_WRAPPER="$PRIVATE_COMMAND_DIR/docker"
+PRIVATE_DOCKER_WRAPPER_ID=""
+PRIVATE_DOCKER_WRAPPER_SHA256=""
+PRIVATE_COMPOSE_WRAPPER="$PRIVATE_COMMAND_DIR/docker-compose"
+PRIVATE_COMPOSE_WRAPPER_ID=""
+PRIVATE_COMPOSE_WRAPPER_SHA256=""
 if [ "$TEST_MODE" = "1" ]; then
     PRIVATE_RUNTIME_ROOT=${DIVA_DEPLOY_PRIVATE_RUNTIME_DIR:-"$DEPLOYMENT_DIR/runtime-private"}
 else
@@ -460,6 +550,120 @@ create_deployment_state_directory() {
     DEPLOYMENT_DIR_ID=$(stat -c '%d:%i' "$DEPLOYMENT_DIR") || return 1
     record_state "deployment.id" "$DEPLOYMENT_ID" || return 1
     record_state "deployment.directory_identity" "$DEPLOYMENT_DIR_ID" || return 1
+    if [ "$TEST_MODE" != "1" ]; then
+        [ ! -e "$PRIVATE_DOCKER_CONFIG" ] \
+            && [ ! -L "$PRIVATE_DOCKER_CONFIG" ] || return 1
+        /usr/bin/mkdir -m 0700 "$PRIVATE_DOCKER_CONFIG" || return 1
+        (umask 077; set -C; printf '{}\n' > "$PRIVATE_DOCKER_CONFIG_FILE") \
+            2>/dev/null || return 1
+        /usr/bin/chmod 0400 "$PRIVATE_DOCKER_CONFIG_FILE" || return 1
+        [ ! -e "$PRIVATE_COMMAND_DIR" ] \
+            && [ ! -L "$PRIVATE_COMMAND_DIR" ] || return 1
+        /usr/bin/mkdir -m 0700 "$PRIVATE_COMMAND_DIR" || return 1
+        /usr/bin/env -i HOME=/root PATH=/usr/sbin:/usr/bin:/sbin:/bin \
+            LANG=C.UTF-8 LC_ALL=C.UTF-8 /usr/bin/python3 -I -c '
+import os
+import stat
+import sys
+
+config_path, command_dir, docker_wrapper, compose_wrapper = sys.argv[1:]
+base_environment = """{
+    "DOCKER_CONFIG": %r,
+    "HOME": "/root",
+    "LANG": "C.UTF-8",
+    "LC_ALL": "C.UTF-8",
+    "PATH": "/usr/sbin:/usr/bin:/sbin:/bin",
+}""" % config_path
+docker_payload = ("""#!/usr/bin/python3 -I
+import os
+import sys
+os.execve("/usr/bin/docker", ["/usr/bin/docker", *sys.argv[1:]], %s)
+""" % base_environment).encode("utf-8")
+compose_payload = ("""#!/usr/bin/python3 -I
+import os
+import sys
+environment = %s
+for name in ("DIVA_API_IMAGE", "DIVA_GATEWAY_IMAGE", "DIVA_WEB_IMAGE"):
+    if name in os.environ:
+        environment[name] = os.environ[name]
+os.execve(
+    "/usr/libexec/docker/cli-plugins/docker-compose",
+    ["/usr/libexec/docker/cli-plugins/docker-compose", *sys.argv[1:]],
+    environment,
+)
+""" % base_environment).encode("utf-8")
+
+for path, payload in (
+    (docker_wrapper, docker_payload),
+    (compose_wrapper, compose_payload),
+):
+    descriptor = os.open(
+        path,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC | os.O_NOFOLLOW,
+        0o500,
+    )
+    try:
+        written = 0
+        while written < len(payload):
+            count = os.write(descriptor, payload[written:])
+            if count <= 0:
+                raise SystemExit(2)
+            written += count
+        os.fchmod(descriptor, 0o500)
+        os.fsync(descriptor)
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1 \
+                or stat.S_IMODE(metadata.st_mode) != 0o500 \
+                or metadata.st_uid != 0 or metadata.st_gid != 0 \
+                or metadata.st_size != len(payload):
+            raise SystemExit(2)
+    finally:
+        os.close(descriptor)
+
+directory_descriptor = os.open(
+    command_dir,
+    os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW,
+)
+try:
+    os.fsync(directory_descriptor)
+finally:
+    os.close(directory_descriptor)
+' "$PRIVATE_DOCKER_CONFIG" "$PRIVATE_COMMAND_DIR" \
+            "$PRIVATE_DOCKER_WRAPPER" "$PRIVATE_COMPOSE_WRAPPER" || return 1
+        PRIVATE_DOCKER_CONFIG_ID=$(/usr/bin/stat -c '%d:%i' \
+            "$PRIVATE_DOCKER_CONFIG") || return 1
+        PRIVATE_DOCKER_CONFIG_FILE_ID=$(/usr/bin/stat -c '%d:%i:%s' \
+            "$PRIVATE_DOCKER_CONFIG_FILE") || return 1
+        PRIVATE_COMMAND_DIR_ID=$(/usr/bin/stat -c '%d:%i' \
+            "$PRIVATE_COMMAND_DIR") || return 1
+        PRIVATE_DOCKER_WRAPPER_ID=$(/usr/bin/stat -c '%d:%i:%s' \
+            "$PRIVATE_DOCKER_WRAPPER") || return 1
+        PRIVATE_COMPOSE_WRAPPER_ID=$(/usr/bin/stat -c '%d:%i:%s' \
+            "$PRIVATE_COMPOSE_WRAPPER") || return 1
+        PRIVATE_DOCKER_WRAPPER_SHA256=$(/usr/bin/sha256sum \
+            "$PRIVATE_DOCKER_WRAPPER" | /usr/bin/awk '{print $1}') || return 1
+        PRIVATE_COMPOSE_WRAPPER_SHA256=$(/usr/bin/sha256sum \
+            "$PRIVATE_COMPOSE_WRAPPER" | /usr/bin/awk '{print $1}') || return 1
+        /usr/bin/sync -f "$PRIVATE_DOCKER_CONFIG_FILE" 2>/dev/null \
+            || /usr/bin/sync || return 1
+        /usr/bin/sync -f "$PRIVATE_DOCKER_CONFIG" 2>/dev/null \
+            || /usr/bin/sync || return 1
+        DOCKER_CONFIG="$PRIVATE_DOCKER_CONFIG"
+        export DOCKER_CONFIG
+        DOCKER_COMMAND="$PRIVATE_DOCKER_WRAPPER"
+        COMPOSE_COMMAND="$PRIVATE_COMPOSE_WRAPPER"
+        record_state "docker.config" "private-empty-root-owned" || return 1
+        record_state "docker.config_identity" "$PRIVATE_DOCKER_CONFIG_ID" \
+            || return 1
+        record_state "docker.command_wrapper_identity" \
+            "$PRIVATE_DOCKER_WRAPPER_ID" || return 1
+        record_state "docker.command_wrapper_sha256" \
+            "$PRIVATE_DOCKER_WRAPPER_SHA256" || return 1
+        record_state "compose.command_wrapper_identity" \
+            "$PRIVATE_COMPOSE_WRAPPER_ID" || return 1
+        record_state "compose.command_wrapper_sha256" \
+            "$PRIVATE_COMPOSE_WRAPPER_SHA256" || return 1
+    fi
     DEPLOYMENT_STATE_INITIALIZED=true
 }
 
@@ -501,9 +705,10 @@ import json
 import subprocess
 import sys
 
-docker, project, compose_file = sys.argv[1:]
+compose, project, compose_file, backend_env_file = sys.argv[1:]
 result = subprocess.run(
-    [docker, "compose", "--project-name", project, "-f", compose_file,
+    [compose, "--env-file", backend_env_file,
+     "--project-name", project, "-f", compose_file,
      "config", "--format", "json"],
     stdin=subprocess.DEVNULL,
     stdout=subprocess.PIPE,
@@ -580,7 +785,8 @@ projection = {
 encoded = (json.dumps(projection, ensure_ascii=True, sort_keys=True,
                       separators=(",", ":")) + "\n").encode("utf-8")
 print(hashlib.sha256(encoded).hexdigest())
-' "$DOCKER_COMMAND" "$COMPOSE_PROJECT" "$COMPOSE_FILE"
+' "$COMPOSE_COMMAND" "$COMPOSE_PROJECT" "$COMPOSE_FILE" \
+        "$PRIVATE_BACKEND_ENV_FILE"
 }
 
 validate_stateful_runtime_contract() {
@@ -1474,7 +1680,7 @@ compose_with_images() {
     shift 3
     env DIVA_API_IMAGE="$api_image" DIVA_GATEWAY_IMAGE="$gateway_image" \
         DIVA_WEB_IMAGE="$web_image" \
-        "$DOCKER_COMMAND" compose --env-file "$PRIVATE_BACKEND_ENV_FILE" \
+        "$COMPOSE_COMMAND" --env-file "$PRIVATE_BACKEND_ENV_FILE" \
         --project-name "$COMPOSE_PROJECT" -f "$RUNTIME_COMPOSE_FILE" "$@"
 }
 
@@ -1498,8 +1704,10 @@ trusted_git() {
         git -C "$ORIGINAL_ROOT_DIR" "$@"
         return
     fi
-    run_with_timeout "$DOCKER_READ_TIMEOUT_SECONDS" /usr/bin/env -i \
-        PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/root LANG=C.UTF-8 LC_ALL=C.UTF-8 \
+    run_with_timeout "$DOCKER_READ_TIMEOUT_SECONDS" /usr/bin/setpriv \
+        --reuid="$SOURCE_REPOSITORY_UID" --regid="$SOURCE_REPOSITORY_GID" \
+        --clear-groups --no-new-privs /usr/bin/env -i \
+        PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/nonexistent LANG=C.UTF-8 LC_ALL=C.UTF-8 \
         GIT_CONFIG_COUNT=0 GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_SYSTEM=/dev/null \
         GIT_CONFIG_GLOBAL=/dev/null GIT_ATTR_NOSYSTEM=1 \
         GIT_NO_REPLACE_OBJECTS=1 GIT_OPTIONAL_LOCKS=0 GIT_TERMINAL_PROMPT=0 \
@@ -1521,11 +1729,8 @@ verify_official_source_provenance() {
     fi
     branch=$(trusted_git symbolic-ref --quiet HEAD) || return 1
     [ "$branch" = refs/heads/main ] || return 1
-    origin=$(run_with_timeout "$DOCKER_READ_TIMEOUT_SECONDS" /usr/bin/env -i \
-        PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/root \
-        GIT_CONFIG_COUNT=0 GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
-        /usr/bin/git config --no-includes --file "$ORIGINAL_ROOT_DIR/.git/config" \
-            --get remote.origin.url) || return 1
+    origin=$(trusted_git config --no-includes --local --get-all remote.origin.url) \
+        || return 1
     [ "$origin" = "$OFFICIAL_GIT_REMOTE_URL" ] || return 1
     replace_refs=$(trusted_git for-each-ref --format='%(refname)' refs/replace/) \
         || return 1
@@ -1642,7 +1847,8 @@ if identity(before) != identity(final) or hashlib.sha256(final_payload).digest()
 }
 
 create_private_source_snapshot() {
-    local archive_hash snapshot_hash tree_count
+    local archive_hash current_head current_remote_main current_status current_tree \
+        snapshot_hash tree_count
     if [ "$TEST_MODE" = "1" ]; then
         COMPOSE_FILE="$ORIGINAL_ROOT_DIR/backend/docker-compose.yml"
         RUNTIME_COMPOSE_FILE="$COMPOSE_FILE"
@@ -1651,8 +1857,8 @@ create_private_source_snapshot() {
         record_state "source.snapshot" "deterministic-test-live-tree"
         return 0
     fi
-    SOURCE_TREE_ID=$(trusted_git rev-parse 'HEAD^{tree}') || return 1
-    trusted_git ls-tree -rz --full-tree HEAD > "$SOURCE_TREE_ENTRIES_FILE" \
+    SOURCE_TREE_ID=$(trusted_git rev-parse "$GIT_COMMIT^{tree}") || return 1
+    trusted_git ls-tree -rz --full-tree "$GIT_COMMIT" > "$SOURCE_TREE_ENTRIES_FILE" \
         || return 1
     "$SYNC_COMMAND" -f "$SOURCE_TREE_ENTRIES_FILE" 2>/dev/null || "$SYNC_COMMAND" \
         || return 1
@@ -1683,16 +1889,186 @@ for entry in entries:
 print(len(entries))
 ' "$SOURCE_TREE_ENTRIES_FILE") || return 1
     case "$tree_count" in ''|*[!0-9]*|0) return 1 ;; esac
-    trusted_git archive --format=tar --output="$SOURCE_ARCHIVE_FILE" HEAD \
+    trusted_git -c tar.umask=0022 archive --format=tar "$GIT_COMMIT" \
+        > "$SOURCE_ARCHIVE_FILE" \
         || return 1
     [ -f "$SOURCE_ARCHIVE_FILE" ] && [ ! -L "$SOURCE_ARCHIVE_FILE" ] \
         || return 1
     "$SYNC_COMMAND" -f "$SOURCE_ARCHIVE_FILE" 2>/dev/null || "$SYNC_COMMAND" \
         || return 1
+    run_with_timeout "$DOCKER_READ_TIMEOUT_SECONDS" "$PYTHON_COMMAND" -I -c '
+import hashlib
+import os
+import posixpath
+import tarfile
+import sys
+
+entries_file, archive_file = sys.argv[1:]
+entries = open(entries_file, "rb").read().split(b"\0")
+if entries[-1:] != [b""]:
+    raise SystemExit(2)
+expected = {}
+expected_directories = set()
+for entry in entries[:-1]:
+    metadata, path = entry.split(b"\t", 1)
+    mode, kind, object_id = metadata.split(b" ")
+    if path in expected or kind != b"blob" or mode not in (b"100644", b"100755"):
+        raise SystemExit(2)
+    expected[path] = (mode, object_id.lower())
+    parent = posixpath.dirname(path)
+    while parent:
+        expected_directories.add(parent)
+        parent = posixpath.dirname(parent)
+
+seen = set()
+total_bytes = 0
+with tarfile.open(archive_file, mode="r:") as archive:
+    for member in archive:
+        name = os.fsencode(member.name).rstrip(b"/")
+        if not name or name.startswith(b"/") or b"\0" in name \
+                or posixpath.normpath(name) != name \
+                or b".." in name.split(b"/"):
+            raise SystemExit(2)
+        if member.isdir():
+            if name not in expected_directories:
+                raise SystemExit(2)
+            continue
+        if not member.isreg() or name in seen or name not in expected:
+            raise SystemExit(2)
+        expected_mode, expected_object_id = expected[name]
+        observed_mode = b"100755" if member.mode == 0o755 else b"100644"
+        if member.mode not in (0o644, 0o755) or observed_mode != expected_mode \
+                or member.size < 0:
+            raise SystemExit(2)
+        total_bytes += member.size
+        if total_bytes > 1024 * 1024 * 1024:
+            raise SystemExit(2)
+        source = archive.extractfile(member)
+        if source is None:
+            raise SystemExit(2)
+        with source:
+            content = source.read(member.size + 1)
+        if len(content) != member.size:
+            raise SystemExit(2)
+        object_header = b"blob " + str(len(content)).encode("ascii") + b"\0"
+        algorithm = hashlib.sha1 if len(expected_object_id) == 40 else hashlib.sha256
+        if algorithm(object_header + content).hexdigest().encode("ascii") != expected_object_id:
+            raise SystemExit(2)
+        seen.add(name)
+if seen != set(expected):
+    raise SystemExit(2)
+' "$SOURCE_TREE_ENTRIES_FILE" "$SOURCE_ARCHIVE_FILE" || return 1
     mkdir -m 0700 "$SOURCE_SNAPSHOT_ROOT" || return 1
-    run_with_timeout "$DOCKER_READ_TIMEOUT_SECONDS" /usr/bin/tar \
+    run_with_timeout "$DOCKER_READ_TIMEOUT_SECONDS" /usr/bin/env -i \
+        HOME=/root PATH=/usr/sbin:/usr/bin:/sbin:/bin LANG=C LC_ALL=C \
+        /usr/bin/tar \
         --extract --file "$SOURCE_ARCHIVE_FILE" --directory "$SOURCE_SNAPSHOT_ROOT" \
         --no-same-owner --same-permissions || return 1
+    run_with_timeout "$DOCKER_READ_TIMEOUT_SECONDS" "$PYTHON_COMMAND" -I -c '
+import hashlib
+import os
+import posixpath
+import stat
+import sys
+
+entries_file, snapshot_root, expected_uid_text, expected_gid_text = sys.argv[1:]
+if not expected_uid_text.isdecimal() or not expected_gid_text.isdecimal():
+    raise SystemExit(2)
+expected_uid = int(expected_uid_text)
+expected_gid = int(expected_gid_text)
+payload = open(entries_file, "rb").read()
+entries = payload.split(b"\0")
+if entries[-1:] != [b""]:
+    raise SystemExit(2)
+expected = {}
+expected_directories = set()
+for entry in entries[:-1]:
+    metadata, path = entry.split(b"\t", 1)
+    mode, kind, object_id = metadata.split(b" ")
+    if path in expected or kind != b"blob" or mode not in (b"100644", b"100755"):
+        raise SystemExit(2)
+    expected[path] = (mode, object_id.lower())
+    parent = posixpath.dirname(path)
+    while parent:
+        expected_directories.add(parent)
+        parent = posixpath.dirname(parent)
+
+root = os.fsencode(snapshot_root)
+actual = {}
+actual_directories = set()
+total_bytes = 0
+for current, directories, files in os.walk(root, topdown=True, followlinks=False):
+    for name in directories:
+        path = os.path.join(current, name)
+        relative = os.path.relpath(path, root).replace(os.fsencode(os.sep), b"/")
+        info = os.lstat(path)
+        if relative not in expected_directories \
+                or not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode) \
+                or stat.S_IMODE(info.st_mode) != 0o755 \
+                or info.st_uid != expected_uid or info.st_gid != expected_gid:
+            raise SystemExit(2)
+        actual_directories.add(relative)
+    for name in files:
+        path = os.path.join(current, name)
+        relative = os.path.relpath(path, root).replace(os.fsencode(os.sep), b"/")
+        if relative in actual:
+            raise SystemExit(2)
+        if relative not in expected:
+            raise SystemExit(2)
+        fd = os.open(
+            path,
+            os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0),
+        )
+        try:
+            before = os.fstat(fd)
+            file_mode = stat.S_IMODE(before.st_mode)
+            if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1 \
+                    or file_mode not in (0o644, 0o755) \
+                    or before.st_uid != expected_uid or before.st_gid != expected_gid:
+                raise SystemExit(2)
+            content = bytearray()
+            while True:
+                chunk = os.read(fd, 1024 * 1024)
+                if not chunk:
+                    break
+                content.extend(chunk)
+                total_bytes += len(chunk)
+                if total_bytes > 1024 * 1024 * 1024:
+                    raise SystemExit(2)
+            after = os.fstat(fd)
+            identity = lambda value: (
+                value.st_dev, value.st_ino, value.st_size, value.st_mtime_ns,
+                value.st_ctime_ns, value.st_uid, value.st_gid, value.st_nlink,
+                stat.S_IMODE(value.st_mode),
+            )
+            if identity(before) != identity(after):
+                raise SystemExit(2)
+        finally:
+            os.close(fd)
+        expected_mode, expected_object_id = expected[relative]
+        observed_mode = b"100755" if file_mode == 0o755 else b"100644"
+        if expected_mode != observed_mode:
+            raise SystemExit(2)
+        object_header = b"blob " + str(len(content)).encode("ascii") + b"\0"
+        algorithm = hashlib.sha1 if len(expected_object_id) == 40 else hashlib.sha256
+        if algorithm(object_header + content).hexdigest().encode("ascii") != expected_object_id:
+            raise SystemExit(2)
+        actual[relative] = observed_mode
+if set(actual) != set(expected) or actual_directories != expected_directories:
+    raise SystemExit(2)
+' "$SOURCE_TREE_ENTRIES_FILE" "$SOURCE_SNAPSHOT_ROOT" 0 0 || return 1
+    current_head=$(trusted_git rev-parse --verify 'HEAD^{commit}') || return 1
+    current_remote_main=$(trusted_git rev-parse --verify \
+        'refs/remotes/origin/main^{commit}') || return 1
+    current_tree=$(trusted_git rev-parse "$GIT_COMMIT^{tree}") || return 1
+    current_status=$(trusted_git status --porcelain=v1 --untracked-files=all) \
+        || return 1
+    [ "$current_head" = "$GIT_COMMIT" ] \
+        && [ "$current_remote_main" = "$GIT_COMMIT" ] \
+        && [ "$current_tree" = "$SOURCE_TREE_ID" ] \
+        && trusted_git diff-index --cached --quiet "$GIT_COMMIT" -- \
+        && [ -z "$current_status" ] \
+        || return 1
     [ -f "$SOURCE_SNAPSHOT_ROOT/backend/docker-compose.yml" ] \
         && [ ! -L "$SOURCE_SNAPSHOT_ROOT/backend/docker-compose.yml" ] \
         || return 1
@@ -1726,7 +2102,9 @@ private_source_tree_digest() {
     local digest_tar="$DEPLOYMENT_DIR/source-digest.$$.tar" digest
     [ -d "$SOURCE_SNAPSHOT_ROOT" ] && [ ! -L "$SOURCE_SNAPSHOT_ROOT" ] \
         && [ ! -e "$digest_tar" ] || return 1
-    run_with_timeout "$DOCKER_READ_TIMEOUT_SECONDS" /usr/bin/tar \
+    run_with_timeout "$DOCKER_READ_TIMEOUT_SECONDS" /usr/bin/env -i \
+        HOME=/root PATH=/usr/sbin:/usr/bin:/sbin:/bin LANG=C LC_ALL=C \
+        /usr/bin/tar \
         --sort=name --format=gnu --mtime=@0 --owner=0 --group=0 \
         --numeric-owner -C "$SOURCE_SNAPSHOT_ROOT" -cf "$digest_tar" . \
         || return 1
@@ -1744,7 +2122,7 @@ bounded_compose_with_images() {
     run_with_timeout "$timeout_seconds" \
         env DIVA_API_IMAGE="$api_image" DIVA_GATEWAY_IMAGE="$gateway_image" \
         DIVA_WEB_IMAGE="$web_image" \
-        "$DOCKER_COMMAND" compose --env-file "$PRIVATE_BACKEND_ENV_FILE" \
+        "$COMPOSE_COMMAND" --env-file "$PRIVATE_BACKEND_ENV_FILE" \
         --project-name "$COMPOSE_PROJECT" -f "$RUNTIME_COMPOSE_FILE" "$@" \
         || rc=$?
     if [ "$rc" -eq 0 ]; then
@@ -2022,13 +2400,85 @@ verify_container_image_linux_arm64() {
     verify_image_linux_arm64 "$image_id"
 }
 
+verify_private_docker_config() {
+    local actual_sha entry config_entry_count=0 command_entry_count=0
+    [ "$TEST_MODE" = "1" ] && return 0
+    [ "${DOCKER_CONFIG:-}" = "$PRIVATE_DOCKER_CONFIG" ] \
+        && [ "$DOCKER_COMMAND" = "$PRIVATE_DOCKER_WRAPPER" ] \
+        && [ "$COMPOSE_COMMAND" = "$PRIVATE_COMPOSE_WRAPPER" ] \
+        && [ -n "$PRIVATE_DOCKER_CONFIG_ID" ] \
+        && [ -n "$PRIVATE_DOCKER_CONFIG_FILE_ID" ] \
+        && [ -n "$PRIVATE_COMMAND_DIR_ID" ] \
+        && [ -n "$PRIVATE_DOCKER_WRAPPER_ID" ] \
+        && [ -n "$PRIVATE_DOCKER_WRAPPER_SHA256" ] \
+        && [ -n "$PRIVATE_COMPOSE_WRAPPER_ID" ] \
+        && [ -n "$PRIVATE_COMPOSE_WRAPPER_SHA256" ] \
+        && [ -d "$PRIVATE_DOCKER_CONFIG" ] \
+        && [ ! -L "$PRIVATE_DOCKER_CONFIG" ] \
+        && [ "$(/usr/bin/stat -c '%u:%g:%a:%d:%i' \
+            "$PRIVATE_DOCKER_CONFIG")" \
+            = "0:0:700:$PRIVATE_DOCKER_CONFIG_ID" ] \
+        && [ -f "$PRIVATE_DOCKER_CONFIG_FILE" ] \
+        && [ ! -L "$PRIVATE_DOCKER_CONFIG_FILE" ] \
+        && [ "$(/usr/bin/stat -c '%u:%g:%a:%h:%d:%i:%s' \
+            "$PRIVATE_DOCKER_CONFIG_FILE")" \
+            = "0:0:400:1:$PRIVATE_DOCKER_CONFIG_FILE_ID" ] || return 1
+    actual_sha=$(/usr/bin/sha256sum "$PRIVATE_DOCKER_CONFIG_FILE" \
+        | /usr/bin/awk '{print $1}') || return 1
+    [ "$actual_sha" = "$DOCKER_CONFIG_FILE_SHA256" ] || return 1
+    [ -d "$PRIVATE_COMMAND_DIR" ] && [ ! -L "$PRIVATE_COMMAND_DIR" ] \
+        && [ "$(/usr/bin/stat -c '%u:%g:%a:%d:%i' \
+            "$PRIVATE_COMMAND_DIR")" \
+            = "0:0:700:$PRIVATE_COMMAND_DIR_ID" ] \
+        && [ -f "$PRIVATE_DOCKER_WRAPPER" ] \
+        && [ ! -L "$PRIVATE_DOCKER_WRAPPER" ] \
+        && [ -x "$PRIVATE_DOCKER_WRAPPER" ] \
+        && [ "$(/usr/bin/stat -c '%u:%g:%a:%h:%d:%i:%s' \
+            "$PRIVATE_DOCKER_WRAPPER")" \
+            = "0:0:500:1:$PRIVATE_DOCKER_WRAPPER_ID" ] \
+        && [ -f "$PRIVATE_COMPOSE_WRAPPER" ] \
+        && [ ! -L "$PRIVATE_COMPOSE_WRAPPER" ] \
+        && [ -x "$PRIVATE_COMPOSE_WRAPPER" ] \
+        && [ "$(/usr/bin/stat -c '%u:%g:%a:%h:%d:%i:%s' \
+            "$PRIVATE_COMPOSE_WRAPPER")" \
+            = "0:0:500:1:$PRIVATE_COMPOSE_WRAPPER_ID" ] || return 1
+    actual_sha=$(/usr/bin/sha256sum "$PRIVATE_DOCKER_WRAPPER" \
+        | /usr/bin/awk '{print $1}') || return 1
+    [ "$actual_sha" = "$PRIVATE_DOCKER_WRAPPER_SHA256" ] || return 1
+    actual_sha=$(/usr/bin/sha256sum "$PRIVATE_COMPOSE_WRAPPER" \
+        | /usr/bin/awk '{print $1}') || return 1
+    [ "$actual_sha" = "$PRIVATE_COMPOSE_WRAPPER_SHA256" ] || return 1
+    for entry in \
+        "$PRIVATE_DOCKER_CONFIG"/* \
+        "$PRIVATE_DOCKER_CONFIG"/.[!.]* \
+        "$PRIVATE_DOCKER_CONFIG"/..?*; do
+        [ -e "$entry" ] || [ -L "$entry" ] || continue
+        config_entry_count=$((config_entry_count + 1))
+        [ "$entry" = "$PRIVATE_DOCKER_CONFIG_FILE" ] || return 1
+    done
+    [ "$config_entry_count" -eq 1 ] || return 1
+    for entry in \
+        "$PRIVATE_COMMAND_DIR"/* \
+        "$PRIVATE_COMMAND_DIR"/.[!.]* \
+        "$PRIVATE_COMMAND_DIR"/..?*; do
+        [ -e "$entry" ] || [ -L "$entry" ] || continue
+        command_entry_count=$((command_entry_count + 1))
+        case "$entry" in
+            "$PRIVATE_DOCKER_WRAPPER"|"$PRIVATE_COMPOSE_WRAPPER") ;;
+            *) return 1 ;;
+        esac
+    done
+    [ "$command_entry_count" -eq 2 ]
+}
+
 verify_production_docker_platform() {
-    local host_machine daemon_platform context_name
+    local context_endpoint context_name daemon_platform host_machine
     [ "$DEPLOYMENT_STATE_INITIALIZED" = "true" ] \
         && [ -n "$DEPLOYMENT_DIR_ID" ] \
         && [ -d "$DEPLOYMENT_DIR" ] && [ ! -L "$DEPLOYMENT_DIR" ] \
         && [ "$(stat -c '%d:%i' "$DEPLOYMENT_DIR")" = "$DEPLOYMENT_DIR_ID" ] \
         || return 1
+    verify_private_docker_config || return 1
     if [ "$TEST_MODE" = "1" ]; then
         case "${DIVA_DEPLOY_TEST_PLATFORM_PROBE:-skip}" in
             skip) return 0 ;;
@@ -2042,6 +2492,10 @@ verify_production_docker_platform() {
     run_bounded_docker_preflight_query context show || return 1
     context_name=$DOCKER_QUERY_OUTPUT
     [ "$context_name" = "default" ] || return 1
+    run_bounded_docker_preflight_query context inspect \
+        --format '{{.Endpoints.docker.Host}}' default || return 1
+    context_endpoint=$DOCKER_QUERY_OUTPUT
+    [ "$context_endpoint" = "unix:///var/run/docker.sock" ] || return 1
     run_bounded_docker_preflight_query info \
         --format '{{.OSType}}/{{.Architecture}}' || return 1
     daemon_platform=$DOCKER_QUERY_OUTPUT
@@ -5772,7 +6226,7 @@ esac
     || { fail "route attempts must allow two stable identity samples"; exit 1; }
 [ "$DAEMON_SETTLE_ATTEMPTS" -ge "$DAEMON_STABLE_SAMPLES" ] \
     || { fail "daemon settle attempts must cover every required stable sample"; exit 1; }
-for required in "$DOCKER_COMMAND" "$CURL_COMMAND" "$SLEEP_COMMAND" "$TIMEOUT_COMMAND" \
+for required in "$DOCKER_COMMAND" "$COMPOSE_COMMAND" "$CURL_COMMAND" "$SLEEP_COMMAND" "$TIMEOUT_COMMAND" \
     "$SYNC_COMMAND" "$PYTHON_COMMAND" "$EXACT_PYTHON_COMMAND" "$TRIVY_COMMAND" \
     awk cat dirname env grep git \
     sha256sum stat; do
@@ -5817,7 +6271,7 @@ if ! create_deployment_state_directory; then
     exit 1
 fi
 verify_production_docker_platform \
-    || { fail "production host/daemon platform is not native linux/aarch64"; exit 1; }
+    || { fail "production host/Docker endpoint/daemon platform is not trusted native linux/aarch64"; exit 1; }
 if ! acquire_deploy_lock; then
     exit 75
 fi

@@ -287,6 +287,16 @@ if [ "$1" = "context" ] && [ "__DOLLAR__{2:-}" = "show" ]; then
     exit 0
 fi
 
+if [ "$1" = "context" ] && [ "__DOLLAR__{2:-}" = "inspect" ]; then
+    [ "__DOLLAR__{FAKE_FAIL_STAGE:-}" != "platform_endpoint_error" ] || exit 42
+    if [ "__DOLLAR__{FAKE_FAIL_STAGE:-}" = "platform_endpoint_remote" ]; then
+        printf '%s\n' tcp://remote.example.invalid:2376
+    else
+        printf '%s\n' unix:///var/run/docker.sock
+    fi
+    exit 0
+fi
+
 if [ "$1" = "info" ]; then
     [ "__DOLLAR__{FAKE_FAIL_STAGE:-}" != "platform_info_error" ] || exit 42
     if [ "__DOLLAR__{FAKE_FAIL_STAGE:-}" = "platform_daemon" ]; then
@@ -735,6 +745,11 @@ printf '%s\n' "$*" >> "__DOLLAR__{FAKE_DOCKER_STATE:?}/curl.log"
 exit 0
 `.replaceAll('__DOLLAR__', '$');
 
+const fakeCompose = String.raw`#!/bin/sh
+set -eu
+exec "__DOLLAR__{DIVA_DOCKER_COMMAND:?}" compose "$@"
+`.replaceAll('__DOLLAR__', '$');
+
 const fakeSleep = String.raw`#!/bin/sh
 exit 0
 `;
@@ -849,6 +864,7 @@ async function createScenario(name) {
   await Promise.all([mkdir(bin), mkdir(containers, { recursive: true }), mkdir(deploymentState)]);
 
   const dockerPath = join(bin, 'docker');
+  const composePath = join(bin, 'docker-compose');
   const curlPath = join(bin, 'curl');
   const sleepPath = join(bin, 'sleep');
   const syncPath = join(bin, 'sync');
@@ -857,6 +873,7 @@ async function createScenario(name) {
   const hookPath = join(bin, 'hook');
   await Promise.all([
     writeFile(dockerPath, fakeDocker, 'utf8'),
+    writeFile(composePath, fakeCompose, 'utf8'),
     writeFile(curlPath, fakeCurl, 'utf8'),
     writeFile(sleepPath, fakeSleep, 'utf8'),
     writeFile(syncPath, fakeSleep, 'utf8'),
@@ -866,6 +883,7 @@ async function createScenario(name) {
   ]);
   await Promise.all([
     chmod(dockerPath, 0o755),
+    chmod(composePath, 0o755),
     chmod(curlPath, 0o755),
     chmod(sleepPath, 0o755),
     chmod(syncPath, 0o755),
@@ -950,7 +968,7 @@ async function createScenario(name) {
   await chmod(backendEnvironmentSource, 0o600);
 
   return {
-    root, fakeState, deploymentState, privateRuntime, dockerPath, curlPath, sleepPath,
+    root, fakeState, deploymentState, privateRuntime, dockerPath, composePath, curlPath, sleepPath,
     syncPath, pythonPath, trivyPath, hookPath, backendEnvironmentSource,
   };
 }
@@ -974,6 +992,7 @@ function scenarioEnvironment(
     ...process.env,
     DIVA_DEPLOY_TEST_MODE: '1',
     DIVA_DOCKER_COMMAND: shellPath(scenario.dockerPath),
+    DIVA_COMPOSE_COMMAND: shellPath(scenario.composePath),
     DIVA_CURL_COMMAND: shellPath(scenario.curlPath),
     DIVA_SLEEP_COMMAND: shellPath(scenario.sleepPath),
     DIVA_SYNC_COMMAND: shellPath(scenario.syncPath),
@@ -1285,6 +1304,8 @@ async function testDockerPlatformPreflightFailureCleanup() {
   for (const failStage of [
     'platform_context_error',
     'platform_context_remote',
+    'platform_endpoint_error',
+    'platform_endpoint_remote',
     'platform_info_error',
     'platform_daemon',
   ]) {
@@ -1299,12 +1320,12 @@ async function testDockerPlatformPreflightFailureCleanup() {
       assert.notEqual(result.status, 0, `${name} unexpectedly passed`);
       assert.match(
         result.stderr,
-        /production host\/daemon platform is not native linux\/aarch64/u,
+        /production host\/Docker endpoint\/daemon platform is not trusted native linux\/aarch64/u,
       );
       const state = await readDeploymentState(scenario.deploymentState);
       assert.match(
         state,
-        /failure=production host\/daemon platform is not native linux\/aarch64/u,
+        /failure=production host\/Docker endpoint\/daemon platform is not trusted native linux\/aarch64/u,
       );
       assert.match(state, /deployment\.status=failed/u);
       assert.doesNotMatch(state, /daemon_mutation\.terminal_release/u);
@@ -1315,17 +1336,33 @@ async function testDockerPlatformPreflightFailureCleanup() {
       if (
         failStage === 'platform_context_error'
         || failStage === 'platform_context_remote'
+        || failStage === 'platform_endpoint_error'
+        || failStage === 'platform_endpoint_remote'
       ) {
         assert.doesNotMatch(dockerLog, /^info /mu);
       } else {
         assert.match(dockerLog, /^info --format /mu);
       }
       const dockerCommands = dockerLog.trim().split('\n').map(line => line.split('|', 1)[0]);
+      const expectedDockerCommands = ['context show'];
+      if (failStage !== 'platform_context_error' && failStage !== 'platform_context_remote') {
+        expectedDockerCommands.push(
+          'context inspect --format {{.Endpoints.docker.Host}} default',
+        );
+      }
+      if (
+        ![
+          'platform_context_error',
+          'platform_context_remote',
+          'platform_endpoint_error',
+          'platform_endpoint_remote',
+        ].includes(failStage)
+      ) {
+        expectedDockerCommands.push('info --format {{.OSType}}/{{.Architecture}}');
+      }
       assert.deepEqual(
         dockerCommands,
-        failStage === 'platform_context_error' || failStage === 'platform_context_remote'
-          ? ['context show']
-          : ['context show', 'info --format {{.OSType}}/{{.Architecture}}'],
+        expectedDockerCommands,
       );
 
       const deploymentEntries = await readdir(scenario.deploymentState, {
@@ -1400,7 +1437,7 @@ function testBridgeTrivyAndExactImageContract() {
   );
   assert.match(
     deploymentSource,
-    /verify_production_docker_platform\(\) \{[\s\S]*?\[ "\$DEPLOYMENT_STATE_INITIALIZED" = "true" \][\s\S]*?stat -c '%d:%i' "\$DEPLOYMENT_DIR"[\s\S]*?run_bounded_docker_preflight_query context show/u,
+    /verify_production_docker_platform\(\) \{[\s\S]*?\[ "\$DEPLOYMENT_STATE_INITIALIZED" = "true" \][\s\S]*?stat -c '%d:%i' "\$DEPLOYMENT_DIR"[\s\S]*?run_bounded_docker_preflight_query context show[\s\S]*?run_bounded_docker_preflight_query context inspect[\s\S]*?\[ "\$context_endpoint" = "unix:\/\/\/var\/run\/docker\.sock" \]/u,
     'production Docker queries must require an initialized, identity-pinned deployment directory',
   );
   const preflightQueryStart = deploymentSource.indexOf(
