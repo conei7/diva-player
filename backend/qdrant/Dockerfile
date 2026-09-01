@@ -164,10 +164,11 @@ RUN set -eux; \
           | LC_ALL=C sort -u | wc -l | tr -d '[:space:]'); \
         [ "$package_count" = "$unique_package_count" ]; \
       else \
-        # Debian usrmerge represents the dynamic loader with one exact dpkg \
-        # diversion pair.  Accept only that pair, and only when its resolved \
-        # target has one ordinary owner belonging to the same package. \
+        # Debian usrmerge represents a legacy top-level library link with one \
+        # exact base-files diversion pair.  Accept only /lib or /lib64, and \
+        # require its resolved /usr directory to have the same package owner. \
         [ "$ownership_lines" = 2 ]; \
+        case "$queried_path" in /lib|/lib64) ;; *) exit 1 ;; esac; \
         diversion_package=$(printf '%s\n' "$ownership" \
           | awk '/^diversion by [^ ]+ from: / { sub(/^diversion by /, ""); sub(/ from: .*/, ""); print }'); \
         diversion_to_package=$(printf '%s\n' "$ownership" \
@@ -187,13 +188,16 @@ RUN set -eux; \
         [ "$divert_owner" = "$diversion_package" ]; \
         [ "$divert_truename" = "$expected_diversion_path" ]; \
         resolved_path=$(readlink -f "$queried_path"); \
-        [ -n "$resolved_path" ] && [ -f "$resolved_path" ]; \
+        [ "$resolved_path" = "/usr$queried_path" ]; \
+        [ -d "$resolved_path" ] && [ ! -L "$resolved_path" ]; \
+        [ "$(stat -c '%u:%g:%a' "$resolved_path")" = '0:0:755' ]; \
         resolved_ownership=$(dpkg-query -S -- "$resolved_path" 2>/dev/null); \
         [ "$(printf '%s\n' "$resolved_ownership" | wc -l | tr -d '[:space:]')" = 1 ]; \
         resolved_package=$(printf '%s\n' "$resolved_ownership" | awk -F ': ' 'NF == 2 { print $1 }'); \
         resolved_owned_path=$(printf '%s\n' "$resolved_ownership" | awk -F ': ' 'NF == 2 { print $2 }'); \
         [ -n "$resolved_package" ] && [ "$resolved_owned_path" = "$resolved_path" ]; \
         binary_packages=${diversion_package%%:*}; \
+        [ "$binary_packages" = base-files ]; \
         [ "${resolved_package%%:*}" = "$binary_packages" ]; \
       fi; \
       for binary_package in $binary_packages; do \

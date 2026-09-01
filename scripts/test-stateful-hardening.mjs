@@ -413,6 +413,41 @@ assert.doesNotMatch(
   'the obsolete non-hidden usrmerge diversion path must not be accepted',
 );
 
+const usrmergeResolvedTargetContract = qdrantDockerfileSource.slice(
+  qdrantDockerfileSource.indexOf('case "$queried_path" in /lib|/lib64)'),
+  qdrantDockerfileSource.indexOf('      for binary_package in $binary_packages; do'),
+);
+assert.match(
+  usrmergeResolvedTargetContract,
+  /case "\$queried_path" in \/lib\|\/lib64\) ;; \*\) exit 1 ;; esac/,
+  'usrmerge diversion handling must be limited to the two legacy top-level library links',
+);
+assert.match(
+  usrmergeResolvedTargetContract,
+  /\[ "\$resolved_path" = "\/usr\$queried_path" \]/,
+  'usrmerge diversion must resolve to the corresponding /usr directory',
+);
+assert.match(
+  usrmergeResolvedTargetContract,
+  /\[ -d "\$resolved_path" \] && \[ ! -L "\$resolved_path" \]/,
+  'usrmerge diversion target must be a non-symlink directory',
+);
+assert.match(
+  usrmergeResolvedTargetContract,
+  /stat -c '%u:%g:%a' "\$resolved_path"\)" = '0:0:755'/,
+  'usrmerge diversion target must be an exact root-owned system directory',
+);
+assert.match(
+  usrmergeResolvedTargetContract,
+  /\[ "\$binary_packages" = base-files \]/,
+  'usrmerge diversion and resolved target must be owned by base-files',
+);
+assert.doesNotMatch(
+  usrmergeResolvedTargetContract,
+  /\[ -f "\$resolved_path" \]/,
+  'usrmerge top-level library links must not require their directory target to be a file',
+);
+
 function deriveUsrmergeDiversion(queriedPath) {
   return spawnSync(bashCommand, [
     '-c',
