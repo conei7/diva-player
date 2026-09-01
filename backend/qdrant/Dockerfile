@@ -173,14 +173,19 @@ RUN set -eux; \
         diversion_to_package=$(printf '%s\n' "$ownership" \
           | awk '/^diversion by [^ ]+ to: / { sub(/^diversion by /, ""); sub(/ to: .*/, ""); print }'); \
         [ -n "$diversion_package" ] && [ "$diversion_to_package" = "$diversion_package" ]; \
+        diversion_directory=${queried_path%/*}; \
+        diversion_basename=${queried_path##*/}; \
+        [ -n "$diversion_basename" ] \
+          && [ "$diversion_directory/$diversion_basename" = "$queried_path" ]; \
+        expected_diversion_path="$diversion_directory/.$diversion_basename.usr-is-merged"; \
         [ "$(printf '%s\n' "$ownership" | grep -Fxc \
           "diversion by $diversion_package from: $queried_path")" = 1 ]; \
         [ "$(printf '%s\n' "$ownership" | grep -Fxc \
-          "diversion by $diversion_package to: $queried_path.usr-is-merged")" = 1 ]; \
+          "diversion by $diversion_package to: $expected_diversion_path")" = 1 ]; \
         divert_owner=$(dpkg-divert --listpackage "$queried_path"); \
         divert_truename=$(dpkg-divert --truename "$queried_path"); \
         [ "$divert_owner" = "$diversion_package" ]; \
-        [ "$divert_truename" = "$queried_path.usr-is-merged" ]; \
+        [ "$divert_truename" = "$expected_diversion_path" ]; \
         resolved_path=$(readlink -f "$queried_path"); \
         [ -n "$resolved_path" ] && [ -f "$resolved_path" ]; \
         resolved_ownership=$(dpkg-query -S -- "$resolved_path" 2>/dev/null); \

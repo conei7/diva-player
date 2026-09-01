@@ -378,6 +378,71 @@ assert.match(qdrantDockerfileSource, /package_names\[package_index\] in seen_pac
 assert.match(qdrantDockerfileSource, /\[ "\$package_count" = "\$unique_package_count" \]/);
 assert.match(qdrantDockerfileSource, /for binary_package in \$binary_packages; do/);
 
+const usrmergeDiversionContract = qdrantDockerfileSource.slice(
+  qdrantDockerfileSource.indexOf('diversion_directory=${queried_path%/*}'),
+  qdrantDockerfileSource.indexOf('resolved_path=$(readlink -f "$queried_path")'),
+);
+assert.match(
+  usrmergeDiversionContract,
+  /diversion_directory=\$\{queried_path%\/\*\}/,
+  'usrmerge diversion must retain the queried path directory',
+);
+assert.match(
+  usrmergeDiversionContract,
+  /diversion_basename=\$\{queried_path##\*\/\}/,
+  'usrmerge diversion must isolate the queried path basename',
+);
+assert.match(
+  usrmergeDiversionContract,
+  /\[ "\$diversion_directory\/\$diversion_basename" = "\$queried_path" \]/,
+  'usrmerge diversion must reject paths outside the derived sibling-path form',
+);
+assert.match(
+  usrmergeDiversionContract,
+  /expected_diversion_path="\$diversion_directory\/\.\$diversion_basename\.usr-is-merged"/,
+  'usrmerge diversion must use Debian trixie\'s hidden sibling path',
+);
+assert.equal(
+  usrmergeDiversionContract.split('$expected_diversion_path').length - 1,
+  2,
+  'the dpkg-query record and dpkg-divert truename must match the one derived path',
+);
+assert.doesNotMatch(
+  usrmergeDiversionContract,
+  /\$queried_path\.usr-is-merged/,
+  'the obsolete non-hidden usrmerge diversion path must not be accepted',
+);
+
+function deriveUsrmergeDiversion(queriedPath) {
+  return spawnSync(bashCommand, [
+    '-c',
+    [
+      'queried_path="$1"',
+      'diversion_directory=${queried_path%/*}',
+      'diversion_basename=${queried_path##*/}',
+      '[ -n "$diversion_basename" ]',
+      '[ "$diversion_directory/$diversion_basename" = "$queried_path" ]',
+      'printf "%s\\n" "$diversion_directory/.$diversion_basename.usr-is-merged"',
+    ].join('; '),
+    'qdrant-usrmerge-diversion',
+    queriedPath,
+  ], { encoding: 'utf8', windowsHide: true });
+}
+
+for (const [queriedPath, expectedDiversion] of [
+  ['/lib', '/.lib.usr-is-merged'],
+  ['/lib64', '/.lib64.usr-is-merged'],
+]) {
+  const derived = deriveUsrmergeDiversion(queriedPath);
+  assert.equal(derived.status, 0, derived.stderr);
+  assert.equal(derived.stdout.trim(), expectedDiversion);
+}
+assert.notEqual(
+  deriveUsrmergeDiversion('lib64').status,
+  0,
+  'a relative dpkg diversion source path must be rejected',
+);
+
 const ownerParserMatch = qdrantDockerfileSource.match(
   /\| awk -F ': ' -v expected_path="\$queried_path" ' \\\r?\n([\s\S]*?)'\); \\/,
 );
