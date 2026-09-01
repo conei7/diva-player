@@ -48,6 +48,7 @@ PIPELINE_RUNTIME_LOCK_FILE="$PIPELINE_ROOT/ml_pipeline/requirements.linux-aarch6
 PIPELINE_RUNTIME_VERIFIER="$PIPELINE_ROOT/ml_pipeline/verify_production_ml_runtime.py"
 PIPELINE_RUNTIME_PATCHER="$PIPELINE_ROOT/ml_pipeline/patch_tensorflow_hub_compat.py"
 API_BRIDGE_RECEIPT=${DIVA_API_BRIDGE_RECEIPT:-/var/lib/diva-player-deploy/api-bridge-receipt.json}
+BRIDGE_BACKUP_MAX_ELAPSED_SECONDS=14400
 
 if [ "$TEST_MODE" = "1" ]; then
     [ "$(/usr/bin/id -u)" -ne 0 ] || {
@@ -2531,7 +2532,7 @@ validate_backup_payload_attestation() {
         "$expected_postgres_status_sha" "$expected_postgres_manifest_sha" \
         "$expected_qdrant_status_sha" "$expected_qdrant_manifest_sha" \
         "$expected_postgres_run" "$expected_qdrant_run" \
-        "$bridge_receipt_created_at" <<'PY'
+        "$bridge_receipt_created_at" "$BRIDGE_BACKUP_MAX_ELAPSED_SECONDS" <<'PY'
 import datetime as dt
 import hashlib
 import json
@@ -2545,6 +2546,7 @@ import sys
     expected_postgres_status_sha, expected_postgres_manifest_sha,
     expected_qdrant_status_sha, expected_qdrant_manifest_sha,
     expected_postgres_run, expected_qdrant_run, bridge_receipt_created_at,
+    bridge_backup_max_elapsed_seconds,
 ) = sys.argv[1:]
 
 def load(path):
@@ -2585,13 +2587,18 @@ receipt_created_at = dt.datetime.fromisoformat(
 require(receipt_created_at.tzinfo is not None,
         "API bridge receipt timestamp has no timezone")
 # The canonical receipt is independently required to remain inside its fixed
-# 24-hour window. Bind the attestation to that immutable commit point so the
-# same exact evidence can be revalidated after long local builds and scans.
+# 24-hour window. Its trusted producer admits a fresh attestation first, then
+# enforces this fixed four-hour deployment window with CLOCK_BOOTTIME. Bind the
+# same exact attestation to that immutable commit point without reimposing the
+# shorter initial-admission window after long local builds and scans.
 attestation_offset = (
     receipt_created_at.astimezone(dt.timezone.utc)
     - verified_at.astimezone(dt.timezone.utc)
 ).total_seconds()
-require(-300 <= attestation_offset <= 900,
+maximum_attestation_offset = int(bridge_backup_max_elapsed_seconds)
+require(maximum_attestation_offset > 0,
+        "API bridge backup lifetime bound is invalid")
+require(-300 <= attestation_offset < maximum_attestation_offset,
         "backup payload attestation is not anchored to the API bridge receipt")
 
 inputs = {

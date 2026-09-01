@@ -33,6 +33,7 @@ let fixtureBaseIdentity;
 let fixtureBaseOriginalAclSddl;
 let fixtureParentRealPath;
 const hardeningScript = join(scriptsDirectory, 'harden-sbc-stateful-services.sh');
+const rollingDeploymentScript = join(scriptsDirectory, 'deploy-sbc-api-rolling.sh');
 const backupAttester = join(scriptsDirectory, 'attest-disaster-backup-payloads.py');
 const qdrantUpgradeController = join(scriptsDirectory, 'sbc-qdrant-storage-upgrade.py');
 const apiBridgeReceiptHelper = join(scriptsDirectory, 'wsl-dr-api-bridge-receipt.py');
@@ -138,6 +139,7 @@ if (process.platform === 'win32' && !existsSync(bashCommand)) {
 
 const [
   hardeningSource,
+  rollingDeploymentSource,
   backupAttesterSource,
   qdrantUpgradeControllerSource,
   apiBridgeReceiptHelperSource,
@@ -152,6 +154,7 @@ const [
   imageScanValidatorSource,
 ] = await Promise.all([
   readFile(hardeningScript, 'utf8'),
+  readFile(rollingDeploymentScript, 'utf8'),
   readFile(backupAttester, 'utf8'),
   readFile(qdrantUpgradeController, 'utf8'),
   readFile(apiBridgeReceiptHelper, 'utf8'),
@@ -261,12 +264,38 @@ const backupAttestationContract = hardeningSource.slice(
   hardeningSource.indexOf('validate_backup_payload_attestation()'),
   hardeningSource.indexOf('validate_backup_source_ancestry()'),
 );
+const hardenerBridgeLifetime = hardeningSource.match(
+  /^BRIDGE_BACKUP_MAX_ELAPSED_SECONDS=([0-9]+)$/mu,
+);
+const rollingBridgeLifetime = rollingDeploymentSource.match(
+  /^BRIDGE_BACKUP_MAX_ELAPSED_SECONDS=([0-9]+)$/mu,
+);
+assert.ok(hardenerBridgeLifetime, 'stateful hardener must fix the bridge backup lifetime');
+assert.ok(rollingBridgeLifetime, 'rolling deploy must fix the bridge backup lifetime');
+assert.equal(
+  hardenerBridgeLifetime[1],
+  rollingBridgeLifetime[1],
+  'rolling deploy and stateful hardener bridge backup lifetimes must not drift',
+);
+assert.equal(hardenerBridgeLifetime[1], '14400');
+assert.doesNotMatch(
+  hardeningSource,
+  /BRIDGE_BACKUP_MAX_ELAPSED_SECONDS=\$\{DIVA_/,
+  'the four-hour bridge lifetime must remain a fixed production bound',
+);
 assert.match(backupAttestationContract, /bridge_receipt_created_at="\$\{15\}"/);
+assert.match(
+  backupAttestationContract,
+  /"\$bridge_receipt_created_at" "\$BRIDGE_BACKUP_MAX_ELAPSED_SECONDS"/,
+);
 assert.match(
   backupAttestationContract,
   /receipt_created_at\.astimezone\(dt\.timezone\.utc\)[\s\S]*verified_at\.astimezone\(dt\.timezone\.utc\)/,
 );
-assert.match(backupAttestationContract, /-300 <= attestation_offset <= 900/);
+assert.match(
+  backupAttestationContract,
+  /-300 <= attestation_offset < maximum_attestation_offset/,
+);
 assert.doesNotMatch(backupAttestationContract, /datetime\.now|dt\.datetime\.now/);
 assert.match(
   backupAttestationContract,
@@ -2726,10 +2755,16 @@ async function writeEvidence(root, playerCommit, pipelineCommit, attesterPath, s
     attestation.verifiedAt = new Date(Date.now() - 20 * 60 * 1000).toISOString();
     attestationBytes = Buffer.from(`${JSON.stringify(attestation, null, 2)}\n`, 'utf8');
     await writeFile(attestationPath, attestationBytes);
+  } else if (scenario === 'bridge-attestation-at-4h') {
+    attestation.verifiedAt = new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString();
+    attestationBytes = Buffer.from(`${JSON.stringify(attestation, null, 2)}\n`, 'utf8');
+    await writeFile(attestationPath, attestationBytes);
   }
   const bridgeCreatedAt = scenario === 'bridge-attestation-prep-over-15m'
       || scenario === 'writer-active'
-    ? new Date(Date.parse(attestation.verifiedAt) + 5 * 60 * 1000).toISOString()
+    ? new Date(Date.parse(attestation.verifiedAt) + 20 * 60 * 1000).toISOString()
+    : scenario === 'bridge-attestation-at-4h'
+      ? new Date(Date.parse(attestation.verifiedAt) + 4 * 60 * 60 * 1000).toISOString()
     : scenario === 'bridge-attestation-new-mismatch'
       ? new Date(Date.parse(attestation.verifiedAt) - 20 * 60 * 1000).toISOString()
       : undefined;
@@ -3667,7 +3702,10 @@ try {
       assert.match(run.state, /api_bridge\.attestation_anchor_created_at=/);
       assert.match(run.state, /image_scan\.status=all-exact-receipts-verified/);
       assert.match(run.state, /pipeline_writer\.status=refused-busy/);
-    } else if (focusedCase === 'bridge-attestation-new-mismatch') {
+    } else if (new Set([
+      'bridge-attestation-at-4h',
+      'bridge-attestation-new-mismatch',
+    ]).has(focusedCase)) {
       assert.notEqual(run.result.status, 0, diagnostic(run));
       assert.equal(run.journalExists, false, diagnostic(run));
       assert.equal(run.interlockExists, false, diagnostic(run));
@@ -3891,6 +3929,18 @@ assert.equal(mismatchedNewAttestation.interlockExists, false, diagnostic(mismatc
 assert.equal(mismatchedNewAttestation.writerGateExists, false, diagnostic(mismatchedNewAttestation));
 assert.equal(mismatchedNewAttestation.writerRolesLocked, false, diagnostic(mismatchedNewAttestation));
 assertExactOldTopology(mismatchedNewAttestation);
+
+const expiredBridgeAttestation = await runScenario('bridge-attestation-at-4h');
+assert.notEqual(expiredBridgeAttestation.result.status, 0, diagnostic(expiredBridgeAttestation));
+assert.equal(expiredBridgeAttestation.journalExists, false, diagnostic(expiredBridgeAttestation));
+assert.equal(expiredBridgeAttestation.interlockExists, false, diagnostic(expiredBridgeAttestation));
+assert.equal(expiredBridgeAttestation.writerGateExists, false, diagnostic(expiredBridgeAttestation));
+assert.equal(expiredBridgeAttestation.writerRolesLocked, false, diagnostic(expiredBridgeAttestation));
+assert.match(
+  expiredBridgeAttestation.result.stderr,
+  /not anchored to the API bridge receipt|copied backup payload attestation changed during preflight/,
+);
+assertExactOldTopology(expiredBridgeAttestation);
 
 for (const nonordinaryIndex of [
   'assume-unchanged-pipeline-source',

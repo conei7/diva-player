@@ -16,6 +16,7 @@ from pathlib import Path
 
 
 HELPER = Path(__file__).with_name("sbc-api-bridge-consumption.py")
+HARDENER = Path(__file__).with_name("harden-sbc-stateful-services.sh")
 TEST_BOOT_ID = "00000000-0000-4000-8000-000000000001"
 TEST_START_TICKS = 424242
 
@@ -52,7 +53,8 @@ def dead_pid(module) -> int:
 def build_fixture(module, root: Path, *, reason: str, owner_pid: int | None = None,
                   owner_boot_id: str | None = None,
                   owner_start_ticks: int | None = None,
-                  incomplete: bool = False) -> dict[str, object]:
+                  incomplete: bool = False,
+                  calibration_status: str | None = None) -> dict[str, object]:
     assert reason in {"calibration", "completed"}
     state_root = root / "state"
     state_root.mkdir(mode=0o700)
@@ -91,9 +93,11 @@ def build_fixture(module, root: Path, *, reason: str, owner_pid: int | None = No
     if incomplete:
         state_lines.append("deployment.status=preflight")
     elif reason == "calibration":
+        if calibration_status is None:
+            calibration_status = module.CURRENT_CALIBRATION_IMAGE_SCAN_STATUS
         state_lines.extend((
             "deployment.status=preflight",
-            "image_scan.status=requires-reviewed-exact-inventory-bounds",
+            f"image_scan.status={calibration_status}",
         ))
     else:
         state_lines.extend((
@@ -265,6 +269,89 @@ def exercise_completed_boundary(module) -> None:
         consume(module, fixture)
         assert reconcile(module, fixture) == "completed"
         assert_settled(module, fixture)
+
+
+def exercise_calibration_status_contract(module) -> None:
+    hardener = HARDENER.read_text(encoding="utf-8")
+    assert (
+        "record_state image_scan.status "
+        + module.CURRENT_CALIBRATION_IMAGE_SCAN_STATUS
+    ) in hardener
+
+    with tempfile.TemporaryDirectory(
+        prefix="diva-sbc-bridge-current-calibration."
+    ) as temporary:
+        fixture = build_fixture(module, Path(temporary), reason="calibration")
+        assert reconcile(module, fixture) == "calibration"
+        assert_settled(module, fixture)
+
+    with tempfile.TemporaryDirectory(
+        prefix="diva-sbc-bridge-legacy-calibration."
+    ) as temporary:
+        fixture = build_fixture(
+            module,
+            Path(temporary),
+            reason="calibration",
+            calibration_status="requires-reviewed-exact-inventory-bounds",
+        )
+        assert reconcile(module, fixture) == "calibration"
+        assert_settled(module, fixture)
+
+    with tempfile.TemporaryDirectory(
+        prefix="diva-sbc-bridge-unknown-calibration."
+    ) as temporary:
+        fixture = build_fixture(
+            module,
+            Path(temporary),
+            reason="calibration",
+            calibration_status="requires-reviewed-unknown-contract",
+        )
+        try:
+            reconcile(module, fixture)
+        except RuntimeError as error:
+            assert "consumable" in str(error)
+        else:
+            raise AssertionError("an unknown calibration status was accepted")
+        assert fixture["receipt"].read_bytes() == fixture["receipt_payload"]
+
+    ambiguous_statuses = (
+        (
+            "recognized-plus-unknown",
+            ("requires-reviewed-unknown-contract",),
+        ),
+        (
+            "current-plus-legacy",
+            ("requires-reviewed-exact-inventory-bounds",),
+        ),
+        (
+            "duplicate-current",
+            (module.CURRENT_CALIBRATION_IMAGE_SCAN_STATUS,),
+        ),
+    )
+    for label, extra_statuses in ambiguous_statuses:
+        with tempfile.TemporaryDirectory(
+            prefix=f"diva-sbc-bridge-{label}."
+        ) as temporary:
+            fixture = build_fixture(
+                module, Path(temporary), reason="calibration"
+            )
+            state = fixture["run_dir"] / "state"
+            with state.open("ab") as handle:
+                for status_value in extra_statuses:
+                    handle.write(
+                        f"image_scan.status={status_value}\n".encode("ascii")
+                    )
+            try:
+                reconcile(module, fixture)
+            except RuntimeError as error:
+                assert "ambiguous or divergent" in str(error), (label, error)
+            else:
+                raise AssertionError(
+                    f"ambiguous calibration status was accepted: {label}"
+                )
+            assert fixture["receipt"].read_bytes() == fixture["receipt_payload"]
+            assert os.path.lexists(fixture["active"])
+            assert os.path.lexists(fixture["lock_dir"])
 
 
 def remove_lock(fixture: dict[str, object]) -> None:
@@ -499,6 +586,7 @@ def main() -> int:
     exercise_consume_cli(module)
     exercise_fault_matrix(module)
     exercise_completed_boundary(module)
+    exercise_calibration_status_contract(module)
     exercise_release_fault_matrix(module)
     exercise_live_intent_ordering(module)
     exercise_settlement_binding(module)

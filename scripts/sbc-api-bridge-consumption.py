@@ -30,6 +30,15 @@ ARCHIVE = re.compile(
     r"^api-bridge-receipt\.(calibration|completed)\.([0-9a-f]{64})\.json$"
 )
 MAX_DOCUMENT = 128 * 1024
+CURRENT_CALIBRATION_IMAGE_SCAN_STATUS = (
+    "requires-reviewed-exact-inventory-and-finding-contracts"
+)
+CALIBRATION_IMAGE_SCAN_STATUSES = frozenset({
+    CURRENT_CALIBRATION_IMAGE_SCAN_STATUS,
+    # Runs created before the finding contract was added still need exact,
+    # crash-safe convergence under the same mutation-free boundary checks.
+    "requires-reviewed-exact-inventory-bounds",
+})
 Checkpoint = Callable[[str], None]
 
 
@@ -641,7 +650,13 @@ def _validate_stage(run_dir: Path, state_root: Path,
         _fail("stale hardening receipt digest is invalid")
     completed = run_dir / "completed"
     promoted = run_dir / "promoted"
-    if "requires-reviewed-exact-inventory-bounds" in values.get("image_scan.status", []):
+    image_scan_statuses = values.get("image_scan.status", [])
+    calibration_statuses = CALIBRATION_IMAGE_SCAN_STATUSES.intersection(
+        image_scan_statuses
+    )
+    if calibration_statuses:
+        if len(image_scan_statuses) != 1:
+            _fail("calibration image scan status is ambiguous or divergent")
         allowed = {
             "preflight", "building-qdrant", "preparing-postgres",
             "scanning-all-runtime-images", "failed",
