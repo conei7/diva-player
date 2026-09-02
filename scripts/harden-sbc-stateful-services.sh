@@ -3718,6 +3718,7 @@ SELECT
                 SELECT 1
                 FROM pg_roles AS role
                 WHERE role.rolcanlogin
+                  AND NOT role.rolsuper
                   AND pg_has_role(role.oid, 'diva_pipeline_runtime', 'MEMBER')
             )
             AND (
@@ -3826,6 +3827,7 @@ WITH inserted_roles AS (
            SELECT count(*)
            FROM pg_roles AS effective_role
            WHERE effective_role.rolcanlogin
+             AND NOT effective_role.rolsuper
              AND pg_has_role(
                  effective_role.oid, 'diva_pipeline_runtime', 'MEMBER'
              )
@@ -3850,6 +3852,7 @@ SELECT CASE WHEN
         SELECT 1
         FROM pg_roles AS role
         WHERE role.rolcanlogin
+          AND NOT role.rolsuper
           AND pg_has_role(role.oid, 'diva_pipeline_runtime', 'MEMBER')
     )
     AND NOT EXISTS (
@@ -3983,6 +3986,7 @@ SELECT CASE WHEN
         SELECT 1
         FROM pg_roles AS role
         WHERE role.rolcanlogin
+          AND NOT role.rolsuper
           AND pg_has_role(role.oid, 'diva_pipeline_runtime', 'MEMBER')
     )
     AND (
@@ -4014,6 +4018,7 @@ SELECT CASE WHEN
         SELECT 1
         FROM pg_roles AS role
         WHERE role.rolcanlogin
+          AND NOT role.rolsuper
           AND pg_has_role(role.oid, 'diva_pipeline_runtime', 'MEMBER')
           AND NOT (:'roles_json'::jsonb ? role.rolname)
     )
@@ -4021,6 +4026,7 @@ SELECT CASE WHEN
         SELECT count(*)
         FROM pg_roles AS role
         WHERE role.rolcanlogin
+          AND NOT role.rolsuper
           AND pg_has_role(role.oid, 'diva_pipeline_runtime', 'MEMBER')
     ) = jsonb_array_length(:'roles_json'::jsonb)
     AND NOT EXISTS (
@@ -5953,7 +5959,7 @@ if [ -e "$API_BRIDGE_CONSUME_INTENT" ] \
         || { fail "stale API bridge receipt consumption could not be reconciled"; exit 1; }
     case "$API_BRIDGE_RECONCILIATION" in
         none) ;;
-        calibration|completed)
+        calibration|completed|pre-mutation-failed)
             printf '%s\n' \
                 "Recovered stale $API_BRIDGE_RECONCILIATION API bridge receipt consumption." >&2
             ;;
@@ -6001,6 +6007,15 @@ durable_sync_path "$LOCK_DIR/owner" \
     && durable_sync_path "$LOCK_DIR" \
     && durable_sync_path "$STATE_ROOT" \
     || { fail "stateful hardening lock owner could not be made durable"; exit 1; }
+if [ -e "$API_BRIDGE_CONSUME_INTENT" ] \
+    || [ -L "$API_BRIDGE_CONSUME_INTENT" ] \
+    || [ -e "$API_BRIDGE_CONSUME_INTENT.prepared" ] \
+    || [ -L "$API_BRIDGE_CONSUME_INTENT.prepared" ]; then
+    fail "API bridge receipt consumption appeared while acquiring the stateful hardening lock"
+    exit 75
+fi
+[ -f "$API_BRIDGE_RECEIPT" ] && [ ! -L "$API_BRIDGE_RECEIPT" ] \
+    || { fail "canonical API bridge receipt disappeared while acquiring the stateful hardening lock"; exit 75; }
 if [ -e "$DEPLOY_LOCK_DIR" ]; then
     fail "rolling deployment lock appeared during stateful hardening preflight"
     exit 75

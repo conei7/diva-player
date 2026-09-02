@@ -999,6 +999,41 @@ for (const [label, contract, expectedActivityChecks] of [
     `${label} gate SQL must identify sessions by direct pipeline-role membership`,
   );
 }
+const effectiveMembershipChecks = [...hardeningSource.matchAll(
+  /FROM pg_roles AS (role|effective_role)\s+WHERE \1\.rolcanlogin\s+AND NOT \1\.rolsuper\s+AND pg_has_role\(\s*\1\.oid, 'diva_pipeline_runtime', 'MEMBER'/g,
+)];
+const allEffectiveMembershipChecks = [...hardeningSource.matchAll(/pg_has_role\(/g)];
+assert.equal(
+  effectiveMembershipChecks.length,
+  6,
+  'every effective runtime-role membership check must ignore PostgreSQL superuser implicit membership',
+);
+assert.equal(
+  allEffectiveMembershipChecks.length,
+  effectiveMembershipChecks.length,
+  'new effective runtime-role membership checks must also exclude PostgreSQL superusers',
+);
+for (const [label, contract, expectedChecks] of [
+  ['verify', gateVerifyContract, 1],
+  ['acquire', gateAcquireContract, 2],
+  ['release', gateReleaseContract, 3],
+]) {
+  assert.equal(
+    [...contract.matchAll(/AND NOT (?:role|effective_role)\.rolsuper\s+AND pg_has_role\(/g)].length,
+    expectedChecks,
+    `${label} gate SQL must ignore only PostgreSQL superuser implicit membership in every effective-role check`,
+  );
+}
+assert.match(
+  hardeningSource,
+  /case "\$API_BRIDGE_RECONCILIATION" in[\s\S]*calibration\|completed\|pre-mutation-failed\)/,
+  'startup reconciliation must accept the reviewed pre-mutation retirement result',
+);
+assert.match(
+  hardeningSource,
+  /durable_sync_path "\$LOCK_DIR\/owner"[\s\S]*API bridge receipt consumption appeared while acquiring the stateful hardening lock[\s\S]*canonical API bridge receipt disappeared while acquiring the stateful hardening lock/,
+  'a durable hardening lock must recheck both sides of the bridge-receipt retirement mutex',
+);
 assert.match(gateAcquireContract, /count\(\*\) = \(\s*SELECT count\(\*\)[\s\S]*pg_has_role/);
 assert.match(gateReleaseContract, /released_roles_ok/);
 for (const contract of [gateAcquireContract, gateReleaseContract]) {
@@ -3824,7 +3859,13 @@ async function runScenario(name) {
       // leave headroom under the two-minute focused-test budget.
       timeout: process.env.DIVA_STATEFUL_TEST_CASE === 'qdrant-controller-timeout'
         ? 120_000
-        : new Set(['success', 'legacy-scan-reviewed', 'gate-release-timeout']).has(
+        : new Set([
+          'success',
+          'legacy-scan-reviewed',
+          'gate-release-timeout',
+          'writer-active',
+          'indirect-pipeline-login-role',
+        ]).has(
           process.env.DIVA_STATEFUL_TEST_CASE,
         )
           ? 600_000
@@ -3953,6 +3994,7 @@ async function runScenario(name) {
       backendEnvBackupRemains,
       controllerSettlement,
       lateControllerMutation: existsSync(join(scenario.fakeState, 'late-controller-mutation')),
+      apiBridgeReceiptExists: existsSync(scenario.bridge.receiptPath),
     };
     assert.equal(
       run.runDirectoryExists,
@@ -4003,6 +4045,7 @@ function diagnostic(run) {
     backendEnvBackupRemains: run.backendEnvBackupRemains,
     controllerSettlement: run.controllerSettlement,
     lateControllerMutation: run.lateControllerMutation,
+    apiBridgeReceiptExists: run.apiBridgeReceiptExists,
   }, null, 2);
 }
 
@@ -4296,6 +4339,27 @@ try {
       assert.match(run.state, /api_bridge\.attestation_anchor_created_at=/);
       assert.match(run.state, /image_scan\.status=all-exact-receipts-verified/);
       assert.match(run.state, /pipeline_writer\.status=refused-busy/);
+    } else if (focusedCase === 'writer-active') {
+      assert.notEqual(run.result.status, 0, diagnostic(run));
+      assert.equal(run.journalExists, false, diagnostic(run));
+      assert.equal(run.interlockExists, false, diagnostic(run));
+      assert.equal(run.writerGateExists, false, diagnostic(run));
+      assert.equal(run.writerRolesLocked, false, diagnostic(run));
+      assertExactOldTopology(run);
+      assert.match(run.state, /image_scan\.status=all-exact-receipts-verified/);
+      assert.match(run.state, /pipeline_writer\.status=refused-busy/);
+      assert.equal(run.apiBridgeReceiptExists, true, diagnostic(run));
+      assert.doesNotMatch(run.dockerLog, / stop | rename | compose /);
+    } else if (focusedCase === 'indirect-pipeline-login-role') {
+      assert.notEqual(run.result.status, 0, diagnostic(run));
+      assert.equal(run.journalExists, false, diagnostic(run));
+      assert.equal(run.interlockExists, false, diagnostic(run));
+      assert.equal(run.writerGateExists, false, diagnostic(run));
+      assert.equal(run.writerRolesLocked, false, diagnostic(run));
+      assertExactOldTopology(run);
+      assert.match(run.state, /pipeline_writer\.status=refused-busy/);
+      assert.equal(run.apiBridgeReceiptExists, true, diagnostic(run));
+      assert.doesNotMatch(run.dockerLog, / stop | rename | compose /);
     } else if (new Set([
       'bridge-attestation-at-4h',
       'bridge-attestation-new-mismatch',
@@ -4503,6 +4567,7 @@ assertExactOldTopology(writerActive);
 assert.match(writerActive.state, /api_bridge\.attestation_anchor_created_at=/);
 assert.match(writerActive.state, /image_scan\.status=all-exact-receipts-verified/);
 assert.match(writerActive.state, /pipeline_writer\.status=refused-busy/);
+assert.equal(writerActive.apiBridgeReceiptExists, true, diagnostic(writerActive));
 assert.doesNotMatch(writerActive.dockerLog, / stop | rename | compose /);
 
 const indirectPipelineLogin = await runScenario('indirect-pipeline-login-role');
