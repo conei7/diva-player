@@ -1616,7 +1616,11 @@ run_bounded_docker_read_with_timeout() {
     local timeout_seconds="$1"
     local read_status=0
     shift
-    run_bounded_command "$timeout_seconds" "$DOCKER_COMMAND" "$@" || read_status=$?
+    # docker exec -i must remain in the SSH TTY foreground process group.
+    # Without --foreground, GNU timeout backgrounds the Docker client and a
+    # read from its inherited terminal can stop it with SIGTTIN indefinitely.
+    "$TIMEOUT_COMMAND" --foreground --signal=TERM --kill-after=10 \
+        "$timeout_seconds" "$DOCKER_COMMAND" "$@" || read_status=$?
     if [ "$read_status" -ne 0 ]; then
         mark_daemon_read_unresolved "$read_status"
         return "$read_status"

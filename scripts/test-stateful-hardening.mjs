@@ -202,6 +202,34 @@ assert.match(
   'production must fail closed when the canonical pipeline repository is unavailable',
 );
 
+const boundedDockerReadContract = hardeningSource.slice(
+  hardeningSource.indexOf('run_bounded_docker_read_with_timeout()'),
+  hardeningSource.indexOf('# Health probes have documented non-zero results'),
+);
+assert.match(
+  boundedDockerReadContract,
+  /"\$TIMEOUT_COMMAND" --foreground --signal=TERM --kill-after=10 \\\n\s+"\$timeout_seconds" "\$DOCKER_COMMAND" "\$@"/,
+  'Docker reads must keep an inherited SSH TTY in the foreground process group',
+);
+const genericBoundedCommandContract = hardeningSource.slice(
+  hardeningSource.indexOf('run_bounded_command()'),
+  hardeningSource.indexOf('mark_daemon_read_unresolved()'),
+);
+assert.doesNotMatch(
+  genericBoundedCommandContract,
+  /--foreground/,
+  'generic bounded commands must retain process-group timeout coverage',
+);
+const guardedDockerMutationContract = hardeningSource.slice(
+  hardeningSource.indexOf('run_guarded_docker_mutation()'),
+  hardeningSource.indexOf('run_bounded_docker_mutation()'),
+);
+assert.doesNotMatch(
+  guardedDockerMutationContract,
+  /--foreground/,
+  'Docker mutations must retain process-group timeout coverage',
+);
+
 const trustedGitContract = hardeningSource.slice(
   hardeningSource.indexOf('trusted_git()'),
   hardeningSource.indexOf('verify_tracked_runtime_source()'),
@@ -2891,7 +2919,7 @@ set -eu
 root=__D__{FAKE_STATE:?}
 scenario=__D__{FAKE_SCENARIO:-success}
 while [ "$#" -gt 0 ]; do
-  case "$1" in --signal=*|--kill-after=*) shift ;; *) break ;; esac
+  case "$1" in --foreground|--signal=*|--kill-after=*) shift ;; *) break ;; esac
 done
 limit=__D__{1:?}
 shift
