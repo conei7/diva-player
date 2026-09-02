@@ -9,6 +9,25 @@ const scriptsDirectory = dirname(fileURLToPath(import.meta.url));
 const projectDirectory = join(scriptsDirectory, '..');
 const deploymentScript = join(scriptsDirectory, 'deploy-sbc-api-rolling.sh');
 const deploymentSource = await readFile(deploymentScript, 'utf8');
+const retiredAllInOneUpdaterSource = await readFile(
+  join(scriptsDirectory, 'sbc_update.sh'),
+  'utf8',
+);
+assert.match(
+  retiredAllInOneUpdaterSource,
+  /sbc_update\.sh is retired and intentionally performs no update\./u,
+  'the unsafe legacy all-in-one updater must remain explicitly retired',
+);
+assert.match(
+  retiredAllInOneUpdaterSource,
+  /exit 78\s*$/u,
+  'the retired updater must fail closed with a stable refusal status',
+);
+assert.doesNotMatch(
+  retiredAllInOneUpdaterSource,
+  /^\s*(?:git\s+(?:pull|fetch|switch)\b|docker\s+compose\b|sudo\b)/mu,
+  'the retired updater must not retain a repository or container mutation path',
+);
 const configuredScenarioTimeout = Number.parseInt(
   process.env.DIVA_ROLLING_TEST_TIMEOUT_MS
     ?? (process.platform === 'win32' ? '900000' : '300000'),
@@ -40,6 +59,7 @@ assert.equal(
 const playerAncestorCommit = playerAncestorResult.stdout.trim();
 assert.match(playerAncestorCommit, /^[0-9a-f]{40}$/u);
 const qdrantImageId = `sha256:${'1'.repeat(64)}`;
+const qdrantDockerfileSha256 = 'cd094d3ab1147d5ca9e4369a9bb1e41d0bdac0bd9989a1769bc0b04a557796c1';
 const postgresImageId = `sha256:${'2'.repeat(64)}`;
 const postgresMigrateImageId = `sha256:${'7'.repeat(64)}`;
 const oldApiAImageId = `sha256:${'a'.repeat(64)}`;
@@ -469,6 +489,13 @@ if [ "$1" = "image" ]; then
                     ;;
             esac
             case "$format" in
+                *'com.diva.qdrant.dockerfile-sha256'*)
+                    if [ "__DOLLAR__{FAKE_FAIL_STAGE:-}" = "stateful_contract_qdrant_provenance_drift" ]; then
+                        printf '%s\n' '__WRONG_QDRANT_DOCKERFILE_SHA256__'
+                    else
+                        printf '%s\n' '__QDRANT_DOCKERFILE_SHA256__'
+                    fi
+                    ;;
                 *'.Id}'*Architecture*)
                     for observed_image in $images; do
                         printf '%s|linux/arm64\n' "$(image_id "$observed_image")"
@@ -934,6 +961,8 @@ exit 1
   .replaceAll('__DOLLAR__', '$')
   .replaceAll('__QDRANT_ID__', '1'.repeat(64))
   .replaceAll('__WRONG_QDRANT_ID__', '3'.repeat(64))
+  .replaceAll('__WRONG_QDRANT_DOCKERFILE_SHA256__', '8'.repeat(64))
+  .replaceAll('__QDRANT_DOCKERFILE_SHA256__', qdrantDockerfileSha256)
   .replaceAll('__POSTGRES_ID__', '2'.repeat(64))
   .replaceAll('__POSTGRES_MIGRATE_ID__', '7'.repeat(64))
   .replaceAll('__WRONG_POSTGRES_MIGRATE_ID__', '6'.repeat(64))
@@ -1147,6 +1176,10 @@ async function createScenario(name) {
     'run=20260830T000000Z-1',
     'qdrant_stable_tag=diva-player-qdrant:v1.19.0-hardened-r1',
     `qdrant_image_id=${qdrantImageId}`,
+    `qdrant_source_commit=${name === 'stateful-contract-qdrant-source-untrusted'
+      ? 'f'.repeat(40)
+      : playerCommit}`,
+    `qdrant_dockerfile_sha256=${qdrantDockerfileSha256}`,
     `postgres_image_reference=${postgresImageReference}`,
     `postgres_image_id=${postgresImageId}`,
     `postgres_migrate_image_reference=${postgresMigrateImageReference}`,
@@ -1341,6 +1374,36 @@ function assertExactOldRollingIdentities(result) {
   assert.equal(result.apiBId, 'e'.repeat(64));
   assert.equal(result.gatewayId, 'f'.repeat(64));
   assert.equal(result.containerEntries.some(entry => entry.includes('_previous_')), false);
+}
+
+async function testStatefulQdrantProvenanceDriftFailsClosed() {
+  const result = await runScenario(
+    'stateful-contract-qdrant-provenance-drift',
+    'stateful_contract_qdrant_provenance_drift',
+  );
+  assert.notEqual(result.result.status, 0);
+  assert.match(
+    result.state,
+    /failure=Qdrant image Dockerfile provenance drifted from the completed runtime contract/,
+  );
+  assert.doesNotMatch(
+    result.dockerLog,
+    /compose [^\n]*--project-name backend .* build/u,
+  );
+  assert.equal(result.activeJournal, '');
+  assert.equal(result.lockOwner, '');
+}
+
+async function testStatefulQdrantSourceCommitFailsClosed() {
+  const result = await runScenario('stateful-contract-qdrant-source-untrusted');
+  assert.notEqual(result.result.status, 0);
+  assert.match(
+    result.state,
+    /failure=Stateful runtime contract Qdrant source commit is not an ancestor of this release/,
+  );
+  assert.doesNotMatch(result.dockerLog, /image inspect|compose [^\n]* build/u);
+  assert.equal(result.activeJournal, '');
+  assert.equal(result.lockOwner, '');
 }
 
 function assertGatewayValidationCleanlyRemoved(result) {
@@ -1776,6 +1839,14 @@ function testBridgeTrivyAndExactImageContract() {
   assert.match(
     deploymentSource,
     /if \[ "\$BRIDGE_BOOTSTRAP_MODE" != "true" \]; then\s+if ! validate_stateful_runtime_contract;/u,
+  );
+  assert.match(
+    deploymentSource,
+    /qdrant_image_id\nqdrant_source_commit\nqdrant_dockerfile_sha256\npostgres_image_reference/u,
+  );
+  assert.match(
+    deploymentSource,
+    /com\.diva\.qdrant\.dockerfile-sha256/u,
   );
   assert.match(
     deploymentSource,
@@ -3694,6 +3765,16 @@ if (process.env.DIVA_ROLLING_TEST_ONLY === 'stateful-migrate-retag') {
   console.log('PASS migration-helper stable-ref retag fail-closed scenario');
   process.exit(0);
 }
+if (process.env.DIVA_ROLLING_TEST_ONLY === 'stateful-qdrant-provenance') {
+  await testStatefulQdrantProvenanceDriftFailsClosed();
+  console.log('PASS Qdrant Dockerfile provenance label fail-closed scenario');
+  process.exit(0);
+}
+if (process.env.DIVA_ROLLING_TEST_ONLY === 'stateful-qdrant-source') {
+  await testStatefulQdrantSourceCommitFailsClosed();
+  console.log('PASS Qdrant source commit ancestry fail-closed scenario');
+  process.exit(0);
+}
 if (process.env.DIVA_ROLLING_TEST_ONLY === 'candidate-platform') {
   await testNormalCandidatePlatformFailsClosed();
   console.log('PASS normal rolling candidate exact linux/arm64 gate');
@@ -3857,6 +3938,10 @@ assert.match(
   successful.dockerLog,
   /image inspect --format \{\{\.Id\}\} diva-player-postgres-migrate:16\.15-hardened-r1/u,
 );
+assert.match(
+  successful.dockerLog,
+  /image inspect --format \{\{index \.Config\.Labels "com\.diva\.qdrant\.dockerfile-sha256"\}\} sha256:[0-9a-f]{64}/u,
+);
 assert.doesNotMatch(
   successful.dockerLog,
   /compose [^\n]*--project-name backend[^\n]* up [^\n]*(?:api_a|api_b|api_gateway|web)/u,
@@ -3889,6 +3974,8 @@ assert.match(statefulContractRetag.state, /failure=Stateful Docker image referen
 assert.doesNotMatch(statefulContractRetag.dockerLog, /compose [^\n]*--project-name backend .* build/u);
 assert.equal(statefulContractRetag.activeJournal, '');
 assert.equal(statefulContractRetag.lockOwner, '');
+
+await testStatefulQdrantProvenanceDriftFailsClosed();
 
 await testStatefulMigrateContractRetagFailsClosed();
 
@@ -3927,6 +4014,8 @@ const statefulAncestorContract = await runScenario(
 assert.notEqual(statefulAncestorContract.result.status, 0);
 assert.match(statefulAncestorContract.state, /stateful_runtime_contract\.sha256=[0-9a-f]{64}/u);
 assert.match(statefulAncestorContract.state, /daemon_mutation\.terminal_release=forbidden-docker-image-query-exit-2/u);
+
+await testStatefulQdrantSourceCommitFailsClosed();
 
 const configOnly = await runScenario('config-only');
 assert.equal(configOnly.result.status, 0, configOnly.result.stderr);

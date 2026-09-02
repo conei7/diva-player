@@ -1,30 +1,22 @@
-#!/bin/bash
+#!/bin/sh
 set -eu
+umask 0022
 
-echo "=============================================="
-echo "🌟 DIVA Player SBC 自動更新スクリプト 🌟"
-echo "=============================================="
+if [ "$#" -ne 0 ]; then
+    printf '%s\n' 'usage: sbc_update.sh' >&2
+    exit 64
+fi
 
-# 1. diva-player の更新
-echo "[1/3] diva-player (Web/API) の更新を確認中..."
-cd ~/diva-player
-git switch main
-git pull --ff-only origin main
+cat >&2 <<'EOF'
+ERROR: sbc_update.sh is retired and intentionally performs no update.
 
-# 2. diva-data-pipeline の更新
-echo "[2/3] diva-data-pipeline (AI/データ) の更新を確認中..."
-cd ~/diva-data-pipeline
-git switch main
-git pull --ff-only origin main
+The former all-in-one path pulled repositories in the wrong provenance order
+and replaced stateful/API containers with an unguarded `docker compose up`.
+Use the reviewed pipeline-first pull, ML runtime update when required, and
+root rolling deployment in:
 
-# 3. Docker コンテナの再ビルドと起動 (diva-player)
-echo "[3/3] Docker コンテナを最新の状態で再起動します..."
-cd ~/diva-player/backend
+  /home/orangepi/diva-data-pipeline/docs/diva-player/ACTIVE/OPERATIONS.md
 
-# ダウンタイムを最小にするために、まずbuildして、それから up -d する
-docker compose build
-docker compose up -d
-
-echo "=============================================="
-echo "🎉 すべての更新が完了しました！"
-echo "=============================================="
+This refusal is fail-closed; no repository or container was changed.
+EOF
+exit 78

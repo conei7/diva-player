@@ -46,6 +46,10 @@ const postgresMigrateDockerfile = join(projectDirectory, 'backend', 'database', 
 const postgresDockerignore = join(projectDirectory, 'backend', 'database', '.dockerignore');
 const postgresSchema = join(projectDirectory, 'backend', 'database', 'schema.sql');
 const imageScanValidator = join(scriptsDirectory, 'validate-container-image-scan.py');
+const arm64ImageScanContractFixture = join(
+  scriptsDirectory,
+  'stateful-arm64-image-scan-contract.fixture.json',
+);
 const playerOfficialOrigin = 'https://github.com/conei7/diva-player.git';
 const pipelineOfficialOrigin = 'git@github.com:conei7/diva-data-pipeline.git';
 const githubEd25519HostKey = 'github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl';
@@ -107,6 +111,7 @@ const timeoutFaultScenarios = new Set([
 // validation, PostgreSQL backup evidence validation, then Qdrant backup
 // evidence validation. Every other scenario must publish exactly one RUN_DIR.
 const preRunRejectionScenarios = new Set([
+  'repository-owner-mismatch',
   'assume-unchanged-pipeline-source',
   'skip-worktree-pipeline-source',
   'pipeline-origin-alias',
@@ -152,6 +157,7 @@ const [
   postgresDockerignoreSource,
   postgresSchemaSource,
   imageScanValidatorSource,
+  arm64ImageScanContractFixtureSource,
 ] = await Promise.all([
   readFile(hardeningScript, 'utf8'),
   readFile(rollingDeploymentScript, 'utf8'),
@@ -167,6 +173,7 @@ const [
   readFile(postgresDockerignore, 'utf8'),
   readFile(postgresSchema, 'utf8'),
   readFile(imageScanValidator, 'utf8'),
+  readFile(arm64ImageScanContractFixture, 'utf8'),
 ]);
 
 const imageScanValidatorSha256 = sha256(Buffer.from(imageScanValidatorSource, 'utf8'));
@@ -199,6 +206,13 @@ const trustedGitContract = hardeningSource.slice(
   hardeningSource.indexOf('trusted_git()'),
   hardeningSource.indexOf('verify_tracked_runtime_source()'),
 );
+const trustedLocalGitContract = hardeningSource.slice(
+  hardeningSource.indexOf('trusted_git()'),
+  hardeningSource.indexOf('trusted_pipeline_remote_git()'),
+);
+const trustedLocalGitProductionContract = trustedLocalGitContract.slice(
+  trustedLocalGitContract.indexOf('    else\n'),
+);
 assert.match(trustedGitContract, /GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=\/dev\/null/);
 assert.equal(
   trustedGitContract.split('/usr/bin/env -i').length - 1,
@@ -206,9 +220,24 @@ assert.equal(
   'local test/production and remote test/production Git must start from an empty environment',
 );
 assert.match(
-  trustedGitContract,
-  /else[\s\S]*\/usr\/bin\/env -i[\s\S]*HOME=\/var\/empty PATH=\/usr\/bin:\/bin[\s\S]*\/usr\/bin\/git/,
-  'production local/HTTPS Git must receive only fixed environment values and an absolute binary',
+  trustedLocalGitProductionContract,
+  /\/usr\/bin\/env -i[\s\S]*HOME=\/var\/empty PATH=\/usr\/bin:\/bin[\s\S]*GIT_TERMINAL_PROMPT=0 \\\n\s+\/usr\/bin\/setpriv \\\n\s+--reuid="\$PIPELINE_RUNTIME_UID" --regid="\$PIPELINE_RUNTIME_GID" \\\n\s+--clear-groups --no-new-privs \\\n\s+--inh-caps=-all --ambient-caps=-all --bounding-set=-all -- \\\n\s+\/usr\/bin\/git/,
+  'production local/HTTPS Git must drop to the validated repository owner before the only Git process',
+);
+assert.equal(
+  trustedLocalGitProductionContract.split('/usr/bin/git').length - 1,
+  1,
+  'production local/HTTPS Git must have no second root-side Git execution path',
+);
+assert.match(
+  trustedLocalGitContract.slice(0, trustedLocalGitContract.indexOf('    else\n')),
+  /GIT_TERMINAL_PROMPT=0 \\\n\s+git -c/,
+  'test mode must retain the injected fake Git command without a production privilege transition',
+);
+assert.doesNotMatch(
+  trustedLocalGitContract.slice(0, trustedLocalGitContract.indexOf('    else\n')),
+  /setpriv/,
+  'test-mode local Git must remain directly observable by the fixture fake',
 );
 assert.equal(
   trustedGitContract.split('-c "safe.directory=$ROOT_DIR"').length - 1,
@@ -238,6 +267,15 @@ assert.match(trustedGitContract, /GlobalKnownHostsFile=\/dev\/null/);
 assert.match(trustedGitContract, /HostKeyAlgorithms=ssh-ed25519/);
 assert.match(trustedGitContract, /run_bounded_command 30/);
 assert.match(trustedGitContract, /\/usr\/bin\/setpriv[\s\S]*--reuid="\$PIPELINE_RUNTIME_UID"/);
+const mainRepositoryTrustBoundary = hardeningSource.slice(
+  hardeningSource.indexOf('trap cleanup EXIT'),
+  hardeningSource.indexOf('PLAYER_RELEASE_COMMIT=$(trusted_git'),
+);
+assert.match(
+  mainRepositoryTrustBoundary,
+  /verify_pipeline_venv_provenance[\s\S]*\[ "\$backend_repo_owner" = "\$PIPELINE_RUNTIME_UID:\$PIPELINE_RUNTIME_GID" \][\s\S]*trusted_git -C "\$ROOT_DIR"/,
+  'the player owner must equal the validated non-root pipeline owner before the first trusted Git call',
+);
 assert.match(hardeningSource, /os\.fchown\(descriptor, expected_uid, expected_gid\)/);
 assert.match(
   hardeningSource,
@@ -279,6 +317,212 @@ assert.doesNotMatch(
 assert.match(hardeningSource, /run_qdrant_controller_supervised "\$PYTHON_COMMAND" -I -B/);
 assert.match(hardeningSource, /--runtime-attestation "\$PIPELINE_RUNTIME_ATTESTATION_FILE"/);
 assert.doesNotMatch(qdrantUpgradeControllerSource, /qdrant_client/);
+
+const trivyCalibrationContract = hardeningSource.slice(
+  hardeningSource.indexOf('write_scan_calibration_evidence()'),
+  hardeningSource.indexOf('scan_exact_image()'),
+);
+assert.match(
+  trivyCalibrationContract,
+  /MAX_TRIVY_DATABASE_BYTES = 2 \* 1024 \* 1024 \* 1024/,
+  'the calibration evidence reader must accept the exact two-GiB Trivy database bound',
+);
+assert.match(
+  trivyCalibrationContract,
+  /before\.st_size <= 0 or before\.st_size > maximum/,
+  'the calibration evidence reader must fail closed above its artifact bound',
+);
+assert.match(
+  trivyCalibrationContract,
+  /database_path, MAX_TRIVY_DATABASE_BYTES, capture=False/,
+  'the Trivy database must be read through the exact two-GiB bound',
+);
+assert.doesNotMatch(
+  trivyCalibrationContract,
+  /database_path, 1024 \* 1024 \* 1024, capture=False/,
+  'the obsolete one-GiB Trivy database bound must not return',
+);
+assert.match(
+  imageScanValidatorSource,
+  /^MAX_DATABASE_BYTES = 2 \* 1024 \* 1024 \* 1024$/mu,
+  'the production scan validator and calibration reader must share the exact two-GiB cap',
+);
+
+const reviewedArm64ScanContract = JSON.parse(arm64ImageScanContractFixtureSource);
+assert.deepEqual(
+  Object.keys(reviewedArm64ScanContract).sort(),
+  ['images', 'kind', 'schemaVersion'],
+  'the reviewed ARM64 fixture schema must remain exact',
+);
+assert.equal(reviewedArm64ScanContract.schemaVersion, 1);
+assert.equal(
+  reviewedArm64ScanContract.kind,
+  'reviewed-arm64-image-scan-calibration-contract',
+);
+assert.ok(Array.isArray(reviewedArm64ScanContract.images));
+
+const expectedArm64InventoryBounds = new Map([
+  ['api-a', [
+    'lang-pkgs:dotnet-core:13:13:3',
+    'lang-pkgs:nuget:12:12:1',
+    'os-pkgs:alpine:21:21:1',
+  ]],
+  ['api-b', [
+    'lang-pkgs:dotnet-core:13:13:3',
+    'lang-pkgs:nuget:12:12:1',
+    'os-pkgs:alpine:21:21:1',
+  ]],
+  ['api-gateway', ['os-pkgs:alpine:24:24:1']],
+  ['postgres-rollback', [
+    'lang-pkgs:gobinary:4:4:1',
+    'os-pkgs:debian:144:144:1',
+  ]],
+  ['qdrant-audit', ['os-pkgs:alpine:3:3:1']],
+  ['qdrant-rollback', [
+    'lang-pkgs:node-pkg:665:665:1',
+    'os-pkgs:debian:92:92:1',
+  ]],
+  ['qdrant-runtime', ['os-pkgs:debian:7:7:1']],
+  ['web', ['os-pkgs:alpine:70:70:1']],
+]);
+const expectedRollbackCalibrationAnchors = new Map([
+  ['qdrant-rollback', {
+    imageId: 'sha256:138fbed447b2b20020d431b9dafee347995dd2ae390c4edd9d7c76dff429f9c9',
+    findingCount: 112,
+    findingSetSha256: '8f0623c8dc073cfbc69eb7a8c507168d85297a2a03a2992d1784deafd3372083',
+    severityCounts: { CRITICAL: 10, HIGH: 102 },
+  }],
+  ['postgres-rollback', {
+    imageId: 'sha256:00ba258a66dac104fd5171074a0084462a64a1369d8513f3d0a634e2f24d15bc',
+    findingCount: 90,
+    findingSetSha256: '505566e401b6c2a6873bafe207e5075d6280e53e4e4ab00146eecc34611f3f82',
+    severityCounts: { CRITICAL: 18, HIGH: 72 },
+  }],
+]);
+assert.deepEqual(
+  reviewedArm64ScanContract.images.map(image => image.service).sort(),
+  [...expectedArm64InventoryBounds.keys()].sort(),
+  'the fixture must contain each reviewed ARM64 service exactly once',
+);
+
+const productionArm64CalibrationFunctions = hardeningSource.slice(
+  hardeningSource.indexOf('reviewed_inventory_bounds()'),
+  hardeningSource.indexOf('prepare_image_scan_database()'),
+);
+assert.ok(
+  productionArm64CalibrationFunctions.startsWith('reviewed_inventory_bounds()'),
+  'the production inventory function must be extractable for execution',
+);
+
+function callProductionCalibrationFunction(functionName, arguments_) {
+  assert.match(functionName, /^reviewed_(?:inventory_bounds|legacy_finding_sha256)$/u);
+  const command = [
+    'set -eu',
+    'TEST_MODE=0',
+    productionArm64CalibrationFunctions,
+    `${functionName} "$1" "$2" "$3" "$4"`,
+  ].join('\n');
+  return spawnSync(
+    bashCommand,
+    ['--noprofile', '--norc', '-s', '--', ...arguments_],
+    { encoding: 'utf8', input: command, windowsHide: true },
+  );
+}
+
+const allReviewedFindingSha256 = new Set();
+for (const image of reviewedArm64ScanContract.images) {
+  assert.deepEqual(
+    Object.keys(image).sort(),
+    [
+      'architecture',
+      'findingSha256',
+      'highCriticalCount',
+      'imageId',
+      'inventory',
+      'osFamily',
+      'service',
+      'severityCounts',
+    ],
+    `the ${image.service} calibration fixture schema must remain exact`,
+  );
+  assert.equal(image.architecture, 'arm64');
+  assert.match(image.imageId, /^sha256:[0-9a-f]{64}$/u);
+  assert.ok(['alpine', 'debian'].includes(image.osFamily));
+  assert.ok(Array.isArray(image.inventory) && image.inventory.length > 0);
+  assert.ok(Array.isArray(image.findingSha256));
+  const inventoryBounds = image.inventory.map(row => {
+    assert.deepEqual(Object.keys(row).sort(), ['class', 'packageCount', 'resultCount', 'type']);
+    assert.ok(Number.isSafeInteger(row.packageCount) && row.packageCount > 0);
+    assert.ok(Number.isSafeInteger(row.resultCount) && row.resultCount > 0);
+    return `${row.class}:${row.type}:${row.packageCount}:${row.packageCount}:${row.resultCount}`;
+  });
+  assert.deepEqual(
+    inventoryBounds,
+    expectedArm64InventoryBounds.get(image.service),
+    `the ${image.service} inventory must match the reviewed calibration exactly`,
+  );
+  const inventoryResult = callProductionCalibrationFunction(
+    'reviewed_inventory_bounds',
+    [image.service, image.architecture, image.osFamily, image.imageId],
+  );
+  assert.equal(inventoryResult.status, 0, inventoryResult.stderr);
+  assert.deepEqual(
+    inventoryResult.stdout.trimEnd().split(/\r?\n/u),
+    inventoryBounds,
+    `the executed ${image.service} inventory function must equal the fixture in order`,
+  );
+
+  const severityKeys = Object.keys(image.severityCounts).sort();
+  assert.deepEqual(severityKeys, ['CRITICAL', 'HIGH']);
+  assert.equal(
+    image.severityCounts.CRITICAL + image.severityCounts.HIGH,
+    image.highCriticalCount,
+  );
+  assert.equal(image.findingSha256.length, image.highCriticalCount);
+  const localFindingSha256 = new Set();
+  for (const fingerprint of image.findingSha256) {
+    assert.match(fingerprint, /^[0-9a-f]{64}$/u);
+    assert.ok(localFindingSha256.add(fingerprint), `${image.service} finding is duplicated`);
+    assert.ok(allReviewedFindingSha256.add(fingerprint), 'reviewed findings must be globally unique');
+  }
+
+  const rollbackAnchor = expectedRollbackCalibrationAnchors.get(image.service);
+  if (rollbackAnchor) {
+    assert.equal(image.imageId, rollbackAnchor.imageId);
+    assert.equal(image.highCriticalCount, rollbackAnchor.findingCount);
+    assert.deepEqual(image.severityCounts, rollbackAnchor.severityCounts);
+    assert.equal(
+      sha256(Buffer.from(`${image.findingSha256.join('\n')}\n`, 'utf8')),
+      rollbackAnchor.findingSetSha256,
+      `${image.service} must retain the exact ordered reviewed finding set`,
+    );
+    const findingResult = callProductionCalibrationFunction(
+      'reviewed_legacy_finding_sha256',
+      [image.service, image.architecture, image.osFamily, image.imageId],
+    );
+    assert.equal(findingResult.status, 0, findingResult.stderr);
+    assert.deepEqual(
+      findingResult.stdout.trimEnd().split(/\r?\n/u),
+      image.findingSha256,
+      `the executed ${image.service} finding function must equal the fixture in order`,
+    );
+    for (const functionName of [
+      'reviewed_inventory_bounds',
+      'reviewed_legacy_finding_sha256',
+    ]) {
+      const wrongImageResult = callProductionCalibrationFunction(
+        functionName,
+        [image.service, image.architecture, image.osFamily, `sha256:${'0'.repeat(64)}`],
+      );
+      assert.notEqual(wrongImageResult.status, 0, `${functionName} must bind the exact image ID`);
+      assert.equal(wrongImageResult.stdout, '');
+    }
+  } else {
+    assert.equal(image.highCriticalCount, 0);
+    assert.deepEqual(image.severityCounts, { CRITICAL: 0, HIGH: 0 });
+  }
+}
+assert.equal(allReviewedFindingSha256.size, 202);
 
 const backupAttestationContract = hardeningSource.slice(
   hardeningSource.indexOf('validate_backup_payload_attestation()'),
@@ -2728,15 +2972,19 @@ exec "$command" "$@"
 const fakeStat = String.raw`#!/bin/sh
 format=__D__{2:-}
 target=__D__{3:-}
+scenario=__D__{FAKE_SCENARIO:-success}
 owner_uid=$(/usr/bin/id -u)
 owner_gid=$(/usr/bin/id -g)
-case "$format:$target" in
-  %u:%g:*/project) printf '%s:%s\n' "$owner_uid" "$owner_gid" ;;
-  %u:%g:%a:%h:*/project/backend/.env*|\
-  %u:%g:%a:%h:*/backend.env.before-qdrant-volume)
+case "$scenario:$format:$target" in
+  repository-owner-mismatch:%u:%g:*/project)
+    printf '%s:%s\n' "__D__((owner_uid + 1))" "$owner_gid"
+    ;;
+  *:%u:%g:*/project) printf '%s:%s\n' "$owner_uid" "$owner_gid" ;;
+  *:%u:%g:%a:%h:*/project/backend/.env*|\
+  *:%u:%g:%a:%h:*/backend.env.before-qdrant-volume)
     printf '%s:%s:600:1\n' "$owner_uid" "$owner_gid"
     ;;
-  %a:*/stateful-hardening.lock) printf '%s\n' 700 ;;
+  *:%a:*/stateful-hardening.lock) printf '%s\n' 700 ;;
   *%u:%g:%a*) printf '%s\n' 0:0:700 ;;
   *%u:%g*) printf '%s\n' 0:0 ;;
   *%a:%h*) printf '%s\n' 600:1 ;;
@@ -3961,6 +4209,24 @@ try {
       );
       assert.equal(run.githubTrustRemains, false, diagnostic(run));
       assertRollbackImagesRetainedOffline(run);
+      const focusedQdrantSource = run.runtimeContract.match(
+        /qdrant_source_commit=([0-9a-f]{40})\nqdrant_dockerfile_sha256=([0-9a-f]{64})\n/,
+      );
+      const focusedPlayerCommit = run.runtimeContract.match(/\nplayer_commit=([0-9a-f]{40})\n/);
+      assert.ok(focusedQdrantSource, diagnostic(run));
+      assert.ok(focusedPlayerCommit, diagnostic(run));
+      assert.equal(focusedQdrantSource[1], focusedPlayerCommit[1], diagnostic(run));
+      assert.equal(
+        focusedQdrantSource[2],
+        sha256(Buffer.from(qdrantDockerfileSource, 'utf8')),
+        diagnostic(run),
+      );
+      assert.match(
+        run.promotionManifest,
+        new RegExp(
+          `qdrant_source_commit=${focusedQdrantSource[1]}\\nqdrant_dockerfile_sha256=${focusedQdrantSource[2]}\\n`,
+        ),
+      );
     } else if (focusedCase === 'legacy-scan-calibration') {
       assertPreWriterScanStop(run);
       const qdrantCalibration = JSON.parse(run.qdrantScanCalibration);
@@ -4097,6 +4363,12 @@ try {
       } else if (focusedCase === 'github-identity-drift') {
         assert.match(run.result.stderr, /pipeline release must be the live official origin\/main commit/);
         assert.match(run.pipelineRemoteBoundary, /identity=dedicated/);
+      } else if (focusedCase === 'repository-owner-mismatch') {
+        assert.match(
+          run.result.stderr,
+          /player and pipeline repositories must share the validated non-root runtime owner/,
+        );
+        assert.equal(run.trustedGitLog, '', diagnostic(run));
       }
     } else if (focusedCase === 'qdrant-controller-timeout') {
       assertQdrantControllerTimeout(run);
@@ -4159,11 +4431,26 @@ const runtimeContractEntries = runtimeContractLines.map((line) => {
   return [line.slice(0, separator), line.slice(separator + 1)];
 });
 const runtimeContract = Object.fromEntries(runtimeContractEntries);
-assert.equal(runtimeContractLines.length, 21, diagnostic(success));
+assert.equal(runtimeContractLines.length, 23, diagnostic(success));
 assert.equal(Object.keys(runtimeContract).length, runtimeContractLines.length, diagnostic(success));
 assert.match(success.runtimeContract, /^schema=1\nstatus=completed\nrun=[^\n]+\n/);
 assert.equal(runtimeContract.qdrant_stable_tag, 'diva-player-qdrant:v1.19.0-hardened-r1');
 assert.equal(runtimeContract.qdrant_image_id, ids.qdrantImage);
+assert.equal(runtimeContract.qdrant_source_commit, runtimeContract.player_commit);
+assert.equal(
+  runtimeContract.qdrant_dockerfile_sha256,
+  sha256(Buffer.from(qdrantDockerfileSource, 'utf8')),
+);
+assert.match(
+  success.runtimeContract,
+  /qdrant_image_id=[^\n]+\nqdrant_source_commit=[0-9a-f]{40}\nqdrant_dockerfile_sha256=[0-9a-f]{64}\npostgres_image_reference=/,
+);
+assert.match(
+  success.promotionManifest,
+  new RegExp(
+    `qdrant_source_commit=${runtimeContract.player_commit}\\nqdrant_dockerfile_sha256=${runtimeContract.qdrant_dockerfile_sha256}\\n`,
+  ),
+);
 assert.equal(
   runtimeContract.postgres_image_reference,
   'diva-player-postgres:16.15-pgvector-0.8.6-hardened-r1',
@@ -4177,6 +4464,7 @@ assert.equal(runtimeContract.postgres_migrate_image_id, ids.postgresMigrateImage
 for (const digestField of [
   'qdrant_image_scan_receipt_sha256',
   'qdrant_audit_image_scan_receipt_sha256',
+  'qdrant_dockerfile_sha256',
   'postgres_image_scan_receipt_sha256',
   'postgres_migrate_image_scan_receipt_sha256',
   'postgres_dockerfile_sha256',

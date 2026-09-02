@@ -806,7 +806,9 @@ validate_stateful_runtime_contract() {
     local state_metadata contract_metadata state_uid state_gid
     local expected_keys actual_keys contract_digest compose_digest compose_digest_after
     local contract_qdrant_id contract_postgres_id contract_postgres_migrate_id
+    local contract_qdrant_source_commit contract_qdrant_dockerfile_sha256
     local observed_qdrant_id observed_postgres_id observed_postgres_migrate_id
+    local observed_qdrant_dockerfile_sha256
     local contract_player_commit current ancestor ancestor_metadata ancestor_uid ancestor_mode
 
     if [ ! -f "$STATEFUL_RUNTIME_CONTRACT" ] || [ -L "$STATEFUL_RUNTIME_CONTRACT" ]; then
@@ -860,6 +862,8 @@ status
 run
 qdrant_stable_tag
 qdrant_image_id
+qdrant_source_commit
+qdrant_dockerfile_sha256
 postgres_image_reference
 postgres_image_id
 postgres_migrate_image_reference
@@ -894,6 +898,8 @@ pipeline_commit'
             return 1
         }
     contract_qdrant_id=$(contract_value qdrant_image_id)
+    contract_qdrant_source_commit=$(contract_value qdrant_source_commit)
+    contract_qdrant_dockerfile_sha256=$(contract_value qdrant_dockerfile_sha256)
     contract_postgres_id=$(contract_value postgres_image_id)
     contract_postgres_migrate_id=$(contract_value postgres_migrate_image_id)
     contract_player_commit=$(contract_value player_commit)
@@ -906,6 +912,7 @@ pipeline_commit'
     done
     for contract_sha256 in "$(contract_value qdrant_image_scan_receipt_sha256)" \
         "$(contract_value qdrant_audit_image_scan_receipt_sha256)" \
+        "$contract_qdrant_dockerfile_sha256" \
         "$(contract_value postgres_image_scan_receipt_sha256)" \
         "$(contract_value postgres_migrate_image_scan_receipt_sha256)" \
         "$(contract_value postgres_dockerfile_sha256)" \
@@ -919,7 +926,8 @@ pipeline_commit'
                 return 1
             }
     done
-    for contract_commit in "$contract_player_commit" "$(contract_value pipeline_commit)"; do
+    for contract_commit in "$contract_player_commit" "$contract_qdrant_source_commit" \
+        "$(contract_value pipeline_commit)"; do
         printf '%s\n' "$contract_commit" | grep -Eq '^[0-9a-f]{40}$' || {
                 fail "Stateful runtime contract commit IDs are invalid"
                 return 1
@@ -928,6 +936,11 @@ pipeline_commit'
     if ! trusted_git merge-base --is-ancestor \
         "$contract_player_commit" "$GIT_COMMIT"; then
         fail "Stateful runtime contract player commit is not an ancestor of this release"
+        return 1
+    fi
+    if ! trusted_git merge-base --is-ancestor \
+        "$contract_qdrant_source_commit" "$GIT_COMMIT"; then
+        fail "Stateful runtime contract Qdrant source commit is not an ancestor of this release"
         return 1
     fi
     if [ ! -f "$COMPOSE_FILE" ] || [ -L "$COMPOSE_FILE" ]; then
@@ -952,6 +965,15 @@ pipeline_commit'
         fail "Stateful Docker image references drifted from the completed runtime contract"
         return 1
     fi
+    run_bounded_docker_query image inspect --format \
+        '{{index .Config.Labels "com.diva.qdrant.dockerfile-sha256"}}' \
+        "$contract_qdrant_id" || return 1
+    observed_qdrant_dockerfile_sha256=$DOCKER_QUERY_OUTPUT
+    if [ "$observed_qdrant_dockerfile_sha256" \
+        != "$contract_qdrant_dockerfile_sha256" ]; then
+        fail "Qdrant image Dockerfile provenance drifted from the completed runtime contract"
+        return 1
+    fi
     contract_digest=$(sha256sum "$STATEFUL_RUNTIME_CONTRACT" | awk '{print $1}') \
         || return 1
     compose_digest_after=$(stateful_compose_projection_sha256) || {
@@ -970,6 +992,10 @@ pipeline_commit'
     fi
     record_state "stateful_runtime_contract.sha256" "$contract_digest"
     record_state "stateful_runtime_contract.qdrant_image_id" "$contract_qdrant_id"
+    record_state "stateful_runtime_contract.qdrant_source_commit" \
+        "$contract_qdrant_source_commit"
+    record_state "stateful_runtime_contract.qdrant_dockerfile_sha256" \
+        "$contract_qdrant_dockerfile_sha256"
     record_state "stateful_runtime_contract.postgres_image_id" "$contract_postgres_id"
     record_state "stateful_runtime_contract.postgres_migrate_image_id" \
         "$contract_postgres_migrate_id"
