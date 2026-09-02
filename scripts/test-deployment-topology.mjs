@@ -692,7 +692,11 @@ assert.match(statefulHardening, /trivy-0\.74\.0/);
 assert.match(statefulHardening, /--scanners vuln/);
 assert.match(
   statefulHardening,
-  /\[ "\$architecture" = amd64 \] \|\| return 1\s+case "\$service:\$os_family" in\s+qdrant-runtime:debian\) printf '%s\\n' 'os-pkgs:debian:7:7:1'/u,
+  /if \[ "\$TEST_MODE" = "1" \]; then\s+case "\$architecture" in amd64\|arm64\) ;; \*\) return 1 ;; esac\s+else\s+\[ "\$architecture" = arm64 \] \|\| return 1\s+fi/u,
+);
+assert.match(
+  statefulHardening,
+  /qdrant-runtime:debian:amd64\|qdrant-runtime:debian:arm64\)\s+printf '%s\\n' 'os-pkgs:debian:7:7:1'/u,
 );
 assert.match(statefulHardening, /qdrant-rollback\|postgres-rollback\)\s*scan_exit_code=0/);
 assert.match(statefulHardening, /\*\)\s*scan_exit_code=1\s*allow_findings=0/);
