@@ -427,6 +427,97 @@ class UpgradeContractTests(unittest.TestCase):
         self.assertIn('(self.old["volume"], "/source", True)', clone)
         self.assertNotIn('(self.old["volume"], "/source", False)', clone)
 
+    def live_fingerprint_fixture(
+        self,
+        indexed_vectors_count: object,
+        *,
+        live_points_count: int = 768343,
+    ) -> tuple[object, object]:
+        hop = MODULE.HOPS[-1]
+        collection = "song_hybrid_active"
+        payload_schema = {"song_id": {"data_type": "integer"}}
+        stable_config = {
+            "onDiskPayload": True,
+            "replicationFactor": 1,
+            "shardNumber": 1,
+            "vectors": {
+                "audio": {"distance": "Cosine", "size": 768},
+                "metadata": {"distance": "Cosine", "size": 768},
+            },
+            "writeConsistencyFactor": 1,
+        }
+        controller = object.__new__(MODULE.UpgradeController)
+        controller.expected_fingerprint = {
+            "aliases": [["songs", collection]],
+            "collections": {
+                collection: {
+                    "pointsCount": 768343,
+                    "payloadSchema": payload_schema,
+                    **stable_config,
+                }
+            },
+        }
+        responses = {
+            "/": {"result": {"version": hop.version}},
+            "/collections": {"result": {"collections": [{"name": collection}]}},
+            "/aliases": {
+                "result": {
+                    "aliases": [
+                        {"alias_name": "songs", "collection_name": collection}
+                    ]
+                }
+            },
+            f"/collections/{collection}": {
+                "result": {
+                    "config": {
+                        "params": {
+                            "on_disk_payload": stable_config["onDiskPayload"],
+                            "replication_factor": stable_config["replicationFactor"],
+                            "shard_number": stable_config["shardNumber"],
+                            "vectors": stable_config["vectors"],
+                            "write_consistency_factor": stable_config[
+                                "writeConsistencyFactor"
+                            ],
+                        }
+                    },
+                    "indexed_vectors_count": indexed_vectors_count,
+                    "payload_schema": payload_schema,
+                    "points_count": live_points_count,
+                }
+            },
+        }
+        controller.probe_curl = lambda _image, path: json.dumps(responses[path])
+        return controller, hop
+
+    def test_live_fingerprint_accepts_nonnegative_multi_vector_index_counts(self) -> None:
+        for indexed_vectors_count in (1536452, 0, 384171):
+            with self.subTest(indexed_vectors_count=indexed_vectors_count):
+                controller, hop = self.live_fingerprint_fixture(indexed_vectors_count)
+                fingerprint = controller.live_fingerprint("sha256:" + "a" * 64, hop)
+                collection = fingerprint["collections"]["song_hybrid_active"]
+                self.assertEqual(collection["pointsCount"], 768343)
+                self.assertEqual(
+                    collection["indexedVectorsCount"], indexed_vectors_count
+                )
+
+    def test_live_fingerprint_rejects_invalid_index_count_types_and_sign(self) -> None:
+        for indexed_vectors_count in (-1, True, False, "1536452", None):
+            with self.subTest(indexed_vectors_count=indexed_vectors_count):
+                controller, hop = self.live_fingerprint_fixture(indexed_vectors_count)
+                with self.assertRaisesRegex(
+                    MODULE.UpgradeError, "indexed-vector invariant failed"
+                ):
+                    controller.live_fingerprint("sha256:" + "a" * 64, hop)
+
+    def test_live_fingerprint_still_rejects_other_logical_drift(self) -> None:
+        controller, hop = self.live_fingerprint_fixture(
+            1536452, live_points_count=768344
+        )
+        with self.assertRaisesRegex(
+            MODULE.UpgradeError, "logical collection fingerprint changed"
+        ):
+            controller.live_fingerprint("sha256:" + "a" * 64, hop)
+
     def test_candidate_ownership_is_fd_safe_separate_and_content_checked(self) -> None:
         ownership = SOURCE[
             SOURCE.index("    def chown_candidate_fd_safe("):

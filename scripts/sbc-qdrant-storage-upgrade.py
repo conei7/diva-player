@@ -1733,10 +1733,12 @@ printf 'structure=%s\nlogicalStructure=%s\ncontent=%s\nentries=%s\nnonRootOwned=
                 or stable_config != expected_stable_config
             ):
                 raise UpgradeError(f"logical collection fingerprint changed: {name}")
-            # Indexed count may legitimately finish optimization after clone,
-            # but may never exceed points or fall below its pre-upgrade value.
-            old_indexed = expected.get("indexedVectorsCount", 0)
-            if not isinstance(indexed, int) or indexed < old_indexed or indexed > points:
+            # This is a vector count, not a point count: named multi-vector
+            # collections can legitimately report more indexed vectors than
+            # points. Optimizer progress is also intentionally absent from the
+            # stable pre-upgrade fingerprint, so only its JSON type and lower
+            # bound are invariant here.
+            if isinstance(indexed, bool) or not isinstance(indexed, int) or indexed < 0:
                 raise UpgradeError(f"indexed-vector invariant failed: {name}")
             projected["collections"][name] = {
                 "pointsCount": points,
