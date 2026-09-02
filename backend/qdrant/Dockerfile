@@ -315,6 +315,20 @@ RUN set -eux; \
       [ ! -e "$target_root$source_link" ] && [ ! -L "$target_root$source_link" ]; \
       ln -s "$expected_target" "$target_root$source_link"; \
     }; \
+    verify_absent_lib64_reservation() { \
+      [ ! -e /lib64 ] && [ ! -L /lib64 ]; \
+      [ ! -e /usr/lib64 ] && [ ! -L /usr/lib64 ]; \
+      [ ! -e /.lib64.usr-is-merged ] && [ ! -L /.lib64.usr-is-merged ]; \
+      lib64_ownership=$(dpkg-query -S -- /lib64 2>/dev/null); \
+      [ "$(printf '%s\n' "$lib64_ownership" | wc -l | tr -d '[:space:]')" = 2 ]; \
+      [ "$(printf '%s\n' "$lib64_ownership" | grep -Fxc \
+        'diversion by base-files from: /lib64')" = 1 ]; \
+      [ "$(printf '%s\n' "$lib64_ownership" | grep -Fxc \
+        'diversion by base-files to: /.lib64.usr-is-merged')" = 1 ]; \
+      [ "$(dpkg-divert --listpackage /lib64)" = base-files ]; \
+      [ "$(dpkg-divert --truename /lib64)" = /.lib64.usr-is-merged ]; \
+      [ "$(dpkg-query -W -f='${Status}' base-files)" = 'install ok installed' ]; \
+    }; \
     write_package_inventory() { \
       package_list="$1"; target_root="$2"; manifest_name="$3"; \
       LC_ALL=C sort -u "$package_list" -o "$package_list"; \
@@ -368,7 +382,17 @@ RUN set -eux; \
           copy_library "$library" "$root" "$runtime_packages"; \
         done; \
     install_usrmerge_link /lib usr/lib "$root" "$runtime_packages"; \
-    install_usrmerge_link /lib64 usr/lib64 "$root" "$runtime_packages"; \
+    # Debian keeps /lib64 as a real usrmerge link on x86_64, while the pinned \
+    # arm64 base keeps only the base-files diversion reservation. \
+    if [ -e /lib64 ] || [ -L /lib64 ]; then \
+      install_usrmerge_link /lib64 usr/lib64 "$root" "$runtime_packages"; \
+      lib64_runtime_link=usr/lib64; \
+    else \
+      verify_absent_lib64_reservation; \
+      [ ! -e "$root/lib64" ] && [ ! -L "$root/lib64" ]; \
+      [ ! -e "$root/usr/lib64" ] && [ ! -L "$root/usr/lib64" ]; \
+      lib64_runtime_link=absent; \
+    fi; \
     interpreter=$(ldd /qdrant/qdrant \
       | awk '/^[[:space:]]*\/.*ld-linux/ { print $1; exit }'); \
     [ -n "$interpreter" ]; \
@@ -390,7 +414,7 @@ RUN set -eux; \
     (cd "$root" && sha256sum etc/ssl/certs/ca-certificates.crt | awk '{print $1}' \
       > usr/share/diva-qdrant/ca-certificates-bundle.sha256); \
     { \
-      printf '%s\n' '/lib=usr/lib' '/lib64=usr/lib64'; \
+      printf '%s\n' '/lib=usr/lib' "/lib64=$lib64_runtime_link"; \
       printf 'interpreter=%s\n' "$interpreter"; \
       printf 'resolved_interpreter=/%s\n' "${resolved_interpreter#"$root"/}"; \
     } > "$root/usr/share/diva-qdrant/runtime-links.txt"; \
@@ -408,7 +432,17 @@ RUN set -eux; \
     test ! -e "$root/qdrant/static"; \
     test ! -e "$root/bin/sh"; \
     test -L "$root/lib" && test "$(readlink "$root/lib")" = usr/lib; \
-    test -L "$root/lib64" && test "$(readlink "$root/lib64")" = usr/lib64; \
+    case "$lib64_runtime_link" in \
+      usr/lib64) \
+        test -L "$root/lib64" && test "$(readlink "$root/lib64")" = usr/lib64; \
+        test -d "$root/usr/lib64" && test ! -L "$root/usr/lib64"; \
+        ;; \
+      absent) \
+        test ! -e "$root/lib64" && test ! -L "$root/lib64"; \
+        test ! -e "$root/usr/lib64" && test ! -L "$root/usr/lib64"; \
+        ;; \
+      *) exit 1 ;; \
+    esac; \
     test -s "$root/var/lib/dpkg/status"; \
     test -s "$root/usr/share/diva-qdrant/runtime-packages.tsv"
 

@@ -6325,7 +6325,7 @@ case "$AUDIT_APK_ARCH" in
         ;;
     aarch64)
         expected_runtime_links=$(printf '%s\n' \
-            '/lib=usr/lib' '/lib64=usr/lib64' \
+            '/lib=usr/lib' '/lib64=absent' \
             'interpreter=/lib/ld-linux-aarch64.so.1' \
             'resolved_interpreter=/usr/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1')
         ;;

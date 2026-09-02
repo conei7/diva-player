@@ -354,7 +354,83 @@ assert.match(
   /\[ "\$\(readlink "\$audit\/bin\/sh"\)" = \/bin\/busybox \]/,
 );
 assert.match(qdrantDockerfileSource, /install_usrmerge_link \/lib usr\/lib/);
-assert.match(qdrantDockerfileSource, /install_usrmerge_link \/lib64 usr\/lib64/);
+const optionalLib64ReservationContract = qdrantDockerfileSource.slice(
+  qdrantDockerfileSource.indexOf('verify_absent_lib64_reservation() {'),
+  qdrantDockerfileSource.indexOf('    write_package_inventory() {'),
+);
+assert.match(
+  optionalLib64ReservationContract,
+  /\[ ! -e \/lib64 \] && \[ ! -L \/lib64 \]/,
+  'an absent /lib64 must not be a broken symlink',
+);
+assert.match(
+  optionalLib64ReservationContract,
+  /\[ ! -e \/usr\/lib64 \] && \[ ! -L \/usr\/lib64 \]/,
+  'an absent /lib64 layout must not retain its /usr target',
+);
+assert.match(
+  optionalLib64ReservationContract,
+  /\[ ! -e \/\.lib64\.usr-is-merged \] && \[ ! -L \/\.lib64\.usr-is-merged \]/,
+  'an absent /lib64 layout must not retain the diverted hidden sibling',
+);
+assert.match(
+  optionalLib64ReservationContract,
+  /diversion by base-files from: \/lib64[\s\S]*diversion by base-files to: \/\.lib64\.usr-is-merged/u,
+  'an absent /lib64 must retain the exact base-files reservation pair',
+);
+assert.match(
+  optionalLib64ReservationContract,
+  /dpkg-divert --listpackage \/lib64\)" = base-files[\s\S]*dpkg-divert --truename \/lib64\)" = \/\.lib64\.usr-is-merged/u,
+  'the absent reservation must agree with dpkg-divert owner and truename',
+);
+assert.doesNotMatch(
+  optionalLib64ReservationContract,
+  /record_(?:named_)?package/,
+  'a reservation without copied content must not enter the runtime package inventory',
+);
+
+const optionalLib64MaterializationContract = qdrantDockerfileSource.slice(
+  qdrantDockerfileSource.indexOf('install_usrmerge_link /lib usr/lib'),
+  qdrantDockerfileSource.indexOf('    interpreter=$(ldd /qdrant/qdrant'),
+);
+assert.match(
+  optionalLib64MaterializationContract,
+  /if \[ -e \/lib64 \] \|\| \[ -L \/lib64 \]; then[\s\S]*install_usrmerge_link \/lib64 usr\/lib64[\s\S]*lib64_runtime_link=usr\/lib64;[\s\S]*else[\s\S]*verify_absent_lib64_reservation[\s\S]*lib64_runtime_link=absent;/u,
+  '/lib64 materialization must distinguish an exact link from an exact reservation-only layout',
+);
+assert.match(
+  qdrantDockerfileSource,
+  /printf '%s\\n' '\/lib=usr\/lib' "\/lib64=\$lib64_runtime_link"/,
+  'runtime link evidence must encode the selected /lib64 layout',
+);
+const finalLib64LayoutContract = qdrantDockerfileSource.slice(
+  qdrantDockerfileSource.indexOf('case "$lib64_runtime_link" in'),
+  qdrantDockerfileSource.indexOf('    test -s "$root/var/lib/dpkg/status"'),
+);
+assert.match(
+  finalLib64LayoutContract,
+  /usr\/lib64\)[\s\S]*test -L "\$root\/lib64"[\s\S]*test -d "\$root\/usr\/lib64" && test ! -L "\$root\/usr\/lib64"/u,
+  'the linked scratch layout must retain one symlink and one real target directory',
+);
+assert.match(
+  finalLib64LayoutContract,
+  /absent\)[\s\S]*test ! -e "\$root\/lib64" && test ! -L "\$root\/lib64";[\s\S]*test ! -e "\$root\/usr\/lib64" && test ! -L "\$root\/usr\/lib64"/u,
+  'the reservation-only scratch layout must retain neither link nor target',
+);
+const runtimeLinkArchitectureContract = hardeningSource.slice(
+  hardeningSource.indexOf('qdrant_runtime_links_sha=$(sha256sum'),
+  hardeningSource.indexOf('run_bounded_docker_mutation rm "$qdrant_audit_id"'),
+);
+assert.match(
+  runtimeLinkArchitectureContract,
+  /x86_64\)[\s\S]*'\/lib=usr\/lib' '\/lib64=usr\/lib64'[\s\S]*interpreter=\/lib64\/ld-linux-x86-64\.so\.2/u,
+  'x86_64 runtime evidence must retain its required /lib64 link',
+);
+assert.match(
+  runtimeLinkArchitectureContract,
+  /aarch64\)[\s\S]*'\/lib=usr\/lib' '\/lib64=absent'[\s\S]*interpreter=\/lib\/ld-linux-aarch64\.so\.1/u,
+  'aarch64 runtime evidence must require the reservation-only /lib64 layout',
+);
 assert.doesNotMatch(qdrantDockerfileSource, /record_package "\$source_target"/);
 assert.match(
   qdrantDockerfileSource,
