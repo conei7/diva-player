@@ -51,6 +51,54 @@ class UpgradeContractTests(unittest.TestCase):
             },
         }
 
+    def test_volume_inspect_treats_exact_lowercase_engine_absence_as_missing(self) -> None:
+        volume = "diva_qdrant_candidate_20260902T112002Z-1063826"
+
+        class MissingVolumeRunner:
+            def __init__(self, detail: str) -> None:
+                self.detail = detail
+
+            def docker_read(self, *arguments: str) -> str:
+                self.arguments = arguments
+                raise MODULE.UpgradeError(
+                    f"command failed (1): /usr/bin/docker: {self.detail}"
+                )
+
+        absences = (
+            f"Error response from daemon: get {volume}: no such volume",
+            f"Error response from daemon: No such volume: {volume}",
+            f"Error: No such volume: {volume}",
+        )
+        for detail in absences:
+            runner = MissingVolumeRunner(detail)
+            with self.subTest(detail=detail):
+                self.assertIsNone(MODULE.inspect_one(runner, "volume", volume))
+                self.assertEqual(runner.arguments, ("volume", "inspect", volume))
+
+    def test_volume_inspect_does_not_hide_unbound_lowercase_errors(self) -> None:
+        volume = "diva_qdrant_candidate_20260902T112002Z-1063826"
+
+        class FailingRunner:
+            def __init__(self, detail: str) -> None:
+                self.detail = detail
+
+            def docker_read(self, *_arguments: str) -> str:
+                raise MODULE.UpgradeError(
+                    f"command failed (1): /usr/bin/docker: {self.detail}"
+                )
+
+        failures = (
+            "Error response from daemon: get another_volume: no such volume",
+            "exec /usr/bin/docker: no such file or directory",
+            "exec /usr/bin/docker: No such file or directory",
+            "Error response from daemon: endpoint not found",
+            "Error response from daemon: No such volume: another_volume",
+            "Error: No such volume: DIVA_QDRANT_CANDIDATE_20260902T112002Z-1063826",
+        )
+        for detail in failures:
+            with self.subTest(detail=detail), self.assertRaises(MODULE.UpgradeError):
+                MODULE.inspect_one(FailingRunner(detail), "volume", volume)
+
     def test_standalone_process_boundary_is_root_only_and_rejects_docker_routing(self) -> None:
         for key in (
             "DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_CERT_PATH", "DOCKER_TLS_VERIFY",

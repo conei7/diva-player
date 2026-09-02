@@ -567,7 +567,17 @@ def inspect_one(runner: Runner, kind: str, reference: str) -> dict[str, Any] | N
     except UpgradeError as error:
         # Only a conclusive Docker 'not found' is absence.  Daemon/read errors
         # remain fatal and preserve the journal.
-        if "No such" in str(error) or "not found" in str(error).lower():
+        detail = str(error)
+        if kind == "volume":
+            exact_absence_suffixes = (
+                f"Error response from daemon: get {reference}: no such volume",
+                f"Error response from daemon: No such volume: {reference}",
+                f"Error: No such volume: {reference}",
+            )
+            if any(detail.endswith(suffix) for suffix in exact_absence_suffixes):
+                return None
+            raise
+        if "No such" in detail or "not found" in detail.lower():
             return None
         raise
     document = json.loads(raw)
