@@ -51,6 +51,38 @@ class UpgradeContractTests(unittest.TestCase):
             },
         }
 
+    def test_helper_capabilities_accept_exact_docker_engine_name_formats(self) -> None:
+        expected = ("CHOWN", "DAC_OVERRIDE")
+        for capabilities in (
+            ["CHOWN", "DAC_OVERRIDE"],
+            ["CAP_CHOWN", "CAP_DAC_OVERRIDE"],
+            ["CAP_DAC_OVERRIDE", "CHOWN"],
+        ):
+            with self.subTest(capabilities=capabilities):
+                self.assertTrue(
+                    MODULE.has_exact_linux_capabilities(capabilities, expected)
+                )
+
+    def test_helper_capabilities_reject_ambiguous_or_expanded_inventory(self) -> None:
+        expected = ("CHOWN", "DAC_OVERRIDE")
+        for capabilities in (
+            None,
+            "CAP_CHOWN",
+            {},
+            [],
+            ["CAP_CHOWN"],
+            ["CAP_CHOWN", "CAP_DAC_OVERRIDE", "CAP_SYS_ADMIN"],
+            ["CHOWN", "CAP_CHOWN", "DAC_OVERRIDE"],
+            ["CAP_", "CAP_DAC_OVERRIDE"],
+            ["CAP_CAP_CHOWN", "CAP_DAC_OVERRIDE"],
+            ["cap_chown", "CAP_DAC_OVERRIDE"],
+            [1, "CAP_DAC_OVERRIDE"],
+        ):
+            with self.subTest(capabilities=capabilities):
+                self.assertFalse(
+                    MODULE.has_exact_linux_capabilities(capabilities, expected)
+                )
+
     def test_volume_inspect_treats_exact_lowercase_engine_absence_as_missing(self) -> None:
         volume = "diva_qdrant_candidate_20260902T112002Z-1063826"
 

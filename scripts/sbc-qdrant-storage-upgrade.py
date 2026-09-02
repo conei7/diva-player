@@ -110,6 +110,31 @@ class UpgradeError(RuntimeError):
     """Fail-closed upgrade error."""
 
 
+def has_exact_linux_capabilities(value: Any, expected: Sequence[str]) -> bool:
+    """Compare Docker capability inventories across Engine name formats.
+
+    Docker 29 reports added capabilities with the kernel-style ``CAP_`` prefix,
+    while older Engines returned the same capabilities without it.  Normalize
+    only that exact prefix and still reject malformed, duplicate, missing, or
+    additional capabilities.
+    """
+    if not isinstance(value, list):
+        return False
+    normalized: list[str] = []
+    for capability in value:
+        if not isinstance(capability, str):
+            return False
+        if capability.startswith("CAP_"):
+            capability = capability[4:]
+        if re.fullmatch(r"[A-Z][A-Z0-9_]*", capability) is None:
+            return False
+        normalized.append(capability)
+    return (
+        len(normalized) == len(set(normalized))
+        and sorted(normalized) == sorted(expected)
+    )
+
+
 @dataclasses.dataclass(frozen=True)
 class StandaloneBoundary:
     """Privilege and state-root boundary established before argument parsing."""
@@ -951,7 +976,9 @@ class UpgradeController:
                 or host.get("NetworkMode") != "none"
                 or host.get("ReadonlyRootfs") is not True
                 or sorted(host.get("CapDrop") or []) != ["ALL"]
-                or sorted(host.get("CapAdd") or []) != ["CHOWN", "DAC_OVERRIDE"]
+                or not has_exact_linux_capabilities(
+                    host.get("CapAdd"), ("CHOWN", "DAC_OVERRIDE")
+                )
                 or host.get("SecurityOpt") not in (
                     ["no-new-privileges"], ["no-new-privileges=true"],
                     ["no-new-privileges:true"],
