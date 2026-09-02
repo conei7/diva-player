@@ -3453,8 +3453,7 @@ verify_candidate_api_semantics() {
         [ "$(container_image_id "$container")" = "$expected_image" ] || return 1
         output="$RUN_DIR/qdrant-$phase-$slot-semantic.json"
         [ ! -e "$output" ] && [ ! -L "$output" ] || return 1
-        run_bounded_docker_read exec "$container" curl -fsS --connect-timeout 2 \
-            --max-time 60 \
+        run_bounded_docker_read exec "$container" /bin/busybox wget -q -T 60 -O - \
             "http://127.0.0.1:5000/api/recommend/similar?songId=$API_BRIDGE_SEED_SONG_ID&count=5" \
             > "$output" || return 1
         chmod 600 "$output" || return 1

@@ -110,6 +110,10 @@ class UpgradeError(RuntimeError):
     """Fail-closed upgrade error."""
 
 
+class ProbeTransportError(UpgradeError):
+    """The attested API probe image cannot execute its HTTP transport."""
+
+
 def has_exact_linux_capabilities(value: Any, expected: Sequence[str]) -> bool:
     """Compare Docker capability inventories across Engine name formats.
 
@@ -1618,16 +1622,14 @@ printf 'structure=%s\nlogicalStructure=%s\ncontent=%s\nentries=%s\nnonRootOwned=
         )
         return self._ensure_upgrade_container(f"hop.{hop.key}.start", name, image_id, command)
 
-    def probe_curl(self, probe_image: str, path: str, *, method: str = "GET", body: str | None = None) -> str:
+    def probe_http(self, probe_image: str, path: str) -> str:
         sequence = self.journal.document.get("probeSequence", 0)
         if not isinstance(sequence, int) or sequence < 0 or sequence >= 10000:
             raise UpgradeError("probe sequence is invalid or exhausted")
         sequence += 1
         self.journal.document["probeSequence"] = sequence
         self.journal._commit()
-        probe_identity = (
-            f"{sequence}\0{self.journal.document['phase']}\0{method}\0{path}\0{body or ''}"
-        )
+        probe_identity = f"{sequence}\0{self.journal.document['phase']}\0GET\0{path}"
         name = require_name(
             f"diva_qprobe_{self.arguments.run_id}_{hashlib.sha256(probe_identity.encode()).hexdigest()[:12]}",
             "probe",
@@ -1640,11 +1642,9 @@ printf 'structure=%s\nlogicalStructure=%s\ncontent=%s\nentries=%s\nnonRootOwned=
         command = [
             "run", "--name", name, "--network", self.network, "--read-only",
             "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
-            "--entrypoint", "curl", probe_image, "-fsS", "--connect-timeout", "2",
-            "--max-time", "30", "-X", method,
+            "--entrypoint", "/bin/busybox", probe_image,
+            "wget", "-q", "-T", "30", "-O", "-",
         ]
-        if body is not None:
-            command.extend(("-H", "content-type: application/json", "--data-binary", body))
         command.append(f"http://qdrant-upgrade:6333{path}")
         key = f"probe.{name}"
         self.journal.intent(key, "probe-run", name, (self.arguments.docker, *command))
@@ -1679,22 +1679,30 @@ printf 'structure=%s\nlogicalStructure=%s\ncontent=%s\nentries=%s\nnonRootOwned=
         if container_by_name(self.runner, name) is not None:
             raise UpgradeError("probe container removal did not stabilize")
         self.journal.receipt(remove_key, {"containerId": item["Id"], "absent": True})
+        if exit_code in (126, 127):
+            # These statuses cannot be Qdrant warm-up: the probe image could
+            # not execute its fixed BusyBox transport.  Retrying would only
+            # grow the durable journal until the health deadline, so preserve
+            # the completed probe evidence and fail the upgrade immediately.
+            raise ProbeTransportError(
+                f"Qdrant internal probe transport is unavailable (exit {exit_code})"
+            ) from command_error
         if exit_code != 0 or command_error is not None:
             raise UpgradeError(f"Qdrant internal probe failed with exit {exit_code}") from command_error
         return output
 
     def live_fingerprint(self, probe_image: str, hop: Hop) -> dict[str, Any]:
-        root = json.loads(self.probe_curl(probe_image, "/"))
+        root = json.loads(self.probe_http(probe_image, "/"))
         version = str((((root.get("result") or {}).get("version")) or root.get("version") or ""))
         if version != hop.version:
             raise UpgradeError(f"Qdrant hop reported wrong version: {version!r} != {hop.version}")
-        collections_payload = json.loads(self.probe_curl(probe_image, "/collections"))
+        collections_payload = json.loads(self.probe_http(probe_image, "/collections"))
         rows = ((collections_payload.get("result") or {}).get("collections") or [])
         names = sorted(row.get("name") for row in rows if isinstance(row, dict))
         expected_names = sorted(self.expected_fingerprint["collections"])
         if names != expected_names:
             raise UpgradeError("collection inventory changed during Qdrant upgrade")
-        aliases_payload = json.loads(self.probe_curl(probe_image, "/aliases"))
+        aliases_payload = json.loads(self.probe_http(probe_image, "/aliases"))
         aliases = sorted(
             (row.get("alias_name"), row.get("collection_name"))
             for row in ((aliases_payload.get("result") or {}).get("aliases") or [])
@@ -1710,7 +1718,7 @@ printf 'structure=%s\nlogicalStructure=%s\ncontent=%s\nentries=%s\nnonRootOwned=
             raise UpgradeError("alias topology changed during Qdrant upgrade")
         projected: dict[str, Any] = {"version": version, "collections": {}, "aliases": aliases}
         for name in names:
-            payload = json.loads(self.probe_curl(probe_image, f"/collections/{name}"))
+            payload = json.loads(self.probe_http(probe_image, f"/collections/{name}"))
             result = payload.get("result") or {}
             expected = self.expected_fingerprint["collections"][name]
             points = result.get("points_count")
@@ -1747,6 +1755,17 @@ printf 'structure=%s\nlogicalStructure=%s\ncontent=%s\nentries=%s\nnonRootOwned=
                 **stable_config,
             }
         return projected
+
+    def wait_for_live_fingerprint(self, probe_image: str, hop: Hop) -> dict[str, Any]:
+        deadline = time.monotonic() + self.arguments.health_timeout
+        while time.monotonic() < deadline:
+            try:
+                return self.live_fingerprint(probe_image, hop)
+            except ProbeTransportError:
+                raise
+            except (UpgradeError, json.JSONDecodeError):
+                time.sleep(2)
+        raise UpgradeError(f"Qdrant hop did not become semantically ready: {hop.version}")
 
     def start_hardened_final(self, image_id: str) -> dict[str, Any]:
         name = require_name(f"diva_qfinal_{self.arguments.run_id}", "hardened final container")
@@ -1907,16 +1926,7 @@ printf 'structure=%s\nlogicalStructure=%s\ncontent=%s\nentries=%s\nnonRootOwned=
             if self.reconcile_validated_hop(hop, image_ids[hop.version]):
                 continue
             hop_container = self.start_hop(hop, image_ids[hop.version])
-            deadline = time.monotonic() + self.arguments.health_timeout
-            fingerprint: dict[str, Any] | None = None
-            while time.monotonic() < deadline:
-                try:
-                    fingerprint = self.live_fingerprint(probe_image, hop)
-                    break
-                except (UpgradeError, json.JSONDecodeError):
-                    time.sleep(2)
-            if fingerprint is None:
-                raise UpgradeError(f"Qdrant hop did not become semantically ready: {hop.version}")
+            fingerprint = self.wait_for_live_fingerprint(probe_image, hop)
             assert_old_identity(self.runner, self.old, require_stopped=True)
             receipt_key = f"hop.{hop.key}.validated"
             self.journal.intent(

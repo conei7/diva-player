@@ -415,7 +415,7 @@ class UpgradeContractTests(unittest.TestCase):
             MODULE.require_image_id("sha256:" + "g" * 64, "test")
 
     def test_upgrade_hops_have_no_public_port_or_implicit_cleanup(self) -> None:
-        start_hop = SOURCE[SOURCE.index("    def start_hop("):SOURCE.index("    def probe_curl(")]
+        start_hop = SOURCE[SOURCE.index("    def start_hop("):SOURCE.index("    def probe_http(")]
         self.assertIn('"--network", self.network', start_hop)
         self.assertIn('"--restart", "no"', start_hop)
         self.assertNotIn("--publish", start_hop)
@@ -426,6 +426,238 @@ class UpgradeContractTests(unittest.TestCase):
         ]
         self.assertIn('(self.old["volume"], "/source", True)', clone)
         self.assertNotIn('(self.old["volume"], "/source", False)', clone)
+
+    def test_probe_uses_the_exact_api_busybox_wget_transport(self) -> None:
+        output = '{"result":{"version":"1.10.1"}}\n'
+        container_id = "f" * 64
+        probe_image = "sha256:" + "d" * 64
+
+        class ProbeJournal:
+            def __init__(self) -> None:
+                self.document = {"phase": "hop-1.10.1", "probeSequence": 0}
+                self.intents: list[tuple] = []
+                self.receipts: list[tuple] = []
+
+            def _commit(self) -> None:
+                return None
+
+            def intent(self, *arguments: object) -> None:
+                self.intents.append(arguments)
+
+            def receipt(self, *arguments: object) -> None:
+                self.receipts.append(arguments)
+
+        class ProbeRunner:
+            def __init__(self) -> None:
+                self.mutations: list[tuple[str, ...]] = []
+                self.reads: list[tuple[str, ...]] = []
+
+            def docker_mutation(self, *arguments: str) -> str:
+                self.mutations.append(arguments)
+                return output if arguments[0] == "run" else ""
+
+            def docker_read(self, *arguments: str) -> str:
+                self.reads.append(arguments)
+                if arguments[0] == "logs":
+                    return output
+                raise AssertionError(f"unexpected Docker read: {arguments!r}")
+
+        journal = ProbeJournal()
+        runner = ProbeRunner()
+        controller = object.__new__(MODULE.UpgradeController)
+        controller.arguments = types.SimpleNamespace(
+            docker="/usr/bin/docker", run_id="20260831T010203Z-123"
+        )
+        controller.network = "diva_qdrant_upgrade_20260831T010203Z-123"
+        controller.journal = journal
+        controller.runner = runner
+        probe_identity = "1\0hop-1.10.1\0GET\0/collections"
+        probe_name = (
+            "diva_qprobe_20260831T010203Z-123_"
+            + MODULE.hashlib.sha256(probe_identity.encode()).hexdigest()[:12]
+        )
+        item = {"Id": container_id, "State": {"Running": False, "ExitCode": 0}}
+
+        with mock.patch.object(
+            MODULE, "container_by_name", side_effect=(None, item, None)
+        ):
+            self.assertEqual(
+                controller.probe_http(probe_image, "/collections"), output
+            )
+
+        expected_run = (
+            "run", "--name", probe_name,
+            "--network", controller.network,
+            "--read-only", "--cap-drop", "ALL",
+            "--security-opt", "no-new-privileges",
+            "--entrypoint", "/bin/busybox", probe_image,
+            "wget", "-q", "-T", "30", "-O", "-",
+            "http://qdrant-upgrade:6333/collections",
+        )
+        self.assertEqual(runner.mutations, [expected_run, ("rm", container_id)])
+        self.assertEqual(runner.reads, [("logs", container_id)])
+        self.assertEqual(journal.intents[0][3], ("/usr/bin/docker", *expected_run))
+        self.assertNotIn("curl", expected_run)
+
+    def test_probe_transport_exit_126_and_127_are_terminal_after_evidence_cleanup(self) -> None:
+        for exit_code in (126, 127):
+            with self.subTest(exit_code=exit_code):
+                container_id = "e" * 64
+                timeline: list[tuple[object, ...]] = []
+
+                class ProbeJournal:
+                    def __init__(self) -> None:
+                        self.document = {"phase": "hop-1.10.1", "probeSequence": 0}
+                        self.receipt_keys: list[str] = []
+
+                    def _commit(self) -> None:
+                        return None
+
+                    def intent(
+                        self,
+                        key: str,
+                        _operation: str,
+                        _target: str,
+                        command: tuple[str, ...],
+                    ) -> None:
+                        if key.endswith(".remove"):
+                            timeline.append(("remove-intent", key, command))
+
+                    def receipt(self, key: str, observed: object) -> None:
+                        self.receipt_keys.append(key)
+                        event = (
+                            "absence-receipt"
+                            if key.endswith(".remove")
+                            else "probe-receipt"
+                        )
+                        timeline.append((event, key, observed))
+
+                class ProbeRunner:
+                    def __init__(self) -> None:
+                        self.mutations: list[tuple[str, ...]] = []
+
+                    def docker_mutation(self, *arguments: str) -> str:
+                        self.mutations.append(arguments)
+                        if arguments[0] == "run":
+                            raise MODULE.UpgradeError(
+                                f"command failed ({exit_code}): /usr/bin/docker"
+                            )
+                        timeline.append(("exact-rm", arguments))
+                        return ""
+
+                    def docker_read(self, *arguments: str) -> str:
+                        self.assert_logs(arguments)
+                        return ""
+
+                    @staticmethod
+                    def assert_logs(arguments: tuple[str, ...]) -> None:
+                        if arguments != ("logs", container_id):
+                            raise AssertionError(f"unexpected Docker read: {arguments!r}")
+
+                controller = object.__new__(MODULE.UpgradeController)
+                controller.arguments = types.SimpleNamespace(
+                    docker="/usr/bin/docker", run_id="20260831T010203Z-123"
+                )
+                controller.network = "diva_qdrant_upgrade_20260831T010203Z-123"
+                controller.journal = ProbeJournal()
+                controller.runner = ProbeRunner()
+                item = {
+                    "Id": container_id,
+                    "State": {"Running": False, "ExitCode": exit_code},
+                }
+
+                with mock.patch.object(
+                    MODULE, "container_by_name", side_effect=(None, item, None)
+                ):
+                    try:
+                        controller.probe_http(
+                            "sha256:" + "d" * 64, "/collections"
+                        )
+                    except MODULE.ProbeTransportError as error:
+                        self.assertRegex(
+                            str(error),
+                            f"transport is unavailable \\(exit {exit_code}\\)",
+                        )
+                        timeline.append(("ProbeTransportError", exit_code))
+                    else:
+                        self.fail("probe transport failure did not escape immediately")
+
+                probe_key = controller.journal.receipt_keys[0]
+                self.assertEqual(
+                    controller.journal.receipt_keys,
+                    [probe_key, probe_key + ".remove"],
+                )
+                self.assertEqual(
+                    controller.runner.mutations[-1], ("rm", container_id)
+                )
+                self.assertEqual(
+                    timeline,
+                    [
+                        (
+                            "probe-receipt",
+                            probe_key,
+                            {
+                                "containerId": container_id,
+                                "outputSha256": MODULE.sha256_bytes(b""),
+                                "exitCode": exit_code,
+                            },
+                        ),
+                        (
+                            "remove-intent",
+                            probe_key + ".remove",
+                            ("/usr/bin/docker", "rm", container_id),
+                        ),
+                        ("exact-rm", ("rm", container_id)),
+                        (
+                            "absence-receipt",
+                            probe_key + ".remove",
+                            {"containerId": container_id, "absent": True},
+                        ),
+                        ("ProbeTransportError", exit_code),
+                    ],
+                )
+
+    def test_probe_transport_failure_bypasses_the_health_retry_loop(self) -> None:
+        controller = object.__new__(MODULE.UpgradeController)
+        controller.arguments = types.SimpleNamespace(health_timeout=7200)
+        controller.live_fingerprint = mock.Mock(
+            side_effect=MODULE.ProbeTransportError("missing BusyBox transport")
+        )
+        with mock.patch.object(
+            MODULE.time, "monotonic", side_effect=(100.0, 100.0)
+        ), mock.patch.object(MODULE.time, "sleep") as sleep, self.assertRaises(
+            MODULE.ProbeTransportError
+        ):
+            controller.wait_for_live_fingerprint(
+                "sha256:" + "d" * 64, MODULE.HOPS[0]
+            )
+        controller.live_fingerprint.assert_called_once()
+        sleep.assert_not_called()
+
+    def test_retryable_probe_failures_sleep_once_then_return_the_fingerprint(self) -> None:
+        expected = {"version": MODULE.HOPS[0].version, "collections": {}}
+        failures = (
+            ("upgrade", MODULE.UpgradeError("Qdrant is still starting")),
+            ("json", json.JSONDecodeError("incomplete response", "{", 1)),
+        )
+        for label, failure in failures:
+            with self.subTest(failure=label):
+                controller = object.__new__(MODULE.UpgradeController)
+                controller.arguments = types.SimpleNamespace(health_timeout=30)
+                controller.live_fingerprint = mock.Mock(
+                    side_effect=(failure, expected)
+                )
+                with mock.patch.object(
+                    MODULE.time,
+                    "monotonic",
+                    side_effect=(100.0, 100.0, 102.0),
+                ), mock.patch.object(MODULE.time, "sleep") as sleep:
+                    result = controller.wait_for_live_fingerprint(
+                        "sha256:" + "d" * 64, MODULE.HOPS[0]
+                    )
+                self.assertIs(result, expected)
+                self.assertEqual(controller.live_fingerprint.call_count, 2)
+                sleep.assert_called_once_with(2)
 
     def live_fingerprint_fixture(
         self,
@@ -486,7 +718,7 @@ class UpgradeContractTests(unittest.TestCase):
                 }
             },
         }
-        controller.probe_curl = lambda _image, path: json.dumps(responses[path])
+        controller.probe_http = lambda _image, path: json.dumps(responses[path])
         return controller, hop
 
     def test_live_fingerprint_accepts_nonnegative_multi_vector_index_counts(self) -> None:

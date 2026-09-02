@@ -4077,6 +4077,25 @@ function diagnostic(run) {
   }, null, 2);
 }
 
+function assertApiSemanticTransport(run) {
+  for (const containerId of ['3'.repeat(64), '5'.repeat(64)]) {
+    const semanticProbe = [
+      'exec', containerId, '/bin/busybox', 'wget', '-q', '-T', '60', '-O', '-',
+      'http://127.0.0.1:5000/api/recommend/similar?songId=42&count=5',
+    ].join(' ');
+    assert.equal(
+      run.dockerLog.split('\n').filter(line => line === semanticProbe).length,
+      2,
+      diagnostic(run),
+    );
+  }
+  assert.doesNotMatch(
+    run.dockerLog,
+    /^exec [35]{64} curl /m,
+    diagnostic(run),
+  );
+}
+
 function assertExactOldTopology(run, { postgres = true } = {}) {
   assert.equal(run.containers.vocadb_qdrant, ids.oldQdrant, diagnostic(run));
   if (postgres) assert.equal(run.containers.vocadb_postgres, ids.oldPostgres, diagnostic(run));
@@ -4271,6 +4290,7 @@ try {
     if (focusedCase === 'success') {
       assert.equal(run.result.status, 0, diagnostic(run));
       assert.equal(run.runDirectoryExists, true, diagnostic(run));
+      assertApiSemanticTransport(run);
       assert.match(run.trustedGitLog, /safe\.directory=.*project/);
       assert.match(run.trustedGitLog, /safe\.directory=.*pipeline/);
       assert.equal(
@@ -4573,6 +4593,7 @@ assert.match(success.runtimeContract, /promotion_manifest_sha256=[0-9a-f]{64}\n/
 assert.match(success.runtimeContract, /player_commit=[0-9a-f]{40}\npipeline_commit=[0-9a-f]{40}\n$/);
 assert.doesNotMatch(success.dockerLog, new RegExp(`rm(?: -f)? ${ids.promotedQdrant}`));
 assert.doesNotMatch(success.dockerLog, new RegExp(`rm(?: -f)? ${ids.promotedPostgres}`));
+assertApiSemanticTransport(success);
 
 const ephemeralCacheChange = await runScenario('postgres-ephemeral-cache-change');
 assert.equal(ephemeralCacheChange.result.status, 0, diagnostic(ephemeralCacheChange));
