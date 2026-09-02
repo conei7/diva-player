@@ -4879,6 +4879,63 @@ apply_gateway_image() {
     if [ "$old_gateway_image" = "$new_gateway_image" ] \
         && [ -n "$old_config_hash" ] \
         && [ "$old_config_hash" = "$CANDIDATE_CONFIG_HASH" ]; then
+        if ! current_id=$(container_id "$GATEWAY_CONTAINER"); then
+            fail "Unchanged gateway identity could not be re-read"
+            return 1
+        fi
+        if [ -z "$current_id" ] \
+            || [ "$current_id" != "$OLD_GATEWAY_CONTAINER_ID" ]; then
+            mark_topology_drift_unresolved \
+                "gateway-unchanged-expected-$OLD_GATEWAY_CONTAINER_ID-observed-${current_id:-absent}"
+            fail "Unchanged gateway identity drifted after candidate validation"
+            return 1
+        fi
+        current_image=$(container_inspect_value "$current_id" '{{.Image}}') || {
+            fail "Unchanged gateway image could not be re-read"
+            return 1
+        }
+        current_config=$(container_inspect_value "$current_id" \
+            '{{index .Config.Labels "com.docker.compose.config-hash"}}') || {
+            fail "Unchanged gateway config hash could not be re-read"
+            return 1
+        }
+        if [ "$current_image" != "$old_gateway_image" ] \
+            || [ "$current_image" != "$new_gateway_image" ] \
+            || [ "$current_image" != "$CANDIDATE_GATEWAY_IMAGE_ID" ] \
+            || [ "$current_config" != "$old_config_hash" ] \
+            || [ "$current_config" != "$CANDIDATE_CONFIG_HASH" ]; then
+            mark_topology_drift_unresolved "gateway-unchanged-runtime-contract-drift"
+            fail "Unchanged gateway image/config drifted after candidate validation"
+            return 1
+        fi
+        if ! require_exact_running_mapping \
+            "$GATEWAY_CONTAINER" "$OLD_GATEWAY_CONTAINER_ID" \
+            || ! wait_healthy "$current_id" \
+            || ! wait_container_mapping "$GATEWAY_CONTAINER" "$current_id"; then
+            mark_topology_drift_unresolved \
+                "gateway-unchanged-exact-container-not-stable"
+            fail "Unchanged gateway did not remain healthy at its exact identity"
+            return 1
+        fi
+        current_image=$(container_inspect_value "$current_id" '{{.Image}}') || {
+            fail "Unchanged gateway image could not be revalidated"
+            return 1
+        }
+        current_config=$(container_inspect_value "$current_id" \
+            '{{index .Config.Labels "com.docker.compose.config-hash"}}') || {
+            fail "Unchanged gateway config hash could not be revalidated"
+            return 1
+        }
+        if [ "$current_image" != "$CANDIDATE_GATEWAY_IMAGE_ID" ] \
+            || [ "$current_config" != "$CANDIDATE_CONFIG_HASH" ]; then
+            mark_topology_drift_unresolved \
+                "gateway-unchanged-runtime-contract-post-readiness-drift"
+            fail "Unchanged gateway image/config changed during readiness"
+            return 1
+        fi
+        NEW_GATEWAY_CONTAINER_ID="$current_id"
+        PUBLISHED_GATEWAY_ID="$current_id"
+        record_state "gateway.unchanged_container_id" "$current_id"
         record_state "gateway.update" "unchanged"
         return 0
     fi

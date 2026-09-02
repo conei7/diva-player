@@ -506,7 +506,11 @@ if [ "$1" = "image" ]; then
                         && [ "$image" = __NEW_API_ID__ ]; } \
                         || { [ "__DOLLAR__{FAKE_FAIL_STAGE:-}" = published_platform ] \
                             && [ -f "$fake_root/published-platform-active" ] \
-                            && [ "$image" = __NEW_WEB_ID__ ]; }; then
+                            && [ "$image" = __NEW_WEB_ID__ ]; } \
+                        || { [ "__DOLLAR__{FAKE_FAIL_STAGE:-}" \
+                                = published_unchanged_gateway_platform ] \
+                            && [ -f "$fake_root/published-platform-active" ] \
+                            && [ "$image" = __OLD_GATEWAY_ID__ ]; }; then
                         printf '%s\n' linux/amd64
                     else
                         printf '%s\n' linux/arm64
@@ -3382,6 +3386,35 @@ async function testPublishedContainerPlatformFailsClosed() {
   assert.equal(result.privateBackendEnvironment, '');
   assert.equal(result.lockOwner, '');
   assertExactOldRollingIdentities(result);
+
+  const unchangedGateway = await runScenario(
+    'unchanged',
+    'published_unchanged_gateway_platform',
+  );
+  assert.notEqual(unchangedGateway.result.status, 0);
+  assert.match(
+    unchangedGateway.state,
+    /gateway\.unchanged_container_id=ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff/u,
+  );
+  assert.match(
+    unchangedGateway.state,
+    /failure=A published API\/gateway\/Web container is not bound to linux\/arm64/u,
+  );
+  assert.doesNotMatch(
+    unchangedGateway.dockerLog,
+    /create --name vocadb_api_gateway /u,
+  );
+  assert.match(
+    unchangedGateway.dockerLog,
+    /update --restart unless-stopped ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff/u,
+  );
+  assert.doesNotMatch(
+    unchangedGateway.dockerLog,
+    /rm -f ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff/u,
+  );
+  assert.equal(unchangedGateway.privateBackendEnvironment, '');
+  assert.equal(unchangedGateway.lockOwner, '');
+  assertExactOldRollingIdentities(unchangedGateway);
 }
 
 async function testPrivateBackendEnvironmentIdentitySwapFailsClosed() {
@@ -4028,8 +4061,16 @@ assert.match(configOnly.dockerLog, /create --name vocadb_api_gateway /u);
 
 const unchanged = await runScenario('unchanged');
 assert.equal(unchanged.result.status, 0, unchanged.result.stderr);
+assert.match(
+  unchanged.state,
+  /gateway\.unchanged_container_id=ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff/u,
+);
 assert.match(unchanged.state, /gateway\.update=unchanged/);
 assert.doesNotMatch(unchanged.dockerLog, /create --name vocadb_api_gateway /u);
+assert.match(
+  unchanged.dockerLog,
+  /update --restart unless-stopped ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff/u,
+);
 
 const migrationFailure = await runScenario('migration', 'migration');
 assertMigrationFailureStopsWithUnresolvedDaemonMutation(migrationFailure);
