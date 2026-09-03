@@ -1131,6 +1131,32 @@ select optgroup {
 }
 
 @media (max-width: 640px) {
+  :root {
+    --header-height: 108px;
+  }
+
+  .topnav-inner {
+    align-content: center;
+    flex-wrap: wrap;
+    gap: 6px 8px;
+    padding: 6px 8px;
+  }
+
+  .topnav-brand {
+    order: 1;
+  }
+
+  .topnav-actions {
+    order: 2;
+    margin-left: auto;
+  }
+
+  .topnav-search {
+    order: 3;
+    flex: 0 0 100%;
+    max-width: none;
+  }
+
   .backup-modal-header {
     gap: 0.5rem;
     padding: 0.75rem;

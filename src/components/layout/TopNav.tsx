@@ -297,13 +297,13 @@ export default function TopNav() {
 
   return (
     <header
-      className="fixed top-0 left-0 right-0 z-50 glass-strong"
+      className="topnav-header fixed top-0 left-0 right-0 z-50 glass-strong"
       style={{ height: 'var(--header-height)' }}
     >
-      <div className="h-full flex items-center px-4 gap-3">
+      <div className="topnav-inner h-full flex items-center px-4 gap-3">
 
         {/* ─── 左: ハンバーガー + ロゴ ─── */}
-        <div className="flex items-center gap-2 flex-shrink-0">
+        <div className="topnav-brand flex items-center gap-2 flex-shrink-0">
           {/* ハンバーガーメニュー */}
           <button
             className="btn-ghost p-2 rounded-full"
@@ -351,7 +351,7 @@ export default function TopNav() {
         </div>
 
         {/* ─── 中央: 検索バー ─── */}
-        <div className="flex-1 flex justify-center max-w-2xl mx-auto">
+        <div className="topnav-search flex-1 flex justify-center max-w-2xl mx-auto">
           <form ref={searchFormRef} onSubmit={handleSearch} className="relative flex w-full">
             <div
               className="hidden sm:flex h-10 items-center rounded-l-full border border-r-0 px-1"
@@ -523,7 +523,7 @@ export default function TopNav() {
         </div>
 
         {/* ─── 右: 統一アクションボタン ─── */}
-        <div className="flex items-center gap-1.5 flex-shrink-0">
+        <div className="topnav-actions flex items-center gap-1.5 flex-shrink-0">
           {/* 隠しモード表示 */}
           {hiddenMode && (
             <span

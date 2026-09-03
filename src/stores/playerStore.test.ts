@@ -234,6 +234,25 @@ describe('player queue autoplay', () => {
     localStorage.removeItem('diva_failedPVsV2');
   });
 
+  it('gives an automatic PV fallback a new playback generation', () => {
+    const fallbackSong: Song = {
+      ...song,
+      id: song.id + 20,
+      pvs: [
+        { ...song.pvs![0], id: 10, pvId: 'youtube-original' },
+        { ...song.pvs![0], id: 11, pvId: 'nico-original', service: 'NicoNicoDouga' },
+      ],
+    };
+    usePlayerStore.getState().setQueue([fallbackSong], 0);
+    const before = usePlayerStore.getState().playbackSequence;
+
+    usePlayerStore.getState().tryNextPV();
+
+    expect(usePlayerStore.getState().currentPV?.pvId).toBe('nico-original');
+    expect(usePlayerStore.getState().playbackSequence).toBe(before + 1);
+    localStorage.removeItem('diva_failedPVsV2');
+  });
+
   it('plays a SoundCloud-only or Bilibili-only song', () => {
     expect(getPlayablePV({
       ...song,

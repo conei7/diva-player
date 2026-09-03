@@ -635,7 +635,11 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     const nextPV = choosePVByPriority(unfailedPVs, get().pvPreference) || choosePVByPriority(enabledPVs, get().pvPreference);
 
     if (nextPV) {
-      set({ currentPV: nextPV, error: null });
+      set({
+        currentPV: nextPV,
+        playbackSequence: get().playbackSequence + 1,
+        error: null,
+      });
     } else {
       get().next();
     }

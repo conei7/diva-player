@@ -5,7 +5,7 @@
  * ① 「同じPの曲」 (RDB検索)
  * ② 「関連曲」 (Qdrant ハイブリッド検索)
  * ③ 「おすすめ」 (ユーザー履歴 + マルコフ連鎖)
- * ④ 「Deep Dig」 (Qdrant 音響ベクトルのみ)
+ * ④ 「音響から探す」 (Qdrant 音響ベクトルのみ)
  */
 
 export type RecTabKey = 'producer' | 'related' | 'recommended' | 'deep';
@@ -20,7 +20,7 @@ const TABS: { key: RecTabKey; label: string; description: string }[] = [
   { key: 'recommended', label: 'おすすめ',  description: 'AI推薦 (メタ+音響+履歴)' },
   { key: 'related',    label: '関連曲',    description: 'メタデータ類似' },
   { key: 'producer',   label: '同じPの曲', description: 'RDB検索' },
-  { key: 'deep',       label: 'Deep Dig',  description: '音響類似' },
+  { key: 'deep',       label: '音響から探す', description: '音の特徴が近い曲' },
 ];
 
 export default function FilterChips({ activeTab, onTabChange, counts }: FilterChipsProps) {

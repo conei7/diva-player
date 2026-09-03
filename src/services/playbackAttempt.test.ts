@@ -1,8 +1,24 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createPlaybackAttemptController } from './playbackAttempt';
+import {
+  createPlaybackAttemptController,
+  isEventForDesiredYouTubePV,
+  shouldUseMutedYouTubeLoad,
+} from './playbackAttempt';
 
 describe('createPlaybackAttemptController', () => {
   afterEach(() => vi.useRealTimers());
+
+  it('uses muted autoplay only for a new background load, never a resume', () => {
+    expect(shouldUseMutedYouTubeLoad(false, true)).toBe(true);
+    expect(shouldUseMutedYouTubeLoad(true, true)).toBe(false);
+    expect(shouldUseMutedYouTubeLoad(false, false)).toBe(false);
+  });
+
+  it('rejects late events from the video being replaced', () => {
+    expect(isEventForDesiredYouTubePV('old', 'new')).toBe(false);
+    expect(isEventForDesiredYouTubePV('new', 'new')).toBe(true);
+    expect(isEventForDesiredYouTubePV('', 'new')).toBe(true);
+  });
 
   it('fires timeout only for the current player generation', () => {
     vi.useFakeTimers();

@@ -5,6 +5,16 @@ export interface PlaybackAttemptToken {
   pvId: string;
 }
 
+/** Existing videos must never be muted merely because playback is resumed. */
+export function shouldUseMutedYouTubeLoad(alreadyLoaded: boolean, documentHidden: boolean): boolean {
+  return !alreadyLoaded && documentHidden;
+}
+
+/** Ignores late native events emitted by the video being replaced. */
+export function isEventForDesiredYouTubePV(reportedPVId: string, desiredPVId: string): boolean {
+  return reportedPVId.length === 0 || reportedPVId === desiredPVId;
+}
+
 /** Coordinates one player generation and ignores late callbacks from older generations. */
 export function createPlaybackAttemptController(timeoutMs = DEFAULT_PLAYBACK_READY_TIMEOUT_MS) {
   let generation = 0;

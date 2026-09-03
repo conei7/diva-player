@@ -7,7 +7,12 @@ import {
   PLAYBACK_OWNER_HEARTBEAT_MS,
   shouldAcceptPlayerPlayingEvent,
 } from '../../services/playbackOwnership';
-import { createPlaybackAttemptController, type PlaybackAttemptToken } from '../../services/playbackAttempt';
+import {
+  createPlaybackAttemptController,
+  isEventForDesiredYouTubePV,
+  shouldUseMutedYouTubeLoad,
+  type PlaybackAttemptToken,
+} from '../../services/playbackAttempt';
 import { usePlaybackWakeRecovery } from '../../hooks/usePlaybackWakeRecovery';
 import {
   buildNicoEmbedUrl,
@@ -628,12 +633,18 @@ export default function PlayerEmbed() {
     try {
       if (shouldPlay) {
         armYouTubePlaybackAttempt(player, desired);
+        const shouldStartMuted = shouldUseMutedYouTubeLoad(desired.loaded, document.hidden);
         // Loading muted is allowed while the document is hidden. Reusing this
         // already-created player preserves the original user activation instead
         // of asking Chromium to authorize a brand-new background iframe.
-        player.mute?.();
-        youtubeAutoplayMutedRef.current = true;
         if (!desired.loaded) {
+          // Only a genuinely new background load needs the muted-autoplay
+          // fallback. Muting an already loaded video on every pause/resume left
+          // ordinary foreground playback silent until another gesture.
+          if (shouldStartMuted) {
+            player.mute?.();
+            youtubeAutoplayMutedRef.current = true;
+          }
           player.loadVideoById(desired.pvId, 0);
           desired.loaded = true;
         }
@@ -698,6 +709,13 @@ export default function PlayerEmbed() {
             onStateChange: (event: YT.OnStateChangeEvent) => {
               const desired = youtubeDesiredVideoRef.current;
               if (!desired) return;
+              let reportedVideoId = '';
+              try {
+                reportedVideoId = event.target.getVideoData?.().video_id ?? '';
+              } catch {
+                // Player teardown can race with a final native callback.
+              }
+              if (!isEventForDesiredYouTubePV(reportedVideoId, desired.pvId)) return;
               switch (event.data) {
                 case window.YT.PlayerState.PLAYING: {
                   const playbackState = usePlayerStore.getState();
@@ -766,7 +784,17 @@ export default function PlayerEmbed() {
                   break;
               }
             },
-            onError: () => failCurrentYouTubeAttempt('YouTube動画の再生中にエラーが発生しました'),
+            onError: (event: YT.OnErrorEvent) => {
+              const desired = youtubeDesiredVideoRef.current;
+              if (!desired) return;
+              try {
+                const reportedVideoId = event.target.getVideoData?.().video_id ?? '';
+                if (!isEventForDesiredYouTubePV(reportedVideoId, desired.pvId)) return;
+              } catch {
+                // Generation checks still reject old timeout callbacks.
+              }
+              failCurrentYouTubeAttempt('YouTube動画の再生中にエラーが発生しました');
+            },
           },
         });
         ytPlayerRef.current = player;

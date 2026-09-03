@@ -41,6 +41,7 @@ import {
 import { excludeHiddenSongs, useHiddenSongStore } from '../stores/hiddenSongStore';
 import { getPlaybackOwnership } from '../services/playbackOwnership';
 import { fetchProgressivePages } from '../utils/progressivePageFetch';
+import { isCurrentWatchSongRequest, watchUrlPlaybackTarget } from '../utils/watchNavigation';
 
 function WatchQueue() {
   const queue = usePlayerStore(s => s.queue);
@@ -183,6 +184,7 @@ export default function WatchPage() {
   });
 
   const fetchedForRef = useRef<number | null>(null);
+  const songRequestGenerationRef = useRef(0);
   const randomOffsetRef = useRef(Math.floor(Math.random() * 20));
   const rankingSeedRef = useRef(createRankingSeed());
   // URLからのロード中はナビゲーションエフェクトをブロックするフラグ
@@ -205,6 +207,7 @@ export default function WatchPage() {
   useEffect(() => {
     if (!songId) return;
     if (fetchedForRef.current === songId) return;
+    const requestGeneration = ++songRequestGenerationRef.current;
     fetchedForRef.current = songId;
     randomOffsetRef.current = Math.floor(Math.random() * 20);
     rankingSeedRef.current = createRankingSeed();
@@ -230,6 +233,9 @@ export default function WatchPage() {
 
     getSongById(songId)
       .then((loadedSong) => {
+        // A slower response for the previous URL must never replace the song
+        // selected by a newer navigation.
+        if (!isCurrentWatchSongRequest(requestGeneration, songRequestGenerationRef.current, songId, fetchedForRef.current)) return;
         loadingFromUrlRef.current = false;
         setSong(loadedSong);
         setLoadingSong(false);
@@ -249,6 +255,7 @@ export default function WatchPage() {
         fetchDeep(loadedSong, 0);
       })
       .catch((err) => {
+        if (!isCurrentWatchSongRequest(requestGeneration, songRequestGenerationRef.current, songId, fetchedForRef.current)) return;
         loadingFromUrlRef.current = false;
         setError(err.message || '楽曲の読み込みに失敗しました');
         setLoadingSong(false);
@@ -550,11 +557,14 @@ export default function WatchPage() {
   // 動画が自動再生で次に進んだ場合などにURLを同期する
   // loadingFromUrlRef が true の間 (URL変更後のフェッチ中) はナビゲートしない
   useEffect(() => {
-    if (loadingFromUrlRef.current) return;
-    if (currentSongId && songId && currentSongId !== songId) {
-      navigate(`/watch?v=${currentSongId}`);
-    }
-  }, [currentSongId, songId, navigate]);
+    const target = watchUrlPlaybackTarget({
+      requestedSongId: songId,
+      displayedSongId: song?.id ?? null,
+      playingSongId: currentSongId ?? null,
+      loadingFromUrl: loadingFromUrlRef.current,
+    });
+    if (target) navigate(`/watch?v=${target}`);
+  }, [currentSongId, song?.id, songId, navigate]);
 
   // songId がない場合はホームへ
   if (!songId) return <Navigate to="/" replace />;

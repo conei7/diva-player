@@ -57,7 +57,6 @@ export function filterViewHistoryByRange(
 
 export function bucketForViewHistoryRange(range: ViewHistoryRange): ViewHistoryBucket {
   if (range === '90d') return 'week';
-  if (range === 'all') return 'month';
   return 'day';
 }
 

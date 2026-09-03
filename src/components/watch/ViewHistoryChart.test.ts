@@ -81,7 +81,7 @@ describe('view history display transforms', () => {
   it('selects a display bucket from the requested range', () => {
     expect(bucketForViewHistoryRange('7d')).toBe('day');
     expect(bucketForViewHistoryRange('90d')).toBe('week');
-    expect(bucketForViewHistoryRange('all')).toBe('month');
+    expect(bucketForViewHistoryRange('all')).toBe('day');
   });
 
   it('keeps the latest cumulative value in each bucket', () => {
