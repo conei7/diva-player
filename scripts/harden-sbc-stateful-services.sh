@@ -965,6 +965,9 @@ reviewed_legacy_finding_sha256() {
     # the normal zero-finding contract enforced by Trivy's non-zero exit code.
     case "$service:$architecture:$os_family:$image_id" in
         qdrant-rollback:arm64:debian:sha256:138fbed447b2b20020d431b9dafee347995dd2ae390c4edd9d7c76dff429f9c9)
+            # The 2026-09-02 Trivy DB adds CVE-2026-16742 projections for
+            # libsystemd0 and libudev1.  The vulnerable systemd-homed service is
+            # absent from this exact offline-only rollback image contract.
             printf '%s\n' \
             '01f8c121ff73677fe215ebd1278dbab4fcd41e922fe7aceaa4d347ab4c012822' \
             '034573dabcf07de7b9e05715fe4821d2e982ca0620ddf4d2bd44088250ce1a97' \
@@ -1061,6 +1064,7 @@ reviewed_legacy_finding_sha256() {
             'cdfaada11be701f0eb0d49672a6078786e83626e225e6300fcd4f74aff99758c' \
             'cf2ce868f9ad85c56ddc056cc44583b0d913b6c559b15b44bcc06fa623777b90' \
             'd57ddeea05c3a8ccf266d2d0a2b24e04b4f1e5aee195413658fae98063cda32d' \
+            'd3b4c531b152a2ca7eaa7fb2b53d6ce972141f387facaeed2991145c2ec37d90' \
             'd70f3cf7cf628467ec296c3f6a21db8dfdea067183c9934fe3ad53243ab00a78' \
             'd78778ecde83b0674a31f9d4f21272cce1883b9f041d9fe52e5f9c9f0538a738' \
             'dd990c2e0594c0c6f1950218c13cbf725ae13b7ed313086c6deaf27d2b2e7b10' \
@@ -1069,6 +1073,7 @@ reviewed_legacy_finding_sha256() {
             'e2651d5b2b053131a15c83dd5806d965ffc0d723aac404c702b1afbbc122494f' \
             'e30cb901bae68bbac3bdfdc38d23f84595b68b792f4d2c256ea8ca2997449b74' \
             'e50c4f22a2fe9aedfd1dd2066012c6f8b17a4167933da81f0744dfc126b01e49' \
+            'e5febbbd2b64a9d7416df5b90cfbe4d2304c5c13d1830c9f06e5215c7b0d523b' \
             'e66e6f6297cdf7b96d04e94f695f20e0271a2dd3a62d5cd016f8f0f0ab8377e2' \
             'e727da259d9e0e3eeb84343c215040cc695ad8aeac252ed62efa08a5957c4c48' \
             'e765d69e05bab0c3a5ede68cbf070db1d408a7fc511b7500e2e21260c23df2c9' \
@@ -1080,9 +1085,12 @@ reviewed_legacy_finding_sha256() {
             'fd1fc059787ef743d01cacc8933aa4a97cd033be1538c2af6356e9f96361657e'
             ;;
         postgres-rollback:arm64:debian:sha256:00ba258a66dac104fd5171074a0084462a64a1369d8513f3d0a634e2f24d15bc)
+            # The same database adds exact libsystemd0/libudev1 projections to
+            # this offline-only rollback image; systemd-homed is not present.
             printf '%s\n' \
             '00deed9f7614378b22ff364e134f124023c54f984155bcb78c1109938f1f8eee' \
             '0358e4d26d70a427a4ead13c2b044785a88941edc4465ddaed05f446cc0f17b1' \
+            '07f3b597a365e4c2a00faa7ae82ffbbf6094d062dc1cbfb9c38cdd3c88c3b009' \
             '0fb991c3578aa5466ae6822198d10e53bcac733bc62d210486c6664d133408b4' \
             '1389bf4ee39cf6a9ee08cfd5aa000f6f8df01c8722292676f35c3e04e91327da' \
             '14158fc81000eb06c5d1ff0c23d77d7d8277a2ad9ac93667b9b7ecb65908eb89' \
@@ -1114,6 +1122,7 @@ reviewed_legacy_finding_sha256() {
             '545b72454d43e9454242b446e2640ec793cc21eb4016c18da4619ae36c99aa58' \
             '56de263f312ab4ef6fdb38be428c067fa30005a02acb98bcf572a63d4f71efef' \
             '5ea19f59078315c1aa4c1020c17efea0bb3488ac56a8456aeb1d86857b2afa53' \
+            '63604e4b35287310548d8b6478cffe8ac3ada072ac3affa0c4c215a4aaa221f0' \
             '64167b7991fe225366bf7e626dd6f0dc543a6126d5c5e99289b1dfe16d8edea7' \
             '647b6c38e0e6b423b173bc5c257b98a626bdaeafeff38007906ee03e87f2f0b5' \
             '64b219466f41e6fcd87668bf9fdd16b7df0fe7274222b40ccc955c974c4ba25f' \

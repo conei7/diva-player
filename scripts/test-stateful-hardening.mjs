@@ -416,15 +416,15 @@ const expectedArm64InventoryBounds = new Map([
 const expectedRollbackCalibrationAnchors = new Map([
   ['qdrant-rollback', {
     imageId: 'sha256:138fbed447b2b20020d431b9dafee347995dd2ae390c4edd9d7c76dff429f9c9',
-    findingCount: 112,
-    findingSetSha256: '8f0623c8dc073cfbc69eb7a8c507168d85297a2a03a2992d1784deafd3372083',
-    severityCounts: { CRITICAL: 10, HIGH: 102 },
+    findingCount: 114,
+    findingSetSha256: 'c34a1796c153ef4916e4268e4ecf0a74253bd440a259cac02e3d0e823409962d',
+    severityCounts: { CRITICAL: 10, HIGH: 104 },
   }],
   ['postgres-rollback', {
     imageId: 'sha256:00ba258a66dac104fd5171074a0084462a64a1369d8513f3d0a634e2f24d15bc',
-    findingCount: 90,
-    findingSetSha256: '505566e401b6c2a6873bafe207e5075d6280e53e4e4ab00146eecc34611f3f82',
-    severityCounts: { CRITICAL: 18, HIGH: 72 },
+    findingCount: 92,
+    findingSetSha256: 'cbbc5e5e26f437e4f92310a2cd94d51f7b1c2afcb90b98d55d0fcaf3e297ab20',
+    severityCounts: { CRITICAL: 18, HIGH: 74 },
   }],
 ]);
 assert.deepEqual(
@@ -550,7 +550,7 @@ for (const image of reviewedArm64ScanContract.images) {
     assert.deepEqual(image.severityCounts, { CRITICAL: 0, HIGH: 0 });
   }
 }
-assert.equal(allReviewedFindingSha256.size, 202);
+assert.equal(allReviewedFindingSha256.size, 206);
 
 const backupAttestationContract = hardeningSource.slice(
   hardeningSource.indexOf('validate_backup_payload_attestation()'),
