@@ -49,6 +49,8 @@ PIPELINE_RUNTIME_VERIFIER="$PIPELINE_ROOT/ml_pipeline/verify_production_ml_runti
 PIPELINE_RUNTIME_PATCHER="$PIPELINE_ROOT/ml_pipeline/patch_tensorflow_hub_compat.py"
 API_BRIDGE_RECEIPT=${DIVA_API_BRIDGE_RECEIPT:-/var/lib/diva-player-deploy/api-bridge-receipt.json}
 BRIDGE_BACKUP_MAX_ELAPSED_SECONDS=14400
+MINIMUM_FREE_BYTES_BEFORE_QDRANT_CLONE=75161927680
+MINIMUM_FREE_BYTES_AFTER_QDRANT_CLONE=32212254720
 
 if [ "$TEST_MODE" = "1" ]; then
     [ "$(/usr/bin/id -u)" -ne 0 ] || {
@@ -1592,6 +1594,27 @@ verify_all_exact_image_scan_receipts() {
 record_state() {
     printf '%s=%s\n' "$1" "$2" >> "$STATE_FILE"
     sync -f "$STATE_FILE" 2>/dev/null || sync
+}
+
+verify_qdrant_capacity_before_quiescence() {
+    local mountpoint filesystem available_blocks block_size available_bytes
+    mountpoint=$(run_bounded_docker_read volume inspect --format '{{.Mountpoint}}' \
+        "$OLD_QDRANT_VOLUME") || return 1
+    [ -n "$mountpoint" ] && [ "${mountpoint#/}" != "$mountpoint" ] || return 1
+    filesystem=$(stat -f -c '%a:%S' "$mountpoint") || return 1
+    case "$filesystem" in
+        *:*) ;;
+        *) return 1 ;;
+    esac
+    available_blocks=${filesystem%:*}
+    block_size=${filesystem#*:}
+    case "$available_blocks" in ''|*[!0-9]*) return 1 ;; esac
+    case "$block_size" in ''|*[!0-9]*) return 1 ;; esac
+    available_bytes=$((available_blocks * block_size))
+    record_state capacity.qdrant_available_before_quiescence_bytes "$available_bytes"
+    record_state capacity.qdrant_minimum_before_clone_bytes \
+        "$MINIMUM_FREE_BYTES_BEFORE_QDRANT_CLONE"
+    [ "$available_bytes" -ge "$MINIMUM_FREE_BYTES_BEFORE_QDRANT_CLONE" ]
 }
 
 run_bounded_read_command() {
@@ -6816,6 +6839,8 @@ validate_backup_payload_attestation "$RUN_DIR/evidence/backup-payload-attestatio
     || { fail "backup payload attestation or its bridge anchor changed before writer quiescence"; exit 1; }
 verify_release_sources_unchanged \
     || { fail "release sources changed before writer quiescence"; exit 1; }
+verify_qdrant_capacity_before_quiescence \
+    || { fail "insufficient or unverifiable free space before Qdrant writer quiescence"; exit 1; }
 gate_pipeline_writers \
     || { fail "pipeline writer gate could not be established; preserving the interlock"; exit 1; }
 for publication_journal in "$FULL_PUBLICATION_JOURNAL" "$INCREMENTAL_PUBLICATION_JOURNAL"; do
@@ -6886,6 +6911,8 @@ run_qdrant_controller_supervised "$PYTHON_COMMAND" -I -B \
     --read-timeout "$READ_TIMEOUT_SECONDS" \
     --mutation-timeout "$DATA_MUTATION_TIMEOUT_SECONDS" \
     --health-timeout "$FINGERPRINT_TIMEOUT_SECONDS" \
+    --minimum-free-bytes-before-clone "$MINIMUM_FREE_BYTES_BEFORE_QDRANT_CLONE" \
+    --minimum-free-bytes-after-clone "$MINIMUM_FREE_BYTES_AFTER_QDRANT_CLONE" \
     || controller_status=$?
 if [ "$controller_status" -ne 0 ]; then
     DAEMON_MUTATION_UNRESOLVED=true

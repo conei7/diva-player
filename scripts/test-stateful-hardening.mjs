@@ -344,6 +344,15 @@ assert.doesNotMatch(
 );
 assert.match(hardeningSource, /run_qdrant_controller_supervised "\$PYTHON_COMMAND" -I -B/);
 assert.match(hardeningSource, /--runtime-attestation "\$PIPELINE_RUNTIME_ATTESTATION_FILE"/);
+assert.match(hardeningSource, /MINIMUM_FREE_BYTES_BEFORE_QDRANT_CLONE=75161927680/);
+assert.match(hardeningSource, /MINIMUM_FREE_BYTES_AFTER_QDRANT_CLONE=32212254720/);
+assert.match(
+  hardeningSource,
+  /verify_qdrant_capacity_before_quiescence[\s\S]*gate_pipeline_writers/,
+  'capacity must be verified before the writer gate is acquired',
+);
+assert.match(hardeningSource, /--minimum-free-bytes-before-clone/);
+assert.match(hardeningSource, /--minimum-free-bytes-after-clone/);
 assert.doesNotMatch(qdrantUpgradeControllerSource, /qdrant_client/);
 
 const trivyCalibrationContract = hardeningSource.slice(
@@ -2397,6 +2406,7 @@ if [ "$1" = volume ] && [ "__D__{2:-}" = inspect ]; then
   done
   case "$format" in
     *'.Name'*) printf '%s\n' "$target" ;;
+    *'.Mountpoint'*) printf '/var/lib/docker/volumes/%s/_data\n' "$target" ;;
     *'.Labels'*) printf '%s\n' '{}' ;;
     *'.Options'*) printf '%s\n' '{}' ;;
     '')
@@ -3033,6 +3043,10 @@ exec "$command" "$@"
 `.replaceAll('__D__', '$');
 
 const fakeStat = String.raw`#!/bin/sh
+if [ "__D__{1:-}" = -f ] && [ "__D__{2:-}" = -c ] && [ "__D__{3:-}" = '%a:%S' ]; then
+  printf '%s\n' '104857600:1024'
+  exit 0
+fi
 format=__D__{2:-}
 target=__D__{3:-}
 scenario=__D__{FAKE_SCENARIO:-success}

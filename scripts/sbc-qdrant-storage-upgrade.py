@@ -757,6 +757,14 @@ class UpgradeController:
     def __init__(self, arguments: argparse.Namespace) -> None:
         self.arguments = arguments
         self.runner = Runner(arguments.docker, arguments.read_timeout, arguments.mutation_timeout)
+        self.minimum_free_bytes_before_clone = arguments.minimum_free_bytes_before_clone
+        self.minimum_free_bytes_after_clone = arguments.minimum_free_bytes_after_clone
+        if (
+            self.minimum_free_bytes_before_clone <= 0
+            or self.minimum_free_bytes_after_clone <= 0
+            or self.minimum_free_bytes_before_clone <= self.minimum_free_bytes_after_clone
+        ):
+            raise UpgradeError("capacity floors must be positive and leave clone headroom")
         run_id = require_name(arguments.run_id, "run ID")
         old_volume = require_name(arguments.old_volume, "old volume")
         candidate_volume = require_name(arguments.candidate_volume, "candidate volume")
@@ -837,6 +845,10 @@ class UpgradeController:
                 "runtimeEvidence": self.runtime_evidence,
                 "pipelineRuntimeAttestation": runtime_attestation,
                 "pipelineRuntimeAttestationSha256": runtime_attestation_sha256,
+                "capacityFloors": {
+                    "beforeCloneBytes": self.minimum_free_bytes_before_clone,
+                    "afterCloneBytes": self.minimum_free_bytes_after_clone,
+                },
             },
             "probe": {"apiImages": probe_slots, "seedSongId": arguments.seed_song_id},
         }
@@ -846,6 +858,41 @@ class UpgradeController:
         self.journal = DurableJournal(journal_path, initial)
         self.candidate_volume = candidate_volume
         self.probe_slots: dict[str, str] = probe_slots
+
+    def require_volume_capacity(self, key: str, volume_name: str, minimum_bytes: int) -> int:
+        item = inspect_one(self.runner, "volume", volume_name)
+        if item is None:
+            raise UpgradeError(f"capacity-check volume is missing: {volume_name}")
+        mountpoint_text = item.get("Mountpoint")
+        if not isinstance(mountpoint_text, str) or not Path(mountpoint_text).is_absolute():
+            raise UpgradeError("capacity-check mountpoint is invalid")
+        mountpoint = Path(mountpoint_text)
+        if mountpoint.is_symlink() or not mountpoint.is_dir():
+            raise UpgradeError("capacity-check mountpoint is unsafe")
+        filesystem = os.statvfs(mountpoint)
+        available_bytes = filesystem.f_bavail * filesystem.f_frsize
+        checks = self.journal.document.setdefault("capacityChecks", {})
+        existing = checks.get(key)
+        observation = {
+            "availableBytes": available_bytes,
+            "minimumBytes": minimum_bytes,
+            "volume": volume_name,
+            "checkedAt": utc_now(),
+        }
+        if existing is not None:
+            if (
+                not isinstance(existing, dict)
+                or existing.get("minimumBytes") != minimum_bytes
+                or existing.get("volume") != volume_name
+            ):
+                raise UpgradeError(f"capacity-check contract changed during resume: {key}")
+        checks[key] = observation
+        self.journal._commit()
+        if available_bytes < minimum_bytes:
+            raise UpgradeError(
+                f"insufficient free space for {key}: {available_bytes} < {minimum_bytes} bytes"
+            )
+        return available_bytes
 
     def mutation(
         self,
@@ -1867,6 +1914,9 @@ printf 'structure=%s\nlogicalStructure=%s\ncontent=%s\nentries=%s\nnonRootOwned=
         ):
             raise UpgradeError("offline audit image provenance is invalid")
         self.attest_audit_filesystem()
+        self.require_volume_capacity(
+            "before-clone", self.old["volume"], self.minimum_free_bytes_before_clone
+        )
         self.ensure_network()
         self.ensure_volume()
         self.journal.set_phase("old-stopping")
@@ -1880,6 +1930,9 @@ printf 'structure=%s\nlogicalStructure=%s\ncontent=%s\nentries=%s\nnonRootOwned=
             raise UpgradeError("legacy rollback volume is not uniformly owned by root:root")
         self.journal.set_phase("cloning")
         self.clone_volume(self.audit_image_id)
+        self.require_volume_capacity(
+            "after-clone", self.candidate_volume, self.minimum_free_bytes_after_clone
+        )
         candidate_clone = self.volume_tree_digest(
             "candidate.digest.cloned",
             require_name(f"diva_qdigest_clone_{self.arguments.run_id}", "digest helper"),
@@ -2033,6 +2086,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--read-timeout", type=int, default=120)
     parser.add_argument("--mutation-timeout", type=int, default=7200)
     parser.add_argument("--health-timeout", type=int, default=1800)
+    parser.add_argument("--minimum-free-bytes-before-clone", required=True, type=int)
+    parser.add_argument("--minimum-free-bytes-after-clone", required=True, type=int)
     return parser
 
 

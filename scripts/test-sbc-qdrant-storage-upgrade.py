@@ -107,6 +107,53 @@ class UpgradeContractTests(unittest.TestCase):
                 self.assertIsNone(MODULE.inspect_one(runner, "volume", volume))
                 self.assertEqual(runner.arguments, ("volume", "inspect", volume))
 
+    def test_capacity_check_records_available_bytes_and_accepts_floor(self) -> None:
+        class Journal:
+            def __init__(self) -> None:
+                self.document: dict = {}
+                self.commits = 0
+
+            def _commit(self) -> None:
+                self.commits += 1
+
+        with tempfile.TemporaryDirectory() as temporary:
+            controller = object.__new__(MODULE.UpgradeController)
+            controller.runner = object()
+            controller.journal = Journal()
+            volume = {"Mountpoint": str(Path(temporary).resolve())}
+            filesystem = types.SimpleNamespace(f_bavail=80, f_frsize=1024)
+            with (
+                mock.patch.object(MODULE, "inspect_one", return_value=volume),
+                mock.patch.object(MODULE.os, "statvfs", return_value=filesystem, create=True),
+            ):
+                available = controller.require_volume_capacity("before-clone", "old", 70 * 1024)
+            self.assertEqual(available, 80 * 1024)
+            self.assertEqual(controller.journal.commits, 1)
+            self.assertEqual(
+                controller.journal.document["capacityChecks"]["before-clone"]["minimumBytes"],
+                70 * 1024,
+            )
+
+    def test_capacity_check_refuses_below_floor(self) -> None:
+        class Journal:
+            document: dict = {}
+
+            def _commit(self) -> None:
+                pass
+
+        with tempfile.TemporaryDirectory() as temporary:
+            controller = object.__new__(MODULE.UpgradeController)
+            controller.runner = object()
+            controller.journal = Journal()
+            volume = {"Mountpoint": str(Path(temporary).resolve())}
+            filesystem = types.SimpleNamespace(f_bavail=29, f_frsize=1024)
+            with (
+                mock.patch.object(MODULE, "inspect_one", return_value=volume),
+                mock.patch.object(MODULE.os, "statvfs", return_value=filesystem, create=True),
+            ):
+                with self.assertRaisesRegex(MODULE.UpgradeError, "insufficient free space"):
+                    controller.require_volume_capacity("after-clone", "candidate", 30 * 1024)
+
     def test_volume_inspect_does_not_hide_unbound_lowercase_errors(self) -> None:
         volume = "diva_qdrant_candidate_20260902T112002Z-1063826"
 
