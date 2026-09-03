@@ -2486,15 +2486,25 @@ container_runtime_snapshot() {
 }
 
 wait_stateful_daemon_stable() {
-    local attempts=0 stable=0 previous="" current name snapshot
+    local attempts=0 stable=0 previous="" current name snapshot snapshot_failed
     while [ "$attempts" -lt "$DAEMON_SETTLE_ATTEMPTS" ]; do
         current=""
+        snapshot_failed=false
         for name in "$QDRANT_CONTAINER" "$QDRANT_PREVIOUS_CONTAINER" \
             "$POSTGRES_CONTAINER" "$POSTGRES_PREVIOUS_CONTAINER"; do
-            snapshot=$(container_runtime_snapshot "$name") || return 1
+            # Docker may briefly reject an inspect while Compose is creating or
+            # renaming a container. Treat that as an unstable sample and retry
+            # within the existing settle window instead of failing the cutover.
+            if ! snapshot=$(container_runtime_snapshot "$name"); then
+                snapshot_failed=true
+                break
+            fi
             current="${current}${name}=${snapshot};"
         done
-        if [ "$current" = "$previous" ]; then
+        if [ "$snapshot_failed" = true ]; then
+            previous=""
+            stable=0
+        elif [ "$current" = "$previous" ]; then
             stable=$((stable + 1))
             [ "$stable" -ge "$DAEMON_STABLE_SAMPLES" ] && return 0
         else
