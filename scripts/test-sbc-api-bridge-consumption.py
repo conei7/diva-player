@@ -237,7 +237,9 @@ def build_pre_mutation_fixture(
     root: Path,
     *,
     rollback_scan_failure_indices: tuple[int, ...] = (),
+    run_count: int = 2,
 ) -> dict[str, object]:
+    assert 1 <= run_count <= module.MAX_PRE_MUTATION_RELATED_RUNS + 1
     state_root = root / "state"
     state_root.mkdir(mode=0o700)
     os.chmod(state_root, 0o700)
@@ -245,10 +247,16 @@ def build_pre_mutation_fixture(
     receipt_payload = b'{"receipt":"pre-mutation-frozen"}\n'
     write_owner_file(receipt, receipt_payload)
     receipt_sha = hashlib.sha256(receipt_payload).hexdigest()
-    run_ids = (
+    baseline_run_ids = (
         "20260902T060832Z-614808",
         "20260902T064512Z-620001",
     )
+    run_ids = baseline_run_ids[:run_count]
+    if run_count > len(baseline_run_ids):
+        run_ids += tuple(
+            f"20260902T07{index:04d}Z-{630000 + index}"
+            for index in range(run_count - len(baseline_run_ids))
+        )
     bindings = []
     run_dirs = []
     state_payloads = []
@@ -901,7 +909,7 @@ def exercise_pre_mutation_cli(module) -> None:
 
 
 def exercise_pre_mutation_fault_matrix(
-    module, *, rollback_scan_failure: bool = False
+    module, *, rollback_scan_failure: bool = False, run_count: int = 2
 ) -> None:
     phases = (
         "intent-after-prepared-write",
@@ -939,8 +947,9 @@ def exercise_pre_mutation_fault_matrix(
             fixture = build_pre_mutation_fixture(
                 module,
                 Path(temporary),
-                rollback_scan_failure_indices=(1,)
+                rollback_scan_failure_indices=(run_count - 1,)
                 if rollback_scan_failure else (),
+                run_count=run_count,
             )
 
             def fail_at(observed: str, *, expected: str = phase) -> None:
@@ -965,6 +974,20 @@ def exercise_pre_mutation_fault_matrix(
 
 
 def exercise_pre_mutation_rollback_scan_failure(module) -> None:
+    with tempfile.TemporaryDirectory(
+        prefix="diva-sbc-bridge-one-run-rollback-scan-success."
+    ) as temporary:
+        fixture = build_pre_mutation_fixture(
+            module,
+            Path(temporary),
+            rollback_scan_failure_indices=(0,),
+            run_count=1,
+        )
+        settlement = retire_pre_mutation(module, fixture)
+        assert settlement["reason"] == module.PRE_MUTATION_REASON
+        assert len(settlement["relatedRuns"]) == 1
+        assert_pre_mutation_settled(module, fixture)
+
     with tempfile.TemporaryDirectory(
         prefix="diva-sbc-bridge-rollback-scan-success."
     ) as temporary:
@@ -1004,6 +1027,25 @@ def exercise_pre_mutation_rollback_scan_failure(module) -> None:
         write_owner_file(validation, b"")
         retire_pre_mutation(module, fixture)
         assert_pre_mutation_settled(module, fixture)
+
+
+def exercise_pre_mutation_binding_cardinality(module) -> None:
+    with tempfile.TemporaryDirectory(
+        prefix="diva-sbc-bridge-pre-mutation-zero-runs."
+    ) as temporary:
+        fixture = build_pre_mutation_fixture(module, Path(temporary))
+        fixture["related_runs"] = ()
+        _expect_pre_mutation_failure(module, fixture, "between one and 16")
+
+    with tempfile.TemporaryDirectory(
+        prefix="diva-sbc-bridge-pre-mutation-too-many-runs."
+    ) as temporary:
+        fixture = build_pre_mutation_fixture(
+            module,
+            Path(temporary),
+            run_count=module.MAX_PRE_MUTATION_RELATED_RUNS + 1,
+        )
+        _expect_pre_mutation_failure(module, fixture, "between one and 16")
 
 
 def exercise_pre_mutation_rollback_scan_fail_closed(module) -> None:
@@ -1568,12 +1610,16 @@ def main() -> int:
     exercise_pre_mutation_fault_matrix(module)
     exercise_pre_mutation_rollback_scan_failure(module)
     exercise_pre_mutation_fault_matrix(module, rollback_scan_failure=True)
+    exercise_pre_mutation_fault_matrix(
+        module, rollback_scan_failure=True, run_count=1
+    )
     exercise_pre_mutation_post_intent_revalidation(module)
     exercise_pre_mutation_cancellation_faults(module)
     exercise_pre_mutation_fixed_paths(module)
     exercise_pre_mutation_residual_contract(module)
     exercise_pre_mutation_fail_closed_cases(module)
     exercise_pre_mutation_rollback_scan_fail_closed(module)
+    exercise_pre_mutation_binding_cardinality(module)
     print("PASS crash-safe SBC API bridge receipt consumption")
     return 0
 

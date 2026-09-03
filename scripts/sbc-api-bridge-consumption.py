@@ -31,6 +31,7 @@ ARCHIVE = re.compile(
     r"([0-9a-f]{64})\.json$"
 )
 MAX_DOCUMENT = 128 * 1024
+MAX_PRE_MUTATION_RELATED_RUNS = 16
 NORMAL_REASONS = frozenset({"calibration", "completed"})
 PRE_MUTATION_REASON = "pre-mutation-failed"
 PRE_MUTATION_DEPLOYMENT_STATUSES = (
@@ -402,8 +403,12 @@ def _encode(document: dict[str, object]) -> bytes:
 
 
 def _normalize_run_bindings(value: object) -> tuple[RunBinding, ...]:
-    if not isinstance(value, (list, tuple)) or len(value) != 2:
-        _fail("pre-mutation retirement requires exactly two related run bindings")
+    if not isinstance(value, (list, tuple)) \
+            or not 1 <= len(value) <= MAX_PRE_MUTATION_RELATED_RUNS:
+        _fail(
+            "pre-mutation retirement requires between one and "
+            f"{MAX_PRE_MUTATION_RELATED_RUNS} related run bindings"
+        )
     bindings: list[RunBinding] = []
     for item in value:
         if isinstance(item, RunBinding):
