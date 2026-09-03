@@ -659,6 +659,55 @@ class UpgradeContractTests(unittest.TestCase):
                 self.assertEqual(controller.live_fingerprint.call_count, 2)
                 sleep.assert_called_once_with(2)
 
+    def test_hardened_final_retries_initial_exit_one_upgrade_error(self) -> None:
+        expected = {"version": MODULE.HOPS[-1].version, "collections": {}}
+        controller = object.__new__(MODULE.UpgradeController)
+        controller.arguments = types.SimpleNamespace(health_timeout=30)
+        controller.live_fingerprint = mock.Mock(
+            side_effect=(
+                MODULE.UpgradeError("Qdrant internal probe failed with exit 1"),
+                expected,
+            )
+        )
+        with mock.patch.object(
+            MODULE.time,
+            "monotonic",
+            side_effect=(100.0, 100.0, 102.0),
+        ), mock.patch.object(MODULE.time, "sleep") as sleep:
+            result = controller.wait_for_live_fingerprint(
+                "sha256:" + "d" * 64, MODULE.HOPS[-1]
+            )
+        self.assertIs(result, expected)
+        self.assertEqual(controller.live_fingerprint.call_count, 2)
+        sleep.assert_called_once_with(2)
+        hardened_final = SOURCE[
+            SOURCE.index('        self.journal.set_phase("hardened-final")'):
+            SOURCE.index('        assert_old_identity(', SOURCE.index('        self.journal.set_phase("hardened-final")'))
+        ]
+        self.assertIn(
+            "self.wait_for_live_fingerprint(probe_image, HOPS[-1])",
+            hardened_final,
+        )
+
+    def test_hardened_final_transport_error_remains_immediate(self) -> None:
+        controller = object.__new__(MODULE.UpgradeController)
+        controller.arguments = types.SimpleNamespace(health_timeout=7200)
+        controller.live_fingerprint = mock.Mock(
+            side_effect=MODULE.ProbeTransportError(
+                "Qdrant internal probe transport is unavailable (exit 127)"
+            )
+        )
+        with mock.patch.object(
+            MODULE.time, "monotonic", side_effect=(100.0, 100.0)
+        ), mock.patch.object(MODULE.time, "sleep") as sleep, self.assertRaises(
+            MODULE.ProbeTransportError
+        ):
+            controller.wait_for_live_fingerprint(
+                "sha256:" + "d" * 64, MODULE.HOPS[-1]
+            )
+        controller.live_fingerprint.assert_called_once()
+        sleep.assert_not_called()
+
     def live_fingerprint_fixture(
         self,
         indexed_vectors_count: object,

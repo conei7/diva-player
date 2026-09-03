@@ -1948,7 +1948,7 @@ printf 'structure=%s\nlogicalStructure=%s\ncontent=%s\nentries=%s\nnonRootOwned=
         # semantics before it is eligible for a public Compose cutover.
         self.journal.set_phase("hardened-final")
         final_container = self.start_hardened_final(final_image_id)
-        hardened_fingerprint = self.live_fingerprint(probe_image, HOPS[-1])
+        hardened_fingerprint = self.wait_for_live_fingerprint(probe_image, HOPS[-1])
         if not self.validate_hardened_final_receipt(final_container, final_image_id):
             self.journal.intent(
                 "final.hardened.validated", "logical-validation", final_container["containerId"],
