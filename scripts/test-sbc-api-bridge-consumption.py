@@ -159,7 +159,85 @@ def pre_mutation_state_payload(run_id: str, receipt_sha: str, *extra: str) -> by
     return ("\n".join(lines) + "\n").encode("utf-8")
 
 
-def build_pre_mutation_fixture(module, root: Path) -> dict[str, object]:
+def rollback_scan_failure_state_payload(
+    run_id: str,
+    receipt_sha: str,
+    candidate_receipts: dict[str, str],
+    *extra: str,
+) -> bytes:
+    lines = [
+        f"run.id={run_id}",
+        "deployment.status=preflight",
+        f"api_bridge.receipt_sha256={receipt_sha}",
+        "api_bridge.attestation_anchor_created_at=2026-09-02T23:35:01Z",
+        f"api_bridge.receipt_sha256={receipt_sha}",
+        "api_bridge.verify_count=1",
+        "deployment.status=building-qdrant",
+        "deployment.status=preparing-postgres",
+        "deployment.status=scanning-all-runtime-images",
+        *(
+            f"image_scan.{service}.receipt_sha256={candidate_receipts[service]}"
+            for service in (
+                "qdrant-runtime",
+                "qdrant-audit",
+                "postgres-runtime",
+                "postgres-migrate",
+            )
+        ),
+        *extra,
+        "deployment.status=failed",
+    ]
+    return ("\n".join(lines) + "\n").encode("utf-8")
+
+
+def install_rollback_scan_failure_evidence(run_dir: Path) -> dict[str, str]:
+    evidence = run_dir / "evidence"
+    evidence.mkdir(mode=0o700)
+    os.chmod(evidence, 0o700)
+    candidate_receipts: dict[str, str] = {}
+    for service in (
+        "qdrant-runtime",
+        "qdrant-audit",
+        "postgres-runtime",
+        "postgres-migrate",
+    ):
+        receipt_payload = (
+            '{"service":"' + service + '","status":"verified"}\n'
+        ).encode("ascii")
+        candidate_receipts[service] = hashlib.sha256(receipt_payload).hexdigest()
+        write_owner_file(
+            evidence / f"image-scan-{service}.json",
+            (f'{{"report":"{service}"}}\n').encode("ascii"),
+        )
+        write_owner_file(
+            evidence / f"image-scan-{service}.receipt.json",
+            receipt_payload,
+        )
+        write_owner_file(
+            evidence / f"image-scan-{service}.validation.json",
+            b'{"status":"validated"}\n',
+        )
+        write_owner_file(
+            evidence / f"image-scan-{service}.verification.json",
+            b'{"status":"verified"}\n',
+        )
+    write_owner_file(
+        evidence / "image-scan-qdrant-rollback.json",
+        b'{"report":"qdrant-rollback","vulnerabilities":1}\n',
+    )
+    write_owner_file(
+        evidence / "image-scan-qdrant-rollback.validation.json",
+        b"",
+    )
+    return candidate_receipts
+
+
+def build_pre_mutation_fixture(
+    module,
+    root: Path,
+    *,
+    rollback_scan_failure_indices: tuple[int, ...] = (),
+) -> dict[str, object]:
     state_root = root / "state"
     state_root.mkdir(mode=0o700)
     os.chmod(state_root, 0o700)
@@ -174,11 +252,17 @@ def build_pre_mutation_fixture(module, root: Path) -> dict[str, object]:
     bindings = []
     run_dirs = []
     state_payloads = []
-    for run_id in run_ids:
+    for index, run_id in enumerate(run_ids):
         run_dir = state_root / ("stateful-" + run_id)
         run_dir.mkdir(mode=0o700)
         os.chmod(run_dir, 0o700)
-        state_payload = pre_mutation_state_payload(run_id, receipt_sha)
+        if index in rollback_scan_failure_indices:
+            candidate_receipts = install_rollback_scan_failure_evidence(run_dir)
+            state_payload = rollback_scan_failure_state_payload(
+                run_id, receipt_sha, candidate_receipts
+            )
+        else:
+            state_payload = pre_mutation_state_payload(run_id, receipt_sha)
         write_owner_file(run_dir / "state", state_payload)
         bindings.append(module.RunBinding(
             run_id=run_id,
@@ -816,7 +900,9 @@ def exercise_pre_mutation_cli(module) -> None:
         assert_pre_mutation_settled(module, fixture)
 
 
-def exercise_pre_mutation_fault_matrix(module) -> None:
+def exercise_pre_mutation_fault_matrix(
+    module, *, rollback_scan_failure: bool = False
+) -> None:
     phases = (
         "intent-after-prepared-write",
         "intent-after-prepared-file-fsync",
@@ -844,9 +930,18 @@ def exercise_pre_mutation_fault_matrix(module) -> None:
     )
     for index, phase in enumerate(phases):
         with tempfile.TemporaryDirectory(
-            prefix=f"diva-sbc-bridge-pre-mutation-fault-{index}."
+            prefix=(
+                "diva-sbc-bridge-rollback-scan-fault-"
+                if rollback_scan_failure
+                else "diva-sbc-bridge-pre-mutation-fault-"
+            ) + f"{index}."
         ) as temporary:
-            fixture = build_pre_mutation_fixture(module, Path(temporary))
+            fixture = build_pre_mutation_fixture(
+                module,
+                Path(temporary),
+                rollback_scan_failure_indices=(1,)
+                if rollback_scan_failure else (),
+            )
 
             def fail_at(observed: str, *, expected: str = phase) -> None:
                 if observed == expected:
@@ -867,6 +962,196 @@ def exercise_pre_mutation_fault_matrix(module) -> None:
                     f"pre-mutation reconciliation failed after {phase}: {error}"
                 ) from error
             assert_pre_mutation_settled(module, fixture)
+
+
+def exercise_pre_mutation_rollback_scan_failure(module) -> None:
+    with tempfile.TemporaryDirectory(
+        prefix="diva-sbc-bridge-rollback-scan-success."
+    ) as temporary:
+        fixture = build_pre_mutation_fixture(
+            module, Path(temporary), rollback_scan_failure_indices=(1,)
+        )
+        settlement = retire_pre_mutation(module, fixture)
+        assert settlement["reason"] == module.PRE_MUTATION_REASON
+        assert_pre_mutation_settled(module, fixture)
+
+    with tempfile.TemporaryDirectory(
+        prefix="diva-sbc-bridge-rollback-scan-post-intent-artifact."
+    ) as temporary:
+        fixture = build_pre_mutation_fixture(
+            module, Path(temporary), rollback_scan_failure_indices=(1,)
+        )
+        validation = (
+            fixture["run_dirs"][-1]
+            / "evidence/image-scan-qdrant-rollback.validation.json"
+        )
+
+        def drift_validation_marker(phase: str) -> None:
+            if phase == "intent-after-prepared-directory-fsync":
+                write_owner_file(validation, b"unexpected validation output\n")
+
+        try:
+            retire_pre_mutation(module, fixture, drift_validation_marker)
+        except RuntimeError as error:
+            assert "empty owner file" in str(error), error
+        else:
+            raise AssertionError(
+                "rollback scan artifact drift crossed the durable intent"
+            )
+        assert fixture["receipt"].read_bytes() == fixture["receipt_payload"]
+        assert not os.path.lexists(fixture["intent"])
+        assert not os.path.lexists(fixture["archive"])
+        write_owner_file(validation, b"")
+        retire_pre_mutation(module, fixture)
+        assert_pre_mutation_settled(module, fixture)
+
+
+def exercise_pre_mutation_rollback_scan_fail_closed(module) -> None:
+    state_mutations = (
+        (
+            "writer-state",
+            lambda payload: payload + b"pipeline_writer.status=gating\n",
+            "later boundary",
+        ),
+        (
+            "other-writer-state",
+            lambda payload: payload + b"pipeline_writer.owner=unexpected\n",
+            "contains writer state",
+        ),
+        (
+            "image-scan-status",
+            lambda payload: payload
+            + b"image_scan.status=all-exact-receipts-verified\n",
+            "later boundary",
+        ),
+        (
+            "backup-freshness",
+            lambda payload: payload
+            + b"backup.freshness=revalidated-before-writer-quiescence\n",
+            "later boundary",
+        ),
+        (
+            "qdrant-rollback-receipt-state",
+            lambda payload: payload
+            + b"qdrant.rollback_scan_receipt_sha256=" + b"e" * 64 + b"\n",
+            "later boundary",
+        ),
+        (
+            "postgres-rollback-receipt-state",
+            lambda payload: payload
+            + b"postgres.rollback_scan_receipt_sha256=" + b"d" * 64 + b"\n",
+            "later boundary",
+        ),
+        (
+            "missing-candidate-receipt",
+            lambda payload: b"\n".join(
+                line for line in payload.split(b"\n")
+                if not line.startswith(
+                    b"image_scan.postgres-migrate.receipt_sha256="
+                )
+            ),
+            "receipt key set",
+        ),
+        (
+            "extra-scan-key",
+            lambda payload: payload
+            + b"image_scan.qdrant-rollback.receipt_sha256="
+            + b"f" * 64 + b"\n",
+            "receipt key set",
+        ),
+        (
+            "scan-record-order",
+            lambda payload: payload.replace(
+                next(
+                    line + b"\n" for line in payload.splitlines()
+                    if line.startswith(
+                        b"image_scan.qdrant-runtime.receipt_sha256="
+                    )
+                ),
+                b"",
+            ).replace(
+                b"deployment.status=failed\n",
+                b"deployment.status=failed\n"
+                + next(
+                    line + b"\n" for line in payload.splitlines()
+                    if line.startswith(
+                        b"image_scan.qdrant-runtime.receipt_sha256="
+                    )
+                ),
+            ),
+            "terminal ordering",
+        ),
+    )
+    for label, mutate, expected in state_mutations:
+        with tempfile.TemporaryDirectory(
+            prefix=f"diva-sbc-bridge-rollback-scan-{label}."
+        ) as temporary:
+            fixture = build_pre_mutation_fixture(
+                module, Path(temporary), rollback_scan_failure_indices=(1,)
+            )
+            state_path = fixture["run_dirs"][-1] / "state"
+            changed = mutate(state_path.read_bytes())
+            write_owner_file(state_path, changed)
+            refresh_pre_mutation_binding(module, fixture, 1)
+            _expect_pre_mutation_failure(module, fixture, expected)
+
+    artifact_mutations = (
+        (
+            "missing-report",
+            "image-scan-qdrant-rollback.json",
+            None,
+            "report is absent",
+        ),
+        (
+            "nonempty-validation",
+            "image-scan-qdrant-rollback.validation.json",
+            b"unexpected\n",
+            "empty owner file",
+        ),
+        (
+            "unexpected-receipt",
+            "image-scan-qdrant-rollback.receipt.json",
+            b"unexpected\n",
+            "unexpected artifact",
+        ),
+        (
+            "candidate-receipt-drift",
+            "image-scan-qdrant-runtime.receipt.json",
+            b"changed\n",
+            "candidate scan receipt changed",
+        ),
+        (
+            "downstream-scan-report",
+            "image-scan-postgres-rollback.json",
+            b'{"unexpected":"downstream"}\n',
+            "artifact set is not exact",
+        ),
+    )
+    for label, name, payload, expected in artifact_mutations:
+        with tempfile.TemporaryDirectory(
+            prefix=f"diva-sbc-bridge-rollback-scan-{label}."
+        ) as temporary:
+            fixture = build_pre_mutation_fixture(
+                module, Path(temporary), rollback_scan_failure_indices=(1,)
+            )
+            path = fixture["run_dirs"][-1] / "evidence" / name
+            if payload is None:
+                path.unlink()
+            else:
+                write_owner_file(path, payload)
+            _expect_pre_mutation_failure(module, fixture, expected)
+
+    for leaf in ("qdrant-quiesce-first.json", "qdrant-before.json"):
+        with tempfile.TemporaryDirectory(
+            prefix=f"diva-sbc-bridge-rollback-scan-{leaf}."
+        ) as temporary:
+            fixture = build_pre_mutation_fixture(
+                module, Path(temporary), rollback_scan_failure_indices=(1,)
+            )
+            write_owner_file(fixture["run_dirs"][-1] / leaf, b"{}\n")
+            _expect_pre_mutation_failure(
+                module, fixture, "post-quiescence artifact"
+            )
 
 
 def exercise_pre_mutation_post_intent_revalidation(module) -> None:
@@ -1281,11 +1566,14 @@ def main() -> int:
     exercise_fail_closed_cases(module)
     exercise_pre_mutation_cli(module)
     exercise_pre_mutation_fault_matrix(module)
+    exercise_pre_mutation_rollback_scan_failure(module)
+    exercise_pre_mutation_fault_matrix(module, rollback_scan_failure=True)
     exercise_pre_mutation_post_intent_revalidation(module)
     exercise_pre_mutation_cancellation_faults(module)
     exercise_pre_mutation_fixed_paths(module)
     exercise_pre_mutation_residual_contract(module)
     exercise_pre_mutation_fail_closed_cases(module)
+    exercise_pre_mutation_rollback_scan_fail_closed(module)
     print("PASS crash-safe SBC API bridge receipt consumption")
     return 0
 

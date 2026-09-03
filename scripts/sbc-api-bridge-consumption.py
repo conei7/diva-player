@@ -42,6 +42,25 @@ PRE_MUTATION_DEPLOYMENT_STATUSES = (
     "failed",
 )
 PRE_MUTATION_WRITER_STATUSES = ("gating", "refused-busy")
+PRE_MUTATION_ROLLBACK_SCAN_FAILURE_DEPLOYMENT_STATUSES = (
+    "preflight",
+    "building-qdrant",
+    "preparing-postgres",
+    "scanning-all-runtime-images",
+    "failed",
+)
+PRE_MUTATION_CANDIDATE_SCAN_KEYS = (
+    "image_scan.qdrant-runtime.receipt_sha256",
+    "image_scan.qdrant-audit.receipt_sha256",
+    "image_scan.postgres-runtime.receipt_sha256",
+    "image_scan.postgres-migrate.receipt_sha256",
+)
+PRE_MUTATION_CANDIDATE_SCAN_SERVICES = (
+    "qdrant-runtime",
+    "qdrant-audit",
+    "postgres-runtime",
+    "postgres-migrate",
+)
 PRE_MUTATION_FORBIDDEN_STATE_KEYS = frozenset({
     "api_bridge.receipt_consumed",
     "api_bridge.receipt_consumption_settlement",
@@ -175,6 +194,18 @@ def _inspect_file(path: Path, *, links: set[int], maximum: int = MAX_DOCUMENT,
             or info.st_nlink not in links or info.st_size <= 0
             or info.st_size > maximum):
         _fail(f"unsafe owner file: {path}")
+    owner = _owner_id()
+    if owner is not None and info.st_uid != owner:
+        _fail(f"file owner mismatch: {path}")
+    return info
+
+
+def _inspect_empty_file(path: Path, *, mode: int = 0o600) -> os.stat_result:
+    info = path.lstat()
+    if (not stat.S_ISREG(info.st_mode)
+            or (os.name != "nt" and stat.S_IMODE(info.st_mode) != mode)
+            or info.st_nlink != 1 or info.st_size != 0):
+        _fail(f"unsafe empty owner file: {path}")
     owner = _owner_id()
     if owner is not None and info.st_uid != owner:
         _fail(f"file owner mismatch: {path}")
@@ -842,6 +873,152 @@ def _single_value(values: dict[str, list[str]], key: str) -> str:
     return found[0]
 
 
+def _validate_pre_mutation_writer_refusal(
+    records: list[tuple[str, str]],
+    values: dict[str, list[str]],
+) -> None:
+    if tuple(values.get("pipeline_writer.status", ())) \
+            != PRE_MUTATION_WRITER_STATUSES:
+        _fail("pre-mutation writer refusal sequence is not exact")
+    if values.get("image_scan.status") != ["all-exact-receipts-verified"]:
+        _fail("pre-mutation image scan boundary is not exact")
+    if values.get("backup.freshness") != [
+        "revalidated-before-writer-quiescence"
+    ]:
+        _fail("pre-mutation backup freshness boundary is not exact")
+    required_order = (
+        ("deployment.status", "quiescing-pipeline-writers"),
+        ("pipeline_writer.status", "gating"),
+        ("pipeline_writer.status", "refused-busy"),
+        ("deployment.status", "failed"),
+    )
+    cursor = -1
+    for expected_record in required_order:
+        try:
+            cursor = records.index(expected_record, cursor + 1)
+        except ValueError:
+            _fail("pre-mutation terminal state ordering is invalid")
+
+
+def _validate_pre_mutation_rollback_scan_failure(
+    run_dir: Path,
+    records: list[tuple[str, str]],
+    values: dict[str, list[str]],
+) -> None:
+    for forbidden_key in (
+        "pipeline_writer.status",
+        "image_scan.status",
+        "backup.freshness",
+        "promotion.status",
+        "qdrant.rollback_scan_receipt_sha256",
+        "postgres.rollback_scan_receipt_sha256",
+    ):
+        if forbidden_key in values:
+            _fail(
+                "pre-mutation rollback scan failure contains a later "
+                f"boundary: {forbidden_key}"
+            )
+    if any(key.startswith("pipeline_writer.") for key in values):
+        _fail("pre-mutation rollback scan failure contains writer state")
+    for leaf in ("qdrant-quiesce-first.json", "qdrant-before.json"):
+        if os.path.lexists(run_dir / leaf):
+            _fail(
+                "pre-mutation rollback scan failure has a post-quiescence "
+                f"artifact: {leaf}"
+            )
+    observed_scan_keys = {
+        key for key in values if key.startswith("image_scan.")
+    }
+    if observed_scan_keys != set(PRE_MUTATION_CANDIDATE_SCAN_KEYS):
+        _fail("pre-mutation candidate image scan receipt key set is not exact")
+
+    evidence = run_dir / "evidence"
+    _inspect_directory(evidence)
+    expected_scan_artifacts: set[str] = set()
+    for key, service in zip(
+        PRE_MUTATION_CANDIDATE_SCAN_KEYS,
+        PRE_MUTATION_CANDIDATE_SCAN_SERVICES,
+        strict=True,
+    ):
+        expected_scan_artifacts.update({
+            f"image-scan-{service}.json",
+            f"image-scan-{service}.receipt.json",
+            f"image-scan-{service}.validation.json",
+            f"image-scan-{service}.verification.json",
+        })
+        receipt_values = values.get(key, [])
+        if len(receipt_values) != 1 or HEX64.fullmatch(receipt_values[0]) is None:
+            _fail(f"pre-mutation candidate scan receipt is invalid: {service}")
+        receipt = evidence / f"image-scan-{service}.receipt.json"
+        receipt_sha, _ = _sha256_file(receipt, links={1})
+        if receipt_sha != receipt_values[0]:
+            _fail(f"pre-mutation candidate scan receipt changed: {service}")
+        _inspect_file(
+            evidence / f"image-scan-{service}.json",
+            links={1},
+            maximum=256 * 1024 * 1024,
+        )
+        _inspect_file(
+            evidence / f"image-scan-{service}.validation.json",
+            links={1},
+        )
+        _inspect_file(
+            evidence / f"image-scan-{service}.verification.json",
+            links={1},
+        )
+
+    required_order = [
+        ("deployment.status", "scanning-all-runtime-images"),
+        *(
+            (key, values[key][0])
+            for key in PRE_MUTATION_CANDIDATE_SCAN_KEYS
+        ),
+        ("deployment.status", "failed"),
+    ]
+    cursor = -1
+    for expected_record in required_order:
+        try:
+            cursor = records.index(expected_record, cursor + 1)
+        except ValueError:
+            _fail("pre-mutation rollback scan terminal ordering is invalid")
+
+    rollback_prefix = evidence / "image-scan-qdrant-rollback"
+    rollback_report = Path(str(rollback_prefix) + ".json")
+    rollback_validation = Path(str(rollback_prefix) + ".validation.json")
+    expected_scan_artifacts.update({
+        rollback_report.name,
+        rollback_validation.name,
+    })
+    if not os.path.lexists(rollback_report):
+        _fail("pre-mutation rollback scan report is absent")
+    if not os.path.lexists(rollback_validation):
+        _fail("pre-mutation rollback scan validation marker is absent")
+    _inspect_file(
+        rollback_report,
+        links={1},
+        maximum=256 * 1024 * 1024,
+    )
+    _inspect_empty_file(rollback_validation)
+    for suffix in (
+        ".receipt.json",
+        ".verification.json",
+        ".reverification.json",
+        ".calibration.json",
+    ):
+        if os.path.lexists(Path(str(rollback_prefix) + suffix)):
+            _fail(
+                "pre-mutation rollback scan failure has an unexpected "
+                f"artifact: {rollback_prefix.name}{suffix}"
+            )
+    observed_scan_artifacts = {
+        entry.name
+        for entry in os.scandir(evidence)
+        if entry.name.startswith("image-scan-")
+    }
+    if observed_scan_artifacts != expected_scan_artifacts:
+        _fail("pre-mutation rollback scan artifact set is not exact")
+
+
 def _validate_pre_mutation_run(
     run_dir: Path,
     state_root: Path,
@@ -861,18 +1038,14 @@ def _validate_pre_mutation_run(
         expected_receipt_sha,
     ]:
         _fail("pre-mutation hardening receipt binding is not exact")
-    if tuple(values.get("deployment.status", ())) \
-            != PRE_MUTATION_DEPLOYMENT_STATUSES:
+    deployment_statuses = tuple(values.get("deployment.status", ()))
+    if deployment_statuses == PRE_MUTATION_DEPLOYMENT_STATUSES:
+        _validate_pre_mutation_writer_refusal(records, values)
+    elif deployment_statuses \
+            == PRE_MUTATION_ROLLBACK_SCAN_FAILURE_DEPLOYMENT_STATUSES:
+        _validate_pre_mutation_rollback_scan_failure(run_dir, records, values)
+    else:
         _fail("pre-mutation hardening deployment status sequence is not exact")
-    if tuple(values.get("pipeline_writer.status", ())) \
-            != PRE_MUTATION_WRITER_STATUSES:
-        _fail("pre-mutation writer refusal sequence is not exact")
-    if values.get("image_scan.status") != ["all-exact-receipts-verified"]:
-        _fail("pre-mutation image scan boundary is not exact")
-    if values.get("backup.freshness") != [
-        "revalidated-before-writer-quiescence"
-    ]:
-        _fail("pre-mutation backup freshness boundary is not exact")
     if values.get("api_bridge.verify_count") != ["1"]:
         _fail("pre-mutation bridge verification count is not exact")
     anchor_values = values.get("api_bridge.attestation_anchor_created_at", [])
@@ -883,18 +1056,6 @@ def _validate_pre_mutation_run(
         if key in PRE_MUTATION_FORBIDDEN_STATE_KEYS \
                 or key.startswith(PRE_MUTATION_FORBIDDEN_STATE_PREFIXES):
             _fail(f"pre-mutation hardening state contains mutation evidence: {key}")
-    required_order = (
-        ("deployment.status", "quiescing-pipeline-writers"),
-        ("pipeline_writer.status", "gating"),
-        ("pipeline_writer.status", "refused-busy"),
-        ("deployment.status", "failed"),
-    )
-    cursor = -1
-    for expected_record in required_order:
-        try:
-            cursor = records.index(expected_record, cursor + 1)
-        except ValueError:
-            _fail("pre-mutation terminal state ordering is invalid")
     for leaf in PRE_MUTATION_FORBIDDEN_FILES:
         if os.path.lexists(run_dir / leaf):
             _fail(f"pre-mutation hardening artifact proves a later boundary: {leaf}")
