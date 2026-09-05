@@ -70,7 +70,10 @@ function NicoEmbed({ pvId, name, duration: songDuration, isPlaying }: { pvId: st
   const initialAutoplayRef = useRef(isPlaying);
   const playerIdRef = useRef(`diva-player-${pvId}-${Date.now().toString(36)}`);
   const requestedPlayingRef = useRef(isPlaying);
-  const autoplayMutedRef = useRef(initialAutoplayRef.current);
+  const autoplayMutedRef = useRef(initialAutoplayRef.current && !navigator.userActivation?.hasBeenActive);
+  const startedRef = useRef(false);
+  const confirmedPlayingRef = useRef(false);
+  const pauseRequestedAtRef = useRef<number | null>(null);
   const embedUrl = buildNicoEmbedUrl(pvId, initialAutoplayRef.current, playerIdRef.current);
   const NICO_ORIGIN = 'https://embed.nicovideo.jp';
 
@@ -82,6 +85,15 @@ function NicoEmbed({ pvId, name, duration: songDuration, isPlaying }: { pvId: st
   const trackerRef = useRef(createNicoProgressTracker());
   const durationRef = useRef(songDuration);
   const advancedRef = useRef(false);
+  const selectionSequence = useRef(usePlayerStore.getState().playbackSequence);
+  const isCurrentSelection = useCallback(() => {
+    const state = usePlayerStore.getState();
+    return state.currentPV?.service === 'NicoNicoDouga' && state.currentPV.pvId === pvId
+      && state.playbackSequence === selectionSequence.current;
+  }, [pvId]);
+  const wantsPlayback = useCallback(() => isCurrentSelection()
+    && usePlayerStore.getState().isPlaying
+    && getPlaybackOwnership().getState() !== 'remote', [isCurrentSelection]);
 
   const applySeek = useCallback((target: number) => {
     if (!iframeReadyRef.current || !iframeRef.current?.contentWindow) return false;
@@ -117,9 +129,14 @@ function NicoEmbed({ pvId, name, duration: songDuration, isPlaying }: { pvId: st
   }, []);
 
   const prepareAndSendPlaybackState = useCallback((playing: boolean) => {
-    if (playing && autoplayMutedRef.current) sendMuted(true);
-    sendPlaybackState(playing);
-  }, [sendMuted, sendPlaybackState]);
+    if (playing && wantsPlayback()) {
+      if (navigator.userActivation?.hasBeenActive) autoplayMutedRef.current = false;
+      sendMuted(autoplayMutedRef.current);
+      sendPlaybackState(true);
+    } else {
+      sendPlaybackState(false);
+    }
+  }, [sendMuted, sendPlaybackState, wantsPlayback]);
 
   const clearPlaybackRetry = useCallback(() => {
     if (playTimerRef.current === null) return;
@@ -133,14 +150,15 @@ function NicoEmbed({ pvId, name, duration: songDuration, isPlaying }: { pvId: st
   }, []);
 
   const ensurePlaybackAttempt = useCallback(() => {
-    if (!requestedPlayingRef.current || attemptTokenRef.current) return;
+    if (!wantsPlayback() || startedRef.current || attemptTokenRef.current) return;
     attemptTokenRef.current = attemptControllerRef.current.start(pvId, () => {
       attemptTokenRef.current = null;
-      if (requestedPlayingRef.current) tryNextPV();
+      if (wantsPlayback()) tryNextPV();
     });
-  }, [pvId, tryNextPV]);
+  }, [pvId, tryNextPV, wantsPlayback]);
 
   const completePlaybackAttempt = useCallback(() => {
+    startedRef.current = true;
     const attempt = attemptTokenRef.current;
     if (!attempt) return;
     attemptControllerRef.current.complete(attempt);
@@ -149,16 +167,16 @@ function NicoEmbed({ pvId, name, duration: songDuration, isPlaying }: { pvId: st
 
   const schedulePlaybackRetry = useCallback((initialDelayMs = 750) => {
     clearPlaybackRetry();
-    if (!requestedPlayingRef.current || !iframeReadyRef.current) return;
+    if (!wantsPlayback() || confirmedPlayingRef.current || !iframeReadyRef.current) return;
     const retry = () => {
       playTimerRef.current = null;
-      if (!requestedPlayingRef.current || !iframeReadyRef.current) return;
+      if (!wantsPlayback() || confirmedPlayingRef.current || !iframeReadyRef.current) return;
       prepareAndSendPlaybackState(true);
       ensurePlaybackAttempt();
       playTimerRef.current = window.setTimeout(retry, 1_000);
     };
     playTimerRef.current = window.setTimeout(retry, initialDelayMs);
-  }, [clearPlaybackRetry, ensurePlaybackAttempt, prepareAndSendPlaybackState]);
+  }, [clearPlaybackRetry, ensurePlaybackAttempt, prepareAndSendPlaybackState, wantsPlayback]);
 
   const scheduleVolumeSync = useCallback(() => {
     sendVolume();
@@ -174,22 +192,27 @@ function NicoEmbed({ pvId, name, duration: songDuration, isPlaying }: { pvId: st
   }, []);
 
   const advanceOnce = useCallback(() => {
-    if (advancedRef.current) return;
+    if (advancedRef.current || !wantsPlayback()) return;
     advancedRef.current = true;
     trackerRef.current.setPlaying(false);
     stopTimer();
     next();
-  }, [next, stopTimer]);
+  }, [next, stopTimer, wantsPlayback]);
 
   const startTimer = useCallback(() => {
     stopTimer();
     trackerRef.current.setPlaying(true);
     timerRef.current = window.setInterval(() => {
+      if (!wantsPlayback()) {
+        trackerRef.current.setPlaying(false);
+        stopTimer();
+        return;
+      }
       const current = trackerRef.current.current();
       setProgress(current);
       if (hasReachedPlaybackEnd(current, durationRef.current ?? 0)) advanceOnce();
     }, 500);
-  }, [advanceOnce, setProgress, stopTimer]);
+  }, [advanceOnce, setProgress, stopTimer, wantsPlayback]);
 
   // マウント時に進捗と再生要求を初期化する。
   useEffect(() => {
@@ -231,10 +254,14 @@ function NicoEmbed({ pvId, name, duration: songDuration, isPlaying }: { pvId: st
       ensurePlaybackAttempt();
       schedulePlaybackRetry();
     } else {
+      confirmedPlayingRef.current = false;
+      pauseRequestedAtRef.current = performance.now();
+      trackerRef.current.setPlaying(false);
+      stopTimer();
       clearPlaybackRetry();
       cancelPlaybackAttempt();
     }
-  }, [cancelPlaybackAttempt, clearPlaybackRetry, ensurePlaybackAttempt, isPlaying, prepareAndSendPlaybackState, schedulePlaybackRetry]);
+  }, [cancelPlaybackAttempt, clearPlaybackRetry, ensurePlaybackAttempt, isPlaying, prepareAndSendPlaybackState, schedulePlaybackRetry, stopTimer]);
 
   useEffect(() => {
     if (seekTarget !== null) applySeek(seekTarget);
@@ -244,7 +271,7 @@ function NicoEmbed({ pvId, name, duration: songDuration, isPlaying }: { pvId: st
   useEffect(() => {
     const handler = (e: MessageEvent) => {
       // 許可originと、このコンポーネントが作ったiframeの両方を確認する。
-      if (e.origin !== NICO_ORIGIN || e.source !== iframeRef.current?.contentWindow) return;
+      if (e.origin !== NICO_ORIGIN || e.source !== iframeRef.current?.contentWindow || !isCurrentSelection()) return;
       const message = parseNicoPlayerMessage(e.data);
       if (!message) return;
       switch (message.type) {
@@ -261,22 +288,42 @@ function NicoEmbed({ pvId, name, duration: songDuration, isPlaying }: { pvId: st
           break;
         }
         case 'progress': {
-          const confirmsPlayback = message.seconds > 0 && attemptTokenRef.current !== null;
+          // App seeks already update the tracker in applySeek. Delayed playback
+          // telemetry after a pause must not move the resume position to the end.
+          if (!wantsPlayback()) break;
+          const confirmsPlayback = wantsPlayback() && message.seconds > 0 && attemptTokenRef.current !== null;
           trackerRef.current.confirm(message.seconds);
           const current = trackerRef.current.current();
           setProgress(current);
           if (confirmsPlayback) {
+            confirmedPlayingRef.current = true;
             clearPlaybackRetry();
             markCurrentPVHealthy();
             completePlaybackAttempt();
-            requestedPlayingRef.current = true;
-            setIsPlaying(true);
+            if (autoplayMutedRef.current && navigator.userActivation?.hasBeenActive) {
+              autoplayMutedRef.current = false;
+              sendMuted(false);
+              scheduleVolumeSync();
+            }
             startTimer();
           }
           if (hasReachedPlaybackEnd(current, durationRef.current ?? 0)) advanceOnce();
           break;
         }
         case 'playing':
+          // A late iframe event must not undo an app pause or a remote claim.
+          // Native controls may start playback only in a visible, focused iframe.
+          if (!wantsPlayback() && (document.hidden
+            || document.activeElement !== iframeRef.current
+            || (pauseRequestedAtRef.current !== null && performance.now() - pauseRequestedAtRef.current < 1_000))) {
+            sendPlaybackState(false);
+            break;
+          }
+          pauseRequestedAtRef.current = null;
+          confirmedPlayingRef.current = true;
+          if (!usePlayerStore.getState().isPlaying) {
+            getPlaybackOwnership().claim(usePlayerStore.getState().currentSong?.id ?? null);
+          }
           clearPlaybackRetry();
           markCurrentPVHealthy();
           completePlaybackAttempt();
@@ -290,14 +337,18 @@ function NicoEmbed({ pvId, name, duration: songDuration, isPlaying }: { pvId: st
           startTimer();
           break;
         case 'paused':
-          if (requestedPlayingRef.current) {
+          confirmedPlayingRef.current = false;
+          trackerRef.current.setPlaying(false);
+          setProgress(trackerRef.current.current());
+          stopTimer();
+          if (wantsPlayback() && !startedRef.current) {
             schedulePlaybackRetry(500);
             break;
           }
-          trackerRef.current.setPlaying(false);
-          setProgress(trackerRef.current.current());
+          requestedPlayingRef.current = false;
+          clearPlaybackRetry();
+          cancelPlaybackAttempt();
           setIsPlaying(false);
-          stopTimer();
           break;
         case 'ended':
           advanceOnce();
@@ -306,7 +357,7 @@ function NicoEmbed({ pvId, name, duration: songDuration, isPlaying }: { pvId: st
     };
     window.addEventListener('message', handler);
     return () => window.removeEventListener('message', handler);
-  }, [advanceOnce, clearPlaybackRetry, completePlaybackAttempt, ensurePlaybackAttempt, markCurrentPVHealthy, prepareAndSendPlaybackState, schedulePlaybackRetry, scheduleVolumeSync, sendMuted, setProgress, setDuration, setIsPlaying, startTimer, stopTimer]);
+  }, [advanceOnce, cancelPlaybackAttempt, clearPlaybackRetry, completePlaybackAttempt, ensurePlaybackAttempt, isCurrentSelection, markCurrentPVHealthy, prepareAndSendPlaybackState, schedulePlaybackRetry, scheduleVolumeSync, sendMuted, sendPlaybackState, setProgress, setDuration, setIsPlaying, startTimer, stopTimer, wantsPlayback]);
 
   useEffect(() => {
     const restoreAutoplayAudio = () => {
@@ -325,7 +376,7 @@ function NicoEmbed({ pvId, name, duration: songDuration, isPlaying }: { pvId: st
 
   const recoverNicoPlayback = useCallback(() => {
     const state = usePlayerStore.getState();
-    if (!state.isPlaying || getPlaybackOwnership().getState() !== 'local') return;
+    if (!state.isPlaying || !wantsPlayback() || getPlaybackOwnership().getState() !== 'local') return;
     // The tracker uses wall time between confirmed Nico events. A suspended
     // browser must not count that gap as listened playback, so anchor it to the
     // last UI-confirmed position before asking the iframe to resume.
@@ -336,10 +387,10 @@ function NicoEmbed({ pvId, name, duration: songDuration, isPlaying }: { pvId: st
       return;
     }
     requestedPlayingRef.current = true;
+    confirmedPlayingRef.current = false;
     prepareAndSendPlaybackState(true);
     schedulePlaybackRetry();
-    startTimer();
-  }, [advanceOnce, prepareAndSendPlaybackState, schedulePlaybackRetry, startTimer]);
+  }, [advanceOnce, prepareAndSendPlaybackState, schedulePlaybackRetry, wantsPlayback]);
   usePlaybackWakeRecovery(recoverNicoPlayback);
 
   // ボリューム同期。iframeロード前に送ったメッセージを補うため遅延再送する。
@@ -417,6 +468,13 @@ export default function PlayerEmbed() {
   const youtubeAutoplayMutedRef = useRef(false);
   const youtubePauseRequestedAtRef = useRef<number | null>(null);
   const ownershipRef = useRef<ReturnType<typeof getPlaybackOwnership> | null>(null);
+  const isActiveYouTubePlayer = useCallback((player: YT.Player) => {
+    const state = usePlayerStore.getState();
+    const desired = youtubeDesiredVideoRef.current;
+    return ytPlayerRef.current === player && desired !== null
+      && state.currentPV?.service === 'Youtube' && state.currentPV.pvId === desired.pvId
+      && state.currentSong?.id === desired.songId && state.playbackSequence === desired.playbackSequence;
+  }, []);
 
   useEffect(() => {
     volumeRef.current = volume;
@@ -434,7 +492,7 @@ export default function PlayerEmbed() {
   const startVolumeSync = useCallback((player: YT.Player) => {
     stopVolumeSync();
     volumeSyncTimerRef.current = window.setInterval(() => {
-      if (ytPlayerRef.current !== player) return;
+      if (!isActiveYouTubePlayer(player)) return;
       try {
         const playerVolume = player.getVolume?.();
         if (typeof playerVolume !== 'number' || !Number.isFinite(playerVolume)) return;
@@ -446,7 +504,7 @@ export default function PlayerEmbed() {
         // プレイヤー破棄と同時に呼ばれた場合は無視する。
       }
     }, 250);
-  }, [setVolume, stopVolumeSync]);
+  }, [isActiveYouTubePlayer, setVolume, stopVolumeSync]);
 
   useEffect(() => {
     const ownership = getPlaybackOwnership();
@@ -494,14 +552,14 @@ export default function PlayerEmbed() {
   const startProgressTimer = useCallback(() => {
     if (progressTimerRef.current) return;
     progressTimerRef.current = window.setInterval(() => {
-      if (ytPlayerRef.current) {
+      if (ytPlayerRef.current && isActiveYouTubePlayer(ytPlayerRef.current)) {
         const currentTime = ytPlayerRef.current.getCurrentTime?.();
         if (typeof currentTime === 'number') {
           setProgress(currentTime);
         }
       }
     }, 500);
-  }, [setProgress]);
+  }, [isActiveYouTubePlayer, setProgress]);
 
   const stopProgressTimer = useCallback(() => {
     if (progressTimerRef.current) {
@@ -530,12 +588,13 @@ export default function PlayerEmbed() {
 
   const scheduleEndRecovery = useCallback((player: YT.Player) => {
     clearEndRecoveryTimer();
+    if (!isActiveYouTubePlayer(player) || !usePlayerStore.getState().isPlaying) return;
     const needsPlaybackRestart = (playerState: number | undefined) => playerState === window.YT.PlayerState.PAUSED
       || playerState === window.YT.PlayerState.UNSTARTED
       || playerState === window.YT.PlayerState.CUED;
     const check = () => {
       endRecoveryTimerRef.current = null;
-      if (ytPlayerRef.current !== player) return;
+      if (!isActiveYouTubePlayer(player)) return;
       if (!usePlayerStore.getState().isPlaying) return;
       try {
         const currentTime = player.getCurrentTime?.() ?? 0;
@@ -574,7 +633,7 @@ export default function PlayerEmbed() {
       getPlaybackRecoveryCheckDelayMs(playerNeedsRestart, currentTime, duration),
     );
     if (playerNeedsRestart) player.playVideo?.();
-  }, [advanceOnce, clearEndRecoveryTimer]);
+  }, [advanceOnce, clearEndRecoveryTimer, isActiveYouTubePlayer]);
 
   const failCurrentYouTubeAttempt = useCallback((message: string) => {
     const desired = youtubeDesiredVideoRef.current;
@@ -607,7 +666,7 @@ export default function PlayerEmbed() {
 
     const startAttempt = (): PlaybackAttemptToken => {
       const token = attemptController.start(desired.pvId, () => {
-        if (youtubeDesiredVideoRef.current !== desired || desired.attempt !== token) return;
+        if (!isActiveYouTubePlayer(player) || youtubeDesiredVideoRef.current !== desired || desired.attempt !== token) return;
         if (!usePlayerStore.getState().isPlaying || desired.started) {
           attemptController.cancel();
           desired.attempt = null;
@@ -633,11 +692,11 @@ export default function PlayerEmbed() {
     };
 
     desired.attempt = startAttempt();
-  }, [failCurrentYouTubeAttempt, scheduleEndRecovery]);
+  }, [failCurrentYouTubeAttempt, isActiveYouTubePlayer, scheduleEndRecovery]);
 
   const loadDesiredYouTubeVideo = useCallback((player: YT.Player) => {
     const desired = youtubeDesiredVideoRef.current;
-    if (!desired || !youtubeReadyRef.current) return;
+    if (!desired || !youtubeReadyRef.current || !isActiveYouTubePlayer(player)) return;
     const shouldPlay = usePlayerStore.getState().isPlaying;
     try {
       if (shouldPlay) {
@@ -674,7 +733,7 @@ export default function PlayerEmbed() {
     } catch {
       failCurrentYouTubeAttempt('YouTube動画の準備に失敗しました');
     }
-  }, [armYouTubePlaybackAttempt, failCurrentYouTubeAttempt, scheduleEndRecovery, startProgressTimer]);
+  }, [armYouTubePlaybackAttempt, failCurrentYouTubeAttempt, isActiveYouTubePlayer, scheduleEndRecovery, startProgressTimer]);
 
   const isYouTube = currentPV?.service === 'Youtube';
   const currentYouTubePVId = isYouTube ? currentPV.pvId : null;
@@ -713,12 +772,14 @@ export default function PlayerEmbed() {
               youtubeReadyRef.current = true;
               event.target.setVolume(volumeRef.current);
               startVolumeSync(event.target);
-              startProgressTimer();
               loadDesiredYouTubeVideo(event.target);
             },
             onStateChange: (event: YT.OnStateChangeEvent) => {
               const desired = youtubeDesiredVideoRef.current;
-              if (!desired) return;
+              if (disposed || !desired || !isActiveYouTubePlayer(event.target)) {
+                if (!disposed && event.data === window.YT.PlayerState.PLAYING) event.target.stopVideo?.();
+                return;
+              }
               let reportedVideoId = '';
               try {
                 reportedVideoId = event.target.getVideoData?.().video_id ?? '';
@@ -797,7 +858,7 @@ export default function PlayerEmbed() {
             },
             onError: (event: YT.OnErrorEvent) => {
               const desired = youtubeDesiredVideoRef.current;
-              if (!desired) return;
+              if (disposed || !desired || !isActiveYouTubePlayer(event.target)) return;
               try {
                 const reportedVideoId = event.target.getVideoData?.().video_id ?? '';
                 if (!isEventForDesiredYouTubePV(reportedVideoId, desired.pvId)) return;
@@ -833,18 +894,21 @@ export default function PlayerEmbed() {
       }
       if (playerContainer) playerContainer.innerHTML = '';
     };
-  }, [advanceOnce, clearEndRecoveryTimer, failCurrentYouTubeAttempt, loadDesiredYouTubeVideo, markPVHealthy, scheduleEndRecovery, setDuration, setIsPlaying, startProgressTimer, stopProgressTimer, startVolumeSync, stopVolumeSync]);
+  }, [advanceOnce, clearEndRecoveryTimer, failCurrentYouTubeAttempt, isActiveYouTubePlayer, loadDesiredYouTubeVideo, markPVHealthy, scheduleEndRecovery, setDuration, setIsPlaying, startProgressTimer, stopProgressTimer, startVolumeSync, stopVolumeSync]);
 
   // The persistent YouTube iframe remains mounted while another service is in
   // use, but its previous video must not keep playing underneath that service.
   useEffect(() => {
     if (isYouTube || !ytPlayerRef.current) return;
+    clearEndRecoveryTimer();
+    stopProgressTimer();
+    youtubeAutoplayMutedRef.current = false;
     try {
       ytPlayerRef.current.stopVideo?.();
     } catch {
       // The idle player may still be completing its initial setup.
     }
-  }, [isYouTube]);
+  }, [clearEndRecoveryTimer, isYouTube, stopProgressTimer]);
 
   // Switch videos inside the persistent player. playbackSequence is included so
   // replaying the same PV restarts it without recreating the iframe.
@@ -879,6 +943,8 @@ export default function PlayerEmbed() {
         || desired.playbackSequence !== playbackSequence) return;
       attemptController.cancel();
       youtubeDesiredVideoRef.current = null;
+      clearEndRecoveryTimer();
+      stopProgressTimer();
     };
   }, [clearEndRecoveryTimer, currentSong?.id, currentSong?.lengthSeconds, currentYouTubePVId, loadDesiredYouTubeVideo, playbackSequence, setDuration, setProgress, stopProgressTimer]);
 
@@ -889,7 +955,7 @@ export default function PlayerEmbed() {
   useEffect(() => {
     const restoreAutoplayAudio = () => {
       const player = ytPlayerRef.current;
-      if (!player || !youtubeAutoplayMutedRef.current || !usePlayerStore.getState().isPlaying) return;
+      if (!player || !isActiveYouTubePlayer(player) || !youtubeAutoplayMutedRef.current || !usePlayerStore.getState().isPlaying) return;
       try {
         player.unMute?.();
         player.setVolume?.(volumeRef.current);
@@ -904,12 +970,12 @@ export default function PlayerEmbed() {
       window.removeEventListener('pointerdown', restoreAutoplayAudio, { capture: true });
       window.removeEventListener('keydown', restoreAutoplayAudio, { capture: true });
     };
-  }, []);
+  }, [isActiveYouTubePlayer]);
 
   const recoverYouTubePlayback = useCallback(() => {
     const player = ytPlayerRef.current;
     const state = usePlayerStore.getState();
-    if (!player || currentPV?.service !== 'Youtube' || !state.isPlaying) return;
+    if (!player || !isActiveYouTubePlayer(player) || !state.isPlaying) return;
     if (ownershipRef.current?.getState() !== 'local') return;
     try {
       const currentTime = player.getCurrentTime?.() ?? 0;
@@ -933,7 +999,7 @@ export default function PlayerEmbed() {
     } catch {
       // The iframe may be between player generations.
     }
-  }, [advanceOnce, currentPV, scheduleEndRecovery, setProgress]);
+  }, [advanceOnce, isActiveYouTubePlayer, scheduleEndRecovery, setProgress]);
   usePlaybackWakeRecovery(recoverYouTubePlayback, currentPV?.service === 'Youtube');
 
   // 再生/一時停止の同期

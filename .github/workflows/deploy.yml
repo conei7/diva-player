@@ -801,6 +801,8 @@ jobs:
           exit 1
       - name: Player controls E2E
         run: npm run test:e2e:player-controls -- http://127.0.0.1:4173/diva-player/
+      - name: Player service switch and paused Nico regression
+        run: npm run test:e2e:player-service-switch -- http://127.0.0.1:4173/diva-player/
       - name: Hidden songs E2E
         run: npm run test:e2e:hidden-songs -- http://127.0.0.1:4173/diva-player/
       - name: External players E2E

@@ -31,6 +31,7 @@
     "test:e2e:navigation": "node scripts/test-navigation-e2e.mjs",
     "test:performance-budget": "node scripts/test-performance-budget.mjs",
     "test:e2e:player-controls": "node scripts/test-player-controls-e2e.mjs",
+    "test:e2e:player-service-switch": "node scripts/test-player-service-switch-e2e.mjs",
     "test:e2e:external-players": "node scripts/test-external-players-e2e.mjs",
     "test:e2e:mobile-player-gestures": "node scripts/test-mobile-player-gestures-e2e.mjs",
     "test:e2e:youtube-playlist-sync": "node scripts/test-youtube-playlist-sync-e2e.mjs",
