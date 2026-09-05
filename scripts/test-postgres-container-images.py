@@ -68,7 +68,7 @@ class PostgresContainerContractTests(unittest.TestCase):
             "postgresql16-dev=16.15-r0",
             "libcrypto3=3.5.8-r0",
             "libssl3=3.5.8-r0",
-            "libuuid=2.41.6-r0",
+            "libuuid=2.41.6-r1",
             "su-exec=0.3-r0",
         ):
             self.assertIn(package, self.postgres)

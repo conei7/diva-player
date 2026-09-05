@@ -47,7 +47,7 @@ RUN set -eux; \
     apk add --no-cache \
       libcrypto3=3.5.8-r0 \
       libssl3=3.5.8-r0 \
-      libuuid=2.41.6-r0 \
+      libuuid=2.41.6-r1 \
       su-exec=0.3-r0; \
     test -L /usr/local/bin/su-exec; \
     [ "$(readlink /usr/local/bin/su-exec)" = gosu ]; \
