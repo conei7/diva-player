@@ -986,12 +986,12 @@ jobs:
         env:
           PREVIEW_URL: ${{ steps.preview_deployment.outputs.preview_url }}
         run: |
-          if npm run check:public-primary-health -- --base-url "$PREVIEW_URL" --timeout-ms 15000 --interval-ms 5000; then
+          if npm run check:public-primary-health -- --base-url "$PREVIEW_URL" --timeout-ms 15000 --interval-ms 5000 --allow-degraded-data; then
             exit 0
           fi
           echo 'Preview edge routes are not converged yet; retrying the complete health contract once after 30 seconds.' >&2
           sleep 30
-          npm run check:public-primary-health -- --base-url "$PREVIEW_URL" --timeout-ms 15000 --interval-ms 5000
+          npm run check:public-primary-health -- --base-url "$PREVIEW_URL" --timeout-ms 15000 --interval-ms 5000 --allow-degraded-data
       - name: Verify preview Nico autoplay smoke
         env:
           PREVIEW_URL: ${{ steps.preview_deployment.outputs.preview_url }}

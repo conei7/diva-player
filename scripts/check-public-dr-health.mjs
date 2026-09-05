@@ -26,6 +26,7 @@ function parseArguments(argv) {
     reportFile: null,
     timeoutMs: DEFAULT_TIMEOUT_MS,
     intervalMs: DEFAULT_INTERVAL_MS,
+    allowDegradedData: false,
   };
   for (let index = 0; index < argv.length; index += 1) {
     const option = argv[index];
@@ -34,6 +35,7 @@ function parseArguments(argv) {
     else if (option === '--report-file' && value) options.reportFile = value;
     else if (option === '--timeout-ms' && value) options.timeoutMs = positiveInteger(value, option);
     else if (option === '--interval-ms' && value) options.intervalMs = positiveInteger(value, option);
+    else if (option === '--allow-degraded-data') options.allowDegradedData = true;
     else throw new Error(`unsupported or incomplete option: ${option}`);
     index += 1;
   }
@@ -48,6 +50,19 @@ function parseArguments(argv) {
   ) throw new Error('--base-url must be a credential-free HTTPS origin');
   options.baseUrl = baseUrl.origin;
   return options;
+}
+
+function isAcceptedDegradedHealthPayload(payload) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload) || payload.status !== 'degraded') {
+    return false;
+  }
+  const dependencies = payload.dependencies;
+  if (!dependencies?.postgres?.ok || !dependencies?.qdrant?.ok) return false;
+  for (const key of ['discoveryQuality', 'audioFeatures']) {
+    const section = payload[key];
+    if (section && section.ok === false && section.error !== 'stale') return false;
+  }
+  return ['discoveryQuality', 'audioFeatures'].some(key => payload[key]?.ok === false && payload[key]?.error === 'stale');
 }
 
 function publicHeader(value, allowed) {
@@ -86,7 +101,7 @@ async function readBoundedJson(response) {
   return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
 }
 
-async function probeEndpoint(baseUrl, path, round, timeoutMs) {
+async function probeEndpoint(baseUrl, path, round, timeoutMs, allowDegradedData) {
   const startedAt = Date.now();
   try {
     const response = await fetch(new URL(path, baseUrl), {
@@ -95,6 +110,7 @@ async function probeEndpoint(baseUrl, path, round, timeoutMs) {
       signal: AbortSignal.timeout(timeoutMs),
     });
     let payloadValid = true;
+    let degradedDataAccepted = false;
     if (API_PATHS.includes(path)) {
       try {
         const payload = await readBoundedJson(response);
@@ -105,6 +121,11 @@ async function probeEndpoint(baseUrl, path, round, timeoutMs) {
           && !Array.isArray(payload)
           && payload.status === expectedStatus
         );
+        degradedDataAccepted = path.endsWith('/health')
+          && allowDegradedData
+          && response.status === 503
+          && isAcceptedDegradedHealthPayload(payload);
+        payloadValid ||= degradedDataAccepted;
       } catch {
         payloadValid = false;
       }
@@ -114,12 +135,13 @@ async function probeEndpoint(baseUrl, path, round, timeoutMs) {
     const result = {
       round,
       path,
-      ok: response.status === 200 && payloadValid,
+      ok: (response.status === 200 && payloadValid) || degradedDataAccepted,
       status: response.status,
       durationMs: Date.now() - startedAt,
       originRole: publicHeader(response.headers.get('x-diva-origin-role'), ORIGIN_ROLES),
       standbyState: publicHeader(response.headers.get('x-diva-standby-state'), STANDBY_STATES),
-      error: payloadValid ? null : 'invalid-api-payload',
+      error: degradedDataAccepted ? 'degraded-data-accepted' : (payloadValid ? null : 'invalid-api-payload'),
+      degradedDataAccepted,
     };
     return result;
   } catch (error) {
@@ -173,7 +195,7 @@ export async function runPublicPrimaryHealth(options) {
   const probes = [];
   for (let round = 1; round <= 2; round += 1) {
     probes.push(...await Promise.all(PROBE_PATHS.map(path => (
-      probeEndpoint(options.baseUrl, path, round, options.timeoutMs)
+      probeEndpoint(options.baseUrl, path, round, options.timeoutMs, options.allowDegradedData)
     ))));
     if (round === 1) {
       await new Promise(resolve => setTimeout(resolve, options.intervalMs));

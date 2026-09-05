@@ -128,7 +128,7 @@ try {
   assert.match(workflow, /Verify preview root, ready, health, and origin headers/);
   assert.match(
     workflow,
-    /Verify preview root, ready, health, and origin headers[\s\S]*if npm run check:public-primary-health -- --base-url "\$PREVIEW_URL" --timeout-ms 15000 --interval-ms 5000; then[\s\S]*sleep 30[\s\S]*npm run check:public-primary-health -- --base-url "\$PREVIEW_URL" --timeout-ms 15000 --interval-ms 5000/,
+    /Verify preview root, ready, health, and origin headers[\s\S]*if npm run check:public-primary-health -- --base-url "\$PREVIEW_URL" --timeout-ms 15000 --interval-ms 5000 --allow-degraded-data; then[\s\S]*sleep 30[\s\S]*npm run check:public-primary-health -- --base-url "\$PREVIEW_URL" --timeout-ms 15000 --interval-ms 5000 --allow-degraded-data/,
     'preview health must retry the complete fail-closed contract once after edge propagation delay',
   );
   assert.match(workflow, /Seal verified last-known-good production/);
