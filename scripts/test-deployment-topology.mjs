@@ -200,8 +200,9 @@ assert.match(
 assert.doesNotMatch(apiDockerfile, /apk upgrade/u);
 assert.match(
   webDockerfile,
-  /RUN apk add --no-cache \\\s+--repository https:\/\/dl-cdn\.alpinelinux\.org\/alpine\/edge\/main \\\s+libuuid=2\.42\.3-r0\s+COPY/u,
+  /RUN apk add --no-cache[^\n]*(?:\\\n[^\n]*)*libuuid=2\.42\.3-r1\s+COPY/u,
 );
+assert.doesNotMatch(webDockerfile, /--repository|\/edge\//u);
 assert.doesNotMatch(webDockerfile, /--allow-untrusted|--force-broken-world/u);
 assert.match(apiDockerfile, /apk add --no-cache[\s\S]*libcrypto3=3\.5\.8-r0[\s\S]*libssl3=3\.5\.8-r0/u);
 assert.match(apiDockerfile, /test "\$\(dotnet --version\)" = "8\.0\.424"/u);
