@@ -44,10 +44,108 @@ try {
       currentPlaybackSource: 'manual',
     }));
   }, fixtureSong);
+  await first.setRequestInterception(true);
+  first.on('request', async request => {
+    if (request.url() !== 'https://www.youtube.com/iframe_api') {
+      await request.continue();
+      return;
+    }
+    await request.respond({ contentType: 'application/javascript', body: `
+      window.YT = {
+        PlayerState: { UNSTARTED: -1, ENDED: 0, PLAYING: 1, PAUSED: 2, CUED: 5 },
+        Player: function (_, options) {
+          const player = this;
+          let state = -1;
+          let position = 0;
+          let videoId = '';
+          window.__yt = player;
+          window.__ytLoads = 0;
+          window.__ytMutes = 0;
+          window.__ytStops = 0;
+          player.getVideoData = () => ({ video_id: videoId });
+          player.getPlayerState = () => state;
+          player.getCurrentTime = () => position;
+          player.getDuration = () => 300;
+          player.getVolume = () => 50;
+          player.setVolume = () => {};
+          player.mute = () => { window.__ytMutes++; };
+          player.unMute = () => {};
+          player.seekTo = seconds => { position = seconds; };
+          player.cueVideoById = player.loadVideoById = id => {
+            videoId = id; position = 0; state = 5; window.__ytLoads++;
+          };
+          const emit = () => options.events.onStateChange({ data: state, target: player });
+          player.playVideo = () => {
+            if (state === 1) return; // Real API does not repeat PLAYING for an idempotent play.
+            state = 1;
+            if (!window.__ytOmitPlaying) emit();
+          };
+          player.pauseVideo = () => { state = 2; emit(); };
+          player.stopVideo = () => { state = 0; window.__ytStops++; };
+          player.fail = () => options.events.onError({ data: 100, target: player });
+          player.destroy = () => {};
+          setTimeout(() => options.events.onReady({ target: player }), 0);
+        }
+      };
+      window.onYouTubeIframeAPIReady();
+    ` });
+  });
   await first.goto(baseUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
   await first.waitForSelector('[data-testid="mini-player-close"]', { timeout: 60_000 });
   await first.waitForFunction(() => document.title === 'Player controls fixture — Fixture producer | DIVA Player');
   console.log('PASS dynamic browser tab title');
+
+  await first.waitForFunction(() => window.__yt?.getVideoData().video_id === 'fixture');
+  await new Promise(resolve => setTimeout(resolve, 1_100));
+  // Native iframe play updates the store first; the resulting React effect must
+  // not arm another startup timeout while the player is already playing.
+  await first.evaluate(() => window.__yt.playVideo());
+  await first.waitForSelector('button[title="一時停止"]');
+  await new Promise(resolve => setTimeout(resolve, 12_500));
+  const assertSameVideo = async label => {
+    const state = await first.evaluate(() => ({
+      loads: window.__ytLoads, mutes: window.__ytMutes, stops: window.__ytStops,
+      video: window.__yt.getVideoData().video_id, position: window.__yt.getCurrentTime(),
+      playing: window.__yt.getPlayerState() === 1,
+    }));
+    if (state.loads !== 1 || state.mutes !== 0 || state.stops !== 0 || state.video !== 'fixture' || !state.playing) {
+      throw new Error(`${label}: ${JSON.stringify(state)}`);
+    }
+    console.log(`PASS ${label}`);
+  };
+  await assertSameVideo('native YouTube play does not rearm startup failure');
+  for (const hidden of [false, true]) {
+    await first.evaluate(value => {
+      Object.defineProperty(document, 'hidden', { configurable: true, get: () => value });
+      window.__yt.seekTo(20);
+      window.__ytOmitPlaying = true;
+    }, hidden);
+    for (let i = 0; i < 3; i++) {
+      await first.$eval('button[title="一時停止"]', button => button.click());
+      await first.waitForFunction(() => window.__yt.getPlayerState() === 2);
+      await first.$eval('button[title="再生"]', button => button.click());
+      await first.waitForFunction(() => window.__yt.getPlayerState() === 1);
+    }
+    await new Promise(resolve => setTimeout(resolve, 12_500));
+    await assertSameVideo(`YouTube pause/resume preserves PV and audio (hidden=${hidden})`);
+    const position = await first.evaluate(() => window.__yt.getCurrentTime());
+    if (position !== 20) throw new Error(`Resume reset position to ${position}`);
+  }
+  await first.$eval('button[title="一時停止"]', button => button.click());
+  await first.waitForFunction(() => window.__yt.getPlayerState() === 2);
+  await new Promise(resolve => setTimeout(resolve, 12_500));
+  const pausedState = await first.evaluate(() => ({
+    state: window.__yt.getPlayerState(), mutes: window.__ytMutes, stops: window.__ytStops,
+  }));
+  if (pausedState.state !== 2 || pausedState.mutes !== 0 || pausedState.stops !== 0) {
+    throw new Error(`Long pause triggered recovery: ${JSON.stringify(pausedState)}`);
+  }
+  await first.$eval('button[title="再生"]', button => button.click());
+  await first.waitForFunction(() => window.__yt.getPlayerState() === 1);
+  await assertSameVideo('long YouTube pause preserves the same video on resume');
+  await first.evaluate(() => window.__yt.fail());
+  await first.waitForFunction(() => window.__ytStops === 1);
+  console.log('PASS explicit YouTube errors still fail a previously healthy PV');
 
   await first.$eval('[data-testid="mini-player-close"]', (button) => button.click());
   await first.waitForFunction(() => !document.querySelector('[data-testid="mini-player-close"]'));
