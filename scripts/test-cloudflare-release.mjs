@@ -131,6 +131,11 @@ try {
     /Verify preview root, ready, health, and origin headers[\s\S]*if npm run check:public-primary-health -- --base-url "\$PREVIEW_URL" --timeout-ms 15000 --interval-ms 5000 --allow-degraded-data; then[\s\S]*sleep 30[\s\S]*npm run check:public-primary-health -- --base-url "\$PREVIEW_URL" --timeout-ms 15000 --interval-ms 5000 --allow-degraded-data/,
     'preview health must retry the complete fail-closed contract once after edge propagation delay',
   );
+  assert.equal(
+    workflow.match(/--base-url https:\/\/diva-player\.pages\.dev[\s\S]*?--allow-degraded-data/g)?.length,
+    3,
+    'rollback candidate, post-deploy, and rollback production checks must allow stale data only through the explicit gate',
+  );
   assert.match(workflow, /Seal verified last-known-good production/);
   assert.match(workflow, /Deploy the same verified release to production[\s\S]*--branch main/);
   assert.match(workflow, /id: production_deploy\n\s+continue-on-error: true/);

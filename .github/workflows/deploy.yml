@@ -1017,7 +1017,8 @@ jobs:
           npm run check:public-primary-health -- \
             --base-url https://diva-player.pages.dev \
             --timeout-ms 15000 \
-            --interval-ms 5000
+            --interval-ms 5000 \
+            --allow-degraded-data
           if npm run test:e2e:pages-nico -- https://diva-player.pages.dev/; then
             exit 0
           fi
@@ -1093,7 +1094,8 @@ jobs:
           npm run check:public-primary-health -- \
             --base-url https://diva-player.pages.dev \
             --timeout-ms 15000 \
-            --interval-ms 5000 || verification_failed=1
+            --interval-ms 5000 \
+            --allow-degraded-data || verification_failed=1
 
           if ! npm run test:e2e:pages-nico -- https://diva-player.pages.dev/; then
             echo "Production Nico autoplay smoke failed once; retrying after 15 seconds."
@@ -1132,7 +1134,8 @@ jobs:
           npm run check:public-primary-health -- \
             --base-url https://diva-player.pages.dev \
             --timeout-ms 15000 \
-            --interval-ms 5000 || rollback_verification_failed=1
+            --interval-ms 5000 \
+            --allow-degraded-data || rollback_verification_failed=1
           if ! npm run test:e2e:pages-nico -- https://diva-player.pages.dev/; then
             echo "Rolled-back Nico autoplay smoke failed once; retrying after 15 seconds."
             sleep 15
