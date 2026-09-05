@@ -24,12 +24,6 @@ export default function SongCardBadges({
 
   return (
     <div className="flex items-center flex-wrap gap-2 mt-2">
-      {song.isSelfCover && (
-        <span className="rounded bg-fuchsia-400/15 px-1.5 py-0.5 text-[10px] font-semibold text-fuchsia-200" title="原曲と同じプロデューサーによるカバー">
-          Self Cover
-        </span>
-      )}
-
       {(pvServices.has('Youtube') || (song.youtubeViews || 0) > 0) && (
         <span
           className="text-[10px] font-bold px-1.5 py-0.5 rounded flex items-center gap-1"
@@ -101,6 +95,12 @@ export default function SongCardBadges({
       ))}
 
       <div className="flex-1" />
+
+      {song.isSelfCover && (
+        <span className="rounded bg-fuchsia-400/15 px-1.5 py-0.5 text-[10px] font-semibold text-fuchsia-200" title="原曲と同じプロデューサーによるカバー">
+          Self Cover
+        </span>
+      )}
 
       {!song.isSelfCover && song.songType !== 'Original' && song.songType !== 'Unspecified' && (
         <span
