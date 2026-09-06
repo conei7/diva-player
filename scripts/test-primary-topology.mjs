@@ -44,6 +44,7 @@ assert.match(publicPrimaryMonitor, /mode:\s*['"]primary-only['"]/);
 assert.match(publicPrimaryWorkflow, /name:\s*Public primary health monitor/);
 assert.match(publicPrimaryWorkflow, /cron:\s*['"]7,22,37,52 \* \* \* \*['"]/);
 assert.match(publicPrimaryWorkflow, /npm run check:public-primary-health/);
+assert.match(publicPrimaryWorkflow, /--report-file public-primary-health-report\.json --allow-degraded-data/);
 assert.doesNotMatch(publicPrimaryWorkflow, /secrets\./);
 
 assert.equal(
@@ -188,6 +189,36 @@ try {
     originRole: 'primary',
     standbyState: 'missing',
   });
+  const healthyFetch = globalThis.fetch;
+  const stale = {
+    status: 'degraded',
+    dependencies: { postgres: { ok: true }, qdrant: { ok: true } },
+    discoveryQuality: { ok: false, error: 'stale' },
+    audioFeatures: { ok: false, error: 'stale' },
+  };
+  const options = { baseUrl: 'https://diva-player.pages.dev', timeoutMs: 1000, intervalMs: 1 };
+  let payload = stale;
+  let role = 'primary';
+  globalThis.fetch = async target => new URL(target).pathname.endsWith('/health')
+    ? Response.json(payload, { status: 503, headers: {
+      'x-diva-origin-role': role, 'x-diva-standby-state': 'missing',
+    } }) : healthyFetch(target);
+  assert.equal((await runPublicPrimaryHealth(options)).ok, false);
+  const warningReport = await runPublicPrimaryHealth({ ...options, allowDegradedData: true });
+  assert.equal(warningReport.ok, true);
+  assert.equal(warningReport.warnings.length, 1);
+  role = 'standby';
+  assert.equal((await runPublicPrimaryHealth({ ...options, allowDegradedData: true })).ok, false);
+  role = 'primary';
+  for (const invalid of [
+    { ...stale, dependencies: { postgres: { ok: false }, qdrant: { ok: true } } },
+    { ...stale, dependencies: { postgres: { ok: true }, qdrant: { ok: false } } },
+    { ...stale, discoveryQuality: { ok: false, error: 'query_failed' } },
+    { ...stale, audioFeatures: undefined },
+  ]) {
+    payload = invalid;
+    assert.equal((await runPublicPrimaryHealth({ ...options, allowDegradedData: true })).ok, false);
+  }
 } finally {
   globalThis.fetch = originalFetch;
 }

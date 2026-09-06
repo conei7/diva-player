@@ -8,6 +8,7 @@ import {
   buildSeedEndpointDiagnostics,
   persistAndAssertRecommendationReport,
   validateRecommendationHealth,
+  getJson,
 } from './test-recommendation-regression.mjs';
 
 const endpoints = ['/api/recommend', '/api/recommend/metadata', '/api/recommend/audio'];
@@ -117,7 +118,34 @@ const healthyDependencies = {
 assert.deepEqual(validateRecommendationHealth(healthyDependencies), {
   audioFeatures: healthyDependencies.audioFeatures,
   audioFeaturesStale: true,
+  discoveryQualityStale: false,
 });
+const staleHealth = {
+  ...healthyDependencies,
+  status: 'degraded',
+  discoveryQuality: { ok: false, error: 'stale' },
+};
+assert.equal(validateRecommendationHealth(staleHealth).discoveryQualityStale, true);
+const originalFetch = globalThis.fetch;
+try {
+  globalThis.fetch = async () => new Response(JSON.stringify(staleHealth), { status: 503 });
+  assert.deepEqual((await getJson('https://fixture.invalid', '/api/health')).data, staleHealth);
+  await assert.rejects(getJson('https://fixture.invalid', '/api/recommend'), /HTTP 503/);
+  for (const bad of [
+    { ...staleHealth, dependencies: { postgres: { ok: false }, qdrant: { ok: true } } },
+    { ...staleHealth, dependencies: { postgres: { ok: true }, qdrant: { ok: false } } },
+    { ...staleHealth, discoveryQuality: { ok: false, error: 'query_failed' } },
+    { ...staleHealth, audioFeatures: { ...staleHealth.audioFeatures, error: 'query_failed' } },
+    { ...staleHealth, audioFeatures: undefined },
+    { status: 'degraded' },
+  ]) {
+    globalThis.fetch = async () => new Response(JSON.stringify(bad), { status: 503 });
+    await assert.rejects(getJson('https://fixture.invalid', '/api/health'), /HTTP 503/);
+    assert.throws(() => validateRecommendationHealth(bad));
+  }
+  globalThis.fetch = async () => new Response(JSON.stringify(staleHealth), { status: 500 });
+  await assert.rejects(getJson('https://fixture.invalid', '/api/health'), /HTTP 500/);
+} finally { globalThis.fetch = originalFetch; }
 assert.throws(
   () => validateRecommendationHealth({
     ...healthyDependencies,

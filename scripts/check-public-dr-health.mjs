@@ -35,7 +35,7 @@ function parseArguments(argv) {
     else if (option === '--report-file' && value) options.reportFile = value;
     else if (option === '--timeout-ms' && value) options.timeoutMs = positiveInteger(value, option);
     else if (option === '--interval-ms' && value) options.intervalMs = positiveInteger(value, option);
-    else if (option === '--allow-degraded-data') options.allowDegradedData = true;
+    else if (option === '--allow-degraded-data') { options.allowDegradedData = true; continue; }
     else throw new Error(`unsupported or incomplete option: ${option}`);
     index += 1;
   }
@@ -52,15 +52,16 @@ function parseArguments(argv) {
   return options;
 }
 
-function isAcceptedDegradedHealthPayload(payload) {
+export function isAcceptedDegradedHealthPayload(payload) {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload) || payload.status !== 'degraded') {
     return false;
   }
   const dependencies = payload.dependencies;
-  if (!dependencies?.postgres?.ok || !dependencies?.qdrant?.ok) return false;
+  if (dependencies?.postgres?.ok !== true || dependencies?.qdrant?.ok !== true) return false;
   for (const key of ['discoveryQuality', 'audioFeatures']) {
     const section = payload[key];
-    if (section && section.ok === false && section.error !== 'stale') return false;
+    if (!section || typeof section.ok !== 'boolean') return false;
+    if (section.ok === false && section.error !== 'stale') return false;
   }
   return ['discoveryQuality', 'audioFeatures'].some(key => payload[key]?.ok === false && payload[key]?.error === 'stale');
 }
@@ -212,6 +213,8 @@ export async function runPublicPrimaryHealth(options) {
     },
     ok: evaluation.ok,
     issues: evaluation.issues,
+    warnings: probes.some(probe => probe.round === 2 && probe.degradedDataAccepted)
+      ? ['Data freshness is stale; Web and API availability are checked independently.'] : [],
     probes,
   };
 }
@@ -223,6 +226,9 @@ async function main() {
     await writeFile(options.reportFile, `${JSON.stringify(report, null, 2)}\n`, 'utf8');
   }
   console.log(JSON.stringify(report, null, 2));
+  for (const warning of report.warnings) {
+    console.warn(`${process.env.GITHUB_ACTIONS === 'true' ? '::warning::' : 'WARN '}${warning}`);
+  }
   if (!report.ok) process.exitCode = 1;
 }
 

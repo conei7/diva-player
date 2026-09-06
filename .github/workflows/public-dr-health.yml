@@ -32,7 +32,7 @@ jobs:
         if: github.event_name == 'workflow_run'
         run: sleep 60
       - name: Probe public Web and primary API paths twice
-        run: npm run check:public-primary-health -- --report-file public-primary-health-report.json
+        run: npm run check:public-primary-health -- --report-file public-primary-health-report.json --allow-degraded-data
       - name: Save sanitized public primary health report
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

@@ -2,6 +2,7 @@
 // It is intentionally independent from browser state so it can run from CI.
 import { appendFile, writeFile } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
+import { isAcceptedDegradedHealthPayload } from './check-public-dr-health.mjs';
 
 // A cold slot may need longer than the 15-second quality budget to finish
 // hydrating its bounded recommendation cache. Let that first attempt complete
@@ -57,15 +58,21 @@ function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
 
-async function getJson(baseUrl, path) {
+export async function getJson(baseUrl, path) {
   const startedAt = performance.now();
   try {
     const response = await fetch(`${baseUrl}${path}`, {
       signal: AbortSignal.timeout(DEFAULT_TIMEOUT_MS),
     });
     const elapsedMs = Math.round(performance.now() - startedAt);
-    if (!response.ok) throw new Error(`${path} returned HTTP ${response.status}.`);
-    return { data: await response.json(), elapsedMs };
+    if (!response.ok && !(path === '/api/health' && response.status === 503)) {
+      throw new Error(`${path} returned HTTP ${response.status}.`);
+    }
+    const data = await response.json();
+    const staleHealth = path === '/api/health' && response.status === 503
+      && isAcceptedDegradedHealthPayload(data);
+    if (!response.ok && !staleHealth) throw new Error(`${path} returned HTTP ${response.status}.`);
+    return { data, elapsedMs };
   } catch (error) {
     const elapsedMs = Math.round(performance.now() - startedAt);
     const message = error instanceof Error ? error.message : String(error);
@@ -403,10 +410,12 @@ export async function persistAndAssertRecommendationReport(
 }
 
 export function validateRecommendationHealth(health) {
-  assert(health.status === 'ok', 'API health status is not ok.');
+  const staleHealth = isAcceptedDegradedHealthPayload(health);
+  assert(health.status === 'ok' || staleHealth, 'API health status is not ok.');
   assert(health.dependencies?.postgres?.ok === true, 'PostgreSQL is not healthy.');
   assert(health.dependencies?.qdrant?.ok === true, 'Qdrant is not healthy.');
-  assert(health.discoveryQuality?.ok !== false, `Discovery quality is unhealthy: ${health.discoveryQuality?.error ?? 'unknown'}.`);
+  const discoveryQualityStale = staleHealth && health.discoveryQuality?.error === 'stale';
+  assert(health.discoveryQuality?.ok !== false || discoveryQualityStale, `Discovery quality is unhealthy: ${health.discoveryQuality?.error ?? 'unknown'}.`);
   const audioFeatures = health.audioFeatures;
   assert(audioFeatures && Number.isInteger(audioFeatures.targetCount), 'Audio feature health is missing from /api/health.');
   assert(Number.isInteger(audioFeatures.actionableTargetCount), 'Audio actionable backlog is missing from /api/health.');
@@ -420,7 +429,7 @@ export function validateRecommendationHealth(health) {
     audioFeatures.ok !== false || audioFeaturesStale,
     `Audio feature backlog is unhealthy: ${audioFeatures.error ?? 'unknown'}.`,
   );
-  return { audioFeatures, audioFeaturesStale };
+  return { audioFeatures, audioFeaturesStale, discoveryQualityStale };
 }
 
 async function main() {
@@ -443,12 +452,17 @@ async function main() {
   console.log(`Recommendation regression check: ${baseUrl}`);
 
   const health = await getJson(baseUrl, '/api/health');
-  const { audioFeatures, audioFeaturesStale } = validateRecommendationHealth(health.data);
+  const { audioFeatures, audioFeaturesStale, discoveryQualityStale } = validateRecommendationHealth(health.data);
+  const warnings = [];
+  if (discoveryQualityStale) warnings.push('Discovery quality freshness is stale; continuing recommendation regression checks.');
   const audioFeatureSummary = `${audioFeatures.computedCount}/${audioFeatures.targetCount} computed, pending ${audioFeatures.pendingCount}; actionable ${audioFeatures.actionablePendingCount}/${audioFeatures.actionableTargetCount} pending`;
   if (audioFeaturesStale) {
-    console.warn(`WARN audio feature acquisition is stale (${audioFeatureSummary}); continuing recommendation regression checks.`);
+    warnings.push(`Audio feature acquisition is stale (${audioFeatureSummary}); continuing recommendation regression checks.`);
   } else {
     console.log(`PASS audio feature health (${audioFeatureSummary})`);
+  }
+  for (const warning of warnings) {
+    console.warn(`${process.env.GITHUB_ACTIONS === 'true' ? '::warning::' : 'WARN '}${warning}`);
   }
 
   const seeds = await getRepresentativeSeeds(baseUrl);
@@ -560,6 +574,8 @@ async function main() {
       ])),
     })),
     health: {
+      status: health.data.status,
+      warnings,
       requestElapsedMs: health.elapsedMs,
       discoveryQuality: health.data.discoveryQuality,
       audioFeatures,
