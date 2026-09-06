@@ -108,6 +108,18 @@ try {
   const frame = await (await page.$('iframe[src*="embed.nicovideo.jp"]')).contentFrame();
   await frame.waitForFunction(() => playing && volume === 0.37);
   assert.equal(await frame.evaluate(() => muted), false, 'User-initiated Nico playback must be audible');
+  const nicoPlayCountBeforeHidden = await frame.evaluate(() => commands.filter(c => c.eventName === 'play').length);
+  await page.evaluate(() => {
+    Object.defineProperty(document, 'hidden', { configurable: true, value: true });
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+  await new Promise(resolve => setTimeout(resolve, 300));
+  assert.equal(await frame.evaluate(() => commands.filter(c => c.eventName === 'play').length), nicoPlayCountBeforeHidden, 'Leaving the tab must not send a Nico play command');
+  await page.evaluate(() => {
+    Object.defineProperty(document, 'hidden', { configurable: true, value: false });
+    document.dispatchEvent(new Event('visibilitychange'));
+    delete document.hidden;
+  });
   const ytPlays = await page.evaluate(() => window.__ytPlays);
   await page.evaluate(() => { window.__yt.setVolume(0); window.__yt.latePlaying(); });
   await page.waitForFunction(() => window.__yt.getPlayerState() !== 1);
