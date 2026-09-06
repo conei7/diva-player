@@ -120,6 +120,8 @@ try {
     document.dispatchEvent(new Event('visibilitychange'));
     delete document.hidden;
   });
+  await new Promise(resolve => setTimeout(resolve, 300));
+  assert.equal(await frame.evaluate(() => commands.filter(c => c.eventName === 'play').length), nicoPlayCountBeforeHidden, 'Returning to the tab without a user action must not send a Nico play command');
   const ytPlays = await page.evaluate(() => window.__ytPlays);
   await page.evaluate(() => { window.__yt.setVolume(0); window.__yt.latePlaying(); });
   await page.waitForFunction(() => window.__yt.getPlayerState() !== 1);

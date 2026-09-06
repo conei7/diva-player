@@ -14,7 +14,6 @@ import {
   type PlaybackAttemptToken,
 } from '../../services/playbackAttempt';
 import { usePlaybackWakeRecovery } from '../../hooks/usePlaybackWakeRecovery';
-import type { PlaybackWakeSignal } from '../../services/playbackWakeRecovery';
 import {
   buildNicoEmbedUrl,
   createNicoMuteMessage,
@@ -376,30 +375,6 @@ function NicoEmbed({ pvId, name, duration: songDuration, isPlaying }: { pvId: st
       window.removeEventListener('keydown', restoreAutoplayAudio, { capture: true });
     };
   }, [scheduleVolumeSync, sendMuted]);
-
-  const recoverNicoPlayback = useCallback((signal: PlaybackWakeSignal) => {
-    // Leaving the tab must never start or re-start Nico playback. A visible
-    // wake may resume a confirmed session, but the hidden transition is only
-    // a lifecycle notification and can arrive before the browser suspends the
-    // iframe.
-    if (signal.source === 'visibility' && document.hidden) return;
-    const state = usePlayerStore.getState();
-    if (!state.isPlaying || !confirmedPlayingRef.current || !wantsPlayback() || getPlaybackOwnership().getState() !== 'local') return;
-    // The tracker uses wall time between confirmed Nico events. A suspended
-    // browser must not count that gap as listened playback, so anchor it to the
-    // last UI-confirmed position before asking the iframe to resume.
-    const rememberedProgress = useProgressStore.getState().progress;
-    trackerRef.current.confirm(rememberedProgress);
-    if (hasReachedPlaybackEnd(rememberedProgress, durationRef.current ?? 0)) {
-      advanceOnce();
-      return;
-    }
-    requestedPlayingRef.current = true;
-    confirmedPlayingRef.current = false;
-    prepareAndSendPlaybackState(true);
-    schedulePlaybackRetry();
-  }, [advanceOnce, prepareAndSendPlaybackState, schedulePlaybackRetry, wantsPlayback]);
-  usePlaybackWakeRecovery(recoverNicoPlayback);
 
   // ボリューム同期。iframeロード前に送ったメッセージを補うため遅延再送する。
   useEffect(() => {
