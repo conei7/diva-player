@@ -119,7 +119,12 @@ try {
 
   await frame.click('#pause');
   await page.waitForSelector('button[title="再生"]');
-  await new Promise(resolve => setTimeout(resolve, 1_200));
+  // Focus stays in the native iframe after pausing. Once transient activation
+  // expires, a delayed PLAYING must not be mistaken for a fresh native click.
+  await frame.evaluate(() => {
+    setTimeout(() => { playing = true; emit('player:play'); }, 6_000);
+  });
+  await new Promise(resolve => setTimeout(resolve, 7_000));
   assert.equal(await frame.evaluate(() => playing), false, 'Native pause must not be retried');
   await frame.click('#play');
   await page.waitForSelector('button[title="一時停止"]');

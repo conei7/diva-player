@@ -248,6 +248,7 @@ function NicoEmbed({ pvId, name, duration: songDuration, isPlaying }: { pvId: st
   }, [applySeek, ensurePlaybackAttempt, prepareAndSendPlaybackState, schedulePlaybackRetry, scheduleVolumeSync, setDuration, songDuration]);
 
   useEffect(() => {
+    const wasRequestedPlaying = requestedPlayingRef.current;
     requestedPlayingRef.current = isPlaying;
     prepareAndSendPlaybackState(isPlaying);
     if (isPlaying) {
@@ -255,7 +256,7 @@ function NicoEmbed({ pvId, name, duration: songDuration, isPlaying }: { pvId: st
       schedulePlaybackRetry();
     } else {
       confirmedPlayingRef.current = false;
-      pauseRequestedAtRef.current = performance.now();
+      if (wasRequestedPlaying) pauseRequestedAtRef.current = performance.now();
       trackerRef.current.setPlaying(false);
       stopTimer();
       clearPlaybackRetry();
@@ -315,6 +316,7 @@ function NicoEmbed({ pvId, name, duration: songDuration, isPlaying }: { pvId: st
           // Native controls may start playback only in a visible, focused iframe.
           if (!wantsPlayback() && (document.hidden
             || document.activeElement !== iframeRef.current
+            || navigator.userActivation?.isActive !== true
             || (pauseRequestedAtRef.current !== null && performance.now() - pauseRequestedAtRef.current < 1_000))) {
             sendPlaybackState(false);
             break;
