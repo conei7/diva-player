@@ -215,6 +215,15 @@ public class DbService
         return age >= TimeSpan.FromMinutes(-5) && age <= maximumAge;
     }
 
+    public async Task<bool> ReserveYouTubePlaylistQuotaAsync(CancellationToken cancellationToken)
+    {
+        await using var conn = await OpenAsync(cancellationToken);
+        await using var cmd = new NpgsqlCommand(
+            "SELECT granted FROM public.reserve_youtube_quota('playlists')", conn)
+        { CommandTimeout = 5 };
+        return await cmd.ExecuteScalarAsync(cancellationToken) is true;
+    }
+
     private async Task<NpgsqlConnection> OpenAsync(CancellationToken cancellationToken)
     {
         var permit = await _connectionBudget.AcquireConnectionAsync(cancellationToken);

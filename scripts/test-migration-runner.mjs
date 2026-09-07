@@ -33,7 +33,7 @@ const entries = manifestText.trimEnd().split('\n').map((line, index) => {
   return { migrationId, executionMode, contentSha256 };
 });
 
-assert.equal(entries.length, 25, 'all existing migrations must be pinned in the manifest');
+assert.equal(entries.length, 26, 'all existing migrations must be pinned in the manifest');
 assert.deepEqual(
   entries.map(entry => entry.migrationId),
   [...entries.map(entry => entry.migrationId)].sort(),

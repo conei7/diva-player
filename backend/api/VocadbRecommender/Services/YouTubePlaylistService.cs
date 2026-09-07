@@ -137,6 +137,8 @@ public sealed class YouTubePlaylistService
 
     private async Task<JsonDocument> GetJsonAsync(string relativePath, CancellationToken cancellationToken)
     {
+        if (!await _db.ReserveYouTubePlaylistQuotaAsync(cancellationToken))
+            throw new YouTubePlaylistException("YouTube playlist daily allowance is exhausted", StatusCodes.Status503ServiceUnavailable);
         using var response = await _http.GetAsync(relativePath, cancellationToken);
         var body = await response.Content.ReadAsStringAsync(cancellationToken);
         if (!response.IsSuccessStatusCode)
