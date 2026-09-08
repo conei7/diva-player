@@ -345,7 +345,7 @@ def write_exclusive(path: Path, payload: bytes) -> None:
         while written < len(payload):
             count = os.write(descriptor, payload[written:])
             if count <= 0:
-                raise FinalizationError(f\"durable write failed: {path}\")
+                raise FinalizationError(f"durable write failed: {path}")
             written += count
         os.fsync(descriptor)
     finally:
