@@ -958,7 +958,7 @@ assert.equal(
   1,
   'the migration-history ACL reconciliation must run once after role reapplication',
 );
-assert.match(databaseRoleContractStep, /grep -qx '25\|25\|0'/);
+assert.match(databaseRoleContractStep, /grep -qx '26\|26\|0'/);
 const secondRuntimeRoleReapply = databaseRoleContractStep.lastIndexOf(
   '0018_runtime_database_roles.sql',
 );
