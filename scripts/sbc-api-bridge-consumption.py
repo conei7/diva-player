@@ -1285,8 +1285,8 @@ def _validate_manual_forward_stage(
     if values.get("run.id") != [run_id]:
         _fail("manual forward-recovery run ID is not exact")
     if values.get("api_bridge.receipt_sha256") != [
-        expected_receipt_sha, expected_receipt_sha
-    ]:
+        expected_receipt_sha, expected_receipt_sha, expected_receipt_sha
+    ] or values.get("api_bridge.verify_count") != ["1", "2"]:
         _fail("manual forward-recovery bridge receipt binding is not exact")
     if values.get("deployment.status") != [
         "preflight", "building-qdrant", "preparing-postgres",
