@@ -125,5 +125,15 @@ class WindowsTrusteePolicyTests(unittest.TestCase):
                 )
 
 
+class TimestampParsingTests(unittest.TestCase):
+    def test_accepts_dotnet_seven_digit_fraction(self) -> None:
+        parsed = ATTESTER._parse_iso_timestamp("2026-09-08T18:23:50.9364109Z")
+        self.assertEqual(parsed.microsecond, 936410)
+
+    def test_preserves_six_digit_fraction(self) -> None:
+        parsed = ATTESTER._parse_iso_timestamp("2026-09-08T18:23:50.936410+00:00")
+        self.assertEqual(parsed.microsecond, 936410)
+
+
 if __name__ == "__main__":
     unittest.main()

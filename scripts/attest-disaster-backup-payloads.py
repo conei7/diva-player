@@ -625,6 +625,19 @@ def _binding_record(binding: PathBinding) -> dict[str, str]:
     }
 
 
+def _parse_iso_timestamp(value: Any) -> dt.datetime:
+    """Parse ISO-8601 timestamps, including .NET's seven-digit fractions."""
+
+    text = str(value).strip()
+    # .NET DateTime.ToString("o") emits seven fractional digits, while
+    # datetime.fromisoformat() accepts at most six microsecond digits. Keep
+    # the representable precision and reject any other malformed suffix.
+    match = re.fullmatch(r"(.+\.)(\d{7,})(Z|[+-]\d{2}:\d{2})", text)
+    if match:
+        text = f"{match.group(1)}{match.group(2)[:6]}{match.group(3)}"
+    return dt.datetime.fromisoformat(text.replace("Z", "+00:00"))
+
+
 def _read_stable_file(
     path: Path,
     *,
@@ -776,14 +789,14 @@ def _read_execution_receipt(
         raise RuntimeError(f"{kind} execution receipt run ID does not match status")
     for field in ("startedAt", "finishedAt"):
         try:
-            timestamp = dt.datetime.fromisoformat(str(execution.get(field)).replace("Z", "+00:00"))
+            timestamp = _parse_iso_timestamp(execution.get(field))
         except (TypeError, ValueError) as error:
             raise RuntimeError(f"{kind} execution receipt timestamp is invalid") from error
         if timestamp.tzinfo is None:
             raise RuntimeError(f"{kind} execution receipt timestamp has no timezone")
     try:
-        started = dt.datetime.fromisoformat(str(execution["startedAt"]).replace("Z", "+00:00"))
-        finished = dt.datetime.fromisoformat(str(execution["finishedAt"]).replace("Z", "+00:00"))
+        started = _parse_iso_timestamp(execution["startedAt"])
+        finished = _parse_iso_timestamp(execution["finishedAt"])
     except (TypeError, ValueError) as error:
         raise RuntimeError(f"{kind} execution receipt timestamps are invalid") from error
     if finished < started:
