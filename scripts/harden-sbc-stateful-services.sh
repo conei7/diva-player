@@ -2834,7 +2834,7 @@ def valid_security_binding(value):
 attestation, parsed_attestation_sha = load(attestation_path)
 require(parsed_attestation_sha == expected_attestation_sha,
         "backup attestation changed after its shell digest check")
-require(attestation.get("schemaVersion") == 1, "unsupported backup attestation schema")
+require(attestation.get("schemaVersion") == 2, "unsupported backup attestation schema")
 require(attestation.get("challenge") == challenge, "backup attestation challenge mismatch")
 require(attestation.get("verifierHost") == expected_host, "backup attestation host mismatch")
 require(attestation.get("verifierSha256") == verifier_sha,
@@ -2903,6 +2903,26 @@ for kind, (
     require(record.get("statusSha256") == status_sha
             and record.get("manifestSha256") == manifest_sha,
             f"{kind} attestation evidence digests are not bound")
+    execution = record.get("execution")
+    require(isinstance(execution, dict), f"{kind} execution provenance is missing")
+    mode = execution.get("mode")
+    if mode == "scheduled-natural":
+        require(set(execution) == {"mode"},
+                f"{kind} natural execution provenance is invalid")
+    elif mode == "scheduled-on-demand":
+        require(set(execution) == {
+            "mode", "requestId", "receiptSha256", "taskDefinitionSha256",
+            "taskActionSha256", "controllerSourceCommit", "controllerSha256",
+        }, f"{kind} on-demand execution provenance is invalid")
+        require(re.fullmatch(r"[0-9a-f]{32}", str(execution.get("requestId") or ""))
+                and re.fullmatch(r"[0-9a-f]{64}", str(execution.get("receiptSha256") or ""))
+                and re.fullmatch(r"[0-9a-f]{64}", str(execution.get("taskDefinitionSha256") or ""))
+                and re.fullmatch(r"[0-9a-f]{64}", str(execution.get("taskActionSha256") or ""))
+                and re.fullmatch(r"[0-9a-f]{40}", str(execution.get("controllerSourceCommit") or ""))
+                and re.fullmatch(r"[0-9a-f]{64}", str(execution.get("controllerSha256") or "")),
+                f"{kind} on-demand execution provenance values are invalid")
+    else:
+        require(False, f"{kind} execution provenance mode is invalid")
     if kind == "postgres":
         database = manifest.get("database") or {}
         expected = [{
@@ -5879,7 +5899,7 @@ done
 [ -f "$IMAGE_SCAN_VALIDATOR" ] && [ ! -L "$IMAGE_SCAN_VALIDATOR" ] \
     || { fail "image scan validator is unsafe"; exit 1; }
 [ "$(sha256sum "$IMAGE_SCAN_VALIDATOR" | awk '{print $1}')" \
-    = f130fd9559791e907f724e334263a42cec3e6565e62e5d347afc03a9dd7e5b4a ] \
+    = 830ed0e5bd2803e095f1792cb2095bd22e13e947dc8ff547b75580bfa9ca2c0a ] \
     || { fail "image scan validator digest is not the frozen reviewed contract"; exit 1; }
 [ -f "$ROOT_DIR/scripts/wsl-dr-api-bridge-receipt.py" ] \
     && [ ! -L "$ROOT_DIR/scripts/wsl-dr-api-bridge-receipt.py" ] \

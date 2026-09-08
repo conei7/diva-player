@@ -5439,7 +5439,7 @@ def valid_security_binding(value):
             and all(re.fullmatch(r"[0-9a-f]{64}", str(item or "")) for item in value.values()))
 
 attestation, _ = load(attestation_path, attestation_sha)
-require(attestation.get("schemaVersion") == 1
+require(attestation.get("schemaVersion") == 2
         and attestation.get("challenge") == challenge
         and attestation.get("verifierHost") == verifier_host
         and attestation.get("verifierSha256") == verifier_sha
@@ -5485,6 +5485,26 @@ for kind, (status, manifest, status_sha, manifest_sha, execution_run) in inputs.
     expected.sort(key=lambda item: str(item.get("file")))
     require(record.get("payloads") == expected,
             f"{kind} attested payloads differ from manifest")
+    execution = record.get("execution")
+    require(isinstance(execution, dict), f"{kind} execution provenance is missing")
+    mode = execution.get("mode")
+    if mode == "scheduled-natural":
+        require(set(execution) == {"mode"},
+                f"{kind} natural execution provenance is invalid")
+    elif mode == "scheduled-on-demand":
+        require(set(execution) == {
+            "mode", "requestId", "receiptSha256", "taskDefinitionSha256",
+            "taskActionSha256", "controllerSourceCommit", "controllerSha256",
+        }, f"{kind} on-demand execution provenance is invalid")
+        require(re.fullmatch(r"[0-9a-f]{32}", str(execution.get("requestId") or ""))
+                and re.fullmatch(r"[0-9a-f]{64}", str(execution.get("receiptSha256") or ""))
+                and re.fullmatch(r"[0-9a-f]{64}", str(execution.get("taskDefinitionSha256") or ""))
+                and re.fullmatch(r"[0-9a-f]{64}", str(execution.get("taskActionSha256") or ""))
+                and re.fullmatch(r"[0-9a-f]{40}", str(execution.get("controllerSourceCommit") or ""))
+                and re.fullmatch(r"[0-9a-f]{64}", str(execution.get("controllerSha256") or "")),
+                f"{kind} on-demand execution provenance values are invalid")
+    else:
+        require(False, f"{kind} execution provenance mode is invalid")
     security = record.get("securityBindings")
     require(isinstance(security, dict)
             and set(security) == {"allowedRoot", "export", "status", "manifest", "payloads"}

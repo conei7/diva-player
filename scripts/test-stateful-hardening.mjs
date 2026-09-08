@@ -1158,6 +1158,10 @@ function initializeFixtureRepository(directory, message, origin) {
   runFixtureGit(directory, ['init', '--quiet']);
   runFixtureGit(directory, ['config', 'user.name', 'DIVA Contract Test']);
   runFixtureGit(directory, ['config', 'user.email', 'diva-contract@example.invalid']);
+  // The hardener deliberately disables the ambient/global Git configuration.
+  // Pin the fixture's line-ending behavior locally so Windows autocrlf does
+  // not make an otherwise clean source snapshot appear modified later.
+  runFixtureGit(directory, ['config', 'core.autocrlf', 'false']);
   runFixtureGit(directory, ['add', '--all']);
   runFixtureGit(directory, ['commit', '--quiet', '-m', message]);
   runFixtureGit(directory, ['branch', '-M', 'main']);
@@ -3252,12 +3256,50 @@ async function writeEvidence(root, playerCommit, pipelineCommit, attesterPath, s
       writeFile(manifestPath, manifestBytes),
       ...payloads.map(({ file, bytes }) => writeFile(join(exportDirectory, file), bytes)),
     ]);
+    const executionReceipt = {
+      schemaVersion: 1,
+      purpose: 'stateful-hardening-backup',
+      state: 'success',
+      requestId: `${kind === 'postgres' ? '3' : '4'}`.repeat(32),
+      job,
+      requestedAt: new Date(Date.now() - 30_000).toISOString(),
+      task: {
+        name: kind === 'postgres'
+          ? 'DIVA PostgreSQL Disaster Backup'
+          : 'DIVA Qdrant Disaster Backup',
+        principal: 'test-user',
+        logonType: 'Interactive',
+        definitionSha256: '5'.repeat(64),
+        actionSha256: '6'.repeat(64),
+        finalDefinitionSha256: '5'.repeat(64),
+        finalActionSha256: '6'.repeat(64),
+      },
+      statusPath,
+      previousRunId: '0'.repeat(32),
+      execution: {
+        runId: executionRunId,
+        startedAt: new Date(Date.now() - 20_000).toISOString(),
+        finishedAt: new Date().toISOString(),
+      },
+      evidence: {
+        statusSha256: sha256(statusBytes),
+        manifestSha256: manifestSha,
+        backupPath: exportDirectory,
+      },
+      controller: {
+        sourceCommit: '7'.repeat(40),
+        sha256: '8'.repeat(64),
+      },
+    };
+    const executionReceiptPath = join(evidenceDirectory, `${kind}-execution-receipt.json`);
+    await writeFile(executionReceiptPath, `${JSON.stringify(executionReceipt)}\n`, 'utf8');
     return {
       runId: executionRunId,
       statusPath,
       statusSha: sha256(statusBytes),
       manifestPath,
       manifestSha,
+      executionReceiptPath,
     };
   }
 
@@ -3278,9 +3320,13 @@ async function writeEvidence(root, playerCommit, pipelineCommit, attesterPath, s
     '--postgres-status', postgres.statusPath,
     '--postgres-manifest', postgres.manifestPath,
     '--postgres-root', join(root, 'offhost'),
+    '--postgres-execution-mode', 'scheduled-on-demand',
+    '--postgres-execution-receipt', postgres.executionReceiptPath,
     '--qdrant-status', qdrant.statusPath,
     '--qdrant-manifest', qdrant.manifestPath,
     '--qdrant-root', join(root, 'offhost'),
+    '--qdrant-execution-mode', 'scheduled-on-demand',
+    '--qdrant-execution-receipt', qdrant.executionReceiptPath,
     '--challenge', challenge,
   ];
   await Promise.all([
@@ -3337,6 +3383,21 @@ async function writeEvidence(root, playerCommit, pipelineCommit, attesterPath, s
       if (existsSync(qdrantExport)) await removeDirectoryLink(qdrantExport);
       await rename(qdrantRealExport, qdrantExport);
     }
+
+    const tamperedReceiptPath = join(evidenceDirectory, 'qdrant-execution-receipt-tampered.json');
+    const tamperedReceipt = JSON.parse(await readFile(qdrant.executionReceiptPath, 'utf8'));
+    tamperedReceipt.execution.runId = 'f'.repeat(32);
+    await writeFile(tamperedReceiptPath, `${JSON.stringify(tamperedReceipt)}\n`, 'utf8');
+    const receiptArguments = [...attesterArguments];
+    receiptArguments[receiptArguments.indexOf('--qdrant-execution-receipt') + 1] = tamperedReceiptPath;
+    const receiptOutput = join(evidenceDirectory, 'must-not-attest-tampered-execution-receipt.json');
+    const receiptRejected = spawnSync(realPythonExecutable, [
+      ...receiptArguments,
+      '--output', receiptOutput,
+    ], { encoding: 'utf8', windowsHide: true });
+    assert.notEqual(receiptRejected.status, 0, 'backup attester accepted a tampered execution receipt');
+    assert.equal(existsSync(receiptOutput), false, 'backup attester published a tampered execution receipt');
+    await unlink(tamperedReceiptPath);
 
     const allowedRoot = join(root, 'offhost');
     const allowedRootJunction = join(root, 'offhost-root-junction');
@@ -3486,7 +3547,13 @@ async function createScenario(name) {
     writeExecutable(fixtureApiBridgeConsumptionHelper, apiBridgeConsumptionHelperSource),
     writeFile(fixtureQdrantDockerfile, qdrantDockerfileSource, 'utf8'),
     writeFile(join(fixtureQdrant, '.dockerignore'), qdrantDockerignoreSource, 'utf8'),
-    writeFile(fixtureQdrantAuditContractHelper, qdrantAuditContractHelperSource, 'utf8'),
+    // The production audit helper is stored with LF on the SBC. Normalize the
+    // Windows checkout before freezing the fixture's content-bound SHA.
+    writeFile(
+      fixtureQdrantAuditContractHelper,
+      qdrantAuditContractHelperSource.replaceAll('\r\n', '\n'),
+      'utf8',
+    ),
     writeFile(fixturePostgresDockerfile, postgresDockerfileSource, 'utf8'),
     writeFile(fixturePostgresMigrateDockerfile, postgresMigrateDockerfileSource, 'utf8'),
     writeFile(join(fixtureDatabase, '.dockerignore'), postgresDockerignoreSource, 'utf8'),

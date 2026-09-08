@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import AbstractSet, Any
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 REPARSE_POINT = 0x400
 CHUNK_SIZE = 8 * 1024 * 1024
 WINDOWS_SYSTEM_SID = "S-1-5-18"
@@ -723,11 +723,105 @@ def _safe_export(
     return export, root, export_binding, root_binding
 
 
+def _read_execution_receipt(
+    kind: str,
+    receipt_path: Path,
+    status_path: Path,
+    status: dict[str, Any],
+    status_sha: str,
+    manifest: dict[str, Any],
+    manifest_sha: str,
+) -> dict[str, Any]:
+    receipt, receipt_sha, receipt_binding = _read_json(
+        receipt_path, f"{kind} execution receipt", policy="managed-file"
+    )
+    expected_job = f"{kind}_disaster_backup"
+    expected_task = (
+        "DIVA PostgreSQL Disaster Backup"
+        if kind == "postgres"
+        else "DIVA Qdrant Disaster Backup"
+    )
+    required = {"schemaVersion", "purpose", "state", "requestId", "job", "requestedAt",
+                "task", "statusPath", "previousRunId", "execution", "evidence", "controller"}
+    if set(receipt) != required:
+        raise RuntimeError(f"{kind} execution receipt keys are invalid")
+    if receipt.get("schemaVersion") != 1 or receipt.get("purpose") != "stateful-hardening-backup":
+        raise RuntimeError(f"{kind} execution receipt contract is invalid")
+    if receipt.get("state") != "success" or receipt.get("job") != expected_job:
+        raise RuntimeError(f"{kind} execution receipt is not successful")
+    if Path(str(receipt.get("statusPath") or "")).resolve(strict=True) \
+            != Path(str(status_path)).resolve(strict=True):
+        raise RuntimeError(f"{kind} execution receipt status path mismatch")
+    request_id = str(receipt.get("requestId") or "")
+    if not re.fullmatch(r"[0-9a-f]{32}", request_id):
+        raise RuntimeError(f"{kind} execution receipt request ID is invalid")
+    task = receipt.get("task")
+    if not isinstance(task, dict) or set(task) != {
+        "name", "principal", "logonType", "definitionSha256", "actionSha256",
+        "finalDefinitionSha256", "finalActionSha256",
+    } or task.get("name") != expected_task:
+        raise RuntimeError(f"{kind} execution receipt Task binding is invalid")
+    for field in ("definitionSha256", "actionSha256", "finalDefinitionSha256", "finalActionSha256"):
+        if not re.fullmatch(r"[0-9a-f]{64}", str(task.get(field) or "")):
+            raise RuntimeError(f"{kind} execution receipt Task digest is invalid")
+    if task["definitionSha256"] != task["finalDefinitionSha256"] \
+            or task["actionSha256"] != task["finalActionSha256"]:
+        raise RuntimeError(f"{kind} execution receipt Task changed during the run")
+    execution = receipt.get("execution")
+    if not isinstance(execution, dict) or set(execution) != {
+        "runId", "startedAt", "finishedAt",
+    }:
+        raise RuntimeError(f"{kind} execution receipt execution section is invalid")
+    if execution.get("runId") != status.get("runId"):
+        raise RuntimeError(f"{kind} execution receipt run ID does not match status")
+    for field in ("startedAt", "finishedAt"):
+        try:
+            timestamp = dt.datetime.fromisoformat(str(execution.get(field)).replace("Z", "+00:00"))
+        except (TypeError, ValueError) as error:
+            raise RuntimeError(f"{kind} execution receipt timestamp is invalid") from error
+        if timestamp.tzinfo is None:
+            raise RuntimeError(f"{kind} execution receipt timestamp has no timezone")
+    try:
+        started = dt.datetime.fromisoformat(str(execution["startedAt"]).replace("Z", "+00:00"))
+        finished = dt.datetime.fromisoformat(str(execution["finishedAt"]).replace("Z", "+00:00"))
+    except (TypeError, ValueError) as error:
+        raise RuntimeError(f"{kind} execution receipt timestamps are invalid") from error
+    if finished < started:
+        raise RuntimeError(f"{kind} execution receipt timestamps are reversed")
+    evidence = receipt.get("evidence")
+    if not isinstance(evidence, dict) or set(evidence) != {
+        "statusSha256", "manifestSha256", "backupPath",
+    }:
+        raise RuntimeError(f"{kind} execution receipt evidence section is invalid")
+    if evidence.get("statusSha256") != status_sha or evidence.get("manifestSha256") != manifest_sha:
+        raise RuntimeError(f"{kind} execution receipt evidence digest mismatch")
+    if Path(str(evidence.get("backupPath") or "")).resolve(strict=True) \
+            != Path(str(status.get("backupPath") or "")).resolve(strict=True):
+        raise RuntimeError(f"{kind} execution receipt backup path mismatch")
+    controller = receipt.get("controller")
+    if not isinstance(controller, dict) or set(controller) != {"sourceCommit", "sha256"} \
+            or not re.fullmatch(r"[0-9a-f]{40}", str(controller.get("sourceCommit") or "")) \
+            or not re.fullmatch(r"[0-9a-f]{64}", str(controller.get("sha256") or "")):
+        raise RuntimeError(f"{kind} execution receipt controller binding is invalid")
+    _assert_file_binding(receipt_path, receipt_binding, policy="managed-file")
+    return {
+        "mode": "scheduled-on-demand",
+        "requestId": request_id,
+        "receiptSha256": receipt_sha,
+        "taskDefinitionSha256": task["definitionSha256"],
+        "taskActionSha256": task["actionSha256"],
+        "controllerSourceCommit": controller["sourceCommit"],
+        "controllerSha256": controller["sha256"],
+    }
+
+
 def _attest_one(
     kind: str,
     status_path: Path,
     manifest_path: Path,
     allowed_root: Path,
+    execution_mode: str,
+    execution_receipt: Path | None,
 ) -> dict[str, Any]:
     status, status_sha, status_binding = _read_json(
         status_path, f"{kind} status", policy="managed-file"
@@ -746,6 +840,18 @@ def _attest_one(
         raise RuntimeError(f"{kind} backup status is not successful")
     if status.get("manifestSha256") != manifest_sha:
         raise RuntimeError(f"{kind} status does not bind the manifest")
+    if execution_mode == "scheduled-natural":
+        if execution_receipt is not None:
+            raise RuntimeError(f"{kind} natural execution must not include a receipt")
+        execution = {"mode": execution_mode}
+    elif execution_mode == "scheduled-on-demand":
+        if execution_receipt is None:
+            raise RuntimeError(f"{kind} on-demand execution requires a receipt")
+        execution = _read_execution_receipt(
+            kind, execution_receipt, status_path, status, status_sha, manifest, manifest_sha
+        )
+    else:
+        raise RuntimeError(f"{kind} execution mode is invalid")
     export, root, export_binding, root_binding = _safe_export(
         str(status.get("backupPath") or ""), export_id, allowed_root
     )
@@ -805,6 +911,7 @@ def _attest_one(
         "payloads": payloads,
         "payloadBytesRehashed": True,
         "directoryInventoryStable": True,
+        "execution": execution,
         "securityBindings": {
             "allowedRoot": _binding_record(root_binding),
             "export": _binding_record(export_binding),
@@ -863,6 +970,18 @@ def main() -> int:
     parser.add_argument("--qdrant-status", type=Path, required=True)
     parser.add_argument("--qdrant-manifest", type=Path, required=True)
     parser.add_argument("--qdrant-root", type=Path, required=True)
+    parser.add_argument(
+        "--postgres-execution-mode",
+        choices=("scheduled-natural", "scheduled-on-demand"),
+        default="scheduled-natural",
+    )
+    parser.add_argument("--postgres-execution-receipt", type=Path)
+    parser.add_argument(
+        "--qdrant-execution-mode",
+        choices=("scheduled-natural", "scheduled-on-demand"),
+        default="scheduled-natural",
+    )
+    parser.add_argument("--qdrant-execution-receipt", type=Path)
     parser.add_argument("--challenge", required=True)
     parser.add_argument(
         "--allowed-writer-sid",
@@ -901,7 +1020,11 @@ def main() -> int:
         ("Qdrant status", args.qdrant_status),
         ("Qdrant manifest", args.qdrant_manifest),
         ("Qdrant root", args.qdrant_root),
+        ("PostgreSQL execution receipt", args.postgres_execution_receipt),
+        ("Qdrant execution receipt", args.qdrant_execution_receipt),
     ):
+        if path is None:
+            continue
         if not path.is_absolute():
             raise RuntimeError(f"{label} path must be absolute")
     args.output = args.output.absolute()
@@ -914,6 +1037,9 @@ def main() -> int:
         args.qdrant_status.resolve(strict=True),
         args.qdrant_manifest.resolve(strict=True),
     }
+    for receipt_path in (args.postgres_execution_receipt, args.qdrant_execution_receipt):
+        if receipt_path is not None:
+            protected_files.add(receipt_path.resolve(strict=True))
     if output_resolved in protected_files:
         raise RuntimeError("Attestation output must not replace verifier or backup evidence")
     for root_path in (args.postgres_root, args.qdrant_root):
@@ -929,10 +1055,12 @@ def main() -> int:
     )
     backups = {
         "postgres": _attest_one(
-            "postgres", args.postgres_status, args.postgres_manifest, args.postgres_root
+            "postgres", args.postgres_status, args.postgres_manifest, args.postgres_root,
+            args.postgres_execution_mode, args.postgres_execution_receipt,
         ),
         "qdrant": _attest_one(
-            "qdrant", args.qdrant_status, args.qdrant_manifest, args.qdrant_root
+            "qdrant", args.qdrant_status, args.qdrant_manifest, args.qdrant_root,
+            args.qdrant_execution_mode, args.qdrant_execution_receipt,
         ),
     }
     verifier_digest_after, verifier_size_after, _, verifier_binding_after = _read_stable_file(
