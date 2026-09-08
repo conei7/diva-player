@@ -5899,7 +5899,7 @@ done
 [ -f "$IMAGE_SCAN_VALIDATOR" ] && [ ! -L "$IMAGE_SCAN_VALIDATOR" ] \
     || { fail "image scan validator is unsafe"; exit 1; }
 [ "$(sha256sum "$IMAGE_SCAN_VALIDATOR" | awk '{print $1}')" \
-    = 830ed0e5bd2803e095f1792cb2095bd22e13e947dc8ff547b75580bfa9ca2c0a ] \
+    = f130fd9559791e907f724e334263a42cec3e6565e62e5d347afc03a9dd7e5b4a ] \
     || { fail "image scan validator digest is not the frozen reviewed contract"; exit 1; }
 [ -f "$ROOT_DIR/scripts/wsl-dr-api-bridge-receipt.py" ] \
     && [ ! -L "$ROOT_DIR/scripts/wsl-dr-api-bridge-receipt.py" ] \

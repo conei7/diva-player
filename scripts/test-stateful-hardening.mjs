@@ -176,7 +176,10 @@ const [
   readFile(arm64ImageScanContractFixture, 'utf8'),
 ]);
 
-const imageScanValidatorSha256 = sha256(Buffer.from(imageScanValidatorSource, 'utf8'));
+// The production SBC checkout is LF. Normalize the Windows checkout before
+// freezing the content-bound validator digest and writing the fixture copy.
+const canonicalImageScanValidatorSource = imageScanValidatorSource.replaceAll('\r\n', '\n');
+const imageScanValidatorSha256 = sha256(Buffer.from(canonicalImageScanValidatorSource, 'utf8'));
 assert.ok(
   hardeningSource.includes(`= ${imageScanValidatorSha256} ]`),
   'stateful hardener must freeze the exact image-scan validator SHA-256',
@@ -3558,7 +3561,7 @@ async function createScenario(name) {
     writeFile(fixturePostgresMigrateDockerfile, postgresMigrateDockerfileSource, 'utf8'),
     writeFile(join(fixtureDatabase, '.dockerignore'), postgresDockerignoreSource, 'utf8'),
     writeFile(fixturePostgresSchema, postgresSchemaSource.replaceAll('\r\n', '\n'), 'utf8'),
-    writeFile(fixtureImageScanValidator, imageScanValidatorSource, 'utf8'),
+    writeFile(fixtureImageScanValidator, canonicalImageScanValidatorSource, 'utf8'),
     writeFile(join(fixtureProject, '.gitignore'), 'backend/.env\n', 'utf8'),
     writeFile(join(fixtureProject, 'backend', 'docker-compose.yml'), 'services: {}\n', 'utf8'),
     writeFile(join(fixtureProject, 'backend', '.env'), 'TEST_ONLY=true\n', 'utf8'),
