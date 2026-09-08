@@ -55,13 +55,14 @@ def _canonical(value: Any) -> bytes:
                        sort_keys=True) + "\n").encode("utf-8")
 
 
-def _regular(path: Path, *, mode: int = 0o600, links: int = 1,
+def _regular(path: Path, *, mode: int = 0o600, links: int | set[int] = 1,
              maximum: int = 8 * 1024 * 1024) -> bytes:
     try:
         info = path.lstat()
     except OSError as error:
         raise RecoveryError(f"required evidence is unavailable: {path}") from error
-    if (not path.is_file() or path.is_symlink() or info.st_nlink != links
+    allowed_links = links if isinstance(links, set) else {links}
+    if (not path.is_file() or path.is_symlink() or info.st_nlink not in allowed_links
             or info.st_size <= 0 or info.st_size > maximum
             or (os.name != "nt" and (info.st_mode & 0o777) != mode)
             or (os.name != "nt" and (info.st_uid != 0 or info.st_gid != 0))):
@@ -72,8 +73,9 @@ def _regular(path: Path, *, mode: int = 0o600, links: int = 1,
     return raw
 
 
-def _json(path: Path, *, maximum: int = 8 * 1024 * 1024) -> tuple[dict[str, Any], bytes]:
-    raw = _regular(path, maximum=maximum)
+def _json(path: Path, *, links: int | set[int] = 1,
+          maximum: int = 8 * 1024 * 1024) -> tuple[dict[str, Any], bytes]:
+    raw = _regular(path, links=links, maximum=maximum)
     try:
         value = json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
@@ -161,14 +163,25 @@ def reconcile(run_id: str, *, verify_only: bool = False) -> dict[str, object]:
     run_dir = STATE_ROOT / ("stateful-" + run_id)
     if not run_id or helper.RUN_ID.fullmatch(run_id) is None:
         raise RecoveryError("run ID is invalid")
-    receipt_raw = _regular(BRIDGE_RECEIPT)
+    receipt_path = BRIDGE_RECEIPT
+    if os.path.lexists(BRIDGE_RECEIPT):
+        receipt, receipt_raw = _json(BRIDGE_RECEIPT, links={1, 2})
+    else:
+        candidates = sorted(run_dir.glob(
+            "api-bridge-receipt.manual-forward-recovery.*.json"
+        ))
+        candidates = [path for path in candidates
+                      if not path.name.endswith(".consumption-settlement.json")]
+        if len(candidates) != 1:
+            raise RecoveryError("archived forward-recovery receipt is ambiguous")
+        receipt_path = candidates[0]
+        receipt, receipt_raw = _json(receipt_path)
     receipt_sha = hashlib.sha256(receipt_raw).hexdigest()
-    receipt, _ = _json(BRIDGE_RECEIPT)
     old_qdrant = receipt.get("oldQdrant")
     if not isinstance(old_qdrant, dict) or not isinstance(old_qdrant.get("containerId"), str):
         raise RecoveryError("bridge receipt old Qdrant binding is absent")
     verifier = _run([
-        sys.executable, "-I", "-B", str(RECEIPT_VERIFIER), "--path", str(BRIDGE_RECEIPT),
+        sys.executable, "-I", "-B", str(RECEIPT_VERIFIER), "--path", str(receipt_path),
         "--expect-host-scope", "sbc-primary", "--verify-previous-api-rollback",
     ], timeout=30)
     if not verifier.strip():
