@@ -336,6 +336,7 @@ jobs:
           bash scripts/test-song-album-normalization.sh
           bash scripts/test-tag-parent-fk-migration.sh
           psql -v ON_ERROR_STOP=1 -f backend/database/migrations/0026_youtube_quota_reservations.sql
+          psql -v ON_ERROR_STOP=1 -f backend/database/migrations/0027_enable_youtube_view_quota.sql
           bash scripts/test-youtube-quota.sh
           psql -v ON_ERROR_STOP=1 -h 127.0.0.1 -U vocadb -d vocadb_recommender <<'SQL'
           DROP TABLE IF EXISTS public.schema_migration_attempts;
@@ -351,7 +352,7 @@ jobs:
           MIGRATIONS_SQL_DIR="$GITHUB_WORKSPACE/backend/database/migrations" sh backend/database/migrate.sh
           MIGRATIONS_SQL_DIR="$GITHUB_WORKSPACE/backend/database/migrations" sh backend/database/migrate.sh
           psql -v ON_ERROR_STOP=1 -h 127.0.0.1 -U vocadb -d vocadb_recommender -f scripts/test-database-role-contract.sql
-          psql -v ON_ERROR_STOP=1 -h 127.0.0.1 -U vocadb -d vocadb_recommender -Atc "SELECT COUNT(*) || '|' || COUNT(*) FILTER (WHERE content_sha256 ~ '^[0-9a-f]{64}$') || '|' || (SELECT COUNT(*) FROM schema_migration_attempts WHERE status = 'running') FROM schema_migrations" | grep -qx '26|26|0'
+          psql -v ON_ERROR_STOP=1 -h 127.0.0.1 -U vocadb -d vocadb_recommender -Atc "SELECT COUNT(*) || '|' || COUNT(*) FILTER (WHERE content_sha256 ~ '^[0-9a-f]{64}$') || '|' || (SELECT COUNT(*) FROM schema_migration_attempts WHERE status = 'running') FROM schema_migrations" | grep -qx '27|27|0'
       - name: Remove PostgreSQL CI runtime
         if: ${{ always() }}
         shell: bash

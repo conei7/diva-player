@@ -1,4 +1,17 @@
 -- Run only against an isolated fixture database; all changes roll back.
+DO $policy$
+DECLARE policy jsonb;
+BEGIN
+    SELECT value::jsonb INTO STRICT policy
+    FROM public.sync_state WHERE key = 'youtube_quota_policy_v2';
+    IF policy->>'views' <> '9000'
+       OR policy->>'playlists' <> '1000'
+       OR policy->>'activeAfter' IS NULL THEN
+        RAISE EXCEPTION 'production YouTube quota policy mismatch';
+    END IF;
+END;
+$policy$;
+
 BEGIN;
 SELECT set_config('diva.quota_test_admin', session_user, true);
 UPDATE public.sync_state SET value = '{"views":3,"playlists":2,"activeAfter":"2000-01-01T00:00:00Z"}'
