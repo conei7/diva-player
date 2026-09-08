@@ -66,13 +66,14 @@ def regular(path: Path, *, mode: int = 0o600, links: set[int] | None = None,
     return raw
 
 
-def read_json(path: Path, *, mode: int = 0o600) -> tuple[dict[str, Any], bytes]:
+def read_json(path: Path, *, mode: int = 0o600,
+              canonical_required: bool = True) -> tuple[dict[str, Any], bytes]:
     raw = regular(path, mode=mode)
     try:
         value = json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
         raise FinalizationError(f"evidence JSON is invalid: {path}") from error
-    if not isinstance(value, dict) or canonical(value) != raw:
+    if not isinstance(value, dict) or (canonical_required and canonical(value) != raw):
         raise FinalizationError(f"evidence JSON is not canonical: {path}")
     return value, raw
 
@@ -204,7 +205,7 @@ def validate_evidence(args: argparse.Namespace, live_qdrant_version: str) -> tup
     documents: dict[str, dict[str, Any]] = {}
     raws: dict[str, bytes] = {}
     for name, path in paths.items():
-        documents[name], raws[name] = read_json(path)
+        documents[name], raws[name] = read_json(path, canonical_required=False)
         require(hashlib.sha256(raws[name]).hexdigest() == expected[name],
                 f"{name} digest does not match the supplied evidence binding")
     postgres_status = documents["postgres_status"]
@@ -423,7 +424,7 @@ def finalize(args: argparse.Namespace) -> dict[str, str]:
     current_pipeline = run(["/usr/bin/git", "-C", str(PIPELINE_ROOT), "rev-parse", "HEAD"]).strip()
     require(current_player == last(state, "git.commit") and COMMIT_RE.fullmatch(current_player),
             "player checkout changed after forward recovery")
-    qdrant_evidence, _ = read_json(Path(args.qdrant_manifest))
+    qdrant_evidence, _ = read_json(Path(args.qdrant_manifest), canonical_required=False)
     source_evidence = qdrant_evidence.get("source") or {}
     attested_pipeline = str(source_evidence.get("pipelineCommit") or "")
     require(attested_pipeline == current_pipeline and COMMIT_RE.fullmatch(current_pipeline),
