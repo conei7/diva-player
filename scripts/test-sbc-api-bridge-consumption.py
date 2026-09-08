@@ -1220,6 +1220,98 @@ def exercise_pre_mutation_post_intent_revalidation(module) -> None:
         retire_pre_mutation(module, fixture)
         assert_pre_mutation_settled(module, fixture)
 
+
+def exercise_manual_forward_recovery_retirement(module) -> None:
+    with tempfile.TemporaryDirectory(prefix="diva-sbc-bridge-forward-recovery.") as temporary:
+        root = Path(temporary)
+        state_root = root / "state"
+        state_root.mkdir(mode=0o700)
+        os.chmod(state_root, 0o700)
+        run_id = "20260909T000000Z-12345"
+        run_dir = state_root / ("stateful-" + run_id)
+        run_dir.mkdir(mode=0o700)
+        os.chmod(run_dir, 0o700)
+        receipt = state_root / "api-bridge-receipt.json"
+        payload = b'{"receipt":"forward-recovery"}\n'
+        write_owner_file(receipt, payload)
+        receipt_sha = hashlib.sha256(payload).hexdigest()
+        state_lines = [
+            f"run.id={run_id}",
+            f"api_bridge.receipt_sha256={receipt_sha}",
+            "deployment.status=preflight",
+            "deployment.status=building-qdrant",
+            "deployment.status=preparing-postgres",
+            "deployment.status=scanning-all-runtime-images",
+            "deployment.status=quiescing-pipeline-writers",
+            "pipeline_writer.status=gating",
+            "pipeline_writer.status=gated",
+            "deployment.status=switching-qdrant",
+            f"api_bridge.receipt_sha256={receipt_sha}",
+            "qdrant.storage_upgrade=intent-before-controller",
+            "qdrant.final_upgrade_stop=intent",
+            "qdrant.final_upgrade_remove=intent",
+            "deployment.status=failed",
+            "qdrant.rollback=started",
+            "qdrant.rollback=incomplete-manual-intervention-required",
+            "qdrant.new_image_id=sha256:" + "a" * 64,
+            "qdrant.candidate_volume=diva_qdrant_v119_" + run_id,
+        ]
+        write_owner_file(run_dir / "state", ("\n".join(state_lines) + "\n").encode())
+        completion = {
+            "activeJournal": "retired",
+            "fallbackQdrant": f"diva_qdrant_failed_{run_id}",
+            "interlock": "retired",
+            "mode": "forward-recovery",
+            "postgres": "promoted",
+            "previousPostgres": "container-not-retained-by-compose",
+            "previousPostgresImage": f"diva-player-postgres:rollback-{run_id}",
+            "previousPostgresVolume": "backend_postgres_data",
+            "qdrant": "promoted",
+            "recovery": "continued-after-postcheck-quoting-failure",
+            "runId": run_id,
+            "schemaVersion": 1,
+            "status": "completed",
+            "writerGate": "released",
+        }
+        write_owner_file(
+            run_dir / "manual-forward-recovery.complete.json",
+            (json.dumps(completion, sort_keys=True, separators=(",", ":")) + "\n").encode(),
+        )
+        write_owner_file(
+            run_dir / "qdrant-storage-upgrade-result.json",
+            (json.dumps({
+                "candidateVolume": f"diva_qdrant_v119_{run_id}",
+                "runId": run_id,
+                "status": "ready-for-coupled-cutover",
+            }, sort_keys=True, separators=(",", ":")) + "\n").encode(),
+        )
+        archive = run_dir / f"api-bridge-receipt.{module.MANUAL_FORWARD_RECOVERY_REASON}.{receipt_sha}.json"
+        settlement = module.retire_manual_forward_recovery(
+            canonical=receipt,
+            intent_path=state_root / "api-bridge-consume-intent.json",
+            state_root=state_root,
+            active=state_root / "stateful-hardening-active",
+            lock_dir=state_root / "stateful-hardening.lock",
+            runtime_contract=state_root / "stateful-runtime-contract",
+            run_id=run_id,
+            expected_sha=receipt_sha,
+        )
+        assert settlement["reason"] == module.MANUAL_FORWARD_RECOVERY_REASON
+        assert not receipt.exists()
+        assert archive.read_bytes() == payload
+        assert (Path(str(archive) + ".consumption-settlement.json")).exists()
+        second = module.retire_manual_forward_recovery(
+            canonical=receipt,
+            intent_path=state_root / "api-bridge-consume-intent.json",
+            state_root=state_root,
+            active=state_root / "stateful-hardening-active",
+            lock_dir=state_root / "stateful-hardening.lock",
+            runtime_contract=state_root / "stateful-runtime-contract",
+            run_id=run_id,
+            expected_sha=receipt_sha,
+        )
+        assert second == settlement
+
     with tempfile.TemporaryDirectory(
         prefix="diva-sbc-bridge-pre-mutation-post-intent-state."
     ) as temporary:
@@ -1619,6 +1711,7 @@ def main() -> int:
     exercise_pre_mutation_residual_contract(module)
     exercise_pre_mutation_fail_closed_cases(module)
     exercise_pre_mutation_rollback_scan_fail_closed(module)
+    exercise_manual_forward_recovery_retirement(module)
     exercise_pre_mutation_binding_cardinality(module)
     print("PASS crash-safe SBC API bridge receipt consumption")
     return 0

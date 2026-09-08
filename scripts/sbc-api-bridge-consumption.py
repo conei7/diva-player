@@ -27,13 +27,15 @@ BOOT_ID = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
 )
 ARCHIVE = re.compile(
-    r"^api-bridge-receipt\.(calibration|completed|pre-mutation-failed)\."
+    r"^api-bridge-receipt\.(calibration|completed|pre-mutation-failed|manual-forward-recovery)\."
     r"([0-9a-f]{64})\.json$"
 )
 MAX_DOCUMENT = 128 * 1024
 MAX_PRE_MUTATION_RELATED_RUNS = 16
 NORMAL_REASONS = frozenset({"calibration", "completed"})
 PRE_MUTATION_REASON = "pre-mutation-failed"
+MANUAL_FORWARD_RECOVERY_REASON = "manual-forward-recovery"
+ALL_REASONS = NORMAL_REASONS | {PRE_MUTATION_REASON, MANUAL_FORWARD_RECOVERY_REASON}
 PRE_MUTATION_DEPLOYMENT_STATUSES = (
     "preflight",
     "building-qdrant",
@@ -583,6 +585,11 @@ def _validate_layout(document: dict[str, object], intent_path: Path) -> dict[str
         if document.get("schemaVersion") != 2:
             _fail("pre-mutation consumption intent schema version is invalid")
         related_runs = _normalize_run_bindings(document.get("relatedRuns"))
+    elif reason == MANUAL_FORWARD_RECOVERY_REASON:
+        required.update({"completionSha256", "stateSha256"})
+        if document.get("schemaVersion") != 3:
+            _fail("manual forward-recovery consumption intent schema version is invalid")
+        related_runs = ()
     else:
         if document.get("schemaVersion") != 1:
             _fail("consumption intent schema version is invalid")
@@ -592,10 +599,15 @@ def _validate_layout(document: dict[str, object], intent_path: Path) -> dict[str
         _fail("consumption intent schema is invalid")
     run_id = document.get("runId")
     receipt_sha = document.get("receiptSha256")
-    if reason not in NORMAL_REASONS | {PRE_MUTATION_REASON} \
+    if reason not in ALL_REASONS \
             or not isinstance(run_id, str) or RUN_ID.fullmatch(run_id) is None \
             or not isinstance(receipt_sha, str) or HEX64.fullmatch(receipt_sha) is None:
         _fail("consumption intent identity is invalid")
+    if reason == MANUAL_FORWARD_RECOVERY_REASON:
+        for key in ("stateSha256", "completionSha256"):
+            if not isinstance(document.get(key), str) \
+                    or HEX64.fullmatch(str(document[key])) is None:
+                _fail("manual forward-recovery evidence digest is invalid")
     if reason == PRE_MUTATION_REASON \
             and run_id != related_runs[-1].run_id:
         _fail("pre-mutation archive run is not the latest related run")
@@ -713,6 +725,10 @@ def _settlement_document(intent: dict[str, object], archive_info: os.stat_result
     if intent["reason"] == PRE_MUTATION_REASON:
         document["schemaVersion"] = 2
         document["relatedRuns"] = intent["relatedRuns"]
+    elif intent["reason"] == MANUAL_FORWARD_RECOVERY_REASON:
+        document["schemaVersion"] = 3
+        document["stateSha256"] = intent["stateSha256"]
+        document["completionSha256"] = intent["completionSha256"]
     return document
 
 
@@ -729,6 +745,11 @@ def _validate_settlement(path: Path, intent: dict[str, object] | None = None) ->
         if document.get("schemaVersion") != 2:
             _fail("pre-mutation consumption settlement schema version is invalid")
         related_runs = _normalize_run_bindings(document.get("relatedRuns"))
+    elif reason == MANUAL_FORWARD_RECOVERY_REASON:
+        if document.get("schemaVersion") != 3:
+            _fail("manual forward-recovery consumption settlement schema version is invalid")
+        required.update({"completionSha256", "stateSha256"})
+        related_runs = ()
     else:
         if document.get("schemaVersion") != 1:
             _fail("consumption settlement schema version is invalid")
@@ -737,10 +758,17 @@ def _validate_settlement(path: Path, intent: dict[str, object] | None = None) ->
             or document.get("operation") != "consume-sbc-api-bridge-receipt" \
             or document.get("status") != "consumed-single-link-archive":
         _fail("consumption settlement schema is invalid")
+    if reason == MANUAL_FORWARD_RECOVERY_REASON:
+        for key in ("stateSha256", "completionSha256"):
+            if not isinstance(document.get(key), str) \
+                    or HEX64.fullmatch(str(document[key])) is None:
+                _fail("manual forward-recovery settlement digest is invalid")
     if intent is not None:
         bound_keys = ["archivePath", "reason", "receiptSha256", "runId"]
         if reason == PRE_MUTATION_REASON:
             bound_keys.append("relatedRuns")
+        elif reason == MANUAL_FORWARD_RECOVERY_REASON:
+            bound_keys.extend(("stateSha256", "completionSha256"))
         for key in bound_keys:
             if document.get(key) != intent.get(key):
                 _fail("consumption settlement does not match its intent")
@@ -1220,6 +1248,101 @@ def _validate_stage(run_dir: Path, state_root: Path,
     return "completed", run_id, receipt_sha
 
 
+def _validate_manual_forward_stage(
+    run_dir: Path,
+    state_root: Path,
+    active: Path,
+    lock_dir: Path,
+    runtime_contract: Path,
+    *,
+    expected_receipt_sha: str,
+    expected_state_sha: str | None = None,
+    expected_completion_sha: str | None = None,
+) -> tuple[str, str, str]:
+    """Validate the exact post-mutation manual recovery boundary.
+
+    This boundary is intentionally narrower than normal hardening completion:
+    the services were already promoted and the operator's recovery receipt is
+    the durable proof.  Only the old bridge receipt is retired here; no
+    service, database, journal, or state document is edited.
+    """
+    run_id = run_dir.name.removeprefix("stateful-")
+    if RUN_ID.fullmatch(run_id) is None:
+        _fail("manual forward-recovery run ID is invalid")
+    if run_dir != state_root / ("stateful-" + run_id):
+        _fail("manual forward-recovery run path is invalid")
+    for path, label in (
+        (active, "active hardening journal"),
+        (lock_dir, "hardening lock"),
+        (runtime_contract, "stateful runtime contract"),
+    ):
+        if os.path.lexists(path):
+            _fail(f"manual forward-recovery found an unexpected {label}")
+    raw, _, values = _state_document(run_dir)
+    state_sha = _sha256_bytes(raw)
+    if expected_state_sha is not None and state_sha != expected_state_sha:
+        _fail("manual forward-recovery state digest changed")
+    if values.get("run.id") != [run_id]:
+        _fail("manual forward-recovery run ID is not exact")
+    if values.get("api_bridge.receipt_sha256") != [
+        expected_receipt_sha, expected_receipt_sha
+    ]:
+        _fail("manual forward-recovery bridge receipt binding is not exact")
+    if values.get("deployment.status") != [
+        "preflight", "building-qdrant", "preparing-postgres",
+        "scanning-all-runtime-images", "quiescing-pipeline-writers",
+        "switching-qdrant", "failed",
+    ]:
+        _fail("manual forward-recovery deployment boundary is not exact")
+    if values.get("pipeline_writer.status") != ["gating", "gated"]:
+        _fail("manual forward-recovery writer boundary is not exact")
+    if values.get("qdrant.storage_upgrade") != ["intent-before-controller"] \
+            or values.get("qdrant.final_upgrade_stop") != ["intent"] \
+            or values.get("qdrant.final_upgrade_remove") != ["intent"]:
+        _fail("manual forward-recovery Qdrant intent boundary is not exact")
+    if values.get("qdrant.rollback") != [
+        "started", "incomplete-manual-intervention-required"
+    ]:
+        _fail("manual forward-recovery rollback boundary is not exact")
+
+    completion_path = run_dir / "manual-forward-recovery.complete.json"
+    completion, completion_raw, _ = _read_json(completion_path, links={1})
+    completion_sha = _sha256_bytes(completion_raw)
+    if expected_completion_sha is not None \
+            and completion_sha != expected_completion_sha:
+        _fail("manual forward-recovery completion digest changed")
+    expected_keys = {
+        "activeJournal", "fallbackQdrant", "interlock", "mode", "postgres",
+        "previousPostgres", "previousPostgresImage", "previousPostgresVolume",
+        "qdrant", "recovery", "runId", "schemaVersion", "status", "writerGate",
+    }
+    if set(completion) != expected_keys or completion != {
+        "activeJournal": "retired",
+        "fallbackQdrant": f"diva_qdrant_failed_{run_id}",
+        "interlock": "retired",
+        "mode": "forward-recovery",
+        "postgres": "promoted",
+        "previousPostgres": "container-not-retained-by-compose",
+        "previousPostgresImage": f"diva-player-postgres:rollback-{run_id}",
+        "previousPostgresVolume": "backend_postgres_data",
+        "qdrant": "promoted",
+        "recovery": "continued-after-postcheck-quoting-failure",
+        "runId": run_id,
+        "schemaVersion": 1,
+        "status": "completed",
+        "writerGate": "released",
+    }:
+        _fail("manual forward-recovery completion contract is invalid")
+    result_path = run_dir / "qdrant-storage-upgrade-result.json"
+    result, _, _ = _read_json(result_path, links={1})
+    if result.get("runId") != run_id \
+            or result.get("status") != "ready-for-coupled-cutover" \
+            or result.get("candidateVolume") \
+            != f"diva_qdrant_v119_{run_id}":
+        _fail("manual forward-recovery Qdrant result is invalid")
+    return run_id, state_sha, completion_sha
+
+
 def _find_settlement(run_dir: Path) -> Path | None:
     matches = []
     for entry in os.scandir(run_dir):
@@ -1237,7 +1360,7 @@ def _build_intent(*, canonical: Path, archive: Path, intent_path: Path,
                   reason: str, run_id: str, state_root: Path, active: Path,
                   lock_dir: Path, expected_sha: str,
                   related_runs: tuple[RunBinding, ...] = ()) -> dict[str, object]:
-    if reason not in NORMAL_REASONS | {PRE_MUTATION_REASON} \
+    if reason not in ALL_REASONS \
             or RUN_ID.fullmatch(run_id) is None \
             or HEX64.fullmatch(expected_sha) is None:
         _fail("requested consumption identity is invalid")
@@ -1263,12 +1386,24 @@ def _build_intent(*, canonical: Path, archive: Path, intent_path: Path,
         "receiptSha256": expected_sha,
         "receiptSize": receipt_info.st_size,
         "runId": run_id,
-        "schemaVersion": 2 if reason == PRE_MUTATION_REASON else 1,
+        "schemaVersion": (
+            2 if reason == PRE_MUTATION_REASON
+            else 3 if reason == MANUAL_FORWARD_RECOVERY_REASON
+            else 1
+        ),
         "settlementPath": str(archive) + ".consumption-settlement.json",
         "stateRoot": str(state_root),
     }
     if reason == PRE_MUTATION_REASON:
         document["relatedRuns"] = _run_binding_documents(related_runs)
+    elif reason == MANUAL_FORWARD_RECOVERY_REASON:
+        run_dir = state_root / ("stateful-" + run_id)
+        state_path = run_dir / "state"
+        completion_path = run_dir / "manual-forward-recovery.complete.json"
+        state_sha, _ = _sha256_file(state_path, links={1}, maximum=4 * 1024 * 1024)
+        completion_sha, _ = _sha256_file(completion_path, links={1}, maximum=MAX_DOCUMENT)
+        document["stateSha256"] = state_sha
+        document["completionSha256"] = completion_sha
     return _validate_layout(document, intent_path)
 
 
@@ -1314,6 +1449,77 @@ def consume(*, canonical: Path, archive: Path, intent_path: Path, reason: str,
         reason=reason, run_id=run_id, state_root=state_root, active=active,
         lock_dir=lock_dir, expected_sha=expected_sha, checkpoint=checkpoint,
     )
+
+
+def retire_manual_forward_recovery(
+    *, canonical: Path, intent_path: Path, state_root: Path,
+    active: Path, lock_dir: Path, runtime_contract: Path,
+    run_id: str, expected_sha: str, checkpoint: Checkpoint = _noop,
+) -> dict[str, object]:
+    """Retire a receipt after a separately verified forward recovery.
+
+    The helper owns only the crash-safe receipt transition.  The caller must
+    prove the live promoted topology before entering this function; the same
+    immutable state/completion proof is repeated after the durable intent is
+    published immediately before the receipt inode is touched.
+    """
+    paths = (canonical, intent_path, state_root, active, lock_dir, runtime_contract)
+    canonical, intent_path, state_root, active, lock_dir, runtime_contract = map(
+        _absolute, paths
+    )
+    _validate_fixed_state_paths(
+        state_root=state_root, canonical=canonical, intent_path=intent_path,
+        active=active, lock_dir=lock_dir, runtime_contract=runtime_contract,
+    )
+    if RUN_ID.fullmatch(run_id) is None or HEX64.fullmatch(expected_sha) is None:
+        _fail("manual forward-recovery identity is invalid")
+    run_dir = state_root / ("stateful-" + run_id)
+    _validate_manual_forward_stage(
+        run_dir, state_root, active, lock_dir, runtime_contract,
+        expected_receipt_sha=expected_sha,
+    )
+    archive = run_dir / f"api-bridge-receipt.{MANUAL_FORWARD_RECOVERY_REASON}.{expected_sha}.json"
+    prepared_intent = Path(str(intent_path) + ".prepared")
+    if os.path.lexists(intent_path) or os.path.lexists(prepared_intent):
+        reconciliation = startup_reconcile(
+            state_root=state_root, canonical=canonical,
+            intent_path=intent_path, active=active, lock_dir=lock_dir,
+            runtime_contract=runtime_contract, checkpoint=checkpoint,
+        )
+        if reconciliation != MANUAL_FORWARD_RECOVERY_REASON:
+            _fail("a different receipt consumption was reconciled")
+        settlement_path = Path(str(archive) + ".consumption-settlement.json")
+        return _validate_settlement(settlement_path)
+    if not os.path.lexists(canonical):
+        if os.path.lexists(archive):
+            settlement_path = Path(str(archive) + ".consumption-settlement.json")
+            if not os.path.lexists(settlement_path):
+                _fail("manual forward-recovery archive has no settlement")
+            return _validate_settlement(settlement_path)
+        _fail("manual forward-recovery canonical receipt is absent")
+
+    def revalidate(intent: dict[str, object]) -> None:
+        _validate_manual_forward_stage(
+            run_dir, state_root, active, lock_dir, runtime_contract,
+            expected_receipt_sha=expected_sha,
+            expected_state_sha=str(intent["stateSha256"]),
+            expected_completion_sha=str(intent["completionSha256"]),
+        )
+
+    settlement = _consume(
+        canonical=canonical, archive=archive, intent_path=intent_path,
+        reason=MANUAL_FORWARD_RECOVERY_REASON, run_id=run_id,
+        state_root=state_root, active=active, lock_dir=lock_dir,
+        expected_sha=expected_sha, before_finish=revalidate,
+        checkpoint=checkpoint,
+    )
+    _validate_manual_forward_stage(
+        run_dir, state_root, active, lock_dir, runtime_contract,
+        expected_receipt_sha=expected_sha,
+        expected_state_sha=str(settlement["stateSha256"]),
+        expected_completion_sha=str(settlement["completionSha256"]),
+    )
+    return settlement
 
 
 def _release_exact_run(active: Path, lock_dir: Path, state_root: Path,
@@ -1397,6 +1603,17 @@ def startup_reconcile(*, state_root: Path, canonical: Path, intent_path: Path,
             )
             if intent_run_dir != state_root / ("stateful-" + str(intent["runId"])):
                 _fail("pre-mutation retirement archive run changed")
+        elif intent["reason"] == MANUAL_FORWARD_RECOVERY_REASON:
+            if run_dir is not None:
+                _fail("manual forward-recovery intent exists beside a hardening interlock")
+            if intent_run_dir != state_root / ("stateful-" + str(intent["runId"])):
+                _fail("manual forward-recovery archive run changed")
+            _validate_manual_forward_stage(
+                intent_run_dir, state_root, active, lock_dir, runtime_contract,
+                expected_receipt_sha=str(intent["receiptSha256"]),
+                expected_state_sha=str(intent["stateSha256"]),
+                expected_completion_sha=str(intent["completionSha256"]),
+            )
         else:
             if run_dir is not None and intent_run_dir != run_dir:
                 _fail("consumption intent and stale hardening lock identify different runs")
@@ -1759,6 +1976,15 @@ def main() -> int:
     retire_parser.add_argument(
         "--related-run", required=True, action="append", type=_parse_run_binding
     )
+    forward_parser = subparsers.add_parser("retire-forward-recovery")
+    forward_parser.add_argument("--canonical", required=True, type=Path)
+    forward_parser.add_argument("--intent", required=True, type=Path)
+    forward_parser.add_argument("--state-root", required=True, type=Path)
+    forward_parser.add_argument("--active-journal", required=True, type=Path)
+    forward_parser.add_argument("--lock-dir", required=True, type=Path)
+    forward_parser.add_argument("--runtime-contract", required=True, type=Path)
+    forward_parser.add_argument("--run-id", required=True)
+    forward_parser.add_argument("--expected-sha256", required=True)
     arguments = parser.parse_args()
     if arguments.command == "consume":
         settlement = consume(
@@ -1777,7 +2003,7 @@ def main() -> int:
             lock_dir=arguments.lock_dir, runtime_contract=arguments.runtime_contract,
         )
         print(result)
-    else:
+    elif arguments.command == "retire-pre-mutation":
         settlement = retire_pre_mutation(
             canonical=arguments.canonical,
             intent_path=arguments.intent,
@@ -1788,6 +2014,19 @@ def main() -> int:
             archive_run_id=arguments.archive_run_id,
             expected_sha=arguments.expected_sha256,
             related_runs=tuple(arguments.related_run),
+        )
+        print(json.dumps(settlement, ensure_ascii=True, separators=(",", ":"),
+                         sort_keys=True))
+    else:
+        settlement = retire_manual_forward_recovery(
+            canonical=arguments.canonical,
+            intent_path=arguments.intent,
+            state_root=arguments.state_root,
+            active=arguments.active_journal,
+            lock_dir=arguments.lock_dir,
+            runtime_contract=arguments.runtime_contract,
+            run_id=arguments.run_id,
+            expected_sha=arguments.expected_sha256,
         )
         print(json.dumps(settlement, ensure_ascii=True, separators=(",", ":"),
                          sort_keys=True))
