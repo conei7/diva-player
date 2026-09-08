@@ -10,7 +10,8 @@ BEGIN
     WHERE key = 'youtube_quota_policy_v2'
     FOR UPDATE;
 
-    IF policy->>'views' <> '3000'
+    IF policy->>'views' IS NULL
+       OR policy->>'views' NOT IN ('3000', '9000')
        OR policy->>'playlists' <> '1000'
        OR policy->>'activeAfter' IS NULL THEN
         RAISE EXCEPTION 'Unexpected YouTube quota policy before 9,000-unit activation';
@@ -19,6 +20,7 @@ BEGIN
     UPDATE public.sync_state
     SET value = jsonb_set(policy, '{views}', '9000'::jsonb, false)::text,
         updated_at = clock_timestamp()
-    WHERE key = 'youtube_quota_policy_v2';
+    WHERE key = 'youtube_quota_policy_v2'
+      AND policy->>'views' = '3000';
 END;
 $quota_policy$;
