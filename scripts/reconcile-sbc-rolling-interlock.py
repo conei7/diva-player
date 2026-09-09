@@ -57,6 +57,16 @@ def _regular(path: Path, mode: int = 0o600) -> os.stat_result:
     return info
 
 
+def _directory(path: Path, mode: int = 0o700) -> os.stat_result:
+    info = path.lstat()
+    require(stat.S_ISDIR(info.st_mode) and not stat.S_ISLNK(info.st_mode),
+            f"unsafe directory: {path}")
+    require(info.st_uid == 0 and info.st_gid == 0
+            and stat.S_IMODE(info.st_mode) == mode,
+            f"unsafe directory ownership or mode: {path}")
+    return info
+
+
 def _run(command: list[str], *, input_data: bytes | None = None,
          timeout: int = 30) -> subprocess.CompletedProcess[bytes]:
     try:
@@ -95,8 +105,8 @@ def _last(values: dict[str, list[str]], key: str) -> str:
     return values[key][-1]
 
 
-def _identity(path: Path, *, include_size: bool) -> str:
-    info = _regular(path)
+def _identity(path: Path, *, include_size: bool, directory: bool = False) -> str:
+    info = _directory(path) if directory else _regular(path)
     mode = f"{info.st_mode & 0xffff:x}"
     if include_size:
         return f"{info.st_dev}:{info.st_ino}:{info.st_size}:{mode}:{info.st_nlink}"
@@ -151,7 +161,8 @@ def _release_interlocks(state_path: Path, values: dict[str, list[str]]) -> None:
     require(_identity(ACTIVE, include_size=True)
             == _last(values, "deployment.journal_identity"),
             "active journal identity changed")
-    require(_identity(LOCK, include_size=False)
+    _directory(LOCK)
+    require(_identity(LOCK, include_size=False, directory=True)
             == _last(values, "deployment.lock_dir_identity"),
             "deploy lock identity changed")
     owner = LOCK / "owner"
