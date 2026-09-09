@@ -3378,7 +3378,7 @@ quiesce_named_migration_container() {
 
 reconcile_migration_acl_after_run() {
     quiesce_named_migration_container || return 1
-    bounded_compose "$MUTATION_TIMEOUT_SECONDS" run --rm --no-deps migrate \
+    bounded_compose "$MUTATION_TIMEOUT_SECONDS" run --rm --no-TTY --no-deps migrate \
         --reconcile-migration-acl-only || return 1
     MIGRATION_ACL_UNRESOLVED=false
 }
@@ -7341,7 +7341,7 @@ record_state "deployment.status" "migrating"
 record_state "migration.status" "started"
 MIGRATION_ACL_UNRESOLVED=true
 migration_status=0
-bounded_compose "$MIGRATION_TIMEOUT_SECONDS" run --no-deps \
+bounded_compose "$MIGRATION_TIMEOUT_SECONDS" run --no-TTY --no-deps \
     --name "$MIGRATION_CONTAINER" migrate || migration_status=$?
 if ! reconcile_migration_acl_after_run; then
     record_state "migration.container_quiescence" "or-acl-unresolved"

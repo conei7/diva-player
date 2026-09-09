@@ -854,7 +854,7 @@ case "$operation" in
         while [ "$#" -gt 0 ]; do
             case "$1" in
                 -d) detached=true; shift ;;
-                --rm|--no-deps) shift ;;
+                --rm|--no-TTY|--no-deps) shift ;;
                 --name) candidate_name="$2"; shift 2 ;;
                 api_gateway|api_a|api_b|web|migrate) service="$1"; shift; break ;;
                 *) shift ;;
