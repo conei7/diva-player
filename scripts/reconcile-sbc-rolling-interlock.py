@@ -194,12 +194,15 @@ def reconcile(run_id: str) -> dict[str, str]:
     require(active_target == str(run_dir), "active journal does not bind requested run")
     state_path = run_dir / "state"
     values = _state(state_path)
-    require(_last(values, "deployment.status")
-            == "daemon-unresolved-fail-stop-manual-reconciliation-required",
+    status = _last(values, "deployment.status")
+    interlock = _last(values, "deployment.interlock")
+    pending_reconcile = status == "failed-manual-reconciliation-completed" \
+        and interlock == "manual-reconciliation-verified-no-live-service-replacement" \
+        and _last(values, "recovery.status") == "manual-daemon-settlement-reconciled"
+    initial_boundary = status == "daemon-unresolved-fail-stop-manual-reconciliation-required" \
+        and interlock == "active-journal-and-deploy-lock-retained"
+    require(initial_boundary or pending_reconcile,
             "run is not at the interrupted compose-run boundary")
-    require(_last(values, "deployment.interlock")
-            == "active-journal-and-deploy-lock-retained",
-            "run interlock is not the expected manual-reconciliation boundary")
     require(_last(values, "daemon_mutation.12.intent") == "compose-run",
             "run mutation intent is not the migration compose-run")
     require(_last(values, "daemon_mutation.interrupted")
@@ -214,9 +217,13 @@ def reconcile(run_id: str) -> dict[str, str]:
 
     migration_name = f"diva_migration_{run_id}"
     migration = _inspect(migration_name)
-    require(migration is not None and migration.get("State", {}).get("Status") == "exited"
-            and migration.get("State", {}).get("ExitCode") == 0,
-            "migration container did not exit successfully")
+    if initial_boundary:
+        require(migration is not None
+                and migration.get("State", {}).get("Status") == "exited"
+                and migration.get("State", {}).get("ExitCode") == 0,
+                "migration container did not exit successfully")
+    else:
+        require(migration is None, "reconciled migration container still exists")
 
     old_ids = {
         "vocadb_api_a": _last(values, "api_a.old_container_id"),
@@ -238,28 +245,34 @@ def reconcile(run_id: str) -> dict[str, str]:
         require(_inspect(prefix + run_id) is None,
                 f"candidate service exists: {prefix}{run_id}")
     rows = _route_rows("vocadb_api_gateway")
-    require(rows["api_a"][17].startswith("MAINT")
-            and rows["api_b"][17].startswith("MAINT"),
-            "HAProxy routes are not both disabled as expected")
-    _route_command("vocadb_api_gateway", "api_a")
-    _route_command("vocadb_api_gateway", "api_b")
-    rows = _route_rows("vocadb_api_gateway")
+    if initial_boundary:
+        require(rows["api_a"][17].startswith("MAINT")
+                and rows["api_b"][17].startswith("MAINT"),
+                "HAProxy routes are not both disabled as expected")
+        _route_command("vocadb_api_gateway", "api_a")
+        _route_command("vocadb_api_gateway", "api_b")
+        rows = _route_rows("vocadb_api_gateway")
+    else:
+        require(rows["api_a"][17].startswith("UP")
+                and rows["api_b"][17].startswith("UP"),
+                "reconciled HAProxy routes are not UP")
     require(rows["api_a"][17].startswith("UP") and rows["api_b"][17].startswith("UP"),
             "HAProxy routes did not return to UP")
     _ready("http://127.0.0.1:5000/api/ready")
     _ready("http://127.0.0.1:8080/backend-api/api/ready")
 
-    removed = _run([DOCKER, "rm", migration_name])
-    require(removed.returncode == 0 and _inspect(migration_name) is None,
-            "migration container cleanup did not settle")
-    _append_state(state_path, [
-        ("migration.container_quiescence", "manual-reconciled-exited-0"),
-        ("migration.acl_reconciliation", "manual-reconciled-by-successful-migration"),
-        ("migration.publication_gate", "manual-restored-old-running-api-routes"),
-        ("recovery.status", "manual-daemon-settlement-reconciled"),
-        ("deployment.status", "failed-manual-reconciliation-completed"),
-        ("deployment.interlock", "manual-reconciliation-verified-no-live-service-replacement"),
-    ])
+    if initial_boundary:
+        removed = _run([DOCKER, "rm", migration_name])
+        require(removed.returncode == 0 and _inspect(migration_name) is None,
+                "migration container cleanup did not settle")
+        _append_state(state_path, [
+            ("migration.container_quiescence", "manual-reconciled-exited-0"),
+            ("migration.acl_reconciliation", "manual-reconciled-by-successful-migration"),
+            ("migration.publication_gate", "manual-restored-old-running-api-routes"),
+            ("recovery.status", "manual-daemon-settlement-reconciled"),
+            ("deployment.status", "failed-manual-reconciliation-completed"),
+            ("deployment.interlock", "manual-reconciliation-verified-no-live-service-replacement"),
+        ])
     _release_interlocks(state_path, values)
     return {"runId": run_id, "status": "reconciled", "oldApiA": old_ids["vocadb_api_a"],
             "oldApiB": old_ids["vocadb_api_b"],
