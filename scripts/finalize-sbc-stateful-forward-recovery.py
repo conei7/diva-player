@@ -424,6 +424,10 @@ def finalize(args: argparse.Namespace) -> dict[str, str]:
     # root.  The checkouts are owned by the deployment user, so Git's dubious
     # ownership guard must be scoped to these exact repositories rather than
     # disabled globally or persisted in root's config.
+    qdrant_evidence, _ = read_json(Path(args.qdrant_manifest), canonical_required=False)
+    source_evidence = qdrant_evidence.get("source") or {}
+    expected_player = (last(state, "git.commit") if "git.commit" in state
+                       else str(source_evidence.get("playerCommit") or ""))
     current_player = run([
         "/usr/bin/git", "-c", f"safe.directory={PLAYER_ROOT}",
         "-C", str(PLAYER_ROOT), "rev-parse", "HEAD",
@@ -432,10 +436,8 @@ def finalize(args: argparse.Namespace) -> dict[str, str]:
         "/usr/bin/git", "-c", f"safe.directory={PIPELINE_ROOT}",
         "-C", str(PIPELINE_ROOT), "rev-parse", "HEAD",
     ]).strip()
-    require(current_player == last(state, "git.commit") and COMMIT_RE.fullmatch(current_player),
+    require(current_player == expected_player and COMMIT_RE.fullmatch(current_player),
             "player checkout changed after forward recovery")
-    qdrant_evidence, _ = read_json(Path(args.qdrant_manifest), canonical_required=False)
-    source_evidence = qdrant_evidence.get("source") or {}
     attested_pipeline = str(source_evidence.get("pipelineCommit") or "")
     require(attested_pipeline == current_pipeline and COMMIT_RE.fullmatch(current_pipeline),
             "pipeline checkout changed after forward recovery")
