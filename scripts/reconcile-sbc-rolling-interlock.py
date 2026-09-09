@@ -205,9 +205,15 @@ def reconcile(run_id: str) -> dict[str, str]:
             "run is not at the interrupted compose-run boundary")
     require(_last(values, "daemon_mutation.12.intent") == "compose-run",
             "run mutation intent is not the migration compose-run")
-    require(_last(values, "daemon_mutation.interrupted")
-            == "compose-run-terminal-release-forbidden",
-            "run was not interrupted at the expected terminal-release boundary")
+    terminal_release = _last(values, "daemon_mutation.terminal_release") \
+        if "daemon_mutation.terminal_release" in values else ""
+    interrupted = _last(values, "daemon_mutation.interrupted") \
+        if "daemon_mutation.interrupted" in values else ""
+    require(
+        terminal_release == "forbidden-compose-run-client-exit-137"
+        or interrupted == "compose-run-terminal-release-forbidden",
+        "run was not interrupted at the expected terminal-release boundary",
+    )
     owner = LOCK / "owner"
     _regular(owner)
     owner_values = _state(owner)
