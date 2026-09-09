@@ -420,8 +420,18 @@ def finalize(args: argparse.Namespace) -> dict[str, str]:
     live_version = qdrant_version()
     check_http("http://127.0.0.1:6333/healthz")
     evidence_projection_sha, evidence_projection = validate_evidence(args, live_version)
-    current_player = run(["/usr/bin/git", "-C", str(PLAYER_ROOT), "rev-parse", "HEAD"]).strip()
-    current_pipeline = run(["/usr/bin/git", "-C", str(PIPELINE_ROOT), "rev-parse", "HEAD"]).strip()
+    # The proof runner deliberately supplies a minimal environment and runs as
+    # root.  The checkouts are owned by the deployment user, so Git's dubious
+    # ownership guard must be scoped to these exact repositories rather than
+    # disabled globally or persisted in root's config.
+    current_player = run([
+        "/usr/bin/git", "-c", f"safe.directory={PLAYER_ROOT}",
+        "-C", str(PLAYER_ROOT), "rev-parse", "HEAD",
+    ]).strip()
+    current_pipeline = run([
+        "/usr/bin/git", "-c", f"safe.directory={PIPELINE_ROOT}",
+        "-C", str(PIPELINE_ROOT), "rev-parse", "HEAD",
+    ]).strip()
     require(current_player == last(state, "git.commit") and COMMIT_RE.fullmatch(current_player),
             "player checkout changed after forward recovery")
     qdrant_evidence, _ = read_json(Path(args.qdrant_manifest), canonical_required=False)
