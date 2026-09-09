@@ -514,7 +514,7 @@ def finalize(args: argparse.Namespace) -> dict[str, str]:
         f"qdrant_scan_receipt_sha256={scan_shas['qdrant']}",
         f"qdrant_audit_scan_receipt_sha256={scan_shas['qdrant_audit']}",
         f"postgres_scan_receipt_sha256={scan_shas['postgres']}",
-        f"postgres_migrate_scan_receipt_sha256={scan_shas['migrate']}",
+        f"postgres_migrate_image_scan_receipt_sha256={scan_shas['migrate']}",
         "recovery=validated-promoted-topology-no-docker-mutation",
     ]
     promotion_path = run_dir / "promotion-transaction"
@@ -534,7 +534,7 @@ def finalize(args: argparse.Namespace) -> dict[str, str]:
         f"qdrant_image_scan_receipt_sha256={scan_shas['qdrant']}",
         f"qdrant_audit_image_scan_receipt_sha256={scan_shas['qdrant_audit']}",
         f"postgres_image_scan_receipt_sha256={scan_shas['postgres']}",
-        f"postgres_migrate_scan_receipt_sha256={scan_shas['migrate']}",
+        f"postgres_migrate_image_scan_receipt_sha256={scan_shas['migrate']}",
         f"postgres_dockerfile_sha256={last(state, 'postgres.dockerfile_sha256')}",
         f"postgres_schema_sha256={last(state, 'postgres.schema_sha256')}",
         f"postgres_source_bundle_sha256={last(state, 'postgres.source_bundle_sha256')}",
