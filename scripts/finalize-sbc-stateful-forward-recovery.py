@@ -88,6 +88,18 @@ def run(command: list[str], *, timeout: int = 30) -> str:
     return result.stdout
 
 
+def require_git_ancestor(repository: Path, ancestor: str, descendant: str,
+                         label: str) -> None:
+    try:
+        run([
+            "/usr/bin/git", "-c", f"safe.directory={repository}",
+            "-C", str(repository), "merge-base", "--is-ancestor",
+            ancestor, descendant,
+        ])
+    except FinalizationError as error:
+        raise FinalizationError(f"{label} source commit is not an ancestor") from error
+
+
 def docker_json(args: list[str]) -> Any:
     try:
         return json.loads(run(["/usr/bin/docker", *args]))
@@ -424,10 +436,12 @@ def finalize(args: argparse.Namespace) -> dict[str, str]:
     # root.  The checkouts are owned by the deployment user, so Git's dubious
     # ownership guard must be scoped to these exact repositories rather than
     # disabled globally or persisted in root's config.
+    postgres_evidence, _ = read_json(Path(args.postgres_manifest), canonical_required=False)
     qdrant_evidence, _ = read_json(Path(args.qdrant_manifest), canonical_required=False)
+    postgres_source = postgres_evidence.get("source") or {}
     source_evidence = qdrant_evidence.get("source") or {}
     expected_player = (last(state, "git.commit") if "git.commit" in state
-                       else str(source_evidence.get("playerCommit") or ""))
+                       else str(postgres_source.get("playerCommit") or ""))
     current_player = run([
         "/usr/bin/git", "-c", f"safe.directory={PLAYER_ROOT}",
         "-C", str(PLAYER_ROOT), "rev-parse", "HEAD",
@@ -438,11 +452,17 @@ def finalize(args: argparse.Namespace) -> dict[str, str]:
     ]).strip()
     require(current_player == expected_player and COMMIT_RE.fullmatch(current_player),
             "player checkout changed after forward recovery")
-    attested_pipeline = str(source_evidence.get("pipelineCommit") or "")
-    require(attested_pipeline == current_pipeline and COMMIT_RE.fullmatch(current_pipeline),
-            "pipeline checkout changed after forward recovery")
-    require(str(source_evidence.get("playerCommit") or "") == current_player,
-            "player source commit in backup evidence does not match the promoted checkout")
+    require(COMMIT_RE.fullmatch(current_pipeline) and COMMIT_RE.fullmatch(current_player),
+            "live checkout commit is invalid")
+    for label, source in (("PostgreSQL", postgres_source), ("Qdrant", source_evidence)):
+        source_player = str(source.get("playerCommit") or "")
+        source_pipeline = str(source.get("pipelineCommit") or "")
+        require(COMMIT_RE.fullmatch(source_player) and COMMIT_RE.fullmatch(source_pipeline),
+                f"{label} source commit is invalid")
+        require_git_ancestor(PLAYER_ROOT, source_player, current_player,
+                             f"{label} player")
+        require_git_ancestor(PIPELINE_ROOT, source_pipeline, current_pipeline,
+                             f"{label} pipeline")
     require(sha(run_dir / "qdrant-build-context/Dockerfile") ==
             docker_inspect("vocadb_qdrant").get("Config", {}).get("Labels", {})
             .get("com.diva.qdrant.dockerfile-sha256"),
