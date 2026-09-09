@@ -3418,6 +3418,63 @@ wait_http() {
     return 1
 }
 
+wait_operational_health() {
+    local url="$1" max_time="$2" attempts=0 status_code body_file
+    body_file="$PRIVATE_RUNTIME_ROOT/api-health.json"
+    while [ "$attempts" -lt "$HEALTH_ATTEMPTS" ]; do
+        status_code=$("$CURL_COMMAND" -sS --connect-timeout 2 --max-time "$max_time" \
+            -o "$body_file" -w '%{http_code}' "$url" 2>/dev/null) || status_code=""
+        if [ "$status_code" = "200" ]; then
+            record_state "health.operational" "ok" || true
+            rm -f -- "$body_file"
+            return 0
+        fi
+        if [ "$status_code" = "503" ] \
+            && "$PYTHON_COMMAND" -I - "$body_file" <<'PY'
+import json
+import sys
+
+try:
+    with open(sys.argv[1], encoding="utf-8") as stream:
+        payload = json.load(stream)
+    if payload.get("status") != "degraded":
+        raise ValueError
+    dependencies = payload.get("dependencies")
+    if not isinstance(dependencies, dict):
+        raise ValueError
+    for name in ("postgres", "qdrant"):
+        dependency = dependencies.get(name)
+        if not isinstance(dependency, dict) or dependency.get("ok") is not True:
+            raise ValueError
+    stale_count = 0
+    for name in ("discoveryQuality", "audioFeatures"):
+        component = payload.get(name)
+        if not isinstance(component, dict):
+            raise ValueError
+        if component.get("ok") is True:
+            continue
+        if component.get("ok") is False and str(component.get("error", "")).lower() == "stale":
+            stale_count += 1
+            continue
+        raise ValueError
+    if stale_count < 1:
+        raise ValueError
+except (OSError, ValueError, TypeError, json.JSONDecodeError, IndexError):
+    raise SystemExit(1)
+PY
+        then
+            record_state "health.operational" "stale-only-postgres-qdrant-ok" || true
+            printf '%s\n' 'WARNING: accepting stale-only operational health; PostgreSQL and Qdrant are healthy' >&2
+            rm -f -- "$body_file"
+            return 0
+        fi
+        attempts=$((attempts + 1))
+        wait_once
+    done
+    rm -f -- "$body_file"
+    return 1
+}
+
 gateway_running() {
     local mapped_id running
     [ -n "$PUBLISHED_GATEWAY_ID" ] || return 1
@@ -7509,7 +7566,7 @@ fi
 record_state "deployment.status" "verifying"
 wait_http http://127.0.0.1:5000/api/ready 10 \
     || { fail "local API readiness did not stabilize"; exit 1; }
-wait_http http://127.0.0.1:5000/api/health 30 \
+wait_operational_health http://127.0.0.1:5000/api/health 30 \
     || { fail "local API health did not stabilize"; exit 1; }
 if container_running "$WEB_CONTAINER"; then
     wait_http http://127.0.0.1:8080/backend-api/api/ready 15 \

@@ -475,6 +475,9 @@ assert.match(
 );
 assert.match(deploy, /HEALTH_ATTEMPTS=\$\{DIVA_DEPLOY_HEALTH_ATTEMPTS:-180\}/);
 assert.match(deploy, /Refusing to enable unhealthy \$slot/);
+assert.match(deploy, /wait_operational_health http:\/\/127\.0\.0\.1:5000\/api\/health 30/);
+assert.match(deploy, /stale-only-postgres-qdrant-ok/);
+assert.match(deploy, /component\.get\("ok"\) is False/);
 assert.match(deploy, /apply_gateway_image "\$OLD_GATEWAY_IMAGE" "\$NEW_GATEWAY_IMAGE"/);
 assert.match(deploy, /--bootstrap-legacy-qdrant-bridge/u);
 assert.match(deploy, /canonical API bridge receipt already exists; bootstrap is one-time/u);
