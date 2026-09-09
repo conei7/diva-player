@@ -111,7 +111,8 @@ def _route_rows(gateway: str) -> dict[str, list[str]]:
     try:
         rows = csv.reader(io.StringIO(result.stdout.decode("utf-8")))
         parsed = {row[1]: row for row in rows
-                  if len(row) > 17 and row[0] == "api_nodes"}
+                  if len(row) > 17 and row[0] == "api_nodes"
+                  and row[1] in {"api_a", "api_b"}}
     except (UnicodeDecodeError, csv.Error) as error:
         raise ReconcileError("HAProxy stats output is invalid") from error
     require(set(parsed) == {"api_a", "api_b"},
