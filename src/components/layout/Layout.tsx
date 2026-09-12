@@ -44,9 +44,9 @@ export default function Layout() {
   useYouTubePlaylistSync();
 
   const isWatchPage = location.pathname === '/watch';
-  const isSoundMapDemo = import.meta.env.DEV
+  const isLocalSoundMapPreview = import.meta.env.DEV
     && location.pathname === '/sound-map'
-    && new URLSearchParams(location.search).get('demo') === '1';
+    && ['demo', 'pilot'].some(parameter => new URLSearchParams(location.search).get(parameter) === '1');
   // /watch ではサイドバーを非表示
   const showSidebar = !isWatchPage;
 
@@ -72,7 +72,7 @@ export default function Layout() {
         data-testid="backend-status-layout"
         style={{ paddingTop: 'var(--header-height)' }}
       >
-        {!isSoundMapDemo && <BackendStatusNotice />}
+        {!isLocalSoundMapPreview && <BackendStatusNotice />}
       </div>
       <Sidebar />
 

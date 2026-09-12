@@ -2,13 +2,14 @@ import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as R
 import { useSearchParams } from 'react-router';
 import { fetchSoundMap, SoundMapRequestError, type SoundMapPoint, type SoundMapResponse } from '../api/soundMap';
 import { getDemoSoundMap } from '../api/soundMapDemo';
+import { fetchSoundMapPilot } from '../api/soundMapPilot';
 import { getSongsByIds } from '../api/vocadb';
 import { getPlayedSongIds } from '../services/historyDatabase';
 import { useHiddenSongStore } from '../stores/hiddenSongStore';
 import { usePlayerStore } from '../stores/playerStore';
 import { useRatingStore } from '../stores/ratingStore';
 import { useUiStore } from '../stores/uiStore';
-import { clampSoundMapZoom, centerSoundMapOnPoint, visibleSoundMapItems, type SoundMapViewport } from '../utils/soundMap';
+import { clampSoundMapZoom, centerSoundMapOnPoint, fitSoundMapItems, visibleSoundMapItems, type SoundMapViewport } from '../utils/soundMap';
 import { getRatedSongIds } from '../utils/ratedSongs';
 
 function readId(value: string | null): number | null {
@@ -27,6 +28,7 @@ function mapErrorMessage(error: unknown): string {
     if (error.code === 'sound_map_unavailable') return '曲調マップの座標がまだ公開されていません。座標生成後に利用できます。';
     if (error.code === 'seed_not_mapped') return 'この曲は曲調マップにまだ含まれていません。別の起点を選んでください。';
     if (error.code === 'sound_map_dependency_unavailable') return '音響検索に接続できませんでした。少し待って再試行してください。';
+    if (error.code === 'sound_map_pilot_missing' || error.code === 'sound_map_pilot_invalid') return error.message;
   }
   return '曲調マップを読み込めませんでした。データAPIへの接続を確認して再試行してください。';
 }
@@ -57,6 +59,8 @@ export default function SoundMapPage() {
   }));
   const requestRevision = useRef(0);
   const demoMode = import.meta.env.DEV && searchParams.get('demo') === '1';
+  const pilotMode = import.meta.env.DEV && searchParams.get('pilot') === '1';
+  const localPreviewMode = demoMode || pilotMode;
   const seedId = readId(searchParams.get('seedSongId')) ?? fallbackSeedId ?? currentSong?.id ?? null;
   const mapVersion = searchParams.get('mapVersion') || undefined;
   const [playedIds, setPlayedIds] = useState<Set<number>>(new Set());
@@ -99,19 +103,21 @@ export default function SoundMapPage() {
     setError('');
     const request = demoMode
       ? Promise.resolve(getDemoSoundMap(seedId, mapVersion ?? 'demo-v1'))
-      : fetchSoundMap(seedId, { mapVersion, limit: 120, signal: controller.signal });
+      : pilotMode
+        ? fetchSoundMapPilot(seedId, controller.signal)
+        : fetchSoundMap(seedId, { mapVersion, limit: 120, signal: controller.signal });
     request
       .then(next => {
         if (revision !== requestRevision.current) return;
         setResult(next);
         setSelectedId(readId(searchParams.get('selectedSongId')) ?? next.origin.songId);
         if (!searchParams.has('centerX') && !searchParams.has('centerY')) {
-          setViewport(centerSoundMapOnPoint(next.origin, 1));
+          setViewport(fitSoundMapItems(next.items));
         }
-        if (!mapVersion || mapVersion !== next.mapVersion) {
+        if (!mapVersion || mapVersion !== next.mapVersion || (pilotMode && seedId !== next.origin.songId)) {
           const params = new URLSearchParams(searchParams);
           params.set('mapVersion', next.mapVersion);
-          params.set('seedSongId', String(seedId));
+          params.set('seedSongId', String(pilotMode ? next.origin.songId : seedId));
           setSearchParams(params, { replace: true });
         }
       })
@@ -122,7 +128,7 @@ export default function SoundMapPage() {
       })
       .finally(() => { if (revision === requestRevision.current) setLoading(false); });
     return () => controller.abort();
-  }, [demoMode, mapVersion, retryKey, searchParams, seedId, setSearchParams]);
+  }, [demoMode, mapVersion, pilotMode, retryKey, searchParams, seedId, setSearchParams]);
 
   const items = useMemo(
     () => result ? visibleSoundMapItems(result.items, hiddenIds) : [],
@@ -192,8 +198,9 @@ export default function SoundMapPage() {
         <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-300">Sound Map</p>
         <h1 className="mt-1 text-2xl font-bold text-white sm:text-3xl">曲調マップ</h1>
         <p className="mt-2 text-sm leading-6 text-neutral-400">似た音響特徴の曲ほど近くに表示されます。軸に意味のある単位はなく、点の近さだけを目安に探索します。</p>
-        {!demoMode && currentSong && <p className="mt-3 text-xs text-cyan-200">再生中: {currentSong.name}</p>}
+        {!localPreviewMode && currentSong && <p className="mt-3 text-xs text-cyan-200">再生中: {currentSong.name}</p>}
         {demoMode && <p className="mt-3 rounded-lg bg-cyan-300/10 px-3 py-2 text-xs text-cyan-100">画面確認用デモです。点の選択・ズーム・起点変更を試せます。</p>}
+        {pilotMode && <p className="mt-3 rounded-lg bg-emerald-300/10 px-3 py-2 text-xs text-emerald-100">実データpilotです。Qdrantの音響ベクトルとPostgreSQLの曲名から生成した小規模マップを表示しています。</p>}
       </div>
 
       {!seedId ? (
@@ -230,8 +237,8 @@ export default function SoundMapPage() {
             selected={selected}
             neighbors={items.filter(item => item.songId !== result.origin.songId).slice(0, 8)}
             selectedId={selectedId}
-            currentSong={demoMode ? null : currentSong}
-            actionsDisabled={demoMode}
+            currentSong={localPreviewMode ? null : currentSong}
+            actionsDisabled={localPreviewMode}
             onSelect={selectPoint}
             onSelectOrigin={setOrigin}
             onPlay={playSelected}
@@ -283,6 +290,7 @@ function SoundMapCanvas({ items, knownIds, result, selectedId, viewport, onSelec
           return (
             <g
               key={point.songId}
+              data-song-id={point.songId}
               transform={`translate(${point.x} ${point.y})`}
               onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') onSelect(point); }}
               role="button"
@@ -290,9 +298,11 @@ function SoundMapCanvas({ items, knownIds, result, selectedId, viewport, onSelec
               tabIndex={0}
               className="cursor-pointer"
             >
-              {selected && <circle r={0.036} fill="none" stroke="white" strokeWidth={0.008} opacity=".9" />}
-              <circle r={origin ? 0.028 : 0.018} className={pointClass(knownIds.has(point.songId), selected, origin)} strokeWidth={0.006} />
-              {origin && <path d="M0,-0.052 L0.052,0 L0,0.052 L-0.052,0 Z" className="fill-cyan-300 stroke-white" strokeWidth=".006" />}
+              <g transform={`scale(${1 / viewport.zoom})`}>
+                {selected && <circle r={0.036} fill="none" stroke="white" strokeWidth={0.008} opacity=".9" />}
+                <circle r={origin ? 0.028 : 0.018} className={pointClass(knownIds.has(point.songId), selected, origin)} strokeWidth={0.006} />
+                {origin && <path d="M0,-0.052 L0.052,0 L0,0.052 L-0.052,0 Z" className="fill-cyan-300 stroke-white" strokeWidth=".006" />}
+              </g>
               <title>{point.name} / {point.artistString}</title>
             </g>
           );
