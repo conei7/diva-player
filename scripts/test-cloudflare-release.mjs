@@ -154,7 +154,7 @@ try {
     'TUNNEL_ORIGIN_PROOF_KEY',
     'CF_ACCESS_CLIENT_SECRET',
   ]);
-  for (const route of ['/backend-api/*', '/tunnel-admin/update', '/watch', '/playing', '/knowledge-map']) {
+  for (const route of ['/backend-api/*', '/tunnel-admin/update', '/watch', '/playing', '/knowledge-map', '/sound-map']) {
     assert.ok(productionRoutes.include.includes(route), `production _routes.json must include ${route}`);
   }
 
@@ -165,7 +165,7 @@ try {
   await writeFile(join(projectRoot, 'dist', 'assets', 'app.js'), 'console.log("DIVA");\n');
   await writeFile(join(projectRoot, 'dist', '_routes.json'), JSON.stringify({
     version: 1,
-    include: ['/backend-api/*', '/tunnel-admin/update', '/watch', '/playing', '/knowledge-map'],
+    include: ['/backend-api/*', '/tunnel-admin/update', '/watch', '/playing', '/knowledge-map', '/sound-map'],
     exclude: [],
   }));
   await writeFile(join(projectRoot, '.cloudflare-functions-build', 'index.js'), workerSource);

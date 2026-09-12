@@ -37,6 +37,7 @@ const ReportsPage = lazy(() => import('./pages/ReportsPage'));
 const HiddenSongsPage = lazy(() => import('./pages/HiddenSongsPage'));
 const ChorusHighlightsPage = lazy(() => import('./pages/ChorusHighlightsPage'));
 const KnowledgeMapPage = lazy(() => import('./pages/KnowledgeMapPage'));
+const SoundMapPage = lazy(() => import('./pages/SoundMapPage'));
 
 /**
  * App - ルートコンポーネント
@@ -214,6 +215,7 @@ function AppContent() {
           <Route path="/reports" element={<ReportsPage />} />
           <Route path="/chorus-highlights" element={<ChorusHighlightsPage />} />
           <Route path="/knowledge-map" element={<KnowledgeMapPage />} />
+          <Route path="/sound-map" element={<SoundMapPage />} />
           <Route path="/settings/hidden-songs" element={<HiddenSongsPage />} />
           {/* 旧ルートの互換性 */}
           <Route path="/playing" element={<WatchPage />} />

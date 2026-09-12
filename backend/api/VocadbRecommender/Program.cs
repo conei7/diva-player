@@ -199,6 +199,7 @@ app.MapGet("/api/internal/qdrant-compatibility-matrix", async (
 });
 app.MapSongReadEndpoints();
 app.MapKnowledgeMapEndpoints();
+app.MapSoundMapEndpoints();
 
 app.MapPlaylistImportEndpoints();
 

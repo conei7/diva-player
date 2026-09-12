@@ -80,6 +80,18 @@ const menuItems: MenuItem[] = [
     ),
   },
   {
+    path: '/sound-map',
+    label: '曲調マップ',
+    icon: (
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+        <circle cx="6" cy="7" r="2" fill="currentColor" stroke="none" />
+        <circle cx="17" cy="5" r="2" fill="currentColor" stroke="none" />
+        <circle cx="14" cy="17" r="2" fill="currentColor" stroke="none" />
+        <path d="M7.8 7.2 15.2 5.7M7.4 8.7l5.2 6.1M16 6.8l-1.4 8.3" />
+      </svg>
+    ),
+  },
+  {
     path: '/favorite-producers',
     label: 'お気に入りP',
     icon: (

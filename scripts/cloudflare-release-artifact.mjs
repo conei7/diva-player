@@ -277,7 +277,7 @@ export async function packageRelease({
   if (routes?.version !== 1 || !Array.isArray(routes.include)) {
     throw new Error('Cloudflare _routes.json is invalid');
   }
-  for (const requiredRoute of ['/backend-api/*', '/tunnel-admin/update', '/watch', '/playing', '/knowledge-map']) {
+  for (const requiredRoute of ['/backend-api/*', '/tunnel-admin/update', '/watch', '/playing', '/knowledge-map', '/sound-map']) {
     if (!routes.include.includes(requiredRoute)) {
       throw new Error(`Cloudflare _routes.json is missing ${requiredRoute}`);
     }

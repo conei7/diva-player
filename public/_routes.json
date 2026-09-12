@@ -13,6 +13,7 @@
     "/playlists",
     "/reports",
     "/knowledge-map",
+    "/sound-map",
     "/settings/hidden-songs"
   ],
   "exclude": []
