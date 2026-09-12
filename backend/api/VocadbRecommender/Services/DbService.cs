@@ -47,6 +47,23 @@ public sealed record KnowledgeMapCatalog(
     IReadOnlyList<KnowledgeMapSong> YoutubeTopSongs,
     IReadOnlyList<KnowledgeMapSong> NicoTopSongs);
 
+public sealed record SoundMapVersionInfo(
+    string MapVersion,
+    string SourceDigest,
+    string Method,
+    string ParametersJson,
+    DateTimeOffset GeneratedAt,
+    DateTimeOffset? PublishedAt,
+    long CoordinateCount);
+
+public sealed record SoundMapSong(
+    int SongId,
+    string Name,
+    string ArtistString,
+    double X,
+    double Y,
+    string? ThumbUrl);
+
 /// <summary>PostgreSQL アクセスサービス</summary>
 public class DbService
 {
@@ -615,6 +632,89 @@ public class DbService
                 reader.GetString(2),
                 reader.GetInt64(3),
                 reader.GetInt64(4),
+                reader.IsDBNull(5) ? null : reader.GetString(5)));
+        }
+        return songs;
+    }
+
+    public async Task<SoundMapVersionInfo?> GetSoundMapVersionAsync(
+        string? requestedMapVersion,
+        CancellationToken cancellationToken)
+    {
+        await using var conn = await OpenAsync(cancellationToken);
+        await using var command = new NpgsqlCommand(@"
+            SELECT v.map_version,
+                   v.source_digest,
+                   v.method,
+                   v.parameters::text,
+                   v.generated_at,
+                   v.published_at,
+                   COUNT(c.song_id)::bigint AS coordinate_count
+            FROM sound_map_versions v
+            LEFT JOIN sound_map_coordinates c ON c.map_version = v.map_version
+            WHERE v.status = 'ready'
+              AND ($1 IS NULL OR v.map_version = $1)
+            GROUP BY v.map_version, v.source_digest, v.method, v.parameters,
+                     v.generated_at, v.published_at
+            ORDER BY v.published_at DESC NULLS LAST, v.generated_at DESC
+            LIMIT 1", conn)
+        {
+            CommandTimeout = 15,
+        };
+        command.Parameters.Add(new NpgsqlParameter
+        {
+            NpgsqlDbType = NpgsqlDbType.Text,
+            Value = requestedMapVersion ?? (object)DBNull.Value,
+        });
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken)) return null;
+        return new SoundMapVersionInfo(
+            reader.GetString(0),
+            reader.GetString(1),
+            reader.GetString(2),
+            reader.GetString(3),
+            reader.GetFieldValue<DateTimeOffset>(4),
+            reader.IsDBNull(5) ? null : reader.GetFieldValue<DateTimeOffset>(5),
+            reader.GetInt64(6));
+    }
+
+    public async Task<IReadOnlyList<SoundMapSong>> GetSoundMapSongsAsync(
+        string mapVersion,
+        IReadOnlyCollection<int> songIds,
+        CancellationToken cancellationToken)
+    {
+        if (songIds.Count == 0) return [];
+
+        await using var conn = await OpenAsync(cancellationToken);
+        await using var command = new NpgsqlCommand(@"
+            SELECT c.song_id,
+                   s.name,
+                   COALESCE(s.artist_string, ''),
+                   c.x,
+                   c.y,
+                   s.raw_json->>'thumbUrl'
+            FROM sound_map_coordinates c
+            JOIN songs s ON s.id = c.song_id
+            JOIN song_discovery_quality quality ON quality.song_id = c.song_id
+            WHERE c.map_version = $1
+              AND c.song_id = ANY($2)
+              AND quality.discovery_eligible = TRUE", conn)
+        {
+            CommandTimeout = 15,
+        };
+        command.Parameters.AddWithValue(mapVersion);
+        command.Parameters.Add(new NpgsqlParameter<int[]> { TypedValue = songIds.ToArray() });
+
+        var songs = new List<SoundMapSong>(songIds.Count);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            songs.Add(new SoundMapSong(
+                reader.GetInt32(0),
+                reader.GetString(1),
+                reader.GetString(2),
+                reader.GetDouble(3),
+                reader.GetDouble(4),
                 reader.IsDBNull(5) ? null : reader.GetString(5)));
         }
         return songs;

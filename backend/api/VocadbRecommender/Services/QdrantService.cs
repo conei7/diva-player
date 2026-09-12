@@ -620,6 +620,20 @@ public class QdrantService
             .ToList();
     }
 
+    public async Task<bool> HasAudioVectorAsync(int songId, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var points = await _client.RetrieveAsync(
+            collectionName: _opts.CollectionAudio,
+            ids: new[] { new PointId { Num = (ulong)songId } },
+            withPayload: false,
+            withVectors: true,
+            cancellationToken: cancellationToken);
+        var point = points.FirstOrDefault();
+        if (point is null || point.Vectors is null) return false;
+        return ReadDenseVector(point.Vectors.Vector).Any(value => value != 0f);
+    }
+
     /// <summary>
     /// メタデータコレクションを使った探索 (音響未処理曲のフォールバック)
     /// </summary>
