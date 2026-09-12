@@ -46,6 +46,8 @@ Viteは既定で`/backend-api`を`http://localhost:5000`へproxyします。別�
 
 曲調マップの画面だけを軽量に確認する場合は、backendやDockerを起動せず`npm run dev`を実行し、既定設定なら`http://localhost:5173/diva-player/sound-map?demo=1&seedSongId=123`を開きます。`demo=1`は開発サーバーでのみ有効な固定fixtureで、API・PostgreSQL・Qdrantへ接続しません。`VITE_BASE_PATH`を変更している場合は、その値をURLの`/diva-player/`部分へ使います。実データの座標とAPI連携を確認するときだけ、下記のbackend起動と`diva-data-pipeline/ml_pipeline/build_sound_map.py`を使います。
 
+読み取り専用の実データpilotを確認する場合は、`diva-data-pipeline/ml_pipeline/export_sound_map_pilot.py`の出力を`public/.local/sound-map-pilot.json`へ置き、`http://localhost:5173/diva-player/sound-map?pilot=1&seedSongId=<defaultSeedSongId>`を開きます。`.local`以下はGitから無視され、`pilot=1`も開発サーバーでのみ有効です。画面は実際の音響ベクトル・曲名・アーティスト名を使いますが、再生・保存・詳細ボタンはbackend未接続のため無効になります。
+
 ### 開発環境（フロント + backend 一括起動）
 
 backend（PostgreSQL、Qdrant、ASP.NET Core API A/B、HAProxy gateway、Web）をDocker Composeで起動し、続けてVite開発サーバーを起動できます。新規環境では`backend/.env.example`を`backend/.env`へコピーし、必須項目をローカル専用の値で設定してください。既存の`backend/.env`がある場合は上書きせず、内容を退避・確認して不足する現行キーだけをmergeします。秘密値をcommitしたり、本番値を開発環境へ流用したりしないでください。
