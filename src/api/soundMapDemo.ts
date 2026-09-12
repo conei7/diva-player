@@ -30,7 +30,7 @@ export function getDemoSoundMap(seedSongId: number, mapVersion = 'demo-v1'): Sou
   return {
     mapVersion,
     generatedAt: '2026-09-12T00:00:00Z',
-    method: 'demo fixture',
+    method: 'デモ',
     coordinateCount: items.length,
     state: 'ready',
     origin,

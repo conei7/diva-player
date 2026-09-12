@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import { useSearchParams } from 'react-router';
 import { fetchSoundMap, SoundMapRequestError, type SoundMapPoint, type SoundMapResponse } from '../api/soundMap';
 import { getDemoSoundMap } from '../api/soundMapDemo';
@@ -65,6 +65,14 @@ export default function SoundMapPage() {
     playedIds.forEach(id => ids.add(id));
     return ids;
   }, [playedIds, ratings]);
+  const displayKnownIds = useMemo(() => {
+    if (!demoMode || !result) return knownIds;
+    const ids = new Set(knownIds);
+    result.items.forEach((point, index) => {
+      if (index > 0 && index % 4 === 0) ids.add(point.songId);
+    });
+    return ids;
+  }, [demoMode, knownIds, result]);
   useEffect(() => {
     getPlayedSongIds().then(setPlayedIds).catch(() => setPlayedIds(new Set()));
   }, [currentSong?.id]);
@@ -184,8 +192,8 @@ export default function SoundMapPage() {
         <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-300">Sound Map</p>
         <h1 className="mt-1 text-2xl font-bold text-white sm:text-3xl">曲調マップ</h1>
         <p className="mt-2 text-sm leading-6 text-neutral-400">似た音響特徴の曲ほど近くに表示されます。軸に意味のある単位はなく、点の近さだけを目安に探索します。</p>
-        {currentSong && <p className="mt-3 text-xs text-cyan-200">再生中: {currentSong.name}</p>}
-        {demoMode && <p className="mt-3 rounded-lg bg-amber-300/10 px-3 py-2 text-xs text-amber-100">ローカルデモ中: API・PostgreSQL・Qdrantには接続していません。</p>}
+        {!demoMode && currentSong && <p className="mt-3 text-xs text-cyan-200">再生中: {currentSong.name}</p>}
+        {demoMode && <p className="mt-3 rounded-lg bg-cyan-300/10 px-3 py-2 text-xs text-cyan-100">画面確認用デモです。点の選択・ズーム・起点変更を試せます。</p>}
       </div>
 
       {!seedId ? (
@@ -207,7 +215,7 @@ export default function SoundMapPage() {
               <span>起点: <strong className="text-white">{result.origin.name}</strong></span>
               <span>{result.coordinateCount.toLocaleString()}曲 · {result.method}</span>
             </div>
-            <SoundMapCanvas items={items} knownIds={knownIds} result={result} selectedId={selectedId} viewport={viewport} onSelect={selectPoint} />
+            <SoundMapCanvas items={items} knownIds={displayKnownIds} result={result} selectedId={selectedId} viewport={viewport} onSelect={selectPoint} />
             {result.state !== 'ready' && <p className="mt-2 px-1 text-xs text-amber-200">{result.state === 'no_audio' ? '起点の音響特徴がないため、座標だけを表示しています。' : '近い曲の候補がまだマップにありません。'}</p>}
             <div className="mt-2 flex flex-wrap items-center gap-2 px-1">
               <button type="button" className="btn-ghost rounded-lg px-3 py-2 text-xs" onClick={() => updateViewport({ ...viewport, zoom: clampSoundMapZoom(viewport.zoom - 0.35) })}>−</button>
@@ -222,7 +230,8 @@ export default function SoundMapPage() {
             selected={selected}
             neighbors={items.filter(item => item.songId !== result.origin.songId).slice(0, 8)}
             selectedId={selectedId}
-            currentSong={currentSong}
+            currentSong={demoMode ? null : currentSong}
+            actionsDisabled={demoMode}
             onSelect={selectPoint}
             onSelectOrigin={setOrigin}
             onPlay={playSelected}
@@ -247,13 +256,27 @@ function SoundMapCanvas({ items, knownIds, result, selectedId, viewport, onSelec
   const viewHeight = 2 / viewport.zoom;
   const viewX = viewport.centerX - viewWidth / 2;
   const viewY = viewport.centerY - viewHeight / 2;
+  const selectNearestPoint = (event: ReactMouseEvent<SVGSVGElement>) => {
+    const matrix = event.currentTarget.getScreenCTM();
+    if (!matrix) return;
+    const cursor = event.currentTarget.createSVGPoint();
+    cursor.x = event.clientX;
+    cursor.y = event.clientY;
+    const mapPosition = cursor.matrixTransform(matrix.inverse());
+    let nearest: SoundMapPoint | null = null;
+    let nearestDistance = Number.POSITIVE_INFINITY;
+    for (const point of items) {
+      const distance = Math.hypot(point.x - mapPosition.x, point.y - mapPosition.y);
+      if (distance < nearestDistance) {
+        nearest = point;
+        nearestDistance = distance;
+      }
+    }
+    if (nearest && nearestDistance <= 0.08 / viewport.zoom) onSelect(nearest);
+  };
   return (
-    <div className="relative h-[420px] w-full overflow-hidden rounded-xl bg-[radial-gradient(circle_at_center,rgba(34,211,238,.1),rgba(10,10,12,1)_70%)] sm:h-[560px]" data-testid="sound-map-canvas">
-      <svg className="h-full w-full" viewBox={`${viewX} ${viewY} ${viewWidth} ${viewHeight}`} role="img" aria-label="曲調マップ。点を選択すると詳細を表示します。" preserveAspectRatio="xMidYMid meet">
-        <g opacity=".18" stroke="currentColor" className="text-cyan-200">
-          <line x1={result.origin.x - 2} x2={result.origin.x + 2} y1={result.origin.y} y2={result.origin.y} />
-          <line x1={result.origin.x} x2={result.origin.x} y1={result.origin.y - 2} y2={result.origin.y + 2} />
-        </g>
+    <div className="relative h-[420px] w-full overflow-hidden rounded-xl bg-[radial-gradient(circle_at_center,rgba(34,211,238,.1),rgba(10,10,12,1)_70%)] sm:h-[clamp(340px,calc(100vh-24rem),520px)]" data-testid="sound-map-canvas">
+      <svg className="h-full w-full cursor-crosshair" viewBox={`${viewX} ${viewY} ${viewWidth} ${viewHeight}`} role="img" aria-label="曲調マップ。点を選択すると詳細を表示します。" preserveAspectRatio="xMidYMid meet" onClick={selectNearestPoint}>
         {items.map(point => {
           const origin = point.songId === result.origin.songId;
           const selected = point.songId === selectedId;
@@ -261,9 +284,9 @@ function SoundMapCanvas({ items, knownIds, result, selectedId, viewport, onSelec
             <g
               key={point.songId}
               transform={`translate(${point.x} ${point.y})`}
-              onClick={() => onSelect(point)}
               onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') onSelect(point); }}
               role="button"
+              aria-label={`${point.name} / ${point.artistString}`}
               tabIndex={0}
               className="cursor-pointer"
             >
@@ -280,11 +303,12 @@ function SoundMapCanvas({ items, knownIds, result, selectedId, viewport, onSelec
   );
 }
 
-function SoundMapDetails({ selected, neighbors, selectedId, currentSong, onSelect, onSelectOrigin, onPlay, onSave, onDetails }: {
+function SoundMapDetails({ selected, neighbors, selectedId, currentSong, actionsDisabled, onSelect, onSelectOrigin, onPlay, onSave, onDetails }: {
   selected: SoundMapPoint | null;
   neighbors: SoundMapPoint[];
   selectedId: number | null;
   currentSong: ReturnType<typeof usePlayerStore.getState>['currentSong'];
+  actionsDisabled: boolean;
   onSelect: (point: SoundMapPoint) => void;
   onSelectOrigin: (point: SoundMapPoint) => void;
   onPlay: () => void;
@@ -296,15 +320,16 @@ function SoundMapDetails({ selected, neighbors, selectedId, currentSong, onSelec
   return (
     <section className="rounded-2xl border border-white/[0.08] bg-white/[0.03] p-5">
       <p className="text-xs font-semibold uppercase tracking-[0.16em] text-cyan-300">選択中</p>
-      <h2 className="mt-2 text-lg font-bold text-white">{selected.name}</h2>
+      <h2 className="mt-2 text-lg font-bold text-white" data-testid="sound-map-selected-title">{selected.name}</h2>
       <p className="mt-1 text-sm text-neutral-400">{selected.artistString || 'アーティスト情報なし'}</p>
       {playing && <p className="mt-3 text-xs text-cyan-200">現在再生中</p>}
       {selected.similarity != null && <p className="mt-3 text-xs text-neutral-500">音響類似度 {(selected.similarity * 100).toFixed(1)}%</p>}
+      {actionsDisabled && <p className="mt-3 text-xs text-neutral-500">再生・保存・詳細は実データ接続後に利用できます。</p>}
       <div className="mt-5 grid grid-cols-2 gap-2">
-        <button type="button" className="rounded-lg bg-cyan-300 px-3 py-2 text-sm font-semibold text-black" onClick={onPlay}>再生</button>
+        <button type="button" disabled={actionsDisabled} className="rounded-lg bg-cyan-300 px-3 py-2 text-sm font-semibold text-black disabled:cursor-not-allowed disabled:opacity-35" onClick={onPlay}>再生</button>
         <button type="button" className="btn-ghost rounded-lg px-3 py-2 text-sm" onClick={() => onSelectOrigin(selected)}>この曲の近くを探す</button>
-        <button type="button" className="btn-ghost rounded-lg px-3 py-2 text-sm" onClick={onSave}>保存</button>
-        <button type="button" className="btn-ghost rounded-lg px-3 py-2 text-sm" onClick={onDetails}>詳細</button>
+        <button type="button" disabled={actionsDisabled} className="btn-ghost rounded-lg px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-35" onClick={onSave}>保存</button>
+        <button type="button" disabled={actionsDisabled} className="btn-ghost rounded-lg px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-35" onClick={onDetails}>詳細</button>
       </div>
       {neighbors.length > 0 && (
         <div className="mt-6 border-t border-white/[0.08] pt-4">
