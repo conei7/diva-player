@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router';
 import { fetchSoundMap, SoundMapRequestError, type SoundMapPoint, type SoundMapResponse } from '../api/soundMap';
+import { getDemoSoundMap } from '../api/soundMapDemo';
 import { getSongsByIds } from '../api/vocadb';
 import { getPlayedSongIds } from '../services/historyDatabase';
 import { useHiddenSongStore } from '../stores/hiddenSongStore';
@@ -55,6 +56,7 @@ export default function SoundMapPage() {
     centerY: Number(searchParams.get('centerY')) || 0,
   }));
   const requestRevision = useRef(0);
+  const demoMode = import.meta.env.DEV && searchParams.get('demo') === '1';
   const seedId = readId(searchParams.get('seedSongId')) ?? fallbackSeedId ?? currentSong?.id ?? null;
   const mapVersion = searchParams.get('mapVersion') || undefined;
   const [playedIds, setPlayedIds] = useState<Set<number>>(new Set());
@@ -87,7 +89,10 @@ export default function SoundMapPage() {
     const controller = new AbortController();
     setLoading(true);
     setError('');
-    fetchSoundMap(seedId, { mapVersion, limit: 120, signal: controller.signal })
+    const request = demoMode
+      ? Promise.resolve(getDemoSoundMap(seedId, mapVersion ?? 'demo-v1'))
+      : fetchSoundMap(seedId, { mapVersion, limit: 120, signal: controller.signal });
+    request
       .then(next => {
         if (revision !== requestRevision.current) return;
         setResult(next);
@@ -109,7 +114,7 @@ export default function SoundMapPage() {
       })
       .finally(() => { if (revision === requestRevision.current) setLoading(false); });
     return () => controller.abort();
-  }, [mapVersion, retryKey, searchParams, seedId, setSearchParams]);
+  }, [demoMode, mapVersion, retryKey, searchParams, seedId, setSearchParams]);
 
   const items = useMemo(
     () => result ? visibleSoundMapItems(result.items, hiddenIds) : [],
@@ -180,6 +185,7 @@ export default function SoundMapPage() {
         <h1 className="mt-1 text-2xl font-bold text-white sm:text-3xl">曲調マップ</h1>
         <p className="mt-2 text-sm leading-6 text-neutral-400">似た音響特徴の曲ほど近くに表示されます。軸に意味のある単位はなく、点の近さだけを目安に探索します。</p>
         {currentSong && <p className="mt-3 text-xs text-cyan-200">再生中: {currentSong.name}</p>}
+        {demoMode && <p className="mt-3 rounded-lg bg-amber-300/10 px-3 py-2 text-xs text-amber-100">ローカルデモ中: API・PostgreSQL・Qdrantには接続していません。</p>}
       </div>
 
       {!seedId ? (
