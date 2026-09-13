@@ -983,6 +983,21 @@ exit 1
 const fakeCurl = String.raw`#!/bin/sh
 set -eu
 printf '%s\n' "$*" >> "__DOLLAR__{FAKE_DOCKER_STATE:?}/curl.log"
+output_file=""
+write_out=""
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        -o) output_file="$2"; shift 2 ;;
+        -w) write_out="$2"; shift 2 ;;
+        *) shift ;;
+    esac
+done
+if [ -n "$output_file" ]; then
+    printf '%s\n' '{"status":"ok","dependencies":{"postgres":{"ok":true},"qdrant":{"ok":true}},"discoveryQuality":{"ok":true},"audioFeatures":{"ok":true}}' > "$output_file"
+fi
+if [ "$write_out" = '%{http_code}' ]; then
+    printf '%s' 200
+fi
 exit 0
 `.replaceAll('__DOLLAR__', '$');
 
