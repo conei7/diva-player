@@ -197,7 +197,7 @@ export default function SoundMapPage() {
       <div className="mb-5 max-w-3xl">
         <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-300">Sound Map</p>
         <h1 className="mt-1 text-2xl font-bold text-white sm:text-3xl">曲調マップ</h1>
-        <p className="mt-2 text-sm leading-6 text-neutral-400">似た音響特徴の曲ほど近くに表示されます。軸に意味のある単位はなく、点の近さだけを目安に探索します。</p>
+        <p className="mt-2 text-sm leading-6 text-neutral-400">音の特徴が似ている曲ほど近くに並びます。気になる点を選びながら、今の曲に近い曲を探してみてください。</p>
         {!localPreviewMode && currentSong && <p className="mt-3 text-xs text-cyan-200">再生中: {currentSong.name}</p>}
         {demoMode && <p className="mt-3 rounded-lg bg-cyan-300/10 px-3 py-2 text-xs text-cyan-100">画面確認用デモです。点の選択・ズーム・起点変更を試せます。</p>}
         {pilotMode && <p className="mt-3 rounded-lg bg-emerald-300/10 px-3 py-2 text-xs text-emerald-100">実データpilotです。Qdrantの音響ベクトルとPostgreSQLの曲名から生成した小規模マップを表示しています。</p>}
