@@ -941,7 +941,7 @@ assert.match(workflow, /npm run test:rolling-deployment/);
 assert.match(workflow, /npm run test:runtime-health/);
 assert.match(workflow, /actions\/setup-python@[0-9a-f]{40} # v7\.0\.0/);
 assert.doesNotMatch(workflow, /uses: actions\/[a-z-]+@v\d/);
-assert.match(workflow, /npm audit --audit-level=high/);
+assert.match(workflow, /npm audit --omit=dev --audit-level=high/);
 assert.match(workflow, /package --vulnerable --include-transitive/);
 assert.match(workflow, /python-version: '3\.10'/);
 assert.match(workflow, /npm run test:runtime-health:python/);
