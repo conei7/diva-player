@@ -4,8 +4,8 @@ DECLARE policy jsonb;
 BEGIN
     SELECT value::jsonb INTO STRICT policy
     FROM public.sync_state WHERE key = 'youtube_quota_policy_v2';
-    IF policy->>'views' <> '9000'
-       OR policy->>'playlists' <> '1000'
+    IF policy->>'views' <> '9500'
+       OR policy->>'playlists' <> '500'
        OR policy->>'activeAfter' IS NULL THEN
         RAISE EXCEPTION 'production YouTube quota policy mismatch';
     END IF;
@@ -58,7 +58,7 @@ BEGIN
 END;
 $test$;
 DO $reset$ BEGIN EXECUTE format('SET SESSION AUTHORIZATION %I', current_setting('diva.quota_test_admin')); END; $reset$;
-UPDATE public.sync_state SET value = '{"views":9000,"playlists":1000,"activeAfter":"2999-01-01T00:00:00Z"}'
+UPDATE public.sync_state SET value = '{"views":9500,"playlists":500,"activeAfter":"2999-01-01T00:00:00Z"}'
 WHERE key = 'youtube_quota_policy_v2';
 DO $test$
 BEGIN
