@@ -420,6 +420,11 @@ CREATE TABLE IF NOT EXISTS pvs (
     stats_last_attempt_at TIMESTAMPTZ,
     stats_last_success_at TIMESTAMPTZ,
     stats_consecutive_failures INTEGER NOT NULL DEFAULT 0,
+    stats_last_failure_kind TEXT NOT NULL DEFAULT 'none'
+        CHECK (stats_last_failure_kind IN ('none', 'missing', 'transient', 'hard')),
+    stats_missing_streak INTEGER NOT NULL DEFAULT 0
+        CHECK (stats_missing_streak >= 0),
+    stats_unavailable_until TIMESTAMPTZ,
     UNIQUE (service, pv_id)
 );
 
@@ -432,6 +437,9 @@ CREATE INDEX IF NOT EXISTS pvs_playable_song_cover_idx
 CREATE INDEX IF NOT EXISTS pvs_stats_due_idx
     ON pvs (service, stats_last_success_at ASC NULLS FIRST, song_id)
     WHERE disabled = FALSE;
+CREATE INDEX IF NOT EXISTS pvs_unavailable_until_idx
+    ON pvs (service, stats_unavailable_until)
+    WHERE disabled = FALSE AND stats_unavailable_until IS NOT NULL;
 
 -- ============================================================
 -- YouTubeプレイリスト同期キャッシュ
