@@ -356,6 +356,24 @@ public sealed class RecommendationSongInfoSqlContractTests
             manifest.ReplaceLineEndings("\n"));
     }
 
+    [Fact]
+    public void SharedExternalPvMigration_RemovesLegacyUniqueIdentity()
+    {
+        var schema = ReadRepositoryFile("backend", "database", "schema.sql");
+        var migration = ReadRepositoryFile(
+            "backend", "database", "migrations", "0032_allow_shared_pv_ids.sql");
+        var manifest = ReadRepositoryFile(
+            "backend", "database", "migrations", "migration-manifest.tsv");
+
+        Assert.DoesNotContain("UNIQUE (service, pv_id)", schema);
+        Assert.Contains("ALTER TABLE public.pvs DROP CONSTRAINT pvs_service_pv_id_key", migration);
+        Assert.Contains("DROP INDEX IF EXISTS public.pvs_service_pv_id_key_ccnew", migration);
+        Assert.Contains("pvs_service_pv_id_lookup_c_idx", migration);
+        Assert.Matches(
+            "(?m)^0032_allow_shared_pv_ids\\.sql\\|atomic\\|[0-9a-f]{64}$",
+            manifest.ReplaceLineEndings("\n"));
+    }
+
     private static string ExtractBetween(string source, string startMarker, string endMarker)
     {
         var start = source.IndexOf(startMarker, StringComparison.Ordinal);

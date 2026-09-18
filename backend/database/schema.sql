@@ -424,9 +424,12 @@ CREATE TABLE IF NOT EXISTS pvs (
         CHECK (stats_last_failure_kind IN ('none', 'missing', 'transient', 'hard')),
     stats_missing_streak INTEGER NOT NULL DEFAULT 0
         CHECK (stats_missing_streak >= 0),
-    stats_unavailable_until TIMESTAMPTZ,
-    UNIQUE (service, pv_id)
+    stats_unavailable_until TIMESTAMPTZ
 );
+
+-- A single external PV can be referenced by multiple songs.  Keep this
+-- lookup non-unique so collation changes and shared PVs cannot make state
+-- updates fail with a stale uniqueness violation.
 
 CREATE INDEX IF NOT EXISTS pvs_song_idx ON pvs (song_id);
 CREATE INDEX IF NOT EXISTS pvs_playable_song_idx ON pvs (song_id) WHERE disabled = FALSE;
