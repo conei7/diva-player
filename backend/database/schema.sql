@@ -440,6 +440,8 @@ CREATE INDEX IF NOT EXISTS pvs_stats_due_idx
 CREATE INDEX IF NOT EXISTS pvs_unavailable_until_idx
     ON pvs (service, stats_unavailable_until)
     WHERE disabled = FALSE AND stats_unavailable_until IS NOT NULL;
+CREATE INDEX IF NOT EXISTS pvs_service_pv_id_lookup_c_idx
+    ON pvs (service COLLATE "C", pv_id COLLATE "C");
 
 -- ============================================================
 -- YouTubeプレイリスト同期キャッシュ
