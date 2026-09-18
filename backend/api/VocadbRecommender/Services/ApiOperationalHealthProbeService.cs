@@ -221,6 +221,22 @@ public sealed class ApiOperationalHealthProbeService : BackgroundService
                     stopwatch);
                 stoppingToken.ThrowIfCancellationRequested();
 
+                // A heavy warmup can exhaust the remaining probe budget after
+                // the cheap checks have completed. Keep each previously good
+                // component in that case so a single timed-out diagnostic
+                // aggregate does not manufacture a new alert. Readiness still
+                // probes core dependencies independently, and this snapshot
+                // remains fail-closed once it becomes older than the maximum
+                // age.
+                var previous = _state.Snapshot;
+                if (previous.Known)
+                {
+                    postgres = PreservePreviousTimeout(postgres, previous.Postgres);
+                    qdrant = PreservePreviousTimeout(qdrant, previous.Qdrant);
+                    discovery = PreservePreviousTimeout(discovery, previous.DiscoveryQuality);
+                    audio = PreservePreviousTimeout(audio, previous.AudioFeatures);
+                }
+
                 _state.Publish(postgres, qdrant, discovery, audio, _timeProvider.GetUtcNow());
                 if (!postgres.Ok || !qdrant.Ok || !discovery.Ok)
                 {
@@ -260,6 +276,21 @@ public sealed class ApiOperationalHealthProbeService : BackgroundService
             error,
             error);
     }
+
+    private static DependencyHealth PreservePreviousTimeout(
+        DependencyHealth current,
+        DependencyHealth previous) =>
+        current.Error == "Timeout" && previous.Ok ? previous : current;
+
+    private static DiscoveryQualityHealth PreservePreviousTimeout(
+        DiscoveryQualityHealth current,
+        DiscoveryQualityHealth previous) =>
+        current.Error == "Timeout" && previous.Ok ? previous : current;
+
+    private static AudioFeatureHealth PreservePreviousTimeout(
+        AudioFeatureHealth current,
+        AudioFeatureHealth previous) =>
+        current.Error == "Timeout" && previous.Ok ? previous : current;
 
     private static async Task<T> ProbeAsync<T>(
         Func<CancellationToken, Task<T>> probe,

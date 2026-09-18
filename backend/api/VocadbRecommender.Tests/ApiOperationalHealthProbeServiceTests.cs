@@ -166,6 +166,37 @@ public sealed class ApiOperationalHealthProbeServiceTests
     }
 
     [Fact]
+    public async Task ComponentTimeout_PreservesPreviousHealthyComponent()
+    {
+        var state = new ApiOperationalHealthProbeState();
+        state.Publish(
+            new DependencyHealth(true, 1),
+            new DependencyHealth(true, 2),
+            Discovery(),
+            Audio(),
+            DateTimeOffset.UtcNow);
+
+        static async Task<AudioFeatureHealth> Never(CancellationToken token)
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, token);
+            throw new InvalidOperationException();
+        }
+
+        var service = CreateService(
+            _ => Task.FromResult(new DependencyHealth(true, 1)),
+            _ => Task.FromResult(new DependencyHealth(true, 2)),
+            _ => Task.FromResult(Discovery()),
+            Never,
+            state,
+            TimeSpan.FromMilliseconds(50));
+
+        Assert.True(await service.ProbeOnceAsync().WaitAsync(TimeSpan.FromSeconds(2)));
+
+        Assert.True(state.Snapshot.AudioFeatures.Ok);
+        Assert.Equal(94, state.Snapshot.AudioFeatures.ActionablePendingCount);
+    }
+
+    [Fact]
     public async Task Timeout_PublishesDegradedSnapshotInsteadOfBlockingEndpoint()
     {
         var state = new ApiOperationalHealthProbeState();
