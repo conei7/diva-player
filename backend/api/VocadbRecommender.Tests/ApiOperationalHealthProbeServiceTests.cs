@@ -130,6 +130,42 @@ public sealed class ApiOperationalHealthProbeServiceTests
     }
 
     [Fact]
+    public async Task MaintenanceGateWait_PreservesKnownSnapshot()
+    {
+        var checkedAt = DateTimeOffset.UtcNow;
+        var state = new ApiOperationalHealthProbeState();
+        state.Publish(
+            new DependencyHealth(true, 1),
+            new DependencyHealth(true, 2),
+            Discovery(),
+            Audio(),
+            checkedAt);
+        var gate = new ApiMaintenanceExecutionGate();
+        using var heldByWarmup = await gate.EnterAsync(CancellationToken.None);
+        var calls = 0;
+        Task<DependencyHealth> Dependency(CancellationToken _)
+        {
+            Interlocked.Increment(ref calls);
+            return Task.FromResult(new DependencyHealth(false, 1, "unexpected"));
+        }
+        var service = CreateService(
+            Dependency,
+            Dependency,
+            _ => Task.FromResult(Discovery()),
+            _ => Task.FromResult(Audio()),
+            state,
+            TimeSpan.FromMilliseconds(50),
+            gate);
+
+        Assert.True(await service.ProbeOnceAsync().WaitAsync(TimeSpan.FromSeconds(2)));
+
+        Assert.Equal(0, Volatile.Read(ref calls));
+        Assert.True(state.Snapshot.Postgres.Ok);
+        Assert.True(state.Snapshot.Qdrant.Ok);
+        Assert.Equal(checkedAt, state.Snapshot.CheckedAt);
+    }
+
+    [Fact]
     public async Task Timeout_PublishesDegradedSnapshotInsteadOfBlockingEndpoint()
     {
         var state = new ApiOperationalHealthProbeState();

@@ -167,7 +167,22 @@ public sealed class ApiOperationalHealthProbeService : BackgroundService
                 !stoppingToken.IsCancellationRequested
                 && timeout.IsCancellationRequested)
             {
-                PublishTimeoutSnapshot(stopwatch.ElapsedMilliseconds);
+                // Warmup and the operational probe share one maintenance gate.
+                // A long cache refresh can legitimately occupy that gate for
+                // the whole probe deadline. Once a real snapshot exists,
+                // retain it instead of replacing it with a synthetic Timeout
+                // result; the endpoint still fails closed when that retained
+                // snapshot exceeds MaximumSnapshotAge.
+                if (_state.Snapshot.Known)
+                {
+                    _logger.LogDebug(
+                        "api_operational_health_probe_skipped_maintenance_busy elapsedMs={ElapsedMs}",
+                        stopwatch.ElapsedMilliseconds);
+                }
+                else
+                {
+                    PublishTimeoutSnapshot(stopwatch.ElapsedMilliseconds);
+                }
                 return true;
             }
 
