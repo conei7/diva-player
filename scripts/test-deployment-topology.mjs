@@ -988,6 +988,10 @@ assert.ok(
     && runtimeRoleContract > runtimeRoleAclReconciliation,
   'role reapplication must converge before the database role contract runs',
 );
+assert.match(
+  databaseRoleContractStep,
+  /UPDATE public\.sync_state[\s\S]*?youtube_quota_policy_v2[\s\S]*?0026_youtube_quota_reservations\.sql[\s\S]*?0027_enable_youtube_view_quota\.sql[\s\S]*?0029_youtube_view_quota_safety\.sql[\s\S]*?test-youtube-quota\.sh/,
+);
 assert.match(workflow, /Validate Cloudflare credentials/);
 assert.match(workflow, /Cloudflare deployment requires CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID/);
 assert.doesNotMatch(workflow, /Cloudflare deployment skipped/);
