@@ -961,7 +961,18 @@ assert.equal(
   1,
   'the migration-history ACL reconciliation must run once after role reapplication',
 );
-assert.match(databaseRoleContractStep, /grep -qx '28\|28\|0'/);
+assert.match(
+  databaseRoleContractStep,
+  /expected_migrations="\$\(awk 'END \{ print NR \}' backend\/database\/migrations\/migration-manifest\.tsv\)"/,
+);
+assert.match(
+  databaseRoleContractStep,
+  /actual_migration_state="\$\(psql[\s\S]*FROM schema_migrations"\)/,
+);
+assert.match(
+  databaseRoleContractStep,
+  /test "\$actual_migration_state" = "\$expected_migration_state"/,
+);
 const secondRuntimeRoleReapply = databaseRoleContractStep.lastIndexOf(
   '0018_runtime_database_roles.sql',
 );
