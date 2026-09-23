@@ -1,4 +1,5 @@
 import puppeteer from 'puppeteer';
+import { pinAppLanguage } from './pin-app-language.mjs';
 
 const baseUrl = process.argv[2] || 'http://127.0.0.1:5173/diva-player/';
 const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox', '--lang=ja-JP'] });
@@ -22,6 +23,7 @@ const fixtureSong = {
 
 try {
   const first = await browser.newPage();
+  await pinAppLanguage(first);
   await first.evaluateOnNewDocument((song) => {
     // Puppeteer installs this callback in every new document, including
     // about:blank documents created while YouTube builds its child iframe.

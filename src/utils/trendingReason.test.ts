@@ -22,4 +22,9 @@ describe('formatTrendingReason', () => {
   it('does not manufacture a reason without measured growth', () => {
     expect(formatTrendingReason(song({ viewGrowth: 0, surgeRate: 2 }))).toBeUndefined();
   });
+
+  it('formats a localized English growth reason', () => {
+    expect(formatTrendingReason(song({ viewGrowth: 12_345, surgeRate: 1.76, trendWindowDays: 7 }), 'en'))
+      .toBe('12.3K more views in 7 days · 1.8× usual');
+  });
 });

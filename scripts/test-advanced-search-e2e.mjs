@@ -1,4 +1,5 @@
 import puppeteer from 'puppeteer';
+import { pinAppLanguage } from './pin-app-language.mjs';
 
 const baseUrl = process.argv[2] || 'http://127.0.0.1:4173/diva-player/';
 const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox', '--lang=ja-JP'] });
@@ -12,6 +13,7 @@ const fixtureSong = {
 
 try {
   const page = await browser.newPage();
+  await pinAppLanguage(page);
   await page.setRequestInterception(true);
   page.on('request', request => {
     const url = request.url();

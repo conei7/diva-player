@@ -610,7 +610,9 @@ export default function TopNav() {
             </svg>
             {/* フィルター適用中のドットインジケーター */}
             {isDiscoveryFilterActive(globalFilterSettings) && (
-              <span className="action-dot" title={`${t('filtersActive')}: ${getGlobalFilterSummary(globalFilterSettings).join(' / ')}`} />
+              <span className="action-dot" title={language === 'en'
+                ? t('filtersActive')
+                : `${t('filtersActive')}: ${getGlobalFilterSummary(globalFilterSettings).join(' / ')}`} />
             )}
           </button>
         </div>

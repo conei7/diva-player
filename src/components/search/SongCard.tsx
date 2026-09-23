@@ -13,6 +13,7 @@ import { isPlayablePV } from '../../utils/playablePV';
 import RecommendationHint from '../recommendation/RecommendationHint';
 import { useHiddenSongStore } from '../../stores/hiddenSongStore';
 import { useTranslateSourceText } from '../../i18n';
+import { useLanguageStore } from '../../stores/languageStore';
 
 interface SongCardProps {
   song: Song;
@@ -31,6 +32,7 @@ interface SongCardProps {
  */
 export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect, recommendationReason, onVisible, onExposureClick }: SongCardProps) {
   const t = useTranslateSourceText();
+  const language = useLanguageStore(state => state.language);
   const { currentSong, isPlaying, setQueue, hiddenMode } = usePlayerStore();
   const { openSaveToPlaylist } = useUiStore();
   const toggleSong = usePlaylistStore(s => s.toggleSongInPlaylist);
@@ -130,7 +132,7 @@ export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect, 
   const producerName = formatDistinctArtistNames(producers.map(a => a.name || a.artist?.name));
   const vocalists = song.artists?.filter(a => a.categories === 'Vocalist') || [];
   const vocalistName = formatDistinctArtistNames(vocalists.map(a => a.name || a.artist?.name));
-  const relativeDate = formatSongRelativeDate(song);
+  const relativeDate = formatSongRelativeDate(song, Date.now(), language);
 
   // 再生時間フォーマット
   const formatDuration = (seconds: number): string => {

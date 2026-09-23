@@ -1,4 +1,5 @@
 import puppeteer from 'puppeteer';
+import { pinAppLanguage } from './pin-app-language.mjs';
 
 const baseUrl = process.argv[2] || 'http://127.0.0.1:5173/diva-player/';
 const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox', '--lang=ja-JP'] });
@@ -33,6 +34,7 @@ const bilibiliSong = song(
 
 async function preparePage(fixtureSong) {
   const page = await browser.newPage();
+  await pinAppLanguage(page);
   await page.evaluateOnNewDocument(currentSong => {
     const tabId = `external-player-fixture-${currentSong.id}`;
     sessionStorage.setItem('diva-playback-tab-v1', tabId);

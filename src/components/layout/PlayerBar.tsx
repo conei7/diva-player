@@ -8,6 +8,7 @@ import PVSourceSelector from '../player/PVSourceSelector';
 import { getPVBadgeStyle } from '../../utils/pvBadge';
 import { getPVServiceLabel } from '../../utils/pvService';
 import { useTranslate } from '../../i18n';
+import { useLanguageStore } from '../../stores/languageStore';
 
 /**
  * PlayerBar - 画面下部固定のプレイヤーコントロール (YouTube Music スタイル)
@@ -18,6 +19,7 @@ import { useTranslate } from '../../i18n';
  */
 export default function PlayerBar() {
   const t = useTranslate();
+  const language = useLanguageStore(state => state.language);
   const {
     currentSong, currentPV, isPlaying, volume,
     next, previous, pause, resume, setVolume, seekTo,
@@ -208,7 +210,7 @@ export default function PlayerBar() {
                 ? 'YouTube'
                 : currentPV.service === 'NicoNicoDouga'
                   ? t('niconico')
-                  : getPVServiceLabel(currentPV.service)}
+                  : getPVServiceLabel(currentPV.service, language)}
             </span>
           )}
           <PVSourceSelector compact />

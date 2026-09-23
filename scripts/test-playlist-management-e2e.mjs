@@ -1,4 +1,5 @@
 import puppeteer from 'puppeteer';
+import { pinAppLanguage } from './pin-app-language.mjs';
 
 const baseUrl = new URL(process.argv[2] || 'http://127.0.0.1:4173/diva-player/');
 const playlistUrl = new URL('playlists', baseUrl);
@@ -179,6 +180,7 @@ async function runMobile(page) {
 const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox', '--lang=ja-JP'] });
 try {
   const page = await browser.newPage();
+  await pinAppLanguage(page);
   page.setDefaultTimeout(30_000);
   await installFixtures(page);
   await runDesktop(page);

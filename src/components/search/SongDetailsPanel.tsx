@@ -17,8 +17,8 @@ interface SongDetailsPanelProps {
   inline?: boolean;
 }
 
-function PVBadge({ pv, t }: { pv: PV; t: (source: string) => string }) {
-  const label = getPVServiceLabel(pv.service);
+function PVBadge({ pv, t, language }: { pv: PV; t: (source: string) => string; language: 'ja' | 'en' }) {
+  const label = getPVServiceLabel(pv.service, language);
   const typeLabel = t(pv.pvType === 'Original' ? '公式' : pv.pvType === 'Reprint' ? '転載' : 'その他');
   const watchUrl = pv.url || (pv.service === 'NicoNicoDouga'
     ? `https://www.nicovideo.jp/watch/${pv.pvId}`
@@ -208,7 +208,7 @@ export default function SongDetailsPanel({ song, onClose, inline }: SongDetailsP
             {t('動画 ({count}件)', { count: playablePVs.length })}
           </h3>
           <div className="flex flex-col gap-1.5">
-            {playablePVs.map(pv => <PVBadge key={pv.id} pv={pv} t={t} />)}
+            {playablePVs.map(pv => <PVBadge key={pv.id} pv={pv} t={t} language={language} />)}
           </div>
         </div>
       )}

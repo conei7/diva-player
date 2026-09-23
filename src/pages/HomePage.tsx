@@ -45,6 +45,7 @@ import { formatWeeklyRankingReason } from '../utils/weeklyRankingReason';
 import { excludeHiddenSongs, useHiddenSongStore } from '../stores/hiddenSongStore';
 import { selectRotatingStartupSongs } from '../utils/startupRecommendations';
 import { useTranslate, type TranslationKey } from '../i18n';
+import { useLanguageStore } from '../stores/languageStore';
 import {
   loadRecentPlayedAtBySongId,
   loadStartupRecommendationSnapshot,
@@ -139,6 +140,7 @@ function nextStartupRotation(): number {
 
 export default function HomePage() {
   const t = useTranslate();
+  const language = useLanguageStore(state => state.language);
   const [searchParams] = useSearchParams();
   const searchQuery = searchParams.get('q') || '';
   const artistIdParam = searchParams.get('artistId');
@@ -584,8 +586,8 @@ export default function HomePage() {
       const categoryReasons = category === 'ranking' || category === 'trending'
         ? result.reduce<Record<number, string>>((reasons, song) => {
             const reason = category === 'ranking'
-              ? formatWeeklyRankingReason(song)
-              : formatTrendingReason(song);
+              ? formatWeeklyRankingReason(song, language)
+              : formatTrendingReason(song, language);
             if (reason) reasons[song.id] = reason;
             return reasons;
           }, {})
@@ -644,7 +646,7 @@ export default function HomePage() {
       }
       fetchingRef.current = false;
     }
-  }, [artistIdParam, artistRoleParam, favoriteProducers, fetchRecommendedHomeSongs, globalFilterSettings, loadPrefetchableHomeSongs]);
+  }, [artistIdParam, artistRoleParam, favoriteProducers, fetchRecommendedHomeSongs, globalFilterSettings, language, loadPrefetchableHomeSongs]);
 
   useEffect(() => {
     setLoading(true);

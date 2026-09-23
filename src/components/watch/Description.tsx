@@ -213,7 +213,7 @@ export default function Description({ song }: DescriptionProps) {
                         className="text-[10px] font-bold px-1.5 py-0.5 rounded"
                         style={getPVBadgeStyle(pv.service, pv.pvType)}
                       >
-                        {getPVServiceLabel(pv.service)}
+                        {getPVServiceLabel(pv.service, language)}
                       </span>
                       {pv.name || pv.url}
                       {pv.pvType !== 'Original' && (

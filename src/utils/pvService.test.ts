@@ -12,4 +12,11 @@ describe('getPVServiceLabel', () => {
     expect(getPVServiceLabel('SoundCloud')).toBe('SoundCloud');
     expect(getPVServiceLabel('Vimeo')).toBe('Vimeo');
   });
+
+  it('uses English labels for localized service names', () => {
+    expect(getPVServiceLabel('NicoNicoDouga', 'en')).toBe('Niconico');
+    expect(getPVServiceLabel('File', 'en')).toBe('File');
+    expect(getPVServiceLabel('LocalFile', 'en')).toBe('Local');
+    expect(getPVServiceLabel('Bilibili', 'en')).toBe('Bilibili');
+  });
 });

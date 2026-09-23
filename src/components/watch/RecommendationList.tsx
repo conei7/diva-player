@@ -14,6 +14,7 @@ import RecommendationHint from '../recommendation/RecommendationHint';
 import { excludeHiddenSongs, useHiddenSongStore } from '../../stores/hiddenSongStore';
 import { useMemo } from 'react';
 import { useTranslate } from '../../i18n';
+import { useLanguageStore } from '../../stores/languageStore';
 
 /**
  * RecommendationList - 推薦動画リスト
@@ -46,6 +47,11 @@ function formatDuration(seconds: number): string {
   return `${m}:${s.toString().padStart(2, '0')}`;
 }
 
+function formatViews(value: number | undefined, language: 'ja' | 'en'): string {
+  if (language === 'ja') return formatJapaneseViews(value);
+  return new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(value || 0);
+}
+
 /** 個別曲アイテム（⋮メニュー付き） */
 function RecItemRow({
   song,
@@ -65,6 +71,7 @@ function RecItemRow({
   onExposureClick?: () => void;
 }) {
   const t = useTranslate();
+  const language = useLanguageStore(state => state.language);
   const navigate = useNavigate();
   const { openSaveToPlaylist } = useUiStore();
   const toggleSongInPlaylist = usePlaylistStore(s => s.toggleSongInPlaylist);
@@ -167,7 +174,7 @@ function RecItemRow({
   const producerName = producers.map(a => a.name || a.artist?.name).filter(Boolean).join(', ');
   const vocalists = song.artists?.filter(a => a.categories === 'Vocalist') || [];
   const vocalistName = vocalists.map(a => a.name || a.artist?.name).filter(Boolean).join(', ');
-  const relativeDate = formatSongRelativeDate(song);
+  const relativeDate = formatSongRelativeDate(song, Date.now(), language);
 
   const handleCardClick = useCallback((e: React.MouseEvent) => {
     if (isSelectionMode) {
@@ -319,7 +326,7 @@ function RecItemRow({
                 <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
                   <path d="M21.582 6.186a2.665 2.665 0 0 0-1.876-1.884C17.95 3.84 12 3.84 12 3.84s-5.95 0-7.706.462A2.665 2.665 0 0 0 2.418 6.186C2 7.952 2 12 2 12s0 4.048.418 5.814a2.665 2.665 0 0 0 1.876 1.884C6.05 20.16 12 20.16 12 20.16s5.95 0 7.706-.462a2.665 2.665 0 0 0 1.876-1.884C22 16.048 22 12 22 12s0-4.048-.418-5.814zM9.75 15.02v-6.04L15.05 12l-5.3 3.02z"/>
                 </svg>
-                {formatJapaneseViews(song.youtubeViews)}
+                {formatViews(song.youtubeViews, language)}
               </span>
             )}
             {(nicoPVs.length > 0 || (song.nicoViews || 0) > 0) && (
@@ -329,7 +336,7 @@ function RecItemRow({
                       color: isNicoUnofficialOnly ? '#1e40af' : '#3b82f6',
                       opacity: isNicoUnofficialOnly ? 0.8 : 1
                     }}>
-                📺 {formatJapaneseViews(song.nicoViews)}
+                📺 {formatViews(song.nicoViews, language)}
               </span>
             )}
             {relativeDate && (

@@ -230,7 +230,7 @@ export default function SongDetailsModal() {
                     style={getPVBadgeStyle(pv.service, pv.pvType)}
                     onClick={(e) => e.stopPropagation()}
                   >
-                    ▶ {getPVServiceLabel(pv.service)}
+                    ▶ {getPVServiceLabel(pv.service, language)}
                     {pv.pvType !== 'Original' && (
                       <span className="ml-1 opacity-70">{t('(非公式)')}</span>
                     )}

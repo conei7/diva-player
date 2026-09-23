@@ -55,4 +55,13 @@ describe('language preference', () => {
     expect(translateSourceText('ja', '★{rating} の曲はまだありません', { rating: 4 })).toBe('★4 の曲はまだありません');
     expect(translateSourceText('en', '未登録の文字列')).toBe('未登録の文字列');
   });
+
+  it('translates dynamic recommendation and data-status labels', async () => {
+    await ensureEnglishTranslations();
+    expect(translateSourceText('en', '音響的に近いおすすめ')).toBe('Recommended for its audio similarity');
+    expect(translateSourceText('en', '音が近い')).toBe('Similar sound');
+    expect(translateSourceText('en', '再生対応PVなし')).toBe('No playable video');
+    expect(translateSourceText('en', 'その他の未再生曲')).toBe('Other undiscovered songs');
+    expect(translateSourceText('en', 'ニコ')).toBe('Nico');
+  });
 });

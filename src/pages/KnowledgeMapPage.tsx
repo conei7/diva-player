@@ -197,6 +197,7 @@ function KnowledgeMapContent({
 }) {
   const t = useTranslateSourceText();
   const language = useLanguageStore(state => state.language);
+  const rectLabel = (rect: KnowledgeMapRect) => rect.aggregate ? t(rect.label) : rect.label;
   const [hovered, setHovered] = useState<{ rect: KnowledgeMapRect; x: number; y: number } | null>(null);
   const tooltipRef = useRef<HTMLDivElement>(null);
 
@@ -259,7 +260,7 @@ function KnowledgeMapContent({
                 {rect.known && <span className={`absolute inset-y-0 left-0 w-[3px] ${platform === 'youtube' ? 'bg-rose-400/80' : 'bg-teal-400/80'}`} />}
                 {(showFullLabel || showShortLabel) && (
                   <span className="relative z-10 flex h-full min-w-0 flex-col justify-end overflow-hidden p-1.5 text-left sm:p-2">
-                    <span className={`${showFullLabel ? 'text-xs sm:text-sm' : 'text-[9px]'} truncate font-bold text-white`}>{rect.label}</span>
+                    <span className={`${showFullLabel ? 'text-xs sm:text-sm' : 'text-[9px]'} truncate font-bold text-white`}>{rectLabel(rect)}</span>
                     {showFullLabel && <span className="mt-0.5 truncate text-[10px] text-white/65">{rect.secondaryLabel || formatViews(rect.views, language)}</span>}
                     {showFullLabel && rect.secondaryLabel && <span className="text-[10px] text-white/75">{formatViews(rect.views, language)}</span>}
                   </span>
@@ -271,7 +272,7 @@ function KnowledgeMapContent({
                 )}
               </>
             );
-            const title = `${t(rect.known ? '知っている' : 'まだ知らない')}: ${rect.label} — ${formatViews(rect.views, language)}`;
+            const title = `${t(rect.known ? '知っている' : 'まだ知らない')}: ${rectLabel(rect)} — ${formatViews(rect.views, language)}`;
             return rect.songId ? (
               <Link
                 key={rect.id}
@@ -320,7 +321,7 @@ function KnowledgeMapContent({
           {hovered.rect.thumbUrl && (
             <img src={hovered.rect.thumbUrl} alt="" className="mb-2 h-16 w-full rounded-lg object-cover" />
           )}
-          <p className="truncate text-sm font-bold text-white">{hovered.rect.label}</p>
+          <p className="truncate text-sm font-bold text-white">{rectLabel(hovered.rect)}</p>
           {hovered.rect.secondaryLabel && <p className="mt-0.5 truncate text-xs text-neutral-400">{hovered.rect.secondaryLabel}</p>}
           <div className="mt-1.5 flex items-center gap-2">
             <span className="text-xs font-medium text-neutral-200">{formatViews(hovered.rect.views, language)}</span>

@@ -59,7 +59,7 @@ export default function PlaylistHealthModal({ songs, onClose, onRemove }: Playli
         <div className="grid grid-cols-2 gap-2 border-b border-white/10 p-4 sm:grid-cols-4">
           {ISSUE_ORDER.map(kind => (
             <div key={kind} className="rounded-xl border border-white/10 bg-white/[0.035] p-3">
-              <p className="text-xs text-neutral-400">{PLAYLIST_HEALTH_ISSUE_LABELS[kind]}</p>
+              <p className="text-xs text-neutral-400">{t(PLAYLIST_HEALTH_ISSUE_LABELS[kind])}</p>
               <p className="mt-1 text-xl font-semibold text-white">{report.counts[kind]}</p>
             </div>
           ))}
@@ -88,7 +88,7 @@ export default function PlaylistHealthModal({ songs, onClose, onRemove }: Playli
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-sm font-medium text-white">{entry.song.name}</span>
                       <span className="mt-1 flex flex-wrap gap-1.5">
-                        {entry.issues.map(kind => <span key={kind} className="rounded-full bg-amber-300/10 px-2 py-0.5 text-[11px] text-amber-200">{PLAYLIST_HEALTH_ISSUE_LABELS[kind]}</span>)}
+                        {entry.issues.map(kind => <span key={kind} className="rounded-full bg-amber-300/10 px-2 py-0.5 text-[11px] text-amber-200">{t(PLAYLIST_HEALTH_ISSUE_LABELS[kind])}</span>)}
                       </span>
                     </span>
                     <span className="text-xs text-neutral-500">#{entry.index + 1}</span>

@@ -1,4 +1,5 @@
 import puppeteer from 'puppeteer';
+import { pinAppLanguage } from './pin-app-language.mjs';
 
 const baseUrl = process.argv[2] || 'http://127.0.0.1:4173/diva-player/';
 const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox', '--lang=ja-JP', '--touch-events=enabled'] });
@@ -65,6 +66,7 @@ async function swipe(page, from, to) {
 
 try {
   const page = await browser.newPage();
+  await pinAppLanguage(page);
   await page.setViewport({ width: 390, height: 844, deviceScaleFactor: 1, isMobile: true, hasTouch: true });
   // Keep the gesture contract independent from the availability of external
   // fixture videos. An invalid real iframe can auto-skip the queue while the

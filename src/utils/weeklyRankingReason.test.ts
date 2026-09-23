@@ -16,4 +16,9 @@ describe('formatWeeklyRankingReason', () => {
     expect(formatWeeklyRankingReason(song({ averageDailyGrowth: 0 }))).toBeUndefined();
     expect(formatWeeklyRankingReason(song({}))).toBeUndefined();
   });
+
+  it('formats the daily increase in English', () => {
+    expect(formatWeeklyRankingReason(song({ averageDailyGrowth: 12_345.4 }), 'en'))
+      .toBe('Average +12.3K views/day');
+  });
 });

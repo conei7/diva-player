@@ -1,4 +1,5 @@
 import puppeteer from 'puppeteer';
+import { pinAppLanguage } from './pin-app-language.mjs';
 import { readFile, stat } from 'node:fs/promises';
 
 const PAGE_TIMEOUT_MS = 45_000;
@@ -331,6 +332,7 @@ async function main() {
   const baseUrl = getBaseUrl();
   const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox', '--lang=ja-JP'] });
   const page = await browser.newPage();
+  await pinAppLanguage(page);
   page.setDefaultTimeout(PAGE_TIMEOUT_MS);
   const counters = {
     historyMetadataRequests: 0,

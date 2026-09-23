@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import puppeteer from 'puppeteer';
+import { pinAppLanguage } from './pin-app-language.mjs';
 
 const baseUrl = process.argv[2] || 'http://127.0.0.1:5173/diva-player/';
 const songs = ['Youtube', 'NicoNicoDouga', 'Youtube'].map((service, index) => ({
@@ -14,6 +15,7 @@ const songs = ['Youtube', 'NicoNicoDouga', 'Youtube'].map((service, index) => ({
 const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox', '--lang=ja-JP'] });
 try {
   const page = await browser.newPage();
+  await pinAppLanguage(page);
   await page.setViewport({ width: 1440, height: 1000 });
   const clickControl = async title => {
     const selector = `button[title="${title}"]`;
@@ -106,7 +108,10 @@ try {
   await clickControl('次の曲へ進む');
   await page.waitForSelector('iframe[src*="embed.nicovideo.jp"]');
   const frame = await (await page.$('iframe[src*="embed.nicovideo.jp"]')).contentFrame();
-  await frame.waitForFunction(() => playing && volume === 0.37);
+  await frame.waitForFunction(() => playing && volume === 0.37).catch(async error => {
+    const state = await frame.evaluate(() => ({ playing, volume, muted, commands }));
+    throw new Error(`Nico playback did not start at the requested volume: ${JSON.stringify(state)}`, { cause: error });
+  });
   assert.equal(await frame.evaluate(() => muted), false, 'User-initiated Nico playback must be audible');
   const nicoPlayCountBeforeHidden = await frame.evaluate(() => commands.filter(c => c.eventName === 'play').length);
   await page.evaluate(() => {

@@ -59,7 +59,7 @@ export default function SongCardBadges({
           <span aria-hidden="true">N</span>
           {song.nicoViews && song.nicoViews > 0
             ? formatViews(song.nicoViews)
-            : (isNicoUnofficialOnly ? t('非公式ニコ') : 'ニコ')}
+            : (isNicoUnofficialOnly ? t('非公式ニコ') : t('ニコ'))}
         </span>
       )}
 

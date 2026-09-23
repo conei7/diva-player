@@ -11,4 +11,12 @@ describe('formatRelativeDate', () => {
     expect(formatRelativeDate('2026-04-12T12:00:00Z', now)).toBe('3か月前');
     expect(formatRelativeDate('2024-07-12T12:00:00Z', now)).toBe('2年前');
   });
+
+  it('formats common publication intervals in English', () => {
+    expect(formatRelativeDate('2026-07-12T00:00:00Z', now, 'en')).toBe('today');
+    expect(formatRelativeDate('2026-07-09T12:00:00Z', now, 'en')).toBe('3 days ago');
+    expect(formatRelativeDate('2026-06-28T12:00:00Z', now, 'en')).toBe('2 weeks ago');
+    expect(formatRelativeDate('2026-04-12T12:00:00Z', now, 'en')).toBe('3 months ago');
+    expect(formatRelativeDate('2024-07-12T12:00:00Z', now, 'en')).toBe('2 years ago');
+  });
 });
