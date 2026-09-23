@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHmac } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -483,7 +484,10 @@ try {
     DIVA_CLOUDFLARE_ENV: fixturePath(envFile),
     DIVA_CLOUDFLARED_LOG: fixturePath(tunnelLog),
     DIVA_PYTHON_COMMAND: process.platform === 'win32'
-      ? shellAbsolutePath(join(
+      ? shellAbsolutePath([
+        join(projectDirectory, '..', 'diva-data-pipeline', 'ml_pipeline', '.venv', 'Scripts', 'python.exe'),
+        join(projectDirectory, '..', '..', '..', 'diva-data-pipeline', 'ml_pipeline', '.venv', 'Scripts', 'python.exe'),
+      ].find(existsSync) ?? join(
         projectDirectory,
         '..',
         'diva-data-pipeline',
