@@ -76,7 +76,7 @@ async function assertMobileButtonTargets(page, label) {
 
 async function main() {
   const baseUrl = getBaseUrl();
-  const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox'] });
+  const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox', '--lang=ja-JP'] });
   try {
     const page = await browser.newPage();
     page.setDefaultTimeout(PAGE_TIMEOUT_MS);

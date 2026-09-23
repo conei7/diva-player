@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { translate, translateSourceText } from '../i18n';
-import { resolveAppLanguage, useLanguageStore } from './languageStore';
+import { ensureEnglishTranslations, resolveAppLanguage, useLanguageStore } from './languageStore';
 
 describe('language preference', () => {
   let values: Map<string, string>;
@@ -34,21 +34,23 @@ describe('language preference', () => {
     expect(useLanguageStore.getState().language).toBe('ja');
   });
 
-  it('persists the selected language without changing other local data', () => {
+  it('persists the selected language without changing other local data', async () => {
     localStorage.setItem('diva_history', JSON.stringify([{ songId: 12 }]));
-    useLanguageStore.getState().setLanguage('en');
+    await useLanguageStore.getState().setLanguage('en');
 
     expect(useLanguageStore.getState().language).toBe('en');
     expect(JSON.parse(localStorage.getItem('diva_uiLanguage') ?? 'null')).toBe('en');
     expect(JSON.parse(localStorage.getItem('diva_history') ?? 'null')).toEqual([{ songId: 12 }]);
   });
 
-  it('formats translated labels with dynamic values', () => {
+  it('formats translated labels with dynamic values', async () => {
+    await ensureEnglishTranslations();
     expect(translate('en', 'discoveryPlaying', { count: 24 })).toBe('Playing 24 songs');
     expect(translate('ja', 'discoveryPlaying', { count: 24 })).toBe('24曲を再生中');
   });
 
-  it('translates source copy while keeping Japanese fallback and interpolated values', () => {
+  it('translates source copy while keeping Japanese fallback and interpolated values', async () => {
+    await ensureEnglishTranslations();
     expect(translateSourceText('en', '★{rating} の曲はまだありません', { rating: 4 })).toBe('No songs rated ★4 yet');
     expect(translateSourceText('ja', '★{rating} の曲はまだありません', { rating: 4 })).toBe('★4 の曲はまだありません');
     expect(translateSourceText('en', '未登録の文字列')).toBe('未登録の文字列');

@@ -176,7 +176,7 @@ async function runMobile(page) {
   console.log('PASS refreshed 390px playlist detail navigation and touch targets');
 }
 
-const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox'] });
+const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox', '--lang=ja-JP'] });
 try {
   const page = await browser.newPage();
   page.setDefaultTimeout(30_000);

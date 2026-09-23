@@ -4,7 +4,7 @@ const baseUrl = new URL(process.argv[2] || 'http://127.0.0.1:5173/diva-player/')
 const seedSongId = process.argv[3];
 if (!seedSongId) throw new Error('Pass the exported default seed song ID as the second argument.');
 
-const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox'] });
+const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox', '--lang=ja-JP'] });
 
 try {
   const page = await browser.newPage();

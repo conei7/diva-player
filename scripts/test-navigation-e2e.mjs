@@ -4,7 +4,7 @@ const baseUrl = process.argv[2] || 'https://diva-player.pages.dev/';
 const base = new URL(baseUrl);
 const normalizePath = path => path.replace(/\/+$/, '') || '/';
 const expectedRoot = normalizePath(new URL(base.pathname, base.origin).pathname);
-const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox'] });
+const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox', '--lang=en-US'] });
 
 // The shell/navigation assertions must be reproducible on pull requests and
 // should not depend on VocaDB or the SBC being reachable from a GitHub runner.

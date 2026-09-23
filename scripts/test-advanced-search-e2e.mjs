@@ -1,7 +1,7 @@
 import puppeteer from 'puppeteer';
 
 const baseUrl = process.argv[2] || 'http://127.0.0.1:4173/diva-player/';
-const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox'] });
+const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox', '--lang=ja-JP'] });
 const capturedSearchUrls = [];
 const fixtureSong = {
   id: 904001, name: '詳細検索 fixture', defaultName: 'Advanced fixture', defaultNameLanguage: 'Japanese',

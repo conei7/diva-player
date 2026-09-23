@@ -1,7 +1,7 @@
 import puppeteer from 'puppeteer';
 
 const baseUrl = process.argv[2] || 'http://127.0.0.1:4173/diva-player/';
-const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox'] });
+const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox', '--lang=ja-JP'] });
 const sourceId = '26375614';
 const sourceSong = {
   id: 903001,

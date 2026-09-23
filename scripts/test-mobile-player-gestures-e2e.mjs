@@ -1,7 +1,7 @@
 import puppeteer from 'puppeteer';
 
 const baseUrl = process.argv[2] || 'http://127.0.0.1:4173/diva-player/';
-const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox', '--touch-events=enabled'] });
+const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox', '--lang=ja-JP', '--touch-events=enabled'] });
 
 const songs = ['First gesture fixture', 'Second gesture fixture', 'Third gesture fixture'].map((name, index) => ({
   id: 901000 + index,

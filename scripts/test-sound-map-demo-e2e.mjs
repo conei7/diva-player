@@ -1,7 +1,7 @@
 import puppeteer from 'puppeteer';
 
 const baseUrl = new URL(process.argv[2] || 'http://127.0.0.1:5173/diva-player/');
-const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox'] });
+const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox', '--lang=ja-JP'] });
 
 async function clickButtonByText(page, label) {
   const buttons = await page.$$('button');

@@ -19,7 +19,7 @@ async function main() {
   const baseUrl = getBaseUrl();
   const debugUrl = new URL(baseUrl);
   debugUrl.searchParams.set('recDebug', '1');
-  const browser = await puppeteer.launch({ headless: true });
+  const browser = await puppeteer.launch({ headless: true, args: ['--lang=ja-JP'] });
   const page = await browser.newPage();
   page.setDefaultTimeout(TIMEOUT_MS);
 

@@ -64,7 +64,7 @@ async function inspectPage(page) {
 
 async function main() {
   const baseUrl = getBaseUrl();
-  const browser = await puppeteer.launch({ headless: true });
+  const browser = await puppeteer.launch({ headless: true, args: ['--lang=ja-JP'] });
   const page = await browser.newPage();
   const tempDir = await mkdtemp(join(tmpdir(), 'diva-player-e2e-'));
   const failures = [];

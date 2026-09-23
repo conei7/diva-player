@@ -11,7 +11,7 @@ const songs = ['Youtube', 'NicoNicoDouga', 'Youtube'].map((service, index) => ({
     name: 'fixture', pvId: `fixture-${index}`, service, pvType: 'Original',
     url: service === 'Youtube' ? `https://youtu.be/fixture-${index}` : 'https://www.nicovideo.jp/watch/fixture-1' }],
 }));
-const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox'] });
+const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox', '--lang=ja-JP'] });
 try {
   const page = await browser.newPage();
   await page.setViewport({ width: 1440, height: 1000 });
@@ -103,7 +103,7 @@ try {
   await page.waitForFunction(() => window.__yt?.getVideoData().video_id === 'fixture-0');
   await clickControl('再生');
   await page.waitForFunction(() => window.__yt.getPlayerState() === 1);
-  await clickControl('次の曲');
+  await clickControl('次の曲へ進む');
   await page.waitForSelector('iframe[src*="embed.nicovideo.jp"]');
   const frame = await (await page.$('iframe[src*="embed.nicovideo.jp"]')).contentFrame();
   await frame.waitForFunction(() => playing && volume === 0.37);
