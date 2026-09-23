@@ -263,6 +263,7 @@ export default function GlobalPlayer() {
             </button>
 
             <button
+              data-testid="global-mini-player-toggle"
               className="rounded-full flex items-center justify-center mini-player-control mini-player-play"
               style={{
                 width: 36,

@@ -63,6 +63,26 @@ describe('player queue autoplay', () => {
     expect(usePlayerStore.getState().isPlaying).toBe(true);
   });
 
+  it('keeps YouTube playback paused while the document is hidden', () => {
+    const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'document');
+    Object.defineProperty(globalThis, 'document', {
+      configurable: true,
+      value: { visibilityState: 'hidden' },
+    });
+    try {
+      usePlayerStore.getState().playSong(song, true);
+      expect(usePlayerStore.getState().currentSong?.id).toBe(song.id);
+      expect(usePlayerStore.getState().isPlaying).toBe(false);
+
+      usePlayerStore.getState().resume();
+      usePlayerStore.getState().setIsPlaying(true);
+      expect(usePlayerStore.getState().isPlaying).toBe(false);
+    } finally {
+      if (descriptor) Object.defineProperty(globalThis, 'document', descriptor);
+      else Reflect.deleteProperty(globalThis, 'document');
+    }
+  });
+
   it('rejects a delayed automatic queue append after the player closes', () => {
     const delayedSong = { ...song, id: song.id + 1, name: 'Delayed auto fixture' };
     usePlayerStore.getState().setQueue([song], 0);

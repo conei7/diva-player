@@ -101,7 +101,7 @@ try {
             let elapsed = 0;
             let currentVideoId = options.videoId || null;
             player.getCurrentTime = () => state === 1 ? elapsed + (Date.now() - startedAt) / 1000 : elapsed;
-            player.getDuration = () => currentVideoId === '0X_pI_SCDK8' ? 3 : 30;
+            player.getDuration = () => 30;
             player.getPlayerState = () => state;
             player.getVolume = () => 50;
             player.setVolume = () => {};
@@ -112,7 +112,6 @@ try {
               currentVideoId = videoId;
               elapsed = 0;
               state = -1;
-              if (videoId === 'fixture-2') window.__blockSecondStartUntil = Date.now() + 13_000;
               window.__youtubeLoadedVideoIds = [...(window.__youtubeLoadedVideoIds || []), videoId];
             };
             player.cueVideoById = (videoId) => {
@@ -123,41 +122,32 @@ try {
             };
             player.playVideo = () => {
               window.__playVideoAttemptCount = (window.__playVideoAttemptCount || 0) + 1;
-              if (currentVideoId === 'fixture-2' && document.hidden && state === -1 && Date.now() < (window.__blockSecondStartUntil || 0)) {
-                window.__backgroundInitialStartIgnoreCount = (window.__backgroundInitialStartIgnoreCount || 0) + 1;
-                return;
-              }
-              if (document.hidden && state === 2 && !window.__backgroundRetryIgnored) {
-                window.__backgroundRetryIgnored = true;
-                return;
-              }
               if (state !== 1) startedAt = Date.now();
               state = 1;
+              window.__successfulPlayCount = (window.__successfulPlayCount || 0) + 1;
               if (window.__wakeRecoveryPending) {
                 window.__wakeRecoveryPending = false;
                 window.__wakeRecoveryPlayCount = (window.__wakeRecoveryPlayCount || 0) + 1;
               }
               window.__backgroundPlaybackStarted = true;
-              if (currentVideoId === 'fixture-2') window.__backgroundSecondPlaybackStarted = true;
               options.events.onStateChange({ data: state, target: player });
             };
-            player.pauseVideo = () => { elapsed = player.getCurrentTime(); state = 2; };
-            player.stopVideo = () => { state = 0; };
-            const pauseForBackground = () => {
-              if (!document.hidden || state !== 1) return;
+            player.pauseVideo = () => {
+              if (document.hidden && state === 1) {
+                window.__backgroundPauseCount = (window.__backgroundPauseCount || 0) + 1;
+              }
               elapsed = player.getCurrentTime();
               state = 2;
-              window.__backgroundPauseCount = (window.__backgroundPauseCount || 0) + 1;
-              options.events.onStateChange({ data: state, target: player });
             };
-            document.addEventListener('visibilitychange', pauseForBackground);
+            player.stopVideo = () => { state = 0; };
+            window.__youtubeState = () => state;
             window.__simulateDeviceWake = () => {
               elapsed = player.getCurrentTime();
               state = 2;
               window.__wakeRecoveryPending = true;
               document.dispatchEvent(new Event('resume'));
             };
-            player.destroy = () => document.removeEventListener('visibilitychange', pauseForBackground);
+            player.destroy = () => {};
             setTimeout(() => options.events.onReady({ target: player }), 0);
           },
         };
@@ -177,6 +167,9 @@ try {
     const queue = JSON.parse(localStorage.getItem('diva_playerQueue') || 'null');
     return queue?.currentSongId === 167789;
   });
+  await playerPage.evaluate(() => window.__simulateDeviceWake());
+  await playerPage.waitForFunction(() => (window.__wakeRecoveryPlayCount || 0) >= 1);
+  const foregroundWakePlayCount = await playerPage.evaluate(() => window.__successfulPlayCount || 0);
 
   const otherPage = await browser.newPage();
   await otherPage.goto('about:blank');
@@ -187,74 +180,54 @@ try {
     const queue = JSON.parse(localStorage.getItem('diva_playerQueue') || 'null');
     return {
       backgroundPauseCount: window.__backgroundPauseCount || 0,
-      backgroundRetryIgnored: window.__backgroundRetryIgnored || false,
+      nativePlayerState: window.__youtubeState?.(),
+      successfulPlayCount: window.__successfulPlayCount || 0,
       currentSongId: queue?.currentSongId,
       visibilityState: document.visibilityState,
     };
   });
-  if (result.backgroundPauseCount < 1) {
-    throw new Error(`The fixture did not reproduce a background pause: ${JSON.stringify(result)}`);
+  if (result.visibilityState !== 'hidden' || result.backgroundPauseCount < 1 || result.nativePlayerState !== 2) {
+    throw new Error(`The app did not pause YouTube when hidden: ${JSON.stringify(result)}`);
   }
-  if (!result.backgroundRetryIgnored) {
-    throw new Error(`The fixture did not exercise the retry path: ${JSON.stringify(result)}`);
+  if (result.currentSongId !== 167789 || result.successfulPlayCount !== foregroundWakePlayCount) {
+    throw new Error(`Hidden YouTube playback advanced or restarted: ${JSON.stringify(result)}`);
   }
-  if (result.currentSongId !== 900002) {
-    throw new Error(`Background end recovery did not advance the queue: ${JSON.stringify(result)}`);
-  }
-  console.log(`PASS background playback recovery (${result.visibilityState})`);
+  console.log('PASS YouTube pauses when its app tab is hidden');
 
-  await new Promise((resolve) => setTimeout(resolve, 14_000));
-  const hiddenTimeoutState = await playerPage.evaluate(() => ({
-    failedPVs: JSON.parse(localStorage.getItem('diva_failedPVsV2') || '{}'),
-    selectedNicoEmbed: Boolean(document.querySelector('iframe[src*="embed.nicovideo.jp"]')),
-    visibilityState: document.visibilityState,
-  }));
-  if (hiddenTimeoutState.selectedNicoEmbed || Object.keys(hiddenTimeoutState.failedPVs['900002'] || {}).length > 0) {
-    throw new Error(`A hidden >12s delay incorrectly failed over to NicoNico: ${JSON.stringify(hiddenTimeoutState)}`);
-  }
-  // Model a provider/device wake while the DIVA tab remains hidden. Recovery
-  // must start the same YouTube iframe without requiring focus or visibility.
+  // A device-wake signal is not permission to resume a YouTube player while
+  // the app is hidden.
   await playerPage.evaluate(() => {
-    window.__blockSecondStartUntil = 0;
-    document.dispatchEvent(new Event('resume'));
+    window.__simulateDeviceWake();
+    window.__wakeRecoveryPending = false;
   });
-  await playerPage.waitForFunction(() => window.__backgroundSecondPlaybackStarted === true, { timeout: 6_000 });
-  const backgroundStart = await playerPage.evaluate(() => ({
-    backgroundIframeCreationBlocked: window.__backgroundIframeCreationBlocked || false,
-    ignoredStarts: window.__backgroundInitialStartIgnoreCount || 0,
-    loadedVideoIds: window.__youtubeLoadedVideoIds || [],
-    playAttempts: window.__playVideoAttemptCount || 0,
-    playerConstructCount: window.__youtubePlayerConstructCount || 0,
-    selectedNicoEmbed: Boolean(document.querySelector('iframe[src*="embed.nicovideo.jp"]')),
-    currentFailureMap: JSON.parse(localStorage.getItem('diva_failedPVsV2') || '{}'),
-    visibilityState: document.visibilityState,
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  const hiddenWake = await playerPage.evaluate(() => ({
+    nativePlayerState: window.__youtubeState?.(),
+    successfulPlayCount: window.__successfulPlayCount || 0,
   }));
-  if (backgroundStart.ignoredStarts < 2 || backgroundStart.visibilityState !== 'hidden') {
-    throw new Error(`The fixture did not exercise hidden initial-start recovery: ${JSON.stringify(backgroundStart)}`);
+  if (hiddenWake.nativePlayerState !== 2 || hiddenWake.successfulPlayCount !== foregroundWakePlayCount) {
+    throw new Error(`YouTube resumed from a hidden device-wake signal: ${JSON.stringify(hiddenWake)}`);
   }
-  if (backgroundStart.backgroundIframeCreationBlocked || backgroundStart.playerConstructCount !== 1) {
-    throw new Error(`YouTube iframe was recreated while hidden: ${JSON.stringify(backgroundStart)}`);
-  }
-  if (backgroundStart.loadedVideoIds.join(',') !== '0X_pI_SCDK8,fixture-2') {
-    throw new Error(`Persistent player did not load both videos in order: ${JSON.stringify(backgroundStart)}`);
-  }
-  if (backgroundStart.selectedNicoEmbed || Object.keys(backgroundStart.currentFailureMap['900002'] || {}).length > 0) {
-    throw new Error(`A hidden startup delay incorrectly failed over to NicoNico: ${JSON.stringify(backgroundStart)}`);
-  }
-  console.log(`PASS hidden >12s startup delay stays on YouTube and reuses one iframe (${backgroundStart.playAttempts} play attempts)`);
+  console.log('PASS hidden device-wake signal does not restart YouTube');
 
   await playerPage.bringToFront();
-  await playerPage.waitForFunction(() => typeof window.__simulateDeviceWake === 'function');
-  await playerPage.evaluate(() => window.__simulateDeviceWake());
-  await playerPage.waitForFunction(() => (window.__wakeRecoveryPlayCount || 0) >= 1);
-  const wakeResult = await playerPage.evaluate(() => ({
+  await playerPage.waitForFunction(() => document.visibilityState === 'visible');
+  await playerPage.waitForFunction(() => window.__youtubeState?.() === 2);
+  await playerPage.evaluate(() => {
+    window.history.pushState({}, '', '/diva-player/');
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  });
+  await playerPage.waitForSelector('[data-testid="global-mini-player-toggle"]');
+  await playerPage.locator('[data-testid="global-mini-player-toggle"]').click();
+  await playerPage.waitForFunction(() => window.__youtubeState?.() === 1);
+  const foregroundResume = await playerPage.evaluate(() => ({
     currentSongId: JSON.parse(localStorage.getItem('diva_playerQueue') || 'null')?.currentSongId,
-    wakeRecoveryPlayCount: window.__wakeRecoveryPlayCount || 0,
+    successfulPlayCount: window.__successfulPlayCount || 0,
   }));
-  if (wakeResult.currentSongId !== 900002) {
-    throw new Error(`Device wake recovery changed the active queue item: ${JSON.stringify(wakeResult)}`);
+  if (foregroundResume.currentSongId !== 167789 || foregroundResume.successfulPlayCount <= foregroundWakePlayCount) {
+    throw new Error(`Explicit foreground resume did not restart the same YouTube item: ${JSON.stringify(foregroundResume)}`);
   }
-  console.log('PASS device sleep lifecycle recovery resumes the owned queue item');
+  console.log('PASS explicit foreground action resumes YouTube at the same queue item');
 } finally {
   await browser.close();
 }

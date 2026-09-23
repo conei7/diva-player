@@ -17,10 +17,9 @@ import { isPlayablePV } from '../utils/playablePV';
 
 type FailedPVMap = Record<string, Record<string, number>>;
 
-// v2 intentionally ignores timeout failures written before background-safe
-// YouTube startup was introduced. Those entries could incorrectly force a
-// healthy official YouTube PV (for example コバルトメモリーズ) to NicoNico
-// for 30 minutes after a hidden-tab startup was deferred by the browser.
+// v2 intentionally ignores timeout failures written by the former hidden-tab
+// YouTube startup path. They could incorrectly force a healthy official PV
+// (for example コバルトメモリーズ) to NicoNico for 30 minutes.
 const FAILED_PVS_KEY = 'failedPVsV2';
 const PV_PREFERENCE_KEY = 'pvPreference';
 const FAILED_PV_RETRY_MS = 30 * 60 * 1000;
@@ -84,6 +83,11 @@ const pvPriorities: Array<{ service: PVService; pvType: PVType }> = [
 
 function getPVFailureKey(pv: PV): string {
   return `${pv.service}:${pv.pvId || pv.id}`;
+}
+
+function canStartPlayback(pv: PV, requested: boolean): boolean {
+  if (!requested || pv.service !== 'Youtube') return requested;
+  return typeof document === 'undefined' || document.visibilityState === 'visible';
 }
 
 function getFailedPVMap(): FailedPVMap {
@@ -519,6 +523,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       }
       return;
     }
+    const shouldStartPlaying = canStartPlayback(pv, startPlaying);
     useProgressStore.getState().setDuration(song.lengthSeconds || pv.length || 0);
     useProgressStore.getState().setProgress(0);
     const { queue, queueIndex, queueSources } = get();
@@ -529,9 +534,9 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       ? queueSources.map((source, index) => index === queueIndex ? 'manual' : source)
       : queueSources;
     const playbackSequence = get().playbackSequence + 1;
-    if (isUserAction && startsNewSession && startPlaying) {
+    if (isUserAction && startsNewSession && shouldStartPlaying) {
       useAutoPlaySessionStore.getState().startSession(song.id);
-    } else if (playbackSource === 'auto' && startPlaying) {
+    } else if (playbackSource === 'auto' && shouldStartPlaying) {
       useAutoPlaySessionStore.getState().recordAutoPlaybackStarted();
     }
     const nextRootSeed = isUserAction ? song : get().rootSeed;
@@ -543,14 +548,18 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       currentPlaybackSource: playbackSource,
       playbackSequence,
       queueSources: nextQueueSources,
-      isPlaying: startPlaying,
+      isPlaying: shouldStartPlaying,
       error: null,
       ...(isUserAction ? { rootSeed: song } : {}),
     });
   },
 
   pause: () => set({ isPlaying: false }),
-  resume: () => set({ isPlaying: true }),
+  resume: () => {
+    const { currentPV } = get();
+    if (currentPV?.service === 'Youtube' && !canStartPlayback(currentPV, true)) return;
+    set({ isPlaying: true });
+  },
 
   next: () => {
     const { queue, queueIndex, loopMode } = get();
@@ -595,7 +604,10 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     storage.set(VOLUME_KEY, next);
     set({ volume: next });
   },
-  setIsPlaying: (isPlaying: boolean) => set({ isPlaying }),
+  setIsPlaying: (isPlaying: boolean) => {
+    const { currentPV } = get();
+    set({ isPlaying: currentPV ? canStartPlayback(currentPV, isPlaying) : isPlaying });
+  },
   setError: (error: string | null) => set({ error }),
 
   selectPV: (pv: PV) => {
@@ -604,7 +616,12 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     clearPVFailure(currentSong.id, pv);
     useProgressStore.getState().setDuration(currentSong.lengthSeconds || pv.length || 0);
     useProgressStore.getState().setProgress(0);
-    set({ currentPV: pv, playbackSequence: get().playbackSequence + 1, isPlaying, error: null });
+    set({
+      currentPV: pv,
+      playbackSequence: get().playbackSequence + 1,
+      isPlaying: canStartPlayback(pv, isPlaying),
+      error: null,
+    });
   },
 
   setPVPreference: (preference: PVPreference) => {

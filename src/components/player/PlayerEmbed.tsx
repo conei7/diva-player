@@ -10,7 +10,6 @@ import {
 import {
   createPlaybackAttemptController,
   isEventForDesiredYouTubePV,
-  shouldUseMutedYouTubeLoad,
   type PlaybackAttemptToken,
 } from '../../services/playbackAttempt';
 import { usePlaybackWakeRecovery } from '../../hooks/usePlaybackWakeRecovery';
@@ -448,7 +447,6 @@ export default function PlayerEmbed() {
     started: boolean;
   } | null>(null);
   const volumeRef = useRef(volume);
-  const youtubeAutoplayMutedRef = useRef(false);
   const youtubePauseRequestedAtRef = useRef<number | null>(null);
   const ownershipRef = useRef<ReturnType<typeof getPlaybackOwnership> | null>(null);
   const isActiveYouTubePlayer = useCallback((player: YT.Player) => {
@@ -561,6 +559,12 @@ export default function PlayerEmbed() {
   const advanceOnce = useCallback(() => {
     const activePV = usePlayerStore.getState().currentPV;
     if (!activePV) return;
+    if (activePV.service === 'Youtube' && document.visibilityState !== 'visible') {
+      stopProgressTimer();
+      clearEndRecoveryTimer();
+      usePlayerStore.getState().pause();
+      return;
+    }
     const key = `${activePV.service}:${activePV.pvId ?? activePV.id}`;
     if (advancedPVRef.current === key) return;
     advancedPVRef.current = key;
@@ -655,18 +659,15 @@ export default function PlayerEmbed() {
           desired.attempt = null;
           return;
         }
-        if (document.hidden) {
-          // A hidden page may delay iframe/API readiness even though the PV is
-          // healthy. Keep retrying the same muted player in that case.
+        if (document.visibilityState !== 'visible') {
+          attemptController.cancel();
+          desired.attempt = null;
           try {
-            player.mute?.();
-            youtubeAutoplayMutedRef.current = true;
-            player.playVideo?.();
-            scheduleEndRecovery(player);
+            player.pauseVideo?.();
           } catch {
-            // The next bounded attempt will retry after iframe readiness.
+            // The iframe may already be suspended by the browser.
           }
-          desired.attempt = startAttempt();
+          usePlayerStore.getState().pause();
           return;
         }
         failCurrentYouTubeAttempt('YouTube動画の準備がタイムアウトしました');
@@ -675,7 +676,7 @@ export default function PlayerEmbed() {
     };
 
     desired.attempt = startAttempt();
-  }, [failCurrentYouTubeAttempt, isActiveYouTubePlayer, scheduleEndRecovery]);
+  }, [failCurrentYouTubeAttempt, isActiveYouTubePlayer]);
 
   const loadDesiredYouTubeVideo = useCallback((player: YT.Player) => {
     const desired = youtubeDesiredVideoRef.current;
@@ -683,31 +684,24 @@ export default function PlayerEmbed() {
     const shouldPlay = usePlayerStore.getState().isPlaying;
     try {
       if (shouldPlay) {
+        if (document.visibilityState !== 'visible') {
+          attemptControllerRef.current.cancel();
+          desired.attempt = null;
+          player.pauseVideo?.();
+          usePlayerStore.getState().pause();
+          return;
+        }
         armYouTubePlaybackAttempt(player, desired);
-        const shouldStartMuted = shouldUseMutedYouTubeLoad(desired.loaded, document.hidden);
-        // Loading muted is allowed while the document is hidden. Reusing this
-        // already-created player preserves the original user activation instead
-        // of asking Chromium to authorize a brand-new background iframe.
         if (!desired.loaded) {
-          // Only a genuinely new background load needs the muted-autoplay
-          // fallback. Muting an already loaded video on every pause/resume left
-          // ordinary foreground playback silent until another gesture.
-          if (shouldStartMuted) {
-            player.mute?.();
-            youtubeAutoplayMutedRef.current = true;
-          }
           player.loadVideoById(desired.pvId, 0);
           desired.loaded = true;
         }
         player.playVideo?.();
         if (desired.started) startProgressTimer();
-        // Do not unmute until PLAYING. Unmuting during the asynchronous load can
-        // make a browser re-evaluate autoplay and defer the start until visible.
         scheduleEndRecovery(player);
       } else {
         attemptControllerRef.current.cancel();
         desired.attempt = null;
-        youtubeAutoplayMutedRef.current = false;
         if (!desired.loaded) {
           player.cueVideoById(desired.pvId, 0);
           desired.loaded = true;
@@ -772,6 +766,15 @@ export default function PlayerEmbed() {
               if (!isEventForDesiredYouTubePV(reportedVideoId, desired.pvId)) return;
               switch (event.data) {
                 case window.YT.PlayerState.PLAYING: {
+                  if (document.visibilityState !== 'visible') {
+                    attemptControllerRef.current.cancel();
+                    desired.attempt = null;
+                    event.target.pauseVideo?.();
+                    stopProgressTimer();
+                    clearEndRecoveryTimer();
+                    usePlayerStore.getState().pause();
+                    break;
+                  }
                   const playbackState = usePlayerStore.getState();
                   const ownership = ownershipRef.current;
                   const ownershipState = ownership?.getState() ?? 'none';
@@ -809,10 +812,6 @@ export default function PlayerEmbed() {
                     markPVHealthy(activePV);
                   }
                   setIsPlaying(true);
-                  if (youtubeAutoplayMutedRef.current && (!navigator.userActivation || navigator.userActivation.hasBeenActive)) {
-                    event.target.unMute?.();
-                    youtubeAutoplayMutedRef.current = false;
-                  }
                   const dur = event.target.getDuration();
                   if (dur > 0) setDuration(dur);
                   startProgressTimer();
@@ -824,10 +823,15 @@ export default function PlayerEmbed() {
                   const startupPending = Boolean(
                     desired.attempt && attemptControllerRef.current.isCurrent(desired.attempt),
                   );
-                  if (usePlayerStore.getState().isPlaying && (startupPending || document.hidden)) {
+                  if (usePlayerStore.getState().isPlaying && startupPending && document.visibilityState === 'visible') {
                     event.target.playVideo?.();
                     scheduleEndRecovery(event.target);
                     break;
+                  }
+                  if (document.visibilityState !== 'visible') {
+                    attemptControllerRef.current.cancel();
+                    desired.attempt = null;
+                    usePlayerStore.getState().pause();
                   }
                   setIsPlaying(false);
                   stopProgressTimer();
@@ -885,7 +889,6 @@ export default function PlayerEmbed() {
     if (isYouTube || !ytPlayerRef.current) return;
     clearEndRecoveryTimer();
     stopProgressTimer();
-    youtubeAutoplayMutedRef.current = false;
     try {
       ytPlayerRef.current.stopVideo?.();
     } catch {
@@ -931,34 +934,44 @@ export default function PlayerEmbed() {
     };
   }, [clearEndRecoveryTimer, currentSong?.id, currentSong?.lengthSeconds, currentYouTubePVId, loadDesiredYouTubeVideo, playbackSequence, setDuration, setProgress, stopProgressTimer]);
 
-  // Muted autoplay is the browser-safe way to get a newly selected song
-  // moving in a background tab. If the session had no activation yet, restore
-  // audio on the first later gesture instead of leaving successful playback
-  // silently muted forever.
+  const pauseYouTubeForHiddenPage = useCallback(() => {
+    const state = usePlayerStore.getState();
+    if (state.currentPV?.service !== 'Youtube' || !state.isPlaying) return;
+    attemptControllerRef.current.cancel();
+    const desired = youtubeDesiredVideoRef.current;
+    if (desired) desired.attempt = null;
+    stopProgressTimer();
+    clearEndRecoveryTimer();
+    youtubePauseRequestedAtRef.current = performance.now();
+    try {
+      ytPlayerRef.current?.pauseVideo?.();
+    } catch {
+      // The iframe may already be suspended by the browser.
+    }
+    state.pause();
+  }, [clearEndRecoveryTimer, stopProgressTimer]);
+
   useEffect(() => {
-    const restoreAutoplayAudio = () => {
-      const player = ytPlayerRef.current;
-      if (!player || !isActiveYouTubePlayer(player) || !youtubeAutoplayMutedRef.current || !usePlayerStore.getState().isPlaying) return;
-      try {
-        player.unMute?.();
-        player.setVolume?.(volumeRef.current);
-        youtubeAutoplayMutedRef.current = false;
-      } catch {
-        // The player may be replaced during navigation.
-      }
+    const onVisibilityChange = () => {
+      if (document.visibilityState !== 'visible') pauseYouTubeForHiddenPage();
     };
-    window.addEventListener('pointerdown', restoreAutoplayAudio, { capture: true });
-    window.addEventListener('keydown', restoreAutoplayAudio, { capture: true });
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    window.addEventListener('pagehide', pauseYouTubeForHiddenPage);
     return () => {
-      window.removeEventListener('pointerdown', restoreAutoplayAudio, { capture: true });
-      window.removeEventListener('keydown', restoreAutoplayAudio, { capture: true });
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      window.removeEventListener('pagehide', pauseYouTubeForHiddenPage);
     };
-  }, [isActiveYouTubePlayer]);
+  }, [pauseYouTubeForHiddenPage]);
 
   const recoverYouTubePlayback = useCallback(() => {
     const player = ytPlayerRef.current;
     const state = usePlayerStore.getState();
-    if (!player || !isActiveYouTubePlayer(player) || !state.isPlaying) return;
+    if (!player || !isActiveYouTubePlayer(player)) return;
+    if (document.visibilityState !== 'visible') {
+      pauseYouTubeForHiddenPage();
+      return;
+    }
+    if (!state.isPlaying) return;
     if (ownershipRef.current?.getState() !== 'local') return;
     try {
       const currentTime = player.getCurrentTime?.() ?? 0;
@@ -982,7 +995,7 @@ export default function PlayerEmbed() {
     } catch {
       // The iframe may be between player generations.
     }
-  }, [advanceOnce, isActiveYouTubePlayer, scheduleEndRecovery, setProgress]);
+  }, [advanceOnce, isActiveYouTubePlayer, pauseYouTubeForHiddenPage, scheduleEndRecovery, setProgress]);
   usePlaybackWakeRecovery(recoverYouTubePlayback, currentPV?.service === 'Youtube');
 
   // 再生/一時停止の同期
