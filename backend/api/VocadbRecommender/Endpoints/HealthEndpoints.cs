@@ -100,8 +100,11 @@ internal static class HealthEndpoints
             now,
             maximumSnapshotAge);
         var healthy = fresh
+            && snapshot.Postgres.Ok
             && postgres.Ok
+            && snapshot.Qdrant.Ok
             && qdrant.Ok
+            && snapshot.DiscoveryQuality.Ok
             && discoveryQuality.Ok;
         var payload = new HealthPayload(
             healthy ? "ok" : "degraded",
