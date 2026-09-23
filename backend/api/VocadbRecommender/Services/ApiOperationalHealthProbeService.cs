@@ -8,7 +8,13 @@ public sealed record ApiOperationalHealthProbeSnapshot(
     DependencyHealth Qdrant,
     DiscoveryQualityHealth DiscoveryQuality,
     AudioFeatureHealth AudioFeatures,
-    DateTimeOffset? CheckedAt);
+    DateTimeOffset? CheckedAt)
+{
+    public DateTimeOffset? PostgresLastSuccessfulAt { get; init; }
+    public DateTimeOffset? QdrantLastSuccessfulAt { get; init; }
+    public DateTimeOffset? DiscoveryQualityLastSuccessfulAt { get; init; }
+    public DateTimeOffset? AudioFeaturesLastSuccessfulAt { get; init; }
+}
 
 public sealed class ApiOperationalHealthProbeState
 {
@@ -33,7 +39,51 @@ public sealed class ApiOperationalHealthProbeState
         DiscoveryQualityHealth discoveryQuality,
         AudioFeatureHealth audioFeatures,
         DateTimeOffset checkedAt) =>
-        _snapshot = new(true, postgres, qdrant, discoveryQuality, audioFeatures, checkedAt);
+        PublishProbeResults(
+            postgres,
+            qdrant,
+            discoveryQuality,
+            audioFeatures,
+            checkedAt,
+            postgresProbeCompleted: true,
+            qdrantProbeCompleted: true,
+            discoveryProbeCompleted: true,
+            audioProbeCompleted: true);
+
+    internal void PublishProbeResults(
+        DependencyHealth postgres,
+        DependencyHealth qdrant,
+        DiscoveryQualityHealth discoveryQuality,
+        AudioFeatureHealth audioFeatures,
+        DateTimeOffset checkedAt,
+        bool postgresProbeCompleted,
+        bool qdrantProbeCompleted,
+        bool discoveryProbeCompleted,
+        bool audioProbeCompleted)
+    {
+        var previous = _snapshot;
+        _snapshot = new ApiOperationalHealthProbeSnapshot(
+            true,
+            postgres,
+            qdrant,
+            discoveryQuality,
+            audioFeatures,
+            checkedAt)
+        {
+            PostgresLastSuccessfulAt = postgresProbeCompleted
+                ? checkedAt
+                : previous.PostgresLastSuccessfulAt,
+            QdrantLastSuccessfulAt = qdrantProbeCompleted
+                ? checkedAt
+                : previous.QdrantLastSuccessfulAt,
+            DiscoveryQualityLastSuccessfulAt = discoveryProbeCompleted
+                ? checkedAt
+                : previous.DiscoveryQualityLastSuccessfulAt,
+            AudioFeaturesLastSuccessfulAt = audioProbeCompleted
+                ? checkedAt
+                : previous.AudioFeaturesLastSuccessfulAt,
+        };
+    }
 }
 
 /// <summary>
@@ -192,30 +242,34 @@ public sealed class ApiOperationalHealthProbeService : BackgroundService
                 // Run the four PostgreSQL-using checks serially under one
                 // deadline. Readiness runs outside this gate and retains its
                 // two dedicated pool permits.
-                var postgres = await ProbeAsync(
+                var postgresProbe = await ProbeAsync(
                     _postgresProbe,
                     (elapsed, error) => new DependencyHealth(false, elapsed, error),
+                    health => health.Ok,
                     timeout.Token,
                     stoppingToken,
                     stopwatch);
-                var qdrant = await ProbeAsync(
+                var qdrantProbe = await ProbeAsync(
                     _qdrantProbe,
                     (elapsed, error) => new DependencyHealth(false, elapsed, error),
+                    health => health.Ok,
                     timeout.Token,
                     stoppingToken,
                     stopwatch);
-                var discovery = await ProbeAsync(
+                var discoveryProbe = await ProbeAsync(
                     _discoveryProbe,
                     (elapsed, error) => new DiscoveryQualityHealth(
                         false, elapsed, 0, 0, 0, 0, 0, null,
                         new Dictionary<string, long>(), 0, null, error),
+                    health => health.ExpectedModelVersion is not null,
                     timeout.Token,
                     stoppingToken,
                     stopwatch);
-                var audio = await ProbeAsync(
+                var audioProbe = await ProbeAsync(
                     _audioProbe,
                     (elapsed, error) => new AudioFeatureHealth(
                         false, elapsed, 0, 0, 0, 0, 0, 0, 0, 0, null, null, error),
+                    HasAudioFeatureSample,
                     timeout.Token,
                     stoppingToken,
                     stopwatch);
@@ -231,13 +285,38 @@ public sealed class ApiOperationalHealthProbeService : BackgroundService
                 var previous = _state.Snapshot;
                 if (previous.Known)
                 {
-                    postgres = PreservePreviousTimeout(postgres, previous.Postgres);
-                    qdrant = PreservePreviousTimeout(qdrant, previous.Qdrant);
-                    discovery = PreservePreviousTimeout(discovery, previous.DiscoveryQuality);
-                    audio = PreservePreviousTimeout(audio, previous.AudioFeatures);
+                    postgresProbe = postgresProbe with
+                    {
+                        Value = PreservePreviousTimeout(postgresProbe.Value, previous.Postgres),
+                    };
+                    qdrantProbe = qdrantProbe with
+                    {
+                        Value = PreservePreviousTimeout(qdrantProbe.Value, previous.Qdrant),
+                    };
+                    discoveryProbe = discoveryProbe with
+                    {
+                        Value = PreservePreviousTimeout(discoveryProbe.Value, previous.DiscoveryQuality),
+                    };
+                    audioProbe = audioProbe with
+                    {
+                        Value = PreservePreviousTimeout(audioProbe.Value, previous.AudioFeatures),
+                    };
                 }
 
-                _state.Publish(postgres, qdrant, discovery, audio, _timeProvider.GetUtcNow());
+                var postgres = postgresProbe.Value;
+                var qdrant = qdrantProbe.Value;
+                var discovery = discoveryProbe.Value;
+                var audio = audioProbe.Value;
+                _state.PublishProbeResults(
+                    postgres,
+                    qdrant,
+                    discovery,
+                    audio,
+                    _timeProvider.GetUtcNow(),
+                    postgresProbe.Completed,
+                    qdrantProbe.Completed,
+                    discoveryProbe.Completed,
+                    audioProbe.Completed);
                 if (!postgres.Ok || !qdrant.Ok || !discovery.Ok)
                 {
                     _logger.LogWarning(
@@ -259,7 +338,7 @@ public sealed class ApiOperationalHealthProbeService : BackgroundService
     private void PublishTimeoutSnapshot(long elapsedMilliseconds)
     {
         const string error = "Timeout";
-        _state.Publish(
+        _state.PublishProbeResults(
             new DependencyHealth(false, elapsedMilliseconds, error),
             new DependencyHealth(false, elapsedMilliseconds, error),
             new DiscoveryQualityHealth(
@@ -268,7 +347,11 @@ public sealed class ApiOperationalHealthProbeService : BackgroundService
             new AudioFeatureHealth(
                 false, elapsedMilliseconds, 0, 0, 0, 0, 0, 0, 0, 0,
                 null, null, error),
-            _timeProvider.GetUtcNow());
+            _timeProvider.GetUtcNow(),
+            postgresProbeCompleted: false,
+            qdrantProbeCompleted: false,
+            discoveryProbeCompleted: false,
+            audioProbeCompleted: false);
         _logger.LogWarning(
             "api_operational_health_probe_degraded postgres={PostgresError} qdrant={QdrantError} discovery={DiscoveryError} audio={AudioError}",
             error,
@@ -292,16 +375,24 @@ public sealed class ApiOperationalHealthProbeService : BackgroundService
         AudioFeatureHealth previous) =>
         current.Error == "Timeout" && previous.Ok ? previous : current;
 
-    private static async Task<T> ProbeAsync<T>(
+    private static bool HasAudioFeatureSample(AudioFeatureHealth health) =>
+        health.TargetCount > 0
+        || health.Error is "empty" or "stale" or "empty,stale";
+
+    private readonly record struct ProbeResult<T>(T Value, bool Completed);
+
+    private static async Task<ProbeResult<T>> ProbeAsync<T>(
         Func<CancellationToken, Task<T>> probe,
         Func<long, string, T> failureResult,
+        Func<T, bool> successfulSample,
         CancellationToken probeToken,
         CancellationToken stoppingToken,
         Stopwatch stopwatch)
     {
         try
         {
-            return await probe(probeToken);
+            var value = await probe(probeToken);
+            return new ProbeResult<T>(value, successfulSample(value));
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
         {
@@ -309,11 +400,15 @@ public sealed class ApiOperationalHealthProbeService : BackgroundService
         }
         catch (OperationCanceledException) when (probeToken.IsCancellationRequested)
         {
-            return failureResult(stopwatch.ElapsedMilliseconds, "Timeout");
+            return new ProbeResult<T>(
+                failureResult(stopwatch.ElapsedMilliseconds, "Timeout"),
+                Completed: false);
         }
         catch (Exception exception)
         {
-            return failureResult(stopwatch.ElapsedMilliseconds, exception.GetType().Name);
+            return new ProbeResult<T>(
+                failureResult(stopwatch.ElapsedMilliseconds, exception.GetType().Name),
+                Completed: false);
         }
     }
 }

@@ -77,7 +77,8 @@ public sealed class ApiOperationalHealthProbeServiceTests
 
         Assert.Equal(StatusCodes.Status503ServiceUnavailable, response.StatusCode);
         Assert.Equal("degraded", response.Payload.status);
-        Assert.True(response.Payload.dependencies.Postgres.Ok);
+        Assert.False(response.Payload.dependencies.Postgres.Ok);
+        Assert.Equal("Stale", response.Payload.dependencies.Postgres.Error);
         Assert.Equal(769_410, response.Payload.discoveryQuality.Total);
     }
 
@@ -169,12 +170,13 @@ public sealed class ApiOperationalHealthProbeServiceTests
     public async Task ComponentTimeout_PreservesPreviousHealthyComponent()
     {
         var state = new ApiOperationalHealthProbeState();
+        var checkedAt = DateTimeOffset.UtcNow;
         state.Publish(
             new DependencyHealth(true, 1),
             new DependencyHealth(true, 2),
             Discovery(),
             Audio(),
-            DateTimeOffset.UtcNow);
+            checkedAt);
 
         static async Task<AudioFeatureHealth> Never(CancellationToken token)
         {
@@ -194,6 +196,88 @@ public sealed class ApiOperationalHealthProbeServiceTests
 
         Assert.True(state.Snapshot.AudioFeatures.Ok);
         Assert.Equal(94, state.Snapshot.AudioFeatures.ActionablePendingCount);
+        Assert.Equal(checkedAt, state.Snapshot.AudioFeaturesLastSuccessfulAt);
+    }
+
+    [Fact]
+    public async Task RepeatedComponentTimeouts_DoNotRefreshSuccessTimesAndEventuallyWarn()
+    {
+        var checkedAt = new DateTimeOffset(2026, 9, 1, 0, 0, 0, TimeSpan.Zero);
+        var time = new MutableTimeProvider(checkedAt);
+        var state = new ApiOperationalHealthProbeState();
+        state.Publish(
+            new DependencyHealth(true, 1),
+            new DependencyHealth(true, 2),
+            Discovery(),
+            Audio(),
+            checkedAt);
+
+        static async Task<T> Never<T>(CancellationToken token)
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, token);
+            throw new InvalidOperationException();
+        }
+
+        var service = CreateService(
+            Never<DependencyHealth>,
+            Never<DependencyHealth>,
+            Never<DiscoveryQualityHealth>,
+            Never<AudioFeatureHealth>,
+            state,
+            TimeSpan.FromMilliseconds(40),
+            timeProvider: time);
+
+        time.Advance(TimeSpan.FromMinutes(5));
+        Assert.True(await service.ProbeOnceAsync().WaitAsync(TimeSpan.FromSeconds(2)));
+        time.Advance(TimeSpan.FromMinutes(11));
+        Assert.True(await service.ProbeOnceAsync().WaitAsync(TimeSpan.FromSeconds(2)));
+
+        var snapshot = state.Snapshot;
+        Assert.Equal(time.GetUtcNow(), snapshot.CheckedAt);
+        Assert.Equal(checkedAt, snapshot.PostgresLastSuccessfulAt);
+        Assert.Equal(checkedAt, snapshot.QdrantLastSuccessfulAt);
+        Assert.Equal(checkedAt, snapshot.DiscoveryQualityLastSuccessfulAt);
+        Assert.Equal(checkedAt, snapshot.AudioFeaturesLastSuccessfulAt);
+
+        var response = HealthEndpoints.CreateOperationalHealthResponse(
+            snapshot,
+            time.GetUtcNow(),
+            ApiOperationalHealthProbeService.MaximumSnapshotAge);
+
+        Assert.Equal(StatusCodes.Status503ServiceUnavailable, response.StatusCode);
+        Assert.Equal("Stale", response.Payload.dependencies.Postgres.Error);
+        Assert.Equal("Stale", response.Payload.dependencies.Qdrant.Error);
+        Assert.Equal("Stale", response.Payload.discoveryQuality.Error);
+        Assert.Equal("Stale", response.Payload.audioFeatures.Error);
+    }
+
+    [Fact]
+    public async Task FailedComponentProbe_DoesNotAdvanceItsLastSuccessfulTime()
+    {
+        var checkedAt = new DateTimeOffset(2026, 9, 1, 0, 0, 0, TimeSpan.Zero);
+        var time = new MutableTimeProvider(checkedAt);
+        var state = new ApiOperationalHealthProbeState();
+        state.Publish(
+            new DependencyHealth(true, 1),
+            new DependencyHealth(true, 2),
+            Discovery(),
+            Audio(),
+            checkedAt);
+
+        var service = CreateService(
+            _ => throw new InvalidOperationException("probe failed"),
+            _ => Task.FromResult(new DependencyHealth(true, 2)),
+            _ => Task.FromResult(Discovery()),
+            _ => Task.FromResult(Audio()),
+            state,
+            timeProvider: time);
+
+        time.Advance(TimeSpan.FromMinutes(1));
+        Assert.True(await service.ProbeOnceAsync().WaitAsync(TimeSpan.FromSeconds(2)));
+
+        Assert.Equal("InvalidOperationException", state.Snapshot.Postgres.Error);
+        Assert.Equal(checkedAt, state.Snapshot.PostgresLastSuccessfulAt);
+        Assert.Equal(time.GetUtcNow(), state.Snapshot.QdrantLastSuccessfulAt);
     }
 
     [Fact]
@@ -249,7 +333,19 @@ public sealed class ApiOperationalHealthProbeServiceTests
     }
 
     private static ApiOperationalHealthProbeSnapshot HealthySnapshot(DateTimeOffset checkedAt) =>
-        new(true, new DependencyHealth(true, 1), new DependencyHealth(true, 2), Discovery(), Audio(), checkedAt);
+        new ApiOperationalHealthProbeSnapshot(
+            true,
+            new DependencyHealth(true, 1),
+            new DependencyHealth(true, 2),
+            Discovery(),
+            Audio(),
+            checkedAt)
+        {
+            PostgresLastSuccessfulAt = checkedAt,
+            QdrantLastSuccessfulAt = checkedAt,
+            DiscoveryQualityLastSuccessfulAt = checkedAt,
+            AudioFeaturesLastSuccessfulAt = checkedAt,
+        };
 
     private static DiscoveryQualityHealth Discovery() =>
         new(true, 100, 769_410, 0.64, 0.01, 0.57, 0.95, "heuristic-v3",
@@ -265,7 +361,8 @@ public sealed class ApiOperationalHealthProbeServiceTests
         Func<CancellationToken, Task<AudioFeatureHealth>> audio,
         ApiOperationalHealthProbeState state,
         TimeSpan? timeout = null,
-        ApiMaintenanceExecutionGate? maintenanceGate = null) =>
+        ApiMaintenanceExecutionGate? maintenanceGate = null,
+        TimeProvider? timeProvider = null) =>
         new(
             postgres,
             qdrant,
@@ -275,9 +372,18 @@ public sealed class ApiOperationalHealthProbeServiceTests
             maintenanceGate ?? new ApiMaintenanceExecutionGate(),
             state,
             NullLogger<ApiOperationalHealthProbeService>.Instance,
-            TimeProvider.System,
+            timeProvider ?? TimeProvider.System,
             TimeSpan.FromSeconds(30),
             timeout ?? TimeSpan.FromSeconds(2));
+
+    private sealed class MutableTimeProvider(DateTimeOffset utcNow) : TimeProvider
+    {
+        private DateTimeOffset _utcNow = utcNow;
+
+        public override DateTimeOffset GetUtcNow() => _utcNow;
+
+        public void Advance(TimeSpan duration) => _utcNow += duration;
+    }
 
     private static ApiDatabaseConnectionBudget CreateConnectionBudget() =>
         new(new ApiBulkheadOptions(

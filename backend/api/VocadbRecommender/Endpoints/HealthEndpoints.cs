@@ -79,21 +79,82 @@ internal static class HealthEndpoints
             ? now - checkedAt
             : TimeSpan.MaxValue;
         var fresh = snapshot.Known && snapshotAge <= maximumSnapshotAge;
+        var postgres = ApplyComponentFreshness(
+            snapshot.Postgres,
+            snapshot.PostgresLastSuccessfulAt,
+            now,
+            maximumSnapshotAge);
+        var qdrant = ApplyComponentFreshness(
+            snapshot.Qdrant,
+            snapshot.QdrantLastSuccessfulAt,
+            now,
+            maximumSnapshotAge);
+        var discoveryQuality = ApplyComponentFreshness(
+            snapshot.DiscoveryQuality,
+            snapshot.DiscoveryQualityLastSuccessfulAt,
+            now,
+            maximumSnapshotAge);
+        var audioFeatures = ApplyComponentFreshness(
+            snapshot.AudioFeatures,
+            snapshot.AudioFeaturesLastSuccessfulAt,
+            now,
+            maximumSnapshotAge);
         var healthy = fresh
-            && snapshot.Postgres.Ok
-            && snapshot.Qdrant.Ok
-            && snapshot.DiscoveryQuality.Ok;
+            && postgres.Ok
+            && qdrant.Ok
+            && discoveryQuality.Ok;
         var payload = new HealthPayload(
             healthy ? "ok" : "degraded",
-            new HealthDependencies(snapshot.Postgres, snapshot.Qdrant),
-            snapshot.DiscoveryQuality,
-            snapshot.AudioFeatures);
+            new HealthDependencies(postgres, qdrant),
+            discoveryQuality,
+            audioFeatures);
         return new OperationalHealthEndpointResponse(
             payload,
             healthy
                 ? StatusCodes.Status200OK
                 : StatusCodes.Status503ServiceUnavailable);
     }
+
+    private static DependencyHealth ApplyComponentFreshness(
+        DependencyHealth health,
+        DateTimeOffset? lastSuccessfulAt,
+        DateTimeOffset now,
+        TimeSpan maximumAge)
+    {
+        if (IsFresh(lastSuccessfulAt, now, maximumAge) || !health.Ok)
+            return health;
+        return health with { Ok = false, Error = "Stale" };
+    }
+
+    private static DiscoveryQualityHealth ApplyComponentFreshness(
+        DiscoveryQualityHealth health,
+        DateTimeOffset? lastSuccessfulAt,
+        DateTimeOffset now,
+        TimeSpan maximumAge)
+    {
+        if (IsFresh(lastSuccessfulAt, now, maximumAge) || !health.Ok)
+            return health;
+        return health with { Ok = false, Error = "Stale" };
+    }
+
+    private static AudioFeatureHealth ApplyComponentFreshness(
+        AudioFeatureHealth health,
+        DateTimeOffset? lastSuccessfulAt,
+        DateTimeOffset now,
+        TimeSpan maximumAge)
+    {
+        if (IsFresh(lastSuccessfulAt, now, maximumAge) || !health.Ok)
+            return health;
+        return health with { Ok = false, Error = "Stale" };
+    }
+
+    private static bool IsFresh(
+        DateTimeOffset? lastSuccessfulAt,
+        DateTimeOffset now,
+        TimeSpan maximumAge) =>
+        lastSuccessfulAt is { } checkedAt
+        && checkedAt <= now
+        && now - checkedAt <= maximumAge;
 }
 
 internal record HealthPayload(
