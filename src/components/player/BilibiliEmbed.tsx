@@ -3,6 +3,7 @@ import type { PV } from '../../types/vocadb';
 import { usePlayerStore } from '../../stores/playerStore';
 import { useProgressStore } from '../../stores/progressStore';
 import { buildBilibiliEmbedUrl } from '../../utils/playablePV';
+import { useTranslateSourceText } from '../../i18n';
 
 interface BilibiliEmbedProps {
   pv: PV;
@@ -11,6 +12,7 @@ interface BilibiliEmbedProps {
 }
 
 export default function BilibiliEmbed({ pv, isPlaying, duration }: BilibiliEmbedProps) {
+  const t = useTranslateSourceText();
   const initialAutoplayRef = useRef(isPlaying);
   const embedUrl = useMemo(
     // The official cross-origin iframe has no parent API for setting an exact
@@ -30,9 +32,9 @@ export default function BilibiliEmbed({ pv, isPlaying, duration }: BilibiliEmbed
 
   useEffect(() => {
     if (embedUrl) return;
-    setError('Bilibiliの動画IDを判定できませんでした');
+    setError(t('Bilibiliの動画IDを判定できませんでした'));
     tryNextPV();
-  }, [embedUrl, setError, tryNextPV]);
+  }, [embedUrl, setError, t, tryNextPV]);
 
   if (!embedUrl) return null;
 

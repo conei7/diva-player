@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { usePlayerStore } from '../../stores/playerStore';
 import { storage } from '../../utils/storage';
+import { useTranslate } from '../../i18n';
 
 const SLEEP_TIMER_KEY = 'sleepTimerUntil';
 const TIMER_OPTIONS = [15, 30, 60, 90];
@@ -13,6 +14,7 @@ function formatRemaining(ms: number): string {
 }
 
 export default function SleepTimer() {
+  const t = useTranslate();
   const pause = usePlayerStore(s => s.pause);
   const [timerUntil, setTimerUntil] = useState<number | null>(() => storage.get<number>(SLEEP_TIMER_KEY));
   const [now, setNow] = useState(() => Date.now());
@@ -64,7 +66,7 @@ export default function SleepTimer() {
       <button
         className="btn-ghost p-1.5 rounded-lg"
         onClick={() => setIsOpen(open => !open)}
-        title={isActive ? `スリープ: ${formatRemaining(remainingMs)}` : 'スリープタイマー'}
+        title={isActive ? t('sleepUntil', { time: formatRemaining(remainingMs) }) : t('sleepTimer')}
         style={{ color: isActive ? 'var(--color-accent-cyan)' : 'var(--color-text-muted)' }}
       >
         <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor">
@@ -92,7 +94,7 @@ export default function SleepTimer() {
           tabIndex={-1}
         >
           <div className="text-xs font-semibold px-2 pb-1" style={{ color: 'var(--color-text-secondary)' }}>
-            スリープ
+            {t('sleep')}
           </div>
           <div className="grid grid-cols-2 gap-1">
             {TIMER_OPTIONS.map(minutes => (
@@ -101,7 +103,7 @@ export default function SleepTimer() {
                 className="btn-ghost rounded-md px-2 py-1.5 text-xs"
                 onClick={() => setTimer(minutes)}
               >
-                {minutes}分
+                {t('minutes', { count: minutes })}
               </button>
             ))}
           </div>
@@ -111,7 +113,7 @@ export default function SleepTimer() {
               onClick={clearTimer}
               style={{ color: 'var(--color-accent-pink)' }}
             >
-              解除 ({formatRemaining(remainingMs)})
+              {t('cancelTimer', { time: formatRemaining(remainingMs) })}
             </button>
           )}
         </div>

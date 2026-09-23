@@ -5,6 +5,7 @@ import { usePlayerInteractionStore } from '../../stores/playerInteractionStore';
 import { usePlayerSwipeGesture } from '../../hooks/usePlayerSwipeGesture';
 import PlayerEmbed from '../player/PlayerEmbed';
 import { getPlaybackOwnership } from '../../services/playbackOwnership';
+import { useTranslateSourceText } from '../../i18n';
 
 /**
  * GlobalPlayer - 永続化されたプレイヤーコンポーネント
@@ -17,6 +18,7 @@ import { getPlaybackOwnership } from '../../services/playbackOwnership';
  * 3. どちらでもない: 画面外または opacity: 0 で隠す。
  */
 export default function GlobalPlayer() {
+  const t = useTranslateSourceText();
   const location = useLocation();
   const navigate = useNavigate();
   const {
@@ -212,8 +214,8 @@ export default function GlobalPlayer() {
               event.stopPropagation();
               closePlayer();
             }}
-            title="ミニプレイヤーを閉じる"
-            aria-label="ミニプレイヤーを閉じる"
+            title={t('ミニプレイヤーを閉じる')}
+            aria-label={t('ミニプレイヤーを閉じる')}
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
               <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" />
@@ -229,9 +231,9 @@ export default function GlobalPlayer() {
               className="btn-ghost p-1.5 rounded-full mini-player-control mini-player-optional"
               onClick={toggleShuffle}
               disabled={!canShuffle && !shuffleEnabled}
-              title={shuffleEnabled ? 'シャッフルOFF' : 'シャッフルON'}
+              title={t(shuffleEnabled ? 'シャッフルOFF' : 'シャッフルON')}
               style={{ color: shuffleEnabled ? 'var(--color-accent-cyan)' : undefined, opacity: canShuffle || shuffleEnabled ? 1 : 0.45 }}
-              aria-label={shuffleEnabled ? 'シャッフルOFF' : canShuffle ? 'シャッフルON' : 'シャッフル不可'}
+              aria-label={t(shuffleEnabled ? 'シャッフルOFF' : canShuffle ? 'シャッフルON' : 'シャッフル不可')}
             >
               <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
                 <path d="M10.59 9.17 5.41 4 4 5.41l5.17 5.17 1.42-1.41zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4h-5.5zm.33 9.41-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04-3.13-3.13z"/>
@@ -241,7 +243,7 @@ export default function GlobalPlayer() {
             <button
               className="btn-ghost p-1.5 rounded-full relative mini-player-control mini-player-optional"
               onClick={toggleLoopMode}
-              title={loopMode === 'none' ? 'ループOFF' : loopMode === 'all' ? '全体ループ' : '1曲ループ'}
+              title={t(loopMode === 'none' ? 'ループOFF' : loopMode === 'all' ? '全体ループ' : '1曲ループ')}
               style={{ color: loopMode !== 'none' ? 'var(--color-accent-cyan)' : undefined }}
             >
               <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
@@ -256,7 +258,7 @@ export default function GlobalPlayer() {
 
           {/* 中央: メインコントロール */}
           <div className="flex items-center gap-1">
-            <button className="btn-ghost p-1.5 rounded-full mini-player-control" onClick={previous} title="前の曲" aria-label="前の曲">
+            <button className="btn-ghost p-1.5 rounded-full mini-player-control" onClick={previous} title={t('前の曲')} aria-label={t('前の曲')}>
               <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
                 <path d="M6 6h2v12H6zm3.5 6 8.5 6V6z" />
               </svg>
@@ -272,8 +274,8 @@ export default function GlobalPlayer() {
                 boxShadow: isPlaying ? '0 0 12px rgba(6,214,160,0.35)' : 'none',
               }}
               onClick={() => isPlaying ? pause() : resume()}
-              title={isPlaying ? '一時停止' : '再生'}
-              aria-label={isPlaying ? '一時停止' : '再生'}
+              title={t(isPlaying ? '一時停止' : '再生')}
+              aria-label={t(isPlaying ? '一時停止' : '再生')}
             >
               {isPlaying ? (
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="white">
@@ -286,7 +288,7 @@ export default function GlobalPlayer() {
               )}
             </button>
 
-            <button className="btn-ghost p-1.5 rounded-full mini-player-control" onClick={next} title="次の曲" aria-label="次の曲">
+            <button className="btn-ghost p-1.5 rounded-full mini-player-control" onClick={next} title={t('次の曲へ進む')} aria-label={t('次の曲へ進む')}>
               <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
                 <path d="m6 18 8.5-6L6 6v12zM16 6v12h2V6h-2z" />
               </svg>
@@ -299,8 +301,8 @@ export default function GlobalPlayer() {
               className="btn-ghost p-1.5 rounded-full relative mini-player-control"
               data-testid="mini-player-queue"
               onClick={toggleQueueDrawer}
-              title="再生キュー"
-              aria-label="再生キュー"
+              title={t('再生キュー')}
+              aria-label={t('再生キュー')}
               style={{ color: queueDrawerOpen ? 'var(--color-accent-purple)' : undefined }}
             >
               <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
@@ -319,7 +321,8 @@ export default function GlobalPlayer() {
             <button
               className="btn-ghost p-1.5 rounded-full mini-player-control"
               onClick={() => navigate(`/watch?v=${currentSong.id}`)}
-              title="全画面で表示"
+              title={t('全画面で表示')}
+              aria-label={t('全画面で表示')}
             >
               <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
                 <path d="M19 19H5V5h7V3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z" />

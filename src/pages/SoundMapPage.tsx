@@ -11,6 +11,8 @@ import { useRatingStore } from '../stores/ratingStore';
 import { useUiStore } from '../stores/uiStore';
 import { clampSoundMapZoom, centerSoundMapOnPoint, fitSoundMapItems, visibleSoundMapItems, type SoundMapViewport } from '../utils/soundMap';
 import { getRatedSongIds } from '../utils/ratedSongs';
+import { useLanguageStore } from '../stores/languageStore';
+import { useTranslateSourceText } from '../i18n';
 
 function readId(value: string | null): number | null {
   const id = Number(value);
@@ -34,6 +36,8 @@ function mapErrorMessage(error: unknown): string {
 }
 
 export default function SoundMapPage() {
+  const t = useTranslateSourceText();
+  const language = useLanguageStore(state => state.language);
   const currentSong = usePlayerStore(state => state.currentSong);
   const ratings = useRatingStore(state => state.ratings);
   const hiddenSongs = useHiddenSongStore(state => state.hiddenSongs);
@@ -196,41 +200,41 @@ export default function SoundMapPage() {
     <main className="mx-auto w-full max-w-7xl px-3 py-4 pb-32 sm:px-6 sm:py-6" data-testid="sound-map-page">
       <div className="mb-5 max-w-3xl">
         <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-300">Sound Map</p>
-        <h1 className="mt-1 text-2xl font-bold text-white sm:text-3xl">曲調マップ</h1>
-        <p className="mt-2 text-sm leading-6 text-neutral-400">音響特徴を2次元に配置した探索用マップです。軸にジャンルなどの意味はなく、点同士の近さは似ている目安です。点を選ぶだけでは再生されません。</p>
-        {!localPreviewMode && currentSong && <p className="mt-3 text-xs text-cyan-200">再生中: {currentSong.name}</p>}
-        {demoMode && <p className="mt-3 rounded-lg bg-cyan-300/10 px-3 py-2 text-xs text-cyan-100">画面確認用デモです。点の選択・ズーム・起点変更を試せます。</p>}
-        {pilotMode && <p className="mt-3 rounded-lg bg-emerald-300/10 px-3 py-2 text-xs text-emerald-100">実データpilotです。Qdrantの音響ベクトルとPostgreSQLの曲名から生成した小規模マップを表示しています。</p>}
+        <h1 className="mt-1 text-2xl font-bold text-white sm:text-3xl">{t('曲調マップ')}</h1>
+        <p className="mt-2 text-sm leading-6 text-neutral-400">{t('音響特徴を2次元に配置した探索用マップです。軸にジャンルなどの意味はなく、点同士の近さは似ている目安です。点を選ぶだけでは再生されません。')}</p>
+        {!localPreviewMode && currentSong && <p className="mt-3 text-xs text-cyan-200">{t('再生中: {song}', { song: currentSong.name })}</p>}
+        {demoMode && <p className="mt-3 rounded-lg bg-cyan-300/10 px-3 py-2 text-xs text-cyan-100">{t('画面確認用デモです。点の選択・ズーム・起点変更を試せます。')}</p>}
+        {pilotMode && <p className="mt-3 rounded-lg bg-emerald-300/10 px-3 py-2 text-xs text-emerald-100">{t('実データpilotです。Qdrantの音響ベクトルとPostgreSQLの曲名から生成した小規模マップを表示しています。')}</p>}
       </div>
 
       {!seedId ? (
         <section className="rounded-2xl border border-white/[0.08] bg-white/[0.03] p-6 text-sm text-neutral-300">
-          曲を再生するか、履歴のある曲から曲調マップを開いてください。
+          {t('曲を再生するか、履歴のある曲から曲調マップを開いてください。')}
         </section>
       ) : loading && !result ? (
-        <div className="rounded-3xl border border-white/[0.06] bg-white/[0.03] py-24 text-center text-neutral-400" aria-busy="true">音響特徴と座標を読み込んでいます…</div>
+        <div className="rounded-3xl border border-white/[0.06] bg-white/[0.03] py-24 text-center text-neutral-400" aria-busy="true">{t('音響特徴と座標を読み込んでいます…')}</div>
       ) : error && !result ? (
         <section className="rounded-2xl border border-red-400/20 bg-red-400/10 p-6 text-red-100" role="alert">
-          <p>{error}</p>
-          <button type="button" onClick={() => setRetryKey(key => key + 1)} className="mt-4 rounded-lg bg-white px-4 py-2 text-sm font-semibold text-black">再試行</button>
+          <p>{t(error)}</p>
+          <button type="button" onClick={() => setRetryKey(key => key + 1)} className="mt-4 rounded-lg bg-white px-4 py-2 text-sm font-semibold text-black">{t('再試行')}</button>
         </section>
       ) : result ? (
         <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_20rem]">
           <section className="overflow-hidden rounded-2xl border border-white/[0.08] bg-neutral-950 p-2 sm:p-3">
-            {error && <p className="mb-2 rounded-lg bg-amber-400/10 px-2 py-1.5 text-xs text-amber-100" role="alert">{error} 前回のマップを表示しています。</p>}
+            {error && <p className="mb-2 rounded-lg bg-amber-400/10 px-2 py-1.5 text-xs text-amber-100" role="alert">{t(error)}{t(' 前回のマップを表示しています。')}</p>}
             <div className="mb-2 flex flex-wrap items-center justify-between gap-2 px-1 text-xs text-neutral-400">
-              <span>起点: <strong className="text-white">{result.origin.name}</strong></span>
-              <span>{result.coordinateCount.toLocaleString()}曲 · {result.method} · <time dateTime={result.generatedAt}>データ更新: {new Intl.DateTimeFormat('ja-JP').format(new Date(result.generatedAt))}</time></span>
+              <span>{t('起点')}: <strong className="text-white">{result.origin.name}</strong></span>
+              <span>{result.coordinateCount.toLocaleString()}{language === 'ja' ? '曲' : ` ${t('曲')}`} · {result.method} · <time dateTime={result.generatedAt}>{t('データ更新: ')}{new Intl.DateTimeFormat(language === 'ja' ? 'ja-JP' : 'en').format(new Date(result.generatedAt))}</time></span>
             </div>
             <SoundMapCanvas items={items} knownIds={displayKnownIds} result={result} selectedId={selectedId} viewport={viewport} onSelect={selectPoint} />
-            {result.state !== 'ready' && <p className="mt-2 px-1 text-xs text-amber-200">{result.state === 'no_audio' ? '起点の音響特徴がないため、座標だけを表示しています。' : '近い曲の候補がまだマップにありません。'}</p>}
+            {result.state !== 'ready' && <p className="mt-2 px-1 text-xs text-amber-200">{t(result.state === 'no_audio' ? '起点の音響特徴がないため、座標だけを表示しています。' : '近い曲の候補がまだマップにありません。')}</p>}
             <div className="mt-2 flex flex-wrap items-center gap-2 px-1">
               <button type="button" className="btn-ghost rounded-lg px-3 py-2 text-xs" onClick={() => updateViewport({ ...viewport, zoom: clampSoundMapZoom(viewport.zoom - 0.35) })}>−</button>
               <span className="min-w-14 text-center text-xs text-neutral-400">{Math.round(viewport.zoom * 100)}%</span>
               <button type="button" className="btn-ghost rounded-lg px-3 py-2 text-xs" onClick={() => updateViewport({ ...viewport, zoom: clampSoundMapZoom(viewport.zoom + 0.35) })}>＋</button>
-              <button type="button" className="btn-ghost rounded-lg px-3 py-2 text-xs" onClick={focusOrigin}>起点を表示</button>
-              <button type="button" className="btn-ghost rounded-lg px-3 py-2 text-xs disabled:cursor-not-allowed disabled:opacity-40" onClick={goBackToPreviousExploration} disabled={explorationHistory.length === 0}>前の探索に戻る</button>
-              <span className="ml-auto text-[11px] text-neutral-500">◆ 起点 · ● 再生/履歴あり · ○ 未再生</span>
+              <button type="button" className="btn-ghost rounded-lg px-3 py-2 text-xs" onClick={focusOrigin}>{t('起点を表示')}</button>
+              <button type="button" className="btn-ghost rounded-lg px-3 py-2 text-xs disabled:cursor-not-allowed disabled:opacity-40" onClick={goBackToPreviousExploration} disabled={explorationHistory.length === 0}>{t('前の探索に戻る')}</button>
+              <span className="ml-auto text-[11px] text-neutral-500">◆ {t('起点')} · ● {t('再生/履歴あり')} · ○ {t('未再生')}</span>
             </div>
           </section>
           <SoundMapDetails
@@ -259,6 +263,7 @@ function SoundMapCanvas({ items, knownIds, result, selectedId, viewport, onSelec
   viewport: SoundMapViewport;
   onSelect: (point: SoundMapPoint) => void;
 }) {
+  const t = useTranslateSourceText();
   const viewWidth = 2 / viewport.zoom;
   const viewHeight = 2 / viewport.zoom;
   const viewX = viewport.centerX - viewWidth / 2;
@@ -283,7 +288,7 @@ function SoundMapCanvas({ items, knownIds, result, selectedId, viewport, onSelec
   };
   return (
     <div className="relative h-[420px] w-full overflow-hidden rounded-xl bg-[radial-gradient(circle_at_center,rgba(34,211,238,.1),rgba(10,10,12,1)_70%)] sm:h-[clamp(340px,calc(100vh-24rem),520px)]" data-testid="sound-map-canvas">
-      <svg className="h-full w-full cursor-crosshair" viewBox={`${viewX} ${viewY} ${viewWidth} ${viewHeight}`} role="img" aria-label="曲調マップ。点を選択すると詳細を表示します。" preserveAspectRatio="xMidYMid meet" onClick={selectNearestPoint}>
+      <svg className="h-full w-full cursor-crosshair" viewBox={`${viewX} ${viewY} ${viewWidth} ${viewHeight}`} role="img" aria-label={t('曲調マップ。点を選択すると詳細を表示します。')} preserveAspectRatio="xMidYMid meet" onClick={selectNearestPoint}>
         {items.map(point => {
           const origin = point.songId === result.origin.songId;
           const selected = point.songId === selectedId;
@@ -308,7 +313,7 @@ function SoundMapCanvas({ items, knownIds, result, selectedId, viewport, onSelec
           );
         })}
       </svg>
-      {items.length === 0 && <div className="absolute inset-0 flex items-center justify-center text-sm text-neutral-500">表示できる曲がありません</div>}
+      {items.length === 0 && <div className="absolute inset-0 flex items-center justify-center text-sm text-neutral-500">{t('表示できる曲がありません')}</div>}
     </div>
   );
 }
@@ -325,25 +330,26 @@ function SoundMapDetails({ selected, neighbors, selectedId, currentSong, actions
   onSave: () => void;
   onDetails: () => void;
 }) {
-  if (!selected) return <section className="rounded-2xl border border-white/[0.08] bg-white/[0.03] p-5 text-sm text-neutral-400">点を選択してください。</section>;
+  const t = useTranslateSourceText();
+  if (!selected) return <section className="rounded-2xl border border-white/[0.08] bg-white/[0.03] p-5 text-sm text-neutral-400">{t('点を選択してください。')}</section>;
   const playing = currentSong?.id === selected.songId;
   return (
     <section className="rounded-2xl border border-white/[0.08] bg-white/[0.03] p-5">
-      <p className="text-xs font-semibold uppercase tracking-[0.16em] text-cyan-300">選択中</p>
+      <p className="text-xs font-semibold uppercase tracking-[0.16em] text-cyan-300">{t('選択中')}</p>
       <h2 className="mt-2 text-lg font-bold text-white" data-testid="sound-map-selected-title">{selected.name}</h2>
-      <p className="mt-1 text-sm text-neutral-400">{selected.artistString || 'アーティスト情報なし'}</p>
-      {playing && <p className="mt-3 text-xs text-cyan-200">現在再生中</p>}
-      {selected.similarity != null && <p className="mt-3 text-xs text-neutral-500">音響類似度 {(selected.similarity * 100).toFixed(1)}%</p>}
-      {actionsDisabled && <p className="mt-3 text-xs text-neutral-500">再生・保存・詳細は実データ接続後に利用できます。</p>}
+      <p className="mt-1 text-sm text-neutral-400">{selected.artistString || t('アーティスト情報なし')}</p>
+      {playing && <p className="mt-3 text-xs text-cyan-200">{t('現在再生中')}</p>}
+      {selected.similarity != null && <p className="mt-3 text-xs text-neutral-500">{t('音響類似度 ')}{(selected.similarity * 100).toFixed(1)}%</p>}
+      {actionsDisabled && <p className="mt-3 text-xs text-neutral-500">{t('再生・保存・詳細は実データ接続後に利用できます。')}</p>}
       <div className="mt-5 grid grid-cols-2 gap-2">
-        <button type="button" disabled={actionsDisabled} className="rounded-lg bg-cyan-300 px-3 py-2 text-sm font-semibold text-black disabled:cursor-not-allowed disabled:opacity-35" onClick={onPlay}>再生</button>
-        <button type="button" className="btn-ghost rounded-lg px-3 py-2 text-sm" onClick={() => onSelectOrigin(selected)}>この曲の近くを探す</button>
-        <button type="button" disabled={actionsDisabled} className="btn-ghost rounded-lg px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-35" onClick={onSave}>保存</button>
-        <button type="button" disabled={actionsDisabled} className="btn-ghost rounded-lg px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-35" onClick={onDetails}>詳細</button>
+        <button type="button" disabled={actionsDisabled} className="rounded-lg bg-cyan-300 px-3 py-2 text-sm font-semibold text-black disabled:cursor-not-allowed disabled:opacity-35" onClick={onPlay}>{t('再生')}</button>
+        <button type="button" className="btn-ghost rounded-lg px-3 py-2 text-sm" onClick={() => onSelectOrigin(selected)}>{t('この曲の近くを探す')}</button>
+        <button type="button" disabled={actionsDisabled} className="btn-ghost rounded-lg px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-35" onClick={onSave}>{t('保存')}</button>
+        <button type="button" disabled={actionsDisabled} className="btn-ghost rounded-lg px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-35" onClick={onDetails}>{t('詳細')}</button>
       </div>
       {neighbors.length > 0 && (
         <div className="mt-6 border-t border-white/[0.08] pt-4">
-          <p className="text-xs font-semibold text-neutral-400">近くの曲</p>
+          <p className="text-xs font-semibold text-neutral-400">{t('近くの曲')}</p>
           <div className="mt-2 space-y-1">
             {neighbors.map(point => (
               <button
@@ -353,7 +359,7 @@ function SoundMapDetails({ selected, neighbors, selectedId, currentSong, actions
                 className={`block w-full rounded-lg px-2.5 py-2 text-left text-xs transition ${point.songId === selectedId ? 'bg-white/[0.12] text-white' : 'text-neutral-400 hover:bg-white/[0.06] hover:text-white'}`}
               >
                 <span className="block truncate">{point.name}</span>
-                <span className="mt-0.5 block truncate text-[10px] text-neutral-500">{point.artistString || 'アーティスト情報なし'}</span>
+                <span className="mt-0.5 block truncate text-[10px] text-neutral-500">{point.artistString || t('アーティスト情報なし')}</span>
               </button>
             ))}
           </div>

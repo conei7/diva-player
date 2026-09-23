@@ -23,6 +23,8 @@ import {
 import BackupModal from './BackupModal';
 import { Link } from 'react-router';
 import { searchVocalistsByName, selectVocalistVariants } from '../../api/vocadb';
+import { useLanguageStore } from '../../stores/languageStore';
+import { useTranslateSourceText } from '../../i18n';
 
 /* ─── 共通UIパーツ ─── */
 
@@ -43,6 +45,8 @@ interface SettingsModalProps {
 }
 
 export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
+  const t = useTranslateSourceText();
+  const language = useLanguageStore(state => state.language);
   const [message, setMessage] = useState('');
   const [draftFilters, setDraftFilters] = useState<GlobalFilterSettings>(DEFAULT_GLOBAL_FILTER_SETTINGS);
   const [activeTab, setActiveTab] = useState<'filter' | 'playback' | 'data'>('filter');
@@ -64,6 +68,27 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
   const setSwipeGestureEnabled = usePlayerInteractionStore(state => state.setSwipeGestureEnabled);
   const showRecommendationHints = useRecommendationDisplayStore(state => state.showHints);
   const setShowRecommendationHints = useRecommendationDisplayStore(state => state.setShowHints);
+
+  const summarizeFilters = (settings: GlobalFilterSettings) => {
+    if (language === 'ja') return getGlobalFilterSummary(settings);
+    const summary: string[] = [];
+    if (settings.enabled && settings.minYoutubeViews > 0) summary.push(`YouTube ≥ ${settings.minYoutubeViews.toLocaleString('en-US')} views`);
+    if (settings.enabled && settings.minNicoViews > 0) summary.push(`Niconico ≥ ${settings.minNicoViews.toLocaleString('en-US')} views`);
+    if (settings.enabled && settings.excludedSongTypes.length > 0) {
+      summary.push(`${settings.excludedSongTypes.map(type => t(SONG_TYPE_LABELS[type])).join(', ')} excluded`);
+    }
+    if (settings.enabled && settings.vocalistFilters.length > 0) {
+      const visible = settings.vocalistFilters.filter((item, index, all) => (
+        !item.variantGroup || all.findIndex(candidate => candidate.variantGroup === item.variantGroup) === index
+      ));
+      const mode = settings.vocalistMatchMode === 'Any' ? 'Any vocalist'
+        : settings.vocalistMatchMode === 'All' ? 'All vocalists' : 'Exact match';
+      summary.push(`Vocalists: ${visible.map(item => item.variantGroup ?? item.name).join(', ')} (${mode})`);
+    }
+    if (settings.cooldownHours > 0) summary.push(`Listening cooldown: ${settings.cooldownHours >= 24 ? `${settings.cooldownHours / 24} days` : `${settings.cooldownHours} hours`}`);
+    if (settings.excludeRatedFromDiscovery) summary.push('Hide rated songs from discovery');
+    return summary;
+  };
 
   useEffect(() => {
     if (!isOpen) {
@@ -145,17 +170,17 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
   const applyFilters = () => {
     setGlobalFilterSettings(draftFilters);
     if (hasSearched) void refreshSearch();
-    const summary = getGlobalFilterSummary(draftFilters);
+    const summary = summarizeFilters(draftFilters);
     setMessage(summary.length > 0
-      ? `適用: ${summary.join(' / ')}`
-      : 'フィルターを停止しました。');
+      ? `${t('適用')}: ${summary.join(' / ')}`
+      : t('フィルターを停止しました。'));
   };
 
   const resetFilters = () => {
     resetGlobalFilterSettings();
     setDraftFilters(DEFAULT_GLOBAL_FILTER_SETTINGS);
     if (hasSearched) void refreshSearch();
-    setMessage('フィルターを初期化しました。');
+    setMessage(t('フィルターを初期化しました。'));
   };
 
   const toggleExcludedType = (songType: SongType) => {
@@ -192,8 +217,8 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
   };
 
   return createPortal(
-    <div className="fixed inset-0 z-[70] flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-label="設定">
-      <button type="button" className="absolute inset-0 bg-black/70 backdrop-blur-sm" aria-label="閉じる" onClick={onClose} />
+    <div className="fixed inset-0 z-[70] flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-label={t('設定')}>
+      <button type="button" className="absolute inset-0 bg-black/70 backdrop-blur-sm" aria-label={t('閉じる')} onClick={onClose} />
 
       <div className="relative max-h-[calc(100dvh-2rem)] w-full max-w-lg overflow-y-auto rounded-2xl shadow-2xl"
            style={{ background: 'var(--color-bg-secondary)', border: '1px solid rgba(255,255,255,0.06)' }}>
@@ -201,25 +226,25 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
         {/* ヘッダー */}
         <div className="sticky top-0 z-10 px-5 pt-5 pb-3" style={{ background: 'var(--color-bg-secondary)' }}>
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-base font-bold" style={{ color: 'var(--color-text-primary)' }}>設定</h2>
-            <button type="button" className="btn-ghost rounded-full w-8 h-8 flex items-center justify-center" onClick={onClose} aria-label="閉じる">
+            <h2 className="text-base font-bold" style={{ color: 'var(--color-text-primary)' }}>{t('設定')}</h2>
+            <button type="button" className="btn-ghost rounded-full w-8 h-8 flex items-center justify-center" onClick={onClose} aria-label={t('閉じる')}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
             </button>
           </div>
 
           {/* 3タブ */}
-          <div className="settings-tab-bar" role="tablist" aria-label="設定カテゴリ">
+          <div className="settings-tab-bar" role="tablist" aria-label={t('設定カテゴリ')}>
             <button type="button" role="tab" id="settings-tab-filter" aria-controls="settings-panel-filter" aria-selected={activeTab === 'filter'} className="settings-tab" data-active={activeTab === 'filter'} onClick={() => setActiveTab('filter')}>
               <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M3 17v2h6v-2H3zM3 5v2h10V5H3zm10 16v-2h8v-2h-8v-2h-2v6h2zM7 9v2H3v2h4v2h2V9H7zm14 4v-2H11v2h10zm-6-4h2V7h4V5h-4V3h-2v6z"/></svg>
-              表示・発見
+              {t('表示・発見')}
             </button>
             <button type="button" role="tab" id="settings-tab-playback" aria-controls="settings-panel-playback" aria-selected={activeTab === 'playback'} className="settings-tab" data-active={activeTab === 'playback'} onClick={() => setActiveTab('playback')}>
               <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg>
-              再生・操作
+              {t('再生・操作')}
             </button>
             <button type="button" role="tab" id="settings-tab-data" aria-controls="settings-panel-data" aria-selected={activeTab === 'data'} className="settings-tab" data-active={activeTab === 'data'} onClick={() => setActiveTab('data')}>
               <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
-              データ
+              {t('データ')}
             </button>
           </div>
         </div>
@@ -234,15 +259,15 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
               <div className="settings-section">
                 <div className="settings-section-title">
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M10 18h4v-2h-4v2zM3 6v2h18V6H3zm3 7h12v-2H6v2z"/></svg>
-                  フィルター
+                  {t('フィルター')}
                 </div>
 
                 <div className="setting-row">
                   <div className="setting-row-info">
-                    <span className="setting-row-title">グローバル表示フィルター</span>
+                    <span className="setting-row-title">{t('グローバル表示フィルター')}</span>
                     <span className="setting-row-desc">
-                      再生数・楽曲種別・歌手条件を検索とおすすめへ共通適用
-                      {!draftFilters.enabled && hasConfiguredSongFilters(draftFilters) && '（停止中）'}
+                      {t('再生数・楽曲種別・歌手条件を検索とおすすめへ共通適用')}
+                      {!draftFilters.enabled && hasConfiguredSongFilters(draftFilters) && t('（停止中）')}
                     </span>
                   </div>
                   <ToggleSwitch checked={draftFilters.enabled} onChange={v => updateDraft('enabled', v)} />
@@ -250,12 +275,12 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
 
                 {isDiscoveryFilterActive(savedFilters) && (
                   <p className="rounded-lg px-2.5 py-1.5 text-[11px] mt-1" style={{ background: 'rgba(6, 214, 160, 0.08)', color: 'var(--color-accent-cyan)' }}>
-                    適用中: {getGlobalFilterSummary(savedFilters).join(' / ')}
+                    {t('適用中')}: {summarizeFilters(savedFilters).join(' / ')}
                   </p>
                 )}
                 {filtersAreDirty && (
                   <p className="rounded-lg px-2.5 py-1.5 text-[11px] mt-1 text-amber-200" role="status" style={{ background: 'rgba(251, 191, 36, 0.08)' }}>
-                    未適用の変更あり
+                    {t('未適用の変更あり')}
                   </p>
                 )}
               </div>
@@ -264,31 +289,31 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
               <div className="settings-section" style={draftFilters.enabled ? undefined : { opacity: 0.45 }}>
                 <div className="settings-section-title">
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M16 6l2.29 2.29-4.88 4.88-4-4L2 16.59 3.41 18l6-6 4 4 6.3-6.29L22 12V6h-6z"/></svg>
-                  最低再生数
+                  {t('最低再生数')}
                 </div>
 
                 <div className="grid grid-cols-2 gap-3">
                   <div className="flex flex-col gap-1.5">
                     <span className="text-[11px]" style={{ color: 'var(--color-text-muted)' }}>YouTube</span>
                     <select className="ui-select w-full" defaultValue="" onChange={e => { if (e.target.value) updateDraft('minYoutubeViews', Number(e.target.value)); }}>
-                      <option value="">プリセット</option>
-                      <option value={10_000}>1万</option>
-                      <option value={50_000}>5万</option>
-                      <option value={100_000}>10万</option>
-                      <option value={500_000}>50万</option>
-                      <option value={1_000_000}>100万</option>
+                      <option value="">{t('プリセット')}</option>
+                      <option value={10_000}>10K</option>
+                      <option value={50_000}>50K</option>
+                      <option value={100_000}>100K</option>
+                      <option value={500_000}>500K</option>
+                      <option value={1_000_000}>1M</option>
                     </select>
                     <input className="ui-number-input" type="number" min={0} step={1} value={draftFilters.minYoutubeViews} onChange={e => updateDraft('minYoutubeViews', Math.max(0, Number(e.target.value) || 0))} />
                   </div>
                   <div className="flex flex-col gap-1.5">
-                    <span className="text-[11px]" style={{ color: 'var(--color-text-muted)' }}>ニコニコ</span>
+                    <span className="text-[11px]" style={{ color: 'var(--color-text-muted)' }}>{t('ニコニコ')}</span>
                     <select className="ui-select w-full" defaultValue="" onChange={e => { if (e.target.value) updateDraft('minNicoViews', Number(e.target.value)); }}>
-                      <option value="">プリセット</option>
-                      <option value={1_000}>1千</option>
-                      <option value={5_000}>5千</option>
-                      <option value={10_000}>1万</option>
-                      <option value={50_000}>5万</option>
-                      <option value={100_000}>10万</option>
+                      <option value="">{t('プリセット')}</option>
+                      <option value={1_000}>1K</option>
+                      <option value={5_000}>5K</option>
+                      <option value={10_000}>10K</option>
+                      <option value={50_000}>50K</option>
+                      <option value={100_000}>100K</option>
                     </select>
                     <input className="ui-number-input" type="number" min={0} step={1} value={draftFilters.minNicoViews} onChange={e => updateDraft('minNicoViews', Math.max(0, Number(e.target.value) || 0))} />
                   </div>
@@ -299,7 +324,7 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
               <div className="settings-section" style={draftFilters.enabled ? undefined : { opacity: 0.45 }}>
                 <div className="settings-section-title">
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>
-                  除外する楽曲種別
+                  {t('除外する楽曲種別')}
                 </div>
                 <div className="flex flex-wrap gap-1.5">
                   {SONG_TYPES.map(songType => (
@@ -311,16 +336,16 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                       data-variant="danger"
                       onClick={() => toggleExcludedType(songType)}
                     >
-                      {SONG_TYPE_LABELS[songType]}
+                      {t(SONG_TYPE_LABELS[songType])}
                     </button>
                   ))}
                 </div>
               </div>
 
               <div className="settings-section" style={draftFilters.enabled ? undefined : { opacity: 0.45 }}>
-                <div className="settings-section-title">歌手フィルター</div>
+                <div className="settings-section-title">{t('歌手フィルター')}</div>
                 <p className="mb-2 text-[11px]" style={{ color: 'var(--color-text-muted)' }}>
-                  選んだ歌手・音声ライブラリの曲だけを検索、おすすめ、自動再生、発掘ミックスに表示
+                  {t('選んだ歌手・音声ライブラリの曲だけを検索、おすすめ、自動再生、発掘ミックスに表示')}
                 </p>
                 {draftFilters.vocalistFilters.length > 0 && (
                   <div className="mb-2 flex flex-wrap gap-1.5">
@@ -333,7 +358,7 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                           className="ui-chip-toggle"
                           data-active="true"
                           onClick={() => removeGlobalVocalist(item.id, item.variantGroup)}
-                          title="クリックして解除"
+                          title={t('クリックして解除')}
                         >
                           {item.variantGroup ?? item.name} ×
                         </button>
@@ -345,12 +370,12 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                     className="ui-number-input w-full"
                     value={vocalistQuery}
                     onChange={event => setVocalistQuery(event.target.value)}
-                    placeholder="初音ミク、重音テト…"
-                    aria-label="グローバル歌手フィルターを検索"
+                    placeholder={t('歌手名を入力…')}
+                    aria-label={t('グローバル歌手フィルターを検索')}
                   />
                   {(vocalistLoading || vocalistSuggestions.length > 0) && (
                     <div className="absolute left-0 right-0 top-full z-30 mt-1 max-h-52 overflow-y-auto rounded-xl border border-white/10 bg-[var(--color-surface-elevated)] shadow-xl">
-                      {vocalistLoading && <p className="px-3 py-2 text-xs text-neutral-400">検索中…</p>}
+                      {vocalistLoading && <p className="px-3 py-2 text-xs text-neutral-400">{t('検索中…')}</p>}
                       {!vocalistLoading && vocalistSuggestions.map(artist => (
                         <button
                           key={artist.id}
@@ -371,9 +396,9 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                     value={draftFilters.vocalistMatchMode}
                     onChange={event => updateDraft('vocalistMatchMode', event.target.value as GlobalFilterSettings['vocalistMatchMode'])}
                   >
-                    <option value="Any">いずれかの歌手を含む</option>
-                    <option value="All">すべての歌手を含む</option>
-                    <option value="Exact">選択した歌手だけ（完全一致）</option>
+                    <option value="Any">{t('いずれかの歌手を含む')}</option>
+                    <option value="All">{t('すべての歌手を含む')}</option>
+                    <option value="Exact">{t('選択した歌手だけ（完全一致）')}</option>
                   </select>
                 )}
               </div>
@@ -382,29 +407,29 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
               <div className="settings-section">
                 <div className="setting-row" style={{ paddingTop: 0 }}>
                   <div className="setting-row-info">
-                    <span className="setting-row-title">再生クールダウン</span>
-                    <span className="setting-row-desc">最近聴いた曲を一定時間、おすすめから除外</span>
+                    <span className="setting-row-title">{t('再生クールダウン')}</span>
+                    <span className="setting-row-desc">{t('最近聴いた曲を一定時間、おすすめから除外')}</span>
                   </div>
                   <select className="ui-select" value={draftFilters.cooldownHours} onChange={e => updateDraft('cooldownHours', Number(e.target.value))}>
-                    <option value={0}>なし</option>
-                    <option value={1}>1時間</option>
-                    <option value={6}>6時間</option>
-                    <option value={24}>24時間</option>
-                    <option value={72}>3日</option>
-                    <option value={168}>7日</option>
+                    <option value={0}>{t('なし')}</option>
+                    <option value={1}>{language === 'ja' ? '1時間' : '1 hour'}</option>
+                    <option value={6}>{language === 'ja' ? '6時間' : '6 hours'}</option>
+                    <option value={24}>{language === 'ja' ? '24時間' : '24 hours'}</option>
+                    <option value={72}>{language === 'ja' ? '3日' : '3 days'}</option>
+                    <option value={168}>{language === 'ja' ? '7日' : '7 days'}</option>
                   </select>
                 </div>
                 <div className="setting-row" style={{ paddingBottom: 0 }}>
                   <div className="setting-row-info">
-                    <span className="setting-row-title">評価済みを発見候補から除外</span>
-                    <span className="setting-row-desc">すでに評価した曲をおすすめに出さない</span>
+                    <span className="setting-row-title">{t('評価済みを発見候補から除外')}</span>
+                    <span className="setting-row-desc">{t('すでに評価した曲をおすすめに出さない')}</span>
                   </div>
                   <ToggleSwitch checked={draftFilters.excludeRatedFromDiscovery} onChange={v => updateDraft('excludeRatedFromDiscovery', v)} />
                 </div>
                 <div className="setting-row" style={{ paddingBottom: 0 }}>
                   <div className="setting-row-info">
-                    <span className="setting-row-title">選曲ヒント</span>
-                    <span className="setting-row-desc">カードに「音が近い」などの短いヒントを表示</span>
+                    <span className="setting-row-title">{t('選曲ヒント')}</span>
+                    <span className="setting-row-desc">{t('カードに「音が近い」などの短いヒントを表示')}</span>
                   </div>
                   <ToggleSwitch checked={showRecommendationHints} onChange={setShowRecommendationHints} />
                 </div>
@@ -413,10 +438,10 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
               {/* 適用/初期化 */}
               <div className="flex gap-2">
                 <button type="button" className="btn-primary flex-1" disabled={!filtersAreDirty} onClick={applyFilters}>
-                  適用
+                  {t('適用')}
                 </button>
                 <button type="button" className="btn-secondary px-4" onClick={resetFilters}>
-                  初期化
+                  {t('初期化')}
                 </button>
               </div>
             </div>
@@ -428,21 +453,21 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
               <div className="settings-section">
                 <div className="settings-section-title">
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M21 3H3c-1.11 0-2 .89-2 2v14c0 1.11.89 2 2 2h18c1.11 0 2-.89 2-2V5c0-1.11-.89-2-2-2zm-9 8H3V5h9v6z"/></svg>
-                  PV設定
+                  {t('PV設定')}
                 </div>
                 <div className="setting-row" style={{ paddingTop: 0, paddingBottom: 0 }}>
                   <div className="setting-row-info">
-                    <span className="setting-row-title">優先するサービス</span>
-                    <span className="setting-row-desc">自動は公式PVを優先し、両方公式ならYouTube</span>
+                    <span className="setting-row-title">{t('優先するサービス')}</span>
+                    <span className="setting-row-desc">{t('自動は公式PVを優先し、両方公式ならYouTube')}</span>
                   </div>
                   <select
                     className="ui-select"
                     value={pvPreference}
                     onChange={e => setPVPreference(e.target.value as PVPreference)}
                   >
-                    <option value="auto">自動（公式優先）</option>
+                    <option value="auto">{t('自動（公式優先）')}</option>
                     <option value="Youtube">YouTube</option>
-                    <option value="NicoNicoDouga">ニコニコ</option>
+                    <option value="NicoNicoDouga">{t('ニコニコ')}</option>
                   </select>
                 </div>
               </div>
@@ -450,19 +475,19 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
               <div className="settings-section">
                 <div className="settings-section-title">
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M9 11.24V7.5C9 6.12 10.12 5 11.5 5S14 6.12 14 7.5v3.74c1.21-.81 2-2.18 2-3.74C16 5.01 13.99 3 11.5 3S7 5.01 7 7.5c0 1.56.79 2.93 2 3.74zm9.84 4.63l-4.54-2.26c-.17-.07-.35-.11-.54-.11H13v-6c0-.83-.67-1.5-1.5-1.5S10 6.67 10 7.5v10.74l-3.43-.72c-.08-.01-.15-.03-.24-.03-.31 0-.59.13-.79.33l-.79.8 4.94 4.94c.27.27.65.44 1.06.44h6.79c.75 0 1.33-.55 1.44-1.28l.75-5.27c.01-.07.02-.14.02-.2 0-.62-.38-1.16-.91-1.38z"/></svg>
-                  操作
+                  {t('操作')}
                 </div>
                 <div className="setting-row" style={{ paddingTop: 0, paddingBottom: 0 }}>
                   <div className="setting-row-info">
-                    <span className="setting-row-title">長押しで複数選択</span>
-                    <span className="setting-row-desc">曲カードの長押しで選択モードを開始</span>
+                    <span className="setting-row-title">{t('長押しで複数選択')}</span>
+                    <span className="setting-row-desc">{t('曲カードの長押しで選択モードを開始')}</span>
                   </div>
                   <ToggleSwitch checked={longPressSelectionEnabled} onChange={setLongPressSelectionEnabled} />
                 </div>
                 <div className="setting-row" style={{ paddingTop: 0, paddingBottom: 0 }}>
                   <div className="setting-row-info">
-                    <span className="setting-row-title">PiPのスワイプ操作</span>
-                    <span className="setting-row-desc">左・右で曲送り、上で再生画面を開く（スマホ・タッチ操作のみ）</span>
+                    <span className="setting-row-title">{t('PiPのスワイプ操作')}</span>
+                    <span className="setting-row-desc">{t('左・右で曲送り、上で再生画面を開く（スマホ・タッチ操作のみ）')}</span>
                   </div>
                   <ToggleSwitch checked={swipeGestureEnabled} onChange={setSwipeGestureEnabled} />
                 </div>
@@ -479,29 +504,29 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                     <path d="M12 3v12" /><path d="m7 10 5 5 5-5" /><path d="M5 21h14a2 2 0 0 0 2-2v-4" /><path d="M3 15v4a2 2 0 0 0 2 2" />
                   </svg>
                 </div>
-                <span className="backup-version-badge">完全バックアップ v6</span>
-                <h3>大切なデータをまとめて管理</h3>
-                <p>履歴、評価、プレイリスト、お気に入りP、表示しない曲、表示設定をひとつのJSONファイルとして保存・復元できます。</p>
-                <div className="settings-data-items" aria-label="バックアップ対象">
-                  {['履歴', '評価', 'プレイリスト', 'お気に入りP', '表示しない曲', '表示設定'].map(item => <span key={item}>{item}</span>)}
+                <span className="backup-version-badge">{t('完全バックアップ')} v6</span>
+                <h3>{t('大切なデータをまとめて管理')}</h3>
+                <p>{t('履歴、評価、プレイリスト、お気に入りP、表示しない曲、表示設定をひとつのJSONファイルとして保存・復元できます。')}</p>
+                <div className="settings-data-items" aria-label={t('バックアップ対象')}>
+                  {['履歴', '評価', 'プレイリスト', 'お気に入りP', '表示しない曲', '表示設定'].map(item => <span key={item}>{t(item)}</span>)}
                 </div>
                 <button type="button" className="btn-primary w-full" onClick={() => setBackupOpen(true)}>
-                  データとバックアップを開く
+                  {t('データとバックアップを開く')}
                 </button>
               </div>
 
               <div className="settings-section">
-                <div className="settings-section-title">好みの管理</div>
-                <p className="setting-row-desc mb-3">「表示しない」にした曲の確認と解除は、専用ページから行えます。</p>
+                <div className="settings-section-title">{t('好みの管理')}</div>
+                <p className="setting-row-desc mb-3">{t('「表示しない」にした曲の確認と解除は、専用ページから行えます。')}</p>
                 <Link to="/settings/hidden-songs" className="btn-secondary flex w-full items-center justify-between px-4 py-3" onClick={onClose}>
-                  <span>表示しない曲を管理</span>
+                  <span>{t('表示しない曲を管理')}</span>
                   <span aria-hidden="true">→</span>
                 </Link>
               </div>
 
               <div className="settings-section">
-                <div className="settings-section-title">保存について</div>
-                <p className="setting-row-desc">データはこのブラウザ内に保存されています。端末移行やブラウザデータ消去に備え、定期的な完全バックアップをおすすめします。</p>
+                <div className="settings-section-title">{t('保存について')}</div>
+                <p className="setting-row-desc">{t('データはこのブラウザ内に保存されています。端末移行やブラウザデータ消去に備え、定期的な完全バックアップをおすすめします。')}</p>
               </div>
             </div>
           )}

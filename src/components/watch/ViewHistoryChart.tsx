@@ -12,6 +12,8 @@ import {
   type ViewHistoryRange,
 } from '../../utils/viewHistory';
 import { formatJapaneseViews } from '../../utils/formatViews';
+import { useTranslateSourceText } from '../../i18n';
+import { useLanguageStore } from '../../stores/languageStore';
 
 interface ChartState {
   songId: number;
@@ -45,18 +47,27 @@ const getNiceStep = (roughStep: number): number => {
   return 10 * power;
 };
 
-const formatDateLabel = (date: string, includeYear = false): string => {
-  const [year, month, day] = date.split("-");
-  if (includeYear) return `${Number(year)}/${Number(month)}/${Number(day)}`;
-  return `${Number(month)}/${Number(day)}`;
+const formatDateLabel = (date: string, includeYear: boolean, language: 'ja' | 'en'): string => {
+  return new Intl.DateTimeFormat(language === 'en' ? 'en-US' : 'ja-JP', {
+    month: 'numeric',
+    day: 'numeric',
+    ...(includeYear ? { year: 'numeric' as const } : {}),
+    timeZone: 'UTC',
+  }).format(new Date(`${date}T00:00:00Z`));
 };
 
-const formatChartValue = (value: number): string => {
-  if (value < 0) return `-${formatJapaneseViews(Math.abs(value), { zeroIsMissing: false, fallback: '0' })}`;
-  return formatJapaneseViews(value, { zeroIsMissing: false, fallback: '0' });
+const formatChartValue = (value: number, language: 'ja' | 'en'): string => {
+  const absolute = Math.abs(value);
+  const formatted = language === 'en'
+    ? new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(absolute)
+    : formatJapaneseViews(absolute, { zeroIsMissing: false, fallback: '0' });
+  return value < 0 ? `-${formatted}` : formatted;
 };
 
 export default function ViewHistoryChart({ songId }: { songId: number }) {
+  const t = useTranslateSourceText();
+  const language = useLanguageStore(state => state.language);
+  const nicoLabel = t(SERIES.nico.label);
   const [hoveredPoint, setHoveredPoint] = useState<{
     x: number;
     y: number;
@@ -244,7 +255,7 @@ export default function ViewHistoryChart({ songId }: { songId: number }) {
       .sort((a, b) => a - b)
       .map((index) => ({
         x: getX(data[index].date),
-        label: formatDateLabel(data[index].date, includeYear),
+        label: formatDateLabel(data[index].date, includeYear, language),
       }));
 
     const yTicks = Array.from({ length: Y_TICK_COUNT }, (_, index) => {
@@ -252,7 +263,7 @@ export default function ViewHistoryChart({ songId }: { songId: number }) {
       return {
         value,
         y: getY(value),
-        label: formatChartValue(value),
+        label: formatChartValue(value, language),
       };
     });
 
@@ -269,7 +280,7 @@ export default function ViewHistoryChart({ songId }: { songId: number }) {
       yMax,
       ready: true,
     };
-  }, [data, metric]);
+  }, [data, language, metric]);
 
   return (
     <div
@@ -282,9 +293,9 @@ export default function ViewHistoryChart({ songId }: { songId: number }) {
             className="text-sm font-bold"
             style={{ color: "var(--color-text-primary)" }}
           >
-            再生回数の推移
+            {t('再生回数の推移')}
           </h3>
-          <div className="flex gap-1 shrink-0 max-w-full overflow-x-auto" role="group" aria-label="表示指標">
+          <div className="flex gap-1 shrink-0 max-w-full overflow-x-auto" role="group" aria-label={t('表示指標')}>
           {(['growth', 'cumulative'] as const).map(option => (
             <button
               key={option}
@@ -297,13 +308,13 @@ export default function ViewHistoryChart({ songId }: { songId: number }) {
               }}
               onClick={() => setMetric(option)}
             >
-              {option === 'growth' ? '増加数' : '累計'}
+              {t(option === 'growth' ? '増加数' : '累計')}
             </button>
           ))}
           </div>
         </div>
         <div className="flex min-w-0 flex-wrap items-center justify-between gap-3">
-          <div className="flex gap-1 shrink-0 max-w-full overflow-x-auto" role="group" aria-label="期間">
+          <div className="flex gap-1 shrink-0 max-w-full overflow-x-auto" role="group" aria-label={t('期間')}>
             {(['7d', '30d', '90d', 'all'] as const).map(option => (
               <button
                 key={option}
@@ -316,7 +327,7 @@ export default function ViewHistoryChart({ songId }: { songId: number }) {
                 }}
                 onClick={() => setRange(option)}
               >
-                {option === 'all' ? '全期間' : option.replace('d', '日')}
+                {option === 'all' ? t('全期間') : t('{count}日', { count: Number.parseInt(option, 10) })}
               </button>
             ))}
           </div>
@@ -346,7 +357,7 @@ export default function ViewHistoryChart({ songId }: { songId: number }) {
                 className="w-2 h-2 rounded-full"
                 style={{ background: SERIES.nico.color }}
               ></span>
-              {SERIES.nico.label}
+              {nicoLabel}
             </button>
           )}
           </div>
@@ -355,28 +366,28 @@ export default function ViewHistoryChart({ songId }: { songId: number }) {
 
       {loading ? (
         <div className="grow min-h-[170px] flex items-center justify-center text-sm" style={{ color: "var(--color-text-muted)" }}>
-          履歴を読み込んでいます…
+          {t('履歴を読み込んでいます…')}
         </div>
       ) : chartState.status === 'error' ? (
         <div className="grow min-h-[170px] flex flex-col items-center justify-center gap-3 text-center" role="alert">
-          <span className="text-sm" style={{ color: "var(--color-text-muted)" }}>{chartState.errorMessage}</span>
+          <span className="text-sm" style={{ color: "var(--color-text-muted)" }}>{t(chartState.errorMessage ?? '')}</span>
           <button
             type="button"
             className="px-3 py-1.5 rounded-md text-xs font-semibold border"
             style={{ color: "var(--color-text-primary)", borderColor: "var(--color-border)" }}
             onClick={() => setRetryToken(value => value + 1)}
           >
-            再試行
+            {t('再試行')}
           </button>
         </div>
       ) : !chart.ready ? (
         <div className="grow min-h-[170px] p-4 flex flex-col items-center justify-center text-center">
           <span className="text-xs" style={{ color: "var(--color-text-muted)" }}>
             {data.length === 0
-              ? "この期間の再生履歴はありません。別の期間を選択できます。"
+              ? t('この期間の再生履歴はありません。別の期間を選択できます。')
               : data.length === 1
-                ? "比較できる再生履歴が1点しかありません。別の期間を選択できます。"
-                : "有効な再生数の変化がまだありません。"}
+                ? t('比較できる再生履歴が1点しかありません。別の期間を選択できます。')
+                : t('有効な再生数の変化がまだありません。')}
           </span>
         </div>
       ) : (
@@ -441,7 +452,7 @@ export default function ViewHistoryChart({ songId }: { songId: number }) {
               className="view-history-point absolute w-6 h-6 p-1 rounded-full -translate-x-1/2 -translate-y-1/2 border-2 cursor-pointer transition-transform hover:scale-125"
               role="button"
               tabIndex={0}
-              aria-label={`${SERIES.youtube.label} ${point.date} ${formatExactViewCount(point.value)}`}
+              aria-label={`${SERIES.youtube.label} ${point.date} ${formatExactViewCount(point.value, language === 'en' ? 'en-US' : 'ja-JP')}`}
               style={{
                 left: `${point.x}%`,
                 top: `${point.y}%`,
@@ -467,21 +478,21 @@ export default function ViewHistoryChart({ songId }: { songId: number }) {
               className="view-history-point absolute w-6 h-6 p-1 rounded-full -translate-x-1/2 -translate-y-1/2 border-2 cursor-pointer transition-transform hover:scale-125"
               role="button"
               tabIndex={0}
-              aria-label={`${SERIES.nico.label} ${point.date} ${formatExactViewCount(point.value)}`}
+              aria-label={`${nicoLabel} ${point.date} ${formatExactViewCount(point.value, language === 'en' ? 'en-US' : 'ja-JP')}`}
               style={{
                 left: `${point.x}%`,
                 top: `${point.y}%`,
                 background: SERIES.nico.color,
                 borderColor: "var(--color-bg-secondary)",
-                zIndex: hoveredPoint?.date === point.date && hoveredPoint?.label === SERIES.nico.label ? 10 : 1,
+                zIndex: hoveredPoint?.date === point.date && hoveredPoint?.label === nicoLabel ? 10 : 1,
               }}
-              onMouseEnter={() => showPoint(point, SERIES.nico.label, SERIES.nico.color)}
+              onMouseEnter={() => showPoint(point, nicoLabel, SERIES.nico.color)}
               onMouseLeave={() => setHoveredPoint(null)}
-              onFocus={() => showPoint(point, SERIES.nico.label, SERIES.nico.color)}
+              onFocus={() => showPoint(point, nicoLabel, SERIES.nico.color)}
               onBlur={() => setHoveredPoint(null)}
-              onKeyDown={(event) => handlePointKeyDown(event, point, SERIES.nico.label, SERIES.nico.color)}
+              onKeyDown={(event) => handlePointKeyDown(event, point, nicoLabel, SERIES.nico.color)}
               onPointerDown={handlePointPointerDown}
-              onPointerUp={(event) => handlePointPointerUp(event, point, SERIES.nico.label, SERIES.nico.color)}
+              onPointerUp={(event) => handlePointPointerUp(event, point, nicoLabel, SERIES.nico.color)}
               onPointerCancel={() => { touchStart.current = null; }}
             ></div>
           ))}
@@ -505,7 +516,7 @@ export default function ViewHistoryChart({ songId }: { songId: number }) {
                 <span>{hoveredPoint.label}:</span>
                 <span className="font-bold text-sm ml-1 tabular-nums">{formatExactViewCount(hoveredPoint.value)}</span>
               </div>
-              {hoveredPoint.corrected && <div className="text-amber-300">異常値を補正</div>}
+              {hoveredPoint.corrected && <div className="text-amber-300">{t('異常値を補正')}</div>}
             </div>
           </div>
         )}

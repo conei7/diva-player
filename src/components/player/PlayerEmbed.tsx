@@ -26,6 +26,7 @@ import { getPlaybackRecoveryCheckDelayMs, hasReachedPlaybackEnd } from '../../se
 import { getSafeWakePosition } from '../../services/playbackWakeRecovery';
 import SoundCloudEmbed from './SoundCloudEmbed';
 import BilibiliEmbed from './BilibiliEmbed';
+import { useTranslate } from '../../i18n';
 
 /**
  * PlayerEmbed - YouTube / ニコニコ / SoundCloud / Bilibili 埋め込みプレイヤー
@@ -427,6 +428,7 @@ function loadYouTubeAPI(): Promise<void> {
 }
 
 export default function PlayerEmbed() {
+  const t = useTranslate();
   const { currentSong, currentPV, playbackSequence, isPlaying, volume, seekTarget, clearSeekTarget, setIsPlaying, setError, setVolume, tryNextPV, markPVHealthy } = usePlayerStore();
   const setProgress = useProgressStore(s => s.setProgress);
   const setDuration = useProgressStore(s => s.setDuration);
@@ -670,13 +672,13 @@ export default function PlayerEmbed() {
           usePlayerStore.getState().pause();
           return;
         }
-        failCurrentYouTubeAttempt('YouTube動画の準備がタイムアウトしました');
+        failCurrentYouTubeAttempt(t('youtubePrepareTimeout'));
       });
       return token;
     };
 
     desired.attempt = startAttempt();
-  }, [failCurrentYouTubeAttempt, isActiveYouTubePlayer]);
+  }, [failCurrentYouTubeAttempt, isActiveYouTubePlayer, t]);
 
   const loadDesiredYouTubeVideo = useCallback((player: YT.Player) => {
     const desired = youtubeDesiredVideoRef.current;
@@ -708,9 +710,9 @@ export default function PlayerEmbed() {
         }
       }
     } catch {
-      failCurrentYouTubeAttempt('YouTube動画の準備に失敗しました');
+      failCurrentYouTubeAttempt(t('youtubePrepareError'));
     }
-  }, [armYouTubePlaybackAttempt, failCurrentYouTubeAttempt, isActiveYouTubePlayer, scheduleEndRecovery, startProgressTimer]);
+  }, [armYouTubePlaybackAttempt, failCurrentYouTubeAttempt, isActiveYouTubePlayer, scheduleEndRecovery, startProgressTimer, t]);
 
   const isYouTube = currentPV?.service === 'Youtube';
   const currentYouTubePVId = isYouTube ? currentPV.pvId : null;
@@ -852,13 +854,13 @@ export default function PlayerEmbed() {
               } catch {
                 // Generation checks still reject old timeout callbacks.
               }
-              failCurrentYouTubeAttempt('YouTube動画の再生中にエラーが発生しました');
+              failCurrentYouTubeAttempt(t('youtubePlaybackError'));
             },
           },
         });
         ytPlayerRef.current = player;
       } catch {
-        if (!disposed) failCurrentYouTubeAttempt('YouTube動画の準備に失敗しました');
+        if (!disposed) failCurrentYouTubeAttempt(t('youtubePrepareError'));
       }
     };
 
@@ -881,7 +883,7 @@ export default function PlayerEmbed() {
       }
       if (playerContainer) playerContainer.innerHTML = '';
     };
-  }, [advanceOnce, clearEndRecoveryTimer, failCurrentYouTubeAttempt, isActiveYouTubePlayer, loadDesiredYouTubeVideo, markPVHealthy, scheduleEndRecovery, setDuration, setIsPlaying, startProgressTimer, stopProgressTimer, startVolumeSync, stopVolumeSync]);
+  }, [advanceOnce, clearEndRecoveryTimer, failCurrentYouTubeAttempt, isActiveYouTubePlayer, loadDesiredYouTubeVideo, markPVHealthy, scheduleEndRecovery, setDuration, setIsPlaying, startProgressTimer, stopProgressTimer, startVolumeSync, stopVolumeSync, t]);
 
   // The persistent YouTube iframe remains mounted while another service is in
   // use, but its previous video must not keep playing underneath that service.

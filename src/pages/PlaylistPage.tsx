@@ -65,9 +65,11 @@ import { syncNicoPlaylist } from '../services/nicoPlaylistSync';
 import PlaylistLibrarySidebar from '../components/playlist/PlaylistLibrarySidebar';
 import PlaylistHero from '../components/playlist/PlaylistHero';
 import PlaylistToolbar from '../components/playlist/PlaylistToolbar';
+import { useTranslateSourceText } from '../i18n';
 
 // ─── メインコンポーネント ──────────────────────────────────────────────────────
 export default function PlaylistPage() {
+  const t = useTranslateSourceText();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const {
@@ -122,17 +124,17 @@ export default function PlaylistPage() {
     if (!encoded) return;
     const payload = decodePlaylistShare(encoded);
     if (!payload) {
-      showToast('共有リンクを読み込めませんでした。', 'warning');
+      showToast(t('共有リンクを読み込めませんでした。'), 'warning');
       navigate('/playlists', { replace: true });
       return;
     }
-    const imported = createPlaylist(`${payload.name} (共有)`, selectedFolderId ?? undefined);
+    const imported = createPlaylist(`${payload.name} (${t('共有')})`, selectedFolderId ?? undefined);
     updatePlaylist(imported.id, { description: payload.description, coverArtUrl: payload.coverArtUrl });
     addSongs(imported.id, payload.songs);
     setSelectedPlaylistId(imported.id);
-    showToast(`${payload.name} を共有リンクから追加しました。`, 'info');
+    showToast(t('{name} を共有リンクから追加しました。', { name: payload.name }), 'info');
     navigate('/playlists', { replace: true });
-  }, [addSongs, createPlaylist, navigate, searchParams, selectedFolderId, showToast, updatePlaylist]);
+  }, [addSongs, createPlaylist, navigate, searchParams, selectedFolderId, showToast, t, updatePlaylist]);
 
   useEffect(() => {
     setSelectionMode(false);
@@ -244,14 +246,14 @@ export default function PlaylistPage() {
       updatePlaylist(smartEditingPlaylist.id, { name, smartRule: rule });
       smartRefreshRef.current = null;
       setSmartRefreshStatuses(current => ({ ...current, [smartEditingPlaylist.id]: { state: 'loading' } }));
-      showToast('スマートプレイリストの条件を更新しました', 'success');
+      showToast(t('スマートプレイリストの条件を更新しました'), 'success');
     } else {
       const playlist = createSmartPlaylist(name, rule, selectedFolderId ?? undefined);
       setSelectedPlaylistId(playlist.id);
-      showToast('スマートプレイリストを作成しました', 'success');
+      showToast(t('スマートプレイリストを作成しました'), 'success');
     }
     closeSmartBuilder();
-  }, [closeSmartBuilder, createSmartPlaylist, selectedFolderId, showToast, smartEditingPlaylist, updatePlaylist]);
+  }, [closeSmartBuilder, createSmartPlaylist, selectedFolderId, showToast, smartEditingPlaylist, t, updatePlaylist]);
 
   const sensors = useSensors(
     useSensor(PointerSensor),
@@ -294,15 +296,15 @@ export default function PlaylistPage() {
     setSelectedIds(new Set());
     setSelectionMode(false);
     if (snapshot) {
-      showToast(`${snapshot.removed.length} 曲を削除しました`, 'info', {
-        label: '元に戻す',
+      showToast(t('{count} 曲を削除しました', { count: snapshot.removed.length }), 'info', {
+        label: t('元に戻す'),
         onAction: () => {
           const restored = restoreRemovedSongs(snapshot);
-          if (restored > 0) showToast(`${restored} 曲を元に戻しました`, 'success');
+          if (restored > 0) showToast(t('{count} 曲を元に戻しました', { count: restored }), 'success');
         },
       });
     }
-  }, [selectedPlaylist, selectedIds, removeSongs, restoreRemovedSongs, showToast]);
+  }, [selectedPlaylist, selectedIds, removeSongs, restoreRemovedSongs, showToast, t]);
 
   const removeDuplicatesFromSelectedPlaylist = useCallback(() => {
     if (!selectedPlaylist) return;
@@ -311,42 +313,42 @@ export default function PlaylistPage() {
       const count = snapshot.removed.length;
       setSelectedIds(new Set());
       setSelectionMode(false);
-      showToast(`${count} 曲の重複を削除しました`, 'success', {
-        label: '元に戻す',
+      showToast(t('{count} 曲の重複を削除しました', { count }), 'success', {
+        label: t('元に戻す'),
         onAction: () => {
           const restored = restoreRemovedSongs(snapshot, { allowDuplicateIds: true });
-          if (restored > 0) showToast(`${restored} 曲を元に戻しました`, 'success');
+          if (restored > 0) showToast(t('{count} 曲を元に戻しました', { count: restored }), 'success');
         },
       });
     }
-  }, [selectedPlaylist, removeDuplicateSongsWithUndo, restoreRemovedSongs, showToast]);
+  }, [selectedPlaylist, removeDuplicateSongsWithUndo, restoreRemovedSongs, showToast, t]);
 
   const removeSongWithUndo = useCallback((playlistId: string, songIndex: number) => {
     const snapshot = removeSong(playlistId, songIndex);
     if (!snapshot) return;
     const title = snapshot.removed[0]?.song.name;
-    showToast(title ? `「${title}」を削除しました` : '曲を削除しました', 'info', {
-      label: '元に戻す',
+    showToast(title ? t('「{title}」を削除しました', { title }) : t('曲を削除しました'), 'info', {
+      label: t('元に戻す'),
       onAction: () => {
         const restored = restoreRemovedSongs(snapshot);
-        if (restored > 0) showToast(`${restored} 曲を元に戻しました`, 'success');
+        if (restored > 0) showToast(t('{count} 曲を元に戻しました', { count: restored }), 'success');
       },
     });
-  }, [removeSong, restoreRemovedSongs, showToast]);
+  }, [removeSong, restoreRemovedSongs, showToast, t]);
 
   const removeHealthIssues = useCallback((indexes: number[]) => {
     if (!selectedPlaylist || indexes.length === 0) return;
     const snapshot = removeSongs(selectedPlaylist.id, indexes);
     setShowHealthModal(false);
     if (!snapshot) return;
-    showToast(`${snapshot.removed.length}曲を削除しました`, 'info', {
-      label: '元に戻す',
+    showToast(t('{count}曲を削除しました', { count: snapshot.removed.length }), 'info', {
+      label: t('元に戻す'),
       onAction: () => {
         const restored = restoreRemovedSongs(snapshot, { allowDuplicateIds: true });
-        if (restored > 0) showToast(`${restored}曲を元に戻しました`, 'success');
+        if (restored > 0) showToast(t('{count}曲を元に戻しました', { count: restored }), 'success');
       },
     });
-  }, [removeSongs, restoreRemovedSongs, selectedPlaylist, showToast]);
+  }, [removeSongs, restoreRemovedSongs, selectedPlaylist, showToast, t]);
 
   const addSelectedToQueue = useCallback(() => {
     if (!selectedPlaylist) return;
@@ -368,9 +370,9 @@ export default function PlaylistPage() {
     if (!selectedPlaylist) return;
     const result = addSongs(selectedPlaylist.id, songs);
     if (result.duplicates > 0) {
-      showToast(`${result.duplicates} 曲は既にプレイリストにあるためスキップしました`, 'warning');
+      showToast(t('{count} 曲は既にプレイリストにあるためスキップしました', { count: result.duplicates }), 'warning');
     }
-  }, [selectedPlaylist, addSongs, showToast]);
+  }, [selectedPlaylist, addSongs, showToast, t]);
 
   const handleYTLink = useCallback((response: YouTubePlaylistSongsResponse) => {
     const now = Date.now();
@@ -389,19 +391,19 @@ export default function PlaylistPage() {
     };
     const linked = createYouTubeLinkedPlaylist(response.title, response.songs, sync, selectedFolderId ?? undefined);
     setSelectedPlaylistId(linked.id);
-    showToast(`「${response.title}」を自動同期プレイリストとして追加しました`, 'success');
-  }, [createYouTubeLinkedPlaylist, selectedFolderId, showToast]);
+    showToast(t('「{title}」を自動同期プレイリストとして追加しました', { title: response.title }), 'success');
+  }, [createYouTubeLinkedPlaylist, selectedFolderId, showToast, t]);
 
   const refreshYouTubePlaylist = useCallback(async () => {
     if (!selectedPlaylist) return;
     const result = await syncYouTubePlaylist(selectedPlaylist, { refresh: true });
     showToast(
-      result === 'error' ? 'YouTubeプレイリストの同期に失敗しました'
-        : result === 'partial' ? '同期しました（一部の動画はVocaDB未登録です）'
-          : 'YouTubeプレイリストを同期しました',
+      result === 'error' ? t('YouTubeプレイリストの同期に失敗しました')
+        : result === 'partial' ? t('同期しました（一部の動画はVocaDB未登録です）')
+          : t('YouTubeプレイリストを同期しました'),
       result === 'error' ? 'warning' : 'success',
     );
-  }, [selectedPlaylist, showToast]);
+  }, [selectedPlaylist, showToast, t]);
 
   const handleNicoLink = useCallback((response: NicoPlaylistSongsResponse) => {
     const now = Date.now();
@@ -421,19 +423,19 @@ export default function PlaylistPage() {
     };
     const linked = createNicoLinkedPlaylist(response.title, response.songs, sync, selectedFolderId ?? undefined);
     setSelectedPlaylistId(linked.id);
-    showToast(`「${response.title}」をニコニコ自動同期プレイリストとして追加しました`, 'success');
-  }, [createNicoLinkedPlaylist, selectedFolderId, showToast]);
+    showToast(t('「{title}」をニコニコ自動同期プレイリストとして追加しました', { title: response.title }), 'success');
+  }, [createNicoLinkedPlaylist, selectedFolderId, showToast, t]);
 
   const refreshNicoPlaylist = useCallback(async () => {
     if (!selectedPlaylist) return;
     const result = await syncNicoPlaylist(selectedPlaylist, { refresh: true });
     showToast(
-      result === 'error' ? 'ニコニコプレイリストの同期に失敗しました'
-        : result === 'partial' ? '同期しました（一部の動画はVocaDB未登録です）'
-          : 'ニコニコプレイリストを同期しました',
+      result === 'error' ? t('ニコニコプレイリストの同期に失敗しました')
+        : result === 'partial' ? t('同期しました（一部の動画はVocaDB未登録です）')
+          : t('ニコニコプレイリストを同期しました'),
       result === 'error' ? 'warning' : 'success',
     );
-  }, [selectedPlaylist, showToast]);
+  }, [selectedPlaylist, showToast, t]);
 
   const handleSetCover   = useCallback((song: Song) => {
     if (!selectedPlaylist) return;
@@ -476,11 +478,11 @@ export default function PlaylistPage() {
     const url = createPlaylistShareUrl(playlist);
     try {
       await navigator.clipboard.writeText(url);
-      showToast('共有リンクをクリップボードにコピーしました', 'info');
+      showToast(t('共有リンクをクリップボードにコピーしました'), 'info');
     } catch {
-      showToast(`共有リンク: ${url}`, 'info');
+      showToast(t('共有リンク: {url}', { url }), 'info');
     }
-  }, [showToast]);
+  }, [showToast, t]);
 
   const exportAllPlaylists = useCallback(() => {
     const exportedAt = new Date().toISOString();
@@ -518,7 +520,7 @@ export default function PlaylistPage() {
           addedSongs += addSongs(playlist.id, item.songs).added;
         });
 
-        showToast(`プレイリストバックアップをインポートしました (${addedSongs} 曲)`, 'success');
+        showToast(t('プレイリストバックアップをインポートしました ({count} 曲)', { count: addedSongs }), 'success');
         return;
       }
 
@@ -532,29 +534,29 @@ export default function PlaylistPage() {
       });
       const result = addSongs(playlist.id, parsed.songs);
       setSelectedPlaylistId(playlist.id);
-      showToast(`「${playlist.name}」をインポートしました (${result.added} 曲)`, 'success');
+      showToast(t('「{name}」をインポートしました ({count} 曲)', { name: playlist.name, count: result.added }), 'success');
     } catch {
-      window.alert('プレイリストJSONを読み込めませんでした。DIVA PlayerからエクスポートしたJSONを選択してください。');
+      window.alert(t('プレイリストJSONを読み込めませんでした。DIVA PlayerからエクスポートしたJSONを選択してください。'));
     }
-  }, [addSongs, createFolder, createPlaylist, selectedFolderId, showToast, updatePlaylist]);
+  }, [addSongs, createFolder, createPlaylist, selectedFolderId, showToast, t, updatePlaylist]);
 
   const handleDelete = useCallback((p: Playlist) => {
     if (p.isPinned) return;
-    if (!window.confirm(`「${p.name}」を削除してもよいですか？`)) return;
+    if (!window.confirm(t('「{name}」を削除してもよいですか？', { name: p.name }))) return;
     const snapshot = deletePlaylist(p.id);
     setSelectedPlaylistId(null);
     if (snapshot) {
-      showToast(`「${p.name}」を削除しました`, 'info', {
-        label: '元に戻す',
+      showToast(t('「{name}」を削除しました', { name: p.name }), 'info', {
+        label: t('元に戻す'),
         onAction: () => {
           if (restoreDeletedPlaylist(snapshot)) {
             setSelectedPlaylistId(snapshot.playlist.id);
-            showToast(`「${snapshot.playlist.name}」を元に戻しました`, 'success');
+            showToast(t('「{name}」を元に戻しました', { name: snapshot.playlist.name }), 'success');
           }
         },
       });
     }
-  }, [deletePlaylist, restoreDeletedPlaylist, showToast]);
+  }, [deletePlaylist, restoreDeletedPlaylist, showToast, t]);
 
   const handleShufflePlay = useCallback(() => {
     if (!selectedPlaylist || selectedPlaylist.songs.length === 0) return;
@@ -603,9 +605,9 @@ export default function PlaylistPage() {
                 </svg>
               </div>
             </div>
-            <p className="text-base font-medium text-neutral-300">プレイリストを選んで始めましょう</p>
+            <p className="text-base font-medium text-neutral-300">{t('プレイリストを選んで始めましょう')}</p>
             <p className="mt-2 max-w-xs text-sm leading-relaxed text-neutral-500">
-              左のサイドバーからプレイリストを選択すると、曲の再生・編集・共有ができます
+              {t('左のサイドバーからプレイリストを選択すると、曲の再生・編集・共有ができます')}
             </p>
           </div>
         ) : (
@@ -616,7 +618,7 @@ export default function PlaylistPage() {
               className="md:hidden sticky top-0 z-10 self-start rounded-full border border-white/10 bg-black/80 backdrop-blur-sm px-3 py-1.5 text-sm text-neutral-300 transition-colors hover:bg-white/10"
               onClick={() => setSelectedPlaylistId(null)}
             >
-              ← ライブラリ
+              ← {t('ライブラリ')}
             </button>
 
             <PlaylistHero
@@ -634,10 +636,10 @@ export default function PlaylistPage() {
               onRefreshYouTube={() => void refreshYouTubePlaylist()}
               onRefreshNico={() => void refreshNicoPlaylist()}
               onUnlinkYouTube={() => {
-                if (unlinkYouTubeSync(selectedPlaylist.id)) showToast('同期を解除しました。現在の曲一覧は保持されます', 'info');
+                if (unlinkYouTubeSync(selectedPlaylist.id)) showToast(t('同期を解除しました。現在の曲一覧は保持されます'), 'info');
               }}
               onUnlinkNico={() => {
-                if (unlinkNicoSync(selectedPlaylist.id)) showToast('同期を解除しました。現在の曲一覧は保持されます', 'info');
+                if (unlinkNicoSync(selectedPlaylist.id)) showToast(t('同期を解除しました。現在の曲一覧は保持されます'), 'info');
               }}
               onOpenYouTubeImport={() => setShowYTImport(true)}
               onOpenNicoImport={() => setShowNicoImport(true)}
@@ -675,7 +677,7 @@ export default function PlaylistPage() {
                     <svg className="w-12 h-12 text-neutral-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1">
                       <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
                     </svg>
-                    <p className="text-sm font-medium text-neutral-400">「{filterText}」に一致する曲はありません</p>
+                    <p className="text-sm font-medium text-neutral-400">{t('「{query}」に一致する曲はありません', { query: filterText })}</p>
                   </>
                 ) : (
                   <>
@@ -684,9 +686,9 @@ export default function PlaylistPage() {
                         <path d="M12 5v14m-7-7h14"/>
                       </svg>
                     </div>
-                    <p className="text-sm font-medium text-neutral-400">曲がまだありません</p>
+                    <p className="text-sm font-medium text-neutral-400">{t('曲がまだありません')}</p>
                     <p className="text-xs max-w-xs text-center leading-relaxed">
-                      検索画面から曲を追加するか、ヘッダーの「⋯」メニューからYouTubeプレイリストをインポートしてみましょう
+                      {t('検索画面から曲を追加するか、ヘッダーの「⋯」メニューからYouTubeプレイリストをインポートしてみましょう')}
                     </p>
                   </>
                 )}
@@ -695,7 +697,7 @@ export default function PlaylistPage() {
               filteredSongs.length > VIRTUAL_THRESHOLD ? (
                 <>
                   <p className="text-xs text-neutral-500 mb-1">
-                    {filteredSongs.length} 件（表示を軽くするため仮想スクロールを使用）
+                    {t('{count} 件（表示を軽くするため仮想スクロールを使用）', { count: filteredSongs.length })}
                   </p>
                   <VirtualSongList
                     songs={filteredSongs}
@@ -770,17 +772,17 @@ export default function PlaylistPage() {
           className="fixed bottom-20 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-4 py-2.5 rounded-2xl shadow-2xl animate-slide-up"
           style={{ background: 'var(--color-bg-card)', border: '1px solid var(--color-border)' }}
         >
-          <span className="text-sm font-medium">{selectedIds.size} 件選択中</span>
+          <span className="text-sm font-medium">{t('{count} 件選択中', { count: selectedIds.size })}</span>
           <button onClick={addSelectedToQueue} className="btn-secondary text-xs px-3 py-1.5 flex items-center gap-1.5">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 5v14M5 12h14" /></svg>
-            キューに追加
+            {t('キューに追加')}
           </button>
           <button onClick={copySelectedToPlaylist} className="btn-secondary text-xs px-3 py-1.5 flex items-center gap-1.5">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M8 7h10a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2z"/>
               <path d="M4 15H3a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
             </svg>
-            コピー
+            {t('コピー')}
           </button>
           <button onClick={deleteSelected}
             className="text-xs px-3 py-1.5 rounded-xl flex items-center gap-1.5 transition-colors hover:bg-red-900/30"
@@ -790,7 +792,7 @@ export default function PlaylistPage() {
               <path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/>
               <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/>
             </svg>
-            削除
+            {t('削除')}
           </button>
           <button onClick={clearSelection} className="text-xs text-neutral-400 hover:text-white transition-colors">✕</button>
         </div>
@@ -805,34 +807,34 @@ export default function PlaylistPage() {
         >
           <div className="rounded-2xl p-6 w-full max-w-md flex flex-col gap-4 animate-slide-up"
                style={{ background: 'var(--color-bg-card)', border: '1px solid var(--color-border)' }}>
-            <h2 className="text-lg font-bold">プレイリストを編集</h2>
+            <h2 className="text-lg font-bold">{t('プレイリストを編集')}</h2>
             <label className="flex flex-col gap-1">
-              <span className="text-xs text-neutral-400">名前</span>
+              <span className="text-xs text-neutral-400">{t('名前')}</span>
               <input className="search-input text-sm" style={{ paddingLeft: '0.75rem' }}
                 value={editName} onChange={e => setEditName(e.target.value)} />
             </label>
             <label className="flex flex-col gap-1">
-              <span className="text-xs text-neutral-400">説明</span>
+              <span className="text-xs text-neutral-400">{t('説明')}</span>
               <textarea className="search-input text-sm resize-none" style={{ paddingLeft: '0.75rem', height: '80px' }}
-                value={editDesc} onChange={e => setEditDesc(e.target.value)} placeholder="プレイリストの説明..." />
+                value={editDesc} onChange={e => setEditDesc(e.target.value)} placeholder={t('プレイリストの説明...')} />
             </label>
             <label className="flex flex-col gap-1">
-              <span className="text-xs text-neutral-400">カバーアート URL</span>
+              <span className="text-xs text-neutral-400">{t('カバーアート URL')}</span>
               <input className="search-input text-sm" style={{ paddingLeft: '0.75rem' }}
                 value={editCover} onChange={e => setEditCover(e.target.value)} placeholder="https://..." />
               {editCover && <img src={editCover} alt="" className="mt-1 w-16 h-16 rounded object-cover" />}
             </label>
             <label className="flex flex-col gap-1">
-              <span className="text-xs text-neutral-400">フォルダ</span>
+              <span className="text-xs text-neutral-400">{t('フォルダ')}</span>
               <select className="search-input text-sm" style={{ paddingLeft: '0.75rem' }}
                 value={editFolderId} onChange={e => setEditFolderId(e.target.value)}>
-                <option value="">なし（ルート）</option>
+                <option value="">{t('なし（ルート）')}</option>
                 {folders.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
               </select>
             </label>
             <div className="flex gap-3 justify-end">
-              <button className="btn-secondary text-sm" onClick={() => setEditingPlaylist(null)}>キャンセル</button>
-              <button className="btn-primary text-sm" onClick={saveEdit}>保存</button>
+              <button className="btn-secondary text-sm" onClick={() => setEditingPlaylist(null)}>{t('キャンセル')}</button>
+              <button className="btn-primary text-sm" onClick={saveEdit}>{t('保存')}</button>
             </div>
           </div>
         </div>

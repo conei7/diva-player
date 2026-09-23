@@ -16,8 +16,8 @@ export interface ViewHistoryYAxisRange {
   yMax: number;
 }
 
-export function formatExactViewCount(value: number): string {
-  return Math.round(value).toLocaleString('ja-JP');
+export function formatExactViewCount(value: number, locale = 'ja-JP'): string {
+  return Math.round(value).toLocaleString(locale);
 }
 
 /** Returns measured points only; cumulative charts connect across temporary collection gaps. */

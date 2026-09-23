@@ -2,6 +2,8 @@ import type { Song } from '../../types/vocadb';
 import { formatJapaneseViews } from '../../utils/formatViews';
 import { getPVBadgeStyle, isUnofficialOnly } from '../../utils/pvBadge';
 import { AUDIO_INSTRUMENT_LABELS } from '../../config/audioInstruments';
+import { useTranslateSourceText } from '../../i18n';
+import { useLanguageStore } from '../../stores/languageStore';
 
 interface SongCardBadgesProps {
   song: Song;
@@ -19,6 +21,11 @@ export default function SongCardBadges({
   isNicoUnofficialOnly,
   relativeDate,
 }: SongCardBadgesProps) {
+  const t = useTranslateSourceText();
+  const language = useLanguageStore(state => state.language);
+  const formatViews = (value: number) => language === 'en'
+    ? new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(value)
+    : formatJapaneseViews(value);
   const isSoundCloudUnofficialOnly = isUnofficialOnly(song.pvs ?? [], 'SoundCloud');
   const isBilibiliUnofficialOnly = isUnofficialOnly(song.pvs ?? [], 'Bilibili');
 
@@ -31,12 +38,12 @@ export default function SongCardBadges({
             ...getPVBadgeStyle('Youtube', isYTUnofficialOnly ? 'Reprint' : 'Original'),
             opacity: isYTUnofficialOnly ? 0.8 : 1,
           }}
-          title="YouTube 再生回数"
+          title={t('YouTube 再生回数')}
         >
           <span aria-hidden="true">▶</span>
           {song.youtubeViews && song.youtubeViews > 0
-            ? formatJapaneseViews(song.youtubeViews)
-            : (isYTUnofficialOnly ? '非公式YT' : 'YT')}
+            ? formatViews(song.youtubeViews)
+            : (isYTUnofficialOnly ? t('非公式YT') : 'YT')}
         </span>
       )}
 
@@ -47,12 +54,12 @@ export default function SongCardBadges({
             ...getPVBadgeStyle('NicoNicoDouga', isNicoUnofficialOnly ? 'Reprint' : 'Original'),
             opacity: isNicoUnofficialOnly ? 0.8 : 1,
           }}
-          title="ニコニコ動画 再生回数"
+          title={t('ニコニコ動画 再生回数')}
         >
           <span aria-hidden="true">N</span>
           {song.nicoViews && song.nicoViews > 0
-            ? formatJapaneseViews(song.nicoViews)
-            : (isNicoUnofficialOnly ? '非公式ニコ' : 'ニコ')}
+            ? formatViews(song.nicoViews)
+            : (isNicoUnofficialOnly ? t('非公式ニコ') : 'ニコ')}
         </span>
       )}
 
@@ -63,7 +70,7 @@ export default function SongCardBadges({
             ...getPVBadgeStyle('SoundCloud', isSoundCloudUnofficialOnly ? 'Reprint' : 'Original'),
             opacity: isSoundCloudUnofficialOnly ? 0.8 : 1,
           }}
-          title="SoundCloudで再生可能"
+          title={t('SoundCloudで再生可能')}
         >
           SC
         </span>
@@ -76,7 +83,7 @@ export default function SongCardBadges({
             ...getPVBadgeStyle('Bilibili', isBilibiliUnofficialOnly ? 'Reprint' : 'Original'),
             opacity: isBilibiliUnofficialOnly ? 0.8 : 1,
           }}
-          title="Bilibiliで再生可能"
+          title={t('Bilibiliで再生可能')}
         >
           Bili
         </span>
@@ -89,15 +96,15 @@ export default function SongCardBadges({
       )}
 
       {song.audioInstruments?.slice(0, 2).map(instrument => (
-        <span key={instrument.key} className="rounded bg-white/[0.05] px-1.5 py-0.5 text-[10px] text-neutral-400" title={`音源解析による推定（信頼度 ${Math.round(instrument.score * 100)}%）`}>
-          {AUDIO_INSTRUMENT_LABELS.get(instrument.key) ?? instrument.key}
+        <span key={instrument.key} className="rounded bg-white/[0.05] px-1.5 py-0.5 text-[10px] text-neutral-400" title={t('音源解析による推定（信頼度 {confidence}%）', { confidence: Math.round(instrument.score * 100) })}>
+          {t(AUDIO_INSTRUMENT_LABELS.get(instrument.key) ?? instrument.key)}
         </span>
       ))}
 
       <div className="flex-1" />
 
       {song.isSelfCover && (
-        <span className="rounded bg-fuchsia-400/15 px-1.5 py-0.5 text-[10px] font-semibold text-fuchsia-200" title="原曲と同じプロデューサーによるカバー">
+        <span className="rounded bg-fuchsia-400/15 px-1.5 py-0.5 text-[10px] font-semibold text-fuchsia-200" title={t('原曲と同じプロデューサーによるカバー')}>
           Self Cover
         </span>
       )}

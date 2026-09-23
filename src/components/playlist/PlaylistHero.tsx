@@ -2,6 +2,8 @@ import type { Playlist } from '../../types/vocadb';
 import PlaylistCover from './PlaylistCover';
 import PlaylistPopoverMenu from './PlaylistPopoverMenu';
 import { SmartPlaylistRuleSummary } from './SmartPlaylistBuilder';
+import { useTranslateSourceText } from '../../i18n';
+import { useLanguageStore } from '../../stores/languageStore';
 
 export interface SmartPlaylistRefreshStatus {
   state: 'loading' | 'success' | 'empty' | 'error';
@@ -49,6 +51,8 @@ function SyncPanel({
   sourceDescription: string;
   onRefresh: () => void;
 }) {
+  const t = useTranslateSourceText();
+  const language = useLanguageStore(state => state.language);
   const youtube = service === 'YouTube';
   const accentClasses = youtube
     ? 'border-red-300/15 bg-red-300/[0.06] text-red-100/80'
@@ -61,24 +65,24 @@ function SyncPanel({
     <div className={`flex flex-wrap items-center gap-x-3 gap-y-2 rounded-2xl border p-3 text-xs ${accentClasses}`}>
       <span className="flex items-center gap-2 font-semibold">
         <span className={`h-2 w-2 rounded-full ${status === 'error' ? 'bg-red-400' : 'bg-emerald-300'}`} />
-        {service}自動同期
+        {t('{service}自動同期', { service: t(service) })}
       </span>
       <span className="text-neutral-300">
         {status === 'error'
-          ? '前回の同期に失敗しました'
+          ? t('前回の同期に失敗しました')
           : status === 'partial'
-            ? `未マッチ ${unmatchedCount ?? 0}件`
-            : sourceDescription}
+            ? t('未マッチ {count}件', { count: unmatchedCount ?? 0 })
+            : t(sourceDescription)}
       </span>
       {lastSuccessfulAt && (
-        <span className="text-neutral-500">最終同期 {new Date(lastSuccessfulAt).toLocaleString('ja-JP')}</span>
+        <span className="text-neutral-500">{t('最終同期')} {new Date(lastSuccessfulAt).toLocaleString(language === 'ja' ? 'ja-JP' : 'en-US')}</span>
       )}
       <div className="ml-auto flex items-center gap-2">
         <a href={sourceUrl} target="_blank" rel="noopener noreferrer" className="underline decoration-white/30 underline-offset-2 hover:text-white">
-          元ページ
+          {t('元ページ')}
         </a>
         <button type="button" onClick={onRefresh} className={`rounded-lg border px-2.5 py-1.5 transition-colors ${actionClasses}`}>
-          今すぐ同期
+          {t('今すぐ同期')}
         </button>
       </div>
     </div>
@@ -106,6 +110,8 @@ export default function PlaylistHero({
   onExport,
   onShare,
 }: PlaylistHeroProps) {
+  const t = useTranslateSourceText();
+  const language = useLanguageStore(state => state.language);
   const isYouTubeLinked = playlist.youtubeSync?.enabled === true;
   const isNicoLinked = playlist.nicoSync?.enabled === true;
   const isExternalLinked = isYouTubeLinked || isNicoLinked;
@@ -135,7 +141,7 @@ export default function PlaylistHero({
             <PlaylistCover playlist={playlist} />
           </div>
           <div className="min-w-0 flex-1 text-center sm:text-left">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-emerald-200/70">{kindLabel}</p>
+            <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-emerald-200/70">{t(kindLabel)}</p>
             <h1 className="mt-2 break-words text-3xl font-black leading-[1.05] tracking-[-0.03em] text-white sm:text-4xl lg:text-5xl">
               {playlist.name}
             </h1>
@@ -143,11 +149,11 @@ export default function PlaylistHero({
               <p className="mx-auto mt-3 line-clamp-2 max-w-3xl text-sm leading-6 text-neutral-300 sm:mx-0">{playlist.description}</p>
             )}
             <div className="mt-3 flex flex-wrap items-center justify-center gap-2 text-xs text-neutral-400 sm:justify-start">
-              <span className="rounded-full border border-white/10 bg-black/20 px-2.5 py-1 font-semibold text-white">{playlist.songs.length}曲</span>
+              <span className="rounded-full border border-white/10 bg-black/20 px-2.5 py-1 font-semibold text-white">{t('{count}曲', { count: playlist.songs.length })}</span>
               {playlist.songs.length > 0 && <span className="rounded-full border border-white/10 bg-black/20 px-2.5 py-1">{durationText}</span>}
-              {isFiltered && <span className="rounded-full border border-cyan-300/20 bg-cyan-300/10 px-2.5 py-1 text-cyan-100">表示中 {filteredSongCount}曲</span>}
-              {playlist.youtubeSync && <span className="rounded-full border border-red-300/15 bg-red-300/10 px-2.5 py-1 text-red-100">YouTube同期</span>}
-              {playlist.nicoSync && <span className="rounded-full border border-cyan-300/15 bg-cyan-300/10 px-2.5 py-1 text-cyan-100">ニコニコ同期</span>}
+              {isFiltered && <span className="rounded-full border border-cyan-300/20 bg-cyan-300/10 px-2.5 py-1 text-cyan-100">{t('表示中 {count}曲', { count: filteredSongCount })}</span>}
+              {playlist.youtubeSync && <span className="rounded-full border border-red-300/15 bg-red-300/10 px-2.5 py-1 text-red-100">{t('YouTube同期')}</span>}
+              {playlist.nicoSync && <span className="rounded-full border border-cyan-300/15 bg-cyan-300/10 px-2.5 py-1 text-cyan-100">{t('ニコニコ同期')}</span>}
             </div>
 
             <div className="mt-5 flex flex-wrap items-center justify-center gap-2 sm:justify-start">
@@ -155,54 +161,54 @@ export default function PlaylistHero({
                 <>
                   <button type="button" onClick={onPlay} className="flex min-h-11 items-center gap-2 rounded-full bg-white px-5 text-sm font-bold text-black shadow-lg shadow-black/20 transition-transform hover:scale-[1.02] hover:bg-neutral-200 active:scale-[0.98]">
                     <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z" /></svg>
-                    再生
+                    {t('再生')}
                   </button>
                   <button type="button" onClick={onShuffle} className="flex min-h-11 items-center gap-2 rounded-full border border-white/15 bg-black/25 px-4 text-sm font-medium text-neutral-100 backdrop-blur-sm transition-colors hover:bg-white/10">
                     <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M16 3h5v5M4 20 21 3M21 16v5h-5M15 15l6 6M4 4l5 5" /></svg>
-                    シャッフル
+                    {t('シャッフル')}
                   </button>
                 </>
               )}
               {playlist.smartRule && (
                 <button type="button" onClick={onRefreshSmart} disabled={smartRefreshStatus?.state === 'loading'} className="min-h-11 rounded-full border border-white/15 bg-black/25 px-4 text-sm font-medium text-neutral-100 backdrop-blur-sm transition-colors hover:bg-white/10 disabled:cursor-wait disabled:opacity-60">
-                  {smartRefreshStatus?.state === 'loading' ? '更新中…' : '条件を再更新'}
+                  {smartRefreshStatus?.state === 'loading' ? t('更新中…') : t('条件を再更新')}
                 </button>
               )}
               {!playlist.isPinned && !isExternalLinked && (
                 <button type="button" onClick={onEdit} className="flex min-h-11 items-center gap-2 rounded-full border border-white/15 bg-black/25 px-4 text-sm text-neutral-200 backdrop-blur-sm transition-colors hover:bg-white/10 hover:text-white">
                   <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.5 2.5a2.1 2.1 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" /></svg>
-                  編集
+                  {t('編集')}
                 </button>
               )}
               <PlaylistPopoverMenu
                 trigger={
-                  <button type="button" className="flex h-11 w-11 items-center justify-center rounded-full border border-white/15 bg-black/25 text-neutral-200 backdrop-blur-sm transition-colors hover:bg-white/10 hover:text-white" title="その他の操作" aria-label="その他の操作">
+                  <button type="button" className="flex h-11 w-11 items-center justify-center rounded-full border border-white/15 bg-black/25 text-neutral-200 backdrop-blur-sm transition-colors hover:bg-white/10 hover:text-white" title={t('その他の操作')} aria-label={t('その他の操作')}>
                     <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5" r="2" /><circle cx="12" cy="12" r="2" /><circle cx="12" cy="19" r="2" /></svg>
                   </button>
                 }
               >
                 <button className="context-menu-item" onClick={onOpenYouTubeImport}>
                   <span className="flex h-5 w-5 items-center justify-center rounded-md bg-red-500/15 text-[10px] font-black text-red-300">YT</span>
-                  <span>YouTubeからインポート</span>
+                  <span>{t('YouTubeからインポート')}</span>
                 </button>
                 <button className="context-menu-item" onClick={onOpenNicoImport}>
                   <span className="flex h-5 w-5 items-center justify-center rounded-md bg-cyan-500/15 text-[10px] font-black text-cyan-300">N</span>
-                  <span>ニコニコからインポート</span>
+                  <span>{t('ニコニコからインポート')}</span>
                 </button>
                 <button className="context-menu-item" onClick={onExport}>
                   <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><path d="m7 10 5 5 5-5M12 15V3" /></svg>
-                  <span>JSONエクスポート</span>
+                  <span>{t('JSONエクスポート')}</span>
                 </button>
                 <button className="context-menu-item" onClick={onShare}>
                   <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" /><path d="m8.6 13.5 6.8 4M15.4 6.5l-6.8 4" /></svg>
-                  <span>共有リンクをコピー</span>
+                  <span>{t('共有リンクをコピー')}</span>
                 </button>
-                {isYouTubeLinked && <button className="context-menu-item" onClick={onUnlinkYouTube}><span className="h-4 w-4 text-center">×</span><span>YouTube同期を解除</span></button>}
-                {isNicoLinked && <button className="context-menu-item" onClick={onUnlinkNico}><span className="h-4 w-4 text-center">×</span><span>ニコニコ同期を解除</span></button>}
+                {isYouTubeLinked && <button className="context-menu-item" onClick={onUnlinkYouTube}><span className="h-4 w-4 text-center">×</span><span>{t('YouTube同期を解除')}</span></button>}
+                {isNicoLinked && <button className="context-menu-item" onClick={onUnlinkNico}><span className="h-4 w-4 text-center">×</span><span>{t('ニコニコ同期を解除')}</span></button>}
                 {!playlist.isPinned && !isExternalLinked && (
                   <button className="context-menu-item text-red-300" onClick={onDelete}>
                     <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M8 6V4h8v2" /></svg>
-                    <span>プレイリストを削除</span>
+                    <span>{t('プレイリストを削除')}</span>
                   </button>
                 )}
               </PlaylistPopoverMenu>
@@ -214,16 +220,16 @@ export default function PlaylistHero({
           <div className="mt-5 rounded-2xl border border-violet-300/15 bg-black/20 p-3.5 backdrop-blur-sm">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
-                <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-violet-200/70">自動更新条件</p>
+                <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-violet-200/70">{t('自動更新条件')}</p>
                 <p className="mt-1 text-xs text-neutral-400">
-                  {smartRefreshStatus?.state === 'loading' && '条件を再計算中…'}
-                  {smartRefreshStatus?.state === 'success' && `条件一致 ${smartRefreshStatus.matchedCount ?? playlist.songs.length}曲・最終更新 ${new Date(smartRefreshStatus.refreshedAt ?? Date.now()).toLocaleTimeString('ja-JP')}`}
-                  {smartRefreshStatus?.state === 'empty' && '条件に一致する曲はありません'}
-                  {smartRefreshStatus?.state === 'error' && '更新に失敗しました。手動で再試行してください'}
-                  {!smartRefreshStatus && 'プレイリストを開いたときに自動更新します'}
+                  {smartRefreshStatus?.state === 'loading' && t('条件を再計算中…')}
+                  {smartRefreshStatus?.state === 'success' && t('条件一致 {count}曲・最終更新 {time}', { count: smartRefreshStatus.matchedCount ?? playlist.songs.length, time: new Date(smartRefreshStatus.refreshedAt ?? Date.now()).toLocaleTimeString(language === 'ja' ? 'ja-JP' : 'en-US') })}
+                  {smartRefreshStatus?.state === 'empty' && t('条件に一致する曲はありません')}
+                  {smartRefreshStatus?.state === 'error' && t('更新に失敗しました。手動で再試行してください')}
+                  {!smartRefreshStatus && t('プレイリストを開いたときに自動更新します')}
                 </p>
               </div>
-              <button type="button" className="min-h-10 rounded-xl border border-violet-200/20 bg-violet-200/10 px-3 text-xs font-medium text-violet-100 transition-colors hover:bg-violet-200/20" onClick={onEditSmartRule}>条件を編集</button>
+              <button type="button" className="min-h-10 rounded-xl border border-violet-200/20 bg-violet-200/10 px-3 text-xs font-medium text-violet-100 transition-colors hover:bg-violet-200/20" onClick={onEditSmartRule}>{t('条件を編集')}</button>
             </div>
             <div className="mt-3"><SmartPlaylistRuleSummary rule={playlist.smartRule} /></div>
           </div>

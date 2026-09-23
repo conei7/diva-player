@@ -1,24 +1,26 @@
 import { useSearchStore, type ExtendedSortRule } from '../../stores/searchStore';
+import { useTranslate } from '../../i18n';
 
-const SORT_OPTIONS: { value: ExtendedSortRule; label: string }[] = [
-  { value: 'FavoritedTimes', label: '人気順' },
-  { value: 'RatingScore', label: '評価順' },
-  { value: 'TotalViews', label: '合計再生数' },
-  { value: 'YoutubeViews', label: 'YouTube再生' },
-  { value: 'NicoViews', label: 'ニコニコ再生' },
-  { value: 'PublishDate', label: '公開日' },
-  { value: 'AdditionDate', label: '登録日' },
-  { value: 'Name', label: '名前順' },
-  { value: 'Random', label: 'ランダム' },
+const SORT_OPTIONS: { value: ExtendedSortRule; labelKey: 'sortPopular' | 'sortRating' | 'sortTotalViews' | 'sortYoutubeViews' | 'sortNicoViews' | 'sortPublishDate' | 'sortAddedDate' | 'sortName' | 'sortRandom' }[] = [
+  { value: 'FavoritedTimes', labelKey: 'sortPopular' },
+  { value: 'RatingScore', labelKey: 'sortRating' },
+  { value: 'TotalViews', labelKey: 'sortTotalViews' },
+  { value: 'YoutubeViews', labelKey: 'sortYoutubeViews' },
+  { value: 'NicoViews', labelKey: 'sortNicoViews' },
+  { value: 'PublishDate', labelKey: 'sortPublishDate' },
+  { value: 'AdditionDate', labelKey: 'sortAddedDate' },
+  { value: 'Name', labelKey: 'sortName' },
+  { value: 'Random', labelKey: 'sortRandom' },
 ];
 
 export default function SearchSortControls() {
+  const t = useTranslate();
   const { sort, sortOrder, setSort, setSortOrder, search } = useSearchStore();
 
   return (
     <div className="flex items-center gap-2">
       <label htmlFor="sort-select" className="text-xs font-medium" style={{ color: 'var(--color-text-secondary)' }}>
-        並び替え
+        {t('sortBy')}
       </label>
       <select
         id="sort-select"
@@ -30,7 +32,7 @@ export default function SearchSortControls() {
         className="ui-select"
       >
         {SORT_OPTIONS.map(option => (
-          <option key={option.value} value={option.value}>{option.label}</option>
+          <option key={option.value} value={option.value}>{t(option.labelKey)}</option>
         ))}
       </select>
       <button
@@ -41,8 +43,8 @@ export default function SearchSortControls() {
           else setSortOrder(sortOrder === 'desc' ? 'asc' : 'desc');
           search();
         }}
-        title={sort === 'Random' ? 'ランダムに並べ直す' : sortOrder === 'desc' ? '降順から昇順へ' : '昇順から降順へ'}
-        aria-label={sort === 'Random' ? 'ランダムに並べ直す' : sortOrder === 'desc' ? '現在は降順。昇順に変更' : '現在は昇順。降順に変更'}
+        title={sort === 'Random' ? t('randomizeSort') : sortOrder === 'desc' ? t('switchAsc') : t('switchDesc')}
+        aria-label={sort === 'Random' ? t('randomizeSort') : sortOrder === 'desc' ? t('descendingNow') : t('ascendingNow')}
         className="flex items-center justify-center rounded-lg transition-all"
         style={{
           width: '32px', height: '32px',

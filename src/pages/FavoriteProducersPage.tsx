@@ -1,23 +1,25 @@
 import { Link } from 'react-router';
 import { useFavoriteProducerStore } from '../stores/favoriteProducerStore';
+import { useTranslateSourceText } from '../i18n';
 
 export default function FavoriteProducersPage() {
+  const t = useTranslateSourceText();
   const producers = useFavoriteProducerStore(state => state.producers);
   const removeProducer = useFavoriteProducerStore(state => state.removeProducer);
 
   return (
     <div className="mx-auto w-full max-w-3xl px-4 py-6 sm:px-6">
       <div className="mb-6">
-        <h1 className="text-xl font-bold" style={{ color: 'var(--color-text-primary)' }}>お気に入りP</h1>
+        <h1 className="text-xl font-bold" style={{ color: 'var(--color-text-primary)' }}>{t('お気に入りP')}</h1>
         <p className="mt-1 text-sm" style={{ color: 'var(--color-text-muted)' }}>
-          登録したPの曲をすぐに検索できます。登録情報はこのブラウザに保存されます。
+          {t('登録したPの曲をすぐに検索できます。登録情報はこのブラウザに保存されます。')}
         </p>
       </div>
 
       {producers.length === 0 ? (
         <div className="rounded-2xl p-6 text-center" style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)' }}>
-          <p className="text-sm" style={{ color: 'var(--color-text-muted)' }}>お気に入りPはまだありません。</p>
-          <p className="mt-2 text-xs" style={{ color: 'var(--color-text-muted)' }}>曲の詳細画面で「お気に入りP」を押すと登録できます。</p>
+          <p className="text-sm" style={{ color: 'var(--color-text-muted)' }}>{t('お気に入りPはまだありません。')}</p>
+          <p className="mt-2 text-xs" style={{ color: 'var(--color-text-muted)' }}>{t('曲の詳細画面で「お気に入りP」を押すと登録できます。')}</p>
         </div>
       ) : (
         <ul className="grid gap-3 sm:grid-cols-2">
@@ -37,10 +39,10 @@ export default function FavoriteProducersPage() {
               <button
                 type="button"
                 className="btn-ghost min-h-10 rounded-lg px-3 py-2 text-xs"
-                aria-label={`${producer.name}をお気に入りPから解除`}
+                aria-label={t('{producer}をお気に入りPから解除', { producer: producer.name })}
                 onClick={() => removeProducer(producer.id)}
               >
-                解除
+                {t('解除')}
               </button>
             </li>
           ))}

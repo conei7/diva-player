@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { playDiscoveryMix } from '../../services/discoveryMix';
+import { useTranslate } from '../../i18n';
 
 type GenerationStatus =
   | { state: 'idle' }
@@ -15,6 +16,7 @@ export default function DiscoveryMixButton({
   expanded: boolean;
   onStarted?: () => void;
 }) {
+  const t = useTranslate();
   const [status, setStatus] = useState<GenerationStatus>({ state: 'idle' });
   const resetTimerRef = useRef<number | null>(null);
 
@@ -50,15 +52,15 @@ export default function DiscoveryMixButton({
   };
 
   const label = status.state === 'loading'
-    ? '発掘中…'
+    ? t('discoveryLoading')
     : status.state === 'success'
-      ? `${status.count}曲を再生中`
-      : '発掘ミックス';
+      ? t('discoveryPlaying', { count: status.count })
+      : t('discoveryMix');
   const detail = status.state === 'empty'
-    ? '未聴の候補が見つかりませんでした。表示フィルターも確認してください'
+    ? t('discoveryEmpty')
     : status.state === 'error'
-      ? '生成に失敗しました'
-      : '音響が近い未聴曲を直接再生';
+      ? t('discoveryError')
+      : t('discoveryDescription');
 
   return (
     <div className="mt-auto px-2 pt-3">
@@ -66,7 +68,7 @@ export default function DiscoveryMixButton({
         type="button"
         disabled={status.state === 'loading'}
         onClick={() => void generate()}
-        aria-label="発掘ミックスを生成して再生"
+        aria-label={t('discoveryAria')}
         aria-busy={status.state === 'loading'}
         title={expanded ? undefined : `${label} — ${detail}`}
         className="group w-full rounded-2xl border border-emerald-300/25 bg-gradient-to-br from-emerald-300/15 to-cyan-300/[0.06] text-emerald-50 shadow-[0_10px_30px_rgba(16,185,129,0.08)] transition hover:border-emerald-200/40 hover:from-emerald-300/25 hover:to-cyan-300/10 disabled:cursor-wait disabled:opacity-70"

@@ -10,6 +10,7 @@
 
 import { useState } from 'react';
 import type { Song } from '../../types/vocadb';
+import { useTranslateSourceText } from '../../i18n';
 import { extractYouTubePlaylistId, fetchYouTubePlaylistSongs, type YouTubePlaylistSongsResponse } from '../../api/youtubePlaylist';
 
 interface Props {
@@ -74,6 +75,7 @@ async function fetchVocadbByYouTubeId(videoId: string): Promise<Song | null> {
 }
 
 export default function YouTubeImportModal({ onClose, onImport, onLink }: Props) {
+  const t = useTranslateSourceText();
   const [url, setUrl] = useState('');
   const [mode, setMode] = useState<'import' | 'link'>('import');
   const [phase, setPhase] = useState<'idle' | 'fetching' | 'matching' | 'done' | 'error'>('idle');
@@ -89,7 +91,7 @@ export default function YouTubeImportModal({ onClose, onImport, onLink }: Props)
   const handleImport = async () => {
     const listId = extractYouTubePlaylistId(url.trim());
     if (!listId) {
-      setErrorMsg('有効な YouTube プレイリスト URL または ID を入力してください');
+      setErrorMsg(t('有効な YouTube プレイリスト URL または ID を入力してください'));
       return;
     }
 
@@ -103,22 +105,22 @@ export default function YouTubeImportModal({ onClose, onImport, onLink }: Props)
 
     try {
       if (mode === 'link') {
-        appendLog('YouTubeプレイリストを同期用に取得中...');
+        appendLog(t('YouTubeプレイリストを同期用に取得中...'));
         const response = await fetchYouTubePlaylistSongs(listId, { refresh: true });
         setLinkedResponse(response);
         setSongs(response.songs);
         setUnmatched(response.unmatchedVideoIds);
         setPhase('done');
-        appendLog(`${response.videoCount} 件の動画、${response.matchedCount} 件の曲を取得しました`);
-        if (response.unmatchedVideoIds.length > 0) appendLog(`未マッチ: ${response.unmatchedVideoIds.length} 件`);
+        appendLog(t('{videos} 件の動画、{songs} 件の曲を取得しました', { videos: response.videoCount, songs: response.matchedCount }));
+        if (response.unmatchedVideoIds.length > 0) appendLog(t('未マッチ: {count} 件', { count: response.unmatchedVideoIds.length }));
         return;
       }
 
-      appendLog('YouTube プレイリストを取得中...');
+      appendLog(t('YouTube プレイリストを取得中...'));
       const videoIds = await fetchPlaylistVideos(listId, (loaded) => {
-        appendLog(`ページ取得中: ${loaded} 件取得済み`);
+        appendLog(t('ページ取得中: {count} 件取得済み', { count: loaded }));
       });
-      appendLog(`${videoIds.length} 件の動画を取得しました`);
+      appendLog(t('{count} 件の動画を取得しました', { count: videoIds.length }));
 
       setPhase('matching');
       const matched: Song[] = [];
@@ -132,16 +134,16 @@ export default function YouTubeImportModal({ onClose, onImport, onLink }: Props)
           if (song) matched.push(song);
           else unmatchedIds.push(batch[idx]);
         });
-        appendLog(`${Math.min(i + batchSize, videoIds.length)} / ${videoIds.length} 照合済み → ${matched.length} 件マッチ`);
+        appendLog(t('{done} / {total} 照合済み → {matched} 件マッチ', { done: Math.min(i + batchSize, videoIds.length), total: videoIds.length, matched: matched.length }));
       }
 
       setSongs(matched);
       setUnmatched(unmatchedIds);
       setPhase('done');
-      appendLog(`完了: ${matched.length} 件の曲が見つかりました（未マッチ: ${unmatchedIds.length} 件）`);
+      appendLog(t('完了: {matched} 件の曲が見つかりました（未マッチ: {unmatched} 件）', { matched: matched.length, unmatched: unmatchedIds.length }));
     } catch (e) {
       setPhase('error');
-      setErrorMsg(e instanceof Error ? e.message : '不明なエラー');
+      setErrorMsg(e instanceof Error ? t(e.message) : t('不明なエラー'));
     }
   };
 
@@ -156,7 +158,7 @@ export default function YouTubeImportModal({ onClose, onImport, onLink }: Props)
         style={{ background: 'var(--color-bg-card)', border: '1px solid var(--color-border)' }}
       >
         <div className="flex items-center justify-between">
-          <h2 className="text-lg font-bold">YouTube プレイリストをインポート</h2>
+          <h2 className="text-lg font-bold">{t('YouTube プレイリストをインポート')}</h2>
           <button onClick={onClose} className="p-1 rounded-lg hover:opacity-70" style={{ color: 'var(--color-text-muted)' }}>
             <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M18 6L6 18M6 6l12 12" />
@@ -181,7 +183,7 @@ export default function YouTubeImportModal({ onClose, onImport, onLink }: Props)
             onClick={handleImport}
             disabled={phase === 'fetching' || phase === 'matching' || !url.trim()}
           >
-            取得
+            {t('取得')}
           </button>
         </div>
 
@@ -192,7 +194,7 @@ export default function YouTubeImportModal({ onClose, onImport, onLink }: Props)
             onClick={() => setMode('import')}
             disabled={phase === 'fetching' || phase === 'matching'}
           >
-            一度だけ追加
+            {t('一度だけ追加')}
           </button>
           <button
             type="button"
@@ -200,7 +202,7 @@ export default function YouTubeImportModal({ onClose, onImport, onLink }: Props)
             onClick={() => setMode('link')}
             disabled={phase === 'fetching' || phase === 'matching' || !onLink}
           >
-            自動同期としてリンク
+            {t('自動同期としてリンク')}
           </button>
         </div>
 
@@ -222,7 +224,7 @@ export default function YouTubeImportModal({ onClose, onImport, onLink }: Props)
         {/* 結果サマリー */}
         {phase === 'done' && (
           <p className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
-            {mode === 'link' ? `${songs.length} 件の曲を同期できます` : `${songs.length} 件の曲が VocaDB でマッチしました`}
+            {mode === 'link' ? t('{count} 件の曲を同期できます', { count: songs.length }) : t('{count} 件の曲が VocaDB でマッチしました', { count: songs.length })}
           </p>
         )}
 
@@ -235,7 +237,7 @@ export default function YouTubeImportModal({ onClose, onImport, onLink }: Props)
               onClick={() => setShowUnmatched(v => !v)}
             >
               <svg className="w-3 h-3" style={{ transform: showUnmatched ? 'rotate(90deg)' : '', transition: 'transform 0.15s' }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M9 18l6-6-6-6"/></svg>
-              未マッチ: {unmatched.length} 件（VocaDB未登録・非公開かも）
+              {t('未マッチ: {count} 件（VocaDB未登録・非公開かも）', { count: unmatched.length })}
             </button>
             {showUnmatched && (
               <div
@@ -262,7 +264,7 @@ export default function YouTubeImportModal({ onClose, onImport, onLink }: Props)
         {/* ボタン */}
         <div className="flex gap-3 justify-end">
           <button className="btn-secondary text-sm" onClick={onClose}>
-            キャンセル
+            {t('キャンセル')}
           </button>
           {phase === 'done' && (songs.length > 0 || (mode === 'link' && linkedResponse)) && (
             <button
@@ -273,7 +275,7 @@ export default function YouTubeImportModal({ onClose, onImport, onLink }: Props)
                 onClose();
               }}
             >
-              {mode === 'link' ? '同期プレイリストを作成' : `${songs.length} 曲をインポート`}
+              {mode === 'link' ? t('同期プレイリストを作成') : t('{count} 曲をインポート', { count: songs.length })}
             </button>
           )}
         </div>

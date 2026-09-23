@@ -10,13 +10,15 @@ import { getPlayedSongIds } from '../services/historyDatabase';
 import { useRatingStore } from '../stores/ratingStore';
 import { buildKnowledgeMapItems, layoutKnowledgeMap, type KnowledgeMapRect } from '../utils/knowledgeMap';
 import { getRatedSongIds } from '../utils/ratedSongs';
+import { useLanguageStore } from '../stores/languageStore';
+import { useTranslateSourceText } from '../i18n';
 
 type ViewMode = 'all' | 'known' | 'unknown';
 
-const compactNumber = new Intl.NumberFormat('ja-JP', { notation: 'compact', maximumFractionDigits: 1 });
-
-function formatViews(value: number): string {
-  return `${compactNumber.format(Math.max(0, value))}回`;
+function formatViews(value: number, language: 'ja' | 'en'): string {
+  const compactNumber = new Intl.NumberFormat(language === 'ja' ? 'ja-JP' : 'en', { notation: 'compact', maximumFractionDigits: 1 });
+  const formatted = compactNumber.format(Math.max(0, value));
+  return language === 'ja' ? `${formatted}回` : `${formatted} views`;
 }
 
 function formatPercent(ratio: number): string {
@@ -46,6 +48,7 @@ const VIEW_MODES: { value: ViewMode; label: string }[] = [
 ];
 
 export default function KnowledgeMapPage() {
+  const t = useTranslateSourceText();
   const ratings = useRatingStore(state => state.ratings);
   const [result, setResult] = useState<KnowledgeMapResponse | null>(null);
   const [platform, setPlatform] = useState<KnowledgeMapPlatform>('youtube');
@@ -110,13 +113,13 @@ export default function KnowledgeMapPage() {
     <main className="mx-auto w-full max-w-7xl px-3 py-4 pb-32 sm:px-6 sm:py-6" data-testid="knowledge-map-page">
       <div className="mb-5 max-w-3xl sm:mb-6">
         <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-300">Your Vocal Synth Map</p>
-        <h1 className="mt-1 text-2xl font-bold text-white sm:text-3xl">知ってる度マップ</h1>
+          <h1 className="mt-1 text-2xl font-bold text-white sm:text-3xl">{t('知ってる度マップ')}</h1>
         <p className="mt-2 text-sm leading-6 text-neutral-400">
-          ボカロ曲全体の再生規模に対して、端末の再生履歴にある曲、または星1〜5で評価した曲が占める面積を表示します。YouTubeとニコニコは換算・合算せず、それぞれの再生数で集計します。
+          {t('ボカロ曲全体の再生規模に対して、端末の再生履歴にある曲、または星1〜5で評価した曲が占める面積を表示します。YouTubeとニコニコは換算・合算せず、それぞれの再生数で集計します。')}
         </p>
       </div>
 
-      <div className="mb-3 grid min-h-11 w-full grid-cols-2 rounded-xl border border-white/[0.08] bg-white/[0.03] p-1 sm:inline-flex sm:w-auto" role="group" aria-label="再生数のサービス">
+      <div className="mb-3 grid min-h-11 w-full grid-cols-2 rounded-xl border border-white/[0.08] bg-white/[0.03] p-1 sm:inline-flex sm:w-auto" role="group" aria-label={t('再生数のサービス')}>
         {(['youtube', 'nico'] as const).map(value => (
           <button
             key={value}
@@ -125,12 +128,12 @@ export default function KnowledgeMapPage() {
             aria-pressed={platform === value}
             className={`min-h-10 rounded-lg px-4 py-2 text-sm font-semibold transition sm:min-w-32 ${platform === value ? 'bg-white text-black' : 'text-neutral-400 hover:bg-white/[0.06] hover:text-white'}`}
           >
-            {platformLabel(value)}
+            {t(platformLabel(value))}
           </button>
         ))}
       </div>
 
-      <div className="mb-5 grid grid-cols-3 gap-1.5 sm:mb-6 sm:flex sm:flex-wrap sm:items-center" role="group" aria-label="マップ表示">
+      <div className="mb-5 grid grid-cols-3 gap-1.5 sm:mb-6 sm:flex sm:flex-wrap sm:items-center" role="group" aria-label={t('マップ表示')}>
         {VIEW_MODES.map(({ value, label }) => (
           <button
             key={value}
@@ -143,22 +146,22 @@ export default function KnowledgeMapPage() {
                 : 'text-neutral-500 hover:bg-white/[0.05] hover:text-neutral-300'
             }`}
           >
-            {label}
+            {t(label)}
           </button>
         ))}
         {viewMode !== 'all' && (
           <span className="col-span-3 mt-0.5 text-[11px] text-neutral-600 sm:col-auto sm:ml-2 sm:mt-0">
-            マップをフィルター中 — タイルが拡大されています
+            {t('マップをフィルター中 — タイルが拡大されています')}
           </span>
         )}
       </div>
 
       {loading ? (
-        <div className="rounded-3xl border border-white/[0.06] bg-white/[0.03] py-24 text-center text-neutral-400" aria-busy="true">再生履歴・評価と曲全体を集計しています…</div>
+        <div className="rounded-3xl border border-white/[0.06] bg-white/[0.03] py-24 text-center text-neutral-400" aria-busy="true">{t('再生履歴・評価と曲全体を集計しています…')}</div>
       ) : error ? (
         <div className="rounded-2xl border border-red-400/20 bg-red-400/10 p-6 text-red-100" role="alert">
-          <p>{error}</p>
-          <button type="button" onClick={retry} className="mt-4 rounded-lg bg-white px-4 py-2 text-sm font-semibold text-black">再試行</button>
+          <p>{t(error)}</p>
+          <button type="button" onClick={retry} className="mt-4 rounded-lg bg-white px-4 py-2 text-sm font-semibold text-black">{t('再試行')}</button>
         </div>
       ) : result && data ? (
         <KnowledgeMapContent
@@ -192,6 +195,8 @@ function KnowledgeMapContent({
   topKnown: PlatformKnowledgeMap['tiles'];
   topUnknown: PlatformKnowledgeMap['tiles'];
 }) {
+  const t = useTranslateSourceText();
+  const language = useLanguageStore(state => state.language);
   const [hovered, setHovered] = useState<{ rect: KnowledgeMapRect; x: number; y: number } | null>(null);
   const tooltipRef = useRef<HTMLDivElement>(null);
 
@@ -219,11 +224,11 @@ function KnowledgeMapContent({
 
   return (
     <>
-      <section className="mb-5 grid grid-cols-2 gap-3 lg:grid-cols-4" aria-label={`${platformLabel(platform)}の知ってる度`}>
-        <Metric label="知ってる度" value={formatPercent(data.coverageRatio)} accent />
-        <Metric label="知っている曲の再生規模" value={formatViews(data.knownViews)} />
-        <Metric label={`${platformLabel(platform)}再生数の総量`} value={formatViews(data.totalViews)} />
-        <Metric label="知っている曲" value={`${data.knownSongCount.toLocaleString()} / ${data.totalSongCount.toLocaleString()}曲`} />
+      <section className="mb-5 grid grid-cols-2 gap-3 lg:grid-cols-4" aria-label={`${t(platformLabel(platform))} ${t('知ってる度')}`}>
+        <Metric label={t('知ってる度')} value={formatPercent(data.coverageRatio)} accent />
+        <Metric label={t('知っている曲の再生規模')} value={formatViews(data.knownViews, language)} />
+        <Metric label={`${t(platformLabel(platform))}${language === 'ja' ? '' : ' '}${t('再生数の総量')}`} value={formatViews(data.totalViews, language)} />
+        <Metric label={t('知っている曲')} value={language === 'ja' ? `${data.knownSongCount.toLocaleString()} / ${data.totalSongCount.toLocaleString()}曲` : `${data.knownSongCount.toLocaleString()} / ${data.totalSongCount.toLocaleString()} songs`} />
       </section>
 
       <section className="overflow-hidden rounded-2xl border border-white/[0.08] bg-neutral-950 p-1.5 shadow-2xl sm:rounded-3xl sm:p-3">
@@ -234,7 +239,7 @@ function KnowledgeMapContent({
         >
           {rectangles.length === 0 ? (
             <div className="flex h-full items-center justify-center text-sm text-neutral-500">
-              {viewMode === 'known' ? '知っている曲がこのサービスにありません' : viewMode === 'unknown' ? '未再生の曲がありません' : '表示する曲がありません'}
+              {t(viewMode === 'known' ? '知っている曲がこのサービスにありません' : viewMode === 'unknown' ? '未再生の曲がありません' : '表示する曲がありません')}
             </div>
           ) : rectangles.map((rect, index) => {
             const showFullLabel = rect.width >= 8 && rect.height >= 7;
@@ -255,8 +260,8 @@ function KnowledgeMapContent({
                 {(showFullLabel || showShortLabel) && (
                   <span className="relative z-10 flex h-full min-w-0 flex-col justify-end overflow-hidden p-1.5 text-left sm:p-2">
                     <span className={`${showFullLabel ? 'text-xs sm:text-sm' : 'text-[9px]'} truncate font-bold text-white`}>{rect.label}</span>
-                    {showFullLabel && <span className="mt-0.5 truncate text-[10px] text-white/65">{rect.secondaryLabel || formatViews(rect.views)}</span>}
-                    {showFullLabel && rect.secondaryLabel && <span className="text-[10px] text-white/75">{formatViews(rect.views)}</span>}
+                    {showFullLabel && <span className="mt-0.5 truncate text-[10px] text-white/65">{rect.secondaryLabel || formatViews(rect.views, language)}</span>}
+                    {showFullLabel && rect.secondaryLabel && <span className="text-[10px] text-white/75">{formatViews(rect.views, language)}</span>}
                   </span>
                 )}
                 {showDot && (
@@ -266,7 +271,7 @@ function KnowledgeMapContent({
                 )}
               </>
             );
-            const title = `${rect.known ? '知っている' : 'まだ知らない'}: ${rect.label} — ${formatViews(rect.views)}`;
+            const title = `${t(rect.known ? '知っている' : 'まだ知らない')}: ${rect.label} — ${formatViews(rect.views, language)}`;
             return rect.songId ? (
               <Link
                 key={rect.id}
@@ -297,9 +302,9 @@ function KnowledgeMapContent({
           })}
         </div>
         <div className="grid gap-2 px-2 pb-1 pt-3 text-[11px] text-neutral-400 sm:flex sm:flex-wrap sm:items-center sm:gap-x-5 sm:gap-y-2 sm:text-xs">
-          <span className="inline-flex items-center gap-2"><span className={`h-3 w-3 rounded-sm ${platform === 'youtube' ? 'bg-rose-500' : 'bg-teal-400'}`} />履歴または星評価がある曲</span>
-          <span className="inline-flex items-center gap-2"><span className="h-3 w-3 rounded-sm bg-neutral-600" />履歴・星評価がない曲</span>
-          <span>長方形の面積＝{platformLabel(platform)}再生数</span>
+          <span className="inline-flex items-center gap-2"><span className={`h-3 w-3 rounded-sm ${platform === 'youtube' ? 'bg-rose-500' : 'bg-teal-400'}`} />{t('履歴または星評価がある曲')}</span>
+          <span className="inline-flex items-center gap-2"><span className="h-3 w-3 rounded-sm bg-neutral-600" />{t('履歴・星評価がない曲')}</span>
+          <span>{t('長方形の面積＝')}{t(platformLabel(platform))}{language === 'ja' ? '再生数' : ' views'}</span>
         </div>
       </section>
 
@@ -318,26 +323,26 @@ function KnowledgeMapContent({
           <p className="truncate text-sm font-bold text-white">{hovered.rect.label}</p>
           {hovered.rect.secondaryLabel && <p className="mt-0.5 truncate text-xs text-neutral-400">{hovered.rect.secondaryLabel}</p>}
           <div className="mt-1.5 flex items-center gap-2">
-            <span className="text-xs font-medium text-neutral-200">{formatViews(hovered.rect.views)}</span>
+            <span className="text-xs font-medium text-neutral-200">{formatViews(hovered.rect.views, language)}</span>
             <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${
               hovered.rect.known
                 ? platform === 'youtube' ? 'bg-rose-500/20 text-rose-300' : 'bg-teal-500/20 text-teal-300'
                 : 'bg-neutral-700/50 text-neutral-400'
             }`}>
-              {hovered.rect.known ? '知っている' : 'まだ知らない'}
+              {t(hovered.rect.known ? '知っている' : 'まだ知らない')}
             </span>
           </div>
-          {hovered.rect.songId && <p className="mt-1 text-[10px] text-neutral-600">クリックで曲ページへ</p>}
+          {hovered.rect.songId && <p className="mt-1 text-[10px] text-neutral-600">{t('クリックで曲ページへ')}</p>}
         </div>
       )}
 
       <section className="mt-5 grid min-w-0 gap-3 sm:mt-6 sm:gap-4 lg:grid-cols-2">
-        <SongRanking title="知っている曲の上位" songs={topKnown} empty="このサービスで再生数を取得できた履歴・評価済み曲はありません。" />
-        <SongRanking title="まだ知らない上位曲" songs={topUnknown} empty="表示対象の上位曲はすべて履歴または星評価に含まれています。" />
+        <SongRanking title={t('知っている曲の上位')} songs={topKnown} empty={t('このサービスで再生数を取得できた履歴・評価済み曲はありません。')} />
+        <SongRanking title={t('まだ知らない上位曲')} songs={topUnknown} empty={t('表示対象の上位曲はすべて履歴または星評価に含まれています。')} />
       </section>
 
       <p className="mt-5 text-xs leading-5 text-neutral-500">
-        対象は発見品質条件を満たす{result.eligibleSongCount.toLocaleString()}曲です。履歴・評価から抽出した既知曲{result.historySongCount.toLocaleString()}曲のうち{result.matchedHistorySongCount.toLocaleString()}曲が対象に一致しました。曲ごとの上位表示に入りきらない分も「その他」として面積へ含めています。履歴と評価は端末内に保持され、重複除去した曲IDだけをこの集計時に送信し保存しません。星の数は送信しません。
+        {t('対象は発見品質条件を満たす{eligible}曲です。履歴・評価から抽出した既知曲{history}曲のうち{matched}曲が対象に一致しました。曲ごとの上位表示に入りきらない分も「その他」として面積へ含めています。履歴と評価は端末内に保持され、重複除去した曲IDだけをこの集計時に送信し保存しません。星の数は送信しません。', { eligible: result.eligibleSongCount.toLocaleString(), history: result.historySongCount.toLocaleString(), matched: result.matchedHistorySongCount.toLocaleString() })}
       </p>
     </>
   );
@@ -353,6 +358,7 @@ function Metric({ label, value, accent = false }: { label: string; value: string
 }
 
 function SongRanking({ title, songs, empty }: { title: string; songs: PlatformKnowledgeMap['tiles']; empty: string }) {
+  const language = useLanguageStore(state => state.language);
   return (
     <div className="min-w-0 overflow-hidden rounded-2xl border border-white/[0.06] bg-white/[0.03] p-3 sm:p-4" data-testid="knowledge-map-ranking">
       <h2 className="font-bold text-white">{title}</h2>
@@ -363,8 +369,8 @@ function SongRanking({ title, songs, empty }: { title: string; songs: PlatformKn
               <Link to={`/watch?v=${song.songId}`} className="grid min-h-14 min-w-0 grid-cols-[1.25rem_3rem_minmax(0,1fr)] items-center gap-x-2 rounded-xl px-1 py-1.5 hover:bg-white/[0.05] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 sm:min-h-12 sm:grid-cols-[1.25rem_3.5rem_minmax(0,1fr)_auto] sm:gap-x-3 sm:px-2">
                 <span className="w-5 text-center text-xs text-neutral-600">{index + 1}</span>
                 <span className="h-9 w-12 overflow-hidden rounded-md bg-neutral-800 sm:w-14">{song.thumbUrl && <img src={song.thumbUrl} alt="" className="h-full w-full object-cover" />}</span>
-                <span className="min-w-0"><span className="block truncate text-sm font-medium text-neutral-200">{song.name}</span><span className="block truncate text-xs text-neutral-500">{song.artistString}</span><span className="mt-0.5 block text-[11px] text-neutral-400 sm:hidden">{formatViews(song.views)}</span></span>
-                <span className="hidden shrink-0 text-xs text-neutral-400 sm:block">{formatViews(song.views)}</span>
+                <span className="min-w-0"><span className="block truncate text-sm font-medium text-neutral-200">{song.name}</span><span className="block truncate text-xs text-neutral-500">{song.artistString}</span><span className="mt-0.5 block text-[11px] text-neutral-400 sm:hidden">{formatViews(song.views, language)}</span></span>
+                <span className="hidden shrink-0 text-xs text-neutral-400 sm:block">{formatViews(song.views, language)}</span>
               </Link>
             </li>
           ))}

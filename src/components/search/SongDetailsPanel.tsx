@@ -8,6 +8,8 @@ import { formatDistinctArtistNames } from '../../utils/artistNames';
 import { getPVServiceLabel } from '../../utils/pvService';
 import { getPVBadgeStyle } from '../../utils/pvBadge';
 import { isPlayablePV } from '../../utils/playablePV';
+import { useTranslateSourceText } from '../../i18n';
+import { useLanguageStore } from '../../stores/languageStore';
 
 interface SongDetailsPanelProps {
   song: Song | null;
@@ -15,9 +17,9 @@ interface SongDetailsPanelProps {
   inline?: boolean;
 }
 
-function PVBadge({ pv }: { pv: PV }) {
+function PVBadge({ pv, t }: { pv: PV; t: (source: string) => string }) {
   const label = getPVServiceLabel(pv.service);
-  const typeLabel = pv.pvType === 'Original' ? '公式' : pv.pvType === 'Reprint' ? '転載' : 'その他';
+  const typeLabel = t(pv.pvType === 'Original' ? '公式' : pv.pvType === 'Reprint' ? '転載' : 'その他');
   const watchUrl = pv.url || (pv.service === 'NicoNicoDouga'
     ? `https://www.nicovideo.jp/watch/${pv.pvId}`
     : pv.service === 'Youtube' ? `https://www.youtube.com/watch?v=${pv.pvId}` : '#');
@@ -51,6 +53,8 @@ function PVBadge({ pv }: { pv: PV }) {
  * 画面右側にスライドインして表示する。
  */
 export default function SongDetailsPanel({ song, onClose, inline }: SongDetailsPanelProps) {
+  const t = useTranslateSourceText();
+  const language = useLanguageStore(state => state.language);
   const { search, searchByArtistId, setQuery } = useSearchStore();
   const { currentSong, currentPV, hiddenMode } = usePlayerStore();
   const isCurrentlyPlaying = currentSong?.id === song?.id && !!currentPV;
@@ -138,18 +142,18 @@ export default function SongDetailsPanel({ song, onClose, inline }: SongDetailsP
       {/* 基本情報 */}
       <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
         <div>
-          <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>曲タイプ</span>
+          <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>{t('曲タイプ')}</span>
           <p style={{ color: 'var(--color-text-primary)' }}>{song.songType}</p>
         </div>
         <div>
-          <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>時間</span>
+          <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>{t('時間')}</span>
           <p style={{ color: 'var(--color-text-primary)' }}>{formatDuration(song.lengthSeconds)}</p>
         </div>
         {song.publishDate && (
           <div>
-            <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>公開日</span>
+            <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>{t('公開日')}</span>
             <p style={{ color: 'var(--color-text-primary)' }}>
-              {new Date(song.publishDate).toLocaleDateString('ja-JP')}
+              {new Date(song.publishDate).toLocaleDateString(language === 'en' ? 'en-US' : 'ja-JP')}
             </p>
           </div>
         )}
@@ -160,7 +164,7 @@ export default function SongDetailsPanel({ song, onClose, inline }: SongDetailsP
       {producers.length > 0 && (
         <div>
           <h3 className="text-xs font-semibold mb-2 uppercase tracking-wider" style={{ color: 'var(--color-text-muted)' }}>
-            プロデューサー
+            {t('プロデューサー')}
           </h3>
           <div className="flex flex-wrap gap-1.5">
             {producers.map(a => (
@@ -178,7 +182,7 @@ export default function SongDetailsPanel({ song, onClose, inline }: SongDetailsP
       {vocalists.length > 0 && (
         <div>
           <h3 className="text-xs font-semibold mb-2 uppercase tracking-wider" style={{ color: 'var(--color-text-muted)' }}>
-            ボーカリスト
+            {t('ボーカリスト')}
           </h3>
           <div className="flex flex-wrap gap-1.5">
             {vocalists.map(a => (
@@ -190,7 +194,7 @@ export default function SongDetailsPanel({ song, onClose, inline }: SongDetailsP
                     }}
                     onClick={() => handleArtistSearch(a)}>
                 {a.name || a.artist?.name}
-                {a.isSupport && <span style={{ opacity: 0.6 }}> (サポート)</span>}
+                {a.isSupport && <span style={{ opacity: 0.6 }}> ({t('サポート')})</span>}
               </button>
             ))}
           </div>
@@ -201,10 +205,10 @@ export default function SongDetailsPanel({ song, onClose, inline }: SongDetailsP
       {playablePVs.length > 0 && (
         <div>
           <h3 className="text-xs font-semibold mb-2 uppercase tracking-wider" style={{ color: 'var(--color-text-muted)' }}>
-            動画 ({playablePVs.length}件)
+            {t('動画 ({count}件)', { count: playablePVs.length })}
           </h3>
           <div className="flex flex-col gap-1.5">
-            {playablePVs.map(pv => <PVBadge key={pv.id} pv={pv} />)}
+            {playablePVs.map(pv => <PVBadge key={pv.id} pv={pv} t={t} />)}
           </div>
         </div>
       )}
@@ -221,7 +225,7 @@ export default function SongDetailsPanel({ song, onClose, inline }: SongDetailsP
           style={{ background: 'var(--color-bg-secondary)', borderBottom: '1px solid var(--color-border)', zIndex: 1 }}
         >
           <span className="text-sm font-semibold" style={{ color: 'var(--color-text-primary)' }}>
-            曲の詳細
+            {t('曲の詳細')}
           </span>
           <a
             href={vocadbUrl}
@@ -268,14 +272,15 @@ export default function SongDetailsPanel({ song, onClose, inline }: SongDetailsP
           <button
             className="btn-ghost p-1.5 rounded-lg"
             onClick={onClose}
-            title="閉じる"
+            title={t('閉じる')}
+            aria-label={t('閉じる')}
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M18 6 6 18M6 6l12 12"/>
             </svg>
           </button>
           <span className="text-sm font-semibold" style={{ color: 'var(--color-text-primary)' }}>
-            曲の詳細
+            {t('曲の詳細')}
           </span>
           <a
             href={vocadbUrl}

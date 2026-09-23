@@ -2,8 +2,10 @@ import { useState } from 'react';
 import type { AlbumSummary, Song } from '../../types/vocadb';
 import { getAlbumTracks, getAlbumsForSong } from '../../api/vocadb';
 import { usePlaylistStore } from '../../stores/playlistStore';
+import { useTranslate } from '../../i18n';
 
 export default function AlbumPlaylistButton({ song }: { song: Song }) {
+  const t = useTranslate();
   const createPlaylist = usePlaylistStore(state => state.createPlaylist);
   const updatePlaylist = usePlaylistStore(state => state.updatePlaylist);
   const addSongs = usePlaylistStore(state => state.addSongs);
@@ -16,15 +18,15 @@ export default function AlbumPlaylistButton({ song }: { song: Song }) {
 
   const loadAlbums = async () => {
     setBusy(true);
-    setMessage('アルバムを取得中…');
+    setMessage(t('loadingAlbums'));
     try {
       const result = await getAlbumsForSong(song.id);
       setAlbums(result);
       setSelectedId(result[0]?.id ?? '');
       setOpen(true);
-      setMessage(result.length > 0 ? '' : 'この曲が登録されたアルバムはありません。');
+      setMessage(result.length > 0 ? '' : t('noAlbums'));
     } catch {
-      setMessage('アルバム情報を取得できませんでした。');
+      setMessage(t('albumLoadError'));
     } finally {
       setBusy(false);
     }
@@ -33,7 +35,7 @@ export default function AlbumPlaylistButton({ song }: { song: Song }) {
   const createFromAlbum = async () => {
     if (!selectedId) return;
     setBusy(true);
-    setMessage('トラックを取得中…');
+    setMessage(t('loadingAlbumTracks'));
     try {
       const { album, tracks } = await getAlbumTracks(Number(selectedId));
       const songs = tracks.map(track => track.song);
@@ -45,10 +47,10 @@ export default function AlbumPlaylistButton({ song }: { song: Song }) {
       const playlist = createPlaylist(name);
       updatePlaylist(playlist.id, { coverArtUrl: album.coverUrl, description: album.releaseDate ? `VocaDB album / ${album.releaseDate}` : 'VocaDB album' });
       addSongs(playlist.id, songs);
-      setMessage(`${songs.length}曲を「${name}」へ追加しました。`);
+      setMessage(t('songsAddedToPlaylist', { count: songs.length, playlist: name }));
       setOpen(false);
     } catch {
-      setMessage('アルバムのプレイリスト化に失敗しました。');
+      setMessage(t('albumPlaylistError'));
     } finally {
       setBusy(false);
     }
@@ -56,14 +58,14 @@ export default function AlbumPlaylistButton({ song }: { song: Song }) {
 
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <button type="button" className="btn-secondary min-h-10 px-3 py-1.5 text-xs sm:min-h-0" disabled={busy} onClick={() => void loadAlbums()}>アルバムをプレイリスト化</button>
+      <button type="button" className="btn-secondary min-h-10 px-3 py-1.5 text-xs sm:min-h-0" disabled={busy} onClick={() => void loadAlbums()}>{t('createAlbumPlaylist')}</button>
       {open && albums.length > 0 && (
         <div className="flex flex-wrap items-center gap-2">
           <select className="min-h-10 min-w-0 max-w-full rounded-lg border border-white/10 bg-black/30 px-2 py-1.5 text-xs sm:min-h-0" value={selectedId} onChange={event => setSelectedId(event.target.value ? Number(event.target.value) : '')} disabled={busy}>
             {albums.map(album => <option key={album.id} value={album.id}>{album.name}</option>)}
           </select>
-          <button type="button" className="btn-primary min-h-10 px-3 py-1.5 text-xs sm:min-h-0" disabled={busy || selectedId === ''} onClick={() => void createFromAlbum()}>作成</button>
-          <button type="button" className="btn-ghost min-h-10 px-3 py-1.5 text-xs sm:min-h-0" disabled={busy} onClick={() => setOpen(false)}>取消</button>
+          <button type="button" className="btn-primary min-h-10 px-3 py-1.5 text-xs sm:min-h-0" disabled={busy || selectedId === ''} onClick={() => void createFromAlbum()}>{t('create')}</button>
+          <button type="button" className="btn-ghost min-h-10 px-3 py-1.5 text-xs sm:min-h-0" disabled={busy} onClick={() => setOpen(false)}>{t('cancel')}</button>
         </div>
       )}
       {message && <p className="text-xs mt-1" role="status" style={{ color: 'var(--color-text-muted)' }}>{message}</p>}

@@ -11,6 +11,7 @@ import type { Artist } from '../../types/vocadb';
 import { searchTagFacets, type SearchTagFacet } from '../../api/searchFacets';
 import { VOICE_SYNTH_ARTIST_TYPES, VOICE_SYNTH_TYPE_LABELS } from '../../config/voiceSynthTypes';
 import { AUDIO_INSTRUMENT_LABELS, AUDIO_INSTRUMENT_OPTIONS } from '../../config/audioInstruments';
+import { useTranslateSourceText } from '../../i18n';
 
 // hall_of_fame_singers.json の型定義
 interface HallOfFameSinger { id: number; name: string; artist_type: string; }
@@ -61,13 +62,14 @@ function RangeInputs({ label, from, to, fromPlaceholder, toPlaceholder, min, max
   onFrom: (value: string) => void;
   onTo: (value: string) => void;
 }) {
+  const t = useTranslateSourceText();
   return (
     <label className="flex flex-col gap-1.5 text-[11px] text-neutral-500">
-      {label}
+      {t(label)}
       <span className="flex items-center gap-1.5">
-        <input type="number" inputMode="numeric" min={min} max={max} value={from} onChange={event => onFrom(event.target.value)} placeholder={fromPlaceholder} className="ui-number-input min-w-0" />
+        <input type="number" inputMode="numeric" min={min} max={max} value={from} onChange={event => onFrom(event.target.value)} placeholder={t(fromPlaceholder)} className="ui-number-input min-w-0" />
         <span>〜</span>
-        <input type="number" inputMode="numeric" min={min} max={max} value={to} onChange={event => onTo(event.target.value)} placeholder={toPlaceholder} className="ui-number-input min-w-0" />
+        <input type="number" inputMode="numeric" min={min} max={max} value={to} onChange={event => onTo(event.target.value)} placeholder={t(toPlaceholder)} className="ui-number-input min-w-0" />
       </span>
     </label>
   );
@@ -98,6 +100,7 @@ function FilterSection({ title, badge, children, defaultOpen = false }: {
   defaultOpen?: boolean;
 }) {
   const [open, setOpen] = useState(defaultOpen);
+  const t = useTranslateSourceText();
 
   // バッジが付いたら自動で開く
   useEffect(() => {
@@ -121,7 +124,7 @@ function FilterSection({ title, badge, children, defaultOpen = false }: {
         >
           <path d="M9 18l6-6-6-6"/>
         </svg>
-        <span className="filter-section-title">{title}</span>
+        <span className="filter-section-title">{t(title)}</span>
         {(badge != null && badge > 0) && (
           <span className="filter-section-badge">{badge}</span>
         )}
@@ -236,6 +239,7 @@ const VOCALIST_CATEGORIES: { label: string; vocalists: PresetVocalist[] }[] = [
 ];
 
 export default function SearchFilters() {
+  const t = useTranslateSourceText();
   const {
     search,
     vocalistFilters, vocalistMatchMode,
@@ -329,7 +333,7 @@ export default function SearchFilters() {
   const vocalistFilterLabel = (filter: typeof vocalistFilters[number]): string => {
     if (!filter.variantGroup) return filter.name;
     const variantCount = vocalistFilters.filter(candidate => candidate.variantGroup === filter.variantGroup).length;
-    return `${filter.variantGroup}（${variantCount}音源）`;
+    return t('{group}（{count}音源）', { group: filter.variantGroup, count: variantCount });
   };
 
   const removeVocalistSelection = (filter: typeof vocalistFilters[number]) => {
@@ -406,8 +410,8 @@ export default function SearchFilters() {
   });
 
   const rangeText = (from: string, to: string, suffix = '') => from && to
-    ? `${Number(from).toLocaleString()}〜${Number(to).toLocaleString()}${suffix}`
-    : from ? `${Number(from).toLocaleString()}${suffix}以上` : `${Number(to).toLocaleString()}${suffix}以下`;
+    ? `${Number(from).toLocaleString()}–${Number(to).toLocaleString()}${suffix}`
+    : from ? `${Number(from).toLocaleString()}${suffix} ${t('以上')}` : `${Number(to).toLocaleString()}${suffix} ${t('以下')}`;
 
   /* ---------- セクション別のバッジ計算 ---------- */
   const vocalistBadge = visibleVocalistFilters.length;
@@ -448,33 +452,33 @@ export default function SearchFilters() {
   }));
 
   // 曲種
-  if (songTypeFilter === 'Original') allChips.push({ key: 'original-only', label: 'オリジナルのみ', color: 'default', clear: () => { setSongTypeFilter('All'); search(); } });
-  advancedFilters.includedSongTypes.forEach(type => allChips.push({ key: `type-${type}`, label: SONG_TYPE_OPTIONS.find(option => option.value === type)?.label ?? type, color: 'default', clear: () => toggleSongType(type) }));
+  if (songTypeFilter === 'Original') allChips.push({ key: 'original-only', label: t('オリジナルのみ'), color: 'default', clear: () => { setSongTypeFilter('All'); search(); } });
+  advancedFilters.includedSongTypes.forEach(type => allChips.push({ key: `type-${type}`, label: t(SONG_TYPE_OPTIONS.find(option => option.value === type)?.label ?? type), color: 'default', clear: () => toggleSongType(type) }));
   if (advancedFilters.selfCoverOnly) allChips.push({ key: 'self-cover', label: 'Self Cover', color: 'default', clear: () => setAdvancedFilters({ selfCoverOnly: false }) });
 
   // 投稿年・長さ
-  if (advancedFilters.publishYearFrom || advancedFilters.publishYearTo) allChips.push({ key: 'year', label: `投稿年 ${rangeText(advancedFilters.publishYearFrom, advancedFilters.publishYearTo)}`, color: 'cyan', clear: () => setAdvancedFilters({ publishYearFrom: '', publishYearTo: '' }) });
-  if (advancedFilters.lengthMinSeconds || advancedFilters.lengthMaxSeconds) allChips.push({ key: 'length', label: `長さ ${rangeText(advancedFilters.lengthMinSeconds, advancedFilters.lengthMaxSeconds, '秒')}`, color: 'cyan', clear: () => setAdvancedFilters({ lengthMinSeconds: '', lengthMaxSeconds: '' }) });
+  if (advancedFilters.publishYearFrom || advancedFilters.publishYearTo) allChips.push({ key: 'year', label: t('投稿年 {range}', { range: rangeText(advancedFilters.publishYearFrom, advancedFilters.publishYearTo) }), color: 'cyan', clear: () => setAdvancedFilters({ publishYearFrom: '', publishYearTo: '' }) });
+  if (advancedFilters.lengthMinSeconds || advancedFilters.lengthMaxSeconds) allChips.push({ key: 'length', label: t('長さ {range}', { range: rangeText(advancedFilters.lengthMinSeconds, advancedFilters.lengthMaxSeconds, t('秒')) }), color: 'cyan', clear: () => setAdvancedFilters({ lengthMinSeconds: '', lengthMaxSeconds: '' }) });
 
   // 再生数・支持
   if (advancedFilters.minYoutubeViews || advancedFilters.maxYoutubeViews) allChips.push({ key: 'youtube', label: `YouTube ${rangeText(advancedFilters.minYoutubeViews, advancedFilters.maxYoutubeViews)}`, color: 'cyan', clear: () => setAdvancedFilters({ minYoutubeViews: '', maxYoutubeViews: '' }) });
-  if (advancedFilters.minNicoViews || advancedFilters.maxNicoViews) allChips.push({ key: 'nico', label: `ニコニコ ${rangeText(advancedFilters.minNicoViews, advancedFilters.maxNicoViews)}`, color: 'cyan', clear: () => setAdvancedFilters({ minNicoViews: '', maxNicoViews: '' }) });
-  if (advancedFilters.minFavoritedTimes || advancedFilters.maxFavoritedTimes) allChips.push({ key: 'favorites', label: `VocaDB支持 ${rangeText(advancedFilters.minFavoritedTimes, advancedFilters.maxFavoritedTimes)}`, color: 'cyan', clear: () => setAdvancedFilters({ minFavoritedTimes: '', maxFavoritedTimes: '' }) });
+  if (advancedFilters.minNicoViews || advancedFilters.maxNicoViews) allChips.push({ key: 'nico', label: `NicoNico ${rangeText(advancedFilters.minNicoViews, advancedFilters.maxNicoViews)}`, color: 'cyan', clear: () => setAdvancedFilters({ minNicoViews: '', maxNicoViews: '' }) });
+  if (advancedFilters.minFavoritedTimes || advancedFilters.maxFavoritedTimes) allChips.push({ key: 'favorites', label: t('VocaDB支持 {range}', { range: rangeText(advancedFilters.minFavoritedTimes, advancedFilters.maxFavoritedTimes) }), color: 'cyan', clear: () => setAdvancedFilters({ minFavoritedTimes: '', maxFavoritedTimes: '' }) });
 
   // タグ
-  advancedFilters.tagFilters.forEach(tag => allChips.push({ key: `tag-${tag.id}`, label: `# ${tag.name}`, color: 'cyan', clear: () => toggleTag(tag) }));
+  advancedFilters.tagFilters.forEach(tag => allChips.push({ key: `tag-${tag.id}`, label: `# ${t(tag.name)}`, color: 'cyan', clear: () => toggleTag(tag) }));
 
   // 参加者
-  if (advancedFilters.creditArtist) allChips.push({ key: 'credit', label: `${CREDIT_ROLES.find(([value]) => value === advancedFilters.creditRole)?.[1] ?? '参加'}: ${advancedFilters.creditArtist.name}`, color: 'cyan', clear: () => setAdvancedFilters({ creditArtist: null }) });
+  if (advancedFilters.creditArtist) allChips.push({ key: 'credit', label: `${t(CREDIT_ROLES.find(([value]) => value === advancedFilters.creditRole)?.[1] ?? '参加')}: ${advancedFilters.creditArtist.name}`, color: 'cyan', clear: () => setAdvancedFilters({ creditArtist: null }) });
 
   // 音源推定
-  if (advancedFilters.bpmFrom || advancedFilters.bpmTo) allChips.push({ key: 'bpm', label: `推定BPM ${rangeText(advancedFilters.bpmFrom, advancedFilters.bpmTo)}`, color: 'cyan', clear: () => setAdvancedFilters({ bpmFrom: '', bpmTo: '' }) });
-  advancedFilters.instrumentKeys.forEach(key => allChips.push({ key: `instrument-${key}`, label: `推定: ${AUDIO_INSTRUMENT_LABELS.get(key) ?? key}`, color: 'cyan', clear: () => toggleInstrument(key) }));
-  if (advancedFilters.audioComputed !== 'any') allChips.push({ key: 'audio', label: `音響解析: ${advancedFilters.audioComputed === 'yes' ? 'あり' : 'なし'}`, color: 'cyan', clear: () => setAdvancedFilters({ audioComputed: 'any' }) });
+  if (advancedFilters.bpmFrom || advancedFilters.bpmTo) allChips.push({ key: 'bpm', label: t('推定BPM {range}', { range: rangeText(advancedFilters.bpmFrom, advancedFilters.bpmTo) }), color: 'cyan', clear: () => setAdvancedFilters({ bpmFrom: '', bpmTo: '' }) });
+  advancedFilters.instrumentKeys.forEach(key => allChips.push({ key: `instrument-${key}`, label: `${t('推定')}: ${t(AUDIO_INSTRUMENT_LABELS.get(key) ?? key)}`, color: 'cyan', clear: () => toggleInstrument(key) }));
+  if (advancedFilters.audioComputed !== 'any') allChips.push({ key: 'audio', label: t('音響解析: {status}', { status: t(advancedFilters.audioComputed === 'yes' ? 'あり' : 'なし') }), color: 'cyan', clear: () => setAdvancedFilters({ audioComputed: 'any' }) });
 
   // 歌詞・PV
-  if (advancedFilters.lyricsQuery.trim()) allChips.push({ key: 'lyrics', label: `歌詞: ${advancedFilters.lyricsQuery.trim()}`, color: 'cyan', clear: () => setAdvancedFilters({ lyricsQuery: '' }) });
-  if (advancedFilters.pvService !== 'any') allChips.push({ key: 'pv', label: `PV: ${advancedFilters.pvService === 'both' ? 'YouTube＋ニコニコ' : advancedFilters.pvService}`, color: 'cyan', clear: () => setAdvancedFilters({ pvService: 'any' }) });
+  if (advancedFilters.lyricsQuery.trim()) allChips.push({ key: 'lyrics', label: t('歌詞: {query}', { query: advancedFilters.lyricsQuery.trim() }), color: 'cyan', clear: () => setAdvancedFilters({ lyricsQuery: '' }) });
+  if (advancedFilters.pvService !== 'any') allChips.push({ key: 'pv', label: `PV: ${advancedFilters.pvService === 'both' ? 'YouTube + NicoNico' : advancedFilters.pvService === 'niconico' ? 'NicoNico' : 'YouTube'}`, color: 'cyan', clear: () => setAdvancedFilters({ pvService: 'any' }) });
 
   const chipColorClass = (color: 'purple' | 'cyan' | 'default') => {
     if (color === 'purple') return 'border-purple-400/30 bg-purple-400/10 text-purple-200';
@@ -502,7 +506,7 @@ export default function SearchFilters() {
           {allChips.map(chip => (
             <span key={chip.key} className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs ${chipColorClass(chip.color)}`}>
               {chip.label}
-              <button type="button" className="opacity-60 hover:opacity-100 transition-opacity ml-0.5" aria-label={`${chip.label}を解除`} onClick={() => { chip.clear(); queueMicrotask(() => void search()); }}>×</button>
+              <button type="button" className="opacity-60 hover:opacity-100 transition-opacity ml-0.5" aria-label={t('{label}を解除', { label: chip.label })} onClick={() => { chip.clear(); queueMicrotask(() => void search()); }}>×</button>
             </span>
           ))}
           <button
@@ -510,28 +514,28 @@ export default function SearchFilters() {
             className="ml-auto text-[11px] text-neutral-500 hover:text-neutral-300 transition-colors"
             onClick={handleClearAll}
           >
-            すべてクリア
+            {t('すべてクリア')}
           </button>
         </div>
       )}
 
       {/* ===== かんたん設定 ===== */}
       <div className="flex flex-wrap items-center gap-1.5 px-4 py-2.5" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
-        <span className="mr-1 text-[10px] font-semibold uppercase tracking-wider text-neutral-500">かんたん設定</span>
-        <button type="button" className="ui-chip-toggle" onClick={() => { setSongTypeFilter('Original'); setAdvancedFilters({ includedSongTypes: [] }); search(); }} data-active={songTypeFilter === 'Original'}>オリジナルのみ</button>
-        <button type="button" className="ui-chip-toggle" onClick={() => setAdvancedFilters({ publishYearFrom: '2007', publishYearTo: '2012' })}>初期ボカロ</button>
-        <button type="button" className="ui-chip-toggle" onClick={() => setAdvancedFilters({ publishYearFrom: '2024', publishYearTo: '' })}>2024年以降</button>
-        <button type="button" className="ui-chip-toggle" onClick={() => setAdvancedFilters({ lengthMinSeconds: '', lengthMaxSeconds: '180' })}>3分以内</button>
-        <button type="button" className="ui-chip-toggle" onClick={() => setAdvancedFilters({ lengthMinSeconds: '360', lengthMaxSeconds: '' })}>6分以上</button>
-        <button type="button" className="ui-chip-toggle" onClick={() => setAdvancedFilters({ minYoutubeViews: '1000000' })}>YouTube 100万+</button>
-        <button type="button" className="ui-chip-toggle" onClick={() => setAdvancedFilters({ minNicoViews: '100000' })}>ニコニコ 10万+</button>
+        <span className="mr-1 text-[10px] font-semibold uppercase tracking-wider text-neutral-500">{t('かんたん設定')}</span>
+        <button type="button" className="ui-chip-toggle" onClick={() => { setSongTypeFilter('Original'); setAdvancedFilters({ includedSongTypes: [] }); search(); }} data-active={songTypeFilter === 'Original'}>{t('オリジナルのみ')}</button>
+        <button type="button" className="ui-chip-toggle" onClick={() => setAdvancedFilters({ publishYearFrom: '2007', publishYearTo: '2012' })}>{t('初期ボカロ')}</button>
+        <button type="button" className="ui-chip-toggle" onClick={() => setAdvancedFilters({ publishYearFrom: '2024', publishYearTo: '' })}>{t('2024年以降')}</button>
+        <button type="button" className="ui-chip-toggle" onClick={() => setAdvancedFilters({ lengthMinSeconds: '', lengthMaxSeconds: '180' })}>{t('3分以内')}</button>
+        <button type="button" className="ui-chip-toggle" onClick={() => setAdvancedFilters({ lengthMinSeconds: '360', lengthMaxSeconds: '' })}>{t('6分以上')}</button>
+        <button type="button" className="ui-chip-toggle" onClick={() => setAdvancedFilters({ minYoutubeViews: '1000000' })}>YouTube 1M+</button>
+        <button type="button" className="ui-chip-toggle" onClick={() => setAdvancedFilters({ minNicoViews: '100000' })}>NicoNico 100K+</button>
       </div>
 
       {/* ===== 1. シンガー ===== */}
       <FilterSection title="シンガー" badge={vocalistBadge} defaultOpen={vocalistBadge > 0}>
         {/* 一致モード */}
         <div className="flex items-center justify-between mb-3">
-          <span className="text-[11px] text-neutral-500">一致モード</span>
+          <span className="text-[11px] text-neutral-500">{t('一致モード')}</span>
           <div className="ui-segmented">
             {MATCH_MODES.map(m => (
               <button
@@ -540,7 +544,7 @@ export default function SearchFilters() {
                 data-active={vocalistMatchMode === m.value}
                 onClick={() => { setVocalistMatchMode(m.value); if (vocalistFilters.length > 0) search(); }}
               >
-                {m.label}
+                {t(m.label)}
               </button>
             ))}
           </div>
@@ -552,7 +556,7 @@ export default function SearchFilters() {
             <svg className="animate-spin" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
             </svg>
-            <span className="text-xs">読み込み中...</span>
+            <span className="text-xs">{t('読み込み中...')}</span>
           </div>
         ) : (
           <div className="flex flex-col gap-2.5">
@@ -560,7 +564,7 @@ export default function SearchFilters() {
               <div key={cat.label} className="flex flex-col gap-1.5">
                 <span className="text-[10px] font-bold tracking-wider uppercase"
                       style={{ color: 'var(--color-text-muted)', opacity: 0.6 }}>
-                  {cat.label}
+                  {t(cat.label)}
                 </span>
                 <div className="flex flex-wrap gap-1.5">
                   {cat.vocalists.map(v => {
@@ -590,14 +594,14 @@ export default function SearchFilters() {
             <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor">
               <path d="M15.5 14h-.79l-.28-.27A6.47 6.47 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/>
             </svg>
-            その他のシンガーを検索
+            {t('その他のシンガーを検索')}
           </div>
           <input
             type="text"
             value={vocalistQuery}
             onChange={e => setVocalistQuery(e.target.value)}
             onFocus={() => suggestions.length > 0 && setShowSuggestions(true)}
-            placeholder="シンガー名を入力..."
+            placeholder={t('シンガー名を入力...')}
             className="ui-number-input"
             style={{ width: '100%' }}
           />
@@ -638,6 +642,7 @@ export default function SearchFilters() {
                 <button
                   onClick={() => removeVocalistSelection(v)}
                   className="opacity-60 hover:opacity-100 transition-opacity ml-0.5 flex items-center"
+                  aria-label={t('{label}を解除', { label: vocalistFilterLabel(v) })}
                 >
                   <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
                     <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
@@ -662,13 +667,13 @@ export default function SearchFilters() {
                 setSongTypeFilter(songTypeFilter === 'Original' ? 'All' : 'Original');
                 search();
               }}
-              title="カバー・リミックスを除外し、オリジナル曲のみ表示"
+              title={t('カバー・リミックスを除外し、オリジナル曲のみ表示')}
             >
-              {songTypeFilter === 'Original' ? '✦ オリジナルのみ' : 'オリジナルのみ'}
+              {songTypeFilter === 'Original' ? `✦ ${t('オリジナルのみ')}` : t('オリジナルのみ')}
             </button>
             {SONG_TYPE_OPTIONS.map(option => (
               <button key={option.value} type="button" className="ui-chip-toggle" data-active={advancedFilters.includedSongTypes.includes(option.value)} onClick={() => toggleSongType(option.value)}>
-                {option.label}
+                {t(option.label)}
               </button>
             ))}
           </div>
@@ -678,7 +683,7 @@ export default function SearchFilters() {
             data-active={advancedFilters.selfCoverOnly}
             onClick={() => setAdvancedFilters({ selfCoverOnly: !advancedFilters.selfCoverOnly })}
           >
-            Self Coverのみ
+            {t('Self Coverのみ')}
           </button>
         </div>
       </FilterSection>
@@ -703,11 +708,11 @@ export default function SearchFilters() {
       {/* ===== 5. VocaDBタグ ===== */}
       <FilterSection title="VocaDBタグ" badge={tagBadge}>
         <div className="flex items-center justify-between mb-2">
-          <span className="text-[11px] text-neutral-500">一致モード</span>
+          <span className="text-[11px] text-neutral-500">{t('一致モード')}</span>
           <div className="ui-segmented">
             {(['all', 'any'] as const).map(mode => (
               <button key={mode} type="button" data-active={advancedFilters.tagMatchMode === mode} onClick={() => setAdvancedFilters({ tagMatchMode: mode })}>
-                {mode === 'all' ? 'すべて含む' : 'いずれか'}
+              {t(mode === 'all' ? 'すべて含む' : 'いずれか')}
               </button>
             ))}
           </div>
@@ -715,13 +720,13 @@ export default function SearchFilters() {
         <div data-testid="vocadb-tag-filters" className="flex flex-wrap gap-1.5">
           {TAG_PRESETS.map(tag => (
             <button key={tag.id} type="button" className="ui-chip-toggle" data-active={advancedFilters.tagFilters.some(item => item.id === tag.id)} onClick={() => toggleTag(tag)}>
-              {tag.name}
+              {t(tag.name)}
             </button>
           ))}
         </div>
         <div className="relative mt-3">
-          <input className="ui-number-input w-full" value={tagQuery} onChange={event => setTagQuery(event.target.value)} placeholder="ほかのタグを検索（例: ギター、和風）" />
-          {tagSuggestions.length > 0 && <SuggestionList items={tagSuggestions.map(tag => ({ id: tag.id, label: tag.name, detail: `${tag.songCount.toLocaleString()}曲` }))} onSelect={item => { const tag = tagSuggestions.find(candidate => candidate.id === item.id); if (tag) toggleTag(tag); setTagQuery(''); setTagSuggestions([]); }} />}
+          <input className="ui-number-input w-full" value={tagQuery} onChange={event => setTagQuery(event.target.value)} placeholder={t('ほかのタグを検索（例: ギター、和風）')} />
+          {tagSuggestions.length > 0 && <SuggestionList items={tagSuggestions.map(tag => ({ id: tag.id, label: tag.name, detail: t('{count}曲', { count: tag.songCount.toLocaleString() }) }))} onSelect={item => { const tag = tagSuggestions.find(candidate => candidate.id === item.id); if (tag) toggleTag(tag); setTagQuery(''); setTagSuggestions([]); }} />}
         </div>
       </FilterSection>
 
@@ -729,40 +734,40 @@ export default function SearchFilters() {
       <FilterSection title="参加者・役割" badge={creditBadge}>
         <div className="grid grid-cols-[minmax(0,1fr)_minmax(120px,0.65fr)] gap-2">
           <div className="relative">
-            <input className="ui-number-input w-full" value={creditQuery} onChange={event => setCreditQuery(event.target.value)} placeholder="P、絵師、動画師、演奏者…" />
+            <input className="ui-number-input w-full" value={creditQuery} onChange={event => setCreditQuery(event.target.value)} placeholder={t('P、絵師、動画師、演奏者…')} />
             {creditSuggestions.length > 0 && <SuggestionList items={creditSuggestions.map(artist => ({ id: artist.id, label: artist.name, detail: artist.artistType }))} onSelect={item => { setAdvancedFilters({ creditArtist: { id: item.id, name: item.label } }); setCreditQuery(''); setCreditSuggestions([]); }} />}
           </div>
           <select className="ui-select w-full" value={advancedFilters.creditRole} onChange={event => setAdvancedFilters({ creditRole: event.target.value })}>
-            {CREDIT_ROLES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+            {CREDIT_ROLES.map(([value, label]) => <option key={value} value={value}>{t(label)}</option>)}
           </select>
         </div>
-        {advancedFilters.creditArtist && <p className="mt-2 text-xs text-cyan-200">選択中: {advancedFilters.creditArtist.name}</p>}
+        {advancedFilters.creditArtist && <p className="mt-2 text-xs text-cyan-200">{t('選択中: {name}', { name: advancedFilters.creditArtist.name })}</p>}
       </FilterSection>
 
       {/* ===== 7. 音源からの推定 ===== */}
       <FilterSection title="音源からの推定" badge={audioBadge}>
-        <div className="mb-2 text-[10px] text-neutral-500">解析済みの曲のみ・誤判定を含む場合があります</div>
+        <div className="mb-2 text-[10px] text-neutral-500">{t('解析済みの曲のみ・誤判定を含む場合があります')}</div>
         <div data-testid="audio-analysis-filters" className="flex flex-col gap-3">
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-[minmax(220px,0.7fr)_minmax(0,1.8fr)]">
             <RangeInputs label="BPM（半分／倍テンポ候補も検索）" from={advancedFilters.bpmFrom} to={advancedFilters.bpmTo} fromPlaceholder="80" toPlaceholder="180" min={ADVANCED_SEARCH_LIMITS.bpmMin} max={ADVANCED_SEARCH_LIMITS.bpmMax} onFrom={value => updateBoundedInteger('bpmFrom', value, ADVANCED_SEARCH_LIMITS.bpmMin, ADVANCED_SEARCH_LIMITS.bpmMax)} onTo={value => updateBoundedInteger('bpmTo', value, ADVANCED_SEARCH_LIMITS.bpmMin, ADVANCED_SEARCH_LIMITS.bpmMax)} />
             <div>
               <div className="mb-2 flex items-center gap-2">
-                <span className="text-[11px] text-neutral-500">楽器</span>
+                <span className="text-[11px] text-neutral-500">{t('楽器')}</span>
                 <div className="ui-segmented ml-auto">
-                  {(['all', 'any'] as const).map(mode => <button key={mode} type="button" data-active={advancedFilters.instrumentMatchMode === mode} onClick={() => setAdvancedFilters({ instrumentMatchMode: mode })}>{mode === 'all' ? 'すべて含む' : 'いずれか'}</button>)}
+                  {(['all', 'any'] as const).map(mode => <button key={mode} type="button" data-active={advancedFilters.instrumentMatchMode === mode} onClick={() => setAdvancedFilters({ instrumentMatchMode: mode })}>{t(mode === 'all' ? 'すべて含む' : 'いずれか')}</button>)}
                 </div>
               </div>
               <div className="flex max-h-36 flex-wrap gap-1.5 overflow-y-auto pr-1">
-                {AUDIO_INSTRUMENT_OPTIONS.map(option => <button key={option.key} type="button" className="ui-chip-toggle" data-active={advancedFilters.instrumentKeys.includes(option.key)} onClick={() => toggleInstrument(option.key)}>{option.label}</button>)}
+                {AUDIO_INSTRUMENT_OPTIONS.map(option => <button key={option.key} type="button" className="ui-chip-toggle" data-active={advancedFilters.instrumentKeys.includes(option.key)} onClick={() => toggleInstrument(option.key)}>{t(option.label)}</button>)}
               </div>
             </div>
           </div>
           <label className="flex flex-col gap-1.5 text-[11px] text-neutral-500">
-            音声特徴量
+            {t('音声特徴量')}
             <select id="audio-computed-filter" value={advancedFilters.audioComputed} onChange={e => setAdvancedFilters({ audioComputed: e.target.value as typeof advancedFilters.audioComputed })} className="ui-select w-full sm:w-48">
-              <option value="any">指定なし</option>
-              <option value="yes">あり</option>
-              <option value="no">なし</option>
+              <option value="any">{t('指定なし')}</option>
+              <option value="yes">{t('あり')}</option>
+              <option value="no">{t('なし')}</option>
             </select>
           </label>
         </div>
@@ -772,23 +777,23 @@ export default function SearchFilters() {
       <FilterSection title="歌詞・PV" badge={lyricsPvBadge}>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <label className="flex flex-col gap-1.5 text-[11px] text-neutral-500">
-            歌詞から逆引き
+            {t('歌詞から逆引き')}
             <input
               className="ui-number-input w-full"
               value={advancedFilters.lyricsQuery}
               maxLength={100}
               onChange={event => setAdvancedFilters({ lyricsQuery: event.target.value })}
               onKeyDown={event => { if (event.key === 'Enter') void search(); }}
-              placeholder="うろ覚えのフレーズを入力"
+              placeholder={t('うろ覚えのフレーズを入力')}
             />
           </label>
           <label className="flex flex-col gap-1.5 text-[11px] text-neutral-500">
             PV
             <select id="pv-service-filter" value={advancedFilters.pvService} onChange={e => setAdvancedFilters({ pvService: e.target.value as typeof advancedFilters.pvService })} className="ui-select w-full">
-              <option value="any">指定なし</option>
-              <option value="youtube">YouTubeあり</option>
-              <option value="niconico">ニコニコあり</option>
-              <option value="both">両方あり</option>
+              <option value="any">{t('指定なし')}</option>
+              <option value="youtube">{t('YouTubeあり')}</option>
+              <option value="niconico">{t('ニコニコあり')}</option>
+              <option value="both">{t('両方あり')}</option>
             </select>
           </label>
         </div>
@@ -796,14 +801,14 @@ export default function SearchFilters() {
 
       {/* ===== フッター ===== */}
       <div className="flex items-center justify-end gap-2 px-4 py-3" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
-        {hasSearched && <span className="mr-auto text-xs text-neutral-500"><strong className="text-white">{totalCount.toLocaleString()}</strong> 曲が該当</span>}
+        {hasSearched && <span className="mr-auto text-xs text-neutral-500">{t('{count} 曲が該当', { count: totalCount.toLocaleString() })}</span>}
         <button
           type="button"
           className="text-xs px-3 py-1.5 rounded-lg transition-colors"
           style={{ background: 'transparent', color: 'var(--color-text-muted)', border: '1px solid rgba(255,255,255,0.08)' }}
           onClick={handleClearAll}
         >
-          クリア
+          {t('クリア')}
         </button>
         <button
           type="button"
@@ -811,7 +816,7 @@ export default function SearchFilters() {
           style={{ background: 'var(--color-accent-purple)', color: '#fff' }}
           onClick={() => search()}
         >
-          この条件で検索
+          {t('この条件で検索')}
         </button>
       </div>
     </div>

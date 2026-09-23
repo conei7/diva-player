@@ -6,6 +6,7 @@ import { useProgressStore } from '../stores/progressStore';
 import { useRatingStore } from '../stores/ratingStore';
 import { useUiStore } from '../stores/uiStore';
 import StarRating from '../components/player/StarRating';
+import { useTranslateSourceText } from '../i18n';
 
 function formatTime(seconds?: number): string {
   if (seconds == null || !Number.isFinite(seconds)) return '--:--';
@@ -13,6 +14,7 @@ function formatTime(seconds?: number): string {
 }
 
 export default function ChorusHighlightsPage() {
+  const t = useTranslateSourceText();
   const [candidates, setCandidates] = useState<Song[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -85,7 +87,7 @@ export default function ChorusHighlightsPage() {
     soughtSongId.current = null;
     advancedSongId.current = null;
     setActive(true);
-    setQueue(candidates, 0, true, 'discovery', '15秒サビハイライト');
+    setQueue(candidates, 0, true, 'discovery', t('15秒サビハイライト'));
   };
 
   const skip = () => {
@@ -102,29 +104,29 @@ export default function ChorusHighlightsPage() {
       <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.18em] text-fuchsia-300">Fast discovery</p>
-          <h1 className="mt-1 text-2xl font-bold text-white">15秒サビハイライト</h1>
-          <p className="mt-2 text-sm text-neutral-400">音源解析で推定したサビ候補だけを連続再生します。気になった曲はその場で保存・評価できます。</p>
+          <h1 className="mt-1 text-2xl font-bold text-white">{t('15秒サビハイライト')}</h1>
+          <p className="mt-2 text-sm text-neutral-400">{t('音源解析で推定したサビ候補だけを連続再生します。気になった曲はその場で保存・評価できます。')}</p>
         </div>
         <button type="button" className="btn-ghost rounded-lg px-3 py-2 text-sm" onClick={() => void loadCandidates()} disabled={loading}>
-          候補を入れ替える
+          {t('候補を入れ替える')}
         </button>
       </div>
 
       {loading ? (
-        <div className="rounded-2xl border border-white/[0.06] bg-white/[0.03] p-10 text-center text-neutral-400">サビ候補を選んでいます…</div>
+        <div className="rounded-2xl border border-white/[0.06] bg-white/[0.03] p-10 text-center text-neutral-400">{t('サビ候補を選んでいます…')}</div>
       ) : error ? (
-        <div className="rounded-2xl border border-red-400/20 bg-red-400/10 p-6 text-red-200">{error}</div>
+        <div className="rounded-2xl border border-red-400/20 bg-red-400/10 p-6 text-red-200">{t(error)}</div>
       ) : candidates.length === 0 ? (
         <div className="rounded-2xl border border-white/[0.06] bg-white/[0.03] p-8 text-center text-neutral-400">
-          解析済みのサビ候補がまだありません。音源解析pipelineの次回実行後に候補が追加されます。
+          {t('解析済みのサビ候補がまだありません。音源解析pipelineの次回実行後に候補が追加されます。')}
         </div>
       ) : !active || !isHighlightSong ? (
         <section className="rounded-3xl border border-fuchsia-300/15 bg-gradient-to-br from-fuchsia-400/10 to-cyan-300/5 p-8 text-center">
           <div className="mx-auto mb-5 flex h-20 w-20 items-center justify-center rounded-full bg-fuchsia-400/15 text-3xl">♫</div>
-          <p className="text-lg font-semibold text-white">{candidates.length}曲のサビ候補を準備しました</p>
-          <p className="mt-2 text-sm text-neutral-400">再生開始後は15秒ごとに自動で次へ進みます。</p>
+          <p className="text-lg font-semibold text-white">{t('{count}曲のサビ候補を準備しました', { count: candidates.length })}</p>
+          <p className="mt-2 text-sm text-neutral-400">{t('再生開始後は15秒ごとに自動で次へ進みます。')}</p>
           <button type="button" className="mt-6 rounded-full bg-fuchsia-500 px-6 py-3 font-semibold text-white shadow-lg shadow-fuchsia-500/20" onClick={startHighlights}>
-            ハイライトを開始
+            {t('ハイライトを開始')}
           </button>
         </section>
       ) : currentSong && (
@@ -134,20 +136,20 @@ export default function ChorusHighlightsPage() {
               {currentSong.thumbUrl ? <img src={currentSong.thumbUrl} alt="" className="h-full w-full object-cover" /> : <div className="flex h-full items-center justify-center text-6xl text-neutral-700">♫</div>}
             </div>
             <div className="flex flex-col justify-center p-6 sm:p-8">
-              <p className="text-xs text-fuchsia-300">{queueIndex + 1} / {candidates.length} ・ {formatTime(startSeconds)}から</p>
+              <p className="text-xs text-fuchsia-300">{queueIndex + 1} / {candidates.length} ・ {formatTime(startSeconds)}{t('から')}</p>
               <h2 className="mt-2 text-2xl font-bold text-white">{currentSong.name}</h2>
               <p className="mt-2 text-sm text-neutral-400">{currentSong.artistString}</p>
               {currentSong.isSelfCover && <span className="mt-3 w-fit rounded-full bg-fuchsia-400/15 px-2.5 py-1 text-xs font-semibold text-fuchsia-200">Self Cover</span>}
 
               <div className="mt-7">
-                <div className="mb-2 flex justify-between text-xs text-neutral-500"><span>{formatTime(progress)}</span><span>15秒</span></div>
+                <div className="mb-2 flex justify-between text-xs text-neutral-500"><span>{formatTime(progress)}</span><span>{t('15秒')}</span></div>
                 <div className="h-2 overflow-hidden rounded-full bg-white/[0.08]"><div className="h-full rounded-full bg-gradient-to-r from-fuchsia-500 to-cyan-400 transition-[width]" style={{ width: `${windowProgress}%` }} /></div>
               </div>
 
               <div className="mt-7 flex flex-wrap items-center gap-3">
                 <StarRating rating={getRating(currentSong.id)} onRate={rating => setRating(currentSong.id, rating)} />
-                <button type="button" className="btn-ghost rounded-lg px-3 py-2 text-sm" onClick={() => openSaveToPlaylist(currentSong)}>保存</button>
-                <button type="button" className="rounded-lg bg-white px-5 py-2 text-sm font-semibold text-black" onClick={skip}>スキップ</button>
+                <button type="button" className="btn-ghost rounded-lg px-3 py-2 text-sm" onClick={() => openSaveToPlaylist(currentSong)}>{t('保存')}</button>
+                <button type="button" className="rounded-lg bg-white px-5 py-2 text-sm font-semibold text-black" onClick={skip}>{t('スキップ')}</button>
               </div>
             </div>
           </div>

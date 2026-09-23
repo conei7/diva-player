@@ -5,6 +5,7 @@ import {
   resolveBackendConnectivityStatus,
   type BackendConnectivityStatus,
 } from '../../api/backendHealth';
+import { useTranslateSourceText } from '../../i18n';
 
 const CHECK_INTERVAL_MS = 30_000;
 const CHECK_TIMEOUT_MS = 5_000;
@@ -31,6 +32,7 @@ const STATUS_COPY: Record<Exclude<BackendConnectivityStatus, 'healthy' | 'checki
 
 /** Keeps local playback and saved data discoverable while SBC-only features degrade. */
 export default function BackendStatusNotice() {
+  const t = useTranslateSourceText();
   const [available, setAvailable] = useState<boolean | null>(null);
   const [online, setOnline] = useState(() => typeof navigator === 'undefined' || navigator.onLine);
   const [checking, setChecking] = useState(false);
@@ -107,12 +109,12 @@ export default function BackendStatusNotice() {
     >
       <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-x-3 gap-y-2">
         <div className="min-w-0 flex-1">
-          <p className="font-semibold" style={{ color: copy.color }}>{copy.title}</p>
-          <p className="mt-0.5 text-xs leading-5" style={{ color: 'var(--color-text-secondary)' }}>{copy.message}</p>
-          <nav className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1 text-xs" aria-label="利用可能なローカル機能">
-            <Link className="underline decoration-dotted underline-offset-2" to="/playlists">プレイリスト</Link>
-            <Link className="underline decoration-dotted underline-offset-2" to="/history">履歴</Link>
-            <Link className="underline decoration-dotted underline-offset-2" to="/favorites">評価・お気に入り</Link>
+          <p className="font-semibold" style={{ color: copy.color }}>{t(copy.title)}</p>
+          <p className="mt-0.5 text-xs leading-5" style={{ color: 'var(--color-text-secondary)' }}>{t(copy.message)}</p>
+          <nav className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1 text-xs" aria-label={t('利用可能なローカル機能')}>
+            <Link className="underline decoration-dotted underline-offset-2" to="/playlists">{t('プレイリスト')}</Link>
+            <Link className="underline decoration-dotted underline-offset-2" to="/history">{t('履歴')}</Link>
+            <Link className="underline decoration-dotted underline-offset-2" to="/favorites">{t('評価・お気に入り')}</Link>
           </nav>
         </div>
         <button
@@ -121,7 +123,7 @@ export default function BackendStatusNotice() {
           disabled={checking || status === 'offline'}
           className="shrink-0 rounded-lg border border-white/20 px-3 py-1.5 text-xs font-semibold transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          {checking ? '再確認中…' : '再接続を確認'}
+          {t(checking ? '再確認中…' : '再接続を確認')}
         </button>
       </div>
     </div>

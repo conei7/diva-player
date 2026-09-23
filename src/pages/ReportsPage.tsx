@@ -3,6 +3,8 @@ import { Link } from 'react-router';
 import { buildHistoryReportCsv, getHistoryReport, type HistoryReport } from '../services/historyStats';
 import { downloadCsv } from '../utils/csv';
 import { toSafeFileName } from '../utils/playlistBackup';
+import { useLanguageStore } from '../stores/languageStore';
+import { useTranslateSourceText } from '../i18n';
 
 function currentKey(period: 'month' | 'year'): string {
   const parts = new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit' }).formatToParts(new Date());
@@ -11,13 +13,17 @@ function currentKey(period: 'month' | 'year'): string {
   return `${year}-${parts.find(part => part.type === 'month')?.value ?? '01'}`;
 }
 
-function formatDuration(seconds: number): string {
+function formatDuration(seconds: number, language: 'ja' | 'en'): string {
   const hours = Math.floor(seconds / 3600);
   const minutes = Math.floor((seconds % 3600) / 60);
-  return `${hours}時間${String(minutes).padStart(2, '0')}分`;
+  return language === 'ja'
+    ? `${hours}時間${String(minutes).padStart(2, '0')}分`
+    : `${hours}h ${String(minutes).padStart(2, '0')}m`;
 }
 
 export default function ReportsPage() {
+  const t = useTranslateSourceText();
+  const language = useLanguageStore(state => state.language);
   const [period, setPeriod] = useState<'month' | 'year'>('month');
   const [key, setKey] = useState(() => currentKey('month'));
   const [report, setReport] = useState<HistoryReport | null>(null);
@@ -54,10 +60,10 @@ export default function ReportsPage() {
   return (
     <main className="w-full max-w-5xl mx-auto px-4 py-6 pb-32 overflow-y-auto">
       <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
-        <h1 className="text-2xl font-bold">リスニングレポート</h1>
+        <h1 className="text-2xl font-bold">{t('リスニングレポート')}</h1>
         <div className="flex flex-wrap gap-2">
           <select value={period} onChange={event => setPeriod(event.target.value as 'month' | 'year')} className="rounded-lg px-3 py-2 bg-black/30 border border-white/10">
-            <option value="month">月間</option><option value="year">年間</option>
+            <option value="month">{t('月間')}</option><option value="year">{t('年間')}</option>
           </select>
           {period === 'month'
             ? <input type="month" value={key} onChange={event => setKey(event.target.value)} className="rounded-lg px-3 py-2 bg-black/30 border border-white/10" />
@@ -67,36 +73,36 @@ export default function ReportsPage() {
             onClick={handleCsvExport}
             disabled={loading || !report}
             className="rounded-lg px-3 py-2 bg-cyan-500/20 border border-cyan-300/30 disabled:opacity-50"
-            title="表示中のレポートをCSVで保存"
+            title={t('表示中のレポートをCSVで保存')}
           >
-            CSV保存
+            {t('CSV保存')}
           </button>
         </div>
       </div>
-      {exportMessage && <p className="mb-4 text-sm text-white/60" role="status">{exportMessage}</p>}
-      {loading && <p className="py-20 text-center text-white/60">集計中…</p>}
-      {!loading && error && <p className="py-20 text-center text-red-300">{error}</p>}
+      {exportMessage && <p className="mb-4 text-sm text-white/60" role="status">{t(exportMessage)}</p>}
+      {loading && <p className="py-20 text-center text-white/60">{t('集計中…')}</p>}
+      {!loading && error && <p className="py-20 text-center text-red-300">{t(error)}</p>}
       {!loading && !error && report && (
         <>
           <section className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
-            <Metric label="開始" value={`${report.totalStarts.toLocaleString()}回`} />
-            <Metric label="有効再生" value={`${report.totalQualifiedPlays.toLocaleString()}回`} />
-            <Metric label="曲数" value={`${report.uniqueSongCount.toLocaleString()}曲`} />
-            <Metric label="完走" value={`${report.totalCompletes.toLocaleString()}回`} />
-            <Metric label="総再生時間" value={formatDuration(report.totalListenedSeconds)} />
+            <Metric label={t('開始')} value={language === 'ja' ? `${report.totalStarts.toLocaleString()}回` : `${report.totalStarts.toLocaleString()} ${t('回')}`} />
+            <Metric label={t('有効再生')} value={language === 'ja' ? `${report.totalQualifiedPlays.toLocaleString()}回` : `${report.totalQualifiedPlays.toLocaleString()} ${t('回')}`} />
+            <Metric label={t('曲数')} value={language === 'ja' ? `${report.uniqueSongCount.toLocaleString()}曲` : `${report.uniqueSongCount.toLocaleString()} ${t('曲')}`} />
+            <Metric label={t('完走')} value={language === 'ja' ? `${report.totalCompletes.toLocaleString()}回` : `${report.totalCompletes.toLocaleString()} ${t('回')}`} />
+            <Metric label={t('総再生時間')} value={formatDuration(report.totalListenedSeconds, language)} />
           </section>
           <section className="rounded-2xl p-4 mb-6" style={{ background: 'var(--color-bg-card)' }}>
-            <div className="flex items-center justify-between mb-3"><h2 className="font-bold">{period === 'month' ? '日別' : '月別'}の再生開始</h2><span className="text-xs text-white/50">手動 {manualStarts} / 自動 {autoStarts}</span></div>
+            <div className="flex items-center justify-between mb-3"><h2 className="font-bold">{t(period === 'month' ? '日別' : '月別')}{t('の再生開始')}</h2><span className="text-xs text-white/50">{t('手動')} {manualStarts} / {t('自動')} {autoStarts}</span></div>
             <div className="h-40 flex items-end gap-1 overflow-x-auto">
-              {report.buckets.map(bucket => <div key={bucket.key} className="h-full min-w-8 flex flex-col items-center justify-end gap-1"><span className="text-[10px] text-white/60">{bucket.starts}</span><div className="w-full rounded-t bg-cyan-400" style={{ height: `${Math.max(3, bucket.starts / maxBucket * 100)}%` }} title={`${bucket.key}: ${bucket.starts}回`} /><span className="text-[9px] text-white/50 [writing-mode:vertical-rl]">{bucket.key.slice(period === 'month' ? 5 : 0)}</span></div>)}
-              {report.buckets.length === 0 && <p className="w-full text-center self-center text-white/50">データがありません</p>}
+              {report.buckets.map(bucket => <div key={bucket.key} className="h-full min-w-8 flex flex-col items-center justify-end gap-1"><span className="text-[10px] text-white/60">{bucket.starts}</span><div className="w-full rounded-t bg-cyan-400" style={{ height: `${Math.max(3, bucket.starts / maxBucket * 100)}%` }} title={`${bucket.key}: ${bucket.starts}${language === 'ja' ? '回' : ` ${t('回')}`}`} /><span className="text-[9px] text-white/50 [writing-mode:vertical-rl]">{bucket.key.slice(period === 'month' ? 5 : 0)}</span></div>)}
+              {report.buckets.length === 0 && <p className="w-full text-center self-center text-white/50">{t('データがありません')}</p>}
             </div>
           </section>
           <section className="rounded-2xl p-4" style={{ background: 'var(--color-bg-card)' }}>
-            <h2 className="font-bold mb-3">よく聴いた曲</h2>
+            <h2 className="font-bold mb-3">{t('よく聴いた曲')}</h2>
             <div className="flex flex-col gap-1">
-              {report.topSongsWithMeta.slice(0, 20).map((song, index) => <Link key={song.songId} to={`/watch?v=${song.songId}`} className="flex items-center gap-3 p-2 rounded-lg hover:bg-white/5"><span className="w-6 text-center text-white/50">{index + 1}</span><div className="w-12 h-8 rounded overflow-hidden bg-black/30 shrink-0">{song.thumbUrl && <img src={song.thumbUrl} alt="" className="w-full h-full object-cover" />}</div><span className="min-w-0 flex-1 truncate">{song.songName}</span><span className="text-sm text-white/60">{song.qualifiedPlayCount}回</span></Link>)}
-              {report.topSongsWithMeta.length === 0 && <p className="text-center text-white/50 py-4">データがありません</p>}
+              {report.topSongsWithMeta.slice(0, 20).map((song, index) => <Link key={song.songId} to={`/watch?v=${song.songId}`} className="flex items-center gap-3 p-2 rounded-lg hover:bg-white/5"><span className="w-6 text-center text-white/50">{index + 1}</span><div className="w-12 h-8 rounded overflow-hidden bg-black/30 shrink-0">{song.thumbUrl && <img src={song.thumbUrl} alt="" className="w-full h-full object-cover" />}</div><span className="min-w-0 flex-1 truncate">{song.songName}</span><span className="text-sm text-white/60">{song.qualifiedPlayCount}{language === 'ja' ? '回' : ` ${t('回')}`}</span></Link>)}
+              {report.topSongsWithMeta.length === 0 && <p className="text-center text-white/50 py-4">{t('データがありません')}</p>}
             </div>
           </section>
         </>

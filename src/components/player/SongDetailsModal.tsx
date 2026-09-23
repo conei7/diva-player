@@ -8,6 +8,8 @@ import { isPlayablePV } from '../../utils/playablePV';
 import { getPVServiceLabel } from '../../utils/pvService';
 import { getPVBadgeStyle } from '../../utils/pvBadge';
 import AlbumPlaylistButton from '../playlist/AlbumPlaylistButton';
+import { useLanguageStore } from '../../stores/languageStore';
+import { useTranslateSourceText } from '../../i18n';
 
 const VOCADB_BASE = 'https://vocadb.net';
 
@@ -20,10 +22,10 @@ function formatDuration(seconds: number): string {
 }
 
 /** 日付文字列を表示用にフォーマット */
-function formatDate(dateStr?: string): string {
+function formatDate(dateStr: string | undefined, locale: string): string {
   if (!dateStr) return '不明';
   const d = new Date(dateStr);
-  return d.toLocaleDateString('ja-JP', { year: 'numeric', month: 'long', day: 'numeric' });
+  return d.toLocaleDateString(locale, { year: 'numeric', month: 'long', day: 'numeric' });
 }
 
 /** 曲タイプの日本語マッピング */
@@ -42,6 +44,8 @@ const SONG_TYPE_JA: Record<string, string> = {
 };
 
 export default function SongDetailsModal() {
+  const t = useTranslateSourceText();
+  const language = useLanguageStore(state => state.language);
   const { detailSong, closeSongDetail } = useUiStore();
   const { setQueue } = usePlayerStore();
   const { getRating, setRating } = useRatingStore();
@@ -102,7 +106,7 @@ export default function SongDetailsModal() {
         className="fixed z-[61] inset-0 flex items-center justify-center p-4"
         role="dialog"
         aria-modal="true"
-        aria-label={`${song.name} の詳細`}
+        aria-label={t('{song} の詳細', { song: song.name })}
         onClick={(e) => e.stopPropagation()}
       >
         <div
@@ -118,7 +122,7 @@ export default function SongDetailsModal() {
           <button
             className="absolute top-3 right-3 z-10 btn-ghost p-1.5 rounded-full"
             onClick={closeSongDetail}
-            aria-label="閉じる"
+            aria-label={t('閉じる')}
             style={{
               background: 'rgba(0,0,0,0.4)',
               color: 'white',
@@ -165,7 +169,7 @@ export default function SongDetailsModal() {
             <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
               {producers.length > 0 && (
                 <>
-                  <dt style={{ color: 'var(--color-text-muted)' }}>プロデューサー</dt>
+                  <dt style={{ color: 'var(--color-text-muted)' }}>{t('プロデューサー')}</dt>
                   <dd style={{ color: 'var(--color-text-primary)' }}>
                     {producers.map(a => a.name).join(', ')}
                   </dd>
@@ -173,7 +177,7 @@ export default function SongDetailsModal() {
               )}
               {vocalists.length > 0 && (
                 <>
-                  <dt style={{ color: 'var(--color-text-muted)' }}>ボーカリスト</dt>
+                  <dt style={{ color: 'var(--color-text-muted)' }}>{t('ボーカリスト')}</dt>
                   <dd style={{ color: 'var(--color-text-primary)' }}>
                     {vocalists.map(a => a.name).join(', ')}
                   </dd>
@@ -181,32 +185,32 @@ export default function SongDetailsModal() {
               )}
               {producers.length === 0 && vocalists.length === 0 && song.artistString && (
                 <>
-                  <dt style={{ color: 'var(--color-text-muted)' }}>アーティスト</dt>
+                  <dt style={{ color: 'var(--color-text-muted)' }}>{t('アーティスト')}</dt>
                   <dd style={{ color: 'var(--color-text-primary)' }}>{song.artistString}</dd>
                 </>
               )}
-              <dt style={{ color: 'var(--color-text-muted)' }}>曲タイプ</dt>
+              <dt style={{ color: 'var(--color-text-muted)' }}>{t('曲タイプ')}</dt>
               <dd style={{ color: 'var(--color-text-primary)' }}>
-                {song.isSelfCover ? 'Self Cover' : (SONG_TYPE_JA[song.songType] ?? song.songType)}
+                {song.isSelfCover ? t('セルフカバー') : t(SONG_TYPE_JA[song.songType] ?? song.songType)}
               </dd>
               {song.chorusStartSeconds != null && (
                 <>
-                  <dt style={{ color: 'var(--color-text-muted)' }}>サビ候補</dt>
+                  <dt style={{ color: 'var(--color-text-muted)' }}>{t('サビ候補')}</dt>
                   <dd style={{ color: 'var(--color-text-primary)' }}>
                     {formatDuration(song.chorusStartSeconds)}〜{formatDuration(song.chorusEndSeconds ?? song.chorusStartSeconds + 15)}
-                    <span className="ml-1 text-xs text-neutral-500">（自動推定）</span>
+                    <span className="ml-1 text-xs text-neutral-500">{t('（自動推定）')}</span>
                   </dd>
                 </>
               )}
               {song.publishDate && (
                 <>
-                  <dt style={{ color: 'var(--color-text-muted)' }}>投稿日</dt>
-                  <dd style={{ color: 'var(--color-text-primary)' }}>{formatDate(song.publishDate)}</dd>
+                  <dt style={{ color: 'var(--color-text-muted)' }}>{t('投稿日')}</dt>
+                  <dd style={{ color: 'var(--color-text-primary)' }}>{formatDate(song.publishDate, language === 'ja' ? 'ja-JP' : 'en-US')}</dd>
                 </>
               )}
               {song.lengthSeconds > 0 && (
                 <>
-                  <dt style={{ color: 'var(--color-text-muted)' }}>再生時間</dt>
+                  <dt style={{ color: 'var(--color-text-muted)' }}>{t('再生時間')}</dt>
                   <dd style={{ color: 'var(--color-text-primary)' }}>{formatDuration(song.lengthSeconds)}</dd>
                 </>
               )}
@@ -228,7 +232,7 @@ export default function SongDetailsModal() {
                   >
                     ▶ {getPVServiceLabel(pv.service)}
                     {pv.pvType !== 'Original' && (
-                      <span className="ml-1 opacity-70">(非公式)</span>
+                      <span className="ml-1 opacity-70">{t('(非公式)')}</span>
                     )}
                   </a>
                 ))}
@@ -244,7 +248,7 @@ export default function SongDetailsModal() {
                   }}
                   onClick={(e) => e.stopPropagation()}
                 >
-                  VocaDB で見る
+                  {t('VocaDB で見る')}
                 </a>
               </div>
             )}
@@ -255,7 +259,7 @@ export default function SongDetailsModal() {
               style={{ background: 'var(--gradient-primary)', color: 'white' }}
               onClick={handlePlay}
             >
-              ▶ この曲を再生
+              ▶ {t('この曲を再生')}
             </button>
           </div>
         </div>

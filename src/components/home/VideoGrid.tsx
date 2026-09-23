@@ -7,6 +7,7 @@ import { useRecommendationExposureStore, type ExposureSurface } from '../../stor
 import { useRecommendationDisplayStore } from '../../stores/recommendationDisplayStore';
 import { excludeHiddenSongs, useHiddenSongStore } from '../../stores/hiddenSongStore';
 import { useMemo } from 'react';
+import { useTranslate } from '../../i18n';
 
 /**
  * VideoGrid - YouTube風のレスポンシブ動画グリッド
@@ -35,7 +36,8 @@ function SkeletonCard() {
   );
 }
 
-export default function VideoGrid({ songs, loading, recommendationReasons, alwaysShowReasons = false, exposureSurface, emptyMessage = '楽曲が見つかりません' }: VideoGridProps) {
+export default function VideoGrid({ songs, loading, recommendationReasons, alwaysShowReasons = false, exposureSurface, emptyMessage }: VideoGridProps) {
+  const t = useTranslate();
   const navigate = useNavigate();
   const setVisibleSongs = useSelectionStore(s => s.setVisibleSongs);
   const recordVisible = useRecommendationExposureStore(s => s.recordVisible);
@@ -69,7 +71,7 @@ export default function VideoGrid({ songs, loading, recommendationReasons, alway
           <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z" />
         </svg>
         <p className="text-base" style={{ color: 'var(--color-text-muted)' }}>
-          {emptyMessage}
+          {emptyMessage ?? t('noSongsFound')}
         </p>
       </div>
     );

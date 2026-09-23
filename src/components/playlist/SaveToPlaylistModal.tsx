@@ -9,8 +9,10 @@ import { createPortal } from 'react-dom';
 import { useUiStore } from '../../stores/uiStore';
 import { usePlaylistStore, WATCH_LATER_ID } from '../../stores/playlistStore';
 import { getQueueSongsForScope, type QueueSaveScope } from '../../utils/queuePlaylist';
+import { useTranslateSourceText } from '../../i18n';
 
 export function SaveToPlaylistModal() {
+  const t = useTranslateSourceText();
   const songs = useUiStore(s => s.saveToPlaylistSongs);
   const saveContext = useUiStore(s => s.saveToPlaylistContext);
   const close = useUiStore(s => s.closeSaveToPlaylist);
@@ -60,8 +62,12 @@ export function SaveToPlaylistModal() {
     const result = addSongs(pl.id, selectedSongs);
     setNewName('');
     setShowCreate(false);
-    setNotice(`${result.added}曲を「${pl.name}」に追加しました${result.duplicates > 0 ? `（重複 ${result.duplicates}曲）` : ''}`);
-  }, [newName, songs, selectedSongs, createPlaylist, addSongs]);
+    setNotice(t('{count}曲を「{name}」に追加しました{duplicates}', {
+      count: result.added,
+      name: pl.name,
+      duplicates: result.duplicates > 0 ? t('（重複 {count}曲）', { count: result.duplicates }) : '',
+    }));
+  }, [newName, songs, selectedSongs, createPlaylist, addSongs, t]);
 
   if (!songs || songs.length === 0 || selectedSongs.length === 0) return null;
 
@@ -81,10 +87,11 @@ export function SaveToPlaylistModal() {
       <div className="bg-neutral-900 border border-neutral-700 rounded-xl w-80 max-h-[80vh] flex flex-col shadow-2xl">
         {/* ヘッダー */}
         <div className="flex items-center justify-between px-4 pt-4 pb-2 border-b border-neutral-700">
-          <h2 className="font-semibold text-sm text-white">プレイリストに保存</h2>
+          <h2 className="font-semibold text-sm text-white">{t('プレイリストに保存')}</h2>
           <button
             onClick={close}
             className="text-neutral-400 hover:text-white transition-colors p-1 rounded"
+            aria-label={t('閉じる')}
           >
             ✕
           </button>
@@ -100,16 +107,16 @@ export function SaveToPlaylistModal() {
               <span className="text-xs text-neutral-300 truncate">{selectedSongs[0].name}</span>
             </>
           ) : (
-            <span className="text-xs text-neutral-300 truncate">{selectedSongs.length} 曲を選択中</span>
+            <span className="text-xs text-neutral-300 truncate">{t('{count} 曲を選択中', { count: selectedSongs.length })}</span>
           )}
         </div>
 
         {saveContext.source === 'queue' && (
           <div className="space-y-1 border-b border-neutral-700 bg-neutral-850 px-4 py-2 text-xs text-neutral-300">
-            <p className="text-[11px] text-neutral-500">キューから保存する範囲</p>
-            <label className="flex items-center gap-2"><input type="radio" checked={queueSaveScope === 'currentAndRemaining'} onChange={() => setQueueSaveScope('currentAndRemaining')} /> 再生中の曲以降（{getQueueSongsForScope(songs, saveContext.queueIndex ?? -1, 'currentAndRemaining').length}曲）</label>
-            <label className="flex items-center gap-2"><input type="radio" checked={queueSaveScope === 'remaining'} onChange={() => setQueueSaveScope('remaining')} /> 次の曲だけ（{getQueueSongsForScope(songs, saveContext.queueIndex ?? -1, 'remaining').length}曲）</label>
-            <label className="flex items-center gap-2"><input type="radio" checked={queueSaveScope === 'all'} onChange={() => setQueueSaveScope('all')} /> キュー全体（{songs.length}曲）</label>
+            <p className="text-[11px] text-neutral-500">{t('キューから保存する範囲')}</p>
+            <label className="flex items-center gap-2"><input type="radio" checked={queueSaveScope === 'currentAndRemaining'} onChange={() => setQueueSaveScope('currentAndRemaining')} /> {t('再生中の曲以降')}（{getQueueSongsForScope(songs, saveContext.queueIndex ?? -1, 'currentAndRemaining').length} {t('曲')})</label>
+            <label className="flex items-center gap-2"><input type="radio" checked={queueSaveScope === 'remaining'} onChange={() => setQueueSaveScope('remaining')} /> {t('次の曲だけ')}（{getQueueSongsForScope(songs, saveContext.queueIndex ?? -1, 'remaining').length} {t('曲')})</label>
+            <label className="flex items-center gap-2"><input type="radio" checked={queueSaveScope === 'all'} onChange={() => setQueueSaveScope('all')} /> {t('キュー全体')}（{songs.length} {t('曲')})</label>
           </div>
         )}
 
@@ -124,13 +131,13 @@ export function SaveToPlaylistModal() {
             const handleToggle = () => {
               if (saveContext.source === 'queue') {
                 const result = addSongs(pl.id, selectedSongs);
-                setNotice(`${result.added}曲を「${pl.name}」に追加しました${result.duplicates > 0 ? `（重複 ${result.duplicates}曲）` : ''}`);
+                setNotice(t('{count}曲を「{name}」に追加しました{duplicates}', { count: result.added, name: pl.name, duplicates: result.duplicates > 0 ? t('（重複 {count}曲）', { count: result.duplicates }) : '' }));
               } else if (checked) {
                 selectedSongs.forEach(s => removeSongById(pl.id, s.id));
-                setNotice(`「${pl.name}」から${selectedSongs.length}曲を外しました`);
+                setNotice(t('「{name}」から{count}曲を外しました', { name: pl.name, count: selectedSongs.length }));
               } else {
                 const result = addSongs(pl.id, selectedSongs);
-                setNotice(`${result.added}曲を「${pl.name}」に追加しました${result.duplicates > 0 ? `（重複 ${result.duplicates}曲）` : ''}`);
+                setNotice(t('{count}曲を「{name}」に追加しました{duplicates}', { count: result.added, name: pl.name, duplicates: result.duplicates > 0 ? t('（重複 {count}曲）', { count: result.duplicates }) : '' }));
               }
             };
 
@@ -153,7 +160,7 @@ export function SaveToPlaylistModal() {
                       </svg>
                     </div>
                     <span className="text-sm text-white truncate">{pl.name}</span>
-                    <span className="text-xs text-neutral-500 flex-shrink-0">{pl.songs.length}曲</span>
+                    <span className="text-xs text-neutral-500 flex-shrink-0">{t('{count}曲', { count: pl.songs.length })}</span>
                   </div>
                 ) : (
                   <div className="flex items-center gap-2 min-w-0">
@@ -167,7 +174,7 @@ export function SaveToPlaylistModal() {
                       </div>
                     )}
                     <span className="text-sm text-white truncate">{pl.name}</span>
-                    <span className="text-xs text-neutral-500 flex-shrink-0">{pl.songs.length}曲</span>
+                    <span className="text-xs text-neutral-500 flex-shrink-0">{t('{count}曲', { count: pl.songs.length })}</span>
                   </div>
                 )}
               </label>
@@ -183,7 +190,7 @@ export function SaveToPlaylistModal() {
               className="w-full text-left text-sm text-cyan-400 hover:text-cyan-300 transition-colors py-1.5 flex items-center gap-2"
             >
               <span className="text-lg leading-none">＋</span>
-              新しいプレイリストを作成
+              {t('新しいプレイリストを作成')}
             </button>
           ) : (
             <div className="flex gap-2 items-center">
@@ -193,7 +200,7 @@ export function SaveToPlaylistModal() {
                 value={newName}
                 onChange={e => setNewName(e.target.value)}
                 onKeyDown={e => { if (e.key === 'Enter') handleCreate(); if (e.key === 'Escape') setShowCreate(false); }}
-                placeholder="プレイリスト名"
+                placeholder={t('プレイリスト名')}
                 className="flex-1 bg-neutral-800 border border-neutral-600 rounded px-2 py-1 text-sm text-white placeholder-neutral-500 focus:outline-none focus:border-cyan-500"
               />
               <button
@@ -201,7 +208,7 @@ export function SaveToPlaylistModal() {
                 disabled={!newName.trim()}
                 className="text-sm bg-cyan-600 hover:bg-cyan-500 disabled:bg-neutral-700 disabled:text-neutral-500 text-white px-3 py-1 rounded transition-colors"
               >
-                作成
+                {t('作成')}
               </button>
             </div>
           )}

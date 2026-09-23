@@ -1,5 +1,6 @@
 import { useFavoriteProducerStore } from '../../stores/favoriteProducerStore';
 import type { ArtistType } from '../../types/vocadb';
+import { useTranslateSourceText } from '../../i18n';
 
 interface FavoriteProducerButtonProps {
   id: number;
@@ -8,6 +9,7 @@ interface FavoriteProducerButtonProps {
 }
 
 export default function FavoriteProducerButton({ id, name, artistType = 'Producer' }: FavoriteProducerButtonProps) {
+  const t = useTranslateSourceText();
   const isFavorite = useFavoriteProducerStore(state => state.producers.some(producer => producer.id === id));
   const toggleProducer = useFavoriteProducerStore(state => state.toggleProducer);
   const normalizedType = artistType === 'Circle' || artistType === 'Band' ? artistType : 'Producer';
@@ -23,8 +25,8 @@ export default function FavoriteProducerButton({ id, name, artistType = 'Produce
         cursor: 'pointer',
       }}
       aria-pressed={isFavorite}
-      aria-label={isFavorite ? `${name}をお気に入りPから解除` : `${name}をお気に入りPに登録`}
-      title={isFavorite ? 'お気に入りPから解除' : 'お気に入りPに登録'}
+      aria-label={isFavorite ? t('{producer}をお気に入りPから解除', { producer: name }) : t('{producer}をお気に入りPに登録', { producer: name })}
+      title={t(isFavorite ? 'お気に入りPから解除' : 'お気に入りPに登録')}
       onClick={(event) => {
         event.preventDefault();
         event.stopPropagation();

@@ -12,6 +12,7 @@ import { formatDistinctArtistNames } from '../../utils/artistNames';
 import { isPlayablePV } from '../../utils/playablePV';
 import RecommendationHint from '../recommendation/RecommendationHint';
 import { useHiddenSongStore } from '../../stores/hiddenSongStore';
+import { useTranslateSourceText } from '../../i18n';
 
 interface SongCardProps {
   song: Song;
@@ -29,6 +30,7 @@ interface SongCardProps {
  * サムネイル、曲名、アーティスト、PVサービスバッジ、再生ボタンを表示。
  */
 export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect, recommendationReason, onVisible, onExposureClick }: SongCardProps) {
+  const t = useTranslateSourceText();
   const { currentSong, isPlaying, setQueue, hiddenMode } = usePlayerStore();
   const { openSaveToPlaylist } = useUiStore();
   const toggleSong = usePlaylistStore(s => s.toggleSongInPlaylist);
@@ -306,8 +308,8 @@ export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect, 
         onPointerUp={handlePointerUp}
         onPointerCancel={handlePointerUp}
         onPointerLeave={handlePointerLeave}
-        title={isSelectionMode ? (isSelected ? '選択解除' : '選択') : hasPlayablePV ? 'クリックして再生' : '再生可能なPVがありません'}
-        aria-label={`${song.name}を再生`}
+        title={t(isSelectionMode ? (isSelected ? '選択解除' : '選択') : hasPlayablePV ? 'クリックして再生' : '再生可能なPVがありません')}
+        aria-label={t('{song}を再生', { song: song.name })}
       >
         {!hiddenMode && song.thumbUrl ? (
           <img
@@ -380,7 +382,7 @@ export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect, 
         {isCurrentSong && isPlaying && (
           <div className="absolute bottom-2 left-2 px-1.5 py-0.5 rounded text-[10px] font-bold"
                style={{ background: 'rgba(29,185,84,0.85)', color: '#fff' }}>
-            ▶ 再生中
+            ▶ {t('再生中')}
           </div>
         )}
 

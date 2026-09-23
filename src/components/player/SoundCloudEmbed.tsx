@@ -6,6 +6,7 @@ import { buildSoundCloudEmbedUrl } from '../../utils/playablePV';
 import { getPlaybackOwnership } from '../../services/playbackOwnership';
 import { hasReachedPlaybackEnd } from '../../services/playbackEndRecovery';
 import { usePlaybackWakeRecovery } from '../../hooks/usePlaybackWakeRecovery';
+import { useTranslateSourceText } from '../../i18n';
 
 interface SoundCloudProgressEvent {
   currentPosition?: number;
@@ -78,6 +79,7 @@ interface SoundCloudEmbedProps {
 }
 
 export default function SoundCloudEmbed({ pv, isPlaying }: SoundCloudEmbedProps) {
+  const t = useTranslateSourceText();
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const widgetRef = useRef<SoundCloudWidget | null>(null);
   const requestedPlayingRef = useRef(isPlaying);
@@ -148,9 +150,9 @@ export default function SoundCloudEmbed({ pv, isPlaying }: SoundCloudEmbedProps)
 
   useEffect(() => {
     if (embedUrl) return;
-    setError('SoundCloudの再生URLを判定できませんでした');
+    setError(t('SoundCloudの再生URLを判定できませんでした'));
     tryNextPV();
-  }, [embedUrl, setError, tryNextPV]);
+  }, [embedUrl, setError, t, tryNextPV]);
 
   useEffect(() => {
     if (!embedUrl) return;
@@ -231,12 +233,12 @@ export default function SoundCloudEmbed({ pv, isPlaying }: SoundCloudEmbedProps)
       });
       widget.bind(events.ERROR, () => {
         if (!active) return;
-        setError('SoundCloudトラックを再生できませんでした');
+        setError(t('SoundCloudトラックを再生できませんでした'));
         tryNextPV();
       });
     }).catch(() => {
       if (!active) return;
-      setError('SoundCloudプレイヤーを読み込めませんでした');
+      setError(t('SoundCloudプレイヤーを読み込めませんでした'));
       tryNextPV();
     });
 
@@ -250,7 +252,7 @@ export default function SoundCloudEmbed({ pv, isPlaying }: SoundCloudEmbedProps)
       if (!factory || !widget) return;
       Object.values(factory.Events).forEach(eventName => widget?.unbind(eventName));
     };
-  }, [clearPauseConfirmation, clearPlaybackRetry, embedUrl, markPVHealthy, next, pv, scheduleWidgetPlayback, setDuration, setError, setIsPlaying, setProgress, syncWidgetPlayback, tryNextPV]);
+  }, [clearPauseConfirmation, clearPlaybackRetry, embedUrl, markPVHealthy, next, pv, scheduleWidgetPlayback, setDuration, setError, setIsPlaying, setProgress, syncWidgetPlayback, t, tryNextPV]);
 
   useEffect(() => {
     requestedPlayingRef.current = isPlaying;

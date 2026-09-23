@@ -44,6 +44,7 @@ import { formatTrendingReason } from '../utils/trendingReason';
 import { formatWeeklyRankingReason } from '../utils/weeklyRankingReason';
 import { excludeHiddenSongs, useHiddenSongStore } from '../stores/hiddenSongStore';
 import { selectRotatingStartupSongs } from '../utils/startupRecommendations';
+import { useTranslate, type TranslationKey } from '../i18n';
 import {
   loadRecentPlayedAtBySongId,
   loadStartupRecommendationSnapshot,
@@ -75,6 +76,18 @@ const CATEGORIES: CategoryChip[] = [
   { id: 'history_based', label: '最近聴いたPの曲' },
   { id: 'favorite_producers', label: 'お気に入りP' },
 ];
+
+const CATEGORY_LABELS: Record<HomeCategoryId, TranslationKey> = {
+  recommended: 'categoryRecommended',
+  ranking: 'categoryRanking',
+  popular: 'categoryPopular',
+  pace: 'categoryPace',
+  trending: 'categoryTrending',
+  recent: 'categoryRecent',
+  deep: 'categoryDeep',
+  history_based: 'categoryHistoryBased',
+  favorite_producers: 'categoryFavoriteProducers',
+};
 
 const PAGE_SIZE = 24;
 const STARTUP_POOL_SIZE = PAGE_SIZE * 2;
@@ -125,6 +138,7 @@ function nextStartupRotation(): number {
 }
 
 export default function HomePage() {
+  const t = useTranslate();
   const [searchParams] = useSearchParams();
   const searchQuery = searchParams.get('q') || '';
   const artistIdParam = searchParams.get('artistId');
@@ -894,12 +908,12 @@ export default function HomePage() {
         <div className="mb-6">
           <div>
             <h1 className="text-xl font-bold mb-1" style={{ color: 'var(--color-text-primary)' }}>
-              {searchQuery ? `「${searchQuery}」の検索結果` : '検索結果'}
+              {searchQuery ? t('searchResults', { query: searchQuery }) : t('searchResultsTitle')}
             </h1>
             <p className="text-sm" style={{ color: 'var(--color-text-muted)' }}>
               {hasSearched
-                ? searchLoading ? '検索中…' : `${totalCount.toLocaleString()} 件`
-                : `${songs.length} 件`}
+                ? searchLoading ? t('searching') : t('resultCount', { count: totalCount.toLocaleString() })
+                : t('resultCount', { count: songs.length })}
             </p>
           </div>
         </div>
@@ -909,10 +923,10 @@ export default function HomePage() {
         <div className="mb-6 flex items-center justify-between">
           <div>
             <h1 className="text-xl font-bold mb-1" style={{ color: 'var(--color-text-primary)' }}>
-              {decodeURIComponent(artistNameParam)}{artistRoleParam ? ` (${artistRoleParam})` : ''} の楽曲
+              {t('artistSongs', { artist: `${decodeURIComponent(artistNameParam)}${artistRoleParam ? ` (${artistRoleParam})` : ''}` })}
             </h1>
             <p className="text-sm" style={{ color: 'var(--color-text-muted)' }}>
-              {searchLoading ? '検索中…' : `${totalCount.toLocaleString()} 件`}
+              {searchLoading ? t('searching') : t('resultCount', { count: totalCount.toLocaleString() })}
             </p>
           </div>
         </div>
@@ -926,7 +940,10 @@ export default function HomePage() {
           style={{ top: 'var(--header-height)', background: 'var(--color-bg-primary)' }}
         >
           <CategoryChips
-            chips={CATEGORIES}
+            chips={CATEGORIES.map(chip => ({
+              ...chip,
+              label: t(CATEGORY_LABELS[asHomeCategoryId(chip.id)]),
+            }))}
             activeChip={activeCategory}
             onSelect={(id) => {
               const nextCategory = asHomeCategoryId(id);
@@ -962,7 +979,7 @@ export default function HomePage() {
         emptyMessage={(hasSearched
           ? isGlobalSongFilterActive(globalFilterSettings)
           : isDiscoveryFilterActive(globalFilterSettings))
-          ? '現在の表示フィルターに一致する曲がありません。設定の「表示・発見」で条件を調整してください。'
+          ? t('noSongsMatchFilters')
           : undefined}
         recommendationReasons={!isSearchMode && !isArtistMode && !hasSearched && (activeCategory === 'recommended' || activeCategory === 'ranking' || activeCategory === 'trending')
           ? recommendationReasons

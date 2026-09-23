@@ -14,6 +14,7 @@ import type { Song } from '../../types/vocadb';
 import { useSelectionStore } from '../../stores/selectionStore';
 import { usePlayerStore } from '../../stores/playerStore';
 import { useUiStore } from '../../stores/uiStore';
+import { useTranslateSourceText } from '../../i18n';
 
 // ─── フィルターモーダル ────────────────────────────────────────────────────────
 
@@ -25,6 +26,7 @@ interface FilterModalProps {
 }
 
 function FilterModal({ songs, onClose }: FilterModalProps) {
+  const t = useTranslateSourceText();
   const [target, setTarget] = useState<FilterTarget>('title');
   const [query, setQuery] = useState('');
   const [caseSensitive, setCaseSensitive] = useState(false);
@@ -60,9 +62,9 @@ function FilterModal({ songs, onClose }: FilterModalProps) {
   }, [query, caseSensitive, target, songs, selectAll, onClose]);
 
   const targetOptions: { value: FilterTarget; label: string }[] = [
-    { value: 'title',  label: 'タイトル' },
-    { value: 'artist', label: 'プロデューサー / アーティスト' },
-    { value: 'tag',    label: 'タグ' },
+    { value: 'title',  label: t('タイトル') },
+    { value: 'artist', label: t('プロデューサー / アーティスト') },
+    { value: 'tag',    label: t('タグ') },
   ];
 
   return (
@@ -79,12 +81,13 @@ function FilterModal({ songs, onClose }: FilterModalProps) {
         {/* ヘッダー */}
         <div className="flex items-center justify-between">
           <h2 className="font-bold text-base" style={{ color: 'var(--color-text-primary)' }}>
-            フィルターで選ぶ
+            {t('フィルターで選ぶ')}
           </h2>
           <button
             onClick={onClose}
             className="p-1.5 rounded-lg hover:bg-white/10 transition-colors"
             style={{ color: 'var(--color-text-muted)' }}
+            aria-label={t('閉じる')}
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
               <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
@@ -94,7 +97,7 @@ function FilterModal({ songs, onClose }: FilterModalProps) {
 
         {/* フィルター対象ラジオ */}
         <div className="space-y-2">
-          <p className="text-xs font-medium" style={{ color: 'var(--color-text-secondary)' }}>フィルター対象</p>
+          <p className="text-xs font-medium" style={{ color: 'var(--color-text-secondary)' }}>{t('フィルター対象')}</p>
           <div className="flex flex-wrap gap-2">
             {targetOptions.map(opt => (
               <label
@@ -120,14 +123,14 @@ function FilterModal({ songs, onClose }: FilterModalProps) {
 
         {/* 検索文字列 */}
         <div className="space-y-1.5">
-          <p className="text-xs font-medium" style={{ color: 'var(--color-text-secondary)' }}>検索文字列</p>
+          <p className="text-xs font-medium" style={{ color: 'var(--color-text-secondary)' }}>{t('検索文字列')}</p>
           <input
             ref={inputRef}
             type="text"
             value={query}
             onChange={e => setQuery(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter') handleApply(); }}
-            placeholder="キーワードを入力..."
+            placeholder={t('キーワードを入力...')}
             className="w-full px-3 py-2 rounded-xl text-sm outline-none transition-all"
             style={{
               background: 'var(--color-bg-card)',
@@ -154,7 +157,7 @@ function FilterModal({ songs, onClose }: FilterModalProps) {
             )}
           </div>
           <span className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
-            大文字と小文字を区別
+            {t('大文字と小文字を区別')}
           </span>
         </label>
 
@@ -164,7 +167,7 @@ function FilterModal({ songs, onClose }: FilterModalProps) {
           className="w-full py-2.5 rounded-xl font-semibold text-sm text-white transition-opacity hover:opacity-90 active:opacity-80"
           style={{ background: 'var(--gradient-primary)' }}
         >
-          適用 ({songs.filter(song => {
+          {t('適用 ({count} 件を選択)', { count: songs.filter(song => {
             const q = caseSensitive ? query : query.toLowerCase();
             if (!q.trim()) return true;
             const haystack =
@@ -175,7 +178,7 @@ function FilterModal({ songs, onClose }: FilterModalProps) {
                   : (song.tags ?? []).map(t => t.tag.name).join(' ');
             const normalizedHaystack = caseSensitive ? haystack : haystack.toLowerCase();
             return normalizedHaystack.includes(q);
-          }).length} 件を選択)
+          }).length })}
         </button>
       </div>
     </div>
@@ -190,6 +193,7 @@ interface SelectionFABProps {
 }
 
 export default function SelectionFAB({ visibleSongs }: SelectionFABProps) {
+  const t = useTranslateSourceText();
   const {
     isSelectionMode,
     selectedSongIds,
@@ -245,8 +249,8 @@ export default function SelectionFAB({ visibleSongs }: SelectionFABProps) {
     addManyToQueue(songs);
     if (!queueDrawerOpen) toggleQueueDrawer();
     setMenuOpen(false);
-    showToast(`${songs.length} 曲をキューに追加しました`);
-  }, [getSelectedSongs, addManyToQueue, queueDrawerOpen, toggleQueueDrawer, showToast]);
+    showToast(t('{count} 曲をキューに追加しました', { count: songs.length }));
+  }, [getSelectedSongs, addManyToQueue, queueDrawerOpen, toggleQueueDrawer, showToast, t]);
 
   const handleSaveToPlaylist = useCallback(() => {
     const songs = getSelectedSongs();
@@ -259,8 +263,8 @@ export default function SelectionFAB({ visibleSongs }: SelectionFABProps) {
     const ids = [...selectedSongIds].join(', ');
     navigator.clipboard.writeText(ids).catch(() => {});
     setMenuOpen(false);
-    showToast('IDをコピーしました');
-  }, [selectedSongIds, showToast]);
+    showToast(t('IDをコピーしました'));
+  }, [selectedSongIds, showToast, t]);
 
   const handleOpenFilterModal = useCallback(() => {
     setMenuOpen(false);
@@ -293,7 +297,8 @@ export default function SelectionFAB({ visibleSongs }: SelectionFABProps) {
           onClick={exitSelectionMode}
           className="p-2 rounded-xl hover:bg-white/10 transition-colors flex-shrink-0"
           style={{ color: 'var(--color-text-muted)' }}
-          title="選択モード終了"
+          title={t('選択モード終了')}
+          aria-label={t('選択モード終了')}
         >
           <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
             <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
@@ -305,7 +310,7 @@ export default function SelectionFAB({ visibleSongs }: SelectionFABProps) {
           className="text-sm font-semibold flex-1 min-w-0 text-center"
           style={{ color: 'var(--color-text-primary)' }}
         >
-          {`${selectedCount.toLocaleString()} / ${totalCount.toLocaleString()} 選択済み`}
+          {t('{selected} / {total} 選択済み', { selected: selectedCount.toLocaleString(), total: totalCount.toLocaleString() })}
         </span>
 
         {/* 全選択 */}
@@ -313,7 +318,8 @@ export default function SelectionFAB({ visibleSongs }: SelectionFABProps) {
           onClick={() => selectAll(visibleSongs)}
           className="p-2 rounded-xl hover:bg-white/10 transition-colors flex-shrink-0"
           style={{ color: 'var(--color-accent-cyan)' }}
-          title="全て選択"
+          title={t('全て選択')}
+          aria-label={t('全て選択')}
         >
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <rect x="3" y="3" width="18" height="18" rx="3"/>
@@ -326,7 +332,8 @@ export default function SelectionFAB({ visibleSongs }: SelectionFABProps) {
           onClick={clearSelection}
           className="p-2 rounded-xl hover:bg-white/10 transition-colors flex-shrink-0"
           style={{ color: selectedCount > 0 ? 'var(--color-text-muted)' : 'var(--color-text-disabled, var(--color-text-muted))' }}
-          title="全て解除"
+          title={t('全て解除')}
+          aria-label={t('全て解除')}
           disabled={selectedCount === 0}
         >
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -344,7 +351,8 @@ export default function SelectionFAB({ visibleSongs }: SelectionFABProps) {
               color: 'var(--color-text-primary)',
               background: menuOpen ? 'rgba(255,255,255,0.08)' : 'transparent',
             }}
-            title="アクション"
+            title={t('アクション')}
+            aria-label={t('アクション')}
             disabled={selectedCount === 0}
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
@@ -367,7 +375,7 @@ export default function SelectionFAB({ visibleSongs }: SelectionFABProps) {
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="flex-shrink-0">
                   <path d="M3 18h13v-2H3v2zm0-5h10v-2H3v2zm0-7v2h13V6H3zm18 9.59L17.42 12 21 8.41 19.59 7l-5 5 5 5L21 15.59z"/>
                 </svg>
-                キューに追加
+                {t('キューに追加')}
                 <span className="ml-auto text-xs opacity-50">{selectedCount}</span>
               </button>
 
@@ -382,7 +390,7 @@ export default function SelectionFAB({ visibleSongs }: SelectionFABProps) {
                   <polyline points="17 21 17 13 7 13 7 21"/>
                   <polyline points="7 3 7 8 15 8"/>
                 </svg>
-                プレイリストに保存
+                {t('プレイリストに保存')}
                 <span className="ml-auto text-xs opacity-50">{selectedCount}</span>
               </button>
 
@@ -397,7 +405,7 @@ export default function SelectionFAB({ visibleSongs }: SelectionFABProps) {
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="flex-shrink-0">
                   <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>
                 </svg>
-                フィルターで選ぶ
+                {t('フィルターで選ぶ')}
               </button>
 
               {/* IDをコピー */}
@@ -409,7 +417,7 @@ export default function SelectionFAB({ visibleSongs }: SelectionFABProps) {
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="flex-shrink-0">
                   <rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
                 </svg>
-                選択曲のIDをコピー
+                {t('選択曲のIDをコピー')}
               </button>
             </div>
           )}

@@ -14,6 +14,8 @@ import {
 } from '../../api/vocadb';
 import { useGlobalFilterStore } from '../../stores/globalFilterStore';
 import { getGlobalFilterSummary, isDiscoveryFilterActive } from '../../utils/globalFilters';
+import { useLanguageStore } from '../../stores/languageStore';
+import { useTranslate } from '../../i18n';
 
 const SettingsModal = lazy(() => import('../settings/SettingsModal'));
 
@@ -50,6 +52,9 @@ function writeSearchHistory(history: string[]) {
 export default function TopNav() {
   const navigate = useNavigate();
   const location = useLocation();
+  const t = useTranslate();
+  const language = useLanguageStore(state => state.language);
+  const setLanguage = useLanguageStore(state => state.setLanguage);
   const isWatchPage = location.pathname === '/watch';
   const {
     toggleSidebar,
@@ -271,16 +276,16 @@ export default function TopNav() {
   };
 
   const kindLabel = (kind: SearchSuggestion['kind']) => {
-    if (kind === 'song') return '曲';
+    if (kind === 'song') return t('suggestionSong');
     if (kind === 'producer') return 'P';
-    return '歌';
+    return t('suggestionVocalist');
   };
 
   const searchModes: Array<{ key: typeof searchMode; label: string; title: string }> = [
-    { key: 'auto', label: '自動', title: '曲名とP名を自動判定' },
-    { key: 'song', label: '曲', title: '曲名として検索' },
-    { key: 'producer', label: 'P', title: 'P名として検索' },
-    { key: 'vocalist', label: '歌', title: 'シンガー名として検索' },
+    { key: 'auto', label: t('autoSearch'), title: t('autoSearchTitle') },
+    { key: 'song', label: t('songSearch'), title: t('songSearchTitle') },
+    { key: 'producer', label: t('producerSearch'), title: t('producerSearchTitle') },
+    { key: 'vocalist', label: t('vocalistSearch'), title: t('vocalistSearchTitle') },
   ];
 
   // キーボードショートカット: / で検索にフォーカス
@@ -315,8 +320,8 @@ export default function TopNav() {
                 toggleSidebar();
               }
             }}
-            title="メニュー"
-            aria-label="メニュー"
+            title={t('menu')}
+            aria-label={t('menu')}
           >
             <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
               <path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z" />
@@ -384,7 +389,7 @@ export default function TopNav() {
               <input
                 ref={searchInputRef}
                 type="text"
-                placeholder="ボカロP名や曲名で検索"
+                placeholder={t('searchPlaceholder')}
                 value={searchQuery}
                 onChange={(e) => {
                   setSearchQuery(e.target.value);
@@ -413,7 +418,7 @@ export default function TopNav() {
                 background: 'var(--color-surface)',
                 borderColor: searchFocused ? 'var(--color-accent-purple)' : 'var(--color-border)',
               }}
-              aria-label="検索"
+              aria-label={t('search')}
             >
               <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" style={{ color: 'var(--color-text-secondary)' }}>
                 <path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z" />
@@ -431,7 +436,7 @@ export default function TopNav() {
                 {showRecentSearches ? (
                   <div>
                     <div className="flex items-center justify-between px-4 py-2 text-xs" style={{ color: 'var(--color-text-muted)' }}>
-                      <span>最近の検索</span>
+                      <span>{t('recentSearches')}</span>
                       <button
                         type="button"
                         className="transition-colors hover:text-white"
@@ -440,7 +445,7 @@ export default function TopNav() {
                           clearSearchHistory();
                         }}
                       >
-                        クリア
+                        {t('clear')}
                       </button>
                     </div>
                     <ul className="max-h-96 overflow-y-auto py-1">
@@ -473,7 +478,7 @@ export default function TopNav() {
                   </div>
                 ) : isSuggestLoading && suggestions.length === 0 ? (
                   <div className="px-4 py-3 text-sm" style={{ color: 'var(--color-text-muted)' }}>
-                    候補を検索中...
+                    {t('suggestionsLoading')}
                   </div>
                 ) : (
                   <ul className="max-h-96 overflow-y-auto py-1">
@@ -524,13 +529,23 @@ export default function TopNav() {
 
         {/* ─── 右: 統一アクションボタン ─── */}
         <div className="topnav-actions flex items-center gap-1.5 flex-shrink-0">
+          <button
+            type="button"
+            className="topnav-action-btn min-w-9 px-2 text-xs font-semibold"
+            onClick={() => setLanguage(language === 'ja' ? 'en' : 'ja')}
+            title={t('switchLanguage')}
+            aria-label={t('switchLanguage')}
+          >
+            {language === 'ja' ? 'EN' : 'JA'}
+          </button>
+
           {/* 隠しモード表示 */}
           {hiddenMode && (
             <span
               className="text-[10px] font-bold px-2 py-1 rounded-full mr-0.5 hidden sm:inline"
               style={{ background: 'rgba(100,100,100,0.3)', color: 'var(--color-text-muted)' }}
             >
-              隠しモード
+              {t('hiddenMode')}
             </span>
           )}
 
@@ -539,8 +554,8 @@ export default function TopNav() {
             className="topnav-action-btn"
             data-active={isSelectionMode}
             onClick={() => isSelectionMode ? exitSelectionMode() : enterSelectionMode()}
-            title={isSelectionMode ? `選択モード終了 (${selectedCount}曲選択中)` : '複数選択モード'}
-            aria-label="複数選択モード"
+            title={isSelectionMode ? t('exitSelection', { count: selectedCount }) : t('multiSelect')}
+            aria-label={t('multiSelect')}
             aria-pressed={isSelectionMode}
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={isSelectionMode ? 2.5 : 2}>
@@ -569,8 +584,8 @@ export default function TopNav() {
               }
               toggleAdvancedSearch();
             }}
-            title={advancedSearchOpen ? '詳細検索を閉じる' : '詳細検索'}
-            aria-label="詳細検索"
+            title={advancedSearchOpen ? t('closeAdvancedSearch') : t('advancedSearch')}
+            aria-label={t('advancedSearch')}
             aria-pressed={advancedSearchOpen}
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
@@ -587,15 +602,15 @@ export default function TopNav() {
           <button
             className="topnav-action-btn"
             onClick={() => setSettingsOpen(true)}
-            title="設定"
-            aria-label="設定"
+            title={t('settings')}
+            aria-label={t('settings')}
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
               <path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.484.484 0 0 0-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.49.49 0 0 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.07.62-.07.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6A3.6 3.6 0 1 1 12 8.4a3.6 3.6 0 0 1 0 7.2z" />
             </svg>
             {/* フィルター適用中のドットインジケーター */}
             {isDiscoveryFilterActive(globalFilterSettings) && (
-              <span className="action-dot" title={`フィルター適用中: ${getGlobalFilterSummary(globalFilterSettings).join(' / ')}`} />
+              <span className="action-dot" title={`${t('filtersActive')}: ${getGlobalFilterSummary(globalFilterSettings).join(' / ')}`} />
             )}
           </button>
         </div>

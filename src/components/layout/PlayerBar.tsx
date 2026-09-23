@@ -7,6 +7,7 @@ import SleepTimer from '../player/SleepTimer';
 import PVSourceSelector from '../player/PVSourceSelector';
 import { getPVBadgeStyle } from '../../utils/pvBadge';
 import { getPVServiceLabel } from '../../utils/pvService';
+import { useTranslate } from '../../i18n';
 
 /**
  * PlayerBar - 画面下部固定のプレイヤーコントロール (YouTube Music スタイル)
@@ -16,6 +17,7 @@ import { getPVServiceLabel } from '../../utils/pvService';
  * 右: 音量 + 各種アイコンボタン
  */
 export default function PlayerBar() {
+  const t = useTranslate();
   const {
     currentSong, currentPV, isPlaying, volume,
     next, previous, pause, resume, setVolume, seekTo,
@@ -95,7 +97,7 @@ export default function PlayerBar() {
             </div>
           ) : (
             <p className="text-sm" style={{ color: 'var(--color-text-muted)' }}>
-              曲を選択してください
+              {t('noSongSelected')}
             </p>
           )}
         </div>
@@ -109,7 +111,7 @@ export default function PlayerBar() {
               className="btn-ghost p-1.5 rounded-full"
               onClick={previous}
               disabled={!currentSong}
-              title="前の曲"
+              title={t('previousSong')}
             >
               <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
                 <path d="M6 6h2v12H6zm3.5 6 8.5 6V6z"/>
@@ -128,7 +130,7 @@ export default function PlayerBar() {
               }}
               onClick={() => isPlaying ? pause() : resume()}
               disabled={!currentSong}
-              title={isPlaying ? '一時停止' : '再生'}
+              title={isPlaying ? t('pause') : t('play')}
             >
               {isPlaying ? (
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="white">
@@ -146,7 +148,7 @@ export default function PlayerBar() {
               className="btn-ghost p-1.5 rounded-full"
               onClick={next}
               disabled={!currentSong}
-              title="次の曲"
+              title={t('nextSong')}
             >
               <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
                 <path d="m6 18 8.5-6L6 6v12zM16 6v12h2V6h-2z"/>
@@ -169,7 +171,7 @@ export default function PlayerBar() {
                 <span
                   className="pointer-events-none absolute top-1/2 z-20 h-1.5 -translate-y-1/2 rounded-full bg-fuchsia-400/55"
                   style={{ left: `${chorusStartPct}%`, width: `${chorusWidthPct}%` }}
-                  title="自動推定したサビ候補"
+                  title={t('estimatedChorus')}
                 />
               )}
               <input
@@ -181,7 +183,7 @@ export default function PlayerBar() {
                 onChange={handleSeek}
                 disabled={!currentSong || !duration}
                 className="relative z-10 w-full progress-slider"
-                title="シーク（紫色はサビ候補）"
+                title={t('seekWithChorus')}
               />
             </div>
             <span
@@ -201,11 +203,11 @@ export default function PlayerBar() {
               className="hidden lg:inline text-[10px] font-bold px-2 py-0.5 rounded-full mr-1"
               style={getPVBadgeStyle(currentPV.service, currentPV.pvType)}
             >
-              {currentPV.pvType !== 'Original' && '非公式'}
+              {currentPV.pvType !== 'Original' && t('unofficial')}
               {currentPV.service === 'Youtube'
                 ? 'YouTube'
                 : currentPV.service === 'NicoNicoDouga'
-                  ? 'ニコニコ'
+                  ? t('niconico')
                   : getPVServiceLabel(currentPV.service)}
             </span>
           )}
@@ -216,7 +218,7 @@ export default function PlayerBar() {
             <button
               className="btn-ghost p-1"
               onClick={() => setVolume(volume > 0 ? 0 : 80)}
-              title="ミュート切替"
+              title={t('muteToggle')}
             >
               {volume === 0 ? (
                 <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor" style={{ color: 'var(--color-text-muted)' }}>
@@ -235,7 +237,7 @@ export default function PlayerBar() {
               value={volume}
               onChange={(e) => setVolume(Number(e.target.value))}
               className="volume-slider w-20"
-              title={`音量: ${volume}%`}
+              title={t('volumePercent', { volume })}
             />
           </div>
 
@@ -244,9 +246,9 @@ export default function PlayerBar() {
             className="btn-ghost p-1.5 rounded-lg"
             onClick={toggleShuffle}
             disabled={!canShuffle && !shuffleEnabled}
-            title={shuffleEnabled ? 'シャッフルOFF' : 'シャッフルON'}
+            title={shuffleEnabled ? t('shuffleOff') : t('shuffleOn')}
             style={{ color: shuffleEnabled ? 'var(--color-accent-cyan)' : 'var(--color-text-muted)', opacity: canShuffle || shuffleEnabled ? 1 : 0.45 }}
-            aria-label={shuffleEnabled ? 'シャッフルOFF' : canShuffle ? 'シャッフルON' : 'シャッフル不可'}
+            aria-label={shuffleEnabled ? t('shuffleOff') : canShuffle ? t('shuffleOn') : t('shuffleUnavailable')}
           >
             <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor">
               <path d="M10.59 9.17 5.41 4 4 5.41l5.17 5.17 1.42-1.41zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4h-5.5zm.33 9.41-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04-3.13-3.13z"/>
@@ -261,7 +263,7 @@ export default function PlayerBar() {
           <button
             className="hidden sm:flex btn-ghost p-1.5 rounded-lg"
             onClick={toggleHiddenMode}
-            title={hiddenMode ? '隠しモードOFF' : '隠しモードON'}
+            title={hiddenMode ? t('hiddenModeOff') : t('hiddenModeOn')}
             style={{ color: hiddenMode ? 'var(--color-accent-cyan)' : 'var(--color-text-muted)' }}
           >
             {hiddenMode ? (
@@ -279,8 +281,8 @@ export default function PlayerBar() {
           <button
             className="btn-ghost p-1.5 rounded-lg"
             onClick={toggleHistoryDrawer}
-            aria-label="履歴"
-            title="視聴履歴"
+            aria-label={t('listeningHistory')}
+            title={t('viewHistory')}
             style={{ color: historyDrawerOpen ? 'var(--color-accent-cyan)' : 'var(--color-text-muted)' }}
           >
             <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor">
@@ -292,8 +294,8 @@ export default function PlayerBar() {
           <button
             className="lg:hidden btn-ghost p-1.5 rounded-lg relative"
             onClick={toggleQueueDrawer}
-            aria-label="キュー"
-            title="再生キュー"
+            aria-label={t('playQueue')}
+            title={t('playQueueTitle')}
             style={{ color: queueDrawerOpen ? 'var(--color-accent-purple)' : 'var(--color-text-muted)' }}
           >
             <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor">

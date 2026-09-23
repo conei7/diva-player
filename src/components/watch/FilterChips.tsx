@@ -16,14 +16,15 @@ interface FilterChipsProps {
   counts?: Record<RecTabKey, number>;
 }
 
-const TABS: { key: RecTabKey; label: string; description: string }[] = [
-  { key: 'recommended', label: 'おすすめ',  description: 'AI推薦 (メタ+音響+履歴)' },
-  { key: 'related',    label: '関連曲',    description: 'メタデータ類似' },
-  { key: 'producer',   label: '同じPの曲', description: 'RDB検索' },
-  { key: 'deep',       label: '音響から探す', description: '音の特徴が近い曲' },
+const TABS: { key: RecTabKey; labelKey: 'filterRecommended' | 'filterRelated' | 'filterProducer' | 'filterSound'; descriptionKey: 'filterRecommendedDescription' | 'filterRelatedDescription' | 'filterProducerDescription' | 'filterSoundDescription' }[] = [
+  { key: 'recommended', labelKey: 'filterRecommended', descriptionKey: 'filterRecommendedDescription' },
+  { key: 'related', labelKey: 'filterRelated', descriptionKey: 'filterRelatedDescription' },
+  { key: 'producer', labelKey: 'filterProducer', descriptionKey: 'filterProducerDescription' },
+  { key: 'deep', labelKey: 'filterSound', descriptionKey: 'filterSoundDescription' },
 ];
 
 export default function FilterChips({ activeTab, onTabChange, counts }: FilterChipsProps) {
+  const t = useTranslate();
   return (
     <div className="flex gap-1.5 overflow-x-auto pb-1" style={{ scrollbarWidth: 'none' }}>
       <style>{`.filter-chips-scroll::-webkit-scrollbar { display: none; }`}</style>
@@ -42,9 +43,9 @@ export default function FilterChips({ activeTab, onTabChange, counts }: FilterCh
               fontSize: '13px',
               padding: '6px 14px',
             }}
-            title={tab.description}
+            title={t(tab.descriptionKey)}
           >
-            {tab.label}
+            {t(tab.labelKey)}
             {count !== undefined && count > 0 && (
               <span
                 className="ml-1 text-[10px] opacity-70"
@@ -59,3 +60,4 @@ export default function FilterChips({ activeTab, onTabChange, counts }: FilterCh
     </div>
   );
 }
+import { useTranslate } from '../../i18n';

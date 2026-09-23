@@ -1,6 +1,7 @@
 import { Link, useLocation } from 'react-router';
 import { useUiStore } from '../../stores/uiStore';
 import DiscoveryMixButton from './DiscoveryMixButton';
+import { useTranslate, type TranslationKey } from '../../i18n';
 
 /**
  * Sidebar - YouTube風の左サイドバー
@@ -11,14 +12,14 @@ import DiscoveryMixButton from './DiscoveryMixButton';
 
 interface MenuItem {
   path: string;
-  label: string;
+  label: TranslationKey;
   icon: React.ReactNode;
 }
 
 const menuItems: MenuItem[] = [
   {
     path: '/',
-    label: 'ホーム',
+    label: 'sidebarHome',
     icon: (
       <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
         <path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z" />
@@ -27,7 +28,7 @@ const menuItems: MenuItem[] = [
   },
   {
     path: '/chorus-highlights',
-    label: 'サビ発掘',
+    label: 'sidebarChorus',
     icon: (
       <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
         <path d="M4 18h2V8H4v10zm4 3h2V3H8v18zm4-5h2V6h-2v10zm4 4h2V4h-2v16zm4-5h2V9h-2v6z" />
@@ -36,7 +37,7 @@ const menuItems: MenuItem[] = [
   },
   {
     path: '/history',
-    label: '履歴',
+    label: 'sidebarHistory',
     icon: (
       <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
         <path d="M13 3a9 9 0 0 0-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42A8.954 8.954 0 0 0 13 21a9 9 0 0 0 0-18zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z" />
@@ -45,7 +46,7 @@ const menuItems: MenuItem[] = [
   },
   {
     path: '/favorites',
-    label: '評価した曲',
+    label: 'sidebarRatings',
     icon: (
       <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
         <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z" />
@@ -54,7 +55,7 @@ const menuItems: MenuItem[] = [
   },
   {
     path: '/playlists',
-    label: 'プレイリスト',
+    label: 'navPlaylists',
     icon: (
       <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
         <path d="M15 6H3v2h12V6zm0 4H3v2h12v-2zM3 16h8v-2H3v2zM17 6v8.18c-.31-.11-.65-.18-1-.18-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3V8h3V6h-5z" />
@@ -63,7 +64,7 @@ const menuItems: MenuItem[] = [
   },
   {
     path: '/reports',
-    label: 'レポート',
+    label: 'sidebarReports',
     icon: (
       <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
         <path d="M5 19h14v2H5zM7 17H5V9h2zm6 0h-2V3h2zm6 0h-2v-5h2z" />
@@ -72,7 +73,7 @@ const menuItems: MenuItem[] = [
   },
   {
     path: '/knowledge-map',
-    label: '知ってる度',
+    label: 'sidebarKnowledgeMap',
     icon: (
       <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
         <path d="M3 3h8v8H3V3zm10 0h8v5h-8V3zm0 7h8v11h-8V10zM3 13h8v8H3v-8z" />
@@ -81,7 +82,7 @@ const menuItems: MenuItem[] = [
   },
   {
     path: '/sound-map',
-    label: '曲調マップ',
+    label: 'sidebarSoundMap',
     icon: (
       <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
         <circle cx="6" cy="7" r="2" fill="currentColor" stroke="none" />
@@ -93,7 +94,7 @@ const menuItems: MenuItem[] = [
   },
   {
     path: '/favorite-producers',
-    label: 'お気に入りP',
+    label: 'sidebarFavoriteProducers',
     icon: (
       <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
         <path d="m12 3 2.78 5.63 6.22.9-4.5 4.39 1.06 6.2L12 17.2l-5.56 2.92 1.06-6.2L3 9.53l6.22-.9L12 3z" />
@@ -104,6 +105,7 @@ const menuItems: MenuItem[] = [
 
 export default function Sidebar() {
   const location = useLocation();
+  const t = useTranslate();
   const isWatchPage = location.pathname === '/watch';
   const { sidebarExpanded, mobileDrawerOpen, closeMobileDrawer } = useUiStore();
 
@@ -136,7 +138,7 @@ export default function Sidebar() {
             <span className="flex-shrink-0" style={{ opacity: isActive ? 1 : 0.7 }}>
               {item.icon}
             </span>
-            <span className={sidebarExpanded ? '' : 'text-center mt-0.5'}>{item.label}</span>
+            <span className={sidebarExpanded ? '' : 'text-center mt-0.5'}>{t(item.label)}</span>
           </Link>
         );
       })}
@@ -200,7 +202,7 @@ export default function Sidebar() {
           <button
             className="btn-ghost p-2 rounded-full"
             onClick={closeMobileDrawer}
-            aria-label="メニューを閉じる"
+            aria-label={t('menuClose')}
           >
             <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
               <path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z" />

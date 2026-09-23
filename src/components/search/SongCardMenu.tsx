@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import type { MouseEvent, RefObject } from 'react';
 import { getMenuNextIndex } from '../../utils/menuNavigation';
+import { useTranslateSourceText } from '../../i18n';
 
 export interface SongCardMenuPosition {
   top: number;
@@ -45,6 +46,7 @@ export default function SongCardMenu({
   onHide,
   onClose,
 }: SongCardMenuProps) {
+  const t = useTranslateSourceText();
   useEffect(() => {
     if (!menuOpen) return;
     menuPortalRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus();
@@ -71,11 +73,11 @@ export default function SongCardMenu({
         type="button"
         aria-haspopup="menu"
         aria-expanded={menuOpen}
-        aria-label={`${songName} のメニュー`}
+        aria-label={t('{song} のメニュー', { song: songName })}
         className="flex h-10 w-10 items-center justify-center rounded-lg opacity-100 transition-opacity hover:bg-white/10 sm:h-6 sm:w-6 sm:p-1 sm:opacity-0 sm:group-hover:opacity-100"
         style={{ color: 'var(--color-text-muted)' }}
         onClick={onToggle}
-        title="メニュー"
+        title={t('メニュー')}
       >
         <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
           <circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/>
@@ -86,7 +88,7 @@ export default function SongCardMenu({
         <div
           ref={menuPortalRef}
           role="menu"
-          aria-label={`${songName} の操作メニュー`}
+          aria-label={t('{song} の操作メニュー', { song: songName })}
           onKeyDown={handleMenuKeyDown}
           className="fixed z-[200] rounded-xl overflow-hidden shadow-2xl min-w-[180px]"
           style={{ top: menuPos.top, right: menuPos.right, background: 'var(--color-bg-card)', border: '1px solid var(--color-border)' }}
@@ -99,7 +101,7 @@ export default function SongCardMenu({
             onClick={(event) => { event.stopPropagation(); onWatchLater(event); onClose(); }}
           >
             <span aria-hidden="true">◷</span>
-            {isWatchLater ? '後で聴くから削除' : '後で聴く'}
+            {t(isWatchLater ? '後で聴くから削除' : '後で聴く')}
           </button>
 
           <button
@@ -110,7 +112,7 @@ export default function SongCardMenu({
             onClick={(event) => { onSaveToPlaylist(event); onClose(); }}
           >
             <span aria-hidden="true">▣</span>
-            プレイリストに保存
+            {t('プレイリストに保存')}
           </button>
 
           {onAddToQueue && hasPlayablePV && (
@@ -122,7 +124,7 @@ export default function SongCardMenu({
               onClick={(event) => { onAddToQueue(event); onClose(); }}
             >
               <span aria-hidden="true">＋</span>
-              キューに追加
+              {t('キューに追加')}
             </button>
           )}
 
@@ -134,10 +136,10 @@ export default function SongCardMenu({
             className={menuItemClass}
             style={{ color: 'var(--color-text-primary)' }}
             onClick={(event) => { onShare(event); onClose(); }}
-            title="VocaDB URLをコピー"
+            title={t('VocaDB URLをコピー')}
           >
             <span aria-hidden="true">↗</span>
-            共有
+            {t('曲を共有')}
           </button>
           <button
             type="button"
@@ -147,7 +149,7 @@ export default function SongCardMenu({
             onClick={(event) => { onHide(event); onClose(); }}
           >
             <span aria-hidden="true">⊘</span>
-            今後表示しない
+            {t('今後表示しない')}
           </button>
         </div>,
         document.body,

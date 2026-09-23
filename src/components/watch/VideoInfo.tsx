@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { Song } from '../../types/vocadb';
+import { useTranslate } from '../../i18n';
 import { Link } from 'react-router';
 import FavoriteProducerButton from './FavoriteProducerButton';
 import { getSongProducerEntries } from '../../utils/songArtists';
@@ -18,6 +19,7 @@ interface VideoInfoProps {
 const PRODUCER_COLLAPSE_THRESHOLD = 3;
 
 export default function VideoInfo({ song }: VideoInfoProps) {
+  const t = useTranslate();
   const [showAllProducers, setShowAllProducers] = useState(false);
 
   // P名を抽出
@@ -53,7 +55,7 @@ export default function VideoInfo({ song }: VideoInfoProps) {
                     to={producer.href}
                     className="font-medium hover:underline"
                     style={{ color: 'var(--color-text-primary)' }}
-                    aria-label={`${producer.name} の曲を表示`}
+                    aria-label={t('showProducerSongs', { producer: producer.name })}
                   >
                     {producer.name}
                   </Link>
@@ -82,9 +84,9 @@ export default function VideoInfo({ song }: VideoInfoProps) {
                 onClick={() => setShowAllProducers(true)}
                 aria-expanded="false"
                 aria-controls="watch-producer-list"
-                aria-label={`他${hiddenCount}名のPを表示`}
+                aria-label={t('producerShow', { count: hiddenCount })}
               >
-                他{hiddenCount}名
+                {t('producerShowShort', { count: hiddenCount })}
               </button>
             )}
             {showAllProducers && producers.length > PRODUCER_COLLAPSE_THRESHOLD && (
@@ -95,9 +97,9 @@ export default function VideoInfo({ song }: VideoInfoProps) {
                 onClick={() => setShowAllProducers(false)}
                 aria-expanded="true"
                 aria-controls="watch-producer-list"
-                aria-label="P一覧を折りたたむ"
+                aria-label={t('producerCollapse')}
               >
-                折りたたむ
+                {t('collapse')}
               </button>
             )}
           </>

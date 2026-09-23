@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router';
 import { useHistoryStore } from '../stores/historyStore';
 import { useRatingStore } from '../stores/ratingStore';
+import { useTranslateSourceText } from '../i18n';
 import VideoGrid from '../components/home/VideoGrid';
 import type { Song } from '../types/vocadb';
 import { getSongById } from '../api/vocadb';
@@ -19,6 +20,7 @@ type FavoriteSortMode = 'recent' | 'name' | 'artist';
  * FavoritesPage - 星1〜5の評価別ライブラリ
  */
 export default function FavoritesPage() {
+  const t = useTranslateSourceText();
   const { ratings } = useRatingStore();
   const { entries } = useHistoryStore();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -107,10 +109,10 @@ export default function FavoritesPage() {
     <div className="w-full px-4 sm:px-6 lg:px-8 py-4">
       <div className="mb-6">
         <h1 className="text-xl font-bold" style={{ color: 'var(--color-text-primary)' }}>
-          評価した曲
+          {t('評価した曲')}
         </h1>
         <p className="text-sm mt-1" style={{ color: 'var(--color-text-muted)' }}>
-          ★{selectedRating} · {ratingCounts[selectedRating]} 曲
+          {t('★{rating} · {count} 曲', { rating: selectedRating, count: ratingCounts[selectedRating] })}
         </p>
       </div>
 
@@ -118,7 +120,7 @@ export default function FavoritesPage() {
         className="mb-6 grid max-w-2xl grid-cols-5 gap-1 rounded-xl border p-1"
         style={{ background: 'var(--color-surface)', borderColor: 'var(--color-border)' }}
         role="tablist"
-        aria-label="評価で絞り込む"
+        aria-label={t('評価で絞り込む')}
       >
         {RATING_VALUES.map(rating => {
           const active = rating === selectedRating;
@@ -149,10 +151,10 @@ export default function FavoritesPage() {
             <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z" />
           </svg>
           <p className="text-base" style={{ color: 'var(--color-text-muted)' }}>
-            ★{selectedRating} の曲はまだありません
+            {t('★{rating} の曲はまだありません', { rating: selectedRating })}
           </p>
           <p className="text-sm" style={{ color: 'var(--color-text-muted)' }}>
-            再生画面の星から評価できます
+            {t('再生画面の星から評価できます')}
           </p>
         </div>
       ) : (
@@ -163,7 +165,7 @@ export default function FavoritesPage() {
                 type="search"
                 value={filterText}
                 onChange={(event) => setFilterText(event.target.value)}
-                placeholder="曲名・アーティスト"
+                placeholder={t('曲名・アーティスト')}
                 className="w-full rounded-lg border px-3 py-2 text-sm outline-none"
                 style={{
                   background: 'var(--color-surface)',
@@ -181,14 +183,14 @@ export default function FavoritesPage() {
                   color: 'var(--color-text-primary)',
                 }}
               >
-                <option value="recent">履歴順</option>
-                <option value="name">曲名</option>
-                <option value="artist">アーティスト</option>
+                <option value="recent">{t('履歴順')}</option>
+                <option value="name">{t('曲名')}</option>
+                <option value="artist">{t('アーティスト')}</option>
               </select>
             </div>
             {filterText.trim() && (
               <p className="text-xs mt-1" style={{ color: 'var(--color-text-muted)' }}>
-                {visibleSongs.length} / {favoriteSongs.length} 件
+                {t('{visible} / {total} 件', { visible: visibleSongs.length, total: favoriteSongs.length })}
               </p>
             )}
           </div>

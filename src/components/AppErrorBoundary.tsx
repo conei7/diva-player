@@ -1,4 +1,6 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
+import { translateSourceText } from '../i18n';
+import { useLanguageStore } from '../stores/languageStore';
 
 interface AppErrorBoundaryProps {
   children: ReactNode;
@@ -24,6 +26,9 @@ export default class AppErrorBoundary extends Component<AppErrorBoundaryProps, A
     window.location.reload();
   };
 
+  private translate = (source: string): string =>
+    translateSourceText(useLanguageStore.getState().language, source);
+
   render() {
     if (!this.state.error) return this.props.children;
 
@@ -37,9 +42,9 @@ export default class AppErrorBoundary extends Component<AppErrorBoundaryProps, A
           style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)' }}
           role="alert"
         >
-          <h1 className="text-lg font-semibold">画面を表示できませんでした</h1>
+          <h1 className="text-lg font-semibold">{this.translate('画面を表示できませんでした')}</h1>
           <p className="mt-2 text-sm" style={{ color: 'var(--color-text-secondary)' }}>
-            曲データの一部に対応できない形式が含まれています。再読み込みすると復旧する場合があります。
+            {this.translate('曲データの一部に対応できない形式が含まれています。再読み込みすると復旧する場合があります。')}
           </p>
           <button
             type="button"
@@ -47,7 +52,7 @@ export default class AppErrorBoundary extends Component<AppErrorBoundaryProps, A
             style={{ background: 'var(--color-accent-cyan)', color: 'var(--color-bg-primary)' }}
             onClick={this.reloadApp}
           >
-            再読み込み
+            {this.translate('再読み込み')}
           </button>
         </section>
       </main>

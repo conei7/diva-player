@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useTranslateSourceText } from '../../i18n';
 
 const STAR_PATH =
   'M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z';
@@ -15,6 +16,7 @@ interface StarRatingProps {
 /** 星5段階評価コンポーネント */
 export default function StarRating({ rating, onRate, size = 'md' }: StarRatingProps) {
   const [hovered, setHovered] = useState(0);
+  const t = useTranslateSourceText();
   const px = size === 'md' ? 18 : 12;
   const display = hovered > 0 ? hovered : rating;
 
@@ -23,7 +25,7 @@ export default function StarRating({ rating, onRate, size = 'md' }: StarRatingPr
       className="flex items-center gap-0.5"
       onMouseLeave={() => setHovered(0)}
       role="group"
-      aria-label="星評価"
+      aria-label={t('星評価')}
     >
       {[1, 2, 3, 4, 5].map((n) => {
         const filled = n <= display;
@@ -32,7 +34,7 @@ export default function StarRating({ rating, onRate, size = 'md' }: StarRatingPr
             key={n}
             type="button"
             className="rating-star-button"
-            aria-label={`${n}星`}
+            aria-label={t('{count}星', { count: n })}
             onMouseEnter={() => setHovered(n)}
             onClick={(e) => {
               e.stopPropagation();

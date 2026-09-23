@@ -17,6 +17,7 @@ import { useAutoQueue } from './hooks/useAutoQueue';
 import AppErrorBoundary from './components/AppErrorBoundary';
 import { formatDocumentTitle } from './utils/documentTitle';
 import { shouldRecordPlayback } from './utils/playbackHistory';
+import { useLanguageStore } from './stores/languageStore';
 
 // Root navigation is the dominant entry path. Start its split-chunk download
 // while App is being evaluated instead of waiting for the first React render.
@@ -192,10 +193,15 @@ function PlayerTracker() {
 
 function AppContent() {
   const currentSong = usePlayerStore(s => s.currentSong);
+  const language = useLanguageStore(s => s.language);
 
   useEffect(() => {
     document.title = formatDocumentTitle(currentSong);
   }, [currentSong]);
+
+  useEffect(() => {
+    document.documentElement.lang = language;
+  }, [language]);
 
   return (
     <>

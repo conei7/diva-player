@@ -42,8 +42,10 @@ import { excludeHiddenSongs, useHiddenSongStore } from '../stores/hiddenSongStor
 import { getPlaybackOwnership } from '../services/playbackOwnership';
 import { fetchProgressivePages } from '../utils/progressivePageFetch';
 import { isCurrentWatchSongRequest, watchUrlPlaybackTarget } from '../utils/watchNavigation';
+import { useTranslate } from '../i18n';
 
 function WatchQueue() {
+  const t = useTranslate();
   const queue = usePlayerStore(s => s.queue);
   const queueIndex = usePlayerStore(s => s.queueIndex);
   const queueTitle = usePlayerStore(s => s.queueTitle);
@@ -63,9 +65,9 @@ function WatchQueue() {
         >
           <div className="min-w-0 text-left">
             <h3 className="truncate text-sm font-semibold max-w-[180px] sm:max-w-[280px]" style={{ color: 'var(--color-text-primary)' }}>
-              次: {nextSong?.name || '終了'}
+              {t('nextLabel')}: {nextSong?.name || t('finished')}
             </h3>
-            <p className="mt-0.5 text-xs" style={{ color: 'var(--color-text-muted)' }}>{queueTitle} - {queueIndex + 1}/{queue.length}曲</p>
+            <p className="mt-0.5 text-xs" style={{ color: 'var(--color-text-muted)' }}>{queueTitle} - {t('queuePosition', { current: queueIndex + 1, total: queue.length })}</p>
           </div>
           <svg
             width="24" height="24" viewBox="0 0 24 24" fill="currentColor"
@@ -78,8 +80,8 @@ function WatchQueue() {
           type="button"
           className="btn-ghost mr-2 shrink-0 rounded-lg p-2"
           onClick={() => openSaveToPlaylist(queue, { source: 'queue', queueIndex })}
-          title="キューをプレイリストに保存"
-          aria-label="キューをプレイリストに保存"
+          title={t('saveQueueToPlaylist')}
+          aria-label={t('saveQueueToPlaylist')}
           style={{ color: 'var(--color-accent-cyan)' }}
         >
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -131,6 +133,7 @@ function mergeUniqueSongs(groups: Song[][]): Song[] {
 }
 
 export default function WatchPage() {
+  const t = useTranslate();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const songIdStr = searchParams.get('v');
@@ -257,7 +260,7 @@ export default function WatchPage() {
       .catch((err) => {
         if (!isCurrentWatchSongRequest(requestGeneration, songRequestGenerationRef.current, songId, fetchedForRef.current)) return;
         loadingFromUrlRef.current = false;
-        setError(err.message || '楽曲の読み込みに失敗しました');
+        setError(err.message || t('watchLoadError'));
         setLoadingSong(false);
       });
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -663,7 +666,7 @@ export default function WatchPage() {
               recommendationReasons={activeTab === 'recommended' ? currentTab.reasons : undefined}
               exposureSurface={activeTab === 'producer' ? 'watch-producer' : activeTab === 'related' ? 'watch-related' : activeTab === 'recommended' ? 'watch-recommended' : 'watch-deep'}
               emptyMessage={isDiscoveryFilterActive(globalFilterSettings)
-                ? '現在の表示・発見フィルターに一致する候補がありません。設定から条件を調整してください。'
+                ? t('emptyRecommendationsWithFilters')
                 : undefined}
             />
 

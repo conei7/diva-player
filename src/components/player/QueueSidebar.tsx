@@ -9,6 +9,7 @@ import { useAutoQueueStatusStore } from '../../stores/autoQueueStatusStore';
 import { useUiStore } from '../../stores/uiStore';
 import { useRecommendationDisplayStore } from '../../stores/recommendationDisplayStore';
 import RecommendationHint from '../recommendation/RecommendationHint';
+import { useTranslateSourceText } from '../../i18n';
 
 function getThumbUrl(song: Song): string | null {
   if (song.thumbUrl) return song.thumbUrl;
@@ -28,6 +29,7 @@ interface QueueSidebarProps {
 }
 
 export default function QueueSidebar({ hideHeader }: QueueSidebarProps = {}) {
+  const t = useTranslateSourceText();
   const { queue, queueIndex, jumpToIndex, removeFromQueue, restoreQueueItem } = usePlayerStore();
   const { getRating, setRating } = useRatingStore();
   const recordQueueRemove = useImplicitFeedbackStore(s => s.recordQueueRemove);
@@ -82,32 +84,32 @@ export default function QueueSidebar({ hideHeader }: QueueSidebarProps = {}) {
             <path d="M3 18h13v-2H3v2zm0-5h10v-2H3v2zm0-7v2h13V6H3zm18 9.59L17.42 12 21 8.41 19.59 7l-5 5 5 5L21 15.59z"/>
           </svg>
           <span className="text-xs font-semibold" style={{ color: 'var(--color-text-primary)' }}>
-            次の曲
+            {t('次の曲')}
           </span>
           {queue.length > 0 && (
             <span
               className="text-[10px] px-1.5 py-0.5 rounded-full"
               style={{ background: 'rgba(139,92,246,0.15)', color: 'var(--color-accent-purple)' }}
             >
-              {queue.length}曲
+              {t('{count}曲', { count: queue.length })}
             </span>
           )}
           {autoQueueStatus === 'fetching' || autoQueueStatus === 'reranking' ? (
-            <span className="text-[10px]" style={{ color: 'var(--color-text-muted)' }}>補充中…</span>
+            <span className="text-[10px]" style={{ color: 'var(--color-text-muted)' }}>{t('補充中…')}</span>
           ) : autoQueueStatus === 'degraded' ? (
-            <span className="text-[10px]" style={{ color: '#fbbf24' }}>関連曲で補充</span>
+            <span className="text-[10px]" style={{ color: '#fbbf24' }}>{t('関連曲で補充')}</span>
           ) : autoQueueStatus === 'relaxed' ? (
-            <span className="text-[10px]" style={{ color: '#fbbf24' }}>条件を緩和して補充</span>
+            <span className="text-[10px]" style={{ color: '#fbbf24' }}>{t('条件を緩和して補充')}</span>
           ) : autoQueueStatus === 'exhausted' ? (
-            <span className="text-[10px]" style={{ color: 'var(--color-text-muted)' }}>候補がありません</span>
+            <span className="text-[10px]" style={{ color: 'var(--color-text-muted)' }}>{t('候補がありません')}</span>
           ) : null}
           <button
             type="button"
             className="btn-ghost ml-auto rounded-lg p-1.5"
             onClick={() => openSaveToPlaylist(queue, { source: 'queue', queueIndex })}
             disabled={queue.length === 0}
-            title="キューをプレイリストに保存"
-            aria-label="キューをプレイリストに保存"
+            title={t('キューをプレイリストに保存')}
+            aria-label={t('キューをプレイリストに保存')}
             style={{ color: queue.length > 0 ? 'var(--color-accent-cyan)' : 'var(--color-text-muted)' }}
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -128,7 +130,7 @@ export default function QueueSidebar({ hideHeader }: QueueSidebarProps = {}) {
             <svg width="32" height="32" viewBox="0 0 24 24" fill="currentColor" style={{ opacity: 0.3 }}>
               <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/>
             </svg>
-            キューが空です
+            {t('キューが空です')}
           </li>
         ) : (
           queue.map((song, i) => {
@@ -216,8 +218,8 @@ export default function QueueSidebar({ hideHeader }: QueueSidebarProps = {}) {
                   <button
                     className="ml-2 flex h-7 w-7 shrink-0 items-center justify-center rounded opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100"
                     style={{ background: 'rgba(239,68,68,0.15)', color: '#ef4444' }}
-                    title="キューから外す（プレイリストは変更しません）"
-                    aria-label={`${song.name}をキューから外す`}
+                    title={t('キューから外す（プレイリストは変更しません）')}
+                    aria-label={t('{song}をキューから外す', { song: song.name })}
                     onClick={(e) => {
                       e.stopPropagation();
                       handleQueueRemove(i);
@@ -238,10 +240,10 @@ export default function QueueSidebar({ hideHeader }: QueueSidebarProps = {}) {
              style={{ background: 'var(--color-surface-elevated)', borderColor: 'var(--color-border)', color: 'var(--color-text-primary)' }}>
           <div className="flex items-center gap-3">
             <span className="min-w-0 flex-1 truncate" title={removedItem.song.name}>
-              「{removedItem.song.name}」をキューから外しました。プレイリストは変更されません。
+              {t('「{song}」をキューから外しました。プレイリストは変更されません。', { song: removedItem.song.name })}
             </span>
             <button type="button" className="shrink-0 font-semibold" style={{ color: 'var(--color-accent-cyan)' }} onClick={undoQueueRemove}>
-              元に戻す
+              {t('元に戻す')}
             </button>
           </div>
         </div>

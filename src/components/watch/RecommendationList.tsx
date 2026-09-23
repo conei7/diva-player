@@ -13,6 +13,7 @@ import { useRecommendationDisplayStore } from '../../stores/recommendationDispla
 import RecommendationHint from '../recommendation/RecommendationHint';
 import { excludeHiddenSongs, useHiddenSongStore } from '../../stores/hiddenSongStore';
 import { useMemo } from 'react';
+import { useTranslate } from '../../i18n';
 
 /**
  * RecommendationList - 推薦動画リスト
@@ -63,6 +64,7 @@ function RecItemRow({
   onVisible?: () => void;
   onExposureClick?: () => void;
 }) {
+  const t = useTranslate();
   const navigate = useNavigate();
   const { openSaveToPlaylist } = useUiStore();
   const toggleSongInPlaylist = usePlaylistStore(s => s.toggleSongInPlaylist);
@@ -221,7 +223,7 @@ function RecItemRow({
         style={{ aspectRatio: '16/9', background: 'var(--color-surface)' }}
         onClick={handleItemLinkClick}
         onAuxClick={handleItemLinkAuxClick}
-        aria-label={`${song.name}を再生`}
+        aria-label={t('playSong', { song: song.name })}
       >
         {!hiddenMode && thumbUrl ? (
           <img src={thumbUrl} alt={song.name} className="w-full h-full object-cover" loading="lazy" />
@@ -359,7 +361,7 @@ function RecItemRow({
             className="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded-md hover:bg-white/10"
             style={{ color: 'var(--color-text-muted)' }}
             onClick={handleMenuToggle}
-            title="メニュー"
+            title={t('moreOptions')}
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
               <circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/>
@@ -383,7 +385,7 @@ function RecItemRow({
           <svg width="16" height="16" viewBox="0 0 24 24" fill={isWatchLater ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2" className="flex-shrink-0">
             <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
           </svg>
-          {isWatchLater ? '後で聴くから削除' : '後で聴く'}
+          {isWatchLater ? t('removeListenLater') : t('listenLater')}
         </button>
         <button className="w-full flex items-center gap-3 px-4 py-2.5 text-sm hover:bg-white/5 transition-colors text-left"
                 style={{ color: 'var(--color-text-primary)' }}
@@ -392,14 +394,14 @@ function RecItemRow({
             <path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/>
             <polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/>
           </svg>
-          プレイリストに保存
+          {t('saveToPlaylist')}
         </button>
         <div className="border-t" style={{ borderColor: 'var(--color-border)' }} />
         <button className="w-full flex items-center gap-3 px-4 py-2.5 text-sm hover:bg-white/5 transition-colors text-left"
                 style={{ color: '#fb7185' }}
                 onClick={handleHide}>
           <span aria-hidden="true">⊘</span>
-          今後表示しない
+          {t('hide')}
         </button>
         <div className="border-t" style={{ borderColor: 'var(--color-border)' }} />
         <button className="w-full flex items-center gap-3 px-4 py-2.5 text-sm hover:bg-white/5 transition-colors text-left"
@@ -409,7 +411,7 @@ function RecItemRow({
             <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
             <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
           </svg>
-          共有
+          {t('share')}
         </button>
       </div>,
       document.body
@@ -435,8 +437,9 @@ export default function RecommendationList({
   loading,
   recommendationReasons,
   exposureSurface,
-  emptyMessage = '曲が見つかりません',
+  emptyMessage,
 }: RecommendationListProps) {
+  const t = useTranslate();
   const { currentSong, isPlaying, hiddenMode } = usePlayerStore();
   const recordVisible = useRecommendationExposureStore(s => s.recordVisible);
   const recordClicked = useRecommendationExposureStore(s => s.recordClicked);
@@ -460,7 +463,7 @@ export default function RecommendationList({
         <svg width="32" height="32" viewBox="0 0 24 24" fill="currentColor" style={{ color: 'var(--color-text-muted)', opacity: 0.3 }}>
           <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z" />
         </svg>
-        <p className="max-w-xs text-center text-sm" style={{ color: 'var(--color-text-muted)' }}>{emptyMessage}</p>
+        <p className="max-w-xs text-center text-sm" style={{ color: 'var(--color-text-muted)' }}>{emptyMessage ?? t('noSongsFound')}</p>
       </div>
     );
   }

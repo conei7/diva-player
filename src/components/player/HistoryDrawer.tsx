@@ -3,20 +3,22 @@ import { usePlayerStore } from '../../stores/playerStore';
 import { useRatingStore } from '../../stores/ratingStore';
 import StarRating from './StarRating';
 import type { Song } from '../../types/vocadb';
+import { useLanguageStore } from '../../stores/languageStore';
+import { useTranslateSourceText } from '../../i18n';
 
 /** Unix timestamp から相対時刻文字列を生成 */
-function getRelativeTime(timestamp: number): string {
+function getRelativeTime(timestamp: number, language: 'ja' | 'en', t: (source: string, values?: Record<string, string | number>) => string): string {
   const diff = Date.now() - timestamp;
   const minutes = Math.floor(diff / 60_000);
   const hours   = Math.floor(diff / 3_600_000);
   const days    = Math.floor(diff / 86_400_000);
 
-  if (minutes < 1)  return 'たった今';
-  if (minutes < 60) return `${minutes}分前`;
-  if (hours   < 24) return `${hours}時間前`;
-  if (days    === 1) return '昨日';
-  if (days    < 7)  return `${days}日前`;
-  return new Date(timestamp).toLocaleDateString('ja-JP', { month: 'short', day: 'numeric' });
+  if (minutes < 1)  return t('たった今');
+  if (minutes < 60) return t('{count}分前', { count: minutes });
+  if (hours   < 24) return t('{count}時間前', { count: hours });
+  if (days    === 1) return t('昨日');
+  if (days    < 7)  return t('{count}日前', { count: days });
+  return new Date(timestamp).toLocaleDateString(language === 'ja' ? 'ja-JP' : 'en-US', { month: 'short', day: 'numeric' });
 }
 
 /** YouTube PV からサムネイル URL を生成 */
@@ -35,6 +37,8 @@ function getProducerString(song: Song): string {
 }
 
 export default function HistoryDrawer() {
+  const t = useTranslateSourceText();
+  const language = useLanguageStore(state => state.language);
   const { entries, totalPlays, clearHistory } = useHistoryStore();
   const {
     historyDrawerOpen, toggleHistoryDrawer,
@@ -69,7 +73,7 @@ export default function HistoryDrawer() {
           boxShadow: historyDrawerOpen ? '-8px 0 32px rgba(0,0,0,0.4)' : 'none',
         }}
         role="dialog"
-        aria-label="視聴履歴"
+        aria-label={t('視聴履歴')}
       >
         {/* ヘッダー */}
         <div
@@ -82,7 +86,7 @@ export default function HistoryDrawer() {
               <path d="M13 3a9 9 0 1 0 9 9h-2a7 7 0 1 1-7-7V3zm7 1-4 4 4-4zM11 8v5l4.28 2.54.72-1.21-3.5-2.08V8H11z"/>
             </svg>
             <span className="text-sm font-semibold" style={{ color: 'var(--color-text-primary)' }}>
-              視聴履歴
+              {t('視聴履歴')}
             </span>
             {totalPlays > 0 && (
               <span
@@ -92,7 +96,7 @@ export default function HistoryDrawer() {
                   color: 'var(--color-accent-cyan)',
                 }}
               >
-                {totalPlays}件
+                {t('{count}件', { count: totalPlays })}
               </span>
             )}
           </div>
@@ -103,17 +107,17 @@ export default function HistoryDrawer() {
                 className="btn-ghost px-2 py-1 rounded-lg text-[11px]"
                 style={{ color: 'var(--color-text-muted)' }}
                 onClick={() => {
-                  if (window.confirm('視聴履歴をすべて削除しますか？')) clearHistory();
+                  if (window.confirm(t('視聴履歴をすべて削除しますか？'))) clearHistory();
                 }}
-                title="履歴を全件削除"
+                title={t('履歴を全件削除')}
               >
-                全件削除
+                {t('全件削除')}
               </button>
             )}
             <button
               className="btn-ghost p-1.5 rounded-lg"
               onClick={toggleHistoryDrawer}
-              aria-label="閉じる"
+              aria-label={t('閉じる')}
             >
               <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"
                    style={{ color: 'var(--color-text-muted)' }}>
@@ -132,7 +136,7 @@ export default function HistoryDrawer() {
                 <path d="M13 3a9 9 0 1 0 9 9h-2a7 7 0 1 1-7-7V3zm7 1-4 4 4-4zM11 8v5l4.28 2.54.72-1.21-3.5-2.08V8H11z"/>
               </svg>
               <p className="text-sm text-center">
-                視聴履歴はありません。<br />曲を再生すると自動的に記録されます。
+                {t('視聴履歴はありません。曲を再生すると自動的に記録されます。')}
               </p>
             </div>
           ) : (
@@ -210,7 +214,7 @@ export default function HistoryDrawer() {
                       {/* 相対時刻 */}
                       <div className="flex-shrink-0 text-[10px] whitespace-nowrap"
                            style={{ color: 'var(--color-text-muted)' }}>
-                        {getRelativeTime(playedAt)}
+                        {getRelativeTime(playedAt, language, t)}
                       </div>
                     </div>
                   </li>

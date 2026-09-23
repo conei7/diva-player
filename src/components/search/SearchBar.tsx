@@ -2,11 +2,13 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router';
 import { getSearchSuggestions, type SearchSuggestion } from '../../api/vocadb';
 import { useSearchStore } from '../../stores/searchStore';
+import { useTranslate } from '../../i18n';
 
 /**
  * SearchBar - 検索入力コンポーネント
  */
 export default function SearchBar() {
+  const t = useTranslate();
   const navigate = useNavigate();
   const {
     query,
@@ -85,9 +87,9 @@ export default function SearchBar() {
   }, [addVocalistFilter, navigate, search, searchByArtistId, setQuery]);
 
   const kindLabel = (kind: SearchSuggestion['kind']) => {
-    if (kind === 'song') return '曲';
-    if (kind === 'producer') return 'P';
-    return '歌';
+    if (kind === 'song') return t('suggestionSong');
+    if (kind === 'producer') return t('producerSearch');
+    return t('suggestionVocalist');
   };
 
   return (
@@ -108,7 +110,7 @@ export default function SearchBar() {
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onFocus={() => query.trim().length >= 2 && setShowSuggestions(true)}
-          placeholder="曲名・アーティスト名で検索..."
+          placeholder={t('searchBySongPlaceholder')}
           className="search-input pr-28"
           autoComplete="off"
         />
@@ -125,10 +127,10 @@ export default function SearchBar() {
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
               </svg>
-              検索中
+              {t('searchingSongs')}
             </span>
           ) : (
-            '検索'
+            t('search')
           )}
         </button>
       </div>
@@ -143,7 +145,7 @@ export default function SearchBar() {
         >
           {isSuggestLoading && suggestions.length === 0 ? (
             <div className="px-4 py-3 text-sm" style={{ color: 'var(--color-text-muted)' }}>
-              候補を検索中...
+              {t('searchNoSuggestions')}
             </div>
           ) : (
             <ul className="max-h-96 overflow-y-auto py-1">

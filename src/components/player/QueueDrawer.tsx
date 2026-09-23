@@ -7,6 +7,7 @@ import { useQueueRecommendationStore } from '../../stores/queueRecommendationSto
 import { useAutoQueueStatusStore } from '../../stores/autoQueueStatusStore';
 import { useRecommendationDisplayStore } from '../../stores/recommendationDisplayStore';
 import RecommendationHint from '../recommendation/RecommendationHint';
+import { useTranslateSourceText } from '../../i18n';
 
 /** YoutubePVからサムネイルURLを生成 */
 function getThumbUrl(song: Song): string | null {
@@ -24,6 +25,7 @@ function getProducerString(song: Song): string {
 }
 
 export default function QueueDrawer() {
+  const t = useTranslateSourceText();
   const {
     queue, queueIndex,
     queueDrawerOpen, toggleQueueDrawer,
@@ -64,7 +66,7 @@ export default function QueueDrawer() {
         }}
         role="dialog"
         data-testid="queue-drawer"
-        aria-label="再生キュー"
+        aria-label={t('再生キュー')}
       >
         {/* ヘッダー */}
         <div
@@ -77,7 +79,7 @@ export default function QueueDrawer() {
               <path d="M3 18h13v-2H3v2zm0-5h10v-2H3v2zm0-7v2h13V6H3zm18 9.59L17.42 12 21 8.41 19.59 7l-5 5 5 5L21 15.59z"/>
             </svg>
             <span className="text-sm font-semibold" style={{ color: 'var(--color-text-primary)' }}>
-              再生キュー
+              {t('再生キュー')}
             </span>
             {queue.length > 0 && (
               <span
@@ -87,7 +89,7 @@ export default function QueueDrawer() {
                   color: 'var(--color-accent-purple)',
                 }}
               >
-                {queue.length}曲
+                {t('{count}曲', { count: queue.length })}
               </span>
             )}
           </div>
@@ -96,7 +98,7 @@ export default function QueueDrawer() {
               <button
                 className="btn-ghost p-1.5 rounded-lg"
                 onClick={removeDuplicateQueueSongs}
-                title={`Remove ${duplicateCount} duplicate songs`}
+                title={t('キュー内の重複{count}曲を削除', { count: duplicateCount })}
                 style={{ color: '#fbbf24' }}
               >
                 <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -109,19 +111,20 @@ export default function QueueDrawer() {
               </button>
             )}
             {autoQueueStatus === 'fetching' || autoQueueStatus === 'reranking' ? (
-              <span className="text-[11px]" style={{ color: 'var(--color-text-muted)' }}>補充中…</span>
+              <span className="text-[11px]" style={{ color: 'var(--color-text-muted)' }}>{t('補充中…')}</span>
             ) : autoQueueStatus === 'degraded' ? (
-              <span className="text-[11px]" style={{ color: '#fbbf24' }}>関連曲へフォールバック中</span>
+              <span className="text-[11px]" style={{ color: '#fbbf24' }}>{t('関連曲へフォールバック中')}</span>
             ) : autoQueueStatus === 'relaxed' ? (
-              <span className="text-[11px]" style={{ color: '#fbbf24' }}>条件を緩和して補充</span>
+              <span className="text-[11px]" style={{ color: '#fbbf24' }}>{t('条件を緩和して補充')}</span>
             ) : autoQueueStatus === 'exhausted' ? (
-              <span className="text-[11px]" style={{ color: 'var(--color-text-muted)' }}>候補がありません</span>
+              <span className="text-[11px]" style={{ color: 'var(--color-text-muted)' }}>{t('候補がありません')}</span>
             ) : null}
             <button
               className="btn-ghost p-1.5 rounded-lg"
               onClick={() => openSaveToPlaylist(queue, { source: 'queue', queueIndex })}
               disabled={queue.length === 0}
-              title="Save queue to playlist"
+              title={t('キューをプレイリストに保存')}
+              aria-label={t('キューをプレイリストに保存')}
               style={{ color: queue.length > 0 ? 'var(--color-accent-cyan)' : 'var(--color-text-muted)' }}
             >
               <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor">
@@ -131,7 +134,7 @@ export default function QueueDrawer() {
             <button
               className="btn-ghost p-1.5 rounded-lg"
               onClick={toggleQueueDrawer}
-              aria-label="閉じる"
+              aria-label={t('閉じる')}
             >
               <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"
                    style={{ color: 'var(--color-text-muted)' }}>
@@ -150,7 +153,7 @@ export default function QueueDrawer() {
                 <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/>
               </svg>
               <p className="text-sm text-center">
-                キューは空です。<br />曲を検索して再生してください。
+                {t('キューは空です。曲を検索して再生してください。')}
               </p>
             </div>
           ) : (

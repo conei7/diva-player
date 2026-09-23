@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { usePlayerStore } from '../../stores/playerStore';
+import { useTranslate } from '../../i18n';
 
 function buildSongUrl(songId: number): string {
   const basePath = import.meta.env.BASE_URL.replace(/\/$/, '');
@@ -7,6 +8,7 @@ function buildSongUrl(songId: number): string {
 }
 
 export default function ShareCurrentSong() {
+  const t = useTranslate();
   const currentSong = usePlayerStore(s => s.currentSong);
   const [copied, setCopied] = useState(false);
 
@@ -41,7 +43,7 @@ export default function ShareCurrentSong() {
       className="btn-ghost p-1.5 rounded-lg"
       onClick={copyUrl}
       disabled={!currentSong}
-      title={copied ? 'コピーしました' : '曲リンクをコピー'}
+      title={copied ? t('copied') : t('copyLink')}
       style={{ color: copied ? 'var(--color-accent-cyan)' : 'var(--color-text-muted)' }}
     >
       {copied ? (

@@ -6,6 +6,13 @@ import { formatJapaneseViews } from '../../utils/formatViews';
 import { getPVServiceLabel } from '../../utils/pvService';
 import { getPVBadgeStyle } from '../../utils/pvBadge';
 import ViewHistoryChart from './ViewHistoryChart';
+import { useTranslate } from '../../i18n';
+import { useLanguageStore } from '../../stores/languageStore';
+
+function formatViews(value: number | undefined, language: 'ja' | 'en'): string {
+  if (language === 'ja') return formatJapaneseViews(value);
+  return new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(value || 0);
+}
 
 /**
  * Description - 折りたたみ可能な概要欄
@@ -15,8 +22,10 @@ interface DescriptionProps {
 }
 
 export default function Description({ song }: DescriptionProps) {
+  const t = useTranslate();
   const [expanded, setExpanded] = useState(false);
   const navigate = useNavigate();
+  const language = useLanguageStore(state => state.language);
 
   // PV情報を概要として使用
   const originalPV = song.pvs?.find(pv => pv.pvType === 'Original' && !pv.disabled);
@@ -25,9 +34,9 @@ export default function Description({ song }: DescriptionProps) {
 
   // 投稿日
   const publishDate = song.publishDate
-    ? new Date(song.publishDate).toLocaleDateString('ja-JP', { year: 'numeric', month: 'long', day: 'numeric' })
+    ? new Date(song.publishDate).toLocaleDateString(language === 'ja' ? 'ja-JP' : 'en', { year: 'numeric', month: 'long', day: 'numeric' })
     : originalPV?.publishDate
-    ? new Date(originalPV.publishDate).toLocaleDateString('ja-JP', { year: 'numeric', month: 'long', day: 'numeric' })
+    ? new Date(originalPV.publishDate).toLocaleDateString(language === 'ja' ? 'ja-JP' : 'en', { year: 'numeric', month: 'long', day: 'numeric' })
     : null;
 
   // PVサービスリスト
@@ -57,12 +66,12 @@ export default function Description({ song }: DescriptionProps) {
             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
               <path d="M21.582 6.186a2.665 2.665 0 0 0-1.876-1.884C17.95 3.84 12 3.84 12 3.84s-5.95 0-7.706.462A2.665 2.665 0 0 0 2.418 6.186C2 7.952 2 12 2 12s0 4.048.418 5.814a2.665 2.665 0 0 0 1.876 1.884C6.05 20.16 12 20.16 12 20.16s5.95 0 7.706-.462a2.665 2.665 0 0 0 1.876-1.884C22 16.048 22 12 22 12s0-4.048-.418-5.814zM9.75 15.02v-6.04L15.05 12l-5.3 3.02z"/>
             </svg>
-            {expanded ? (song.youtubeViews || 0).toLocaleString() : formatJapaneseViews(song.youtubeViews)}回
+            {expanded ? (song.youtubeViews || 0).toLocaleString() : formatViews(song.youtubeViews, language)} {t('viewsSuffix')}
           </span>
         )}
         {(pvList.some(p => p.service === 'NicoNicoDouga') || (song.nicoViews || 0) > 0) && (
           <span className="font-medium flex items-center gap-1" style={{ color: '#3b82f6' }}>
-            📺 {expanded ? (song.nicoViews || 0).toLocaleString() : formatJapaneseViews(song.nicoViews)}回
+            📺 {expanded ? (song.nicoViews || 0).toLocaleString() : formatViews(song.nicoViews, language)} {t('viewsSuffix')}
           </span>
         )}
 
@@ -103,7 +112,7 @@ export default function Description({ song }: DescriptionProps) {
             {/* アーティスト詳細 */}
             {producers.length > 0 && (
               <div>
-                <span className="text-xs font-medium" style={{ color: 'var(--color-text-muted)' }}>プロデューサー</span>
+                <span className="text-xs font-medium" style={{ color: 'var(--color-text-muted)' }}>{t('producerLabel')}</span>
                 <div className="flex flex-wrap gap-1 mt-1">
                   {producers.map(a => (
                     <button
@@ -128,7 +137,7 @@ export default function Description({ song }: DescriptionProps) {
             )}
             {vocalists.length > 0 && (
               <div>
-                <span className="text-xs font-medium" style={{ color: 'var(--color-text-muted)' }}>ボーカル</span>
+                <span className="text-xs font-medium" style={{ color: 'var(--color-text-muted)' }}>{t('vocalistLabel')}</span>
                 <div className="flex flex-wrap gap-1 mt-1">
                   {vocalists.map(a => (
                     <button 
@@ -153,7 +162,7 @@ export default function Description({ song }: DescriptionProps) {
             )}
             {others.length > 0 && (
               <div>
-                <span className="text-xs font-medium" style={{ color: 'var(--color-text-muted)' }}>その他参加</span>
+                <span className="text-xs font-medium" style={{ color: 'var(--color-text-muted)' }}>{t('otherCredits')}</span>
                 <div className="flex flex-wrap gap-1 mt-1">
                   {others.flatMap(a => {
                     const artistName = a.name || a.artist?.name || '';
@@ -188,7 +197,7 @@ export default function Description({ song }: DescriptionProps) {
             {/* PVリンク */}
             {pvList.length > 0 && (
               <div>
-                <span className="text-xs font-medium" style={{ color: 'var(--color-text-muted)' }}>PVリンク</span>
+                <span className="text-xs font-medium" style={{ color: 'var(--color-text-muted)' }}>{t('pvLinks')}</span>
                 <div className="flex flex-col gap-1 mt-1">
                   {pvList.map(pv => (
                     <a
@@ -232,13 +241,13 @@ export default function Description({ song }: DescriptionProps) {
         style={{ color: 'var(--color-text-secondary)' }}
         type="button"
         aria-expanded={expanded}
-        aria-label={expanded ? '概要を折りたたむ' : '概要を展開する'}
+        aria-label={expanded ? t('descriptionCollapseAria') : t('descriptionExpandAria')}
         onClick={(e) => {
           e.stopPropagation();
           setExpanded(!expanded);
         }}
       >
-        {expanded ? '一部を表示' : 'もっと見る'}
+        {expanded ? t('showLess') : t('showMore')}
       </button>
     </div>
   );

@@ -1,6 +1,7 @@
 import { Link, useNavigate } from 'react-router';
 import type { Song } from '../../types/vocadb';
 import { usePlayerStore, getPlayablePV } from '../../stores/playerStore';
+import { useTranslate } from '../../i18n';
 
 interface VideoCardProps {
   song: Song;
@@ -32,6 +33,7 @@ function getProducerInfo(song: Song): { name: string; id?: number } {
 
 export default function VideoCard({ song, showScore }: VideoCardProps) {
   const navigate = useNavigate();
+  const t = useTranslate();
   const { currentSong, isPlaying, hiddenMode } = usePlayerStore();
   const isCurrentSong = currentSong?.id === song.id;
   const thumbUrl = getThumbUrl(song);
@@ -75,7 +77,7 @@ export default function VideoCard({ song, showScore }: VideoCardProps) {
         className="block relative w-full rounded-xl overflow-hidden"
         style={{ aspectRatio: '16/9', background: 'var(--color-surface)' }}
         onClick={handleSongLinkClick}
-        aria-label={`${song.name}を再生`}
+        aria-label={t('playSong', { song: song.name })}
       >
         {!hiddenMode && thumbUrl ? (
           <img
@@ -134,7 +136,7 @@ export default function VideoCard({ song, showScore }: VideoCardProps) {
             onClick={handleProducerClick}
             onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--color-text-primary)'; }}
             onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--color-text-secondary)'; }}
-            title={`${producer.name} の曲を表示`}
+            title={t('showProducerSongs', { producer: producer.name })}
           >
             {producer.name}
           </p>

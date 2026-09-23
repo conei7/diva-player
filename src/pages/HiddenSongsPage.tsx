@@ -1,6 +1,8 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router';
 import { useHiddenSongStore } from '../stores/hiddenSongStore';
+import { useLanguageStore } from '../stores/languageStore';
+import { useTranslateSourceText } from '../i18n';
 
 type SortMode = 'recent' | 'name';
 
@@ -11,6 +13,8 @@ function thumbnail(song: { thumbUrl?: string; pvs?: Array<{ service: string; pvI
 }
 
 export default function HiddenSongsPage() {
+  const t = useTranslateSourceText();
+  const language = useLanguageStore(state => state.language);
   const hiddenSongs = useHiddenSongStore(state => state.hiddenSongs);
   const restoreSong = useHiddenSongStore(state => state.restoreSong);
   const [query, setQuery] = useState('');
@@ -31,9 +35,9 @@ export default function HiddenSongsPage() {
       <div className="mx-auto max-w-4xl">
         <div className="mb-6">
           <p className="mb-1 text-xs font-medium uppercase tracking-[0.18em]" style={{ color: '#fb7185' }}>Preference controls</p>
-          <h1 className="text-2xl font-bold" style={{ color: 'var(--color-text-primary)' }}>表示しない曲</h1>
+          <h1 className="text-2xl font-bold" style={{ color: 'var(--color-text-primary)' }}>{t('表示しない曲')}</h1>
           <p className="mt-2 text-sm" style={{ color: 'var(--color-text-secondary)' }}>
-            ここにある曲は検索、おすすめ、自動再生候補に表示されません。星評価や履歴、プレイリストの記録は削除していません。
+            {t('ここにある曲は検索、おすすめ、自動再生候補に表示されません。星評価や履歴、プレイリストの記録は削除していません。')}
           </p>
         </div>
 
@@ -42,7 +46,7 @@ export default function HiddenSongsPage() {
             type="search"
             value={query}
             onChange={event => setQuery(event.target.value)}
-            placeholder="曲名・アーティスト"
+            placeholder={t('曲名・アーティスト')}
             className="min-w-0 flex-1 rounded-xl border px-3 py-2.5 text-sm outline-none"
             style={{ background: 'var(--color-surface)', borderColor: 'var(--color-border)', color: 'var(--color-text-primary)' }}
           />
@@ -50,21 +54,21 @@ export default function HiddenSongsPage() {
             value={sortMode}
             onChange={event => setSortMode(event.target.value as SortMode)}
             className="ui-select sm:w-40"
-            aria-label="並び順"
+            aria-label={t('並び順')}
           >
-            <option value="recent">追加が新しい順</option>
-            <option value="name">曲名順</option>
+            <option value="recent">{t('追加が新しい順')}</option>
+            <option value="name">{t('曲名順')}</option>
           </select>
         </div>
 
-        <p className="mb-3 text-xs" style={{ color: 'var(--color-text-muted)' }}>{records.length.toLocaleString()} 曲</p>
+        <p className="mb-3 text-xs" style={{ color: 'var(--color-text-muted)' }}>{t('{count} 曲', { count: records.length.toLocaleString() })}</p>
 
         {records.length === 0 ? (
           <div className="rounded-2xl border px-6 py-16 text-center" style={{ borderColor: 'var(--color-border)', background: 'var(--color-surface)' }}>
             <p className="text-base font-medium" style={{ color: 'var(--color-text-primary)' }}>
-              {Object.keys(hiddenSongs).length === 0 ? '表示しない曲はありません' : '条件に合う曲がありません'}
+              {t(Object.keys(hiddenSongs).length === 0 ? '表示しない曲はありません' : '条件に合う曲がありません')}
             </p>
-            <p className="mt-2 text-sm" style={{ color: 'var(--color-text-muted)' }}>再生画面の「表示しない」から追加できます。</p>
+            <p className="mt-2 text-sm" style={{ color: 'var(--color-text-muted)' }}>{t('再生画面の「表示しない」から追加できます。')}</p>
           </div>
         ) : (
           <div className="overflow-hidden rounded-2xl border" style={{ borderColor: 'var(--color-border)', background: 'var(--color-surface)' }}>
@@ -79,13 +83,13 @@ export default function HiddenSongsPage() {
                     <p className="truncate text-sm font-semibold" style={{ color: 'var(--color-text-primary)' }}>{record.song.name}</p>
                     <p className="truncate text-xs" style={{ color: 'var(--color-text-secondary)' }}>{record.song.artistString}</p>
                     <p className="mt-1 text-[11px]" style={{ color: 'var(--color-text-muted)' }}>
-                      {new Date(record.hiddenAt).toLocaleDateString('ja-JP')} に非表示
+                      {new Date(record.hiddenAt).toLocaleDateString(language === 'ja' ? 'ja-JP' : 'en')}{t(' に非表示')}
                     </p>
                   </div>
                   <div className="ml-auto flex w-full justify-end gap-2 sm:w-auto">
-                    <Link className="btn-ghost rounded-full px-3 py-2 text-xs" to={`/watch?v=${record.song.id}&autoplay=0`}>確認</Link>
+                    <Link className="btn-ghost rounded-full px-3 py-2 text-xs" to={`/watch?v=${record.song.id}&autoplay=0`}>{t('確認')}</Link>
                     <button type="button" className="btn-secondary rounded-full px-3 py-2 text-xs" onClick={() => restoreSong(record.song.id)}>
-                      再表示
+                      {t('再表示')}
                     </button>
                   </div>
                 </div>
