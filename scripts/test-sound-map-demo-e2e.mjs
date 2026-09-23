@@ -46,6 +46,10 @@ try {
   if (state.pointCount !== 29) throw new Error(`Expected 29 demo points, received ${state.pointCount}.`);
   if (state.knownPointCount === 0) throw new Error('Demo map does not illustrate known-song styling.');
   if (!state.text.includes('画面確認用デモです。')) throw new Error('Local demo explanation is missing.');
+  if (!state.text.includes('音響特徴を2次元に配置した探索用マップです。')) throw new Error('Map projection explanation is missing.');
+  if (!state.text.includes('軸にジャンルなどの意味はなく、点同士の近さは似ている目安です。')) throw new Error('Map distance explanation is missing.');
+  if (!state.text.includes('点を選ぶだけでは再生されません。')) throw new Error('No-autoplay explanation is missing.');
+  if (!state.text.includes('データ更新:')) throw new Error('Map generation date is missing.');
   if (!['再生', '保存', '詳細'].every(label => state.disabledLabels.includes(label))) {
     throw new Error(`Backend-dependent demo actions are not disabled: ${JSON.stringify(state.disabledLabels)}`);
   }

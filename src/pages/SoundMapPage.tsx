@@ -197,7 +197,7 @@ export default function SoundMapPage() {
       <div className="mb-5 max-w-3xl">
         <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-300">Sound Map</p>
         <h1 className="mt-1 text-2xl font-bold text-white sm:text-3xl">曲調マップ</h1>
-        <p className="mt-2 text-sm leading-6 text-neutral-400">音の特徴が似ている曲ほど近くに並びます。気になる点を選びながら、今の曲に近い曲を探してみてください。</p>
+        <p className="mt-2 text-sm leading-6 text-neutral-400">音響特徴を2次元に配置した探索用マップです。軸にジャンルなどの意味はなく、点同士の近さは似ている目安です。点を選ぶだけでは再生されません。</p>
         {!localPreviewMode && currentSong && <p className="mt-3 text-xs text-cyan-200">再生中: {currentSong.name}</p>}
         {demoMode && <p className="mt-3 rounded-lg bg-cyan-300/10 px-3 py-2 text-xs text-cyan-100">画面確認用デモです。点の選択・ズーム・起点変更を試せます。</p>}
         {pilotMode && <p className="mt-3 rounded-lg bg-emerald-300/10 px-3 py-2 text-xs text-emerald-100">実データpilotです。Qdrantの音響ベクトルとPostgreSQLの曲名から生成した小規模マップを表示しています。</p>}
@@ -220,7 +220,7 @@ export default function SoundMapPage() {
             {error && <p className="mb-2 rounded-lg bg-amber-400/10 px-2 py-1.5 text-xs text-amber-100" role="alert">{error} 前回のマップを表示しています。</p>}
             <div className="mb-2 flex flex-wrap items-center justify-between gap-2 px-1 text-xs text-neutral-400">
               <span>起点: <strong className="text-white">{result.origin.name}</strong></span>
-              <span>{result.coordinateCount.toLocaleString()}曲 · {result.method}</span>
+              <span>{result.coordinateCount.toLocaleString()}曲 · {result.method} · <time dateTime={result.generatedAt}>データ更新: {new Intl.DateTimeFormat('ja-JP').format(new Date(result.generatedAt))}</time></span>
             </div>
             <SoundMapCanvas items={items} knownIds={displayKnownIds} result={result} selectedId={selectedId} viewport={viewport} onSelect={selectPoint} />
             {result.state !== 'ready' && <p className="mt-2 px-1 text-xs text-amber-200">{result.state === 'no_audio' ? '起点の音響特徴がないため、座標だけを表示しています。' : '近い曲の候補がまだマップにありません。'}</p>}
