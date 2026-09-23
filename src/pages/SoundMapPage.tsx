@@ -14,6 +14,16 @@ import { getRatedSongIds } from '../utils/ratedSongs';
 import { useLanguageStore } from '../stores/languageStore';
 import { useTranslateSourceText } from '../i18n';
 
+const SOUND_MAP_GUIDE_STORAGE_KEY = 'diva_sound_map_guide_dismissed_v1';
+
+function readSoundMapGuideDismissed(): boolean {
+  try {
+    return window.localStorage.getItem(SOUND_MAP_GUIDE_STORAGE_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
 function readId(value: string | null): number | null {
   const id = Number(value);
   return Number.isInteger(id) && id > 0 ? id : null;
@@ -54,6 +64,7 @@ export default function SoundMapPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [retryKey, setRetryKey] = useState(0);
+  const [guideDismissed, setGuideDismissed] = useState(readSoundMapGuideDismissed);
   const [explorationHistory, setExplorationHistory] = useState<number[]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(() => readId(searchParams.get('selectedSongId')));
   const [viewport, setViewport] = useState<SoundMapViewport>(() => ({
@@ -178,6 +189,14 @@ export default function SoundMapPage() {
     setSearchParams(params);
   };
   const focusOrigin = () => result && updateViewport(centerSoundMapOnPoint(result.origin, Math.max(1, viewport.zoom)));
+  const dismissGuide = () => {
+    setGuideDismissed(true);
+    try {
+      window.localStorage.setItem(SOUND_MAP_GUIDE_STORAGE_KEY, '1');
+    } catch {
+      // The guide can still be dismissed for this page view when storage is unavailable.
+    }
+  };
   const loadSong = useCallback(async (songId: number) => (await getSongsByIds([songId]))[0], []);
 
   const playSelected = async () => {
@@ -201,7 +220,17 @@ export default function SoundMapPage() {
       <div className="mb-5 max-w-3xl">
         <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-300">Sound Map</p>
         <h1 className="mt-1 text-2xl font-bold text-white sm:text-3xl">{t('曲調マップ')}</h1>
-        <p className="mt-2 text-sm leading-6 text-neutral-400">{t('音響特徴を2次元に配置した探索用マップです。軸にジャンルなどの意味はなく、点同士の近さは似ている目安です。点を選ぶだけでは再生されません。')}</p>
+        {seedId && !guideDismissed ? (
+          <section className="mt-2 flex items-start gap-2 text-xs leading-5 text-neutral-300" data-testid="sound-map-guide" aria-labelledby="sound-map-guide-title">
+            <div className="min-w-0 flex-1">
+              <h2 id="sound-map-guide-title" className="inline font-semibold text-cyan-100">{t('はじめての方へ')} </h2>
+              <span>{t('点を選んで曲を確認し、「この曲の近くを探す」で次を発掘。軸はジャンルではなく、選択だけで再生されません。色つきは履歴／評価あり、輪郭は未再生です。')}</span>
+            </div>
+            <button type="button" className="btn-ghost shrink-0 rounded-lg px-2 py-0.5 text-xs" onClick={dismissGuide} aria-label={t('案内を閉じる')} title={t('案内を閉じる')}>×</button>
+          </section>
+        ) : (
+          <p className="mt-2 text-sm leading-6 text-neutral-400">{t('音響特徴を2次元に配置した探索用マップです。軸にジャンルなどの意味はなく、点同士の近さは似ている目安です。点を選ぶだけでは再生されません。')}</p>
+        )}
         {!localPreviewMode && currentSong && <p className="mt-3 text-xs text-cyan-200">{t('再生中: {song}', { song: currentSong.name })}</p>}
         {demoMode && <p className="mt-3 rounded-lg bg-cyan-300/10 px-3 py-2 text-xs text-cyan-100">{t('画面確認用デモです。点の選択・ズーム・起点変更を試せます。')}</p>}
         {pilotMode && <p className="mt-3 rounded-lg bg-emerald-300/10 px-3 py-2 text-xs text-emerald-100">{t('実データpilotです。Qdrantの音響ベクトルとPostgreSQLの曲名から生成した小規模マップを表示しています。')}</p>}

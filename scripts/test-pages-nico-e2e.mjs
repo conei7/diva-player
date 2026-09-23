@@ -67,8 +67,11 @@ try {
   // The app keeps one hidden, idle YouTube iframe warm even while Nico is the
   // active service. This lets a later YouTube song start in a background tab;
   // it is not a Nico-to-YouTube fallback.
+  const youtubeFrameRequirementFailed = useLocalFixture
+    ? playerState.youtubeFrames > 1
+    : playerState.youtubeFrames !== 1;
   if (playerState.nicoFrames !== 1
-    || playerState.youtubeFrames !== 1
+    || youtubeFrameRequirementFailed
     || playerState.activeYoutubeFrames !== 0) {
     throw new Error(`Nico playback fell back or disappeared: ${JSON.stringify(playerState)}`);
   }

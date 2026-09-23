@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { existsSync } from 'node:fs';
 import { chmod, mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -198,7 +199,18 @@ function shellCommandPath(command) {
 
 const nativeExactPythonCommand = process.env.DIVA_ROLLING_TEST_NATIVE_PYTHON
   ?? (process.platform === 'win32'
-    ? join(projectDirectory, '..', 'diva-data-pipeline', 'ml_pipeline', '.venv', 'Scripts', 'python.exe')
+    ? [
+      join(projectDirectory, '..', 'diva-data-pipeline', 'ml_pipeline', '.venv', 'Scripts', 'python.exe'),
+      join(projectDirectory, '..', '..', '..', 'diva-data-pipeline', 'ml_pipeline', '.venv', 'Scripts', 'python.exe'),
+    ].find(existsSync) ?? join(
+      projectDirectory,
+      '..',
+      'diva-data-pipeline',
+      'ml_pipeline',
+      '.venv',
+      'Scripts',
+      'python.exe',
+    )
     : 'python3');
 const nativeExactPythonProbe = spawnSync(nativeExactPythonCommand, ['--version'], {
   cwd: projectDirectory,

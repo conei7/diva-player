@@ -19,6 +19,8 @@ try {
   const page = await browser.newPage();
   page.setDefaultTimeout(30_000);
   await page.setViewport({ width: 1580, height: 720 });
+  await page.goto(baseUrl, { waitUntil: 'domcontentloaded' });
+  await page.evaluate(() => localStorage.clear());
   await page.goto(new URL('sound-map?demo=1&seedSongId=123', baseUrl), { waitUntil: 'domcontentloaded' });
   await page.waitForSelector('[data-testid="sound-map-canvas"] g[role="button"]');
 
@@ -46,9 +48,9 @@ try {
   if (state.pointCount !== 29) throw new Error(`Expected 29 demo points, received ${state.pointCount}.`);
   if (state.knownPointCount === 0) throw new Error('Demo map does not illustrate known-song styling.');
   if (!state.text.includes('画面確認用デモです。')) throw new Error('Local demo explanation is missing.');
-  if (!state.text.includes('音響特徴を2次元に配置した探索用マップです。')) throw new Error('Map projection explanation is missing.');
-  if (!state.text.includes('軸にジャンルなどの意味はなく、点同士の近さは似ている目安です。')) throw new Error('Map distance explanation is missing.');
-  if (!state.text.includes('点を選ぶだけでは再生されません。')) throw new Error('No-autoplay explanation is missing.');
+  if (!state.text.includes('軸はジャンルではなく')) throw new Error('Map projection explanation is missing.');
+  if (!state.text.includes('選択だけで再生されません。')) throw new Error('No-autoplay explanation is missing.');
+  if (!state.text.includes('はじめての方へ') || !state.text.includes('「この曲の近くを探す」で次を発掘。')) throw new Error('First-visit sound map guide is missing.');
   if (!state.text.includes('データ更新:')) throw new Error('Map generation date is missing.');
   if (!['再生', '保存', '詳細'].every(label => state.disabledLabels.includes(label))) {
     throw new Error(`Backend-dependent demo actions are not disabled: ${JSON.stringify(state.disabledLabels)}`);
@@ -57,6 +59,15 @@ try {
   if (state.focusOriginBottom > state.viewportHeight) {
     throw new Error(`Map controls are below the viewport: ${JSON.stringify(state)}`);
   }
+
+  await page.click('button[aria-label="案内を閉じる"]');
+  if (await page.$('[data-testid="sound-map-guide"]')) throw new Error('Sound map guide remained visible after dismissal.');
+  if (!(await page.$eval('[data-testid="sound-map-page"]', element => element.textContent ?? '')).includes('点同士の近さは似ている目安です。')) {
+    throw new Error('Map explanation is missing after dismissing the first-visit guide.');
+  }
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('[data-testid="sound-map-canvas"] g[role="button"]');
+  if (await page.$('[data-testid="sound-map-guide"]')) throw new Error('Dismissed sound map guide returned after reload.');
 
   const points = await page.$$('[data-testid="sound-map-canvas"] g[role="button"]');
   const pointBox = await points[1].boundingBox();
@@ -68,6 +79,17 @@ try {
   }
   await clickButtonByText(page, 'この曲の近くを探す');
   await page.waitForFunction(() => new URL(location.href).searchParams.get('seedSongId') === '124');
+
+  await page.evaluate(() => {
+    localStorage.setItem('diva_uiLanguage', JSON.stringify('en'));
+    localStorage.removeItem('diva_sound_map_guide_dismissed_v1');
+  });
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('[data-testid="sound-map-guide"]');
+  const englishGuide = await page.$eval('[data-testid="sound-map-guide"]', element => element.textContent ?? '');
+  if (!englishGuide.includes('New to the sound map?') || !englishGuide.includes('Explore songs like this')) {
+    throw new Error(`Sound map guide did not localize to English: ${englishGuide}`);
+  }
 
   console.log('Sound map local demo E2E passed.');
 } finally {
