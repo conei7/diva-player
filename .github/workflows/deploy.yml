@@ -494,10 +494,11 @@ jobs:
           test "$(docker container inspect --format '{{.State.Running}}' \
             "$qdrant_smoke_container")" = true
           command -v jq >/dev/null
-          curl --fail --silent --show-error --connect-timeout 2 --max-time 30 \
+          curl --fail-with-body --silent --show-error --connect-timeout 2 --max-time 30 \
             --request PUT --header 'content-type: application/json' \
             --data-binary '{"vectors":{"size":4,"distance":"Cosine"}}' \
             "$qdrant_smoke_url/collections/diva_ci_smoke" \
+            | tee /dev/stderr \
             | jq --exit-status '.status == "ok"' >/dev/null
           curl --fail --silent --show-error --connect-timeout 2 --max-time 30 \
             --request PUT --header 'content-type: application/json' \
