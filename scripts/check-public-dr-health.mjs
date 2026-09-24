@@ -118,10 +118,14 @@ async function probeEndpoint(baseUrl, path, round, timeoutMs, allowDegradedData)
     });
     let payloadValid = true;
     let degradedDataAccepted = false;
+    let degradedHealthPayload = false;
     if (API_PATHS.includes(path)) {
       try {
         const payload = await readBoundedJson(response);
         const expectedStatus = path.endsWith('/ready') ? 'ready' : 'ok';
+        degradedHealthPayload = path.endsWith('/health')
+          && response.status === 503
+          && payload?.status === 'degraded';
         payloadValid = Boolean(
           payload
           && typeof payload === 'object'
@@ -147,7 +151,13 @@ async function probeEndpoint(baseUrl, path, round, timeoutMs, allowDegradedData)
       durationMs: Date.now() - startedAt,
       originRole: publicHeader(response.headers.get('x-diva-origin-role'), ORIGIN_ROLES),
       standbyState: publicHeader(response.headers.get('x-diva-standby-state'), STANDBY_STATES),
-      error: degradedDataAccepted ? 'degraded-data-accepted' : (payloadValid ? null : 'invalid-api-payload'),
+      error: degradedDataAccepted
+        ? 'degraded-data-accepted'
+        : payloadValid
+          ? null
+          : degradedHealthPayload
+            ? 'degraded-health-not-accepted'
+            : 'invalid-api-payload',
       degradedDataAccepted,
     };
     return result;

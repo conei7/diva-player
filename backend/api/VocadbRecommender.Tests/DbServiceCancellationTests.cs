@@ -7,6 +7,16 @@ namespace VocadbRecommender.Tests;
 
 public sealed class DbServiceCancellationTests
 {
+    [Fact]
+    public void DiscoveryQualityHealthQueryTimeout_FitsWithinOperationalProbeBudget()
+    {
+        var queryTimeout = TimeSpan.FromSeconds(
+            DbService.DiscoveryQualityHealthQueryTimeoutSeconds);
+
+        Assert.Equal(TimeSpan.FromSeconds(8), queryTimeout);
+        Assert.True(queryTimeout < ApiOperationalHealthProbeService.ProbeTimeout);
+    }
+
     [Theory]
     [InlineData(nameof(DbService.CheckHealthAsync))]
     [InlineData(nameof(DbService.CheckDiscoveryQualityAsync))]

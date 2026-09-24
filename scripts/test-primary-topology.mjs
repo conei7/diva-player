@@ -227,6 +227,22 @@ try {
     payload = invalid;
     assert.equal((await runPublicPrimaryHealth({ ...options, allowDegradedData: true })).ok, false);
   }
+  payload = {
+    ...stale,
+    discoveryQuality: { ok: false, error: 'NpgsqlException' },
+    audioFeatures: { ok: true, error: null },
+  };
+  const rejectedDegradedReport = await runPublicPrimaryHealth({
+    ...options,
+    allowDegradedData: true,
+  });
+  assert.equal(rejectedDegradedReport.ok, false);
+  assert.equal(
+    rejectedDegradedReport.probes.find(probe => (
+      probe.round === 2 && probe.path.endsWith('/api/health')
+    )).error,
+    'degraded-health-not-accepted',
+  );
 } finally {
   globalThis.fetch = originalFetch;
 }

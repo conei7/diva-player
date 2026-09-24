@@ -67,6 +67,7 @@ public sealed record SoundMapSong(
 /// <summary>PostgreSQL アクセスサービス</summary>
 public class DbService
 {
+    internal const int DiscoveryQualityHealthQueryTimeoutSeconds = 8;
     internal const string ConnectionCleanupExceptionDataKey =
         "Diva.DatabaseConnectionCleanupExceptionType";
     internal const int MaxRestrictedDiverseFallbackCandidateCount = 2_000;
@@ -437,7 +438,13 @@ public class DbService
                 FROM discovery_quality_model_policy policy
                 LEFT JOIN song_discovery_quality quality ON TRUE
                 WHERE policy.singleton = TRUE
-                GROUP BY policy.expected_model_version", conn) { CommandTimeout = 3 };
+                GROUP BY policy.expected_model_version", conn)
+            {
+                // This health aggregate scans the full discovery-quality table.
+                // Keep it within the operational probe's 25-second total budget,
+                // but allow normal cache and parallel-query variance beyond 3s.
+                CommandTimeout = DiscoveryQualityHealthQueryTimeoutSeconds,
+            };
             await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
             if (!await reader.ReadAsync(cancellationToken))
                 return new DiscoveryQualityHealth(false, stopwatch.ElapsedMilliseconds, 0, 0, 0, 0, 0, null, new Dictionary<string, long>(), 0, null, "model_policy_missing");
