@@ -61,9 +61,15 @@ export function isAcceptedDegradedHealthPayload(payload) {
   for (const key of ['discoveryQuality', 'audioFeatures']) {
     const section = payload[key];
     if (!section || typeof section.ok !== 'boolean') return false;
-    if (section.ok === false && section.error !== 'stale') return false;
+    const isStale = typeof section.error === 'string'
+      && section.error.toLowerCase() === 'stale';
+    if (section.ok === false && !isStale) return false;
   }
-  return ['discoveryQuality', 'audioFeatures'].some(key => payload[key]?.ok === false && payload[key]?.error === 'stale');
+  return ['discoveryQuality', 'audioFeatures'].some(key => (
+    payload[key]?.ok === false
+    && typeof payload[key]?.error === 'string'
+    && payload[key].error.toLowerCase() === 'stale'
+  ));
 }
 
 function publicHeader(value, allowed) {

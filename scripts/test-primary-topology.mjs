@@ -207,6 +207,14 @@ try {
   const warningReport = await runPublicPrimaryHealth({ ...options, allowDegradedData: true });
   assert.equal(warningReport.ok, true);
   assert.equal(warningReport.warnings.length, 1);
+  payload = {
+    ...stale,
+    discoveryQuality: { ok: false, error: 'Stale' },
+    audioFeatures: { ok: false, error: 'Stale' },
+  };
+  const apiCasingWarningReport = await runPublicPrimaryHealth({ ...options, allowDegradedData: true });
+  assert.equal(apiCasingWarningReport.ok, true);
+  assert.equal(apiCasingWarningReport.warnings.length, 1);
   role = 'standby';
   assert.equal((await runPublicPrimaryHealth({ ...options, allowDegradedData: true })).ok, false);
   role = 'primary';
