@@ -133,8 +133,13 @@ try {
   );
   assert.equal(
     workflow.match(/--base-url https:\/\/diva-player\.pages\.dev[\s\S]*?--allow-degraded-data/g)?.length,
-    3,
-    'rollback candidate, post-deploy, and rollback production checks must allow stale data only through the explicit gate',
+    2,
+    'rollback candidate and shared production health helper must allow stale data only through the explicit gate',
+  );
+  assert.equal(
+    workflow.match(/verify_public_health \|\|/g)?.length,
+    2,
+    'the shared production health helper must verify both the new and restored deployments',
   );
   assert.match(workflow, /Seal verified last-known-good production/);
   assert.match(workflow, /Deploy the same verified release to production[\s\S]*--branch main/);
