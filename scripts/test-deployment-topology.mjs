@@ -996,8 +996,12 @@ assert.match(
 assert.match(workflow, /Validate Cloudflare credentials/);
 assert.match(workflow, /Cloudflare deployment requires CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID/);
 assert.doesNotMatch(workflow, /Cloudflare deployment skipped/);
-assert.ok((workflow.match(/npm run test:e2e:pages-nico -- https:\/\/diva-player\.pages\.dev\//g)?.length ?? 0) >= 4);
-assert.match(workflow, /if npm run test:e2e:pages-nico[\s\S]*?sleep 15[\s\S]*?npm run test:e2e:pages-nico/);
+assert.ok((workflow.match(/npm run test:e2e:pages-nico -- https:\/\/diva-player\.pages\.dev\//g)?.length ?? 0) >= 1);
+assert.match(workflow, /verify_nico_smoke\(\) \{[\s\S]*?npm run test:e2e:pages-nico[\s\S]*?sleep 15/);
+assert.match(workflow, /verify_public_health\(\) \{[\s\S]*?for attempt in \$\(seq 1 6\)[\s\S]*?Production public health has not converged/);
+assert.match(workflow, /verify_nico_smoke\(\) \{[\s\S]*?for attempt in \$\(seq 1 3\)[\s\S]*?Production Nico autoplay smoke has not converged/);
+assert.match(workflow, /wait-production[\s\S]*?--attempts 18[\s\S]*?--interval-ms 10000/);
+assert.match(workflow, /rollback-production[\s\S]*?--attempts 18[\s\S]*?--interval-ms 10000/);
 const deployJobStart = workflow.indexOf('  deploy-cloudflare:');
 const deployStepsStart = workflow.indexOf('\n    steps:', deployJobStart);
 assert.notEqual(deployJobStart, -1);
