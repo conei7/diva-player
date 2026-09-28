@@ -45,7 +45,12 @@ assert.match(publicPrimaryWorkflow, /name:\s*Public primary health monitor/);
 assert.match(publicPrimaryWorkflow, /cron:\s*['"]7,22,37,52 \* \* \* \*['"]/);
 assert.match(publicPrimaryWorkflow, /npm run check:public-primary-health/);
 assert.match(publicPrimaryWorkflow, /--report-file public-primary-health-report\.json --allow-degraded-data/);
-assert.doesNotMatch(publicPrimaryWorkflow, /secrets\./);
+const publicPrimaryWebhookReference = publicPrimaryWorkflow.indexOf('secrets.DIVA_ALERT_WEBHOOK_URL');
+assert.equal(publicPrimaryWorkflow.match(/secrets\./g)?.length ?? 0, 1);
+assert.ok(
+  publicPrimaryWebhookReference > publicPrimaryWorkflow.indexOf('- name: Notify Discord on confirmed incident or recovery'),
+  'only the Discord incident/recovery step may read the webhook secret',
+);
 
 assert.equal(
   packageJson.scripts['test:primary-topology'],
