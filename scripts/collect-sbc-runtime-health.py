@@ -1242,6 +1242,16 @@ def _environment_number(name: str, default: float) -> float:
         return math.nan
 
 
+def collect_runtime_inputs(
+    now: datetime | None = None,
+) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
+    """Collect local and public health concurrently within the service budget."""
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+        snapshot_future = executor.submit(collect_snapshot)
+        public_probes_future = executor.submit(collect_public_probes, now)
+        return snapshot_future.result(), public_probes_future.result()
+
+
 def main() -> int:
     configured_state_dir = os.environ.get("DIVA_RUNTIME_STATE_DIR")
     state_dir = (
@@ -1253,8 +1263,7 @@ def main() -> int:
     history_path = state_dir / "runtime_health_history.jsonl"
     previous = load_json(latest_path)
     now = datetime.now(timezone.utc)
-    collected = collect_snapshot()
-    probes = collect_public_probes(now)
+    collected, probes = collect_runtime_inputs(now)
     audio_cache_probe = _probe_audio_cache_retention()
     if audio_cache_probe is not None:
         probes["cache:audio-retention"] = {

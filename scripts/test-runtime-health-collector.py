@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
+import threading
 import types
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -290,6 +291,32 @@ class RuntimeHealthCollectorContractTests(unittest.TestCase):
         self.assertEqual(probe["status"], "success")
         self.assertTrue(probe["logCapacityPressure"])
         self.assertEqual(probe["error"], "operational-log-budget-exceeded")
+
+    def test_local_and_public_inputs_are_collected_concurrently(self) -> None:
+        public_started = threading.Event()
+        local_wait_results: list[bool] = []
+        now = datetime(2026, 9, 29, 0, 0, tzinfo=timezone.utc)
+        local_snapshot = {"source": "local"}
+        public_probes = {"public:root": {"ok": True}}
+
+        def collect_local() -> dict[str, str]:
+            local_wait_results.append(public_started.wait(timeout=1))
+            return local_snapshot
+
+        def collect_public(checked_at: datetime) -> dict[str, dict[str, bool]]:
+            self.assertIs(checked_at, now)
+            public_started.set()
+            return public_probes
+
+        with (
+            mock.patch.object(COLLECTOR, "collect_snapshot", side_effect=collect_local),
+            mock.patch.object(COLLECTOR, "collect_public_probes", side_effect=collect_public),
+        ):
+            actual_snapshot, actual_probes = COLLECTOR.collect_runtime_inputs(now)
+
+        self.assertEqual(local_wait_results, [True])
+        self.assertEqual(actual_snapshot, local_snapshot)
+        self.assertEqual(actual_probes, public_probes)
 
     def test_public_probe_checks_json_dependencies_and_primary_route(self) -> None:
         payload = {
