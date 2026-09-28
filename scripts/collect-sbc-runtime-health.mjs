@@ -117,6 +117,12 @@ export function parseHostMemory(meminfoOutput, vmstatOutput, pressureOutput = ''
   };
 }
 
+function nonnegativeCount(value) {
+  if (typeof value === 'boolean') return 0;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : 0;
+}
+
 export function evaluateRuntimeSnapshot(snapshot, previous = {}, thresholds = {}) {
   const apiRssWarnMiB = thresholds.apiRssWarnMiB ?? 384;
   const dbConnectionsWarn = thresholds.dbConnectionsWarn ?? 28;
@@ -162,15 +168,74 @@ export function evaluateRuntimeSnapshot(snapshot, previous = {}, thresholds = {}
     violations.push({ id: 'host:memory-available', message: `host available memory is below ${hostAvailableWarnPercent}%` });
   }
 
-  const priorCounts = previous.consecutiveViolations || {};
-  const consecutiveViolations = Object.fromEntries(violations.map(item => [item.id, (priorCounts[item.id] || 0) + 1]));
-  const critical = violations.filter(item => consecutiveViolations[item.id] >= 2);
+  const priorCounts = previous.consecutiveViolations && typeof previous.consecutiveViolations === 'object'
+    && !Array.isArray(previous.consecutiveViolations) ? previous.consecutiveViolations : {};
+  const consecutiveViolations = Object.fromEntries(violations.map(item => [item.id, nonnegativeCount(priorCounts[item.id]) + 1]));
+  const currentById = new Map(violations.map(item => [item.id, item]));
+  const previousCritical = new Map((previous.critical || [])
+    .filter(item => item && typeof item.id === 'string')
+    .map(item => [item.id, item]));
+  const externalPrefixes = ['public:', 'cache:', 'capacity:'];
+  const isInternal = id => !externalPrefixes.some(prefix => id.startsWith(prefix));
+  const activeInternalIds = new Set([...previousCritical.keys()].filter(isInternal));
+  for (const field of ['notifiedCriticalIds', 'pendingIncidentIds', 'pendingRecoveryIds']) {
+    for (const id of Array.isArray(previous[field]) ? previous[field] : []) {
+      if (typeof id === 'string' && isInternal(id)) activeInternalIds.add(id);
+    }
+  }
+
+  const priorSuccesses = previous.consecutiveSuccesses && typeof previous.consecutiveSuccesses === 'object'
+    && !Array.isArray(previous.consecutiveSuccesses) ? previous.consecutiveSuccesses : {};
+  const consecutiveSuccesses = {};
+  const criticalById = new Map(violations
+    .filter(item => consecutiveViolations[item.id] >= 2)
+    .map(item => [item.id, item]));
+  const previousStartedAt = previous.violationStartedAt || {};
+  const violationStartedAt = {};
+  for (const item of violations) {
+    const priorCount = nonnegativeCount(priorCounts[item.id]);
+    const startedAt = previousStartedAt[item.id]
+      || (priorCount > 0 ? previous.checkedAt : snapshot.checkedAt);
+    if (typeof startedAt === 'string' && startedAt) violationStartedAt[item.id] = startedAt;
+  }
+
+  for (const id of activeInternalIds) {
+    if (currentById.has(id)) {
+      consecutiveSuccesses[id] = 0;
+      if (previousCritical.has(id)) criticalById.set(id, currentById.get(id));
+      continue;
+    }
+    const successfulChecks = nonnegativeCount(priorSuccesses[id]) + 1;
+    if (successfulChecks >= 2) continue;
+    consecutiveSuccesses[id] = successfulChecks;
+    const priorItem = previousCritical.get(id)
+      || (previous.violations || []).find(item => item?.id === id)
+      || { id, message: 'awaiting recovery confirmation' };
+    if (!criticalById.has(id)) criticalById.set(id, priorItem);
+    const startedAt = previousStartedAt[id]
+      || previous.incidentStartedAt?.[id]
+      || previous.checkedAt;
+    if (typeof startedAt === 'string' && startedAt) violationStartedAt[id] = startedAt;
+  }
+
+  for (const id of criticalById.keys()) {
+    if (!(id in consecutiveSuccesses)) consecutiveSuccesses[id] = 0;
+    if (!(id in violationStartedAt)) {
+      const startedAt = previousStartedAt[id]
+        || previous.incidentStartedAt?.[id]
+        || snapshot.checkedAt;
+      if (typeof startedAt === 'string' && startedAt) violationStartedAt[id] = startedAt;
+    }
+  }
+  const critical = [...criticalById.values()];
   return {
     ...snapshot,
     status: critical.length > 0 ? 'critical' : violations.length > 0 ? 'warning' : 'ok',
     violations,
     critical,
     consecutiveViolations,
+    consecutiveSuccesses,
+    violationStartedAt,
   };
 }
 
