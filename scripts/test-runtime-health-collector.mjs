@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   evaluateRuntimeSnapshot,
+  applyCriticalNotification,
   parseByteSize,
   parseContainerHealth,
   parseDockerStats,
@@ -111,6 +112,63 @@ const collectionFailure = evaluateRuntimeSnapshot({
 assert(collectionFailure.violations.some(item => item.id === 'collector:postgres'));
 assert(collectionFailure.violations.some(item => item.id === 'haproxy:api_b'));
 assert.deepEqual(parseDockerStats('{not-json}\n'), []);
+
+
+const previousDiscordWebhook = process.env.DIVA_ALERT_WEBHOOK_URL;
+process.env.DIVA_ALERT_WEBHOOK_URL = 'https://discord.com/api/webhooks/123/token?thread_id=456&wait=false';
+
+const notificationSnapshot = {
+  ...baseSnapshot,
+  checkedAt: "2026-08-10T00:00:00.000Z",
+  status: "critical",
+  critical: [{ id: "disk:used", message: "disk use exceeds 85%" }],
+};
+let capturedDiscordRequest;
+const delivered = await applyCriticalNotification(
+  notificationSnapshot,
+  { notifiedCriticalIds: [], lastDiscordMessageId: "111" },
+  async (url, request) => {
+    capturedDiscordRequest = { url: new URL(url), request };
+    return { ok: true, status: 200, json: async () => ({ id: "123456789012345678" }) };
+  },
+);
+assert.equal(delivered.notificationStatus, "sent");
+assert.deepEqual(delivered.notifiedCriticalIds, ["disk:used"]);
+assert.equal(delivered.lastDiscordMessageId, "123456789012345678");
+assert.equal(capturedDiscordRequest.url.searchParams.get("thread_id"), "456");
+assert.equal(capturedDiscordRequest.url.searchParams.get("wait"), "true");
+const discordPayload = JSON.parse(capturedDiscordRequest.request.body);
+assert.match(discordPayload.content, /disk:used/);
+assert.deepEqual(discordPayload.allowed_mentions, { parse: [] });
+
+const noIdDelivery = await applyCriticalNotification(
+  notificationSnapshot,
+  { notifiedCriticalIds: [], lastDiscordMessageId: "111" },
+  async () => ({ ok: true, status: 200, json: async () => ({ type: 1 }) }),
+);
+assert.equal(noIdDelivery.notificationStatus, "failed");
+assert.deepEqual(noIdDelivery.notifiedCriticalIds, []);
+assert.equal(noIdDelivery.lastDiscordMessageId, "111");
+
+const oversizedSnapshot = {
+  ...notificationSnapshot,
+  critical: Array.from({ length: 80 }, (_, index) => ({
+    id: "critical:" + index,
+    message: "long diagnostic ".repeat(30),
+  })),
+};
+const boundedDelivery = await applyCriticalNotification(
+  oversizedSnapshot,
+  {},
+  async (_url, request) => {
+    const payload = JSON.parse(request.body);
+    assert.ok(payload.content.length <= 1900);
+    return { ok: true, status: 200, json: async () => ({ id: "222" }) };
+  },
+);
+assert.equal(boundedDelivery.notificationStatus, "sent");
+if (previousDiscordWebhook === undefined) delete process.env.DIVA_ALERT_WEBHOOK_URL;
+else process.env.DIVA_ALERT_WEBHOOK_URL = previousDiscordWebhook;
 
 const temporaryDirectory = await mkdtemp(join(tmpdir(), 'diva-runtime-health-'));
 try {

@@ -224,6 +224,90 @@ class RuntimeHealthCollectorContractTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "must be a positive number"):
                 COLLECTOR.rotate_history_if_needed(history_path, 0)
 
+    def test_discord_notification_is_a_verified_message_and_bounded(self) -> None:
+        snapshot = {
+            "checkedAt": "2026-08-10T00:00:00.000Z",
+            "status": "critical",
+            "critical": [{"id": "disk:used", "message": "disk use exceeds 85%"}],
+        }
+        webhook = "https://discord.com/api/webhooks/123/token?thread_id=456&wait=false"
+        response = mock.MagicMock()
+        response.status = 200
+        response.read.return_value = b'{"id":"123456789012345678"}'
+        context = mock.MagicMock()
+        context.__enter__.return_value = response
+        with (
+            mock.patch.dict(os.environ, {"DIVA_ALERT_WEBHOOK_URL": webhook}, clear=True),
+            mock.patch.object(
+                COLLECTOR.urllib_request, "urlopen", return_value=context
+            ) as urlopen,
+        ):
+            delivered = COLLECTOR.apply_critical_notification(
+                snapshot,
+                {"notifiedCriticalIds": [], "lastDiscordMessageId": "111"},
+            )
+
+        request = urlopen.call_args.args[0]
+        self.assertEqual(request.get_method(), "POST")
+        self.assertIn("thread_id=456", request.full_url)
+        self.assertIn("wait=true", request.full_url)
+        payload = json.loads(request.data)
+        self.assertIn("disk:used", payload["content"])
+        self.assertEqual(payload["allowed_mentions"], {"parse": []})
+        self.assertEqual(delivered["notificationStatus"], "sent")
+        self.assertEqual(delivered["notifiedCriticalIds"], ["disk:used"])
+        self.assertEqual(delivered["lastDiscordMessageId"], "123456789012345678")
+        repeated = COLLECTOR.apply_critical_notification(snapshot, delivered)
+        self.assertEqual(repeated["notificationStatus"], "up-to-date")
+        self.assertEqual(repeated["lastDiscordMessageId"], "123456789012345678")
+
+        oversized_snapshot = {
+            **snapshot,
+            "critical": [
+                {"id": "critical:" + str(index), "message": "long diagnostic " * 30}
+                for index in range(80)
+            ],
+        }
+        response.read.return_value = b'{"id":"222"}'
+        with mock.patch.object(
+            COLLECTOR.urllib_request, "urlopen", return_value=context
+        ) as oversized_urlopen:
+            bounded = COLLECTOR.apply_critical_notification(oversized_snapshot, {})
+        bounded_payload = json.loads(oversized_urlopen.call_args.args[0].data)
+        self.assertLessEqual(len(bounded_payload["content"].encode("utf-16-le")) // 2, 1900)
+        self.assertEqual(bounded["notificationStatus"], "sent")
+
+    def test_discord_notification_requires_message_receipt_before_marking_sent(self) -> None:
+        snapshot = {
+            "checkedAt": "2026-08-10T00:00:00.000Z",
+            "status": "critical",
+            "critical": [{"id": "disk:used", "message": "disk use exceeds 85%"}],
+        }
+        response = mock.MagicMock()
+        response.status = 200
+        response.read.return_value = b'{"type":1}'
+        context = mock.MagicMock()
+        context.__enter__.return_value = response
+        with (
+            mock.patch.dict(
+                os.environ,
+                {"DIVA_ALERT_WEBHOOK_URL": "https://discord.com/api/webhooks/123/token"},
+                clear=True,
+            ),
+            mock.patch.object(
+                COLLECTOR.urllib_request, "urlopen", return_value=context
+            ),
+        ):
+            failed = COLLECTOR.apply_critical_notification(
+                snapshot,
+                {"notifiedCriticalIds": [], "lastDiscordMessageId": "111"},
+            )
+        self.assertEqual(failed["notificationStatus"], "failed")
+        self.assertEqual(failed["notifiedCriticalIds"], [])
+        self.assertEqual(failed["lastDiscordMessageId"], "111")
+        self.assertNotIn("token", failed["notificationError"])
+
+
     def test_main_persists_same_state_and_exit_code_contract(self) -> None:
         with tempfile.TemporaryDirectory(prefix="diva-runtime-health-") as directory:
             environment = {
