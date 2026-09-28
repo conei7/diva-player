@@ -257,7 +257,10 @@ class RuntimeHealthCollectorContractTests(unittest.TestCase):
         self.assertEqual(delivered["notificationStatus"], "sent")
         self.assertEqual(delivered["notifiedCriticalIds"], ["disk:used"])
         self.assertEqual(delivered["lastDiscordMessageId"], "123456789012345678")
-        repeated = COLLECTOR.apply_critical_notification(snapshot, delivered)
+        with mock.patch.dict(
+            os.environ, {"DIVA_ALERT_WEBHOOK_URL": webhook}, clear=True
+        ):
+            repeated = COLLECTOR.apply_critical_notification(snapshot, delivered)
         self.assertEqual(repeated["notificationStatus"], "up-to-date")
         self.assertEqual(repeated["lastDiscordMessageId"], "123456789012345678")
 
@@ -269,9 +272,14 @@ class RuntimeHealthCollectorContractTests(unittest.TestCase):
             ],
         }
         response.read.return_value = b'{"id":"222"}'
-        with mock.patch.object(
-            COLLECTOR.urllib_request, "urlopen", return_value=context
-        ) as oversized_urlopen:
+        with (
+            mock.patch.dict(
+                os.environ, {"DIVA_ALERT_WEBHOOK_URL": webhook}, clear=True
+            ),
+            mock.patch.object(
+                COLLECTOR.urllib_request, "urlopen", return_value=context
+            ) as oversized_urlopen,
+        ):
             bounded = COLLECTOR.apply_critical_notification(oversized_snapshot, {})
         bounded_payload = json.loads(oversized_urlopen.call_args.args[0].data)
         self.assertLessEqual(len(bounded_payload["content"].encode("utf-16-le")) // 2, 1900)
