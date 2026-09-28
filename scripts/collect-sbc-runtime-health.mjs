@@ -395,7 +395,10 @@ export async function applyCriticalNotification(snapshot, previous, fetchImpl = 
     webhookUrl.searchParams.set('wait', 'true');
     const response = await fetchImpl(webhookUrl, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: {
+        'content-type': 'application/json',
+        'user-agent': 'DIVA-Player-Runtime-Health/1.0',
+      },
       body: JSON.stringify({
         content: discordCriticalContent(snapshot, newlyCritical),
         allowed_mentions: { parse: [] },

@@ -249,6 +249,9 @@ class RuntimeHealthCollectorContractTests(unittest.TestCase):
 
         request = urlopen.call_args.args[0]
         self.assertEqual(request.get_method(), "POST")
+        self.assertEqual(
+            request.get_header("User-agent"), "DIVA-Player-Runtime-Health/1.0"
+        )
         self.assertIn("thread_id=456", request.full_url)
         self.assertIn("wait=true", request.full_url)
         payload = json.loads(request.data)
