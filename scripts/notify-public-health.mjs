@@ -83,9 +83,14 @@ export function advanceGithubHealthState(report, previous = {}, now = new Date()
 }
 
 function notificationContent(notifications) {
-  const lines = ['DIVA Player public health monitor (GitHub Actions)'];
+  const testOnly = notifications.length > 0 && notifications.every(item => item.testOnly === true);
+  const lines = [
+    `DIVA Player public health monitor (GitHub Actions)${testOnly ? ' — TEST ONLY (no synthetic state change)' : ''}`,
+  ];
   for (const item of notifications) {
-    const label = item.kind === 'incident' ? '障害を検知' : '復旧を確認';
+    const label = testOnly
+      ? (item.kind === 'incident' ? 'テスト障害通知' : 'テスト復旧通知')
+      : (item.kind === 'incident' ? '障害を検知' : '復旧を確認');
     lines.push(`• ${label}: ${item.id} (${item.status ?? 'no response'}${item.error ? ` / ${item.error}` : ''})`);
     lines.push(`  ${item.url}`);
     lines.push(`  発生時刻: ${item.startedAt}`);
@@ -117,6 +122,24 @@ export async function sendGithubHealthNotifications(notifications, webhook, fetc
   } catch (error) {
     return { sent: false, error: `Discord delivery failed (${error?.name || 'Error'})` };
   }
+}
+
+export async function sendGithubHealthTestNotification(webhook, fetchImpl = fetch, now = new Date()) {
+  const checkedAt = now.toISOString();
+  const shared = {
+    id: 'test:public-health',
+    path: '/backend-api/api/health',
+    url: PATHS['/backend-api/api/health'],
+    status: 200,
+    error: null,
+    startedAt: checkedAt,
+    checkedAt,
+    testOnly: true,
+  };
+  return sendGithubHealthNotifications([
+    { kind: 'incident', ...shared },
+    { kind: 'recovery', ...shared },
+  ], webhook, fetchImpl);
 }
 
 export function applyGithubNotificationReceipt(result, delivery) {
@@ -172,10 +195,30 @@ async function main() {
   const advanced = advanceGithubHealthState(report, previous);
   const delivery = await sendGithubHealthNotifications(advanced.notifications, process.env.DIVA_ALERT_WEBHOOK_URL);
   const result = applyGithubNotificationReceipt(advanced, delivery);
+  const testRequested = process.env.DIVA_PUBLIC_HEALTH_DISCORD_TEST === 'true';
+  const testDelivery = testRequested
+    ? await sendGithubHealthTestNotification(process.env.DIVA_ALERT_WEBHOOK_URL)
+    : null;
   await writeFile(options.stateFile, `${JSON.stringify(result.state, null, 2)}\n`, 'utf8');
-  await writeFile(options.resultFile, `${JSON.stringify({ reportOk: result.reportOk, notificationStatus: result.notificationStatus, notificationError: result.notificationError }, null, 2)}\n`, 'utf8');
-  console.log(JSON.stringify({ reportOk: result.reportOk, notificationStatus: result.notificationStatus, notificationError: result.notificationError, notificationCount: result.notifications.length }));
-  if (!result.reportOk || result.notificationStatus === 'pending') process.exitCode = 1;
+  const testNotificationStatus = !testRequested ? 'not-requested' : testDelivery.sent ? 'sent' : 'pending';
+  await writeFile(options.resultFile, `${JSON.stringify({
+    reportOk: result.reportOk,
+    notificationStatus: result.notificationStatus,
+    notificationError: result.notificationError,
+    testNotificationStatus,
+    testNotificationMessageId: testDelivery?.messageId || null,
+    testNotificationError: testDelivery?.sent ? null : testDelivery?.error || null,
+  }, null, 2)}\n`, 'utf8');
+  console.log(JSON.stringify({
+    reportOk: result.reportOk,
+    notificationStatus: result.notificationStatus,
+    notificationError: result.notificationError,
+    notificationCount: result.notifications.length,
+    testNotificationStatus,
+  }));
+  if (!result.reportOk || result.notificationStatus === 'pending' || testNotificationStatus === 'pending') {
+    process.exitCode = 1;
+  }
 }
 
 if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) {
