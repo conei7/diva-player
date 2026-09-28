@@ -735,7 +735,10 @@ def apply_critical_notification(
     webhook_request = urllib_request.Request(
         _discord_wait_url(webhook),
         data=payload,
-        headers={"content-type": "application/json"},
+        headers={
+            "content-type": "application/json",
+            "user-agent": "DIVA-Player-Runtime-Health/1.0",
+        },
         method="POST",
     )
     try:

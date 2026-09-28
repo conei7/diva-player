@@ -137,6 +137,10 @@ assert.deepEqual(delivered.notifiedCriticalIds, ["disk:used"]);
 assert.equal(delivered.lastDiscordMessageId, "123456789012345678");
 assert.equal(capturedDiscordRequest.url.searchParams.get("thread_id"), "456");
 assert.equal(capturedDiscordRequest.url.searchParams.get("wait"), "true");
+assert.equal(
+  capturedDiscordRequest.request.headers["user-agent"],
+  "DIVA-Player-Runtime-Health/1.0",
+);
 const discordPayload = JSON.parse(capturedDiscordRequest.request.body);
 assert.match(discordPayload.content, /disk:used/);
 assert.deepEqual(discordPayload.allowed_mentions, { parse: [] });
