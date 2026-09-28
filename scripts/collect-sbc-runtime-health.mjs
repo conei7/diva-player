@@ -337,38 +337,92 @@ export async function rotateHistoryIfNeeded(path, maximumBytes) {
   return true;
 }
 
-async function applyCriticalNotification(snapshot, previous) {
+function discordMessageId(value) {
+  if (typeof value === 'string' && /^[0-9]+$/.test(value) && /[1-9]/.test(value)) return value;
+  if (Number.isSafeInteger(value) && value > 0) return String(value);
+  return null;
+}
+
+function truncateDiscordContent(value, maximumLength = 1900) {
+  if (value.length <= maximumLength) return value;
+  let output = '';
+  for (const character of value) {
+    if (output.length + character.length > maximumLength - 3) break;
+    output += character;
+  }
+  return output + '...';
+}
+
+function discordCriticalContent(snapshot, critical) {
+  const lines = [
+    'DIVA Player runtime health: CRITICAL',
+    'Checked at: ' + snapshot.checkedAt,
+  ];
+  for (const item of critical) {
+    const id = String(item.id || 'unknown');
+    const message = typeof item.message === 'string'
+      ? item.message.replace(/\s+/g, ' ').trim()
+      : '';
+    lines.push('- ' + id + (message ? ': ' + message : ''));
+  }
+  return truncateDiscordContent(lines.join('\n'));
+}
+
+function safeNotificationError(error, webhook) {
+  let message = String(error?.message || error || 'unknown error');
+  if (webhook) message = message.split(webhook).join('[redacted webhook]');
+  return message.replace(/https?:\/\/[^\s<>"']+/gi, '[redacted URL]').slice(0, 300);
+}
+
+export async function applyCriticalNotification(snapshot, previous, fetchImpl = fetch) {
   const webhook = process.env.DIVA_ALERT_WEBHOOK_URL;
   const currentIds = new Set(snapshot.critical.map(item => item.id));
   const previousNotifiedIds = Array.isArray(previous.notifiedCriticalIds)
     ? previous.notifiedCriticalIds
     : [];
-  const notifiedIds = new Set(
-    previousNotifiedIds.filter(id => currentIds.has(id)),
-  );
+  const notifiedIds = new Set(previousNotifiedIds.filter(id => currentIds.has(id)));
+  const previousMessageId = discordMessageId(previous.lastDiscordMessageId);
+  const notificationState = {
+    ...snapshot,
+    notifiedCriticalIds: [...notifiedIds],
+    ...(previousMessageId ? { lastDiscordMessageId: previousMessageId } : {}),
+  };
   const newlyCritical = snapshot.critical.filter(item => !notifiedIds.has(item.id));
-  if (!webhook) {
-    return { ...snapshot, notifiedCriticalIds: [...notifiedIds], notificationStatus: 'disabled' };
-  }
-  if (newlyCritical.length === 0) {
-    return { ...snapshot, notifiedCriticalIds: [...notifiedIds], notificationStatus: 'up-to-date' };
-  }
+  if (!webhook) return { ...notificationState, notificationStatus: 'disabled' };
+  if (newlyCritical.length === 0) return { ...notificationState, notificationStatus: 'up-to-date' };
   try {
-    const response = await fetch(webhook, {
+    const webhookUrl = new URL(webhook);
+    webhookUrl.searchParams.set('wait', 'true');
+    const response = await fetchImpl(webhookUrl, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ event: 'diva_runtime_health', status: snapshot.status, checkedAt: snapshot.checkedAt, critical: newlyCritical }),
+      body: JSON.stringify({
+        content: discordCriticalContent(snapshot, newlyCritical),
+        allowed_mentions: { parse: [] },
+      }),
       signal: AbortSignal.timeout(10_000),
     });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    if (!response.ok) throw new Error('HTTP ' + response.status);
+    let discordMessage;
+    try {
+      discordMessage = await response.json();
+    } catch {
+      throw new Error('Discord response was not JSON');
+    }
+    const messageId = discordMessageId(discordMessage?.id);
+    if (!messageId) throw new Error('Discord response did not include a message id');
     for (const item of newlyCritical) notifiedIds.add(item.id);
-    return { ...snapshot, notifiedCriticalIds: [...notifiedIds], notificationStatus: 'sent' };
-  } catch (error) {
     return {
       ...snapshot,
       notifiedCriticalIds: [...notifiedIds],
+      lastDiscordMessageId: messageId,
+      notificationStatus: 'sent',
+    };
+  } catch (error) {
+    return {
+      ...notificationState,
       notificationStatus: 'failed',
-      notificationError: String(error?.message || error || 'unknown error').slice(0, 300),
+      notificationError: safeNotificationError(error, webhook),
     };
   }
 }

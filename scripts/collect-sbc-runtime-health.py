@@ -20,6 +20,7 @@ import traceback
 from typing import Any, Callable
 from urllib import error as urllib_error
 from urllib import request as urllib_request
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 
 DEFAULT_CONTAINERS = [
@@ -642,6 +643,60 @@ def rotate_history_if_needed(path: Path, maximum_bytes: float) -> bool:
     return True
 
 
+def _discord_message_id(value: Any) -> str | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int) and value > 0:
+        return str(value)
+    if isinstance(value, str) and re.fullmatch(r"[0-9]+", value) and any(
+        digit != "0" for digit in value
+    ):
+        return value
+    return None
+
+
+def _discord_wait_url(webhook: str) -> str:
+    parts = urlsplit(webhook)
+    query = [
+        (key, value)
+        for key, value in parse_qsl(parts.query, keep_blank_values=True)
+        if key != "wait"
+    ]
+    query.append(("wait", "true"))
+    return urlunsplit(parts._replace(query=urlencode(query)))
+
+
+def _discord_content(snapshot: dict[str, Any], critical: list[dict[str, Any]]) -> str:
+    lines = [
+        "DIVA Player runtime health: CRITICAL",
+        f"Checked at: {snapshot.get('checkedAt', 'unknown')}",
+    ]
+    for item in critical:
+        item_id = " ".join(str(item.get("id") or "unknown").split())
+        message = item.get("message")
+        safe_message = " ".join(message.split()) if isinstance(message, str) else ""
+        lines.append(f"- {item_id}{': ' + safe_message if safe_message else ''}")
+    content = "\n".join(lines)
+    if len(content.encode("utf-16-le")) // 2 <= 1900:
+        return content
+    truncated = []
+    length = 0
+    for character in content:
+        units = len(character.encode("utf-16-le")) // 2
+        if length + units > 1897:
+            break
+        truncated.append(character)
+        length += units
+    return "".join(truncated) + "..."
+
+
+def _safe_notification_error(error: Any, webhook: str) -> str:
+    message = str(error or "unknown error")
+    if webhook:
+        message = message.replace(webhook, "[redacted webhook]")
+    return re.sub(r"https?://\S+", "[redacted URL]", message)[:300]
+
+
 def apply_critical_notification(
     snapshot: dict[str, Any], previous: dict[str, Any]
 ) -> dict[str, Any]:
@@ -655,34 +710,30 @@ def apply_critical_notification(
         if item_id in current_ids and item_id not in notified_ids:
             notified_ids.append(item_id)
     notified_id_set = set(notified_ids)
+    previous_message_id = _discord_message_id(previous.get("lastDiscordMessageId"))
+    notification_state = {
+        **snapshot,
+        "notifiedCriticalIds": notified_ids,
+        **({"lastDiscordMessageId": previous_message_id} if previous_message_id else {}),
+    }
     newly_critical = [
         item for item in snapshot["critical"] if item["id"] not in notified_id_set
     ]
     if not webhook:
-        return {
-            **snapshot,
-            "notifiedCriticalIds": notified_ids,
-            "notificationStatus": "disabled",
-        }
+        return {**notification_state, "notificationStatus": "disabled"}
     if not newly_critical:
-        return {
-            **snapshot,
-            "notifiedCriticalIds": notified_ids,
-            "notificationStatus": "up-to-date",
-        }
+        return {**notification_state, "notificationStatus": "up-to-date"}
 
     payload = json.dumps(
         {
-            "event": "diva_runtime_health",
-            "status": snapshot["status"],
-            "checkedAt": snapshot["checkedAt"],
-            "critical": newly_critical,
+            "content": _discord_content(snapshot, newly_critical),
+            "allowed_mentions": {"parse": []},
         },
         ensure_ascii=False,
         separators=(",", ":"),
     ).encode("utf-8")
     webhook_request = urllib_request.Request(
-        webhook,
+        _discord_wait_url(webhook),
         data=payload,
         headers={"content-type": "application/json"},
         method="POST",
@@ -691,6 +742,15 @@ def apply_critical_notification(
         with urllib_request.urlopen(webhook_request, timeout=10) as response:
             if not 200 <= response.status < 300:
                 raise RuntimeError(f"HTTP {response.status}")
+            try:
+                discord_message = json.loads(response.read())
+            except (TypeError, ValueError, json.JSONDecodeError):
+                raise RuntimeError("Discord response was not JSON") from None
+        message_id = _discord_message_id(
+            discord_message.get("id") if isinstance(discord_message, dict) else None
+        )
+        if not message_id:
+            raise RuntimeError("Discord response did not include a message id")
         for item in newly_critical:
             if item["id"] not in notified_id_set:
                 notified_ids.append(item["id"])
@@ -698,18 +758,15 @@ def apply_critical_notification(
         return {
             **snapshot,
             "notifiedCriticalIds": notified_ids,
+            "lastDiscordMessageId": message_id,
             "notificationStatus": "sent",
         }
     except Exception as exc:
-        if isinstance(exc, urllib_error.HTTPError):
-            message = f"HTTP {exc.code}"
-        else:
-            message = str(exc or "unknown error")
+        message = f"HTTP {exc.code}" if isinstance(exc, urllib_error.HTTPError) else exc
         return {
-            **snapshot,
-            "notifiedCriticalIds": notified_ids,
+            **notification_state,
             "notificationStatus": "failed",
-            "notificationError": message[:300],
+            "notificationError": _safe_notification_error(message, webhook),
         }
 
 
