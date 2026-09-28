@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   advanceGithubHealthState,
   applyGithubNotificationReceipt,
+  sendGithubHealthTestNotification,
   sendGithubHealthNotifications,
 } from './notify-public-health.mjs';
 
@@ -59,4 +60,25 @@ test('API route mismatch is considered unhealthy and Discord delivery requires a
     return { ok: true, status: 200, json: async () => ({ id: 'confirmed-message' }) };
   });
   assert.equal(sent.messageId, 'confirmed-message');
+});
+
+test('manual Discord test is clearly labeled and does not need or mutate monitor state', async () => {
+  const now = new Date('2026-09-29T00:00:00.000Z');
+  let requestBody;
+  const result = await sendGithubHealthTestNotification(
+    'https://discord.com/api/webhooks/1/secret',
+    async (_url, options) => {
+      requestBody = JSON.parse(options.body);
+      return { ok: true, status: 200, json: async () => ({ id: 'test-message-receipt' }) };
+    },
+    now,
+  );
+  assert.equal(result.sent, true);
+  assert.equal(result.messageId, 'test-message-receipt');
+  assert.match(requestBody.content, /TEST ONLY/);
+  assert.match(requestBody.content, /テスト障害通知/);
+  assert.match(requestBody.content, /テスト復旧通知/);
+  assert.match(requestBody.content, /no synthetic state change/);
+  assert.deepEqual(requestBody.allowed_mentions.parse, []);
+  assert.equal(Object.hasOwn(result, 'state'), false);
 });

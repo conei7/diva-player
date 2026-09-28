@@ -43,6 +43,8 @@ assert.doesNotMatch(tunnelAdmin, /standby:\s*['"]quick_tunnel_standby_url['"]/);
 assert.match(publicPrimaryMonitor, /mode:\s*['"]primary-only['"]/);
 assert.match(publicPrimaryWorkflow, /name:\s*Public primary health monitor/);
 assert.match(publicPrimaryWorkflow, /cron:\s*['"]7,22,37,52 \* \* \* \*['"]/);
+assert.match(publicPrimaryWorkflow, /discord_test:[\s\S]*type: boolean[\s\S]*default: false/);
+assert.match(publicPrimaryWorkflow, /DIVA_PUBLIC_HEALTH_DISCORD_TEST:/);
 assert.match(publicPrimaryWorkflow, /npm run check:public-primary-health/);
 assert.match(publicPrimaryWorkflow, /--report-file public-primary-health-report\.json --allow-degraded-data/);
 const publicPrimaryWebhookReference = publicPrimaryWorkflow.indexOf('secrets.DIVA_ALERT_WEBHOOK_URL');

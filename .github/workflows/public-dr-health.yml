@@ -7,6 +7,12 @@ on:
     # minute zero so this primary-only external monitor is less likely to be discarded.
     - cron: '7,22,37,52 * * * *'
   workflow_dispatch:
+    inputs:
+      discord_test:
+        description: Send a TEST ONLY message with synthetic incident and recovery entries
+        required: false
+        type: boolean
+        default: false
   workflow_run:
     workflows: ['Deploy DIVA Player']
     types: [completed]
@@ -54,6 +60,7 @@ jobs:
         if: always()
         env:
           DIVA_ALERT_WEBHOOK_URL: ${{ secrets.DIVA_ALERT_WEBHOOK_URL }}
+          DIVA_PUBLIC_HEALTH_DISCORD_TEST: ${{ github.event_name == 'workflow_dispatch' && inputs.discord_test == true }}
         run: >-
           node scripts/notify-public-health.mjs
           --report-file public-primary-health-report.json
@@ -78,4 +85,4 @@ jobs:
             echo "Public health state could not be saved"
             exit 1
           fi
-          node -e 'const r=require("./public-primary-health-result.json"); if (!r.reportOk || r.notificationStatus === "pending") process.exit(1);'
+          node -e 'const r=require("./public-primary-health-result.json"); if (!r.reportOk || r.notificationStatus === "pending" || r.testNotificationStatus === "pending") process.exit(1);'
