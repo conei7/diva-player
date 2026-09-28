@@ -17,6 +17,7 @@ concurrency:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   public-primary-health:
@@ -31,13 +32,50 @@ jobs:
       - name: Allow Pages edges to converge after deploy
         if: github.event_name == 'workflow_run'
         run: sleep 60
+      - name: Download the latest persistent notification state
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p public-primary-state
+          previous_run_id="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/public-dr-health.yml/runs?status=completed&per_page=100" --jq '.workflow_runs[0].id // empty')"
+          if [ -n "$previous_run_id" ]; then
+            gh run download "$previous_run_id" --name public-primary-health-notification-state --dir public-primary-state || true
+          fi
+          if [ -f public-primary-state/public-primary-health-state.json ]; then
+            cp public-primary-state/public-primary-health-state.json public-primary-health-state.json
+          fi
       - name: Probe public Web and primary API paths twice
+        id: probe
+        continue-on-error: true
         run: npm run check:public-primary-health -- --report-file public-primary-health-report.json --allow-degraded-data
-      - name: Save sanitized public primary health report
+      - name: Notify Discord on confirmed incident or recovery
+        id: notify
+        if: always()
+        env:
+          DIVA_ALERT_WEBHOOK_URL: ${{ secrets.DIVA_ALERT_WEBHOOK_URL }}
+        run: >-
+          node scripts/notify-public-health.mjs
+          --report-file public-primary-health-report.json
+          --state-file public-primary-health-state.json
+          --result-file public-primary-health-result.json
+      - name: Save sanitized public health state and report
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: public-primary-health-report
-          path: public-primary-health-report.json
+          name: public-primary-health-notification-state
+          path: |
+            public-primary-health-report.json
+            public-primary-health-state.json
+            public-primary-health-result.json
           if-no-files-found: ignore
-          retention-days: 14
+          retention-days: 90
+      - name: Preserve monitoring failure status
+        if: always()
+        shell: bash
+        run: |
+          if [ ! -f public-primary-health-result.json ]; then
+            echo "Public health state could not be saved"
+            exit 1
+          fi
+          node -e 'const r=require("./public-primary-health-result.json"); if (!r.reportOk || r.notificationStatus === "pending") process.exit(1);'

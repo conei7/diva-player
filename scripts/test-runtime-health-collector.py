@@ -13,6 +13,7 @@ import subprocess
 import tempfile
 import types
 import unittest
+from datetime import datetime, timezone
 from unittest import mock
 
 
@@ -187,6 +188,125 @@ class RuntimeHealthCollectorContractTests(unittest.TestCase):
         self.assertEqual(recovered["status"], "ok")
         self.assertEqual(recovered["consecutiveViolations"], {})
 
+    def test_public_monitor_requires_two_failures_and_two_successes(self) -> None:
+        now = COLLECTOR.datetime(2026, 9, 28, 3, 0, tzinfo=COLLECTOR.timezone.utc)
+        failed = {"public:ready": {"ok": False, "status": 530, "error": "http-530"}}
+        recovered_probe = {"public:ready": {"ok": True, "status": 200, "error": None}}
+        state, violations, recovered = COLLECTOR.advance_public_monitor(failed, {}, now=now)
+        self.assertEqual(violations, [])
+        self.assertEqual(recovered, [])
+        self.assertEqual(state["checks"]["public:ready"]["consecutiveFailures"], 1)
+
+        state, violations, recovered = COLLECTOR.advance_public_monitor(failed, {"publicMonitor": state}, now=now)
+        self.assertEqual([item["id"] for item in violations], ["public:ready"])
+        self.assertEqual([item["id"] for item in recovered], [])
+
+        state, violations, recovered = COLLECTOR.advance_public_monitor(recovered_probe, {"publicMonitor": state}, now=now)
+        self.assertEqual([item["id"] for item in violations], ["public:ready"])
+        self.assertEqual(recovered, [])
+        state, violations, recovered = COLLECTOR.advance_public_monitor(recovered_probe, {"publicMonitor": state}, now=now)
+        self.assertEqual(violations, [])
+        self.assertEqual([item["id"] for item in recovered], ["public:ready"])
+
+    def test_unrun_probe_keeps_incident_active_without_counting_as_recovery(self) -> None:
+        now = COLLECTOR.datetime(2026, 9, 28, 3, 0, tzinfo=COLLECTOR.timezone.utc)
+        failed = {"public:health": {"ok": False, "status": 503, "error": "http-503"}}
+        state, _, _ = COLLECTOR.advance_public_monitor(failed, {}, now=now)
+        state, violations, _ = COLLECTOR.advance_public_monitor(
+            failed, {"publicMonitor": state}, now=now
+        )
+        self.assertEqual([item["id"] for item in violations], ["public:health"])
+
+        state, violations, recovered = COLLECTOR.advance_public_monitor(
+            {"public:ready": {"ok": True, "status": 200}},
+            {"publicMonitor": state},
+            now=now,
+        )
+        self.assertEqual([item["id"] for item in violations], ["public:health"])
+        self.assertEqual(recovered, [])
+        self.assertEqual(state["checks"]["public:health"]["consecutiveSuccesses"], 0)
+
+        healthy = {"public:health": {"ok": True, "status": 200, "error": None}}
+        state, violations, recovered = COLLECTOR.advance_public_monitor(
+            healthy, {"publicMonitor": state}, now=now
+        )
+        self.assertEqual([item["id"] for item in violations], ["public:health"])
+        self.assertEqual(recovered, [])
+        state, violations, recovered = COLLECTOR.advance_public_monitor(
+            healthy, {"publicMonitor": state}, now=now
+        )
+        self.assertEqual(violations, [])
+        self.assertEqual([item["id"] for item in recovered], ["public:health"])
+
+    def test_audio_cache_retention_pressure_uses_incident_and_recovery_thresholds(self) -> None:
+        failed = {"cache:audio-retention": {"ok": False, "status": "capacity_pressure"}}
+        recovered_probe = {"cache:audio-retention": {"ok": True, "status": "success"}}
+        state, violations, recovered = COLLECTOR.advance_public_monitor(failed, {}, now=datetime(2026, 9, 28, tzinfo=timezone.utc))
+        self.assertEqual(violations, [])
+        state, violations, recovered = COLLECTOR.advance_public_monitor(failed, {"publicMonitor": state}, now=datetime(2026, 9, 28, 0, 1, tzinfo=timezone.utc))
+        self.assertEqual(violations[0]["id"], "cache:audio-retention")
+        self.assertIn("cache retention", violations[0]["message"])
+        state, violations, recovered = COLLECTOR.advance_public_monitor(recovered_probe, {"publicMonitor": state}, now=datetime(2026, 9, 28, 0, 2, tzinfo=timezone.utc))
+        self.assertEqual(len(violations), 1)
+        self.assertEqual(recovered, [])
+        state, violations, recovered = COLLECTOR.advance_public_monitor(recovered_probe, {"publicMonitor": state}, now=datetime(2026, 9, 28, 0, 3, tzinfo=timezone.utc))
+        self.assertEqual(violations, [])
+        self.assertEqual([item["id"] for item in recovered], ["cache:audio-retention"])
+
+    def test_audio_cache_probe_flags_capacity_and_ignores_missing_pre_first_run(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            status_path = Path(directory) / "retention.json"
+            with mock.patch.dict(os.environ, {"DIVA_AUDIO_CACHE_RETENTION_STATUS_PATH": str(status_path)}, clear=True):
+                self.assertIsNone(COLLECTOR._probe_audio_cache_retention())
+                status_path.write_text(json.dumps({"status": "capacity_pressure", "remainingBytes": 5_000_000_000, "checkedAt": "2026-09-28T00:00:00Z"}), encoding="utf-8")
+                probe = COLLECTOR._probe_audio_cache_retention()
+        self.assertFalse(probe["ok"])
+        self.assertEqual(probe["status"], "capacity_pressure")
+
+    def test_audio_cache_probe_separates_log_budget_pressure_from_cache_pressure(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            status_path = Path(directory) / "retention.json"
+            status_path.write_text(json.dumps({
+                "status": "success",
+                "checkedAt": datetime.now(timezone.utc).isoformat(),
+                "logRetention": {
+                    "pipeline": {"totalBytes": 300 * 1024 * 1024},
+                    "audio": {"totalBytes": 250 * 1024 * 1024},
+                },
+            }), encoding="utf-8")
+            with mock.patch.dict(os.environ, {"DIVA_AUDIO_CACHE_RETENTION_STATUS_PATH": str(status_path)}, clear=True):
+                probe = COLLECTOR._probe_audio_cache_retention()
+        self.assertTrue(probe["ok"] is False)
+        self.assertEqual(probe["status"], "success")
+        self.assertTrue(probe["logCapacityPressure"])
+        self.assertEqual(probe["error"], "operational-log-budget-exceeded")
+
+    def test_public_probe_checks_json_dependencies_and_primary_route(self) -> None:
+        payload = {
+            "status": "ready",
+            "dependencies": {"postgres": {"ok": True}, "qdrant": {"ok": True}},
+            "warmup": {"completed": True},
+        }
+        response = mock.MagicMock()
+        response.status = 200
+        response.headers = {
+            "Content-Length": str(len(json.dumps(payload))),
+            "X-Diva-Origin-Role": "primary",
+            "X-Diva-Standby-State": "missing",
+        }
+        response.read.return_value = json.dumps(payload).encode()
+        context = mock.MagicMock()
+        context.__enter__.return_value = response
+        with mock.patch.object(COLLECTOR.urllib_request, "urlopen", return_value=context) as urlopen:
+            result = COLLECTOR._probe_public_endpoint("public:ready", "/backend-api/api/ready")
+        self.assertTrue(result["ok"])
+        self.assertEqual(urlopen.call_args.kwargs["timeout"], 15)
+        self.assertEqual(urlopen.call_args.args[0].get_header("User-agent"), "DIVA-Player-Runtime-Health/1.0")
+        response.headers["X-Diva-Origin-Role"] = "standby"
+        with mock.patch.object(COLLECTOR.urllib_request, "urlopen", return_value=context):
+            result = COLLECTOR._probe_public_endpoint("public:ready", "/backend-api/api/ready")
+        self.assertFalse(result["ok"])
+
     def test_collection_failures_and_missing_haproxy_slot_are_violations(self) -> None:
         failure_snapshot = copy.deepcopy(self.base_snapshot)
         failure_snapshot["collectionErrors"] = [
@@ -318,6 +438,31 @@ class RuntimeHealthCollectorContractTests(unittest.TestCase):
         self.assertEqual(failed["lastDiscordMessageId"], "111")
         self.assertNotIn("token", failed["notificationError"])
 
+    def test_discord_recovery_is_sent_once_and_retried_if_delivery_fails(self) -> None:
+        webhook = "https://discord.com/api/webhooks/123/token"
+        healthy = {"checkedAt": "2026-08-10T00:02:00Z", "status": "ok", "critical": []}
+        active = {"checkedAt": "2026-08-10T00:00:00Z", "status": "critical", "critical": [{"id": "disk:used", "message": "disk full"}]}
+        previous = {"notifiedCriticalIds": ["disk:used"], "notificationSchemaVersion": 2, "lastDiscordMessageId": "111"}
+        response = mock.MagicMock()
+        response.status = 200
+        response.read.return_value = b'{"id":"222"}'
+        context = mock.MagicMock()
+        context.__enter__.return_value = response
+        with (
+            mock.patch.dict(os.environ, {"DIVA_ALERT_WEBHOOK_URL": webhook}, clear=True),
+            mock.patch.object(COLLECTOR.urllib_request, "urlopen", return_value=context) as urlopen,
+        ):
+            sent = COLLECTOR.apply_critical_notification(healthy, previous)
+        self.assertIn("Recovered after two consecutive healthy checks", json.loads(urlopen.call_args.args[0].data)["content"])
+        self.assertEqual(sent["notifiedCriticalIds"], [])
+        with (
+            mock.patch.dict(os.environ, {"DIVA_ALERT_WEBHOOK_URL": webhook}, clear=True),
+            mock.patch.object(COLLECTOR.urllib_request, "urlopen", side_effect=TimeoutError("timeout")),
+        ):
+            retried = COLLECTOR.apply_critical_notification(healthy, previous)
+        self.assertEqual(retried["notificationStatus"], "failed")
+        self.assertEqual(retried["notifiedCriticalIds"], ["disk:used"])
+
 
     def test_main_persists_same_state_and_exit_code_contract(self) -> None:
         with tempfile.TemporaryDirectory(prefix="diva-runtime-health-") as directory:
@@ -333,6 +478,7 @@ class RuntimeHealthCollectorContractTests(unittest.TestCase):
                     "collect_snapshot",
                     side_effect=lambda: copy.deepcopy(self.base_snapshot),
                 ),
+                mock.patch.object(COLLECTOR, "collect_public_probes", return_value={}),
                 redirect_stdout(output),
             ):
                 self.assertEqual(COLLECTOR.main(), 0)
@@ -378,6 +524,7 @@ class RuntimeHealthCollectorContractTests(unittest.TestCase):
                     "collect_snapshot",
                     return_value=failed_snapshot,
                 ),
+                mock.patch.object(COLLECTOR, "collect_public_probes", return_value={}),
                 redirect_stdout(io.StringIO()),
             ):
                 self.assertEqual(COLLECTOR.main(), 0)

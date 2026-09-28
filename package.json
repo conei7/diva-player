@@ -26,6 +26,7 @@
     "verify:cloudflare-release": "node scripts/cloudflare-release-artifact.mjs verify",
     "test:runtime-health": "node scripts/test-runtime-health-collector.mjs",
     "test:runtime-health:python": "python -B scripts/test-runtime-health-collector.py",
+    "test:public-health-notifications": "node --test scripts/test-notify-public-health.mjs",
     "test:rate-limit-contract": "node scripts/test-rate-limit-contract.mjs",
     "test:e2e:pages-nico": "node scripts/test-pages-nico-e2e.mjs",
     "test:e2e:navigation": "node scripts/test-navigation-e2e.mjs",
