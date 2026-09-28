@@ -226,8 +226,9 @@ try {
   await page.click('button[aria-label="Advanced search"]');
   const homeSongMenu = 'button[aria-label="Menu for DIVA E2E Home Song"]';
   await page.waitForSelector(homeSongMenu, { timeout: 30_000 });
-  await page.hover(homeSongMenu);
-  await page.click(homeSongMenu);
+  const homeSongMenuLocator = page.locator(homeSongMenu);
+  await homeSongMenuLocator.hover();
+  await homeSongMenuLocator.click();
   await page.waitForSelector('[role="menu"]', { timeout: 10_000 });
   const songMenuEnglish = await page.$eval('[role="menu"]', menu => menu.innerText);
   if (!songMenuEnglish.includes('Listen Later')
