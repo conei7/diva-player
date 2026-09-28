@@ -16,6 +16,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+from datetime import datetime, timezone
 import traceback
 from typing import Any, Callable
 from urllib import error as urllib_error
@@ -30,6 +31,13 @@ DEFAULT_CONTAINERS = [
     "vocadb_postgres",
     "vocadb_qdrant",
 ]
+DEFAULT_PUBLIC_ORIGIN = "https://diva-player.pages.dev"
+PUBLIC_PATHS = {
+    "public:root": "/",
+    "public:ready": "/backend-api/api/ready",
+    "public:health": "/backend-api/api/health",
+}
+MAX_PUBLIC_RESPONSE_BYTES = 1024 * 1024
 _BYTE_SIZE_PATTERN = re.compile(
     r"^\s*([0-9]+(?:\.[0-9]+)?)\s*([kmgt]?i?b)\s*$",
     re.IGNORECASE,
@@ -370,6 +378,135 @@ def evaluate_runtime_snapshot(
     }
 
 
+def _public_origin() -> str:
+    raw = os.environ.get("DIVA_PUBLIC_BASE_URL", DEFAULT_PUBLIC_ORIGIN)
+    parsed = urlsplit(raw)
+    if (
+        parsed.scheme != "https"
+        or not parsed.hostname
+        or parsed.username
+        or parsed.password
+        or parsed.path not in {"", "/"}
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ValueError("DIVA_PUBLIC_BASE_URL must be a credential-free HTTPS origin")
+    return f"{parsed.scheme}://{parsed.netloc}"
+
+
+def _probe_public_endpoint(check_id: str, path: str, timeout_seconds: float = 15) -> dict[str, Any]:
+    url = f"{_public_origin()}{path}"
+    request = urllib_request.Request(
+        url,
+        headers={"User-Agent": "DIVA-Player-Runtime-Health/1.0", "Accept": "application/json"},
+    )
+    status: int | None = None
+    try:
+        try:
+            response_context = urllib_request.urlopen(request, timeout=timeout_seconds)
+        except urllib_error.HTTPError as exc:
+            response_context = exc
+        with response_context as response:
+            status = int(response.status)
+            headers = response.headers
+            declared = _parse_int(headers.get("Content-Length"))
+            if declared > MAX_PUBLIC_RESPONSE_BYTES:
+                raise ValueError("response-too-large")
+            body = response.read(MAX_PUBLIC_RESPONSE_BYTES + 1)
+            if len(body) > MAX_PUBLIC_RESPONSE_BYTES:
+                raise ValueError("response-too-large")
+        if check_id == "public:root":
+            ok = status == 200 and bool(body)
+        else:
+            payload = json.loads(body.decode("utf-8"))
+            dependencies = payload.get("dependencies") if isinstance(payload, dict) else None
+            deps_ok = isinstance(dependencies, dict) and all(
+                isinstance(dependencies.get(name), dict)
+                and dependencies[name].get("ok") is True
+                for name in ("postgres", "qdrant")
+            )
+            routing_ok = headers.get("X-Diva-Origin-Role") == "primary" and headers.get("X-Diva-Standby-State") == "missing"
+            if check_id == "public:ready":
+                warmup = payload.get("warmup") if isinstance(payload, dict) else None
+                ok = status == 200 and payload.get("status") == "ready" and deps_ok and routing_ok and isinstance(warmup, dict) and warmup.get("completed") is True
+            else:
+                if status == 200:
+                    ok = payload.get("status") == "ok" and deps_ok and routing_ok
+                elif status == 503 and payload.get("status") == "degraded" and deps_ok:
+                    sections = [payload.get(name) for name in ("discoveryQuality", "audioFeatures")]
+                    ok = routing_ok and all(isinstance(section, dict) and isinstance(section.get("ok"), bool) and (section["ok"] or str(section.get("error", "")).lower() == "stale") for section in sections) and any(section.get("ok") is False for section in sections)
+                else:
+                    ok = False
+        return {"status": status, "ok": bool(ok), "error": None if ok else "invalid-response"}
+    except urllib_error.HTTPError as exc:
+        return {"status": int(exc.code), "ok": False, "error": f"http-{exc.code}"}
+    except Exception as exc:
+        error = "timeout" if isinstance(exc, TimeoutError) else str(exc) or type(exc).__name__
+        return {"status": status, "ok": False, "error": error[:120]}
+
+
+def collect_public_probes(now: datetime | None = None) -> dict[str, dict[str, Any]]:
+    now = now or datetime.now(timezone.utc)
+    checks = {key: value for key, value in PUBLIC_PATHS.items() if key != "public:health" or now.minute % 5 == 0}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(checks)) as executor:
+        futures = {key: executor.submit(_probe_public_endpoint, key, path) for key, path in checks.items()}
+        return {key: future.result() for key, future in futures.items()}
+
+
+def advance_public_monitor(
+    probes: dict[str, dict[str, Any]],
+    previous: dict[str, Any],
+    *,
+    now: datetime | None = None,
+) -> tuple[dict[str, Any], list[dict[str, str]], list[dict[str, str]]]:
+    now = now or datetime.now(timezone.utc)
+    prior = previous.get("publicMonitor") if isinstance(previous.get("publicMonitor"), dict) else {}
+    states = prior.get("checks") if isinstance(prior.get("checks"), dict) else {}
+    updated: dict[str, Any] = {}
+    newly_active: list[dict[str, str]] = []
+    recovered: list[dict[str, str]] = []
+    for check_id, result in probes.items():
+        old = states.get(check_id) if isinstance(states.get(check_id), dict) else {}
+        state = {
+            "consecutiveFailures": 0 if result.get("ok") else int(old.get("consecutiveFailures") or 0) + 1,
+            "consecutiveSuccesses": int(old.get("consecutiveSuccesses") or 0) + 1 if result.get("ok") else 0,
+            "active": bool(old.get("active")),
+            "startedAt": old.get("startedAt"),
+            "lastCheckedAt": now.astimezone(timezone.utc).isoformat(),
+            "lastStatus": result.get("status"),
+            "lastError": result.get("error"),
+        }
+        if not result.get("ok") and state["consecutiveFailures"] >= 2 and not state["active"]:
+            state["active"] = True
+            state["startedAt"] = state["lastCheckedAt"]
+            if check_id == "cache:audio-retention":
+                detail = result.get("error") or result.get("status") or "capacity pressure"
+                message = f"SBC analyzed-audio cache retention needs attention ({detail})"
+            elif check_id == "capacity:ops-logs":
+                message = "SBC operational log generations exceed the 500 MiB retention budget"
+            else:
+                message = f"Public endpoint returned {result.get('status') or 'no response'} ({result.get('error') or 'failed'})"
+            newly_active.append({"id": check_id, "message": message})
+        elif result.get("ok") and state["active"] and state["consecutiveSuccesses"] >= 2:
+            recovered.append({"id": check_id, "message": "Public endpoint recovered"})
+            state["active"] = False
+            state["startedAt"] = None
+        updated[check_id] = state
+    combined_states = {**states, **updated}
+    violations: list[dict[str, str]] = []
+    for check_id, state in combined_states.items():
+        if not isinstance(state, dict) or not state.get("active"):
+            continue
+        if check_id == "cache:audio-retention":
+            message = f"SBC analyzed-audio cache retention needs attention ({state.get('lastError') or state.get('lastStatus') or 'capacity pressure'})"
+        elif check_id == "capacity:ops-logs":
+            message = "SBC operational log generations exceed the 500 MiB retention budget"
+        else:
+            message = f"Public endpoint is unhealthy ({state.get('lastStatus') or 'no response'})"
+        violations.append({"id": check_id, "message": message})
+    return {"checks": combined_states}, violations, recovered
+
+
 def _normalize_subprocess_output(value: str | bytes | None) -> str:
     if value is None:
         return ""
@@ -607,6 +744,57 @@ def collect_snapshot() -> dict[str, Any]:
     }
 
 
+def _probe_audio_cache_retention() -> dict[str, Any] | None:
+    configured = os.environ.get("DIVA_AUDIO_CACHE_RETENTION_STATUS_PATH")
+    if configured:
+        path = Path(configured).expanduser()
+    else:
+        try:
+            path = Path.home() / "diva-data-pipeline" / "logs" / "audio_cache_retention_status.json"
+        except RuntimeError:
+            return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError, TypeError):
+        return {"ok": False, "status": "invalid", "error": "retention-status-unreadable"}
+    if not isinstance(payload, dict):
+        return {"ok": False, "status": "invalid", "error": "retention-status-invalid"}
+    status = str(payload.get("status") or "unknown")
+    checked_at = payload.get("checkedAt")
+    stale = False
+    if isinstance(checked_at, str):
+        try:
+            parsed = datetime.fromisoformat(checked_at.replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            stale = (datetime.now(timezone.utc) - parsed.astimezone(timezone.utc)).total_seconds() > 36 * 60 * 60
+        except ValueError:
+            stale = True
+    log_retention = payload.get("logRetention") if isinstance(payload.get("logRetention"), dict) else {}
+    log_bytes = 0
+    try:
+        log_bytes = sum(
+            max(0, int(source.get("totalBytes") or 0))
+            for source in log_retention.values()
+            if isinstance(source, dict)
+        )
+    except (TypeError, ValueError):
+        log_bytes = 500 * 1024 * 1024 + 1
+    log_pressure = log_bytes > 500 * 1024 * 1024
+    ok = status in {"success", "empty"} and not stale and not log_pressure
+    return {
+        "ok": ok,
+        "status": status,
+        "error": "retention-status-stale" if stale else "operational-log-budget-exceeded" if log_pressure else None if ok else status,
+        "logCapacityPressure": log_pressure,
+        "remainingBytes": payload.get("remainingBytes"),
+        "protectedBytesOverLimit": payload.get("protectedBytesOverLimit"),
+        "operationalLogBytes": log_bytes,
+    }
+
+
 def load_json(path: Path) -> dict[str, Any]:
     try:
         with path.open("r", encoding="utf-8") as handle:
@@ -666,16 +854,26 @@ def _discord_wait_url(webhook: str) -> str:
     return urlunsplit(parts._replace(query=urlencode(query)))
 
 
-def _discord_content(snapshot: dict[str, Any], critical: list[dict[str, Any]]) -> str:
+def _discord_content(
+    snapshot: dict[str, Any],
+    critical: list[dict[str, Any]],
+    recovered: list[str] | None = None,
+) -> str:
+    recovered = recovered or []
     lines = [
-        "DIVA Player runtime health: CRITICAL",
+        "DIVA Player runtime health: INCIDENT UPDATE",
         f"Checked at: {snapshot.get('checkedAt', 'unknown')}",
     ]
+    if critical:
+        lines.append("Active incidents:")
     for item in critical:
         item_id = " ".join(str(item.get("id") or "unknown").split())
         message = item.get("message")
         safe_message = " ".join(message.split()) if isinstance(message, str) else ""
         lines.append(f"- {item_id}{': ' + safe_message if safe_message else ''}")
+    if recovered:
+        lines.append("Recovered after two consecutive healthy checks:")
+        lines.extend(f"- {item_id}" for item_id in recovered)
     content = "\n".join(lines)
     if len(content.encode("utf-16-le")) // 2 <= 1900:
         return content
@@ -705,28 +903,29 @@ def apply_critical_notification(
     previous_notified_ids = previous.get("notifiedCriticalIds")
     if not isinstance(previous_notified_ids, list):
         previous_notified_ids = []
-    notified_ids = []
-    for item_id in previous_notified_ids:
-        if item_id in current_ids and item_id not in notified_ids:
-            notified_ids.append(item_id)
-    notified_id_set = set(notified_ids)
+    known_ids = list(dict.fromkeys(item_id for item_id in previous_notified_ids if isinstance(item_id, str)))
+    if previous.get("notificationSchemaVersion") != 2:
+        known_ids = [item_id for item_id in known_ids if item_id in current_ids]
+    notified_id_set = set(known_ids)
     previous_message_id = _discord_message_id(previous.get("lastDiscordMessageId"))
     notification_state = {
         **snapshot,
-        "notifiedCriticalIds": notified_ids,
+        "notifiedCriticalIds": known_ids,
+        "notificationSchemaVersion": 2,
         **({"lastDiscordMessageId": previous_message_id} if previous_message_id else {}),
     }
     newly_critical = [
         item for item in snapshot["critical"] if item["id"] not in notified_id_set
     ]
+    recovered = sorted(notified_id_set - current_ids)
     if not webhook:
         return {**notification_state, "notificationStatus": "disabled"}
-    if not newly_critical:
+    if not newly_critical and not recovered:
         return {**notification_state, "notificationStatus": "up-to-date"}
 
     payload = json.dumps(
         {
-            "content": _discord_content(snapshot, newly_critical),
+            "content": _discord_content(snapshot, newly_critical, recovered),
             "allowed_mentions": {"parse": []},
         },
         ensure_ascii=False,
@@ -754,13 +953,10 @@ def apply_critical_notification(
         )
         if not message_id:
             raise RuntimeError("Discord response did not include a message id")
-        for item in newly_critical:
-            if item["id"] not in notified_id_set:
-                notified_ids.append(item["id"])
-                notified_id_set.add(item["id"])
         return {
             **snapshot,
-            "notifiedCriticalIds": notified_ids,
+            "notifiedCriticalIds": sorted(current_ids),
+            "notificationSchemaVersion": 2,
             "lastDiscordMessageId": message_id,
             "notificationStatus": "sent",
         }
@@ -793,8 +989,27 @@ def main() -> int:
     latest_path = state_dir / "runtime_health_latest.json"
     history_path = state_dir / "runtime_health_history.jsonl"
     previous = load_json(latest_path)
+    now = datetime.now(timezone.utc)
+    collected = collect_snapshot()
+    probes = collect_public_probes(now)
+    audio_cache_probe = _probe_audio_cache_retention()
+    if audio_cache_probe is not None:
+        probes["cache:audio-retention"] = {
+            **audio_cache_probe,
+            "ok": audio_cache_probe.get("status") in {"success", "empty"}
+            and audio_cache_probe.get("error") in {None, "operational-log-budget-exceeded"},
+        }
+        probes["capacity:ops-logs"] = {
+            "ok": not audio_cache_probe.get("logCapacityPressure"),
+            "status": "over-budget" if audio_cache_probe.get("logCapacityPressure") else "within-budget",
+            "error": audio_cache_probe.get("error") if audio_cache_probe.get("logCapacityPressure") else None,
+            "operationalLogBytes": audio_cache_probe.get("operationalLogBytes"),
+        }
+    public_state, public_violations, _ = advance_public_monitor(probes, previous, now=now)
+    collected["publicMonitor"] = public_state
+    collected["externalHealthViolations"] = public_violations
     snapshot = evaluate_runtime_snapshot(
-        collect_snapshot(),
+        collected,
         previous,
         {
             "apiRssWarnMiB": _environment_number(
@@ -811,6 +1026,17 @@ def main() -> int:
             ),
         },
     )
+    active_public_ids = {item["id"] for item in public_violations}
+    critical_by_id = {item["id"]: item for item in snapshot["critical"]}
+    critical_by_id.update({item["id"]: item for item in public_violations if item["id"] in active_public_ids and public_state["checks"].get(item["id"], {}).get("active") is True})
+    snapshot["critical"] = list(critical_by_id.values())
+    snapshot["violations"] = list({item["id"]: item for item in [*snapshot["violations"], *public_violations]}.values())
+    if snapshot["critical"]:
+        snapshot["status"] = "critical"
+    elif snapshot["violations"]:
+        snapshot["status"] = "warning"
+    else:
+        snapshot["status"] = "ok"
     # Notification failures are recorded without suppressing the local state.
     # notifiedCriticalIds advances only after delivery, so the next timer run
     # retries while still avoiding duplicate alerts after a successful send.
