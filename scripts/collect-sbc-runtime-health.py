@@ -1082,7 +1082,9 @@ def _safe_notification_error(error: Any, webhook: str) -> str:
 
 
 def apply_critical_notification(
-    snapshot: dict[str, Any], previous: dict[str, Any]
+    snapshot: dict[str, Any],
+    previous: dict[str, Any],
+    state_path: Path | None = None,
 ) -> dict[str, Any]:
     webhook = os.environ.get("DIVA_ALERT_WEBHOOK_URL")
     current_ids = {item["id"] for item in snapshot["critical"]}
@@ -1146,6 +1148,14 @@ def apply_critical_notification(
             "pendingRecoveryIds": [],
             "notificationStatus": "up-to-date",
         }
+
+    # Persist the outbox before contacting Discord. If the process exits after
+    # Discord accepts the POST but before its message ID is saved, the next
+    # timer run can retry the incident and any matching recovery instead of
+    # silently losing the notification state.
+    pending_state = {**notification_state, "notificationStatus": "pending"}
+    if state_path is not None:
+        write_json_atomic(state_path, pending_state)
 
     current_critical = {
         item["id"]: item
@@ -1293,7 +1303,7 @@ def main() -> int:
     # Notification failures are recorded without suppressing the local state.
     # notifiedCriticalIds advances only after delivery, so the next timer run
     # retries while still avoiding duplicate alerts after a successful send.
-    snapshot = apply_critical_notification(snapshot, previous)
+    snapshot = apply_critical_notification(snapshot, previous, latest_path)
     write_json_atomic(latest_path, snapshot)
     rotate_history_if_needed(
         history_path,

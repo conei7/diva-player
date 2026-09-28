@@ -454,6 +454,98 @@ class RuntimeHealthCollectorContractTests(unittest.TestCase):
         self.assertEqual(failed["lastDiscordMessageId"], "111")
         self.assertNotIn("token", failed["notificationError"])
 
+    def test_notification_outbox_is_persisted_before_discord_delivery(self) -> None:
+        webhook = "https://discord.com/api/webhooks/123/token"
+        snapshot = {
+            "checkedAt": "2026-09-29T00:00:00Z",
+            "status": "critical",
+            "critical": [{"id": "disk:used", "message": "disk use exceeds 85%"}],
+        }
+        response = mock.MagicMock()
+        response.status = 200
+        response.read.return_value = b'{"id":"333"}'
+        context = mock.MagicMock()
+        context.__enter__.return_value = response
+        with tempfile.TemporaryDirectory(prefix="diva-runtime-health-") as directory:
+            state_path = Path(directory) / "runtime_health_latest.json"
+
+            def deliver_after_reading_outbox(*_args: Any, **_kwargs: Any) -> Any:
+                persisted = json.loads(state_path.read_text(encoding="utf-8"))
+                self.assertEqual(persisted["notificationStatus"], "pending")
+                self.assertEqual(persisted["pendingIncidentIds"], ["disk:used"])
+                return context
+
+            with (
+                mock.patch.dict(os.environ, {"DIVA_ALERT_WEBHOOK_URL": webhook}, clear=True),
+                mock.patch.object(
+                    COLLECTOR.urllib_request,
+                    "urlopen",
+                    side_effect=deliver_after_reading_outbox,
+                ),
+            ):
+                delivered = COLLECTOR.apply_critical_notification(
+                    snapshot, {}, state_path
+                )
+        self.assertEqual(delivered["notificationStatus"], "sent")
+        self.assertEqual(delivered["lastDiscordMessageId"], "333")
+
+    def test_outbox_replays_incident_and_recovery_after_process_exit(self) -> None:
+        webhook = "https://discord.com/api/webhooks/123/token"
+        active = {
+            "checkedAt": "2026-09-29T00:00:00Z",
+            "status": "critical",
+            "critical": [{"id": "public:ready", "message": "HTTP 530"}],
+            "publicMonitor": {"checks": {"public:ready": {"active": True}}},
+        }
+        healthy = {
+            "checkedAt": "2026-09-29T00:02:00Z",
+            "status": "ok",
+            "critical": [],
+            "publicMonitor": {"checks": {"public:ready": {"active": False}}},
+        }
+        with tempfile.TemporaryDirectory(prefix="diva-runtime-health-") as directory:
+            state_path = Path(directory) / "runtime_health_latest.json"
+
+            def accepted_then_process_exits(*_args: Any, **_kwargs: Any) -> Any:
+                persisted = json.loads(state_path.read_text(encoding="utf-8"))
+                self.assertEqual(persisted["pendingIncidentIds"], ["public:ready"])
+                raise KeyboardInterrupt()
+
+            with (
+                mock.patch.dict(os.environ, {"DIVA_ALERT_WEBHOOK_URL": webhook}, clear=True),
+                mock.patch.object(
+                    COLLECTOR.urllib_request,
+                    "urlopen",
+                    side_effect=accepted_then_process_exits,
+                ),
+            ):
+                with self.assertRaises(KeyboardInterrupt):
+                    COLLECTOR.apply_critical_notification(active, {}, state_path)
+
+            persisted_outbox = json.loads(state_path.read_text(encoding="utf-8"))
+            response = mock.MagicMock()
+            response.status = 200
+            response.read.return_value = b'{"id":"444"}'
+            context = mock.MagicMock()
+            context.__enter__.return_value = response
+            with (
+                mock.patch.dict(os.environ, {"DIVA_ALERT_WEBHOOK_URL": webhook}, clear=True),
+                mock.patch.object(
+                    COLLECTOR.urllib_request, "urlopen", return_value=context
+                ) as urlopen,
+            ):
+                delivered = COLLECTOR.apply_critical_notification(
+                    healthy, persisted_outbox, state_path
+                )
+
+        content = json.loads(urlopen.call_args.args[0].data)["content"]
+        self.assertIn("Confirmed incidents:", content)
+        self.assertIn("public:ready", content)
+        self.assertIn("Recovered after two consecutive healthy checks:", content)
+        self.assertEqual(delivered["notificationStatus"], "sent")
+        self.assertEqual(delivered["pendingIncidentIds"], [])
+        self.assertEqual(delivered["pendingRecoveryIds"], [])
+
     def test_discord_recovery_is_sent_once_and_retried_if_delivery_fails(self) -> None:
         webhook = "https://discord.com/api/webhooks/123/token"
         healthy = {"checkedAt": "2026-08-10T00:02:00Z", "status": "ok", "critical": []}
