@@ -83,13 +83,22 @@ assert.deepEqual(warning.violations.map(item => item.id).sort(), ['memory:vocadb
 const critical = evaluateRuntimeSnapshot(baseSnapshot, warning);
 assert.equal(critical.status, 'critical');
 assert.equal(critical.critical.length, 2);
-const recovered = evaluateRuntimeSnapshot({
+const firstHealthy = evaluateRuntimeSnapshot({
   ...baseSnapshot,
   containers: baseSnapshot.containers.map(container => ({ ...container, memoryUsedBytes: 100 * 1024 ** 2 })),
   postgres: { ...baseSnapshot.postgres, total: 10 },
 }, critical);
+assert.equal(firstHealthy.status, 'critical');
+assert.deepEqual(new Set(Object.values(firstHealthy.consecutiveSuccesses)), new Set([1]));
+const recovered = evaluateRuntimeSnapshot({
+  ...baseSnapshot,
+  checkedAt: '2026-08-10T00:01:00.000Z',
+  containers: baseSnapshot.containers.map(container => ({ ...container, memoryUsedBytes: 100 * 1024 ** 2 })),
+  postgres: { ...baseSnapshot.postgres, total: 10 },
+}, firstHealthy);
 assert.equal(recovered.status, 'ok');
 assert.deepEqual(recovered.consecutiveViolations, {});
+assert.deepEqual(recovered.consecutiveSuccesses, {});
 
 const lowHostMemoryWarning = evaluateRuntimeSnapshot({
   ...baseSnapshot,

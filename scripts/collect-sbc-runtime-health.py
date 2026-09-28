@@ -265,6 +265,16 @@ def _display_number(value: int | float) -> str:
     return str(value)
 
 
+def _nonnegative_count(value: Any) -> int:
+    if isinstance(value, bool):
+        return 0
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError, OverflowError):
+        return 0
+    return max(0, parsed)
+
+
 def evaluate_runtime_snapshot(
     snapshot: dict[str, Any],
     previous: dict[str, Any] | None = None,
@@ -362,19 +372,114 @@ def evaluate_runtime_snapshot(
             }
         )
 
-    prior_counts = previous.get("consecutiveViolations") or {}
+    prior_counts = previous.get("consecutiveViolations")
+    if not isinstance(prior_counts, dict):
+        prior_counts = {}
     consecutive_violations = {
-        item["id"]: (prior_counts.get(item["id"]) or 0) + 1 for item in violations
+        item["id"]: _nonnegative_count(prior_counts.get(item["id"])) + 1
+        for item in violations
     }
-    critical = [
-        item for item in violations if consecutive_violations[item["id"]] >= 2
-    ]
+    current_by_id = {item["id"]: item for item in violations}
+    previous_critical = {
+        item["id"]: item
+        for item in previous.get("critical") or []
+        if isinstance(item, dict) and isinstance(item.get("id"), str)
+    }
+    external_prefixes = ("public:", "cache:", "capacity:")
+    active_internal_ids = {
+        item_id
+        for item_id in previous_critical
+        if not item_id.startswith(external_prefixes)
+    }
+    for field in ("notifiedCriticalIds", "pendingIncidentIds", "pendingRecoveryIds"):
+        values = previous.get(field)
+        if isinstance(values, list):
+            active_internal_ids.update(
+                item_id
+                for item_id in values
+                if isinstance(item_id, str) and not item_id.startswith(external_prefixes)
+            )
+
+    prior_successes = previous.get("consecutiveSuccesses")
+    if not isinstance(prior_successes, dict):
+        prior_successes = {}
+    consecutive_successes: dict[str, int] = {}
+    critical_by_id = {
+        item["id"]: item
+        for item in violations
+        if consecutive_violations[item["id"]] >= 2
+    }
+    violation_started_at: dict[str, str] = {}
+    previous_started_at = previous.get("violationStartedAt")
+    if not isinstance(previous_started_at, dict):
+        previous_started_at = {}
+
+    for item_id in current_by_id:
+        prior_count = _nonnegative_count(prior_counts.get(item_id))
+        started_at = previous_started_at.get(item_id)
+        if not isinstance(started_at, str) or not started_at:
+            started_at = (
+                previous.get("checkedAt")
+                if prior_count > 0 and isinstance(previous.get("checkedAt"), str)
+                else snapshot.get("checkedAt")
+            )
+        if isinstance(started_at, str) and started_at:
+            violation_started_at[item_id] = started_at
+
+    for item_id in active_internal_ids:
+        if item_id in current_by_id:
+            consecutive_successes[item_id] = 0
+            if item_id in previous_critical:
+                critical_by_id.setdefault(item_id, current_by_id[item_id])
+            continue
+
+        successful_checks = _nonnegative_count(prior_successes.get(item_id)) + 1
+        if successful_checks >= 2:
+            continue
+        consecutive_successes[item_id] = successful_checks
+        prior_item = previous_critical.get(item_id)
+        if prior_item is None:
+            prior_item = next(
+                (
+                    item
+                    for item in previous.get("violations") or []
+                    if isinstance(item, dict) and item.get("id") == item_id
+                ),
+                {"id": item_id, "message": "awaiting recovery confirmation"},
+            )
+        critical_by_id.setdefault(item_id, prior_item)
+        started_at = previous_started_at.get(item_id)
+        if not isinstance(started_at, str) or not started_at:
+            incident_started_at = previous.get("incidentStartedAt")
+            if isinstance(incident_started_at, dict):
+                started_at = incident_started_at.get(item_id)
+        if not isinstance(started_at, str) or not started_at:
+            started_at = previous.get("checkedAt")
+        if isinstance(started_at, str) and started_at:
+            violation_started_at[item_id] = started_at
+
+    for item_id in critical_by_id:
+        consecutive_successes.setdefault(item_id, 0)
+        if item_id not in violation_started_at:
+            started_at = previous_started_at.get(item_id)
+            if not isinstance(started_at, str) or not started_at:
+                incident_started_at = previous.get("incidentStartedAt")
+                if isinstance(incident_started_at, dict):
+                    started_at = incident_started_at.get(item_id)
+            if not isinstance(started_at, str) or not started_at:
+                started_at = snapshot.get("checkedAt")
+            if isinstance(started_at, str) and started_at:
+                violation_started_at[item_id] = started_at
+
+    critical = list(critical_by_id.values())
     return {
         **snapshot,
         "status": "critical" if critical else "warning" if violations else "ok",
         "violations": violations,
         "critical": critical,
         "consecutiveViolations": consecutive_violations,
+        "consecutiveSuccesses": consecutive_successes,
+        "violationStartedAt": violation_started_at,
     }
 
 
@@ -467,18 +572,34 @@ def advance_public_monitor(
     recovered: list[dict[str, str]] = []
     for check_id, result in probes.items():
         old = states.get(check_id) if isinstance(states.get(check_id), dict) else {}
+        checked_at = now.astimezone(timezone.utc).isoformat()
+        old_failures = _nonnegative_count(old.get("consecutiveFailures"))
+        if result.get("ok"):
+            first_failed_at = (
+                old.get("firstFailedAt") or old.get("startedAt")
+                if old.get("active")
+                else None
+            )
+        else:
+            first_failed_at = (
+                old.get("firstFailedAt")
+                or old.get("startedAt")
+                or (old.get("lastCheckedAt") if old_failures > 0 else None)
+                or checked_at
+            )
         state = {
-            "consecutiveFailures": 0 if result.get("ok") else int(old.get("consecutiveFailures") or 0) + 1,
-            "consecutiveSuccesses": int(old.get("consecutiveSuccesses") or 0) + 1 if result.get("ok") else 0,
+            "consecutiveFailures": 0 if result.get("ok") else old_failures + 1,
+            "consecutiveSuccesses": _nonnegative_count(old.get("consecutiveSuccesses")) + 1 if result.get("ok") else 0,
             "active": bool(old.get("active")),
             "startedAt": old.get("startedAt"),
-            "lastCheckedAt": now.astimezone(timezone.utc).isoformat(),
+            "firstFailedAt": first_failed_at,
+            "lastCheckedAt": checked_at,
             "lastStatus": result.get("status"),
             "lastError": result.get("error"),
         }
         if not result.get("ok") and state["consecutiveFailures"] >= 2 and not state["active"]:
             state["active"] = True
-            state["startedAt"] = state["lastCheckedAt"]
+            state["startedAt"] = state["firstFailedAt"] or state["lastCheckedAt"]
             if check_id == "cache:audio-retention":
                 detail = result.get("error") or result.get("status") or "capacity pressure"
                 message = f"SBC analyzed-audio cache retention needs attention ({detail})"
@@ -854,26 +975,91 @@ def _discord_wait_url(webhook: str) -> str:
     return urlunsplit(parts._replace(query=urlencode(query)))
 
 
+def _confirmation_target(item_id: str) -> str:
+    public_endpoints = {
+        "public:root": "https://diva-player.pages.dev/",
+        "public:ready": "https://diva-player.pages.dev/backend-api/api/ready",
+        "public:health": "https://diva-player.pages.dev/backend-api/api/health",
+    }
+    if item_id in public_endpoints:
+        return public_endpoints[item_id]
+    if item_id == "cache:audio-retention":
+        return "~/diva-data-pipeline/logs/audio_cache_retention_status.json"
+    if item_id == "capacity:ops-logs":
+        return "~/diva-data-pipeline/logs/audio_cache_retention_status.json (logRetention)"
+    snapshot_path = "~/.local/state/diva-player/runtime_health_latest.json"
+    if item_id.startswith("collector:"):
+        return f"{snapshot_path} (collectionErrors)"
+    if item_id.startswith("container:") or item_id.startswith("memory:"):
+        return f"{snapshot_path} (containers)"
+    if item_id.startswith("haproxy:"):
+        return f"{snapshot_path} (haproxy)"
+    if item_id == "postgres:connections":
+        return f"{snapshot_path} (postgres)"
+    if item_id == "disk:used":
+        return f"{snapshot_path} (disk)"
+    if item_id == "host:memory-available":
+        return f"{snapshot_path} (hostMemory)"
+    return snapshot_path
+
+
+def _incident_start_time(
+    item_id: str,
+    snapshot: dict[str, Any],
+    previous: dict[str, Any],
+    recorded: dict[str, Any],
+) -> str:
+    value = recorded.get(item_id)
+    if isinstance(value, str) and value:
+        return value
+    for source in (snapshot, previous):
+        public_monitor = source.get("publicMonitor")
+        checks = public_monitor.get("checks") if isinstance(public_monitor, dict) else None
+        check_state = checks.get(item_id) if isinstance(checks, dict) else None
+        if isinstance(check_state, dict):
+            value = check_state.get("startedAt") or check_state.get("firstFailedAt")
+            if isinstance(value, str) and value:
+                return value
+        violations_started = source.get("violationStartedAt")
+        value = violations_started.get(item_id) if isinstance(violations_started, dict) else None
+        if isinstance(value, str) and value:
+            return value
+    for source in (previous, snapshot):
+        value = source.get("checkedAt")
+        if isinstance(value, str) and value:
+            return value
+    return "unknown"
+
+
 def _discord_content(
     snapshot: dict[str, Any],
     critical: list[dict[str, Any]],
     recovered: list[str] | None = None,
+    incident_started_at: dict[str, str] | None = None,
 ) -> str:
     recovered = recovered or []
+    incident_started_at = incident_started_at or {}
+    checked_at = snapshot.get("checkedAt", "unknown")
     lines = [
         "DIVA Player runtime health: INCIDENT UPDATE",
-        f"Checked at: {snapshot.get('checkedAt', 'unknown')}",
+        f"Checked at: {checked_at}",
     ]
     if critical:
-        lines.append("Active incidents:")
+        lines.append("Confirmed incidents:")
     for item in critical:
         item_id = " ".join(str(item.get("id") or "unknown").split())
         message = item.get("message")
         safe_message = " ".join(message.split()) if isinstance(message, str) else ""
         lines.append(f"- {item_id}{': ' + safe_message if safe_message else ''}")
+        lines.append(f"  Started: {incident_started_at.get(item_id, checked_at)}")
+        lines.append(f"  Check: {_confirmation_target(item_id)}")
     if recovered:
         lines.append("Recovered after two consecutive healthy checks:")
-        lines.extend(f"- {item_id}" for item_id in recovered)
+        for item_id in recovered:
+            lines.append(f"- {item_id}")
+            lines.append(f"  Incident started: {incident_started_at.get(item_id, 'unknown')}")
+            lines.append(f"  Recovery confirmed: {checked_at}")
+            lines.append(f"  Check: {_confirmation_target(item_id)}")
     content = "\n".join(lines)
     if len(content.encode("utf-16-le")) // 2 <= 1900:
         return content
@@ -896,7 +1082,9 @@ def _safe_notification_error(error: Any, webhook: str) -> str:
 
 
 def apply_critical_notification(
-    snapshot: dict[str, Any], previous: dict[str, Any]
+    snapshot: dict[str, Any],
+    previous: dict[str, Any],
+    state_path: Path | None = None,
 ) -> dict[str, Any]:
     webhook = os.environ.get("DIVA_ALERT_WEBHOOK_URL")
     current_ids = {item["id"] for item in snapshot["critical"]}
@@ -904,28 +1092,96 @@ def apply_critical_notification(
     if not isinstance(previous_notified_ids, list):
         previous_notified_ids = []
     known_ids = list(dict.fromkeys(item_id for item_id in previous_notified_ids if isinstance(item_id, str)))
-    if previous.get("notificationSchemaVersion") != 2:
+    if previous.get("notificationSchemaVersion") not in {2, 3}:
         known_ids = [item_id for item_id in known_ids if item_id in current_ids]
     notified_id_set = set(known_ids)
+    previous_pending_incidents = previous.get("pendingIncidentIds")
+    previous_pending_recoveries = previous.get("pendingRecoveryIds")
+    pending_incident_ids = {
+        item_id
+        for item_id in previous_pending_incidents or []
+        if isinstance(item_id, str)
+    } if isinstance(previous_pending_incidents, list) else set()
+    pending_recovery_ids = {
+        item_id
+        for item_id in previous_pending_recoveries or []
+        if isinstance(item_id, str)
+    } if isinstance(previous_pending_recoveries, list) else set()
+    incident_ids = pending_incident_ids | (current_ids - notified_id_set)
+    recovered_ids = (
+        pending_recovery_ids
+        | (notified_id_set - current_ids)
+        | (incident_ids - current_ids)
+    ) - current_ids
+    recorded_start_times = previous.get("incidentStartedAt")
+    if not isinstance(recorded_start_times, dict):
+        recorded_start_times = {}
+    outstanding_ids = current_ids | incident_ids | recovered_ids | notified_id_set
+    incident_started_at = {
+        item_id: _incident_start_time(
+            item_id, snapshot, previous, recorded_start_times
+        )
+        for item_id in outstanding_ids
+    }
     previous_message_id = _discord_message_id(previous.get("lastDiscordMessageId"))
     notification_state = {
         **snapshot,
         "notifiedCriticalIds": known_ids,
-        "notificationSchemaVersion": 2,
+        "pendingIncidentIds": sorted(incident_ids),
+        "pendingRecoveryIds": sorted(recovered_ids),
+        "incidentStartedAt": incident_started_at,
+        "notificationSchemaVersion": 3,
         **({"lastDiscordMessageId": previous_message_id} if previous_message_id else {}),
     }
-    newly_critical = [
-        item for item in snapshot["critical"] if item["id"] not in notified_id_set
-    ]
-    recovered = sorted(notified_id_set - current_ids)
     if not webhook:
         return {**notification_state, "notificationStatus": "disabled"}
-    if not newly_critical and not recovered:
-        return {**notification_state, "notificationStatus": "up-to-date"}
+
+    if not incident_ids and not recovered_ids:
+        notification_state["incidentStartedAt"] = {
+            item_id: incident_started_at[item_id]
+            for item_id in current_ids
+            if item_id in incident_started_at
+        }
+        return {
+            **notification_state,
+            "pendingIncidentIds": [],
+            "pendingRecoveryIds": [],
+            "notificationStatus": "up-to-date",
+        }
+
+    # Persist the outbox before contacting Discord. If the process exits after
+    # Discord accepts the POST but before its message ID is saved, the next
+    # timer run can retry the incident and any matching recovery instead of
+    # silently losing the notification state.
+    pending_state = {**notification_state, "notificationStatus": "pending"}
+    if state_path is not None:
+        write_json_atomic(state_path, pending_state)
+
+    current_critical = {
+        item["id"]: item
+        for item in snapshot.get("critical") or []
+        if isinstance(item, dict) and isinstance(item.get("id"), str)
+    }
+    previous_critical = {
+        item["id"]: item
+        for item in previous.get("critical") or []
+        if isinstance(item, dict) and isinstance(item.get("id"), str)
+    }
+    incident_items = [
+        current_critical.get(item_id)
+        or previous_critical.get(item_id)
+        or {"id": item_id, "message": "incident notification was not acknowledged"}
+        for item_id in sorted(incident_ids)
+    ]
 
     payload = json.dumps(
         {
-            "content": _discord_content(snapshot, newly_critical, recovered),
+            "content": _discord_content(
+                snapshot,
+                incident_items,
+                sorted(recovered_ids),
+                incident_started_at,
+            ),
             "allowed_mentions": {"parse": []},
         },
         ensure_ascii=False,
@@ -956,7 +1212,14 @@ def apply_critical_notification(
         return {
             **snapshot,
             "notifiedCriticalIds": sorted(current_ids),
-            "notificationSchemaVersion": 2,
+            "pendingIncidentIds": [],
+            "pendingRecoveryIds": [],
+            "incidentStartedAt": {
+                item_id: incident_started_at[item_id]
+                for item_id in current_ids
+                if item_id in incident_started_at
+            },
+            "notificationSchemaVersion": 3,
             "lastDiscordMessageId": message_id,
             "notificationStatus": "sent",
         }
@@ -1040,7 +1303,7 @@ def main() -> int:
     # Notification failures are recorded without suppressing the local state.
     # notifiedCriticalIds advances only after delivery, so the next timer run
     # retries while still avoiding duplicate alerts after a successful send.
-    snapshot = apply_critical_notification(snapshot, previous)
+    snapshot = apply_critical_notification(snapshot, previous, latest_path)
     write_json_atomic(latest_path, snapshot)
     rotate_history_if_needed(
         history_path,
