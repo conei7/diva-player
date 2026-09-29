@@ -4,7 +4,8 @@ Description=Run DIVA Player runtime health snapshot every minute
 [Timer]
 OnBootSec=2min
 OnUnitActiveSec=60s
-RandomizedDelaySec=5s
+# Avoid systemd default timer coalescing, which can defer the nominal 1-minute probe by up to 1 minute.
+AccuracySec=1s
 Persistent=true
 Unit=diva-runtime-health.service
 

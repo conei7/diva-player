@@ -75,6 +75,16 @@ class RuntimeHealthCollectorContractTests(unittest.TestCase):
             "disk": {"usedPercent": 70},
         }
 
+    def test_runtime_health_timer_preserves_one_minute_probe_cadence(self) -> None:
+        timer = (
+            Path(__file__)
+            .with_name("diva-runtime-health.timer")
+            .read_text(encoding="utf-8")
+        )
+        self.assertRegex(timer, r"(?m)^OnUnitActiveSec=60s$")
+        self.assertRegex(timer, r"(?m)^AccuracySec=1s$")
+        self.assertNotRegex(timer, r"(?m)^RandomizedDelaySec=")
+
     def test_byte_size_and_docker_stats_parsers(self) -> None:
         self.assertEqual(COLLECTOR.parse_byte_size("129.8MiB"), 129.8 * 1024**2)
         self.assertEqual(COLLECTOR.parse_byte_size("1.5 GiB"), 1.5 * 1024**3)
