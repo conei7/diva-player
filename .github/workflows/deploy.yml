@@ -15,7 +15,7 @@ concurrency:
 jobs:
   cloudflare_contract:
     if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
       compatibility_date: ${{ steps.inspect.outputs.compatibility_date }}
@@ -47,7 +47,7 @@ jobs:
   build:
     if: github.ref == 'refs/heads/main'
     needs: cloudflare_contract
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Stateful/DR fault matrices intentionally exercise bounded timeout,
     # rollback, and daemon-settlement paths before the container scans and E2E
     # release gates. Keep a finite ceiling without turning a healthy, complete
@@ -903,7 +903,7 @@ jobs:
           compression-level: 0
   deploy-cloudflare:
     needs: [cloudflare_contract, build]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

@@ -115,6 +115,10 @@ npm run test:api
 npm run preview
 ```
 
+## GitHub Actions実行環境
+
+各workflow jobは`ubuntu-24.04`を指定し、`ubuntu-latest`のOS世代がGitHub側の切替だけで変わることを避けます。GitHubは同じOS世代のrunner image内のツールを更新するため、これはOS世代の固定であり、runner image contents全体の固定ではありません。実行環境の世代を変更するときは、変更後のworkflow・テスト・配備後health checkが成功することを確認します。
+
 ## Cloudflare Pagesリリース
 
 `main`のGitHub Actionsは最初にCloudflare projectをread-onlyでinspectし、preview／productionに実際に保存されているcompatibility date／flagsとbinding metadataを検証します。通常のtest／E2Eに成功した後でCloudflare用の`dist`を1回だけbuildし、`functions`もその実測compatibility設定を明示してWranglerで再現可能なminify済み`dist/_worker.js`へ1回だけcompileします。その配備可能な`dist`全体をSHA-256 file manifest付きの単一release artifactへ固定します。配備jobはこのartifactを再build／再bundleせず、download後とproduction upload直前にcommit、compatibility設定、全file hashを検証します。
