@@ -261,6 +261,10 @@ services:
 
 volumes:
   postgres_data:
+    # Keep the canonical production volume as the default, while allowing the
+    # PostgreSQL-only restore/cutover workflow to pin a verified run-unique
+    # volume without changing the Qdrant volume or Compose project.
+    name: "${DIVA_POSTGRES_VOLUME:-backend_postgres_data}"
   # The one-time v1.9 -> v1.19 stateful upgrade writes the exact, verified
   # run-unique candidate volume into owner-only backend/.env.  A default keeps
   # fresh development checkouts usable, while production is durably pinned

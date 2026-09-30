@@ -156,6 +156,7 @@ assert.match(compose, /web:[\s\S]*user: "101:101"[\s\S]*"8080:8080"/);
 assert.match(compose, /http:\/\/127\.0\.0\.1:8080\/backend-api\/api\/ready/);
 assert.match(compose, /image: "\$\{DIVA_POSTGRES_IMAGE:-diva-player-postgres:16\.15-pgvector-0\.8\.6-hardened-r1\}"/);
 assert.match(compose, /postgres:[\s\S]*pull_policy: never/);
+assert.match(compose, /postgres_data:[\s\S]*?name: "\$\{DIVA_POSTGRES_VOLUME:-backend_postgres_data\}"/);
 assert.doesNotMatch(compose, /pgvector\/pgvector|ccc6e83d/);
 assert.match(compose, /postgres:[\s\S]*cap_drop:\s*- ALL[\s\S]*cap_add:[\s\S]*- CHOWN[\s\S]*- DAC_OVERRIDE[\s\S]*- FOWNER[\s\S]*- SETGID[\s\S]*- SETUID/);
 assert.doesNotMatch(compose, /schema\.sql:\/docker-entrypoint-initdb\.d/);
