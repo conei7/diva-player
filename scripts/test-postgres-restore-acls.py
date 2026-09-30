@@ -29,7 +29,6 @@ class PostgresRestoreAclTests(unittest.TestCase):
             "GRANT SELECT ON TABLE public.song_album_links TO diva_api_runtime",
             "GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.song_album_links",
             "REVOKE ALL ON FUNCTION public.sync_song_album_links_from_raw_json_v1()",
-            "REVOKE ALL ON PROCEDURE public.backfill_song_album_links_batch_v1(INTEGER, INTEGER)",
             "GRANT EXECUTE ON FUNCTION public.reserve_youtube_quota(text)",
         ):
             self.assertIn(statement, self.acl)

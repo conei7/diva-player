@@ -270,6 +270,7 @@ docker run --detach --pull=never \
     --mount "type=bind,src=$script_directory,dst=/restore-scripts,readonly" \
     --env "POSTGRES_USER=$admin_user" --env "POSTGRES_DB=$DATABASE_NAME" \
     --env "POSTGRES_PASSWORD_FILE=$ADMIN_PASSWORD_PATH" \
+    --env "PGPORT=$db_port" \
     "$POSTGRES_IMAGE" postgres -c listen_addresses=127.0.0.1 -c "port=$db_port" >/dev/null
 ready=false
 for attempt in $(seq 1 90); do
