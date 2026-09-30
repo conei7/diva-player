@@ -3,8 +3,6 @@ set +x
 set -Eeuo pipefail
 umask 077
 
-API_PASSWORD_FILE='/etc/diva-player/secrets/postgres-api-password'
-
 fail() { printf '[postgres-restore] ERROR: %s\n' "$1" >&2; exit 1; }
 usage() { printf 'Usage: smoke-sbc-postgres-isolated-api.sh --state-file <restore-state.json>\n' >&2; exit 2; }
 
@@ -27,6 +25,7 @@ state_file="$(realpath -e -- "$state_file")"
 state_directory="$(dirname -- "$state_file")"
 [[ "$(stat -c '%u:%a' -- "$state_file")" == '0:600' ]] || fail 'state file must be root-owned mode 0600'
 [[ "$(stat -c '%u:%a' -- "$state_directory")" == '0:700' ]] || fail 'restore state directory must be root-owned mode 0700'
+API_PASSWORD_FILE="$state_directory/api-password"
 [[ -f "$API_PASSWORD_FILE" && ! -L "$API_PASSWORD_FILE" ]] || fail 'API password file must be a regular file'
 [[ "$(stat -c '%u:%a' -- "$API_PASSWORD_FILE")" == '0:600' ]] || fail 'API password file must be root-owned mode 0600'
 script_directory="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -148,7 +147,7 @@ rm -f -- "$api_env_file"
 api_env_exists=false
 docker stop "$candidate_container" >/dev/null
 docker rm "$candidate_container" >/dev/null
-rm -f -- "$state_directory/admin-password"
+rm -f -- "$state_directory/admin-password" "$state_directory/api-password" "$state_directory/pipeline-password"
 
 volume_run_id="$(docker volume inspect --format '{{ index .Labels "com.diva.postgres-restore.run-id" }}' "$candidate_volume")"
 [[ "$volume_run_id" == "$run_id" ]] || fail 'candidate volume run-ID label changed during API verification'

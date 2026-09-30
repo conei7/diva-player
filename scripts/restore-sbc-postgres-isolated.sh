@@ -246,6 +246,16 @@ mapfile -t pipeline_roles < <(docker exec "$CURRENT_CONTAINER" psql -X -v ON_ERR
     -d "$DATABASE_NAME" -Atq -c "SELECT member.rolname FROM pg_auth_members membership JOIN pg_roles parent ON parent.oid=membership.roleid JOIN pg_roles member ON member.oid=membership.member WHERE parent.rolname='diva_pipeline_runtime' AND member.rolcanlogin AND member.rolname ~ '^diva_pipeline_login_[a-z0-9][a-z0-9_]*$' ORDER BY member.rolname")
 [[ "${#pipeline_roles[@]}" -eq 1 ]] || fail 'production database must have exactly one versioned pipeline login role'
 pipeline_role="${pipeline_roles[0]}"
+# Isolated verification uses its own credentials, independent of production secret storage.
+python3 - "$state_directory" <<'PY_CREDENTIALS'
+import os, secrets, sys
+from pathlib import Path
+for name in ("api-password", "pipeline-password"):
+    fd = os.open(Path(sys.argv[1]) / name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try: os.write(fd, secrets.token_urlsafe(48).encode("ascii")); os.fsync(fd)
+    finally: os.close(fd)
+PY_CREDENTIALS
+DIVA_DB_API_PASSWORD_FILE="$state_directory/api-password" DIVA_DB_PIPELINE_PASSWORD_FILE="$state_directory/pipeline-password" \
 DIVA_DB_CONTAINER="$candidate_container" DIVA_DB_ADMIN_USER="$admin_user" DIVA_DB_NAME="$DATABASE_NAME" \
     DIVA_DB_API_LOGIN_ROLE="$api_role" DIVA_DB_PIPELINE_LOGIN_ROLE="$pipeline_role" \
     bash "$repository_root/scripts/provision-sbc-db-roles.sh" create >/dev/null
