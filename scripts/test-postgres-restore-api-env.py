@@ -59,6 +59,7 @@ class RestoreApiEnvironmentTests(unittest.TestCase):
         self.assertIn("Host=127.0.0.1;Port=25432", connection)
         self.assertIn('Password="p;ass""word"', connection)
         self.assertNotIn("old-secret", connection)
+        self.assertIn("Maximum Pool Size=10;", connection)
         self.assertEqual(environment["Recommender__QdrantEndpoint"], "http://127.0.0.1:6334")
         self.assertEqual(environment["Recommender__QdrantRestEndpoint"], "http://127.0.0.1:6333")
         self.assertEqual(environment["ASPNETCORE_URLS"], "http://127.0.0.1:25000")

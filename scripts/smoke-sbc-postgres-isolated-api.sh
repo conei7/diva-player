@@ -115,6 +115,8 @@ candidate_api_started=true
 
 ready=false
 for attempt in $(seq 1 120); do
+    [[ "$(docker inspect --format '{{.State.Running}}' "$candidate_api_container")" == 'true' ]] \
+        || fail 'isolated API exited before becoming ready'
     if curl --silent --show-error --fail --noproxy '*' --max-time 5 \
         "http://127.0.0.1:$api_port/api/ready" >/dev/null 2>&1; then ready=true; break; fi
     sleep 2

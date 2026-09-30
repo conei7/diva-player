@@ -77,6 +77,14 @@ def build_environment(
         raise ApiEnvironmentError("API password file is empty or multiline")
 
     environment = environments[0]
+    try:
+        aggregate = int(environment.get("Recommender__Bulkhead__AggregatePermitLimit", "6"))
+        reserve = int(environment.get("Recommender__Bulkhead__DatabaseConnectionReserve", "4"))
+    except ValueError as error:
+        raise ApiEnvironmentError("live API database connection budget is invalid") from error
+    if not 1 <= aggregate <= 64 or not 4 <= reserve <= 64:
+        raise ApiEnvironmentError("live API database connection budget is out of range")
+    pool_size = aggregate + reserve
 
     def quote_connection_value(value: str) -> str:
         return '"' + value.replace('"', '""') + '"' if any(char in value for char in ';"') else value
@@ -85,7 +93,7 @@ def build_environment(
         "ConnectionStrings__Postgres": (
             f"Host=127.0.0.1;Port={database_port};Database=vocadb_recommender;"
             f"Username={expected_role};Password={quote_connection_value(password)};"
-            "Maximum Pool Size=8;Timeout=5;Application Name=diva-postgres-restore-check"
+            f"Maximum Pool Size={pool_size};Timeout=5;Application Name=diva-postgres-restore-check"
         ),
         "Recommender__QdrantEndpoint": "http://127.0.0.1:6334",
         "Recommender__QdrantRestEndpoint": "http://127.0.0.1:6333",
