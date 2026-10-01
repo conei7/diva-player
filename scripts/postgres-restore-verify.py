@@ -473,7 +473,9 @@ def _api_get(base_url: str, path: str, query: dict[str, str] | None = None) -> A
             if response.status != 200:
                 raise VerificationError(f"isolated API request failed: {path} HTTP {response.status}")
             body = response.read(1_048_577)
-    except (OSError, urllib.error.URLError, urllib.error.HTTPError) as error:
+    except urllib.error.HTTPError as error:
+        raise VerificationError(f"isolated API request failed: {path} HTTP {error.code}") from error
+    except (OSError, urllib.error.URLError) as error:
         raise VerificationError(f"isolated API request could not complete: {path}") from error
     if len(body) > 1_048_576:
         raise VerificationError(f"isolated API response is too large: {path}")

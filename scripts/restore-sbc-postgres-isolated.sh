@@ -259,6 +259,8 @@ mapfile -t pipeline_roles < <(docker exec "$CURRENT_CONTAINER" psql -X -v ON_ERR
     -d "$DATABASE_NAME" -Atq -c "SELECT member.rolname FROM pg_auth_members membership JOIN pg_roles parent ON parent.oid=membership.roleid JOIN pg_roles member ON member.oid=membership.member WHERE parent.rolname='diva_pipeline_runtime' AND member.rolcanlogin AND member.rolname ~ '^diva_pipeline_login_[a-z0-9][a-z0-9_]*$' ORDER BY member.rolname")
 [[ "${#pipeline_roles[@]}" -eq 1 ]] || fail 'production database must have exactly one versioned pipeline login role'
 pipeline_role="${pipeline_roles[0]}"
+python3 "$script_directory/postgres-restore-state.py" update --state-file "$state_directory/state.json" --phase credentials-preparing \
+    --fields-json "$(python3 -c 'import json,sys;print(json.dumps({"apiLoginRole":sys.argv[1],"pipelineLoginRole":sys.argv[2]}))' "$api_role" "$pipeline_role")"
 # Isolated verification uses its own credentials, independent of production secret storage.
 python3 - "$state_directory" <<'PY_CREDENTIALS'
 import os, secrets, sys
@@ -276,6 +278,8 @@ write_state 'roles-and-acls-rebuilt'
 
 db_port="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')"
 [[ "$db_port" =~ ^[0-9]+$ ]] || fail 'could not choose a loopback verification port'
+python3 "$script_directory/postgres-restore-state.py" update --state-file "$state_directory/state.json" --phase loopback-container-recreating \
+    --fields-json "$(python3 -c 'import json,sys;print(json.dumps({"databasePort":int(sys.argv[1]),"rolesAndAclsRebuilt":True}))' "$db_port")"
 docker stop "$candidate_container" >/dev/null
 docker rm "$candidate_container" >/dev/null
 docker run --detach --pull=never \

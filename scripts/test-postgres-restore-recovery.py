@@ -77,6 +77,19 @@ class ComparisonTests(unittest.TestCase):
             opener.return_value.open.return_value.__enter__.return_value=response
             with self.assertRaisesRegex(VERIFY.VerificationError,"Qdrant"):VERIFY._publication_alignment(generation)
 
+class ApiDiagnosticsTests(unittest.TestCase):
+    def test_http_failure_reports_status_without_response_body(self):
+        error=VERIFY.urllib.error.HTTPError("http://127.0.0.1/api/health",503,"degraded",{},io.BytesIO(b"private diagnostics"))
+        with patch.object(VERIFY.urllib.request,"build_opener") as opener:
+            opener.return_value.open.side_effect=error
+            with self.assertRaisesRegex(VERIFY.VerificationError,r"/api/health HTTP 503"):
+                VERIFY._api_get("http://127.0.0.1","/api/health")
+    def test_health_wait_retains_strict_success_and_private_failure_logs(self):
+        text=(ROOT/"smoke-sbc-postgres-isolated-api.sh").read_text()
+        self.assertIn("for attempt in $(seq 1 100)",text)
+        self.assertIn("operational health did not become healthy",text)
+        self.assertIn('chmod 0600 "$state_directory/api-failure.log"',text)
+
 class SequenceTests(unittest.TestCase):
     def test_boolean_text_from_postgres_is_accepted(self):
         rows=[{"sequenceName":"songs_id_seq","sequenceSchema":"public","tableName":"songs","tableSchema":"public","columnName":"id","increment":1}]

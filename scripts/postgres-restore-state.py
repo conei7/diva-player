@@ -46,6 +46,43 @@ def checkpoint(path, phase, fields=None):
     atomic_json(path, state)
     return state
 
+def validated_receipt(directory, preflight):
+    directory=Path(directory)
+    verification=directory/"verification.json";receipt=directory/"restore-evidence.json"
+    if not verification.exists() or not receipt.exists(): return None
+    for path in (verification,receipt):
+        if path.is_symlink() or path.stat().st_uid!=0 or path.stat().st_mode & 0o777!=0o600:raise ValueError("receipt must be root-private")
+    expected=module("postgres-restore-evidence").build_evidence(preflight,json.loads(verification.read_text()))
+    recorded=json.loads(receipt.read_text())
+    expected.pop("recordedAt",None);recorded.pop("recordedAt",None)
+    if expected!=recorded:raise ValueError("completed receipt changed")
+    return recorded
+
+def finish_verified_cleanup(path,state,preflight):
+    path=Path(path)
+    if validated_receipt(path.parent,preflight) is None:return False
+    volume=json.loads(subprocess.check_output(["docker","volume","inspect",state["candidateVolume"]]))[0]
+    for key,value in {"com.diva.postgres-restore.run-id":state["runId"],"com.diva.postgres-restore.manifest-sha256":state["manifestSha256"],"com.diva.postgres-restore.dump-sha256":state["dumpSha256"]}.items():
+        if volume.get("Labels",{}).get(key)!=value:raise ValueError("verified volume binding changed")
+    for name in (state["candidateContainer"]+"_api",state["candidateContainer"]):
+        result=subprocess.run(["docker","inspect",name],stdout=subprocess.PIPE,stderr=subprocess.DEVNULL)
+        if result.returncode==0:
+            container=json.loads(result.stdout)[0]
+            labels=container["Config"].get("Labels",{})
+            if labels.get("com.diva.postgres-restore.run-id")!=state["runId"] or labels.get("com.diva.postgres-restore.purpose")!="isolated-verification":
+                raise ValueError("cleanup target is not owned by this restore run")
+            if name==state["candidateContainer"] and not any(m.get("Name")==state["candidateVolume"] and m["Destination"]=="/var/lib/postgresql/data" for m in container["Mounts"]):
+                raise ValueError("verified database volume changed")
+            subprocess.run(["docker","rm","-f",container["Id"]],check=True,stdout=subprocess.DEVNULL)
+    for name in ("api.env","admin-password","api-password","pipeline-password"):
+        target=path.parent/name
+        if target.exists():
+            if target.is_symlink() or target.stat().st_uid!=0 or target.stat().st_mode & 0o777!=0o600:raise ValueError("transient credential changed")
+            target.unlink()
+    checkpoint(path,"verification-complete",{"apiVerificationComplete":True,"apiContainerStoppedAndRemoved":True,"databaseContainerStoppedAndRemoved":True,
+        "candidateVolumeRetained":True,"adminPasswordRemoved":True,"suspendedAtUserRequest":False,"evidenceFile":"restore-evidence.json"})
+    return True
+
 def resume(path):
     path = Path(path)
     if path.is_symlink() or path.parent.is_symlink(): raise ValueError("restore state must not be a symlink")
@@ -58,16 +95,13 @@ def resume(path):
     backup = pre._read_backup(Path(preflight["backup"]["manifestPath"]).parent, state["runId"])
     for key in ("manifestSha256", "dumpSha256", "publicationGeneration"):
         if backup[key] != state[key] or backup[key] != preflight["backup"][key]: raise ValueError("resume backup binding changed")
-    verify._publication_alignment(state["publicationGeneration"])
-    if state["phase"] == "verification-complete":
-        evidence = module("postgres-restore-evidence").build_evidence(preflight, json.loads((path.parent/"verification.json").read_text()))
-        recorded = json.loads((path.parent/"restore-evidence.json").read_text())
-        recorded.pop("recordedAt", None); evidence.pop("recordedAt", None)
-        if recorded != evidence: raise ValueError("completed receipt changed")
-        volume = json.loads(subprocess.check_output(["docker","volume","inspect",state["candidateVolume"]]))[0]
-        if volume["Labels"].get("com.diva.postgres-restore.run-id") != state["runId"]: raise ValueError("completed candidate volume binding changed")
-        print(json.dumps({"status": "already-verified", "runId": state["runId"]}))
+    if finish_verified_cleanup(path,state,preflight):
+        print(json.dumps({"status":"already-verified","runId":state["runId"]}))
         return
+    verify._publication_alignment(state["publicationGeneration"])
+    production=json.loads(subprocess.check_output(["docker","inspect","vocadb_postgres"]))[0]
+    if production["Image"]!=state["postgresImageId"] or not any(m.get("Name")==state["oldVolume"] and m["Destination"]=="/var/lib/postgresql/data" for m in production["Mounts"]):
+        raise ValueError("production image or volume changed since preflight")
     if state.get("databasePort") is None or state.get("logicalRestoreFinishedAt") is None:
         raise ValueError("DB is not ready for API resume; inspect incomplete restore rather than restoring twice")
     verify._inspect_candidate(state["candidateContainer"], state["candidateVolume"], preflight, state["databasePort"], allow_stopped=True)

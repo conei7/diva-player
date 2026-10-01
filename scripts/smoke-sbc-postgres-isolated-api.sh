@@ -32,6 +32,9 @@ if [[ "$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["phase"]
     exec python3 "$script_directory/postgres-restore-state.py" resume --state-file "$state_file"
 fi
 python3 "$script_directory/postgres-restore-state.py" resume --state-file "$state_file"
+if [[ "$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["phase"])' "$state_file")" == verification-complete ]]; then
+    exit 0
+fi
 API_PASSWORD_FILE="$state_directory/api-password"
 [[ -f "$API_PASSWORD_FILE" && ! -L "$API_PASSWORD_FILE" ]] || fail 'API password file must be a regular file'
 [[ "$(stat -c '%u:%a' -- "$API_PASSWORD_FILE")" == '0:600' ]] || fail 'API password file must be root-owned mode 0600'
@@ -113,7 +116,13 @@ api_env_exists=true
 cleanup_transient() {
     local result=$?
     trap - EXIT
-    if [ "$candidate_api_started" = true ]; then docker rm -f "$candidate_api_container" >/dev/null 2>&1 || true; fi
+    if [ "$candidate_api_started" = true ]; then
+        if (( result != 0 )); then
+            docker logs --tail 300 "$candidate_api_container" >"$state_directory/api-failure.log" 2>&1 || true
+            chmod 0600 "$state_directory/api-failure.log"
+        fi
+        docker rm -f "$candidate_api_container" >/dev/null 2>&1 || true
+    fi
     if [ "$api_env_exists" = true ]; then rm -f -- "$api_env_file"; fi
     if (( result != 0 )); then
         docker stop --time 15 "$candidate_container" >/dev/null 2>&1 || true
@@ -150,6 +159,18 @@ api_ready_seconds="$(( $(date +%s) - api_started_epoch ))"
 python3 "$script_directory/postgres-restore-state.py" update --state-file "$state_file" --phase "database-ready-loopback-port-$database_port" \
     --fields-json "$(python3 -c 'import json,sys;print(json.dumps({"apiReadyElapsedSeconds":int(sys.argv[1])}))' "$api_ready_seconds")"
 printf '[postgres-restore] isolated API ready in %s seconds\n' "$api_ready_seconds"
+# Operational health probes are cached on a five-minute cadence. Allow the
+# first cold-start probe to refresh after readiness without accepting degradation.
+healthy=false
+for attempt in $(seq 1 100); do
+    if curl --silent --show-error --fail --noproxy '*' --max-time 5 \
+        "http://127.0.0.1:$api_port/api/health" >"$state_directory/api-health.json" 2>/dev/null; then
+        healthy=true; break
+    fi
+    sleep 2
+done
+chmod 0600 "$state_directory/api-health.json"
+[ "$healthy" = true ] || fail 'isolated API operational health did not become healthy'
 mapfile -t api_listeners < <(ss -H -lnt "sport = :$api_port")
 [[ "${#api_listeners[@]}" -eq 1 ]] || fail 'isolated API must expose exactly one listening socket'
 read -r listener_state listener_recv listener_send listener_address listener_peer _ <<<"${api_listeners[0]}"
@@ -187,18 +208,8 @@ old_volume="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1],enco
 [[ "$old_volume" != "$candidate_volume" ]] || fail 'candidate volume matches the production volume'
 docker volume inspect "$old_volume" >/dev/null
 
-python3 - "$state_file" "$evidence_json" <<'PY'
-import json, os, sys
-path, evidence=sys.argv[1:]
-with open(path,encoding="utf-8") as stream: state=json.load(stream)
-state.update({"phase":"verification-complete","apiContainerStoppedAndRemoved":True,
-              "databaseContainerStoppedAndRemoved":True,"candidateVolumeRetained":True,
-              "adminPasswordRemoved":True,"apiVerificationComplete":True,"suspendedAtUserRequest":False,"evidenceFile":os.path.basename(evidence)})
-temporary=path+".tmp"
-with open(temporary,"x",encoding="utf-8") as stream:
-    json.dump(state,stream,sort_keys=True,indent=2); stream.write("\n"); stream.flush(); os.fsync(stream.fileno())
-os.chmod(temporary,0o600); os.replace(temporary,path)
-PY
+python3 "$script_directory/postgres-restore-state.py" update --state-file "$state_file" \
+    --phase verification-complete --fields-json '{"apiContainerStoppedAndRemoved":true,"databaseContainerStoppedAndRemoved":true,"candidateVolumeRetained":true,"adminPasswordRemoved":true,"apiVerificationComplete":true,"suspendedAtUserRequest":false,"evidenceFile":"restore-evidence.json"}'
 
 printf '{"status":"restore-verified","runId":"%s","evidence":"%s","candidateVolume":"%s","candidateVolumeRetained":true}\n' \
     "$run_id" "$evidence_json" "$candidate_volume"
