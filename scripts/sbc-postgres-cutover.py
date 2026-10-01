@@ -199,10 +199,12 @@ class Controller:
         while time.monotonic()<limit:
             try:
                 value=VERIFY._api_get("http://127.0.0.1:5000","/api/ready")
-                if value.get("status")=="ready":available=True;break
+                if value.get("status")=="ready" and (not smoke or VERIFY._api_get("http://127.0.0.1:5000","/api/health").get("status")=="ok"):
+                    available=True;break
             except VERIFY.VerificationError:pass
+            require(self.rollback_mode or self.state.get("writerReleaseIntent") or remaining(self.state)>5,"API health refresh reached deadline")
             time.sleep(2)
-        require(available,"fresh API readiness did not recover")
+        require(available,"fresh API readiness and health did not recover")
         if smoke:VERIFY._api_smoke("http://127.0.0.1:5000")
     def prepare(self,verified,reuse_rehearsal=False):
         previous=copy.deepcopy(self.state)

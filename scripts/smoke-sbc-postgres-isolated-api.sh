@@ -162,7 +162,7 @@ printf '[postgres-restore] isolated API ready in %s seconds\n' "$api_ready_secon
 # Operational health probes are cached on a five-minute cadence. Allow the
 # first cold-start probe to refresh after readiness without accepting degradation.
 healthy=false
-for attempt in $(seq 1 100); do
+for attempt in $(seq 1 180); do
     if curl --silent --show-error --fail --noproxy '*' --max-time 5 \
         "http://127.0.0.1:$api_port/api/health" >"$state_directory/api-health.json" 2>/dev/null; then
         healthy=true; break

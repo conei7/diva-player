@@ -86,7 +86,7 @@ class ApiDiagnosticsTests(unittest.TestCase):
                 VERIFY._api_get("http://127.0.0.1","/api/health")
     def test_health_wait_retains_strict_success_and_private_failure_logs(self):
         text=(ROOT/"smoke-sbc-postgres-isolated-api.sh").read_text()
-        self.assertIn("for attempt in $(seq 1 100)",text)
+        self.assertIn("for attempt in $(seq 1 180)",text)
         self.assertIn("operational health did not become healthy",text)
         self.assertIn('chmod 0600 "$state_directory/api-failure.log"',text)
 
@@ -154,6 +154,15 @@ class CutoverTests(unittest.TestCase):
         self.assertEqual(payload["Image"],old["Config"]["Image"])
         self.assertEqual(payload["HostConfig"]["Memory"],123)
         self.assertEqual(payload["HostConfig"]["PortBindings"],old["HostConfig"]["PortBindings"])
+    def test_api_resume_waits_for_health_refresh_before_full_smoke(self):
+        with tempfile.TemporaryDirectory() as directory:
+            controller=CUTOVER.Controller(Path(directory))
+            controller.state={"writerReleaseIntent":True}
+            controller.inspect=lambda name:{"State":{"Running":True,"Health":{"Status":"healthy"}}}
+            answers=[{"status":"ready"},CUTOVER.VERIFY.VerificationError("HTTP 503"),{"status":"ready"},{"status":"ok"}]
+            with patch.object(CUTOVER.VERIFY,"_api_get",side_effect=answers),patch.object(CUTOVER.VERIFY,"_api_smoke") as smoke,patch.object(CUTOVER.time,"sleep"):
+                controller.api_ready()
+                smoke.assert_called_once()
     def test_forward_recovery_never_stops_old_database(self):
         with tempfile.TemporaryDirectory() as directory:
             controller=CUTOVER.Controller(Path(directory))
