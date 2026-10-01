@@ -260,9 +260,15 @@ def build_evidence(preflight: dict[str, Any], verification: dict[str, Any]) -> d
         for name, version in extensions.items()
     ):
         raise EvidenceError("verification extensions must map extension names to versions")
-    if extensions.get("vector") != "0.8.6" or not {"pg_trgm", "pgcrypto"}.issubset(extensions):
+    if not {"vector", "pg_trgm"}.issubset(extensions):
         raise EvidenceError("verification is missing a required PostgreSQL extension")
 
+    extensions_comparison = verification.get("extensionsComparison", {"reference":"inventory-only","expected":None})
+    expected_extensions = extensions_comparison.get("expected")
+    if expected_extensions is not None and extensions != expected_extensions:
+        raise EvidenceError("restored extension inventory differs from its source reference")
+    if backup.get("validationBaseline", {}).get("extensions") is not None and extensions != backup["validationBaseline"].get("expectedRestoredExtensions",backup["validationBaseline"]["extensions"]):
+        raise EvidenceError("restored extension inventory differs from the backup snapshot")
     indexes = verification.get("indexes")
     if not isinstance(indexes, dict):
         raise EvidenceError("verification must record index validity totals")
@@ -389,6 +395,7 @@ def build_evidence(preflight: dict[str, Any], verification: dict[str, Any]) -> d
         },
         "checks": checks,
         "backupComparison": comparison,
+        "extensionsComparison": extensions_comparison,
         "measurements": measurements,
     }
 

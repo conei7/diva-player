@@ -90,7 +90,7 @@ def encoded(value): return (json.dumps(value,ensure_ascii=True,sort_keys=True,se
 def rollback_allowed(state): return not state.get("writerReleaseIntent",False) and not state.get("writersResumed",False)
 def remaining(state):
     if state.get("outageStartedEpoch") is None: return 300
-    return max(0,ROLLBACK_AT-(time.time()-state["outageStartedEpoch"]))
+    return max(0,state.get("rollbackAfterSeconds",ROLLBACK_AT)-(time.time()-state["outageStartedEpoch"]))
 
 class Engine(http.client.HTTPConnection):
     def __init__(self): super().__init__("localhost",timeout=30)
@@ -176,17 +176,32 @@ class Controller:
             except RuntimeError: pass
             time.sleep(1)
         raise RuntimeError("PostgreSQL readiness timed out")
-    def api_ready(self):
-        for name in ("vocadb_api_a","vocadb_api_b"):
-            limit=time.monotonic()+150
-            while time.monotonic()<limit:
+    def resume_api(self):
+        for name,expected in self.state["apiSlotIds"].items():
+            current=self.inspect(name)
+            require(current["Id"]==expected,"API slot identity changed during maintenance")
+            if current["State"].get("Paused"):self.run(["docker","unpause",expected],timeout=15)
+            elif not current["State"]["Running"]:self.run(["docker","start",expected],timeout=15)
+    def api_ready(self,smoke=True):
+        limit=time.monotonic()+max(150,self.state.get("apiReadyBudgetSeconds",150))
+        pending={"vocadb_api_a","vocadb_api_b"}
+        while pending and time.monotonic()<limit:
+            for name in list(pending):
                 current=self.inspect(name)
-                if current["State"].get("Health",{}).get("Status")=="healthy":break
                 require(current["State"]["Running"],"API exited during readiness")
-                require(self.rollback_mode or self.state.get("writerReleaseIntent") or remaining(self.state)>5,"API readiness reached deadline")
-                time.sleep(2)
-            else:raise RuntimeError("API readiness timed out")
-        VERIFY._api_smoke("http://127.0.0.1:5000")
+                if current["State"].get("Health",{}).get("Status")=="healthy":pending.remove(name)
+            require(self.rollback_mode or self.state.get("writerReleaseIntent") or remaining(self.state)>5,"API readiness reached deadline")
+            if pending:time.sleep(2)
+        require(not pending,"API readiness timed out")
+        available=False
+        while time.monotonic()<limit:
+            try:
+                value=VERIFY._api_get("http://127.0.0.1:5000","/api/ready")
+                if value.get("status")=="ready":available=True;break
+            except VERIFY.VerificationError:pass
+            time.sleep(2)
+        require(available,"fresh API readiness did not recover")
+        if smoke:VERIFY._api_smoke("http://127.0.0.1:5000")
     def prepare(self,verified):
         private(Path(verified).parent,True)
         source_state=json.loads(private(verified).read_text())
@@ -207,7 +222,8 @@ class Controller:
         require(len(mounts)==1,"production volume is ambiguous")
         env=dict(item.split("=",1) for item in old["Config"]["Env"])
         require("POSTGRES_PASSWORD" in env,"production admin secret source needs explicit support")
-        self.mark("preparing",adminUser=env["POSTGRES_USER"],oldVolume=mounts[0]["Name"],oldContainerId=old["Id"],
+        api_ids={name:self.inspect(name)["Id"] for name in ("vocadb_api_a","vocadb_api_b")}
+        self.mark("preparing",apiSlotIds=api_ids,apiQuiesceMode="pause",adminUser=env["POSTGRES_USER"],oldVolume=mounts[0]["Name"],oldContainerId=old["Id"],
             newVolume="backend_postgres_cutover_"+self.state["runId"],candidateContainer="vocadb_postgres_cutover_"+self.state["runId"],
             rollbackContainer="vocadb_postgres_rollback_"+self.state["runId"],imageId=old["Image"],
             generation=preflight["backup"]["publicationGeneration"],gateToken=secrets.token_hex(32),
@@ -228,9 +244,14 @@ class Controller:
         started=time.monotonic()
         manifest=module("postgres-restore-backup").capture(self.path/rehearsal,"vocadb_postgres",self.state["adminUser"],DATABASE,rehearsal)
         measured=time.monotonic()-started
-        estimate=evidence["measurements"]["logicalPostgresRestoreDurationSeconds"]+2*measured+180+30
-        self.mark("backup-rehearsal-complete",rehearsalRunId=rehearsal,backupRehearsalSeconds=round(measured,3),estimatedOutageSeconds=round(estimate,3))
-        require(estimate<ROLLBACK_AT,"measured backup/restore/verification budget exceeds 12-minute rollback threshold")
+        # Freeze API processes without losing their already-warmed read caches.
+        # Original sockets are disconnected by PostgreSQL shutdown; unpause
+        # opens fresh pools against the same schema/data/credentials.
+        api_budget=30
+        rollback_after=ROLLBACK_AT
+        estimate=evidence["measurements"]["logicalPostgresRestoreDurationSeconds"]+2*measured+api_budget+60
+        self.mark("backup-rehearsal-complete",rehearsalRunId=rehearsal,backupRehearsalSeconds=round(measured,3),estimatedOutageSeconds=round(estimate,3),apiReadyBudgetSeconds=api_budget,rollbackAfterSeconds=rollback_after)
+        require(estimate<rollback_after,"measured backup/restore/verification budget exceeds 12-minute rollback threshold")
         self.run(["docker","volume","create","--label","com.diva.postgres-cutover.run-id="+self.state["runId"],"--label","com.diva.postgres-cutover.old-volume="+self.state["oldVolume"],self.state["newVolume"]])
         private_env=self.path/"candidate.env"
         bytes_atomic(private_env,("\n".join(k+"="+env[k] for k in ("POSTGRES_USER","POSTGRES_PASSWORD","POSTGRES_DB"))+"\n").encode())
@@ -242,7 +263,7 @@ class Controller:
             "--mount","type=bind,src="+str(self.path)+",dst=/cutover,readonly",
             "--env-file",str(private_env),IMAGE])
         self.ready(self.state["candidateContainer"])
-        self.mark("prepared",preparedAt=now())
+        self.mark("prepared",preparedAt=now(),candidateContainerId=self.inspect(self.state["candidateContainer"])["Id"])
     def validate_db(self,container,manifest):
         baseline=manifest["validationBaseline"]
         counts=VERIFY._table_counts(container,self.state["adminUser"])
@@ -251,6 +272,7 @@ class Controller:
         for database in (DATABASE,"postgres"):VERIFY._collation(container,self.state["adminUser"],database)
         indexes=VERIFY._indexes(container,self.state["adminUser"])
         extensions=VERIFY._extensions(container,self.state["adminUser"])
+        require(extensions==baseline["expectedRestoredExtensions"],"restored extensions differ from final backup snapshot")
         sequences=VERIFY._sequence_state(container,self.state["adminUser"])
         role_sql=(SCRIPTS/"test-database-role-contract.sql").read_text().replace("NOT member.rolcanlogin","(NOT member.rolcanlogin AND parent.rolname <> 'diva_pipeline_runtime')")
         self.sql(container,role_sql)
@@ -279,6 +301,7 @@ class Controller:
         expected=module("sbc-runtime-contract").runtime_projection(old)
         observed=module("sbc-runtime-contract").runtime_projection(actual)
         expected["HostConfig"]["Binds"]=observed["HostConfig"]["Binds"]
+        require(observed["HostConfig"]["Binds"]==create_payload(old,self.state["newVolume"])["HostConfig"]["Binds"],"published PostgreSQL volume binding differs from prepared intent")
         require(expected==observed,"published PostgreSQL runtime configuration changed beyond the selected volume")
         require(actual["Image"]==old["Image"],"published PostgreSQL image changed")
     def publish_configuration(self):
@@ -324,8 +347,8 @@ class Controller:
             bytes_atomic(target,(self.path/(name+".before")).read_bytes())
         gate=self.query("vocadb_postgres","SELECT value FROM sync_state WHERE key='diva_stateful_maintenance_gate'")
         if gate: self.gate("vocadb_postgres",True)
-        for name in ("vocadb_api_a","vocadb_api_b"):self.run(["docker","start",name])
-        self.api_ready()
+        self.resume_api()
+        self.api_ready(smoke=False)
         candidate=self.inspect(self.state["candidateContainer"],True)
         if candidate and candidate["State"]["Running"]:self.run(["docker","stop","--time","10",candidate["Id"]])
         duration=time.time()-self.state.get("outageStartedEpoch",time.time())
@@ -337,6 +360,11 @@ class Controller:
         try:
             old=self.inspect("vocadb_postgres")
             require(old["Id"]==self.state["oldContainerId"],"production PostgreSQL identity changed after preparation")
+            candidate_record=self.inspect(self.state["candidateContainer"])
+            require(candidate_record["Id"]==self.state["candidateContainerId"] and candidate_record["Image"]==self.state["imageId"]
+                and candidate_record["HostConfig"]["NetworkMode"]=="none"
+                and candidate_record["Config"]["Labels"].get("com.diva.postgres-cutover.run-id")==self.state["runId"],"prepared candidate identity changed")
+            require(any(m.get("Name")==self.state["newVolume"] and m["Destination"]==DATA for m in candidate_record["Mounts"]),"prepared candidate volume changed")
             VERIFY._publication_alignment(self.state["generation"])
             self.mark("writer-gating")
             for attempt in range(60):
@@ -349,9 +377,12 @@ class Controller:
             roles=re.sub(r"^CREATE ROLE "+re.escape(self.state["adminUser"])+r";\n","",roles,flags=re.M)
             bytes_atomic(self.path/"roles.sql",roles.encode())
             self.mark("outage-starting",outageStartedAt=now(),outageStartedEpoch=time.time())
-            self.run(["systemd-run","--unit",self.state["unit"]+"-deadline","--on-active="+str(ROLLBACK_AT)+"s",
+            self.run(["systemd-run","--unit",self.state["unit"]+"-deadline","--on-active="+str(self.state.get("rollbackAfterSeconds",ROLLBACK_AT))+"s",
                 "/usr/bin/python3",str(SCRIPTS/"sbc-postgres-cutover.py"),"watchdog","--state-directory",str(self.path)],timeout=20)
-            for name in ("vocadb_api_a","vocadb_api_b"):self.run(["docker","stop","--time","10",name],timeout=20)
+            for name,expected in self.state["apiSlotIds"].items():
+                current=self.inspect(name)
+                require(current["Id"]==expected and current["State"]["Running"] and not current["State"].get("Paused"),"API slot is not ready for maintenance")
+                self.run(["docker","pause",expected],timeout=15)
             final="postgres-"+datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")+"-"+secrets.token_hex(4)
             self.mark("final-backup-running",finalBackupRunId=final)
             self.run(["python3",str(SCRIPTS/"postgres-restore-backup.py"),"--directory",str(self.path/final),"--run-id",final,
@@ -369,10 +400,14 @@ class Controller:
                 self.sql(candidate,path.read_text())
             self.mark("final-database-verifying")
             self.validate_db(candidate,manifest)
+            self.mark("restored-database-analyzing")
+            self.run(["docker","exec",candidate,"vacuumdb","--analyze-only","--jobs=2","-U",self.state["adminUser"],"-d",DATABASE],timeout=90)
             self.publish_container(old)
             self.publish_configuration()
-            for name in ("vocadb_api_a","vocadb_api_b"):self.run(["docker","start",name])
+            self.resume_api()
             self.api_ready()
+            sessions=self.query("vocadb_postgres","SELECT count(DISTINCT application_name) FROM pg_stat_activity WHERE application_name IN ('diva-api-a','diva-api-b') AND backend_type='client backend'")
+            require(int(sessions)>=2,"both API slots did not reconnect to the restored database")
             VERIFY._publication_alignment(self.state["generation"])
             require(self.inspect("vocadb_qdrant")["Id"]==json.loads((self.path/"qdrant.inspect.json").read_text())["Id"],"Qdrant identity changed")
             require(remaining(self.state)>0,"API verification exceeded rollback deadline")

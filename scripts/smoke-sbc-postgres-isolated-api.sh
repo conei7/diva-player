@@ -125,6 +125,7 @@ trap cleanup_transient EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
+api_started_epoch="$(date +%s)"
 docker run --detach --pull=never \
     --name "$candidate_api_container" \
     --label "com.diva.postgres-restore.run-id=$run_id" \
@@ -145,6 +146,10 @@ for attempt in $(seq 1 120); do
     sleep 2
 done
 [ "$ready" = true ] || fail 'isolated API did not become ready against candidate PostgreSQL and current Qdrant'
+api_ready_seconds="$(( $(date +%s) - api_started_epoch ))"
+python3 "$script_directory/postgres-restore-state.py" update --state-file "$state_file" --phase "database-ready-loopback-port-$database_port" \
+    --fields-json "$(python3 -c 'import json,sys;print(json.dumps({"apiReadyElapsedSeconds":int(sys.argv[1])}))' "$api_ready_seconds")"
+printf '[postgres-restore] isolated API ready in %s seconds\n' "$api_ready_seconds"
 mapfile -t api_listeners < <(ss -H -lnt "sport = :$api_port")
 [[ "${#api_listeners[@]}" -eq 1 ]] || fail 'isolated API must expose exactly one listening socket'
 read -r listener_state listener_recv listener_send listener_address listener_peer _ <<<"${api_listeners[0]}"

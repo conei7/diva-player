@@ -351,10 +351,10 @@ WHERE sequence.relkind = 'S'
             last_value_text, called_text = last_output.split("\t", 1)
             last_value = int(last_value_text)
             maximum_value = int(maximum_output)
-            is_called = called_text == "t"
+            is_called = called_text in {"t", "true"}
         except (ValueError, TypeError) as error:
             raise VerificationError(f"could not read restored sequence state: {sequence_name}") from error
-        if called_text not in {"t", "f"}:
+        if called_text not in {"t", "f", "true", "false"}:
             raise VerificationError(f"restored sequence call state is invalid: {sequence_name}")
         safe_next_value = last_value >= maximum_value if is_called else last_value > maximum_value
         if not safe_next_value:
@@ -396,6 +396,15 @@ FROM public.schema_migrations
     return {"count": len(migrations), "latest": migrations[-1]["id"], "rows": migrations}
 
 
+def _expected_restored_extensions(source: dict[str, str]) -> dict[str, str]:
+    # pg_dump emits CREATE EXTENSION without VERSION; this pinned image ships
+    # only vector 0.8.6 SQL. Its running binary is already 0.8.6 in production.
+    if source.get("vector") not in {"0.8.2", "0.8.6"}:
+        raise VerificationError("unreviewed vector registered-version transition")
+    result = dict(source)
+    result["vector"] = "0.8.6"
+    return result
+
 def _extensions(container: str, admin_user: str) -> dict[str, str]:
     sql = """
 SELECT COALESCE(json_object_agg(extname, extversion ORDER BY extname), '{}'::json)::text
@@ -407,7 +416,7 @@ FROM pg_extension
         for name, version in result.items()
     ):
         raise VerificationError("restored PostgreSQL extension inventory is invalid")
-    if result.get("vector") != "0.8.6" or not {"pg_trgm", "pgcrypto"}.issubset(result):
+    if not {"vector", "pg_trgm"}.issubset(result):
         raise VerificationError("restored PostgreSQL extensions do not match the runtime contract")
     return result
 
@@ -616,6 +625,7 @@ def collect_verification(
     started_at: str | None = None,
     logical_restore_finished_at: str | None = None,
     resource_usage: dict[str, Any] | None = None,
+    expected_extensions: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     if preflight.get("status") != "ready" or preflight.get("capacity", {}).get("sufficient") is not True:
         raise VerificationError("preflight did not pass")
@@ -638,6 +648,8 @@ def collect_verification(
     migrations = _migrations(container, admin_user)
     comparison = _backup_comparison(preflight["backup"], counts, migrations)
     extensions = _extensions(container, admin_user)
+    if expected_extensions is not None and extensions != expected_extensions:
+        raise VerificationError("restored PostgreSQL extensions differ from the source database")
     indexes = _indexes(container, admin_user)
     app_collation = _collation(container, admin_user, DATABASE_NAME)
     admin_collation = _collation(container, admin_user, "postgres")
@@ -780,6 +792,7 @@ JOIN pg_roles parent ON parent.rolname = members.rolname
         "sequences": sequences,
         "migrations": migrations,
         "extensions": extensions,
+        "extensionsComparison": {"reference": "current-production" if expected_extensions is not None else "inventory-only", "expected": expected_extensions},
         "indexes": indexes,
         "databaseCollations": {
             DATABASE_NAME: app_collation,
@@ -861,6 +874,8 @@ def main() -> int:
         if args.resource_usage_json is None:
             parser.error("--resource-usage-json is required for full verification")
         aliases_before = _publication_alignment(preflight["backup"]["publicationGeneration"])
+        source_extensions = _extensions("vocadb_postgres", preflight["postgres"]["adminUser"])
+        expected_extensions = _expected_restored_extensions(source_extensions)
         verification = collect_verification(
             preflight,
             container=args.container,
@@ -872,7 +887,10 @@ def main() -> int:
             started_at=args.started_at,
             logical_restore_finished_at=args.logical_restore_finished_at,
             resource_usage=_load_object(args.resource_usage_json, "resource usage summary"),
+            expected_extensions=expected_extensions,
         )
+        verification["extensionsComparison"] = {"reference": "fixed-image-logical-restore", "source": source_extensions, "expected": expected_extensions,
+            "registeredVersionChanges": {key: {"source": value, "restored": expected_extensions[key]} for key,value in source_extensions.items() if value != expected_extensions[key]}}
         if _publication_alignment(preflight["backup"]["publicationGeneration"]) != aliases_before:
             raise VerificationError("Qdrant publication changed during API validation")
         if args.output.is_symlink() or args.output.exists():

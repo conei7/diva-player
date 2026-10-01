@@ -58,6 +58,17 @@ class ComparisonTests(unittest.TestCase):
     def test_missing_table_baseline_is_rejected(self):
         del self.backup["validationBaseline"]["tableCounts"]["songs"]
         with self.assertRaisesRegex(VERIFY.VerificationError,"incomplete"):VERIFY._backup_comparison(self.backup,self.counts,{"rows":self.rows})
+    def test_existing_extension_versions_are_preserved_without_adding_pgcrypto(self):
+        expected={"vector":"0.8.2","pg_trgm":"1.6","plpgsql":"1.0"}
+        with patch.object(VERIFY,"_query_json",return_value=expected):
+            self.assertEqual(VERIFY._extensions("candidate","vocadb"),expected)
+    def test_fixed_image_restore_records_vector_registration_transition(self):
+        source={"vector":"0.8.2","pg_trgm":"1.6","plpgsql":"1.0"}
+        expected=VERIFY._expected_restored_extensions(source)
+        self.assertEqual(expected["vector"],"0.8.6")
+        self.assertEqual(source["vector"],"0.8.2")
+        self.assertNotIn("pgcrypto",expected)
+        with self.assertRaises(VERIFY.VerificationError):VERIFY._expected_restored_extensions({"vector":"0.7.0"})
     def test_qdrant_generation_mismatch_is_rejected(self):
         generation="a"*64+":"+"b"*32
         inspected=[{"Config":{"Env":["POSTGRES_USER=vocadb","POSTGRES_DB=vocadb_recommender"]}}]
@@ -65,6 +76,16 @@ class ComparisonTests(unittest.TestCase):
         with patch.object(VERIFY,"run_command",return_value=json.dumps(inspected)),patch.object(VERIFY,"_query",side_effect=[generation,"0"]),patch.object(VERIFY.urllib.request,"build_opener") as opener:
             opener.return_value.open.return_value.__enter__.return_value=response
             with self.assertRaisesRegex(VERIFY.VerificationError,"Qdrant"):VERIFY._publication_alignment(generation)
+
+class SequenceTests(unittest.TestCase):
+    def test_boolean_text_from_postgres_is_accepted(self):
+        rows=[{"sequenceName":"songs_id_seq","sequenceSchema":"public","tableName":"songs","tableSchema":"public","columnName":"id","increment":1}]
+        for form in ("true","t"):
+            with self.subTest(form=form),patch.object(VERIFY,"_query_json",return_value=rows),patch.object(VERIFY,"_query",side_effect=["10\t"+form,"10"]):
+                self.assertTrue(VERIFY._sequence_state("candidate","vocadb")["songs_id_seq"]["isCalled"])
+        for form in ("false","f"):
+            with self.subTest(form=form),patch.object(VERIFY,"_query_json",return_value=rows),patch.object(VERIFY,"_query",side_effect=["11\t"+form,"10"]):
+                self.assertFalse(VERIFY._sequence_state("candidate","vocadb")["songs_id_seq"]["isCalled"])
 
 class SnapshotTests(unittest.TestCase):
     def test_dump_and_all_baseline_queries_share_exported_snapshot(self):
@@ -76,7 +97,8 @@ class SnapshotTests(unittest.TestCase):
                 kwargs["stdout"].write(b"custom-dump")
                 return types.SimpleNamespace(stdout="",returncode=0)
             sql=args[-1]
-            if "json_agg" in sql: result='[{"id":"0018_runtime_database_roles.sql","sha256":null}]'
+            if "json_object_agg" in sql:result='{"vector":"0.8.2","pg_trgm":"1.6","plpgsql":"1.0"}'
+            elif "json_agg" in sql: result='[{"id":"0018_runtime_database_roles.sql","sha256":null}]'
             elif "recommendation_publication_generation" in sql: result="a"*64+":"+"b"*32
             else:result="1"
             return types.SimpleNamespace(stdout=result,returncode=0)
@@ -121,9 +143,42 @@ class CutoverTests(unittest.TestCase):
             controller.recover()
             self.assertEqual(calls,[("vocadb_postgres",True),"api-ready"])
             self.assertEqual(controller.state["phase"],"completed")
+    def test_interrupted_cutover_restores_old_volume_and_unpauses_slots(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory);(path/"backend.env.before").write_bytes(b"original-env")
+            (path/"runtime-contract.before").write_bytes(b"original-contract")
+            backend=path/"player"/"backend";backend.mkdir(parents=True)
+            contract=path/"runtime-contract";contract.write_bytes(b"new-contract")
+            controller=CUTOVER.Controller(path)
+            controller.state={"phase":"new-database-created","oldContainerId":"old-id","runId":"run",
+                "candidateContainer":"candidate","outageStartedEpoch":100,"apiSlotIds":{"vocadb_api_a":"api-a","vocadb_api_b":"api-b"}}
+            calls=[]
+            def inspected(name,optional=False):
+                if name=="old-id":return {"Id":"old-id","Name":"/old-rollback","State":{"Running":False},"NetworkSettings":{"Networks":{}}}
+                if name=="vocadb_postgres":return {"Id":"new-id","Config":{"Labels":{"com.diva.postgres-cutover.run-id":"run"}}}
+                if name=="candidate":return {"Id":"candidate-id","State":{"Running":False}}
+                return {"Id":controller.state["apiSlotIds"][name],"State":{"Running":True,"Paused":True}}
+            controller.inspect=inspected
+            controller.run=lambda args,**kwargs:calls.append(args) or ""
+            controller.query=lambda *args:"owned-token"
+            controller.gate=lambda container,release:calls.append(["gate-release",container])
+            controller.ready=lambda *args:None
+            controller.api_ready=lambda **kwargs:calls.append(["api-ready"])
+            controller.mark=lambda phase,**fields:controller.state.update(phase=phase,**fields)
+            with patch.object(CUTOVER,"PLAYER",path/"player"),patch.object(CUTOVER,"CONTRACT",contract),patch.object(CUTOVER,"bytes_atomic",side_effect=lambda p,b:Path(p).write_bytes(b)),patch.object(CUTOVER.time,"time",return_value=150):
+                controller.recover()
+            self.assertIn(["docker","stop","--time","10","new-id"],calls)
+            self.assertIn(["docker","start","old-id"],calls)
+            self.assertIn(["docker","unpause","api-a"],calls)
+            self.assertIn(["docker","unpause","api-b"],calls)
+            self.assertIn(["gate-release","vocadb_postgres"],calls)
+            self.assertEqual((backend/".env").read_bytes(),b"original-env")
+            self.assertEqual(contract.read_bytes(),b"original-contract")
+            self.assertEqual(controller.state["phase"],"rolled-back")
+            self.assertTrue(controller.state["outageCapMet"])
     def test_shell_is_postgres_only_and_watchdog_is_durable(self):
         text=(ROOT/"sbc-postgres-cutover.py").read_text()
-        self.assertIn('"--on-active="+str(ROLLBACK_AT)',text)
+        self.assertIn('"--on-active="+str(self.state.get("rollbackAfterSeconds",ROLLBACK_AT))',text)
         self.assertIn('"--property=Restart=on-failure"',text)
         self.assertNotIn('["docker","restart","vocadb_qdrant"]',text)
         self.assertNotIn('["docker","volume","rm"',text)

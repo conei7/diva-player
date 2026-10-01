@@ -40,7 +40,8 @@ def capture(directory, container, admin, database, run_id, timeout=300):
             migrations=json.loads(query("SELECT coalesce(json_agg(json_build_object('id',migration_id,'sha256',content_sha256) ORDER BY migration_id),'[]'::json)::text FROM public.schema_migrations"))
             generation=query("SELECT value FROM public.sync_state WHERE key='recommendation_publication_generation'")
             logical=int(query("SELECT pg_database_size(current_database())"))
-            baseline={"schemaVersion":1,"snapshot":snapshot,"tableCounts":counts,"migrations":migrations}
+            extensions=json.loads(query("SELECT json_object_agg(extname,extversion ORDER BY extname)::text FROM pg_extension"))
+            baseline={"schemaVersion":1,"snapshot":snapshot,"tableCounts":counts,"migrations":migrations,"extensions":extensions,"expectedRestoredExtensions":verify._expected_restored_extensions(extensions)}
             dump=directory/"postgres.dump"
             with open(dump,"xb") as output:
                 os.chmod(dump,0o600)
