@@ -59,6 +59,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 2
+      - name: Capacity retention and API-only deployment contracts
+        run: |
+          python3 -B scripts/test-sbc-capacity-retention.py
+          python3 -B scripts/test-api-only-deployment.py
       - name: Build and start exact PostgreSQL CI artifacts
         shell: bash
         run: |

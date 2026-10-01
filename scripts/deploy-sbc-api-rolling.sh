@@ -3,10 +3,12 @@ set -eu
 umask 077
 
 BRIDGE_BOOTSTRAP_MODE=false
+API_DEPLOY_ONLY=false
 case "$#:${1:-}" in
     0:) ;;
     1:--bootstrap-legacy-qdrant-bridge) BRIDGE_BOOTSTRAP_MODE=true ;;
-    *) printf '%s\n' 'usage: deploy-sbc-api-rolling.sh [--bootstrap-legacy-qdrant-bridge]' >&2; exit 64 ;;
+    1:--api-only) API_DEPLOY_ONLY=true ;;
+    *) printf '%s\n' 'usage: deploy-sbc-api-rolling.sh [--bootstrap-legacy-qdrant-bridge|--api-only]' >&2; exit 64 ;;
 esac
 
 ROOT_DIR=$(CDPATH= cd -- "$(/usr/bin/dirname -- "$0")/.." && pwd)
@@ -1716,6 +1718,11 @@ cleanup() {
                 "Deployment lock cleanup failed and was not ignored: $DEPLOY_LOCK_DIR" >&2
             exit 1
         fi
+    fi
+    if [ "$TEST_MODE" != "1" ] && [ "$original_exit_code" -eq 0 ] && [ "$SOURCE_SNAPSHOT_CAPTURED" = "true" ]; then
+        "$EXACT_PYTHON_COMMAND" -I -B "$SOURCE_SNAPSHOT_ROOT/scripts/prune-sbc-scan-cache.py" --apply \
+            > "$DEPLOYMENT_DIR/scan-cache-retention-end.json" \
+            || log "WARNING: scan cache retention deferred; inspect protected references."
     fi
     exit "$original_exit_code"
 }
@@ -4697,6 +4704,24 @@ finalize_exact_previous_container() {
     record_state "$label.previous_cleanup" "completed"
 }
 
+preserved_runtime_fingerprint() {
+    container_inspect_value "$1" '{{json .}}' | "$EXACT_PYTHON_COMMAND" -I -c '
+import hashlib, json, sys
+value = json.load(sys.stdin)
+payload = {key: value[key] for key in ("Config", "HostConfig", "Mounts")}
+print(hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest())
+'
+}
+
+verify_preserved_stateless() {
+    [ "$(container_id "$GATEWAY_CONTAINER")" = "$OLD_GATEWAY_CONTAINER_ID" ] \
+        && [ "$(container_id "$WEB_CONTAINER")" = "$OLD_WEB_CONTAINER_ID" ] \
+        && [ "$(preserved_runtime_fingerprint "$OLD_GATEWAY_CONTAINER_ID")" = "$PRESERVED_GATEWAY_SHA256" ] \
+        && [ "$(preserved_runtime_fingerprint "$OLD_WEB_CONTAINER_ID")" = "$PRESERVED_WEB_SHA256" ] \
+        && wait_healthy "$OLD_GATEWAY_CONTAINER_ID" \
+        && wait_healthy "$OLD_WEB_CONTAINER_ID"
+}
+
 verify_exact_rolling_topology() {
     local current_id image_id config_hash slot expected_new_id previous_container expected_old_id
     local expected_config_hash expected_runtime_sha environment_file
@@ -4736,6 +4761,10 @@ verify_exact_rolling_topology() {
             "$expected_runtime_sha" "$environment_file" unless-stopped || return 1
     done
 
+    if [ "$API_DEPLOY_ONLY" = "true" ]; then
+        verify_preserved_stateless
+        return $?
+    fi
     current_id=$(container_id "$GATEWAY_CONTAINER") || return 1
     if [ "$GATEWAY_WAS_RUNNING" != "true" ]; then
         [ -n "$NEW_GATEWAY_CONTAINER_ID" ] \
@@ -4777,6 +4806,9 @@ commit_published_restart_policies() {
     for id in "$NEW_API_A_CONTAINER_ID" "$NEW_API_B_CONTAINER_ID" \
         "$NEW_GATEWAY_CONTAINER_ID" "$NEW_WEB_CONTAINER_ID"; do
         [ -n "$id" ] || continue
+        if [ "$API_DEPLOY_ONLY" = "true" ] && { [ "$id" = "$OLD_GATEWAY_CONTAINER_ID" ] || [ "$id" = "$OLD_WEB_CONTAINER_ID" ]; }; then
+            continue
+        fi
         run_bounded_docker_mutation update --restart unless-stopped "$id" \
             >/dev/null || return 1
         policy=$(container_inspect_value "$id" '{{.HostConfig.RestartPolicy.Name}}') \
@@ -4787,6 +4819,10 @@ commit_published_restart_policies() {
 }
 
 verify_published_web() {
+    if [ "$API_DEPLOY_ONLY" = "true" ]; then
+        verify_preserved_stateless
+        return $?
+    fi
     local expected_restart="${1:-no}"
     local current_id current_image current_config
     current_id=$(container_id "$WEB_CONTAINER") || return 1
@@ -7182,6 +7218,11 @@ if ! capture_private_backend_environment; then
     exit 1
 fi
 run_test_hook "private-runtime-captured"
+if [ "$TEST_MODE" != "1" ]; then
+    "$EXACT_PYTHON_COMMAND" -I -B "$SOURCE_SNAPSHOT_ROOT/scripts/prune-sbc-scan-cache.py" --apply --parent-lock \
+        > "$DEPLOYMENT_DIR/scan-cache-retention-start.json" \
+        || log "WARNING: scan cache retention deferred; inspect protected references."
+fi
 if [ "$BRIDGE_BOOTSTRAP_MODE" != "true" ]; then
     if ! validate_stateful_runtime_contract; then
         exit 1
@@ -7276,6 +7317,21 @@ record_state "gateway.old_container_id" "${OLD_GATEWAY_CONTAINER_ID:-none}"
 record_state "web.was_running" "$WEB_WAS_RUNNING"
 record_state "web.old_image" "${OLD_WEB_IMAGE:-none}"
 record_state "web.old_container_id" "${OLD_WEB_CONTAINER_ID:-none}"
+if [ "$API_DEPLOY_ONLY" = "true" ]; then
+    [ "$GATEWAY_WAS_RUNNING" = "true" ] && [ "$WEB_WAS_RUNNING" = "true" ] \
+        && [ -n "$OLD_API_A_CONTAINER_ID" ] && [ -n "$OLD_API_B_CONTAINER_ID" ] \
+        || { fail "API-only deployment requires the existing healthy A/B, gateway and Web topology"; exit 1; }
+    PRESERVED_GATEWAY_SHA256=$(preserved_runtime_fingerprint "$OLD_GATEWAY_CONTAINER_ID") || exit 1
+    PRESERVED_WEB_SHA256=$(preserved_runtime_fingerprint "$OLD_WEB_CONTAINER_ID") || exit 1
+    NEW_GATEWAY_CONTAINER_ID="$OLD_GATEWAY_CONTAINER_ID"
+    NEW_WEB_CONTAINER_ID="$OLD_WEB_CONTAINER_ID"
+    PUBLISHED_GATEWAY_ID="$OLD_GATEWAY_CONTAINER_ID"
+    record_state "deployment.mode" "api-only"
+    record_state "gateway.preserved_runtime_sha256" "$PRESERVED_GATEWAY_SHA256"
+    record_state "web.preserved_runtime_sha256" "$PRESERVED_WEB_SHA256"
+    record_state "web.update" "preserved-api-only"
+    record_state "gateway.update" "preserved-api-only"
+fi
 record_state "api_a.route_state" "$API_A_STATE"
 record_state "api_b.route_state" "$API_B_STATE"
 
@@ -7309,10 +7365,19 @@ if ! capture_canonical_image_state; then
     fail "Canonical image-tag prestate could not be captured before build"
     exit 1
 fi
-bounded_compose "$BUILD_TIMEOUT_SECONDS" build api_a api_gateway web
+if [ "$API_DEPLOY_ONLY" = "true" ]; then
+    bounded_compose "$BUILD_TIMEOUT_SECONDS" build api_a
+else
+    bounded_compose "$BUILD_TIMEOUT_SECONDS" build api_a api_gateway web
+fi
 NEW_API_IMAGE=$(image_ref_id "$API_IMAGE")
 NEW_GATEWAY_IMAGE=$(image_ref_id "$GATEWAY_IMAGE")
 NEW_WEB_IMAGE=$(image_ref_id "$WEB_IMAGE")
+if [ "$API_DEPLOY_ONLY" = "true" ]; then
+    [ "$NEW_GATEWAY_IMAGE" = "$OLD_GATEWAY_IMAGE" ] && [ "$NEW_WEB_IMAGE" = "$OLD_WEB_IMAGE" ] \
+        || { fail "API-only deployment refuses drifted gateway/Web image tags"; exit 1; }
+    verify_preserved_stateless || { fail "Preserved gateway/Web runtime drifted during API build"; exit 1; }
+fi
 verify_image_linux_arm64 "$NEW_API_IMAGE" \
     && verify_image_linux_arm64 "$NEW_GATEWAY_IMAGE" \
     && verify_image_linux_arm64 "$NEW_WEB_IMAGE" \
@@ -7472,9 +7537,13 @@ if [ "$GATEWAY_WAS_RUNNING" = "true" ]; then
     fi
 
     record_state "deployment.status" "updating-gateway"
-    if ! apply_gateway_image "$OLD_GATEWAY_IMAGE" "$NEW_GATEWAY_IMAGE" \
-        "$API_A_STATE" "$API_B_STATE"; then
-        exit 1
+    if [ "$API_DEPLOY_ONLY" = "true" ]; then
+        verify_preserved_stateless || { fail "Preserved gateway/Web runtime changed during API replacement"; exit 1; }
+    else
+        if ! apply_gateway_image "$OLD_GATEWAY_IMAGE" "$NEW_GATEWAY_IMAGE" \
+            "$API_A_STATE" "$API_B_STATE"; then
+            exit 1
+        fi
     fi
 else
     # Bootstrap/migration from the legacy single API. Nothing is routed to the
@@ -7556,11 +7625,13 @@ else
 
 fi
 
-if ! validate_candidate_web; then
-    exit 1
-fi
-if ! replace_web; then
-    exit 1
+if [ "$API_DEPLOY_ONLY" != "true" ]; then
+    if ! validate_candidate_web; then
+        exit 1
+    fi
+    if ! replace_web; then
+        exit 1
+    fi
 fi
 
 record_state "deployment.status" "verifying"

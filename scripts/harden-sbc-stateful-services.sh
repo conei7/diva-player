@@ -6190,6 +6190,11 @@ ACTIVE_JOURNAL_CREATED=true
 sync -f "$STATE_ROOT" 2>/dev/null || sync
 record_state run.id "$RUN_ID"
 record_state deployment.status preflight
+if [ "$TEST_MODE" != "1" ]; then
+    "$PYTHON_COMMAND" -I -B "$ROOT_DIR/scripts/prune-sbc-scan-cache.py" --apply --parent-lock \
+        > "$RUN_DIR/scan-cache-retention-start.json" \
+        || printf '%s\n' 'WARNING: scan cache retention deferred; inspect protected references.' >&2
+fi
 
 cp "$POSTGRES_BACKUP_STATUS_FILE" "$RUN_DIR/evidence/postgres-status.json"
 cp "$POSTGRES_BACKUP_MANIFEST_FILE" "$RUN_DIR/evidence/postgres-manifest.json"
@@ -7412,4 +7417,9 @@ release_active_journal_exact \
         exit 1
     }
 SUCCEEDED=true
+if [ "$TEST_MODE" != "1" ]; then
+    "$PYTHON_COMMAND" -I -B "$ROOT_DIR/scripts/prune-sbc-scan-cache.py" --apply \
+        > "$RUN_DIR/scan-cache-retention-end.json" \
+        || printf '%s\n' 'WARNING: scan cache retention deferred; inspect protected references.' >&2
+fi
 printf '%s\n' "Stateful service hardening completed: $STATE_FILE"

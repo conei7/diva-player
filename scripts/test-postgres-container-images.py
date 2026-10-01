@@ -66,8 +66,8 @@ class PostgresContainerContractTests(unittest.TestCase):
         for package in (
             "build-base=0.5-r3",
             "postgresql16-dev=16.15-r0",
-            "libcrypto3=3.5.8-r0",
-            "libssl3=3.5.8-r0",
+            "libcrypto3=3.5.9-r0",
+            "libssl3=3.5.9-r0",
             "libuuid=2.41.6-r1",
             "su-exec=0.3-r0",
         ):
@@ -168,8 +168,8 @@ class PostgresContainerContractTests(unittest.TestCase):
         self.assertNotIn("/migrations", self.migrate)
         self.assertNotRegex(self.migrate, r"(?m)^\s*(?:RUN\s+)?apk\s+(?:update|upgrade)\b")
         for package in (
-            "libcrypto3=3.5.8-r0",
-            "libssl3=3.5.8-r0",
+            "libcrypto3=3.5.9-r0",
+            "libssl3=3.5.9-r0",
             "musl=1.2.5-r23",
             "musl-utils=1.2.5-r23",
             "postgresql16-client=16.15-r0",

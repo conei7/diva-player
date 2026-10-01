@@ -372,6 +372,7 @@ def evaluate_runtime_snapshot(
             }
         )
 
+    violations.extend(snapshot.get("capacityViolations") or [])
     prior_counts = previous.get("consecutiveViolations")
     if not isinstance(prior_counts, dict):
         prior_counts = {}
@@ -1252,6 +1253,74 @@ def collect_runtime_inputs(
         return snapshot_future.result(), public_probes_future.result()
 
 
+def operation_capacity(collected: dict, previous: dict, state_dir: Path, now: datetime) -> tuple[dict, list]:
+    """Reuse exact backup preflight; keep a bounded daily growth baseline."""
+    from datetime import timedelta
+    from statistics import median
+    margin = 8 * 1024**3
+    info = previous.get("capacity") or {}
+    try:
+        checked = datetime.fromisoformat(info["checkedAt"])
+    except (KeyError, ValueError, TypeError):
+        checked = datetime.min.replace(tzinfo=timezone.utc)
+    if (now - checked).total_seconds() >= 300:
+        try:
+            root = Path(os.environ.get("DIVA_PIPELINE_ROOT") or Path.home() / "diva-data-pipeline")
+            output = _run_command([str(root / "ml_pipeline/.venv/bin/python"), "-B",
+                                   str(root / "report_sbc_capacity.py")], timeout_seconds=35)
+            info = json.loads(output)
+            if info.get("status") != "success":
+                raise ValueError("Invalid capacity report")
+        except Exception as error:
+            info = {"status": "unknown", "checkedAt": now.isoformat(), "errorType": type(error).__name__}
+    info = dict(info)
+    disk = collected.get("disk") or {}
+    free = disk.get("availableBytes")
+    required = info.get("requiredFreeBytes")
+    violations = []
+    if isinstance(free, int) and isinstance(required, int):
+        info.update({"freeBytes": free, "operationalMarginBytes": margin,
+                     "headroomBytes": free - required, "reserveRequiredBytes": required + margin})
+        if free < required + margin:
+            violations.append({"id": "capacity:operation-headroom", "message": "作業必要容量＋8GiBの余裕が不足"})
+        path = state_dir / "capacity_daily_samples.json"
+        document = load_json(path)
+        samples = document.get("samples") or []
+        transient = info.get("managedTransientBytes", 0)
+        total = disk.get("totalBytes", 0)
+        durable = total - free - transient
+        cutoff = (now - timedelta(days=30)).date().isoformat()
+        samples = [x for x in samples if x["date"] >= cutoff]
+        if samples and (samples[-1].get("totalBytes") != total or durable < samples[-1]["durableUsedBytes"] - 2 * 1024**3):
+            samples = []  # A storage resize or large physical cleanup starts a new baseline.
+        day = now.astimezone(timezone(timedelta(hours=9))).date().isoformat()
+        samples = [x for x in samples if x["date"] != day]
+        samples.append({"date": day, "totalBytes": total, "durableUsedBytes": durable})
+        write_json_atomic(path, {"schemaVersion": 1, "samples": samples[-30:]})
+        info["growthSampleCount"] = len(samples)
+        info["forecastStatus"] = "insufficient-samples"
+        info["estimatedExhaustionAt"] = None
+        if len(samples) >= 7:
+            slopes = [(b["durableUsedBytes"] - a["durableUsedBytes"]) /
+                      (datetime.fromisoformat(b["date"]) - datetime.fromisoformat(a["date"])).days
+                      for i, a in enumerate(samples) for b in samples[i + 1:]]
+            growth = median(slopes)
+            info["estimatedDailyGrowthBytes"] = growth
+            info["forecastStatus"] = "growing" if growth > 0 else "no-positive-growth"
+            if growth > 0:
+                days = max(0, (free - required - margin) / growth)
+                info["daysUntilReserveExhaustion"] = days
+                info["estimatedExhaustionAt"] = (now + timedelta(days=min(days, 365000))).isoformat()
+                if days < 30:
+                    violations.append({"id": "capacity:forecast", "message": "作業容量の余裕が30日以内に不足する予測"})
+    else:
+        info["forecastStatus"] = "unknown"
+    cleanup = ((info.get("qdrant") or {}).get("cleanup") or {})
+    if cleanup.get("status") == "blocked":
+        violations.append({"id": "maintenance:qdrant-cleanup", "message": "旧collection整理が安全条件不一致で保留（内部statusを確認）"})
+    return info, violations
+
+
 def main() -> int:
     configured_state_dir = os.environ.get("DIVA_RUNTIME_STATE_DIR")
     state_dir = (
@@ -1264,6 +1333,9 @@ def main() -> int:
     previous = load_json(latest_path)
     now = datetime.now(timezone.utc)
     collected, probes = collect_runtime_inputs(now)
+    capacity, capacity_violations = operation_capacity(collected, previous, state_dir, now)
+    collected["capacity"] = capacity
+    collected["capacityViolations"] = capacity_violations
     audio_cache_probe = _probe_audio_cache_retention()
     if audio_cache_probe is not None:
         probes["cache:audio-retention"] = {
@@ -1279,7 +1351,7 @@ def main() -> int:
         }
     public_state, public_violations, _ = advance_public_monitor(probes, previous, now=now)
     collected["publicMonitor"] = public_state
-    collected["externalHealthViolations"] = public_violations
+    collected["externalHealthViolations"] = public_violations + capacity_violations
     snapshot = evaluate_runtime_snapshot(
         collected,
         previous,
