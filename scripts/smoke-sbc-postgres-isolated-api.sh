@@ -25,6 +25,13 @@ state_file="$(realpath -e -- "$state_file")"
 state_directory="$(dirname -- "$state_file")"
 [[ "$(stat -c '%u:%a' -- "$state_file")" == '0:600' ]] || fail 'state file must be root-owned mode 0600'
 [[ "$(stat -c '%u:%a' -- "$state_directory")" == '0:700' ]] || fail 'restore state directory must be root-owned mode 0700'
+script_directory="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+exec 8>"$state_directory/api-verification.lock"
+flock -n 8 || fail 'this restore run is already being verified'
+if [[ "$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["phase"])' "$state_file")" == verification-complete ]]; then
+    exec python3 "$script_directory/postgres-restore-state.py" resume --state-file "$state_file"
+fi
+python3 "$script_directory/postgres-restore-state.py" resume --state-file "$state_file"
 API_PASSWORD_FILE="$state_directory/api-password"
 [[ -f "$API_PASSWORD_FILE" && ! -L "$API_PASSWORD_FILE" ]] || fail 'API password file must be a regular file'
 [[ "$(stat -c '%u:%a' -- "$API_PASSWORD_FILE")" == '0:600' ]] || fail 'API password file must be root-owned mode 0600'
@@ -71,6 +78,10 @@ restore_started_at="${fields[7]}"
 logical_restore_finished_at="${fields[8]}"
 resource_usage_json="$state_directory/${fields[9]}"
 candidate_api_container="${candidate_container}_api"
+for attempt in $(seq 1 30); do
+    docker exec "$candidate_container" pg_isready -h 127.0.0.1 -p "$database_port" >/dev/null 2>&1 && break
+    sleep 1
+done
 [[ -f "$preflight_json" && ! -L "$preflight_json" ]] || fail 'bound preflight JSON is missing'
 [[ "$(stat -c '%u:%a' -- "$preflight_json")" == '0:600' ]] || fail 'preflight report must be root-owned mode 0600'
 [[ -f "$resource_usage_json" && ! -L "$resource_usage_json" ]] || fail 'resource usage summary is missing'
@@ -83,6 +94,12 @@ python3 "$script_directory/postgres-restore-verify.py" \
     --volume "$candidate_volume" --database-port "$database_port" \
     --assert-candidate-only >/dev/null
 
+for result_file in "$verification_json" "$evidence_json"; do
+    if [[ -e "$result_file" ]]; then
+        [[ -f "$result_file" && ! -L "$result_file" ]] || fail 'existing result is not a regular file'
+        mv -- "$result_file" "$result_file.previous.$(date -u +%Y%m%dT%H%M%S).$$"
+    fi
+done
 api_port="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')"
 [[ "$api_port" =~ ^[0-9]+$ && "$api_port" != "$database_port" ]] || fail 'could not choose a loopback API port'
 api_image_id="$(docker inspect --format '{{.Image}}' vocadb_api_a)"
@@ -98,9 +115,15 @@ cleanup_transient() {
     trap - EXIT
     if [ "$candidate_api_started" = true ]; then docker rm -f "$candidate_api_container" >/dev/null 2>&1 || true; fi
     if [ "$api_env_exists" = true ]; then rm -f -- "$api_env_file"; fi
+    if (( result != 0 )); then
+        docker stop --time 15 "$candidate_container" >/dev/null 2>&1 || true
+        python3 "$script_directory/postgres-restore-state.py" update --state-file "$state_file" --phase api-verification-failed || true
+    fi
     exit "$result"
 }
 trap cleanup_transient EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 docker run --detach --pull=never \
     --name "$candidate_api_container" \
@@ -165,7 +188,7 @@ path, evidence=sys.argv[1:]
 with open(path,encoding="utf-8") as stream: state=json.load(stream)
 state.update({"phase":"verification-complete","apiContainerStoppedAndRemoved":True,
               "databaseContainerStoppedAndRemoved":True,"candidateVolumeRetained":True,
-              "adminPasswordRemoved":True,"evidenceFile":os.path.basename(evidence)})
+              "adminPasswordRemoved":True,"apiVerificationComplete":True,"suspendedAtUserRequest":False,"evidenceFile":os.path.basename(evidence)})
 temporary=path+".tmp"
 with open(temporary,"x",encoding="utf-8") as stream:
     json.dump(state,stream,sort_keys=True,indent=2); stream.write("\n"); stream.flush(); os.fsync(stream.fileno())

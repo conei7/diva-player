@@ -207,6 +207,13 @@ def build_evidence(preflight: dict[str, Any], verification: dict[str, Any]) -> d
     if peak_filesystem > max(filesystem_total_before, filesystem_total_after):
         raise EvidenceError("recorded peak filesystem usage exceeds the measured filesystem size")
 
+    comparison = verification.get("backupComparison", {"status": "not-recorded-in-source-backup"})
+    if backup.get("validationBaseline") is not None:
+        baseline = backup["validationBaseline"]
+        if (comparison.get("status") != "matched" or verification.get("tableCounts") != baseline.get("tableCounts")
+            or verification.get("migrations", {}).get("rows") != baseline.get("migrations")):
+            raise EvidenceError("backup snapshot comparison is missing or inconsistent")
+    elif comparison.get("status") != "not-recorded-in-source-backup": raise EvidenceError("cannot attest comparison absent from backup")
     checks = _required_check_results(verification.get("checks"))
     table_counts = verification.get("tableCounts")
     if not isinstance(table_counts, dict) or not all(
@@ -381,6 +388,7 @@ def build_evidence(preflight: dict[str, Any], verification: dict[str, Any]) -> d
             },
         },
         "checks": checks,
+        "backupComparison": comparison,
         "measurements": measurements,
     }
 

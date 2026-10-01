@@ -48,7 +48,7 @@ TABLES_TO_COUNT = (
     "song_lyrics",
     "song_audio_analysis",
     "song_audio_instruments",
-    "state_cluster",
+    "song_features",
     "markov_transitions",
     "schema_migrations",
 )
@@ -142,6 +142,7 @@ def _inspect_candidate(
     volume: str,
     preflight: dict[str, Any],
     expected_port: int,
+    *, allow_stopped: bool = False,
 ) -> dict[str, Any]:
     if not CONTAINER_NAME.fullmatch(container):
         raise VerificationError("candidate PostgreSQL container name is invalid")
@@ -182,7 +183,7 @@ def _inspect_candidate(
     record = inspected[0]
     state = record.get("State")
     config = record.get("Config")
-    if not isinstance(state, dict) or state.get("Running") is not True:
+    if not isinstance(state, dict) or (state.get("Running") is not True and not allow_stopped):
         raise VerificationError("candidate PostgreSQL container is not running")
     if not isinstance(config, dict) or config.get("Image") != postgres.get("image"):
         raise VerificationError("candidate PostgreSQL container uses a different image tag")
@@ -235,6 +236,35 @@ def _inspect_candidate(
         raise VerificationError("candidate PostgreSQL volume labels do not match the backup")
     return record
 
+
+def _publication_alignment(expected: str) -> dict[str, str]:
+    inspected = json.loads(run_command(["docker", "inspect", "vocadb_postgres"]))[0]
+    env = dict(item.split("=", 1) for item in inspected["Config"]["Env"])
+    current = _query("vocadb_postgres", env["POSTGRES_USER"], env["POSTGRES_DB"],
+        "SELECT value FROM public.sync_state WHERE key='recommendation_publication_generation'")
+    busy = _query("vocadb_postgres", env["POSTGRES_USER"], env["POSTGRES_DB"],
+        "SELECT count(*) FROM public.sync_state WHERE key='recommendation_publication_in_progress'")
+    if current != expected or busy != "0": raise VerificationError("production publication generation changed or publication is in progress")
+    parts = expected.split(":")
+    if len(parts) != 2 or not all(re.fullmatch(r"[0-9a-f]+", part) for part in parts): raise VerificationError("publication has no verifiable Qdrant build identity")
+    suffix = parts[0][:12] + "_" + parts[1][:8]
+    with urllib.request.build_opener(urllib.request.ProxyHandler({})).open("http://127.0.0.1:6333/aliases", timeout=10) as response:
+        aliases = json.load(response)["result"]["aliases"]
+    targets = {item["alias_name"]: item["collection_name"] for item in aliases}
+    required = {"song_metadata_active": "song_metadata_basis_", "songs_v2_active": "songs_v2_basis_", "song_hybrid_active": "song_hybrid_basis_"}
+    if any(targets.get(alias) != prefix + suffix for alias, prefix in required.items()): raise VerificationError("Qdrant aliases do not match backup publication generation")
+    return {alias: targets[alias] for alias in required}
+
+def _backup_comparison(backup: dict, counts: dict, migrations: dict) -> dict:
+    baseline = backup.get("validationBaseline")
+    if baseline is None: return {"status": "not-recorded-in-source-backup", "tableCountsMatched": False, "migrationsMatched": False}
+    if not isinstance(baseline, dict) or baseline.get("schemaVersion") != 1 or not baseline.get("snapshot"): raise VerificationError("backup validation baseline is invalid")
+    expected = baseline.get("tableCounts")
+    if not isinstance(expected, dict) or set(expected) != set(TABLES_TO_COUNT) or any(type(v) is not int or v < 0 for v in expected.values()): raise VerificationError("backup validation table counts are incomplete")
+    if counts != expected: raise VerificationError("restored table counts do not match source backup snapshot")
+    expected_migrations = baseline.get("migrations")
+    if not isinstance(expected_migrations, list) or not expected_migrations or migrations.get("rows") != expected_migrations: raise VerificationError("restored migrations do not match source backup snapshot")
+    return {"status": "matched", "snapshot": baseline["snapshot"], "tableCountsMatched": True, "migrationsMatched": True}
 
 def _table_counts(container: str, admin_user: str) -> dict[str, int]:
     counts: dict[str, int] = {}
@@ -606,6 +636,7 @@ def collect_verification(
     counts = _table_counts(container, admin_user)
     sequences = _sequence_state(container, admin_user)
     migrations = _migrations(container, admin_user)
+    comparison = _backup_comparison(preflight["backup"], counts, migrations)
     extensions = _extensions(container, admin_user)
     indexes = _indexes(container, admin_user)
     app_collation = _collation(container, admin_user, DATABASE_NAME)
@@ -745,8 +776,9 @@ JOIN pg_roles parent ON parent.rolname = members.rolname
         "finishedAt": finished,
         "checks": checks,
         "tableCounts": counts,
+        "backupComparison": comparison,
         "sequences": sequences,
-        "migrations": {"count": migrations["count"], "latest": migrations["latest"]},
+        "migrations": migrations,
         "extensions": extensions,
         "indexes": indexes,
         "databaseCollations": {
@@ -828,6 +860,7 @@ def main() -> int:
             parser.error("--logical-restore-finished-at is required for full verification")
         if args.resource_usage_json is None:
             parser.error("--resource-usage-json is required for full verification")
+        aliases_before = _publication_alignment(preflight["backup"]["publicationGeneration"])
         verification = collect_verification(
             preflight,
             container=args.container,
@@ -840,10 +873,16 @@ def main() -> int:
             logical_restore_finished_at=args.logical_restore_finished_at,
             resource_usage=_load_object(args.resource_usage_json, "resource usage summary"),
         )
+        if _publication_alignment(preflight["backup"]["publicationGeneration"]) != aliases_before:
+            raise VerificationError("Qdrant publication changed during API validation")
         if args.output.is_symlink() or args.output.exists():
             raise VerificationError("verification output must be a new file")
         args.output.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        args.output.write_text(json.dumps(verification, ensure_ascii=False, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+        from importlib.util import spec_from_file_location, module_from_spec
+        spec = spec_from_file_location("restore_state", Path(__file__).with_name("postgres-restore-state.py"))
+        state_module = module_from_spec(spec)
+        spec.loader.exec_module(state_module)
+        state_module.atomic_json(args.output, verification)
     except (VerificationError, OSError, ValueError, KeyError, TypeError) as error:
         print(json.dumps({"status": "failed", "error": str(error)}, ensure_ascii=False), file=sys.stderr)
         return 1

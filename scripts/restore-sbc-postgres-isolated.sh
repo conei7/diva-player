@@ -18,13 +18,19 @@ usage() {
 
 backup_directory=''
 run_id=''
+resume_state=''
 while (($#)); do
     case "$1" in
         --backup-directory) (($# >= 2)) || usage; backup_directory="$2"; shift 2 ;;
+        --resume-state) (($# >= 2)) || usage; resume_state="$2"; shift 2 ;;
         --run-id) (($# >= 2)) || usage; run_id="$2"; shift 2 ;;
         *) usage ;;
     esac
 done
+if [[ -n "$resume_state" ]]; then
+    [[ -z "$backup_directory" && -z "$run_id" ]] || usage
+    exec bash "$(dirname -- "${BASH_SOURCE[0]}")/smoke-sbc-postgres-isolated-api.sh" --state-file "$resume_state"
+fi
 [[ -n "$backup_directory" && -n "$run_id" ]] || usage
 [[ "$(id -u)" -eq 0 ]] || fail 'must run as root on the SBC'
 [[ "$run_id" =~ ^postgres-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}$ ]] || fail 'backup run ID is invalid'
@@ -62,9 +68,22 @@ stop_resource_monitor() {
         resource_monitor_pid=''
     fi
 }
-trap stop_resource_monitor EXIT
+on_restore_exit() {
+    local result=$?
+    trap - EXIT
+    stop_resource_monitor
+    if (( result != 0 )) && [[ -f "$state_directory/state.json" ]]; then
+        python3 "$script_directory/postgres-restore-state.py" update --state-file "$state_directory/state.json" --phase failed-candidate-preserved || true
+        docker stop --time 15 "$candidate_container" >/dev/null 2>&1 || true
+    fi
+    exit "$result"
+}
+trap on_restore_exit EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 if docker container inspect "$candidate_container" >/dev/null 2>&1 \
     || docker volume inspect "$candidate_volume" >/dev/null 2>&1; then
+    candidate_container=''
     fail 'a candidate resource with this run ID already exists; no resource was changed'
 fi
 
@@ -112,30 +131,19 @@ toc_entries="$(docker run --rm --pull=never --network none \
 write_state() {
     python3 - "$state_directory/state.json" "$1" "$run_id" "$candidate_volume" \
         "$candidate_container" "$old_volume" "$manifest_sha" "$dump_sha" \
-        "$generation" "$image_id" "$started_at" <<'PY'
-import json, os, sys
-path, phase, run_id, volume, container, old_volume, manifest_sha, dump_sha, generation, image_id, started_at = sys.argv[1:]
-state = {
-    "schemaVersion": 1,
-    "phase": phase,
-    "runId": run_id,
-    "candidateVolume": volume,
-    "candidateContainer": container,
-    "oldVolume": old_volume,
-    "manifestSha256": manifest_sha,
-    "dumpSha256": dump_sha,
-    "publicationGeneration": generation,
-    "postgresImageId": image_id,
-    "startedAt": started_at,
-}
-temporary = path + ".tmp"
-with open(temporary, "x", encoding="utf-8") as stream:
-    json.dump(state, stream, sort_keys=True, indent=2)
-    stream.write("\n")
-    stream.flush()
-    os.fsync(stream.fileno())
-os.chmod(temporary, 0o600)
-os.replace(temporary, path)
+        "$generation" "$image_id" "$started_at" "$script_directory" "$repository_root" <<'PY'
+import json, sys, hashlib, importlib.util
+from pathlib import Path
+path, phase, run_id, volume, container, old_volume, manifest_sha, dump_sha, generation, image_id, started_at, scripts, repository = sys.argv[1:]
+spec=importlib.util.spec_from_file_location("restore_state",Path(scripts)/"postgres-restore-state.py")
+helper=importlib.util.module_from_spec(spec);spec.loader.exec_module(helper)
+marker=Path(repository)/"SOURCE_COMMIT"
+fields={"schemaVersion":1,"runId":run_id,"candidateVolume":volume,"candidateContainer":container,
+        "oldVolume":old_volume,"manifestSha256":manifest_sha,"dumpSha256":dump_sha,
+        "publicationGeneration":generation,"postgresImageId":image_id,"startedAt":started_at,
+        "sourceCommit":marker.read_text().strip() if marker.is_file() else None,
+        "controllerSha256":hashlib.sha256((Path(scripts)/"restore-sbc-postgres-isolated.sh").read_bytes()).hexdigest()}
+helper.checkpoint(path,phase,fields)
 PY
 }
 write_state 'preflight-complete'
@@ -203,6 +211,8 @@ done
 [ "$monitor_ready" = true ] || fail 'isolated PostgreSQL resource monitor did not capture a baseline sample'
 logical_restore_started_at="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 write_state 'logical-restore-running'
+python3 "$script_directory/postgres-restore-state.py" update --state-file "$state_directory/state.json" --phase logical-restore-running \
+    --fields-json "$(python3 -c 'import json,sys;print(json.dumps({"restoreStartedAt":sys.argv[1]}))' "$logical_restore_started_at")"
 if ! docker exec "$candidate_container" pg_restore --exit-on-error --no-owner --no-privileges \
     --jobs=2 --username "$admin_user" --dbname "$DATABASE_NAME" /restore/postgres.dump >"$state_directory/restore.log" 2>&1; then
     chmod 0600 -- "$state_directory/restore.log"
@@ -212,6 +222,9 @@ fi
 chmod 0600 -- "$state_directory/restore.log"
 logical_restore_finished_at="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 write_state 'logical-restore-complete'
+python3 "$script_directory/postgres-restore-state.py" update --state-file "$state_directory/state.json" --phase logical-restore-complete \
+    --fields-json "$(python3 -c 'import json,sys;print(json.dumps({"logicalRestoreFinishedAt":sys.argv[1]}))' "$logical_restore_finished_at")"
+write_state 'acl-and-migration-rebuilding'
 
 # The dump omits ACLs. Rebuild the base policy, run current migrations, then
 # restore later explicit grants without changing migration-history rows.

@@ -129,6 +129,7 @@ async function main() {
     ['scripts/test-postgres-restore-controller.py', 'Isolated PostgreSQL restore controller safety contract'],
     ['scripts/test-postgres-restore-verify.py', 'Isolated PostgreSQL restore and API verification'],
     ['scripts/test-postgres-restore-evidence.py', 'PostgreSQL restore verification evidence contract'],
+    ['scripts/test-postgres-restore-recovery.py', 'PostgreSQL checkpoints, snapshot equality and bounded cutover recovery'],
     ['scripts/test-postgres-restore-acls.py', 'PostgreSQL restore runtime ACL reconstruction contract'],
     ['scripts/test-sbc-runtime-contract.py', 'Python SBC runtime contract'],
     ['scripts/test-sbc-qdrant-storage-upgrade.py', 'Python SBC Qdrant upgrade controller'],

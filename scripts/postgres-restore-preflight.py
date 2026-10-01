@@ -135,6 +135,7 @@ def _read_backup(backup_directory: Path, expected_run_id: str | None) -> dict[st
         "logicalDatabaseSizeBytes": logical_size,
         "publicationGeneration": generation,
         "createdAt": manifest.get("createdAt"),
+        **({"validationBaseline": manifest["validationBaseline"]} if "validationBaseline" in manifest else {}),
         "manifestPath": str(manifest_path),
         "dumpPath": str(dump_path),
     }
