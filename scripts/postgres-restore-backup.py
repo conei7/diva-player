@@ -45,7 +45,7 @@ def capture(directory, container, admin, database, run_id, timeout=300):
             dump=directory/"postgres.dump"
             with open(dump,"xb") as output:
                 os.chmod(dump,0o600)
-                subprocess.run(["docker","exec",container,"pg_dump","-U",admin,"-d",database,"--format=custom","--no-owner","--no-privileges","--snapshot="+snapshot],stdout=output,stderr=log,check=True,timeout=timeout)
+                subprocess.run(["docker","exec",container,"pg_dump","-U",admin,"-d",database,"--format=custom","--compress=0","--no-owner","--no-privileges","--snapshot="+snapshot],stdout=output,stderr=log,check=True,timeout=timeout)
                 output.flush();os.fsync(output.fileno())
             session.stdin.write("COMMIT;\n");session.stdin.close()
             session.wait(timeout=10)
