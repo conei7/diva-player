@@ -123,7 +123,7 @@ class SnapshotTests(unittest.TestCase):
             for args in calls:
                 if "pg_dump" in args:
                     self.assertIn("--snapshot=00000001-00000001-1",args)
-                    self.assertIn("--compress=0",args)
+                    self.assertIn("--compress=6",args)
                 else:self.assertIn("SET TRANSACTION SNAPSHOT '00000001-00000001-1'",args[-1])
 
 class CutoverTests(unittest.TestCase):

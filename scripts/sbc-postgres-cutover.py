@@ -208,8 +208,9 @@ class Controller:
     def prepare(self,verified,reuse_rehearsal=False):
         previous=copy.deepcopy(self.state)
         if reuse_rehearsal:
-            require(previous.get("phase")=="preparation-failed" and previous.get("failedPhase")=="backup-rehearsal-complete",
-                "only a budget-rejected rehearsal can be reused")
+            rejected=(previous.get("phase")=="preparation-failed" and previous.get("failedPhase")=="backup-rehearsal-complete") or (
+                previous.get("phase")=="backup-rehearsal-complete" and previous.get("estimatedOutageSeconds",0)>=previous.get("rollbackAfterSeconds",ROLLBACK_AT))
+            require(rejected,"only a budget-rejected rehearsal can be reused")
             require((PLAYER/"backend/.env").read_bytes()==(self.path/"backend.env.before").read_bytes()
                 and CONTRACT.read_bytes()==(self.path/"runtime-contract.before").read_bytes(),"prepared configuration changed")
             require(self.inspect("vocadb_postgres")["Id"]==previous["oldContainerId"],"rehearsal source database changed")
