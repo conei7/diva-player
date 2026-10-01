@@ -13,7 +13,7 @@ RUN set -eux; \
     wget -O /tmp/pcre2.apk "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/$(apk --print-arch)/pcre2-10.49-r0.apk"; \
     echo "$package_sha  /tmp/pcre2.apk" | sha256sum -c -; \
     apk add --no-network /tmp/pcre2.apk; \
-    test "$(apk info -v pcre2)" = pcre2-10.49-r0; \
+    test "$(awk '$0=="P:pcre2"{p=1;next} p && /^V:/{print substr($0,3);exit}' /lib/apk/db/installed)" = 10.49-r0; \
     rm /tmp/pcre2.apk
 RUN apk add --no-cache socat=1.8.1.3-r0
 COPY --chown=haproxy:haproxy ${HAPROXY_CONFIG} /usr/local/etc/haproxy/haproxy.cfg
