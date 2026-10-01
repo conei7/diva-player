@@ -213,6 +213,13 @@ assert.match(apiDockerfile, /dotnet restore [^\n]* --locked-mode/u);
 assert.doesNotMatch(gatewayDockerfile, /apk upgrade/u);
 assert.match(gatewayDockerfile, /apk add --no-cache socat=1\.8\.1\.3-r0/u);
 assert.doesNotMatch(gatewayDockerfile, /\bcurl\b/u);
+for (const dockerfile of [gatewayDockerfile, webDockerfile]) {
+  assert.match(dockerfile, /pcre2-10\.49-r0\.apk/u);
+  assert.match(dockerfile, /sha256sum -c -/u);
+  assert.match(dockerfile, /apk add --no-network \/tmp\/pcre2\.apk/u);
+  assert.match(dockerfile, /x86_64\) package_sha=[a-f0-9]{64}/u);
+  assert.match(dockerfile, /aarch64\) package_sha=[a-f0-9]{64}/u);
+}
 assert.match(compose, /wget -q -T 5 -O \/dev\/null http:\/\/127\.0\.0\.1:5000\/api\/ready/u);
 assert.equal(
   (compose.match(/^\s*stop_grace_period:\s*30s\s*$/gmu) ?? []).length,

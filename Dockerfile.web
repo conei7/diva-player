@@ -10,6 +10,19 @@ RUN npm run build
 FROM nginxinc/nginx-unprivileged:alpine@sha256:901e944d1f4fc2bd077e8f5568b98c1f6f8cdacf6b97a87747c43134a339b9a7
 ARG NGINX_CONFIG=nginx.conf
 USER root
+# Bind the ARM and x86 packages independently; the pinned ARM base has old PCRE2.
+RUN set -eux; \
+    case "$(cat /etc/alpine-release)" in 3.24.*) ;; *) exit 1 ;; esac; \
+    case "$(apk --print-arch)" in \
+      x86_64) package_sha=2919897914820f42a17a8d7d37df310d2dfad1c82ebe5f539cc5c765f916752a ;; \
+      aarch64) package_sha=03efd0b29f7f38deb10a9ccb54f56e19683eb7ac27eb1f347e6dbd2e59ea000d ;; \
+      *) exit 1 ;; \
+    esac; \
+    wget -O /tmp/pcre2.apk "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/$(apk --print-arch)/pcre2-10.49-r0.apk"; \
+    echo "$package_sha  /tmp/pcre2.apk" | sha256sum -c -; \
+    apk add --no-network /tmp/pcre2.apk; \
+    test "$(apk info -v pcre2)" = pcre2-10.49-r0; \
+    rm /tmp/pcre2.apk
 # Use checksummed APKs directly: a stale mirror index must not downgrade OpenSSL.
 RUN set -eux; \
     case "$(cat /etc/alpine-release)" in 3.24.*) ;; *) exit 1 ;; esac; \
