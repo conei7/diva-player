@@ -60,6 +60,10 @@ class IsolatedRestoreControllerTests(unittest.TestCase):
         self.assertNotIn("--clean", self.restore)
         self.assertNotIn("--create", self.restore)
 
+    def test_api_smoke_analyzes_bound_candidate_before_warmup(self) -> None:
+        self.assertIn('vacuumdb --analyze-only --jobs=2', self.smoke)
+        self.assertLess(self.smoke.index("vacuumdb --analyze-only"),self.smoke.index("candidate_api_started=true"))
+
     def test_api_smoke_is_loopback_bound_and_removes_only_its_temporary_container(self) -> None:
         self.assertIn("http://127.0.0.1:$api_port/api/ready", self.smoke)
         self.assertIn('"http://127.0.0.1:$api_port"', self.smoke)

@@ -103,6 +103,12 @@ for result_file in "$verification_json" "$evidence_json"; do
         mv -- "$result_file" "$result_file.previous.$(date -u +%Y%m%dT%H%M%S).$$"
     fi
 done
+# Logical dumps omit planner statistics. Analyze only the bound candidate
+# before a cold API warmup, including resumed runs restored by older scripts.
+admin_user="$(python3 -c 'import json,re,sys; value=json.load(open(sys.argv[1]))["postgres"]["adminUser"]; assert re.fullmatch(r"[a-z_][a-z0-9_]{0,62}",value); print(value)' "$preflight_json")"
+python3 "$script_directory/postgres-restore-state.py" update --state-file "$state_file" --phase api-database-analyzing
+docker exec "$candidate_container" vacuumdb --analyze-only --jobs=2 -h 127.0.0.1 -p "$database_port" -U "$admin_user" -d vocadb_recommender >"$state_directory/analyze.log" 2>&1
+python3 "$script_directory/postgres-restore-state.py" update --state-file "$state_file" --phase api-database-analyzed --fields-json '{"plannerStatisticsAnalyzed":true}'
 api_port="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')"
 [[ "$api_port" =~ ^[0-9]+$ && "$api_port" != "$database_port" ]] || fail 'could not choose a loopback API port'
 api_image_id="$(docker inspect --format '{{.Image}}' vocadb_api_a)"
@@ -147,7 +153,7 @@ docker run --detach --pull=never \
 candidate_api_started=true
 
 ready=false
-for attempt in $(seq 1 120); do
+for attempt in $(seq 1 180); do
     [[ "$(docker inspect --format '{{.State.Running}}' "$candidate_api_container")" == 'true' ]] \
         || fail 'isolated API exited before becoming ready'
     if curl --silent --show-error --fail --noproxy '*' --max-time 5 \
