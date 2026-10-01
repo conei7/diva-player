@@ -151,6 +151,7 @@ class CutoverTests(unittest.TestCase):
         self.assertEqual(old,before)
         self.assertEqual(payload["HostConfig"]["Binds"],["new:/var/lib/postgresql/data:rw"])
         self.assertEqual(payload["Env"],old["Config"]["Env"])
+        self.assertEqual(payload["Image"],old["Config"]["Image"])
         self.assertEqual(payload["HostConfig"]["Memory"],123)
         self.assertEqual(payload["HostConfig"]["PortBindings"],old["HostConfig"]["PortBindings"])
     def test_forward_recovery_never_stops_old_database(self):

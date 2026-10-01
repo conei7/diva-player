@@ -103,7 +103,6 @@ class Engine(http.client.HTTPConnection):
 
 def create_payload(old,volume):
     config=copy.deepcopy(old["Config"]);host=copy.deepcopy(old["HostConfig"])
-    config["Image"]=old["Image"]
     for key in ("Hostname","Domainname"): config[key]=""
     host["Binds"]=[volume+":"+DATA+":rw" if x.split(":")[1]==DATA else x for x in host.get("Binds") or []]
     host["RestartPolicy"]={"Name":"unless-stopped","MaximumRetryCount":0}
@@ -323,7 +322,7 @@ class Controller:
         expected["HostConfig"]["Binds"]=observed["HostConfig"]["Binds"]
         require(observed["HostConfig"]["Binds"]==create_payload(old,self.state["newVolume"])["HostConfig"]["Binds"],"published PostgreSQL volume binding differs from prepared intent")
         require(expected==observed,"published PostgreSQL runtime configuration changed beyond the selected volume")
-        require(actual["Image"]==old["Image"],"published PostgreSQL image changed")
+        require(actual["Image"]==old["Image"] and actual["Config"]["Image"]==old["Config"]["Image"],"published PostgreSQL image or pinned reference changed")
     def publish_configuration(self):
         env_path=PLAYER/"backend/.env"
         require(env_path.read_bytes()==(self.path/"backend.env.before").read_bytes(),"deployment environment changed during cutover")
