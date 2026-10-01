@@ -206,7 +206,7 @@ assert.match(
 );
 assert.doesNotMatch(webDockerfile, /--repository|\/edge\//u);
 assert.doesNotMatch(webDockerfile, /--allow-untrusted|--force-broken-world/u);
-assert.match(apiDockerfile, /apk add --no-cache[\s\S]*libcrypto3=3\.5\.8-r0[\s\S]*libssl3=3\.5\.8-r0/u);
+assert.match(apiDockerfile, /apk add --no-cache[\s\S]*libcrypto3=3\.5\.9-r0[\s\S]*libssl3=3\.5\.9-r0/u);
 assert.match(apiDockerfile, /test "\$\(dotnet --version\)" = "8\.0\.424"/u);
 assert.match(apiDockerfile, /COPY \["VocadbRecommender\/VocadbRecommender\.csproj", "VocadbRecommender\/packages\.lock\.json"/u);
 assert.match(apiDockerfile, /dotnet restore [^\n]* --locked-mode/u);
