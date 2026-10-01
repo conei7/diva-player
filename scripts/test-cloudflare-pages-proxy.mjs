@@ -483,7 +483,9 @@ try {
     PATH: process.env.PATH ?? process.env.Path ?? '',
     DIVA_CLOUDFLARE_ENV: fixturePath(envFile),
     DIVA_CLOUDFLARED_LOG: fixturePath(tunnelLog),
-    DIVA_PYTHON_COMMAND: process.platform === 'win32'
+    DIVA_PYTHON_COMMAND: process.env.DIVA_PYTHON_COMMAND
+      ? shellAbsolutePath(process.env.DIVA_PYTHON_COMMAND)
+      : process.platform === 'win32'
       ? shellAbsolutePath([
         join(projectDirectory, '..', 'diva-data-pipeline', 'ml_pipeline', '.venv', 'Scripts', 'python.exe'),
         join(projectDirectory, '..', '..', '..', 'diva-data-pipeline', 'ml_pipeline', '.venv', 'Scripts', 'python.exe'),
