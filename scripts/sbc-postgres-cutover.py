@@ -212,7 +212,7 @@ class Controller:
         evidence.pop("recordedAt",None);recorded.pop("recordedAt",None)
         require(evidence==recorded,"isolated evidence binding changed")
         VERIFY._publication_alignment(preflight["backup"]["publicationGeneration"])
-        source_commit=self.run(["git","-C",str(PLAYER),"rev-parse","HEAD"]).strip()
+        source_commit=self.run(["runuser","-u","orangepi","--","git","-C",str(PLAYER),"rev-parse","HEAD"]).strip()
         require(re.fullmatch(r"[0-9a-f]{40}",source_commit),"deployment source commit is invalid")
         self.mark("source-bound",sourceCommit=source_commit,controllerSha256=digest(Path(__file__).read_bytes()))
         old=self.inspect("vocadb_postgres")
@@ -311,6 +311,9 @@ class Controller:
         bytes_atomic(env_path,("\n".join(lines)+"\nDIVA_POSTGRES_VOLUME="+self.state["newVolume"]+"\n").encode())
         after=self.compose();before=json.loads((self.path/"compose-projection.before.json").read_text())
         require(after["services"]["qdrant"]==before["services"]["qdrant"],"Qdrant Compose definition changed")
+        mounts=[m for m in after["services"]["postgres"].get("volumes",[]) if m.get("target")==DATA and m.get("type")=="volume"]
+        require(len(mounts)==1 and after["volumes"].get(mounts[0]["source"],{}).get("name")==self.state["newVolume"],
+            "Compose PostgreSQL volume does not match the promoted database")
         STATE.atomic_json(self.path/"compose-projection.after.json",after)
         require(CONTRACT.read_bytes()==(self.path/"runtime-contract.before").read_bytes(),"runtime contract changed during cutover")
         receipt={"schemaVersion":1,"runId":self.state["runId"],"previousContractSha256":digest(CONTRACT.read_bytes()),"oldVolume":self.state["oldVolume"],
@@ -460,7 +463,12 @@ def main():
     with controller.locks():
         if args.action=="prepare":
             require(args.verified_state is not None,"--verified-state is required")
-            controller.prepare(args.verified_state)
+            try:
+                controller.prepare(args.verified_state)
+            except Exception as error:
+                controller.mark("preparation-failed",failedPhase=controller.state["phase"],
+                    failureClass=type(error).__name__,failureReason=str(error) if isinstance(error,RuntimeError) else type(error).__name__)
+                raise
         elif args.action=="worker":controller.worker()
         elif args.action=="recover":controller.recover()
     print(json.dumps({"status":controller.state["phase"],"state":str(controller.state_path)}))
