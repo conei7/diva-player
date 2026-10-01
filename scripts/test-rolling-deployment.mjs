@@ -365,7 +365,23 @@ if [ "$1" = "inspect" ]; then
             [ -n "$value" ] || exit 1
             printf '%s\n' "$value"
             ;;
-        *State.Running*) read_value "$containers/$container.running" true ;;
+        *State.Running*State.Status*)
+            running=$(read_value "$containers/$container.running" true)
+            status=$(read_value "$containers/$container.status" running)
+            if [ "__DOLLAR__{FAKE_FAIL_STAGE:-}" = gateway_validation_exit_during_observation ] && [ "$running" = true ] && [ "__DOLLAR__{container#diva_gateway_config_validation_}" != "$container" ]; then
+                write_value "$containers/$container.running" false
+                write_value "$containers/$container.status" exited
+            fi
+            printf '%s:%s\n' "$running" "$status"
+            ;;
+        *State.Running*)
+            running=$(read_value "$containers/$container.running" true)
+            if [ "__DOLLAR__{FAKE_FAIL_STAGE:-}" = gateway_validation_exit_during_observation ] && [ "$running" = true ] && [ "__DOLLAR__{container#diva_gateway_config_validation_}" != "$container" ]; then
+                write_value "$containers/$container.running" false
+                write_value "$containers/$container.status" exited
+            fi
+            printf '%s\n' "$running"
+            ;;
         *State.Health*) container_health "$container" ;;
         *State.Status*) read_value "$containers/$container.status" running ;;
         *State.ExitCode*) read_value "$containers/$container.exit_code" 0 ;;
@@ -771,6 +787,10 @@ case "$1" in
                         write_value "$containers/$target.running" true
                         write_value "$containers/$target.status" running
                         exit 137
+                        ;;
+                    gateway_validation_exit_during_observation)
+                        write_value "$containers/$target.running" true
+                        write_value "$containers/$target.status" running
                         ;;
                     gateway_validation_oom)
                         write_value "$containers/$target.running" false
@@ -1450,6 +1470,18 @@ function assertGatewayValidationCleanlyRemoved(result) {
 }
 
 async function testGatewayConfigValidationSettlementContract() {
+  const exitsDuringObservation = await runScenario(
+    'gateway-validation-exits-during-observation',
+    'gateway_validation_exit_during_observation',
+    'before-migration-publication-quiesce',
+    'fail',
+  );
+  assert.equal(exitsDuringObservation.result.status, 97,
+    exitsDuringObservation.result.stderr);
+  assert.match(exitsDuringObservation.state,
+    /gateway\.config_validation=passed-exact-container/u);
+  assertGatewayValidationCleanlyRemoved(exitsDuringObservation);
+
   const clientKilled = await runScenario(
     'gateway-validation-clients-killed',
     'gateway_validation_clients_137',

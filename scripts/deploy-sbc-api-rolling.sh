@@ -3073,7 +3073,7 @@ create_gateway_config_validation_container() {
 }
 
 settle_gateway_config_validation_start() {
-    local client_rc="$1" attempts=0 stable_created=0 mapped_id running status
+    local client_rc="$1" attempts=0 stable_created=0 mapped_id running status runtime_state
     local exit_code oom_killed runtime_error
     if ! verify_gateway_config_validation_container \
         "$GATEWAY_CONFIG_VALIDATION_ID"; then
@@ -3088,10 +3088,12 @@ settle_gateway_config_validation_start() {
                 "docker-start-gateway-config-validation-identity-drift"
             return 1
         fi
-        running=$(container_inspect_value "$GATEWAY_CONFIG_VALIDATION_ID" \
-            '{{.State.Running}}') || return 1
-        status=$(container_inspect_value "$GATEWAY_CONFIG_VALIDATION_ID" \
-            '{{.State.Status}}') || return 1
+        # A short validator can exit between two inspect requests. Read both
+        # fields from the same Docker snapshot to avoid a false true:exited.
+        runtime_state=$(container_inspect_value "$GATEWAY_CONFIG_VALIDATION_ID" \
+            '{{.State.Running}}:{{.State.Status}}') || return 1
+        running=${runtime_state%%:*}
+        status=${runtime_state#*:}
         case "$running:$status" in
             true:running)
                 stable_created=0
