@@ -197,7 +197,12 @@ def main():
         second['status'] = 'success'
         second['removedBytes'] = sum(row['bytes'] for row in second['removed'])
         atomic_json(receipt, second)
-        summary = ROOT / 'scan-cache-capacity.json'
+        public_root = Path('/var/lib/diva-player-capacity')
+        public_root.mkdir(mode=0o755, exist_ok=True)
+        if public_root.is_symlink() or public_root.stat().st_uid != 0 or public_root.stat().st_mode & 0o022:
+            raise RuntimeError('Unsafe public capacity directory')
+        os.chmod(public_root, 0o755)
+        summary = public_root / 'scan-cache-capacity.json'
         atomic_json(summary, {'schemaVersion': 1, 'checkedAt': second['checkedAt'], 'status': 'success',
                               'retainedCount': len(second['caches']) - len(second['removed']),
                               'retainedBytes': second['protectedBytes'],
