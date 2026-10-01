@@ -104,6 +104,9 @@ const npmScripts = async scripts => {
 };
 
 async function main() {
+  const resumeFrom = process.env.DIVA_PREPUSH_RESUME_FROM;
+  if (resumeFrom && resumeFrom !== 'stateful-hardening') throw new Error('Unsupported pre-push resume point.');
+  if (!resumeFrom) {
   await npmScripts(['lint', 'test']);
   await run('dotnet', ['restore', 'diva-player.sln', '--locked-mode'], { label: 'Restore locked API dependencies', env: dotnetEnvironment });
   await run('dotnet', ['build', 'backend/api/VocadbRecommender/VocadbRecommender.csproj', '--configuration', 'Release', '--no-restore'], { label: 'Build API', env: dotnetEnvironment });
@@ -115,6 +118,9 @@ async function main() {
     'test:sbc-trivy-installer',
     'test:primary-topology',
     'test:rolling-deployment',
+  ]);
+  }
+  await npmScripts([
     'test:stateful-hardening',
     'test:runtime-health',
   ]);

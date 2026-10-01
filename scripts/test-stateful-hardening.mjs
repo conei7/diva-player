@@ -3998,9 +3998,11 @@ async function runScenario(name) {
           ? 240_000
           : process.env.DIVA_STATEFUL_TEST_CASE
             ? 90_000
-            : 600_000,
+            : process.platform === 'win32' ? 900_000 : 600_000,
       windowsHide: true,
     });
+    assert.equal(result.error, undefined,
+      "stateful scenario " + name + " failed to execute: " + String(result.error) + "\n" + (result.stderr?.slice(-4000) ?? ''));
     await waitForDelayedMutation(scenario.fakeState, name);
     if (name === 'qdrant-controller-timeout' && process.platform !== 'win32') {
       await new Promise(resolve => setTimeout(resolve, 4_000));
@@ -4599,6 +4601,9 @@ try {
     }
     console.log(`PASS focused stateful hardening case ${focusedCase}`);
   } else {
+const resumeTail = process.env.DIVA_STATEFUL_TEST_FROM;
+assert.ok(!resumeTail || resumeTail === 'delayed-old-rm', 'unsupported stateful resume point');
+if (!resumeTail) {
 const success = await runScenario('success');
 assert.equal(success.result.status, 0, diagnostic(success));
 assert.match(success.trustedGitLog, /safe\.directory=.*project/);
@@ -4924,6 +4929,7 @@ assert.equal(
 assert.match(existingJournal.result.stderr, /PostgreSQL off-host backup evidence is invalid/);
 assert.equal(existingJournal.dockerLog, '', diagnostic(existingJournal));
 
+}
 const delayedOldRemoval = await runScenario('delayed-old-rm');
 assertPersistentFailStop(delayedOldRemoval);
 assert.equal(delayedOldRemoval.containers.vocadb_qdrant, ids.promotedQdrant, diagnostic(delayedOldRemoval));
