@@ -390,7 +390,10 @@ class Controller:
                 and candidate_record["Config"]["Labels"].get("com.diva.postgres-cutover.run-id")==self.state["runId"],"prepared candidate identity changed")
             require(any(m.get("Name")==self.state["newVolume"] and m["Destination"]==DATA for m in candidate_record["Mounts"]),"prepared candidate volume changed")
             VERIFY._publication_alignment(self.state["generation"])
-            self.mark("writer-gating")
+            executing_commit=self.run(["runuser","-u","orangepi","--","git","-C",str(PLAYER),"rev-parse","HEAD"]).strip()
+            require(re.fullmatch(r"[0-9a-f]{40}",executing_commit),"cutover execution source commit is invalid")
+            self.mark("writer-gating",executingSourceCommit=executing_commit,
+                executingControllerSha256=digest(Path(__file__).read_bytes()))
             for attempt in range(60):
                 try:self.gate("vocadb_postgres");break
                 except RuntimeError:
