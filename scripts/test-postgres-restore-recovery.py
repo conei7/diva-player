@@ -209,6 +209,11 @@ class CutoverTests(unittest.TestCase):
             self.assertEqual(contract.read_bytes(),b"original-contract")
             self.assertEqual(controller.state["phase"],"rolled-back")
             self.assertTrue(controller.state["outageCapMet"])
+    def test_gated_pipeline_role_is_supported_during_acl_rebuild(self):
+        text=(ROOT/"sbc-postgres-cutover.py").read_text()
+        self.assertIn('if path.name=="0018_runtime_database_roles.sql":',text)
+        self.assertIn("pipeline login was enabled before validation",text)
+
     def test_shell_is_postgres_only_and_watchdog_is_durable(self):
         text=(ROOT/"sbc-postgres-cutover.py").read_text()
         self.assertIn('"--on-active="+str(self.state.get("rollbackAfterSeconds",ROLLBACK_AT))',text)

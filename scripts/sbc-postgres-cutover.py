@@ -424,7 +424,11 @@ class Controller:
             for path in [SCRIPTS.parent/"backend/database/migrations/0018_runtime_database_roles.sql",
                          SCRIPTS.parent/"backend/database/migrations/0025_reconcile_runtime_role_migration_history_acl.sql",
                          SCRIPTS/"postgres-restore-runtime-acls.sql"]:
-                self.sql(candidate,path.read_text())
+                policy=path.read_text()
+                if path.name=="0018_runtime_database_roles.sql":
+                    # The final role dump deliberately preserves the writer gate.
+                    policy=policy.replace("NOT member.rolcanlogin","(NOT member.rolcanlogin AND parent.rolname <> 'diva_pipeline_runtime')")
+                self.sql(candidate,policy)
             self.mark("final-database-verifying")
             self.validate_db(candidate,manifest)
             self.mark("restored-database-analyzing")
