@@ -131,6 +131,14 @@ class CutoverTests(unittest.TestCase):
         self.assertEqual(CUTOVER.ROLLBACK_AT,720);self.assertEqual(CUTOVER.OUTAGE_CAP,900)
         with patch.object(CUTOVER.time,"time",return_value=820):
             self.assertEqual(CUTOVER.remaining({"outageStartedEpoch":100}),0)
+    def test_outage_estimate_includes_one_final_backup_and_separate_contingency(self):
+        self.assertEqual(CUTOVER.estimate_outage(380,132),662)
+        self.assertGreater(CUTOVER.estimate_outage(380,300),CUTOVER.ROLLBACK_AT)
+    def test_rehearsal_reuse_revalidates_dump_and_configuration(self):
+        text=(ROOT/"sbc-postgres-cutover.py").read_text()
+        self.assertIn('only a budget-rejected rehearsal can be reused',text)
+        self.assertIn('module("postgres-restore-preflight")._read_backup(self.path/rehearsal,rehearsal)',text)
+        self.assertIn('prepared configuration changed',text)
     def test_writer_release_intent_disables_old_volume_rollback(self):
         self.assertTrue(CUTOVER.rollback_allowed({}))
         self.assertFalse(CUTOVER.rollback_allowed({"writerReleaseIntent":True}))

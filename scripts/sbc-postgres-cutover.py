@@ -87,6 +87,9 @@ def projection(configuration):
         return result
     return {"schema":1,"services":services,"volumes":selected("volumes",volumes),"networks":selected("networks",networks)}
 def encoded(value): return (json.dumps(value,ensure_ascii=True,sort_keys=True,separators=(",",":"))+"\n").encode()
+def estimate_outage(restore_seconds,backup_seconds,api_seconds=30):
+    return restore_seconds+backup_seconds+api_seconds+60+60
+
 def rollback_allowed(state): return not state.get("writerReleaseIntent",False) and not state.get("writersResumed",False)
 def remaining(state):
     if state.get("outageStartedEpoch") is None: return 300
@@ -202,7 +205,16 @@ class Controller:
             time.sleep(2)
         require(available,"fresh API readiness did not recover")
         if smoke:VERIFY._api_smoke("http://127.0.0.1:5000")
-    def prepare(self,verified):
+    def prepare(self,verified,reuse_rehearsal=False):
+        previous=copy.deepcopy(self.state)
+        if reuse_rehearsal:
+            require(previous.get("phase")=="preparation-failed" and previous.get("failedPhase")=="backup-rehearsal-complete",
+                "only a budget-rejected rehearsal can be reused")
+            require((PLAYER/"backend/.env").read_bytes()==(self.path/"backend.env.before").read_bytes()
+                and CONTRACT.read_bytes()==(self.path/"runtime-contract.before").read_bytes(),"prepared configuration changed")
+            require(self.inspect("vocadb_postgres")["Id"]==previous["oldContainerId"],"rehearsal source database changed")
+            require(self.inspect(previous["candidateContainer"],True) is None,"candidate initialization already began")
+            VERIFY._publication_alignment(previous["generation"])
         private(Path(verified).parent,True)
         source_state=json.loads(private(verified).read_text())
         require(source_state.get("apiVerificationComplete") is True and source_state["phase"]=="verification-complete","isolated API verification is incomplete")
@@ -240,16 +252,23 @@ class Controller:
         logical=int(self.query("vocadb_postgres","SELECT pg_database_size(current_database())"))
         require(__import__("shutil").disk_usage("/var/lib/docker").free>=2*logical+1024**3,"insufficient cutover capacity")
         # A consistent rehearsal backup measures both dump and comparison cost before outage.
-        rehearsal="postgres-"+datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")+"-"+secrets.token_hex(4)
-        started=time.monotonic()
-        manifest=module("postgres-restore-backup").capture(self.path/rehearsal,"vocadb_postgres",self.state["adminUser"],DATABASE,rehearsal)
-        measured=time.monotonic()-started
+        if reuse_rehearsal:
+            rehearsal=previous["rehearsalRunId"]
+            module("postgres-restore-preflight")._read_backup(self.path/rehearsal,rehearsal)
+            measured=previous["backupRehearsalSeconds"]
+        else:
+            rehearsal="postgres-"+datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")+"-"+secrets.token_hex(4)
+            started=time.monotonic()
+            module("postgres-restore-backup").capture(self.path/rehearsal,"vocadb_postgres",self.state["adminUser"],DATABASE,rehearsal)
+            measured=time.monotonic()-started
         # Freeze API processes without losing their already-warmed read caches.
         # Original sockets are disconnected by PostgreSQL shutdown; unpause
         # opens fresh pools against the same schema/data/credentials.
         api_budget=30
         rollback_after=ROLLBACK_AT
-        estimate=evidence["measurements"]["logicalPostgresRestoreDurationSeconds"]+2*measured+api_budget+60
+        # One final snapshot backup follows pause; comparison/ACL/analyze receive
+        # 60 seconds and a separate 60-second contingency before the 12m limit.
+        estimate=estimate_outage(evidence["measurements"]["logicalPostgresRestoreDurationSeconds"],measured,api_budget)
         self.mark("backup-rehearsal-complete",rehearsalRunId=rehearsal,backupRehearsalSeconds=round(measured,3),estimatedOutageSeconds=round(estimate,3),apiReadyBudgetSeconds=api_budget,rollbackAfterSeconds=rollback_after)
         require(estimate<rollback_after,"measured backup/restore/verification budget exceeds 12-minute rollback threshold")
         self.run(["docker","volume","create","--label","com.diva.postgres-cutover.run-id="+self.state["runId"],"--label","com.diva.postgres-cutover.old-volume="+self.state["oldVolume"],self.state["newVolume"]])
@@ -434,6 +453,7 @@ def main():
     parser.add_argument("action",choices=("prepare","start","worker","recover","watchdog","status"))
     parser.add_argument("--state-directory",required=True,type=Path)
     parser.add_argument("--verified-state",type=Path)
+    parser.add_argument("--reuse-rehearsal",action="store_true")
     args=parser.parse_args()
     os.umask(0o077)
     require(os.getuid()==0,"must run as root")
@@ -441,9 +461,11 @@ def main():
     require(path.parent==STATE_ROOT and re.fullmatch(r"[0-9]{8}T[0-9]{6}Z-[0-9]+",path.name),"state directory must be a run beneath the fixed root")
     STATE_ROOT.mkdir(mode=0o700,parents=True,exist_ok=True)
     if args.action=="prepare":
-        require(not path.exists(),"cutover run already exists")
-        path.mkdir(mode=0o700)
-        STATE.atomic_json(path/"state.json",{"schemaVersion":1,"runId":path.name,"phase":"new","unit":"diva-postgres-cutover-"+path.name})
+        if not args.reuse_rehearsal:
+            require(not path.exists(),"cutover run already exists")
+            path.mkdir(mode=0o700)
+            STATE.atomic_json(path/"state.json",{"schemaVersion":1,"runId":path.name,"phase":"new","unit":"diva-postgres-cutover-"+path.name})
+        else: require(path.exists(),"rehearsal state is missing")
     private(path,True);private(path/"state.json")
     controller=Controller(path)
     if args.action=="status":
@@ -464,7 +486,7 @@ def main():
         if args.action=="prepare":
             require(args.verified_state is not None,"--verified-state is required")
             try:
-                controller.prepare(args.verified_state)
+                controller.prepare(args.verified_state,args.reuse_rehearsal)
             except Exception as error:
                 controller.mark("preparation-failed",failedPhase=controller.state["phase"],
                     failureClass=type(error).__name__,failureReason=str(error) if isinstance(error,RuntimeError) else type(error).__name__)
