@@ -188,6 +188,8 @@ public class RecommendService
         mergedCandidates = mergedCandidates
             .Where(candidate => eligibleIds.Contains(candidate.Key))
             .ToList();
+        mergedCandidates = ApplyMetadataContextIfNoVectorEvidence(
+            mergedCandidates, seedSong, candidateInfos, annCandidates.Count > 0);
         // count の 1/3 を同一プロデューサー上限とし、残りを他プロデューサーで埋める
         // Shared singers stay eligible; singer-only matches receive a continuous score correction.
         mergedCandidates = MetadataRelationshipRanking.CorrectSingerOnlyBias(
@@ -235,6 +237,14 @@ public class RecommendService
 
         return new RecommendResponse(items, null);
     }
+
+    internal static List<(int SongId, double Score)> ApplyMetadataContextIfNoVectorEvidence(
+        List<(int SongId, double Score)> candidates,
+        SongInfo seed,
+        IEnumerable<SongInfo> candidateInfos,
+        bool hasVectorEvidence) => hasVectorEvidence
+            ? candidates
+            : MetadataRelationshipRanking.ScoreWithoutVectorEvidence(candidates, seed, candidateInfos);
 
     internal static async Task<DiverseFallbackCandidateSelection>
         GetDiverseFallbackCandidateIdsRestrictedFirstAsync(

@@ -190,10 +190,30 @@ public static class MetadataRelationshipRanking
             .ToList();
     }
 
+    internal static List<(int SongId, double Score)> ScoreWithoutVectorEvidence(
+        IEnumerable<(int SongId, double Score)> candidates,
+        SongInfo seed,
+        IEnumerable<SongInfo> candidateInfos)
+    {
+        var preparedSeed = new PreparedRelationships(seed);
+        var infos = candidateInfos.ToDictionary(info => info.Id,
+            info => new PreparedRelationships(info));
+        // Catalog fallback order is not similarity evidence. Use the same known
+        // seed relationships as metadata recommendations, without a vector term.
+        // The hybrid pipeline applies its existing evidence penalty once later.
+        return candidates.Where(candidate => infos.ContainsKey(candidate.SongId))
+            .Select(candidate => (candidate.SongId, Score: RelatedScore(
+                preparedSeed, infos[candidate.SongId], -1, applyEvidencePenalty: false)))
+            .OrderByDescending(candidate => candidate.Score)
+            .ThenBy(candidate => candidate.SongId)
+            .ToList();
+    }
+
     private static double RelatedScore(
         PreparedRelationships seed,
         PreparedRelationships candidate,
-        double vectorScore)
+        double vectorScore,
+        bool applyEvidencePenalty = true)
     {
         var values = new WeightedValues();
         if (vectorScore >= 0)
@@ -208,7 +228,9 @@ public static class MetadataRelationshipRanking
         values.Add(SongTypeSimilarity(seed.Info, candidate.Info), 0.06);
         values.Add(LengthSimilarity(seed.Info, candidate.Info), 0.05);
 
-        return values.Average * RecommendationQuality.EvidenceMultiplier(candidate.Info);
+        return applyEvidencePenalty
+            ? values.Average * RecommendationQuality.EvidenceMultiplier(candidate.Info)
+            : values.Average;
     }
 
     private static double IndependentContextScore(SongInfo seed, SongInfo candidate)
