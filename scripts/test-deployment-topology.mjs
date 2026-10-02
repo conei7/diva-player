@@ -1114,7 +1114,8 @@ const rankingQueryStart = dbService.indexOf('private async Task<string> ExecuteT
 const rankingQueryEnd = dbService.indexOf('public async Task<List<(int SongId, string Name, string ArtistString)>> GetSongsByProducerAsync(', rankingQueryStart);
 assert.ok(rankingQueryStart >= 0 && rankingQueryEnd > rankingQueryStart, 'ranking query contract was not found');
 const rankingQuery = dbService.slice(rankingQueryStart, rankingQueryEnd);
-assert.match(rankingQuery, /history_observation_groups AS MATERIALIZED/);
+assert.match(rankingQuery, /history_observation_groups AS NOT MATERIALIZED/);
+assert.equal((rankingQuery.match(/FROM history_observation_groups h/g) ?? []).length, 1);
 assert.match(rankingQuery, /CASE WHEN h\.youtube_observed THEN h\.youtube_views END AS youtube_views/);
 assert.match(rankingQuery, /CASE WHEN h\.nico_observed THEN h\.nico_views END AS nico_views/);
 assert.match(rankingQuery, /history_filled AS MATERIALIZED/);

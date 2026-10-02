@@ -2577,7 +2577,10 @@ public class DbService
                 SELECT MAX(recorded_at) AS observed_at
                 FROM view_history
             ),
-            history_observation_groups AS MATERIALIZED (
+            history_observation_groups AS NOT MATERIALIZED (
+                -- This projection has one consumer. Stream it into the carry
+                -- window instead of writing and rereading all 21 days of rows.
+                -- Keep the reused filled/window stages materialized below.
                 -- YouTube and NicoNico are acquired independently. Explicit
                 -- observation flags distinguish a real zero from a missing
                 -- service sample without guessing from the counter value.
