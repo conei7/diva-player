@@ -46,6 +46,7 @@ public sealed class QdrantServiceCancellationTests
             () => service.SearchNamedVectorsAsync(1, 10, cancellation.Token),
             () => service.SearchSimilarAsync(1, 10, cancellation.Token),
             () => service.SearchAudioOnlyAsync(1, 10, cancellation.Token),
+            () => service.GetAudioFeatureAxesAsync([1], 0, 1023, cancellation.Token),
             () => service.SearchMetadataSimilarAsync(1, 10, cancellation.Token),
         ];
 

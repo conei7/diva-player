@@ -7,7 +7,11 @@ internal sealed record SoundMapPoint(
     double X,
     double Y,
     double? Similarity,
-    string? ThumbUrl);
+    string? ThumbUrl,
+    double? FeatureX = null,
+    double? FeatureY = null);
+
+internal sealed record SoundMapAxes(int X, int Y, int DimensionCount, double MinX, double MaxX, double MinY, double MaxY);
 
 internal sealed record SoundMapResponse(
     string MapVersion,
@@ -16,7 +20,8 @@ internal sealed record SoundMapResponse(
     long CoordinateCount,
     string State,
     SoundMapPoint Origin,
-    IReadOnlyList<SoundMapPoint> Items);
+    IReadOnlyList<SoundMapPoint> Items,
+    SoundMapAxes? Axes = null);
 
 internal static class SoundMapEndpoints
 {
@@ -34,6 +39,8 @@ internal static class SoundMapEndpoints
         int seedSongId,
         int? limit,
         string? mapVersion,
+        int? axisX,
+        int? axisY,
         DbService db,
         QdrantService qdrant,
         CancellationToken cancellationToken)
@@ -44,6 +51,9 @@ internal static class SoundMapEndpoints
         var requestedLimit = limit ?? DefaultLimit;
         if (requestedLimit is < 20 or > MaxLimit)
             return Results.BadRequest(new { error = $"limit must be between 20 and {MaxLimit}" });
+        if (axisX.HasValue != axisY.HasValue || axisX is < 0 or >= 1024 || axisY is < 0 or >= 1024 ||
+            (axisX.HasValue && axisX == axisY))
+            return Results.BadRequest(new { error = "axisX and axisY must be distinct integers between 0 and 1023" });
 
         var version = await db.GetSoundMapVersionAsync(mapVersion, cancellationToken);
         if (version is null)
@@ -102,14 +112,52 @@ internal static class SoundMapEndpoints
             }
         }
         var state = !hasAudio ? "no_audio" : items.Length == 1 ? "no_mapped_neighbors" : "ready";
+        SoundMapAxes? axes = null;
+        if (axisX.HasValue && axisY.HasValue)
+        {
+            try
+            {
+                var values = await qdrant.GetAudioFeatureAxesAsync(
+                    items.Select(point => point.SongId).ToArray(), axisX.Value, axisY.Value, cancellationToken);
+                if (!values.ContainsKey(seedSongId))
+                    return Results.NotFound(new { error = "sound_map_features_unavailable", message = "The selected song has no usable 1024-dimensional audio features." });
+                (items, axes) = ProjectFeatureAxes(items, values, axisX.Value, axisY.Value);
+                originPoint = items.First(point => point.SongId == seedSongId);
+                state = items.Length > 1 ? "ready" : "no_mapped_neighbors";
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                return Results.Json(new { error = "sound_map_dependency_unavailable", reason = exception.GetType().Name }, statusCode: StatusCodes.Status503ServiceUnavailable);
+            }
+        }
         return Results.Ok(new SoundMapResponse(
             version.MapVersion,
             version.GeneratedAt,
-            version.Method,
+            axes is null ? version.Method : "feature_axes",
             version.CoordinateCount,
             state,
             originPoint,
-            items));
+            items,
+            axes));
+    }
+
+    internal static (SoundMapPoint[] Points, SoundMapAxes Axes) ProjectFeatureAxes(
+        IReadOnlyList<SoundMapPoint> points, IReadOnlyDictionary<int, (double X, double Y)> values, int axisX, int axisY)
+    {
+        var available = points.Where(point => values.TryGetValue(point.SongId, out var pair) &&
+            double.IsFinite(pair.X) && double.IsFinite(pair.Y)).ToArray();
+        if (available.Length == 0) throw new InvalidOperationException("No usable feature axes");
+        var minX = available.Min(point => values[point.SongId].X);
+        var maxX = available.Max(point => values[point.SongId].X);
+        var minY = available.Min(point => values[point.SongId].Y);
+        var maxY = available.Max(point => values[point.SongId].Y);
+        static double Scale(double value, double min, double max) => max > min ? 2 * (value - min) / (max - min) - 1 : 0;
+        return (available.Select(point => point with
+        {
+            X = Scale(values[point.SongId].X, minX, maxX),
+            Y = -Scale(values[point.SongId].Y, minY, maxY),
+            FeatureX = values[point.SongId].X, FeatureY = values[point.SongId].Y,
+        }).ToArray(), new SoundMapAxes(axisX, axisY, 1024, minX, maxX, minY, maxY));
     }
 
     private static SoundMapPoint ToPoint(SoundMapSong song, double? similarity) =>

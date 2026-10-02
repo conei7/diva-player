@@ -13,6 +13,7 @@ import { clampSoundMapZoom, centerSoundMapOnPoint, fitSoundMapItems, visibleSoun
 import { getRatedSongIds } from '../utils/ratedSongs';
 import { useLanguageStore } from '../stores/languageStore';
 import { useTranslateSourceText } from '../i18n';
+import { changeSoundMapAxes, randomSoundMapAxes, readSoundMapAxes } from '../utils/soundMapAxes';
 
 const SOUND_MAP_GUIDE_STORAGE_KEY = 'diva_sound_map_guide_dismissed_v1';
 
@@ -39,6 +40,7 @@ function mapErrorMessage(error: unknown): string {
   if (error instanceof SoundMapRequestError) {
     if (error.code === 'sound_map_unavailable') return '曲調マップの座標がまだ公開されていません。座標生成後に利用できます。';
     if (error.code === 'seed_not_mapped') return 'この曲は曲調マップにまだ含まれていません。別の起点を選んでください。';
+    if (error.code === 'sound_map_features_unavailable') return 'この曲の特徴軸を取得できませんでした。別の曲かPCA配置を選んでください。';
     if (error.code === 'sound_map_dependency_unavailable') return '音響検索に接続できませんでした。少し待って再試行してください。';
     if (error.code === 'sound_map_pilot_missing' || error.code === 'sound_map_pilot_invalid') return error.message;
   }
@@ -73,11 +75,23 @@ export default function SoundMapPage() {
     centerY: Number(searchParams.get('centerY')) || 0,
   }));
   const requestRevision = useRef(0);
+  const latestSearchParams = useRef(searchParams);
+  const latestSetSearchParams = useRef(setSearchParams);
+  useEffect(() => {
+    latestSearchParams.current = searchParams;
+    latestSetSearchParams.current = setSearchParams;
+  }, [searchParams, setSearchParams]);
   const demoMode = import.meta.env.DEV && searchParams.get('demo') === '1';
   const pilotMode = import.meta.env.DEV && searchParams.get('pilot') === '1';
   const localPreviewMode = demoMode || pilotMode;
   const seedId = readId(searchParams.get('seedSongId')) ?? fallbackSeedId ?? currentSong?.id ?? null;
   const mapVersion = searchParams.get('mapVersion') || undefined;
+  const featureMode = !localPreviewMode && (searchParams.get('layout') === 'features' || (!searchParams.has('layout') && !mapVersion));
+  const [axisX, axisY] = readSoundMapAxes(searchParams);
+  const applyAxes = (axes: [number, number] | null) => {
+    setSearchParams(changeSoundMapAxes(searchParams, axes));
+    setExplorationHistory([]);
+  };
   const [playedIds, setPlayedIds] = useState<Set<number>>(new Set());
   const knownIds = useMemo(() => {
     const ids = new Set(getRatedSongIds(ratings));
@@ -120,20 +134,32 @@ export default function SoundMapPage() {
       ? Promise.resolve(getDemoSoundMap(seedId, mapVersion ?? 'demo-v1'))
       : pilotMode
         ? fetchSoundMapPilot(seedId, controller.signal)
-        : fetchSoundMap(seedId, { mapVersion, limit: 120, signal: controller.signal });
+        : fetchSoundMap(seedId, { mapVersion, limit: 120, ...(featureMode ? { axisX, axisY } : {}), signal: controller.signal });
     request
       .then(next => {
         if (revision !== requestRevision.current) return;
+        const currentParams = latestSearchParams.current;
+        if (featureMode && !next.axes) {
+          // Older API slots ignore the new query parameters during rollout.
+          setResult(next);
+          latestSetSearchParams.current(changeSoundMapAxes(currentParams, null), { replace: true });
+          return;
+        }
         setResult(next);
-        setSelectedId(readId(searchParams.get('selectedSongId')) ?? next.origin.songId);
-        if (!searchParams.has('centerX') && !searchParams.has('centerY')) {
+        setSelectedId(readId(currentParams.get('selectedSongId')) ?? next.origin.songId);
+        if (!currentParams.has('centerX') && !currentParams.has('centerY')) {
           setViewport(fitSoundMapItems(next.items));
         }
         if (!mapVersion || mapVersion !== next.mapVersion || (pilotMode && seedId !== next.origin.songId)) {
-          const params = new URLSearchParams(searchParams);
+          const params = new URLSearchParams(currentParams);
           params.set('mapVersion', next.mapVersion);
+          if (featureMode) {
+            params.set('layout', 'features');
+            params.set('axisX', String(axisX));
+            params.set('axisY', String(axisY));
+          }
           params.set('seedSongId', String(pilotMode ? next.origin.songId : seedId));
-          setSearchParams(params, { replace: true });
+          latestSetSearchParams.current(params, { replace: true });
         }
       })
       .catch(requestError => {
@@ -143,7 +169,7 @@ export default function SoundMapPage() {
       })
       .finally(() => { if (revision === requestRevision.current) setLoading(false); });
     return () => controller.abort();
-  }, [demoMode, mapVersion, pilotMode, retryKey, searchParams, seedId, setSearchParams]);
+  }, [axisX, axisY, demoMode, featureMode, mapVersion, pilotMode, retryKey, seedId]);
 
   const items = useMemo(
     () => result ? visibleSoundMapItems(result.items, hiddenIds) : [],
@@ -224,17 +250,45 @@ export default function SoundMapPage() {
           <section className="mt-2 flex items-start gap-2 text-xs leading-5 text-neutral-300" data-testid="sound-map-guide" aria-labelledby="sound-map-guide-title">
             <div className="min-w-0 flex-1">
               <h2 id="sound-map-guide-title" className="inline font-semibold text-cyan-100">{t('はじめての方へ')} </h2>
-              <span>{t('点を選んで曲を確認し、「この曲の近くを探す」で次を発掘。軸はジャンルではなく、選択だけで再生されません。色つきは履歴／評価あり、輪郭は未再生です。')}</span>
+              <span>{t(featureMode ? '1024個の音響特徴からX・Yを選んで探索できます。特徴には決まった名前はなく、選択だけで再生されません。' : '点を選んで曲を確認し、「この曲の近くを探す」で次を発掘。軸はジャンルではなく、選択だけで再生されません。色つきは履歴／評価あり、輪郭は未再生です。')}</span>
             </div>
             <button type="button" className="btn-ghost shrink-0 rounded-lg px-2 py-0.5 text-xs" onClick={dismissGuide} aria-label={t('案内を閉じる')} title={t('案内を閉じる')}>×</button>
           </section>
         ) : (
-          <p className="mt-2 text-sm leading-6 text-neutral-400">{t('音響特徴を2次元に配置した探索用マップです。軸にジャンルなどの意味はなく、点同士の近さは似ている目安です。点を選ぶだけでは再生されません。')}</p>
+          <p className="mt-2 text-sm leading-6 text-neutral-400">{t(featureMode ? '1024個の音響特徴からX・Yを選んで探索できます。特徴には決まった名前はなく、選択だけで再生されません。' : '音響特徴を2次元に配置した探索用マップです。軸にジャンルなどの意味はなく、点同士の近さは似ている目安です。点を選ぶだけでは再生されません。')}</p>
         )}
         {!localPreviewMode && currentSong && <p className="mt-3 text-xs text-cyan-200">{t('再生中: {song}', { song: currentSong.name })}</p>}
         {demoMode && <p className="mt-3 rounded-lg bg-cyan-300/10 px-3 py-2 text-xs text-cyan-100">{t('画面確認用デモです。点の選択・ズーム・起点変更を試せます。')}</p>}
         {pilotMode && <p className="mt-3 rounded-lg bg-emerald-300/10 px-3 py-2 text-xs text-emerald-100">{t('実データpilotです。Qdrantの音響ベクトルとPostgreSQLの曲名から生成した小規模マップを表示しています。')}</p>}
       </div>
+
+      {!localPreviewMode && <section className="mb-4 rounded-2xl border border-white/[0.08] bg-white/[0.03] p-3" data-testid="sound-map-axes">
+        <div className="flex flex-wrap items-center gap-3 text-sm">
+          <label>{t('配置方法')}
+            <select aria-label={t('配置方法')} className="ml-2 rounded-lg bg-neutral-900 px-2 py-2" value={featureMode ? 'features' : 'pca'} onChange={event => applyAxes(event.target.value === 'features' ? [axisX, axisY] : null)}>
+              <option value="features">{t('特徴軸を選ぶ')}</option><option value="pca">PCA</option>
+            </select>
+          </label>
+          {featureMode && <form key={`${axisX}-${axisY}`} className="flex flex-wrap items-center gap-2" onInput={event => {
+            (event.currentTarget.elements.namedItem('axisY') as HTMLInputElement).setCustomValidity('');
+          }} onSubmit={event => {
+            event.preventDefault();
+            const data = new FormData(event.currentTarget);
+            const x = Number(data.get('axisX')) - 1;
+            const y = Number(data.get('axisY')) - 1;
+            const input = event.currentTarget.elements.namedItem('axisY') as HTMLInputElement;
+            input.setCustomValidity(x === y ? t('XとYには異なる特徴を選んでください。') : '');
+            if (event.currentTarget.reportValidity()) applyAxes([x, y]);
+          }}>
+            <label>X <input aria-label={t('Xの特徴番号')} className="w-20 rounded-lg bg-neutral-900 px-2 py-2" type="number" name="axisX" min="1" max="1024" step="1" required defaultValue={axisX + 1} /></label>
+            <label>Y <input aria-label={t('Yの特徴番号')} className="w-20 rounded-lg bg-neutral-900 px-2 py-2" type="number" name="axisY" min="1" max="1024" step="1" required defaultValue={axisY + 1} onInput={event => event.currentTarget.setCustomValidity('')} /></label>
+            <button className="btn-ghost rounded-lg px-3 py-2 disabled:opacity-40" disabled={loading}>{t('軸を適用')}</button>
+            <button type="button" className="btn-ghost rounded-lg px-3 py-2 disabled:opacity-40" disabled={loading} onClick={() => applyAxes(randomSoundMapAxes([axisX, axisY]))}>{t('ランダムな軸')}</button>
+            <button type="button" className="btn-ghost rounded-lg px-3 py-2 disabled:opacity-40" disabled={loading} onClick={() => applyAxes([axisY, axisX])}>{t('XとYを入れ替え')}</button>
+          </form>}
+        </div>
+        {featureMode && <p className="mt-2 text-xs text-neutral-400">{t('候補曲は1024次元全体の音響類似度で選び、表示は選択した2つの特徴だけを使います。軸の範囲は表示候補に合わせて調整します。')}</p>}
+      </section>}
 
       {!seedId ? (
         <section className="rounded-2xl border border-white/[0.08] bg-white/[0.03] p-6 text-sm text-neutral-300">
@@ -256,6 +310,15 @@ export default function SoundMapPage() {
               <span>{result.coordinateCount.toLocaleString()}{language === 'ja' ? '曲' : ` ${t('曲')}`} · {result.method} · <time dateTime={result.generatedAt}>{t('データ更新: ')}{new Intl.DateTimeFormat(language === 'ja' ? 'ja-JP' : 'en').format(new Date(result.generatedAt))}</time></span>
             </div>
             <SoundMapCanvas items={items} knownIds={displayKnownIds} result={result} selectedId={selectedId} viewport={viewport} onSelect={selectPoint} />
+            {result.axes && <p className="mt-2 px-1 text-xs text-neutral-400">X: {t('特徴')}{result.axes.x + 1} ({result.axes.minX.toFixed(4)} → {result.axes.maxX.toFixed(4)}) · Y: {t('特徴')}{result.axes.y + 1} ({result.axes.minY.toFixed(4)} → {result.axes.maxY.toFixed(4)}){loading && ` · ${t('切替中…')}`}</p>}
+            {result.axes && (result.axes.minX === result.axes.maxX || result.axes.minY === result.axes.maxY) && <p className="mt-1 px-1 text-xs text-amber-200">{t('この候補では値が同じ特徴があります。別の軸も試してみてください。')}</p>}
+            {result.axes && <div className="mt-2 flex flex-wrap gap-2 px-1">
+              {(['featureX', 'featureY'] as const).flatMap((key, axis) => [true, false].map(high => {
+                const candidates = items.filter(point => point[key] != null);
+                const point = candidates.reduce<SoundMapPoint | null>((best, candidate) => !best || (high ? candidate[key]! > best[key]! : candidate[key]! < best[key]!) ? candidate : best, null);
+                return <button key={`${key}-${high}`} type="button" className="btn-ghost rounded-lg px-2 py-1.5 text-xs disabled:opacity-40" disabled={!point || loading} onClick={() => point && selectPoint(point)}>{axis === 0 ? 'X' : 'Y'} · {t(high ? '値が高い曲' : '値が低い曲')}</button>;
+              }))}
+            </div>}
             {result.state !== 'ready' && <p className="mt-2 px-1 text-xs text-amber-200">{t(result.state === 'no_audio' ? '起点の音響特徴がないため、座標だけを表示しています。' : '近い曲の候補がまだマップにありません。')}</p>}
             <div className="mt-2 flex flex-wrap items-center gap-2 px-1">
               <button type="button" className="btn-ghost rounded-lg px-3 py-2 text-xs" onClick={() => updateViewport({ ...viewport, zoom: clampSoundMapZoom(viewport.zoom - 0.35) })}>−</button>
@@ -342,6 +405,10 @@ function SoundMapCanvas({ items, knownIds, result, selectedId, viewport, onSelec
           );
         })}
       </svg>
+      {result.axes && <>
+        <span data-testid="sound-map-axis-x" data-feature-index={result.axes.x} className="pointer-events-none absolute bottom-2 right-3 rounded bg-black/60 px-2 py-1 text-xs text-cyan-100">X · {t('特徴')}{result.axes.x + 1} →</span>
+        <span data-testid="sound-map-axis-y" data-feature-index={result.axes.y} className="pointer-events-none absolute left-2 top-2 rounded bg-black/60 px-2 py-1 text-xs text-cyan-100">↑ Y · {t('特徴')}{result.axes.y + 1}</span>
+      </>}
       {items.length === 0 && <div className="absolute inset-0 flex items-center justify-center text-sm text-neutral-500">{t('表示できる曲がありません')}</div>}
     </div>
   );
@@ -369,6 +436,7 @@ function SoundMapDetails({ selected, neighbors, selectedId, currentSong, actions
       <p className="mt-1 text-sm text-neutral-400">{selected.artistString || t('アーティスト情報なし')}</p>
       {playing && <p className="mt-3 text-xs text-cyan-200">{t('現在再生中')}</p>}
       {selected.similarity != null && <p className="mt-3 text-xs text-neutral-500">{t('音響類似度 ')}{(selected.similarity * 100).toFixed(1)}%</p>}
+      {selected.featureX != null && selected.featureY != null && <p className="mt-2 text-xs text-cyan-200">X: {selected.featureX.toFixed(5)} · Y: {selected.featureY.toFixed(5)}</p>}
       {actionsDisabled && <p className="mt-3 text-xs text-neutral-500">{t('再生・保存・詳細は実データ接続後に利用できます。')}</p>}
       <div className="mt-5 grid grid-cols-2 gap-2">
         <button type="button" disabled={actionsDisabled} className="rounded-lg bg-cyan-300 px-3 py-2 text-sm font-semibold text-black disabled:cursor-not-allowed disabled:opacity-35" onClick={onPlay}>{t('再生')}</button>
