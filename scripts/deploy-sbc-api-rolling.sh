@@ -1719,7 +1719,7 @@ cleanup() {
             exit 1
         fi
     fi
-    if [ "$TEST_MODE" != "1" ] && [ "$original_exit_code" -eq 0 ] && [ "$SOURCE_SNAPSHOT_CAPTURED" = "true" ]; then
+    if [ "$TEST_MODE" != "1" ] && [ "$recovery_result" -eq 0 ] && [ "$SOURCE_SNAPSHOT_CAPTURED" = "true" ]; then
         "$EXACT_PYTHON_COMMAND" -I -B "$SOURCE_SNAPSHOT_ROOT/scripts/prune-sbc-scan-cache.py" --apply \
             > "$DEPLOYMENT_DIR/scan-cache-retention-end.json" \
             || log "WARNING: scan cache retention deferred; inspect protected references."

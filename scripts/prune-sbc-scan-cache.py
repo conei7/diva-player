@@ -31,9 +31,37 @@ def terminal(run: Path) -> bool:
     state = run / 'state'
     if state.is_symlink() or not state.is_file():
         return False
-    statuses = [line.split('=', 1)[1] for line in state.read_text().splitlines()
-                if line.startswith('deployment.status=')]
-    return bool(statuses and statuses[-1] in TERMINAL)
+    values = dict(line.split('=', 1) for line in state.read_text().splitlines() if '=' in line)
+    status = values.get('deployment.status')
+    if status in TERMINAL:
+        return True
+    # "failed" is written before recovery finishes. Only the durable final
+    # releases prove that failure recovery has actually completed.
+    return status == 'failed' and all(values.get(key) == expected for key, expected in {
+        'backend_env.private_cleanup': 'durable-exact-inode-unlink',
+        'backend_env.private_runtime_cleanup': 'durable-tmpfs-dirfd-release',
+        'deployment.journal_cleanup': 'durable-exact-inode-release',
+        'deployment.lock_cleanup': 'durable-exact-inode-release',
+    }.items())
+
+
+def unresolved(run: Path) -> bool:
+    for marker in run.glob('*unresolved*'):
+        # Preserve the manual reconciliation record, but do not mistake the
+        # explicitly retired marker for a live interlock. Validate its receipt.
+        if marker.name == 'daemon-mutation-unresolved.reconciled' and not marker.is_symlink() and marker.is_file():
+            receipt = run / 'gateway-validation-manual-reconciliation.json'
+            if receipt.is_file() and not receipt.is_symlink():
+                try:
+                    data = json.loads(receipt.read_text())
+                    if (data.get('runId') == run.name
+                            and data.get('status') == 'verified-terminal-before-migration-no-live-replacement'
+                            and data.get('canonicalImages') == 'exact-prestate-restored'):
+                        continue
+                except (ValueError, OSError):
+                    pass
+        return True
+    return False
 
 
 def plan(root: Path, references: list[str]) -> dict:
@@ -51,7 +79,7 @@ def plan(root: Path, references: list[str]) -> dict:
             reason = None
             if cache.is_symlink() or cache.parent.is_symlink() or cache.resolve() != cache:
                 reason = 'unsafe-path'
-            elif not terminal(run) or any(run.glob('*unresolved*')):
+            elif not terminal(run) or unresolved(run):
                 reason = 'nonterminal-or-unresolved'
             elif any(str(run) in value or run.name in value for value in references):
                 reason = 'runtime-process-mount-or-recovery-reference'

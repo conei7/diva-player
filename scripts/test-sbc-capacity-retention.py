@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta, timezone
 import importlib.util
+import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -59,6 +60,67 @@ class CacheRetentionTests(unittest.TestCase):
             except OSError:
                 self.skipTest('symlinks unavailable')
             self.assertEqual(cache.plan(root, [])['caches'][0]['protectedReason'], 'unsafe-path')
+
+    def test_failed_run_requires_every_final_release(self):
+        releases = {
+            'backend_env.private_cleanup': 'durable-exact-inode-unlink',
+            'backend_env.private_runtime_cleanup': 'durable-tmpfs-dirfd-release',
+            'deployment.journal_cleanup': 'durable-exact-inode-release',
+            'deployment.lock_cleanup': 'durable-exact-inode-release',
+        }
+        with tempfile.TemporaryDirectory() as temp:
+            run = Path(temp)
+            state = run / 'state'
+            def write(values):
+                state.write_text('deployment.status=failed\n' + ''.join(f'{k}={v}\n' for k, v in values.items()))
+            for missing in releases:
+                write({k: v for k, v in releases.items() if k != missing})
+                self.assertFalse(cache.terminal(run))
+            write(releases)
+            self.assertTrue(cache.terminal(run))
+            with state.open('a') as stream:
+                stream.write('deployment.lock_cleanup=failed\n')
+            self.assertFalse(cache.terminal(run))
+
+    def test_reconciled_marker_requires_matching_receipt(self):
+        with tempfile.TemporaryDirectory() as temp:
+            run = Path(temp) / '20261001T232943Z-167409'
+            run.mkdir()
+            (run / 'daemon-mutation-unresolved.reconciled').touch()
+            receipt = run / 'gateway-validation-manual-reconciliation.json'
+            self.assertTrue(cache.unresolved(run))
+            data = {'runId': run.name, 'status': 'verified-terminal-before-migration-no-live-replacement',
+                    'canonicalImages': 'exact-prestate-restored'}
+            receipt.write_text(json.dumps(data))
+            self.assertFalse(cache.unresolved(run))
+            receipt.write_text(json.dumps({**data, 'runId': 'wrong'}))
+            self.assertTrue(cache.unresolved(run))
+            receipt.write_text(json.dumps(data))
+            (run / 'another-unresolved').touch()
+            self.assertTrue(cache.unresolved(run))
+
+    def test_clean_failed_caches_converge_to_one(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp).resolve()
+            for i in range(1, 8):
+                run = root / f'2026100{i}T010203Z-{i}'
+                (run / 'trivy-cache').mkdir(parents=True)
+                (run / 'state').write_text('deployment.status=failed\n'
+                    'backend_env.private_cleanup=durable-exact-inode-unlink\n'
+                    'backend_env.private_runtime_cleanup=durable-tmpfs-dirfd-release\n'
+                    'deployment.journal_cleanup=durable-exact-inode-release\n'
+                    'deployment.lock_cleanup=durable-exact-inode-release\n')
+            rows = cache.plan(root, [])['caches']
+            self.assertEqual(sum(row['protectedReason'] is not None for row in rows), 1)
+            self.assertEqual(rows[0]['protectedReason'], 'latest-terminal-cache')
+
+    def test_failure_retention_hook_requires_successful_recovery(self):
+        source = Path(__file__).with_name('deploy-sbc-api-rolling.sh').read_text()
+        hook = source[source.index('    if [ "$TEST_MODE" != "1" ] && [ "$recovery_result" -eq 0 ]'):]
+        hook = hook[:hook.index('    exit "$original_exit_code"')]
+        self.assertIn('"$SOURCE_SNAPSHOT_CAPTURED" = "true"', hook)
+        self.assertIn('prune-sbc-scan-cache.py" --apply', hook)
+        self.assertNotIn('"$original_exit_code" -eq 0', hook)
 
 
 class CapacityMonitoringTests(unittest.TestCase):
