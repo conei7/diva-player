@@ -96,8 +96,33 @@ def plan(root: Path, references: list[str]) -> dict:
             'reclaimableBytes': sum(x['bytes'] for x in caches if not x['protectedReason'])}
 
 
+def scan_references(root: Path, image_ids: set[str]) -> list[str]:
+    refs = []
+    for run in root.iterdir():
+        if not RUN.fullmatch(run.name) or run.is_symlink() or not run.is_dir():
+            continue
+        scan = run / 'image-scan'
+        if scan.is_symlink():
+            raise RuntimeError('Unsafe image scan directory')
+        for receipt in scan.glob('*.receipt.json'):
+            if receipt.is_symlink() or not receipt.is_file():
+                raise RuntimeError('Unsafe image scan receipt')
+            try:
+                value = json.loads(receipt.read_text())
+                image_id = value['image']['id']
+                if not re.fullmatch(r'sha256:[0-9a-f]{64}', image_id):
+                    raise ValueError('Invalid receipt image identity')
+            except (ValueError, KeyError, TypeError):
+                refs.append(str(run))  # Unknown verification evidence stays protected.
+                continue
+            if image_id in image_ids:
+                refs.append(str(run))
+    return refs
+
+
 def live_references(root: Path) -> list[str]:
     refs = []
+    image_ids = set()
     for name in CONTROLS:
         p = root / name
         if p.is_symlink():
@@ -108,9 +133,20 @@ def live_references(root: Path) -> list[str]:
     if ids:
         containers = json.loads(subprocess.check_output(['docker', 'inspect', *ids], text=True))
         for container in containers:
+            image_ids.add(container['Image'])
             refs.extend(str(m.get('Source', '')) for m in container.get('Mounts', []))
             refs.extend(str(m.get('Destination', '')) for m in container.get('Mounts', []))
             refs.append(json.dumps((container.get('Config') or {}).get('Labels') or {}))
+    # A rollback tag may have no container yet. Its exact scan DB is still
+    # required for receipt verification and must not be selected as spare cache.
+    tags = subprocess.check_output(['docker', 'image', 'ls', '--no-trunc', '--format',
+                                    '{{.Repository}}:{{.Tag}} {{.ID}}'], text=True)
+    for row in tags.splitlines():
+        reference, image_id = row.split()
+        repository, tag = reference.rsplit(':', 1)
+        if repository.startswith('diva-player-') and (tag == 'local' or tag.startswith('rollback')):
+            image_ids.add(image_id)
+    refs.extend(scan_references(root, image_ids))
     for proc in Path('/proc').iterdir():
         if not proc.name.isdigit():
             continue

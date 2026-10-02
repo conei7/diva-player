@@ -122,6 +122,20 @@ class CacheRetentionTests(unittest.TestCase):
         self.assertIn('prune-sbc-scan-cache.py" --apply', hook)
         self.assertNotIn('"$original_exit_code" -eq 0', hook)
 
+    def test_exact_image_receipts_protect_rollback_database(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp).resolve()
+            run = root / '20261001T010203Z-1'
+            scan = run / 'image-scan'
+            scan.mkdir(parents=True)
+            receipt = scan / 'api.receipt.json'
+            image = 'sha256:' + 'a' * 64
+            receipt.write_text(json.dumps({'image': {'id': image}}))
+            self.assertEqual(cache.scan_references(root, {image}), [str(run)])
+            self.assertEqual(cache.scan_references(root, {'sha256:' + 'b' * 64}), [])
+            receipt.write_text('{broken')
+            self.assertEqual(cache.scan_references(root, set()), [str(run)])
+
 
 class CapacityMonitoringTests(unittest.TestCase):
     def info(self, now):
