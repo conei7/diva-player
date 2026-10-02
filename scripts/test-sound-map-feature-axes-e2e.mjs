@@ -36,7 +36,7 @@ try {
   await page.goto(new URL('sound-map?seedSongId=7', baseUrl), { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => new URL(location.href).searchParams.get('layout') === 'features');
   await page.waitForSelector('[data-testid="sound-map-canvas"] g[role="button"]');
-  await page.waitForFunction(() => ![...document.querySelectorAll('button')].find(button => button.textContent === '軸を適用')?.disabled);
+  await page.waitForFunction(() => [...document.querySelectorAll('button')].some(button => button.textContent === '軸を適用' && !button.disabled));
   async function button(label) {
     for (const handle of await page.$$('button')) if ((await handle.evaluate(node => node.textContent?.trim())) === label) return handle;
     throw new Error(`Missing button: ${label}`);
@@ -60,7 +60,8 @@ try {
   await (await button('XとYを入れ替え')).click();
   await page.waitForFunction(() => new URL(location.href).searchParams.get('axisX') === '1023');
   assert.equal(new URL(page.url()).searchParams.get('axisY'), '0');
-  await page.waitForFunction(() => ![...document.querySelectorAll('button')].find(button => button.textContent === 'ランダムな軸')?.disabled);
+  await page.waitForFunction(() => document.querySelector('[data-testid="sound-map-axis-x"]')?.getAttribute('data-feature-index') === '1023' && document.querySelector('[data-testid="sound-map-axis-y"]')?.getAttribute('data-feature-index') === '0');
+  await page.waitForFunction(() => [...document.querySelectorAll('button')].some(button => button.textContent === 'ランダムな軸' && !button.disabled));
   await (await button('ランダムな軸')).click();
   await page.waitForFunction(() => new URL(location.href).searchParams.get('axisX') !== '1023' || new URL(location.href).searchParams.get('axisY') !== '0');
   const selectedAxes = [new URL(page.url()).searchParams.get('axisX'), new URL(page.url()).searchParams.get('axisY')];
@@ -72,7 +73,7 @@ try {
   await page.waitForFunction(() => !document.querySelector('[data-testid="sound-map-page"]')?.textContent.includes('X · 特徴'));
   assert.equal(new URL(page.url()).searchParams.get('layout'), 'pca');
   await page.select('select[aria-label="配置方法"]', 'features');
-  await page.waitForFunction(() => ![...document.querySelectorAll('button')].find(button => button.textContent === '軸を適用')?.disabled);
+  await page.waitForFunction(() => [...document.querySelectorAll('button')].some(button => button.textContent === '軸を適用' && !button.disabled));
   await fill('Xの特徴番号', 17); await fill('Yの特徴番号', 17);
   await (await button('軸を適用')).click();
   assert.equal(await page.$eval('input[name="axisY"]', element => element.validity.valid), false);
