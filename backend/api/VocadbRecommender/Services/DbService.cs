@@ -2580,7 +2580,7 @@ public class DbService
             history_observation_groups AS NOT MATERIALIZED (
                 -- This projection has one consumer. Stream it into the carry
                 -- window instead of writing and rereading all 21 days of rows.
-                -- Keep the reused filled/window stages materialized below.
+                -- Only the shared history_windows result is materialized below.
                 -- YouTube and NicoNico are acquired independently. Explicit
                 -- observation flags distinguish a real zero from a missing
                 -- service sample without guessing from the counter value.
@@ -2595,7 +2595,7 @@ public class DbService
                 WHERE watermark.observed_at IS NOT NULL
                   AND h.recorded_at >= watermark.observed_at - interval '21 days'
             ),
-            history_filled AS MATERIALIZED (
+            history_filled AS NOT MATERIALIZED (
                 -- A cumulative counter cannot legitimately decrease. Running
                 -- maxima both carry independent-service gaps and suppress API
                 -- regressions without fabricating a pre-observation value.
@@ -2644,7 +2644,7 @@ public class DbService
                        h.youtube_views,
                        h.nico_views,
                        {latestTotalViewsSql} AS total_views
-                FROM history_filled h
+                FROM history_windows h
                 JOIN songs latest_song ON latest_song.id = h.song_id
                 JOIN song_discovery_quality latest_quality
                   ON latest_quality.song_id = h.song_id
