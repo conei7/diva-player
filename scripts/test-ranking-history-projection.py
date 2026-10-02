@@ -108,6 +108,9 @@ def main():
             objects.append(value)
             output = output.lstrip()[end:]
         old_plan, old_signature, new_plan, new_signature = objects
+        if args.output:
+            args.output.write_text(json.dumps({'status': 'measured', 'originalSignature': old_signature,
+                'candidateSignature': new_signature, 'originalPlan': old_plan, 'candidatePlan': new_plan}, indent=2))
         assert old_signature == new_signature, (old_signature, new_signature)
         def stats(plan):
             return {'executionMs': plan[0]['Execution Time'],
