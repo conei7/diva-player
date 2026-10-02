@@ -8,6 +8,8 @@ export interface SoundMapPoint {
   y: number;
   similarity: number | null;
   thumbUrl?: string;
+  featureX?: number | null;
+  featureY?: number | null;
 }
 
 export interface SoundMapResponse {
@@ -18,6 +20,7 @@ export interface SoundMapResponse {
   state: 'ready' | 'no_audio' | 'no_mapped_neighbors';
   origin: SoundMapPoint;
   items: SoundMapPoint[];
+  axes?: { x: number; y: number; dimensionCount: number; minX: number; maxX: number; minY: number; maxY: number } | null;
 }
 
 export class SoundMapRequestError extends Error {
@@ -38,13 +41,15 @@ export class SoundMapRequestError extends Error {
 
 export async function fetchSoundMap(
   seedSongId: number,
-  options: { mapVersion?: string; limit?: number; signal?: AbortSignal } = {},
+  options: { mapVersion?: string; limit?: number; axisX?: number; axisY?: number; signal?: AbortSignal } = {},
 ): Promise<SoundMapResponse> {
   const params = new URLSearchParams({
     seedSongId: String(seedSongId),
     limit: String(options.limit ?? 120),
   });
   if (options.mapVersion) params.set('mapVersion', options.mapVersion);
+  if (options.axisX !== undefined) params.set('axisX', String(options.axisX));
+  if (options.axisY !== undefined) params.set('axisY', String(options.axisY));
   const response = await fetch(`${RECOMMENDER_API}/api/discovery/sound-map?${params}`, {
     signal: options.signal,
   });

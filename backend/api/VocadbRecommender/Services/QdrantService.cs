@@ -620,6 +620,28 @@ public class QdrantService
             .ToList();
     }
 
+    public async Task<Dictionary<int, (double X, double Y)>> GetAudioFeatureAxesAsync(
+        IReadOnlyCollection<int> songIds, int axisX, int axisY, CancellationToken cancellationToken)
+    {
+        if (axisX is < 0 or >= 1024 || axisY is < 0 or >= 1024 || axisX == axisY)
+            throw new ArgumentOutOfRangeException(nameof(axisX));
+        if (songIds.Count > 201) throw new ArgumentOutOfRangeException(nameof(songIds));
+        cancellationToken.ThrowIfCancellationRequested();
+        var points = await _client.RetrieveAsync(
+            collectionName: _opts.CollectionAudio,
+            ids: songIds.Distinct().Select(id => new PointId { Num = (ulong)id }).ToArray(),
+            withPayload: false, withVectors: true, cancellationToken: cancellationToken);
+        var result = new Dictionary<int, (double X, double Y)>();
+        foreach (var point in points)
+        {
+            var vector = ReadDenseVector(point.Vectors?.Vector);
+            if (vector.Length != 1024 || !float.IsFinite(vector[axisX]) || !float.IsFinite(vector[axisY]))
+                continue;
+            result[checked((int)point.Id.Num)] = (vector[axisX], vector[axisY]);
+        }
+        return result;
+    }
+
     public async Task<bool> HasAudioVectorAsync(int songId, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
