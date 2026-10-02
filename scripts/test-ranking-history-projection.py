@@ -30,7 +30,9 @@ def signatures(prefix):
 def run_psql(sql, args):
     command = ['docker', 'exec', '-i', args.container, 'psql', '-X', '-q', '-A', '-t',
                '-v', 'ON_ERROR_STOP=1', '-U', 'vocadb', '-d', 'vocadb_recommender']
-    result = subprocess.run(command, input=sql, text=True, capture_output=True, timeout=210, check=True)
+    result = subprocess.run(command, input=sql, text=True, capture_output=True, timeout=210)
+    if result.returncode:
+        raise RuntimeError(result.stderr.strip())
     return result.stdout.strip()
 
 
