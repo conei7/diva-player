@@ -128,11 +128,16 @@ class CacheRetentionTests(unittest.TestCase):
             run = root / '20261001T010203Z-1'
             scan = run / 'image-scan'
             scan.mkdir(parents=True)
+            (scan / 'trivy-cache').mkdir()
             receipt = scan / 'api.receipt.json'
             image = 'sha256:' + 'a' * 64
             receipt.write_text(json.dumps({'image': {'id': image}}))
             self.assertEqual(cache.scan_references(root, {image}), [str(run)])
             self.assertEqual(cache.scan_references(root, {'sha256:' + 'b' * 64}), [])
+            newer = root / '20261002T010203Z-2'
+            (newer / 'image-scan/trivy-cache').mkdir(parents=True)
+            (newer / 'image-scan/api.receipt.json').write_text(receipt.read_text())
+            self.assertEqual(cache.scan_references(root, {image}), [str(newer)])
             receipt.write_text('{broken')
             self.assertEqual(cache.scan_references(root, set()), [str(run)])
 

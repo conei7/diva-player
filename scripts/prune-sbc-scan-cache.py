@@ -98,12 +98,15 @@ def plan(root: Path, references: list[str]) -> dict:
 
 def scan_references(root: Path, image_ids: set[str]) -> list[str]:
     refs = []
-    for run in root.iterdir():
+    remaining = set(image_ids)
+    for run in sorted(root.iterdir(), reverse=True):
         if not RUN.fullmatch(run.name) or run.is_symlink() or not run.is_dir():
             continue
         scan = run / 'image-scan'
         if scan.is_symlink():
             raise RuntimeError('Unsafe image scan directory')
+        if not (scan / 'trivy-cache').exists():
+            continue
         for receipt in scan.glob('*.receipt.json'):
             if receipt.is_symlink() or not receipt.is_file():
                 raise RuntimeError('Unsafe image scan receipt')
@@ -115,8 +118,9 @@ def scan_references(root: Path, image_ids: set[str]) -> list[str]:
             except (ValueError, KeyError, TypeError):
                 refs.append(str(run))  # Unknown verification evidence stays protected.
                 continue
-            if image_id in image_ids:
+            if image_id in remaining:
                 refs.append(str(run))
+                remaining.remove(image_id)
     return refs
 
 
