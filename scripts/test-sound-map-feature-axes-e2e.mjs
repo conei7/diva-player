@@ -5,6 +5,12 @@ const baseUrl = new URL(process.argv[2] || 'http://127.0.0.1:5173/diva-player/')
 const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox', '--lang=ja-JP'] });
 try {
   const page = await browser.newPage();
+  await page.evaluateOnNewDocument(() => {
+    // Keep the Japanese selectors stable on CI browsers with an English locale.
+    Object.defineProperty(navigator, 'language', { get: () => 'en-US' });
+    Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
+    localStorage.setItem('diva_uiLanguage', JSON.stringify('ja'));
+  });
   await page.setViewport({ width: 1280, height: 900 });
   await page.setRequestInterception(true);
   let requests = 0;
@@ -36,7 +42,7 @@ try {
     throw new Error(`Missing button: ${label}`);
   }
   async function fill(label, value) {
-    const handle = await page.$(`input[aria-label="${label}"]`);
+    const handle = await page.waitForSelector(`input[aria-label="${label}"]`);
     await handle.focus();
     await page.keyboard.down('Control'); await page.keyboard.press('A'); await page.keyboard.up('Control');
     await page.keyboard.type(String(value));
