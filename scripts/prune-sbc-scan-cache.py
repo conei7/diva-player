@@ -228,6 +228,46 @@ def atomic_json(path: Path, value: dict):
             os.unlink(temporary)
 
 
+def build_capacity_budget(required: int, free: int, image_sizes: list[int]) -> dict:
+    if any(type(v) is not int or v < 0 for v in [required, free, *image_sizes]) or required == 0:
+        raise RuntimeError('Unknown build capacity requirements')
+    margin = 8 * 1024**3
+    build = max(margin, 2 * sum(image_sizes))
+    total = required + margin + build
+    return {'status': 'success' if free >= total else 'blocked',
+            'freeBytes': free, 'backupRequiredBytes': required,
+            'operationalMarginBytes': margin, 'buildAllowanceBytes': build,
+            'requiredFreeBytes': total, 'headroomBytes': free - total}
+
+
+def check_build_capacity(root: Path) -> dict:
+    # Use the pipeline operator's backup roots rather than root's empty HOME.
+    pipeline = Path('/home/orangepi/diva-data-pipeline')
+    report = json.loads(subprocess.check_output([
+        'runuser', '-u', 'orangepi', '--',
+        str(pipeline / 'ml_pipeline/.venv/bin/python'), '-B',
+        str(pipeline / 'report_sbc_capacity.py'),
+    ], text=True, stderr=subprocess.DEVNULL, timeout=90))
+    if report.get('status') != 'success':
+        raise RuntimeError('Operation capacity report is unavailable')
+    tags = subprocess.check_output(['docker', 'image', 'ls', '--no-trunc', '--format',
+                                    '{{.Repository}}:{{.Tag}} {{.ID}}'], text=True)
+    ids = set()
+    for row in tags.splitlines():
+        reference, image_id = row.split()
+        if reference in ('diva-player-api:local', 'diva-player-api-gateway:local', 'diva-player-web:local'):
+            ids.add(image_id)
+    images = json.loads(subprocess.check_output(['docker', 'image', 'inspect', *sorted(ids)], text=True)) if ids else []
+    disk = os.statvfs(root)
+    result = build_capacity_budget(report['requiredFreeBytes'], disk.f_bavail * disk.f_frsize,
+                                   [image['Size'] for image in images])
+    result['checkedAt'] = datetime.now(timezone.utc).isoformat()
+    atomic_json(root / 'build-capacity-preflight.json', result)
+    if result['status'] != 'success':
+        raise RuntimeError('Insufficient free space for build plus backup and operational reserves')
+    return result
+
+
 def main():
     def interrupted(signum, frame):
         raise RuntimeError(f'Cache retention interrupted by signal {signum}')
@@ -236,10 +276,14 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--apply', action='store_true')
     parser.add_argument('--parent-lock', action='store_true', help='verify and borrow the invoking deployment lock')
+    parser.add_argument('--check-build-capacity', action='store_true', help='require backup, operational and build reserves before deployment')
     args = parser.parse_args()
     if os.geteuid() != 0:
         raise RuntimeError('Run with sudo to inspect all protected references')
     with deployment_lock(ROOT, args.parent_lock):
+        if args.check_build_capacity:
+            print(json.dumps(check_build_capacity(ROOT), sort_keys=True))
+            return
         first = plan(ROOT, live_references(ROOT))
         if not args.apply:
             print(json.dumps(first, sort_keys=True))

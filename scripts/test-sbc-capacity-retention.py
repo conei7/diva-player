@@ -143,6 +143,20 @@ class CacheRetentionTests(unittest.TestCase):
 
 
 class CapacityMonitoringTests(unittest.TestCase):
+    def test_build_preserves_backup_operational_and_build_reserves(self):
+        gib = 1024**3
+        result = cache.build_capacity_budget(25 * gib, 40 * gib, [gib])
+        self.assertEqual(result['status'], 'blocked')
+        self.assertEqual(result['requiredFreeBytes'], 41 * gib)
+        self.assertEqual(cache.build_capacity_budget(25 * gib, 41 * gib, [gib])['status'], 'success')
+        self.assertEqual(cache.build_capacity_budget(25 * gib, 50 * gib, [5 * gib])['buildAllowanceBytes'], 10 * gib)
+        for invalid in [-1, 0, None, True]:
+            with self.assertRaises(RuntimeError):
+                cache.build_capacity_budget(invalid, 50 * gib, [])
+        source = Path(__file__).with_name('deploy-sbc-api-rolling.sh').read_text()
+        self.assertIn('--check-build-capacity --parent-lock', source)
+        self.assertIn('fail "Build capacity preflight failed;', source)
+
     def info(self, now):
         return {'status': 'success', 'checkedAt': now.isoformat(), 'requiredFreeBytes': 20 * 1024**3,
                 'managedTransientBytes': 5 * 1024**3}

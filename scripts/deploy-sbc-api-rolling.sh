@@ -7224,6 +7224,11 @@ if [ "$TEST_MODE" != "1" ]; then
     "$EXACT_PYTHON_COMMAND" -I -B "$SOURCE_SNAPSHOT_ROOT/scripts/prune-sbc-scan-cache.py" --apply --parent-lock \
         > "$DEPLOYMENT_DIR/scan-cache-retention-start.json" \
         || log "WARNING: scan cache retention deferred; inspect protected references."
+    if ! "$EXACT_PYTHON_COMMAND" -I -B "$SOURCE_SNAPSHOT_ROOT/scripts/prune-sbc-scan-cache.py" --check-build-capacity --parent-lock \
+        > "$DEPLOYMENT_DIR/build-capacity-preflight.json"; then
+        fail "Build capacity preflight failed; preserve backup and operational reserves"
+        exit 1
+    fi
 fi
 if [ "$BRIDGE_BOOTSTRAP_MODE" != "true" ]; then
     if ! validate_stateful_runtime_contract; then
