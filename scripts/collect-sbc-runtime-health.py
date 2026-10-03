@@ -1261,6 +1261,8 @@ def operation_capacity(collected: dict, previous: dict, state_dir: Path, now: da
     info = previous.get("capacity") or {}
     try:
         checked = datetime.fromisoformat(info["checkedAt"])
+        if checked.tzinfo is None or checked > now:
+            raise ValueError("Invalid capacity report timestamp")
     except (KeyError, ValueError, TypeError):
         checked = datetime.min.replace(tzinfo=timezone.utc)
     if (now - checked).total_seconds() >= 300:
@@ -1274,26 +1276,44 @@ def operation_capacity(collected: dict, previous: dict, state_dir: Path, now: da
         except Exception as error:
             info = {"status": "unknown", "checkedAt": now.isoformat(), "errorType": type(error).__name__}
     info = dict(info)
+    for key in ("estimatedDailyGrowthBytes", "daysUntilReserveExhaustion", "estimatedExhaustionAt"):
+        info[key] = None
     disk = collected.get("disk") or {}
     free = disk.get("availableBytes")
     required = info.get("requiredFreeBytes")
+    total = disk.get("totalBytes")
+    transient = info.get("managedTransientBytes", 0)
     violations = []
-    if isinstance(free, int) and isinstance(required, int):
+    valid_bytes = all(type(value) is int and value >= 0 for value in (free, required, total, transient))
+    if valid_bytes and total > 0 and free + transient <= total:
         info.update({"freeBytes": free, "operationalMarginBytes": margin,
                      "headroomBytes": free - required, "reserveRequiredBytes": required + margin})
         if free < required + margin:
             violations.append({"id": "capacity:operation-headroom", "message": "作業必要容量＋8GiBの余裕が不足"})
         path = state_dir / "capacity_daily_samples.json"
         document = load_json(path)
-        samples = document.get("samples") or []
-        transient = info.get("managedTransientBytes", 0)
-        total = disk.get("totalBytes", 0)
         durable = total - free - transient
-        cutoff = (now - timedelta(days=30)).date().isoformat()
-        samples = [x for x in samples if x["date"] >= cutoff]
+        local_day = now.astimezone(timezone(timedelta(hours=9))).date()
+        cutoff = local_day - timedelta(days=30)
+        by_day = {}
+        rows = document.get("samples")
+        for row in rows if isinstance(rows, list) else []:
+            if not isinstance(row, dict):
+                continue
+            try:
+                sample_day = datetime.fromisoformat(row["date"]).date()
+            except (KeyError, ValueError, TypeError):
+                continue
+            used = row.get("durableUsedBytes")
+            if (row.get("date") != sample_day.isoformat() or not cutoff <= sample_day <= local_day
+                    or type(row.get("totalBytes")) is not int or row["totalBytes"] != total
+                    or type(used) is not int or not 0 <= used <= total):
+                continue
+            by_day[row["date"]] = row
+        samples = [by_day[day] for day in sorted(by_day)]
         if samples and (samples[-1].get("totalBytes") != total or durable < samples[-1]["durableUsedBytes"] - 2 * 1024**3):
             samples = []  # A storage resize or large physical cleanup starts a new baseline.
-        day = now.astimezone(timezone(timedelta(hours=9))).date().isoformat()
+        day = local_day.isoformat()
         samples = [x for x in samples if x["date"] != day]
         samples.append({"date": day, "totalBytes": total, "durableUsedBytes": durable})
         write_json_atomic(path, {"schemaVersion": 1, "samples": samples[-30:]})

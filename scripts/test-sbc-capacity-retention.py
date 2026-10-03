@@ -190,6 +190,75 @@ class CapacityMonitoringTests(unittest.TestCase):
             info, _ = health.operation_capacity(self.disk(40 * 1024**3), {}, Path(temp), datetime.now(timezone.utc))
             self.assertEqual(info['forecastStatus'], 'unknown')
 
+    def test_cleanup_clears_cached_growth_and_exhaustion(self):
+        with tempfile.TemporaryDirectory() as temp:
+            state = Path(temp)
+            start = datetime(2026, 10, 1, tzinfo=timezone.utc)
+            for i in range(7):
+                now = start + timedelta(days=i)
+                info, _ = health.operation_capacity(self.disk((45 - i) * 1024**3), {'capacity': self.info(now)}, state, now)
+            self.assertIsNotNone(info['daysUntilReserveExhaustion'])
+            updated, _ = health.operation_capacity(self.disk(70 * 1024**3), {'capacity': info}, state, now)
+            self.assertEqual(updated['growthSampleCount'], 1)
+            self.assertEqual(updated['forecastStatus'], 'insufficient-samples')
+            for key in ['estimatedDailyGrowthBytes', 'daysUntilReserveExhaustion', 'estimatedExhaustionAt']:
+                self.assertIsNone(updated[key])
+            self.assertIsNotNone(info['estimatedDailyGrowthBytes'])
+
+    def test_no_growth_clears_previous_exhaustion(self):
+        with tempfile.TemporaryDirectory() as temp:
+            state = Path(temp)
+            start = datetime(2026, 10, 1, tzinfo=timezone.utc)
+            for i in range(7):
+                now = start + timedelta(days=i)
+                health.operation_capacity(self.disk(45 * 1024**3), {'capacity': self.info(now)}, state, now)
+            previous = self.info(now)
+            previous.update({'daysUntilReserveExhaustion': 2, 'estimatedExhaustionAt': 'old'})
+            info, _ = health.operation_capacity(self.disk(45 * 1024**3), {'capacity': previous}, state, now)
+            self.assertEqual(info['forecastStatus'], 'no-positive-growth')
+            self.assertEqual(info['estimatedDailyGrowthBytes'], 0)
+            self.assertIsNone(info['daysUntilReserveExhaustion'])
+            self.assertIsNone(info['estimatedExhaustionAt'])
+
+    def test_invalid_duplicate_and_future_samples_do_not_break_collection(self):
+        with tempfile.TemporaryDirectory() as temp:
+            state = Path(temp)
+            now = datetime(2026, 10, 7, tzinfo=timezone.utc)
+            rows = [{'date': f'2026-10-{i:02d}', 'totalBytes': 100 * 1024**3,
+                     'durableUsedBytes': (50 + i) * 1024**3} for i in range(1, 7)]
+            rows += [rows[0], None, {}, {'date': 'invalid'},
+                     {**rows[0], 'date': '2026-10-08'},
+                     {**rows[0], 'date': '2026-10-02', 'durableUsedBytes': True},
+                     {**rows[0], 'date': '2026-10-03', 'totalBytes': 1}]
+            (state / 'capacity_daily_samples.json').write_text(json.dumps({'samples': list(reversed(rows))}))
+            info, _ = health.operation_capacity(self.disk(38 * 1024**3), {'capacity': self.info(now)}, state, now)
+            self.assertEqual(info['growthSampleCount'], 7)
+            self.assertEqual(info['estimatedDailyGrowthBytes'], 1024**3)
+            saved = json.loads((state / 'capacity_daily_samples.json').read_text())['samples']
+            self.assertEqual([row['date'] for row in saved], [f'2026-10-{i:02d}' for i in range(1, 8)])
+
+    def test_invalid_disk_does_not_record_or_keep_forecast(self):
+        with tempfile.TemporaryDirectory() as temp:
+            now = datetime(2026, 10, 7, tzinfo=timezone.utc)
+            previous = self.info(now)
+            previous['estimatedDailyGrowthBytes'] = 123
+            for disk in [self.disk(True), self.disk(101 * 1024**3), {'disk': {'availableBytes': 1}}]:
+                info, _ = health.operation_capacity(disk, {'capacity': previous}, Path(temp), now)
+                self.assertEqual(info['forecastStatus'], 'unknown')
+                self.assertIsNone(info['estimatedDailyGrowthBytes'])
+            self.assertFalse((Path(temp) / 'capacity_daily_samples.json').exists())
+
+    def test_naive_or_future_report_timestamp_is_refreshed(self):
+        with tempfile.TemporaryDirectory() as temp:
+            now = datetime(2026, 10, 7, tzinfo=timezone.utc)
+            for checked in ['2026-10-07T00:00:00', (now + timedelta(days=1)).isoformat()]:
+                previous = self.info(now)
+                previous['checkedAt'] = checked
+                with patch.object(health, '_run_command', return_value=json.dumps(self.info(now))) as run:
+                    info, _ = health.operation_capacity(self.disk(40 * 1024**3), {'capacity': previous}, Path(temp), now)
+                run.assert_called_once()
+                self.assertEqual(info['forecastStatus'], 'insufficient-samples')
+
 
 if __name__ == '__main__':
     unittest.main()
