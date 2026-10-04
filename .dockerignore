@@ -6,6 +6,7 @@ build
 *.local
 .git
 .venv
+**/__pycache__/
 .env*
 .dev.vars
 wrangler.toml

@@ -131,6 +131,7 @@ const [
   gatewayDockerfile,
   postgresDockerfile,
   postgresMigrateDockerfile,
+  webDockerignore,
   databaseDockerignore,
 ] = (await Promise.all([
   readFile(new URL('../Dockerfile.web', import.meta.url), 'utf8'),
@@ -138,6 +139,7 @@ const [
   readFile(new URL('../backend/api-gateway/Dockerfile', import.meta.url), 'utf8'),
   readFile(new URL('../backend/database/Dockerfile.pgvector', import.meta.url), 'utf8'),
   readFile(new URL('../backend/database/Dockerfile.migrate', import.meta.url), 'utf8'),
+  readFile(new URL('../.dockerignore', import.meta.url), 'utf8'),
   readFile(new URL('../backend/database/.dockerignore', import.meta.url), 'utf8'),
 ])).map(normalizeNewlines);
 const [sdkContract, apiPackagesLock, apiTestPackagesLock] = await Promise.all([
@@ -184,6 +186,7 @@ assert.deepEqual(databaseDockerignore.trim().split('\n'), [
   '!Dockerfile.migrate',
   '!schema.sql',
 ]);
+assert.match(webDockerignore, /(?:^|\n)\*\*\/__pycache__\/(?:\n|$)/);
 assert.match(webDockerfile, /node:22\.22\.2-alpine@sha256:8ea2348b068a9544dae7317b4f3aafcdc032df1647bb7d768a05a5cad1a7683f/);
 assert.match(webDockerfile, /nginxinc\/nginx-unprivileged:alpine@sha256:901e944d1f4fc2bd077e8f5568b98c1f6f8cdacf6b97a87747c43134a339b9a7/);
 assert.match(apiDockerfile, /aspnet:8\.0-alpine-extra@sha256:bfb8d74a4b0130c7e4abf88a4dede4f51929b91e26d76ae8ccf3f571a21db3b9/);
