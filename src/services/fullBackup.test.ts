@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { parseFullBackup, readPersistedPlaylistsForBackup } from './fullBackup';
+import { executeFullBackupImport, parseFullBackup, readPersistedPlaylistsForBackup } from './fullBackup';
 import { usePlaylistStore } from '../stores/playlistStore';
 
 function createLocalStorage(initial: Record<string, string> = {}) {
@@ -203,5 +203,101 @@ describe('parseFullBackup', () => {
     expect(preview?.canRestore).toBe(true);
     expect(preview?.hiddenSongCount).toBe(1);
     expect(preview?.parsed.sections.hiddenSongs['42'].song.name).toBe('表示しない曲');
+  });
+
+  it('rejects an invalid preview before reading or changing persisted data', async () => {
+    const preview = {
+      canRestore: false,
+      parsed: { sections: {} },
+    } as never;
+
+    await expect(executeFullBackupImport(preview, { mode: 'replace', ratingPriority: 'backup' }))
+      .rejects.toMatchObject({ name: 'FullBackupImportError', recoveryComplete: true });
+    expect(usePlaylistStore.getState().playlists).toEqual([]);
+  });
+
+  it('revalidates the payload in the service instead of trusting a forged preview flag', async () => {
+    const preview = { canRestore: true, parsed: {} } as never;
+
+    await expect(executeFullBackupImport(preview, { mode: 'replace', ratingPriority: 'backup' }))
+      .rejects.toMatchObject({ name: 'FullBackupImportError', recoveryComplete: true });
+    expect(usePlaylistStore.getState().playlists).toEqual([]);
+  });
+
+  it('reports an incomplete rollback when playlist storage cannot be restored', async () => {
+    const historyStores = ['plays', 'stats_pending', 'stats_applied', 'song_stats', 'year_stats', 'month_stats', 'stats_meta'];
+    const database = {
+      transaction: () => {
+        let completedRequests = 0;
+        const requests: Array<{ result: unknown[]; onsuccess: (() => void) | null }> = [];
+        const transaction: { error: null; oncomplete: (() => void) | null; onerror: (() => void) | null; onabort: (() => void) | null; objectStore: () => { getAll: () => { result: unknown[]; onsuccess: (() => void) | null } } } = {
+          error: null,
+          oncomplete: null,
+          onerror: null,
+          onabort: null,
+          objectStore: () => ({
+            getAll: () => {
+              const request = { result: [], onsuccess: null as (() => void) | null };
+              requests.push(request);
+              queueMicrotask(() => {
+                request.onsuccess?.();
+                completedRequests += 1;
+                if (completedRequests === historyStores.length) transaction.oncomplete?.();
+              });
+              return request;
+            },
+          }),
+        };
+        return transaction;
+      },
+    };
+    const indexedDb = {
+      open: () => {
+        const request: { result: typeof database; onsuccess: (() => void) | null; onerror: (() => void) | null } = {
+          result: database,
+          onsuccess: null,
+          onerror: null,
+        };
+        queueMicrotask(() => request.onsuccess?.());
+        return request;
+      },
+    };
+    vi.stubGlobal('indexedDB', indexedDb);
+    const values = new Map<string, string>([
+      ['diva_playlists', 'previous-playlists'],
+      ['diva_playlistFolders', 'previous-folders'],
+    ]);
+    let writes = 0;
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => {
+        writes += 1;
+        if (key === 'diva_playlistFolders' || writes >= 3) throw new DOMException('storage full', 'QuotaExceededError');
+        values.set(key, value);
+      },
+      removeItem: (key: string) => { values.delete(key); },
+      key: (index: number) => [...values.keys()][index] ?? null,
+      get length() { return values.size; },
+    });
+    usePlaylistStore.setState({ playlists: [], folders: [] });
+    const preview = parseFullBackup({
+      kind: 'diva-player-full-backup',
+      version: 1,
+      sections: {
+        history: { events: [] },
+        ratings: {},
+        playlists: { folders: [], playlists: [] },
+      },
+    });
+
+    expect(preview?.canRestore).toBe(true);
+    await expect(executeFullBackupImport(preview!, { mode: 'replace', ratingPriority: 'backup' }))
+      .rejects.toMatchObject({
+        name: 'FullBackupImportError',
+        recoveryComplete: false,
+        rollbackErrors: expect.arrayContaining([expect.stringContaining('diva_playlists')]),
+      });
+    expect(usePlaylistStore.getState().playlists).toEqual([]);
+    expect(values.get('diva_playlists')).not.toBe('previous-playlists');
   });
 });

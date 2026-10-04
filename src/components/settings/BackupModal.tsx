@@ -3,6 +3,7 @@ import {
   createFullBackup,
   downloadFullBackup,
   executeFullBackupImport,
+  FullBackupImportError,
   getCurrentBackupCounts,
   parseFullBackup,
   readCurrentBackupCounts,
@@ -135,7 +136,13 @@ export default function BackupModal({ isOpen, onBack, onClose }: BackupModalProp
       setMessage(mode === 'replace' ? 'バックアップの内容へ置き換えました。' : 'バックアップを現在のデータへ追加しました。');
     } catch (error) {
       console.error(error);
-      setMessage('復元に失敗しました。現在のデータは維持されています。');
+      if (error instanceof FullBackupImportError && !error.recoveryComplete) {
+        setMessage(`復元に失敗し、一部の復旧を確認できませんでした。${error.rollbackErrors.join(' / ')}`);
+      } else if (error instanceof FullBackupImportError) {
+        setMessage(`復元できませんでした。${error.message}`);
+      } else {
+        setMessage('復元できませんでした。現在の保存データを確認してください。');
+      }
     } finally {
       setBusy(false);
     }

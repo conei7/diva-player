@@ -124,7 +124,8 @@ async function searchSongsPreferBackend(params: {
       maxResults: params.maxResults,
       songTypes: params.songTypes,
     });
-  } catch {
+  } catch (error) {
+    if (params.artistRole) throw error;
     const fallback = await searchSongs({
       query: params.query,
       artistIds: params.artistIds,
@@ -154,6 +155,7 @@ async function fetchByArtistIds(
   songTypes?: SongType[],
   filters?: AdvancedSearchFilters,
   globalFilters?: GlobalFilterSettings,
+  artistRole?: string,
 ): Promise<{ items: Song[]; totalCount: number; nextApiStart?: number }> {
   const apiSort = toApiSort(sort);
   const producerIds = producerArtistId ? [producerArtistId] : [];
@@ -178,6 +180,7 @@ async function fetchByArtistIds(
     return searchSongsBackend({
       artistIds: producerIds.length > 0 ? producerIds : undefined,
       anyArtistIds: vocalistFilters.map(v => v.id),
+      artistRole,
       sort,
       sortOrder,
       start,
@@ -196,6 +199,7 @@ async function fetchByArtistIds(
       return searchSongsBackend({
         artistIds: allIds.length > 0 ? allIds : undefined,
         artistIdGroups,
+        artistRole,
         sort,
         sortOrder,
         start,
@@ -206,11 +210,13 @@ async function fetchByArtistIds(
       });
     }
     const allRequiredIds = [...producerIds, ...vocalistFilters.map(v => v.id)];
-    if (LOCAL_SORT_RULES.has(sort)
+    if (artistRole
+      || LOCAL_SORT_RULES.has(sort)
       || (filters ? hasAdvancedFilters(filters) : false)
       || (globalFilters ? hasGlobalSongFilters(globalFilters) : false)) {
       return searchSongsBackend({
         artistIds: allRequiredIds.length > 0 ? allRequiredIds : undefined,
+        artistRole,
         sort, sortOrder, start, maxResults: PAGE_SIZE, songTypes, filters, globalFilters
       });
     }
@@ -250,12 +256,13 @@ async function fetchByArtistIds(
 
   // PAGE_SIZE 件見つかるまで、または API 結果が尽きるまでループ
   outer: while (matched.length < PAGE_SIZE) {
-    const batch = hasVariantGroups || LOCAL_SORT_RULES.has(sort)
+    const batch = hasVariantGroups || !!artistRole || LOCAL_SORT_RULES.has(sort)
       || (filters ? hasAdvancedFilters(filters) : false)
       || (globalFilters ? hasGlobalSongFilters(globalFilters) : false)
       ? await searchSongsBackend({
           artistIds: hasVariantGroups ? (producerIds.length > 0 ? producerIds : undefined) : (allIds.length > 0 ? allIds : undefined),
           anyArtistIds: hasVariantGroups ? vocalistFilters.map(v => v.id) : undefined,
+          artistRole,
           sort, sortOrder, start: apiOffset, maxResults: BATCH, songTypes, filters, globalFilters
         })
       : await searchSongs({
@@ -543,6 +550,7 @@ export const useSearchStore = create<SearchState>((set, get) => ({
           songTypes,
           advancedFilters,
           globalFilters,
+          artistRole || undefined,
         );
         if (generation !== searchGeneration) return;
         set({
@@ -629,6 +637,7 @@ export const useSearchStore = create<SearchState>((set, get) => ({
           songTypes,
           advancedFilters,
           globalFilters,
+          artistRole || undefined,
         );
         if (generation !== searchGeneration) return;
         set({
@@ -639,6 +648,7 @@ export const useSearchStore = create<SearchState>((set, get) => ({
         });
       } else {
         const useBackend = LOCAL_SORT_RULES.has(sort)
+          || !!artistRole
           || hasAdvancedFilters(advancedFilters)
           || hasGlobalSongFilters(globalFilters);
         const result = useBackend

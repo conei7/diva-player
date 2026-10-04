@@ -843,6 +843,8 @@ jobs:
         run: npm run test:e2e:nico-playlist-sync -- http://127.0.0.1:4173/diva-player/
       - name: Playlist management E2E
         run: npm run test:e2e:playlists -- http://127.0.0.1:4173/diva-player/
+      - name: Settings and backup E2E
+        run: npm run test:e2e:settings -- --base-url http://127.0.0.1:4173/diva-player/
       - name: Knowledge map E2E
         run: npm run test:e2e:knowledge-map -- http://127.0.0.1:4173/diva-player/
       - name: Sound map feature axes E2E

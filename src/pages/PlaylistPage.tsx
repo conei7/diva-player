@@ -75,7 +75,7 @@ export default function PlaylistPage() {
   const {
     playlists, folders,
     loadPlaylists,
-    createPlaylist, deletePlaylist, restoreDeletedPlaylist, updatePlaylist,
+    createPlaylist, createPlaylistWithSongs, deletePlaylist, restoreDeletedPlaylist, updatePlaylist,
     createSmartPlaylist, createYouTubeLinkedPlaylist, unlinkYouTubeSync,
     createNicoLinkedPlaylist, unlinkNicoSync, replacePlaylistSongs,
     createFolder, deleteFolder,
@@ -128,13 +128,14 @@ export default function PlaylistPage() {
       navigate('/playlists', { replace: true });
       return;
     }
-    const imported = createPlaylist(`${payload.name} (${t('共有')})`, selectedFolderId ?? undefined);
-    updatePlaylist(imported.id, { description: payload.description, coverArtUrl: payload.coverArtUrl });
-    addSongs(imported.id, payload.songs);
+    const imported = createPlaylistWithSongs(
+      `${payload.name} (${t('共有')})`, payload.songs, selectedFolderId ?? undefined,
+      { description: payload.description, coverArtUrl: payload.coverArtUrl },
+    );
     setSelectedPlaylistId(imported.id);
     showToast(t('{name} を共有リンクから追加しました。', { name: payload.name }), 'info');
     navigate('/playlists', { replace: true });
-  }, [addSongs, createPlaylist, navigate, searchParams, selectedFolderId, showToast, t, updatePlaylist]);
+  }, [createPlaylistWithSongs, navigate, searchParams, selectedFolderId, showToast, t]);
 
   useEffect(() => {
     setSelectionMode(false);
@@ -369,6 +370,10 @@ export default function PlaylistPage() {
   const handleYTImport = useCallback((songs: Song[]) => {
     if (!selectedPlaylist) return;
     const result = addSongs(selectedPlaylist.id, songs);
+    if (!result.success) {
+      showToast(t('プレイリストに追加できませんでした。'), 'warning');
+      return;
+    }
     if (result.duplicates > 0) {
       showToast(t('{count} 曲は既にプレイリストにあるためスキップしました', { count: result.duplicates }), 'warning');
     }
@@ -511,13 +516,11 @@ export default function PlaylistPage() {
 
         let addedSongs = 0;
         backup.playlists.forEach(item => {
-          const playlist = createPlaylist(`${item.name} (import)`, item.folderId ? folderIdMap.get(item.folderId) : selectedFolderId ?? undefined);
-          updatePlaylist(playlist.id, {
-            description: item.description,
-            coverArtUrl: item.coverArtUrl,
-            smartRule: item.smartRule,
-          });
-          addedSongs += addSongs(playlist.id, item.songs).added;
+          const playlist = createPlaylistWithSongs(
+            `${item.name} (import)`, item.songs, item.folderId ? folderIdMap.get(item.folderId) : selectedFolderId ?? undefined,
+            { description: item.description, coverArtUrl: item.coverArtUrl, smartRule: item.smartRule },
+          );
+          addedSongs += playlist.songs.length;
         });
 
         showToast(t('プレイリストバックアップをインポートしました ({count} 曲)', { count: addedSongs }), 'success');
@@ -527,18 +530,16 @@ export default function PlaylistPage() {
       const parsed = parsePlaylistImport(data);
       if (!parsed) throw new Error('Invalid playlist JSON');
 
-      const playlist = createPlaylist(`${parsed.name} (import)`, selectedFolderId ?? undefined);
-      updatePlaylist(playlist.id, {
-        description: parsed.description,
-        coverArtUrl: parsed.coverArtUrl,
-      });
-      const result = addSongs(playlist.id, parsed.songs);
+      const playlist = createPlaylistWithSongs(
+        `${parsed.name} (import)`, parsed.songs, selectedFolderId ?? undefined,
+        { description: parsed.description, coverArtUrl: parsed.coverArtUrl },
+      );
       setSelectedPlaylistId(playlist.id);
-      showToast(t('「{name}」をインポートしました ({count} 曲)', { name: playlist.name, count: result.added }), 'success');
+      showToast(t('「{name}」をインポートしました ({count} 曲)', { name: playlist.name, count: playlist.songs.length }), 'success');
     } catch {
       window.alert(t('プレイリストJSONを読み込めませんでした。DIVA PlayerからエクスポートしたJSONを選択してください。'));
     }
-  }, [addSongs, createFolder, createPlaylist, selectedFolderId, showToast, t, updatePlaylist]);
+  }, [createFolder, createPlaylistWithSongs, selectedFolderId, showToast, t]);
 
   const handleDelete = useCallback((p: Playlist) => {
     if (p.isPinned) return;

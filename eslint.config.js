@@ -6,7 +6,7 @@ import tseslint from 'typescript-eslint'
 import { defineConfig, globalIgnores } from 'eslint/config'
 
 export default defineConfig([
-  globalIgnores(['dist', 'scripts/.stateful-hardening-test-*/**']),
+  globalIgnores(['dist', '.worktrees/**', '.npm-cache/**', '.quota-pipeline-docs/**', 'scripts/.stateful-hardening-test-*/**']),
   {
     files: ['**/*.{ts,tsx}'],
     extends: [

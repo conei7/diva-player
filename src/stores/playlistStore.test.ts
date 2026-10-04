@@ -44,7 +44,7 @@ describe('playlist bulk save regression', () => {
     const playlist = store.createPlaylist('まとめ');
 
     expect(playlist.id).toMatch(/^playlist-/);
-    expect(store.addSongs(playlist.id, [song(1), song(2), song(1)])).toEqual({ added: 2, duplicates: 1 });
+    expect(store.addSongs(playlist.id, [song(1), song(2), song(1)])).toEqual({ success: true, added: 2, duplicates: 1 });
     expect(usePlaylistStore.getState().playlists.find(item => item.id === playlist.id)?.songs.map(item => item.id)).toEqual([1, 2]);
   });
 
@@ -52,6 +52,74 @@ describe('playlist bulk save regression', () => {
     const songs = [song(10), song(11)];
     useUiStore.getState().openSaveToPlaylist(songs);
     expect(useUiStore.getState().saveToPlaylistSongs).toEqual(songs);
+  });
+
+  it('creates a bulk playlist with unique songs and a first-song cover fallback', () => {
+    vi.stubGlobal('localStorage', createLocalStorage());
+    vi.stubGlobal('crypto', undefined);
+    const first = { ...song(12), thumbUrl: 'https://example.test/cover.jpg' };
+
+    const playlist = usePlaylistStore.getState().createPlaylistWithSongs(
+      'インポート', [first, { ...first, name: '重複' }], undefined, { coverArtUrl: undefined },
+    );
+
+    expect(playlist.songs).toEqual([first]);
+    expect(playlist.coverArtUrl).toBe(first.thumbUrl);
+    expect(usePlaylistStore.getState().playlists[0]?.songs).toEqual([first]);
+  });
+
+  it('does not update in-memory data when the second persisted key fails and rollback succeeds', () => {
+    const values = new Map<string, string>();
+    let writes = 0;
+    const localStorageMock = {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => {
+        writes += 1;
+        if (writes === 2) throw new DOMException('storage full', 'QuotaExceededError');
+        values.set(key, value);
+      },
+      removeItem: (key: string) => { values.delete(key); },
+      key: (index: number) => [...values.keys()][index] ?? null,
+      get length() { return values.size; },
+    };
+    vi.stubGlobal('localStorage', localStorageMock);
+    vi.stubGlobal('alert', vi.fn());
+    if (typeof window !== 'undefined') vi.spyOn(window, 'alert').mockImplementation(() => undefined);
+
+    expect(() => usePlaylistStore.getState().createPlaylist('保存できない')).toThrow(/保存できませんでした/);
+    expect(usePlaylistStore.getState().playlists).toEqual([]);
+    expect(values.has('diva_playlists')).toBe(false);
+    expect(values.has('diva_playlistFolders')).toBe(false);
+  });
+
+  it('reports when a failed playlist save cannot restore the previous storage value', () => {
+    const values = new Map<string, string>([['diva_playlists', 'previous-value']]);
+    let writes = 0;
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => {
+        writes += 1;
+        if (writes === 2 || writes === 3) throw new DOMException('storage full', 'QuotaExceededError');
+        values.set(key, value);
+      },
+      removeItem: (key: string) => { values.delete(key); },
+      key: (index: number) => [...values.keys()][index] ?? null,
+      get length() { return values.size; },
+    });
+    vi.stubGlobal('alert', vi.fn());
+    if (typeof window !== 'undefined') vi.spyOn(window, 'alert').mockImplementation(() => undefined);
+
+    let failure: unknown;
+    try {
+      usePlaylistStore.getState().createPlaylist('復旧できない');
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toMatchObject({ name: 'PlaylistPersistenceError', recoveryComplete: false });
+    expect(usePlaylistStore.getState().playlists).toEqual([]);
+    expect(values.has('diva_playlists')).toBe(true);
+    expect(values.get('diva_playlists')).not.toBe('previous-value');
   });
 });
 

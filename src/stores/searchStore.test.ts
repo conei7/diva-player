@@ -393,4 +393,92 @@ describe('direct artist search state', () => {
     expect(useSearchStore.getState().query).toBe('new query');
     useSearchStore.getState().reset();
   });
+
+  it('keeps the artist role on subsequent pages for ordinary sorts', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      headers: { get: () => null },
+      json: async () => ({ items: [{ id: 2, name: '役割一致の曲' }], totalCount: 2 }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    useSearchStore.setState({
+      query: '',
+      sort: 'FavoritedTimes',
+      sortOrder: 'desc',
+      resolvedArtistId: 123,
+      artistRole: 'Illustrator',
+      vocalistFilters: [],
+      vocalistMatchMode: 'Any',
+      songTypeFilter: 'All',
+      advancedFilters: { ...DEFAULT_ADVANCED_FILTERS },
+      results: [{ id: 1, name: '1ページ目' } as never],
+      totalCount: 2,
+      currentPage: 0,
+      exactApiOffset: 0,
+      isLoading: false,
+      error: null,
+      hasSearched: true,
+    });
+
+    await useSearchStore.getState().loadMore();
+
+    const url = new URL(String(fetchMock.mock.calls[0]?.[0]), 'https://example.test');
+    expect(url.searchParams.get('artistRole')).toBe('Illustrator');
+    expect(url.searchParams.get('artistIds')).toBe('123');
+    expect(useSearchStore.getState().results.map(song => song.id)).toEqual([1, 2]);
+    useSearchStore.getState().reset();
+  });
+
+  it('keeps the artist role when vocalist filters load another page', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      headers: { get: () => null },
+      json: async () => ({ items: [{ id: 2, name: '役割と歌手が一致する曲' }], totalCount: 2 }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    useSearchStore.setState({
+      query: 'Producer',
+      sort: 'TotalViews',
+      sortOrder: 'desc',
+      resolvedArtistId: 123,
+      artistRole: 'Illustrator',
+      vocalistFilters: [{ id: 456, name: '初音ミク' }],
+      vocalistMatchMode: 'All',
+      songTypeFilter: 'All',
+      advancedFilters: { ...DEFAULT_ADVANCED_FILTERS },
+      results: [{ id: 1, name: '1ページ目' } as never],
+      totalCount: 2,
+      currentPage: 0,
+      exactApiOffset: 0,
+      isLoading: false,
+      error: null,
+      hasSearched: true,
+    });
+
+    await useSearchStore.getState().loadMore();
+
+    const url = new URL(String(fetchMock.mock.calls[0]?.[0]), 'https://example.test');
+    expect(url.searchParams.get('artistRole')).toBe('Illustrator');
+    expect(url.searchParams.get('artistIds')).toBe('123,456');
+    expect(useSearchStore.getState().results.map(song => song.id)).toEqual([1, 2]);
+    useSearchStore.getState().reset();
+  });
+
+  it('fails a role-filtered search closed when the backend request fails', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      headers: { get: () => null },
+      json: async () => ({ error: 'unavailable' }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await useSearchStore.getState().searchByArtistId(123, 'Illustrator', 'Illustrator');
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const url = new URL(String(fetchMock.mock.calls[0]?.[0]), 'https://example.test');
+    expect(url.searchParams.get('artistRole')).toBe('Illustrator');
+    expect(useSearchStore.getState().results).toEqual([]);
+    expect(useSearchStore.getState().error).toBeTruthy();
+    useSearchStore.getState().reset();
+  });
 });

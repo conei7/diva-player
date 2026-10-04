@@ -24,6 +24,22 @@ type SupportedBackupVersion = 1 | 2 | 3 | 4 | 5 | 6;
 const MAX_HISTORY_EVENTS = 1_000_000;
 const MAX_PLAYLISTS = 10_000;
 
+export class FullBackupImportError extends Error {
+  readonly recoveryComplete: boolean;
+  readonly rollbackErrors: string[];
+
+  constructor(
+    message: string,
+    recoveryComplete: boolean,
+    rollbackErrors: string[] = [],
+  ) {
+    super(message);
+    this.name = 'FullBackupImportError';
+    this.recoveryComplete = recoveryComplete;
+    this.rollbackErrors = rollbackErrors;
+  }
+}
+
 export interface FullBackupPayload {
   kind: typeof BACKUP_KIND;
   version: SupportedBackupVersion;
@@ -362,6 +378,8 @@ export function parseFullBackup(data: unknown): FullBackupPreview | null {
   };
 }
 
+type HistoryStoreSnapshot = Record<string, unknown[]>;
+
 function transactionToPromise(transaction: IDBTransaction): Promise<void> {
   return new Promise((resolve, reject) => {
     transaction.oncomplete = () => resolve();
@@ -386,17 +404,37 @@ async function replaceHistory(events: ListeningPlayEvent[]): Promise<void> {
   await transactionToPromise(tx);
 }
 
-async function readAllHistoryEvents(): Promise<ListeningPlayEvent[]> {
+async function readHistoryStoreSnapshot(): Promise<HistoryStoreSnapshot> {
   const db = await openHistoryDb();
-  const tx = db.transaction(HISTORY_STORES.plays, 'readonly');
-  return new Promise<ListeningPlayEvent[]>((resolve, reject) => {
-    const request = tx.objectStore(HISTORY_STORES.plays).getAll();
-    request.onsuccess = () => resolve(request.result as ListeningPlayEvent[]);
-    request.onerror = () => reject(request.error);
+  const storeNames = Object.values(HISTORY_STORES);
+  const tx = db.transaction(storeNames, 'readonly');
+  const snapshot: HistoryStoreSnapshot = Object.fromEntries(storeNames.map(name => [name, []]));
+  await new Promise<void>((resolve, reject) => {
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error);
+    for (const name of storeNames) {
+      const request = tx.objectStore(name).getAll();
+      request.onsuccess = () => { snapshot[name] = request.result as unknown[]; };
+      request.onerror = () => reject(request.error);
+    }
   });
+  return snapshot;
 }
 
-async function mergeHistory(events: ListeningPlayEvent[]): Promise<void> {
+async function restoreHistoryStoreSnapshot(snapshot: HistoryStoreSnapshot): Promise<void> {
+  const db = await openHistoryDb();
+  const storeNames = Object.values(HISTORY_STORES);
+  const tx = db.transaction(storeNames, 'readwrite');
+  for (const name of storeNames) {
+    const store = tx.objectStore(name);
+    store.clear();
+    for (const value of snapshot[name] ?? []) store.put(value);
+  }
+  await transactionToPromise(tx);
+}
+
+async function mergeHistory(events: ListeningPlayEvent[]): Promise<boolean> {
   const db = await openHistoryDb();
   const readTx = db.transaction(HISTORY_STORES.plays, 'readonly');
   const existing = await new Promise<ListeningPlayEvent[]>((resolve, reject) => {
@@ -406,7 +444,7 @@ async function mergeHistory(events: ListeningPlayEvent[]): Promise<void> {
   });
   const fingerprints = new Set(existing.map(playEventFingerprint));
   const additions = events.filter(event => !fingerprints.has(playEventFingerprint(event)));
-  if (additions.length === 0) return;
+  if (additions.length === 0) return false;
   const tx = db.transaction(Object.values(HISTORY_STORES), 'readwrite');
   const plays = tx.objectStore(HISTORY_STORES.plays);
   for (const event of additions) plays.add(event);
@@ -417,6 +455,7 @@ async function mergeHistory(events: ListeningPlayEvent[]): Promise<void> {
   tx.objectStore(HISTORY_STORES.monthStats).clear();
   tx.objectStore(HISTORY_STORES.meta).clear();
   await transactionToPromise(tx);
+  return true;
 }
 
 function uniqueId(existing: Set<string>, candidate: string): string {
@@ -440,15 +479,48 @@ function mergePlaylists(current: Playlist[], incoming: Playlist[], currentFolder
 }
 
 export async function executeFullBackupImport(preview: FullBackupPreview, options: FullBackupImportOptions): Promise<FullBackupImportResult> {
+  const validatedPreview = parseFullBackup(preview?.parsed);
+  if (preview?.canRestore !== true || !validatedPreview?.canRestore) {
+    throw new FullBackupImportError('検証に合格していないバックアップは復元できません。', true);
+  }
   const currentRatings = { ...useRatingStore.getState().ratings };
   const currentPlaylists = usePlaylistStore.getState().playlists.map(playlist => ({ ...playlist, songs: [...playlist.songs] }));
   const currentFolders = usePlaylistStore.getState().folders.map(folder => ({ ...folder }));
   const currentGlobalFilters = getGlobalFilterSettings();
   const currentFavoriteProducers = useFavoriteProducerStore.getState().producers.map(producer => ({ ...producer }));
   const currentHiddenSongs = normalizeHiddenSongs(useHiddenSongStore.getState().hiddenSongs);
-  const currentHistory = await readAllHistoryEvents();
+  let currentHistorySnapshot: HistoryStoreSnapshot;
   try {
-    const incoming = preview.parsed.sections;
+    currentHistorySnapshot = await readHistoryStoreSnapshot();
+  } catch (error) {
+    throw new FullBackupImportError(
+      `復元前の履歴を読み取れませんでした: ${error instanceof Error ? error.message : String(error)}`,
+      true,
+    );
+  }
+  const currentHistory = currentHistorySnapshot[HISTORY_STORES.plays] as ListeningPlayEvent[];
+  const storageKeys = [
+    'diva_playlists',
+    'diva_playlistFolders',
+    'diva-ratings',
+    'diva-hidden-songs',
+    'diva-global-filters',
+    'diva-favorite-producers',
+  ];
+  const storageSnapshot = new Map<string, string | null>();
+  try {
+    if (typeof localStorage !== 'undefined') {
+      for (const key of storageKeys) storageSnapshot.set(key, localStorage.getItem(key));
+    }
+  } catch (error) {
+    throw new FullBackupImportError(
+      `復元前の保存状態を読み取れませんでした: ${error instanceof Error ? error.message : String(error)}`,
+      true,
+    );
+  }
+  const changed = { playlists: false, ratings: false, hiddenSongs: false, globalFilters: false, favoriteProducers: false, history: false };
+  try {
+    const incoming = validatedPreview.parsed.sections;
     const merged = options.mode === 'replace'
       ? null
       : mergePlaylists(currentPlaylists, incoming.playlists.playlists, currentFolders, incoming.playlists.folders);
@@ -460,29 +532,42 @@ export async function executeFullBackupImport(preview: FullBackupPreview, option
       const watchLater = currentPlaylists.find(playlist => playlist.id === WATCH_LATER_ID);
       if (watchLater) nextPlaylists.unshift(watchLater);
     }
-    if (!storage.set('playlists', nextPlaylists) || !storage.set('playlistFolders', nextFolders)) throw new Error('playlist storage write failed');
-    usePlaylistStore.getState().loadPlaylists();
+    changed.playlists = true;
+    const playlistWrite = storage.setMany([
+      { key: 'playlists', value: nextPlaylists },
+      { key: 'playlistFolders', value: nextFolders },
+    ]);
+    if (!playlistWrite.success) throw new Error('プレイリストまたはフォルダを保存できませんでした。');
+    usePlaylistStore.setState({ playlists: nextPlaylists, folders: nextFolders });
 
     const nextRatings = options.mode === 'replace'
       ? { ...incoming.ratings }
       : options.ratingPriority === 'backup' ? { ...currentRatings, ...incoming.ratings } : { ...incoming.ratings, ...currentRatings };
+    changed.ratings = true;
     useRatingStore.setState({ ratings: nextRatings });
     const nextHiddenSongs = options.mode === 'replace'
       ? incoming.hiddenSongs
       : { ...currentHiddenSongs, ...incoming.hiddenSongs };
+    changed.hiddenSongs = true;
     useHiddenSongStore.getState().replaceHiddenSongs(nextHiddenSongs);
     if (options.mode === 'replace' && incoming.preferences?.globalFilters) {
+      changed.globalFilters = true;
       useGlobalFilterStore.getState().setSettings(incoming.preferences.globalFilters);
     }
     const incomingFavoriteProducers = incoming.preferences?.favoriteProducers;
     if (incomingFavoriteProducers) {
+      changed.favoriteProducers = true;
       const favoriteById = new Map<number, FavoriteProducer>();
       if (options.mode !== 'replace') currentFavoriteProducers.forEach(producer => favoriteById.set(producer.id, producer));
       incomingFavoriteProducers.forEach(producer => favoriteById.set(producer.id, producer));
       useFavoriteProducerStore.setState({ producers: [...favoriteById.values()] });
     }
-    if (options.mode === 'replace') await replaceHistory(incoming.history.events);
-    else await mergeHistory(incoming.history.events);
+    if (options.mode === 'replace') {
+      await replaceHistory(incoming.history.events);
+      changed.history = true;
+    } else {
+      changed.history = await mergeHistory(incoming.history.events);
+    }
     await useHistoryStore.getState().reloadHistory();
     return {
       before: getCountsFromSections({
@@ -496,19 +581,57 @@ export async function executeFullBackupImport(preview: FullBackupPreview, option
       mode: options.mode,
     };
   } catch (error) {
-    storage.set('playlists', currentPlaylists);
-    storage.set('playlistFolders', currentFolders);
-    usePlaylistStore.getState().loadPlaylists();
-    useRatingStore.setState({ ratings: currentRatings });
-    useHiddenSongStore.getState().replaceHiddenSongs(currentHiddenSongs);
-    useGlobalFilterStore.getState().setSettings(currentGlobalFilters);
-    useFavoriteProducerStore.setState({ producers: currentFavoriteProducers });
-    try {
-      await replaceHistory(currentHistory);
-      await useHistoryStore.getState().reloadHistory();
-    } catch (rollbackError) {
-      console.error('[FullBackup] History rollback failed', rollbackError);
+    const rollbackErrors: string[] = [];
+    if (changed.history) {
+      try {
+        await restoreHistoryStoreSnapshot(currentHistorySnapshot);
+        await useHistoryStore.getState().reloadHistory();
+      } catch (rollbackError) {
+        rollbackErrors.push(`履歴: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`);
+      }
     }
-    throw error;
+    if (changed.favoriteProducers) {
+      try { useFavoriteProducerStore.setState({ producers: currentFavoriteProducers }); }
+      catch (rollbackError) { rollbackErrors.push(`お気に入りP: ${String(rollbackError)}`); }
+    }
+    if (changed.globalFilters) {
+      try { useGlobalFilterStore.getState().setSettings(currentGlobalFilters); }
+      catch (rollbackError) { rollbackErrors.push(`全体フィルター: ${String(rollbackError)}`); }
+    }
+    if (changed.hiddenSongs) {
+      try { useHiddenSongStore.getState().replaceHiddenSongs(currentHiddenSongs); }
+      catch (rollbackError) { rollbackErrors.push(`非表示曲: ${String(rollbackError)}`); }
+    }
+    if (changed.ratings) {
+      try { useRatingStore.setState({ ratings: currentRatings }); }
+      catch (rollbackError) { rollbackErrors.push(`評価: ${String(rollbackError)}`); }
+    }
+    if (changed.playlists) {
+      try { usePlaylistStore.setState({ playlists: currentPlaylists, folders: currentFolders }); }
+      catch (rollbackError) { rollbackErrors.push(`プレイリスト: ${String(rollbackError)}`); }
+    }
+    for (const key of [...storageSnapshot.keys()].reverse()) {
+      const shouldRestore = (key === 'diva_playlists' || key === 'diva_playlistFolders')
+        ? changed.playlists
+        : key === 'diva-ratings' ? changed.ratings
+          : key === 'diva-hidden-songs' ? changed.hiddenSongs
+            : key === 'diva-global-filters' ? changed.globalFilters
+              : changed.favoriteProducers;
+      if (!shouldRestore || typeof localStorage === 'undefined') continue;
+      try {
+        const value = storageSnapshot.get(key) ?? null;
+        if (value === null) localStorage.removeItem(key);
+        else localStorage.setItem(key, value);
+      } catch (rollbackError) {
+        rollbackErrors.push(`${key}: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`);
+      }
+    }
+    console.error('[FullBackup] Import failed', error);
+    if (rollbackErrors.length > 0) console.error('[FullBackup] Rollback incomplete', rollbackErrors);
+    throw new FullBackupImportError(
+      error instanceof Error ? error.message : String(error),
+      rollbackErrors.length === 0,
+      rollbackErrors,
+    );
   }
 }

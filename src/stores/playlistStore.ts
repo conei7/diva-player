@@ -29,8 +29,21 @@ export interface AddSongResult {
 }
 
 export interface AddSongsResult {
+  success: boolean;
   added: number;
   duplicates: number;
+}
+
+export class PlaylistPersistenceError extends Error {
+  readonly recoveryComplete: boolean;
+
+  constructor(recoveryComplete: boolean) {
+    super(recoveryComplete
+      ? 'プレイリストを保存できませんでした。変更は反映されていません。'
+      : 'プレイリストの保存に失敗し、保存状態の復旧も確認できませんでした。再読み込み前にデータを確認してください。');
+    this.name = 'PlaylistPersistenceError';
+    this.recoveryComplete = recoveryComplete;
+  }
 }
 
 export interface RemovedSong {
@@ -62,6 +75,12 @@ interface PlaylistState {
 
   // プレイリスト CRUD
   createPlaylist: (name: string, folderId?: string) => Playlist;
+  createPlaylistWithSongs: (
+    name: string,
+    songs: Song[],
+    folderId?: string,
+    details?: Partial<Pick<Playlist, 'description' | 'coverArtUrl' | 'smartRule'>>,
+  ) => Playlist;
   deletePlaylist: (id: string) => DeletedPlaylistSnapshot | null;
   restoreDeletedPlaylist: (snapshot: DeletedPlaylistSnapshot) => boolean;
   updatePlaylist: (id: string, patch: Partial<Pick<Playlist, 'name' | 'description' | 'coverArtUrl' | 'folderId' | 'smartRule'>>) => void;
@@ -123,23 +142,15 @@ function slimSongForStorage(song: Song): Song {
 }
 
 // ─── 永続化ヘルパー ─────────────────────────────────────────────────────────
-function save(playlists: Playlist[], folders: PlaylistFolder[]): void {
+function save(playlists: Playlist[], folders: PlaylistFolder[]): { success: boolean; rollbackSucceeded: boolean } {
   const slimmedPlaylists = playlists.map(pl => ({
     ...pl,
     songs: pl.songs.map(slimSongForStorage),
   }));
-  const ok = storage.set(PLAYLISTS_KEY, slimmedPlaylists);
-  if (!ok) {
-    // ユーザーへの通知（非同期で表示）
-    setTimeout(() => {
-      alert(
-        '⚠ プレイリストの保存に失敗しました。\n' +
-        'ブラウザのストレージ容量が不足している可能性があります。\n' +
-        'ページを再読み込みするとデータが失われることがあります。'
-      );
-    }, 0);
-  }
-  storage.set(FOLDERS_KEY, folders);
+  return storage.setMany([
+    { key: PLAYLISTS_KEY, value: slimmedPlaylists },
+    { key: FOLDERS_KEY, value: folders },
+  ]);
 }
 
 // ─── ソート実装 ─────────────────────────────────────────────────────────────
@@ -158,7 +169,18 @@ function sortSongsBy(songs: Song[], by: SortKey): Song[] {
   }
 }
 
-export const usePlaylistStore = create<PlaylistState>((set, get) => ({
+export const usePlaylistStore = create<PlaylistState>((set, get) => {
+  const commit = (playlists: Playlist[], folders: PlaylistFolder[]) => {
+    const result = save(playlists, folders);
+    if (!result.success) {
+      const error = new PlaylistPersistenceError(result.rollbackSucceeded);
+      if (typeof window !== 'undefined') window.setTimeout(() => window.alert(error.message), 0);
+      throw error;
+    }
+    set({ playlists, folders });
+  };
+
+  return {
   playlists: [],
   folders:   [],
 
@@ -179,10 +201,8 @@ export const usePlaylistStore = create<PlaylistState>((set, get) => ({
       { id: WATCH_LATER_ID, name: '後で聴く', songs: [], isPinned: true, createdAt: Date.now(), updatedAt: Date.now() },
       ...stored,
     ];
-    if (!hasWL || hadLegacyDigPlaylist) {
-      save(playlists, folders);
-    }
-    set({ playlists, folders });
+    if (!hasWL || hadLegacyDigPlaylist) commit(playlists, folders);
+    else set({ playlists, folders });
   },
 
   // ─── プレイリスト CRUD ──────────────────────────────────────────────────────
@@ -197,9 +217,30 @@ export const usePlaylistStore = create<PlaylistState>((set, get) => ({
     };
     const updated = [...get().playlists, p];
     const { folders } = get();
-    set({ playlists: updated });
-    save(updated, folders);
+    commit(updated, folders);
     return p;
+  },
+
+  createPlaylistWithSongs: (name, songs, folderId, details) => {
+    const songIds = new Set<number>();
+    const uniqueSongs = songs.filter(song => {
+      if (songIds.has(song.id)) return false;
+      songIds.add(song.id);
+      return true;
+    });
+    const playlist: Playlist = {
+      id: createStableId('playlist'),
+      name,
+      songs: uniqueSongs,
+      folderId,
+      ...details,
+      coverArtUrl: details?.coverArtUrl ?? uniqueSongs[0]?.thumbUrl,
+      ...(details?.smartRule ? { smartRule: normalizeSmartPlaylistRule(details.smartRule) } : {}),
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+    commit([...get().playlists, playlist], get().folders);
+    return playlist;
   },
 
   deletePlaylist: (id) => {
@@ -209,8 +250,7 @@ export const usePlaylistStore = create<PlaylistState>((set, get) => ({
     const target = index >= 0 ? current[index] : undefined;
     if (!target || target.isPinned) return null;
     const updated = current.filter(p => p.id !== id);
-    set({ playlists: updated });
-    save(updated, get().folders);
+    commit(updated, get().folders);
     return { playlist: target, index };
   },
 
@@ -220,8 +260,7 @@ export const usePlaylistStore = create<PlaylistState>((set, get) => ({
     const index = Math.max(0, Math.min(snapshot.index, current.length));
     const updated = [...current];
     updated.splice(index, 0, snapshot.playlist);
-    set({ playlists: updated });
-    save(updated, get().folders);
+    commit(updated, get().folders);
     return true;
   },
 
@@ -232,8 +271,7 @@ export const usePlaylistStore = create<PlaylistState>((set, get) => ({
     const updated = get().playlists.map(p =>
       p.id === id ? { ...p, ...normalizedPatch, updatedAt: Date.now() } : p
     );
-    set({ playlists: updated });
-    save(updated, get().folders);
+    commit(updated, get().folders);
   },
 
   // ─── フォルダ CRUD ───────────────────────────────────────────────────────────
@@ -246,8 +284,7 @@ export const usePlaylistStore = create<PlaylistState>((set, get) => ({
       updatedAt: Date.now(),
     };
     const updated = [...get().folders, f];
-    set({ folders: updated });
-    save(get().playlists, updated);
+    commit(get().playlists, updated);
     return f;
   },
 
@@ -272,24 +309,24 @@ export const usePlaylistStore = create<PlaylistState>((set, get) => ({
     const updatedPlaylists = get().playlists.map(p =>
       p.folderId && toDelete.has(p.folderId) ? { ...p, folderId: undefined } : p
     );
-    set({ folders: updatedFolders, playlists: updatedPlaylists });
-    save(updatedPlaylists, updatedFolders);
+    commit(updatedPlaylists, updatedFolders);
   },
 
   renameFolder: (id, name) => {
     const updated = get().folders.map(f =>
       f.id === id ? { ...f, name, updatedAt: Date.now() } : f
     );
-    set({ folders: updated });
-    save(get().playlists, updated);
+    commit(get().playlists, updated);
   },
 
   // ─── 曲操作 ─────────────────────────────────────────────────────────────────
   addSong: (playlistId, song) => {
     let isDuplicate = false;
     let isReadOnly = false;
+    let targetExists = false;
     const updated = get().playlists.map(p => {
       if (p.id !== playlistId) return p;
+      targetExists = true;
       if (isLinked(p)) {
         isReadOnly = true;
         return p;
@@ -302,19 +339,22 @@ export const usePlaylistStore = create<PlaylistState>((set, get) => ({
       const newCover = (!p.coverArtUrl && p.songs.length === 0) ? song.thumbUrl : p.coverArtUrl;
       return { ...p, songs: [...p.songs, song], coverArtUrl: newCover, updatedAt: Date.now() };
     });
+    if (!targetExists || isReadOnly) return { success: false, isDuplicate: false };
     if (!isDuplicate) {
-      set({ playlists: updated });
-      save(updated, get().folders);
+      commit(updated, get().folders);
     }
-    return { success: !isDuplicate && !isReadOnly, isDuplicate };
+    return { success: !isDuplicate, isDuplicate };
   },
 
   addSongs: (playlistId, songs) => {
     let added = 0;
     let duplicates = 0;
+    let targetExists = false;
+    let isReadOnly = false;
     const updated = get().playlists.map(p => {
       if (p.id !== playlistId) return p;
-      if (isLinked(p)) return p;
+      targetExists = true;
+      if (isLinked(p)) { isReadOnly = true; return p; }
       const existingIds = new Set(p.songs.map(s => s.id));
       const newSongs = songs.filter(s => {
         if (existingIds.has(s.id)) { duplicates++; return false; }
@@ -324,9 +364,9 @@ export const usePlaylistStore = create<PlaylistState>((set, get) => ({
       });
       return { ...p, songs: [...p.songs, ...newSongs], updatedAt: Date.now() };
     });
-    set({ playlists: updated });
-    save(updated, get().folders);
-    return { added, duplicates };
+    if (!targetExists || isReadOnly) return { success: false, added: 0, duplicates: 0 };
+    if (added > 0) commit(updated, get().folders);
+    return { success: true, added, duplicates };
   },
 
   removeSong: (playlistId, songIndex) => get().removeSongs(playlistId, [songIndex]),
@@ -355,8 +395,7 @@ export const usePlaylistStore = create<PlaylistState>((set, get) => ({
       coverArtUrl: removedCover ? songs[0]?.thumbUrl : p.coverArtUrl,
       updatedAt: Date.now(),
     });
-    set({ playlists: updated });
-    save(updated, get().folders);
+    commit(updated, get().folders);
     return snapshot;
   },
 
@@ -387,8 +426,7 @@ export const usePlaylistStore = create<PlaylistState>((set, get) => ({
       coverArtUrl: coverWasAutoUpdated ? snapshot.previousCoverArtUrl : p.coverArtUrl,
       updatedAt: Date.now(),
     });
-    set({ playlists: updated });
-    save(updated, get().folders);
+    commit(updated, get().folders);
     return count;
   },
 
@@ -398,8 +436,7 @@ export const usePlaylistStore = create<PlaylistState>((set, get) => ({
       if (isLinked(p)) return p;
       return { ...p, songs: p.songs.filter(s => s.id !== songId), updatedAt: Date.now() };
     });
-    set({ playlists: updated });
-    save(updated, get().folders);
+    commit(updated, get().folders);
   },
 
   reorderSongs: (playlistId, fromIndex, toIndex) => {
@@ -411,8 +448,7 @@ export const usePlaylistStore = create<PlaylistState>((set, get) => ({
       songs.splice(toIndex, 0, moved);
       return { ...p, songs, updatedAt: Date.now() };
     });
-    set({ playlists: updated });
-    save(updated, get().folders);
+    commit(updated, get().folders);
   },
 
   sortSongs: (playlistId, by) => {
@@ -421,8 +457,7 @@ export const usePlaylistStore = create<PlaylistState>((set, get) => ({
       if (isLinked(p)) return p;
       return { ...p, songs: sortSongsBy(p.songs, by), updatedAt: Date.now() };
     });
-    set({ playlists: updated });
-    save(updated, get().folders);
+    commit(updated, get().folders);
   },
 
   createSmartPlaylist: (name, smartRule, folderId) => {
@@ -437,8 +472,7 @@ export const usePlaylistStore = create<PlaylistState>((set, get) => ({
       updatedAt: Date.now(),
     };
     const updated = [...get().playlists, playlist];
-    set({ playlists: updated });
-    save(updated, get().folders);
+    commit(updated, get().folders);
     return playlist;
   },
 
@@ -455,14 +489,13 @@ export const usePlaylistStore = create<PlaylistState>((set, get) => ({
       updatedAt: now,
     };
     const updated = [...get().playlists, playlist];
-    set({ playlists: updated });
-    save(updated, get().folders);
+    commit(updated, get().folders);
     return playlist;
   },
 
   applyYouTubeSync: (playlistId, songs, sync) => {
     const target = get().playlists.find(playlist => playlist.id === playlistId);
-    if (!target?.youtubeSync || target.youtubeSync.playlistId !== sync.playlistId) return false;
+    if (!target?.youtubeSync?.enabled || target.youtubeSync.playlistId !== sync.playlistId) return false;
     const updated = get().playlists.map(playlist => playlist.id === playlistId
       ? {
           ...playlist,
@@ -472,8 +505,7 @@ export const usePlaylistStore = create<PlaylistState>((set, get) => ({
           updatedAt: Date.now(),
         }
       : playlist);
-    set({ playlists: updated });
-    save(updated, get().folders);
+    commit(updated, get().folders);
     return true;
   },
 
@@ -483,8 +515,7 @@ export const usePlaylistStore = create<PlaylistState>((set, get) => ({
     const updated = get().playlists.map(playlist => playlist.id === playlistId
       ? { ...playlist, youtubeSync: undefined, updatedAt: Date.now() }
       : playlist);
-    set({ playlists: updated });
-    save(updated, get().folders);
+    commit(updated, get().folders);
     return true;
   },
 
@@ -501,14 +532,13 @@ export const usePlaylistStore = create<PlaylistState>((set, get) => ({
       updatedAt: now,
     };
     const updated = [...get().playlists, playlist];
-    set({ playlists: updated });
-    save(updated, get().folders);
+    commit(updated, get().folders);
     return playlist;
   },
 
   applyNicoSync: (playlistId, songs, sync) => {
     const target = get().playlists.find(playlist => playlist.id === playlistId);
-    if (!target?.nicoSync
+    if (!target?.nicoSync?.enabled
       || target.nicoSync.sourceKind !== sync.sourceKind
       || target.nicoSync.sourceId !== sync.sourceId) return false;
     const updated = get().playlists.map(playlist => playlist.id === playlistId
@@ -520,8 +550,7 @@ export const usePlaylistStore = create<PlaylistState>((set, get) => ({
           updatedAt: Date.now(),
         }
       : playlist);
-    set({ playlists: updated });
-    save(updated, get().folders);
+    commit(updated, get().folders);
     return true;
   },
 
@@ -531,8 +560,7 @@ export const usePlaylistStore = create<PlaylistState>((set, get) => ({
     const updated = get().playlists.map(playlist => playlist.id === playlistId
       ? { ...playlist, nicoSync: undefined, updatedAt: Date.now() }
       : playlist);
-    set({ playlists: updated });
-    save(updated, get().folders);
+    commit(updated, get().folders);
     return true;
   },
 
@@ -540,8 +568,7 @@ export const usePlaylistStore = create<PlaylistState>((set, get) => ({
     const updated = get().playlists.map(playlist => playlist.id === playlistId && !isLinked(playlist)
       ? { ...playlist, songs, updatedAt: Date.now() }
       : playlist);
-    set({ playlists: updated });
-    save(updated, get().folders);
+    commit(updated, get().folders);
   },
 
   removeDuplicateSongs: (playlistId) => get().removeDuplicateSongsWithUndo(playlistId)?.removed.length ?? 0,
@@ -567,8 +594,7 @@ export const usePlaylistStore = create<PlaylistState>((set, get) => ({
       get().removeSongById(playlistId, song.id);
       return false;
     } else {
-      get().addSong(playlistId, song);
-      return true;
+      return get().addSong(playlistId, song).success;
     }
   },
 
@@ -589,8 +615,8 @@ export const usePlaylistStore = create<PlaylistState>((set, get) => ({
       updatedAt: Date.now(),
     };
     const updated = [wl, ...get().playlists];
-    set({ playlists: updated });
-    save(updated, get().folders);
+    commit(updated, get().folders);
     return wl;
   },
-}));
+  };
+});

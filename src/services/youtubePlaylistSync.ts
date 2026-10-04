@@ -1,6 +1,6 @@
 import { fetchYouTubePlaylistSongs } from '../api/youtubePlaylist';
 import type { Playlist, YouTubePlaylistSync } from '../types/vocadb';
-import { usePlaylistStore } from '../stores/playlistStore';
+import { PlaylistPersistenceError, usePlaylistStore } from '../stores/playlistStore';
 import { withCrossTabLock } from '../utils/crossTabLock';
 
 const SYNC_LOCK_KEY = 'diva-youtube-playlist-sync-lock';
@@ -37,11 +37,18 @@ export async function syncYouTubePlaylist(
     fallbackKey: SYNC_LOCK_KEY,
   }, async () => {
     try {
+      const initialSettings = { playlistId: sync.playlistId, intervalHours: sync.intervalHours };
       const response = await fetchYouTubePlaylistSongs(sync.playlistId, { refresh: options.refresh });
+      const current = usePlaylistStore.getState().playlists.find(item => item.id === playlist.id);
+      if (!current?.youtubeSync?.enabled
+        || current.youtubeSync !== sync
+        || current.youtubeSync.playlistId !== initialSettings.playlistId
+        || current.youtubeSync.intervalHours !== initialSettings.intervalHours) return 'skipped' as const;
       const nextSync = buildSyncState(sync, response, Date.now());
-      usePlaylistStore.getState().applyYouTubeSync(playlist.id, response.songs, nextSync);
+      if (!usePlaylistStore.getState().applyYouTubeSync(playlist.id, response.songs, nextSync)) return 'skipped' as const;
       return nextSync.lastStatus === 'partial' ? 'partial' as const : 'success' as const;
     } catch (error) {
+      if (error instanceof PlaylistPersistenceError) return 'error' as const;
       const failedSync: YouTubePlaylistSync = {
         ...sync,
         lastAttemptAt: Date.now(),
@@ -49,7 +56,16 @@ export async function syncYouTubePlaylist(
         lastError: error instanceof Error ? error.message : '同期に失敗しました',
       };
       const current = usePlaylistStore.getState().playlists.find(item => item.id === playlist.id);
-      if (current) usePlaylistStore.getState().applyYouTubeSync(playlist.id, current.songs, failedSync);
+      if (!current?.youtubeSync?.enabled
+        || current.youtubeSync !== sync
+        || current.youtubeSync.playlistId !== sync.playlistId
+        || current.youtubeSync.intervalHours !== sync.intervalHours) return 'skipped' as const;
+      try {
+        usePlaylistStore.getState().applyYouTubeSync(playlist.id, current.songs, failedSync);
+      } catch {
+        // The failed sync result cannot be persisted either; the store reports
+        // the persistence failure to the user and leaves memory unchanged.
+      }
       return 'error' as const;
     }
   });

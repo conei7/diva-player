@@ -156,6 +156,7 @@ async function main() {
   await withPreview('/diva-player/', async baseUrl => {
     for (const script of [
       'test:e2e:player-controls',
+      'test:e2e:player-service-switch',
       'test:e2e:hidden-songs',
       'test:e2e:external-players',
       'test:e2e:mobile-player-gestures',
@@ -163,6 +164,7 @@ async function main() {
       'test:e2e:nico-playlist-sync',
       'test:e2e:playlists',
       'test:e2e:knowledge-map',
+      'test:e2e:sound-map-feature-axes',
       'test:e2e:advanced-search',
       'test:e2e:background-playback',
       'test:e2e:navigation',

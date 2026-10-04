@@ -17,7 +17,7 @@ export function SaveToPlaylistModal() {
   const saveContext = useUiStore(s => s.saveToPlaylistContext);
   const close = useUiStore(s => s.closeSaveToPlaylist);
   const playlists = usePlaylistStore(s => s.playlists);
-  const createPlaylist = usePlaylistStore(s => s.createPlaylist);
+  const createPlaylistWithSongs = usePlaylistStore(s => s.createPlaylistWithSongs);
   const addSongs = usePlaylistStore(s => s.addSongs);
   const removeSongById = usePlaylistStore(s => s.removeSongById);
   const isSongIn = usePlaylistStore(s => s.isSongInPlaylist);
@@ -58,16 +58,15 @@ export function SaveToPlaylistModal() {
   const handleCreate = useCallback(() => {
     const name = newName.trim();
     if (!name || !songs || songs.length === 0) return;
-    const pl = createPlaylist(name);
-    const result = addSongs(pl.id, selectedSongs);
+    const pl = createPlaylistWithSongs(name, selectedSongs);
     setNewName('');
     setShowCreate(false);
     setNotice(t('{count}曲を「{name}」に追加しました{duplicates}', {
-      count: result.added,
+      count: selectedSongs.length,
       name: pl.name,
-      duplicates: result.duplicates > 0 ? t('（重複 {count}曲）', { count: result.duplicates }) : '',
+      duplicates: '',
     }));
-  }, [newName, songs, selectedSongs, createPlaylist, addSongs, t]);
+  }, [newName, songs, selectedSongs, createPlaylistWithSongs, t]);
 
   if (!songs || songs.length === 0 || selectedSongs.length === 0) return null;
 
@@ -131,12 +130,20 @@ export function SaveToPlaylistModal() {
             const handleToggle = () => {
               if (saveContext.source === 'queue') {
                 const result = addSongs(pl.id, selectedSongs);
+                if (!result.success) {
+                  setNotice(t('このプレイリストには追加できません。'));
+                  return;
+                }
                 setNotice(t('{count}曲を「{name}」に追加しました{duplicates}', { count: result.added, name: pl.name, duplicates: result.duplicates > 0 ? t('（重複 {count}曲）', { count: result.duplicates }) : '' }));
               } else if (checked) {
                 selectedSongs.forEach(s => removeSongById(pl.id, s.id));
                 setNotice(t('「{name}」から{count}曲を外しました', { name: pl.name, count: selectedSongs.length }));
               } else {
                 const result = addSongs(pl.id, selectedSongs);
+                if (!result.success) {
+                  setNotice(t('このプレイリストには追加できません。'));
+                  return;
+                }
                 setNotice(t('{count}曲を「{name}」に追加しました{duplicates}', { count: result.added, name: pl.name, duplicates: result.duplicates > 0 ? t('（重複 {count}曲）', { count: result.duplicates }) : '' }));
               }
             };

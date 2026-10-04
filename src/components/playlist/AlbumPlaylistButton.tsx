@@ -6,9 +6,7 @@ import { useTranslate } from '../../i18n';
 
 export default function AlbumPlaylistButton({ song }: { song: Song }) {
   const t = useTranslate();
-  const createPlaylist = usePlaylistStore(state => state.createPlaylist);
-  const updatePlaylist = usePlaylistStore(state => state.updatePlaylist);
-  const addSongs = usePlaylistStore(state => state.addSongs);
+  const createPlaylistWithSongs = usePlaylistStore(state => state.createPlaylistWithSongs);
   const playlists = usePlaylistStore(state => state.playlists);
   const [albums, setAlbums] = useState<AlbumSummary[]>([]);
   const [selectedId, setSelectedId] = useState<number | ''>('');
@@ -44,9 +42,10 @@ export default function AlbumPlaylistButton({ song }: { song: Song }) {
       let name = album.name;
       let suffix = 2;
       while (usedNames.has(name)) name = `${album.name} (${suffix++})`;
-      const playlist = createPlaylist(name);
-      updatePlaylist(playlist.id, { coverArtUrl: album.coverUrl, description: album.releaseDate ? `VocaDB album / ${album.releaseDate}` : 'VocaDB album' });
-      addSongs(playlist.id, songs);
+      createPlaylistWithSongs(name, songs, undefined, {
+        coverArtUrl: album.coverUrl ?? songs[0]?.thumbUrl,
+        description: album.releaseDate ? `VocaDB album / ${album.releaseDate}` : 'VocaDB album',
+      });
       setMessage(t('songsAddedToPlaylist', { count: songs.length, playlist: name }));
       setOpen(false);
     } catch {

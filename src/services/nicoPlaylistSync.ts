@@ -1,5 +1,5 @@
 import { fetchNicoPlaylistSongs } from '../api/nicoPlaylist';
-import { usePlaylistStore } from '../stores/playlistStore';
+import { PlaylistPersistenceError, usePlaylistStore } from '../stores/playlistStore';
 import type { NicoPlaylistSync, Playlist } from '../types/vocadb';
 import { withCrossTabLock } from '../utils/crossTabLock';
 
@@ -18,7 +18,14 @@ export async function syncNicoPlaylist(
     fallbackKey: LOCK_KEY,
   }, async () => {
     try {
+      const initialSettings = { sourceKind: sync.sourceKind, sourceId: sync.sourceId, intervalHours: sync.intervalHours };
       const response = await fetchNicoPlaylistSongs({ kind: sync.sourceKind, id: sync.sourceId }, { refresh: options.refresh });
+      const current = usePlaylistStore.getState().playlists.find(item => item.id === playlist.id);
+      if (!current?.nicoSync?.enabled
+        || current.nicoSync !== sync
+        || current.nicoSync.sourceKind !== initialSettings.sourceKind
+        || current.nicoSync.sourceId !== initialSettings.sourceId
+        || current.nicoSync.intervalHours !== initialSettings.intervalHours) return 'skipped' as const;
       const next: NicoPlaylistSync = {
         ...sync,
         lastAttemptAt: Date.now(),
@@ -30,9 +37,10 @@ export async function syncNicoPlaylist(
         lastUnmatchedCount: response.unmatchedVideoIds.length,
         lastError: undefined,
       };
-      usePlaylistStore.getState().applyNicoSync(playlist.id, response.songs, next);
+      if (!usePlaylistStore.getState().applyNicoSync(playlist.id, response.songs, next)) return 'skipped' as const;
       return next.lastStatus === 'partial' ? 'partial' as const : 'success' as const;
     } catch (reason) {
+      if (reason instanceof PlaylistPersistenceError) return 'error' as const;
       const failed: NicoPlaylistSync = {
         ...sync,
         lastAttemptAt: Date.now(),
@@ -40,7 +48,17 @@ export async function syncNicoPlaylist(
         lastError: reason instanceof Error ? reason.message : '同期に失敗しました',
       };
       const current = usePlaylistStore.getState().playlists.find(item => item.id === playlist.id);
-      if (current) usePlaylistStore.getState().applyNicoSync(playlist.id, current.songs, failed);
+      if (!current?.nicoSync?.enabled
+        || current.nicoSync !== sync
+        || current.nicoSync.sourceKind !== sync.sourceKind
+        || current.nicoSync.sourceId !== sync.sourceId
+        || current.nicoSync.intervalHours !== sync.intervalHours) return 'skipped' as const;
+      try {
+        usePlaylistStore.getState().applyNicoSync(playlist.id, current.songs, failed);
+      } catch {
+        // The failed sync result cannot be persisted either; the store reports
+        // the persistence failure to the user and leaves memory unchanged.
+      }
       return 'error' as const;
     }
   });
