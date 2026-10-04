@@ -38,6 +38,8 @@ async function runViewport(page, baseUrl, width, height) {
   await page.setViewport({ width, height, deviceScaleFactor: 1 });
   const response = await page.goto(baseUrl, { waitUntil: 'domcontentloaded' });
   assert(response && response.status() < 400, `Home returned HTTP ${response?.status() ?? 'unknown'}`);
+  await page.evaluate(() => localStorage.setItem('diva_uiLanguage', JSON.stringify('ja')));
+  await page.reload({ waitUntil: 'domcontentloaded' });
   await page.waitForSelector('button[aria-label="設定"]');
   await page.click('button[aria-label="設定"]');
   await page.waitForSelector('[role="dialog"][aria-label="設定"]', { visible: true });
@@ -113,7 +115,7 @@ async function runViewport(page, baseUrl, width, height) {
 
 async function main() {
   const baseUrl = getBaseUrl();
-  const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox', '--lang=ja-JP'] });
+  const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox', '--lang=en-US'] });
   try {
     const page = await browser.newPage();
     page.setDefaultTimeout(PAGE_TIMEOUT_MS);
