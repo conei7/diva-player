@@ -1150,14 +1150,21 @@ public class DbService
 
         if (songTypes != null && songTypes.Count > 0)
         {
+            // Inclusion already rules out every other type. Apply exclusions to
+            // the allowed values once instead of decompressing raw_json again
+            // for every matching row in both the count and the page query.
+            var allowedTypes = IncludedSongTypesAfterExclusions(songTypes, excludedSongTypes);
+            excludedSongTypes = null;
             var typeParams = new List<string>();
-            foreach (var st in songTypes)
+            foreach (var st in allowedTypes)
             {
                 typeParams.Add($"${paramIndex}");
                 paramValues.Add(st);
                 paramIndex++;
             }
-            conditions.Add($"COALESCE(NULLIF(raw_json->>'songType', ''), song_type, 'Unspecified') IN ({string.Join(", ", typeParams)})");
+            conditions.Add(typeParams.Count == 0
+                ? "FALSE"
+                : $"COALESCE(NULLIF(raw_json->>'songType', ''), song_type, 'Unspecified') IN ({string.Join(", ", typeParams)})");
         }
 
         if (excludedSongTypes != null && excludedSongTypes.Count > 0)
@@ -1541,6 +1548,12 @@ public class DbService
             totalStopwatch.ElapsedMilliseconds,
             false);
     }
+
+    internal static IReadOnlyList<string> IncludedSongTypesAfterExclusions(
+        IReadOnlyList<string> included, IReadOnlyList<string>? excluded) =>
+        excluded is { Count: > 0 }
+            ? included.Except(excluded, StringComparer.Ordinal).ToArray()
+            : included;
 
     public async Task<IReadOnlyList<SearchTagItem>> SearchTagsAsync(
         string query,

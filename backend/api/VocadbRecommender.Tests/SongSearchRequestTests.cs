@@ -5,6 +5,23 @@ namespace VocadbRecommender.Tests;
 public sealed class SongSearchRequestTests
 {
     [Fact]
+    public void SongTypeFilterSimplificationPreservesEveryInclusionExclusionCombination()
+    {
+        string[] types = ["Original", "Cover", "DramaPV", "Unspecified", "original"];
+        for (var includeMask = 1; includeMask < (1 << types.Length); includeMask++)
+        for (var excludeMask = 0; excludeMask < (1 << types.Length); excludeMask++)
+        {
+            var included = types.Where((_, i) => (includeMask & (1 << i)) != 0).ToArray();
+            var excluded = types.Where((_, i) => (excludeMask & (1 << i)) != 0).ToArray();
+            var allowed = DbService.IncludedSongTypesAfterExclusions(included, excluded);
+            foreach (var type in types.Append("Other"))
+                Assert.Equal(included.Contains(type) && !excluded.Contains(type), allowed.Contains(type));
+        }
+        Assert.Empty(DbService.IncludedSongTypesAfterExclusions(["Original"], ["Original"]));
+        Assert.Equal(new[] { "Original", "Cover" }, DbService.IncludedSongTypesAfterExclusions(["Original", "Cover"], null));
+    }
+
+    [Fact]
     public void Create_CanonicalizesOnlyOrderInsensitiveInputs()
     {
         var first = Create(
