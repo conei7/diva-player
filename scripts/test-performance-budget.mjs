@@ -265,6 +265,9 @@ async function installApiFixtures(page, counters) {
         && !url.searchParams.has('artistIds')
         && !url.searchParams.has('anyArtistIds');
       if (isStartupPopular && url.searchParams.get('start') === '0') {
+        if (counters.startupPopularDelayMs > 0) {
+          await new Promise(resolve => setTimeout(resolve, counters.startupPopularDelayMs));
+        }
         counters.startupPopularRequests += 1;
         body = { items: Array.from({ length: 12 }, (_, index) => fixtureSongForId(2501 + index)), totalCount: 40 };
       } else if (isStartupPopular && url.searchParams.get('start') === '12'
@@ -377,6 +380,7 @@ async function main() {
     historyMetadataRequests: 0,
     startupPopularRequests: 0,
     startupPopularMoreRequests: 0,
+    startupPopularDelayMs: 0,
     historyMetadataDelayMs: HISTORY_METADATA_DELAY_MS,
     homeRankingRequests: 0,
     homeRankingResponses: 0,
@@ -509,6 +513,9 @@ async function main() {
     counters.historyMetadataDelayMs = 0;
     counters.homeRankingRequests = 0;
     counters.homeRankingResponses = 0;
+    // Give the IndexedDB-only recovery path time to win over a fresh personalized
+    // calculation; otherwise the outcome depends on runner-specific IDB/network scheduling.
+    counters.startupPopularDelayMs = 900;
     await page.evaluate(async () => {
       localStorage.removeItem('diva-startup-recommendations');
       localStorage.removeItem('diva-startup-recommendations-backup');
@@ -534,6 +541,7 @@ async function main() {
     await waitForCards(page, 'IndexedDB personalized cache');
     const indexedDbFirstCardMs = Date.now() - indexedDbReloadStartedAt;
     const cachedFirstContent = await waitForMetric(page, 'home.first-content');
+    counters.startupPopularDelayMs = 0;
     const cachedFrame = await page.evaluate(() => ({
       hasLegacyStartupPage: document.querySelector('#startup-home') !== null,
       songIds: Array.from(new Set(Array.from(document.querySelectorAll('main a[href*="/watch?v="]'))
