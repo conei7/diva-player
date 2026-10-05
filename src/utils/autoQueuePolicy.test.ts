@@ -43,6 +43,33 @@ describe('auto queue policy', () => {
     expect(createAutoQueuePlan(0, 20)).toMatchObject({ requestedCount: 12, stage: 'late' });
   });
 
+  it('preserves the initial thirteen-song queue and expands it to a forty-row window after the delay', () => {
+    expect(createAutoQueuePlan(12, 0)).toBeNull();
+    expect(createAutoQueuePlan(12, 0, undefined, {
+      backgroundPrefillReady: true,
+      queueIndex: 0,
+    })).toMatchObject({ requestedCount: 27 });
+    expect(createAutoQueuePlan(39, 0, undefined, {
+      backgroundPrefillReady: true,
+      queueIndex: 0,
+    })).toBeNull();
+  });
+
+  it('reduces the upcoming target as ten recent songs become visible history', () => {
+    expect(createAutoQueuePlan(12, 0, undefined, {
+      backgroundPrefillReady: true,
+      queueIndex: 10,
+    })).toMatchObject({ requestedCount: 17 });
+    expect(createAutoQueuePlan(29, 0, undefined, {
+      backgroundPrefillReady: true,
+      queueIndex: 10,
+    })).toBeNull();
+    expect(createAutoQueuePlan(29, 0, undefined, {
+      backgroundPrefillReady: true,
+      queueIndex: 30,
+    })).toBeNull();
+  });
+
   it('returns continuous scores in the refill plan without known/unknown counts', () => {
     const plan = createAutoQueuePlan(0, 7);
     expect(plan).toMatchObject({ requestedCount: 12, stage: 'middle' });

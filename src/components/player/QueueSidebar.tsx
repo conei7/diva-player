@@ -10,6 +10,7 @@ import { useUiStore } from '../../stores/uiStore';
 import { useRecommendationDisplayStore } from '../../stores/recommendationDisplayStore';
 import RecommendationHint from '../recommendation/RecommendationHint';
 import { useTranslateSourceText } from '../../i18n';
+import { getQueueDisplayWindow } from '../../utils/queueUtils';
 
 function getThumbUrl(song: Song): string | null {
   if (song.thumbUrl) return song.thumbUrl;
@@ -37,6 +38,7 @@ export default function QueueSidebar({ hideHeader }: QueueSidebarProps = {}) {
   const autoQueueStatus = useAutoQueueStatusStore(s => s.status);
   const openSaveToPlaylist = useUiStore(s => s.openSaveToPlaylist);
   const showRecommendationHints = useRecommendationDisplayStore(s => s.showHints);
+  const { items: displayedQueue, startIndex: displayedQueueStartIndex } = getQueueDisplayWindow(queue, queueIndex);
   const currentRef = useRef<HTMLLIElement>(null);
   const removalTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [removedItem, setRemovedItem] = useState<ReturnType<typeof removeFromQueue>>(null);
@@ -91,7 +93,7 @@ export default function QueueSidebar({ hideHeader }: QueueSidebarProps = {}) {
               className="text-[10px] px-1.5 py-0.5 rounded-full"
               style={{ background: 'rgba(139,92,246,0.15)', color: 'var(--color-accent-purple)' }}
             >
-              {t('{count}曲', { count: queue.length })}
+              {t('{count}曲', { count: displayedQueue.length })}
             </span>
           )}
           {autoQueueStatus === 'fetching' || autoQueueStatus === 'reranking' ? (
@@ -133,7 +135,8 @@ export default function QueueSidebar({ hideHeader }: QueueSidebarProps = {}) {
             {t('キューが空です')}
           </li>
         ) : (
-          queue.map((song, i) => {
+          displayedQueue.map((song, displayedIndex) => {
+            const i = displayedQueueStartIndex + displayedIndex;
             const isCurrent = i === queueIndex;
             const thumb = getThumbUrl(song);
             const producer = getProducerString(song);

@@ -8,6 +8,7 @@ import { useAutoQueueStatusStore } from '../../stores/autoQueueStatusStore';
 import { useRecommendationDisplayStore } from '../../stores/recommendationDisplayStore';
 import RecommendationHint from '../recommendation/RecommendationHint';
 import { useTranslateSourceText } from '../../i18n';
+import { getQueueDisplayWindow } from '../../utils/queueUtils';
 
 /** YoutubePVからサムネイルURLを生成 */
 function getThumbUrl(song: Song): string | null {
@@ -36,6 +37,7 @@ export default function QueueDrawer() {
   const recommendations = useQueueRecommendationStore(s => s.recommendations);
   const autoQueueStatus = useAutoQueueStatusStore(s => s.status);
   const showRecommendationHints = useRecommendationDisplayStore(s => s.showHints);
+  const { items: displayedQueue, startIndex: displayedQueueStartIndex } = getQueueDisplayWindow(queue, queueIndex);
   const duplicateCount = queue.length - new Set(queue.map(song => song.id)).size;
 
   return (
@@ -89,7 +91,7 @@ export default function QueueDrawer() {
                   color: 'var(--color-accent-purple)',
                 }}
               >
-                {t('{count}曲', { count: queue.length })}
+                {t('{count}曲', { count: displayedQueue.length })}
               </span>
             )}
           </div>
@@ -158,7 +160,8 @@ export default function QueueDrawer() {
             </div>
           ) : (
             <ul>
-              {queue.map((song, i) => {
+              {displayedQueue.map((song, displayedIndex) => {
+                const i = displayedQueueStartIndex + displayedIndex;
                 const isCurrent = i === queueIndex;
                 const thumb = getThumbUrl(song);
                 const producer = getProducerString(song);

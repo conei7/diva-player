@@ -1,3 +1,8 @@
+import {
+  MIX_QUEUE_DISPLAY_HISTORY_LIMIT,
+  MIX_QUEUE_DISPLAY_TARGET,
+} from './queueUtils';
+
 export type AutoQueueStage = 'early' | 'middle' | 'late';
 
 export interface AutoQueuePlan {
@@ -15,9 +20,16 @@ export interface AutoQueueAdaptation {
   consecutiveSkips: number;
 }
 
+export interface AutoQueuePlanOptions {
+  /** Whether the delayed background queue expansion has become eligible. */
+  backgroundPrefillReady?: boolean;
+  queueIndex?: number;
+}
+
 export const AUTO_QUEUE_LOW_WATERMARK = 3;
 export const AUTO_QUEUE_TARGET_WATERMARK = 12;
 export const AUTO_QUEUE_MAX_BATCH_SIZE = 12;
+export const AUTO_QUEUE_BACKGROUND_PREFILL_DELAY_MS = 3_000;
 
 /**
  * Session progress must be based on played automatic songs, not queue length.
@@ -56,18 +68,30 @@ export function createAutoQueuePlan(
   remainingCount: number,
   autoPlayedCount: number,
   adaptation?: AutoQueueAdaptation,
+  options: AutoQueuePlanOptions = {},
 ): AutoQueuePlan | null {
-  if (remainingCount > AUTO_QUEUE_LOW_WATERMARK) return null;
+  const backgroundPrefillReady = options.backgroundPrefillReady === true;
+  const queueIndex = Math.max(0, Math.trunc(options.queueIndex ?? 0));
+  const displayedHistoryCount = Math.min(queueIndex, MIX_QUEUE_DISPLAY_HISTORY_LIMIT);
+  const targetWatermark = backgroundPrefillReady
+    ? Math.max(0, MIX_QUEUE_DISPLAY_TARGET - displayedHistoryCount - 1)
+    : AUTO_QUEUE_TARGET_WATERMARK;
 
-  const requestedCount = Math.min(
-    AUTO_QUEUE_MAX_BATCH_SIZE,
-    Math.max(0, AUTO_QUEUE_TARGET_WATERMARK - Math.max(0, remainingCount)),
-  );
+  if (backgroundPrefillReady) {
+    if (remainingCount >= targetWatermark) return null;
+  } else if (remainingCount > AUTO_QUEUE_LOW_WATERMARK) {
+    return null;
+  }
+
+  const requestedCount = Math.max(0, targetWatermark - Math.max(0, remainingCount));
+  const boundedRequestedCount = backgroundPrefillReady
+    ? requestedCount
+    : Math.min(AUTO_QUEUE_MAX_BATCH_SIZE, requestedCount);
   const stage = getAutoQueueStage(autoPlayedCount);
   return {
     stage,
     mixProgress: getAutoQueueMixProgress(autoPlayedCount),
     familiarityBias: getAutoQueueFamiliarityBias(autoPlayedCount, adaptation),
-    requestedCount,
+    requestedCount: boundedRequestedCount,
   };
 }

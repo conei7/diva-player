@@ -9,6 +9,7 @@ import { getPVBadgeStyle } from '../../utils/pvBadge';
 import { getPVServiceLabel } from '../../utils/pvService';
 import { useTranslate } from '../../i18n';
 import { useLanguageStore } from '../../stores/languageStore';
+import { getQueueDisplayWindow } from '../../utils/queueUtils';
 
 /**
  * PlayerBar - 画面下部固定のプレイヤーコントロール (YouTube Music スタイル)
@@ -24,13 +25,14 @@ export default function PlayerBar() {
     currentSong, currentPV, isPlaying, volume,
     next, previous, pause, resume, setVolume, seekTo,
     hiddenMode, toggleHiddenMode,
-    queue, queueDrawerOpen, toggleQueueDrawer,
+    queue, queueIndex, queueDrawerOpen, toggleQueueDrawer,
     historyDrawerOpen, toggleHistoryDrawer,
     shuffleEnabled, toggleShuffle,
   } = usePlayerStore();
   const progress = useProgressStore((s) => s.progress);
   const duration = useProgressStore((s) => s.duration);
   const { getRating, setRating } = useRatingStore();
+  const queueDisplayCount = getQueueDisplayWindow(queue, queueIndex).items.length;
 
   const progressPct = duration > 0 ? Math.min(100, (progress / duration) * 100) : 0;
   const chorusStartPct = currentSong?.chorusStartSeconds != null && duration > 0
@@ -303,12 +305,12 @@ export default function PlayerBar() {
             <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor">
               <path d="M3 18h13v-2H3v2zm0-5h10v-2H3v2zm0-7v2h13V6H3zm18 9.59L17.42 12 21 8.41 19.59 7l-5 5 5 5L21 15.59z"/>
             </svg>
-            {queue.length > 0 && (
+            {queueDisplayCount > 0 && (
               <span
                 className="absolute -top-0.5 -right-0.5 text-[9px] font-bold w-4 h-4 rounded-full flex items-center justify-center leading-none"
                 style={{ background: 'var(--color-accent-purple)', color: '#fff' }}
               >
-                {queue.length > 99 ? '99+' : queue.length}
+                {queueDisplayCount > 99 ? '99+' : queueDisplayCount}
               </span>
             )}
           </button>

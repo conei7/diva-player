@@ -156,6 +156,7 @@ async function main() {
   await withPreview('/diva-player/', async baseUrl => {
     for (const script of [
       'test:e2e:player-controls',
+      'test:e2e:queue-window',
       'test:e2e:player-service-switch',
       'test:e2e:hidden-songs',
       'test:e2e:external-players',

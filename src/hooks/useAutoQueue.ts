@@ -17,7 +17,11 @@ import {
   getPlaylistSongs,
   rankKnownSongs,
 } from '../utils/recommendationScoring';
-import { createAutoQueuePlan, type AutoQueueAdaptation } from '../utils/autoQueuePolicy';
+import {
+  AUTO_QUEUE_BACKGROUND_PREFILL_DELAY_MS,
+  createAutoQueuePlan,
+  type AutoQueueAdaptation,
+} from '../utils/autoQueuePolicy';
 import { rerankRecommendationCandidatesDetailed } from '../utils/recommendationReranking';
 import { buildUserTasteProfile, type TasteSeed } from '../services/userTasteProfile';
 import { useAutoPlaySessionStore } from '../stores/autoPlaySessionStore';
@@ -221,7 +225,24 @@ export function useAutoQueue({
   const favoriteProducers = useFavoriteProducerStore(state => state.producers);
   const hiddenSongs = useHiddenSongStore(state => state.hiddenSongs);
   const requestGenerationRef = useRef(0);
+  const [backgroundPrefillSequence, setBackgroundPrefillSequence] = useState<number | null>(null);
   const { autoCompletedCount, autoSkippedCount, consecutiveSkips } = adaptation;
+
+  useEffect(() => {
+    setBackgroundPrefillSequence(null);
+  }, [currentSong?.id, playbackSequence]);
+
+  useEffect(() => {
+    if (
+      currentSong?.id == null
+      || (status !== 'ready' && status !== 'relaxed')
+      || backgroundPrefillSequence === playbackSequence
+    ) return;
+
+    const sequence = playbackSequence;
+    const timer = setTimeout(() => setBackgroundPrefillSequence(sequence), AUTO_QUEUE_BACKGROUND_PREFILL_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [backgroundPrefillSequence, currentSong?.id, playbackSequence, status]);
 
   useEffect(() => {
     useAutoQueueStatusStore.getState().setStatus(status);
@@ -238,6 +259,9 @@ export function useAutoQueue({
       autoCompletedCount,
       autoSkippedCount,
       consecutiveSkips,
+    }, {
+      backgroundPrefillReady: backgroundPrefillSequence === playbackSequence,
+      queueIndex,
     });
     if (!queuePlan) {
       setStatus('ready');
@@ -445,6 +469,7 @@ export function useAutoQueue({
     autoSkippedCount,
     consecutiveSkips,
     autoPlayedCount,
+    backgroundPrefillSequence,
     currentSong,
     playbackSequence,
     historyEntries,

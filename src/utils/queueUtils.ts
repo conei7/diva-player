@@ -7,6 +7,27 @@ export interface DedupedQueue {
   removed: number;
 }
 
+export const MIX_QUEUE_DISPLAY_TARGET = 40;
+export const MIX_QUEUE_DISPLAY_HISTORY_LIMIT = 10;
+
+export interface QueueDisplayWindow<T> {
+  items: T[];
+  startIndex: number;
+}
+
+/** Keeps the current item visible while limiting rendered playback history. */
+export function getQueueDisplayWindow<T>(
+  queue: readonly T[],
+  queueIndex: number,
+  historyLimit = MIX_QUEUE_DISPLAY_HISTORY_LIMIT,
+): QueueDisplayWindow<T> {
+  const hasCurrentIndex = Number.isInteger(queueIndex) && queueIndex >= 0 && queueIndex < queue.length;
+  const startIndex = hasCurrentIndex
+    ? Math.max(0, queueIndex - Math.max(0, historyLimit))
+    : 0;
+  return { items: queue.slice(startIndex), startIndex };
+}
+
 /** Returns a new Fisher-Yates shuffled array without mutating the source. */
 export function shuffleQueue<T>(items: readonly T[], random: () => number = Math.random): T[] {
   const shuffled = [...items];

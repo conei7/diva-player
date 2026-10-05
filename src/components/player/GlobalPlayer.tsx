@@ -6,6 +6,7 @@ import { usePlayerSwipeGesture } from '../../hooks/usePlayerSwipeGesture';
 import PlayerEmbed from '../player/PlayerEmbed';
 import { getPlaybackOwnership } from '../../services/playbackOwnership';
 import { useTranslateSourceText } from '../../i18n';
+import { getQueueDisplayWindow } from '../../utils/queueUtils';
 
 /**
  * GlobalPlayer - 永続化されたプレイヤーコンポーネント
@@ -27,8 +28,9 @@ export default function GlobalPlayer() {
     closePlayer,
     shuffleEnabled, toggleShuffle,
     loopMode, toggleLoopMode,
-    queue, queueDrawerOpen, toggleQueueDrawer,
+    queue, queueIndex, queueDrawerOpen, toggleQueueDrawer,
   } = usePlayerStore();
+  const queueDisplayCount = getQueueDisplayWindow(queue, queueIndex).items.length;
   const swipeGestureEnabled = usePlayerInteractionStore(state => state.swipeGestureEnabled);
   const playbackOwnership = getPlaybackOwnership();
   const ownershipState = useSyncExternalStore(
@@ -308,12 +310,12 @@ export default function GlobalPlayer() {
               <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
                 <path d="M3 18h13v-2H3v2zm0-5h10v-2H3v2zm0-7v2h13V6H3zm18 9.59L17.42 12 21 8.41 19.59 7l-5 5 5 5L21 15.59z"/>
               </svg>
-              {queue.length > 0 && (
+              {queueDisplayCount > 0 && (
                 <span
                   className="absolute -top-0.5 -right-0.5 text-[9px] font-bold w-4 h-4 rounded-full flex items-center justify-center leading-none"
                   style={{ background: 'var(--color-accent-purple)', color: '#fff' }}
                 >
-                  {queue.length > 99 ? '99+' : queue.length}
+                  {queueDisplayCount > 99 ? '99+' : queueDisplayCount}
                 </span>
               )}
             </button>
