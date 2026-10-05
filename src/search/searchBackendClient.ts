@@ -1,6 +1,7 @@
 import type { Song, SongType } from '../types/vocadb';
 import type { GlobalFilterSettings } from '../stores/globalFilterStore';
 import { AsyncTtlCache } from '../utils/asyncTtlCache';
+import { scheduleFetch, type RequestPriority } from '../utils/requestScheduler';
 import {
   parseServerTiming,
   performanceNow,
@@ -58,9 +59,11 @@ export interface BackendSearchParams {
   globalFilters?: GlobalFilterSettings;
   discoveryOnly?: boolean;
   chorusOnly?: boolean;
+  compactCards?: boolean;
+  priority?: RequestPriority;
 }
 
-function buildSearchQuery(params: BackendSearchParams): URLSearchParams {
+export function buildSearchQuery(params: BackendSearchParams): URLSearchParams {
   const validationError = params.filters ? validateAdvancedSearchFilters(params.filters) : null;
   if (validationError) throw new Error(validationError);
   const query = new URLSearchParams();
@@ -91,6 +94,7 @@ function buildSearchQuery(params: BackendSearchParams): URLSearchParams {
   query.set('onlyWithPVs', 'true');
   if (params.discoveryOnly) query.set('discoveryOnly', 'true');
   if (params.chorusOnly) query.set('chorusOnly', 'true');
+  if (params.compactCards) query.set('compact', 'true');
 
   if (params.filters) {
     const filters = params.filters;
@@ -176,10 +180,12 @@ export async function searchSongsBackend(
       ? [window.__DIVA_STARTUP_POPULAR__, window.__DIVA_STARTUP_POPULAR_MORE__]
         .find(request => request?.url === url)
       : undefined;
-    const response = await (startupRequest?.response ?? fetch(url));
-    if (typeof window !== 'undefined') {
-      if (startupRequest === window.__DIVA_STARTUP_POPULAR__) delete window.__DIVA_STARTUP_POPULAR__;
-      if (startupRequest === window.__DIVA_STARTUP_POPULAR_MORE__) delete window.__DIVA_STARTUP_POPULAR_MORE__;
+    const response = await (startupRequest?.response ?? scheduleFetch(url, undefined, params.priority ?? 'foreground'));
+    if (typeof window !== 'undefined' && startupRequest === window.__DIVA_STARTUP_POPULAR__) {
+      delete window.__DIVA_STARTUP_POPULAR__;
+    }
+    if (typeof window !== 'undefined' && startupRequest === window.__DIVA_STARTUP_POPULAR_MORE__) {
+      delete window.__DIVA_STARTUP_POPULAR_MORE__;
     }
     const responseAt = performanceNow();
     if (!response.ok) throw new Error('Search failed');

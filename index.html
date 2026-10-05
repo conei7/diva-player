@@ -6,50 +6,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content="DIVA Player - VocaDB APIを活用したボカロ特化ミュージックプレイヤー。YouTube・ニコニコ動画のボカロ楽曲を検索・再生。" />
     <title>DIVA Player — ボカロミュージックプレイヤー</title>
-    <script>
-      // GitHub Pages SPA redirect restore
-      (function(l) {
-        if (l.search[1] === '/') {
-          var decoded = l.search.slice(1).split('&').map(function(s) {
-            return s.replace(/~and~/g, '&')
-          }).join('?');
-          window.history.replaceState(null, null,
-            l.pathname.slice(0, -1) + decoded + l.hash
-          );
-        }
-      }(window.location))
-    </script>
-    <script>
-      // Start authoritative discovery-safe popular pages before the
-      // application bundle, lazy Home route, and listening-history restore.
-      // HomePage consumes these exact Responses through searchSongsBackend.
-      // This is data-only: the normal application layout owns every pixel so
-      // startup never flashes a second, visually incompatible page.
-      (function(l) {
-        var normalizedPath = l.pathname.replace(/\/+$/, '');
-        var params = new URLSearchParams(l.search);
-        var isHome = normalizedPath === '' || normalizedPath === '/diva-player';
-        if (!isHome || params.has('q') || params.has('artistId')) return;
-
-        function startPopularPage(start) {
-          var url = '/backend-api/api/songs/search?sort=FavoritedTimes&order=desc&start=' + start + '&maxResults=12&onlyWithPVs=true&discoveryOnly=true';
-          var response = fetch(url);
-          response.catch(function() {});
-          var request = {
-            url: url,
-            response: response,
-            data: response.then(function(result) {
-              if (!result.ok) throw new Error('Startup search failed');
-              return result.clone().json();
-            })
-          };
-          request.data.catch(function() {});
-          return request;
-        }
-        window.__DIVA_STARTUP_POPULAR__ = startPopularPage(0);
-        window.__DIVA_STARTUP_POPULAR_MORE__ = startPopularPage(12);
-      }(window.location))
-    </script>
+    <script defer src="%BASE_URL%spa-redirect.js"></script>
+    <script defer src="%BASE_URL%startup.js"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Noto+Sans+JP:wght@300;400;500;600;700&display=swap" rel="stylesheet" />

@@ -16,7 +16,6 @@ import {
   getSongById,
   getRecommendedSongs,
   getSongsByProducerFromBackend,
-  getSongsByProducer,
   getAudioSimilarSongs,
   getMetadataSimilarSongs,
   attachExternalViews,
@@ -40,9 +39,9 @@ import {
 } from '../utils/globalFilters';
 import { excludeHiddenSongs, useHiddenSongStore } from '../stores/hiddenSongStore';
 import { getPlaybackOwnership } from '../services/playbackOwnership';
-import { fetchProgressivePages } from '../utils/progressivePageFetch';
 import { isCurrentWatchSongRequest, watchUrlPlaybackTarget } from '../utils/watchNavigation';
 import { useTranslate } from '../i18n';
+import { getProgressiveWindow } from '../utils/progressiveWindow';
 
 function WatchQueue() {
   const t = useTranslate();
@@ -121,16 +120,8 @@ interface TabState {
 }
 
 const PAGE_SIZE = 40;
-const INITIAL_REFILL_PAGES = 3;
-
-function mergeUniqueSongs(groups: Song[][]): Song[] {
-  const seen = new Set<number>();
-  return groups.flat().filter(item => {
-    if (seen.has(item.id)) return false;
-    seen.add(item.id);
-    return true;
-  });
-}
+const FIRST_WATCH_PAGE_SIZE = 12;
+const APPEND_WATCH_PAGE_SIZE = 28;
 
 export default function WatchPage() {
   const t = useTranslate();
@@ -188,6 +179,7 @@ export default function WatchPage() {
 
   const fetchedForRef = useRef<number | null>(null);
   const songRequestGenerationRef = useRef(0);
+  const songRequestAbortRef = useRef<AbortController | null>(null);
   const randomOffsetRef = useRef(Math.floor(Math.random() * 20));
   const rankingSeedRef = useRef(createRankingSeed());
   // URLからのロード中はナビゲーションエフェクトをブロックするフラグ
@@ -210,6 +202,9 @@ export default function WatchPage() {
   useEffect(() => {
     if (!songId) return;
     if (fetchedForRef.current === songId) return;
+    songRequestAbortRef.current?.abort();
+    const requestAbortController = new AbortController();
+    songRequestAbortRef.current = requestAbortController;
     const requestGeneration = ++songRequestGenerationRef.current;
     fetchedForRef.current = songId;
     randomOffsetRef.current = Math.floor(Math.random() * 20);
@@ -222,10 +217,10 @@ export default function WatchPage() {
 
     // タブリセット
     setTabs({
-      producer: { items: [], relaxedConditions: [], loading: true, hasMore: true, page: 0 },
-      related: { items: [], relaxedConditions: [], loading: true, hasMore: true, page: 0 },
-      recommended: { items: [], relaxedConditions: [], loading: true, hasMore: true, page: 0 },
-      deep: { items: [], relaxedConditions: [], loading: true, hasMore: true, page: 0 },
+      producer: { items: [], relaxedConditions: [], loading: false, hasMore: true, page: 0 },
+      related: { items: [], relaxedConditions: [], loading: false, hasMore: true, page: 0 },
+      recommended: { items: [], relaxedConditions: [], loading: false, hasMore: true, page: 0 },
+      deep: { items: [], relaxedConditions: [], loading: false, hasMore: true, page: 0 },
     });
     seenSets.current = {
       producer: new Set([songId]),
@@ -251,11 +246,7 @@ export default function WatchPage() {
           resume();
         }
 
-        // 推薦データの取得
-        fetchProducer(loadedSong, 0);
-        fetchRelated(loadedSong, 0);
-        fetchRecommended(loadedSong, 0);
-        fetchDeep(loadedSong, 0);
+        // The active tab loads first. Other recommendation modes load when selected.
       })
       .catch((err) => {
         if (!isCurrentWatchSongRequest(requestGeneration, songRequestGenerationRef.current, songId, fetchedForRef.current)) return;
@@ -263,6 +254,10 @@ export default function WatchPage() {
         setError(err.message || t('watchLoadError'));
         setLoadingSong(false);
       });
+    return () => {
+      requestAbortController.abort();
+      if (songRequestAbortRef.current === requestAbortController) songRequestAbortRef.current = null;
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [songId]);
 
@@ -271,10 +266,10 @@ export default function WatchPage() {
   useEffect(() => {
     if (!song || !songId || loadingFromUrlRef.current) return;
     setTabs({
-      producer: { items: [], relaxedConditions: [], loading: true, hasMore: true, page: 0 },
-      related: { items: [], relaxedConditions: [], loading: true, hasMore: true, page: 0 },
-      recommended: { items: [], relaxedConditions: [], loading: true, hasMore: true, page: 0 },
-      deep: { items: [], relaxedConditions: [], loading: true, hasMore: true, page: 0 },
+      producer: { items: [], relaxedConditions: [], loading: false, hasMore: true, page: 0 },
+      related: { items: [], relaxedConditions: [], loading: false, hasMore: true, page: 0 },
+      recommended: { items: [], relaxedConditions: [], loading: false, hasMore: true, page: 0 },
+      deep: { items: [], relaxedConditions: [], loading: false, hasMore: true, page: 0 },
     });
     seenSets.current = {
       producer: new Set([song.id]),
@@ -282,15 +277,14 @@ export default function WatchPage() {
       recommended: new Set([song.id]),
       deep: new Set([song.id]),
     };
-    fetchProducer(song, 0);
-    fetchRelated(song, 0);
-    fetchRecommended(song, 0);
-    fetchDeep(song, 0);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [globalFilterSettings]);
 
   const fetchProducer = useCallback(async (s: Song, page: number) => {
+    const signal = songRequestAbortRef.current?.signal;
+    if (!signal || signal.aborted) return;
     try {
+      const { start, count } = getProgressiveWindow(page, FIRST_WATCH_PAGE_SIZE, APPEND_WATCH_PAGE_SIZE, PAGE_SIZE);
       const producerIds = (s.artists ?? [])
         .filter(a => a.categories?.includes('Producer'))
         .map(a => a.artist?.id)
@@ -299,11 +293,11 @@ export default function WatchPage() {
       // Producer pagination is already popularity-ordered by the backend.
       // Applying the mix tab's random offset here skipped the first page and
       // made the same-P tab appear to miss songs when its pool was small.
-      const producerSongs = await getSongsByProducerFromBackend(s.id, producerIds, PAGE_SIZE, page * PAGE_SIZE);
+      const producerSongs = await getSongsByProducerFromBackend(s.id, producerIds, count, start, signal);
       const filtered = filterDiscoverySongs(
         requiresExternalViewCounts(globalFilterSettings) ? await attachExternalViews(producerSongs) : producerSongs,
-        PAGE_SIZE,
-        producerSongs.length < PAGE_SIZE,
+        count,
+        producerSongs.length < count,
       );
       const items = rerankDisplayedSongs(
         filtered.items,
@@ -320,53 +314,38 @@ export default function WatchPage() {
             ? filtered.relaxedConditions
             : [...new Set([...prev.producer.relaxedConditions, ...filtered.relaxedConditions])],
           loading: false,
-          hasMore: producerSongs.length >= PAGE_SIZE,
+          hasMore: producerSongs.length >= count && fresh.length > 0,
           page: page + 1,
         },
       }));
     } catch {
+      if (signal.aborted || fetchedForRef.current !== s.id) return;
       setTabs(prev => ({ ...prev, producer: { ...prev.producer, loading: false, hasMore: false } }));
     }
   }, [filterDiscoverySongs, globalFilterSettings]);
 
   const fetchRelated = useCallback(async (s: Song, page: number) => {
+    const signal = songRequestAbortRef.current?.signal;
+    if (!signal || signal.aborted) return;
     try {
-      const { pages: relatedPages, nextPage } = await fetchProgressivePages({
-        startPage: page,
-        maxPages: page === 0 ? INITIAL_REFILL_PAGES : 1,
-        fetchPage: async sourcePage => {
-          const source = await getMetadataSimilarSongs(
-            s.id,
-            PAGE_SIZE * 2,
-            sourcePage * PAGE_SIZE * 2,
-          );
-          return requiresExternalViewCounts(globalFilterSettings)
-            ? await attachExternalViews(source)
-            : source;
-        },
-        needsMore: pages => {
-          const sourceExhausted = pages[pages.length - 1].length < PAGE_SIZE * 2;
-          if (sourceExhausted) return false;
-          return filterDiscoverySongs(
-            mergeUniqueSongs(pages),
-            PAGE_SIZE,
-            false,
-          ).items.length < PAGE_SIZE;
-        },
-      });
-      const relatedSongs = mergeUniqueSongs(relatedPages);
-      const sourceExhausted = relatedPages[relatedPages.length - 1].length < PAGE_SIZE * 2;
+      const { start, count } = getProgressiveWindow(page, FIRST_WATCH_PAGE_SIZE, APPEND_WATCH_PAGE_SIZE, PAGE_SIZE);
+      const sourceSongs = await getMetadataSimilarSongs(s.id, count, start, signal);
+      const relatedSongs = requiresExternalViewCounts(globalFilterSettings)
+        ? await attachExternalViews(sourceSongs)
+        : sourceSongs;
+      const sourceExhausted = sourceSongs.length < count;
       const filtered = filterDiscoverySongs(
         relatedSongs,
-        PAGE_SIZE,
+        count,
         sourceExhausted,
       );
       const items = rerankDisplayedSongs(
-        filtered.items.slice(0, PAGE_SIZE),
+        filtered.items.slice(0, count),
         rankingSeedRef.current,
       );
       const fresh = items.filter(item => !seenSets.current.related.has(item.id));
       fresh.forEach(item => seenSets.current.related.add(item.id));
+      if (signal.aborted || fetchedForRef.current !== s.id) return;
 
       setTabs(prev => ({
         ...prev,
@@ -376,80 +355,64 @@ export default function WatchPage() {
             ? filtered.relaxedConditions
             : [...new Set([...prev.related.relaxedConditions, ...filtered.relaxedConditions])],
           loading: false,
-          hasMore: !sourceExhausted,
-          page: nextPage,
+          hasMore: !sourceExhausted && fresh.length > 0,
+          page: page + 1,
         },
       }));
     } catch {
+      if (signal.aborted || fetchedForRef.current !== s.id) return;
       setTabs(prev => ({ ...prev, related: { ...prev.related, loading: false, hasMore: false } }));
     }
   }, [filterDiscoverySongs, globalFilterSettings]);
 
   const fetchRecommended = useCallback(async (s: Song, page: number) => {
+    const signal = songRequestAbortRef.current?.signal;
+    if (!signal || signal.aborted) return;
     try {
+      const { start, count } = getProgressiveWindow(page, FIRST_WATCH_PAGE_SIZE, APPEND_WATCH_PAGE_SIZE, PAGE_SIZE);
       type SourcePage = [Song[], Song[], Song[]];
-      const rankSources = (sourcePages: SourcePage[]) => {
-        const hybrid = mergeUniqueSongs(sourcePages.map(result => result[0]));
-        const audio = mergeUniqueSongs(sourcePages.map(result => result[1]));
-        const favorite = mergeUniqueSongs(sourcePages.map(result => result[2]));
-        const lastPage = sourcePages[sourcePages.length - 1];
-        const sourceExhausted = lastPage[0].length < PAGE_SIZE * 2
-          && lastPage[1].length < PAGE_SIZE
-          && lastPage[2].length < PAGE_SIZE;
-        const hybridFiltered = filterDiscoverySongs([...favorite, ...hybrid], PAGE_SIZE, sourceExhausted);
-        const audioFiltered = filterDiscoverySongs(audio, 4, sourceExhausted);
-        const detailed = rerankRecommendationCandidatesDetailed({
-          hybrid: hybridFiltered.items,
-          audio: audioFiltered.items,
-        }, {
-          total: PAGE_SIZE,
-          historyEntries: entries,
-          playlists,
-          ratings,
-          implicitFeedback,
-          excludeIds: new Set([s.id]),
-          rankingSeed: rankingSeedRef.current,
-          explorationStrength: 0.06,
-          exposureEntries: useRecommendationExposureStore.getState().entries,
-          favoriteProducerIds: new Set(favoriteProducers.map(producer => producer.id)),
-        });
-        return {
-          detailed,
-          sourceExhausted,
-          relaxedConditions: [...new Set([
-            ...hybridFiltered.relaxedConditions,
-            ...audioFiltered.relaxedConditions,
-          ])],
-        };
-      };
-
-      const { pages: pageResults, nextPage } = await fetchProgressivePages<SourcePage>({
-        startPage: page,
-        maxPages: page === 0 ? INITIAL_REFILL_PAGES : 1,
-        fetchPage: async sourcePage => {
-          const offset = randomOffsetRef.current + sourcePage * PAGE_SIZE * 2;
-          const raw = await Promise.all([
-            getRecommendedSongs(s.id, PAGE_SIZE * 2, 0.0, ratings, offset),
-            getAudioSimilarSongs(s.id, PAGE_SIZE, offset),
-            Promise.all(favoriteProducers.map(producer =>
-              getSongsByProducer([producer.id], 0, PAGE_SIZE, sourcePage * PAGE_SIZE)
-                .then(result => result.items)
-                .catch(() => [] as Song[]),
-            )).then(results => results.flat()),
-          ]);
-          if (!requiresExternalViewCounts(globalFilterSettings)) return raw as SourcePage;
-          return await Promise.all(raw.map(items => attachExternalViews(items))) as SourcePage;
-        },
-        needsMore: sourcePages => {
-          const ranked = rankSources(sourcePages);
-          return !ranked.sourceExhausted && ranked.detailed.ranked.length < PAGE_SIZE;
-        },
+      const favoriteWindow = favoriteProducers.slice(0, 2);
+      const raw = await Promise.all([
+        getRecommendedSongs(s.id, count, 0.0, ratings, randomOffsetRef.current + start, signal),
+        getAudioSimilarSongs(s.id, count, randomOffsetRef.current + start, signal),
+        Promise.all(favoriteWindow.map(producer =>
+          getSongsByProducerFromBackend(s.id, [producer.id], count, start, signal)
+            .catch(() => [] as Song[]),
+        )).then(results => results.flat()),
+      ]) as SourcePage;
+      const sourcePage = requiresExternalViewCounts(globalFilterSettings)
+        ? await Promise.all(raw.map(items => attachExternalViews(items))) as SourcePage
+        : raw;
+      const [hybrid, audio, favorite] = sourcePage;
+      const sourceExhausted = hybrid.length < count
+        && audio.length < count
+        && favorite.length < count;
+      const hybridFiltered = filterDiscoverySongs([...favorite, ...hybrid], count, sourceExhausted);
+      const audioFiltered = filterDiscoverySongs(audio, Math.min(4, count), sourceExhausted);
+      const detailed = rerankRecommendationCandidatesDetailed({
+        hybrid: hybridFiltered.items,
+        audio: audioFiltered.items,
+      }, {
+        total: count,
+        historyEntries: entries,
+        playlists,
+        ratings,
+        implicitFeedback,
+        excludeIds: new Set([s.id, ...seenSets.current.recommended]),
+        rankingSeed: rankingSeedRef.current,
+        explorationStrength: 0.06,
+        exposureEntries: useRecommendationExposureStore.getState().entries,
+        favoriteProducerIds: new Set(favoriteProducers.map(producer => producer.id)),
       });
-      const { detailed, sourceExhausted, relaxedConditions } = rankSources(pageResults);
+      const relaxedConditions = [...new Set([
+        ...hybridFiltered.relaxedConditions,
+        ...audioFiltered.relaxedConditions,
+      ])];
       const mixed = detailed.ranked;
       const items = mixed.map(item => item.song);
       const fresh = items.filter(item => !seenSets.current.recommended.has(item.id));
       fresh.forEach(item => seenSets.current.recommended.add(item.id));
+      if (signal.aborted || fetchedForRef.current !== s.id) return;
       const freshIds = new Set(fresh.map(item => item.id));
       const reasons = Object.fromEntries(mixed
         .filter(item => freshIds.has(item.song.id))
@@ -477,22 +440,26 @@ export default function WatchPage() {
             ? relaxedConditions
             : [...new Set([...prev.recommended.relaxedConditions, ...relaxedConditions])],
           loading: false,
-          hasMore: !sourceExhausted,
-          page: nextPage,
+          hasMore: !sourceExhausted && fresh.length > 0,
+          page: page + 1,
         },
       }));
     } catch {
+      if (signal.aborted || fetchedForRef.current !== s.id) return;
       setTabs(prev => ({ ...prev, recommended: { ...prev.recommended, loading: false, hasMore: false } }));
     }
   }, [entries, favoriteProducers, globalFilterSettings, implicitFeedback, playlists, ratings, filterDiscoverySongs]);
 
   const fetchDeep = useCallback(async (s: Song, page: number) => {
+    const signal = songRequestAbortRef.current?.signal;
+    if (!signal || signal.aborted) return;
     try {
-      const deepSongs = await getAudioSimilarSongs(s.id, PAGE_SIZE, page * PAGE_SIZE);
+      const { start, count } = getProgressiveWindow(page, FIRST_WATCH_PAGE_SIZE, APPEND_WATCH_PAGE_SIZE, PAGE_SIZE);
+      const deepSongs = await getAudioSimilarSongs(s.id, count, start, signal);
       const filtered = filterDiscoverySongs(
         requiresExternalViewCounts(globalFilterSettings) ? await attachExternalViews(deepSongs) : deepSongs,
-        PAGE_SIZE,
-        deepSongs.length < PAGE_SIZE,
+        count,
+        deepSongs.length < count,
       );
       const items = rerankDisplayedSongs(
         filtered.items,
@@ -500,6 +467,7 @@ export default function WatchPage() {
       );
       const fresh = items.filter(item => !seenSets.current.deep.has(item.id));
       fresh.forEach(item => seenSets.current.deep.add(item.id));
+      if (signal.aborted || fetchedForRef.current !== s.id) return;
 
       setTabs(prev => ({
         ...prev,
@@ -509,14 +477,32 @@ export default function WatchPage() {
             ? filtered.relaxedConditions
             : [...new Set([...prev.deep.relaxedConditions, ...filtered.relaxedConditions])],
           loading: false,
-          hasMore: deepSongs.length >= PAGE_SIZE,
+          hasMore: deepSongs.length >= count && fresh.length > 0,
           page: page + 1,
         },
       }));
     } catch {
+      if (signal.aborted || fetchedForRef.current !== s.id) return;
       setTabs(prev => ({ ...prev, deep: { ...prev.deep, loading: false, hasMore: false } }));
     }
   }, [filterDiscoverySongs, globalFilterSettings]);
+
+  useEffect(() => {
+    if (!song || loadingFromUrlRef.current) return;
+    const tab = tabs[activeTab];
+    if (tab.loading || tab.items.length > 0 || !tab.hasMore) return;
+
+    setTabs(previous => ({
+      ...previous,
+      [activeTab]: { ...previous[activeTab], loading: true },
+    }));
+    switch (activeTab) {
+      case 'producer': void fetchProducer(song, tab.page); break;
+      case 'related': void fetchRelated(song, tab.page); break;
+      case 'recommended': void fetchRecommended(song, tab.page); break;
+      case 'deep': void fetchDeep(song, tab.page); break;
+    }
+  }, [activeTab, fetchDeep, fetchProducer, fetchRecommended, fetchRelated, song, tabs]);
 
   // 追加読み込み
   const loadMore = useCallback(() => {

@@ -16,9 +16,10 @@ interface CategoryChipsProps {
   chips: CategoryChip[];
   activeChip: string;
   onSelect: (id: string) => void;
+  onPrefetch?: (id: string) => void;
 }
 
-export default function CategoryChips({ chips, activeChip, onSelect }: CategoryChipsProps) {
+export default function CategoryChips({ chips, activeChip, onSelect, onPrefetch }: CategoryChipsProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // アクティブチップが見えるようにスクロール
@@ -52,6 +53,8 @@ export default function CategoryChips({ chips, activeChip, onSelect }: CategoryC
             <button
               key={chip.id}
               data-active={isActive}
+              onMouseEnter={() => onPrefetch?.(chip.id)}
+              onFocus={() => onPrefetch?.(chip.id)}
               onClick={() => onSelect(chip.id)}
               className="yt-chip flex-shrink-0"
               style={{

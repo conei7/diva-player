@@ -1036,6 +1036,7 @@ public class DbService
         string? lyricsQuery = null,
         bool selfCoverOnly = false,
         bool chorusOnly = false,
+        bool compactCards = false,
         bool forceRefresh = false,
         CancellationToken cancellationToken = default)
     {
@@ -1078,7 +1079,8 @@ public class DbService
             exactVocalistIds,
             lyricsQuery,
             selfCoverOnly,
-            chorusOnly);
+            chorusOnly,
+            compactCards);
         return _searchCache.GetOrCreateAsync(
             request.CacheKey,
             cacheLoadCancellationToken =>
@@ -1491,7 +1493,9 @@ public class DbService
 
         // --- 4. データ取得 (行単位で読み取り、C#側でJSON配列構築) ---
         var dataStopwatch = Stopwatch.StartNew();
-        string dataSql = $@"
+        string dataSql = request.CompactCards
+            ? $@"SELECT id FROM songs {whereClause} ORDER BY {orderBy} {orderDir} NULLS LAST OFFSET ${paramIndex} LIMIT ${paramIndex + 1}"
+            : $@"
             SELECT (raw_json - 'lyrics') || jsonb_strip_nulls(jsonb_build_object(
                 'youtubeViews', youtube_views,
                 'nicoViews', nico_views,
@@ -1530,14 +1534,30 @@ public class DbService
         dataCmd.Parameters.AddWithValue(start);
         dataCmd.Parameters.AddWithValue(maxResults);
 
-        var items = new List<string>();
-        await using var reader = await dataCmd.ExecuteReaderAsync(cacheLoadCancellationToken);
-        while (await reader.ReadAsync(cacheLoadCancellationToken))
+        string itemsJson;
+        if (request.CompactCards)
         {
-            items.Add(reader.GetString(0));
+            var orderedIds = new List<int>();
+            await using (var reader = await dataCmd.ExecuteReaderAsync(cacheLoadCancellationToken))
+            {
+                while (await reader.ReadAsync(cacheLoadCancellationToken))
+                    orderedIds.Add(reader.GetInt32(0));
+            }
+            var cardsById = await GetSongsCardJsonByIdsAsync(conn, orderedIds, cacheLoadCancellationToken);
+            var compactItems = orderedIds
+                .Where(cardsById.ContainsKey)
+                .Select(id => cardsById[id])
+                .ToArray();
+            itemsJson = compactItems.Length > 0 ? "[" + string.Join(",", compactItems) + "]" : "[]";
         }
-
-        var itemsJson = items.Count > 0 ? "[" + string.Join(",", items) + "]" : "[]";
+        else
+        {
+            var items = new List<string>();
+            await using var reader = await dataCmd.ExecuteReaderAsync(cacheLoadCancellationToken);
+            while (await reader.ReadAsync(cacheLoadCancellationToken))
+                items.Add(reader.GetString(0));
+            itemsJson = items.Count > 0 ? "[" + string.Join(",", items) + "]" : "[]";
+        }
         dataStopwatch.Stop();
         return new SongSearchExecution(
             itemsJson,
@@ -1633,6 +1653,16 @@ public class DbService
         if (ids.Length == 0) return [];
 
         await using var conn = await OpenAsync(cancellationToken);
+        return await GetSongsCardJsonByIdsAsync(conn, ids, cancellationToken);
+    }
+
+    private static async Task<Dictionary<int, string>> GetSongsCardJsonByIdsAsync(
+        NpgsqlConnection conn,
+        IEnumerable<int> songIds,
+        CancellationToken cancellationToken)
+    {
+        var ids = songIds.Where(id => id > 0).Distinct().Take(100).ToArray();
+        if (ids.Length == 0) return [];
         await using var cmd = new NpgsqlCommand(@"
             SELECT s.id,
                    jsonb_strip_nulls(jsonb_build_object(
@@ -1662,6 +1692,16 @@ public class DbService
                        'chorusStartSeconds', (SELECT aa.chorus_start_seconds FROM song_audio_analysis aa WHERE aa.song_id = s.id),
                        'chorusEndSeconds', (SELECT aa.chorus_end_seconds FROM song_audio_analysis aa WHERE aa.song_id = s.id),
                        'chorusConfidence', (SELECT aa.chorus_confidence FROM song_audio_analysis aa WHERE aa.song_id = s.id),
+                       'bpm', (SELECT aa.bpm FROM song_audio_analysis aa WHERE aa.song_id = s.id),
+                       'bpmAlternative', (SELECT aa.bpm_alternative FROM song_audio_analysis aa WHERE aa.song_id = s.id),
+                       'bpmConfidence', (SELECT aa.bpm_confidence FROM song_audio_analysis aa WHERE aa.song_id = s.id),
+                       'musicalKey', (SELECT aa.musical_key FROM song_audio_analysis aa WHERE aa.song_id = s.id),
+                       'keyMode', (SELECT aa.key_mode FROM song_audio_analysis aa WHERE aa.song_id = s.id),
+                       'keyConfidence', (SELECT aa.key_confidence FROM song_audio_analysis aa WHERE aa.song_id = s.id),
+                       'audioInstruments', COALESCE((
+                           SELECT jsonb_agg(jsonb_build_object('key', sai.instrument_key, 'score', sai.score) ORDER BY sai.rank)
+                           FROM song_audio_instruments sai WHERE sai.song_id = s.id AND sai.score >= 0.08
+                       ), '[]'::jsonb),
                        'thumbUrl', COALESCE(s.raw_json->'thumbUrl', s.raw_json->'pvs'->0->'thumbUrl'),
                        'artists', COALESCE((
                            SELECT jsonb_agg(jsonb_strip_nulls(jsonb_build_object(

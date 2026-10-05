@@ -209,6 +209,8 @@ app.MapGet("/api/recommend", async (
     int? offset,
     double sessionProgress,
     RecommendService svc,
+    DbService db,
+    bool? cards,
     CancellationToken cancellationToken) =>
 {
     if (count is < 1 or > 100)
@@ -236,6 +238,14 @@ app.MapGet("/api/recommend", async (
 
     // offset 適用
     var pagedItems = result.Items.Skip(skip).Take(take).ToList();
+    if (cards == true)
+    {
+        var compactCards = await BuildCompactSongCardsAsync(
+            db,
+            pagedItems.Select(item => item.SongId),
+            cancellationToken);
+        return Results.Ok(new { items = pagedItems, cards = compactCards, error = result.Error });
+    }
     return Results.Ok(new RecommendResponse(pagedItems, result.Error));
 });
 
@@ -247,6 +257,7 @@ app.MapGet("/api/recommend/producer", async (
     int count,
     int? offset,
     DbService db,
+    bool? cards,
     CancellationToken cancellationToken) =>
 {
     if (count is < 1 or > 100)
@@ -270,6 +281,14 @@ app.MapGet("/api/recommend/producer", async (
         })
         .ToList();
 
+    if (cards == true)
+    {
+        var compactCards = await BuildCompactSongCardsAsync(
+            db,
+            paged.Select(item => item.songId),
+            cancellationToken);
+        return Results.Ok(new { items = paged, cards = compactCards });
+    }
     return Results.Ok(new { items = paged });
 });
 
@@ -281,6 +300,7 @@ app.MapGet("/api/recommend/similar", async (
     int? offset,
     QdrantService qdrant,
     DbService db,
+    bool? cards,
     CancellationToken cancellationToken) =>
 {
     if (count is < 1 or > 100)
@@ -343,6 +363,14 @@ app.MapGet("/api/recommend/similar", async (
         })
         .ToList();
 
+    if (cards == true)
+    {
+        var compactCards = await BuildCompactSongCardsAsync(
+            db,
+            items.Select(item => item.songId),
+            cancellationToken);
+        return Results.Ok(new { items, cards = compactCards });
+    }
     return Results.Ok(new { items });
 });
 
@@ -354,6 +382,7 @@ app.MapGet("/api/recommend/metadata", async (
     int? offset,
     QdrantService qdrant,
     DbService db,
+    bool? cards,
     CancellationToken cancellationToken) =>
 {
     if (count is < 1 or > 100)
@@ -514,6 +543,14 @@ app.MapGet("/api/recommend/metadata", async (
         })
         .ToList();
 
+    if (cards == true)
+    {
+        var compactCards = await BuildCompactSongCardsAsync(
+            db,
+            items.Select(item => item.songId),
+            cancellationToken);
+        return Results.Ok(new { items, cards = compactCards });
+    }
     return Results.Ok(new { items });
 });
 
@@ -525,6 +562,7 @@ app.MapGet("/api/recommend/audio", async (
     int? offset,
     QdrantService qdrant,
     DbService db,
+    bool? cards,
     CancellationToken cancellationToken) =>
 {
     if (count is < 1 or > 100)
@@ -570,6 +608,14 @@ app.MapGet("/api/recommend/audio", async (
         })
         .ToList();
 
+    if (cards == true)
+    {
+        var compactCards = await BuildCompactSongCardsAsync(
+            db,
+            items.Select(item => item.songId),
+            cancellationToken);
+        return Results.Ok(new { items, cards = compactCards });
+    }
     return Results.Ok(new { items });
 });
 
@@ -773,6 +819,7 @@ app.MapGet("/api/songs/search", async (
     bool? discoveryOnly,
     bool? selfCover,
     bool? chorusOnly,
+    bool? compact,
     HttpContext http,
     DbService db,
     CancellationToken cancellationToken) =>
@@ -923,6 +970,7 @@ app.MapGet("/api/songs/search", async (
         lyricsQuery,
         selfCover ?? false,
         chorusOnly ?? false,
+        compactCards: compact ?? false,
         cancellationToken: cancellationToken
     );
     requestStopwatch.Stop();
@@ -958,6 +1006,20 @@ app.MapGet("/api/search/tags", async (
     var take = Math.Clamp(maxResults ?? 12, 1, 30);
     return Results.Ok(new { items = await db.SearchTagsAsync(normalized, take, cancellationToken) });
 });
+
+static async Task<JsonElement[]> BuildCompactSongCardsAsync(
+    DbService db,
+    IEnumerable<int> songIds,
+    CancellationToken cancellationToken)
+{
+    var orderedIds = songIds.Where(id => id > 0).Distinct().ToArray();
+    if (orderedIds.Length == 0) return [];
+    var songsById = await db.GetSongsCardJsonByIdsAsync(orderedIds, cancellationToken);
+    return orderedIds
+        .Where(songsById.ContainsKey)
+        .Select(id => JsonSerializer.Deserialize<JsonElement>(songsById[id]))
+        .ToArray();
+}
 
 static List<string> ParseCsv(string? value) => string.IsNullOrWhiteSpace(value)
     ? []

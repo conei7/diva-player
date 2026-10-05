@@ -38,12 +38,12 @@ import { useFavoriteProducerStore } from '../stores/favoriteProducerStore';
 import { performanceNow, recordPerformanceMetric, type PerformanceSegment } from '../utils/performanceMetrics';
 import { selectRotatingWindow } from '../utils/pageWindow';
 import { interleaveUniqueSongs, selectRecentProducerIds } from '../utils/recentProducers';
-import { resolveWithin } from '../utils/timeBudget';
 import { isDeterministicHomeRankingCategory } from '../utils/homeRanking';
 import { formatTrendingReason } from '../utils/trendingReason';
 import { formatWeeklyRankingReason } from '../utils/weeklyRankingReason';
 import { excludeHiddenSongs, useHiddenSongStore } from '../stores/hiddenSongStore';
 import { selectRotatingStartupSongs } from '../utils/startupRecommendations';
+import { getProgressiveWindow } from '../utils/progressiveWindow';
 import { useTranslate, type TranslationKey } from '../i18n';
 import { useLanguageStore } from '../stores/languageStore';
 import {
@@ -91,23 +91,13 @@ const CATEGORY_LABELS: Record<HomeCategoryId, TranslationKey> = {
 };
 
 const PAGE_SIZE = 24;
+const FIRST_HOME_PAGE_SIZE = 12;
+const APPEND_HOME_PAGE_SIZE = 28;
 const STARTUP_POOL_SIZE = PAGE_SIZE * 2;
 const STARTUP_ROTATION_KEY = 'diva-startup-rotation-v1';
 const MAX_FAVORITE_PRODUCER_REQUESTS = 4;
-const INITIAL_OPTIONAL_RECOMMENDATION_BUDGET_MS = 2_500;
 const MAX_AUTOFILL_PAGES = 2;
-const HOME_CATEGORY_PREFETCH_DELAY_MS = 300;
-const PREFETCHABLE_HOME_CATEGORIES: PrefetchableHomeCategoryId[] = [
-  'ranking',
-  'popular',
-  'pace',
-  'trending',
-  'recent',
-  'deep',
-  'history_based',
-  'favorite_producers',
-];
-
+const HOME_CATEGORY_PREFETCH_DELAY_MS = 500;
 function asHomeCategoryId(id: string): HomeCategoryId {
   return CATEGORIES.some(category => category.id === id)
     ? (id as HomeCategoryId)
@@ -171,7 +161,6 @@ export default function HomePage() {
   });
   const pendingSearchPaintRef = useRef<number | null>(null);
   const startupCacheStartedRef = useRef(false);
-  const startupCacheAvailableRef = useRef(false);
   const firstHomeContentRecordedRef = useRef(false);
   const firstHomePaintRecordedRef = useRef(false);
   const persistedStartupSignatureRef = useRef('');
@@ -247,8 +236,7 @@ export default function HomePage() {
       if (cachedSongs.length === 0) return;
 
       const rotation = nextStartupRotation();
-      const selectedSongs = selectRotatingStartupSongs(cachedSongs, rotation, PAGE_SIZE);
-      startupCacheAvailableRef.current = true;
+      const selectedSongs = selectRotatingStartupSongs(cachedSongs, rotation, FIRST_HOME_PAGE_SIZE);
       setStartupSongs(selectedSongs);
       setLoading(false);
       if (!firstHomeContentRecordedRef.current) {
@@ -281,6 +269,7 @@ export default function HomePage() {
   }, [activeCategory, isArtistMode, isSearchMode]);
 
   const fetchRecommendedHomeSongs = useCallback(async (pageNum: number): Promise<Song[]> => {
+    const { start, count } = getProgressiveWindow(pageNum, FIRST_HOME_PAGE_SIZE, APPEND_HOME_PAGE_SIZE);
     const excludeIds = new Set<number>();
     if (currentSong?.id) excludeIds.add(currentSong.id);
 
@@ -332,45 +321,45 @@ export default function HomePage() {
       pageNum,
       MAX_FAVORITE_PRODUCER_REQUESTS,
     );
-    const optionalSources = Promise.all([
-      Promise.all(seedIds.map(seedId =>
-        getRecommendedSongs(seedId, 8, 0.0, ratings, pageNum * 8)
-          .catch(() => [] as Song[])
-      )),
-      Promise.all(preferenceSeedIds.map(seedId =>
-        getSimilarSongs(seedId, 8, pageNum * 8)
-          .catch(() => [] as Song[])
-      )),
-      Promise.all(audioSeedIds.map(seedId =>
-        getAudioSimilarSongs(seedId, 8, pageNum * 8)
-          .catch(() => [] as Song[])
-      )),
-      Promise.all(favoriteProducerWindow.map(producer =>
-        searchSongsBackend({
-          artistIds: [producer.id],
-          sort: 'FavoritedTimes',
-          sortOrder: 'desc',
-          start: pageNum * 12,
-          maxResults: 12,
-          discoveryOnly: true,
-        })
-          .then(result => result.items)
-          .catch(() => [] as Song[]),
-      )),
-    ]);
+    const optionalSources = pageNum === 0
+      ? Promise.resolve([[], [], [], []] as Song[][][])
+      : Promise.all([
+          Promise.all(seedIds.map(seedId =>
+            getRecommendedSongs(seedId, Math.min(8, count), 0.0, ratings, start)
+              .catch(() => [] as Song[])
+          )),
+          Promise.all(preferenceSeedIds.map(seedId =>
+            getSimilarSongs(seedId, Math.min(8, count), start)
+              .catch(() => [] as Song[])
+          )),
+          Promise.all(audioSeedIds.map(seedId =>
+            getAudioSimilarSongs(seedId, Math.min(8, count), start)
+              .catch(() => [] as Song[])
+          )),
+          Promise.all(favoriteProducerWindow.map(producer =>
+            searchSongsBackend({
+              artistIds: [producer.id],
+              sort: 'FavoritedTimes',
+              sortOrder: 'desc',
+              start,
+              maxResults: Math.min(12, count),
+              discoveryOnly: true,
+              compactCards: true,
+            })
+              .then(result => result.items)
+              .catch(() => [] as Song[]),
+          )),
+        ]);
     const popularPromise = searchSongsBackend({
       sort: 'FavoritedTimes',
       sortOrder: 'desc',
-      maxResults: 12,
-      start: pageNum * 12,
+      maxResults: count,
+      start,
       discoveryOnly: true,
+      compactCards: true,
     });
-    const optionalPromise = pageNum === 0 && !startupCacheAvailableRef.current
-      ? resolveWithin(optionalSources, INITIAL_OPTIONAL_RECOMMENDATION_BUDGET_MS, [[], [], [], []] as Song[][][])
-      : optionalSources.then(value => ({ value, timedOut: false }));
-
-    const [popularResult, optionalResult] = await Promise.all([popularPromise, optionalPromise]);
-    const [seedResults, preferenceResults, audioResults, favoriteResults] = optionalResult.value;
+    const [popularResult, optionalResults] = await Promise.all([popularPromise, optionalSources]);
+    const [seedResults, preferenceResults, audioResults, favoriteResults] = optionalResults;
     const hybridCandidates = uniqueSongsById([
       ...favoriteResults.flat(),
       ...preferenceResults.flat(),
@@ -383,14 +372,14 @@ export default function HomePage() {
     ]));
     const eligibleDiscoveryIds = new Set(eligibleDiscoverySongs.map(song => song.id));
 
-    const knownStart = pageNum * 10;
+    const knownStart = start;
     const detailed = rerankRecommendationCandidatesDetailed({
       known: knownSongs.slice(knownStart, knownStart + 18),
       hybrid: hybridCandidates.filter(song => eligibleDiscoveryIds.has(song.id)),
       audio: audioCandidates.filter(song => eligibleDiscoveryIds.has(song.id)),
       popular: popularResult.items,
     }, {
-      total: PAGE_SIZE,
+      total: count,
       historyEntries: eligibleEntries,
       playlists: eligiblePlaylists,
       ratings,
@@ -415,36 +404,31 @@ export default function HomePage() {
       selectedCount: detailed.ranked.length,
       trace: detailed.trace,
     });
-    if (optionalResult.timedOut) {
-      recordPerformanceMetric({
-        name: 'home.optional-budget',
-        startedAt: performanceNow() - INITIAL_OPTIONAL_RECOMMENDATION_BUDGET_MS,
-        detail: { page: pageNum, timedOut: true },
-      });
-    }
-    return result.length > 0 ? result : popularResult.items;
+    return (result.length > 0 ? result : popularResult.items).slice(0, count);
   }, [currentSong, entries, favoriteProducers, playlists, ratings, implicitFeedback]);
 
   const fetchPrefetchableHomeSongs = useCallback(async (
     category: PrefetchableHomeCategoryId,
     pageNum: number,
+    priority: 'foreground' | 'background' = 'foreground',
   ): Promise<Song[]> => {
+    const { start, count } = getProgressiveWindow(pageNum, FIRST_HOME_PAGE_SIZE, APPEND_HOME_PAGE_SIZE);
     switch (category) {
       case 'ranking':
-        return getTrendingSongs(7, PAGE_SIZE, pageNum * PAGE_SIZE, 'weekly', 0, globalFilterSettings);
+        return getTrendingSongs(7, count, start, 'weekly', 0, globalFilterSettings, priority);
       case 'popular':
-        return getTrendingSongs(30, PAGE_SIZE, pageNum * PAGE_SIZE, 'alltime', 0, globalFilterSettings);
+        return getTrendingSongs(30, count, start, 'alltime', 0, globalFilterSettings, priority);
       case 'pace':
-        return getTrendingSongs(30, PAGE_SIZE, pageNum * PAGE_SIZE, 'pace', 0, globalFilterSettings);
+        return getTrendingSongs(30, count, start, 'pace', 0, globalFilterSettings, priority);
       case 'trending':
-        return getTrendingSongs(7, PAGE_SIZE, pageNum * PAGE_SIZE, 'surge', 0, globalFilterSettings);
+        return getTrendingSongs(7, count, start, 'surge', 0, globalFilterSettings, priority);
       case 'recent':
-        return getTrendingSongs(30, PAGE_SIZE, pageNum * PAGE_SIZE, 'recent', 0, globalFilterSettings);
+        return getTrendingSongs(30, count, start, 'recent', 0, globalFilterSettings, priority);
       case 'deep':
         // The API's canonical seed-0 pool is kept hot with the other Home
         // feeds. Client-side exposure reranking below still varies its order
         // per page view, without making a new SQL/cache variant block the tab.
-        return getTrendingSongs(30, PAGE_SIZE, pageNum * PAGE_SIZE, 'deep', 0, globalFilterSettings);
+        return getTrendingSongs(30, count, start, 'deep', 0, globalFilterSettings, priority);
       case 'history_based': {
         const recentSongIds = new Set(entries.slice(0, 50).map(entry => entry.song.id));
         if (recentProducerIds.length > 0) {
@@ -454,9 +438,11 @@ export default function HomePage() {
               anyArtistIds: [producerId],
               sort: 'FavoritedTimes',
               sortOrder: 'desc',
-              maxResults: 12,
-              start: pageNum * 12,
+              maxResults: Math.min(12, count),
+              start,
               discoveryOnly: true,
+              compactCards: true,
+              priority,
             }).then(searchResult => searchResult.items).catch(() => [] as Song[]),
           ));
           const interleaved = interleaveUniqueSongs(producerResults, recentSongIds, PAGE_SIZE);
@@ -466,9 +452,11 @@ export default function HomePage() {
         const fallback = await searchSongsBackend({
           sort: 'FavoritedTimes',
           sortOrder: 'desc',
-          maxResults: PAGE_SIZE,
-          start: pageNum * PAGE_SIZE,
+          maxResults: count,
+          start,
           discoveryOnly: true,
+          compactCards: true,
+          priority,
         });
         return fallback.items;
       }
@@ -484,12 +472,14 @@ export default function HomePage() {
             artistIds: [producer.id],
             sort: 'FavoritedTimes',
             sortOrder: 'desc',
-            start: pageNum * 12,
-            maxResults: 12,
+            start,
+            maxResults: Math.min(12, count),
             discoveryOnly: true,
+            compactCards: true,
+            priority,
           }).then(result => result.items).catch(() => [] as Song[]),
         ));
-        return uniqueSongsById(producerResults.flat()).slice(0, PAGE_SIZE);
+        return uniqueSongsById(producerResults.flat()).slice(0, count);
       }
     }
   }, [entries, favoriteProducers, globalFilterSettings, recentProducerIds]);
@@ -497,14 +487,15 @@ export default function HomePage() {
   const loadPrefetchableHomeSongs = useCallback((
     category: PrefetchableHomeCategoryId,
     pageNum: number,
+    priority: 'foreground' | 'background' = 'foreground',
   ): Promise<Song[]> => {
-    if (pageNum > 0) return fetchPrefetchableHomeSongs(category, pageNum);
+    if (pageNum > 0) return fetchPrefetchableHomeSongs(category, pageNum, priority);
 
     const key = `${homeSourceContextKey}:${category}:0`;
     const existing = homeSourcePromisesRef.current.get(key);
     if (existing) return existing;
 
-    const request = fetchPrefetchableHomeSongs(category, 0);
+    const request = fetchPrefetchableHomeSongs(category, 0, priority);
     homeSourcePromisesRef.current.set(key, request);
     void request.catch(() => {
       if (homeSourcePromisesRef.current.get(key) === request) {
@@ -531,6 +522,7 @@ export default function HomePage() {
     try {
       let result: Song[] = [];
       const sourceStartedAt = performanceNow();
+      const { start, count } = getProgressiveWindow(pageNum, FIRST_HOME_PAGE_SIZE, APPEND_HOME_PAGE_SIZE);
 
       if (artistIdParam) {
         const searchResult = await searchSongsBackend({
@@ -538,8 +530,10 @@ export default function HomePage() {
           artistRole: artistRoleParam || undefined,
           sort: 'FavoritedTimes',
           sortOrder: 'desc',
-          maxResults: PAGE_SIZE,
-          start: pageNum * PAGE_SIZE,
+          maxResults: count,
+          start,
+          compactCards: true,
+          priority: 'foreground',
         });
         result = searchResult.items;
       } else if (query) {
@@ -547,14 +541,16 @@ export default function HomePage() {
           query,
           sort: 'FavoritedTimes',
           sortOrder: 'desc',
-          maxResults: PAGE_SIZE,
-          start: pageNum * PAGE_SIZE,
+          maxResults: count,
+          start,
+          compactCards: true,
+          priority: 'foreground',
         });
         result = searchResult.items;
       } else if (category === 'recommended') {
         result = await fetchRecommendedHomeSongs(pageNum);
       } else {
-        result = await loadPrefetchableHomeSongs(category, pageNum);
+        result = await loadPrefetchableHomeSongs(category, pageNum, 'foreground');
       }
       segments.push({ name: 'source', durationMs: performanceNow() - sourceStartedAt });
 
@@ -623,7 +619,7 @@ export default function HomePage() {
       // A filtered page may contain no visible songs even though the source
       // still has more candidates. Continue until the source is exhausted or
       // a broken fallback repeats the same page.
-      setHasMore(fetchedCount >= PAGE_SIZE && (pageNum === 0 || newSourceCount > 0));
+      setHasMore(fetchedCount >= count && (pageNum === 0 || newSourceCount > 0));
       recordPerformanceMetric({
         name: 'home.load',
         startedAt,
@@ -722,11 +718,11 @@ export default function HomePage() {
   );
   const shouldRelaxFreshDiscovery = !hasSearched
     && !loading
-    && freshStrictDiscoverySongs.length < PAGE_SIZE
+    && freshStrictDiscoverySongs.length < FIRST_HOME_PAGE_SIZE
     && !hasMore;
   const freshDiscoveryResult = useMemo(
     () => shouldRelaxFreshDiscovery
-      ? applyDiscoveryFilterWithRelaxation(unhiddenFreshSongs, discoveryContext, PAGE_SIZE)
+      ? applyDiscoveryFilterWithRelaxation(unhiddenFreshSongs, discoveryContext, FIRST_HOME_PAGE_SIZE)
       : { items: freshStrictDiscoverySongs, relaxedConditions: [] },
     [discoveryContext, freshStrictDiscoverySongs, shouldRelaxFreshDiscovery, unhiddenFreshSongs],
   );
@@ -740,10 +736,13 @@ export default function HomePage() {
     && !hasSearched
     && startupDiscoverySongs.length > 0;
   const discoveryResult = showingStartupCache
-    ? { items: startupDiscoverySongs, relaxedConditions: [] }
+    ? {
+        items: uniqueSongsById([...startupDiscoverySongs, ...freshDiscoveryResult.items]).slice(0, 40),
+        relaxedConditions: [],
+      }
     : freshDiscoveryResult;
   const homeLoading = loading && !showingStartupCache;
-  const startupRefreshTarget = showingStartupCache ? STARTUP_POOL_SIZE : PAGE_SIZE;
+  const startupRefreshTarget = showingStartupCache ? 40 : FIRST_HOME_PAGE_SIZE;
   const displaySongs = useMemo(
     () => hasSearched
       ? applyGlobalSongFilter(unhiddenSearchResults, globalFilterSettings)
@@ -760,22 +759,34 @@ export default function HomePage() {
 
     let cancelled = false;
     const timer = window.setTimeout(() => {
-      void (async () => {
-        const rankingFeeds = PREFETCHABLE_HOME_CATEGORIES.slice(0, 6);
-        await Promise.all(rankingFeeds.map(category =>
-          loadPrefetchableHomeSongs(category, 0).catch(() => [] as Song[]),
-        ));
-        if (cancelled) return;
-        for (const category of PREFETCHABLE_HOME_CATEGORIES.slice(6)) {
-          await loadPrefetchableHomeSongs(category, 0).catch(() => [] as Song[]);
-          if (cancelled) return;
-        }
-      })();
+      const idleWindow = window as Window & {
+        requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => number;
+        cancelIdleCallback?: (id: number) => void;
+      };
+      const startPrefetch = () => {
+        void loadPrefetchableHomeSongs('ranking', 0, 'background')
+          .catch(() => [] as Song[])
+          .then(() => {
+            if (!cancelled) return loadPrefetchableHomeSongs('popular', 0, 'background');
+            return [] as Song[];
+          })
+          .catch(() => [] as Song[]);
+      };
+      if (idleWindow.requestIdleCallback) {
+        idleCallbackId = idleWindow.requestIdleCallback(startPrefetch, { timeout: 2_000 });
+      } else {
+        idleFallbackTimer = window.setTimeout(startPrefetch, 0);
+      }
     }, HOME_CATEGORY_PREFETCH_DELAY_MS);
+    let idleCallbackId: number | undefined;
+    let idleFallbackTimer: number | undefined;
 
     return () => {
       cancelled = true;
       window.clearTimeout(timer);
+      if (idleFallbackTimer !== undefined) window.clearTimeout(idleFallbackTimer);
+      const idleWindow = window as Window & { cancelIdleCallback?: (id: number) => void };
+      if (idleCallbackId !== undefined) idleWindow.cancelIdleCallback?.(idleCallbackId);
     };
   }, [activeCategory, displaySongs.length, hasSearched, isArtistMode, isSearchMode, loadPrefetchableHomeSongs]);
 
@@ -808,7 +819,7 @@ export default function HomePage() {
     // An underfilled first screen is handled by the bounded auto-fill below.
     // Observing its already-visible sentinel as well caused an endless stream
     // of placeholder cards on large displays with strict filters.
-    if (!hasSearched && freshStrictDiscoverySongs.length < PAGE_SIZE) return;
+    if (!hasSearched && freshStrictDiscoverySongs.length < FIRST_HOME_PAGE_SIZE) return;
     const el = sentinelRef.current;
     if (!el) return;
     const observer = new IntersectionObserver(
@@ -820,6 +831,12 @@ export default function HomePage() {
     observer.observe(el);
     return () => observer.disconnect();
   }, [freshStrictDiscoverySongs.length, hasSearched, loadMore]);
+
+  useEffect(() => {
+    if (hasSearched || isSearchMode || isArtistMode || loading || !hasMore || page !== 0 || songs.length < FIRST_HOME_PAGE_SIZE) return;
+    const timer = window.setTimeout(loadMore, 180);
+    return () => window.clearTimeout(timer);
+  }, [hasMore, hasSearched, isArtistMode, isSearchMode, loadMore, loading, page, songs.length]);
 
   const relaxationMessage = hasSearched
     ? null
@@ -941,12 +958,16 @@ export default function HomePage() {
           className="sticky z-20 pb-2 pt-3 -mx-4 sm:-mx-6 lg:-mx-8 px-4 sm:px-6 lg:px-8 mb-4"
           style={{ top: 'var(--header-height)', background: 'var(--color-bg-primary)' }}
         >
-          <CategoryChips
+        <CategoryChips
             chips={CATEGORIES.map(chip => ({
               ...chip,
               label: t(CATEGORY_LABELS[asHomeCategoryId(chip.id)]),
             }))}
             activeChip={activeCategory}
+            onPrefetch={(id) => {
+              if (id === 'recommended' || !CATEGORIES.some(category => category.id === id)) return;
+              void loadPrefetchableHomeSongs(asHomeCategoryId(id) as PrefetchableHomeCategoryId, 0, 'background');
+            }}
             onSelect={(id) => {
               const nextCategory = asHomeCategoryId(id);
               if (nextCategory === activeCategory) return;

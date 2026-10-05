@@ -126,6 +126,17 @@ public sealed class SongSearchRequestTests
             Create(tagIds: [1], tagMatchMode: "any").CacheKey);
     }
 
+    [Fact]
+    public void Create_SeparatesCompactCardSearchesFromFullSearchesInCache()
+    {
+        var full = Create();
+        var compact = Create(compactCards: true);
+
+        Assert.False(full.CompactCards);
+        Assert.True(compact.CompactCards);
+        Assert.NotEqual(full.CacheKey, compact.CacheKey);
+    }
+
     [Theory]
     [InlineData(double.NaN)]
     [InlineData(double.PositiveInfinity)]
@@ -161,7 +172,8 @@ public sealed class SongSearchRequestTests
         int? creditArtistId = null,
         string? creditArtistRole = null,
         int randomSeed = 0,
-        IEnumerable<int>? exactVocalistIds = null)
+        IEnumerable<int>? exactVocalistIds = null,
+        bool compactCards = false)
         => SongSearchRequest.Create(
             query,
             artistIds,
@@ -190,5 +202,6 @@ public sealed class SongSearchRequestTests
             creditArtistId: creditArtistId,
             creditArtistRole: creditArtistRole,
             randomSeed: randomSeed,
-            exactVocalistIds: exactVocalistIds);
+            exactVocalistIds: exactVocalistIds,
+            compactCards: compactCards);
 }

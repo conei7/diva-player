@@ -14,6 +14,7 @@ import { checkBackendHealth } from './backendHealth';
 import { buildSmartPlaylistSearchParams } from '../utils/smartPlaylist';
 import { AsyncTtlCache } from '../utils/asyncTtlCache';
 import { performanceNow, recordPerformanceMetric, type PerformanceSegment } from '../utils/performanceMetrics';
+import { scheduleFetch, type RequestPriority } from '../utils/requestScheduler';
 
 const BASE_URL = 'https://vocadb.net/api';
 const RECOMMENDER_API = import.meta.env.VITE_RECOMMENDER_API || '/backend-api';
@@ -232,9 +233,10 @@ export async function getDiscoveryEligibleSongIds(
 
   const results = await Promise.all(chunks.map(async chunk => {
     try {
-      const response = await fetch(
+      const response = await scheduleFetch(
         `${RECOMMENDER_API}/api/songs/discovery-eligibility?ids=${chunk.join(',')}`,
         { cache: 'no-store', signal },
+        'foreground',
       );
       if (!response.ok) return [] as number[];
       const payload = await response.json() as { items?: unknown };
@@ -281,10 +283,15 @@ async function getSongDetailsWithConcurrency(ids: readonly number[], concurrency
 /**
  * 指数バックオフ付きfetch
  */
-async function fetchWithRetry(url: string, retries = MAX_RETRIES): Promise<Response> {
+async function fetchWithRetry(
+  url: string,
+  retries = MAX_RETRIES,
+  priority: RequestPriority = 'foreground',
+  signal?: AbortSignal,
+): Promise<Response> {
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
-      const response = await fetch(url);
+      const response = await scheduleFetch(url, signal ? { signal } : undefined, priority);
       
       if (response.ok) return response;
       
@@ -312,6 +319,7 @@ async function fetchWithRetry(url: string, retries = MAX_RETRIES): Promise<Respo
       
       throw new Error(`API Error ${response.status} after ${retries + 1} attempts`);
     } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') throw error;
       if (error instanceof Error && error.name === 'DivaApiClientError') throw error;
       if (attempt === retries) throw error;
       const delay = Math.pow(2, attempt) * 500;
@@ -508,7 +516,7 @@ export async function searchSmartPlaylistSongs(
   signal?: AbortSignal,
 ): Promise<{ items: Song[]; totalCount: number }> {
   const params = buildSmartPlaylistSearchParams(rule, maxResults);
-  const response = await fetch(`${RECOMMENDER_API}/api/songs/search?${params.toString()}`, { signal });
+  const response = await scheduleFetch(`${RECOMMENDER_API}/api/songs/search?${params.toString()}`, { signal }, 'foreground');
   if (!response.ok) {
     throw new Error(`Smart playlist search failed: ${response.status}`);
   }
@@ -602,6 +610,7 @@ export async function getTrendingSongs(
   mode: 'growth' | 'alltime' | 'weekly' | 'pace' | 'popular' | 'surge' | 'recent' | 'deep' = 'growth',
   seed = 0,
   globalFilters?: GlobalFilterSettings,
+  priority: RequestPriority = 'foreground',
 ): Promise<Song[]> {
   const params = new URLSearchParams({
     days: String(days),
@@ -629,7 +638,7 @@ export async function getTrendingSongs(
 
   if (await isRecommenderAvailable()) {
     try {
-      const res = await fetch(url);
+      const res = await scheduleFetch(url, undefined, priority);
       if (res.ok) {
         const data: SongSearchResult = await res.json();
         setCache(cacheKey, data.items);
@@ -942,6 +951,7 @@ interface RecommendItem {
 interface RecommendResponse {
   items: RecommendItem[];
   error: string | null;
+  cards?: Song[];
 }
 
 let _recommenderAvailable: boolean | null = null;
@@ -1031,13 +1041,13 @@ export async function getDigRecommendedSongs(
 ): Promise<Song[]> {
   if (await isRecommenderAvailable()) {
     try {
-      const res = await fetch(`${RECOMMENDER_API}/api/recommend/dig`, {
+      const res = await scheduleFetch(`${RECOMMENDER_API}/api/recommend/dig`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(buildDigRecommendationRequest(
           seeds, count, excludeSongIds, offset, generationSeed, globalFilters,
         )),
-      });
+      }, 'foreground');
       if (res.ok) {
         const data: DigRecommendationResponse = await res.json();
         if (!data.error && Array.isArray(data.items)) {
@@ -1069,6 +1079,7 @@ export async function getRecommendedSongs(
   sessionProgress = 0.0,
   ratings?: Record<string, number>,
   offset = 0,
+  signal?: AbortSignal,
 ): Promise<Song[]> {
   void ratings;
   // ローカルバックエンドを優先
@@ -1079,18 +1090,21 @@ export async function getRecommendedSongs(
         count:  String(count),
         offset: String(offset),
         sessionProgress: String(sessionProgress),
+        cards: 'true',
       });
       // 評価データをAPIに渡す (id:rating のカンマ区切り、最大30件)
-      const res = await fetch(`${RECOMMENDER_API}/api/recommend?${params}`);
+      const res = await scheduleFetch(`${RECOMMENDER_API}/api/recommend?${params}`, signal ? { signal } : undefined, 'foreground');
       if (res.ok) {
         const data: RecommendResponse = await res.json();
         if (!data.error && data.items.length > 0) {
           // 推薦IDをSBCの軽量バッチAPIでカード情報へ解決する（未対応時はVocaDBへフォールバック）
           const ids = data.items.map(i => i.songId);
+          if (Array.isArray(data.cards) && data.cards.every(isSongPayload)) return data.cards;
           return getSongsByIds(ids);
         }
       }
-    } catch {
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') throw error;
       _recommenderAvailable = false; // 次回からフォールバック
       _recommenderCheckedAt = Date.now();
     }
@@ -1118,7 +1132,7 @@ export async function getMultiRecommendedSongs(
 
   if (await isRecommenderAvailable()) {
     try {
-      const res = await fetch(`${RECOMMENDER_API}/api/recommend/multi`, {
+      const res = await scheduleFetch(`${RECOMMENDER_API}/api/recommend/multi`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1127,7 +1141,7 @@ export async function getMultiRecommendedSongs(
           offset,
           excludeSongIds: excludeSongIds.slice(0, 500),
         }),
-      });
+      }, 'foreground');
       if (res.ok) {
         const data: RecommendResponse = await res.json();
         if (!data.error && data.items.length > 0) {
@@ -1166,13 +1180,14 @@ export async function getMultiRecommendedSongs(
  * バックエンド不可時は VocaDB artistId 検索にフォールバック
  */
 interface ProducerSongItem { songId: number; name: string; artistString: string; }
-interface ProducerSongResponse { items: ProducerSongItem[]; }
+interface ProducerSongResponse { items: ProducerSongItem[]; cards?: Song[]; }
 
 export async function getSongsByProducerFromBackend(
   seedSongId: number,
   producerIds: number[],
   count = 20,
   offset = 0,
+  signal?: AbortSignal,
 ): Promise<Song[]> {
   if (await isRecommenderAvailable()) {
     try {
@@ -1180,15 +1195,18 @@ export async function getSongsByProducerFromBackend(
         songId: String(seedSongId),
         count:  String(count),
         offset: String(offset),
+        cards: 'true',
       });
-      const res = await fetch(`${RECOMMENDER_API}/api/recommend/producer?${params}`);
+      const res = await scheduleFetch(`${RECOMMENDER_API}/api/recommend/producer?${params}`, signal ? { signal } : undefined, 'foreground');
       if (res.ok) {
         const data: ProducerSongResponse = await res.json();
+        if (Array.isArray(data.cards) && data.cards.every(isSongPayload)) return data.cards;
         if (data.items.length > 0) {
           return getSongsByIds(data.items.map(item => item.songId));
         }
       }
-    } catch {
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') throw error;
       _recommenderAvailable = false;
       _recommenderCheckedAt = Date.now();
     }
@@ -1278,12 +1296,18 @@ export async function getSongsByTags(
  * バックエンドが利用不可の場合は VocaDB /related にフォールバック
  */
 interface SimilarItem { songId: number; name: string; artist: string; score: number; }
-interface SimilarResponse { items: SimilarItem[]; }
+interface SimilarResponse { items: SimilarItem[]; cards?: Song[]; }
+
+function readCompactCards(cards: unknown): Song[] | null {
+  if (!Array.isArray(cards) || !cards.every(isSongPayload)) return null;
+  return cards;
+}
 
 export async function getSimilarSongs(
   seedSongId: number,
   count = 20,
   offset = 0,
+  signal?: AbortSignal,
 ): Promise<Song[]> {
   if (await isRecommenderAvailable()) {
     try {
@@ -1291,15 +1315,19 @@ export async function getSimilarSongs(
         songId: String(seedSongId),
         count:  String(count),
         offset: String(offset),
+        cards: 'true',
       });
-      const res = await fetch(`${RECOMMENDER_API}/api/recommend/similar?${params}`);
+      const res = await scheduleFetch(`${RECOMMENDER_API}/api/recommend/similar?${params}`, signal ? { signal } : undefined, 'foreground');
       if (res.ok) {
         const data: SimilarResponse = await res.json();
+        const cards = readCompactCards(data.cards);
+        if (cards) return cards;
         if (data.items.length > 0) {
           return getSongsByIds(data.items.map(item => item.songId));
         }
       }
-    } catch {
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') throw error;
       _recommenderAvailable = false;
       _recommenderCheckedAt = Date.now();
     }
@@ -1318,6 +1346,7 @@ export async function getMetadataSimilarSongs(
   seedSongId: number,
   count = 20,
   offset = 0,
+  signal?: AbortSignal,
 ): Promise<Song[]> {
   if (await isRecommenderAvailable()) {
     try {
@@ -1325,15 +1354,19 @@ export async function getMetadataSimilarSongs(
         songId: String(seedSongId),
         count:  String(count),
         offset: String(offset),
+        cards: 'true',
       });
-      const res = await fetch(`${RECOMMENDER_API}/api/recommend/metadata?${params}`);
+      const res = await scheduleFetch(`${RECOMMENDER_API}/api/recommend/metadata?${params}`, signal ? { signal } : undefined, 'foreground');
       if (res.ok) {
         const data: SimilarResponse = await res.json();
+        const cards = readCompactCards(data.cards);
+        if (cards) return cards;
         if (data.items.length > 0) {
           return getSongsByIds(data.items.map(item => item.songId));
         }
       }
-    } catch {
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') throw error;
       _recommenderAvailable = false;
       _recommenderCheckedAt = Date.now();
     }
@@ -1350,6 +1383,7 @@ export async function getAudioSimilarSongs(
   seedSongId: number,
   count = 20,
   offset = 0,
+  signal?: AbortSignal,
 ): Promise<Song[]> {
   if (await isRecommenderAvailable()) {
     try {
@@ -1357,15 +1391,19 @@ export async function getAudioSimilarSongs(
         songId: String(seedSongId),
         count:  String(count),
         offset: String(offset),
+        cards: 'true',
       });
-      const res = await fetch(`${RECOMMENDER_API}/api/recommend/audio?${params}`);
+      const res = await scheduleFetch(`${RECOMMENDER_API}/api/recommend/audio?${params}`, signal ? { signal } : undefined, 'foreground');
       if (res.ok) {
         const data: SimilarResponse = await res.json();
+        const cards = readCompactCards(data.cards);
+        if (cards) return cards;
         if (data.items.length > 0) {
           return getSongsByIds(data.items.map(item => item.songId));
         }
       }
-    } catch {
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') throw error;
       _recommenderAvailable = false;
       _recommenderCheckedAt = Date.now();
     }

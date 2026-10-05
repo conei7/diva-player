@@ -49,7 +49,8 @@ public sealed record SongSearchRequest(
     int[]? ExactVocalistIds,
     string? LyricsQuery,
     bool SelfCoverOnly,
-    bool ChorusOnly)
+    bool ChorusOnly,
+    bool CompactCards)
 {
     [JsonIgnore]
     public string CacheKey
@@ -57,7 +58,7 @@ public sealed record SongSearchRequest(
         get
         {
             var canonicalJson = JsonSerializer.SerializeToUtf8Bytes(this);
-            return $"song-search:v3:{Convert.ToHexString(SHA256.HashData(canonicalJson))}";
+            return $"song-search:v4:{Convert.ToHexString(SHA256.HashData(canonicalJson))}";
         }
     }
 
@@ -100,7 +101,8 @@ public sealed record SongSearchRequest(
         IEnumerable<int>? exactVocalistIds = null,
         string? lyricsQuery = null,
         bool selfCoverOnly = false,
-        bool chorusOnly = false)
+        bool chorusOnly = false,
+        bool compactCards = false)
     {
         if (bpmFrom.HasValue && !double.IsFinite(bpmFrom.Value)
             || bpmTo.HasValue && !double.IsFinite(bpmTo.Value))
@@ -164,7 +166,8 @@ public sealed record SongSearchRequest(
             ExactVocalistIds: NormalizeIds(exactVocalistIds),
             LyricsQuery: NormalizeLyricsQuery(lyricsQuery),
             SelfCoverOnly: selfCoverOnly,
-            ChorusOnly: chorusOnly);
+            ChorusOnly: chorusOnly,
+            CompactCards: compactCards);
     }
 
     private static int[]? NormalizeIds(IEnumerable<int>? values)

@@ -2,15 +2,16 @@ import puppeteer from 'puppeteer';
 import { pinAppLanguage } from './pin-app-language.mjs';
 import { readFile, stat } from 'node:fs/promises';
 
-const PAGE_TIMEOUT_MS = 45_000;
+const PAGE_TIMEOUT_MS = Number(process.env.PERF_BUDGET_TIMEOUT_MS ?? 45_000);
 const HISTORY_METADATA_DELAY_MS = 5_000;
 const BUDGETS_MS = {
   'home.first-card': 1_500,
   'home.first-content': 1_500,
-  'home.load': 10_000,
+  'home.load': 6_000,
   'home.paint': 1_500,
   'home.prefetched-category': 500,
   'search.paint': 3_000,
+  'watch.first-card': 2_500,
 };
 const INITIAL_MAIN_JS_BUDGET_BYTES = 400 * 1024;
 const INITIAL_JS_BUDGET_BYTES = 430 * 1024;
@@ -23,7 +24,10 @@ async function assertInitialBundleBudget() {
   assert(initialJs.length > 0, 'Production index did not reference an initial JavaScript graph.');
   const sizes = await Promise.all(initialJs.map(async asset => ({
     asset,
-    size: (await stat(new URL(`../dist/assets/${asset.split('/').pop()}`, import.meta.url))).size,
+    size: (await stat(new URL(
+      `../dist/${new URL(asset, 'http://localhost').pathname.replace(/^\/(?:diva-player\/)?/, '')}`,
+      import.meta.url,
+    ))).size,
   })));
   const main = sizes.find(item => /\/index-[^/]+\.js$/.test(item.asset));
   const total = sizes.reduce((sum, item) => sum + item.size, 0);
@@ -257,16 +261,51 @@ async function installApiFixtures(page, counters) {
     } else if (path.includes('/api/songs/search')) {
       const isStartupPopular = url.searchParams.get('discoveryOnly') === 'true'
         && url.searchParams.get('sort') === 'FavoritedTimes'
-        && url.searchParams.get('maxResults') === '12';
+        && url.searchParams.get('compact') === 'true'
+        && !url.searchParams.has('artistIds')
+        && !url.searchParams.has('anyArtistIds');
       if (isStartupPopular && url.searchParams.get('start') === '0') {
         counters.startupPopularRequests += 1;
-        body = { items: [fixtureSong, fixtureSongForId(2502)], totalCount: 3 };
-      } else if (isStartupPopular && url.searchParams.get('start') === '12') {
+        body = { items: Array.from({ length: 12 }, (_, index) => fixtureSongForId(2501 + index)), totalCount: 40 };
+      } else if (isStartupPopular && url.searchParams.get('start') === '12'
+        && url.searchParams.get('maxResults') === '28') {
         counters.startupPopularMoreRequests += 1;
-        body = { items: [fixtureSongForId(2503)], totalCount: 3 };
+        body = { items: Array.from({ length: 28 }, (_, index) => fixtureSongForId(2503 + index)), totalCount: 40 };
       } else {
         body = { items: [fixtureSong, fixtureSongForId(2502), fixtureSongForId(2503)], totalCount: 3 };
       }
+    } else if (path.includes('/api/recommend/metadata')) {
+      counters.watchMetadataRequests += 1;
+      const count = Number(url.searchParams.get('count') ?? 12);
+      const ids = Array.from({ length: count }, (_, index) => 710_001 + index);
+      body = {
+        items: ids.map(songId => ({ songId, name: `Related ${songId}`, artist: fixtureProducer.name, score: 1 })),
+        cards: ids.map(fixtureSongForId),
+      };
+    } else if (path.includes('/api/recommend/producer')) {
+      counters.watchProducerRequests += 1;
+      const count = Number(url.searchParams.get('count') ?? 12);
+      const ids = Array.from({ length: count }, (_, index) => 720_001 + index);
+      body = {
+        items: ids.map(songId => ({ songId, name: `Producer ${songId}`, artistString: fixtureProducer.name })),
+        cards: ids.map(fixtureSongForId),
+      };
+    } else if (path.includes('/api/recommend/audio')) {
+      const count = Number(url.searchParams.get('count') ?? 12);
+      const ids = Array.from({ length: count }, (_, index) => 730_001 + index);
+      body = {
+        items: ids.map(songId => ({ songId, name: `Audio ${songId}`, artist: fixtureProducer.name, score: 1 })),
+        cards: ids.map(fixtureSongForId),
+      };
+    } else if (path.endsWith('/api/recommend')) {
+      counters.watchRecommendedRequests += 1;
+      const count = Number(url.searchParams.get('count') ?? 12);
+      const ids = Array.from({ length: count }, (_, index) => 700_001 + index);
+      body = {
+        items: ids.map(songId => ({ songId, name: `Recommended ${songId}`, artist: fixtureProducer.name, score: 1, reason: 'fixture' })),
+        cards: ids.map(fixtureSongForId),
+        error: null,
+      };
     } else if (path.includes('/api/recommend')) {
       body = { items: [] };
     } else if (path.match(/\/api\/songs\/\d+$/)) {
@@ -343,6 +382,9 @@ async function main() {
     homeRankingResponses: 0,
     homeRankingDelayMs: 800,
     deepRankingSeeds: [],
+    watchRecommendedRequests: 0,
+    watchMetadataRequests: 0,
+    watchProducerRequests: 0,
   };
   await installApiFixtures(page, counters);
 
@@ -364,7 +406,7 @@ async function main() {
       hasNormalHeader: document.querySelector('header') !== null,
       hasNormalNavigation: document.querySelector('aside nav') !== null,
       songIds: Array.from(new Set(Array.from(document.querySelectorAll('main a[href*="/watch?v="]'))
-        .map(link => new URL(link.href).searchParams.get('v')))).slice(0, 24),
+        .map(link => new URL(link.href).searchParams.get('v')))).slice(0, 12),
       skeletons: document.querySelectorAll('main .skeleton').length,
     }));
     const firstContent = await waitForMetric(page, 'home.first-content');
@@ -372,7 +414,7 @@ async function main() {
     const homePaint = await waitForMetric(page, 'home.paint');
     const settledFrame = await page.evaluate(() => ({
       songIds: Array.from(new Set(Array.from(document.querySelectorAll('main a[href*="/watch?v="]'))
-        .map(link => new URL(link.href).searchParams.get('v')))).slice(0, 24),
+        .map(link => new URL(link.href).searchParams.get('v')))).slice(0, 12),
       skeletons: document.querySelectorAll('main .skeleton').length,
     }));
     assert(
@@ -495,7 +537,7 @@ async function main() {
     const cachedFrame = await page.evaluate(() => ({
       hasLegacyStartupPage: document.querySelector('#startup-home') !== null,
       songIds: Array.from(new Set(Array.from(document.querySelectorAll('main a[href*="/watch?v="]'))
-        .map(link => new URL(link.href).searchParams.get('v')))).slice(0, 24),
+        .map(link => new URL(link.href).searchParams.get('v')))).slice(0, 12),
       skeletons: document.querySelectorAll('main .skeleton').length,
     }));
     assert(
@@ -511,14 +553,11 @@ async function main() {
     console.log(`PASS home.personalized-cache: ${Math.round(cachedFirstContent.durationMs)}ms / ${BUDGETS_MS['home.first-card']}ms`);
 
     const rankingPrefetchDeadline = Date.now() + PAGE_TIMEOUT_MS;
-    while (counters.homeRankingResponses < 6 && Date.now() < rankingPrefetchDeadline) {
+    while (counters.homeRankingResponses < 2 && Date.now() < rankingPrefetchDeadline) {
       await new Promise(resolve => setTimeout(resolve, 50));
     }
-    assert(counters.homeRankingResponses >= 6, `Home ranking prefetch did not cover all server feeds: ${counters.homeRankingResponses}`);
-    assert(
-      counters.deepRankingSeeds.length > 0 && counters.deepRankingSeeds.every(seed => seed === '0'),
-      `Home deep prefetch missed the canonical warm seed: ${JSON.stringify(counters.deepRankingSeeds)}`,
-    );
+    assert(counters.homeRankingResponses === 2,
+      `Home idle prefetch did not stay on weekly and popular feeds: ${counters.homeRankingResponses}`);
     const categoryStartedAt = Date.now();
     await page.evaluate(() => {
       const chip = Array.from(document.querySelectorAll('button')).find(button => button.textContent?.trim() === 'ランキング');
@@ -545,7 +584,44 @@ async function main() {
     await page.type(searchInput, 'wowaka');
     await page.keyboard.press('Enter');
     await waitForCards(page, 'search');
+    try {
+      await page.waitForSelector('main a[href*="/watch?v=2502"]', { timeout: 5_000 });
+    } catch (error) {
+      const searchState = await page.evaluate(() => ({
+        url: location.href,
+        links: Array.from(document.querySelectorAll('main a[href*="/watch?v="]'))
+          .slice(0, 8).map(link => link.getAttribute('href')),
+        text: document.querySelector('main')?.textContent?.slice(0, 500),
+      }));
+      throw new Error(`Search fixture did not render song 2502: ${JSON.stringify(searchState)} (${error.message})`);
+    }
     const searchPaint = await waitForMetric(page, 'search.paint');
+
+    counters.watchRecommendedRequests = 0;
+    counters.watchMetadataRequests = 0;
+    counters.watchProducerRequests = 0;
+    const watchStartedAt = Date.now();
+    await page.click('main a[href*="/watch?v=2502"]');
+    await page.waitForFunction(() => location.search.includes('v=2502'));
+    await page.waitForFunction(() => document.body.innerText.includes('DIVA Performance Song'));
+    await page.waitForSelector('main a[href*="/watch?v="]');
+    const watchFirstCardMs = Date.now() - watchStartedAt;
+    assert(counters.watchRecommendedRequests === 1,
+      `Opening a song requested ${counters.watchRecommendedRequests} recommendation batches (expected the active source once).`);
+    assert(counters.watchMetadataRequests === 0 && counters.watchProducerRequests === 0,
+      `Inactive watch tabs loaded before selection: ${JSON.stringify({ metadata: counters.watchMetadataRequests, producer: counters.watchProducerRequests })}`);
+    const relatedRequest = page.waitForRequest(request => request.url().includes('/api/recommend/metadata'));
+    await page.evaluate(() => {
+      const button = Array.from(document.querySelectorAll('button')).find(candidate => candidate.textContent?.includes('関連曲'));
+      if (!(button instanceof HTMLButtonElement)) throw new Error('Related songs tab was not found.');
+      button.click();
+    });
+    await relatedRequest;
+    await page.waitForFunction(() => Array.from(document.querySelectorAll('main a[href*="/watch?v="]'))
+      .some(link => /[?&]v=710001(?:&|$)/.test(link.getAttribute('href') ?? '')));
+    assert(counters.watchMetadataRequests === 1,
+      `Selecting related songs issued ${counters.watchMetadataRequests} metadata requests (expected one first-page request).`);
+    console.log(`PASS watch.active-tab-first-page: ${watchFirstCardMs}ms / 2,500ms`);
 
     const metrics = {
       'home.first-card': { durationMs: firstCardMs },
@@ -554,6 +630,7 @@ async function main() {
       'home.paint': homePaint,
       'home.prefetched-category': { durationMs: prefetchedCategoryMs },
       'search.paint': searchPaint,
+      'watch.first-card': { durationMs: watchFirstCardMs },
     };
     for (const [name, metric] of Object.entries(metrics)) {
       assert(metric && Number.isFinite(metric.durationMs), `${name} was not recorded.`);
@@ -567,6 +644,6 @@ async function main() {
 }
 
 main().catch(error => {
-  console.error(`Performance budget test failed: ${error instanceof Error ? error.message : String(error)}`);
+  console.error(`Performance budget test failed: ${error instanceof Error ? error.stack ?? error.message : String(error)}`);
   process.exitCode = 1;
 });
