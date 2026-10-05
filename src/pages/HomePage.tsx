@@ -708,10 +708,6 @@ export default function HomePage() {
     () => excludeHiddenSongs(startupSongs, hiddenSongs),
     [hiddenSongs, startupSongs],
   );
-  const unhiddenSearchResults = useMemo(
-    () => excludeHiddenSongs(searchResults, hiddenSongs),
-    [hiddenSongs, searchResults],
-  );
   const freshStrictDiscoverySongs = useMemo(
     () => applyDiscoveryFilter(unhiddenFreshSongs, discoveryContext),
     [discoveryContext, unhiddenFreshSongs],
@@ -745,9 +741,9 @@ export default function HomePage() {
   const startupRefreshTarget = showingStartupCache ? 40 : FIRST_HOME_PAGE_SIZE;
   const displaySongs = useMemo(
     () => hasSearched
-      ? applyGlobalSongFilter(unhiddenSearchResults, globalFilterSettings)
+      ? applyGlobalSongFilter(searchResults, globalFilterSettings)
       : discoveryResult.items,
-    [discoveryResult.items, globalFilterSettings, hasSearched, unhiddenSearchResults],
+    [discoveryResult.items, globalFilterSettings, hasSearched, searchResults],
   );
 
   useEffect(() => {
@@ -999,6 +995,7 @@ export default function HomePage() {
       <VideoGrid
         songs={displaySongs}
         loading={hasSearched ? searchLoading : homeLoading}
+        visibilityIntent={hasSearched ? 'search' : 'discovery'}
         emptyMessage={(hasSearched
           ? isGlobalSongFilterActive(globalFilterSettings)
           : isDiscoveryFilterActive(globalFilterSettings))

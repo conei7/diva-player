@@ -5,9 +5,10 @@ import SongCard from '../search/SongCard';
 import { useSelectionStore } from '../../stores/selectionStore';
 import { useRecommendationExposureStore, type ExposureSurface } from '../../stores/recommendationExposureStore';
 import { useRecommendationDisplayStore } from '../../stores/recommendationDisplayStore';
-import { excludeHiddenSongs, useHiddenSongStore } from '../../stores/hiddenSongStore';
+import { useHiddenSongStore } from '../../stores/hiddenSongStore';
 import { useMemo } from 'react';
 import { useTranslate } from '../../i18n';
+import { filterSongsForVisibilityIntent, type SongVisibilityIntent } from '../../utils/songVisibility';
 
 /**
  * VideoGrid - YouTube風のレスポンシブ動画グリッド
@@ -22,6 +23,7 @@ interface VideoGridProps {
   alwaysShowReasons?: boolean;
   exposureSurface?: ExposureSurface;
   emptyMessage?: string;
+  visibilityIntent?: SongVisibilityIntent;
 }
 
 function SkeletonCard() {
@@ -36,7 +38,15 @@ function SkeletonCard() {
   );
 }
 
-export default function VideoGrid({ songs, loading, recommendationReasons, alwaysShowReasons = false, exposureSurface, emptyMessage }: VideoGridProps) {
+export default function VideoGrid({
+  songs,
+  loading,
+  recommendationReasons,
+  alwaysShowReasons = false,
+  exposureSurface,
+  emptyMessage,
+  visibilityIntent = 'discovery',
+}: VideoGridProps) {
   const t = useTranslate();
   const navigate = useNavigate();
   const setVisibleSongs = useSelectionStore(s => s.setVisibleSongs);
@@ -44,7 +54,10 @@ export default function VideoGrid({ songs, loading, recommendationReasons, alway
   const recordClicked = useRecommendationExposureStore(s => s.recordClicked);
   const showRecommendationHints = useRecommendationDisplayStore(s => s.showHints);
   const hiddenSongs = useHiddenSongStore(s => s.hiddenSongs);
-  const visibleSongs = useMemo(() => excludeHiddenSongs(songs, hiddenSongs), [hiddenSongs, songs]);
+  const visibleSongs = useMemo(
+    () => filterSongsForVisibilityIntent(songs, hiddenSongs, visibilityIntent),
+    [hiddenSongs, songs, visibilityIntent],
+  );
 
   // 表示中の曲リストをselectionStoreに登録（FABの全選択・フィルター用）
   useEffect(() => {
@@ -84,6 +97,7 @@ export default function VideoGrid({ songs, loading, recommendationReasons, alway
           key={song.id}
           song={song}
           index={index}
+          showHidden={visibilityIntent === 'search'}
           onPlay={handlePlay}
           recommendationReason={showRecommendationHints || alwaysShowReasons ? recommendationReasons?.[song.id] : undefined}
           onVisible={exposureSurface ? () => recordVisible(song.id, exposureSurface, index + 1) : undefined}

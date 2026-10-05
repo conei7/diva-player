@@ -22,10 +22,30 @@ const song = {
 
 try {
   const page = await browser.newPage();
+  const searchRequests = [];
   await pinAppLanguage(page);
   await page.setRequestInterception(true);
   page.on('request', async request => {
     const url = request.url();
+    if (url.includes('/backend-api/api/songs/search?')) {
+      const query = new URL(url).searchParams.get('query');
+      searchRequests.push(query);
+      const items = query?.toLowerCase().includes('hidden song fixture') ? [song] : [];
+      await request.respond({
+        contentType: 'application/json',
+        headers: { 'access-control-allow-origin': '*' },
+        body: JSON.stringify({ items, totalCount: items.length }),
+      });
+      return;
+    }
+    if (url.startsWith('https://vocadb.net/api/songs?') || url.startsWith('https://vocadb.net/api/artists?')) {
+      await request.respond({
+        contentType: 'application/json',
+        headers: { 'access-control-allow-origin': '*' },
+        body: JSON.stringify({ items: [] }),
+      });
+      return;
+    }
     if (url.startsWith('https://vocadb.net/api/songs/900009?')) {
       await request.respond({ contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify(song) });
       return;
@@ -52,6 +72,25 @@ try {
     return persisted?.state?.hiddenSongs?.['900009']?.song?.name === 'Hidden song fixture';
   });
   console.log('PASS explicit dislike persists the hidden song');
+
+  await page.goto(new URL('', baseUrl), { waitUntil: 'domcontentloaded', timeout: 60_000 });
+  const searchInput = 'input[placeholder="ボカロP名や曲名で検索"]';
+  await page.waitForSelector(searchInput, { visible: true });
+  await page.type(searchInput, 'Hidden song fixture');
+  await page.keyboard.press('Enter');
+  try {
+    await page.waitForSelector('a[href*="/watch?v=900009"]', { visible: true, timeout: 30_000 });
+  } catch (error) {
+    const diagnostic = await page.evaluate(() => ({
+      url: location.href,
+      alert: document.querySelector('[role="alert"]')?.textContent?.trim(),
+      text: document.body.innerText.slice(0, 1200),
+      cards: [...document.querySelectorAll('.song-card')].map(card => card.textContent?.trim()),
+      links: [...document.querySelectorAll('a[href*="/watch"]')].map(link => link.getAttribute('href')),
+    }));
+    throw new Error(`Hidden search result did not appear: ${JSON.stringify({ diagnostic, searchRequests })}`, { cause: error });
+  }
+  console.log('PASS explicit search shows a song hidden from passive discovery');
 
   await page.goto(new URL('settings/hidden-songs', baseUrl), { waitUntil: 'domcontentloaded', timeout: 60_000 });
   await page.waitForFunction(() => document.body.textContent?.includes('Hidden song fixture'));

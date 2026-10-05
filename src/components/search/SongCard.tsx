@@ -24,13 +24,24 @@ interface SongCardProps {
   recommendationReason?: string;
   onVisible?: () => void;
   onExposureClick?: () => void;
+  showHidden?: boolean;
 }
 
 /**
  * SongCard - 検索結果の曲カード
  * サムネイル、曲名、アーティスト、PVサービスバッジ、再生ボタンを表示。
  */
-export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect, recommendationReason, onVisible, onExposureClick }: SongCardProps) {
+export default function SongCard({
+  song,
+  index,
+  onPlay,
+  onAddToQueue,
+  onSelect,
+  recommendationReason,
+  onVisible,
+  onExposureClick,
+  showHidden = false,
+}: SongCardProps) {
   const t = useTranslateSourceText();
   const language = useLanguageStore(state => state.language);
   const { currentSong, isPlaying, setQueue, hiddenMode } = usePlayerStore();
@@ -280,7 +291,7 @@ export default function SongCard({ song, index, onPlay, onAddToQueue, onSelect, 
     setMenuOpen(true);
   }, [menuOpen]);
 
-  if (isHidden) return null;
+  if (isHidden && !showHidden) return null;
 
   return (
     <div
