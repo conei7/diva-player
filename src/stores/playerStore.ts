@@ -85,8 +85,8 @@ function getPVFailureKey(pv: PV): string {
   return `${pv.service}:${pv.pvId || pv.id}`;
 }
 
-function canStartPlayback(pv: PV, requested: boolean): boolean {
-  if (!requested || pv.service !== 'Youtube') return requested;
+function canStartPlayback(pv: PV, requested: boolean, allowHiddenPlayback = false): boolean {
+  if (!requested || pv.service !== 'Youtube' || allowHiddenPlayback) return requested;
   return typeof document === 'undefined' || document.visibilityState === 'visible';
 }
 
@@ -313,7 +313,7 @@ interface PlayerState {
   error: string | null;
 
   // アクション
-  playSong: (song: Song, isUserAction?: boolean, startsNewSession?: boolean, startPlaying?: boolean) => void;
+  playSong: (song: Song, isUserAction?: boolean, startsNewSession?: boolean, startPlaying?: boolean, allowHiddenPlayback?: boolean) => void;
   pause: () => void;
   resume: () => void;
   next: () => void;
@@ -512,7 +512,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   queueTitle: storedPlayerQueue?.queueTitle ?? 'ミックスリスト',
   error: null,
 
-  playSong: (song: Song, isUserAction?: boolean, startsNewSession = true, startPlaying = true) => {
+  playSong: (song: Song, isUserAction?: boolean, startsNewSession = true, startPlaying = true, allowHiddenPlayback = false) => {
     const pv = getPlayablePV(song);
     if (!pv) {
       set({ error: `再生可能な動画が見つかりません: ${song.name}` });
@@ -523,7 +523,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       }
       return;
     }
-    const shouldStartPlaying = canStartPlayback(pv, startPlaying);
+    const shouldStartPlaying = canStartPlayback(pv, startPlaying, allowHiddenPlayback);
     useProgressStore.getState().setDuration(song.lengthSeconds || pv.length || 0);
     useProgressStore.getState().setProgress(0);
     const { queue, queueIndex, queueSources } = get();
@@ -567,17 +567,17 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       // 1曲ループ: 同じ曲を再度再生
       useProgressStore.getState().setProgress(0);
       set({ seekTarget: 0 });
-      get().playSong(queue[queueIndex]);
+      get().playSong(queue[queueIndex], false, false, true, true);
       return;
     }
     if (queueIndex < queue.length - 1) {
       const nextIndex = queueIndex + 1;
       set({ queueIndex: nextIndex });
-      get().playSong(queue[nextIndex]);
+      get().playSong(queue[nextIndex], false, false, true, true);
     } else if (loopMode === 'all' && queue.length > 0) {
       // 全体ループ: 先頭に戻る
       set({ queueIndex: 0 });
-      get().playSong(queue[0]);
+      get().playSong(queue[0], false, false, true, true);
     } else {
       // キュー終端: 停止
       set({ isPlaying: false });
@@ -605,8 +605,9 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     set({ volume: next });
   },
   setIsPlaying: (isPlaying: boolean) => {
-    const { currentPV } = get();
-    set({ isPlaying: currentPV ? canStartPlayback(currentPV, isPlaying) : isPlaying });
+    const { currentPV, isPlaying: wasPlaying } = get();
+    if (isPlaying && !wasPlaying && currentPV && !canStartPlayback(currentPV, true)) return;
+    set({ isPlaying });
   },
   setError: (error: string | null) => set({ error }),
 
@@ -619,7 +620,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     set({
       currentPV: pv,
       playbackSequence: get().playbackSequence + 1,
-      isPlaying: canStartPlayback(pv, isPlaying),
+      isPlaying: canStartPlayback(pv, isPlaying, isPlaying),
       error: null,
     });
   },

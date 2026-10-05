@@ -188,48 +188,40 @@ try {
       visibilityState: document.visibilityState,
     };
   });
-  if (result.visibilityState !== 'hidden' || result.backgroundPauseCount < 1 || result.nativePlayerState !== 2) {
-    throw new Error(`The app did not pause YouTube when hidden: ${JSON.stringify(result)}`);
+  if (result.visibilityState !== 'hidden' || result.backgroundPauseCount !== 0 || result.nativePlayerState !== 1) {
+    throw new Error(`YouTube playback did not continue while hidden: ${JSON.stringify(result)}`);
   }
   if (result.currentSongId !== 167789 || result.successfulPlayCount !== foregroundWakePlayCount) {
-    throw new Error(`Hidden YouTube playback advanced or restarted: ${JSON.stringify(result)}`);
+    throw new Error(`YouTube playback unexpectedly advanced or restarted while hidden: ${JSON.stringify(result)}`);
   }
-  console.log('PASS YouTube pauses when its app tab is hidden');
+  console.log('PASS YouTube keeps playing when its app tab is hidden');
 
-  // A device-wake signal is not permission to resume a YouTube player while
-  // the app is hidden.
+  // Browsers may suspend a hidden iframe on device sleep; its existing intent
+  // should recover without a foreground interaction.
   await playerPage.evaluate(() => {
     window.__simulateDeviceWake();
-    window.__wakeRecoveryPending = false;
   });
-  await new Promise((resolve) => setTimeout(resolve, 300));
+  await playerPage.waitForFunction(() => (window.__wakeRecoveryPlayCount || 0) >= 2);
   const hiddenWake = await playerPage.evaluate(() => ({
     nativePlayerState: window.__youtubeState?.(),
     successfulPlayCount: window.__successfulPlayCount || 0,
   }));
-  if (hiddenWake.nativePlayerState !== 2 || hiddenWake.successfulPlayCount !== foregroundWakePlayCount) {
-    throw new Error(`YouTube resumed from a hidden device-wake signal: ${JSON.stringify(hiddenWake)}`);
+  if (hiddenWake.nativePlayerState !== 1 || hiddenWake.successfulPlayCount <= foregroundWakePlayCount) {
+    throw new Error(`YouTube did not recover while hidden after device wake: ${JSON.stringify(hiddenWake)}`);
   }
-  console.log('PASS hidden device-wake signal does not restart YouTube');
+  console.log('PASS hidden device-wake signal recovers the same YouTube player');
 
   await playerPage.bringToFront();
   await playerPage.waitForFunction(() => document.visibilityState === 'visible');
-  await playerPage.waitForFunction(() => window.__youtubeState?.() === 2);
-  await playerPage.evaluate(() => {
-    window.history.pushState({}, '', '/diva-player/');
-    window.dispatchEvent(new PopStateEvent('popstate'));
-  });
-  await playerPage.waitForSelector('[data-testid="global-mini-player-toggle"]');
-  await playerPage.locator('[data-testid="global-mini-player-toggle"]').click();
   await playerPage.waitForFunction(() => window.__youtubeState?.() === 1);
-  const foregroundResume = await playerPage.evaluate(() => ({
+  const foregroundReturn = await playerPage.evaluate(() => ({
     currentSongId: JSON.parse(localStorage.getItem('diva_playerQueue') || 'null')?.currentSongId,
     successfulPlayCount: window.__successfulPlayCount || 0,
   }));
-  if (foregroundResume.currentSongId !== 167789 || foregroundResume.successfulPlayCount <= foregroundWakePlayCount) {
-    throw new Error(`Explicit foreground resume did not restart the same YouTube item: ${JSON.stringify(foregroundResume)}`);
+  if (foregroundReturn.currentSongId !== 167789 || foregroundReturn.successfulPlayCount !== hiddenWake.successfulPlayCount) {
+    throw new Error(`Returning to the DIVA tab changed its YouTube item or restarted playback: ${JSON.stringify(foregroundReturn)}`);
   }
-  console.log('PASS explicit foreground action resumes YouTube at the same queue item');
+  console.log('PASS returning to the DIVA tab keeps the same YouTube item playing');
 } finally {
   await browser.close();
 }

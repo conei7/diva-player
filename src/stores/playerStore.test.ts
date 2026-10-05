@@ -63,20 +63,33 @@ describe('player queue autoplay', () => {
     expect(usePlayerStore.getState().isPlaying).toBe(true);
   });
 
-  it('keeps YouTube playback paused while the document is hidden', () => {
+  it('keeps a new hidden YouTube tab paused but lets the active queue continue', () => {
     const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'document');
+    const documentState = { visibilityState: 'hidden' };
     Object.defineProperty(globalThis, 'document', {
       configurable: true,
-      value: { visibilityState: 'hidden' },
+      value: documentState,
     });
     try {
-      usePlayerStore.getState().playSong(song, true);
+      const nextSong = { ...song, id: song.id + 1, name: 'Queue continuation fixture' };
+      usePlayerStore.getState().setQueue([song, nextSong], 0, false);
       expect(usePlayerStore.getState().currentSong?.id).toBe(song.id);
       expect(usePlayerStore.getState().isPlaying).toBe(false);
 
       usePlayerStore.getState().resume();
       usePlayerStore.getState().setIsPlaying(true);
       expect(usePlayerStore.getState().isPlaying).toBe(false);
+
+      documentState.visibilityState = 'visible';
+      usePlayerStore.getState().setQueue([song, nextSong], 0, true);
+      expect(usePlayerStore.getState().isPlaying).toBe(true);
+
+      documentState.visibilityState = 'hidden';
+      usePlayerStore.getState().next();
+      expect(usePlayerStore.getState().currentSong?.id).toBe(nextSong.id);
+      expect(usePlayerStore.getState().isPlaying).toBe(true);
+      usePlayerStore.getState().setIsPlaying(true);
+      expect(usePlayerStore.getState().isPlaying).toBe(true);
     } finally {
       if (descriptor) Object.defineProperty(globalThis, 'document', descriptor);
       else Reflect.deleteProperty(globalThis, 'document');
