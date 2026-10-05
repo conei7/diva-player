@@ -47,6 +47,8 @@ const songs = [
 
 try {
   const playerPage = await browser.newPage();
+  await playerPage.bringToFront();
+  await playerPage.waitForFunction(() => document.visibilityState === 'visible');
   await pinAppLanguage(playerPage);
   playerPage.on('pageerror', (error) => console.error('PAGE ERROR', error.message));
   await playerPage.evaluateOnNewDocument((queue) => {
@@ -163,7 +165,20 @@ try {
     const queue = JSON.parse(localStorage.getItem('diva_playerQueue') || 'null');
     return queue?.currentSongId === 167789 && document.querySelector('#yt-player-embed');
   });
-  await playerPage.waitForFunction(() => window.__backgroundPlaybackStarted === true);
+  try {
+    await playerPage.waitForFunction(() => window.__backgroundPlaybackStarted === true);
+  } catch {
+    const playbackStartState = await playerPage.evaluate(() => ({
+      backgroundPlaybackStarted: window.__backgroundPlaybackStarted === true,
+      loadedVideoIds: window.__youtubeLoadedVideoIds || [],
+      nativePlayerState: window.__youtubeState?.(),
+      playerConstructCount: window.__youtubePlayerConstructCount || 0,
+      playVideoAttemptCount: window.__playVideoAttemptCount || 0,
+      queueSongId: JSON.parse(localStorage.getItem('diva_playerQueue') || 'null')?.currentSongId,
+      visibilityState: document.visibilityState,
+    }));
+    throw new Error(`YouTube playback did not start in the foreground fixture: ${JSON.stringify(playbackStartState)}`);
+  }
   console.log('PASS same-song page click resumes YouTube playback');
   await playerPage.waitForFunction(() => {
     const queue = JSON.parse(localStorage.getItem('diva_playerQueue') || 'null');
