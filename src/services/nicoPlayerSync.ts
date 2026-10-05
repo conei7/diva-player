@@ -14,10 +14,13 @@ export interface NicoControllerMessage {
   data: Record<string, unknown>;
 }
 
-export function buildNicoEmbedUrl(pvId: string, autoplay: boolean, playerId: string): string {
+export function buildNicoEmbedUrl(pvId: string, playerId: string): string {
   const params = new URLSearchParams({
     jsapi: '1',
-    autoplay: autoplay ? '1' : '0',
+    // Playback is controlled by the current foreground app intent through the
+    // connector. Native autoplay can outlive a pause while the iframe is still
+    // loading and start unexpectedly when a background tab wakes.
+    autoplay: '0',
     allowProgrammaticFullscreen: '1',
     playerId,
   });

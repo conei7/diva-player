@@ -3,14 +3,14 @@ import puppeteer from 'puppeteer';
 import { pinAppLanguage } from './pin-app-language.mjs';
 
 const baseUrl = process.argv[2] || 'http://127.0.0.1:5173/diva-player/';
-const songs = ['Youtube', 'NicoNicoDouga', 'Youtube'].map((service, index) => ({
+const songs = ['Youtube', 'NicoNicoDouga', 'Youtube', 'NicoNicoDouga'].map((service, index) => ({
   id: 990100 + index, name: `Service switch ${index}`, artistString: 'Fixture',
   createDate: '2026-01-01T00:00:00Z', defaultName: `Service switch ${index}`,
   defaultNameLanguage: 'English', favoritedTimes: 0, lengthSeconds: index === 1 ? 85 : 300,
   pvServices: service, ratingScore: 0, songType: 'Original', status: 'Finished', version: 1,
   pvs: [{ author: '', disabled: false, id: 9901000 + index, length: index === 1 ? 85 : 300,
     name: 'fixture', pvId: `fixture-${index}`, service, pvType: 'Original',
-    url: service === 'Youtube' ? `https://youtu.be/fixture-${index}` : 'https://www.nicovideo.jp/watch/fixture-1' }],
+    url: service === 'Youtube' ? `https://youtu.be/fixture-${index}` : `https://www.nicovideo.jp/watch/fixture-${index}` }],
 }));
 const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox', '--lang=ja-JP'] });
 try {
@@ -22,7 +22,7 @@ try {
     for (const button of await page.$$(selector)) {
       const box = await button.boundingBox();
       if (box && box.width > 0 && box.height > 0) {
-        await button.click();
+        await page.$eval(selector, target => target.click());
         return;
       }
     }
@@ -106,13 +106,25 @@ try {
   await clickControl('再生');
   await page.waitForFunction(() => window.__yt.getPlayerState() === 1);
   await clickControl('次の曲へ進む');
-  await page.waitForSelector('iframe[src*="embed.nicovideo.jp"]');
+  await page.waitForSelector('iframe[src*="embed.nicovideo.jp"]', { timeout: 10_000 }).catch(async error => {
+    const state = await page.evaluate(() => ({
+      title: document.title,
+      iframes: [...document.querySelectorAll('iframe')].map(iframe => iframe.src),
+      controls: [...document.querySelectorAll('button[title]')].map(button => button.title),
+      queue: JSON.parse(localStorage.getItem('diva_playerQueue') || 'null'),
+      body: document.body.innerText.slice(0, 1200),
+    }));
+    throw new Error(`Nico iframe did not mount after service switch: ${JSON.stringify(state)}`, { cause: error });
+  });
   const frame = await (await page.$('iframe[src*="embed.nicovideo.jp"]')).contentFrame();
+  const nicoUrl = new URL(await page.$eval('iframe[src*="embed.nicovideo.jp"]', iframe => iframe.src));
+  assert.equal(nicoUrl.searchParams.get('autoplay'), '0', 'Nico must not start from native iframe autoplay');
   await frame.waitForFunction(() => playing && volume === 0.37).catch(async error => {
     const state = await frame.evaluate(() => ({ playing, volume, muted, commands }));
     throw new Error(`Nico playback did not start at the requested volume: ${JSON.stringify(state)}`, { cause: error });
   });
   assert.equal(await frame.evaluate(() => muted), false, 'User-initiated Nico playback must be audible');
+  assert.notEqual(await page.evaluate(() => window.__yt.getPlayerState()), 1, 'Previous YouTube PV must stop before Nico playback');
   const nicoPlayCountBeforeHidden = await frame.evaluate(() => commands.filter(c => c.eventName === 'play').length);
   await page.evaluate(() => {
     Object.defineProperty(document, 'hidden', { configurable: true, value: true });
@@ -184,6 +196,27 @@ try {
   await new Promise(resolve => setTimeout(resolve, 1_000));
   assert.ok(await page.$('iframe[src*="fixture-1"]'), 'Late paused progress must not corrupt resume position');
   console.log('PASS native/app Nico pause, hidden/resume/focus, 85s late events, 90s idle and explicit resume');
+
+  await clickControl('次の曲へ進む');
+  await page.waitForFunction(() => JSON.parse(localStorage.getItem('diva_playerQueue') || 'null')?.queueIndex === 2, { timeout: 5_000 });
+  await page.waitForFunction(() => window.__yt.getVideoData().video_id === 'fixture-2' && window.__yt.getPlayerState() === 1);
+  await other.bringToFront();
+  await page.waitForFunction(() => document.hidden);
+  await page.evaluate(() => window.__yt.lateEnded());
+  await page.waitForSelector('iframe[src*="fixture-3"]');
+  const backgroundNicoElement = await page.$('iframe[src*="fixture-3"]');
+  const backgroundNicoFrame = await backgroundNicoElement.contentFrame();
+  await backgroundNicoFrame.waitForFunction(() => commands.some(command => command.eventName === 'pause'));
+  const backgroundNicoUrl = new URL(await backgroundNicoElement.evaluate(iframe => iframe.src));
+  assert.equal(backgroundNicoUrl.searchParams.get('autoplay'), '0');
+  assert.equal(await backgroundNicoFrame.evaluate(() => playing), false, 'A hidden queue transition must not start Nico playback');
+  assert.equal(await backgroundNicoFrame.evaluate(() => commands.filter(command => command.eventName === 'play').length), 0);
+  assert.ok(await page.$('button[title="再生"]'), 'A hidden transition to Nico must leave the app paused');
+  assert.notEqual(await page.evaluate(() => window.__yt.getPlayerState()), 1, 'Previous YouTube PV must stop at the hidden service boundary');
+  await page.bringToFront();
+  await new Promise(resolve => setTimeout(resolve, 1_000));
+  assert.equal(await backgroundNicoFrame.evaluate(() => playing), false, 'Returning to the tab must not start the deferred Nico PV');
+  console.log('PASS hidden YouTube-to-Nico queue transition stays paused without overlap');
 } finally {
   await browser.close();
 }

@@ -86,8 +86,12 @@ function getPVFailureKey(pv: PV): string {
 }
 
 function canStartPlayback(pv: PV, requested: boolean, allowHiddenPlayback = false): boolean {
-  if (!requested || pv.service !== 'Youtube' || allowHiddenPlayback) return requested;
-  return typeof document === 'undefined' || document.visibilityState === 'visible';
+  if (!requested) return false;
+  if (typeof document === 'undefined' || document.visibilityState === 'visible') return true;
+  // Background queue continuation is intentionally limited to YouTube. Passing
+  // allowHiddenPlayback from next() must not start a different provider such as
+  // NicoNico underneath the still-running background YouTube player.
+  return pv.service === 'Youtube' && allowHiddenPlayback;
 }
 
 function getFailedPVMap(): FailedPVMap {
@@ -557,7 +561,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   pause: () => set({ isPlaying: false }),
   resume: () => {
     const { currentPV } = get();
-    if (currentPV?.service === 'Youtube' && !canStartPlayback(currentPV, true)) return;
+    if (currentPV && !canStartPlayback(currentPV, true)) return;
     set({ isPlaying: true });
   },
 

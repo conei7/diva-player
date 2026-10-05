@@ -12,12 +12,12 @@ import {
 } from './nicoPlayerSync';
 
 describe('nico player synchronization', () => {
-  it('enables the iframe control API and preserves autoplay intent', () => {
-    const url = new URL(buildNicoEmbedUrl('sm7918983', true, 'diva-player-1'));
+  it('keeps native iframe autoplay disabled and enables the control API', () => {
+    const url = new URL(buildNicoEmbedUrl('sm7918983', 'diva-player-1'));
     expect(url.origin).toBe('https://embed.nicovideo.jp');
     expect(url.pathname).toBe('/watch/sm7918983');
     expect(url.searchParams.get('jsapi')).toBe('1');
-    expect(url.searchParams.get('autoplay')).toBe('1');
+    expect(url.searchParams.get('autoplay')).toBe('0');
     expect(url.searchParams.get('playerId')).toBe('diva-player-1');
   });
 

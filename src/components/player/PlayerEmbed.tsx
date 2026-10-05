@@ -1,5 +1,5 @@
 /// <reference types="@types/youtube" />
-import { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useRef, useCallback, useLayoutEffect } from 'react';
 import { usePlayerStore } from '../../stores/playerStore';
 import { useProgressStore } from '../../stores/progressStore';
 import {
@@ -74,7 +74,7 @@ function NicoEmbed({ pvId, name, duration: songDuration, isPlaying }: { pvId: st
   const startedRef = useRef(false);
   const confirmedPlayingRef = useRef(false);
   const pauseRequestedAtRef = useRef<number | null>(null);
-  const embedUrl = buildNicoEmbedUrl(pvId, initialAutoplayRef.current, playerIdRef.current);
+  const embedUrl = buildNicoEmbedUrl(pvId, playerIdRef.current);
   const NICO_ORIGIN = 'https://embed.nicovideo.jp';
 
   const timerRef = useRef<number | null>(null);
@@ -93,6 +93,7 @@ function NicoEmbed({ pvId, name, duration: songDuration, isPlaying }: { pvId: st
   }, [pvId]);
   const wantsPlayback = useCallback(() => isCurrentSelection()
     && usePlayerStore.getState().isPlaying
+    && (document.visibilityState === 'visible' || confirmedPlayingRef.current)
     && getPlaybackOwnership().getState() !== 'remote', [isCurrentSelection]);
 
   const applySeek = useCallback((target: number) => {
@@ -230,6 +231,7 @@ function NicoEmbed({ pvId, name, duration: songDuration, isPlaying }: { pvId: st
       if (volumeRetryRef.current !== null) window.clearTimeout(volumeRetryRef.current);
       clearPlaybackRetry();
       volumeRetryRef.current = null;
+      sendPlaybackState(false);
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pvId]);
@@ -263,6 +265,30 @@ function NicoEmbed({ pvId, name, duration: songDuration, isPlaying }: { pvId: st
       cancelPlaybackAttempt();
     }
   }, [cancelPlaybackAttempt, clearPlaybackRetry, ensurePlaybackAttempt, isPlaying, prepareAndSendPlaybackState, schedulePlaybackRetry, stopTimer]);
+
+  // A request that has not started yet must not outlive a tab switch. Already
+  // confirmed Nico playback may continue in the background, but a pending
+  // iframe load/retry is canceled and remains paused when the tab returns.
+  useEffect(() => {
+    const cancelPendingHiddenStart = () => {
+      if (document.visibilityState === 'visible' || confirmedPlayingRef.current
+        || !isCurrentSelection() || !usePlayerStore.getState().isPlaying) return;
+      requestedPlayingRef.current = false;
+      sendPlaybackState(false);
+      trackerRef.current.setPlaying(false);
+      stopTimer();
+      clearPlaybackRetry();
+      cancelPlaybackAttempt();
+      setIsPlaying(false);
+    };
+    document.addEventListener('visibilitychange', cancelPendingHiddenStart);
+    window.addEventListener('pagehide', cancelPendingHiddenStart);
+    cancelPendingHiddenStart();
+    return () => {
+      document.removeEventListener('visibilitychange', cancelPendingHiddenStart);
+      window.removeEventListener('pagehide', cancelPendingHiddenStart);
+    };
+  }, [cancelPlaybackAttempt, clearPlaybackRetry, isCurrentSelection, sendPlaybackState, setIsPlaying, stopTimer]);
 
   useEffect(() => {
     if (seekTarget !== null) applySeek(seekTarget);
@@ -873,7 +899,7 @@ export default function PlayerEmbed() {
 
   // The persistent YouTube iframe remains mounted while another service is in
   // use, but its previous video must not keep playing underneath that service.
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (isYouTube || !ytPlayerRef.current) return;
     clearEndRecoveryTimer();
     stopProgressTimer();

@@ -96,6 +96,44 @@ describe('player queue autoplay', () => {
     }
   });
 
+  it('pauses hidden queue continuation when the next PV is Niconico', () => {
+    const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'document');
+    Object.defineProperty(globalThis, 'document', {
+      configurable: true,
+      value: { visibilityState: 'visible' },
+    });
+    try {
+      const nicoSong: Song = {
+        ...song,
+        id: song.id + 2,
+        name: 'Niconico queue continuation fixture',
+        pvs: [{
+          ...song.pvs![0],
+          id: song.pvs![0].id + 1,
+          pvId: 'nico-fixture',
+          service: 'NicoNicoDouga',
+          url: 'https://www.nicovideo.jp/watch/nico-fixture',
+        }],
+        pvServices: 'NicoNicoDouga',
+      };
+      usePlayerStore.getState().setQueue([song, nicoSong], 0, true);
+      expect(usePlayerStore.getState().isPlaying).toBe(true);
+
+      Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });
+      usePlayerStore.getState().next();
+
+      expect(usePlayerStore.getState().currentSong?.id).toBe(nicoSong.id);
+      expect(usePlayerStore.getState().currentPV?.service).toBe('NicoNicoDouga');
+      expect(usePlayerStore.getState().isPlaying).toBe(false);
+      usePlayerStore.getState().resume();
+      usePlayerStore.getState().setIsPlaying(true);
+      expect(usePlayerStore.getState().isPlaying).toBe(false);
+    } finally {
+      if (descriptor) Object.defineProperty(globalThis, 'document', descriptor);
+      else Reflect.deleteProperty(globalThis, 'document');
+    }
+  });
+
   it('rejects a delayed automatic queue append after the player closes', () => {
     const delayedSong = { ...song, id: song.id + 1, name: 'Delayed auto fixture' };
     usePlayerStore.getState().setQueue([song], 0);
