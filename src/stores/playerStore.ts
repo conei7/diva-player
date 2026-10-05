@@ -88,10 +88,11 @@ function getPVFailureKey(pv: PV): string {
 function canStartPlayback(pv: PV, requested: boolean, allowHiddenPlayback = false): boolean {
   if (!requested) return false;
   if (typeof document === 'undefined' || document.visibilityState === 'visible') return true;
-  // Background queue continuation is intentionally limited to YouTube. Passing
-  // allowHiddenPlayback from next() must not start a different provider such as
-  // NicoNico underneath the still-running background YouTube player.
-  return pv.service === 'Youtube' && allowHiddenPlayback;
+  // Niconico's iframe can start after a delayed load even after pause. Keep the
+  // existing hidden-start behavior for other providers, while requiring the
+  // explicit queue-continuation allowance for YouTube.
+  if (pv.service === 'NicoNicoDouga') return false;
+  return pv.service !== 'Youtube' || allowHiddenPlayback;
 }
 
 function getFailedPVMap(): FailedPVMap {

@@ -134,6 +134,39 @@ describe('player queue autoplay', () => {
     }
   });
 
+  it('preserves hidden SoundCloud playback behavior', () => {
+    const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'document');
+    Object.defineProperty(globalThis, 'document', {
+      configurable: true,
+      value: { visibilityState: 'hidden' },
+    });
+    try {
+      const soundCloudSong: Song = {
+        ...song,
+        id: song.id + 3,
+        name: 'SoundCloud hidden playback fixture',
+        pvs: [{
+          ...song.pvs![0],
+          id: song.pvs![0].id + 2,
+          pvId: 'fixture/hidden-soundcloud',
+          service: 'SoundCloud',
+          url: 'https://soundcloud.com/fixture/hidden-soundcloud',
+        }],
+        pvServices: 'SoundCloud',
+      };
+      usePlayerStore.getState().setQueue([soundCloudSong], 0, true);
+      expect(usePlayerStore.getState().currentPV?.service).toBe('SoundCloud');
+      expect(usePlayerStore.getState().isPlaying).toBe(true);
+
+      usePlayerStore.getState().pause();
+      usePlayerStore.getState().resume();
+      expect(usePlayerStore.getState().isPlaying).toBe(true);
+    } finally {
+      if (descriptor) Object.defineProperty(globalThis, 'document', descriptor);
+      else Reflect.deleteProperty(globalThis, 'document');
+    }
+  });
+
   it('rejects a delayed automatic queue append after the player closes', () => {
     const delayedSong = { ...song, id: song.id + 1, name: 'Delayed auto fixture' };
     usePlayerStore.getState().setQueue([song], 0);
