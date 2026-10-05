@@ -12,6 +12,7 @@ const BUDGETS_MS = {
   'home.prefetched-category': 500,
   'search.paint': 3_000,
   'watch.first-card': 2_500,
+  'watch.related-first-card': 2_500,
 };
 const INITIAL_MAIN_JS_BUDGET_BYTES = 400 * 1024;
 const INITIAL_JS_BUDGET_BYTES = 430 * 1024;
@@ -618,6 +619,7 @@ async function main() {
       `Opening a song requested ${counters.watchRecommendedRequests} recommendation batches (expected the active source once).`);
     assert(counters.watchMetadataRequests === 0 && counters.watchProducerRequests === 0,
       `Inactive watch tabs loaded before selection: ${JSON.stringify({ metadata: counters.watchMetadataRequests, producer: counters.watchProducerRequests })}`);
+    const relatedStartedAt = Date.now();
     const relatedRequest = page.waitForRequest(request => request.url().includes('/api/recommend/metadata'));
     await page.evaluate(() => {
       const button = Array.from(document.querySelectorAll('button')).find(candidate => candidate.textContent?.includes('関連曲'));
@@ -627,8 +629,12 @@ async function main() {
     await relatedRequest;
     await page.waitForFunction(() => Array.from(document.querySelectorAll('main a[href*="/watch?v="]'))
       .some(link => /[?&]v=710001(?:&|$)/.test(link.getAttribute('href') ?? '')));
+    const relatedFirstCardMs = Date.now() - relatedStartedAt;
     assert(counters.watchMetadataRequests === 1,
       `Selecting related songs issued ${counters.watchMetadataRequests} metadata requests (expected one first-page request).`);
+    assert(relatedFirstCardMs <= BUDGETS_MS['watch.related-first-card'],
+      `Related songs first card exceeded ${BUDGETS_MS['watch.related-first-card']}ms (${relatedFirstCardMs}ms).`);
+    console.log(`PASS watch.related-first-card: ${relatedFirstCardMs}ms / ${BUDGETS_MS['watch.related-first-card']}ms`);
     console.log(`PASS watch.active-tab-first-page: ${watchFirstCardMs}ms / 2,500ms`);
 
     const metrics = {
@@ -639,6 +645,7 @@ async function main() {
       'home.prefetched-category': { durationMs: prefetchedCategoryMs },
       'search.paint': searchPaint,
       'watch.first-card': { durationMs: watchFirstCardMs },
+      'watch.related-first-card': { durationMs: relatedFirstCardMs },
     };
     for (const [name, metric] of Object.entries(metrics)) {
       assert(metric && Number.isFinite(metric.durationMs), `${name} was not recorded.`);
