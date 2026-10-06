@@ -381,44 +381,46 @@ try {
   }, { timeout: 60_000 });
   console.log('PASS search state resets on home navigation');
 
-  // Give the browser Back assertion a clean, concrete Home history entry. The
-  // navigation smoke test has exercised several earlier route changes, and
-  // those entries are unrelated to whether a Home mix survives a watch-page
-  // round trip.
-  await page.goto(base, { waitUntil: 'domcontentloaded', timeout: 60_000 });
-  await page.waitForSelector('main a[href*="/watch?v=1502"]', { timeout: 60_000 });
-  const homeHistoryLength = await page.evaluate(() => window.history.length);
-  const homeMixIdsBeforeBack = await page.$$eval('main a[href*="/watch?v="]', links => [...new Set(
+  // Use an isolated tab so earlier smoke-test route changes cannot make the
+  // browser Back assertion traverse unrelated history entries.
+  const backPage = await browser.newPage();
+  await backPage.setViewport({ width: 1440, height: 900 });
+  await pinAppLanguage(backPage);
+  await installApiFixtures(backPage);
+  await backPage.goto(base, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+  await backPage.waitForSelector('main a[href*="/watch?v=1502"]', { timeout: 60_000 });
+  const homeHistoryLength = await backPage.evaluate(() => window.history.length);
+  const homeMixIdsBeforeBack = await backPage.$$eval('main a[href*="/watch?v="]', links => [...new Set(
     links.map(link => new URL(link.href).searchParams.get('v')).filter(Boolean),
   )]);
   if (homeMixIdsBeforeBack.length < 3) {
     throw new Error(`Navigation fixture did not load enough home mix songs: ${JSON.stringify(homeMixIdsBeforeBack)}`);
   }
-  await page.evaluate(() => window.__DIVA_PERFORMANCE__?.clear());
-  await page.click('main a[href*="/watch?v=1502"]');
-  await page.waitForFunction(path => (location.pathname.replace(/\/+$/, '') || '/') === path, { timeout: 60_000 }, expectedWatch);
-  const watchHistoryLength = await page.evaluate(() => window.history.length);
+  await backPage.evaluate(() => window.__DIVA_PERFORMANCE__?.clear());
+  await backPage.click('main a[href*="/watch?v=1502"]');
+  await backPage.waitForFunction(path => (location.pathname.replace(/\/+$/, '') || '/') === path, { timeout: 60_000 }, expectedWatch);
+  const watchHistoryLength = await backPage.evaluate(() => window.history.length);
   if (watchHistoryLength <= homeHistoryLength) {
-    throw new Error(`Opening a Home song did not add a browser history entry: before=${homeHistoryLength}, after=${watchHistoryLength}, url=${page.url()}`);
+    throw new Error(`Opening a Home song did not add a browser history entry: before=${homeHistoryLength}, after=${watchHistoryLength}, url=${backPage.url()}`);
   }
-  await page.goBack();
+  await backPage.goBack();
   try {
-    await page.waitForFunction(path => (location.pathname.replace(/\/+$/, '') || '/') === path, { timeout: 15_000 }, expectedRoot);
+    await backPage.waitForFunction(path => (location.pathname.replace(/\/+$/, '') || '/') === path, { timeout: 15_000 }, expectedRoot);
   } catch {
-    const backState = await page.evaluate(() => ({
+    const backState = await backPage.evaluate(() => ({
       href: location.href,
       historyLength: window.history.length,
       historyState: window.history.state,
     }));
     throw new Error(`Browser Back did not restore Home: ${JSON.stringify(backState)}`);
   }
-  await page.waitForSelector('main a[href*="/watch?v=1502"]', { timeout: 60_000 });
-  const homeMixIdsAfterBack = await page.$$eval('main a[href*="/watch?v="]', links => [...new Set(
+  await backPage.waitForSelector('main a[href*="/watch?v=1502"]', { timeout: 60_000 });
+  const homeMixIdsAfterBack = await backPage.$$eval('main a[href*="/watch?v="]', links => [...new Set(
     links.map(link => new URL(link.href).searchParams.get('v')).filter(Boolean),
   )]);
   const retainedMixIds = homeMixIdsBeforeBack.filter(id => id !== '1502');
   const retainedMixIdsAfterBack = homeMixIdsAfterBack.filter(id => retainedMixIds.includes(id));
-  const repeatedHomeLoads = await page.evaluate(() => window.__DIVA_PERFORMANCE__
+  const repeatedHomeLoads = await backPage.evaluate(() => window.__DIVA_PERFORMANCE__
     ?.getMetrics().filter(metric => metric.name === 'home.load').length ?? 0);
   if (JSON.stringify(retainedMixIdsAfterBack) !== JSON.stringify(retainedMixIds) || repeatedHomeLoads !== 0) {
     throw new Error(`Back regenerated the home mix: before=${JSON.stringify(homeMixIdsBeforeBack)}, after=${JSON.stringify(homeMixIdsAfterBack)}, homeLoads=${repeatedHomeLoads}`);
