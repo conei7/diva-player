@@ -191,17 +191,15 @@ class PostgresContainerContractTests(unittest.TestCase):
         self.assertNotIn("libcrypto3=3.5.9-r0", self.migrate)
         self.assertNotIn("libssl3=3.5.9-r0", self.migrate)
         self.assertIn(
-            "test \"$(apk info -v libcrypto3)\" = 'libcrypto3-3.5.9-r0'",
+            "awk -F: -v package=\"$package\" -v version=\"$version\"",
             self.migrate,
         )
-        self.assertIn(
-            "test \"$(apk info -v libssl3)\" = 'libssl3-3.5.9-r0'",
-            self.migrate,
-        )
-        self.assertIn(
-            "test \"$(apk info -v zlib)\" = 'zlib-1.3.2-r1'",
-            self.migrate,
-        )
+        for package_version in (
+            "'libcrypto3:3.5.9-r0'",
+            "'libssl3:3.5.9-r0'",
+            "'zlib:1.3.2-r1'",
+        ):
+            self.assertIn(package_version, self.migrate)
         self.assertNotIn("zlib=1.3.2-r0", self.migrate)
         self.assertIn("case \"$(apk --print-arch)\" in x86_64|aarch64)", self.migrate)
         self.assertIn("ENV HOME=/tmp", self.migrate)

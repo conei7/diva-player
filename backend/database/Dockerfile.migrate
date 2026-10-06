@@ -28,9 +28,12 @@ RUN set -eux; \
       musl=1.2.5-r23 \
       musl-utils=1.2.5-r23 \
       postgresql16-client=16.15-r0; \
-    test "$(apk info -v libcrypto3)" = 'libcrypto3-3.5.9-r0'; \
-    test "$(apk info -v libssl3)" = 'libssl3-3.5.9-r0'; \
-    test "$(apk info -v zlib)" = 'zlib-1.3.2-r1'; \
+    for package_version in 'libcrypto3:3.5.9-r0' 'libssl3:3.5.9-r0' 'zlib:1.3.2-r1'; do \
+      package="${package_version%%:*}"; version="${package_version#*:}"; \
+      awk -F: -v package="$package" -v version="$version" \
+        '$1 == "P" { installed = ($2 == package); next } installed && $1 == "V" { if ($2 == version) found = 1; exit } END { exit !found }' \
+        /lib/apk/db/installed; \
+    done; \
     install -d -o 0 -g 0 -m 0755 /usr/share/diva-postgres-migrate; \
     apk info -vv | LC_ALL=C sort \
       > /usr/share/diva-postgres-migrate/runtime-packages.txt; \
