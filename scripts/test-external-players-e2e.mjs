@@ -5,7 +5,7 @@ const baseUrl = process.argv[2] || 'http://127.0.0.1:5173/diva-player/';
 const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox', '--lang=ja-JP'] });
 
 const song = (service, pvId, url) => ({
-  id: service === 'SoundCloud' ? 900201 : 900202,
+  id: service === 'SoundCloud' ? 900201 : service === 'NicoNicoDouga' ? 900203 : 900202,
   name: `${service} fixture`,
   artistString: 'Fixture producer',
   createDate: '2026-01-01T00:00:00Z',
@@ -18,7 +18,7 @@ const song = (service, pvId, url) => ({
   songType: 'Original',
   status: 'Finished',
   version: 1,
-  pvs: [{ author: '', disabled: false, id: service === 'SoundCloud' ? 9002011 : 9002021, length: 120, name: 'fixture', pvId, service, pvType: 'Original', url }],
+  pvs: [{ author: '', disabled: false, id: service === 'SoundCloud' ? 9002011 : service === 'NicoNicoDouga' ? 9002031 : 9002021, length: 120, name: 'fixture', pvId, service, pvType: 'Original', url }],
 });
 
 const soundCloudSong = song(
@@ -31,11 +31,16 @@ const bilibiliSong = song(
   '45451154',
   'https://www.bilibili.com/video/av45451154',
 );
+const nicoSong = song(
+  'NicoNicoDouga',
+  'sm-nico-volume-fixture',
+  'https://www.nicovideo.jp/watch/sm-nico-volume-fixture',
+);
 
-async function preparePage(fixtureSong) {
+async function preparePage(fixtureSong, savedVolume = 23) {
   const page = await browser.newPage();
   await pinAppLanguage(page);
-  await page.evaluateOnNewDocument(currentSong => {
+  await page.evaluateOnNewDocument((currentSong, currentVolume) => {
     const tabId = `external-player-fixture-${currentSong.id}`;
     sessionStorage.setItem('diva-playback-tab-v1', tabId);
     localStorage.setItem('diva-playback-owner-v1', JSON.stringify({
@@ -44,7 +49,8 @@ async function preparePage(fixtureSong) {
       songId: currentSong.id,
       claimedAt: Date.now(),
     }));
-    localStorage.setItem('diva_volume', JSON.stringify(23));
+    if (currentVolume === null) localStorage.removeItem('diva_volume');
+    else localStorage.setItem('diva_volume', JSON.stringify(currentVolume));
     localStorage.setItem('diva_playerQueue', JSON.stringify({
       queue: [currentSong],
       queueIndex: 0,
@@ -53,7 +59,7 @@ async function preparePage(fixtureSong) {
       queueSources: ['manual'],
       currentPlaybackSource: 'manual',
     }));
-  }, fixtureSong);
+  }, fixtureSong, savedVolume);
   await page.setRequestInterception(true);
   page.on('request', async request => {
     const url = request.url();
@@ -117,6 +123,10 @@ async function preparePage(fixtureSong) {
     }
     if (url.startsWith('https://player.bilibili.com/player.html')) {
       await request.respond({ contentType: 'text/html', body: '<!doctype html><title>Bilibili fixture</title>' });
+      return;
+    }
+    if (url.startsWith('https://embed.nicovideo.jp/watch/')) {
+      await request.respond({ contentType: 'text/html', body: '<!doctype html><title>Niconico fixture</title>' });
       return;
     }
     await request.continue();
@@ -183,6 +193,37 @@ try {
     throw new Error(`Unexpected Bilibili embed: ${bilibiliSrc}`);
   }
   console.log('PASS Bilibili aid embed keeps native player audio enabled');
+
+  const nicoPage = await preparePage(nicoSong);
+  await nicoPage.goto(baseUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+  await nicoPage.waitForSelector('iframe[src*="embed.nicovideo.jp/watch/sm-nico-volume-fixture"]', { timeout: 60_000 });
+  const nicoFrame = nicoPage.frames().find(frame => frame.url().includes('embed.nicovideo.jp/watch/sm-nico-volume-fixture'));
+  if (!nicoFrame) throw new Error('Niconico fixture iframe did not load');
+  const playerId = new URL(nicoFrame.url()).searchParams.get('playerId');
+  if (!playerId) throw new Error('Niconico fixture is missing its player id');
+  await nicoFrame.evaluate(id => {
+    parent.postMessage({
+      sourceConnectorType: 0,
+      playerId: id,
+      eventName: 'playerMetadataChange',
+      data: { currentTime: 10_000, volume: 0.42 },
+    }, '*');
+  }, playerId);
+  await nicoPage.waitForFunction(() => localStorage.getItem('diva_volume') === '42', { timeout: 5_000 });
+  console.log('PASS Niconico native volume changes persist in the shared player setting');
+  await nicoPage.close();
+
+  const defaultNicoPage = await preparePage(nicoSong, null);
+  await defaultNicoPage.goto(baseUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+  await defaultNicoPage.waitForSelector('input.volume-slider', { timeout: 60_000 });
+  const volumeSlider = 'input.volume-slider';
+  const defaultVolume = await defaultNicoPage.$eval(volumeSlider, input => input.value);
+  if (defaultVolume !== '50') throw new Error(`Unexpected default volume: ${defaultVolume}`);
+  await defaultNicoPage.$eval('button[title="ミュート切替"]', button => button.click());
+  await defaultNicoPage.$eval('button[title="ミュート切替"]', button => button.click());
+  const restoredVolume = await defaultNicoPage.$eval(volumeSlider, input => input.value);
+  if (restoredVolume !== '50') throw new Error(`Unexpected volume after unmute: ${restoredVolume}`);
+  console.log('PASS Niconico starts and unmutes at the 50% default');
 } finally {
   await browser.close();
 }

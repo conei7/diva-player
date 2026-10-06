@@ -3,17 +3,18 @@ import type { Song } from '../types/vocadb';
 
 let usePlayerStore: typeof import('./playerStore').usePlayerStore;
 let getPlayablePV: typeof import('./playerStore').getPlayablePV;
+let DEFAULT_VOLUME: typeof import('./playerStore').DEFAULT_VOLUME;
+const localStorageValues = new Map<string, string>();
 
 beforeAll(async () => {
-  const values = new Map<string, string>();
   vi.stubGlobal('localStorage', {
-    get length() { return values.size; },
-    getItem: (key: string) => values.get(key) ?? null,
-    setItem: (key: string, value: string) => { values.set(key, value); },
-    removeItem: (key: string) => { values.delete(key); },
-    key: (index: number) => [...values.keys()][index] ?? null,
+    get length() { return localStorageValues.size; },
+    getItem: (key: string) => localStorageValues.get(key) ?? null,
+    setItem: (key: string, value: string) => { localStorageValues.set(key, value); },
+    removeItem: (key: string) => { localStorageValues.delete(key); },
+    key: (index: number) => [...localStorageValues.keys()][index] ?? null,
   });
-  ({ usePlayerStore, getPlayablePV } = await import('./playerStore'));
+  ({ usePlayerStore, getPlayablePV, DEFAULT_VOLUME } = await import('./playerStore'));
 });
 
 const song: Song = {
@@ -366,5 +367,18 @@ describe('player queue autoplay', () => {
       ...song,
       pvs: [{ ...song.pvs![0], pvId: '45451154', service: 'Bilibili' }],
     })?.service).toBe('Bilibili');
+  });
+});
+
+describe('player volume persistence', () => {
+  it('defaults to 50% and persists volume changes for every player service', () => {
+    expect(DEFAULT_VOLUME).toBe(50);
+    expect(usePlayerStore.getState().volume).toBe(50);
+
+    usePlayerStore.getState().setVolume(37);
+
+    expect(localStorageValues.get('diva_volume')).toBe('37');
+    expect(usePlayerStore.getState().volume).toBe(37);
+    usePlayerStore.getState().setVolume(DEFAULT_VOLUME);
   });
 });

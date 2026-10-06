@@ -26,7 +26,7 @@ const FAILED_PV_RETRY_MS = 30 * 60 * 1000;
 const VOLUME_KEY = 'volume';
 const LOOP_MODE_KEY = 'loopMode';
 const PLAYER_QUEUE_KEY = 'playerQueue';
-const DEFAULT_VOLUME = 50;
+export const DEFAULT_VOLUME = 50;
 
 // Startup restoration is asynchronous. Every intentional persistence change
 // invalidates the snapshot being restored so a late response cannot resurrect

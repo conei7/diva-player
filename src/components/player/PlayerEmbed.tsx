@@ -56,7 +56,7 @@ declare global {
  * 失敗した場合はタイマーベースのフォールバックで経過時間を推定する。
  */
 function NicoEmbed({ pvId, name, duration: songDuration, isPlaying }: { pvId: string; name?: string; duration?: number; isPlaying: boolean }) {
-  const { volume, setIsPlaying, next, markPVHealthy, tryNextPV } = usePlayerStore();
+  const { volume, setVolume, setIsPlaying, next, markPVHealthy, tryNextPV } = usePlayerStore();
   const markCurrentPVHealthy = useCallback(() => {
     const pv = usePlayerStore.getState().currentPV;
     if (pv) markPVHealthy(pv);
@@ -315,6 +315,9 @@ function NicoEmbed({ pvId, name, duration: songDuration, isPlaying }: { pvId: st
           break;
         }
         case 'progress': {
+          if (message.volume !== undefined && usePlayerStore.getState().volume !== message.volume) {
+            setVolume(message.volume);
+          }
           // App seeks already update the tracker in applySeek. Delayed playback
           // telemetry after a pause must not move the resume position to the end.
           if (!wantsPlayback()) break;
@@ -337,6 +340,9 @@ function NicoEmbed({ pvId, name, duration: songDuration, isPlaying }: { pvId: st
           if (hasReachedPlaybackEnd(current, durationRef.current ?? 0)) advanceOnce();
           break;
         }
+        case 'volume':
+          if (usePlayerStore.getState().volume !== message.volume) setVolume(message.volume);
+          break;
         case 'playing':
           // A late iframe event must not undo an app pause or a remote claim.
           // Native controls may start playback only in a visible, focused iframe.
@@ -385,7 +391,7 @@ function NicoEmbed({ pvId, name, duration: songDuration, isPlaying }: { pvId: st
     };
     window.addEventListener('message', handler);
     return () => window.removeEventListener('message', handler);
-  }, [advanceOnce, cancelPlaybackAttempt, clearPlaybackRetry, completePlaybackAttempt, ensurePlaybackAttempt, isCurrentSelection, markCurrentPVHealthy, prepareAndSendPlaybackState, schedulePlaybackRetry, scheduleVolumeSync, sendMuted, sendPlaybackState, setProgress, setDuration, setIsPlaying, startTimer, stopTimer, wantsPlayback]);
+  }, [advanceOnce, cancelPlaybackAttempt, clearPlaybackRetry, completePlaybackAttempt, ensurePlaybackAttempt, isCurrentSelection, markCurrentPVHealthy, prepareAndSendPlaybackState, schedulePlaybackRetry, scheduleVolumeSync, sendMuted, sendPlaybackState, setProgress, setDuration, setIsPlaying, setVolume, startTimer, stopTimer, wantsPlayback]);
 
   useEffect(() => {
     const restoreAutoplayAudio = () => {

@@ -1,4 +1,4 @@
-import { usePlayerStore } from '../../stores/playerStore';
+import { DEFAULT_VOLUME, usePlayerStore } from '../../stores/playerStore';
 import { useProgressStore } from '../../stores/progressStore';
 import { useRatingStore } from '../../stores/ratingStore';
 import StarRating from '../player/StarRating';
@@ -221,7 +221,7 @@ export default function PlayerBar() {
           <div className="hidden sm:flex items-center gap-1.5 mr-1">
             <button
               className="btn-ghost p-1"
-              onClick={() => setVolume(volume > 0 ? 0 : 80)}
+              onClick={() => setVolume(volume > 0 ? 0 : DEFAULT_VOLUME)}
               title={t('muteToggle')}
             >
               {volume === 0 ? (

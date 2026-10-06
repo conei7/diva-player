@@ -1,6 +1,7 @@
 export type NicoPlayerEvent =
   | { type: 'ready'; duration?: number }
-  | { type: 'progress'; seconds: number }
+  | { type: 'progress'; seconds: number; volume?: number }
+  | { type: 'volume'; volume: number }
   | { type: 'playing' }
   | { type: 'paused' }
   | { type: 'ended' };
@@ -71,6 +72,11 @@ function parseNicoPlayerStatus(status: unknown): NicoPlayerEvent | null {
   return null;
 }
 
+function parseNicoVolume(volume: unknown): number | null {
+  if (typeof volume !== 'number' || !Number.isFinite(volume)) return null;
+  return Math.round(Math.max(0, Math.min(1, volume)) * 100);
+}
+
 export function parseNicoPlayerMessage(data: unknown): NicoPlayerEvent | null {
   let message: { eventName?: string; data?: Record<string, unknown> };
   try {
@@ -94,10 +100,13 @@ export function parseNicoPlayerMessage(data: unknown): NicoPlayerEvent | null {
       return typeof seconds === 'number' && Number.isFinite(seconds) ? { type: 'progress', seconds } : null;
     }
     case 'playerMetadataChange': {
-      const milliseconds = (message.data as { currentTime?: unknown } | undefined)?.currentTime;
-      return typeof milliseconds === 'number' && Number.isFinite(milliseconds)
-        ? { type: 'progress', seconds: milliseconds / 1000 }
-        : null;
+      const data = message.data as { currentTime?: unknown; volume?: unknown } | undefined;
+      const seconds = data?.currentTime;
+      const volume = parseNicoVolume(data?.volume);
+      if (typeof seconds === 'number' && Number.isFinite(seconds)) {
+        return { type: 'progress', seconds: seconds / 1000, ...(volume === null ? {} : { volume }) };
+      }
+      return volume === null ? null : { type: 'volume', volume };
     }
     case 'seekStatusChange': {
       const milliseconds = (message.data as { currentTime?: unknown } | undefined)?.currentTime;

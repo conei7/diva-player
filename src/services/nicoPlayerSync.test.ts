@@ -27,6 +27,17 @@ describe('nico player synchronization', () => {
     expect(parseNicoPlayerMessage({ eventName: 'seekStatusChange', data: { currentTime: 12500 } })).toEqual({ type: 'progress', seconds: 12.5 });
   });
 
+  it('reads Nico volume metadata so native volume changes can be persisted', () => {
+    expect(parseNicoPlayerMessage({
+      eventName: 'playerMetadataChange',
+      data: { currentTime: 12_500, volume: 0.35 },
+    })).toEqual({ type: 'progress', seconds: 12.5, volume: 35 });
+    expect(parseNicoPlayerMessage({
+      eventName: 'playerMetadataChange',
+      data: { volume: 0.5 },
+    })).toEqual({ type: 'volume', volume: 50 });
+  });
+
   it('maps status and ignores malformed messages', () => {
     expect(parseNicoPlayerMessage({ eventName: 'playerStatusChange', data: { playerStatus: 3 } })).toEqual({ type: 'playing' });
     expect(parseNicoPlayerMessage({ eventName: 'statusChange', data: { playerStatus: 4, seekStatus: 0 } })).toEqual({ type: 'paused' });
