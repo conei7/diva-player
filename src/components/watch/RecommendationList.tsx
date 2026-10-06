@@ -15,6 +15,7 @@ import { excludeHiddenSongs, useHiddenSongStore } from '../../stores/hiddenSongS
 import { useMemo } from 'react';
 import { useTranslate } from '../../i18n';
 import { useLanguageStore } from '../../stores/languageStore';
+import { getSongThumbnailCandidates } from '../../utils/songThumbnail';
 
 /**
  * RecommendationList - 推薦動画リスト
@@ -31,12 +32,36 @@ interface RecommendationListProps {
   emptyMessage?: string;
 }
 
-/** サムネイルURLを解決 */
-function getThumbUrl(song: Song): string | null {
-  if (song.thumbUrl) return song.thumbUrl;
-  const yt = song.pvs?.find(pv => pv.service === 'Youtube');
-  if (yt) return `https://img.youtube.com/vi/${yt.pvId}/hqdefault.jpg`;
-  return null;
+function RecommendationThumbnail({ song, hiddenMode }: { song: Song; hiddenMode: boolean }) {
+  const candidates = useMemo(() => getSongThumbnailCandidates(song), [song]);
+  const signature = candidates.join('\u0000');
+  const [failedState, setFailedState] = useState({ signature, index: 0 });
+  const imageIndex = failedState.signature === signature ? failedState.index : 0;
+  const imageUrl = candidates[imageIndex];
+
+  if (hiddenMode || !imageUrl) {
+    return (
+      <div className="w-full h-full flex items-center justify-center" style={{ background: 'var(--color-bg-secondary)' }}>
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" style={{ color: 'var(--color-text-muted)', opacity: 0.3 }}>
+          <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z" />
+        </svg>
+      </div>
+    );
+  }
+
+  return (
+    <img
+      src={imageUrl}
+      alt=""
+      aria-hidden="true"
+      className="w-full h-full object-cover"
+      loading="lazy"
+      onError={() => setFailedState(previous => ({
+        signature,
+        index: previous.signature === signature ? previous.index + 1 : 1,
+      }))}
+    />
+  );
 }
 
 /** 再生時間フォーマット */
@@ -158,7 +183,6 @@ function RecItemRow({
     hideSong(song);
   }, [hideSong, song]);
 
-  const thumbUrl = getThumbUrl(song);
   const duration = formatDuration(song.lengthSeconds);
 
   // YouTubeにOriginalがない（非公式のみ: ReprntまたはOtherのみ）
@@ -232,15 +256,7 @@ function RecItemRow({
         onAuxClick={handleItemLinkAuxClick}
         aria-label={t('playSong', { song: song.name })}
       >
-        {!hiddenMode && thumbUrl ? (
-          <img src={thumbUrl} alt={song.name} className="w-full h-full object-cover" loading="lazy" />
-        ) : (
-          <div className="w-full h-full flex items-center justify-center" style={{ background: 'var(--color-bg-secondary)' }}>
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" style={{ color: 'var(--color-text-muted)', opacity: 0.3 }}>
-              <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z" />
-            </svg>
-          </div>
-        )}
+        <RecommendationThumbnail song={song} hiddenMode={hiddenMode} />
         {isActive && isPlaying && (
           <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
             <div className="flex items-end gap-0.5 h-4">
