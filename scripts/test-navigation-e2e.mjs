@@ -4,6 +4,7 @@ const baseUrl = process.argv[2] || 'https://diva-player.pages.dev/';
 const base = new URL(baseUrl);
 const normalizePath = path => path.replace(/\/+$/, '') || '/';
 const expectedRoot = normalizePath(new URL(base.pathname, base.origin).pathname);
+const expectedWatch = normalizePath(new URL('watch', base).pathname);
 const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox', '--lang=en-US'] });
 
 // The shell/navigation assertions must be reproducible on pull requests and
@@ -109,6 +110,15 @@ const fixtureHomeSong = {
   name: 'DIVA E2E Home Song',
   defaultName: 'DIVA E2E Home Song',
 };
+const fixtureHomeSongs = [
+  fixtureHomeSong,
+  ...[1503, 1504, 1505, 1506].map(id => ({
+    ...fixtureHomeSong,
+    id,
+    name: `DIVA E2E Home Song ${id}`,
+    defaultName: `DIVA E2E Home Song ${id}`,
+  })),
+];
 const fixtureSongs = [fixtureSong, fixtureHomeSong];
 const fixtureResponse = (body, contentType = 'application/json') => ({
   status: 200,
@@ -142,7 +152,13 @@ async function installApiFixtures(page) {
     } else if (path.includes('/api/recommend')) {
       response = fixtureResponse({ items: [] });
     } else if (path.includes('/api/songs/search')) {
-      response = fixtureResponse({ items: fixtureSongs, totalCount: fixtureSongs.length });
+      const isRecommendedHomeFeed = url.searchParams.get('sort') === 'FavoritedTimes'
+        && url.searchParams.get('discoveryOnly') === 'true'
+        && !url.searchParams.has('query')
+        && !url.searchParams.has('artistIds')
+        && !url.searchParams.has('anyArtistIds');
+      const items = isRecommendedHomeFeed ? fixtureHomeSongs : fixtureSongs;
+      response = fixtureResponse({ items, totalCount: items.length });
     } else if (path.match(/\/api\/songs\/\d+$/)) {
       response = fixtureResponse(fixtureSong);
     } else if (isVocaDb && path.match(/\/api\/songs$/)) {
@@ -364,6 +380,31 @@ try {
       && input.value === '';
   }, { timeout: 60_000 });
   console.log('PASS search state resets on home navigation');
+
+  await page.waitForSelector('main a[href*="/watch?v=1502"]', { timeout: 60_000 });
+  const homeMixIdsBeforeBack = await page.$$eval('main a[href*="/watch?v="]', links => [...new Set(
+    links.map(link => new URL(link.href).searchParams.get('v')).filter(Boolean),
+  )]);
+  if (homeMixIdsBeforeBack.length < 3) {
+    throw new Error(`Navigation fixture did not load enough home mix songs: ${JSON.stringify(homeMixIdsBeforeBack)}`);
+  }
+  await page.evaluate(() => window.__DIVA_PERFORMANCE__?.clear());
+  await page.click('main a[href*="/watch?v=1502"]');
+  await page.waitForFunction(path => (location.pathname.replace(/\/+$/, '') || '/') === path, { timeout: 60_000 }, expectedWatch);
+  await page.goBack();
+  await page.waitForFunction(path => (location.pathname.replace(/\/+$/, '') || '/') === path, { timeout: 60_000 }, expectedRoot);
+  await page.waitForSelector('main a[href*="/watch?v=1502"]', { timeout: 60_000 });
+  const homeMixIdsAfterBack = await page.$$eval('main a[href*="/watch?v="]', links => [...new Set(
+    links.map(link => new URL(link.href).searchParams.get('v')).filter(Boolean),
+  )]);
+  const retainedMixIds = homeMixIdsBeforeBack.filter(id => id !== '1502');
+  const retainedMixIdsAfterBack = homeMixIdsAfterBack.filter(id => retainedMixIds.includes(id));
+  const repeatedHomeLoads = await page.evaluate(() => window.__DIVA_PERFORMANCE__
+    ?.getMetrics().filter(metric => metric.name === 'home.load').length ?? 0);
+  if (JSON.stringify(retainedMixIdsAfterBack) !== JSON.stringify(retainedMixIds) || repeatedHomeLoads !== 0) {
+    throw new Error(`Back regenerated the home mix: before=${JSON.stringify(homeMixIdsBeforeBack)}, after=${JSON.stringify(homeMixIdsAfterBack)}, homeLoads=${repeatedHomeLoads}`);
+  }
+  console.log(`PASS browser Back restores home mix order without regenerating (${retainedMixIds.length} retained songs)`);
 
   const discoveryMixState = await page.evaluate(() => {
     const buttons = [...document.querySelectorAll('button[aria-label="発掘ミックスを生成して再生"]')];
