@@ -194,7 +194,7 @@ export default function ViewHistoryChart({ songId }: { songId: number }) {
   const chart = useMemo(() => {
     const hasYoutube = data.some((d) => d.youtube !== null);
     const hasNico = data.some((d) => d.nico !== null);
-    const valueRange = getViewHistoryYAxisRange(data, metric);
+    const valueRange = getViewHistoryYAxisRange(data, metric, visibleSeries);
 
     if (data.length < 2 || valueRange.yMax <= 0) {
       return {
@@ -280,7 +280,7 @@ export default function ViewHistoryChart({ songId }: { songId: number }) {
       yMax,
       ready: true,
     };
-  }, [data, language, metric]);
+  }, [data, language, metric, visibleSeries]);
 
   return (
     <div

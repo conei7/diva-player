@@ -11,6 +11,11 @@ export type ViewHistoryRange = '7d' | '30d' | '90d' | 'all';
 export type ViewHistoryBucket = 'day' | 'week' | 'month';
 export type ViewHistoryMetric = 'cumulative' | 'growth';
 
+export interface ViewHistorySeriesVisibility {
+  youtube: boolean;
+  nico: boolean;
+}
+
 export interface ViewHistoryYAxisRange {
   yMin: number;
   yMax: number;
@@ -31,9 +36,16 @@ export function getObservedViewHistory(
 export function getViewHistoryYAxisRange(
   history: ViewHistoryData[],
   metric: ViewHistoryMetric,
+  visibleSeries?: ViewHistorySeriesVisibility,
 ): ViewHistoryYAxisRange {
-  const values = history.flatMap(item => [item.youtube, item.nico]
-    .filter((value): value is number => value !== null && Number.isFinite(value)));
+  // Keep a useful scale if the user has hidden both lines; otherwise fit only
+  // the series that are currently visible.
+  const includeYoutube = !visibleSeries || (!visibleSeries.youtube && !visibleSeries.nico) || visibleSeries.youtube;
+  const includeNico = !visibleSeries || (!visibleSeries.youtube && !visibleSeries.nico) || visibleSeries.nico;
+  const values = history.flatMap(item => [
+    ...(includeYoutube ? [item.youtube] : []),
+    ...(includeNico ? [item.nico] : []),
+  ].filter((value): value is number => value !== null && Number.isFinite(value)));
   const maxValue = Math.max(...values, 0);
   if (metric === 'growth' && values.some(value => value < 0)) {
     return {

@@ -162,6 +162,38 @@ describe('view history display transforms', () => {
     ], 'growth')).toEqual({ yMin: -20, yMax: 20 });
   });
 
+  it('fits the Y axis to the visible service when the other service is hidden', () => {
+    const history = normalizeViewHistory([
+      { date: '2026-01-01', youtube: 8_000_000, nico: 80_000 },
+      { date: '2026-01-02', youtube: 9_000_000, nico: 120_000 },
+    ]);
+
+    expect(getViewHistoryYAxisRange(history, 'cumulative', { youtube: false, nico: true }))
+      .toEqual({ yMin: 0, yMax: 120_000 });
+    expect(getViewHistoryYAxisRange(history, 'cumulative', { youtube: true, nico: false }))
+      .toEqual({ yMin: 0, yMax: 9_000_000 });
+  });
+
+  it('fits the growth axis to the visible service and keeps a symmetric negative range', () => {
+    const history = [
+      { date: '2026-01-01', youtube: 8_000_000, nico: -5 },
+      { date: '2026-01-02', youtube: 9_000_000, nico: 10 },
+    ];
+
+    expect(getViewHistoryYAxisRange(history, 'growth', { youtube: false, nico: true }))
+      .toEqual({ yMin: -10, yMax: 10 });
+  });
+
+  it('keeps the full-data scale when both services are hidden', () => {
+    const history = normalizeViewHistory([
+      { date: '2026-01-01', youtube: 800, nico: 80 },
+      { date: '2026-01-02', youtube: 900, nico: 120 },
+    ]);
+
+    expect(getViewHistoryYAxisRange(history, 'cumulative', { youtube: false, nico: false }))
+      .toEqual({ yMin: 0, yMax: 900 });
+  });
+
   it('does not assign multiple missing days of growth to the next observed day', () => {
     const history = normalizeViewHistory([
       { date: '2026-07-13', youtube: 90, nico: 40, baseline: true },
