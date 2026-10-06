@@ -5,7 +5,7 @@
  * ① 「同じPの曲」 (RDB検索)
  * ② 「関連曲」 (Qdrant ハイブリッド検索)
  * ③ 「おすすめ」 (ユーザー履歴 + マルコフ連鎖)
- * ④ 「音響から探す」 (Qdrant 音響ベクトルのみ)
+ * ④ 「音響類似度」 (Qdrant 音響ベクトルのみ)
  */
 
 export type RecTabKey = 'producer' | 'related' | 'recommended' | 'deep';

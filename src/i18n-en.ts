@@ -92,7 +92,7 @@ export const messages = {
     filterRelatedDescription: 'Songs with similar metadata',
     filterProducer: 'Same producer',
     filterProducerDescription: 'More songs by this producer',
-    filterSound: 'Similar sound',
+    filterSound: 'Audio similarity',
     filterSoundDescription: 'Songs with similar audio features',
     share: 'Share',
     copyLink: 'Copy song link',

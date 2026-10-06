@@ -119,7 +119,7 @@ const messages = {
     filterRelatedDescription: 'メタデータが似ている曲',
     filterProducer: '同じPの曲',
     filterProducerDescription: '同じプロデューサーの曲',
-    filterSound: '音響から探す',
+    filterSound: '音響類似度',
     filterSoundDescription: '音の特徴が近い曲',
     share: '共有',
     copyLink: '曲リンクをコピー',
