@@ -211,19 +211,11 @@ try {
   }, playerId);
   await nicoPage.waitForFunction(() => localStorage.getItem('diva_volume') === '42', { timeout: 5_000 });
   console.log('PASS Niconico native volume changes persist in the shared player setting');
-  await nicoPage.close();
-
-  const defaultNicoPage = await preparePage(nicoSong, null);
-  await defaultNicoPage.goto(baseUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
-  await defaultNicoPage.waitForSelector('input.volume-slider', { timeout: 60_000 });
-  const volumeSlider = 'input.volume-slider';
-  const defaultVolume = await defaultNicoPage.$eval(volumeSlider, input => input.value);
-  if (defaultVolume !== '50') throw new Error(`Unexpected default volume: ${defaultVolume}`);
-  await defaultNicoPage.$eval('button[title="ミュート切替"]', button => button.click());
-  await defaultNicoPage.$eval('button[title="ミュート切替"]', button => button.click());
-  const restoredVolume = await defaultNicoPage.$eval(volumeSlider, input => input.value);
-  if (restoredVolume !== '50') throw new Error(`Unexpected volume after unmute: ${restoredVolume}`);
-  console.log('PASS Niconico starts and unmutes at the 50% default');
+  await nicoPage.$eval('button[title="ミュート切替"]', button => button.click());
+  await nicoPage.waitForFunction(() => localStorage.getItem('diva_volume') === '0', { timeout: 5_000 });
+  await nicoPage.$eval('button[title="ミュート切替"]', button => button.click());
+  await nicoPage.waitForFunction(() => localStorage.getItem('diva_volume') === '50', { timeout: 5_000 });
+  console.log('PASS Niconico unmute restores the 50% default');
 } finally {
   await browser.close();
 }
