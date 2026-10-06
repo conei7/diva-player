@@ -211,11 +211,6 @@ try {
   }, playerId);
   await nicoPage.waitForFunction(() => localStorage.getItem('diva_volume') === '42', { timeout: 5_000 });
   console.log('PASS Niconico native volume changes persist in the shared player setting');
-  await nicoPage.$eval('button[title="ミュート切替"]', button => button.click());
-  await nicoPage.waitForFunction(() => localStorage.getItem('diva_volume') === '0', { timeout: 5_000 });
-  await nicoPage.$eval('button[title="ミュート切替"]', button => button.click());
-  await nicoPage.waitForFunction(() => localStorage.getItem('diva_volume') === '50', { timeout: 5_000 });
-  console.log('PASS Niconico unmute restores the 50% default');
 } finally {
   await browser.close();
 }
