@@ -69,6 +69,20 @@ try {
   await playerPage.setRequestInterception(true);
   playerPage.on('request', async (request) => {
     const requestUrl = request.url();
+    const parsedUrl = new URL(requestUrl);
+    if (parsedUrl.pathname === '/backend-api/api/songs/details') {
+      const ids = (parsedUrl.searchParams.get('ids') || '').split(',').filter(Boolean).map(Number);
+      const items = ids.flatMap(id => {
+        const song = songs.find(candidate => candidate.id === id);
+        return song ? [song] : [];
+      });
+      await request.respond({
+        contentType: 'application/json',
+        headers: { 'access-control-allow-origin': '*' },
+        body: JSON.stringify({ items }),
+      });
+      return;
+    }
     if (requestUrl.startsWith('https://vocadb.net/api/songs/167789?')) {
       await request.respond({
         contentType: 'application/json',
@@ -163,7 +177,9 @@ try {
   await playerPage.goto(new URL('watch?v=167789', baseUrl), { waitUntil: 'domcontentloaded', timeout: 60_000 });
   await playerPage.waitForFunction(() => {
     const queue = JSON.parse(localStorage.getItem('diva_playerQueue') || 'null');
-    return queue?.currentSongId === 167789 && document.querySelector('#yt-player-embed');
+    return queue?.currentSongId === 167789
+      && document.querySelector('#yt-player-embed')
+      && document.body.innerText.includes('コバルトメモリーズ');
   });
   try {
     await playerPage.waitForFunction(() => window.__backgroundPlaybackStarted === true);
