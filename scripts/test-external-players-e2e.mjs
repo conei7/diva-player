@@ -199,6 +199,7 @@ try {
   await nicoPage.waitForSelector('iframe[src*="embed.nicovideo.jp/watch/sm-nico-volume-fixture"]', { timeout: 60_000 });
   const nicoFrame = nicoPage.frames().find(frame => frame.url().includes('embed.nicovideo.jp/watch/sm-nico-volume-fixture'));
   if (!nicoFrame) throw new Error('Niconico fixture iframe did not load');
+  await nicoFrame.waitForFunction(() => document.readyState === 'complete', { timeout: 15_000 });
   const playerId = new URL(nicoFrame.url()).searchParams.get('playerId');
   if (!playerId) throw new Error('Niconico fixture is missing its player id');
   await nicoFrame.evaluate(id => {
