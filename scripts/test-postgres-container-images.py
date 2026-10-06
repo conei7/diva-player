@@ -168,14 +168,41 @@ class PostgresContainerContractTests(unittest.TestCase):
         self.assertNotIn("/migrations", self.migrate)
         self.assertNotRegex(self.migrate, r"(?m)^\s*(?:RUN\s+)?apk\s+(?:update|upgrade)\b")
         for package in (
-            "libcrypto3=3.5.9-r0",
-            "libssl3=3.5.9-r0",
             "musl=1.2.5-r23",
             "musl-utils=1.2.5-r23",
             "postgresql16-client=16.15-r0",
-            "zlib=1.3.2-r0",
         ):
             self.assertIn(package, self.migrate)
+        for artifact in (
+            "libcrypto3-3.5.9-r0.apk",
+            "libssl3-3.5.9-r0.apk",
+            "zlib-1.3.2-r1.apk",
+        ):
+            self.assertIn(artifact, self.migrate)
+        self.assertIn(
+            "zlib_sha=ee62e1864c235901e2aa4d1868c7ae8f7cc5d0740a98c48a2525332eb4bfda73",
+            self.migrate,
+        )
+        self.assertIn(
+            "zlib_sha=82d52fa82a46c73aae8b9f95d7f31a196137f3ce4a000980cdbbfc05c245e7bf",
+            self.migrate,
+        )
+        self.assertIn("apk add --no-network", self.migrate)
+        self.assertNotIn("libcrypto3=3.5.9-r0", self.migrate)
+        self.assertNotIn("libssl3=3.5.9-r0", self.migrate)
+        self.assertIn(
+            "test \"$(apk info -v libcrypto3)\" = 'libcrypto3-3.5.9-r0'",
+            self.migrate,
+        )
+        self.assertIn(
+            "test \"$(apk info -v libssl3)\" = 'libssl3-3.5.9-r0'",
+            self.migrate,
+        )
+        self.assertIn(
+            "test \"$(apk info -v zlib)\" = 'zlib-1.3.2-r1'",
+            self.migrate,
+        )
+        self.assertNotIn("zlib=1.3.2-r0", self.migrate)
         self.assertIn("case \"$(apk --print-arch)\" in x86_64|aarch64)", self.migrate)
         self.assertIn("ENV HOME=/tmp", self.migrate)
         self.assertIn("USER 65534:65534", self.migrate)
