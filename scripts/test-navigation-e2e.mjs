@@ -387,9 +387,10 @@ try {
   }, { timeout: 60_000 });
   console.log('PASS search state resets on home navigation');
 
-  // Use an isolated tab so earlier smoke-test route changes cannot make the
-  // browser Back assertion traverse unrelated history entries.
-  const backPage = await browser.newPage();
+  // Use a fresh browser context so earlier smoke tests cannot leak their
+  // persisted player queue or cross-tab playback ownership into this flow.
+  const backContext = await browser.createBrowserContext();
+  const backPage = await backContext.newPage();
   await backPage.setViewport({ width: 1440, height: 900 });
   await pinAppLanguage(backPage);
   await installApiFixtures(backPage);
