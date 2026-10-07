@@ -409,7 +409,9 @@ try {
   if (watchHistoryLength <= homeHistoryLength) {
     throw new Error(`Opening a Home song did not add a browser history entry: before=${homeHistoryLength}, after=${watchHistoryLength}, url=${backPage.url()}`);
   }
-  await backPage.goBack();
+  // Drive the browser's actual session-history traversal and let the SPA
+  // handle the resulting popstate, as it does for the browser Back button.
+  await backPage.evaluate(() => window.history.back());
   try {
     await backPage.waitForFunction(path => (location.pathname.replace(/\/+$/, '') || '/') === path, { timeout: 15_000 }, expectedRoot);
   } catch {
