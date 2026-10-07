@@ -391,6 +391,7 @@ try {
   // persisted player queue or cross-tab playback ownership into this flow.
   const backContext = await browser.createBrowserContext();
   const backPage = await backContext.newPage();
+  const backHistorySession = await backPage.createCDPSession();
   await backPage.setViewport({ width: 1440, height: 900 });
   await pinAppLanguage(backPage);
   await installApiFixtures(backPage);
@@ -410,19 +411,39 @@ try {
   if (watchHistoryLength <= homeHistoryLength) {
     throw new Error(`Opening a Home song did not add a browser history entry: before=${homeHistoryLength}, after=${watchHistoryLength}, url=${backPage.url()}`);
   }
+  const browserHistoryBeforeBack = await backHistorySession.send('Page.getNavigationHistory');
+  await backPage.evaluate(() => {
+    window.__DIVA_NAV_HISTORY_EVENTS__ = [];
+    window.addEventListener('popstate', () => {
+      window.__DIVA_NAV_HISTORY_EVENTS__.push({ href: location.href, state: history.state });
+    });
+  });
   // Drive the browser's actual session-history traversal and let the SPA
   // handle the resulting popstate, as it does for the browser Back button.
   await backPage.evaluate(() => window.history.back());
   try {
     await backPage.waitForFunction(path => (location.pathname.replace(/\/+$/, '') || '/') === path, { timeout: 15_000 }, expectedRoot);
   } catch {
-    const backState = await backPage.evaluate(() => ({
-      href: location.href,
-      historyLength: window.history.length,
-      historyState: window.history.state,
-    }));
-    throw new Error(`Browser Back did not restore Home: ${JSON.stringify(backState)}`);
+    const [backState, browserHistoryAfterBack] = await Promise.all([
+      backPage.evaluate(() => ({
+        href: location.href,
+        historyLength: window.history.length,
+        historyState: window.history.state,
+        popstateEvents: window.__DIVA_NAV_HISTORY_EVENTS__,
+      })),
+      backHistorySession.send('Page.getNavigationHistory'),
+    ]);
+    const summarizeHistory = history => ({
+      currentIndex: history.currentIndex,
+      entries: history.entries.map(({ url, title }) => ({ url, title })),
+    });
+    throw new Error(`Browser Back did not restore Home: ${JSON.stringify({
+      ...backState,
+      browserHistoryBeforeBack: summarizeHistory(browserHistoryBeforeBack),
+      browserHistoryAfterBack: summarizeHistory(browserHistoryAfterBack),
+    })}`);
   }
+  await backHistorySession.detach();
   await backPage.waitForSelector('main a[href*="/watch?v=1502"]', { timeout: 60_000 });
   const homeMixIdsAfterBack = await backPage.$$eval('main a[href*="/watch?v="]', links => [...new Set(
     links.map(link => new URL(link.href).searchParams.get('v')).filter(Boolean),
