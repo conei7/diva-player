@@ -204,28 +204,24 @@ try {
     const iframe = document.querySelector('iframe[src*="embed.nicovideo.jp/watch/sm-nico-volume-fixture"]');
     return iframe instanceof HTMLIFrameElement && iframe.contentWindow !== null;
   }, { timeout: 15_000 });
+  const nicoFrame = nicoPage.frames().find(frame => frame.url().includes('embed.nicovideo.jp/watch/sm-nico-volume-fixture'));
+  if (!nicoFrame) throw new Error('Niconico volume fixture frame was not attached');
   const volumeUpdateDeadline = Date.now() + 5_000;
   while (Date.now() < volumeUpdateDeadline) {
     if (await nicoPage.evaluate(() => localStorage.getItem('diva_volume') === '42')) break;
-    // Dispatch a provider-shaped message through the app's listener using the
-    // active iframe WindowProxy. This exercises the origin/source checks and
-    // persistence without depending on cross-frame scheduling in headless CI.
-    await nicoPage.evaluate(() => {
-      const iframe = document.querySelector('iframe[src*="embed.nicovideo.jp/watch/sm-nico-volume-fixture"]');
-      if (!(iframe instanceof HTMLIFrameElement) || !iframe.contentWindow) return;
-      const playerId = new URL(iframe.src).searchParams.get('playerId');
-      if (playerId) {
-        window.dispatchEvent(new MessageEvent('message', {
-          origin: 'https://embed.nicovideo.jp',
-          source: iframe.contentWindow,
-          data: {
-            sourceConnectorType: 0,
-            playerId,
-            eventName: 'playerMetadataChange',
-            data: { currentTime: 10_000, volume: 0.42 },
-          },
-        }));
-      }
+    // Send from the embedded document so Chromium supplies a real origin and
+    // source WindowProxy. A synthetic top-window MessageEvent can lose those
+    // properties across browser/runtime versions and silently miss the app's
+    // origin/source checks.
+    await nicoFrame.evaluate(() => {
+      const playerId = new URL(window.location.href).searchParams.get('playerId');
+      if (!playerId) return;
+      window.parent.postMessage({
+        sourceConnectorType: 0,
+        playerId,
+        eventName: 'playerMetadataChange',
+        data: { volume: 0.42 },
+      }, '*');
     });
     await new Promise(resolve => setTimeout(resolve, 25));
   }
