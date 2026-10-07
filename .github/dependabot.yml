@@ -8,6 +8,10 @@ updates:
     groups:
       npm-dependencies:
         patterns: ["*"]
+    ignore:
+      - dependency-name: typescript
+        # typescript-eslint currently caps its TypeScript peer range below 6.1.
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: nuget
     directory: /backend/api
     schedule:
