@@ -55,7 +55,7 @@ declare global {
  * embed.nicovideo.jp の postMessage API でプログレス同期を試み、
  * 失敗した場合はタイマーベースのフォールバックで経過時間を推定する。
  */
-function NicoEmbed({ pvId, name, duration: songDuration, isPlaying }: { pvId: string; name?: string; duration?: number; isPlaying: boolean }) {
+function NicoEmbed({ pvId, playbackSequence, name, duration: songDuration, isPlaying }: { pvId: string; playbackSequence: number; name?: string; duration?: number; isPlaying: boolean }) {
   const { volume, setVolume, setIsPlaying, next, markPVHealthy, tryNextPV } = usePlayerStore();
   const markCurrentPVHealthy = useCallback(() => {
     const pv = usePlayerStore.getState().currentPV;
@@ -85,7 +85,10 @@ function NicoEmbed({ pvId, name, duration: songDuration, isPlaying }: { pvId: st
   const trackerRef = useRef(createNicoProgressTracker());
   const durationRef = useRef(songDuration);
   const advancedRef = useRef(false);
-  const selectionSequence = useRef(usePlayerStore.getState().playbackSequence);
+  // The parent keys this component by the selected playback sequence. Use the
+  // matching render snapshot here so a store update racing the initial render
+  // cannot bind this iframe to a newer sequence and reject its own messages.
+  const selectionSequence = useRef(playbackSequence);
   const isCurrentSelection = useCallback(() => {
     const state = usePlayerStore.getState();
     return state.currentPV?.service === 'NicoNicoDouga' && state.currentPV.pvId === pvId
@@ -1058,7 +1061,7 @@ export default function PlayerEmbed() {
         <div id="yt-player-embed" />
       </div>
       {currentPV?.service === 'NicoNicoDouga' && (
-        <NicoEmbed key={`${currentPV.pvId}:${playbackSequence}`} pvId={currentPV.pvId} name={currentPV.name} duration={currentSong?.lengthSeconds} isPlaying={isPlaying} />
+        <NicoEmbed key={`${currentPV.pvId}:${playbackSequence}`} pvId={currentPV.pvId} playbackSequence={playbackSequence} name={currentPV.name} duration={currentSong?.lengthSeconds} isPlaying={isPlaying} />
       )}
       {currentPV?.service === 'SoundCloud' && (
         <SoundCloudEmbed key={`${currentPV.pvId}:${playbackSequence}`} pv={currentPV} isPlaying={isPlaying} />

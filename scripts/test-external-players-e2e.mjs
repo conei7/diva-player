@@ -206,6 +206,19 @@ try {
   }, { timeout: 15_000 });
   const nicoFrame = nicoPage.frames().find(frame => frame.url().includes('embed.nicovideo.jp/watch/sm-nico-volume-fixture'));
   if (!nicoFrame) throw new Error('Niconico volume fixture frame was not attached');
+  await nicoPage.evaluate(() => {
+    const iframe = document.querySelector('iframe[src*="embed.nicovideo.jp/watch/sm-nico-volume-fixture"]');
+    window.__nicoVolumeMessageProbe = [];
+    window.addEventListener('message', event => {
+      if (event.data?.eventName !== 'playerMetadataChange') return;
+      window.__nicoVolumeMessageProbe.push({
+        origin: event.origin,
+        sourceMatches: event.source === iframe?.contentWindow,
+        playerId: event.data.playerId,
+        volume: event.data.data?.volume,
+      });
+    }, true);
+  });
   const volumeUpdateDeadline = Date.now() + 5_000;
   while (Date.now() < volumeUpdateDeadline) {
     if (await nicoPage.evaluate(() => localStorage.getItem('diva_volume') === '42')) break;
@@ -230,6 +243,7 @@ try {
     throw new Error(`Niconico volume event was not persisted: ${JSON.stringify({
       savedVolume: savedNicoVolume,
       iframeUrls: await nicoPage.$$eval('iframe[src*="embed.nicovideo.jp/watch/sm-nico-volume-fixture"]', frames => frames.map(frame => frame.src)),
+      receivedEvents: await nicoPage.evaluate(() => window.__nicoVolumeMessageProbe?.slice(-3) ?? []),
     })}`);
   }
   console.log('PASS Niconico native volume changes persist in the shared player setting');
