@@ -180,6 +180,12 @@ async function installApiFixtures(page) {
   });
 }
 
+async function pinAppLanguage(page, language = 'en') {
+  await page.evaluateOnNewDocument(value => {
+    localStorage.setItem('diva_uiLanguage', JSON.stringify(value));
+  }, language);
+}
+
 try {
   const page = await browser.newPage();
   await page.setViewport({ width: 1440, height: 900 });
