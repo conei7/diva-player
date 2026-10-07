@@ -38,7 +38,10 @@ const nicoSong = song(
 );
 
 async function preparePage(fixtureSong, savedVolume = 23) {
-  const page = await browser.newPage();
+  // Each provider case is independent; separate contexts keep its playback
+  // ownership and persisted volume from racing with the other fixture pages.
+  const context = await browser.createBrowserContext();
+  const page = await context.newPage();
   await pinAppLanguage(page);
   await page.evaluateOnNewDocument((currentSong, currentVolume) => {
     const tabId = `external-player-fixture-${currentSong.id}`;
