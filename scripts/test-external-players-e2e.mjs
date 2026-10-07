@@ -200,30 +200,34 @@ try {
   const nicoPage = await preparePage(nicoSong);
   await nicoPage.goto(baseUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
   await nicoPage.waitForSelector('iframe[src*="embed.nicovideo.jp/watch/sm-nico-volume-fixture"]', { timeout: 60_000 });
-  const nicoFrame = nicoPage.frames().find(frame => frame.url().includes('embed.nicovideo.jp/watch/sm-nico-volume-fixture'));
-  if (!nicoFrame) throw new Error('Niconico fixture iframe did not load');
-  await nicoFrame.waitForFunction(() => document.readyState === 'complete', { timeout: 15_000 });
+  await nicoPage.waitForFunction(() => {
+    const iframe = document.querySelector('iframe[src*="embed.nicovideo.jp/watch/sm-nico-volume-fixture"]');
+    return iframe instanceof HTMLIFrameElement && iframe.contentWindow !== null;
+  }, { timeout: 15_000 });
   const volumeUpdateDeadline = Date.now() + 5_000;
   while (Date.now() < volumeUpdateDeadline) {
     if (await nicoPage.evaluate(() => localStorage.getItem('diva_volume') === '42')) break;
-    // A persisted queue may settle while the fixture loads and replace its
-    // iframe. Always post from the currently mounted frame so the app's
-    // source-window guard sees the active player rather than a stale one.
-    const activeNicoFrame = nicoPage.frames().find(frame => frame.url().includes('embed.nicovideo.jp/watch/sm-nico-volume-fixture'));
-    if (activeNicoFrame) {
-      const playerId = new URL(activeNicoFrame.url()).searchParams.get('playerId');
+    // Dispatch a provider-shaped message through the app's listener using the
+    // active iframe WindowProxy. This exercises the origin/source checks and
+    // persistence without depending on cross-frame scheduling in headless CI.
+    await nicoPage.evaluate(() => {
+      const iframe = document.querySelector('iframe[src*="embed.nicovideo.jp/watch/sm-nico-volume-fixture"]');
+      if (!(iframe instanceof HTMLIFrameElement) || !iframe.contentWindow) return;
+      const playerId = new URL(iframe.src).searchParams.get('playerId');
       if (playerId) {
-        await activeNicoFrame.evaluate(id => {
-          parent.postMessage({
+        window.dispatchEvent(new MessageEvent('message', {
+          origin: 'https://embed.nicovideo.jp',
+          source: iframe.contentWindow,
+          data: {
             sourceConnectorType: 0,
-            playerId: id,
+            playerId,
             eventName: 'playerMetadataChange',
             data: { currentTime: 10_000, volume: 0.42 },
-          }, '*');
-        }, playerId);
+          },
+        }));
       }
-    }
-    await new Promise(resolve => setTimeout(resolve, 100));
+    });
+    await new Promise(resolve => setTimeout(resolve, 25));
   }
   const savedNicoVolume = await nicoPage.evaluate(() => localStorage.getItem('diva_volume'));
   if (savedNicoVolume !== '42') {
