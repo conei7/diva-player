@@ -203,17 +203,35 @@ try {
   const nicoFrame = nicoPage.frames().find(frame => frame.url().includes('embed.nicovideo.jp/watch/sm-nico-volume-fixture'));
   if (!nicoFrame) throw new Error('Niconico fixture iframe did not load');
   await nicoFrame.waitForFunction(() => document.readyState === 'complete', { timeout: 15_000 });
-  const playerId = new URL(nicoFrame.url()).searchParams.get('playerId');
-  if (!playerId) throw new Error('Niconico fixture is missing its player id');
-  await nicoFrame.evaluate(id => {
-    parent.postMessage({
-      sourceConnectorType: 0,
-      playerId: id,
-      eventName: 'playerMetadataChange',
-      data: { currentTime: 10_000, volume: 0.42 },
-    }, '*');
-  }, playerId);
-  await nicoPage.waitForFunction(() => localStorage.getItem('diva_volume') === '42', { timeout: 5_000 });
+  const volumeUpdateDeadline = Date.now() + 5_000;
+  while (Date.now() < volumeUpdateDeadline) {
+    if (await nicoPage.evaluate(() => localStorage.getItem('diva_volume') === '42')) break;
+    // A persisted queue may settle while the fixture loads and replace its
+    // iframe. Always post from the currently mounted frame so the app's
+    // source-window guard sees the active player rather than a stale one.
+    const activeNicoFrame = nicoPage.frames().find(frame => frame.url().includes('embed.nicovideo.jp/watch/sm-nico-volume-fixture'));
+    if (activeNicoFrame) {
+      const playerId = new URL(activeNicoFrame.url()).searchParams.get('playerId');
+      if (playerId) {
+        await activeNicoFrame.evaluate(id => {
+          parent.postMessage({
+            sourceConnectorType: 0,
+            playerId: id,
+            eventName: 'playerMetadataChange',
+            data: { currentTime: 10_000, volume: 0.42 },
+          }, '*');
+        }, playerId);
+      }
+    }
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  const savedNicoVolume = await nicoPage.evaluate(() => localStorage.getItem('diva_volume'));
+  if (savedNicoVolume !== '42') {
+    throw new Error(`Niconico volume event was not persisted: ${JSON.stringify({
+      savedVolume: savedNicoVolume,
+      iframeUrls: await nicoPage.$$eval('iframe[src*="embed.nicovideo.jp/watch/sm-nico-volume-fixture"]', frames => frames.map(frame => frame.src)),
+    })}`);
+  }
   console.log('PASS Niconico native volume changes persist in the shared player setting');
 } finally {
   await browser.close();
