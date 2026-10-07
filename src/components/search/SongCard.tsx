@@ -201,9 +201,8 @@ export default function SongCard({
     }
 
     // Home cards already expose a router link for normal clicks. Let that
-    // single navigation create the Watch history entry; calling onPlay here
-    // as well pushes a second Watch URL before the link's autoplay=0 URL.
-    // WatchPage applies the same autoplay ownership guard when that URL loads.
+    // single navigation create the Watch history entry; WatchPage applies the
+    // autoplay ownership guard when the link's autoplay=0 URL loads.
     if (onPlay) {
       e.stopPropagation();
       onExposureClick?.();
@@ -381,8 +380,7 @@ export default function SongCard({
         {/* 再生オーバーレイ (選択モード中は非表示) */}
         {!isSelectionMode && (
         <div
-          className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex items-center justify-center"
-          onClick={(e) => { e.stopPropagation(); handlePlay(); }}
+          className="pointer-events-none absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex items-center justify-center"
         >
           {hasPlayablePV && (
             <div
