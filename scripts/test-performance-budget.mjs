@@ -615,6 +615,14 @@ async function main() {
     await page.waitForFunction(() => document.body.innerText.includes('DIVA Performance Song'));
     await page.waitForSelector('main a[href*="/watch?v="]');
     const watchFirstCardMs = Date.now() - watchStartedAt;
+    // The Watch title/card can paint before its asynchronous recommender
+    // availability check and first request complete. Keep measuring first
+    // content above, but allow that foreground request to settle before
+    // asserting the request count.
+    const watchRecommendationDeadline = Date.now() + 5_000;
+    while (counters.watchRecommendedRequests === 0 && Date.now() < watchRecommendationDeadline) {
+      await new Promise(resolve => setTimeout(resolve, 25));
+    }
     assert(counters.watchRecommendedRequests === 1,
       `Opening a song requested ${counters.watchRecommendedRequests} recommendation batches (expected the active source once).`);
     assert(counters.watchMetadataRequests === 0 && counters.watchProducerRequests === 0,

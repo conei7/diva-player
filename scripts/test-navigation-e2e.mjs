@@ -407,6 +407,9 @@ try {
   await backPage.evaluate(() => window.__DIVA_PERFORMANCE__?.clear());
   await backPage.click('main a[href*="/watch?v=1502"]');
   await backPage.waitForFunction(path => (location.pathname.replace(/\/+$/, '') || '/') === path, { timeout: 60_000 }, expectedWatch);
+  if (new URL(backPage.url()).searchParams.get('autoplay') === '0') {
+    throw new Error('A same-tab Home song click suppressed the playback intent.');
+  }
   const watchHistoryLength = await backPage.evaluate(() => window.history.length);
   if (watchHistoryLength !== homeHistoryLength + 1) {
     const browserHistoryAfterOpen = await backHistorySession.send('Page.getNavigationHistory');

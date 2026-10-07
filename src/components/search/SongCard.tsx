@@ -200,20 +200,19 @@ export default function SongCard({
       return;
     }
 
-    // Home cards already expose a router link for normal clicks. Let that
-    // single navigation create the Watch history entry; WatchPage applies the
-    // autoplay ownership guard when the link's autoplay=0 URL loads.
+    // Same-tab clicks use the card's play action once. This preserves the
+    // normal playback intent and avoids combining a programmatic navigation
+    // with the link's default navigation. The link href keeps autoplay=0 for
+    // opening the song in a separate tab.
     if (onPlay) {
-      e.stopPropagation();
-      onExposureClick?.();
-      onSelect?.(song);
+      handlePlay(e);
       return;
     }
 
     e.preventDefault();
     e.stopPropagation();
     handlePlay(e);
-  }, [handlePlay, isSelectionMode, onExposureClick, onPlay, onSelect, song, toggleSelection]);
+  }, [handlePlay, isSelectionMode, onPlay, song, toggleSelection]);
 
   const handleSongLinkAuxClick = useCallback((e: React.MouseEvent<HTMLAnchorElement>) => {
     if (isSelectionMode) {
