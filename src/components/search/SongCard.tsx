@@ -199,10 +199,22 @@ export default function SongCard({
       e.stopPropagation();
       return;
     }
+
+    // Home cards already expose a router link for normal clicks. Let that
+    // single navigation create the Watch history entry; calling onPlay here
+    // as well pushes a second Watch URL before the link's autoplay=0 URL.
+    // WatchPage applies the same autoplay ownership guard when that URL loads.
+    if (onPlay) {
+      e.stopPropagation();
+      onExposureClick?.();
+      onSelect?.(song);
+      return;
+    }
+
     e.preventDefault();
     e.stopPropagation();
     handlePlay(e);
-  }, [handlePlay, isSelectionMode, song, toggleSelection]);
+  }, [handlePlay, isSelectionMode, onExposureClick, onPlay, onSelect, song, toggleSelection]);
 
   const handleSongLinkAuxClick = useCallback((e: React.MouseEvent<HTMLAnchorElement>) => {
     if (isSelectionMode) {

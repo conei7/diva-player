@@ -408,8 +408,14 @@ try {
   await backPage.click('main a[href*="/watch?v=1502"]');
   await backPage.waitForFunction(path => (location.pathname.replace(/\/+$/, '') || '/') === path, { timeout: 60_000 }, expectedWatch);
   const watchHistoryLength = await backPage.evaluate(() => window.history.length);
-  if (watchHistoryLength <= homeHistoryLength) {
-    throw new Error(`Opening a Home song did not add a browser history entry: before=${homeHistoryLength}, after=${watchHistoryLength}, url=${backPage.url()}`);
+  if (watchHistoryLength !== homeHistoryLength + 1) {
+    const browserHistoryAfterOpen = await backHistorySession.send('Page.getNavigationHistory');
+    throw new Error(`Opening a Home song did not add exactly one browser history entry: ${JSON.stringify({
+      before: homeHistoryLength,
+      after: watchHistoryLength,
+      url: backPage.url(),
+      browserHistory: browserHistoryAfterOpen.entries.map(({ url, title }) => ({ url, title })),
+    })}`);
   }
   const browserHistoryBeforeBack = await backHistorySession.send('Page.getNavigationHistory');
   await backPage.evaluate(() => {
