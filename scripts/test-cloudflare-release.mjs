@@ -108,6 +108,19 @@ try {
   assert.match(workflow, /Inspect live Cloudflare release contract[\s\S]*--github-output "\$GITHUB_OUTPUT"/);
   assert.match(workflow, /build:\n\s+if: github\.ref == 'refs\/heads\/main'\n\s+needs: cloudflare_contract/);
   assert.match(workflow, /deploy-cloudflare:\n\s+needs: \[cloudflare_contract, build\]/);
+  const runtimeJob = workflow.slice(workflow.indexOf('  runtime_validation:'), workflow.indexOf('  build:'));
+  const pagesBuildJob = workflow.slice(workflow.indexOf('  build:'), workflow.indexOf('  deploy-cloudflare:'));
+  assert.match(runtimeJob, /Attest exact deployable image vulnerability scans/);
+  assert.match(runtimeJob, /--severity HIGH,CRITICAL/);
+  assert.doesNotMatch(runtimeJob, /continue-on-error/);
+  assert.doesNotMatch(pagesBuildJob, /docker build|Trivy|runtime_validation/);
+  for (const gate of [
+    'npm audit --omit=dev --audit-level=high',
+    'npm run lint', 'npm run test', 'npm run build',
+    'npm run test:e2e:external-players', 'npm run test:e2e:navigation',
+    'npm run test:performance-budget', 'npm run test:cloudflare-proxy',
+    'npm run test:cloudflare-release',
+  ]) assert.ok(pagesBuildJob.includes(gate), `Pages release must retain ${gate}`);
   assert.equal(workflow.match(/cloudflare-release-artifact\.mjs build-worker/g)?.length, 1);
   assert.equal(workflow.match(/--no-bundle/g)?.length, 2);
   assert.match(workflow, /build-worker \\\n\s+--compatibility-date "\$COMPATIBILITY_DATE" \\\n\s+--compatibility-flags-json "\$COMPATIBILITY_FLAGS_JSON"/);

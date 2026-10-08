@@ -44,17 +44,13 @@ jobs:
           node scripts/cloudflare-pages-release.mjs inspect-project \
             --project diva-player \
             --github-output "$GITHUB_OUTPUT"
-  build:
+  runtime_validation:
     if: github.ref == 'refs/heads/main'
-    needs: cloudflare_contract
     runs-on: ubuntu-24.04
-    # Stateful/DR fault matrices intentionally exercise bounded timeout,
-    # rollback, and daemon-settlement paths before the container scans and E2E
-    # release gates. Keep a finite ceiling without turning a healthy, complete
-    # security run into a false timeout on a slower hosted runner.
+    # These artifacts run on SBC; Pages publishes only the separately verified
+    # static assets and Worker. Keep runtime failures visible and fail closed
+    # without coupling a Pages-only release to the external Trivy DB publisher.
     timeout-minutes: 240
-    outputs:
-      release_sha256: ${{ steps.release_artifact.outputs.release_sha256 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -807,6 +803,31 @@ jobs:
             ${{ runner.temp }}/trivy-deploy-${{ github.run_id }}-${{ github.run_attempt }}/*/receipt.json
           if-no-files-found: warn
           retention-days: 30
+  build:
+    if: github.ref == 'refs/heads/main'
+    needs: cloudflare_contract
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    outputs:
+      release_sha256: ${{ steps.release_artifact.outputs.release_sha256 }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22.22.0'
+          cache: 'npm'
+      - name: Install dependencies
+        run: npm ci
+      - name: Audit JavaScript dependencies
+        run: npm audit --omit=dev --audit-level=high --fetch-retries=5 --fetch-retry-mintimeout=20000 --fetch-retry-maxtimeout=120000
+      - name: Lint
+        run: npm run lint
+      - name: Test
+        run: npm run test
+      - name: Build
+        run: npm run build
       - name: Start preview server for E2E
         run: |
           npm run preview -- --host 127.0.0.1 > "$RUNNER_TEMP/diva-player-preview.log" 2>&1 &
