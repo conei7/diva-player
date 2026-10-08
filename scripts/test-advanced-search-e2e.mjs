@@ -5,7 +5,7 @@ const baseUrl = process.argv[2] || 'http://127.0.0.1:4173/diva-player/';
 const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox', '--lang=ja-JP'] });
 const capturedSearchUrls = [];
 const fixtureSong = {
-  id: 904001, name: '詳細検索 fixture', defaultName: 'Advanced fixture', defaultNameLanguage: 'Japanese',
+  id: 904001, name: '詳細検索 fixture', defaultName: 'Advanced fixture', defaultNameLanguage: 'English',
   artistString: 'Facet producer', createDate: '2026-01-01T00:00:00Z', publishDate: '2026-01-01',
   favoritedTimes: 10, lengthSeconds: 180, pvServices: 'Youtube', ratingScore: 0,
   songType: 'Original', status: 'Finished', version: 1,
@@ -80,7 +80,8 @@ try {
     input.dispatchEvent(new Event('input', { bubbles: true }));
   });
   await page.evaluate(() => [...document.querySelectorAll('button')].find(button => button.textContent?.includes('この条件で検索'))?.click());
-  await page.waitForFunction(() => document.body.textContent?.includes('321') && document.body.textContent?.includes('詳細検索 fixture'));
+  await page.waitForFunction(name => document.body.textContent?.includes('321') && document.body.textContent?.includes(name), {}, fixtureSong.defaultName);
+  if (await page.$eval('body', body => body.textContent?.includes('詳細検索 fixture'))) throw new Error('search results displayed the alternate title instead of the default title');
 
   const requestUrl = capturedSearchUrls.at(-1);
   if (!requestUrl) throw new Error('advanced search request not captured');
