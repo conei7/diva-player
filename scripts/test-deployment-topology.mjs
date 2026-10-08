@@ -203,10 +203,13 @@ assert.match(
   /apk add --no-cache[\s\S]*libcrypto3=3\.5\.9-r0[\s\S]*libssl3=3\.5\.9-r0[\s\S]*libexpat=2\.8\.5-r0/u,
 );
 assert.doesNotMatch(apiDockerfile, /apk upgrade/u);
-assert.match(
-  webDockerfile,
-  /RUN apk update && \\\s+apk add --no-cache[^\n]*(?:\\\n[^\n]*)*libuuid=2\.42\.3-r1\s+COPY/u,
-);
+const webApkUpdateStart = webDockerfile.indexOf('RUN apk update &&');
+const webCopyStart = webDockerfile.indexOf('\nCOPY --from=build', webApkUpdateStart);
+assert.ok(webApkUpdateStart >= 0 && webCopyStart > webApkUpdateStart);
+const webApkUpdate = webDockerfile.slice(webApkUpdateStart, webCopyStart);
+assert.match(webApkUpdate, /libuuid=2\.42\.3-r1/u);
+assert.match(webApkUpdate, /tiff=4\.7\.2-r0/u);
+assert.match(webApkUpdate, /test[^\n]*P:tiff[^\n]*4\.7\.2-r0/u);
 assert.doesNotMatch(webDockerfile, /--repository|\/edge\//u);
 assert.doesNotMatch(webDockerfile, /--allow-untrusted|--force-broken-world/u);
 assert.match(apiDockerfile, /apk add --no-cache[\s\S]*libcrypto3=3\.5\.9-r0[\s\S]*libssl3=3\.5\.9-r0/u);
