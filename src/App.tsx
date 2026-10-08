@@ -1,5 +1,5 @@
-import { lazy, useEffect, useRef } from 'react';
-import { BrowserRouter, Routes, Route } from 'react-router';
+import { lazy, useCallback, useEffect, useRef, useState } from 'react';
+import { BrowserRouter, Routes, Route, useLocation } from 'react-router';
 import Layout from './components/layout/Layout';
 import MediaSession from './components/player/MediaSession';
 import KeyboardShortcuts from './components/player/KeyboardShortcuts';
@@ -15,9 +15,14 @@ import { useAutoQueueDecisionStore } from './stores/autoQueueDecisionStore';
 import { useAutoQueueBanditStore } from './stores/autoQueueBanditStore';
 import { useAutoQueue } from './hooks/useAutoQueue';
 import AppErrorBoundary from './components/AppErrorBoundary';
-import { formatDocumentTitle } from './utils/documentTitle';
+import {
+  formatDocumentTitle,
+  WATCH_LOADING_DOCUMENT_TITLE,
+  WATCH_UNAVAILABLE_DOCUMENT_TITLE,
+} from './utils/documentTitle';
 import { shouldRecordPlayback } from './utils/playbackHistory';
 import { useLanguageStore } from './stores/languageStore';
+import type { WatchPageDocumentTitleState } from './pages/WatchPage';
 
 // Root navigation is the dominant entry path. Start its split-chunk download
 // while App is being evaluated instead of waiting for the first React render.
@@ -194,10 +199,40 @@ function PlayerTracker() {
 function AppContent() {
   const currentSong = usePlayerStore(s => s.currentSong);
   const language = useLanguageStore(s => s.language);
+  const location = useLocation();
+  const isWatchRoute = location.pathname === '/watch' || location.pathname === '/playing';
+  const parsedRequestedSongId = isWatchRoute
+    ? Number(new URLSearchParams(location.search).get('v'))
+    : Number.NaN;
+  const requestedSongId = Number.isSafeInteger(parsedRequestedSongId) && parsedRequestedSongId > 0
+    ? parsedRequestedSongId
+    : null;
+  const [watchTitleState, setWatchTitleState] = useState<WatchPageDocumentTitleState | null>(null);
+  const reportWatchTitleState = useCallback((state: WatchPageDocumentTitleState) => {
+    setWatchTitleState(state);
+  }, []);
 
   useEffect(() => {
+    if (isWatchRoute && requestedSongId) {
+      const state = watchTitleState?.songId === requestedSongId ? watchTitleState : null;
+      if (state?.status === 'loaded') {
+        document.title = formatDocumentTitle(state.song);
+      } else if (currentSong?.id === requestedSongId) {
+        // Show the locally known song immediately while WatchPage refreshes its
+        // page metadata, then replace it with the fetched page song.
+        document.title = formatDocumentTitle(currentSong);
+      } else if (state?.status === 'error') {
+        document.title = WATCH_UNAVAILABLE_DOCUMENT_TITLE;
+      } else {
+        // A new tab can restore another tab's player state before its own URL
+        // finishes loading. Never label that tab with the unrelated old song.
+        document.title = WATCH_LOADING_DOCUMENT_TITLE;
+      }
+      return;
+    }
+
     document.title = formatDocumentTitle(currentSong);
-  }, [currentSong]);
+  }, [currentSong, isWatchRoute, requestedSongId, watchTitleState]);
 
   useEffect(() => {
     document.documentElement.lang = language;
@@ -213,7 +248,7 @@ function AppContent() {
       <Routes>
         <Route element={<Layout />}>
           <Route path="/" element={<HomePage />} />
-          <Route path="/watch" element={<WatchPage />} />
+          <Route path="/watch" element={<WatchPage onDocumentTitleStateChange={reportWatchTitleState} />} />
           <Route path="/history" element={<HistoryPage />} />
           <Route path="/favorites" element={<FavoritesPage />} />
           <Route path="/favorite-producers" element={<FavoriteProducersPage />} />
@@ -224,7 +259,7 @@ function AppContent() {
           <Route path="/sound-map" element={<SoundMapPage />} />
           <Route path="/settings/hidden-songs" element={<HiddenSongsPage />} />
           {/* 旧ルートの互換性 */}
-          <Route path="/playing" element={<WatchPage />} />
+          <Route path="/playing" element={<WatchPage onDocumentTitleStateChange={reportWatchTitleState} />} />
         </Route>
       </Routes>
     </>

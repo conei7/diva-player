@@ -125,7 +125,15 @@ const PAGE_SIZE = 40;
 const FIRST_WATCH_PAGE_SIZE = 12;
 const APPEND_WATCH_PAGE_SIZE = 28;
 
-export default function WatchPage() {
+export type WatchPageDocumentTitleState =
+  | { songId: number; status: 'loading' | 'error' }
+  | { songId: number; status: 'loaded'; song: Song };
+
+interface WatchPageProps {
+  onDocumentTitleStateChange?: (state: WatchPageDocumentTitleState) => void;
+}
+
+export default function WatchPage({ onDocumentTitleStateChange }: WatchPageProps = {}) {
   const t = useTranslate();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
@@ -204,6 +212,7 @@ export default function WatchPage() {
   useEffect(() => {
     if (!songId) return;
     if (fetchedForRef.current === songId) return;
+    onDocumentTitleStateChange?.({ songId, status: 'loading' });
     songRequestAbortRef.current?.abort();
     const requestAbortController = new AbortController();
     songRequestAbortRef.current = requestAbortController;
@@ -239,6 +248,7 @@ export default function WatchPage() {
         loadingFromUrlRef.current = false;
         setSong(loadedSong);
         setLoadingSong(false);
+        onDocumentTitleStateChange?.({ songId, status: 'loaded', song: loadedSong });
 
         // 再生開始（現在の曲と違う場合のみ）
         if (currentSong?.id !== loadedSong.id) {
@@ -255,6 +265,7 @@ export default function WatchPage() {
         loadingFromUrlRef.current = false;
         setError(err.message || t('watchLoadError'));
         setLoadingSong(false);
+        onDocumentTitleStateChange?.({ songId, status: 'error' });
       });
     return () => {
       requestAbortController.abort();
