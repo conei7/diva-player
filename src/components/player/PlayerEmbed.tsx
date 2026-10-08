@@ -388,13 +388,22 @@ function NicoEmbed({ pvId, playbackSequence, name, duration: songDuration, isPla
           setIsPlaying(false);
           break;
         case 'ended':
+          // Some unavailable/error pages report an end event without ever
+          // starting. Treat that as a failed PV so tryNextPV can select another
+          // video for this song before the queue advances.
+          if (wantsPlayback() && !startedRef.current) {
+            clearPlaybackRetry();
+            cancelPlaybackAttempt();
+            tryNextPV();
+            break;
+          }
           advanceOnce();
           break;
       }
     };
     window.addEventListener('message', handler);
     return () => window.removeEventListener('message', handler);
-  }, [advanceOnce, cancelPlaybackAttempt, clearPlaybackRetry, completePlaybackAttempt, ensurePlaybackAttempt, isCurrentSelection, markCurrentPVHealthy, prepareAndSendPlaybackState, schedulePlaybackRetry, scheduleVolumeSync, sendMuted, sendPlaybackState, setProgress, setDuration, setIsPlaying, setVolume, startTimer, stopTimer, wantsPlayback]);
+  }, [advanceOnce, cancelPlaybackAttempt, clearPlaybackRetry, completePlaybackAttempt, ensurePlaybackAttempt, isCurrentSelection, markCurrentPVHealthy, prepareAndSendPlaybackState, schedulePlaybackRetry, scheduleVolumeSync, sendMuted, sendPlaybackState, setProgress, setDuration, setIsPlaying, setVolume, startTimer, stopTimer, tryNextPV, wantsPlayback]);
 
   useEffect(() => {
     const restoreAutoplayAudio = () => {
