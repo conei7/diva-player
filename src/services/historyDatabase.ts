@@ -1,4 +1,5 @@
 import type { Song } from '../types/vocadb';
+import { withDefaultSongName } from '../utils/entryNames';
 
 export const HISTORY_DB_NAME = 'diva-listening-history';
 export const HISTORY_DB_VERSION = 3;
@@ -124,7 +125,7 @@ function validStartupRecommendationSnapshot(value: unknown): StartupRecommendati
     || Number(candidate.savedAt) <= 0
     || !Array.isArray(candidate.songs)
     || candidate.songs.length === 0) return null;
-  return candidate as StartupRecommendationSnapshot;
+  return { ...candidate, songs: candidate.songs.map(withDefaultSongName) } as StartupRecommendationSnapshot;
 }
 
 function newerStartupSnapshot(

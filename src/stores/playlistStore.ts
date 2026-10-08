@@ -9,6 +9,7 @@ import type { NicoPlaylistSync, Playlist, PlaylistFolder, Song, SmartPlaylistRul
 import { storage } from '../utils/storage';
 import { createStableId } from '../utils/id';
 import { normalizeSmartPlaylistRule } from '../utils/smartPlaylist';
+import { withDefaultSongName } from '../utils/entryNames';
 
 const PLAYLISTS_KEY = 'playlists';
 const FOLDERS_KEY   = 'playlistFolders';
@@ -192,7 +193,7 @@ export const usePlaylistStore = create<PlaylistState>((set, get) => {
       const normalized = playlist.smartRule
         ? { ...playlist, smartRule: normalizeSmartPlaylistRule(playlist.smartRule) }
         : playlist;
-      return normalized;
+      return { ...normalized, songs: normalized.songs.map(withDefaultSongName) };
     });
     const folders = storage.get<PlaylistFolder[]>(FOLDERS_KEY) ?? [];
     // 「後で聴く」がなければ作成

@@ -15,10 +15,11 @@ import { buildSmartPlaylistSearchParams } from '../utils/smartPlaylist';
 import { AsyncTtlCache } from '../utils/asyncTtlCache';
 import { performanceNow, recordPerformanceMetric, type PerformanceSegment } from '../utils/performanceMetrics';
 import { scheduleFetch, type RequestPriority } from '../utils/requestScheduler';
+import { withDefaultSongName } from '../utils/entryNames';
 
 const BASE_URL = 'https://vocadb.net/api';
 const RECOMMENDER_API = import.meta.env.VITE_RECOMMENDER_API || '/backend-api';
-const DEFAULT_LANG = 'Japanese';
+const DEFAULT_LANG = 'Default';
 const DEFAULT_FIELDS = 'PVs,Artists,ThumbUrl';
 const CACHE_TTL = 5 * 60 * 1000; // 5分
 const MAX_RETRIES = 3;
@@ -121,7 +122,7 @@ async function flushSongCardRequests(): Promise<void> {
       if (!res.ok) throw new Error(`Song batch request failed: ${res.status}`);
       return res.json() as Promise<{ items: Song[] }>;
     }));
-    const songsById = new Map(responses.flatMap(response => response.items).map(song => [song.id, song]));
+    const songsById = new Map(responses.flatMap(response => response.items).map(withDefaultSongName).map(song => [song.id, song]));
     requests.forEach((waiters, id) => {
       waiters.forEach(({ resolve }) => resolve(songsById.get(id)));
     });
@@ -161,7 +162,7 @@ async function flushFullSongRequests(): Promise<void> {
       if (!res.ok) throw new Error(`Full song batch request failed: ${res.status}`);
       return res.json() as Promise<{ items: Song[] }>;
     }));
-    const songsById = new Map(responses.flatMap(response => response.items).map(song => [song.id, song]));
+    const songsById = new Map(responses.flatMap(response => response.items).map(withDefaultSongName).map(song => [song.id, song]));
     requests.forEach((waiters, id) => {
       waiters.forEach(({ resolve }) => resolve(songsById.get(id)));
     });
@@ -354,6 +355,8 @@ function buildSearchParams(params: Record<string, string | number | boolean | st
  */
 export async function attachExternalViews(songs: Song[]): Promise<Song[]> {
   if (!songs || songs.length === 0) return songs;
+  const namedSongs = songs.map(withDefaultSongName);
+  if (namedSongs.some((song, index) => song !== songs[index])) songs = namedSongs;
   const missingSongs = songs.filter(song => song.youtubeViews === undefined || song.nicoViews === undefined);
   if (missingSongs.length === 0) return songs;
 
@@ -520,7 +523,8 @@ export async function searchSmartPlaylistSongs(
   if (!response.ok) {
     throw new Error(`Smart playlist search failed: ${response.status}`);
   }
-  return response.json();
+  const data = await response.json() as SongSearchResult;
+  return { ...data, items: data.items.map(withDefaultSongName) };
 }
 
 export interface AlbumTrack {
@@ -641,8 +645,9 @@ export async function getTrendingSongs(
       const res = await scheduleFetch(url, undefined, priority);
       if (res.ok) {
         const data: SongSearchResult = await res.json();
-        setCache(cacheKey, data.items);
-        return data.items;
+        const items = data.items.map(withDefaultSongName);
+        setCache(cacheKey, items);
+        return items;
       }
     } catch {
       _recommenderAvailable = false;
@@ -1099,7 +1104,7 @@ export async function getRecommendedSongs(
         if (!data.error && data.items.length > 0) {
           // 推薦IDをSBCの軽量バッチAPIでカード情報へ解決する（未対応時はVocaDBへフォールバック）
           const ids = data.items.map(i => i.songId);
-          if (Array.isArray(data.cards) && data.cards.every(isSongPayload)) return data.cards;
+          if (Array.isArray(data.cards) && data.cards.every(isSongPayload)) return data.cards.map(withDefaultSongName);
           return getSongsByIds(ids);
         }
       }
@@ -1200,7 +1205,7 @@ export async function getSongsByProducerFromBackend(
       const res = await scheduleFetch(`${RECOMMENDER_API}/api/recommend/producer?${params}`, signal ? { signal } : undefined, 'foreground');
       if (res.ok) {
         const data: ProducerSongResponse = await res.json();
-        if (Array.isArray(data.cards) && data.cards.every(isSongPayload)) return data.cards;
+        if (Array.isArray(data.cards) && data.cards.every(isSongPayload)) return data.cards.map(withDefaultSongName);
         if (data.items.length > 0) {
           return getSongsByIds(data.items.map(item => item.songId));
         }
@@ -1300,7 +1305,7 @@ interface SimilarResponse { items: SimilarItem[]; cards?: Song[]; }
 
 function readCompactCards(cards: unknown): Song[] | null {
   if (!Array.isArray(cards) || !cards.every(isSongPayload)) return null;
-  return cards;
+  return cards.map(withDefaultSongName);
 }
 
 export async function getSimilarSongs(

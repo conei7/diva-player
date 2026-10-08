@@ -1,6 +1,7 @@
 import type { Song, SongType } from '../types/vocadb';
 import type { GlobalFilterSettings } from '../stores/globalFilterStore';
 import { AsyncTtlCache } from '../utils/asyncTtlCache';
+import { withDefaultSongName } from '../utils/entryNames';
 import { scheduleFetch, type RequestPriority } from '../utils/requestScheduler';
 import {
   parseServerTiming,
@@ -196,7 +197,7 @@ export async function searchSongsBackend(
       { name: 'parse', durationMs: parsedAt - responseAt },
     );
     return {
-      data,
+      data: { ...data, items: data.items.map(withDefaultSongName) },
       serverTiming: parseServerTiming(response.headers?.get?.('Server-Timing') ?? null),
       serverCache: response.headers?.get?.('X-Diva-Search-Cache') ?? undefined,
     };

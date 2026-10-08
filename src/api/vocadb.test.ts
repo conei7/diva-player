@@ -1,6 +1,34 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Artist, Song } from '../types/vocadb';
-import { attachExternalViews, buildDigRecommendationRequest, filterDiscoveryEligibleSongs, getDiscoveryEligibleSongIds, getSongById, getSongsByIds, getTopSongs, getTrendingSongs, rankArtistsByName, resolveProducerByName, searchVocalistsByName, selectVocalistVariants } from './vocadb';
+import { attachExternalViews, buildDigRecommendationRequest, filterDiscoveryEligibleSongs, getDiscoveryEligibleSongIds, getSongById, getSongsByIds, getTopSongs, getTrendingSongs, rankArtistsByName, resolveProducerByName, searchProducersByName, searchVocalistsByName, selectVocalistVariants } from './vocadb';
+
+describe('VocaDB entry spelling', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('normalizes stale backend cards and full details to GEDO', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ items: [{ id: 943372, name: 'ゲドウ', defaultName: 'GEDO' }] }),
+    }));
+    expect((await getSongsByIds([943372]))[0].name).toBe('GEDO');
+    expect((await getSongById(943372)).name).toBe('GEDO');
+  });
+
+  it('uses the entry default name even when view counts need no refresh', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const songs = await attachExternalViews([{ id: 943373, name: 'ゲドウ', defaultName: 'GEDO', youtubeViews: 0, nicoViews: 0 } as Song]);
+    expect(songs[0].name).toBe('GEDO');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('requests producer default spellings independently of the Japanese UI', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ items: [{ id: 45, name: 'DECO*27', artistType: 'Producer' }] }) });
+    vi.stubGlobal('fetch', fetchMock);
+    expect((await searchProducersByName('DECO*27'))[0].name).toBe('DECO*27');
+    expect(new URL(String(fetchMock.mock.calls[0][0])).searchParams.get('lang')).toBe('Default');
+  });
+});
 import { DEFAULT_GLOBAL_FILTER_SETTINGS } from '../stores/globalFilterStore';
 import { VOCALIST_SEARCH_ARTIST_TYPES } from '../config/voiceSynthTypes';
 
