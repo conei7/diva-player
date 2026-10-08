@@ -6,6 +6,7 @@ import { formatJapaneseViews } from '../../utils/formatViews';
 import { getPVServiceLabel } from '../../utils/pvService';
 import { getPVBadgeStyle } from '../../utils/pvBadge';
 import ViewHistoryChart from './ViewHistoryChart';
+import SongAlbums from '../playlist/SongAlbums';
 import { useTranslate } from '../../i18n';
 import { useLanguageStore } from '../../stores/languageStore';
 
@@ -227,6 +228,8 @@ export default function Description({ song }: DescriptionProps) {
           </div>
         )}
       </div>
+
+      <SongAlbums key={song.id} songId={song.id} />
 
       {/* 展開時の詳細情報（履歴チャート） */}
       {expanded && (

@@ -159,8 +159,20 @@ async function installApiFixtures(page) {
         && !url.searchParams.has('anyArtistIds');
       const items = isRecommendedHomeFeed ? fixtureHomeSongs : fixtureSongs;
       response = fixtureResponse({ items, totalCount: items.length });
+    } else if (isVocaDb && url.searchParams.get('fields') === 'Albums') {
+      response = fixtureResponse({ albums: path.endsWith('/1501') ? [
+        { id: 901, name: 'DIVA E2E Album' },
+        { id: 902, name: 'DIVA E2E Second Album' },
+      ] : [] });
+    } else if (isVocaDb && path === '/api/albums/901/tracks') {
+      response = fixtureResponse([
+        { songId: 1502, discNumber: 1, trackNumber: 2 },
+        { songId: 1501, discNumber: 1, trackNumber: 1 },
+      ]);
+    } else if (isVocaDb && path === '/api/albums/901') {
+      response = fixtureResponse({ id: 901, name: 'DIVA E2E Album' });
     } else if (path.match(/\/api\/songs\/\d+$/)) {
-      response = fixtureResponse(fixtureSong);
+      response = fixtureResponse(path.endsWith('/1502') ? fixtureHomeSong : fixtureSong);
     } else if (isVocaDb && path.match(/\/api\/songs$/)) {
       response = fixtureResponse({ items: fixtureSongs, term: url.searchParams.get('query') ?? '', totalCount: fixtureSongs.length });
     } else if (isVocaDb && path.startsWith('/api/songs/')) {
@@ -344,6 +356,28 @@ try {
   await page.click('button[aria-label="P一覧を折りたたむ"]');
   await page.waitForSelector('button[aria-label="他1名のPを表示"]');
   console.log('PASS compact watch metadata, producer collapse, and action layout');
+  await page.waitForSelector('[data-testid="song-albums"] button[aria-label="「DIVA E2E Album」をプレイリストに追加"]');
+  const albumSection = await page.$eval('[data-testid="song-albums"]', section => ({
+    inDescription: Boolean(section.closest('div[aria-expanded]')),
+    inActions: Boolean(section.closest('[data-testid="watch-action-bar"]')),
+    names: [...section.querySelectorAll('a')].map(link => link.textContent),
+  }));
+  if (!albumSection.inDescription || albumSection.inActions || albumSection.names.length !== 2) {
+    throw new Error(`Unexpected album placement: ${JSON.stringify(albumSection)}`);
+  }
+  await page.click('[data-testid="song-albums"] button[aria-label="「DIVA E2E Album」をプレイリストに追加"]');
+  await page.waitForFunction(() => document.querySelector('[data-testid="song-albums"] [role="status"]')?.textContent?.includes('2曲を「DIVA E2E Album」へ追加しました。'));
+  if (!await page.$('button[aria-label="概要を展開する"]')) throw new Error('Album action unexpectedly expanded the description');
+  const albumPlaylist = await page.evaluate(() => {
+    const playlists = JSON.parse(localStorage.getItem('diva_playlists') ?? '[]');
+    return playlists?.find(playlist => playlist.name === 'DIVA E2E Album')?.songs.map(song => song.id);
+  });
+  if (JSON.stringify(albumPlaylist) !== '[1501,1502]') throw new Error(`Album track order was not preserved: ${JSON.stringify(albumPlaylist)}`);
+  await page.setViewport({ width: 390, height: 844 });
+  const albumOverflow = await page.$eval('[data-testid="song-albums"]', section => section.scrollWidth > section.clientWidth + 1);
+  if (albumOverflow) throw new Error('Album rows overflow at 390px');
+  await page.setViewport({ width: 1440, height: 900 });
+  console.log('PASS album names and adjacent playlist actions in description, saved track order, and mobile layout');
   await page.waitForSelector('button[aria-label="概要を展開する"]', { timeout: 60_000 });
   await page.click('button[aria-label="概要を展開する"]');
   await page.waitForSelector('button[aria-label="概要を折りたたむ"]', { timeout: 60_000 });
@@ -510,6 +544,13 @@ try {
   const vocadbFavoriteBadgeCount = await page.$$eval('[title="VocaDB お気に入り数"]', elements => elements.length);
   if (vocadbFavoriteBadgeCount !== 0) throw new Error('VocaDB favorite badge is still visible.');
   console.log(`PASS semantic song link, new-tab autoplay guard, and hidden VocaDB favorite badge (${songHref})`);
+
+  const albumsLoaded = page.waitForResponse(response => new URL(response.url()).searchParams.get('fields') === 'Albums');
+  await page.goto(new URL('watch?v=1502', base), { waitUntil: 'domcontentloaded', timeout: 60_000 });
+  await albumsLoaded;
+  await page.waitForSelector('button[aria-label="概要を展開する"]');
+  if (await page.$('[data-testid="song-albums"]')) throw new Error('Album section remained visible for a song without albums');
+  console.log('PASS songs without albums hide the album section');
 } finally {
   await browser.close();
 }

@@ -8,14 +8,13 @@ import { useHiddenSongStore } from '../../stores/hiddenSongStore';
 import { usePlayerStore } from '../../stores/playerStore';
 import PVSourceSelector from '../player/PVSourceSelector';
 import OriginalVersionLink from './OriginalVersionLink';
-import AlbumPlaylistButton from '../playlist/AlbumPlaylistButton';
 import { useTranslate } from '../../i18n';
 
 /**
  * ActionBar - YouTube風アクションバー
  *
  * 上段: 5段階星評価 + アクションボタン（共有・保存・後で聴く・非表示・VocaDB）
- * 下段: PVソース選択・原曲リンク・アルバムプレイリスト化
+ * 下段: PVソース選択・原曲リンク
  */
 interface ActionBarProps {
   song: Song;
@@ -171,13 +170,12 @@ export default function ActionBar({ song }: ActionBarProps) {
         </div>
       </div>
 
-      {/* ─── 下段: PVソース選択 + 原曲 + アルバム ─── */}
+      {/* ─── 下段: PVソース選択 + 原曲 ─── */}
       <div className="flex min-w-0 flex-wrap items-center gap-2">
         <div className="min-w-0 basis-full sm:flex-1 sm:basis-auto">
           <PVSourceSelector song={song} />
         </div>
         <OriginalVersionLink song={song} />
-        <AlbumPlaylistButton song={song} />
       </div>
     </div>
   );

@@ -7,7 +7,7 @@ import OriginalVersionLink from '../watch/OriginalVersionLink';
 import { isPlayablePV } from '../../utils/playablePV';
 import { getPVServiceLabel } from '../../utils/pvService';
 import { getPVBadgeStyle } from '../../utils/pvBadge';
-import AlbumPlaylistButton from '../playlist/AlbumPlaylistButton';
+import SongAlbums from '../playlist/SongAlbums';
 import { useLanguageStore } from '../../stores/languageStore';
 import { useTranslateSourceText } from '../../i18n';
 
@@ -162,7 +162,6 @@ export default function SongDetailsModal() {
                 />
               </div>
               <OriginalVersionLink song={song} />
-              <AlbumPlaylistButton song={song} />
             </div>
 
             {/* メタデータグリッド */}
@@ -216,6 +215,7 @@ export default function SongDetailsModal() {
               )}
 
             </dl>
+            <SongAlbums key={song.id} songId={song.id} />
 
             {/* PVリンク */}
             {pvLinks.length > 0 && (
