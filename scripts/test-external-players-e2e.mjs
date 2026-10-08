@@ -66,6 +66,30 @@ async function preparePage(fixtureSong, savedVolume = 23) {
   await page.setRequestInterception(true);
   page.on('request', async request => {
     const url = request.url();
+    const parsedUrl = new URL(url);
+    if (parsedUrl.pathname.startsWith('/backend-api/') || parsedUrl.hostname === 'vocadb.net') {
+      // These player cases use synthetic songs. Their IDs also exist in the
+      // live catalog, so metadata/home requests must stay inside this fixture.
+      const path = parsedUrl.pathname;
+      let body = { items: [], totalCount: 0 };
+      if (path.endsWith('/api/ready') || path.endsWith('/api/health')) {
+        body = { status: path.endsWith('/api/ready') ? 'ready' : 'ok', dependencies: { postgres: { ok: true }, qdrant: { ok: true } } };
+      } else if (parsedUrl.searchParams.get('fields') === 'Albums') {
+        body = { albums: [] };
+      } else if (path.endsWith('/api/songs/details') || path.endsWith('/api/songs/batch')) {
+        body = { items: [fixtureSong] };
+      } else if (/\/api\/songs\/\d+$/.test(path)) {
+        body = fixtureSong;
+      } else if (path.endsWith('/api/songs/views')) {
+        body = { [fixtureSong.id]: { youtubeViews: 0, nicoViews: 0 } };
+      } else if (path.endsWith('/api/songs/discovery-eligibility')) {
+        body = { items: [{ songId: fixtureSong.id, discoveryEligible: true }] };
+      } else if (path.includes('/api/recommend/')) {
+        body = [];
+      }
+      await request.respond({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
+      return;
+    }
     if (url === 'https://w.soundcloud.com/player/api.js') {
       await request.respond({
         contentType: 'application/javascript',
@@ -199,6 +223,8 @@ try {
 
   const nicoPage = await preparePage(nicoSong);
   await nicoPage.goto(baseUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+  await nicoPage.bringToFront();
+  await nicoPage.waitForFunction(() => document.visibilityState === 'visible');
   await nicoPage.waitForSelector('iframe[src*="embed.nicovideo.jp/watch/sm-nico-volume-fixture"]', { timeout: 60_000 });
   await nicoPage.waitForFunction(() => {
     const iframe = document.querySelector('iframe[src*="embed.nicovideo.jp/watch/sm-nico-volume-fixture"]');
