@@ -9,11 +9,12 @@ function assert(condition, message) {
 }
 
 function createSong(index) {
+  const defaultName = index === 173 ? '特別な検索対象曲' : `Playlist fixture ${String(index + 1).padStart(3, '0')}`;
   return {
     id: 910000 + index,
-    name: index === 173 ? '特別な検索対象曲' : `Playlist fixture ${String(index + 1).padStart(3, '0')}`,
-    defaultName: `Playlist fixture ${index + 1}`,
-    defaultNameLanguage: 'English',
+    name: index === 0 ? 'プレイリスト旧表記001' : defaultName,
+    defaultName,
+    defaultNameLanguage: index === 173 ? 'Japanese' : 'English',
     artistString: index === 173 ? '検索対象プロデューサー' : `Producer ${index % 12}`,
     createDate: '2026-01-01T00:00:00Z',
     publishDate: `2025-${String((index % 12) + 1).padStart(2, '0')}-01T00:00:00Z`,
@@ -122,6 +123,8 @@ async function runDesktop(page) {
 
   await openPlaylist(page);
   await page.waitForFunction(() => document.body.textContent?.includes('仮想スクロールを使用'));
+  await page.waitForFunction(() => document.body.textContent?.includes('Playlist fixture 001'));
+  assert(!await page.$eval('body', body => body.textContent?.includes('プレイリスト旧表記001')), 'saved playlist did not use the default song name');
   const desktopLayout = await page.evaluate(() => {
     const heading = document.querySelector('h1');
     const toolbar = document.querySelector('input[placeholder="曲名・アーティストを検索"]')?.closest('.sticky');
