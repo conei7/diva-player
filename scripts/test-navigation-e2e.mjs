@@ -129,7 +129,7 @@ const fixtureResponse = (body, contentType = 'application/json') => ({
   body: typeof body === 'string' ? body : JSON.stringify(body),
 });
 
-async function installApiFixtures(page) {
+async function installApiFixtures(page, homeSongs = fixtureHomeSongs) {
   await page.setRequestInterception(true);
   page.on('request', request => {
     const url = new URL(request.url());
@@ -157,7 +157,7 @@ async function installApiFixtures(page) {
         && !url.searchParams.has('query')
         && !url.searchParams.has('artistIds')
         && !url.searchParams.has('anyArtistIds');
-      const items = isRecommendedHomeFeed ? fixtureHomeSongs : fixtureSongs;
+      const items = isRecommendedHomeFeed ? homeSongs : fixtureSongs;
       response = fixtureResponse({ items, totalCount: items.length });
     } else if (isVocaDb && url.searchParams.get('fields') === 'Albums') {
       response = fixtureResponse({ albums: path.endsWith('/1501') ? [
@@ -551,6 +551,55 @@ try {
   await page.waitForSelector('button[aria-label="概要を展開する"]');
   if (await page.$('[data-testid="song-albums"]')) throw new Error('Album section remained visible for a song without albums');
   console.log('PASS songs without albums hide the album section');
+
+  // A fresh tab must use the complete raw log, including events outside the
+  // initial 300 metadata records and the newest timestamp of repeated songs.
+  const cooldownContext = await browser.createBrowserContext();
+  const setupPage = await cooldownContext.newPage();
+  await installApiFixtures(setupPage);
+  await setupPage.goto(base.href, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+  await setupPage.waitForSelector('main a[href*="/watch?v="]');
+  await setupPage.evaluate(async () => {
+    const database = await new Promise((resolve, reject) => {
+      const request = indexedDB.open('diva-listening-history', 3);
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    await new Promise((resolve, reject) => {
+      const tx = database.transaction('plays', 'readwrite');
+      const store = tx.objectStore('plays');
+      store.clear();
+      const now = Date.now();
+      const day = 24 * 60 * 60 * 1000;
+      store.add({ s: 1502, t: now - day, f: 0 });
+      for (let i = 0; i < 350; i++) store.add({ s: 999999, t: now - i, f: 0 });
+      store.add({ s: 1503, t: now - day, f: 0 });
+      store.add({ s: 1503, t: now - 8 * day, f: 0 });
+      store.add({ s: 1504, t: now - 8 * day, f: 0 });
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+    database.close();
+    localStorage.clear();
+    localStorage.setItem('diva-global-filters', JSON.stringify({ version: 2, state: { enabled: false, cooldownHours: 168 } }));
+  });
+  await setupPage.close();
+  const cooldownCandidates = Array.from({ length: 20 }, (_, i) => ({
+    ...fixtureHomeSong, id: 1502 + i, name: `Cooldown candidate ${1502 + i}`,
+  }));
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const reopenedPage = await cooldownContext.newPage();
+    await installApiFixtures(reopenedPage, cooldownCandidates);
+    await reopenedPage.goto(base.href, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+    await reopenedPage.waitForSelector('main a[href*="/watch?v=1504"]', { timeout: 60_000 });
+    const visibleIds = await reopenedPage.$$eval('main a[href*="/watch?v="]', links => links.map(link => Number(new URL(link.href).searchParams.get('v'))));
+    if (visibleIds.includes(1502) || visibleIds.includes(1503)) throw new Error(`Seven-day cooldown lost after reopening tab: ${JSON.stringify(visibleIds)}`);
+    const hours = await reopenedPage.evaluate(() => JSON.parse(localStorage.getItem('diva-global-filters')).state.cooldownHours);
+    if (hours !== 168) throw new Error(`Cooldown setting was reset: ${hours}`);
+    await reopenedPage.close();
+  }
+  await cooldownContext.close();
+  console.log('PASS seven-day cooldown survives closing and reopening tabs with >300 plays and older repeated events');
 } finally {
   await browser.close();
 }

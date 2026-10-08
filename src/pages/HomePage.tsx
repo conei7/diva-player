@@ -182,7 +182,7 @@ export default function HomePage() {
   const suppressStaleHomeFeedCacheRef = useRef(Boolean(restoredHomeFeed?.initialLoadPending));
   const restoredScrollYRef = useRef<number | null>(restoredHomeFeed?.scrollY ?? null);
 
-  const { entries, hasHydrated } = useHistoryStore();
+  const { entries, hasHydrated, lastPlayedAtBySongId } = useHistoryStore();
   const { currentSong } = usePlayerStore();
   const { ratings } = useRatingStore();
   const { playlists } = usePlaylistStore();
@@ -792,15 +792,11 @@ export default function HomePage() {
     searchLoadMore,
   ]);
 
-  const discoveryLastPlayed = useMemo(
-    () => new Map(entries.map(entry => [entry.song.id, entry.playedAt] as const)),
-    [entries],
-  );
   const discoveryContext = useMemo(() => ({
     settings: globalFilterSettings,
     ratings,
-    lastPlayedAtBySongId: discoveryLastPlayed,
-  }), [discoveryLastPlayed, globalFilterSettings, ratings]);
+    lastPlayedAtBySongId,
+  }), [lastPlayedAtBySongId, globalFilterSettings, ratings]);
   const unhiddenFreshSongs = useMemo(() => excludeHiddenSongs(songs, hiddenSongs), [hiddenSongs, songs]);
   const unhiddenStartupSongs = useMemo(
     () => excludeHiddenSongs(startupSongs, hiddenSongs),

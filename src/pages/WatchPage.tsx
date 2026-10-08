@@ -141,7 +141,7 @@ export default function WatchPage() {
   const { currentSong, setQueue, setRootSeed, resume } = usePlayerStore();
   const currentSongId = currentSong?.id;
   const { ratings } = useRatingStore();
-  const { entries } = useHistoryStore();
+  const { entries, hasHydrated } = useHistoryStore();
   const { playlists } = usePlaylistStore();
   const implicitFeedback = useImplicitFeedbackStore(state => state.feedback);
   const favoriteProducers = useFavoriteProducerStore(state => state.producers);
@@ -161,10 +161,10 @@ export default function WatchPage() {
     const context = {
       settings: globalFilterSettings,
       ratings,
-      lastPlayedAtBySongId: new Map(entries.map(entry => [entry.song.id, entry.playedAt] as const)),
+      lastPlayedAtBySongId: useHistoryStore.getState().lastPlayedAtBySongId,
     };
     return filterDiscoverySourcePage(candidates, context, minimumCount, allowRelaxation);
-  }, [entries, globalFilterSettings, hiddenSongs, ratings]);
+  }, [globalFilterSettings, hiddenSongs, ratings]);
 
   const [song, setSong] = useState<Song | null>(null);
   const [loadingSong, setLoadingSong] = useState(true);
@@ -491,6 +491,7 @@ export default function WatchPage() {
 
   useEffect(() => {
     if (!song || loadingFromUrlRef.current) return;
+    if (globalFilterSettings.cooldownHours > 0 && !hasHydrated) return;
     const tab = tabs[activeTab];
     if (tab.loading || tab.items.length > 0 || !tab.hasMore) return;
 
@@ -504,11 +505,12 @@ export default function WatchPage() {
       case 'recommended': void fetchRecommended(song, tab.page); break;
       case 'deep': void fetchDeep(song, tab.page); break;
     }
-  }, [activeTab, fetchDeep, fetchProducer, fetchRecommended, fetchRelated, song, tabs]);
+  }, [activeTab, fetchDeep, fetchProducer, fetchRecommended, fetchRelated, globalFilterSettings.cooldownHours, hasHydrated, song, tabs]);
 
   // 追加読み込み
   const loadMore = useCallback(() => {
     if (!song) return;
+    if (globalFilterSettings.cooldownHours > 0 && !hasHydrated) return;
     const tab = tabs[activeTab];
     if (tab.loading || !tab.hasMore) return;
 
@@ -520,7 +522,7 @@ export default function WatchPage() {
       case 'recommended': fetchRecommended(song, tab.page); break;
       case 'deep': fetchDeep(song, tab.page); break;
     }
-  }, [song, tabs, activeTab, fetchProducer, fetchRelated, fetchRecommended, fetchDeep]);
+  }, [song, tabs, activeTab, fetchProducer, fetchRelated, fetchRecommended, fetchDeep, globalFilterSettings.cooldownHours, hasHydrated]);
 
   // 無限スクロール
   useEffect(() => {

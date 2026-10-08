@@ -4,6 +4,7 @@ import { getSongsByIds } from '../api/vocadb';
 import type { Song } from '../types/vocadb';
 import { HISTORY_STORES, openHistoryDb } from '../services/historyDatabase';
 import { filterHistoryEntries } from '../utils/historySearch';
+import { latestPlayedAtBySongId } from '../utils/listeningCooldown';
 
 const PLAY_STORE = HISTORY_STORES.plays;
 const LEGACY_HISTORY_KEY = 'diva-history';
@@ -41,6 +42,7 @@ interface LegacyPersistedHistory {
 
 interface HistoryState {
   entries: HistoryEntry[];
+  lastPlayedAtBySongId: ReadonlyMap<number, number>;
   totalPlays: number;
   hasMoreEntries: boolean;
   isLoadingMore: boolean;
@@ -138,12 +140,6 @@ async function appendPlayEvents(events: ListeningPlayEvent[]): Promise<void> {
   });
 }
 
-async function countPlayEvents(): Promise<number> {
-  const db = await openHistoryDb();
-  const tx = db.transaction(PLAY_STORE, 'readonly');
-  return requestToPromise(tx.objectStore(PLAY_STORE).count());
-}
-
 async function readAllPlayEvents(): Promise<ListeningPlayEvent[]> {
   const db = await openHistoryDb();
   const tx = db.transaction(PLAY_STORE, 'readonly');
@@ -159,13 +155,16 @@ export async function searchHistoryEntries(query: string): Promise<HistoryEntry[
   return filterHistoryEntries(entries, query);
 }
 
-async function loadHistorySnapshot(): Promise<Pick<HistoryState, 'entries' | 'totalPlays' | 'hasMoreEntries'>> {
-  const events = await readRecentPlayEvents(RECENT_ENTRY_LIMIT);
+async function loadHistorySnapshot(): Promise<Pick<HistoryState, 'entries' | 'lastPlayedAtBySongId' | 'totalPlays' | 'hasMoreEntries'>> {
+  // Raw events are compact. Restore cooldowns from all of them while keeping
+  // the expensive metadata lookup limited to the latest 300 display entries.
+  const allEvents = await readAllPlayEvents();
+  const events = allEvents.slice(-RECENT_ENTRY_LIMIT).reverse();
   const entries = await loadEntriesFromEvents(events);
-  const totalPlays = await countPlayEvents();
+  const totalPlays = allEvents.length;
   oldestLoadedEventId = events.at(-1)?.id;
   historyPageHasMore = events.length >= RECENT_ENTRY_LIMIT && oldestLoadedEventId !== undefined;
-  return { entries, totalPlays, hasMoreEntries: historyPageHasMore };
+  return { entries, lastPlayedAtBySongId: latestPlayedAtBySongId(allEvents), totalPlays, hasMoreEntries: historyPageHasMore };
 }
 
 async function readRecentPlayEvents(limit: number, beforeId?: number): Promise<ListeningPlayEvent[]> {
@@ -265,6 +264,7 @@ async function migrateLegacyHistory(): Promise<void> {
 
 export const useHistoryStore = create<HistoryState>((set, get) => ({
   entries: [],
+  lastPlayedAtBySongId: new Map(),
   totalPlays: 0,
   hasMoreEntries: false,
   isLoadingMore: false,
@@ -329,9 +329,11 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
       && recentEntry?.song.id === song.id
       && playedAt - recentEntry.playedAt < DUPLICATE_PLAY_WINDOW_MS;
     const newEntry: HistoryEntry = { song, playedAt };
+    const lastPlayedAtBySongId = new Map(get().lastPlayedAtBySongId);
+    lastPlayedAtBySongId.set(song.id, Math.max(lastPlayedAtBySongId.get(song.id) ?? -Infinity, playedAt));
 
     if (isDuplicate) {
-      set({ entries: [newEntry, ...entries.slice(1)] });
+      set({ entries: [newEntry, ...entries.slice(1)], lastPlayedAtBySongId });
       return;
     }
 
@@ -364,6 +366,7 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
 
     set({
       entries: [newEntry, ...entries],
+      lastPlayedAtBySongId,
       totalPlays: totalPlays + 1,
       activePlayEventId: undefined,
       activeSongId: song.id,
@@ -394,6 +397,7 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
     historyPageHasMore = false;
     set({
       entries: [],
+      lastPlayedAtBySongId: new Map(),
       totalPlays: 0,
       hasMoreEntries: false,
       isLoadingMore: false,

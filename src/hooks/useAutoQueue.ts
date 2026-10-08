@@ -10,6 +10,7 @@ import {
 } from '../api/vocadb';
 import type { Song } from '../types/vocadb';
 import type { HistoryEntry } from '../stores/historyStore';
+import { useHistoryStore } from '../stores/historyStore';
 import type { ImplicitSongFeedback } from '../stores/implicitFeedbackStore';
 import {
   buildPlaylistSongSet,
@@ -67,18 +68,12 @@ interface UseAutoQueueArgs {
  * diversity are applied once by the shared recommendation reranker. */
 function filterCandidatePool(
   candidates: Song[],
-  historyEntries: HistoryEntry[],
+  lastPlayedAtBySongId: ReadonlyMap<number, number>,
   existingIds: Set<number>,
   settings: GlobalFilterSettings,
   ratings: Record<string, number>,
   minimumCount: number,
 ): DiscoveryFilterResult {
-  const lastPlayedMap = new Map<number, number>();
-  for (const entry of historyEntries) {
-    const existing = lastPlayedMap.get(entry.song.id);
-    if (!existing || entry.playedAt > existing) lastPlayedMap.set(entry.song.id, entry.playedAt);
-  }
-
   const uniqueCandidates = candidates
     .filter(song => !existingIds.has(song.id))
     .filter((song, index, songs) => songs.findIndex(candidate => candidate.id === song.id) === index);
@@ -86,7 +81,7 @@ function filterCandidatePool(
   return applyDiscoveryFilterWithRelaxation(uniqueCandidates, {
     settings,
     ratings,
-    lastPlayedAtBySongId: lastPlayedMap,
+    lastPlayedAtBySongId,
   }, minimumCount);
 }
 
@@ -212,6 +207,8 @@ export function useAutoQueue({
   addManyToQueue,
 }: UseAutoQueueArgs): AutoQueueStatus {
   const [status, setStatus] = useState<AutoQueueStatus>('idle');
+  const hasHydratedHistory = useHistoryStore(state => state.hasHydrated);
+  const lastPlayedAtBySongId = useHistoryStore(state => state.lastPlayedAtBySongId);
   const globalFilterSettings = useGlobalFilterStore(useShallow(state => ({
     enabled: state.enabled,
     minYoutubeViews: state.minYoutubeViews,
@@ -249,7 +246,7 @@ export function useAutoQueue({
   }, [status]);
 
   useEffect(() => {
-    if (!currentSong) {
+    if (!currentSong || (globalFilterSettings.cooldownHours > 0 && !hasHydratedHistory)) {
       setStatus('idle');
       return;
     }
@@ -348,7 +345,7 @@ export function useAutoQueue({
         const enrichedCandidates = await attachExternalViews(authoritativeCandidatePool);
         const filteredCandidates = filterCandidatePool(
           enrichedCandidates,
-          eligibleHistoryEntries,
+          useHistoryStore.getState().lastPlayedAtBySongId,
           existingIds,
           globalFilterSettings,
           ratings,
@@ -368,7 +365,7 @@ export function useAutoQueue({
           {
           settings: globalFilterSettings,
           ratings,
-          lastPlayedAtBySongId: new Map(eligibleHistoryEntries.map(entry => [entry.song.id, entry.playedAt] as const)),
+          lastPlayedAtBySongId: useHistoryStore.getState().lastPlayedAtBySongId,
           },
           queuePlan.requestedCount,
         );
@@ -473,6 +470,8 @@ export function useAutoQueue({
     currentSong,
     playbackSequence,
     historyEntries,
+    hasHydratedHistory,
+    lastPlayedAtBySongId,
     implicitFeedback,
     playlists,
     queue,
