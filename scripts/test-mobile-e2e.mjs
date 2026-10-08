@@ -91,7 +91,7 @@ async function main() {
       ['settings/hidden-songs', 'h1', 'hidden songs'],
       ['favorites', 'h1', 'favorites'],
       ['favorite-producers', 'h1', 'favorite producers'],
-      ['playlists', 'input[placeholder="新しいプレイリスト"]', 'playlists'],
+      ['playlists', 'aside[aria-label="プレイリストライブラリ"]', 'playlists'],
       ['watch?v=1501', 'main', 'watch'],
     ]) {
       const response = await page.goto(new URL(route, baseUrl), { waitUntil: 'domcontentloaded' });
@@ -105,6 +105,8 @@ async function main() {
 
     await page.goto(new URL('playlists', baseUrl), { waitUntil: 'domcontentloaded' });
     await waitForLayout(page);
+    await page.evaluate(() => [...document.querySelectorAll('aside[aria-label="プレイリストライブラリ"] button')].find(button => button.textContent?.trim() === '新規作成')?.click());
+    await page.waitForSelector('input[placeholder="新しいプレイリスト"]');
     const createButtonLayout = await page.$eval('button[aria-label="プレイリストを作成"]', button => {
       const style = getComputedStyle(button);
       return { display: style.display, alignItems: style.alignItems, justifyContent: style.justifyContent };

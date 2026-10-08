@@ -275,14 +275,15 @@ try {
   console.log('PASS English player controls, song-card menu, and advanced-search filters');
   await page.goto(new URL('playlists', base), { waitUntil: 'domcontentloaded', timeout: 60_000 });
   await page.waitForSelector('aside[aria-label="Playlist library"]', { timeout: 60_000 });
+  await page.evaluate(() => [...document.querySelectorAll('aside[aria-label="Playlist library"] button')].find(button => button.textContent?.trim() === 'New playlist')?.click());
   await page.waitForSelector('input[placeholder="New playlist"]', { timeout: 60_000 });
   await page.type('input[placeholder="New playlist"]', 'DIVA English UI E2E');
   await page.click('button[aria-label="Create playlist"]');
   await page.waitForFunction(() => document.body.innerText.includes('DIVA English UI E2E'));
-  await page.click('button[aria-label="Create smart playlist"]');
+  await page.click('button[title="Create smart playlist"]');
   await page.waitForSelector('[role="dialog"] h2#smart-playlist-builder-title', { timeout: 60_000 });
   const smartPlaylistEnglish = await page.$eval('#smart-playlist-builder-title', heading => heading.textContent);
-  if (smartPlaylistEnglish !== 'Create smart playlist') {
+  if (smartPlaylistEnglish !== 'Collect songs by rules') {
     throw new Error(`Smart-playlist dialog is not translated: ${smartPlaylistEnglish}`);
   }
   await page.click('[role="dialog"] button[aria-label="Close"]');

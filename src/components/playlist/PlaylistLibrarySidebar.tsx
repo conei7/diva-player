@@ -52,7 +52,7 @@ function FolderRow({
       <button
         type="button"
         onClick={onSelect}
-        className="flex min-w-0 flex-1 items-center gap-2 px-2.5 py-2 text-left text-xs text-neutral-300"
+        className="flex min-h-11 min-w-0 flex-1 items-center gap-2 px-2.5 py-2 text-left text-xs text-neutral-300"
       >
         <svg className="h-3.5 w-3.5 flex-shrink-0 text-emerald-200/80" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
           <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
@@ -62,7 +62,7 @@ function FolderRow({
       <button
         type="button"
         onClick={onDelete}
-        className="mr-1 flex h-8 w-8 items-center justify-center rounded-lg text-neutral-600 opacity-0 transition-all hover:bg-red-400/10 hover:text-red-300 group-focus-within:opacity-100 group-hover:opacity-100"
+        className="mr-1 flex h-11 w-11 items-center justify-center rounded-lg text-neutral-600 opacity-0 transition-all hover:bg-red-400/10 hover:text-red-300 group-focus-within:opacity-100 group-hover:opacity-100"
         title={t('{name}を削除', { name: folder.name })}
         aria-label={t('{name}を削除', { name: folder.name })}
       >
@@ -168,7 +168,7 @@ export default function PlaylistLibrarySidebar({
             <button className="context-menu-item" onClick={onExportAll} disabled={playlists.length === 0}>{t('全体をバックアップ')}</button>
           </PlaylistPopoverMenu>
         </div>
-        <p className="mt-1 text-xs text-neutral-400">{t('{count}曲', { count: playlists.reduce((sum, playlist) => sum + playlist.songs.length, 0) })} {t('保存曲')} · {regularPlaylists.length} {t('リスト')}</p>
+        <p className="mt-1 text-xs text-neutral-400">{t('{count}曲', { count: playlists.reduce((sum, playlist) => sum + playlist.songs.length, 0) })} · {regularPlaylists.length} {t('リスト')}</p>
         <div className="mt-4 grid grid-cols-2 gap-2">
           <button type="button" className="min-h-11 rounded-xl bg-white px-2 text-xs font-semibold text-black hover:bg-neutral-200" onClick={() => setShowCreate(value => !value)} aria-expanded={showCreate}>{t('新規作成')}</button>
           <button type="button" className="min-h-11 rounded-xl border border-violet-300/25 bg-violet-300/5 px-2 text-xs font-medium text-violet-100 hover:bg-violet-300/10" onClick={onOpenSmartBuilder} title={t('スマートプレイリストを作成')}>{t('条件で自動作成')}</button>
@@ -176,7 +176,7 @@ export default function PlaylistLibrarySidebar({
         {showCreate && <form className="mt-3 space-y-2 rounded-xl border border-white/10 p-3" onSubmit={event => { event.preventDefault(); submitPlaylist(); }}>
           <label className="block text-xs text-neutral-300">{t('プレイリスト名')}<input className="playlist-field mt-1 w-full text-sm" placeholder={t('新しいプレイリスト')} value={newPlaylistName} onChange={event => setNewPlaylistName(event.target.value)} autoFocus /></label>
           <p className="text-xs leading-5 text-neutral-500">{t('空のリストを作成します。曲は検索画面などの保存ボタンから追加できます。')}</p>
-          <button type="submit" disabled={!newPlaylistName.trim()} className="btn-primary min-h-11 w-full text-xs" aria-label={t('プレイリストを作成')}>{t('作成')}</button>
+          <button type="submit" disabled={!newPlaylistName.trim()} className="btn-primary flex min-h-11 w-full items-center justify-center text-xs" aria-label={t('プレイリストを作成')}>{t('作成')}</button>
         </form>}
         <PlaylistPopoverMenu align="left" trigger={<button type="button" className="mt-2 flex min-h-11 w-full items-center justify-between rounded-xl border border-white/10 px-3 text-xs text-neutral-200 hover:bg-white/5"><span>{t('外部から読み込む')}</span><span aria-hidden="true">↓</span></button>}>
           <button className="context-menu-item" onClick={onOpenNicoImport}>{t('ニコニコからインポート')}</button>
@@ -213,7 +213,7 @@ export default function PlaylistLibrarySidebar({
         <section className="space-y-1">
           <h3 className="mb-2 flex justify-between text-xs text-neutral-500"><span>{t('プレイリスト')}</span><span>{visiblePlaylists.length}</span></h3>
           {visiblePlaylists.map(playlist => <PlaylistLibraryItem key={playlist.id} playlist={playlist} selected={selectedPlaylistId === playlist.id} compact={preferences.density === 'compact'} onSelect={() => onSelectPlaylist(playlist.id)} />)}
-          {visiblePlaylists.length === 0 && <div className="rounded-xl border border-dashed border-white/10 p-5 text-sm leading-6 text-neutral-400">{regularPlaylists.length === 0 ? t('まだプレイリストはありません。新規作成・外部読み込み・条件で自動作成から始められます。') : t('該当するプレイリストはありません')}<button type="button" className="mt-3 block text-xs text-cyan-300" onClick={() => { setQuery(''); setLibraryScope('all'); chooseFolder(null, true); }}>{t('表示条件をリセット')}</button></div>}
+          {visiblePlaylists.length === 0 && <div className="rounded-xl border border-dashed border-white/10 p-5 text-sm leading-6 text-neutral-400">{regularPlaylists.length === 0 ? t('まだプレイリストはありません。新規作成・外部読み込み・条件で自動作成から始められます。') : t('該当するプレイリストはありません')}<button type="button" className="mt-3 block min-h-11 text-xs text-cyan-300" onClick={() => { setQuery(''); setLibraryScope('all'); chooseFolder(null, true); }}>{t('表示条件をリセット')}</button></div>}
         </section>
       </div>
       <input ref={importInputRef} type="file" accept="application/json,.json" className="hidden" onChange={event => { const file = event.target.files?.[0]; if (file) void onImportJson(file); event.currentTarget.value = ''; }} />
