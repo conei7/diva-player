@@ -168,7 +168,7 @@ export default function PlaylistLibrarySidebar({
             <button className="context-menu-item" onClick={onExportAll} disabled={playlists.length === 0}>{t('全体をバックアップ')}</button>
           </PlaylistPopoverMenu>
         </div>
-        <p className="mt-1 text-xs text-neutral-400">{t('{count}曲', { count: playlists.reduce((sum, playlist) => sum + playlist.songs.length, 0) })} · {regularPlaylists.length} {t('リスト')}</p>
+        <p className="mt-1 text-xs text-neutral-400">{t('保存曲')} {t('{count}曲', { count: playlists.reduce((sum, playlist) => sum + playlist.songs.length, 0) })} · {regularPlaylists.length} {t('リスト')}</p>
         <div className="mt-4 grid grid-cols-2 gap-2">
           <button type="button" className="min-h-11 rounded-xl bg-white px-2 text-xs font-semibold text-black hover:bg-neutral-200" onClick={() => setShowCreate(value => !value)} aria-expanded={showCreate}>{t('新規作成')}</button>
           <button type="button" className="min-h-11 rounded-xl border border-violet-300/25 bg-violet-300/5 px-2 text-xs font-medium text-violet-100 hover:bg-violet-300/10" onClick={onOpenSmartBuilder} title={t('スマートプレイリストを作成')}>{t('条件で自動作成')}</button>
