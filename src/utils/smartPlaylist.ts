@@ -37,6 +37,24 @@ export const SMART_PLAYLIST_PRESETS: Array<{ id: string; label: string; rule: Pa
   },
 ];
 
+/** Presets replace search conditions; only the user's selected capacity survives. */
+export function applySmartPlaylistPreset(id: string, maxSongs?: SmartPlaylistMaxSongs): NormalizedSmartPlaylistRule {
+  const preset = SMART_PLAYLIST_PRESETS.find(item => item.id === id);
+  return normalizeSmartPlaylistRule({ ...preset?.rule, maxSongs });
+}
+
+export function validateSmartPlaylistRule(rule: SmartPlaylistRule): string | null {
+  if ((rule.publishYearFrom && rule.publishYearFrom.length !== 4)
+    || (rule.publishYearTo && rule.publishYearTo.length !== 4)) return '公開年は4桁で入力してください。';
+  if (rule.publishYearFrom && rule.publishYearTo && Number(rule.publishYearFrom) > Number(rule.publishYearTo)) {
+    return '公開年の開始は終了以前にしてください。';
+  }
+  if (rule.lengthMinSeconds && rule.lengthMaxSeconds && Number(rule.lengthMinSeconds) > Number(rule.lengthMaxSeconds)) {
+    return '最短の長さは最長以下にしてください。';
+  }
+  return null;
+}
+
 export interface NormalizedSmartPlaylistRule extends Omit<SmartPlaylistRule, 'maxSongs' | 'sortBy'> {
   maxSongs: SmartPlaylistMaxSongs;
   sortBy: SmartPlaylistSortBy;

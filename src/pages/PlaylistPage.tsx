@@ -164,6 +164,8 @@ export default function PlaylistPage() {
     try {
       const rule = normalizeSmartPlaylistRule(playlist.smartRule);
       const result = await searchSmartPlaylistSongs(rule, rule.maxSongs);
+      const current = usePlaylistStore.getState().playlists.find(item => item.id === playlist.id);
+      if (!current || current.smartRule !== playlist.smartRule) return;
       const matchingSongs = filterSmartPlaylistSongs(result.items, rule);
       replacePlaylistSongs(playlist.id, matchingSongs);
       smartRefreshRetryRef.current.delete(playlist.id);
@@ -368,7 +370,12 @@ export default function PlaylistPage() {
   }, [selectedPlaylist, selectedIds, openSaveToPlaylist]);
 
   const handleYTImport = useCallback((songs: Song[]) => {
-    if (!selectedPlaylist) return;
+    if (!selectedPlaylist || selectedPlaylist.smartRule || selectedPlaylist.youtubeSync || selectedPlaylist.nicoSync) {
+      const created = createPlaylistWithSongs(t('YouTubeから取り込んだ曲'), songs, selectedFolderId ?? undefined);
+      setSelectedPlaylistId(created.id);
+      showToast(t('{count}曲を保存しました。', { count: created.songs.length }), 'success');
+      return;
+    }
     const result = addSongs(selectedPlaylist.id, songs);
     if (!result.success) {
       showToast(t('プレイリストに追加できませんでした。'), 'warning');
@@ -377,7 +384,19 @@ export default function PlaylistPage() {
     if (result.duplicates > 0) {
       showToast(t('{count} 曲は既にプレイリストにあるためスキップしました', { count: result.duplicates }), 'warning');
     }
-  }, [selectedPlaylist, addSongs, showToast, t]);
+  }, [selectedPlaylist, addSongs, createPlaylistWithSongs, selectedFolderId, showToast, t]);
+
+  const handleNicoImport = useCallback((songs: Song[], title: string, intoExisting: boolean) => {
+    if (intoExisting && selectedPlaylist && !selectedPlaylist.smartRule && !selectedPlaylist.youtubeSync && !selectedPlaylist.nicoSync) {
+      const result = addSongs(selectedPlaylist.id, songs);
+      if (!result.success) throw new Error(t('プレイリストに追加できませんでした。'));
+      showToast(t('{count}曲を保存しました。', { count: result.added }), 'success');
+    } else {
+      const created = createPlaylistWithSongs(title, songs, selectedFolderId ?? undefined);
+      setSelectedPlaylistId(created.id);
+      showToast(t('{count}曲を保存しました。', { count: created.songs.length }), 'success');
+    }
+  }, [addSongs, createPlaylistWithSongs, selectedPlaylist, selectedFolderId, showToast, t]);
 
   const handleYTLink = useCallback((response: YouTubePlaylistSongsResponse) => {
     const now = Date.now();
@@ -566,7 +585,7 @@ export default function PlaylistPage() {
 
   return (
     <div
-      className="flex min-h-0 flex-col gap-4 px-3 py-3 md:flex-row md:px-4 md:py-4"
+      className="flex min-h-0 flex-col gap-4 px-3 py-3 xl:flex-row md:px-4 md:py-4"
       style={{
         height: 'calc(100dvh - var(--header-height))',
         paddingBottom: 'calc(var(--player-bar-height) + 24px)',
@@ -587,12 +606,14 @@ export default function PlaylistPage() {
         onCreateFolder={name => { createFolder(name); }}
         onDeleteFolder={deleteFolder}
         onOpenSmartBuilder={() => openSmartBuilder()}
+        onOpenNicoImport={() => setShowNicoImport(true)}
+        onOpenYouTubeImport={() => setShowYTImport(true)}
         onImportJson={importPlaylistJson}
         onExportAll={exportAllPlaylists}
       />
 
       {/* ─── 右パネル ────────────────────────────────────────────────── */}
-      <main className={`min-h-0 min-w-0 flex-1 space-y-3 overflow-y-auto ${selectedPlaylist ? 'block animate-slide-in-right md:animate-none' : 'hidden md:block'}`}>
+      <main className={`min-h-0 min-w-0 flex-1 space-y-3 overflow-y-auto ${selectedPlaylist ? 'block animate-slide-in-right xl:animate-none' : 'hidden xl:block'}`}>
         {!selectedPlaylist ? (
           /* ── 空状態 ── */
           <div className="flex h-full min-h-[360px] flex-col items-center justify-center rounded-2xl border border-white/[0.07] bg-white/[0.02] px-6 text-center">
@@ -608,7 +629,7 @@ export default function PlaylistPage() {
             </div>
             <p className="text-base font-medium text-neutral-300">{t('プレイリストを選んで始めましょう')}</p>
             <p className="mt-2 max-w-xs text-sm leading-relaxed text-neutral-500">
-              {t('左のサイドバーからプレイリストを選択すると、曲の再生・編集・共有ができます')}
+              {t('ライブラリから選んで再生。新しいリストは、手動・外部読み込み・条件で自動作成の3つの方法で作れます。')}
             </p>
           </div>
         ) : (
@@ -616,7 +637,7 @@ export default function PlaylistPage() {
             {/* ── モバイル戻るボタン（固定） ── */}
             <button
               type="button"
-              className="md:hidden sticky top-0 z-10 self-start rounded-full border border-white/10 bg-black/80 backdrop-blur-sm px-3 py-1.5 text-sm text-neutral-300 transition-colors hover:bg-white/10"
+              className="xl:hidden sticky top-0 z-30 min-h-11 self-start rounded-xl border border-white/10 bg-black/90 px-3 text-sm text-neutral-300 transition-colors hover:bg-white/10"
               onClick={() => setSelectedPlaylistId(null)}
             >
               ← {t('ライブラリ')}
@@ -689,7 +710,7 @@ export default function PlaylistPage() {
                     </div>
                     <p className="text-sm font-medium text-neutral-400">{t('曲がまだありません')}</p>
                     <p className="text-xs max-w-xs text-center leading-relaxed">
-                      {t('検索画面から曲を追加するか、ヘッダーの「⋯」メニューからYouTubeプレイリストをインポートしてみましょう')}
+                      {selectedPlaylist.smartRule ? t('条件に合う曲が見つかると、ここに表示されます。「条件を編集」から対象を見直せます。') : isExternalLinked ? t('元の外部リストにある、DIVA登録済みの曲がここに表示されます。') : t('検索画面の保存ボタンから追加するか、外部プレイリストを読み込めます。')}
                     </p>
                   </>
                 )}
@@ -770,7 +791,7 @@ export default function PlaylistPage() {
       {/* ─── 一括選択フローティングバー ───────────────────────────────── */}
       {selectionMode && selectedIds.size > 0 && (
         <div
-          className="fixed bottom-20 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-4 py-2.5 rounded-2xl shadow-2xl animate-slide-up"
+          className="fixed bottom-20 left-1/2 -translate-x-1/2 z-50 flex w-max max-w-[calc(100vw-1.5rem)] flex-wrap justify-center items-center gap-2 px-3 py-2.5 rounded-2xl shadow-2xl animate-slide-up"
           style={{ background: 'var(--color-bg-card)', border: '1px solid var(--color-border)' }}
         >
           <span className="text-sm font-medium">{t('{count} 件選択中', { count: selectedIds.size })}</span>
@@ -860,11 +881,12 @@ export default function PlaylistPage() {
       )}
 
       {/* ─── YouTube インポートモーダル ──────────────────────────────── */}
-      {showYTImport && selectedPlaylist && (
+      {showYTImport && (
         <YouTubeImportModal onClose={() => setShowYTImport(false)} onImport={handleYTImport} onLink={handleYTLink} />
       )}
-      {showNicoImport && selectedPlaylist && (
-        <NicoImportModal onClose={() => setShowNicoImport(false)} onImport={handleYTImport} onLink={handleNicoLink} />
+      {showNicoImport && (
+        <NicoImportModal onClose={() => setShowNicoImport(false)} onImport={handleNicoImport} onLink={handleNicoLink}
+          targetName={selectedPlaylist && !selectedPlaylist.smartRule && !selectedPlaylist.youtubeSync && !selectedPlaylist.nicoSync ? selectedPlaylist.name : undefined} />
       )}
     </div>
   );

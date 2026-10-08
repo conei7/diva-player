@@ -5,7 +5,6 @@ import {
   DEFAULT_PLAYLIST_LIST_PREFERENCES,
   normalizePlaylistListPreferences,
   sortPlaylistsForDisplay,
-  type PlaylistListDensity,
   type PlaylistListSortKey,
 } from '../../utils/playlistListPreferences';
 import PlaylistCover from './PlaylistCover';
@@ -28,6 +27,8 @@ interface PlaylistLibrarySidebarProps {
   onCreateFolder: (name: string) => void;
   onDeleteFolder: (id: string) => void;
   onOpenSmartBuilder: () => void;
+  onOpenNicoImport: () => void;
+  onOpenYouTubeImport: () => void;
   onImportJson: (file: File) => void | Promise<void>;
   onExportAll: () => void;
 }
@@ -121,19 +122,9 @@ function PlaylistLibraryItem({
 }
 
 export default function PlaylistLibrarySidebar({
-  playlists,
-  folders,
-  selectedPlaylistId,
-  selectedFolderId,
-  hasSelectedPlaylist,
-  onSelectPlaylist,
-  onSelectFolder,
-  onCreatePlaylist,
-  onCreateFolder,
-  onDeleteFolder,
-  onOpenSmartBuilder,
-  onImportJson,
-  onExportAll,
+  playlists, folders, selectedPlaylistId, selectedFolderId, hasSelectedPlaylist,
+  onSelectPlaylist, onSelectFolder, onCreatePlaylist, onCreateFolder, onDeleteFolder,
+  onOpenSmartBuilder, onOpenNicoImport, onOpenYouTubeImport, onImportJson, onExportAll,
 }: PlaylistLibrarySidebarProps) {
   const t = useTranslateSourceText();
   const [folderScope, setFolderScope] = useState<'all' | 'folder'>('all');
@@ -141,299 +132,91 @@ export default function PlaylistLibrarySidebar({
   const [query, setQuery] = useState('');
   const [newPlaylistName, setNewPlaylistName] = useState('');
   const [newFolderName, setNewFolderName] = useState('');
+  const [showCreate, setShowCreate] = useState(false);
   const [showFolderInput, setShowFolderInput] = useState(false);
   const [preferences, setPreferences] = useState(() => normalizePlaylistListPreferences(
     storage.get(PLAYLIST_LIST_PREFERENCES_KEY) ?? DEFAULT_PLAYLIST_LIST_PREFERENCES,
   ));
   const importInputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    storage.set(PLAYLIST_LIST_PREFERENCES_KEY, preferences);
-  }, [preferences]);
-
-  const regularPlaylists = playlists.filter(playlist => !playlist.isPinned);
-  const pinnedPlaylists = playlists.filter(playlist => playlist.isPinned);
-  const syncedCount = regularPlaylists.filter(playlist => playlist.youtubeSync || playlist.nicoSync).length;
-  const songReferenceCount = playlists.reduce((sum, playlist) => sum + playlist.songs.length, 0);
-
+  useEffect(() => { storage.set(PLAYLIST_LIST_PREFERENCES_KEY, preferences); }, [preferences]);
+  const regularPlaylists = useMemo(() => playlists.filter(playlist => !playlist.isPinned), [playlists]);
   const visiblePlaylists = useMemo(() => {
-    const normalizedQuery = query.trim().toLocaleLowerCase('ja-JP');
-    const inFolder = folderScope === 'all'
-      ? regularPlaylists
-      : selectedFolderId
-        ? regularPlaylists.filter(playlist => playlist.folderId === selectedFolderId)
-        : regularPlaylists.filter(playlist => !playlist.folderId);
-    const inScope = inFolder.filter(playlist => {
-      if (libraryScope === 'smart') return Boolean(playlist.smartRule);
-      if (libraryScope === 'synced') return Boolean(playlist.youtubeSync || playlist.nicoSync);
-      return true;
-    });
-    return sortPlaylistsForDisplay(inScope, preferences.sortKey, preferences.sortOrder)
-      .filter(playlist => !normalizedQuery || playlist.name.toLocaleLowerCase('ja-JP').includes(normalizedQuery));
+    const inFolder = folderScope === 'all' ? regularPlaylists : regularPlaylists.filter(playlist => (playlist.folderId ?? null) === selectedFolderId);
+    return sortPlaylistsForDisplay(inFolder.filter(playlist => libraryScope === 'smart' ? Boolean(playlist.smartRule)
+      : libraryScope === 'synced' ? Boolean(playlist.youtubeSync || playlist.nicoSync) : true), preferences.sortKey, preferences.sortOrder)
+      .filter(playlist => playlist.name.toLocaleLowerCase('ja-JP').includes(query.trim().toLocaleLowerCase('ja-JP')));
   }, [folderScope, libraryScope, preferences.sortKey, preferences.sortOrder, query, regularPlaylists, selectedFolderId]);
-
-  const smartPlaylists = visiblePlaylists.filter(playlist => Boolean(playlist.smartRule));
-  const standardPlaylists = visiblePlaylists.filter(playlist => !playlist.smartRule);
-  const compact = preferences.density === 'compact';
-
+  const pinned = playlists.filter(playlist => playlist.isPinned && playlist.name.toLocaleLowerCase('ja-JP').includes(query.trim().toLocaleLowerCase('ja-JP')));
   const submitPlaylist = () => {
-    const name = newPlaylistName.trim();
-    if (!name) return;
-    onCreatePlaylist(name, folderScope === 'folder' ? selectedFolderId ?? undefined : undefined);
-    setNewPlaylistName('');
+    if (!newPlaylistName.trim()) return;
+    onCreatePlaylist(newPlaylistName.trim(), folderScope === 'folder' ? selectedFolderId ?? undefined : undefined);
+    setNewPlaylistName(''); setShowCreate(false);
   };
-
   const submitFolder = () => {
-    const name = newFolderName.trim();
-    if (!name) return;
-    onCreateFolder(name);
-    setNewFolderName('');
-    setShowFolderInput(false);
+    if (!newFolderName.trim()) return;
+    onCreateFolder(newFolderName.trim()); setNewFolderName(''); setShowFolderInput(false);
   };
-
-  const selectAllFolders = () => {
-    setFolderScope('all');
-    onSelectFolder(null);
-  };
-
-  const selectFolder = (id: string | null) => {
-    setFolderScope('folder');
-    onSelectFolder(id);
-  };
-
+  const chooseFolder = (id: string | null, all = false) => { setFolderScope(all ? 'all' : 'folder'); onSelectFolder(id); };
   return (
-    <aside
-      className={`min-h-0 w-full flex-shrink-0 flex-col overflow-hidden rounded-[1.5rem] border border-white/[0.08] bg-gradient-to-b from-white/[0.055] to-white/[0.018] shadow-2xl shadow-black/10 md:h-full md:w-[21rem] lg:w-[23rem] ${hasSelectedPlaylist ? 'hidden md:flex' : 'flex'}`}
-      aria-label={t('プレイリストライブラリ')}
-    >
-      <div className="border-b border-white/[0.07] p-3.5">
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-emerald-200/60">Your library</p>
-            <h2 className="mt-1 text-xl font-bold tracking-tight text-white">{t('プレイリスト')}</h2>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <button
-              type="button"
-              onClick={() => setShowFolderInput(current => !current)}
-              className="flex h-9 w-9 items-center justify-center rounded-xl border border-white/10 bg-white/[0.045] text-neutral-400 transition-colors hover:bg-white/10 hover:text-white"
-              title={t('フォルダーを作成')}
-              aria-label={t('フォルダーを作成')}
-            >
-              <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-                <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-                <path d="M12 11v6m-3-3h6" />
-              </svg>
-            </button>
-            <button
-              type="button"
-              onClick={onOpenSmartBuilder}
-              className="flex h-9 w-9 items-center justify-center rounded-xl border border-violet-300/20 bg-violet-300/10 text-violet-200 transition-colors hover:bg-violet-300/20 hover:text-white"
-              title={t('スマートプレイリストを作成')}
-              aria-label={t('スマートプレイリストを作成')}
-            >
-              <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
-                <path d="m12 3 1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3Z" />
-                <path d="m19 15 .7 2.3L22 18l-2.3.7L19 21l-.7-2.3L16 18l2.3-.7L19 15Z" />
-              </svg>
-            </button>
-            <PlaylistPopoverMenu
-              trigger={
-                <button type="button" className="flex h-9 w-9 items-center justify-center rounded-xl border border-white/10 bg-white/[0.045] text-neutral-400 transition-colors hover:bg-white/10 hover:text-white" title={t('ライブラリ操作')} aria-label={t('ライブラリ操作')}>
-                  <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5" r="2" /><circle cx="12" cy="12" r="2" /><circle cx="12" cy="19" r="2" /></svg>
-                </button>
-              }
-            >
-              <button className="context-menu-item" onClick={() => importInputRef.current?.click()}>
-                <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><path d="m7 10 5-5 5 5M12 5v12" /></svg>
-                <span>{t('JSONを読み込む')}</span>
-              </button>
-              <button className="context-menu-item" onClick={onExportAll} disabled={playlists.length === 0}>
-                <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><path d="m7 10 5 5 5-5M12 15V3" /></svg>
-                <span>{t('全体をバックアップ')}</span>
-              </button>
-            </PlaylistPopoverMenu>
-          </div>
+    <aside className={`min-h-0 w-full flex-1 flex-col overflow-hidden rounded-2xl border border-white/10 bg-white/[0.025] xl:h-full xl:w-80 xl:flex-none ${hasSelectedPlaylist ? 'hidden xl:flex' : 'flex'}`} aria-label={t('プレイリストライブラリ')}>
+      <header className="shrink-0 border-b border-white/10 p-4">
+        <div className="flex items-center justify-between gap-2">
+          <h2 className="text-xl font-bold">{t('プレイリスト')}</h2>
+          <PlaylistPopoverMenu trigger={<button type="button" className="h-11 w-11 rounded-xl text-neutral-400 hover:bg-white/10" title={t('ライブラリ操作')} aria-label={t('ライブラリ操作')}>•••</button>}>
+            <button className="context-menu-item" onClick={() => setShowFolderInput(true)}>{t('フォルダーを作成')}</button>
+            <button className="context-menu-item" onClick={() => importInputRef.current?.click()}>{t('JSONを読み込む')}</button>
+            <button className="context-menu-item" onClick={onExportAll} disabled={playlists.length === 0}>{t('全体をバックアップ')}</button>
+          </PlaylistPopoverMenu>
         </div>
-
-        <div className="mt-3 grid grid-cols-3 gap-1.5">
-          <div className="rounded-xl border border-white/[0.07] bg-black/15 px-2.5 py-2">
-            <p className="text-lg font-bold text-white">{regularPlaylists.length}</p>
-            <p className="text-[10px] text-neutral-500">{t('リスト')}</p>
-          </div>
-          <div className="rounded-xl border border-white/[0.07] bg-black/15 px-2.5 py-2">
-            <p className="text-lg font-bold text-white">{songReferenceCount.toLocaleString('ja-JP')}</p>
-            <p className="text-[10px] text-neutral-500">{t('保存曲')}</p>
-          </div>
-          <div className="rounded-xl border border-white/[0.07] bg-black/15 px-2.5 py-2">
-            <p className="text-lg font-bold text-white">{syncedCount}</p>
-            <p className="text-[10px] text-neutral-500">{t('同期中')}</p>
-          </div>
+        <p className="mt-1 text-xs text-neutral-400">{t('{count}曲', { count: playlists.reduce((sum, playlist) => sum + playlist.songs.length, 0) })} {t('保存曲')} · {regularPlaylists.length} {t('リスト')}</p>
+        <div className="mt-4 grid grid-cols-2 gap-2">
+          <button type="button" className="min-h-11 rounded-xl bg-white px-2 text-xs font-semibold text-black hover:bg-neutral-200" onClick={() => setShowCreate(value => !value)} aria-expanded={showCreate}>{t('新規作成')}</button>
+          <button type="button" className="min-h-11 rounded-xl border border-violet-300/25 bg-violet-300/5 px-2 text-xs font-medium text-violet-100 hover:bg-violet-300/10" onClick={onOpenSmartBuilder} title={t('スマートプレイリストを作成')}>{t('条件で自動作成')}</button>
         </div>
-
-        {showFolderInput && (
-          <div className="mt-3 flex gap-2 rounded-xl border border-white/[0.08] bg-black/20 p-2">
-            <input
-              type="text"
-              value={newFolderName}
-              onChange={event => setNewFolderName(event.target.value)}
-              onKeyDown={event => event.key === 'Enter' && submitFolder()}
-              placeholder={t('フォルダー名')}
-              className="search-input min-w-0 flex-1 text-xs"
-              autoFocus
-            />
-            <button type="button" className="rounded-lg bg-white px-3 text-xs font-bold text-black" onClick={submitFolder}>{t('作成')}</button>
-          </div>
-        )}
-      </div>
-
-      <div className="space-y-3 border-b border-white/[0.07] p-3.5">
-        <div className="relative">
-          <svg className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" /></svg>
-          <input
-            type="search"
-            value={query}
-            onChange={event => setQuery(event.target.value)}
-            placeholder={t('ライブラリを検索')}
-            className="search-input w-full rounded-xl py-2.5 pl-10 pr-9 text-sm"
-          />
-          {query && (
-            <button type="button" onClick={() => setQuery('')} className="absolute right-1.5 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-lg text-neutral-500 hover:bg-white/10 hover:text-white" aria-label={t('検索をクリア')}>
-              <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
-            </button>
-          )}
+        {showCreate && <form className="mt-3 space-y-2 rounded-xl border border-white/10 p-3" onSubmit={event => { event.preventDefault(); submitPlaylist(); }}>
+          <label className="block text-xs text-neutral-300">{t('プレイリスト名')}<input className="playlist-field mt-1 w-full text-sm" placeholder={t('新しいプレイリスト')} value={newPlaylistName} onChange={event => setNewPlaylistName(event.target.value)} autoFocus /></label>
+          <p className="text-xs leading-5 text-neutral-500">{t('空のリストを作成します。曲は検索画面などの保存ボタンから追加できます。')}</p>
+          <button type="submit" disabled={!newPlaylistName.trim()} className="btn-primary min-h-11 w-full text-xs" aria-label={t('プレイリストを作成')}>{t('作成')}</button>
+        </form>}
+        <PlaylistPopoverMenu align="left" trigger={<button type="button" className="mt-2 flex min-h-11 w-full items-center justify-between rounded-xl border border-white/10 px-3 text-xs text-neutral-200 hover:bg-white/5"><span>{t('外部から読み込む')}</span><span aria-hidden="true">↓</span></button>}>
+          <button className="context-menu-item" onClick={onOpenNicoImport}>{t('ニコニコからインポート')}</button>
+          <button className="context-menu-item" onClick={onOpenYouTubeImport}>{t('YouTubeからインポート')}</button>
+          <button className="context-menu-item" onClick={() => importInputRef.current?.click()}>{t('JSONを読み込む')}</button>
+        </PlaylistPopoverMenu>
+        {showFolderInput && <form className="mt-3 flex gap-2" onSubmit={event => { event.preventDefault(); submitFolder(); }}>
+          <input className="playlist-field min-w-0 flex-1 text-sm" placeholder={t('フォルダー名')} aria-label={t('フォルダー名')} value={newFolderName} onChange={event => setNewFolderName(event.target.value)} autoFocus />
+          <button type="submit" className="btn-secondary min-h-11 text-xs" disabled={!newFolderName.trim()}>{t('作成')}</button>
+          <button type="button" onClick={() => setShowFolderInput(false)} aria-label={t('キャンセル')} className="px-2 text-neutral-400">×</button>
+        </form>}
+      </header>
+      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
+        <input type="search" placeholder={t('ライブラリを検索')} aria-label={t('ライブラリを検索')} value={query} onChange={event => setQuery(event.target.value)} className="playlist-field min-h-11 w-full text-sm" />
+        <div className="flex gap-1 rounded-xl bg-black/20 p-1" aria-label={t('プレイリスト種別')}>
+          {([['all', t('すべて')], ['smart', t('スマート')], ['synced', t('同期中')]] as const).map(([value, label]) => <button key={value} type="button" onClick={() => setLibraryScope(value)} aria-pressed={libraryScope === value} className={`min-h-11 flex-1 rounded-lg px-2 text-xs ${libraryScope === value ? 'bg-white/10 text-white' : 'text-neutral-400 hover:text-white'}`}>{label}</button>)}
         </div>
-
-        <div className="flex rounded-xl bg-black/20 p-1" aria-label={t('プレイリスト種別')}>
-          {([
-            ['all', t('すべて')],
-            ['smart', t('スマート')],
-            ['synced', t('同期中')],
-          ] as const).map(([value, label]) => (
-            <button
-              key={value}
-              type="button"
-              onClick={() => setLibraryScope(value)}
-              aria-pressed={libraryScope === value}
-              className={`min-h-9 flex-1 rounded-lg px-2 text-[11px] font-medium transition-colors ${libraryScope === value ? 'bg-white/10 text-white shadow-sm' : 'text-neutral-500 hover:text-neutral-300'}`}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-
-        <div className="flex items-center gap-1.5">
-          <select
-            className="input min-w-0 flex-1 rounded-lg py-1.5 text-[11px]"
-            value={preferences.sortKey}
-            onChange={event => setPreferences(current => ({ ...current, sortKey: event.target.value as PlaylistListSortKey }))}
-            aria-label={t('プレイリストの並べ替え')}
-          >
-            <option value="updatedAt">{t('更新順')}</option>
-            <option value="name">{t('名前順')}</option>
-            <option value="songCount">{t('曲数順')}</option>
-          </select>
-          <button type="button" className="flex h-10 w-10 items-center justify-center rounded-lg border border-white/10 text-xs text-neutral-400 hover:bg-white/10 hover:text-white sm:h-8 sm:w-8" onClick={() => setPreferences(current => ({ ...current, sortOrder: current.sortOrder === 'desc' ? 'asc' : 'desc' }))} title={t('並び順を反転')} aria-label={t('並び順を反転')}>
-            {preferences.sortOrder === 'desc' ? '↓' : '↑'}
-          </button>
-          <button type="button" className="flex h-10 w-10 items-center justify-center rounded-lg border border-white/10 text-neutral-400 hover:bg-white/10 hover:text-white sm:h-8 sm:w-8" onClick={() => setPreferences(current => ({ ...current, density: current.density === 'comfortable' ? 'compact' : 'comfortable' as PlaylistListDensity }))} title={t('表示密度を切り替え')} aria-label={t('表示密度を切り替え')}>
-            <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16" /></svg>
-          </button>
-        </div>
-      </div>
-
-      <div className="min-h-0 flex-1 overflow-y-auto p-3.5">
-        {pinnedPlaylists.length > 0 && libraryScope === 'all' && !query && (
-          <section className="mb-4 space-y-1.5">
-            <p className="px-2 text-[10px] font-semibold uppercase tracking-[0.15em] text-neutral-600">{t('ピン留め')}</p>
-            {pinnedPlaylists.map(playlist => (
-              <PlaylistLibraryItem key={playlist.id} playlist={playlist} selected={selectedPlaylistId === playlist.id} compact={compact} onSelect={() => onSelectPlaylist(playlist.id)} />
-            ))}
-          </section>
-        )}
-
-        <section className="mb-4 rounded-2xl border border-white/[0.06] bg-black/10 p-1.5">
-          <button
-            type="button"
-            onClick={selectAllFolders}
-            className={`flex min-h-10 w-full items-center gap-2 rounded-xl px-2.5 text-left text-xs transition-colors ${folderScope === 'all' ? 'bg-white/[0.08] text-white' : 'text-neutral-400 hover:bg-white/[0.04]'}`}
-          >
-            <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M3 9 12 2l9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /></svg>
-            {t('すべてのフォルダー')}
-          </button>
-          <button
-            type="button"
-            onClick={() => selectFolder(null)}
-            className={`flex min-h-10 w-full items-center gap-2 rounded-xl px-2.5 text-left text-xs transition-colors ${folderScope === 'folder' && selectedFolderId === null ? 'bg-white/[0.08] text-white' : 'text-neutral-400 hover:bg-white/[0.04]'}`}
-          >
-            <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2" /></svg>
-            {t('未分類')}
-          </button>
-          {folders.map(folder => (
-            <FolderRow
-              key={folder.id}
-              folder={folder}
-              selected={folderScope === 'folder' && selectedFolderId === folder.id}
-              onSelect={() => selectFolder(folder.id)}
-              onDelete={() => onDeleteFolder(folder.id)}
-            />
-          ))}
-        </section>
-
-        <section className="space-y-4">
-          {smartPlaylists.length > 0 && libraryScope !== 'synced' && (
-            <div className="space-y-1.5">
-              <p className="flex items-center justify-between px-2 text-[10px] font-semibold uppercase tracking-[0.15em] text-violet-200/60">
-                <span>{t('スマート')}</span><span>{smartPlaylists.length}</span>
-              </p>
-              {smartPlaylists.map(playlist => (
-                <PlaylistLibraryItem key={playlist.id} playlist={playlist} selected={selectedPlaylistId === playlist.id} compact={compact} onSelect={() => onSelectPlaylist(playlist.id)} />
-              ))}
+        <details className="rounded-xl border border-white/[0.07] p-3">
+          <summary className="cursor-pointer text-xs text-neutral-400">{t('フォルダー・表示設定')}{folderScope === 'folder' && ` · ${folders.find(folder => folder.id === selectedFolderId)?.name ?? t('フォルダーなし')}`}</summary>
+          <div className="mt-3 space-y-2">
+            <button type="button" onClick={() => chooseFolder(null, true)} aria-pressed={folderScope === 'all'} className="min-h-11 w-full rounded-lg px-2 text-left text-xs text-neutral-200 hover:bg-white/5">{t('すべてのフォルダー')}</button>
+            <button type="button" onClick={() => chooseFolder(null)} aria-pressed={folderScope === 'folder' && !selectedFolderId} className="min-h-11 w-full rounded-lg px-2 text-left text-xs text-neutral-400 hover:bg-white/5">{t('フォルダーなし')}</button>
+            {folders.map(folder => <FolderRow key={folder.id} folder={folder} selected={folderScope === 'folder' && selectedFolderId === folder.id} onSelect={() => chooseFolder(folder.id)} onDelete={() => onDeleteFolder(folder.id)} />)}
+            <div className="flex gap-2 border-t border-white/10 pt-3">
+              <select className="playlist-field min-w-0 flex-1 text-xs" value={preferences.sortKey} onChange={event => setPreferences(current => ({ ...current, sortKey: event.target.value as PlaylistListSortKey }))} aria-label={t('プレイリストの並べ替え')}>
+                <option value="updatedAt">{t('更新順')}</option><option value="name">{t('名前順')}</option><option value="songCount">{t('曲数順')}</option>
+              </select>
+              <button type="button" className="h-11 w-11 rounded-lg border border-white/10" aria-label={t('並び順を反転')} onClick={() => setPreferences(current => ({ ...current, sortOrder: current.sortOrder === 'desc' ? 'asc' : 'desc' }))}>{preferences.sortOrder === 'desc' ? '↓' : '↑'}</button>
             </div>
-          )}
-          <div className="space-y-1.5">
-            <p className="flex items-center justify-between px-2 text-[10px] font-semibold uppercase tracking-[0.15em] text-neutral-600">
-              <span>{libraryScope === 'synced' ? t('外部同期') : t('プレイリスト')}</span><span>{standardPlaylists.length}</span>
-            </p>
-            {standardPlaylists.length === 0 && smartPlaylists.length === 0 ? (
-              <div className="rounded-2xl border border-dashed border-white/10 px-4 py-8 text-center">
-                <p className="text-xs font-medium text-neutral-400">{t('該当するプレイリストはありません')}</p>
-                <p className="mt-1 text-[10px] text-neutral-600">{t('検索や表示条件を変更してください')}</p>
-              </div>
-            ) : standardPlaylists.map(playlist => (
-              <PlaylistLibraryItem key={playlist.id} playlist={playlist} selected={selectedPlaylistId === playlist.id} compact={compact} onSelect={() => onSelectPlaylist(playlist.id)} />
-            ))}
+            <label className="flex min-h-11 items-center gap-2 text-xs text-neutral-400"><input type="checkbox" checked={preferences.density === 'compact'} onChange={event => setPreferences(current => ({ ...current, density: event.target.checked ? 'compact' : 'comfortable' }))} />{t('コンパクト表示')}</label>
           </div>
+        </details>
+        {pinned.length > 0 && libraryScope === 'all' && folderScope === 'all' && <section className="space-y-1"><h3 className="mb-2 text-xs text-neutral-500">{t('ピン留め')}</h3>{pinned.map(playlist => <PlaylistLibraryItem key={playlist.id} playlist={playlist} selected={selectedPlaylistId === playlist.id} compact={preferences.density === 'compact'} onSelect={() => onSelectPlaylist(playlist.id)} />)}</section>}
+        <section className="space-y-1">
+          <h3 className="mb-2 flex justify-between text-xs text-neutral-500"><span>{t('プレイリスト')}</span><span>{visiblePlaylists.length}</span></h3>
+          {visiblePlaylists.map(playlist => <PlaylistLibraryItem key={playlist.id} playlist={playlist} selected={selectedPlaylistId === playlist.id} compact={preferences.density === 'compact'} onSelect={() => onSelectPlaylist(playlist.id)} />)}
+          {visiblePlaylists.length === 0 && <div className="rounded-xl border border-dashed border-white/10 p-5 text-sm leading-6 text-neutral-400">{regularPlaylists.length === 0 ? t('まだプレイリストはありません。新規作成・外部読み込み・条件で自動作成から始められます。') : t('該当するプレイリストはありません')}<button type="button" className="mt-3 block text-xs text-cyan-300" onClick={() => { setQuery(''); setLibraryScope('all'); chooseFolder(null, true); }}>{t('表示条件をリセット')}</button></div>}
         </section>
       </div>
-
-      <div className="border-t border-white/[0.07] p-3.5">
-        <div className="flex gap-2 rounded-2xl border border-white/[0.07] bg-black/20 p-2">
-          <input
-            type="text"
-            value={newPlaylistName}
-            onChange={event => setNewPlaylistName(event.target.value)}
-            onKeyDown={event => event.key === 'Enter' && submitPlaylist()}
-            placeholder={folderScope === 'folder' && selectedFolderId ? t('このフォルダーに新規作成') : t('新しいプレイリスト')}
-            className="search-input min-w-0 flex-1 text-xs"
-          />
-          <button type="button" className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl bg-white text-black transition-colors hover:bg-neutral-200" onClick={submitPlaylist} title={t('プレイリストを作成')} aria-label={t('プレイリストを作成')}>
-            <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
-          </button>
-        </div>
-      </div>
-
-      <input
-        ref={importInputRef}
-        type="file"
-        accept="application/json,.json"
-        className="hidden"
-        onChange={event => {
-          const file = event.target.files?.[0];
-          if (file) void onImportJson(file);
-          event.currentTarget.value = '';
-        }}
-      />
+      <input ref={importInputRef} type="file" accept="application/json,.json" className="hidden" onChange={event => { const file = event.target.files?.[0]; if (file) void onImportJson(file); event.currentTarget.value = ''; }} />
     </aside>
   );
 }

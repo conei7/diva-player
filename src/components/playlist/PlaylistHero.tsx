@@ -125,7 +125,7 @@ export default function PlaylistHero({
         : 'プレイリスト';
 
   return (
-    <section className="relative flex-shrink-0 overflow-hidden rounded-[1.75rem] border border-white/[0.1] bg-neutral-950 shadow-2xl shadow-black/20">
+    <section className="relative flex-shrink-0 overflow-hidden rounded-2xl border border-white/[0.1] bg-neutral-950 shadow-2xl shadow-black/20">
       {backdropUrl && (
         <div
           className="absolute inset-0 scale-110 bg-cover bg-center opacity-30 blur-2xl"
@@ -136,19 +136,19 @@ export default function PlaylistHero({
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_18%_15%,rgba(6,214,160,0.18),transparent_42%),linear-gradient(110deg,rgba(8,10,14,0.7),rgba(8,10,14,0.94)_58%,rgba(8,10,14,0.98))]" aria-hidden="true" />
 
       <div className="relative p-4 sm:p-5 lg:p-6">
-        <div className="flex flex-col gap-5 sm:flex-row sm:items-end">
-          <div className="mx-auto aspect-square w-36 flex-shrink-0 overflow-hidden rounded-[1.5rem] bg-black/30 shadow-2xl shadow-black/40 ring-1 ring-white/15 sm:mx-0 sm:w-40 lg:w-48">
+        <div className="flex items-start gap-4 sm:gap-5">
+          <div className="aspect-square w-20 flex-shrink-0 overflow-hidden rounded-[1.5rem] bg-black/30 shadow-2xl shadow-black/40 ring-1 ring-white/15 sm:w-28">
             <PlaylistCover playlist={playlist} />
           </div>
-          <div className="min-w-0 flex-1 text-center sm:text-left">
+          <div className="min-w-0 flex-1 text-left">
             <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-emerald-200/70">{t(kindLabel)}</p>
-            <h1 className="mt-2 break-words text-3xl font-black leading-[1.05] tracking-[-0.03em] text-white sm:text-4xl lg:text-5xl">
+            <h1 className="mt-2 break-words text-2xl font-bold leading-tight tracking-[-0.03em] text-white sm:text-4xl">
               {playlist.name}
             </h1>
             {playlist.description && (
               <p className="mx-auto mt-3 line-clamp-2 max-w-3xl text-sm leading-6 text-neutral-300 sm:mx-0">{playlist.description}</p>
             )}
-            <div className="mt-3 flex flex-wrap items-center justify-center gap-2 text-xs text-neutral-400 sm:justify-start">
+            <div className="mt-3 flex flex-wrap items-center justify-start gap-2 text-xs text-neutral-400 sm:justify-start">
               <span className="rounded-full border border-white/10 bg-black/20 px-2.5 py-1 font-semibold text-white">{t('{count}曲', { count: playlist.songs.length })}</span>
               {playlist.songs.length > 0 && <span className="rounded-full border border-white/10 bg-black/20 px-2.5 py-1">{durationText}</span>}
               {isFiltered && <span className="rounded-full border border-cyan-300/20 bg-cyan-300/10 px-2.5 py-1 text-cyan-100">{t('表示中 {count}曲', { count: filteredSongCount })}</span>}
@@ -156,7 +156,7 @@ export default function PlaylistHero({
               {playlist.nicoSync && <span className="rounded-full border border-cyan-300/15 bg-cyan-300/10 px-2.5 py-1 text-cyan-100">{t('ニコニコ同期')}</span>}
             </div>
 
-            <div className="mt-5 flex flex-wrap items-center justify-center gap-2 sm:justify-start">
+            <div className="mt-4 flex flex-wrap items-center justify-start gap-2 sm:justify-start">
               {playlist.songs.length > 0 && (
                 <>
                   <button type="button" onClick={onPlay} className="flex min-h-11 items-center gap-2 rounded-full bg-white px-5 text-sm font-bold text-black shadow-lg shadow-black/20 transition-transform hover:scale-[1.02] hover:bg-neutral-200 active:scale-[0.98]">
@@ -171,7 +171,7 @@ export default function PlaylistHero({
               )}
               {playlist.smartRule && (
                 <button type="button" onClick={onRefreshSmart} disabled={smartRefreshStatus?.state === 'loading'} className="min-h-11 rounded-full border border-white/15 bg-black/25 px-4 text-sm font-medium text-neutral-100 backdrop-blur-sm transition-colors hover:bg-white/10 disabled:cursor-wait disabled:opacity-60">
-                  {smartRefreshStatus?.state === 'loading' ? t('更新中…') : t('条件を再更新')}
+                  {smartRefreshStatus?.state === 'loading' ? t('更新中…') : t('曲を更新')}
                 </button>
               )}
               {!playlist.isPinned && !isExternalLinked && (
@@ -231,7 +231,7 @@ export default function PlaylistHero({
               </div>
               <button type="button" className="min-h-10 rounded-xl border border-violet-200/20 bg-violet-200/10 px-3 text-xs font-medium text-violet-100 transition-colors hover:bg-violet-200/20" onClick={onEditSmartRule}>{t('条件を編集')}</button>
             </div>
-            <div className="mt-3"><SmartPlaylistRuleSummary rule={playlist.smartRule} /></div>
+            <details className="mt-3 text-xs text-neutral-400"><summary className="cursor-pointer py-2">{t('保存している条件を見る')}</summary><div className="mt-2"><SmartPlaylistRuleSummary rule={playlist.smartRule} /></div><p className="mt-3 leading-5">{t('条件に合う上位曲を開くたびに更新します。ランダム抽選や好みの学習ではありません。')}</p></details>
           </div>
         )}
 

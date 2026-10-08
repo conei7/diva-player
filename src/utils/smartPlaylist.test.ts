@@ -6,6 +6,8 @@ import {
   formatSmartPlaylistRule,
   SMART_DERIVED_SONG_TYPES,
   normalizeSmartPlaylistRule,
+  applySmartPlaylistPreset,
+  validateSmartPlaylistRule,
 } from './smartPlaylist';
 
 const rule = (overrides: Partial<SmartPlaylistRule> = {}): SmartPlaylistRule => ({
@@ -16,6 +18,21 @@ const rule = (overrides: Partial<SmartPlaylistRule> = {}): SmartPlaylistRule => 
 });
 
 describe('smart playlist UI summaries', () => {
+  it('replaces preset conditions instead of retaining unrelated search restrictions', () => {
+    const preset = applySmartPlaylistPreset('niconico', 100);
+    expect(preset.minYoutubeViews).toBe(0);
+    expect(preset.minNicoViews).toBe(10_000);
+    expect(preset.pvService).toBe('niconico');
+    expect(preset.excludedSongTypes).toEqual([]);
+    expect(preset.maxSongs).toBe(100);
+    expect(applySmartPlaylistPreset('audio').pvService).toBe('any');
+  });
+  it('rejects incomplete years and reversed ranges before querying or saving', () => {
+    expect(validateSmartPlaylistRule(rule({ publishYearFrom: '202' }))).not.toBeNull();
+    expect(validateSmartPlaylistRule(rule({ publishYearFrom: '2025', publishYearTo: '2020' }))).not.toBeNull();
+    expect(validateSmartPlaylistRule(rule({ lengthMinSeconds: '300', lengthMaxSeconds: '60' }))).not.toBeNull();
+    expect(validateSmartPlaylistRule(rule({ publishYearFrom: '2020', publishYearTo: '2025', lengthMinSeconds: '60', lengthMaxSeconds: '300' }))).toBeNull();
+  });
   it('shows a useful empty condition summary', () => {
     expect(formatSmartPlaylistRule(rule())).toEqual(['条件なし', '上限 200曲', 'VocaDB支持順']);
   });

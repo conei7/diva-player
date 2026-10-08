@@ -64,7 +64,8 @@
     "test:e2e:advanced-search": "node scripts/test-advanced-search-e2e.mjs",
     "analyze:surge-quality": "node scripts/analyze-surge-quality.mjs",
     "audit:custom-producers": "node scripts/audit-custom-producer-shape.mjs",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:e2e:playlist-workflows": "node scripts/test-playlist-workflows-e2e.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

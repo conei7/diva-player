@@ -59,7 +59,7 @@ try {
   await page.type('input[placeholder*="nicovideo.jp/mylist"]', `https://www.nicovideo.jp/mylist/${sourceId}`);
   await page.evaluate(() => [...document.querySelectorAll('button')].find(button => button.textContent?.trim() === '取得')?.click());
   await page.waitForFunction(() => document.body.textContent?.includes('Nico imported fixture') && document.body.textContent?.includes('2本中 1曲を照合'));
-  await page.evaluate(() => [...document.querySelectorAll('button')].find(button => button.textContent?.includes('自動同期としてリンク'))?.click());
+  await page.evaluate(() => [...document.querySelectorAll('label')].find(label => label.textContent?.includes('自動同期としてリンク'))?.click());
   await page.evaluate(() => [...document.querySelectorAll('button')].find(button => button.textContent?.includes('同期プレイリストを作成'))?.click());
   await page.waitForFunction(() => document.body.textContent?.includes('ニコニコ自動同期') && document.body.textContent?.includes('Nico sync fixture'));
   const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('diva_playlists') || '[]'));

@@ -77,7 +77,7 @@ export default function PlaylistToolbar({
         </div>
 
         <select
-          className="input min-h-10 min-w-[7.5rem] rounded-xl text-xs sm:hidden"
+          className="playlist-field min-h-10 min-w-[7.5rem] rounded-xl text-xs sm:hidden"
           value={sortKey}
           onChange={event => onSortChange(event.target.value as SortKey)}
           disabled={externalLinked}

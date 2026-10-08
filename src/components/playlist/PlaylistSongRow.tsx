@@ -5,7 +5,8 @@
  * - PlainSongRow: DnDなしの曲行（ソート済み表示・仮想リスト内で使用）
  * - VirtualSongList: 200件超のプレイリスト用仮想スクロールリスト
  */
-import { useEffect, useState, useRef } from 'react';
+import { useRef } from 'react';
+import PlaylistPopoverMenu from './PlaylistPopoverMenu';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
@@ -26,76 +27,16 @@ function SongContextMenu({
   onRemove: () => void;
 }) {
   const t = useTranslateSourceText();
-  const [menuOpen, setMenuOpen] = useState(false);
-  const menuRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!menuOpen) return;
-    const handler = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false);
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, [menuOpen]);
-
   return (
-    <div ref={menuRef} className="relative flex-shrink-0">
-      <button
-        onClick={() => setMenuOpen(v => !v)}
-        className="opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity p-2 rounded-lg hover:bg-white/10 text-neutral-400 hover:text-white"
-        title={t('曲の操作')}
-        aria-label={t('曲の操作')}
-      >
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-          <circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/>
-        </svg>
-      </button>
-      {menuOpen && (
-        <div
-          className="absolute right-0 top-full mt-1 md:top-auto md:bottom-full md:mt-0 md:mb-1 z-50 rounded-xl overflow-hidden shadow-xl w-44"
-          style={{ background: 'var(--color-bg-card)', border: '1px solid var(--color-border)' }}
-        >
-          <button className="context-menu-item" onClick={() => { onPlay(); setMenuOpen(false); }}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
-            {t('ここから再生')}
-          </button>
-          <button className="context-menu-item" onClick={() => { onMoveTop(); setMenuOpen(false); }}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <polyline points="17 11 12 6 7 11"/><polyline points="17 18 12 13 7 18"/>
-            </svg>
-            {t('一番上に移動')}
-          </button>
-          <button className="context-menu-item" onClick={() => { onMoveBottom(); setMenuOpen(false); }}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <polyline points="7 13 12 18 17 13"/><polyline points="7 6 12 11 17 6"/>
-            </svg>
-            {t('一番下に移動')}
-          </button>
-          <button className="context-menu-item" onClick={() => { onSetCover(); setMenuOpen(false); }}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/>
-              <polyline points="21 15 16 10 5 21"/>
-            </svg>
-            {t('カバーに設定')}
-          </button>
-          <div className="border-t" style={{ borderColor: 'var(--color-border)' }} />
-          <button
-            className="context-menu-item"
-            style={{ color: 'var(--color-error)' }}
-            onClick={() => { onRemove(); setMenuOpen(false); }}
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/>
-              <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/>
-            </svg>
-            {t('削除')}
-          </button>
-        </div>
-      )}
-    </div>
+    <PlaylistPopoverMenu trigger={<button type="button" className="flex h-11 w-9 items-center justify-center rounded-lg text-neutral-400 hover:bg-white/10 hover:text-white focus-visible:ring-2 focus-visible:ring-cyan-300" title={t('曲の操作')} aria-label={t('曲の操作')}>•••</button>}>
+      <button className="context-menu-item" onClick={onPlay}>{t('ここから再生')}</button>
+      <button className="context-menu-item" onClick={onMoveTop}>{t('一番上に移動')}</button>
+      <button className="context-menu-item" onClick={onMoveBottom}>{t('一番下に移動')}</button>
+      <button className="context-menu-item" onClick={onSetCover}>{t('カバーに設定')}</button>
+      <button className="context-menu-item text-red-300" onClick={onRemove}>{t('削除')}</button>
+    </PlaylistPopoverMenu>
   );
 }
-
 // ─── 曲行の共通コンテンツ ────────────────────────────────────────────────────
 interface SongRowContentProps {
   index: number;
