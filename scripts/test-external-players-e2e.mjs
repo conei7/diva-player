@@ -153,7 +153,13 @@ async function preparePage(fixtureSong, savedVolume = 23) {
       return;
     }
     if (url.startsWith('https://embed.nicovideo.jp/watch/')) {
-      await request.respond({ contentType: 'text/html', body: '<!doctype html><title>Niconico fixture</title>' });
+      await request.respond({ contentType: 'text/html', body: `<!doctype html><title>Niconico fixture</title>
+        <script>
+          window.addEventListener('message', event => {
+            if (event.source !== window.parent || event.data?.eventName !== 'volumeChange') return;
+            window.__nicoAppliedVolume = event.data.data?.volume;
+          });
+        </script>` });
       return;
     }
     await request.continue();
@@ -232,6 +238,9 @@ try {
   }, { timeout: 15_000 });
   const nicoFrame = nicoPage.frames().find(frame => frame.url().includes('embed.nicovideo.jp/watch/sm-nico-volume-fixture'));
   if (!nicoFrame) throw new Error('Niconico volume fixture frame was not attached');
+  // An attached iframe can precede React's player effects. Wait for the app's
+  // initial volume command before testing the reverse (native control) path.
+  await nicoFrame.waitForFunction(() => window.__nicoAppliedVolume === 0.23, { timeout: 15_000 });
   await nicoPage.evaluate(() => {
     const iframe = document.querySelector('iframe[src*="embed.nicovideo.jp/watch/sm-nico-volume-fixture"]');
     window.__nicoVolumeMessageProbe = [];
