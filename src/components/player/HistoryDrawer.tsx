@@ -1,3 +1,5 @@
+import { useRef } from 'react';
+import { useDialogFocus } from '../../hooks/useDialogFocus';
 import { useHistoryStore } from '../../stores/historyStore';
 import { usePlayerStore } from '../../stores/playerStore';
 import { useRatingStore } from '../../stores/ratingStore';
@@ -45,6 +47,8 @@ export default function HistoryDrawer() {
     playSong,
   } = usePlayerStore();
   const { getRating, setRating } = useRatingStore();
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useDialogFocus(dialogRef, historyDrawerOpen, toggleHistoryDrawer);
 
   return (
     <>
@@ -60,7 +64,12 @@ export default function HistoryDrawer() {
 
       {/* ドロワー本体 */}
       <div
-        className="fixed top-0 right-0 z-50 h-full flex flex-col"
+        ref={dialogRef}
+        inert={!historyDrawerOpen}
+        aria-hidden={!historyDrawerOpen}
+        aria-modal={historyDrawerOpen || undefined}
+        tabIndex={-1}
+        className="fixed top-0 right-0 z-50 h-full flex flex-col queue-drawer"
         style={{
           width: '360px',
           maxWidth: '90vw',
@@ -69,7 +78,7 @@ export default function HistoryDrawer() {
           borderLeft: '1px solid var(--color-border)',
           transform: historyDrawerOpen ? 'translateX(0)' : 'translateX(100%)',
           transition: 'transform 0.28s cubic-bezier(0.4, 0, 0.2, 1)',
-          paddingBottom: 'calc(var(--player-bar-height) + env(safe-area-inset-bottom))',
+          paddingBottom: 'env(safe-area-inset-bottom)',
           boxShadow: historyDrawerOpen ? '-8px 0 32px rgba(0,0,0,0.4)' : 'none',
         }}
         role="dialog"
@@ -128,7 +137,7 @@ export default function HistoryDrawer() {
         </div>
 
         {/* 履歴リスト */}
-        <div className="flex-1 overflow-y-auto">
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
           {entries.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-full gap-3 px-4"
                  style={{ color: 'var(--color-text-muted)' }}>

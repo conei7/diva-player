@@ -120,6 +120,7 @@ async function main() {
     const page = await browser.newPage();
     page.setDefaultTimeout(PAGE_TIMEOUT_MS);
     await runViewport(page, baseUrl, 390, 844);
+    await runViewport(page, baseUrl, 320, 568);
     await runViewport(page, baseUrl, 1280, 900);
     console.log('Settings browser E2E test passed.');
   } finally {

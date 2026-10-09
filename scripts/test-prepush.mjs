@@ -179,6 +179,7 @@ async function main() {
       label: `test:e2e:settings (${baseUrl})`,
     });
     await run(npmCommand, [...npmPrefix, 'run', 'test:e2e:mobile', '--', '--base-url', baseUrl], { label: `test:e2e:mobile (${baseUrl})` });
+    await run(npmCommand, [...npmPrefix, 'run', 'test:e2e:mobile-layout', '--', baseUrl], { label: `test:e2e:mobile-layout (${baseUrl})` });
     await run(npmCommand, [...npmPrefix, 'run', 'test:cloudflare-proxy'], { label: 'Cloudflare proxy contract test' });
   });
 

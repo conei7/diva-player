@@ -80,7 +80,7 @@ function SuggestionList({ items, onSelect }: {
   onSelect: (item: { id: number; label: string; detail?: string }) => void;
 }) {
   return (
-    <ul className="absolute left-0 right-0 top-full z-30 mt-1 max-h-56 overflow-y-auto rounded-xl border border-white/10 bg-[var(--color-surface-elevated)] shadow-xl">
+    <ul className="relative z-30 mt-1 max-h-56 overflow-y-auto overscroll-contain rounded-xl border border-white/10 bg-[var(--color-surface-elevated)] shadow-xl">
       {items.map(item => (
         <li key={item.id}>
           <button type="button" className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm hover:bg-white/5" onMouseDown={event => { event.preventDefault(); onSelect(item); }}>
@@ -607,7 +607,7 @@ export default function SearchFilters() {
           />
           {showSuggestions && suggestions.length > 0 && (
             <ul
-              className="absolute top-full left-0 right-0 z-20 mt-1 rounded-xl overflow-hidden shadow-xl"
+              className="relative z-20 mt-1 max-h-56 overflow-y-auto overscroll-contain rounded-xl shadow-xl"
               style={{ background: 'var(--color-surface-elevated)', border: '1px solid rgba(255,255,255,0.08)' }}
             >
               {suggestions.map(s => (

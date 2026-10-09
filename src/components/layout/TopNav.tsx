@@ -427,7 +427,7 @@ export default function TopNav() {
 
             {showSuggestions && (showRecentSearches || suggestions.length > 0 || isSuggestLoading) && (
               <div
-                className="absolute left-0 right-0 top-full z-50 mt-2 overflow-hidden rounded-lg shadow-2xl"
+                className="absolute left-0 right-0 top-full z-50 mt-2 max-h-[calc(100dvh-var(--header-height)-1rem)] overflow-y-auto overscroll-contain rounded-lg shadow-2xl"
                 style={{
                   background: 'var(--color-surface-elevated)',
                   border: '1px solid var(--color-border)',
@@ -448,7 +448,7 @@ export default function TopNav() {
                         {t('clear')}
                       </button>
                     </div>
-                    <ul className="max-h-96 overflow-y-auto py-1">
+                    <ul className="py-1">
                       {recentSearches.map(term => (
                         <li key={term}>
                           <button
@@ -481,7 +481,7 @@ export default function TopNav() {
                     {t('suggestionsLoading')}
                   </div>
                 ) : (
-                  <ul className="max-h-96 overflow-y-auto py-1">
+                  <ul className="py-1">
                     {suggestions.map((suggestion) => (
                       <li key={`${suggestion.kind}-${suggestion.id}`}>
                         <button

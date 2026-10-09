@@ -220,7 +220,7 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     <div className="fixed inset-0 z-[70] flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-label={t('設定')}>
       <button type="button" className="absolute inset-0 bg-black/70 backdrop-blur-sm" aria-label={t('閉じる')} onClick={onClose} />
 
-      <div className="relative max-h-[calc(100dvh-2rem)] w-full max-w-lg overflow-y-auto rounded-2xl shadow-2xl"
+      <div className="relative max-h-[calc(100dvh-2rem)] w-full max-w-lg overflow-y-auto overscroll-contain rounded-2xl shadow-2xl"
            style={{ background: 'var(--color-bg-secondary)', border: '1px solid rgba(255,255,255,0.06)' }}>
 
         {/* ヘッダー */}

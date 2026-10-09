@@ -186,6 +186,33 @@ try {
     return stored?.queueIndex === 25;
   }, { timeout: 10_000 });
   console.log('PASS selecting a visible historical row uses its original queue index');
+  await page.setViewport({ width: 320, height: 360 });
+  const drawerLayout = await page.$eval('[data-testid="queue-drawer"]', drawer => {
+    const list = drawer.querySelector('.overflow-y-auto');
+    list.scrollTop = list.scrollHeight;
+    const rect = drawer.getBoundingClientRect();
+    const last = list.querySelector('li:last-child').getBoundingClientRect();
+    const bottom = list.getBoundingClientRect().bottom;
+    return { left: rect.left, right: rect.right, bottom: rect.bottom, lastBottom: last.bottom,
+      listBottom: bottom, locked: document.body.style.overflow === 'hidden' };
+  });
+  if (drawerLayout.left < -1 || drawerLayout.right > 321 || drawerLayout.bottom > 361
+    || drawerLayout.lastBottom > drawerLayout.listBottom + 1 || !drawerLayout.locked) {
+    throw new Error(`Mobile queue cannot reach its last row: ${JSON.stringify(drawerLayout)}`);
+  }
+  await page.evaluate(() => {
+    const drawer = document.querySelector('[data-testid="queue-drawer"]');
+    const targets = [...drawer.querySelectorAll('button:not(:disabled), [tabindex="0"]')];
+    targets.at(-1).focus();
+  });
+  await page.keyboard.press('Tab');
+  if (!await page.$eval('[data-testid="queue-drawer"]', drawer => drawer.contains(document.activeElement))) {
+    throw new Error('Tab escaped the queue drawer.');
+  }
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => document.querySelector('[data-testid="queue-drawer"]').inert
+    && document.body.style.overflow !== 'hidden');
+  console.log('PASS mobile queue last row, scroll lock, focus containment and Escape');
 } finally {
   await browser.close();
 }

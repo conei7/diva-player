@@ -143,7 +143,7 @@ export default function HistoryPage() {
 
   return (
     <div className="w-full px-4 sm:px-6 lg:px-8 py-4">
-      <div className="flex items-center justify-between mb-6">
+      <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-xl font-bold" style={{ color: 'var(--color-text-primary)' }}>
             {t('視聴履歴')}
@@ -152,7 +152,7 @@ export default function HistoryPage() {
             {language === 'ja' ? `${totalPlays} 件` : t('{count} 件', { count: totalPlays })}
           </p>
         </div>
-        <div className="flex items-center justify-end gap-2 flex-wrap">
+        <div className="flex flex-wrap items-center gap-2 sm:justify-end">
           <input
             ref={importInputRef}
             type="file"

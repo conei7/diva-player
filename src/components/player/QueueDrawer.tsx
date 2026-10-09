@@ -1,3 +1,5 @@
+import { useRef } from 'react';
+import { useDialogFocus } from '../../hooks/useDialogFocus';
 import { usePlayerStore } from '../../stores/playerStore';
 import { useRatingStore } from '../../stores/ratingStore';
 import { useUiStore } from '../../stores/uiStore';
@@ -39,6 +41,8 @@ export default function QueueDrawer() {
   const showRecommendationHints = useRecommendationDisplayStore(s => s.showHints);
   const { items: displayedQueue, startIndex: displayedQueueStartIndex } = getQueueDisplayWindow(queue, queueIndex);
   const duplicateCount = queue.length - new Set(queue.map(song => song.id)).size;
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useDialogFocus(dialogRef, queueDrawerOpen, toggleQueueDrawer);
 
   return (
     <>
@@ -54,6 +58,11 @@ export default function QueueDrawer() {
 
       {/* ドロワー本体 */}
       <div
+        ref={dialogRef}
+        inert={!queueDrawerOpen}
+        aria-hidden={!queueDrawerOpen}
+        aria-modal={queueDrawerOpen || undefined}
+        tabIndex={-1}
         className="fixed top-0 right-0 z-50 h-full flex flex-col queue-drawer"
         style={{
           width: '360px',
@@ -147,7 +156,7 @@ export default function QueueDrawer() {
         </div>
 
         {/* キューリスト */}
-        <div className="flex-1 overflow-y-auto">
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
           {queue.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-full gap-3 px-4"
                  style={{ color: 'var(--color-text-muted)' }}>
