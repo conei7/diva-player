@@ -73,6 +73,13 @@ try {
     .find(button => button.textContent.includes('参加者・役割')).click());
   await page.type('input[placeholder="P、絵師、動画師、演奏者…"]', 'Layout');
   await page.waitForFunction(() => document.body.textContent.includes('Layout fixture 19'));
+  // A fast fixture response may arrive during the section's opening transition.
+  // Measure its final layout, while retaining the clipping assertion below.
+  await page.evaluate(() => Promise.all(document.getAnimations()
+    .filter(animation => animation.effect instanceof KeyframeEffect
+      && animation.effect.target?.closest('.filter-section')
+      && animation.effect.getComputedTiming().iterations !== Infinity)
+    .map(animation => animation.finished.catch(() => {}))));
   const list = await page.evaluate(() => {
     const input = document.querySelector('input[placeholder="P、絵師、動画師、演奏者…"]');
     const section = input.closest('.filter-section-content');
