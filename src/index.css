@@ -813,6 +813,26 @@ select optgroup {
 }
 
 /* ─── カスタム数値入力 ─── */
+.playlist-page {
+  min-height: calc(100dvh - var(--header-height));
+  padding-bottom: calc(16px + env(safe-area-inset-bottom) + var(--floating-player-clearance, 0px));
+}
+
+.playlist-detail > .sticky {
+  top: var(--header-height);
+}
+
+@media (min-width: 1280px) {
+  .playlist-page {
+    height: calc(100dvh - var(--header-height));
+    padding-bottom: 16px;
+  }
+
+  .playlist-detail > .sticky {
+    top: 0;
+  }
+}
+
 .playlist-field {
   min-height: 44px;
   min-width: 0;

@@ -5,9 +5,9 @@
  * - PlainSongRow: DnDなしの曲行（ソート済み表示・仮想リスト内で使用）
  * - VirtualSongList: 200件超のプレイリスト用仮想スクロールリスト
  */
-import { useRef } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import PlaylistPopoverMenu from './PlaylistPopoverMenu';
-import { useVirtualizer } from '@tanstack/react-virtual';
+import { useVirtualizer, useWindowVirtualizer } from '@tanstack/react-virtual';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { usePlayerStore } from '../../stores/playerStore';
@@ -210,24 +210,51 @@ export function VirtualSongList({
 }: VirtualSongListProps) {
   const { setQueue } = usePlayerStore();
   const parentRef = useRef<HTMLDivElement>(null);
+  const [desktop, setDesktop] = useState(() => window.matchMedia('(min-width: 1280px)').matches);
+  const [scrollMargin, setScrollMargin] = useState(0);
   const ROW_HEIGHT = 64;
 
-  const rowVirtualizer = useVirtualizer({
+  useEffect(() => {
+    const media = window.matchMedia('(min-width: 1280px)');
+    const change = () => setDesktop(media.matches);
+    media.addEventListener('change', change);
+    return () => media.removeEventListener('change', change);
+  }, []);
+  useLayoutEffect(() => {
+    if (desktop || !parentRef.current) return;
+    const measure = () => setScrollMargin((parentRef.current?.getBoundingClientRect().top ?? 0) + window.scrollY);
+    measure();
+    const observer = new ResizeObserver(measure);
+    if (parentRef.current.parentElement) observer.observe(parentRef.current.parentElement);
+    window.addEventListener('resize', measure);
+    return () => { observer.disconnect(); window.removeEventListener('resize', measure); };
+  }, [desktop, songs]);
+
+  const panelVirtualizer = useVirtualizer({
+    enabled: desktop,
     count: songs.length,
     getScrollElement: () => parentRef.current,
     estimateSize: () => ROW_HEIGHT,
     overscan: 10,
   });
+  const windowVirtualizer = useWindowVirtualizer({
+    enabled: !desktop,
+    count: songs.length,
+    estimateSize: () => ROW_HEIGHT,
+    overscan: 10,
+    scrollMargin,
+  });
+  const rowVirtualizer = desktop ? panelVirtualizer : windowVirtualizer;
 
   return (
     <div
       ref={parentRef}
-      className="rounded-xl overflow-y-auto overflow-x-hidden"
+      className="rounded-xl overflow-visible xl:overflow-y-auto xl:overflow-x-hidden"
       style={{
         border: '1px solid var(--color-border)',
         background: 'var(--color-bg-card)',
-        height: 'min(calc(100dvh - 400px), 600px)',
-        maxHeight: '600px',
+        height: desktop ? 'min(calc(100dvh - 400px), 600px)' : undefined,
+        maxHeight: desktop ? '600px' : undefined,
       }}
     >
       <div style={{ height: rowVirtualizer.getTotalSize(), position: 'relative' }}>
@@ -239,7 +266,7 @@ export function VirtualSongList({
               key={virtualItem.key}
               style={{
                 position: 'absolute',
-                top: virtualItem.start,
+                top: virtualItem.start - (desktop ? 0 : scrollMargin),
                 width: '100%',
                 height: ROW_HEIGHT,
               }}

@@ -158,8 +158,8 @@ export default function PlaylistLibrarySidebar({
   };
   const chooseFolder = (id: string | null, all = false) => { setFolderScope(all ? 'all' : 'folder'); onSelectFolder(id); };
   return (
-    <aside className={`min-h-0 w-full flex-1 flex-col overflow-hidden rounded-2xl border border-white/10 bg-white/[0.025] xl:h-full xl:w-80 xl:flex-none ${hasSelectedPlaylist ? 'hidden xl:flex' : 'flex'}`} aria-label={t('プレイリストライブラリ')}>
-      <header className="shrink-0 border-b border-white/10 p-4">
+    <aside className={`min-h-0 w-full flex-none flex-col overflow-visible xl:h-full xl:w-80 xl:overflow-hidden xl:rounded-2xl xl:border xl:border-white/10 xl:bg-white/[0.025] ${hasSelectedPlaylist ? 'hidden xl:flex' : 'flex'}`} aria-label={t('プレイリストライブラリ')}>
+      <header className="shrink-0 border-b border-white/10 px-1 pb-4 pt-1 xl:p-4">
         <div className="flex items-center justify-between gap-2">
           <h2 className="text-xl font-bold">{t('プレイリスト')}</h2>
           <PlaylistPopoverMenu trigger={<button type="button" className="h-11 w-11 rounded-xl text-neutral-400 hover:bg-white/10" title={t('ライブラリ操作')} aria-label={t('ライブラリ操作')}>•••</button>}>
@@ -189,7 +189,7 @@ export default function PlaylistLibrarySidebar({
           <button type="button" onClick={() => setShowFolderInput(false)} aria-label={t('キャンセル')} className="px-2 text-neutral-400">×</button>
         </form>}
       </header>
-      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
+      <div className="min-h-0 space-y-4 overflow-visible py-4 xl:flex-1 xl:overflow-y-auto xl:p-4" data-testid="playlist-library-content">
         <input type="search" placeholder={t('ライブラリを検索')} aria-label={t('ライブラリを検索')} value={query} onChange={event => setQuery(event.target.value)} className="playlist-field min-h-11 w-full text-sm" />
         <div className="flex gap-1 rounded-xl bg-black/20 p-1" aria-label={t('プレイリスト種別')}>
           {([['all', t('すべて')], ['smart', t('スマート')], ['synced', t('同期中')]] as const).map(([value, label]) => <button key={value} type="button" onClick={() => setLibraryScope(value)} aria-pressed={libraryScope === value} className={`min-h-11 flex-1 rounded-lg px-2 text-xs ${libraryScope === value ? 'bg-white/10 text-white' : 'text-neutral-400 hover:text-white'}`}>{label}</button>)}

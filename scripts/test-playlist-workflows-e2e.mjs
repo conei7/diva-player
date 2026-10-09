@@ -59,6 +59,14 @@ try {
     await fixtures(page);
     await page.goto(new URL('playlists', baseUrl), { waitUntil: 'domcontentloaded', timeout: 60000 });
     await page.waitForSelector('aside[aria-label="プレイリストライブラリ"]');
+    if (width < 1280) {
+      const layout = await page.evaluate(() => ({
+        padding: parseFloat(getComputedStyle(document.querySelector('.playlist-page')).paddingBottom),
+        overflow: getComputedStyle(document.querySelector('[data-testid="playlist-library-content"]')).overflowY,
+        border: getComputedStyle(document.querySelector('aside[aria-label="プレイリストライブラリ"]')).borderTopWidth,
+      }));
+      assert(layout.padding <= 24 && layout.overflow === 'visible' && layout.border === '0px', `empty library wastes mobile viewport: ${JSON.stringify(layout)}`);
+    }
     await screenshot(page, `library-${width}`);
     await clickText(page, '外部から読み込む');
     const menuBounds = await page.$eval('[role="menu"]', element => { const r = element.getBoundingClientRect(); return { left: r.left, right: r.right, top: r.top, bottom: r.bottom }; });
@@ -80,6 +88,14 @@ try {
     const imported = await page.evaluate(() => JSON.parse(localStorage.getItem('diva_playlists')));
     assert(imported.some(item => item.name === '変更後のシリーズ' && item.songs[0]?.id === song.id && !item.nicoSync), 'one-time import without target did not persist');
     await screenshot(page, `detail-${width}`);
+    if (width === 390) {
+      await clickText(page, '再生');
+      await page.waitForSelector('.global-mini-player', { visible: true });
+      await page.waitForFunction(() => {
+        const player = document.querySelector('.global-mini-player');
+        return player && parseFloat(getComputedStyle(document.querySelector('.playlist-page')).paddingBottom) >= player.getBoundingClientRect().height + 16;
+      });
+    }
     if (width < 1280) await clickText(page, '← ライブラリ');
     await clickText(page, '条件で自動作成');
     await page.waitForFunction(() => document.body.textContent.includes('総一致 1曲 / 保存予定 1曲'));

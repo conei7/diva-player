@@ -93,6 +93,20 @@ export default function GlobalPlayer() {
     && !renderAsWatchPage
     && !!currentSong
     && hasLocalPlayback;
+  const floatingPlayerRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const element = floatingPlayerRef.current;
+    const update = () => document.documentElement.style.setProperty(
+      '--floating-player-clearance', `${showMiniPlayer && element ? Math.ceil(element.getBoundingClientRect().height) + 16 : 0}px`,
+    );
+    update();
+    const observer = new ResizeObserver(update);
+    if (element && showMiniPlayer) observer.observe(element);
+    return () => {
+      observer.disconnect();
+      document.documentElement.style.removeProperty('--floating-player-clearance');
+    };
+  }, [showMiniPlayer]);
   const canShuffle = queue.length > 1;
   const handleSwipe = useCallback((direction: 'left' | 'right' | 'up') => {
     if (direction === 'left') next();
@@ -161,7 +175,7 @@ export default function GlobalPlayer() {
   })();
 
   return (
-    <div className={`overflow-hidden${showMiniPlayer ? ' global-mini-player' : ''}`} data-testid="global-player" style={containerStyle}>
+    <div ref={floatingPlayerRef} className={`overflow-hidden${showMiniPlayer ? ' global-mini-player' : ''}`} data-testid="global-player" style={containerStyle}>
       {/* プレイヤー本体 (iframe) */}
       <div 
         style={{ 

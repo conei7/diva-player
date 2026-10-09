@@ -86,7 +86,9 @@ async function installFixtures(page) {
   await page.evaluateOnNewDocument((playlists, folders) => {
     localStorage.setItem('diva_playlists', JSON.stringify(playlists));
     localStorage.setItem('diva_playlistFolders', JSON.stringify(folders));
-  }, [largePlaylist, smartPlaylist, syncedPlaylist], [{
+  }, [largePlaylist, smartPlaylist, syncedPlaylist, ...Array.from({ length: 40 }, (_, index) => ({
+    ...largePlaylist, id: `library-scroll-${index}`, name: `一覧スクロール確認 ${String(index).padStart(2, '0')}`, songs: [],
+  }))], [{
     id: 'folder-discovery',
     name: '発掘用',
     createdAt: now,
@@ -171,12 +173,35 @@ async function runMobile(page) {
   assert(mobileLayout.backVisible, 'mobile library back action is missing');
   assert(mobileLayout.overflow <= 1, `mobile layout overflows horizontally by ${mobileLayout.overflow}px`);
 
+  const virtualScroll = await page.evaluate(() => {
+    const heading = document.querySelector('h1');
+    const detail = heading.closest('main');
+    const nestedScrollers = [...detail.querySelectorAll('*')].filter(element => ['auto', 'scroll'].includes(getComputedStyle(element).overflowY) && element.scrollHeight > element.clientHeight + 1);
+    return { count: nestedScrollers.length, height: document.documentElement.scrollHeight };
+  });
+  assert(virtualScroll.count === 0 && virtualScroll.height > 844, `mobile songs trapped in nested scroll: ${JSON.stringify(virtualScroll)}`);
+  await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+  await page.waitForFunction(() => document.body.textContent.includes('Playlist fixture 240'));
+  await page.evaluate(() => window.scrollTo(0, 0));
+
   await page.evaluate(() => {
     const backButton = [...document.querySelectorAll('button')].find(button => button.textContent?.includes('← ライブラリ'));
     if (!(backButton instanceof HTMLButtonElement)) throw new Error('library back button not found');
     backButton.click();
   });
   await page.waitForSelector('aside[aria-label="プレイリストライブラリ"]', { visible: true });
+  const libraryScroll = await page.$eval('aside[aria-label="プレイリストライブラリ"]', element => {
+    const content = element.querySelector('[data-testid="playlist-library-content"]');
+    return { overflow: getComputedStyle(content).overflowY, bottom: element.getBoundingClientRect().bottom + scrollY, pageHeight: document.documentElement.scrollHeight, border: getComputedStyle(element).borderTopWidth };
+  });
+  assert(libraryScroll.overflow === 'visible' && libraryScroll.border === '0px' && libraryScroll.bottom <= libraryScroll.pageHeight, `mobile library is boxed or clipped: ${JSON.stringify(libraryScroll)}`);
+  await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+  const lastPlaylist = await page.evaluate(() => {
+    const button = [...document.querySelectorAll('aside button')].find(item => item.textContent?.includes('一覧スクロール確認 39'));
+    const rect = button?.getBoundingClientRect();
+    return { top: rect?.top, bottom: rect?.bottom, headerBottom: document.querySelector('header').getBoundingClientRect().bottom };
+  });
+  assert(lastPlaylist.top >= lastPlaylist.headerBottom && lastPlaylist.bottom <= 844, `last playlist cannot be reached by page scroll: ${JSON.stringify(lastPlaylist)}`);
   console.log('PASS refreshed 390px playlist detail navigation and touch targets');
 }
 

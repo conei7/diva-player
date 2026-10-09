@@ -10,7 +10,7 @@
  * - モバイル遷移アニメーション
  * - シャッフル再生ボタン
  */
-import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
+import { useEffect, useLayoutEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
 import {
   DndContext,
@@ -85,6 +85,9 @@ export default function PlaylistPage() {
   const openSaveToPlaylist = useUiStore(s => s.openSaveToPlaylist);
 
   const [selectedPlaylistId, setSelectedPlaylistId] = useState<string | null>(null);
+  useLayoutEffect(() => {
+    if (window.matchMedia('(max-width: 1279px)').matches) window.scrollTo(0, 0);
+  }, [selectedPlaylistId]);
   const [selectedFolderId, setSelectedFolderId]     = useState<string | null>(null);
 
   const [filterText, setFilterText]     = useState('');
@@ -585,11 +588,7 @@ export default function PlaylistPage() {
 
   return (
     <div
-      className="flex min-h-0 flex-col gap-4 px-3 py-3 xl:flex-row md:px-4 md:py-4"
-      style={{
-        height: 'calc(100dvh - var(--header-height))',
-        paddingBottom: 'calc(var(--player-bar-height) + 24px)',
-      }}
+      className="playlist-page flex min-h-0 flex-col gap-4 px-3 py-3 xl:flex-row md:px-4 md:py-4"
     >
       {/* ─── 統一トースト ───────────────────────────────────────────── */}
       <PlaylistToast toasts={toasts} onDismiss={dismissToast} />
@@ -613,7 +612,7 @@ export default function PlaylistPage() {
       />
 
       {/* ─── 右パネル ────────────────────────────────────────────────── */}
-      <main className={`min-h-0 min-w-0 flex-1 space-y-3 overflow-y-auto ${selectedPlaylist ? 'block animate-slide-in-right xl:animate-none' : 'hidden xl:block'}`}>
+      <main className={`playlist-detail min-h-0 min-w-0 flex-1 space-y-3 overflow-visible xl:overflow-y-auto ${selectedPlaylist ? 'block animate-slide-in-right xl:animate-none' : 'hidden xl:block'}`}>
         {!selectedPlaylist ? (
           /* ── 空状態 ── */
           <div className="flex h-full min-h-[360px] flex-col items-center justify-center rounded-2xl border border-white/[0.07] bg-white/[0.02] px-6 text-center">
@@ -637,7 +636,7 @@ export default function PlaylistPage() {
             {/* ── モバイル戻るボタン（固定） ── */}
             <button
               type="button"
-              className="xl:hidden sticky top-0 z-30 min-h-11 self-start rounded-xl border border-white/10 bg-black/90 px-3 text-sm text-neutral-300 transition-colors hover:bg-white/10"
+              className="xl:hidden min-h-11 self-start rounded-xl border border-white/10 bg-black/90 px-3 text-sm text-neutral-300 transition-colors hover:bg-white/10"
               onClick={() => setSelectedPlaylistId(null)}
             >
               ← {t('ライブラリ')}
