@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import {
   assertRecommendationReport,
   buildSeedEndpointDiagnostics,
+  calculateModeOverlapDiagnostics,
   persistAndAssertRecommendationReport,
   validateRecommendationHealth,
   getJson,
@@ -91,6 +92,9 @@ assert.equal(diagnostics.maxProducerShare, 0.5);
 assert.deepEqual(diagnostics.dominantProducerIds, [7, 8]);
 assert.equal(diagnostics.maxVocalistShare, 0.5);
 assert.deepEqual(diagnostics.dominantVocalistIds, [39, 40]);
+assert.equal(buildSeedEndpointDiagnostics([
+  { songId: 1, relatedEvidence: ['tag'] },
+]).relatedEvidenceCoverage, 1);
 assert.deepEqual(buildSeedEndpointDiagnostics([]), {
   resultSongIds: [],
   maxArtistShare: 0,
@@ -99,7 +103,27 @@ assert.deepEqual(buildSeedEndpointDiagnostics([]), {
   dominantProducerIds: [],
   maxVocalistShare: 0,
   dominantVocalistIds: [],
+  relatedEvidenceCoverage: null,
 });
+
+const overlappingLists = new Map([
+  [1, new Map(endpoints.map(endpoint => [endpoint, Array.from({ length: 20 }, (_, index) => ({ songId: index + 1 }))]))],
+  [2, new Map(endpoints.map(endpoint => [endpoint, Array.from({ length: 20 }, (_, index) => ({ songId: index + 1 }))]))],
+]);
+const overlapDiagnostics = calculateModeOverlapDiagnostics([
+  { id: 1, audioComputed: false },
+  { id: 2, audioComputed: true },
+], overlappingLists, endpoints);
+assert.equal(overlapDiagnostics.maxObservedOverlap, 1);
+assert.equal(overlapDiagnostics.maxComparableOverlap, 1);
+assert.equal(overlapDiagnostics.perSeed[1].overlap, 1);
+const missingAudioOnly = calculateModeOverlapDiagnostics(
+  [{ id: 1, audioComputed: false }],
+  overlappingLists,
+  endpoints,
+);
+assert.equal(missingAudioOnly.maxObservedOverlap, 1);
+assert.equal(missingAudioOnly.maxComparableOverlap, 0);
 
 assert.doesNotThrow(() => assertRecommendationReport(passingReport()));
 

@@ -1300,7 +1300,7 @@ export async function getSongsByTags(
  * Qdrant ハイブリッドベクトルによる音響類似曲取得
  * バックエンドが利用不可の場合は VocaDB /related にフォールバック
  */
-interface SimilarItem { songId: number; name: string; artist: string; score: number; }
+interface SimilarItem { songId: number; name: string; artist: string; score: number; relatedEvidence?: string[]; }
 interface SimilarResponse { items: SimilarItem[]; cards?: Song[]; }
 
 function readCompactCards(cards: unknown): Song[] | null {

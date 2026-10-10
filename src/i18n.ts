@@ -122,6 +122,8 @@ const messages = {
     filterRecommendedDescription: 'おすすめ（メタデータ・音響・履歴）',
     filterRelated: '関連曲',
     filterRelatedDescription: 'メタデータが似ている曲',
+    relatedSongsNoEvidence: '関連曲が見つかりませんでした。総合推薦をお試しください。',
+    relatedSongsLoadFailed: '関連曲を読み込めませんでした。時間をおいて再度お試しください。',
     filterProducer: '同じPの曲',
     filterProducerDescription: '同じプロデューサーの曲',
     filterSound: '音響類似度',

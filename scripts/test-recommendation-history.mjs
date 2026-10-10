@@ -37,8 +37,5 @@ assert.deepEqual(sustained.sustainedViolations.map(item => item.id), ['quality./
 assert.equal(evaluateRecommendationHistory([report({ latency: 5000 }), report()]).status, 'healthy');
 const unavailable = report();
 unavailable.seedResults[0].counts['/api/recommend/metadata'] = 0;
-assert.deepEqual(
-  collectRecommendationViolations(unavailable).map(item => item.id),
-  ['availability./api/recommend/metadata'],
-);
+assert.deepEqual(collectRecommendationViolations(unavailable), []);
 console.log('PASS recommendation history sustained-deviation evaluation');

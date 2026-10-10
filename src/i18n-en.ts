@@ -90,6 +90,8 @@ export const messages = {
     filterRecommendedDescription: 'Recommendations using metadata, sound, and listening history',
     filterRelated: 'Related',
     filterRelatedDescription: 'Songs with similar metadata',
+    relatedSongsNoEvidence: 'No related songs were found. Try Recommendations.',
+    relatedSongsLoadFailed: 'Related songs could not be loaded. Please try again later.',
     filterProducer: 'Same producer',
     filterProducerDescription: 'More songs by this producer',
     filterSound: 'Audio similarity',

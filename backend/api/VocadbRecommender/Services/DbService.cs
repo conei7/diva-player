@@ -155,7 +155,8 @@ public class DbService
     private static long EstimateSongInfoBytes(SongInfo info) =>
         256L
         + (long)(info.Name.Length + info.ArtistString.Length + info.SongType.Length) * sizeof(char)
-        + (long)(info.ProducerIds.Length + info.VocalistIds.Length + info.RelatedTagIds.Length + info.AlbumIds.Length) * sizeof(int);
+        + (long)(info.ProducerIds.Length + info.VocalistIds.Length + info.RelatedTagIds.Length + info.AlbumIds.Length) * sizeof(int)
+        + (info.OriginalVersionId is null ? 0 : sizeof(int));
 
     private static long EstimateIdArrayBytes(int[] ids) => 64L + (long)ids.Length * sizeof(int);
 
@@ -1895,13 +1896,14 @@ public class DbService
                    ) AS has_playable_pv,
                    COALESCE(q.discovery_eligible, FALSE) AS discovery_eligible
                    ,COALESCE(q.quality_score, 0.5)::double precision AS quality_score
-                   ,sf.audio_computed IS TRUE AS has_audio_features
-                   ,EXISTS (
-                       SELECT 1 FROM pvs original_pv
-                       WHERE original_pv.song_id = s.id
-                         AND original_pv.disabled = FALSE
-                         AND original_pv.pv_type = 'Original'
-                   ) AS has_original_pv
+                           ,sf.audio_computed IS TRUE AS has_audio_features
+                           ,EXISTS (
+                               SELECT 1 FROM pvs original_pv
+                               WHERE original_pv.song_id = s.id
+                                 AND original_pv.disabled = FALSE
+                                 AND original_pv.pv_type = 'Original'
+                           ) AS has_original_pv,
+                           s.original_version_id
             FROM songs s
             LEFT JOIN song_features sf ON sf.song_id = s.id
             LEFT JOIN song_discovery_quality q ON q.song_id = s.id
@@ -1931,7 +1933,8 @@ public class DbService
                 DiscoveryEligible: !reader.IsDBNull(16) && reader.GetBoolean(16),
                 QualityScore: reader.IsDBNull(17) ? 0.5 : reader.GetDouble(17),
                 HasAudioFeatures: !reader.IsDBNull(18) && reader.GetBoolean(18),
-                HasOriginalPv: !reader.IsDBNull(19) && reader.GetBoolean(19)
+                HasOriginalPv: !reader.IsDBNull(19) && reader.GetBoolean(19),
+                OriginalVersionId: reader.IsDBNull(20) ? null : reader.GetInt32(20)
             );
 
             _objectCache.Set(
@@ -2032,6 +2035,52 @@ public class DbService
         var ids = result.ToArray();
         _objectCache.Set(cacheKey, ids, TimeSpan.FromMinutes(15), EstimateIdArrayBytes(ids));
         return ids;
+    }
+
+    public async Task<int[]> GetVersionRelatedCandidateIdsAsync(
+        int seedSongId,
+        int? seedOriginalVersionId,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var publicationGeneration =
+            await GetRecommendationPublicationGenerationAsync(cancellationToken);
+        var cacheKey = RecommendationCacheKey(
+            publicationGeneration,
+            $"version-related:{seedSongId}:{seedOriginalVersionId?.ToString(CultureInfo.InvariantCulture) ?? "none"}");
+        if (_objectCache.TryGetValue(cacheKey, out int[]? cached) && cached is not null)
+            return cached;
+
+        await using var conn = await OpenAsync(cancellationToken);
+        await using var cmd = new NpgsqlCommand(@"
+            SELECT s.id
+            FROM songs s
+            WHERE s.id = $2
+               OR s.original_version_id = $1
+               OR ($2 IS NOT NULL AND s.original_version_id = $2)
+            ORDER BY CASE
+                         WHEN s.id = $2 THEN 0
+                         WHEN s.original_version_id = $1 THEN 1
+                         ELSE 2
+                     END,
+                     s.id
+            LIMIT 100", conn);
+        cmd.Parameters.AddWithValue(seedSongId);
+        cmd.Parameters.Add(new NpgsqlParameter
+        {
+            NpgsqlDbType = NpgsqlDbType.Integer,
+            Value = (object?)seedOriginalVersionId ?? DBNull.Value,
+        });
+
+        var ids = new List<int>();
+        await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+            if (reader.GetInt32(0) != seedSongId)
+                ids.Add(reader.GetInt32(0));
+
+        var result = ids.Distinct().ToArray();
+        _objectCache.Set(cacheKey, result, TimeSpan.FromMinutes(15), EstimateIdArrayBytes(result));
+        return result;
     }
 
     internal static string MetadataRelationshipCacheKey(
@@ -3220,5 +3269,6 @@ public record SongInfo(
     bool    DiscoveryEligible,
     double  QualityScore,
     bool    HasAudioFeatures,
-    bool    HasOriginalPv
+    bool    HasOriginalPv,
+    int?    OriginalVersionId = null
 );

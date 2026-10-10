@@ -119,6 +119,7 @@ interface TabState {
   loading: boolean;
   hasMore: boolean;
   page: number;
+  loadError?: boolean;
 }
 
 const PAGE_SIZE = 40;
@@ -368,13 +369,14 @@ export default function WatchPage({ onDocumentTitleStateChange }: WatchPageProps
             ? filtered.relaxedConditions
             : [...new Set([...prev.related.relaxedConditions, ...filtered.relaxedConditions])],
           loading: false,
+          loadError: false,
           hasMore: !sourceExhausted && fresh.length > 0,
           page: page + 1,
         },
       }));
     } catch {
       if (signal.aborted || fetchedForRef.current !== s.id) return;
-      setTabs(prev => ({ ...prev, related: { ...prev.related, loading: false, hasMore: false } }));
+      setTabs(prev => ({ ...prev, related: { ...prev.related, loading: false, hasMore: false, loadError: true } }));
     }
   }, [filterDiscoverySongs, globalFilterSettings]);
 
@@ -668,6 +670,8 @@ export default function WatchPage({ onDocumentTitleStateChange }: WatchPageProps
               exposureSurface={activeTab === 'producer' ? 'watch-producer' : activeTab === 'related' ? 'watch-related' : activeTab === 'recommended' ? 'watch-recommended' : 'watch-deep'}
               emptyMessage={isDiscoveryFilterActive(globalFilterSettings)
                 ? t('emptyRecommendationsWithFilters')
+                : activeTab === 'related'
+                  ? t(currentTab.loadError ? 'relatedSongsLoadFailed' : 'relatedSongsNoEvidence')
                 : undefined}
             />
 

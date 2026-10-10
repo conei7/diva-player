@@ -7,6 +7,27 @@ namespace VocadbRecommender.Services;
 /// </summary>
 public static class MetadataRelationshipRanking
 {
+    /// <summary>
+    /// Related-song results require an identifiable catalog relationship. Vector,
+    /// era, and popularity similarity can rank related candidates, but cannot make
+    /// an otherwise unrelated catalog song eligible for this endpoint.
+    /// </summary>
+    public static bool HasExplicitRelatedEvidence(SongInfo seed, SongInfo candidate)
+    {
+        if (seed.Id == candidate.Id) return false;
+
+        return IsVersionRelated(seed, candidate)
+            || SharesAny(seed.AlbumIds, candidate.AlbumIds)
+            || SharesAny(seed.ProducerIds, candidate.ProducerIds)
+            || SharesAny(seed.RelatedTagIds, candidate.RelatedTagIds);
+    }
+
+    public static bool IsVersionRelated(SongInfo first, SongInfo second) =>
+        first.OriginalVersionId == second.Id
+        || second.OriginalVersionId == first.Id
+        || (first.OriginalVersionId is not null
+            && first.OriginalVersionId == second.OriginalVersionId);
+
     public static bool NeedsDiverseFallback(
         IEnumerable<SongInfo> candidateInfos,
         IEnumerable<SongInfo>? vocalistAssessmentInfos = null)

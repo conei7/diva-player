@@ -5,6 +5,47 @@ namespace VocadbRecommender.Tests;
 public sealed class MetadataRelationshipRankingTests
 {
     [Fact]
+    public void HasExplicitRelatedEvidence_RequiresAConcreteCatalogRelationship()
+    {
+        var seed = RandomSong(new Random(1), 1) with
+        {
+            OriginalVersionId = null,
+            ProducerIds = [10],
+            RelatedTagIds = [20],
+            AlbumIds = [30],
+        };
+        var unrelated = RandomSong(new Random(2), 2) with
+        {
+            OriginalVersionId = null,
+            ProducerIds = [11],
+            RelatedTagIds = [21],
+            AlbumIds = [31],
+        };
+
+        Assert.False(MetadataRelationshipRanking.HasExplicitRelatedEvidence(seed, unrelated));
+        Assert.True(MetadataRelationshipRanking.HasExplicitRelatedEvidence(
+            seed, unrelated with { RelatedTagIds = [20] }));
+        Assert.True(MetadataRelationshipRanking.HasExplicitRelatedEvidence(
+            seed, unrelated with { AlbumIds = [30] }));
+        Assert.True(MetadataRelationshipRanking.HasExplicitRelatedEvidence(
+            seed, unrelated with { ProducerIds = [10] }));
+        Assert.False(MetadataRelationshipRanking.HasExplicitRelatedEvidence(seed, seed));
+    }
+
+    [Fact]
+    public void IsVersionRelated_MatchesOriginalsAndSiblings()
+    {
+        var original = RandomSong(new Random(3), 10) with { OriginalVersionId = null };
+        var cover = RandomSong(new Random(4), 11) with { OriginalVersionId = original.Id };
+        var sibling = RandomSong(new Random(5), 12) with { OriginalVersionId = original.Id };
+        var unrelated = RandomSong(new Random(6), 13) with { OriginalVersionId = null };
+
+        Assert.True(MetadataRelationshipRanking.IsVersionRelated(original, cover));
+        Assert.True(MetadataRelationshipRanking.IsVersionRelated(cover, sibling));
+        Assert.False(MetadataRelationshipRanking.IsVersionRelated(original, unrelated));
+    }
+
+    [Fact]
     public void RerankRelated_MatchesReferenceBitForBitAcrossRandomizedCatalogs()
     {
         for (var scenario = 0; scenario < 24; scenario++)
@@ -275,7 +316,8 @@ public sealed class MetadataRelationshipRankingTests
             DiscoveryEligible: true,
             QualityScore: random.NextDouble(),
             HasAudioFeatures: random.Next(2) == 0,
-            HasOriginalPv: random.Next(2) == 0);
+            HasOriginalPv: random.Next(2) == 0,
+            OriginalVersionId: null);
     }
 
     private static int[] RandomRelationships(

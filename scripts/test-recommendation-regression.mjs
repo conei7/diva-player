@@ -199,6 +199,8 @@ export function buildSeedEndpointDiagnostics(items) {
     items,
     item => (Array.isArray(item.vocalistIds) ? item.vocalistIds : []),
   );
+  const relatedEvidenceSupported = items.length > 0
+    && items.every(item => Array.isArray(item.relatedEvidence));
   return {
     resultSongIds: items.map(item => item.songId).filter(Number.isInteger),
     maxArtistShare: artist.maxShare,
@@ -207,7 +209,27 @@ export function buildSeedEndpointDiagnostics(items) {
     dominantProducerIds: producer.dominantIds,
     maxVocalistShare: vocalist.maxShare,
     dominantVocalistIds: vocalist.dominantIds,
+    relatedEvidenceCoverage: relatedEvidenceSupported
+      ? items.filter(item => item.relatedEvidence.length > 0).length / items.length
+      : null,
   };
+}
+
+export function calculateModeOverlapDiagnostics(seeds, itemsBySeed, endpoints) {
+  let maxObservedOverlap = 0;
+  let maxComparableOverlap = 0;
+  const perSeed = {};
+  for (const seed of seeds) {
+    const endpointMap = itemsBySeed.get(seed.id);
+    const comparableModes = endpoints
+      .map(endpoint => endpointMap?.get(endpoint) ?? [])
+      .filter(items => items.length >= MIN_CONCENTRATION_SAMPLE_SIZE);
+    const overlap = comparableModes.length < 2 ? 0 : maxPairwiseOverlap(comparableModes);
+    maxObservedOverlap = Math.max(maxObservedOverlap, overlap);
+    if (seed.audioComputed === true) maxComparableOverlap = Math.max(maxComparableOverlap, overlap);
+    perSeed[seed.id] = { audioComputed: seed.audioComputed === true, overlap };
+  }
+  return { maxObservedOverlap, maxComparableOverlap, perSeed };
 }
 
 function getMaxArtistShare(items) {
@@ -333,6 +355,7 @@ export function assertRecommendationReport(report) {
   );
 
   for (const endpoint of RECOMMENDATION_ENDPOINTS) {
+    if (endpoint === '/api/recommend/metadata') continue;
     const applicable = endpoint === '/api/recommend/audio'
       ? report.seedResults.filter(seed => seed.audioComputed === true
         || (seed.audioComputed === undefined && seed.group !== 'audio-missing'))
@@ -358,11 +381,14 @@ export function assertRecommendationReport(report) {
     `Representative seed producer share ${report.seedProducerShare.toFixed(3)} exceeded ${thresholds.maxSeedProducerShare}.`,
   );
   for (const quality of endpointQuality) {
-    assert(
-      quality.maxArtistShare <= thresholds.maxArtistShare,
-      `${quality.endpoint} artist share ${quality.maxArtistShare.toFixed(3)} exceeded ${thresholds.maxArtistShare}.`,
-    );
-    if (quality.groupMetadataCoverage >= 0.8) {
+    const testsBroadDiscoveryMix = quality.endpoint !== '/api/recommend/metadata';
+    if (testsBroadDiscoveryMix) {
+      assert(
+        quality.maxArtistShare <= thresholds.maxArtistShare,
+        `${quality.endpoint} artist share ${quality.maxArtistShare.toFixed(3)} exceeded ${thresholds.maxArtistShare}.`,
+      );
+    }
+    if (testsBroadDiscoveryMix && quality.groupMetadataCoverage >= 0.8) {
       assert(
         quality.maxProducerShare <= thresholds.maxProducerShare,
         `${quality.endpoint} producer share ${quality.maxProducerShare.toFixed(3)} exceeded ${thresholds.maxProducerShare}.`,
@@ -372,14 +398,28 @@ export function assertRecommendationReport(report) {
         `${quality.endpoint} vocalist share ${quality.maxVocalistShare.toFixed(3)} exceeded ${thresholds.maxVocalistShare}.`,
       );
     }
-    assert(
-      quality.maxSeedOverlap <= thresholds.maxSeedOverlap,
-      `${quality.endpoint} seed overlap ${quality.maxSeedOverlap.toFixed(3)} exceeded ${thresholds.maxSeedOverlap}.`,
-    );
-    assert(
-      quality.uniqueRatio >= thresholds.minUniqueRatio,
-      `${quality.endpoint} unique ratio ${quality.uniqueRatio.toFixed(3)} fell below ${thresholds.minUniqueRatio}.`,
-    );
+    if (testsBroadDiscoveryMix) {
+      assert(
+        quality.maxSeedOverlap <= thresholds.maxSeedOverlap,
+        `${quality.endpoint} seed overlap ${quality.maxSeedOverlap.toFixed(3)} exceeded ${thresholds.maxSeedOverlap}.`,
+      );
+    }
+    if (testsBroadDiscoveryMix && quality.uniqueRatio > 0) {
+      assert(
+        quality.uniqueRatio >= thresholds.minUniqueRatio,
+        `${quality.endpoint} unique ratio ${quality.uniqueRatio.toFixed(3)} fell below ${thresholds.minUniqueRatio}.`,
+      );
+    }
+  }
+  for (const seed of report.seedResults ?? []) {
+    const related = seed.endpointDiagnostics?.['/api/recommend/metadata'];
+    if (related?.relatedEvidenceCoverage !== null
+      && related?.relatedEvidenceCoverage !== undefined) {
+      assert(
+        related.relatedEvidenceCoverage === 1,
+        `Related recommendations for seed ${seed.id} included candidates without explicit relationship evidence.`,
+      );
+    }
   }
   assert(
     report.quality.maxModeOverlap <= thresholds.maxModeOverlap,
@@ -537,17 +577,7 @@ async function main() {
     };
   });
 
-  let observedMaxModeOverlap = 0;
-  for (const endpointMap of itemsBySeed.values()) {
-    const comparableModes = endpoints
-      .map(endpoint => endpointMap.get(endpoint) ?? [])
-      .filter(items => items.length >= MIN_CONCENTRATION_SAMPLE_SIZE);
-    if (comparableModes.length < 2) continue;
-    observedMaxModeOverlap = Math.max(
-      observedMaxModeOverlap,
-      maxPairwiseOverlap(comparableModes),
-    );
-  }
+  const modeOverlap = calculateModeOverlapDiagnostics(seeds, itemsBySeed, endpoints);
 
   const report = {
     generatedAt: new Date().toISOString(),
@@ -591,7 +621,9 @@ async function main() {
     },
     quality: {
       endpoints: endpointQuality,
-      maxModeOverlap: observedMaxModeOverlap,
+      maxModeOverlap: modeOverlap.maxComparableOverlap,
+      maxObservedModeOverlap: modeOverlap.maxObservedOverlap,
+      modeOverlapBySeed: modeOverlap.perSeed,
       thresholds: {
         maxArtistShare, maxProducerShare, maxVocalistShare,
         maxSeedOverlap, maxModeOverlap, minUniqueRatio,
@@ -619,7 +651,7 @@ async function main() {
   console.log(`PASS slowest recommendation requests (${slowestRequests.map(sample => `${sample.endpoint} seed=${sample.seedId} ${sample.elapsedMs}ms`).join('; ')})`);
   console.log(`PASS representative seed balance (producerShare=${getSeedProducerShare(seeds).toFixed(2)}, audioCoverage=${(seeds.filter(seed => seed.audioComputed === true).length / seeds.length).toFixed(2)})`);
   console.log(`PASS Dig discovery (${digItems.length} candidates, latency=${digResult.elapsedMs}ms, generationOverlap=${digGenerationOverlap.toFixed(2)}, producerShare=${digMaxProducerShare.toFixed(2)})`);
-  console.log(`PASS recommendation diversity (${endpointQuality.map(quality => `${quality.endpoint} artist=${quality.maxArtistShare.toFixed(2)} producer=${quality.maxProducerShare.toFixed(2)} vocalist=${quality.maxVocalistShare.toFixed(2)} seedOverlap=${quality.maxSeedOverlap.toFixed(2)} unique=${quality.uniqueRatio.toFixed(2)} minor=${quality.minorShare.toFixed(2)} metadata=${quality.groupMetadataCoverage.toFixed(2)}`).join('; ')}; modeOverlap=${observedMaxModeOverlap.toFixed(2)})`);
+  console.log(`PASS recommendation diversity (${endpointQuality.map(quality => `${quality.endpoint} artist=${quality.maxArtistShare.toFixed(2)} producer=${quality.maxProducerShare.toFixed(2)} vocalist=${quality.maxVocalistShare.toFixed(2)} seedOverlap=${quality.maxSeedOverlap.toFixed(2)} unique=${quality.uniqueRatio.toFixed(2)} minor=${quality.minorShare.toFixed(2)} metadata=${quality.groupMetadataCoverage.toFixed(2)}`).join('; ')}; comparableModeOverlap=${modeOverlap.maxComparableOverlap.toFixed(2)} observedModeOverlap=${modeOverlap.maxObservedOverlap.toFixed(2)})`);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

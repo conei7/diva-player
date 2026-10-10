@@ -394,7 +394,6 @@ app.MapGet("/api/recommend/metadata", async (
     int skip = offset ?? 0;
     const int vectorCandidateCount = 400;
     const int tagCandidateCount = 600;
-    const int diverseFallbackCandidateCount = 100;
     var vectorTask = qdrant.SearchMetadataSimilarAsync(
         songId,
         vectorCandidateCount,
@@ -412,15 +411,18 @@ app.MapGet("/api/recommend/metadata", async (
     if (seed is null)
         return Results.Ok(new { items = Array.Empty<object>() });
 
+    var versionRelatedIds = await db.GetVersionRelatedCandidateIdsAsync(
+        seed.Id,
+        seed.OriginalVersionId,
+        cancellationToken);
+
     var vectorCandidates = await vectorTask;
-    var vocalistDiversityAssessmentIds = vectorCandidates
-        .Take(RecommendService.VocalistDiversityAssessmentCandidateCount)
-        .Select(candidate => candidate.SongId)
-        .ToHashSet();
     var candidateScores = vectorCandidates
         .ToDictionary(candidate => candidate.SongId, candidate => candidate.Score);
     foreach (var candidateId in await tagTask)
         candidateScores.TryAdd(candidateId, -1);
+    foreach (var candidateId in versionRelatedIds)
+        candidateScores[candidateId] = 1;
     foreach (var candidateId in await db.GetSongsByProducersAsync(
         seed.ProducerIds,
         seed.Id,
@@ -435,96 +437,31 @@ app.MapGet("/api/recommend/metadata", async (
     var infos = await db.GetSongInfoBatchAsync(
         results.Select(r => r.SongId),
         cancellationToken);
-    var vocalistDiversityAssessmentInfos = infos
-        .Where(info => vocalistDiversityAssessmentIds.Contains(info.Id));
-    RecommendService.DiverseFallbackCandidateSelection? fallbackSelection = null;
-    if (MetadataRelationshipRanking.NeedsDiverseFallback(
-        infos,
-        vocalistDiversityAssessmentInfos))
-    {
-        var restrictedCandidatePool = candidateScores.Keys.ToArray();
-        fallbackSelection = await RecommendService.GetDiverseFallbackCandidateIdsRestrictedFirstAsync(
-            diverseFallbackCandidateCount,
-            infos,
-            token => db.GetRestrictedDiverseFallbackCandidateIdsAsync(
-                songId,
-                diverseFallbackCandidateCount,
-                restrictedCandidatePool,
-                token),
-            token => db.GetQualityDiverseFallbackCandidateIdsAsync(
-                songId,
-                DbService.QualityDiverseFallbackPoolCount,
-                token),
-            (ids, token) => db.GetSongInfoBatchAsync(ids, token),
-            token => db.GetDiverseFallbackCandidateIdsAsync(
-                songId,
-                diverseFallbackCandidateCount,
-                token),
-            cancellationToken);
-        if (fallbackSelection.Value.Source
-            != RecommendService.DiverseFallbackCandidateSource.RestrictedExisting)
-        {
-            foreach (var candidateId in fallbackSelection.Value.CandidateIds)
-                candidateScores.TryAdd(candidateId, -1);
-            results = candidateScores
-                .Select(candidate => (SongId: candidate.Key, Score: candidate.Value))
-                .ToList();
-            infos = await db.GetSongInfoBatchAsync(
-                results.Select(result => result.SongId),
-                cancellationToken);
-        }
-    }
     if (results.Count == 0)
         return Results.Ok(new { items = Array.Empty<object>() });
     var infoMap = infos.ToDictionary(i => i.Id);
     results = results
-        .Where(result => infoMap.TryGetValue(result.SongId, out var info) && DiscoveryEligibility.IsEligible(info))
+        .Where(result => infoMap.TryGetValue(result.SongId, out var info)
+            && DiscoveryEligibility.IsEligible(info)
+            && MetadataRelationshipRanking.HasExplicitRelatedEvidence(seed, info))
         .ToList();
-    var usedFastFallback = fallbackSelection is { } selection
-        && selection.Source != RecommendService.DiverseFallbackCandidateSource.ExactGlobal;
-    var rerankCount = usedFastFallback
-        ? RecommendService.MetadataDiversityCanonicalRerankCount(results.Count, count + skip)
-        : Math.Min(results.Count, count + skip);
-    results = MetadataRelationshipRanking.RerankRelated(
-        results,
+
+    var versionResults = results.Where(result => versionRelatedIds.Contains(result.SongId));
+    var otherResults = results.Where(result => !versionRelatedIds.Contains(result.SongId));
+    var resultLimit = count + skip;
+    var rankedVersions = MetadataRelationshipRanking.RerankRelated(
+        versionResults,
         seed,
         infos,
-        rerankCount);
-
-    if (usedFastFallback)
-    {
-        results = RecommendService.StabilizeMetadataFallbackDiversity(results, infos);
-        var globalFallbackIds = await RecommendService.GetMetadataGlobalFallbackIfNeededAsync(
-            fallbackSelection!.Value,
-            results,
-            infos,
-            token => db.GetDiverseFallbackCandidateIdsAsync(
-                songId,
-                diverseFallbackCandidateCount,
-                token),
-            cancellationToken);
-        if (globalFallbackIds is not null)
-        {
-            foreach (var candidateId in globalFallbackIds)
-                candidateScores.TryAdd(candidateId, -1);
-            results = candidateScores
-                .Select(candidate => (SongId: candidate.Key, Score: candidate.Value))
-                .ToList();
-            infos = await db.GetSongInfoBatchAsync(
-                results.Select(result => result.SongId),
-                cancellationToken);
-            infoMap = infos.ToDictionary(info => info.Id);
-            results = results
-                .Where(result => infoMap.TryGetValue(result.SongId, out var info)
-                    && DiscoveryEligibility.IsEligible(info))
-                .ToList();
-            results = MetadataRelationshipRanking.RerankRelated(
-                results,
-                seed,
-                infos,
-                Math.Min(results.Count, count + skip));
-        }
-    }
+        Math.Min(versionRelatedIds.Length, resultLimit));
+    var rankedOther = MetadataRelationshipRanking.RerankRelated(
+        otherResults,
+        seed,
+        infos,
+        Math.Max(0, resultLimit - rankedVersions.Count));
+    // Explicit original/version matches lead the list; metadata matches fill only
+    // the remaining slots. Both groups keep a stable order across offset pages.
+    results = rankedVersions.Concat(rankedOther).ToList();
 
     results = results.Skip(skip).Take(count).ToList();
 
@@ -540,6 +477,7 @@ app.MapGet("/api/recommend/metadata", async (
             vocalistIds = infoMap[r.SongId].VocalistIds,
             youtubeViews = infoMap[r.SongId].YoutubeViews,
             nicoViews = infoMap[r.SongId].NicoViews,
+            relatedEvidence = GetRelatedEvidence(seed, infoMap[r.SongId]),
         })
         .ToList();
 
@@ -1019,6 +957,20 @@ static async Task<JsonElement[]> BuildCompactSongCardsAsync(
         .Where(songsById.ContainsKey)
         .Select(id => JsonSerializer.Deserialize<JsonElement>(songsById[id]))
         .ToArray();
+}
+
+static string[] GetRelatedEvidence(SongInfo seed, SongInfo candidate)
+{
+    var evidence = new List<string>(4);
+    if (MetadataRelationshipRanking.IsVersionRelated(seed, candidate))
+        evidence.Add("originalVersion");
+    if (seed.AlbumIds.Intersect(candidate.AlbumIds).Any())
+        evidence.Add("album");
+    if (seed.ProducerIds.Intersect(candidate.ProducerIds).Any())
+        evidence.Add("producer");
+    if (seed.RelatedTagIds.Intersect(candidate.RelatedTagIds).Any())
+        evidence.Add("tag");
+    return evidence.ToArray();
 }
 
 static List<string> ParseCsv(string? value) => string.IsNullOrWhiteSpace(value)

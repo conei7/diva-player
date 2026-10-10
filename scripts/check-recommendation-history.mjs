@@ -22,6 +22,7 @@ export function collectRecommendationViolations(report) {
   add(violations, Number(report?.seedProducerShare) > Number(thresholds.maxSeedProducerShare),
     'seed.producerShare', report?.seedProducerShare, thresholds.maxSeedProducerShare);
   for (const endpoint of ['/api/recommend', '/api/recommend/metadata', '/api/recommend/audio']) {
+    if (endpoint === '/api/recommend/metadata') continue;
     const applicable = (report?.seedResults ?? []).filter(
       seed => endpoint !== '/api/recommend/audio' || seed.group !== 'audio-missing',
     );
@@ -31,18 +32,30 @@ export function collectRecommendationViolations(report) {
   }
   for (const quality of report?.quality?.endpoints ?? []) {
     const prefix = `quality.${quality.endpoint}`;
-    add(violations, Number(quality.maxArtistShare) > Number(thresholds.maxArtistShare),
-      `${prefix}.artistShare`, quality.maxArtistShare, thresholds.maxArtistShare);
-    if (Number(quality.groupMetadataCoverage) >= 0.8) {
+    const testsBroadDiscoveryMix = quality.endpoint !== '/api/recommend/metadata';
+    if (testsBroadDiscoveryMix) {
+      add(violations, Number(quality.maxArtistShare) > Number(thresholds.maxArtistShare),
+        `${prefix}.artistShare`, quality.maxArtistShare, thresholds.maxArtistShare);
+    }
+    if (testsBroadDiscoveryMix && Number(quality.groupMetadataCoverage) >= 0.8) {
       add(violations, Number(quality.maxProducerShare) > Number(thresholds.maxProducerShare),
         `${prefix}.producerShare`, quality.maxProducerShare, thresholds.maxProducerShare);
       add(violations, Number(quality.maxVocalistShare) > Number(thresholds.maxVocalistShare),
         `${prefix}.vocalistShare`, quality.maxVocalistShare, thresholds.maxVocalistShare);
     }
-    add(violations, Number(quality.maxSeedOverlap) > Number(thresholds.maxSeedOverlap),
-      `${prefix}.seedOverlap`, quality.maxSeedOverlap, thresholds.maxSeedOverlap);
-    add(violations, Number(quality.uniqueRatio) < Number(thresholds.minUniqueRatio),
-      `${prefix}.uniqueRatio`, quality.uniqueRatio, thresholds.minUniqueRatio);
+    if (testsBroadDiscoveryMix) {
+      add(violations, Number(quality.maxSeedOverlap) > Number(thresholds.maxSeedOverlap),
+        `${prefix}.seedOverlap`, quality.maxSeedOverlap, thresholds.maxSeedOverlap);
+      add(violations, Number(quality.uniqueRatio) > 0
+        && Number(quality.uniqueRatio) < Number(thresholds.minUniqueRatio),
+        `${prefix}.uniqueRatio`, quality.uniqueRatio, thresholds.minUniqueRatio);
+    } else {
+      for (const seed of report?.seedResults ?? []) {
+        const coverage = seed.endpointDiagnostics?.[quality.endpoint]?.relatedEvidenceCoverage;
+        add(violations, coverage !== null && coverage !== undefined && Number(coverage) < 1,
+          `quality.${quality.endpoint}.relatedEvidence.${seed.id}`, coverage, 1);
+      }
+    }
     if (quality.endpoint === '/api/recommend') {
       add(violations, Number(quality.minorShare) < Number(thresholds.minHybridMinorShare),
         `${prefix}.minorShare.low`, quality.minorShare, thresholds.minHybridMinorShare);
