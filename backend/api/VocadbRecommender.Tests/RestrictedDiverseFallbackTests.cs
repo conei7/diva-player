@@ -637,7 +637,7 @@ public sealed class RestrictedDiverseFallbackTests
     }
 
     [Fact]
-    public void HybridAndMetadataPaths_CallRestrictedBeforeGlobalFallback()
+    public void HybridUsesRestrictedBeforeGlobalFallback_AndRelatedMetadataRejectsGlobalFallback()
     {
         var recommendSource = ReadRepositoryFile(
             "backend", "api", "VocadbRecommender", "Services", "RecommendService.cs");
@@ -653,11 +653,12 @@ public sealed class RestrictedDiverseFallbackTests
             "// GET /api/recommend/audio");
 
         AssertRestrictedBeforeGlobal(hybridPath);
-        AssertRestrictedBeforeGlobal(metadataPath);
-        Assert.Contains("DiverseFallbackCandidateSource.RestrictedExisting", metadataPath);
-        Assert.Contains("MetadataDiversityCanonicalRerankCount", metadataPath);
-        Assert.Contains("StabilizeMetadataFallbackDiversity", metadataPath);
-        Assert.Contains("GetMetadataGlobalFallbackIfNeededAsync", metadataPath);
+        Assert.Contains("GetVersionRelatedCandidateIdsAsync", metadataPath);
+        Assert.Contains("HasExplicitRelatedEvidence", metadataPath);
+        Assert.Contains("rankedVersions.Concat(rankedOther)", metadataPath);
+        Assert.DoesNotContain("GetDiverseFallbackCandidateIdsRestrictedFirstAsync", metadataPath);
+        Assert.DoesNotContain("GetQualityDiverseFallbackCandidateIdsAsync", metadataPath);
+        Assert.DoesNotContain("GetDiverseFallbackCandidateIdsAsync", metadataPath);
         Assert.Contains(".Take(MetadataDiversityProbeMinimumCount)", recommendSource);
     }
 
