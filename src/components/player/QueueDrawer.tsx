@@ -1,277 +1,75 @@
 import { useRef } from 'react';
 import { useDialogFocus } from '../../hooks/useDialogFocus';
 import { usePlayerStore } from '../../stores/playerStore';
-import { useRatingStore } from '../../stores/ratingStore';
-import { useUiStore } from '../../stores/uiStore';
-import StarRating from './StarRating';
-import type { Song } from '../../types/vocadb';
-import { useQueueRecommendationStore } from '../../stores/queueRecommendationStore';
-import { useAutoQueueStatusStore } from '../../stores/autoQueueStatusStore';
-import { useRecommendationDisplayStore } from '../../stores/recommendationDisplayStore';
-import RecommendationHint from '../recommendation/RecommendationHint';
 import { useTranslateSourceText } from '../../i18n';
-import { getQueueDisplayWindow } from '../../utils/queueUtils';
+import { displayQueueTitle } from '../../utils/displayNames';
+import IconButton from '../ui/IconButton';
+import EmptyState from '../ui/EmptyState';
+import { CloseIcon, QueueMusicIcon } from '../ui/icons';
+import { cx } from '../ui/overlay';
+import { QueueHeader, QueueList } from '../watch/PlaylistPanel';
+import { useQueueView } from '../watch/useQueueView';
 
-/** YoutubePVからサムネイルURLを生成 */
-function getThumbUrl(song: Song): string | null {
-  if (song.thumbUrl) return song.thumbUrl;
-  const ytPv = song.pvs?.find(pv => pv.service === 'Youtube');
-  if (ytPv) return `https://img.youtube.com/vi/${ytPv.pvId}/mqdefault.jpg`;
-  return null;
-}
-
-/** アーティスト文字列からプロデューサー部分を抽出（ feat. 以前） */
-function getProducerString(song: Song): string {
-  const str = song.artistString ?? '';
-  const featIdx = str.indexOf(' feat. ');
-  return featIdx !== -1 ? str.slice(0, featIdx) : str;
-}
-
+/**
+ * キュー (opened from the mini player). A right drawer, full width on phones.
+ * It stays mounted once opened: while closed it is moved off screen and made inert.
+ * The header and rows are the same parts as the watch page's playing-list panel.
+ */
 export default function QueueDrawer() {
   const t = useTranslateSourceText();
-  const {
-    queue, queueIndex,
-    queueDrawerOpen, toggleQueueDrawer,
-    jumpToIndex, removeDuplicateQueueSongs,
-  } = usePlayerStore();
-  const { getRating, setRating } = useRatingStore();
-  const openSaveToPlaylist = useUiStore(s => s.openSaveToPlaylist);
-  const recommendations = useQueueRecommendationStore(s => s.recommendations);
-  const autoQueueStatus = useAutoQueueStatusStore(s => s.status);
-  const showRecommendationHints = useRecommendationDisplayStore(s => s.showHints);
-  const { items: displayedQueue, startIndex: displayedQueueStartIndex } = getQueueDisplayWindow(queue, queueIndex);
-  const duplicateCount = queue.length - new Set(queue.map(song => song.id)).size;
+  const queueDrawerOpen = usePlayerStore(state => state.queueDrawerOpen);
+  const toggleQueueDrawer = usePlayerStore(state => state.toggleQueueDrawer);
+  const { queue, queueTitle, view } = useQueueView();
   const dialogRef = useRef<HTMLDivElement>(null);
   useDialogFocus(dialogRef, queueDrawerOpen, toggleQueueDrawer);
 
+  const title = displayQueueTitle(queueTitle, t) || t('キュー');
+  const closeButton = <IconButton label={t('閉じる')} icon={<CloseIcon />} onClick={toggleQueueDrawer} />;
+
   return (
     <>
-      {/* オーバーレイ（ドロワー外クリックで閉じる） */}
       {queueDrawerOpen && (
         <div
-          className="fixed inset-0 z-40"
-          style={{ background: 'rgba(0,0,0,0.4)' }}
+          className="fixed inset-0 z-[var(--z-drawer,60)] bg-overlay"
           onClick={toggleQueueDrawer}
           aria-hidden="true"
         />
       )}
 
-      {/* ドロワー本体 */}
       <div
         ref={dialogRef}
         inert={!queueDrawerOpen}
         aria-hidden={!queueDrawerOpen}
         aria-modal={queueDrawerOpen || undefined}
         tabIndex={-1}
-        className="fixed top-0 right-0 z-50 h-full flex flex-col queue-drawer"
-        style={{
-          width: '360px',
-          maxWidth: '90vw',
-          height: '100dvh',
-          background: 'var(--color-surface)',
-          borderLeft: '1px solid var(--color-border)',
-          transform: queueDrawerOpen ? 'translateX(0)' : 'translateX(100%)',
-          transition: 'transform 0.28s cubic-bezier(0.4, 0, 0.2, 1)',
-          paddingBottom: 'env(safe-area-inset-bottom)',
-          boxShadow: queueDrawerOpen ? '-8px 0 32px rgba(0,0,0,0.4)' : 'none',
-        }}
         role="dialog"
         data-testid="queue-drawer"
-        aria-label={t('再生キュー')}
+        aria-label={t('キュー')}
+        className={cx(
+          'queue-drawer fixed right-0 top-0 z-[var(--z-drawer,60)] flex h-dvh w-[400px] max-w-full flex-col bg-yt-bg text-yt-text outline-none',
+          'transition-transform duration-200 ease-out motion-reduce:transition-none',
+          queueDrawerOpen ? 'translate-x-0 shadow-[-8px_0_32px_rgba(0,0,0,0.5)]' : 'translate-x-full',
+        )}
+        style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
       >
-        {/* ヘッダー */}
-        <div
-          className="flex items-center justify-between px-4 py-3 flex-shrink-0"
-          style={{ borderBottom: '1px solid var(--color-border)' }}
-        >
-          <div className="flex items-center gap-2">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"
-                 style={{ color: 'var(--color-accent-purple)' }}>
-              <path d="M3 18h13v-2H3v2zm0-5h10v-2H3v2zm0-7v2h13V6H3zm18 9.59L17.42 12 21 8.41 19.59 7l-5 5 5 5L21 15.59z"/>
-            </svg>
-            <span className="text-sm font-semibold" style={{ color: 'var(--color-text-primary)' }}>
-              {t('再生キュー')}
-            </span>
-            {queue.length > 0 && (
-              <span
-                className="text-[11px] px-1.5 py-0.5 rounded-full"
-                style={{
-                  background: 'rgba(139, 92, 246, 0.15)',
-                  color: 'var(--color-accent-purple)',
-                }}
-              >
-                {t('{count}曲', { count: displayedQueue.length })}
-              </span>
-            )}
-          </div>
-          <div className="flex items-center gap-1">
-            {duplicateCount > 0 && (
-              <button
-                className="btn-ghost p-1.5 rounded-lg"
-                onClick={removeDuplicateQueueSongs}
-                title={t('キュー内の重複{count}曲を削除', { count: duplicateCount })}
-                style={{ color: '#fbbf24' }}
-              >
-                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M3 6h18"/>
-                  <path d="M8 6V4h8v2"/>
-                  <path d="M6 6l1 14h10l1-14"/>
-                  <path d="M10 11v5"/>
-                  <path d="M14 11v5"/>
-                </svg>
-              </button>
-            )}
-            {autoQueueStatus === 'fetching' || autoQueueStatus === 'reranking' ? (
-              <span className="text-[11px]" style={{ color: 'var(--color-text-muted)' }}>{t('補充中…')}</span>
-            ) : autoQueueStatus === 'degraded' ? (
-              <span className="text-[11px]" style={{ color: '#fbbf24' }}>{t('関連曲へフォールバック中')}</span>
-            ) : autoQueueStatus === 'relaxed' ? (
-              <span className="text-[11px]" style={{ color: '#fbbf24' }}>{t('条件を緩和して補充')}</span>
-            ) : autoQueueStatus === 'exhausted' ? (
-              <span className="text-[11px]" style={{ color: 'var(--color-text-muted)' }}>{t('候補がありません')}</span>
-            ) : null}
-            <button
-              className="btn-ghost p-1.5 rounded-lg"
-              onClick={() => openSaveToPlaylist(queue, { source: 'queue', queueIndex })}
-              disabled={queue.length === 0}
-              title={t('キューをプレイリストに保存')}
-              aria-label={t('キューをプレイリストに保存')}
-              style={{ color: queue.length > 0 ? 'var(--color-accent-cyan)' : 'var(--color-text-muted)' }}
-            >
-              <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M17 3H5a2 2 0 0 0-2 2v14l7-3 7 3V5a2 2 0 0 0-2-2zm-1 13.97-6-2.57-6 2.57V5h12v11.97zM19 7v14l-7-3-3.35 1.44 1.63-1.92L12 16.78l5 2.14V7h2z"/>
-              </svg>
-            </button>
-            <button
-              className="btn-ghost p-1.5 rounded-lg"
-              onClick={toggleQueueDrawer}
-              aria-label={t('閉じる')}
-            >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"
-                   style={{ color: 'var(--color-text-muted)' }}>
-                <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
-              </svg>
-            </button>
-          </div>
-        </div>
-
-        {/* キューリスト */}
-        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
-          {queue.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-full gap-3 px-4"
-                 style={{ color: 'var(--color-text-muted)' }}>
-              <svg width="40" height="40" viewBox="0 0 24 24" fill="currentColor" style={{ opacity: 0.3 }}>
-                <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/>
-              </svg>
-              <p className="text-sm text-center">
-                {t('キューは空です。曲を検索して再生してください。')}
-              </p>
+        {queue.length === 0 ? (
+          <>
+            <div className="flex shrink-0 items-center gap-2 px-4 pb-1 pt-3">
+              <h2 className="min-w-0 flex-1 truncate text-xl font-bold leading-7">{t('キュー')}</h2>
+              <div className="-mr-2">{closeButton}</div>
             </div>
-          ) : (
-            <ul>
-              {displayedQueue.map((song, displayedIndex) => {
-                const i = displayedQueueStartIndex + displayedIndex;
-                const isCurrent = i === queueIndex;
-                const thumb = getThumbUrl(song);
-                const producer = getProducerString(song);
-                const recommendation = recommendations[String(song.id)];
-
-                return (
-                  <li key={`${song.id}-${i}`}>
-                    <div
-                      role="button"
-                      tabIndex={0}
-                      className="w-full flex items-center gap-3 px-3 py-2.5 text-left transition-colors queue-drawer-row"
-                      style={{
-                        background: isCurrent
-                          ? 'rgba(139, 92, 246, 0.12)'
-                          : 'transparent',
-                        borderLeft: isCurrent
-                          ? '3px solid var(--color-accent-purple)'
-                          : '3px solid transparent',
-                      }}
-                      onClick={() => jumpToIndex(i)}
-                      onKeyDown={(event) => {
-                        if (event.target !== event.currentTarget) return;
-                        if (event.key === 'Enter' || event.key === ' ') {
-                          event.preventDefault();
-                          jumpToIndex(i);
-                        }
-                      }}
-                    >
-                      {/* インデックス番号 or 再生中アイコン */}
-                      <div
-                        className="flex-shrink-0 w-5 text-center text-xs"
-                        style={{ color: isCurrent ? 'var(--color-accent-purple)' : 'var(--color-text-muted)' }}
-                      >
-                        {isCurrent ? (
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style={{ display: 'inline' }}>
-                            <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/>
-                          </svg>
-                        ) : (
-                          i + 1
-                        )}
-                      </div>
-
-                      {/* サムネイル */}
-                      <div
-                        className="flex-shrink-0 w-12 h-9 rounded overflow-hidden"
-                        style={{ background: 'var(--color-surface-elevated)' }}
-                      >
-                        {thumb ? (
-                          <img
-                            src={thumb}
-                            alt={song.name}
-                            className="w-full h-full object-cover"
-                            loading="lazy"
-                          />
-                        ) : (
-                          <div className="w-full h-full flex items-center justify-center">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"
-                                 style={{ color: 'var(--color-text-muted)', opacity: 0.5 }}>
-                              <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/>
-                            </svg>
-                          </div>
-                        )}
-                      </div>
-
-                      {/* テキスト情報 */}
-                      <div className="flex-1 min-w-0">
-                        <p
-                          className="text-xs font-medium truncate leading-tight"
-                          style={{
-                            color: isCurrent
-                              ? 'var(--color-accent-purple)'
-                              : 'var(--color-text-primary)',
-                          }}
-                        >
-                          {song.name}
-                        </p>
-                        {producer && (
-                          <p className="text-[11px] truncate mt-0.5" style={{ color: 'var(--color-text-muted)' }}>
-                            {producer}
-                          </p>
-                        )}
-                        {showRecommendationHints && recommendation && (
-                          <RecommendationHint reason={recommendation.reasonText} className="mt-0.5" />
-                        )}
-                      </div>
-
-                      {/* ミニ星評価 */}
-                      <div className="flex-shrink-0">
-                        <StarRating
-                          rating={getRating(song.id)}
-                          onRate={(r) => setRating(song.id, r)}
-                          size="sm"
-                        />
-                      </div>
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </div>
+            <EmptyState
+              icon={<QueueMusicIcon />}
+              title={t('キューは空です')}
+              action={{ label: t('曲を探す'), to: '/', onClick: toggleQueueDrawer }}
+            />
+          </>
+        ) : (
+          <>
+            <QueueHeader view={view} title={title} end={closeButton} />
+            <QueueList view={view} revealKey={queueDrawerOpen} />
+          </>
+        )}
       </div>
     </>
   );

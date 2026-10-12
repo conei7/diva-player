@@ -1,12 +1,124 @@
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import type { CSSProperties, RefObject } from 'react';
+import { createPortal } from 'react-dom';
 import { useLocation, useNavigate } from 'react-router';
 import { usePlayerStore } from '../../stores/playerStore';
 import { usePlayerInteractionStore } from '../../stores/playerInteractionStore';
+import { useLanguageStore } from '../../stores/languageStore';
+import { showToast } from '../../stores/toastStore';
 import { usePlayerSwipeGesture } from '../../hooks/usePlayerSwipeGesture';
+import { FINE_HOVER_MEDIA_QUERY, MOBILE_MEDIA_QUERY, useMediaQuery } from '../../hooks/useMediaQuery';
 import PlayerEmbed from '../player/PlayerEmbed';
 import { getPlaybackOwnership } from '../../services/playbackOwnership';
-import { useTranslateSourceText } from '../../i18n';
-import { getQueueDisplayWindow } from '../../utils/queueUtils';
+import { translateSourceText } from '../../i18n';
+import { isWatchPath, watchPath } from '../../utils/routes';
+import { serviceLabel } from '../../utils/songMeta';
+import { cx } from '../ui/overlay';
+import { DeferredBoundary } from '../layout/RouteErrorBoundary';
+import { whenIdle } from '../../routes/routeLoaders';
+import SleepTimerWatcher from './SleepTimer';
+import { createPlaybackFailureTracker, type PlaybackNotice } from './playbackNotices';
+import { isSilentVolume } from './playerMute';
+
+// The mini player's controls are only drawn once a song is loaded, so they stay out of the initial
+// JavaScript (DESIGN_SPEC §1-12). The iframe (PlayerEmbed) is never inside their Suspense boundary.
+const loadMiniPlayerControls = () => import('./MiniPlayerControls');
+const loadProgressLine = () => import('./ProgressLine');
+const loadMuteBadge = () => import('./MuteBadge');
+const MiniPlayerControls = lazy(loadMiniPlayerControls);
+const ProgressLine = lazy(loadProgressLine);
+const MuteBadge = lazy(loadMuteBadge);
+const preloadMiniPlayerControls = () => {
+  void loadMiniPlayerControls().catch(() => undefined);
+  void loadProgressLine().catch(() => undefined);
+  void loadMuteBadge().catch(() => undefined);
+};
+
+/**
+ * While `active`, every iframe under `root` gets tabindex="-1": Tab skips the embedded player and its
+ * own controls (dozens of stops in YouTube's), while clicks still reach it. Embedded players come
+ * and go (YouTube builds its own iframe, each video gets a new one), so new iframes are caught too.
+ * The attribute is the only change; the iframes are never moved or remounted.
+ */
+function useIframesOutOfTabOrder(root: RefObject<HTMLElement | null>, active: boolean) {
+  useEffect(() => {
+    const element = root.current;
+    if (!element || !active) return undefined;
+    const apply = () => element.querySelectorAll('iframe:not([tabindex="-1"])').forEach(iframe => {
+      iframe.setAttribute('tabindex', '-1');
+    });
+    apply();
+    const observer = new MutationObserver(apply);
+    observer.observe(element, { childList: true, subtree: true });
+    return () => {
+      observer.disconnect();
+      element.querySelectorAll('iframe[tabindex="-1"]').forEach(iframe => iframe.removeAttribute('tabindex'));
+    };
+  }, [active, root]);
+}
+
+/**
+ * Tells the user when playback failed and what the player did about it (DESIGN_SPEC §6.2.1):
+ * switched to another video, skipped to the next song (［戻る］) or stopped (［再試行］).
+ */
+function usePlaybackFailureToasts(isWatchPage: boolean) {
+  const onWatchPageRef = useRef(isWatchPage);
+  onWatchPageRef.current = isWatchPage;
+
+  useEffect(() => {
+    const announce = (notice: PlaybackNotice) => {
+      const language = useLanguageStore.getState().language;
+      if (notice.kind === 'switched') {
+        showToast(notice.from === notice.to
+          ? translateSourceText(language, '再生できないため、別の動画に切り替えました')
+          : translateSourceText(language, '{from}で再生できないため、{to}に切り替えました', {
+            from: serviceLabel(notice.from, language),
+            to: serviceLabel(notice.to, language),
+          }));
+        return;
+      }
+      if (notice.kind === 'skipped') {
+        showToast(translateSourceText(language, '再生できなかったため次の曲へ進みました'), notice.canGoBack ? {
+          action: {
+            label: translateSourceText(language, '戻る'),
+            onAction: () => {
+              const state = usePlayerStore.getState();
+              // Straight back to the song that failed (previous() would only rewind once the
+              // next song has played for a few seconds).
+              if (state.queue[notice.queueIndex]?.id === notice.songId) state.jumpToIndex(notice.queueIndex);
+              else state.previous();
+            },
+          },
+        } : undefined);
+        return;
+      }
+      // Nothing played. The song page explains a song without any video in the player frame.
+      if (!notice.canRetry && onWatchPageRef.current) return;
+      showToast(translateSourceText(language, '再生できませんでした'), notice.canRetry ? {
+        action: {
+          label: translateSourceText(language, '再試行'),
+          onAction: () => {
+            const state = usePlayerStore.getState();
+            if (state.currentSong?.id === notice.songId) state.playSong(state.currentSong, true, false);
+          },
+        },
+      } : undefined);
+    };
+    const tracker = createPlaybackFailureTracker({
+      onNotice: announce,
+      // The error only exists to be reported; clear it so the same failure is noticed next time.
+      onSettled: error => {
+        const state = usePlayerStore.getState();
+        if (state.error === error) state.setError(null);
+      },
+    });
+    const unsubscribe = usePlayerStore.subscribe((state, prev) => tracker.update(state, prev));
+    return () => {
+      unsubscribe();
+      tracker.dispose();
+    };
+  }, []);
+}
 
 /**
  * GlobalPlayer - 永続化されたプレイヤーコンポーネント
@@ -15,23 +127,27 @@ import { getQueueDisplayWindow } from '../../utils/queueUtils';
  * 動画の再生状態を維持するための工夫。
  *
  * 1. WatchPage表示時: VideoPlayerのDOMRect (playerRect) に合わせて絶対配置し、メインプレイヤーのフリをする。
- * 2. それ以外 (HomePage等) で再生中: 右下にフローティングするMiniPlayer (PiP) として振る舞う。
- * 3. どちらでもない: 画面外または opacity: 0 で隠す。
+ *    曲を切り替える間や再生できる動画が無い曲（動画枠が無い間）は前の位置に残し、aria-hidden と inert を付ける。
+ * 2. それ以外 (HomePage等) で再生中: 右下のミニプレイヤーとして振る舞う（モバイルは下部ナビの上・全幅）。
+ *    埋め込みの iframe は tabindex=-1（Tab はミニプレイヤーの操作だけを通る。クリックは今までどおり iframe へ）。
+ * 3. どちらでもない: 画面外に置き、aria-hidden と inert で読み上げ・フォーカスから外す。
+ *    アンマウントも display:none もしない（再生を止めないため）。
+ *
+ * DOM では body の末尾（ページの後ろ）に置く（portal。置き場所は最初から固定なので iframe は付け替わらない）。
+ * キーボードでは上部バー・ガイド・本文の後にミニプレイヤーが来る（YouTube と同じ）。
  */
 export default function GlobalPlayer() {
-  const t = useTranslateSourceText();
   const location = useLocation();
   const navigate = useNavigate();
-  const {
-    currentSong, playerRect, isPlaying,
-    pause, resume, next, previous,
-    closePlayer,
-    shuffleEnabled, toggleShuffle,
-    loopMode, toggleLoopMode,
-    queue, queueIndex, queueDrawerOpen, toggleQueueDrawer,
-  } = usePlayerStore();
-  const queueDisplayCount = getQueueDisplayWindow(queue, queueIndex).items.length;
+  const currentSong = usePlayerStore(state => state.currentSong);
+  const playerRect = usePlayerStore(state => state.playerRect);
+  const isPlaying = usePlayerStore(state => state.isPlaying);
+  const volume = usePlayerStore(state => state.volume);
+  const next = usePlayerStore(state => state.next);
+  const previous = usePlayerStore(state => state.previous);
   const swipeGestureEnabled = usePlayerInteractionStore(state => state.swipeGestureEnabled);
+  const isMobile = useMediaQuery(MOBILE_MEDIA_QUERY);
+  const finePointer = useMediaQuery(FINE_HOVER_MEDIA_QUERY);
   const playbackOwnership = getPlaybackOwnership();
   const ownershipState = useSyncExternalStore(
     playbackOwnership.subscribe,
@@ -39,9 +155,11 @@ export default function GlobalPlayer() {
     playbackOwnership.getState,
   );
 
-  const isWatchPage = location.pathname === '/watch';
+  const isWatchPage = isWatchPath(location.pathname);
   const [isLeavingWatchPage, setIsLeavingWatchPage] = useState(false);
   const lastWatchPlayerRectRef = useRef<DOMRect | null>(null);
+
+  usePlaybackFailureToasts(isWatchPage);
 
   useEffect(() => {
     if (isWatchPage && playerRect) lastWatchPlayerRectRef.current = playerRect;
@@ -93,7 +211,15 @@ export default function GlobalPlayer() {
     && !renderAsWatchPage
     && !!currentSong
     && hasLocalPlayback;
+  const hiddenOffscreen = !(currentSong && renderAsWatchPage) && !showMiniPlayer;
+  // No placeholder on the song page (a song without a playable video, or between two songs): the
+  // player keeps its last spot under the page's own frame, out of reach like when parked off screen.
+  const coveredOnWatchPage = renderAsWatchPage && !playerRect;
+  const unreachable = hiddenOffscreen || coveredOnWatchPage;
+  const videoVisible = !!currentSong && (showMiniPlayer || (renderAsWatchPage && !coveredOnWatchPage));
   const floatingPlayerRef = useRef<HTMLDivElement>(null);
+  // The mini player has its own controls; on the song page the video's own controls stay reachable.
+  useIframesOutOfTabOrder(floatingPlayerRef, showMiniPlayer);
   useEffect(() => {
     const element = floatingPlayerRef.current;
     const update = () => document.documentElement.style.setProperty(
@@ -107,59 +233,52 @@ export default function GlobalPlayer() {
       document.documentElement.style.removeProperty('--floating-player-clearance');
     };
   }, [showMiniPlayer]);
-  const canShuffle = queue.length > 1;
+  const currentSongId = currentSong?.id ?? null;
+  // Fetch the controls as soon as something is loaded (otherwise when the browser is idle), so they
+  // are ready when the mini player shows and are not left to download late in a long session.
+  const hasSong = currentSongId !== null;
+  useEffect(() => {
+    if (!hasSong) return whenIdle(preloadMiniPlayerControls);
+    preloadMiniPlayerControls();
+    return undefined;
+  }, [hasSong]);
+  const openSongPage = useCallback(() => {
+    if (currentSongId !== null) navigate(watchPath(currentSongId));
+  }, [currentSongId, navigate]);
   const handleSwipe = useCallback((direction: 'left' | 'right' | 'up') => {
     if (direction === 'left') next();
     else if (direction === 'right') previous();
-    else navigate(`/watch?v=${currentSong?.id ?? ''}`);
-  }, [currentSong?.id, navigate, next, previous]);
+    else openSongPage();
+  }, [next, openSongPage, previous]);
   const swipeHandlers = usePlayerSwipeGesture({
     enabled: showMiniPlayer && swipeGestureEnabled,
     onSwipe: handleSwipe,
   });
+  // The badge goes away once pressed: keep the keyboard on the mini player (its play button).
+  const keepFocusAfterUnmute = useCallback((badgeHadFocus: boolean) => {
+    if (!badgeHadFocus) return;
+    floatingPlayerRef.current?.querySelector<HTMLElement>('[data-testid="global-mini-player-toggle"]')?.focus();
+  }, []);
 
-  const producerName = (() => {
-    if (!currentSong) return '';
-    const producer = currentSong.artists?.find(a => a.categories?.includes('Producer'));
-    if (producer) return producer.name || producer.artist?.name || '';
-    const str = currentSong.artistString;
-    if (str.includes(' feat.')) return str.split(' feat.')[0];
-    return str;
-  })();
-  const containerStyle: React.CSSProperties = (() => {
+  const containerStyle: CSSProperties | undefined = (() => {
     if (currentSong && renderAsWatchPage && watchPlayerRect) {
       // WatchPage の VideoPlayer の位置にピタリと合わせる
       // absolute にすることで、スクロール時に自動追従し、JSによる遅延を防ぐ
       return {
-      position: 'absolute',
-      top: watchPlayerRect.top,
-      left: watchPlayerRect.left,
-      width: watchPlayerRect.width,
-      height: watchPlayerRect.height,
-      borderRadius: '12px',
-      zIndex: 10,
-      background: '#000',
-      transition: 'none', // スクロールに追従させるためtransitionは切る（あるいは高速化）
+        position: 'absolute',
+        top: watchPlayerRect.top,
+        left: watchPlayerRect.left,
+        width: watchPlayerRect.width,
+        height: watchPlayerRect.height,
+        // 640px 未満の再生ページは動画枠が全幅・角丸なし（watch と合わせる）
+        borderRadius: isMobile ? 0 : 12,
+        zIndex: 10,
+        background: '#000',
       };
     }
 
-    if (showMiniPlayer) {
-      // MiniPlayer (PiP) モード — スタイルは .global-mini-player CSS で強化される
-      return {
-      position: 'fixed',
-      bottom: '16px',
-      right: '16px',
-      width: '400px',
-      height: 'auto',
-      maxWidth: 'calc(100vw - 32px)',
-      borderRadius: '14px',
-      zIndex: 50,
-      boxShadow: '0 8px 32px rgba(0,0,0,0.6), 0 0 20px rgba(0,0,0,0.3)',
-      background: 'var(--color-bg-secondary)',
-      border: '1px solid var(--color-border)',
-      transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
-      };
-    }
+    // ミニプレイヤーの位置・大きさ・地の色は .global-mini-player（index.css の area:player）
+    if (showMiniPlayer) return undefined;
 
     // 非表示モード (アンマウントはしない)
     return {
@@ -174,179 +293,54 @@ export default function GlobalPlayer() {
     };
   })();
 
-  return (
-    <div ref={floatingPlayerRef} className={`overflow-hidden${showMiniPlayer ? ' global-mini-player' : ''}`} data-testid="global-player" style={containerStyle}>
+  return createPortal(
+    <div
+      ref={floatingPlayerRef}
+      className={cx('overflow-hidden', showMiniPlayer && 'global-mini-player')}
+      data-testid="global-player"
+      style={containerStyle}
+      aria-hidden={unreachable || undefined}
+      inert={unreachable || undefined}
+    >
+      <DeferredBoundary>
+        <Suspense fallback={null}>
+          {/* Nothing can be heard (M, or a volume of 0): the only sign of it, on the video itself. */}
+          {videoVisible && isSilentVolume(volume) && (
+            <MuteBadge inset={showMiniPlayer ? 'mini' : 'page'} onUnmuted={keepFocusAfterUnmute} />
+          )}
+        </Suspense>
+      </DeferredBoundary>
+
       {/* プレイヤー本体 (iframe) */}
-      <div 
-        style={{ 
-          width: '100%', 
-          aspectRatio: '16/9', 
-          background: '#000',
-          cursor: showMiniPlayer ? 'pointer' : 'default',
-        }}
+      <div
+        className={cx('w-full bg-black', renderAsWatchPage ? 'h-full' : 'aspect-video', showMiniPlayer && 'cursor-pointer')}
         onClick={() => {
-          if (showMiniPlayer && currentSong) navigate(`/watch?v=${currentSong.id}`);
+          if (showMiniPlayer) openSongPage();
         }}
       >
         <PlayerEmbed />
       </div>
 
-      {/* MiniPlayer コントロール (PiPモード時のみ表示) */}
-      {currentSong && <div
-        className="mini-player-controls"
-        data-testid="mini-player-gesture-surface"
-        {...swipeHandlers}
-        style={{ 
-           display: showMiniPlayer ? 'flex' : 'none',
-           flexDirection: 'column',
-           gap: '0.25rem',
-           padding: '0.5rem 0.75rem 0.625rem',
-           opacity: showMiniPlayer ? 1 : 0,
-           transition: 'opacity 0.3s',
-           touchAction: 'pan-y',
-        }}
-      >
-        {/* 1行目: 曲情報 + 閉じるボタン */}
-        <div className="flex items-center gap-2">
-          <div
-            className="flex-1 min-w-0 cursor-pointer"
-            data-testid="mini-player-swipe-origin"
-            onClick={() => navigate(`/watch?v=${currentSong.id}`)}
-          >
-            <p
-              className="text-sm font-medium truncate"
-              style={{ color: 'var(--color-text-primary)' }}
-            >
-              {currentSong.name}
-            </p>
-            <p className="text-xs truncate" style={{ color: 'var(--color-text-secondary)' }}>
-              {producerName}
-            </p>
-          </div>
-          <button
-            className="btn-ghost p-1 rounded-full mini-player-control"
-            data-testid="mini-player-close"
-            onClick={(event) => {
-              event.stopPropagation();
-              closePlayer();
-            }}
-            title={t('ミニプレイヤーを閉じる')}
-            aria-label={t('ミニプレイヤーを閉じる')}
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" />
-            </svg>
-          </button>
-        </div>
-
-        {/* 2行目: 再生コントロール */}
-        <div className="flex items-center justify-between">
-          {/* 左: セカンダリコントロール */}
-          <div className="flex items-center gap-0.5">
-            <button
-              className="btn-ghost p-1.5 rounded-full mini-player-control mini-player-optional"
-              onClick={toggleShuffle}
-              disabled={!canShuffle && !shuffleEnabled}
-              title={t(shuffleEnabled ? 'シャッフルOFF' : 'シャッフルON')}
-              style={{ color: shuffleEnabled ? 'var(--color-accent-cyan)' : undefined, opacity: canShuffle || shuffleEnabled ? 1 : 0.45 }}
-              aria-label={t(shuffleEnabled ? 'シャッフルOFF' : canShuffle ? 'シャッフルON' : 'シャッフル不可')}
-            >
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M10.59 9.17 5.41 4 4 5.41l5.17 5.17 1.42-1.41zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4h-5.5zm.33 9.41-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04-3.13-3.13z"/>
-              </svg>
-            </button>
-
-            <button
-              className="btn-ghost p-1.5 rounded-full relative mini-player-control mini-player-optional"
-              onClick={toggleLoopMode}
-              title={t(loopMode === 'none' ? 'ループOFF' : loopMode === 'all' ? '全体ループ' : '1曲ループ')}
-              style={{ color: loopMode !== 'none' ? 'var(--color-accent-cyan)' : undefined }}
-            >
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z"/>
-              </svg>
-              {loopMode === 'one' && (
-                <span className="absolute -top-0.5 -right-0.5 text-[8px] font-bold leading-none w-3.5 h-3.5 rounded-full flex items-center justify-center"
-                      style={{ background: 'var(--color-accent-cyan)', color: '#000' }}>1</span>
-              )}
-            </button>
-          </div>
-
-          {/* 中央: メインコントロール */}
-          <div className="flex items-center gap-1">
-            <button className="btn-ghost p-1.5 rounded-full mini-player-control" onClick={previous} title={t('前の曲')} aria-label={t('前の曲')}>
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M6 6h2v12H6zm3.5 6 8.5 6V6z" />
-              </svg>
-            </button>
-
-            <button
-              data-testid="global-mini-player-toggle"
-              className="rounded-full flex items-center justify-center mini-player-control mini-player-play"
-              style={{
-                width: 36,
-                height: 36,
-                background: 'var(--gradient-primary)',
-                boxShadow: isPlaying ? '0 0 12px rgba(6,214,160,0.35)' : 'none',
-              }}
-              onClick={() => isPlaying ? pause() : resume()}
-              title={t(isPlaying ? '一時停止' : '再生')}
-              aria-label={t(isPlaying ? '一時停止' : '再生')}
-            >
-              {isPlaying ? (
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="white">
-                  <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" />
-                </svg>
-              ) : (
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="white" style={{ marginLeft: 2 }}>
-                  <path d="M8 5v14l11-7z" />
-                </svg>
-              )}
-            </button>
-
-            <button className="btn-ghost p-1.5 rounded-full mini-player-control" onClick={next} title={t('次の曲へ進む')} aria-label={t('次の曲へ進む')}>
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-                <path d="m6 18 8.5-6L6 6v12zM16 6v12h2V6h-2z" />
-              </svg>
-            </button>
-          </div>
-
-          {/* 右: キュー・全画面 */}
-          <div className="flex items-center gap-0.5">
-            <button
-              className="btn-ghost p-1.5 rounded-full relative mini-player-control"
-              data-testid="mini-player-queue"
-              onClick={toggleQueueDrawer}
-              title={t('再生キュー')}
-              aria-label={t('再生キュー')}
-              style={{ color: queueDrawerOpen ? 'var(--color-accent-purple)' : undefined }}
-            >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M3 18h13v-2H3v2zm0-5h10v-2H3v2zm0-7v2h13V6H3zm18 9.59L17.42 12 21 8.41 19.59 7l-5 5 5 5L21 15.59z"/>
-              </svg>
-              {queueDisplayCount > 0 && (
-                <span
-                  className="absolute -top-0.5 -right-0.5 text-[9px] font-bold w-4 h-4 rounded-full flex items-center justify-center leading-none"
-                  style={{ background: 'var(--color-accent-purple)', color: '#fff' }}
-                >
-                  {queueDisplayCount > 99 ? '99+' : queueDisplayCount}
-                </span>
-              )}
-            </button>
-
-            <button
-              className="btn-ghost p-1.5 rounded-full mini-player-control"
-              onClick={() => navigate(`/watch?v=${currentSong.id}`)}
-              title={t('全画面で表示')}
-              aria-label={t('全画面で表示')}
-            >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M19 19H5V5h7V3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z" />
-              </svg>
-            </button>
-          </div>
-        </div>
-      </div>}
-    </div>
+      <DeferredBoundary>
+        <Suspense fallback={null}>
+          {showMiniPlayer && currentSong && <ProgressLine seekable={finePointer && !isMobile} />}
+          {/*
+            Off the song page the controls stay in the DOM while a song is loaded (hidden until the
+            mini player shows), as before. On the song page they are left out entirely: the page has
+            its own 前の曲 / 次の曲 / ⋮ with the same labels.
+          */}
+          {currentSong && (!isWatchPage || isLeavingWatchPage) && (
+            <MiniPlayerControls
+              visible={showMiniPlayer}
+              mobile={isMobile}
+              onOpenSongPage={openSongPage}
+              swipeHandlers={swipeHandlers}
+            />
+          )}
+        </Suspense>
+      </DeferredBoundary>
+      <SleepTimerWatcher />
+    </div>,
+    document.body,
   );
 }

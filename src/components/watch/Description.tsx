@@ -1,257 +1,192 @@
-import { useState } from 'react';
-import { useNavigate } from 'react-router';
+import { useId, useState } from 'react';
+import type { ReactNode } from 'react';
+import { Link } from 'react-router';
 import type { Song } from '../../types/vocadb';
-import { tokenizeDescriptionText } from '../../utils/descriptionText';
-import { formatJapaneseViews } from '../../utils/formatViews';
-import { getPVServiceLabel } from '../../utils/pvService';
-import { getPVBadgeStyle } from '../../utils/pvBadge';
-import ViewHistoryChart from './ViewHistoryChart';
-import SongAlbums from '../playlist/SongAlbums';
-import { useTranslate } from '../../i18n';
+import { shortenUrlForDisplay, tokenizeDescriptionText } from '../../utils/descriptionText';
+import { formatViewCount, serviceLabel, songTypeLabel, artistRoleLabel } from '../../utils/songMeta';
+import { useTranslate, useTranslateSourceText } from '../../i18n';
 import { useLanguageStore } from '../../stores/languageStore';
+import { cx } from '../ui/overlay';
+import SongAlbums from '../playlist/SongAlbums';
+import ViewHistoryChart from './ViewHistoryChart';
+import OriginalVersionLink from './OriginalVersionLink';
+import ServiceIcon from './ServiceIcon';
+import { buildCreditGroups, formatCalendarDate, formatExactViewCount } from './watchFormat';
+import { videoSourceLabel } from './videoLabels';
 
-function formatViews(value: number | undefined, language: 'ja' | 'en'): string {
-  if (language === 'ja') return formatJapaneseViews(value);
-  return new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(value || 0);
-}
+const CREDIT_CHIP =
+  'inline-flex h-10 max-w-full items-center truncate rounded-chip bg-yt-tonal px-3 text-sm font-medium leading-5 text-yt-text no-underline transition-colors duration-150 hover:bg-yt-tonal-hover sm:h-8';
+
+const SECTION_HEADING = 'text-base font-bold leading-[22px] text-yt-text';
+
+const stop = (event: { stopPropagation: () => void }) => event.stopPropagation();
 
 /**
- * Description - 折りたたみ可能な概要欄
+ * 概要 (YouTube's description box). Collapsed: one meta line and three lines of text; anywhere
+ * in the box expands it. Expanded: the full text, credits, albums, videos and the view-count chart.
  */
-interface DescriptionProps {
-  song: Song;
-}
-
-export default function Description({ song }: DescriptionProps) {
-  const t = useTranslate();
-  const [expanded, setExpanded] = useState(false);
-  const navigate = useNavigate();
+export default function Description({ song }: { song: Song }) {
+  const t = useTranslateSourceText();
+  const tk = useTranslate();
   const language = useLanguageStore(state => state.language);
+  const [expanded, setExpanded] = useState(false);
+  const bodyId = useId();
 
-  // PV情報を概要として使用
   const originalPV = song.pvs?.find(pv => pv.pvType === 'Original' && !pv.disabled);
-  const description = originalPV?.description || '';
-  const descriptionTokens = tokenizeDescriptionText(description);
+  const description = originalPV?.description?.trim() ? originalPV.description : '';
+  const descriptionTokens = description ? tokenizeDescriptionText(description) : [];
+  const publishDate = formatCalendarDate(song.publishDate ?? originalPV?.publishDate, language);
+  const pvList = song.pvs?.filter(pv => !pv.disabled) ?? [];
+  const credits = expanded ? buildCreditGroups(song) : [];
 
-  // 投稿日
-  const publishDate = song.publishDate
-    ? new Date(song.publishDate).toLocaleDateString(language === 'ja' ? 'ja-JP' : 'en', { year: 'numeric', month: 'long', day: 'numeric' })
-    : originalPV?.publishDate
-    ? new Date(originalPV.publishDate).toLocaleDateString(language === 'ja' ? 'ja-JP' : 'en', { year: 'numeric', month: 'long', day: 'numeric' })
-    : null;
+  const formatViews = (count: number) => (expanded ? formatExactViewCount(count, language) : formatViewCount(count, language));
+  const metaParts: ReactNode[] = [];
+  if ((song.youtubeViews ?? 0) > 0) metaParts.push(`${serviceLabel('Youtube', language)} ${formatViews(song.youtubeViews ?? 0)}`);
+  if ((song.nicoViews ?? 0) > 0) metaParts.push(`${serviceLabel('NicoNicoDouga', language)} ${formatViews(song.nicoViews ?? 0)}`);
+  if (publishDate) metaParts.push(publishDate);
+  if (song.songType !== 'Original' && song.songType !== 'Unspecified') metaParts.push(songTypeLabel(song.songType, language));
 
-  // PVサービスリスト
-  const pvList = song.pvs?.filter(pv => !pv.disabled) || [];
+  const creditLabel = (role: string) => {
+    if (role === 'producer') return t('ボカロP');
+    if (role === 'vocalist') return tk('vocalistLabel');
+    return artistRoleLabel(role, language);
+  };
 
-  // アーティスト情報
-  const producers = song.artists?.filter(a => a.categories?.includes('Producer')) || [];
-  const vocalists = song.artists?.filter(a => a.categories === 'Vocalist') || [];
-  const others = song.artists?.filter(a => {
-    const categories = a.categories || '';
-    return !categories.includes('Vocalist') && (categories.includes('Illustrator') || categories.includes('Animator') || categories.includes('Composer') || categories.includes('Lyricist') || categories.includes('Instrumentalist') || categories.includes('Other'));
-  }) || [];
+  const expandButton = (
+    <button
+      type="button"
+      className={cx(
+        'inline-flex cursor-pointer items-center font-medium text-yt-text outline-none focus-visible:outline-2 focus-visible:outline-yt-focus max-sm:min-h-9',
+        descriptionTokens.length > 0 && 'sm:absolute sm:bottom-0 sm:right-0 sm:bg-yt-tonal-solid sm:pl-1 sm:group-hover/desc:bg-yt-tonal-solid-hover sm:before:pointer-events-none sm:before:absolute sm:before:inset-y-0 sm:before:right-full sm:before:w-10 sm:before:bg-linear-to-r sm:before:from-transparent sm:before:to-yt-tonal-solid sm:group-hover/desc:before:to-yt-tonal-solid-hover',
+      )}
+      aria-expanded={false}
+      aria-controls={bodyId}
+      aria-label={tk('descriptionExpandAria')}
+      onClick={event => {
+        event.stopPropagation();
+        setExpanded(true);
+      }}
+    >
+      …{t('もっと見る')}
+    </button>
+  );
 
   return (
-    <div
-      className="mt-3 rounded-xl p-3 transition-colors"
-      style={{ background: 'var(--color-surface)' }}
+    <section
+      data-testid="watch-description"
+      data-expanded={expanded ? 'true' : 'false'}
+      aria-label={t('概要')}
+      className={cx(
+        'group/desc mt-3 min-w-0 rounded-card bg-yt-tonal-solid p-3 text-sm leading-5 text-yt-text transition-colors duration-150 max-sm:mx-3',
+        !expanded && 'cursor-pointer hover:bg-yt-tonal-solid-hover',
+      )}
       onClick={() => {
         if (!expanded) setExpanded(true);
       }}
-      aria-expanded={expanded}
     >
-      {/* ヘッダー行 */}
-      <div className="flex items-center gap-3 text-sm flex-wrap">
-        {(pvList.some(p => p.service === 'Youtube') || (song.youtubeViews || 0) > 0) && (
-          <span className="font-medium flex items-center gap-1" style={{ color: '#ef4444' }}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M21.582 6.186a2.665 2.665 0 0 0-1.876-1.884C17.95 3.84 12 3.84 12 3.84s-5.95 0-7.706.462A2.665 2.665 0 0 0 2.418 6.186C2 7.952 2 12 2 12s0 4.048.418 5.814a2.665 2.665 0 0 0 1.876 1.884C6.05 20.16 12 20.16 12 20.16s5.95 0 7.706-.462a2.665 2.665 0 0 0 1.876-1.884C22 16.048 22 12 22 12s0-4.048-.418-5.814zM9.75 15.02v-6.04L15.05 12l-5.3 3.02z"/>
-            </svg>
-            {expanded ? (song.youtubeViews || 0).toLocaleString() : formatViews(song.youtubeViews, language)} {t('viewsSuffix')}
-          </span>
-        )}
-        {(pvList.some(p => p.service === 'NicoNicoDouga') || (song.nicoViews || 0) > 0) && (
-          <span className="font-medium flex items-center gap-1" style={{ color: '#3b82f6' }}>
-            📺 {expanded ? (song.nicoViews || 0).toLocaleString() : formatViews(song.nicoViews, language)} {t('viewsSuffix')}
-          </span>
-        )}
+      {(metaParts.length > 0 || song.originalVersionId) && (
+        <div className="font-medium tabular-nums">
+          {metaParts.map((part, index) => (
+            <span key={index}>
+              {index > 0 && <span aria-hidden="true">{' · '}</span>}
+              {part}
+            </span>
+          ))}
+          <OriginalVersionLink song={song} prefix={metaParts.length > 0 ? ' · ' : undefined} />
+        </div>
+      )}
 
-        {publishDate && (
-          <span style={{ color: 'var(--color-text-secondary)' }}>{publishDate}</span>
-        )}
-      </div>
-
-      {/* 概要テキスト */}
-      <div className={expanded ? '' : 'line-clamp-2'}>
-        {description ? (
-          <p className="text-sm mt-2 whitespace-pre-wrap break-words" style={{ color: 'var(--color-text-primary)' }}>
+      <div id={bodyId} className="relative">
+        {descriptionTokens.length > 0 && (
+          <p className={cx('mt-1 whitespace-pre-wrap break-words', !expanded && 'line-clamp-3')}>
             {descriptionTokens.map((token, index) => token.type === 'url' ? (
               <a
                 key={`url-${index}`}
                 href={token.value}
+                title={token.value}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="break-all underline decoration-dotted underline-offset-2"
-                style={{ color: 'var(--color-accent-blue)' }}
-                onClick={(event) => event.stopPropagation()}
+                className="break-all text-yt-link no-underline hover:underline"
+                onClick={stop}
               >
-                {token.value}
+                {shortenUrlForDisplay(token.value)}
               </a>
             ) : (
               <span key={`text-${index}`}>{token.value}</span>
             ))}
           </p>
-        ) : (
-          <p className="text-sm mt-2" style={{ color: 'var(--color-text-secondary)' }}>
-            {song.artistString}
-          </p>
         )}
+        {!expanded && expandButton}
+      </div>
 
-        {/* 展開時の詳細情報 */}
-        {expanded && (
-          <div className="mt-4 space-y-3">
-            {/* アーティスト詳細 */}
-            {producers.length > 0 && (
-              <div>
-                <span className="text-xs font-medium" style={{ color: 'var(--color-text-muted)' }}>{t('producerLabel')}</span>
-                <div className="flex flex-wrap gap-1 mt-1">
-                  {producers.map(a => (
-                    <button
-                      key={a.id} 
-                      className="text-sm px-2 py-0.5 rounded-full hover:brightness-125 transition-all" 
-                      style={{ background: 'var(--color-surface-hover)', color: 'var(--color-text-primary)' }}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        const artistName = a.name || a.artist?.name;
-                        if (a.artist?.id) {
-                          navigate(`/?artistId=${a.artist.id}&artistName=${encodeURIComponent(artistName || '')}`);
-                        } else if (artistName) {
-                          navigate(`/?q=${encodeURIComponent(artistName)}`);
-                        }
-                      }}
-                    >
-                      {a.name || a.artist?.name}
-                    </button>
-                  ))}
-                </div>
+      {expanded && (
+        <div className="mt-6 space-y-6">
+          {credits.length > 0 && (
+            <section aria-label={t('クレジット')}>
+              <h3 className={SECTION_HEADING}>{t('クレジット')}</h3>
+              <div className="mt-1 space-y-3">
+                {credits.map(group => (
+                  <div key={group.role}>
+                    <h4 className="text-xs font-normal leading-[18px] text-yt-text-secondary">{creditLabel(group.role)}</h4>
+                    <div className="mt-1 flex flex-wrap gap-2">
+                      {group.people.map(person => person.href ? (
+                        <Link key={person.key} to={person.href} className={CREDIT_CHIP} onClick={stop}>
+                          {person.name}
+                        </Link>
+                      ) : (
+                        <span key={person.key} className={CREDIT_CHIP}>{person.name}</span>
+                      ))}
+                    </div>
+                  </div>
+                ))}
               </div>
-            )}
-            {vocalists.length > 0 && (
-              <div>
-                <span className="text-xs font-medium" style={{ color: 'var(--color-text-muted)' }}>{t('vocalistLabel')}</span>
-                <div className="flex flex-wrap gap-1 mt-1">
-                  {vocalists.map(a => (
-                    <button 
-                      key={a.id} 
-                      className="text-sm px-2 py-0.5 rounded-full hover:brightness-125 transition-all" 
-                      style={{ background: 'rgba(6, 214, 160, 0.15)', color: 'var(--color-accent-cyan)' }}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        const artistName = a.name || a.artist?.name;
-                        if (a.artist?.id) {
-                          navigate(`/?artistId=${a.artist.id}&artistName=${encodeURIComponent(artistName || '')}`);
-                        } else if (artistName) {
-                          navigate(`/?q=${encodeURIComponent(artistName)}`);
-                        }
-                      }}
-                    >
-                      {a.name || a.artist?.name}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-            {others.length > 0 && (
-              <div>
-                <span className="text-xs font-medium" style={{ color: 'var(--color-text-muted)' }}>{t('otherCredits')}</span>
-                <div className="flex flex-wrap gap-1 mt-1">
-                  {others.flatMap(a => {
-                    const artistName = a.name || a.artist?.name || '';
-                    const roles = (a.roles || a.effectiveRoles || a.categories || 'Other')
-                      .split(',')
-                      .map(role => role.trim())
-                      .filter(role => role && !['Default', 'Producer', 'Vocalist'].includes(role));
-                    const artistId = a.artist?.id;
-                    return (roles.length > 0 ? roles : ['Other']).map(role => (
-                      <button
-                        key={`${a.id}-${role}`}
-                        type="button"
-                        className="text-sm px-2 py-0.5 rounded-full hover:brightness-125 transition-all"
-                        style={{ background: 'var(--color-surface-hover)', color: 'var(--color-text-secondary)' }}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          if (artistId) {
-                            navigate(`/?artistId=${artistId}&artistRole=${encodeURIComponent(role)}&artistName=${encodeURIComponent(artistName)}`);
-                          } else if (artistName) {
-                            navigate(`/?q=${encodeURIComponent(artistName)}`);
-                          }
-                        }}
-                      >
-                        {artistName} ({role})
-                      </button>
-                    ));
-                  })}
-                </div>
-              </div>
-            )}
+            </section>
+          )}
 
-            {/* PVリンク */}
-            {pvList.length > 0 && (
-              <div>
-                <span className="text-xs font-medium" style={{ color: 'var(--color-text-muted)' }}>{t('pvLinks')}</span>
-                <div className="flex flex-col gap-1 mt-1">
-                  {pvList.map(pv => (
+          <SongAlbums key={song.id} songId={song.id} />
+
+          {pvList.length > 0 && (
+            <section aria-label={tk('pvLinks')}>
+              <h3 className={SECTION_HEADING}>{tk('pvLinks')}</h3>
+              <ul className="mt-1">
+                {pvList.map(pv => (
+                  <li key={pv.id}>
                     <a
-                      key={pv.id}
                       href={pv.url}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="text-sm flex items-center gap-2 hover:underline"
-                      style={{ color: 'var(--color-accent-blue)' }}
-                      onClick={(e) => e.stopPropagation()}
+                      className="flex min-h-10 min-w-0 items-center gap-3 text-yt-text no-underline hover:underline"
+                      onClick={stop}
                     >
-                      <span
-                        className="text-[10px] font-bold px-1.5 py-0.5 rounded"
-                        style={getPVBadgeStyle(pv.service, pv.pvType)}
-                      >
-                        {getPVServiceLabel(pv.service, language)}
+                      <ServiceIcon service={pv.service} className="text-yt-text-secondary" />
+                      <span className="min-w-0 flex-1 truncate">{pv.name || pv.url}</span>
+                      <span className="shrink-0 text-xs text-yt-text-secondary">
+                        {videoSourceLabel(pv, language, t)}
                       </span>
-                      {pv.name || pv.url}
-                      {pv.pvType !== 'Original' && (
-                        <span className="text-[10px]" style={{ color: 'var(--color-text-muted)' }}>({pv.pvType})</span>
-                      )}
                     </a>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
 
-      <SongAlbums key={song.id} songId={song.id} />
-
-      {/* 展開時の詳細情報（履歴チャート） */}
-      {expanded && (
-        <div className="mt-4 pt-4 border-t border-[rgba(255,255,255,0.05)]">
           <ViewHistoryChart songId={song.id} />
+
+          <button
+            type="button"
+            className="inline-flex cursor-pointer items-center font-medium text-yt-text outline-none focus-visible:outline-2 focus-visible:outline-yt-focus max-sm:min-h-9"
+            aria-expanded
+            aria-controls={bodyId}
+            aria-label={tk('descriptionCollapseAria')}
+            onClick={event => {
+              event.stopPropagation();
+              setExpanded(false);
+            }}
+          >
+            {t('一部を表示')}
+          </button>
         </div>
       )}
-
-      {/* 展開/折りたたみトグル */}
-      <button
-        className="mt-2 inline-flex min-h-10 items-center rounded-lg px-2 text-xs font-medium sm:min-h-0 sm:px-0"
-        style={{ color: 'var(--color-text-secondary)' }}
-        type="button"
-        aria-expanded={expanded}
-        aria-label={expanded ? t('descriptionCollapseAria') : t('descriptionExpandAria')}
-        onClick={(e) => {
-          e.stopPropagation();
-          setExpanded(!expanded);
-        }}
-      >
-        {expanded ? t('showLess') : t('showMore')}
-      </button>
-    </div>
+    </section>
   );
 }

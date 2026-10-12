@@ -156,7 +156,8 @@ async function seedRatings(page) {
 }
 
 async function clickButtonByText(page, label) {
-  const buttons = await page.$$('button');
+  // Only the page's own controls: the top bar may have buttons with the same words.
+  const buttons = await page.$$('[data-testid="knowledge-map-page"] button');
   for (const button of buttons) {
     const text = await button.evaluate(element => element.textContent?.trim());
     if (text === label) {
@@ -208,10 +209,40 @@ try {
   if (!youtubeText.includes('55.0%') || !youtubeText.includes('Known YouTube Song') || !youtubeText.includes('Rated YouTube Song')) {
     throw new Error('YouTube knowledge map summary or tiles are missing.');
   }
+  if (!youtubeText.includes('2 / 900曲')) {
+    throw new Error(`Known / total song counts are missing from the summary: ${youtubeText}`);
+  }
+  // The songs fill the map; the rest is a band under it with its share of all views.
+  const remainderLayout = await page.evaluate(() => {
+    const treemap = document.querySelector('[data-testid="youtube-knowledge-treemap"]');
+    const band = treemap?.querySelector('[data-testid="knowledge-map-remainder"]');
+    return {
+      bandText: band?.textContent ?? '',
+      remainderTiles: treemap?.querySelectorAll('[data-tile-id="unknown-remainder"]').length ?? 0,
+      remainderInBand: Boolean(band?.querySelector('[data-tile-id="unknown-remainder"]')),
+      mapText: treemap?.textContent ?? '',
+    };
+  });
+  if (!remainderLayout.bandText.includes('その他のまだ知らない曲')
+    || !remainderLayout.bandText.includes('45.0%')
+    || remainderLayout.remainderTiles !== 1
+    || !remainderLayout.remainderInBand
+    || !remainderLayout.mapText.includes('面積＝再生数（上位2曲）')) {
+    throw new Error(`Knowledge map remainder band is wrong: ${JSON.stringify(remainderLayout)}`);
+  }
+  // The explanation and the privacy notice live in the ⓘ popover.
+  await page.click('[data-testid="knowledge-map-page"] button[aria-label="このマップについて"]');
+  await page.waitForSelector('[role="dialog"][aria-label="このマップについて"]');
+  const aboutText = await page.$eval('[role="dialog"][aria-label="このマップについて"]', element => element.textContent ?? '');
+  if (!aboutText.includes('送信するのは曲IDだけで、保存されません。星の数は送りません') || !aboutText.includes('対象 1,000曲')) {
+    throw new Error(`Knowledge map privacy notice or counts are missing: ${aboutText}`);
+  }
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => !document.querySelector('[role="dialog"][aria-label="このマップについて"]'));
 
   await clickButtonByText(page, '知っている曲');
   const knownMapText = await page.$eval('[data-testid="youtube-knowledge-treemap"]', element => element.textContent ?? '');
-  if (!knownMapText.includes('Known YouTube Song') || !knownMapText.includes('Rated YouTube Song') || knownMapText.includes('その他の未再生曲')) {
+  if (!knownMapText.includes('Known YouTube Song') || !knownMapText.includes('Rated YouTube Song') || knownMapText.includes('その他のまだ知らない曲')) {
     throw new Error(`Known-song filter returned unexpected tiles: ${knownMapText}`);
   }
   const knownSongTile = await page.$('[data-testid="youtube-knowledge-treemap"] a[aria-label*="Known YouTube Song"]');
@@ -225,10 +256,14 @@ try {
 
   await clickButtonByText(page, 'まだ知らない曲');
   const unknownMapText = await page.$eval('[data-testid="youtube-knowledge-treemap"]', element => element.textContent ?? '');
-  if (!unknownMapText.includes('その他の未再生曲') || unknownMapText.includes('Known YouTube Song')) {
+  if (!unknownMapText.includes('その他のまだ知らない曲') || unknownMapText.includes('Known YouTube Song')) {
     throw new Error(`Unknown-song filter returned unexpected tiles: ${unknownMapText}`);
   }
-  await clickButtonByText(page, '全体');
+  // No song tile is left here, so the remainder fills the map instead of a band.
+  if (await page.$('[data-testid="youtube-knowledge-treemap"] [data-testid="knowledge-map-remainder"]')) {
+    throw new Error('A remainder-only map must not also draw the remainder band.');
+  }
+  await clickButtonByText(page, 'すべて');
 
   await clickButtonByText(page, 'ニコニコ');
   await page.waitForSelector('[data-testid="nico-knowledge-treemap"]');

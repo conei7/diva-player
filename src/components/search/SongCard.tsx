@@ -1,75 +1,87 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import type { Song } from '../../types/vocadb';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
+import type { KeyboardEvent, MouseEvent, PointerEvent } from 'react';
 import { Link } from 'react-router';
-import { usePlayerStore, getPlayablePV } from '../../stores/playerStore';
-import { useUiStore } from '../../stores/uiStore';
-import { usePlaylistStore, WATCH_LATER_ID } from '../../stores/playlistStore';
+import type { Song } from '../../types/vocadb';
+import { getPlayablePV, usePlayerStore } from '../../stores/playerStore';
 import { useSelectionStore } from '../../stores/selectionStore';
-import { formatSongRelativeDate } from '../../utils/relativeDate';
-import SongCardMenu from './SongCardMenu';
-import SongCardBadges from './SongCardBadges';
-import { formatDistinctArtistNames } from '../../utils/artistNames';
-import { isPlayablePV } from '../../utils/playablePV';
-import RecommendationHint from '../recommendation/RecommendationHint';
 import { useHiddenSongStore } from '../../stores/hiddenSongStore';
 import { useTranslateSourceText } from '../../i18n';
 import { useLanguageStore } from '../../stores/languageStore';
+import { formatSongRelativeDate } from '../../utils/relativeDate';
+import { shortRecommendationReason } from '../recommendation/reasonLabels';
+import { artistPath, searchPath, watchPath } from '../../utils/routes';
+import SongThumbnail from '../ui/SongThumbnail';
+import SongActionsMenu from '../ui/SongActionsMenu';
+import { MenuItem } from '../ui/Menu';
+import { CheckBoxOutlineIcon, PersonIcon } from '../ui/icons';
+import { cx } from '../ui/overlay';
+import ViewCounts from '../ui/ViewCounts';
+import { hasViewCounts } from '../ui/songMetaParts';
+import { MetaTag, SongArtistLine } from './SongCardBadges';
+import { getSongProducerLinks, useSongTypeTagLabel } from './songCardMeta';
 
 interface SongCardProps {
   song: Song;
+  /** Position in the grid (kept for callers; the rank badge uses `rank`). */
   index: number;
   onPlay?: (song: Song) => void;
-  onAddToQueue?: (song: Song) => void;
   onSelect?: (song: Song) => void;
   recommendationReason?: string;
   onVisible?: () => void;
   onExposureClick?: () => void;
+  /** Explicit searches also show songs that are hidden from discovery. */
   showHidden?: boolean;
+  /** Ranking-type feeds show the position at the top-left of the thumbnail. */
+  rank?: number;
+}
+
+function isPlainLeftClick(event: MouseEvent): boolean {
+  return event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey;
 }
 
 /**
- * SongCard - 検索結果の曲カード
- * サムネイル、曲名、アーティスト、PVサービスバッジ、再生ボタンを表示。
+ * The title link's ::after covers the tile (the card is `relative`) and carries the focus ring.
+ * It ignores the pointer, so the thumbnail, the artist links and the ⋮ keep their own clicks.
+ * Phones: the thumbnail is full-bleed (-12px on both sides); the ring follows it and is drawn inside.
+ */
+const TITLE_LINK_CLASS = cx(
+  "text-inherit no-underline focus-visible:outline-none after:pointer-events-none after:absolute after:inset-0 after:rounded-card after:content-['']",
+  'focus-visible:after:outline-2 focus-visible:after:outline-offset-2 focus-visible:after:outline-yt-focus',
+  'max-sm:after:-inset-x-3 max-sm:after:rounded-none max-sm:focus-visible:after:-outline-offset-2',
+);
+
+/**
+ * Home / search tile (YouTube grid item): 16:9 thumbnail, 2-line title, artist line, view counts.
+ * Same-tab clicks play the song; modified and middle clicks open `…&autoplay=0` in a new tab.
  */
 export default function SongCard({
   song,
-  index,
   onPlay,
-  onAddToQueue,
   onSelect,
   recommendationReason,
   onVisible,
   onExposureClick,
   showHidden = false,
+  rank,
 }: SongCardProps) {
   const t = useTranslateSourceText();
   const language = useLanguageStore(state => state.language);
-  const { currentSong, isPlaying, setQueue, hiddenMode } = usePlayerStore();
-  const { openSaveToPlaylist } = useUiStore();
-  const toggleSong = usePlaylistStore(s => s.toggleSongInPlaylist);
-  const isSongIn  = usePlaylistStore(s => s.isSongInPlaylist);
-  const isCurrentSong = currentSong?.id === song.id;
-  const playablePV = getPlayablePV(song);
-  const hasPlayablePV = !!playablePV;
-  const isWatchLater = isSongIn(WATCH_LATER_ID, song.id);
+  const isNowPlaying = usePlayerStore(state => state.currentSong?.id === song.id && state.isPlaying);
+  const setQueue = usePlayerStore(state => state.setQueue);
   const isHidden = useHiddenSongStore(state => Boolean(state.hiddenSongs[String(song.id)]));
-  const hideSong = useHiddenSongStore(state => state.hideSong);
-  const [menuOpen, setMenuOpen] = useState(false);
-  const [menuPos, setMenuPos] = useState<{ top: number; right: number } | null>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
-  const menuPortalRef = useRef<HTMLDivElement>(null);
-  const btnRef = useRef<HTMLButtonElement>(null);
+  const isSelectionMode = useSelectionStore(state => state.isSelectionMode);
+  const longPressSelectionEnabled = useSelectionStore(state => state.longPressSelectionEnabled);
+  const isSelected = useSelectionStore(state => state.selectedSongIds.has(song.id));
+  const toggleSelection = useSelectionStore(state => state.toggleSong);
+  const enterSelectionMode = useSelectionStore(state => state.enterSelectionMode);
+  const hasPlayablePV = useMemo(() => getPlayablePV(song) !== null, [song]);
+  const tagLabel = useSongTypeTagLabel(song);
   const cardRef = useRef<HTMLDivElement>(null);
-  const longPressTriggered = useRef(false);
   const visibilityReportedRef = useRef(false);
-
-  // 複数選択ストア
-  const isSelectionMode = useSelectionStore(s => s.isSelectionMode);
-  const longPressSelectionEnabled = useSelectionStore(s => s.longPressSelectionEnabled);
-  const selectedSongIds = useSelectionStore(s => s.selectedSongIds);
-  const isSelected      = selectedSongIds.has(song.id);
-  const toggleSelection = useSelectionStore(s => s.toggleSong);
-  const enterSelectionMode = useSelectionStore(s => s.enterSelectionMode);
+  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const longPressTriggered = useRef(false);
+  const href = watchPath(song.id, { autoplay: false });
+  const producer = getSongProducerLinks(song)[0];
 
   useEffect(() => {
     visibilityReportedRef.current = false;
@@ -87,394 +99,188 @@ export default function SongCard({
     return () => observer.disconnect();
   }, [onVisible]);
 
-  // メニュー外クリックで閉じる
-  useEffect(() => {
-    if (!menuOpen) return;
-    const handler = (e: PointerEvent) => {
-      if (!menuRef.current?.contains(e.target as Node) && !menuPortalRef.current?.contains(e.target as Node)) {
-        setMenuOpen(false);
-        setMenuPos(null);
-      }
-    };
-    document.addEventListener('pointerdown', handler);
-    return () => document.removeEventListener('pointerdown', handler);
-  }, [menuOpen]);
+  useEffect(() => () => {
+    if (longPressTimer.current) clearTimeout(longPressTimer.current);
+  }, []);
 
-  useEffect(() => {
-    if (!menuOpen) return;
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        event.preventDefault();
-        setMenuOpen(false);
-        setMenuPos(null);
-        btnRef.current?.focus();
-      }
-    };
-    const closeOnViewportChange = () => {
-      setMenuOpen(false);
-      setMenuPos(null);
-    };
-    document.addEventListener('keydown', handleKeyDown);
-    window.addEventListener('resize', closeOnViewportChange);
-    window.addEventListener('scroll', closeOnViewportChange, true);
-    return () => {
-      document.removeEventListener('keydown', handleKeyDown);
-      window.removeEventListener('resize', closeOnViewportChange);
-      window.removeEventListener('scroll', closeOnViewportChange, true);
-    };
-  }, [menuOpen]);
+  const play = useCallback(() => {
+    onExposureClick?.();
+    if (onPlay) onPlay(song);
+    else setQueue([song], 0);
+    onSelect?.(song);
+  }, [onExposureClick, onPlay, onSelect, setQueue, song]);
 
-  // 利用可能なPVサービスのバッジ
-  const pvServices = song.pvs?.reduce((acc, pv) => {
-    if (isPlayablePV(pv)) {
-      acc.add(pv.service);
+  const selectThisSong = useCallback(() => {
+    enterSelectionMode();
+    if (!useSelectionStore.getState().selectedSongIds.has(song.id)) toggleSelection(song);
+  }, [enterSelectionMode, song, toggleSelection]);
+
+  // Clicks on the text area (outside the links and the ⋮) behave like the title link.
+  const handleCardClick = (event: MouseEvent<HTMLDivElement>) => {
+    if (event.defaultPrevented) return;
+    if (isSelectionMode) {
+      event.preventDefault();
+      toggleSelection(song);
+      return;
     }
-    return acc;
-  }, new Set<string>()) ?? new Set();
-
-  const ytPVs = song.pvs?.filter(pv => !pv.disabled && pv.service === 'Youtube') ?? [];
-  const isYTUnofficialOnly = ytPVs.length > 0 && ytPVs.every(pv => pv.pvType !== 'Original');
-
-  const nicoPVs = song.pvs?.filter(pv => !pv.disabled && pv.service === 'NicoNicoDouga') ?? [];
-  const isNicoUnofficialOnly = nicoPVs.length > 0 && nicoPVs.every(pv => pv.pvType !== 'Original');
-
-  // アーティスト名の抽出
-  const producers = song.artists?.filter(a => a.categories?.includes('Producer')) || [];
-  const producerName = formatDistinctArtistNames(producers.map(a => a.name || a.artist?.name));
-  const vocalists = song.artists?.filter(a => a.categories === 'Vocalist') || [];
-  const vocalistName = formatDistinctArtistNames(vocalists.map(a => a.name || a.artist?.name));
-  const relativeDate = formatSongRelativeDate(song, Date.now(), language);
-
-  // 再生時間フォーマット
-  const formatDuration = (seconds: number): string => {
-    if (!seconds) return '--:--';
-    const m = Math.floor(seconds / 60);
-    const s = Math.floor(seconds % 60);
-    return `${m}:${s.toString().padStart(2, '0')}`;
+    if (isPlainLeftClick(event)) play();
   };
 
-  const handlePlay = useCallback((e?: React.MouseEvent) => {
-    if (e) {
-      e.stopPropagation();
-      e.preventDefault();
-    }
-    // 選択モード中は再生をブロック
-    if (isSelectionMode) return;
-
-    onExposureClick?.();
-    
-    if (onPlay) {
-      onPlay(song);
-    } else {
-      setQueue([song], 0);
-    }
-    onSelect?.(song);
-  }, [isSelectionMode, onPlay, song, setQueue, onSelect, onExposureClick]);
-
-  // カード全体でのクリックハンドラ
-  const handleCardClick = useCallback((e: React.MouseEvent) => {
-    if (isSelectionMode) {
-      e.stopPropagation();
-      e.preventDefault();
-      toggleSelection(song);
-    } else {
-      handlePlay(e);
-    }
-  }, [isSelectionMode, toggleSelection, song, handlePlay]);
-
-  const handleSongLinkClick = useCallback((e: React.MouseEvent<HTMLAnchorElement>) => {
+  const handleLinkClick = (event: MouseEvent<HTMLAnchorElement>) => {
+    event.stopPropagation();
     if (longPressTriggered.current) {
       longPressTriggered.current = false;
-      e.preventDefault();
-      e.stopPropagation();
+      event.preventDefault();
       return;
     }
     if (isSelectionMode) {
-      e.preventDefault();
-      e.stopPropagation();
+      event.preventDefault();
       toggleSelection(song);
       return;
     }
-    if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) {
-      e.stopPropagation();
-      return;
+    // Modified clicks keep the link's default: the song opens in a new tab without autoplay.
+    if (!isPlainLeftClick(event)) return;
+    event.preventDefault();
+    play();
+  };
+
+  const handleLinkAuxClick = (event: MouseEvent<HTMLAnchorElement>) => {
+    if (isSelectionMode) event.preventDefault();
+    event.stopPropagation();
+  };
+
+  // In selection mode the title is a checkbox: Space toggles it (Enter is the link's click, which toggles too).
+  const handleSelectionKeyDown = (event: KeyboardEvent<HTMLAnchorElement>) => {
+    if (event.key !== ' ' || event.nativeEvent.isComposing) return;
+    event.preventDefault();
+    toggleSelection(song);
+  };
+
+  const clearLongPress = () => {
+    if (longPressTimer.current) {
+      clearTimeout(longPressTimer.current);
+      longPressTimer.current = null;
     }
+  };
 
-    // Same-tab clicks use the card's play action once. This preserves the
-    // normal playback intent and avoids combining a programmatic navigation
-    // with the link's default navigation. The link href keeps autoplay=0 for
-    // opening the song in a separate tab.
-    if (onPlay) {
-      handlePlay(e);
-      return;
-    }
-
-    e.preventDefault();
-    e.stopPropagation();
-    handlePlay(e);
-  }, [handlePlay, isSelectionMode, onPlay, song, toggleSelection]);
-
-  const handleSongLinkAuxClick = useCallback((e: React.MouseEvent<HTMLAnchorElement>) => {
-    if (isSelectionMode) {
-      e.preventDefault();
-    }
-    e.stopPropagation();
-  }, [isSelectionMode]);
-
-  // 長押しで選択モード突入
-  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const handlePointerDown = useCallback((event: React.PointerEvent<HTMLAnchorElement>) => {
-    // Long-press selection is intentionally mouse/pen-only. On touch devices
-    // a held finger is commonly used to scroll, so entering selection mode
-    // after 500ms makes normal browsing feel like an accidental action.
-    if (!longPressSelectionEnabled || event.pointerType === 'touch') return;
-    if (isSelectionMode) return;
+  // Long-press selection is mouse/pen-only: on touch screens a held finger usually means scrolling.
+  const handlePointerDown = (event: PointerEvent<HTMLAnchorElement>) => {
+    if (!longPressSelectionEnabled || event.pointerType === 'touch' || isSelectionMode) return;
     longPressTriggered.current = false;
+    clearLongPress();
     longPressTimer.current = setTimeout(() => {
+      longPressTimer.current = null;
       longPressTriggered.current = true;
-      enterSelectionMode();
-      toggleSelection(song);
+      selectThisSong();
     }, 500);
-  }, [isSelectionMode, enterSelectionMode, toggleSelection, song, longPressSelectionEnabled]);
-  const handlePointerUp = useCallback(() => {
-    if (longPressTimer.current) {
-      clearTimeout(longPressTimer.current);
-      longPressTimer.current = null;
-    }
-  }, []);
-  const handlePointerLeave = useCallback(() => {
-    if (longPressTimer.current) {
-      clearTimeout(longPressTimer.current);
-      longPressTimer.current = null;
-    }
-  }, []);
-
-  const handleWatchLater = useCallback((e: React.MouseEvent) => {
-    e.stopPropagation();
-    toggleSong(WATCH_LATER_ID, song);
-  }, [toggleSong, song]);
-
-  const handleSaveToPlaylist = useCallback((e: React.MouseEvent) => {
-    e.stopPropagation();
-    setMenuOpen(false);
-    setMenuPos(null);
-    openSaveToPlaylist(song);
-  }, [openSaveToPlaylist, song]);
-
-  const handleAddToQueueFromMenu = useCallback((e: React.MouseEvent) => {
-    e.stopPropagation();
-    setMenuOpen(false);
-    setMenuPos(null);
-    onAddToQueue?.(song);
-  }, [onAddToQueue, song]);
-
-  const handleShare = useCallback((e: React.MouseEvent) => {
-    e.stopPropagation();
-    setMenuOpen(false);
-    setMenuPos(null);
-    const url = `https://vocadb.net/S/${song.id}`;
-    navigator.clipboard.writeText(url).catch(() => {});
-  }, [song.id]);
-
-  const handleHide = useCallback((e: React.MouseEvent) => {
-    e.stopPropagation();
-    setMenuOpen(false);
-    setMenuPos(null);
-    hideSong(song);
-  }, [hideSong, song]);
-
-  const handleMenuToggle = useCallback((e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (menuOpen) {
-      setMenuOpen(false);
-      setMenuPos(null);
-      return;
-    }
-    const rect = btnRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    const menuHeight = 230;
-    const fitsBelow = rect.bottom + 4 + menuHeight <= window.innerHeight;
-    setMenuPos({
-      top: Math.max(8, fitsBelow ? rect.bottom + 4 : rect.top - menuHeight - 4),
-      right: window.innerWidth - rect.right,
-    });
-    setMenuOpen(true);
-  }, [menuOpen]);
+  };
 
   if (isHidden && !showHidden) return null;
+
+  const linkHandlers = {
+    onClick: handleLinkClick,
+    onAuxClick: handleLinkAuxClick,
+    onPointerDown: handlePointerDown,
+    onPointerUp: clearLongPress,
+    onPointerCancel: clearLongPress,
+    onPointerLeave: clearLongPress,
+  };
+  const relativeDate = formatSongRelativeDate(song, Date.now(), language);
+  const reasonLabel = recommendationReason ? t(shortRecommendationReason(recommendationReason)) : null;
+  const producerHref = producer
+    ? producer.id ? artistPath({ id: producer.id, name: producer.name }) : searchPath(producer.name, 'producer')
+    : null;
 
   return (
     <div
       ref={cardRef}
-      className="song-card rounded-xl overflow-hidden group relative"
-      style={{
-        background: isSelected
-          ? 'color-mix(in srgb, #1a73e8 15%, var(--color-bg-card))'
-          : isCurrentSong ? 'var(--color-bg-card-hover)' : 'var(--color-bg-card)',
-        border: isSelected
-          ? '2px solid #1a73e8'
-          : isCurrentSong ? '1px solid rgba(6, 214, 160, 0.3)' : '1px solid transparent',
-        animationDelay: `${index * 50}ms`,
-        cursor: isSelectionMode ? 'pointer' : undefined,
-        userSelect: isSelectionMode ? 'none' : undefined,
-      }}
+      data-selected={isSelectionMode && isSelected ? 'true' : undefined}
+      className={cx('song-card group relative min-w-0', isSelectionMode && 'cursor-pointer select-none')}
       onClick={handleCardClick}
     >
-      {/* サムネイル — クリックで再生（選択モード時は選択トグル） */}
       <Link
-        to={`/watch?v=${song.id}&autoplay=0`}
-        className="block relative aspect-video overflow-hidden cursor-pointer"
-        style={{ background: 'var(--color-surface)' }}
-        onClick={handleSongLinkClick}
-        onAuxClick={handleSongLinkAuxClick}
-        onPointerDown={handlePointerDown}
-        onPointerUp={handlePointerUp}
-        onPointerCancel={handlePointerUp}
-        onPointerLeave={handlePointerLeave}
-        title={t(isSelectionMode ? (isSelected ? '選択解除' : '選択') : hasPlayablePV ? 'クリックして再生' : '再生可能なPVがありません')}
-        aria-label={t('{song}を再生', { song: song.name })}
+        to={href}
+        tabIndex={-1}
+        aria-hidden="true"
+        draggable={false}
+        className="relative block max-sm:-mx-3"
+        {...linkHandlers}
       >
-        {!hiddenMode && song.thumbUrl ? (
-          <img
-            src={song.thumbUrl}
-            alt={song.name}
-            className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
-            loading="lazy"
-          />
-        ) : (
-          <div className="w-full h-full flex items-center justify-center" style={hiddenMode ? { background: 'var(--color-bg-secondary)' } : {}}>
-            {!hiddenMode && (
-              <svg className="w-12 h-12" style={{ color: 'var(--color-text-muted)' }} viewBox="0 0 24 24" fill="currentColor">
-                <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/>
-              </svg>
-            )}
-          </div>
-        )}
-
-        {/* 選択モード: チェックボックスオーバーレイ */}
-        {isSelectionMode && (
-          <div
-            className="absolute inset-0 flex items-end justify-end p-2 pointer-events-none z-10"
-            style={{
-              background: isSelected ? 'rgba(0,0,0,0.1)' : 'rgba(0,0,0,0.3)',
-              transition: 'background 0.15s',
-            }}
-          >
-            <div
-              className="w-6 h-6 rounded flex items-center justify-center transition-all shadow-md"
-              style={{
-                background: isSelected ? '#1a73e8' : 'rgba(255,255,255,0.7)',
-                border: isSelected ? 'none' : '2px solid rgba(255,255,255,0.9)',
-              }}
-            >
-              {isSelected && (
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="white">
-                  <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
-                </svg>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* 再生オーバーレイ (選択モード中は非表示) */}
-        {!isSelectionMode && (
-        <div
-          className="pointer-events-none absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex items-center justify-center"
+        <SongThumbnail
+          song={song}
+          className="w-full max-sm:rounded-none"
+          rank={isSelectionMode ? undefined : rank}
+          nowPlaying={isNowPlaying}
+          selected={isSelectionMode && isSelected}
         >
-          {hasPlayablePV && (
-            <div
-              className="w-12 h-12 rounded-full flex items-center justify-center transition-transform duration-200 group-hover:scale-110"
-              style={{ background: 'var(--gradient-primary)' }}
-            >
-              {isCurrentSong && isPlaying ? (
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="white">
-                  <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>
-                </svg>
-              ) : (
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="white" className="ml-0.5">
-                  <path d="M8 5v14l11-7z"/>
-                </svg>
-              )}
+          {!hasPlayablePV && (
+            <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/60">
+              <span className="rounded-badge bg-thumb-badge px-2 py-1 text-xs leading-4 font-medium text-white">
+                {t('再生できません')}
+              </span>
             </div>
           )}
-        </div>
-        )}
-
-        {/* 再生中インジケーター */}
-        {isCurrentSong && isPlaying && (
-          <div className="absolute bottom-2 left-2 px-1.5 py-0.5 rounded text-[10px] font-bold"
-               style={{ background: 'rgba(29,185,84,0.85)', color: '#fff' }}>
-            ▶ {t('再生中')}
-          </div>
-        )}
-
-        {/* 再生時間 */}
-        <div className="absolute bottom-2 right-2 px-1.5 py-0.5 rounded text-[11px] font-medium"
-             style={{ background: 'rgba(0,0,0,0.7)', color: 'var(--color-text-primary)' }}>
-          {formatDuration(song.lengthSeconds)}
-        </div>
+          {isSelectionMode && !isSelected && (
+            <span
+              aria-hidden="true"
+              className="pointer-events-none absolute left-1 top-1 h-6 w-6 rounded-full border-2 border-white bg-black/30"
+            />
+          )}
+        </SongThumbnail>
       </Link>
 
-      {/* 曲情報 */}
-      <div className="p-3">
-        {/* タイトル行 + ⋮メニュー */}
-        <div className="flex items-start gap-1">
-          <div className="flex-1 min-w-0">
+      <div className="mt-3 flex items-start">
+        <div className="min-w-0 flex-1 pr-1">
+          <h3 className="m-0 line-clamp-2 break-words text-base leading-[22px] font-medium text-yt-text">
+            {/*
+              The focus ring is drawn by ::after around the whole tile: the 2-line clamp's overflow
+              would clip a ring on the link itself. In selection mode the title is the tile's checkbox.
+            */}
             <Link
-            to={`/watch?v=${song.id}&autoplay=0`}
-              className="block text-sm font-semibold truncate"
-              style={{ color: 'var(--color-text-primary)' }}
-              onClick={handleSongLinkClick}
-              onAuxClick={handleSongLinkAuxClick}
+              to={href}
+              role={isSelectionMode ? 'checkbox' : undefined}
+              aria-checked={isSelectionMode ? isSelected : undefined}
+              onKeyDown={isSelectionMode ? handleSelectionKeyDown : undefined}
+              className={TITLE_LINK_CLASS}
+              {...linkHandlers}
             >
               {song.name}
             </Link>
-            
-            {vocalistName ? (
-              <p className="text-xs mt-0.5 truncate" style={{ color: 'var(--color-text-secondary)' }}>
-                feat. {vocalistName}
-              </p>
-            ) : (
-              <div className="h-0" />
-            )}
-
-            <p className="text-xs mt-0.5 truncate" style={{ color: 'var(--color-text-muted)' }}>
-              {producerName || song.artistString}
-            </p>
-            {recommendationReason && (
-              <RecommendationHint reason={recommendationReason} className="mt-1" />
-            )}
-          </div>
-
-          {/* メニュー操作は再生・選択ロジックから分離 */}
-          {!isSelectionMode && (
-            <SongCardMenu
-              songName={song.name}
-              menuOpen={menuOpen}
-              menuPos={menuPos}
-              menuRef={menuRef}
-              menuPortalRef={menuPortalRef}
-              buttonRef={btnRef}
-              isWatchLater={isWatchLater}
-              hasPlayablePV={hasPlayablePV}
-              onAddToQueue={onAddToQueue ? handleAddToQueueFromMenu : undefined}
-              onToggle={handleMenuToggle}
-              onWatchLater={handleWatchLater}
-              onSaveToPlaylist={handleSaveToPlaylist}
-              onShare={handleShare}
-              onHide={handleHide}
-              onClose={() => { setMenuOpen(false); setMenuPos(null); }}
-            />
+          </h3>
+          <p className="m-0 mt-1 truncate text-sm leading-5 text-yt-text-secondary">
+            <SongArtistLine song={song} linked={!isSelectionMode} />
+          </p>
+          {(hasViewCounts(song) || relativeDate || tagLabel || (showHidden && isHidden)) && (
+            <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-sm leading-5 text-yt-text-secondary">
+              <ViewCounts song={song} />
+              {relativeDate && <span>{relativeDate}</span>}
+              {tagLabel && <MetaTag>{tagLabel}</MetaTag>}
+              {showHidden && isHidden && <MetaTag>{t('非表示中')}</MetaTag>}
+            </div>
+          )}
+          {reasonLabel && (
+            <p className="m-0 mt-1 truncate text-sm leading-5 text-yt-text-secondary">{reasonLabel}</p>
           )}
         </div>
-
-        <SongCardBadges
-          song={song}
-          pvServices={pvServices}
-          isYTUnofficialOnly={isYTUnofficialOnly}
-          isNicoUnofficialOnly={isNicoUnofficialOnly}
-          relativeDate={relativeDate}
-        />
+        {!isSelectionMode && (
+          <div className="-mr-2 -mt-2">
+            <SongActionsMenu
+              song={song}
+              extraItems={(
+                <>
+                  {producer && producerHref && (
+                    <MenuItem icon={<PersonIcon />} href={producerHref}>
+                      {t('{name}の曲', { name: producer.name })}
+                    </MenuItem>
+                  )}
+                  <MenuItem icon={<CheckBoxOutlineIcon />} onSelect={selectThisSong}>
+                    {t('選択')}
+                  </MenuItem>
+                </>
+              )}
+            />
+          </div>
+        )}
       </div>
     </div>
   );

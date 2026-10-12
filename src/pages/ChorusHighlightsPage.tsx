@@ -5,44 +5,61 @@ import { usePlayerStore } from '../stores/playerStore';
 import { useProgressStore } from '../stores/progressStore';
 import { useRatingStore } from '../stores/ratingStore';
 import { useUiStore } from '../stores/uiStore';
-import StarRating from '../components/player/StarRating';
+import { useLanguageStore } from '../stores/languageStore';
 import { useTranslateSourceText } from '../i18n';
+import { MOBILE_MEDIA_QUERY, useMediaQuery } from '../hooks/useMediaQuery';
+import { formatClockDuration, formatCount } from '../utils/songMeta';
+import { getWideSongThumbnailCandidates } from '../utils/songThumbnail';
+import Button from '../components/ui/Button';
+import EmptyState from '../components/ui/EmptyState';
+import IconButton from '../components/ui/IconButton';
+import { PageHeader, PageShell } from '../components/ui/PageHeader';
+import { SkeletonBlock, SkeletonListRow } from '../components/ui/Skeleton';
+import SongActionsMenu from '../components/ui/SongActionsMenu';
+import SongListRow from '../components/ui/SongListRow';
+import SongThumbnail from '../components/ui/SongThumbnail';
+import { ChorusIcon, ErrorIcon, PlayIcon, RefreshIcon } from '../components/ui/icons';
+import ChorusNowPlaying from '../components/library/ChorusNowPlaying';
+import LibraryHero from '../components/library/LibraryHero';
+import RowBadge from '../components/library/RowBadge';
 
-function formatTime(seconds?: number): string {
-  if (seconds == null || !Number.isFinite(seconds)) return '--:--';
-  return `${Math.floor(seconds / 60)}:${Math.floor(seconds % 60).toString().padStart(2, '0')}`;
-}
+/** Stored as the queue name; displayQueueTitle() translates it where it is shown. */
+const QUEUE_TITLE = 'サビ発掘';
+const CANDIDATE_COUNT = 60;
+const DEFAULT_WINDOW_SECONDS = 15;
 
 export default function ChorusHighlightsPage() {
   const t = useTranslateSourceText();
+  const language = useLanguageStore(state => state.language);
+  const isMobile = useMediaQuery(MOBILE_MEDIA_QUERY);
   const [candidates, setCandidates] = useState<Song[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
   const [active, setActive] = useState(false);
+  const [fullSongId, setFullSongId] = useState<number | null>(null);
   const soughtSongId = useRef<number | null>(null);
   const advancedSongId = useRef<number | null>(null);
 
   const currentSong = usePlayerStore(state => state.currentSong);
-  const queueIndex = usePlayerStore(state => state.queueIndex);
-  const setQueue = usePlayerStore(state => state.setQueue);
+  const queue = usePlayerStore(state => state.queue);
   const next = usePlayerStore(state => state.next);
   const seekTo = usePlayerStore(state => state.seekTo);
   const progress = useProgressStore(state => state.progress);
   const duration = useProgressStore(state => state.duration);
-  const getRating = useRatingStore(state => state.getRating);
+  const ratings = useRatingStore(state => state.ratings);
   const setRating = useRatingStore(state => state.setRating);
-  const openSaveToPlaylist = useUiStore(state => state.openSaveToPlaylist);
 
   const loadCandidates = useCallback(async () => {
     setLoading(true);
-    setError(null);
+    setFailed(false);
+    setActive(false);
     refreshSearchRandomSeed();
     try {
       const result = await searchSongsBackend({
         sort: 'Random',
         sortOrder: 'desc',
         start: 0,
-        maxResults: 60,
+        maxResults: CANDIDATE_COUNT,
         discoveryOnly: true,
         chorusOnly: true,
       });
@@ -51,7 +68,7 @@ export default function ChorusHighlightsPage() {
         && song.pvs?.some(pv => !pv.disabled && ['Youtube', 'NicoNicoDouga', 'SoundCloud'].includes(pv.service)),
       ));
     } catch {
-      setError('サビ候補を読み込めませんでした。');
+      setFailed(true);
       setCandidates([]);
     } finally {
       setLoading(false);
@@ -61,33 +78,56 @@ export default function ChorusHighlightsPage() {
   useEffect(() => { void loadCandidates(); }, [loadCandidates]);
 
   const candidateIds = useMemo(() => new Set(candidates.map(song => song.id)), [candidates]);
-  const isHighlightSong = !!currentSong && candidateIds.has(currentSong.id);
+  const isHighlightSong = active && !!currentSong && candidateIds.has(currentSong.id);
   const startSeconds = isHighlightSong ? currentSong?.chorusStartSeconds ?? 0 : 0;
   const endSeconds = isHighlightSong
-    ? Math.min(duration || currentSong?.lengthSeconds || startSeconds + 15, currentSong?.chorusEndSeconds ?? startSeconds + 15)
+    ? Math.min(
+      duration || currentSong?.lengthSeconds || startSeconds + DEFAULT_WINDOW_SECONDS,
+      currentSong?.chorusEndSeconds ?? startSeconds + DEFAULT_WINDOW_SECONDS,
+    )
     : 0;
 
+  // Jump to the chorus once per song.
   useEffect(() => {
-    if (!active || !currentSong || !isHighlightSong || duration <= 0) return;
+    if (!isHighlightSong || !currentSong || duration <= 0) return;
     if (soughtSongId.current === currentSong.id) return;
     soughtSongId.current = currentSong.id;
     advancedSongId.current = null;
     seekTo(currentSong.chorusStartSeconds ?? 0);
-  }, [active, currentSong, duration, isHighlightSong, seekTo]);
+  }, [currentSong, duration, isHighlightSong, seekTo]);
 
+  // Move on when the chorus ends, unless the song is being heard in full.
   useEffect(() => {
-    if (!active || !currentSong || !isHighlightSong || endSeconds <= 0) return;
+    if (!isHighlightSong || !currentSong || endSeconds <= 0) return;
+    if (fullSongId === currentSong.id) return;
     if (progress < endSeconds - 0.2 || advancedSongId.current === currentSong.id) return;
     advancedSongId.current = currentSong.id;
     next();
-  }, [active, currentSong, endSeconds, isHighlightSong, next, progress]);
+  }, [currentSong, endSeconds, fullSongId, isHighlightSong, next, progress]);
 
-  const startHighlights = () => {
+  // The highlight songs in the order the player plays them (it may be shuffled).
+  const highlightQueue = useMemo(() => queue.filter(song => candidateIds.has(song.id)), [candidateIds, queue]);
+  const position = isHighlightSong && currentSong ? highlightQueue.findIndex(song => song.id === currentSong.id) : -1;
+  const upNext = isHighlightSong && position >= 0 ? highlightQueue.slice(position + 1) : candidates;
+
+  const startHighlights = (index = 0) => {
     if (candidates.length === 0) return;
     soughtSongId.current = null;
     advancedSongId.current = null;
+    setFullSongId(null);
     setActive(true);
-    setQueue(candidates, 0, true, 'discovery', t('15秒サビハイライト'));
+    usePlayerStore.getState().setQueue(candidates, Math.max(0, Math.min(index, candidates.length - 1)), true, 'discovery', QUEUE_TITLE);
+  };
+
+  const playSong = (song: Song) => {
+    if (isHighlightSong) {
+      const queueIndex = usePlayerStore.getState().queue.findIndex(item => item.id === song.id);
+      if (queueIndex >= 0) {
+        usePlayerStore.getState().jumpToIndex(queueIndex);
+        return;
+      }
+    }
+    startHighlights(candidates.findIndex(item => item.id === song.id));
   };
 
   const skip = () => {
@@ -95,77 +135,142 @@ export default function ChorusHighlightsPage() {
     next();
   };
 
-  const elapsed = active && isHighlightSong ? Math.max(0, progress - startSeconds) : 0;
-  const windowLength = Math.max(1, endSeconds - startSeconds || 15);
-  const windowProgress = Math.min(100, elapsed / windowLength * 100);
+  const elapsed = isHighlightSong ? Math.max(0, progress - startSeconds) : 0;
+  const windowLength = Math.max(1, endSeconds - startSeconds || DEFAULT_WINDOW_SECONDS);
+
+  if (failed || (!loading && candidates.length === 0)) {
+    return (
+      <div data-testid="chorus-highlights-page">
+        <PageShell>
+          <PageHeader title={t('サビ発掘')} />
+          {failed ? (
+            <EmptyState
+              icon={<ErrorIcon />}
+              title={t('読み込めませんでした')}
+              action={{ label: t('再試行'), onClick: () => void loadCandidates() }}
+            />
+          ) : (
+            <EmptyState
+              icon={<ChorusIcon />}
+              title={t('サビ候補はまだありません')}
+              action={{ label: t('再読み込み'), onClick: () => void loadCandidates() }}
+            />
+          )}
+        </PageShell>
+      </div>
+    );
+  }
+
+  const collage = candidates.slice(0, 4);
+  const refreshButton = isMobile ? (
+    <IconButton
+      label={t('入れ替え')}
+      icon={<RefreshIcon />}
+      variant="tonal"
+      className="size-11!"
+      disabled={loading}
+      onClick={() => void loadCandidates()}
+    />
+  ) : (
+    <Button size="lg" icon={<RefreshIcon />} disabled={loading} onClick={() => void loadCandidates()}>
+      {t('入れ替え')}
+    </Button>
+  );
 
   return (
-    <main className="mx-auto w-full max-w-5xl px-4 py-6 sm:px-6" data-testid="chorus-highlights-page">
-      <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-fuchsia-300">Fast discovery</p>
-          <h1 className="mt-1 text-2xl font-bold text-white">{t('15秒サビハイライト')}</h1>
-          <p className="mt-2 text-sm text-neutral-400">{t('音源解析で推定したサビ候補だけを連続再生します。気になった曲はその場で保存・評価できます。')}</p>
-        </div>
-        <button type="button" className="btn-ghost rounded-lg px-3 py-2 text-sm" onClick={() => void loadCandidates()} disabled={loading}>
-          {t('候補を入れ替える')}
-        </button>
-      </div>
-
-      {loading ? (
-        <div className="rounded-2xl border border-white/[0.06] bg-white/[0.03] p-10 text-center text-neutral-400">{t('サビ候補を選んでいます…')}</div>
-      ) : error ? (
-        <div className="rounded-2xl border border-red-400/20 bg-red-400/10 p-6 text-red-200">{t(error)}</div>
-      ) : candidates.length === 0 ? (
-        <div className="rounded-2xl border border-white/[0.06] bg-white/[0.03] p-8 text-center text-neutral-400">
-          {t('解析済みのサビ候補がまだありません。音源解析pipelineの次回実行後に候補が追加されます。')}
-        </div>
-      ) : !active || !isHighlightSong ? (
-        <section className="rounded-3xl border border-fuchsia-300/15 bg-gradient-to-br from-fuchsia-400/10 to-cyan-300/5 p-8 text-center">
-          <div className="mx-auto mb-5 flex h-20 w-20 items-center justify-center rounded-full bg-fuchsia-400/15 text-3xl">♫</div>
-          <p className="text-lg font-semibold text-white">{t('{count}曲のサビ候補を準備しました', { count: candidates.length })}</p>
-          <p className="mt-2 text-sm text-neutral-400">{t('再生開始後は15秒ごとに自動で次へ進みます。')}</p>
-          <button type="button" className="mt-6 rounded-full bg-fuchsia-500 px-6 py-3 font-semibold text-white shadow-lg shadow-fuchsia-500/20" onClick={startHighlights}>
-            {t('ハイライトを開始')}
-          </button>
-        </section>
-      ) : currentSong && (
-        <section className="overflow-hidden rounded-3xl border border-white/[0.08] bg-neutral-900/80 shadow-2xl">
-          <div className="grid md:grid-cols-[minmax(280px,0.9fr)_minmax(0,1.1fr)]">
-            <div className="aspect-video bg-neutral-950 md:aspect-square">
-              {currentSong.thumbUrl ? <img src={currentSong.thumbUrl} alt="" className="h-full w-full object-cover" /> : <div className="flex h-full items-center justify-center text-6xl text-neutral-700">♫</div>}
-            </div>
-            <div className="flex flex-col justify-center p-6 sm:p-8">
-              <p className="text-xs text-fuchsia-300">{queueIndex + 1} / {candidates.length} ・ {formatTime(startSeconds)}{t('から')}</p>
-              <h2 className="mt-2 text-2xl font-bold text-white">{currentSong.name}</h2>
-              <p className="mt-2 text-sm text-neutral-400">{currentSong.artistString}</p>
-              {currentSong.isSelfCover && <span className="mt-3 w-fit rounded-full bg-fuchsia-400/15 px-2.5 py-1 text-xs font-semibold text-fuchsia-200">Self Cover</span>}
-
-              <div className="mt-7">
-                <div className="mb-2 flex justify-between text-xs text-neutral-500"><span>{formatTime(progress)}</span><span>{t('15秒')}</span></div>
-                <div className="h-2 overflow-hidden rounded-full bg-white/[0.08]"><div className="h-full rounded-full bg-gradient-to-r from-fuchsia-500 to-cyan-400 transition-[width]" style={{ width: `${windowProgress}%` }} /></div>
+    <div data-testid="chorus-highlights-page">
+      <PageShell>
+        <div className="flex flex-col gap-6 xl:flex-row xl:items-start">
+          <LibraryHero
+            titleId="chorus-highlights-title"
+            title={t('サビ発掘')}
+            meta={loading
+              ? <SkeletonBlock className="h-4 w-32 rounded-badge" />
+              : `${formatCount(candidates.length, 'song', language)} · ${t('1曲15秒')}`}
+            backdropUrl={collage[0] ? getWideSongThumbnailCandidates(collage[0])[0] : undefined}
+            cover={loading ? <SkeletonBlock className="aspect-video w-full rounded-card" /> : (
+              <div className="group/collage relative grid aspect-video grid-cols-2 grid-rows-2 overflow-hidden rounded-card bg-yt-tonal-solid">
+                {collage.map(song => (
+                  <SongThumbnail key={song.id} song={song} className="h-full w-full" radius="none" showDuration={false} loading="eager" />
+                ))}
+                <button
+                  type="button"
+                  onClick={() => startHighlights(0)}
+                  className="absolute inset-0 flex cursor-pointer items-center justify-center gap-2 bg-black/60 text-sm leading-5 font-medium text-white opacity-0 transition-opacity duration-150 group-hover/collage:opacity-100 focus-visible:opacity-100"
+                >
+                  <PlayIcon />
+                  {t('再生')}
+                </button>
               </div>
+            )}
+            actionsLayout={isMobile ? 'fill-first' : 'equal'}
+            actions={(
+              <>
+                <Button
+                  variant="primary"
+                  size="lg"
+                  icon={<PlayIcon />}
+                  disabled={loading || candidates.length === 0}
+                  onClick={() => startHighlights(0)}
+                >
+                  {t('再生')}
+                </Button>
+                {refreshButton}
+              </>
+            )}
+          />
 
-              <div className="mt-7 flex flex-wrap items-center gap-3">
-                <StarRating rating={getRating(currentSong.id)} onRate={rating => setRating(currentSong.id, rating)} />
-                <button type="button" className="btn-ghost rounded-lg px-3 py-2 text-sm" onClick={() => openSaveToPlaylist(currentSong)}>{t('保存')}</button>
-                <button type="button" className="rounded-lg bg-white px-5 py-2 text-sm font-semibold text-black" onClick={skip}>{t('スキップ')}</button>
+          <div className="min-w-0 flex-1">
+            {loading ? (
+              <div aria-busy="true" className="-mx-2">
+                {Array.from({ length: 6 }, (_, index) => <SkeletonListRow key={index} size="sm" />)}
               </div>
-            </div>
+            ) : (
+              <>
+                {isHighlightSong && currentSong && (
+                  <div className="mb-6">
+                    <ChorusNowPlaying
+                      song={currentSong}
+                      position={position + 1}
+                      total={highlightQueue.length}
+                      startSeconds={startSeconds}
+                      elapsed={elapsed}
+                      windowLength={windowLength}
+                      fullSong={fullSongId === currentSong.id}
+                      progress={progress}
+                      duration={duration}
+                      rating={ratings[String(currentSong.id)] ?? 0}
+                      onRate={rating => setRating(currentSong.id, rating)}
+                      onSave={() => useUiStore.getState().openSaveToPlaylist(currentSong)}
+                      onToggleFullSong={() => setFullSongId(previous => (previous === currentSong.id ? null : currentSong.id))}
+                      onSkip={skip}
+                    />
+                  </div>
+                )}
+                {upNext.length > 0 && (
+                  <section aria-labelledby="chorus-up-next">
+                    <h2 id="chorus-up-next" className="m-0 mb-2 text-base leading-[22px] font-bold text-yt-text">{t('次のサビ')}</h2>
+                    <div className="-mx-2">
+                      {upNext.map(song => (
+                        <SongListRow
+                          key={song.id}
+                          song={song}
+                          size="sm"
+                          onActivate={() => playSong(song)}
+                          badges={song.chorusStartSeconds != null ? (
+                            <RowBadge>{t('サビ {time}〜', { time: formatClockDuration(song.chorusStartSeconds) })}</RowBadge>
+                          ) : undefined}
+                          trailing={<SongActionsMenu song={song} />}
+                        />
+                      ))}
+                    </div>
+                  </section>
+                )}
+              </>
+            )}
           </div>
-        </section>
-      )}
-
-      {candidates.length > 0 && (
-        <div className="mt-6 flex gap-2 overflow-x-auto pb-2">
-          {candidates.slice(Math.max(0, queueIndex + 1), Math.max(0, queueIndex + 7)).map(song => (
-            <div key={song.id} className="w-36 flex-none rounded-xl border border-white/[0.06] bg-white/[0.03] p-2">
-              <p className="truncate text-xs font-semibold text-neutral-200">{song.name}</p>
-              <p className="mt-1 truncate text-[10px] text-neutral-500">{song.artistString}</p>
-            </div>
-          ))}
         </div>
-      )}
-    </main>
+      </PageShell>
+    </div>
   );
 }

@@ -1,9 +1,40 @@
+import { useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import type { Playlist } from '../../types/vocadb';
-import PlaylistCover from './PlaylistCover';
-import PlaylistPopoverMenu from './PlaylistPopoverMenu';
-import { SmartPlaylistRuleSummary } from './SmartPlaylistBuilder';
 import { useTranslateSourceText } from '../../i18n';
-import { useLanguageStore } from '../../stores/languageStore';
+import { usePlayerStore } from '../../stores/playerStore';
+import { getSongsRefreshedAt, usePlaylistStore } from '../../stores/playlistStore';
+import { displayPlaylistName } from '../../utils/displayNames';
+import { canEditPlaylistDetails } from '../../utils/playlistPermissions';
+import { describeSmartPlaylistRule } from '../../utils/smartPlaylist';
+import { formatCount, formatTotalDuration } from '../../utils/songMeta';
+import Button from '../ui/Button';
+import IconButton from '../ui/IconButton';
+import Menu, { MenuDivider, MenuItem } from '../ui/Menu';
+import Tooltip from '../ui/Tooltip';
+import {
+  ArrowBackIcon,
+  CheckCircleIcon,
+  DownloadIcon,
+  EditIcon,
+  FolderIcon,
+  MoreVertIcon,
+  OpenInNewIcon,
+  PlayIcon,
+  QueueMusicIcon,
+  RefreshIcon,
+  ShareIcon,
+  ShuffleIcon,
+  SpinnerIcon,
+  SyncIcon,
+  TrashIcon,
+  TuneIcon,
+  UploadIcon,
+} from '../ui/icons';
+import { cx } from '../ui/overlay';
+import PlaylistThumbnail from './PlaylistThumbnail';
+import { formatSmartRuleItem, getPlaylistCoverCandidates, getPlaylistSyncInfo } from './playlistDisplay';
+import { usePlaylistText } from './usePlaylistText';
 
 export interface SmartPlaylistRefreshStatus {
   state: 'loading' | 'success' | 'empty' | 'error';
@@ -14,253 +45,386 @@ export interface SmartPlaylistRefreshStatus {
 
 interface PlaylistHeroProps {
   playlist: Playlist;
-  durationText: string;
-  filteredSongCount: number;
-  isFiltered: boolean;
-  smartRefreshStatus?: SmartPlaylistRefreshStatus;
-  onPlay: () => void;
+  folderName?: string;
+  /** Songs can be changed by hand (not smart / synced). */
+  editable: boolean;
+  duplicateCount: number;
+  smartStatus?: SmartPlaylistRefreshStatus;
+  syncing: boolean;
+  /** Phones only: ← back to the library. */
+  onBack?: () => void;
+  onPlayAll: () => void;
   onShuffle: () => void;
-  onEdit: () => void;
-  onDelete: () => void;
-  onEditSmartRule: () => void;
-  onRefreshSmart: () => void;
-  onRefreshYouTube: () => void;
-  onRefreshNico: () => void;
-  onUnlinkYouTube: () => void;
-  onUnlinkNico: () => void;
-  onOpenYouTubeImport: () => void;
-  onOpenNicoImport: () => void;
-  onExport: () => void;
+  onAddToQueue: () => void;
+  onEdit: (focus?: 'folder') => void;
   onShare: () => void;
+  onExport: () => void;
+  onDelete: () => void;
+  onImportInto: () => void;
+  onCheckSongs: () => void;
+  onRemoveDuplicates: () => void;
+  onRefreshSmart: () => void;
+  onEditRules: () => void;
+  onSyncNow: () => void;
+  onUnlinkSync: () => void;
 }
 
-function SyncPanel({
-  service,
-  status,
-  sourceUrl,
-  lastSuccessfulAt,
-  unmatchedCount,
-  sourceDescription,
-  onRefresh,
-}: {
-  service: 'YouTube' | 'ニコニコ';
-  status?: 'never' | 'success' | 'partial' | 'error';
-  sourceUrl: string;
-  lastSuccessfulAt?: number;
-  unmatchedCount?: number;
-  sourceDescription: string;
-  onRefresh: () => void;
-}) {
-  const t = useTranslateSourceText();
-  const language = useLanguageStore(state => state.language);
-  const youtube = service === 'YouTube';
-  const accentClasses = youtube
-    ? 'border-red-300/15 bg-red-300/[0.06] text-red-100/80'
-    : 'border-cyan-300/15 bg-cyan-300/[0.06] text-cyan-100/80';
-  const actionClasses = youtube
-    ? 'border-red-200/20 text-red-100 hover:bg-red-200/10'
-    : 'border-cyan-200/20 text-cyan-100 hover:bg-cyan-200/10';
-
+/**
+ * The blurred cover behind the hero (falls through to the next image when one fails). Without an
+ * image (empty list, hidden mode, every image failed) a grey surface keeps the hero a panel.
+ */
+function HeroBackdrop({ playlist }: { playlist: Playlist }) {
+  const hiddenMode = usePlayerStore(state => state.hiddenMode);
+  const { coverArtUrl, songs } = playlist;
+  const candidates = useMemo(() => getPlaylistCoverCandidates({ coverArtUrl, songs }), [coverArtUrl, songs]);
+  const signature = candidates.join('\u0000');
+  const [failure, setFailure] = useState({ signature, index: 0 });
+  const imageUrl = hiddenMode ? undefined : candidates[failure.signature === signature ? failure.index : 0];
   return (
-    <div className={`flex flex-wrap items-center gap-x-3 gap-y-2 rounded-2xl border p-3 text-xs ${accentClasses}`}>
-      <span className="flex items-center gap-2 font-semibold">
-        <span className={`h-2 w-2 rounded-full ${status === 'error' ? 'bg-red-400' : 'bg-emerald-300'}`} />
-        {t('{service}自動同期', { service: t(service) })}
-      </span>
-      <span className="text-neutral-300">
-        {status === 'error'
-          ? t('前回の同期に失敗しました')
-          : status === 'partial'
-            ? t('未マッチ {count}件', { count: unmatchedCount ?? 0 })
-            : t(sourceDescription)}
-      </span>
-      {lastSuccessfulAt && (
-        <span className="text-neutral-500">{t('最終同期')} {new Date(lastSuccessfulAt).toLocaleString(language === 'ja' ? 'ja-JP' : 'en-US')}</span>
+    <div aria-hidden="true" className="pointer-events-none absolute inset-0 -z-10 overflow-hidden">
+      {imageUrl ? (
+        <>
+          <img
+            key={imageUrl}
+            src={imageUrl}
+            alt=""
+            decoding="async"
+            className="absolute inset-0 h-full w-full scale-[1.2] object-cover opacity-50 blur-[48px]"
+            onError={() => setFailure(previous => ({
+              signature,
+              index: (previous.signature === signature ? previous.index : 0) + 1,
+            }))}
+          />
+          <div className="absolute inset-0 bg-[linear-gradient(to_bottom,rgba(15,15,15,0.2),rgba(15,15,15,0.7)_55%,#0f0f0f)]" />
+        </>
+      ) : (
+        <div data-testid="playlist-hero-surface" className="absolute inset-0 bg-[linear-gradient(to_bottom,var(--color-yt-raised),var(--color-yt-bg))]" />
       )}
-      <div className="ml-auto flex items-center gap-2">
-        <a href={sourceUrl} target="_blank" rel="noopener noreferrer" className="underline decoration-white/30 underline-offset-2 hover:text-white">
-          {t('元ページ')}
-        </a>
-        <button type="button" onClick={onRefresh} className={`rounded-lg border px-2.5 py-1.5 transition-colors ${actionClasses}`}>
-          {t('今すぐ同期')}
-        </button>
-      </div>
     </div>
   );
 }
 
-export default function PlaylistHero({
-  playlist,
-  durationText,
-  filteredSongCount,
-  isFiltered,
-  smartRefreshStatus,
-  onPlay,
-  onShuffle,
-  onEdit,
-  onDelete,
-  onEditSmartRule,
-  onRefreshSmart,
-  onRefreshYouTube,
-  onRefreshNico,
-  onUnlinkYouTube,
-  onUnlinkNico,
-  onOpenYouTubeImport,
-  onOpenNicoImport,
-  onExport,
-  onShare,
-}: PlaylistHeroProps) {
+function HeroDescription({ text }: { text: string }) {
   const t = useTranslateSourceText();
-  const language = useLanguageStore(state => state.language);
-  const isYouTubeLinked = playlist.youtubeSync?.enabled === true;
-  const isNicoLinked = playlist.nicoSync?.enabled === true;
-  const isExternalLinked = isYouTubeLinked || isNicoLinked;
-  const backdropUrl = playlist.coverArtUrl || playlist.songs.find(song => song.thumbUrl)?.thumbUrl;
-  const kindLabel = playlist.smartRule
-    ? 'スマートプレイリスト'
-    : playlist.isPinned
-      ? 'ピン留めコレクション'
-      : isExternalLinked
-        ? '外部同期プレイリスト'
-        : 'プレイリスト';
+  const [expanded, setExpanded] = useState(false);
+  const [overflowing, setOverflowing] = useState(false);
+  const ref = useRef<HTMLParagraphElement>(null);
+
+  useLayoutEffect(() => {
+    const element = ref.current;
+    if (!element || expanded) return undefined;
+    const check = () => setOverflowing(element.scrollHeight > element.clientHeight + 1);
+    check();
+    if (typeof ResizeObserver === 'undefined') return undefined;
+    const observer = new ResizeObserver(check);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [expanded, text]);
 
   return (
-    <section className="relative flex-shrink-0 overflow-hidden rounded-2xl border border-white/[0.1] bg-neutral-950 shadow-2xl shadow-black/20">
-      {backdropUrl && (
-        <div
-          className="absolute inset-0 scale-110 bg-cover bg-center opacity-30 blur-2xl"
-          style={{ backgroundImage: `url(${JSON.stringify(backdropUrl)})` }}
-          aria-hidden="true"
-        />
+    <div className="mt-3">
+      <p ref={ref} className={cx('m-0 whitespace-pre-line text-sm leading-5 text-yt-text-secondary [overflow-wrap:anywhere]', !expanded && 'line-clamp-2')}>
+        {text}
+      </p>
+      {(overflowing || expanded) && (
+        <Button variant="text" size="sm" className="-ml-3 mt-1" onClick={() => setExpanded(value => !value)}>
+          {expanded ? t('一部を表示') : t('もっと見る')}
+        </Button>
       )}
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_18%_15%,rgba(6,214,160,0.18),transparent_42%),linear-gradient(110deg,rgba(8,10,14,0.7),rgba(8,10,14,0.94)_58%,rgba(8,10,14,0.98))]" aria-hidden="true" />
+    </div>
+  );
+}
 
-      <div className="relative p-4 sm:p-5 lg:p-6">
-        <div className="flex items-start gap-4 sm:gap-5">
-          <div className="aspect-square w-20 flex-shrink-0 overflow-hidden rounded-[1.5rem] bg-black/30 shadow-2xl shadow-black/40 ring-1 ring-white/15 sm:w-28">
-            <PlaylistCover playlist={playlist} />
-          </div>
-          <div className="min-w-0 flex-1 text-left">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-emerald-200/70">{t(kindLabel)}</p>
-            <h1 className="mt-2 break-words text-2xl font-bold leading-tight tracking-[-0.03em] text-white sm:text-4xl">
-              {playlist.name}
-            </h1>
-            {playlist.description && (
-              <p className="mx-auto mt-3 line-clamp-2 max-w-3xl text-sm leading-6 text-neutral-300 sm:mx-0">{playlist.description}</p>
+const RULE_CHIP_CLASS = 'h-6 shrink-0 whitespace-nowrap rounded-badge bg-yt-tonal px-2 text-xs leading-6 text-yt-text';
+const RULE_CHIP_GAP = 4;
+const RULE_MORE_WIDTH = 36;
+
+/** One line of rule chips: as many as fit, then 「+N」. Pressing it opens the rule editor. */
+function RuleChips({ items, onEdit }: { items: string[]; onEdit: () => void }) {
+  const t = useTranslateSourceText();
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const measureRef = useRef<HTMLDivElement>(null);
+  const [visibleCount, setVisibleCount] = useState(items.length);
+
+  useLayoutEffect(() => {
+    const button = buttonRef.current;
+    const row = measureRef.current;
+    if (!button || !row) return undefined;
+    const measure = () => {
+      const available = button.clientWidth - 8;
+      const widths = [...row.children].map(child => (child as HTMLElement).offsetWidth);
+      let used = 0;
+      let count = 0;
+      for (let index = 0; index < widths.length; index += 1) {
+        const rest = widths.length - index - 1;
+        const next = used + (count > 0 ? RULE_CHIP_GAP : 0) + widths[index];
+        if (next + (rest > 0 ? RULE_CHIP_GAP + RULE_MORE_WIDTH : 0) > available) break;
+        used = next;
+        count += 1;
+      }
+      setVisibleCount(Math.max(1, count));
+    };
+    measure();
+    if (typeof ResizeObserver === 'undefined') return undefined;
+    const observer = new ResizeObserver(measure);
+    observer.observe(button);
+    return () => observer.disconnect();
+  }, [items]);
+
+  const shown = items.slice(0, visibleCount);
+  return (
+    <Tooltip content={t('条件を編集')}>
+      <button
+        ref={buttonRef}
+        type="button"
+        onClick={onEdit}
+        className="relative -mx-1 mt-3 flex min-h-10 w-[calc(100%+8px)] cursor-pointer items-center gap-1 overflow-hidden rounded-chip px-1 text-left transition-colors duration-150 hover:bg-yt-tonal"
+      >
+        {/* Off-screen copy used to measure every chip. */}
+        <div ref={measureRef} aria-hidden="true" className="pointer-events-none invisible absolute left-0 top-0 flex gap-1">
+          {items.map(item => <span key={item} className={RULE_CHIP_CLASS}>{item}</span>)}
+        </div>
+        {shown.map(item => (
+          <span key={item} className={cx(RULE_CHIP_CLASS, 'min-w-0 max-w-full truncate')}>{item}</span>
+        ))}
+        {items.length > shown.length && (
+          <span className={cx(RULE_CHIP_CLASS, 'tabular-nums')}>+{items.length - shown.length}</span>
+        )}
+      </button>
+    </Tooltip>
+  );
+}
+
+/** Meta items joined with 「 · 」 (items may be styled elements). */
+function MetaLine({ items, className }: { items: ReactNode[]; className?: string }) {
+  const visible = items.filter(item => item !== null && item !== undefined && item !== false && item !== '');
+  if (visible.length === 0) return null;
+  return (
+    <div className={cx('flex flex-wrap items-center gap-x-0 text-sm leading-5', className)}>
+      {visible.map((item, index) => (
+        <span key={index} className="inline-flex items-center">
+          {index > 0 && <span aria-hidden="true" className="px-1">·</span>}
+          {item}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+/** Left column (≥1280px) / top block of /playlists?list=<id>. */
+export default function PlaylistHero({
+  playlist,
+  folderName,
+  editable,
+  duplicateCount,
+  smartStatus,
+  syncing,
+  onBack,
+  onPlayAll,
+  onShuffle,
+  onAddToQueue,
+  onEdit,
+  onShare,
+  onExport,
+  onDelete,
+  onImportInto,
+  onCheckSongs,
+  onRemoveDuplicates,
+  onRefreshSmart,
+  onEditRules,
+  onSyncNow,
+  onUnlinkSync,
+}: PlaylistHeroProps) {
+  const t = useTranslateSourceText();
+  const text = usePlaylistText();
+  const titleId = useId();
+  const name = displayPlaylistName(playlist, t);
+  const songCount = playlist.songs.length;
+  const hasSongs = songCount > 0;
+  const sync = getPlaylistSyncInfo(playlist);
+  const smart = Boolean(playlist.smartRule);
+  const detailsEditable = canEditPlaylistDetails(playlist);
+  // Without folders there is nowhere to move to (folders are made from the library's ⋮).
+  const hasFolders = usePlaylistStore(state => state.folders.length > 0);
+  const smartLoading = smartStatus?.state === 'loading';
+  const totalSeconds = playlist.songs.reduce((sum, song) => sum + (song.lengthSeconds || 0), 0);
+  const countText = formatCount(songCount, 'song', text.language);
+
+  let meta: ReactNode[];
+  if (smart) {
+    if (smartLoading) {
+      meta = [t('更新中…')];
+    } else if (smartStatus?.state === 'error') {
+      meta = [
+        <span key="error" className="text-yt-danger">{t('更新できませんでした')}</span>,
+        <Button key="retry" variant="text" size="sm" className="-my-1.5" onClick={onRefreshSmart}>{t('再試行')}</Button>,
+      ];
+    } else if (smartStatus && typeof smartStatus.matchedCount === 'number') {
+      const matched = smartStatus.matchedCount;
+      const loaded = smartStatus.loadedCount ?? songCount;
+      const refreshed = text.refreshed(smartStatus.refreshedAt ?? Date.now());
+      // Nothing matched: the list below already says so (「条件に合う曲がありません」).
+      meta = matched === 0 || loaded === 0 ? [refreshed] : [
+        matched === 1 ? t('1曲が一致') : t('{count}曲が一致', { count: text.number(matched) }),
+        t('上位{count}曲', { count: text.number(loaded) }),
+        refreshed,
+      ];
+    } else {
+      meta = [countText, text.refreshed(getSongsRefreshedAt(playlist) ?? playlist.updatedAt)];
+    }
+  } else if (sync) {
+    meta = [
+      countText,
+      sync.status === 'error'
+        ? <span key="error" className="text-yt-danger">{t('同期エラー')}</span>
+        : sync.lastSuccessfulAt ? text.synced(sync.lastSuccessfulAt) : null,
+      sync.unmatchedCount > 0 ? t('{count}本は未登録', { count: text.number(sync.unmatchedCount) }) : null,
+    ];
+  } else {
+    meta = [countText, hasSongs ? formatTotalDuration(totalSeconds, text.language) : null, text.updated(playlist)];
+  }
+
+  const smartRule = playlist.smartRule;
+  const language = text.language;
+  const ruleItems = useMemo(
+    () => (smartRule ? describeSmartPlaylistRule(smartRule).map(item => formatSmartRuleItem(item, t, language)) : []),
+    [language, smartRule, t],
+  );
+
+  const iconButtonClass = 'shrink-0';
+  const moreLabel = t('その他の操作');
+
+  return (
+    <section
+      aria-labelledby={titleId}
+      className={cx(
+        'relative isolate overflow-hidden',
+        'max-sm:-mx-3 max-sm:-mt-6',
+        'sm:rounded-panel',
+        'xl:sticky xl:top-[calc(var(--header-height,56px)_+_var(--selection-bar-height,0px)_+_24px)] xl:h-[calc(100dvh_-_var(--header-height,56px)_-_var(--selection-bar-height,0px)_-_48px)] xl:w-[360px] xl:shrink-0',
+      )}
+    >
+      <HeroBackdrop playlist={playlist} />
+      <div className="relative flex h-full flex-col px-3 pb-4 pt-2 sm:flex-row sm:gap-6 sm:p-6 xl:flex-col xl:gap-0 xl:overflow-y-auto xl:overscroll-contain">
+        {onBack && (
+          <IconButton
+            label={t('プレイリスト一覧に戻る')}
+            icon={<ArrowBackIcon />}
+            className="-ml-2 mb-2 self-start"
+            onClick={onBack}
+          />
+        )}
+        <PlaylistThumbnail
+          playlist={playlist}
+          stacked={false}
+          showCount={false}
+          loading="eager"
+          className="w-full sm:w-80 xl:w-full"
+        >
+          {hasSongs && (
+            <button
+              type="button"
+              onClick={onPlayAll}
+              className="absolute inset-0 flex cursor-pointer items-center justify-center gap-1.5 bg-black/60 text-sm font-medium leading-5 text-white opacity-0 transition-opacity duration-150 hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none"
+            >
+              <PlayIcon size={24} />
+              {t('すべて再生')}
+            </button>
+          )}
+        </PlaylistThumbnail>
+
+        <div className="mt-4 flex min-w-0 flex-1 flex-col sm:mt-0 xl:mt-4">
+          <h1 id={titleId} className="m-0 line-clamp-3 text-[22px] font-bold leading-[30px] text-yt-text [overflow-wrap:anywhere] sm:text-[28px] sm:leading-9">
+            {name}
+          </h1>
+          <p className="m-0 mt-3 truncate text-sm font-medium leading-5 text-yt-text">
+            {text.kind(playlist)}
+            {folderName ? ` · ${folderName}` : ''}
+          </p>
+          <MetaLine items={meta} className="mt-1 text-yt-text-secondary tabular-nums" />
+          {playlist.description && <HeroDescription text={playlist.description} />}
+
+          {ruleItems.length > 0 && <RuleChips items={ruleItems} onEdit={onEditRules} />}
+
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            {detailsEditable && (
+              <IconButton variant="tonal" label={t('編集')} icon={<EditIcon />} className={iconButtonClass} onClick={() => onEdit()} />
             )}
-            <div className="mt-3 flex flex-wrap items-center justify-start gap-2 text-xs text-neutral-400 sm:justify-start">
-              <span className="rounded-full border border-white/10 bg-black/20 px-2.5 py-1 font-semibold text-white">{t('{count}曲', { count: playlist.songs.length })}</span>
-              {playlist.songs.length > 0 && <span className="rounded-full border border-white/10 bg-black/20 px-2.5 py-1">{durationText}</span>}
-              {isFiltered && <span className="rounded-full border border-cyan-300/20 bg-cyan-300/10 px-2.5 py-1 text-cyan-100">{t('表示中 {count}曲', { count: filteredSongCount })}</span>}
-              {playlist.youtubeSync && <span className="rounded-full border border-red-300/15 bg-red-300/10 px-2.5 py-1 text-red-100">{t('YouTube同期')}</span>}
-              {playlist.nicoSync && <span className="rounded-full border border-cyan-300/15 bg-cyan-300/10 px-2.5 py-1 text-cyan-100">{t('ニコニコ同期')}</span>}
-            </div>
-
-            <div className="mt-4 flex flex-wrap items-center justify-start gap-2 sm:justify-start">
-              {playlist.songs.length > 0 && (
+            <IconButton variant="tonal" label={t('共有')} icon={<ShareIcon />} className={iconButtonClass} onClick={onShare} />
+            {smart && (
+              <>
+                <IconButton
+                  variant="tonal"
+                  label={t('今すぐ更新')}
+                  icon={smartLoading ? <SpinnerIcon /> : <RefreshIcon />}
+                  disabled={smartLoading}
+                  className={iconButtonClass}
+                  onClick={onRefreshSmart}
+                />
+                <IconButton variant="tonal" label={t('条件を編集')} icon={<TuneIcon />} className={iconButtonClass} onClick={onEditRules} />
+              </>
+            )}
+            {sync && (
+              <>
+                <IconButton
+                  variant="tonal"
+                  label={t('今すぐ同期')}
+                  icon={syncing ? <SpinnerIcon /> : <SyncIcon />}
+                  disabled={syncing}
+                  className={iconButtonClass}
+                  onClick={onSyncNow}
+                />
+                <Tooltip content={t('{service}で開く', { service: text.serviceName(sync.service) })}>
+                  <a
+                    href={sync.sourceUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    aria-label={t('{service}で開く', { service: text.serviceName(sync.service) })}
+                    className="inline-flex size-10 shrink-0 items-center justify-center rounded-full bg-yt-tonal text-yt-text transition-colors duration-150 hover:bg-yt-tonal-hover"
+                  >
+                    <OpenInNewIcon size={24} />
+                  </a>
+                </Tooltip>
+              </>
+            )}
+            <Menu trigger={<IconButton variant="tonal" label={moreLabel} icon={<MoreVertIcon />} className={iconButtonClass} />} label={moreLabel}>
+              <MenuItem icon={<QueueMusicIcon />} disabled={!hasSongs} onSelect={onAddToQueue}>{t('キューに追加')}</MenuItem>
+              {editable && (
+                <MenuItem icon={<UploadIcon />} onSelect={onImportInto}>{t('このプレイリストにインポート')}</MenuItem>
+              )}
+              <MenuItem icon={<DownloadIcon />} onSelect={onExport}>{t('JSONでエクスポート')}</MenuItem>
+              {detailsEditable && hasFolders && (
+                <MenuItem icon={<FolderIcon />} onSelect={() => onEdit('folder')}>{t('フォルダーに移動')}</MenuItem>
+              )}
+              {editable && hasSongs && (
+                <MenuItem icon={<CheckCircleIcon />} onSelect={onCheckSongs}>{t('曲をチェック')}</MenuItem>
+              )}
+              {editable && duplicateCount > 0 && (
+                <MenuItem icon={<TrashIcon />} onSelect={onRemoveDuplicates}>
+                  {t('重複を削除（{count}曲）', { count: duplicateCount })}
+                </MenuItem>
+              )}
+              {sync && <MenuItem icon={<SyncIcon />} onSelect={onUnlinkSync}>{t('同期を解除')}</MenuItem>}
+              {detailsEditable && (
                 <>
-                  <button type="button" onClick={onPlay} className="flex min-h-11 items-center gap-2 rounded-full bg-white px-5 text-sm font-bold text-black shadow-lg shadow-black/20 transition-transform hover:scale-[1.02] hover:bg-neutral-200 active:scale-[0.98]">
-                    <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z" /></svg>
-                    {t('再生')}
-                  </button>
-                  <button type="button" onClick={onShuffle} className="flex min-h-11 items-center gap-2 rounded-full border border-white/15 bg-black/25 px-4 text-sm font-medium text-neutral-100 backdrop-blur-sm transition-colors hover:bg-white/10">
-                    <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M16 3h5v5M4 20 21 3M21 16v5h-5M15 15l6 6M4 4l5 5" /></svg>
-                    {t('シャッフル')}
-                  </button>
+                  <MenuDivider />
+                  <MenuItem icon={<TrashIcon />} onSelect={onDelete}>{t('プレイリストを削除')}</MenuItem>
                 </>
               )}
-              {playlist.smartRule && (
-                <button type="button" onClick={onRefreshSmart} disabled={smartRefreshStatus?.state === 'loading'} className="min-h-11 rounded-full border border-white/15 bg-black/25 px-4 text-sm font-medium text-neutral-100 backdrop-blur-sm transition-colors hover:bg-white/10 disabled:cursor-wait disabled:opacity-60">
-                  {smartRefreshStatus?.state === 'loading' ? t('更新中…') : t('曲を更新')}
-                </button>
-              )}
-              {!playlist.isPinned && !isExternalLinked && (
-                <button type="button" onClick={onEdit} className="flex min-h-11 items-center gap-2 rounded-full border border-white/15 bg-black/25 px-4 text-sm text-neutral-200 backdrop-blur-sm transition-colors hover:bg-white/10 hover:text-white">
-                  <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.5 2.5a2.1 2.1 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" /></svg>
-                  {t('編集')}
-                </button>
-              )}
-              <PlaylistPopoverMenu
-                trigger={
-                  <button type="button" className="flex h-11 w-11 items-center justify-center rounded-full border border-white/15 bg-black/25 text-neutral-200 backdrop-blur-sm transition-colors hover:bg-white/10 hover:text-white" title={t('その他の操作')} aria-label={t('その他の操作')}>
-                    <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5" r="2" /><circle cx="12" cy="12" r="2" /><circle cx="12" cy="19" r="2" /></svg>
-                  </button>
-                }
-              >
-                <button className="context-menu-item" onClick={onOpenYouTubeImport}>
-                  <span className="flex h-5 w-5 items-center justify-center rounded-md bg-red-500/15 text-[10px] font-black text-red-300">YT</span>
-                  <span>{t('YouTubeからインポート')}</span>
-                </button>
-                <button className="context-menu-item" onClick={onOpenNicoImport}>
-                  <span className="flex h-5 w-5 items-center justify-center rounded-md bg-cyan-500/15 text-[10px] font-black text-cyan-300">N</span>
-                  <span>{t('ニコニコからインポート')}</span>
-                </button>
-                <button className="context-menu-item" onClick={onExport}>
-                  <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><path d="m7 10 5 5 5-5M12 15V3" /></svg>
-                  <span>{t('JSONエクスポート')}</span>
-                </button>
-                <button className="context-menu-item" onClick={onShare}>
-                  <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" /><path d="m8.6 13.5 6.8 4M15.4 6.5l-6.8 4" /></svg>
-                  <span>{t('共有リンクをコピー')}</span>
-                </button>
-                {isYouTubeLinked && <button className="context-menu-item" onClick={onUnlinkYouTube}><span className="h-4 w-4 text-center">×</span><span>{t('YouTube同期を解除')}</span></button>}
-                {isNicoLinked && <button className="context-menu-item" onClick={onUnlinkNico}><span className="h-4 w-4 text-center">×</span><span>{t('ニコニコ同期を解除')}</span></button>}
-                {!playlist.isPinned && !isExternalLinked && (
-                  <button className="context-menu-item text-red-300" onClick={onDelete}>
-                    <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M8 6V4h8v2" /></svg>
-                    <span>{t('プレイリストを削除')}</span>
-                  </button>
-                )}
-              </PlaylistPopoverMenu>
-            </div>
+            </Menu>
           </div>
+
+          {hasSongs && (
+            <div className="mt-4 flex gap-2">
+              <Button variant="primary" size="lg" icon={<PlayIcon />} className="flex-1" onClick={onPlayAll}>
+                {t('すべて再生')}
+              </Button>
+              <Button variant="tonal" size="lg" icon={<ShuffleIcon />} className="flex-1" onClick={onShuffle}>
+                {t('シャッフル')}
+              </Button>
+            </div>
+          )}
         </div>
-
-        {playlist.smartRule && (
-          <div className="mt-5 rounded-2xl border border-violet-300/15 bg-black/20 p-3.5 backdrop-blur-sm">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div>
-                <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-violet-200/70">{t('自動更新条件')}</p>
-                <p className="mt-1 text-xs text-neutral-400">
-                  {smartRefreshStatus?.state === 'loading' && t('条件を再計算中…')}
-                  {smartRefreshStatus?.state === 'success' && t('条件一致 {count}曲・最終更新 {time}', { count: smartRefreshStatus.matchedCount ?? playlist.songs.length, time: new Date(smartRefreshStatus.refreshedAt ?? Date.now()).toLocaleTimeString(language === 'ja' ? 'ja-JP' : 'en-US') })}
-                  {smartRefreshStatus?.state === 'empty' && t('条件に一致する曲はありません')}
-                  {smartRefreshStatus?.state === 'error' && t('更新に失敗しました。手動で再試行してください')}
-                  {!smartRefreshStatus && t('プレイリストを開いたときに自動更新します')}
-                </p>
-              </div>
-              <button type="button" className="min-h-10 rounded-xl border border-violet-200/20 bg-violet-200/10 px-3 text-xs font-medium text-violet-100 transition-colors hover:bg-violet-200/20" onClick={onEditSmartRule}>{t('条件を編集')}</button>
-            </div>
-            <details className="mt-3 text-xs text-neutral-400"><summary className="cursor-pointer py-2">{t('保存している条件を見る')}</summary><div className="mt-2"><SmartPlaylistRuleSummary rule={playlist.smartRule} /></div><p className="mt-3 leading-5">{t('条件に合う上位曲を開くたびに更新します。ランダム抽選や好みの学習ではありません。')}</p></details>
-          </div>
-        )}
-
-        {playlist.youtubeSync && (
-          <div className="mt-4">
-            <SyncPanel
-              service="YouTube"
-              status={playlist.youtubeSync.lastStatus}
-              sourceUrl={playlist.youtubeSync.sourceUrl}
-              lastSuccessfulAt={playlist.youtubeSync.lastSuccessfulAt}
-              unmatchedCount={playlist.youtubeSync.lastUnmatchedCount}
-              sourceDescription="YouTubeの順序をミラー表示中"
-              onRefresh={onRefreshYouTube}
-            />
-          </div>
-        )}
-        {playlist.nicoSync && (
-          <div className="mt-4">
-            <SyncPanel
-              service="ニコニコ"
-              status={playlist.nicoSync.lastStatus}
-              sourceUrl={playlist.nicoSync.sourceUrl}
-              lastSuccessfulAt={playlist.nicoSync.lastSuccessfulAt}
-              unmatchedCount={playlist.nicoSync.lastUnmatchedCount}
-              sourceDescription={`${playlist.nicoSync.sourceKind === 'mylist' ? 'マイリスト' : 'シリーズ'}の順序をミラー表示中`}
-              onRefresh={onRefreshNico}
-            />
-          </div>
-        )}
       </div>
     </section>
   );

@@ -4,116 +4,133 @@ import { useTranslateSourceText } from '../../i18n';
 import {
   analyzePlaylistHealth,
   PLAYLIST_HEALTH_ISSUE_LABELS,
+  PLAYLIST_HEALTH_ISSUE_ORDER,
   type PlaylistHealthIssueKind,
 } from '../../utils/playlistHealth';
+import { formatArtistLine } from '../../utils/songMeta';
+import Button from '../ui/Button';
+import { Chip, ChipBar } from '../ui/Chip';
+import Dialog from '../ui/Dialog';
+import EmptyState from '../ui/EmptyState';
+import SongThumbnail from '../ui/SongThumbnail';
+import { CheckBoxIcon, CheckBoxOutlineIcon, CheckCircleIcon } from '../ui/icons';
 
 interface PlaylistHealthModalProps {
   songs: Song[];
   onClose: () => void;
+  /** Saved positions of the songs to remove (ascending). */
   onRemove: (indexes: number[]) => void;
 }
 
-const ISSUE_ORDER: PlaylistHealthIssueKind[] = [
-  'duplicate',
-  'no-pv',
-  'all-pv-disabled',
-  'no-playable-pv',
-];
-
+/** 曲のチェック: duplicates and songs without a playable video; pick which ones to remove. */
 export default function PlaylistHealthModal({ songs, onClose, onRemove }: PlaylistHealthModalProps) {
   const t = useTranslateSourceText();
   const report = useMemo(() => analyzePlaylistHealth(songs), [songs]);
+  const [kindFilter, setKindFilter] = useState<PlaylistHealthIssueKind | null>(null);
   const [selectedIndexes, setSelectedIndexes] = useState<Set<number>>(
     () => new Set(report.entries.map(entry => entry.index)),
   );
+  const kinds = PLAYLIST_HEALTH_ISSUE_ORDER.filter(kind => report.counts[kind] > 0);
+  const shown = kindFilter ? report.entries.filter(entry => entry.issues.includes(kindFilter)) : report.entries;
+  // With a kind chip on, only the checked rows on screen are counted and removed (the hidden
+  // ones keep their checks for when the chip is turned off).
+  const targets = shown.filter(entry => selectedIndexes.has(entry.index)).map(entry => entry.index).sort((a, b) => a - b);
+  const count = targets.length;
 
   const toggle = (index: number) => {
     setSelectedIndexes(current => {
       const next = new Set(current);
-      if (next.has(index)) next.delete(index); else next.add(index);
+      if (next.has(index)) next.delete(index);
+      else next.add(index);
+      return next;
+    });
+  };
+  const setShown = (checked: boolean) => {
+    setSelectedIndexes(current => {
+      const next = new Set(current);
+      shown.forEach(entry => (checked ? next.add(entry.index) : next.delete(entry.index)));
       return next;
     });
   };
 
-  const selectAll = () => setSelectedIndexes(new Set(report.entries.map(entry => entry.index)));
-  const clearAll = () => setSelectedIndexes(new Set());
+  const hasIssues = report.entries.length > 0;
 
   return (
-    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm" role="presentation" onMouseDown={onClose}>
-      <section
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="playlist-health-title"
-        className="flex max-h-[min(720px,calc(100dvh-2rem))] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-white/10 bg-neutral-950 shadow-2xl"
-        onMouseDown={event => event.stopPropagation()}
-      >
-        <header className="flex items-start justify-between gap-4 border-b border-white/10 p-5">
-          <div>
-            <p className="text-xs uppercase tracking-[0.16em] text-cyan-300/70">Playlist health</p>
-            <h2 id="playlist-health-title" className="mt-1 text-xl font-semibold text-white">{t('プレイリストの健全性')}</h2>
-            <p className="mt-1 text-sm text-neutral-400">{t('削除前に対象を確認できます。チェックを外した曲は残ります。')}</p>
-          </div>
-          <button type="button" onClick={onClose} className="rounded-full p-2 text-neutral-400 hover:bg-white/10 hover:text-white" aria-label={t('閉じる')}>✕</button>
-        </header>
-
-        <div className="grid grid-cols-2 gap-2 border-b border-white/10 p-4 sm:grid-cols-4">
-          {ISSUE_ORDER.map(kind => (
-            <div key={kind} className="rounded-xl border border-white/10 bg-white/[0.035] p-3">
-              <p className="text-xs text-neutral-400">{t(PLAYLIST_HEALTH_ISSUE_LABELS[kind])}</p>
-              <p className="mt-1 text-xl font-semibold text-white">{report.counts[kind]}</p>
-            </div>
-          ))}
-        </div>
-
-        {report.entries.length === 0 ? (
-          <div className="flex flex-1 flex-col items-center justify-center gap-3 p-12 text-center">
-            <div className="text-4xl text-emerald-300">✓</div>
-            <p className="font-medium text-white">{t('問題は見つかりませんでした')}</p>
-            <p className="text-sm text-neutral-400">{t('{count}曲すべてに再生可能なPVがあります。', { count: report.totalSongs })}</p>
-          </div>
-        ) : (
-          <>
-            <div className="flex items-center justify-between gap-3 border-b border-white/10 px-5 py-3 text-xs text-neutral-400">
-              <span>{t('{count}曲を削除対象に選択中', { count: selectedIndexes.size })}</span>
-              <span className="flex gap-3">
-                <button type="button" onClick={selectAll} className="text-cyan-300 hover:text-white">{t('すべて選択')}</button>
-                <button type="button" onClick={clearAll} className="hover:text-white">{t('選択解除')}</button>
-              </span>
-            </div>
-            <div className="min-h-0 flex-1 overflow-y-auto p-3">
-              <div className="space-y-2">
-                {report.entries.map(entry => (
-                  <label key={`${entry.song.id}-${entry.index}`} className="flex cursor-pointer items-start gap-3 rounded-xl border border-white/10 bg-white/[0.025] p-3 hover:bg-white/[0.06]">
-                    <input type="checkbox" checked={selectedIndexes.has(entry.index)} onChange={() => toggle(entry.index)} className="mt-1 h-4 w-4 accent-cyan-400" />
+    <Dialog
+      open
+      onClose={onClose}
+      title={t('曲のチェック')}
+      size="md"
+      footerStart={hasIssues ? (
+        <>
+          <Button variant="text" size="sm" onClick={() => setShown(true)}>{t('すべて選択')}</Button>
+          <Button variant="text" size="sm" onClick={() => setShown(false)}>{t('すべて解除')}</Button>
+        </>
+      ) : undefined}
+      footer={hasIssues ? (
+        <>
+          <Button variant="ghost" onClick={onClose}>{t('キャンセル')}</Button>
+          <Button
+            variant="primary"
+            disabled={count === 0}
+            onClick={() => onRemove(targets)}
+          >
+            {count === 1 ? t('1曲を削除') : t('{count}曲を削除', { count })}
+          </Button>
+        </>
+      ) : undefined}
+    >
+      {!hasIssues ? (
+        <EmptyState compact icon={<CheckCircleIcon />} title={t('問題は見つかりませんでした')} />
+      ) : (
+        <>
+          <ChipBar label={t('問題の種類')} className="[--chipbar-fade:var(--color-yt-raised)]">
+            {kinds.map(kind => (
+              <Chip
+                key={kind}
+                selected={kindFilter === kind}
+                count={report.counts[kind]}
+                onClick={() => setKindFilter(current => (current === kind ? null : kind))}
+              >
+                {t(PLAYLIST_HEALTH_ISSUE_LABELS[kind])}
+              </Chip>
+            ))}
+          </ChipBar>
+          <ul className="m-0 mt-3 list-none p-0">
+            {shown.map(entry => {
+              const checked = selectedIndexes.has(entry.index);
+              return (
+                <li key={`${entry.song.id}-${entry.index}`}>
+                  <button
+                    type="button"
+                    role="checkbox"
+                    aria-checked={checked}
+                    onClick={() => toggle(entry.index)}
+                    className="-mx-2 flex w-[calc(100%+16px)] cursor-pointer items-center gap-3 rounded-chip px-2 py-2 text-left transition-colors duration-150 hover:bg-yt-tonal"
+                  >
+                    <span aria-hidden="true" className="flex shrink-0">
+                      {checked ? <CheckBoxIcon className="text-yt-link" /> : <CheckBoxOutlineIcon className="text-yt-text-secondary" />}
+                    </span>
+                    <SongThumbnail song={entry.song} className="w-16" radius="sm" showDuration={false} />
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate text-sm font-medium text-white">{entry.song.name}</span>
-                      <span className="mt-1 flex flex-wrap gap-1.5">
-                        {entry.issues.map(kind => <span key={kind} className="rounded-full bg-amber-300/10 px-2 py-0.5 text-[11px] text-amber-200">{t(PLAYLIST_HEALTH_ISSUE_LABELS[kind])}</span>)}
+                      <span className="block truncate text-sm font-medium leading-5 text-yt-text">{entry.song.name}</span>
+                      <span className="mt-0.5 flex min-w-0 flex-wrap items-center gap-1 text-xs leading-[18px] text-yt-text-secondary">
+                        <span className="min-w-0 truncate">{formatArtistLine(entry.song)}</span>
+                        {entry.issues.map(kind => (
+                          <span key={kind} className="shrink-0 rounded-badge bg-yt-tonal px-1.5 text-xs leading-5 text-yt-text">
+                            {t(PLAYLIST_HEALTH_ISSUE_LABELS[kind])}
+                          </span>
+                        ))}
                       </span>
                     </span>
-                    <span className="text-xs text-neutral-500">#{entry.index + 1}</span>
-                  </label>
-                ))}
-              </div>
-            </div>
-          </>
-        )}
-
-        <footer className="flex items-center justify-end gap-2 border-t border-white/10 p-4">
-          <button type="button" onClick={onClose} className="rounded-xl border border-white/10 px-4 py-2 text-sm text-neutral-300 hover:bg-white/10">{t('閉じる')}</button>
-          {report.entries.length > 0 && (
-            <button
-              type="button"
-              disabled={selectedIndexes.size === 0}
-              onClick={() => onRemove([...selectedIndexes].sort((a, b) => a - b))}
-              className="rounded-xl bg-red-400/90 px-4 py-2 text-sm font-semibold text-black transition-opacity hover:bg-red-300 disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              {t('選択した{count}曲を削除', { count: selectedIndexes.size })}
-            </button>
-          )}
-        </footer>
-      </section>
-    </div>
+                    <span className="shrink-0 text-xs text-yt-text-secondary tabular-nums">#{entry.index + 1}</span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </>
+      )}
+    </Dialog>
   );
 }
-

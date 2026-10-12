@@ -3,6 +3,9 @@ import { pinAppLanguage } from './pin-app-language.mjs';
 
 const baseUrl = process.argv[2] || 'http://127.0.0.1:5173/diva-player/';
 const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox', '--lang=ja-JP'] });
+// The mini player's play / pause toggle (its aria-label tells the state).
+const PLAY_BUTTON = '[data-testid="global-mini-player-toggle"][aria-label="再生"]';
+const PAUSE_BUTTON = '[data-testid="global-mini-player-toggle"][aria-label="一時停止"]';
 
 const song = (service, pvId, url) => ({
   id: service === 'SoundCloud' ? 900201 : service === 'NicoNicoDouga' ? 900203 : 900202,
@@ -176,9 +179,11 @@ try {
     throw new Error(`Unexpected SoundCloud target: ${soundCloudSrc}`);
   }
   await soundCloudPage.waitForFunction(() => window.__soundCloudReady === true);
-  await soundCloudPage.$eval('button[title="再生"]', button => button.click());
+  // The mini player's controls are a separate chunk that loads once a song is set (performance budget).
+  await soundCloudPage.waitForSelector(PLAY_BUTTON);
+  await soundCloudPage.$eval(PLAY_BUTTON, button => button.click());
   await soundCloudPage.waitForFunction(() => window.__soundCloudPlayCalls > 0);
-  await soundCloudPage.waitForSelector('button[title="一時停止"]');
+  await soundCloudPage.waitForSelector(PAUSE_BUTTON);
   await new Promise(resolve => setTimeout(resolve, 500));
   const soundCloudState = await soundCloudPage.evaluate(() => ({
     playCalls: window.__soundCloudPlayCalls || 0,
@@ -188,9 +193,9 @@ try {
   if (soundCloudState.playCalls !== 1 || soundCloudState.pauseCalls !== 0 || soundCloudState.volume !== 23) {
     throw new Error(`Unstable SoundCloud state: ${JSON.stringify(soundCloudState)}`);
   }
-  await soundCloudPage.$eval('button[title="一時停止"]', button => button.click());
+  await soundCloudPage.$eval(PAUSE_BUTTON, button => button.click());
   await soundCloudPage.waitForFunction(() => window.__soundCloudPauseCalls > 0);
-  await soundCloudPage.waitForSelector('button[title="再生"]');
+  await soundCloudPage.waitForSelector(PLAY_BUTTON);
   console.log('PASS SoundCloud stable playback and inherited volume');
 
   await soundCloudPage.evaluate(() => {
@@ -199,14 +204,14 @@ try {
     window.__soundCloudStartsToIgnore = 2;
     window.__soundCloudIgnoredStarts = 0;
     window.__soundCloudConfirmedPlaying = false;
-    document.querySelector('button[title="再生"]')?.click();
+    document.querySelector('[data-testid="global-mini-player-toggle"][aria-label="再生"]')?.click();
   });
   await soundCloudPage.waitForFunction(() => window.__soundCloudConfirmedPlaying === true, { timeout: 5_000 });
   const soundCloudBackgroundState = await soundCloudPage.evaluate(() => ({
     confirmedPlaying: window.__soundCloudConfirmedPlaying === true,
     ignoredStarts: window.__soundCloudIgnoredStarts || 0,
     playCalls: window.__soundCloudPlayCalls || 0,
-    controlTitle: document.querySelector('button[title="再生"], button[title="一時停止"]')?.getAttribute('title'),
+    controlLabel: document.querySelector('[data-testid="global-mini-player-toggle"]')?.getAttribute('aria-label'),
     visibilityState: document.visibilityState,
   }));
   if (!soundCloudBackgroundState.confirmedPlaying || soundCloudBackgroundState.visibilityState !== 'hidden') {

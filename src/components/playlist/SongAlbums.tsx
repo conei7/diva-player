@@ -1,17 +1,55 @@
 import { useEffect, useRef, useState } from 'react';
+import { useNavigate } from 'react-router';
 import type { AlbumSummary } from '../../types/vocadb';
 import { getAlbumTracks, getAlbumsForSong } from '../../api/vocadb';
 import { usePlaylistStore } from '../../stores/playlistStore';
-import { useTranslate } from '../../i18n';
+import { usePlayerStore } from '../../stores/playerStore';
+import { showToast } from '../../stores/toastStore';
+import { useTranslate, useTranslateSourceText } from '../../i18n';
+import { playlistPath } from '../../utils/routes';
+import Button from '../ui/Button';
+import { AlbumIcon } from '../ui/icons';
 
-/** Mounted with the song ID as its key so requests and feedback stay with that song. */
+const COLLAPSED_ALBUM_COUNT = 2;
+
+function AlbumCover({ album }: { album: AlbumSummary }) {
+  const hiddenMode = usePlayerStore(state => state.hiddenMode);
+  const [failed, setFailed] = useState<string | null>(null);
+  const src = !hiddenMode && album.coverUrl && failed !== album.coverUrl ? album.coverUrl : null;
+  return (
+    <span className="flex size-12 shrink-0 items-center justify-center overflow-hidden rounded-chip bg-yt-tonal text-yt-text-secondary">
+      {src ? (
+        <img
+          src={src}
+          alt=""
+          loading="lazy"
+          decoding="async"
+          draggable={false}
+          className="h-full w-full object-cover"
+          onError={() => setFailed(src)}
+        />
+      ) : (
+        <AlbumIcon size={24} />
+      )}
+    </span>
+  );
+}
+
+/**
+ * アルバム (expanded description and the song details dialog): cover · name (VocaDB link) ·
+ * 「プレイリストを作成」 (a new playlist with the album's tracks in album order).
+ * Two albums at first, the rest behind 「すべて表示（{n}）」.
+ * Mounted with the song ID as its key so requests and feedback stay with that song.
+ */
 export default function SongAlbums({ songId }: { songId: number }) {
-  const t = useTranslate();
+  const t = useTranslateSourceText();
+  const tk = useTranslate();
+  const navigate = useNavigate();
   const [albums, setAlbums] = useState<AlbumSummary[]>([]);
   const [loadAttempt, setLoadAttempt] = useState(0);
   const [loadError, setLoadError] = useState(false);
   const [busyId, setBusyId] = useState<number | null>(null);
-  const [message, setMessage] = useState('');
+  const [showAll, setShowAll] = useState(false);
   const creating = useRef(false);
 
   useEffect(() => {
@@ -28,7 +66,6 @@ export default function SongAlbums({ songId }: { songId: number }) {
     if (creating.current) return;
     creating.current = true;
     setBusyId(albumId);
-    setMessage(t('loadingAlbumTracks'));
     try {
       const { album, tracks } = await getAlbumTracks(albumId);
       const songs = tracks.map(track => track.song);
@@ -38,13 +75,15 @@ export default function SongAlbums({ songId }: { songId: number }) {
       let name = album.name;
       let suffix = 2;
       while (usedNames.has(name)) name = `${album.name} (${suffix++})`;
-      store.createPlaylistWithSongs(name, songs, undefined, {
+      const playlist = store.createPlaylistWithSongs(name, songs, undefined, {
         coverArtUrl: album.coverUrl ?? songs[0]?.thumbUrl,
         description: album.releaseDate ? `VocaDB album / ${album.releaseDate}` : 'VocaDB album',
       });
-      setMessage(t('songsAddedToPlaylist', { count: songs.length, playlist: name }));
+      showToast(t('「{title}」を作成しました', { title: name }), {
+        action: { label: t('開く'), onAction: () => navigate(playlistPath(playlist.id)) },
+      });
     } catch {
-      setMessage(t('albumPlaylistError'));
+      showToast(t('プレイリストを作成できませんでした'));
     } finally {
       creating.current = false;
       setBusyId(null);
@@ -53,31 +92,72 @@ export default function SongAlbums({ songId }: { songId: number }) {
 
   if (albums.length === 0 && !loadError) return null;
 
+  const visibleAlbums = showAll || albums.length <= COLLAPSED_ALBUM_COUNT ? albums : albums.slice(0, COLLAPSED_ALBUM_COUNT);
+
   return (
-    <section data-testid="song-albums" className="mt-3 space-y-2" aria-label={t('albumsLabel')}>
-      <h3 className="text-xs font-medium" style={{ color: 'var(--color-text-muted)' }}>{t('albumsLabel')}</h3>
-      {albums.map(album => (
-        <div key={album.id} className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
-          <a href={`https://vocadb.net/Al/${album.id}`} target="_blank" rel="noopener noreferrer"
-            className="min-w-0 break-words text-sm hover:underline" style={{ color: 'var(--color-accent-blue)' }}
-            onClick={event => event.stopPropagation()}>{album.name}</a>
-          <button type="button" className="btn-secondary min-h-10 shrink-0 px-3 py-1.5 text-xs"
-            disabled={busyId !== null} aria-label={t('addAlbumToPlaylistAria', { album: album.name })}
-            title={t('createAlbumPlaylistHint')}
-            onClick={event => { event.stopPropagation(); void createFromAlbum(album.id); }}>
-            {busyId === album.id ? t('loadingAlbumTracks') : t('addAlbumToPlaylist')}
-          </button>
-        </div>
-      ))}
+    <section data-testid="song-albums" className="min-w-0" aria-label={tk('albumsLabel')}>
+      <h3 className="text-base font-bold leading-[22px] text-yt-text">{tk('albumsLabel')}</h3>
+      {albums.length > 0 && (
+        <ul className="mt-2 space-y-2">
+          {visibleAlbums.map(album => (
+            <li key={album.id} className="flex min-w-0 items-center gap-3">
+              <a
+                href={`https://vocadb.net/Al/${album.id}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex min-w-0 flex-1 items-center gap-3 rounded-chip text-yt-text no-underline hover:underline"
+                onClick={event => event.stopPropagation()}
+              >
+                <AlbumCover album={album} />
+                <span className="min-w-0 break-words text-sm font-medium leading-5">{album.name}</span>
+              </a>
+              <Button
+                size="sm"
+                className="shrink-0"
+                loading={busyId === album.id}
+                disabled={busyId !== null}
+                aria-label={t('「{album}」からプレイリストを作成', { album: album.name })}
+                onClick={event => {
+                  event.stopPropagation();
+                  void createFromAlbum(album.id);
+                }}
+              >
+                {t('プレイリストを作成')}
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {albums.length > COLLAPSED_ALBUM_COUNT && (
+        <Button
+          variant="text"
+          size="sm"
+          className="-ml-3 mt-1"
+          aria-expanded={showAll}
+          onClick={event => {
+            event.stopPropagation();
+            setShowAll(value => !value);
+          }}
+        >
+          {showAll ? t('一部を表示') : t('すべて表示（{count}）', { count: albums.length })}
+        </Button>
+      )}
       {loadError && (
-        <div className="flex flex-wrap items-center gap-2">
-          <p className="text-xs" role="status" style={{ color: 'var(--color-text-muted)' }}>{t('albumLoadError')}</p>
-          <button type="button" className="btn-secondary min-h-10 px-3 text-xs" onClick={event => {
-            event.stopPropagation(); setLoadError(false); setLoadAttempt(attempt => attempt + 1);
-          }}>{t('retryAlbumLoad')}</button>
+        <div className="mt-2 flex flex-wrap items-center gap-2 text-sm leading-5 text-yt-text-secondary">
+          <span>{t('アルバムを読み込めませんでした')}</span>
+          <Button
+            variant="text"
+            size="sm"
+            onClick={event => {
+              event.stopPropagation();
+              setLoadError(false);
+              setLoadAttempt(attempt => attempt + 1);
+            }}
+          >
+            {t('再試行')}
+          </Button>
         </div>
       )}
-      {message && <p className="text-xs" role="status" style={{ color: 'var(--color-text-muted)' }}>{message}</p>}
     </section>
   );
 }

@@ -1,165 +1,133 @@
-import { useEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
+import { useId, useRef, useState } from 'react';
+import type { KeyboardEvent, MouseEvent, ReactNode } from 'react';
+import { useNavigate } from 'react-router';
+import { useShallow } from 'zustand/react/shallow';
+import { COARSE_POINTER_MEDIA_QUERY, MOBILE_MEDIA_QUERY, useMediaQuery } from '../../hooks/useMediaQuery';
+import { useTranslateSourceText } from '../../i18n';
+import { confirmDialog } from '../../stores/confirmStore';
 import {
   DEFAULT_GLOBAL_FILTER_SETTINGS,
-  SONG_TYPES,
   getGlobalFilterSettings,
   useGlobalFilterStore,
 } from '../../stores/globalFilterStore';
-import type { GlobalFilterSettings } from '../../stores/globalFilterStore';
-import { useSearchStore } from '../../stores/searchStore';
-import { usePlayerStore } from '../../stores/playerStore';
-import { useSelectionStore } from '../../stores/selectionStore';
+import type { GlobalFilterSettings, GlobalFilterState } from '../../stores/globalFilterStore';
+import { useLanguageStore } from '../../stores/languageStore';
+import type { AppLanguage } from '../../stores/languageStore';
 import { usePlayerInteractionStore } from '../../stores/playerInteractionStore';
+import { usePlayerStore } from '../../stores/playerStore';
 import { useRecommendationDisplayStore } from '../../stores/recommendationDisplayStore';
-import type { Artist, PVPreference, SongType } from '../../types/vocadb';
+import { useSearchStore } from '../../stores/searchStore';
+import { useSelectionStore } from '../../stores/selectionStore';
+import { showToast } from '../../stores/toastStore';
+import type { SettingsTab } from '../../stores/uiStore';
+import type { PVPreference } from '../../types/vocadb';
 import {
   areGlobalFilterSettingsEqual,
-  getGlobalFilterSummary,
   hasConfiguredSongFilters,
   isDiscoveryFilterActive,
-  SONG_TYPE_LABELS,
 } from '../../utils/globalFilters';
-import BackupModal from './BackupModal';
-import { Link } from 'react-router';
-import { searchVocalistsByName, selectVocalistVariants } from '../../api/vocadb';
-import { useLanguageStore } from '../../stores/languageStore';
-import { useTranslateSourceText } from '../../i18n';
-
-/* ─── 共通UIパーツ ─── */
-
-function ToggleSwitch({ checked, onChange, disabled }: { checked: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
-  return (
-    <label className="ui-switch" style={disabled ? { opacity: 0.45, pointerEvents: 'none' } : undefined}>
-      <input type="checkbox" checked={checked} onChange={e => onChange(e.target.checked)} disabled={disabled} />
-      <span className="ui-switch-track" />
-    </label>
-  );
-}
-
-/* ─── SettingsModal ─── */
+import Button from '../ui/Button';
+import Dialog from '../ui/Dialog';
+import Switch from '../ui/Switch';
+import { FolderIcon, SettingsIcon, TuneIcon } from '../ui/icons';
+import { cx } from '../ui/overlay';
+import DataSettingsPanel from './DataSettingsPanel';
+import FilterSettingsPanel from './FilterSettingsPanel';
+import type { UpdateFilterDraft, ViewThresholdService } from './FilterSettingsPanel';
+import { SettingRow, SettingsSelect } from './settingsControls';
 
 interface SettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
+  /** 開いた時に表示するタブ（無ければフィルター） */
+  initialTab?: SettingsTab;
 }
 
-export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
-  const t = useTranslateSourceText();
-  const language = useLanguageStore(state => state.language);
-  const [message, setMessage] = useState('');
-  const [draftFilters, setDraftFilters] = useState<GlobalFilterSettings>(DEFAULT_GLOBAL_FILTER_SETTINGS);
-  const [activeTab, setActiveTab] = useState<'filter' | 'playback' | 'data'>('filter');
-  const [backupOpen, setBackupOpen] = useState(false);
-  const [vocalistQuery, setVocalistQuery] = useState('');
-  const [vocalistSuggestions, setVocalistSuggestions] = useState<Artist[]>([]);
-  const [vocalistLoading, setVocalistLoading] = useState(false);
-  const vocalistRequestRef = useRef(0);
-  const globalFilterState = useGlobalFilterStore();
-  const setGlobalFilterSettings = useGlobalFilterStore(state => state.setSettings);
-  const resetGlobalFilterSettings = useGlobalFilterStore(state => state.resetSettings);
-  const hasSearched = useSearchStore(state => state.hasSearched);
-  const refreshSearch = useSearchStore(state => state.search);
-  const pvPreference = usePlayerStore(state => state.pvPreference);
-  const setPVPreference = usePlayerStore(state => state.setPVPreference);
-  const longPressSelectionEnabled = useSelectionStore(state => state.longPressSelectionEnabled);
-  const setLongPressSelectionEnabled = useSelectionStore(state => state.setLongPressSelectionEnabled);
-  const swipeGestureEnabled = usePlayerInteractionStore(state => state.swipeGestureEnabled);
-  const setSwipeGestureEnabled = usePlayerInteractionStore(state => state.setSwipeGestureEnabled);
-  const showRecommendationHints = useRecommendationDisplayStore(state => state.showHints);
-  const setShowRecommendationHints = useRecommendationDisplayStore(state => state.setShowHints);
+const TAB_ORDER: SettingsTab[] = ['filter', 'playback', 'data'];
 
-  const summarizeFilters = (settings: GlobalFilterSettings) => {
-    if (language === 'ja') return getGlobalFilterSummary(settings);
-    const summary: string[] = [];
-    if (settings.enabled && settings.minYoutubeViews > 0) summary.push(`YouTube ≥ ${settings.minYoutubeViews.toLocaleString('en-US')} views`);
-    if (settings.enabled && settings.minNicoViews > 0) summary.push(`Niconico ≥ ${settings.minNicoViews.toLocaleString('en-US')} views`);
-    if (settings.enabled && settings.excludedSongTypes.length > 0) {
-      summary.push(`${settings.excludedSongTypes.map(type => t(SONG_TYPE_LABELS[type])).join(', ')} excluded`);
-    }
-    if (settings.enabled && settings.vocalistFilters.length > 0) {
-      const visible = settings.vocalistFilters.filter((item, index, all) => (
-        !item.variantGroup || all.findIndex(candidate => candidate.variantGroup === item.variantGroup) === index
-      ));
-      const mode = settings.vocalistMatchMode === 'Any' ? 'Any vocalist'
-        : settings.vocalistMatchMode === 'All' ? 'All vocalists' : 'Exact match';
-      summary.push(`Vocalists: ${visible.map(item => item.variantGroup ?? item.name).join(', ')} (${mode})`);
-    }
-    if (settings.cooldownHours > 0) summary.push(`Listening cooldown: ${settings.cooldownHours >= 24 ? `${settings.cooldownHours / 24} days` : `${settings.cooldownHours} hours`}`);
-    if (settings.excludeRatedFromDiscovery) summary.push('Hide rated songs from discovery');
-    return summary;
+const NO_CUSTOM_VIEWS: Record<ViewThresholdService, boolean> = { youtube: false, nico: false };
+
+function selectFilterSettings(state: GlobalFilterState): GlobalFilterSettings {
+  return {
+    enabled: state.enabled,
+    minYoutubeViews: state.minYoutubeViews,
+    minNicoViews: state.minNicoViews,
+    excludedSongTypes: state.excludedSongTypes,
+    excludeSelfCovers: state.excludeSelfCovers,
+    vocalistFilters: state.vocalistFilters,
+    vocalistMatchMode: state.vocalistMatchMode,
+    cooldownHours: state.cooldownHours,
+    excludeRatedFromDiscovery: state.excludeRatedFromDiscovery,
   };
+}
 
-  useEffect(() => {
-    if (!isOpen) {
-      setMessage('');
-      setBackupOpen(false);
-      setVocalistQuery('');
-      setVocalistSuggestions([]);
-    } else {
-      setDraftFilters(getGlobalFilterSettings());
-    }
-  }, [isOpen]);
+/** 検索結果を出している時は、新しい条件で検索し直す。 */
+function refreshSearchIfShown() {
+  const search = useSearchStore.getState();
+  if (search.hasSearched) void search.search();
+}
 
-  useEffect(() => {
-    if (!isOpen || backupOpen) return;
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [backupOpen, isOpen, onClose]);
+/** トーストの［元に戻す］。ダイアログを閉じた後でも動く。 */
+function restoreSavedFilters(settings: GlobalFilterSettings) {
+  useGlobalFilterStore.getState().setSettings(settings);
+  refreshSearchIfShown();
+}
 
-  useEffect(() => {
-    if (!isOpen || activeTab !== 'filter') return;
-    const query = vocalistQuery.trim();
-    if (query.length < 2) {
-      setVocalistSuggestions([]);
-      setVocalistLoading(false);
-      return;
-    }
-    const requestId = ++vocalistRequestRef.current;
-    setVocalistLoading(true);
-    const timer = window.setTimeout(() => {
-      void searchVocalistsByName(query, 20)
-        .then(items => {
-          if (requestId === vocalistRequestRef.current) setVocalistSuggestions(items);
-        })
-        .catch(() => {
-          if (requestId === vocalistRequestRef.current) setVocalistSuggestions([]);
-        })
-        .finally(() => {
-          if (requestId === vocalistRequestRef.current) setVocalistLoading(false);
-        });
-    }, 250);
-    return () => window.clearTimeout(timer);
-  }, [activeTab, isOpen, vocalistQuery]);
+/**
+ * 全体のショートカット（Space＝再生/一時停止、← →＝シーク）が、設定の中のボタンやタブの操作を
+ * 横取りしないようにする（window へ伝えない。Tab と Esc は止めない）。
+ */
+function keepKeysInside(event: KeyboardEvent<HTMLElement>) {
+  if (event.key === ' ' || event.key === 'ArrowLeft' || event.key === 'ArrowRight') event.stopPropagation();
+}
 
+/** 設定ダイアログ（DESIGN_SPEC §6.8.1）。props はレイアウトから使われるので変えない。 */
+export default function SettingsModal({ isOpen, onClose, initialTab }: SettingsModalProps) {
   if (!isOpen) return null;
+  return <SettingsDialog onClose={onClose} initialTab={initialTab} />;
+}
 
-  if (backupOpen) {
-    return createPortal(
-      <BackupModal isOpen onBack={() => setBackupOpen(false)} onClose={onClose} />,
-      document.body,
-    );
+function SettingsDialog({ onClose, initialTab }: Omit<SettingsModalProps, 'isOpen'>) {
+  const t = useTranslateSourceText();
+  const navigate = useNavigate();
+  const isMobile = useMediaQuery(MOBILE_MEDIA_QUERY);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const tabRefs = useRef<Partial<Record<SettingsTab, HTMLButtonElement | null>>>({});
+  const cancelButtonRef = useRef<HTMLButtonElement>(null);
+  const confirmingRef = useRef(false);
+
+  const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab ?? 'filter');
+  // 開いたまま別のタブを指定された時（「フィルターを変更」など）は、そのタブを出す
+  const [requestedTab, setRequestedTab] = useState(initialTab);
+  if (requestedTab !== initialTab) {
+    setRequestedTab(initialTab);
+    setActiveTab(initialTab ?? 'filter');
   }
 
-  const savedFilters: GlobalFilterSettings = {
-    enabled: globalFilterState.enabled,
-    minYoutubeViews: globalFilterState.minYoutubeViews,
-    minNicoViews: globalFilterState.minNicoViews,
-    excludedSongTypes: globalFilterState.excludedSongTypes,
-    vocalistFilters: globalFilterState.vocalistFilters,
-    vocalistMatchMode: globalFilterState.vocalistMatchMode,
-    cooldownHours: globalFilterState.cooldownHours,
-    excludeRatedFromDiscovery: globalFilterState.excludeRatedFromDiscovery,
-  };
-  const filtersAreDirty = !areGlobalFilterSettingsEqual(draftFilters, savedFilters);
+  /* ─── フィルターの下書き ─── */
+  const savedFilters = useGlobalFilterStore(useShallow(selectFilterSettings));
+  const setGlobalFilterSettings = useGlobalFilterStore(state => state.setSettings);
+  const resetGlobalFilterSettings = useGlobalFilterStore(state => state.resetSettings);
+  const [draft, setDraft] = useState<GlobalFilterSettings>(savedFilters);
+  const [customViews, setCustomViews] = useState(NO_CUSTOM_VIEWS);
+  // 保存済みの値がダイアログの外で変わった時（［元に戻す］・復元など）は、未適用の変更が無ければ下書きも合わせる
+  const [followedSaved, setFollowedSaved] = useState(savedFilters);
+  if (followedSaved !== savedFilters) {
+    setFollowedSaved(savedFilters);
+    if (areGlobalFilterSettingsEqual(draft, followedSaved)) {
+      setDraft(savedFilters);
+      setCustomViews(NO_CUSTOM_VIEWS);
+    }
+  }
+  const filtersDirty = !areGlobalFilterSettingsEqual(draft, savedFilters);
+  const resetDisabled = areGlobalFilterSettingsEqual(draft, DEFAULT_GLOBAL_FILTER_SETTINGS)
+    && areGlobalFilterSettingsEqual(savedFilters, DEFAULT_GLOBAL_FILTER_SETTINGS);
 
-  const updateDraft = <K extends keyof GlobalFilterSettings>(key: K, value: GlobalFilterSettings[K]) => {
-    setDraftFilters(current => {
-      const next = { ...current, [key]: value };
-      if ((key === 'minYoutubeViews' || key === 'minNicoViews' || key === 'excludedSongTypes' || key === 'vocalistFilters')
+  const updateDraft: UpdateFilterDraft = (key, value) => {
+    setDraft(current => {
+      const next: GlobalFilterSettings = { ...current, [key]: value };
+      // 再生数・種類・ボーカルを触ったら「フィルターを使う」をオンにする（今までの挙動）
+      if ((key === 'minYoutubeViews' || key === 'minNicoViews' || key === 'excludedSongTypes' || key === 'excludeSelfCovers' || key === 'vocalistFilters')
         && hasConfiguredSongFilters(next)) {
         next.enabled = true;
       }
@@ -168,378 +136,265 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
   };
 
   const applyFilters = () => {
-    setGlobalFilterSettings(draftFilters);
-    if (hasSearched) void refreshSearch();
-    const summary = summarizeFilters(draftFilters);
-    setMessage(summary.length > 0
-      ? `${t('適用')}: ${summary.join(' / ')}`
-      : t('フィルターを停止しました。'));
+    if (!filtersDirty) return;
+    const previous = savedFilters;
+    setGlobalFilterSettings(draft);
+    // ストアは値を正規化して保存するので、下書きも保存された形にそろえる（適用後に「変更あり」が残らないように）
+    setDraft(getGlobalFilterSettings());
+    refreshSearchIfShown();
+    const turnedOff = isDiscoveryFilterActive(previous) && !isDiscoveryFilterActive(draft);
+    showToast(turnedOff ? t('フィルターをオフにしました') : t('フィルターを適用しました'), {
+      action: { label: t('元に戻す'), onAction: () => restoreSavedFilters(previous) },
+    });
   };
 
   const resetFilters = () => {
+    const previous = savedFilters;
     resetGlobalFilterSettings();
-    setDraftFilters(DEFAULT_GLOBAL_FILTER_SETTINGS);
-    if (hasSearched) void refreshSearch();
-    setMessage(t('フィルターを初期化しました。'));
+    setDraft(DEFAULT_GLOBAL_FILTER_SETTINGS);
+    setCustomViews(NO_CUSTOM_VIEWS);
+    refreshSearchIfShown();
+    showToast(t('フィルターをリセットしました'), {
+      action: { label: t('元に戻す'), onAction: () => restoreSavedFilters(previous) },
+    });
   };
 
-  const toggleExcludedType = (songType: SongType) => {
-    updateDraft('excludedSongTypes',
-      draftFilters.excludedSongTypes.includes(songType)
-        ? draftFilters.excludedSongTypes.filter(t => t !== songType)
-        : [...draftFilters.excludedSongTypes, songType]);
+  /** 閉じる（×・Esc・背景・キャンセル・ページへの移動）。未適用の変更がある時は確認する。 */
+  const requestClose = async (afterClose?: () => void) => {
+    if (confirmingRef.current) return;
+    if (filtersDirty) {
+      confirmingRef.current = true;
+      try {
+        const discard = await confirmDialog({ title: t('変更を破棄しますか？'), confirmLabel: t('破棄') });
+        if (!discard) return;
+      } finally {
+        confirmingRef.current = false;
+      }
+    }
+    afterClose?.();
+    onClose();
   };
 
-  const addGlobalVocalist = async (artist: Artist) => {
-    const query = vocalistQuery.trim() || artist.name;
-    const matches = selectVocalistVariants(
-      await searchVocalistsByName(query, 50).catch(() => [artist]),
-      query,
-    );
-    const selected = matches.length > 0 ? matches : [artist];
-    const newIds = new Set(selected.map(item => item.id));
-    updateDraft('vocalistFilters', [
-      ...draftFilters.vocalistFilters.filter(item => !newIds.has(item.id)),
-      ...selected.map(item => ({
-        id: item.id,
-        name: item.name,
-        ...(selected.length > 1 ? { variantGroup: query } : {}),
-      })),
-    ]);
-    setVocalistQuery('');
-    setVocalistSuggestions([]);
+  const handleLinkClick = (event: MouseEvent<HTMLAnchorElement>, path: string) => {
+    if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    if (!filtersDirty) {
+      onClose();
+      return;
+    }
+    event.preventDefault();
+    void requestClose(() => navigate(path));
   };
 
-  const removeGlobalVocalist = (id: number, variantGroup?: string) => {
-    updateDraft('vocalistFilters', draftFilters.vocalistFilters.filter(item => (
-      variantGroup ? item.variantGroup !== variantGroup : item.id !== id
-    )));
+  /* ─── タブ ─── */
+  const selectTab = (tab: SettingsTab) => {
+    if (tab === activeTab) return;
+    setActiveTab(tab);
+    // パネル（ダイアログで唯一のスクロール領域）を先頭へ戻す
+    const panel = contentRef.current?.closest('[role="dialog"]')?.firstElementChild;
+    if (panel instanceof HTMLElement) panel.scrollTop = 0;
   };
 
-  return createPortal(
-    <div className="fixed inset-0 z-[70] flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-label={t('設定')}>
-      <button type="button" className="absolute inset-0 bg-black/70 backdrop-blur-sm" aria-label={t('閉じる')} onClick={onClose} />
+  const onTabKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    const index = TAB_ORDER.indexOf(activeTab);
+    let next: number;
+    if (event.key === 'ArrowDown' || event.key === 'ArrowRight') next = (index + 1) % TAB_ORDER.length;
+    else if (event.key === 'ArrowUp' || event.key === 'ArrowLeft') next = (index - 1 + TAB_ORDER.length) % TAB_ORDER.length;
+    else if (event.key === 'Home') next = 0;
+    else if (event.key === 'End') next = TAB_ORDER.length - 1;
+    else return;
+    event.preventDefault();
+    event.stopPropagation();
+    const tab = TAB_ORDER[next];
+    selectTab(tab);
+    tabRefs.current[tab]?.focus();
+  };
 
-      <div className="relative max-h-[calc(100dvh-2rem)] w-full max-w-lg overflow-y-auto overscroll-contain rounded-2xl shadow-2xl"
-           style={{ background: 'var(--color-bg-secondary)', border: '1px solid rgba(255,255,255,0.06)' }}>
+  const tabs: Array<{ id: SettingsTab; label: string; icon: ReactNode }> = [
+    { id: 'filter', label: t('フィルター'), icon: <TuneIcon /> },
+    { id: 'playback', label: t('全般'), icon: <SettingsIcon /> },
+    { id: 'data', label: t('データ'), icon: <FolderIcon /> },
+  ];
 
-        {/* ヘッダー */}
-        <div className="sticky top-0 z-10 px-5 pt-5 pb-3" style={{ background: 'var(--color-bg-secondary)' }}>
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-base font-bold" style={{ color: 'var(--color-text-primary)' }}>{t('設定')}</h2>
-            <button type="button" className="btn-ghost rounded-full w-8 h-8 flex items-center justify-center" onClick={onClose} aria-label={t('閉じる')}>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
-            </button>
-          </div>
+  /**
+   * ［適用］［リセット］は押すと押せなくなる（変更が無くなる）。フォーカスがそのボタンに残ると body へ落ちて
+   * 押した場所を見失うので、押せるまま残る［キャンセル］へ先に移す。
+   */
+  const moveFocusOffPressedButton = (event: MouseEvent<HTMLButtonElement>) => {
+    if (document.activeElement === event.currentTarget) cancelButtonRef.current?.focus({ preventScroll: true });
+  };
 
-          {/* 3タブ */}
-          <div className="settings-tab-bar" role="tablist" aria-label={t('設定カテゴリ')}>
-            <button type="button" role="tab" id="settings-tab-filter" aria-controls="settings-panel-filter" aria-selected={activeTab === 'filter'} className="settings-tab" data-active={activeTab === 'filter'} onClick={() => setActiveTab('filter')}>
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M3 17v2h6v-2H3zM3 5v2h10V5H3zm10 16v-2h8v-2h-8v-2h-2v6h2zM7 9v2H3v2h4v2h2V9H7zm14 4v-2H11v2h10zm-6-4h2V7h4V5h-4V3h-2v6z"/></svg>
-              {t('表示・発見')}
-            </button>
-            <button type="button" role="tab" id="settings-tab-playback" aria-controls="settings-panel-playback" aria-selected={activeTab === 'playback'} className="settings-tab" data-active={activeTab === 'playback'} onClick={() => setActiveTab('playback')}>
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg>
-              {t('再生・操作')}
-            </button>
-            <button type="button" role="tab" id="settings-tab-data" aria-controls="settings-panel-data" aria-selected={activeTab === 'data'} className="settings-tab" data-active={activeTab === 'data'} onClick={() => setActiveTab('data')}>
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
-              {t('データ')}
-            </button>
-          </div>
+  const onFilterTab = activeTab === 'filter';
+  const footerStart = onFilterTab ? (
+    <div className="contents" onKeyDown={keepKeysInside}>
+      <Button
+        variant="text"
+        disabled={resetDisabled}
+        onClick={event => {
+          moveFocusOffPressedButton(event);
+          resetFilters();
+        }}
+      >
+        {t('リセット')}
+      </Button>
+    </div>
+  ) : undefined;
+  const footer = onFilterTab ? (
+    <div className="contents" onKeyDown={keepKeysInside}>
+      <Button ref={cancelButtonRef} variant="ghost" onClick={() => void requestClose()}>{t('キャンセル')}</Button>
+      <Button
+        variant="primary"
+        disabled={!filtersDirty}
+        onClick={event => {
+          moveFocusOffPressedButton(event);
+          applyFilters();
+        }}
+      >
+        {t('適用')}
+      </Button>
+    </div>
+  ) : undefined;
+
+  return (
+    <Dialog
+      open
+      onClose={() => void requestClose()}
+      title={<span className="text-xl leading-7">{t('設定')}</span>}
+      ariaLabel={t('設定')}
+      size="xl"
+      panelClassName={cx(
+        'sm:h-[min(640px,calc(100dvh-48px))]',
+        // フッター（フィルタータブだけ）の上の区切り線
+        onFilterTab && '[&>div:last-child]:border-t [&>div:last-child]:border-yt-divider',
+      )}
+      footerStart={footerStart}
+      footer={footer}
+    >
+      <div ref={contentRef} className="sm:flex sm:items-start sm:gap-6 sm:pt-2" onKeyDown={keepKeysInside}>
+        <div
+          role="tablist"
+          aria-label={t('設定カテゴリ')}
+          aria-orientation={isMobile ? 'horizontal' : 'vertical'}
+          onKeyDown={onTabKeyDown}
+          className={cx(
+            'flex gap-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden',
+            // モバイル: ヘッダーの下に固定する Chip 型のタブ
+            'max-sm:sticky max-sm:top-[max(56px,calc(48px_+_env(safe-area-inset-top)))] max-sm:z-[5] max-sm:-mx-4 max-sm:overflow-x-auto max-sm:bg-yt-raised max-sm:px-4 max-sm:py-2',
+            // デスクトップ: 左の縦のタブ（220px）。本文をスクロールしても見えたまま
+            'sm:sticky sm:top-16 sm:w-[220px] sm:shrink-0 sm:flex-col sm:gap-1 sm:self-start',
+          )}
+        >
+          {tabs.map(tab => {
+            const selected = tab.id === activeTab;
+            return (
+              <button
+                key={tab.id}
+                ref={element => { tabRefs.current[tab.id] = element; }}
+                type="button"
+                role="tab"
+                id={`settings-tab-${tab.id}`}
+                aria-controls={`settings-panel-${tab.id}`}
+                aria-selected={selected}
+                tabIndex={selected ? 0 : -1}
+                onClick={() => selectTab(tab.id)}
+                className={cx(
+                  'flex h-10 shrink-0 cursor-pointer select-none items-center whitespace-nowrap text-sm leading-5 transition-colors duration-150 [-webkit-tap-highlight-color:transparent]',
+                  'max-sm:rounded-chip max-sm:px-3 max-sm:font-medium',
+                  'sm:w-full sm:gap-4 sm:rounded-row sm:px-3',
+                  selected
+                    ? 'max-sm:bg-yt-inverse max-sm:text-yt-on-inverse sm:bg-yt-tonal sm:font-medium sm:text-yt-text'
+                    : 'max-sm:bg-yt-tonal max-sm:text-yt-text max-sm:hover:bg-yt-tonal-hover sm:text-yt-text-secondary sm:hover:bg-yt-tonal sm:hover:text-yt-text',
+                )}
+              >
+                <span aria-hidden="true" className="flex max-sm:hidden">{tab.icon}</span>
+                {tab.label}
+              </button>
+            );
+          })}
         </div>
 
-        {/* タブコンテンツ */}
-        <div className="px-5 pb-5 flex flex-col gap-4">
-
-          {/* ========== 表示・発見タブ ========== */}
+        <div
+          role="tabpanel"
+          id={`settings-panel-${activeTab}`}
+          aria-labelledby={`settings-tab-${activeTab}`}
+          className="min-w-0 flex-1 max-sm:pt-2"
+        >
           {activeTab === 'filter' && (
-            <div id="settings-panel-filter" role="tabpanel" aria-labelledby="settings-tab-filter" tabIndex={0} className="flex flex-col gap-4">
-              {/* フィルター有効/無効 */}
-              <div className="settings-section">
-                <div className="settings-section-title">
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M10 18h4v-2h-4v2zM3 6v2h18V6H3zm3 7h12v-2H6v2z"/></svg>
-                  {t('フィルター')}
-                </div>
-
-                <div className="setting-row">
-                  <div className="setting-row-info">
-                    <span className="setting-row-title">{t('グローバル表示フィルター')}</span>
-                    <span className="setting-row-desc">
-                      {t('再生数・楽曲種別・歌手条件を検索とおすすめへ共通適用')}
-                      {!draftFilters.enabled && hasConfiguredSongFilters(draftFilters) && t('（停止中）')}
-                    </span>
-                  </div>
-                  <ToggleSwitch checked={draftFilters.enabled} onChange={v => updateDraft('enabled', v)} />
-                </div>
-
-                {isDiscoveryFilterActive(savedFilters) && (
-                  <p className="rounded-lg px-2.5 py-1.5 text-[11px] mt-1" style={{ background: 'rgba(6, 214, 160, 0.08)', color: 'var(--color-accent-cyan)' }}>
-                    {t('適用中')}: {summarizeFilters(savedFilters).join(' / ')}
-                  </p>
-                )}
-                {filtersAreDirty && (
-                  <p className="rounded-lg px-2.5 py-1.5 text-[11px] mt-1 text-amber-200" role="status" style={{ background: 'rgba(251, 191, 36, 0.08)' }}>
-                    {t('未適用の変更あり')}
-                  </p>
-                )}
-              </div>
-
-              {/* 再生数閾値 */}
-              <div className="settings-section" style={draftFilters.enabled ? undefined : { opacity: 0.45 }}>
-                <div className="settings-section-title">
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M16 6l2.29 2.29-4.88 4.88-4-4L2 16.59 3.41 18l6-6 4 4 6.3-6.29L22 12V6h-6z"/></svg>
-                  {t('最低再生数')}
-                </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="flex flex-col gap-1.5">
-                    <span className="text-[11px]" style={{ color: 'var(--color-text-muted)' }}>YouTube</span>
-                    <select className="ui-select w-full" defaultValue="" onChange={e => { if (e.target.value) updateDraft('minYoutubeViews', Number(e.target.value)); }}>
-                      <option value="">{t('プリセット')}</option>
-                      <option value={10_000}>10K</option>
-                      <option value={50_000}>50K</option>
-                      <option value={100_000}>100K</option>
-                      <option value={500_000}>500K</option>
-                      <option value={1_000_000}>1M</option>
-                    </select>
-                    <input className="ui-number-input" type="number" min={0} step={1} value={draftFilters.minYoutubeViews} onChange={e => updateDraft('minYoutubeViews', Math.max(0, Number(e.target.value) || 0))} />
-                  </div>
-                  <div className="flex flex-col gap-1.5">
-                    <span className="text-[11px]" style={{ color: 'var(--color-text-muted)' }}>{t('ニコニコ')}</span>
-                    <select className="ui-select w-full" defaultValue="" onChange={e => { if (e.target.value) updateDraft('minNicoViews', Number(e.target.value)); }}>
-                      <option value="">{t('プリセット')}</option>
-                      <option value={1_000}>1K</option>
-                      <option value={5_000}>5K</option>
-                      <option value={10_000}>10K</option>
-                      <option value={50_000}>50K</option>
-                      <option value={100_000}>100K</option>
-                    </select>
-                    <input className="ui-number-input" type="number" min={0} step={1} value={draftFilters.minNicoViews} onChange={e => updateDraft('minNicoViews', Math.max(0, Number(e.target.value) || 0))} />
-                  </div>
-                </div>
-              </div>
-
-              {/* 除外する楽曲種別 */}
-              <div className="settings-section" style={draftFilters.enabled ? undefined : { opacity: 0.45 }}>
-                <div className="settings-section-title">
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>
-                  {t('除外する楽曲種別')}
-                </div>
-                <div className="flex flex-wrap gap-1.5">
-                  {SONG_TYPES.map(songType => (
-                    <button
-                      key={songType}
-                      type="button"
-                      className="ui-chip-toggle"
-                      data-active={draftFilters.excludedSongTypes.includes(songType)}
-                      data-variant="danger"
-                      onClick={() => toggleExcludedType(songType)}
-                    >
-                      {t(SONG_TYPE_LABELS[songType])}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="settings-section" style={draftFilters.enabled ? undefined : { opacity: 0.45 }}>
-                <div className="settings-section-title">{t('歌手フィルター')}</div>
-                <p className="mb-2 text-[11px]" style={{ color: 'var(--color-text-muted)' }}>
-                  {t('選んだ歌手・音声ライブラリの曲だけを検索、おすすめ、自動再生、発掘ミックスに表示')}
-                </p>
-                {draftFilters.vocalistFilters.length > 0 && (
-                  <div className="mb-2 flex flex-wrap gap-1.5">
-                    {draftFilters.vocalistFilters
-                      .filter((item, index, all) => !item.variantGroup || all.findIndex(candidate => candidate.variantGroup === item.variantGroup) === index)
-                      .map(item => (
-                        <button
-                          key={item.variantGroup ?? item.id}
-                          type="button"
-                          className="ui-chip-toggle"
-                          data-active="true"
-                          onClick={() => removeGlobalVocalist(item.id, item.variantGroup)}
-                          title={t('クリックして解除')}
-                        >
-                          {item.variantGroup ?? item.name} ×
-                        </button>
-                      ))}
-                  </div>
-                )}
-                <div className="relative">
-                  <input
-                    className="ui-number-input w-full"
-                    value={vocalistQuery}
-                    onChange={event => setVocalistQuery(event.target.value)}
-                    placeholder={t('歌手名を入力…')}
-                    aria-label={t('グローバル歌手フィルターを検索')}
-                  />
-                  {(vocalistLoading || vocalistSuggestions.length > 0) && (
-                    <div className="absolute left-0 right-0 top-full z-30 mt-1 max-h-52 overflow-y-auto rounded-xl border border-white/10 bg-[var(--color-surface-elevated)] shadow-xl">
-                      {vocalistLoading && <p className="px-3 py-2 text-xs text-neutral-400">{t('検索中…')}</p>}
-                      {!vocalistLoading && vocalistSuggestions.map(artist => (
-                        <button
-                          key={artist.id}
-                          type="button"
-                          className="block w-full px-3 py-2 text-left text-sm hover:bg-white/10"
-                          onClick={() => void addGlobalVocalist(artist)}
-                        >
-                          <span className="block text-neutral-100">{artist.name}</span>
-                          <span className="text-[10px] text-neutral-500">{artist.artistType}</span>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-                {draftFilters.vocalistFilters.length > 1 && (
-                  <select
-                    className="ui-select mt-2 w-full"
-                    value={draftFilters.vocalistMatchMode}
-                    onChange={event => updateDraft('vocalistMatchMode', event.target.value as GlobalFilterSettings['vocalistMatchMode'])}
-                  >
-                    <option value="Any">{t('いずれかの歌手を含む')}</option>
-                    <option value="All">{t('すべての歌手を含む')}</option>
-                    <option value="Exact">{t('選択した歌手だけ（完全一致）')}</option>
-                  </select>
-                )}
-              </div>
-
-              {/* その他のフィルター */}
-              <div className="settings-section">
-                <div className="setting-row" style={{ paddingTop: 0 }}>
-                  <div className="setting-row-info">
-                    <span className="setting-row-title">{t('再生クールダウン')}</span>
-                    <span className="setting-row-desc">{t('最近聴いた曲を一定時間、おすすめから除外')}</span>
-                  </div>
-                  <select className="ui-select" value={draftFilters.cooldownHours} onChange={e => updateDraft('cooldownHours', Number(e.target.value))}>
-                    <option value={0}>{t('なし')}</option>
-                    <option value={1}>{language === 'ja' ? '1時間' : '1 hour'}</option>
-                    <option value={6}>{language === 'ja' ? '6時間' : '6 hours'}</option>
-                    <option value={24}>{language === 'ja' ? '24時間' : '24 hours'}</option>
-                    <option value={72}>{language === 'ja' ? '3日' : '3 days'}</option>
-                    <option value={168}>{language === 'ja' ? '7日' : '7 days'}</option>
-                  </select>
-                </div>
-                <div className="setting-row" style={{ paddingBottom: 0 }}>
-                  <div className="setting-row-info">
-                    <span className="setting-row-title">{t('評価済みを発見候補から除外')}</span>
-                    <span className="setting-row-desc">{t('すでに評価した曲をおすすめに出さない')}</span>
-                  </div>
-                  <ToggleSwitch checked={draftFilters.excludeRatedFromDiscovery} onChange={v => updateDraft('excludeRatedFromDiscovery', v)} />
-                </div>
-                <div className="setting-row" style={{ paddingBottom: 0 }}>
-                  <div className="setting-row-info">
-                    <span className="setting-row-title">{t('選曲ヒント')}</span>
-                    <span className="setting-row-desc">{t('カードに「音が近い」などの短いヒントを表示')}</span>
-                  </div>
-                  <ToggleSwitch checked={showRecommendationHints} onChange={setShowRecommendationHints} />
-                </div>
-              </div>
-
-              {/* 適用/初期化 */}
-              <div className="flex gap-2">
-                <button type="button" className="btn-primary flex-1" disabled={!filtersAreDirty} onClick={applyFilters}>
-                  {t('適用')}
-                </button>
-                <button type="button" className="btn-secondary px-4" onClick={resetFilters}>
-                  {t('初期化')}
-                </button>
-              </div>
-            </div>
+            <FilterSettingsPanel
+              draft={draft}
+              updateDraft={updateDraft}
+              customViews={customViews}
+              setCustomView={(service, custom) => setCustomViews(current => ({ ...current, [service]: custom }))}
+            />
           )}
-
-          {/* ========== 再生・操作タブ ========== */}
-          {activeTab === 'playback' && (
-            <div id="settings-panel-playback" role="tabpanel" aria-labelledby="settings-tab-playback" tabIndex={0} className="flex flex-col gap-4">
-              <div className="settings-section">
-                <div className="settings-section-title">
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M21 3H3c-1.11 0-2 .89-2 2v14c0 1.11.89 2 2 2h18c1.11 0 2-.89 2-2V5c0-1.11-.89-2-2-2zm-9 8H3V5h9v6z"/></svg>
-                  {t('PV設定')}
-                </div>
-                <div className="setting-row" style={{ paddingTop: 0, paddingBottom: 0 }}>
-                  <div className="setting-row-info">
-                    <span className="setting-row-title">{t('優先するサービス')}</span>
-                    <span className="setting-row-desc">{t('自動は公式PVを優先し、両方公式ならYouTube')}</span>
-                  </div>
-                  <select
-                    className="ui-select"
-                    value={pvPreference}
-                    onChange={e => setPVPreference(e.target.value as PVPreference)}
-                  >
-                    <option value="auto">{t('自動（公式優先）')}</option>
-                    <option value="Youtube">YouTube</option>
-                    <option value="NicoNicoDouga">{t('ニコニコ')}</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="settings-section">
-                <div className="settings-section-title">
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M9 11.24V7.5C9 6.12 10.12 5 11.5 5S14 6.12 14 7.5v3.74c1.21-.81 2-2.18 2-3.74C16 5.01 13.99 3 11.5 3S7 5.01 7 7.5c0 1.56.79 2.93 2 3.74zm9.84 4.63l-4.54-2.26c-.17-.07-.35-.11-.54-.11H13v-6c0-.83-.67-1.5-1.5-1.5S10 6.67 10 7.5v10.74l-3.43-.72c-.08-.01-.15-.03-.24-.03-.31 0-.59.13-.79.33l-.79.8 4.94 4.94c.27.27.65.44 1.06.44h6.79c.75 0 1.33-.55 1.44-1.28l.75-5.27c.01-.07.02-.14.02-.2 0-.62-.38-1.16-.91-1.38z"/></svg>
-                  {t('操作')}
-                </div>
-                <div className="setting-row" style={{ paddingTop: 0, paddingBottom: 0 }}>
-                  <div className="setting-row-info">
-                    <span className="setting-row-title">{t('長押しで複数選択')}</span>
-                    <span className="setting-row-desc">{t('曲カードの長押しで選択モードを開始')}</span>
-                  </div>
-                  <ToggleSwitch checked={longPressSelectionEnabled} onChange={setLongPressSelectionEnabled} />
-                </div>
-                <div className="setting-row" style={{ paddingTop: 0, paddingBottom: 0 }}>
-                  <div className="setting-row-info">
-                    <span className="setting-row-title">{t('PiPのスワイプ操作')}</span>
-                    <span className="setting-row-desc">{t('左・右で曲送り、上で再生画面を開く（スマホ・タッチ操作のみ）')}</span>
-                  </div>
-                  <ToggleSwitch checked={swipeGestureEnabled} onChange={setSwipeGestureEnabled} />
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* ========== データタブ ========== */}
-          {activeTab === 'data' && (
-            <div id="settings-panel-data" role="tabpanel" aria-labelledby="settings-tab-data" tabIndex={0} className="flex flex-col gap-4">
-              <div className="settings-data-hero">
-                <div className="settings-data-icon" aria-hidden="true">
-                  <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M12 3v12" /><path d="m7 10 5 5 5-5" /><path d="M5 21h14a2 2 0 0 0 2-2v-4" /><path d="M3 15v4a2 2 0 0 0 2 2" />
-                  </svg>
-                </div>
-                <span className="backup-version-badge">{t('完全バックアップ')} v6</span>
-                <h3>{t('大切なデータをまとめて管理')}</h3>
-                <p>{t('履歴、評価、プレイリスト、お気に入りP、表示しない曲、表示設定をひとつのJSONファイルとして保存・復元できます。')}</p>
-                <div className="settings-data-items" aria-label={t('バックアップ対象')}>
-                  {['履歴', '評価', 'プレイリスト', 'お気に入りP', '表示しない曲', '表示設定'].map(item => <span key={item}>{t(item)}</span>)}
-                </div>
-                <button type="button" className="btn-primary w-full" onClick={() => setBackupOpen(true)}>
-                  {t('データとバックアップを開く')}
-                </button>
-              </div>
-
-              <div className="settings-section">
-                <div className="settings-section-title">{t('好みの管理')}</div>
-                <p className="setting-row-desc mb-3">{t('「表示しない」にした曲の確認と解除は、専用ページから行えます。')}</p>
-                <Link to="/settings/hidden-songs" className="btn-secondary flex w-full items-center justify-between px-4 py-3" onClick={onClose}>
-                  <span>{t('表示しない曲を管理')}</span>
-                  <span aria-hidden="true">→</span>
-                </Link>
-              </div>
-
-              <div className="settings-section">
-                <div className="settings-section-title">{t('保存について')}</div>
-                <p className="setting-row-desc">{t('データはこのブラウザ内に保存されています。端末移行やブラウザデータ消去に備え、定期的な完全バックアップをおすすめします。')}</p>
-              </div>
-            </div>
-          )}
-
-          {message && (
-            <p className="text-xs text-center py-1 rounded-lg" role="status"
-               style={{ color: 'var(--color-text-secondary)', background: 'rgba(255,255,255,0.03)' }}>
-              {message}
-            </p>
-          )}
+          {activeTab === 'playback' && <GeneralSettingsPanel />}
+          {activeTab === 'data' && <DataSettingsPanel onLinkClick={handleLinkClick} />}
         </div>
       </div>
-    </div>,
-    document.body,
+    </Dialog>
+  );
+}
+
+/** タブ「全般」。すべて即時に反映する。 */
+function GeneralSettingsPanel() {
+  const t = useTranslateSourceText();
+  const ids = useId();
+  const language = useLanguageStore(state => state.language);
+  const setLanguage = useLanguageStore(state => state.setLanguage);
+  const pvPreference = usePlayerStore(state => state.pvPreference);
+  const setPVPreference = usePlayerStore(state => state.setPVPreference);
+  const showRecommendationHints = useRecommendationDisplayStore(state => state.showHints);
+  const setShowRecommendationHints = useRecommendationDisplayStore(state => state.setShowHints);
+  const longPressSelectionEnabled = useSelectionStore(state => state.longPressSelectionEnabled);
+  const setLongPressSelectionEnabled = useSelectionStore(state => state.setLongPressSelectionEnabled);
+  const swipeGestureEnabled = usePlayerInteractionStore(state => state.swipeGestureEnabled);
+  const setSwipeGestureEnabled = usePlayerInteractionStore(state => state.setSwipeGestureEnabled);
+  // ミニプレイヤーのスワイプはタッチ操作だけの機能なので、タッチ端末の時だけ出す
+  const touchDevice = useMediaQuery(COARSE_POINTER_MEDIA_QUERY);
+
+  return (
+    <div>
+      <SettingRow label={t('表示言語')} htmlFor={`${ids}-language`}>
+        <SettingsSelect
+          id={`${ids}-language`}
+          value={language}
+          onChange={event => void setLanguage(event.target.value as AppLanguage)}
+        >
+          <option value="ja" lang="ja">日本語</option>
+          <option value="en" lang="en">English</option>
+        </SettingsSelect>
+      </SettingRow>
+      <SettingRow label={t('優先する動画サービス')} htmlFor={`${ids}-pv`}>
+        <SettingsSelect
+          id={`${ids}-pv`}
+          value={pvPreference}
+          onChange={event => setPVPreference(event.target.value as PVPreference)}
+        >
+          <option value="auto">{t('自動（公式優先）')}</option>
+          <option value="Youtube">YouTube</option>
+          <option value="NicoNicoDouga">{t('ニコニコ')}</option>
+        </SettingsSelect>
+      </SettingRow>
+      <Switch
+        className="setting-row min-h-14 py-2"
+        label={t('おすすめの理由を表示')}
+        checked={showRecommendationHints}
+        onChange={setShowRecommendationHints}
+      />
+      <Switch
+        className="setting-row min-h-14 py-2"
+        label={t('長押しで複数選択')}
+        checked={longPressSelectionEnabled}
+        onChange={setLongPressSelectionEnabled}
+      />
+      {touchDevice && (
+        <Switch
+          className="setting-row min-h-14 py-2"
+          label={t('ミニプレイヤーのスワイプ')}
+          description={t('左右で曲送り・上で再生ページ')}
+          checked={swipeGestureEnabled}
+          onChange={setSwipeGestureEnabled}
+        />
+      )}
+    </div>
   );
 }

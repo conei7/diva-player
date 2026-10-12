@@ -1,8 +1,9 @@
 import type { PVService } from '../types/vocadb';
 
+/** Service names as shown in the UI (DESIGN_SPEC §2.2: no YT / ニコ abbreviations). */
 const PV_SERVICE_LABELS: Record<PVService, string> = {
-  Youtube: 'YT',
-  NicoNicoDouga: 'ニコ',
+  Youtube: 'YouTube',
+  NicoNicoDouga: 'ニコニコ',
   SoundCloud: 'SoundCloud',
   Vimeo: 'Vimeo',
   Piapro: 'piapro',

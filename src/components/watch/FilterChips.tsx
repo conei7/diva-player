@@ -1,63 +1,52 @@
-/**
- * FilterChips - 推薦リスト上部のフィルタータブ
- *
- * 4つの丸薬型（Pill型）ボタン:
- * ① 「同じPの曲」 (RDB検索)
- * ② 「関連曲」 (Qdrant ハイブリッド検索)
- * ③ 「おすすめ」 (ユーザー履歴 + マルコフ連鎖)
- * ④ 「音響類似度」 (Qdrant 音響ベクトルのみ)
- */
+import { useTranslate, useTranslateSourceText } from '../../i18n';
+import { Chip, ChipBar } from '../ui/Chip';
 
+/**
+ * Chips above the related list: おすすめ / {P名}の曲 / 関連曲 / 曲調が近い
+ * (multi-select is in the top bar).
+ */
 export type RecTabKey = 'producer' | 'related' | 'recommended' | 'deep';
 
 interface FilterChipsProps {
   activeTab: RecTabKey;
   onTabChange: (tab: RecTabKey) => void;
-  counts?: Record<RecTabKey, number>;
+  /** First producer of the song (「{producer}の曲」). Without it the chip says 「同じPの曲」. */
+  producerName?: string;
+  sticky?: boolean;
+  className?: string;
 }
 
-const TABS: { key: RecTabKey; labelKey: 'filterRecommended' | 'filterRelated' | 'filterProducer' | 'filterSound'; descriptionKey: 'filterRecommendedDescription' | 'filterRelatedDescription' | 'filterProducerDescription' | 'filterSoundDescription' }[] = [
-  { key: 'recommended', labelKey: 'filterRecommended', descriptionKey: 'filterRecommendedDescription' },
-  { key: 'related', labelKey: 'filterRelated', descriptionKey: 'filterRelatedDescription' },
-  { key: 'producer', labelKey: 'filterProducer', descriptionKey: 'filterProducerDescription' },
-  { key: 'deep', labelKey: 'filterSound', descriptionKey: 'filterSoundDescription' },
-];
+const PRODUCER_NAME_MAX = 16;
 
-export default function FilterChips({ activeTab, onTabChange, counts }: FilterChipsProps) {
-  const t = useTranslate();
+function shortProducerName(name: string): string {
+  return name.length > PRODUCER_NAME_MAX ? `${name.slice(0, PRODUCER_NAME_MAX - 1)}…` : name;
+}
+
+export default function FilterChips({ activeTab, onTabChange, producerName, sticky = false, className }: FilterChipsProps) {
+  const tk = useTranslate();
+  const t = useTranslateSourceText();
+
+  const tabs: { key: RecTabKey; label: string }[] = [
+    { key: 'recommended', label: tk('filterRecommended') },
+    {
+      key: 'producer',
+      label: producerName ? t('{producer}の曲', { producer: shortProducerName(producerName) }) : tk('filterProducer'),
+    },
+    { key: 'related', label: tk('filterRelated') },
+    { key: 'deep', label: t('曲調が近い') },
+  ];
+
   return (
-    <div className="flex gap-1.5 overflow-x-auto pb-1" style={{ scrollbarWidth: 'none' }}>
-      <style>{`.filter-chips-scroll::-webkit-scrollbar { display: none; }`}</style>
-      {TABS.map((tab) => {
-        const isActive = tab.key === activeTab;
-        const count = counts?.[tab.key];
-        return (
-          <button
-            key={tab.key}
-            onClick={() => onTabChange(tab.key)}
-            className="yt-chip flex-shrink-0 transition-all"
-            style={{
-              background: isActive ? 'var(--color-yt-chip-active)' : 'var(--color-yt-chip)',
-              color: isActive ? '#0f0f0f' : 'var(--color-yt-text)',
-              fontWeight: isActive ? 600 : 400,
-              fontSize: '13px',
-              padding: '6px 14px',
-            }}
-            title={t(tab.descriptionKey)}
-          >
-            {t(tab.labelKey)}
-            {count !== undefined && count > 0 && (
-              <span
-                className="ml-1 text-[10px] opacity-70"
-                style={{ color: isActive ? '#0f0f0f' : 'var(--color-text-muted)' }}
-              >
-                {count}
-              </span>
-            )}
-          </button>
-        );
-      })}
-    </div>
+    <ChipBar
+      label={t('関連曲の種類')}
+      sticky={sticky}
+      className={className}
+    >
+      {tabs.map(tab => (
+        <Chip key={tab.key} selected={tab.key === activeTab} onClick={() => onTabChange(tab.key)}>
+          {tab.label}
+        </Chip>
+      ))}
+    </ChipBar>
   );
 }
-import { useTranslate } from '../../i18n';

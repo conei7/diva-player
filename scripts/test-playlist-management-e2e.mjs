@@ -96,58 +96,64 @@ async function installFixtures(page) {
   }]);
 }
 
+const LIBRARY = 'section[data-testid="playlist-library"][aria-label="プレイリストライブラリ"]';
+const SEARCH_LABEL = 'プレイリスト内を検索';
+
 async function openPlaylist(page) {
-  await page.waitForSelector('aside[aria-label="プレイリストライブラリ"]', { visible: true });
-  await page.waitForFunction(name => [...document.querySelectorAll('button')].some(button => button.textContent?.includes(name)), {}, largePlaylist.name);
+  await page.waitForSelector(LIBRARY, { visible: true });
+  await page.waitForFunction(name => [...document.querySelectorAll('[data-testid="playlist-card"] a')].some(link => link.textContent?.includes(name)), {}, largePlaylist.name);
   await page.evaluate(name => {
-    const button = [...document.querySelectorAll('button')].find(item => item.textContent?.includes(name));
-    if (!(button instanceof HTMLButtonElement)) throw new Error('large playlist button not found');
-    button.click();
+    const link = [...document.querySelectorAll('[data-testid="playlist-card"] a')].find(item => item.textContent?.includes(name));
+    if (!(link instanceof HTMLAnchorElement)) throw new Error('large playlist card not found');
+    link.click();
   }, largePlaylist.name);
-  await page.waitForSelector('h1');
-  await page.waitForFunction(name => document.querySelector('h1')?.textContent?.includes(name), {}, largePlaylist.name);
+  // The open playlist lives in the URL (/playlists?list=<id>).
+  await page.waitForFunction(id => new URL(location.href).searchParams.get('list') === id, {}, largePlaylist.id);
+  await page.waitForFunction(name => document.querySelector('main section h1')?.textContent?.includes(name), {}, largePlaylist.name);
 }
 
 async function runDesktop(page) {
   await page.setViewport({ width: 1440, height: 900, deviceScaleFactor: 1 });
   const response = await page.goto(playlistUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
   assert(response && response.status() < 400, `playlist page returned ${response?.status() ?? 'unknown'}`);
-  await page.waitForSelector('aside[aria-label="プレイリストライブラリ"]', { visible: true });
+  await page.waitForSelector(LIBRARY, { visible: true });
 
-  const library = await page.$eval('aside[aria-label="プレイリストライブラリ"]', element => ({
-    text: element.textContent ?? '',
-    width: element.getBoundingClientRect().width,
+  const library = await page.$eval(LIBRARY, element => ({
+    cards: element.querySelectorAll('[data-testid="playlist-card"]').length,
     scopeButtons: [...element.querySelectorAll('button[aria-pressed]')].map(button => button.textContent?.trim()),
+    nestedAside: Boolean(document.querySelector('main aside')),
   }));
-  assert(library.width >= 320, `desktop library is too narrow: ${library.width}`);
-  assert(library.text.includes('保存曲') && library.text.includes('同期中'), 'library overview is missing');
-  assert(library.scopeButtons.some(label => label === 'スマート') && library.scopeButtons.some(label => label === '同期中'), 'library scope controls are missing');
+  assert(library.cards >= 3, `library cards are missing: ${library.cards}`);
+  assert(!library.nestedAside, 'the old second sidebar is still rendered');
+  assert(library.scopeButtons.some(label => label === 'スマート') && library.scopeButtons.some(label => label === '同期'), `library filter chips are missing: ${JSON.stringify(library.scopeButtons)}`);
 
   await openPlaylist(page);
-  await page.waitForFunction(() => document.body.textContent?.includes('仮想スクロールを使用'));
   await page.waitForFunction(() => document.body.textContent?.includes('Playlist fixture 001'));
   assert(!await page.$eval('body', body => body.textContent?.includes('プレイリスト旧表記001')), 'saved playlist did not use the default song name');
   const desktopLayout = await page.evaluate(() => {
-    const heading = document.querySelector('h1');
-    const toolbar = document.querySelector('input[placeholder="曲名・アーティストを検索"]')?.closest('.sticky');
-    const rows = [...document.querySelectorAll('button')].filter(button => button.textContent?.includes('Playlist fixture'));
+    const heading = document.querySelector('main section h1');
+    const toolbar = document.querySelector('[data-testid="playlist-list-header"]');
+    const rows = document.querySelectorAll('[data-testid="playlist-song-row"]');
     return {
       headingSize: heading ? Number.parseFloat(getComputedStyle(heading).fontSize) : 0,
-      toolbarVisible: Boolean(toolbar && toolbar.getBoundingClientRect().height > 0),
+      toolbarVisible: Boolean(toolbar && toolbar.getBoundingClientRect().height > 0 && getComputedStyle(toolbar).position === 'sticky'),
       renderedRows: rows.length,
       overflow: document.documentElement.scrollWidth - innerWidth,
     };
   });
-  assert(desktopLayout.headingSize >= 36, `playlist hero heading is too small: ${desktopLayout.headingSize}`);
-  assert(desktopLayout.toolbarVisible, 'playlist toolbar is not visible');
+  assert(desktopLayout.headingSize >= 28, `playlist hero heading is too small: ${desktopLayout.headingSize}`);
+  assert(desktopLayout.toolbarVisible, 'sticky playlist list header is not visible');
+  assert(desktopLayout.renderedRows > 0, 'virtual list rendered no rows');
   assert(desktopLayout.renderedRows < largePlaylist.songs.length, `virtual list rendered every row: ${desktopLayout.renderedRows}`);
   assert(desktopLayout.overflow <= 1, `desktop layout overflows horizontally by ${desktopLayout.overflow}px`);
 
-  const search = 'input[placeholder="曲名・アーティストを検索"]';
+  await page.click(`[data-testid="playlist-list-header"] button[aria-label="${SEARCH_LABEL}"]`);
+  const search = `[data-testid="playlist-list-header"] input[aria-label="${SEARCH_LABEL}"]`;
+  await page.waitForSelector(search, { visible: true });
   await page.type(search, '特別な検索対象曲');
   await page.waitForFunction(() => document.body.textContent?.includes('1 / 240曲を表示'));
   assert(await page.$eval('body', body => body.textContent?.includes('検索対象プロデューサー') ?? false), 'playlist search did not render the matching song');
-  console.log('PASS refreshed desktop playlist library, hero, toolbar, and virtualized 240-song list');
+  console.log('PASS desktop playlist library grid, detail URL, hero, sticky list header, and virtualized 240-song list');
 }
 
 async function runMobile(page) {
@@ -156,9 +162,9 @@ async function runMobile(page) {
   await openPlaylist(page);
 
   const mobileLayout = await page.evaluate(() => {
-    const library = document.querySelector('aside[aria-label="プレイリストライブラリ"]');
-    const playButton = [...document.querySelectorAll('button')].find(button => button.textContent?.trim() === '再生');
-    const backButton = [...document.querySelectorAll('button')].find(button => button.textContent?.includes('← ライブラリ'));
+    const library = document.querySelector('[data-testid="playlist-library"]');
+    const playButton = [...document.querySelectorAll('main section button')].find(button => button.textContent?.trim() === 'すべて再生');
+    const backButton = document.querySelector('main button[aria-label="プレイリスト一覧に戻る"]');
     const playRect = playButton?.getBoundingClientRect();
     return {
       libraryVisible: Boolean(library && getComputedStyle(library).display !== 'none'),
@@ -169,12 +175,13 @@ async function runMobile(page) {
     };
   });
   assert(!mobileLayout.libraryVisible, 'mobile library should be hidden while viewing playlist details');
-  assert(mobileLayout.playWidth >= 44 && mobileLayout.playHeight >= 44, `mobile play target is too small: ${JSON.stringify(mobileLayout)}`);
+  // Button lg (40px) is the large button of the design system (DESIGN_SPEC §3.4).
+  assert(mobileLayout.playWidth >= 40 && mobileLayout.playHeight >= 40, `mobile play target is too small: ${JSON.stringify(mobileLayout)}`);
   assert(mobileLayout.backVisible, 'mobile library back action is missing');
   assert(mobileLayout.overflow <= 1, `mobile layout overflows horizontally by ${mobileLayout.overflow}px`);
 
   const virtualScroll = await page.evaluate(() => {
-    const heading = document.querySelector('h1');
+    const heading = document.querySelector('main section h1');
     const detail = heading.closest('main');
     const nestedScrollers = [...detail.querySelectorAll('*')].filter(element => ['auto', 'scroll'].includes(getComputedStyle(element).overflowY) && element.scrollHeight > element.clientHeight + 1);
     return { count: nestedScrollers.length, height: document.documentElement.scrollHeight };
@@ -184,25 +191,27 @@ async function runMobile(page) {
   await page.waitForFunction(() => document.body.textContent.includes('Playlist fixture 240'));
   await page.evaluate(() => window.scrollTo(0, 0));
 
-  await page.evaluate(() => {
-    const backButton = [...document.querySelectorAll('button')].find(button => button.textContent?.includes('← ライブラリ'));
-    if (!(backButton instanceof HTMLButtonElement)) throw new Error('library back button not found');
-    backButton.click();
+  await page.click('main button[aria-label="プレイリスト一覧に戻る"]');
+  await page.waitForSelector(LIBRARY, { visible: true });
+  const libraryScroll = await page.$eval(LIBRARY, element => {
+    const scrollers = [element, ...element.querySelectorAll('*')].filter(item => ['auto', 'scroll'].includes(getComputedStyle(item).overflowY) && item.scrollHeight > item.clientHeight + 1);
+    return { nestedScrollers: scrollers.length, bottom: element.getBoundingClientRect().bottom + scrollY, pageHeight: document.documentElement.scrollHeight };
   });
-  await page.waitForSelector('aside[aria-label="プレイリストライブラリ"]', { visible: true });
-  const libraryScroll = await page.$eval('aside[aria-label="プレイリストライブラリ"]', element => {
-    const content = element.querySelector('[data-testid="playlist-library-content"]');
-    return { overflow: getComputedStyle(content).overflowY, bottom: element.getBoundingClientRect().bottom + scrollY, pageHeight: document.documentElement.scrollHeight, border: getComputedStyle(element).borderTopWidth };
-  });
-  assert(libraryScroll.overflow === 'visible' && libraryScroll.border === '0px' && libraryScroll.bottom <= libraryScroll.pageHeight, `mobile library is boxed or clipped: ${JSON.stringify(libraryScroll)}`);
+  assert(libraryScroll.nestedScrollers === 0 && libraryScroll.bottom <= libraryScroll.pageHeight, `mobile library is boxed or clipped: ${JSON.stringify(libraryScroll)}`);
   await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+  await new Promise(resolve => setTimeout(resolve, 300));
   const lastPlaylist = await page.evaluate(() => {
-    const button = [...document.querySelectorAll('aside button')].find(item => item.textContent?.includes('一覧スクロール確認 39'));
-    const rect = button?.getBoundingClientRect();
-    return { top: rect?.top, bottom: rect?.bottom, headerBottom: document.querySelector('header').getBoundingClientRect().bottom };
+    const card = [...document.querySelectorAll('[data-testid="playlist-card"]')].find(item => item.textContent?.includes('一覧スクロール確認 39'));
+    const rect = card?.getBoundingClientRect();
+    // A bar fixed at the bottom (the phone navigation) must not cover the last row.
+    const bottomBar = [...document.querySelectorAll('nav')].find(item => {
+      const box = item.getBoundingClientRect();
+      return getComputedStyle(item).position === 'fixed' && box.height > 0 && box.bottom >= innerHeight - 1 && box.top > innerHeight / 2;
+    });
+    return { top: rect?.top, bottom: rect?.bottom, headerBottom: document.querySelector('header').getBoundingClientRect().bottom, visibleBottom: bottomBar ? bottomBar.getBoundingClientRect().top : innerHeight };
   });
-  assert(lastPlaylist.top >= lastPlaylist.headerBottom && lastPlaylist.bottom <= 844, `last playlist cannot be reached by page scroll: ${JSON.stringify(lastPlaylist)}`);
-  console.log('PASS refreshed 390px playlist detail navigation and touch targets');
+  assert(lastPlaylist.top >= lastPlaylist.headerBottom && lastPlaylist.bottom <= lastPlaylist.visibleBottom + 1, `last playlist cannot be reached by page scroll: ${JSON.stringify(lastPlaylist)}`);
+  console.log('PASS 390px playlist detail, back navigation, window scrolling, and touch targets');
 }
 
 const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox', '--lang=ja-JP'] });

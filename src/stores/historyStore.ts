@@ -196,7 +196,9 @@ async function readRecentPlayEvents(limit: number, beforeId?: number): Promise<L
 async function clearPlayEvents(): Promise<void> {
   const db = await openHistoryDb();
   await new Promise<void>((resolve, reject) => {
-    const tx = db.transaction(PLAY_STORE, 'readwrite');
+    // Every history store (plays and the statistics built from them) has to be in the
+    // transaction's scope; objectStore() throws for a store outside it.
+    const tx = db.transaction(Object.values(HISTORY_STORES), 'readwrite');
     for (const storeName of Object.values(HISTORY_STORES)) {
       tx.objectStore(storeName).clear();
     }

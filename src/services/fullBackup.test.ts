@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { executeFullBackupImport, parseFullBackup, readPersistedPlaylistsForBackup } from './fullBackup';
+import { executeFullBackupImport, FullBackupImportError, parseFullBackup, readPersistedPlaylistsForBackup } from './fullBackup';
+import type { FullBackupPreview } from './fullBackup';
 import { usePlaylistStore } from '../stores/playlistStore';
 
 function createLocalStorage(initial: Record<string, string> = {}) {
@@ -16,6 +17,7 @@ function createLocalStorage(initial: Record<string, string> = {}) {
 describe('parseFullBackup', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.restoreAllMocks();
     usePlaylistStore.setState({ playlists: [], folders: [] });
   });
 
@@ -172,7 +174,29 @@ describe('parseFullBackup', () => {
       manifest: { schemaVersion: 4, historyEvents: 0, ratingCount: 1, playlistCount: 1, playlistSongCount: 99, folderCount: 0, favoriteProducerCount: 0 },
     });
     expect(mismatch?.canRestore).toBe(false);
-    expect(mismatch?.validationMessages).toContain('manifestと実データの件数が一致しません。');
+    expect(mismatch?.validationIssues).toEqual([{ kind: 'manifest-mismatch' }]);
+  });
+
+  it('reports validation problems as identifiers with values instead of display text', () => {
+    const legacy = parseFullBackup({
+      kind: 'diva-player-full-backup',
+      version: 3,
+      sections: { history: { events: [] }, ratings: {}, playlists: { folders: [], playlists: [] } },
+    });
+    expect(legacy?.canRestore).toBe(true);
+    expect(legacy?.validationIssues).toEqual([{ kind: 'legacy-format' }]);
+
+    const broken = parseFullBackup({
+      kind: 'diva-player-full-backup',
+      version: 1,
+      sections: {
+        history: { events: [{ s: -1, t: 1 }] },
+        ratings: { '1': 4, invalid: 9 },
+        playlists: { folders: [], playlists: [] },
+      },
+    });
+    expect(broken?.canRestore).toBe(false);
+    expect(broken?.validationIssues).toEqual([{ kind: 'legacy-format' }, { kind: 'invalid-items', count: 2 }]);
   });
 
   it('validates and counts hidden songs in v6 backups', () => {
@@ -212,7 +236,7 @@ describe('parseFullBackup', () => {
     } as never;
 
     await expect(executeFullBackupImport(preview, { mode: 'replace', ratingPriority: 'backup' }))
-      .rejects.toMatchObject({ name: 'FullBackupImportError', recoveryComplete: true });
+      .rejects.toMatchObject({ name: 'FullBackupImportError', code: 'not-validated', recoveryComplete: true, rollbackFailures: [] });
     expect(usePlaylistStore.getState().playlists).toEqual([]);
   });
 
@@ -220,49 +244,63 @@ describe('parseFullBackup', () => {
     const preview = { canRestore: true, parsed: {} } as never;
 
     await expect(executeFullBackupImport(preview, { mode: 'replace', ratingPriority: 'backup' }))
-      .rejects.toMatchObject({ name: 'FullBackupImportError', recoveryComplete: true });
+      .rejects.toMatchObject({ name: 'FullBackupImportError', code: 'not-validated', recoveryComplete: true });
     expect(usePlaylistStore.getState().playlists).toEqual([]);
   });
 
+  it('reports a failed read of the current data as an identifier, without display text', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    installHistoryDatabase();
+    vi.stubGlobal('localStorage', {
+      ...createLocalStorage(),
+      getItem: () => { throw new DOMException('denied', 'SecurityError'); },
+    });
+
+    const failure = await executeFullBackupImport(emptyLegacyBackup(), { mode: 'merge', ratingPriority: 'backup' })
+      .catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(FullBackupImportError);
+    expect(failure).toMatchObject({ code: 'read-failed', section: undefined, recoveryComplete: true, rollbackFailures: [] });
+    expect((failure as FullBackupImportError).cause).toMatchObject({ name: 'SecurityError' });
+    expect((failure as FullBackupImportError).message).not.toMatch(JAPANESE);
+  });
+
+  it('names the data whose write failed and keeps the current data when the rollback succeeds', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    installHistoryDatabase();
+    const values = new Map<string, string>([
+      ['diva_playlists', 'previous-playlists'],
+      ['diva_playlistFolders', 'previous-folders'],
+    ]);
+    let foldersFailed = false;
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => {
+        if (key === 'diva_playlistFolders' && !foldersFailed) {
+          foldersFailed = true;
+          throw new DOMException('storage full', 'QuotaExceededError');
+        }
+        values.set(key, value);
+      },
+      removeItem: (key: string) => { values.delete(key); },
+      key: (index: number) => [...values.keys()][index] ?? null,
+      get length() { return values.size; },
+    });
+    usePlaylistStore.setState({ playlists: [], folders: [] });
+
+    const failure = await executeFullBackupImport(emptyLegacyBackup(), { mode: 'replace', ratingPriority: 'backup' })
+      .catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(FullBackupImportError);
+    expect(failure).toMatchObject({ code: 'write-failed', section: 'playlists', recoveryComplete: true, rollbackFailures: [] });
+    expect((failure as FullBackupImportError).message).not.toMatch(JAPANESE);
+    expect(values.get('diva_playlists')).toBe('previous-playlists');
+    expect(values.get('diva_playlistFolders')).toBe('previous-folders');
+  });
+
   it('reports an incomplete rollback when playlist storage cannot be restored', async () => {
-    const historyStores = ['plays', 'stats_pending', 'stats_applied', 'song_stats', 'year_stats', 'month_stats', 'stats_meta'];
-    const database = {
-      transaction: () => {
-        let completedRequests = 0;
-        const requests: Array<{ result: unknown[]; onsuccess: (() => void) | null }> = [];
-        const transaction: { error: null; oncomplete: (() => void) | null; onerror: (() => void) | null; onabort: (() => void) | null; objectStore: () => { getAll: () => { result: unknown[]; onsuccess: (() => void) | null } } } = {
-          error: null,
-          oncomplete: null,
-          onerror: null,
-          onabort: null,
-          objectStore: () => ({
-            getAll: () => {
-              const request = { result: [], onsuccess: null as (() => void) | null };
-              requests.push(request);
-              queueMicrotask(() => {
-                request.onsuccess?.();
-                completedRequests += 1;
-                if (completedRequests === historyStores.length) transaction.oncomplete?.();
-              });
-              return request;
-            },
-          }),
-        };
-        return transaction;
-      },
-    };
-    const indexedDb = {
-      open: () => {
-        const request: { result: typeof database; onsuccess: (() => void) | null; onerror: (() => void) | null } = {
-          result: database,
-          onsuccess: null,
-          onerror: null,
-        };
-        queueMicrotask(() => request.onsuccess?.());
-        return request;
-      },
-    };
-    vi.stubGlobal('indexedDB', indexedDb);
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    installHistoryDatabase();
     const values = new Map<string, string>([
       ['diva_playlists', 'previous-playlists'],
       ['diva_playlistFolders', 'previous-folders'],
@@ -280,24 +318,109 @@ describe('parseFullBackup', () => {
       get length() { return values.size; },
     });
     usePlaylistStore.setState({ playlists: [], folders: [] });
-    const preview = parseFullBackup({
-      kind: 'diva-player-full-backup',
-      version: 1,
-      sections: {
-        history: { events: [] },
-        ratings: {},
-        playlists: { folders: [], playlists: [] },
-      },
-    });
+    const preview = emptyLegacyBackup();
 
-    expect(preview?.canRestore).toBe(true);
-    await expect(executeFullBackupImport(preview!, { mode: 'replace', ratingPriority: 'backup' }))
-      .rejects.toMatchObject({
-        name: 'FullBackupImportError',
-        recoveryComplete: false,
-        rollbackErrors: expect.arrayContaining([expect.stringContaining('diva_playlists')]),
-      });
+    expect(preview.canRestore).toBe(true);
+    const failure = await executeFullBackupImport(preview, { mode: 'replace', ratingPriority: 'backup' })
+      .catch((error: unknown) => error);
+    expect(failure).toMatchObject({
+      name: 'FullBackupImportError',
+      code: 'write-failed',
+      section: 'playlists',
+      recoveryComplete: false,
+    });
+    const { rollbackFailures } = failure as FullBackupImportError;
+    // 保存キー（diva_playlists など）ではなく、データの種類で返す。書き戻せなかったのは変わったキーだけ
+    expect(rollbackFailures.map(item => item.section)).toEqual(['playlists']);
+    expect(rollbackFailures[0].error).toMatchObject({ name: 'QuotaExceededError' });
     expect(usePlaylistStore.getState().playlists).toEqual([]);
     expect(values.get('diva_playlists')).not.toBe('previous-playlists');
+    expect(values.get('diva_playlistFolders')).toBe('previous-folders');
+  });
+
+  it('does not report an undo failure for data that was never changed', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    installHistoryDatabase();
+    const values = new Map<string, string>([
+      ['diva_playlists', 'previous-playlists'],
+      ['diva_playlistFolders', 'previous-folders'],
+    ]);
+    // Every write of the playlist keys fails, so nothing is changed and writing the old values back would fail too.
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => {
+        if (key.startsWith('diva_playlist')) throw new DOMException('storage full', 'QuotaExceededError');
+        values.set(key, value);
+      },
+      removeItem: (key: string) => { values.delete(key); },
+      key: (index: number) => [...values.keys()][index] ?? null,
+      get length() { return values.size; },
+    });
+    usePlaylistStore.setState({ playlists: [], folders: [] });
+
+    const failure = await executeFullBackupImport(emptyLegacyBackup(), { mode: 'replace', ratingPriority: 'backup' })
+      .catch((error: unknown) => error);
+
+    expect(failure).toMatchObject({ code: 'write-failed', section: 'playlists', recoveryComplete: true, rollbackFailures: [] });
+    expect(values.get('diva_playlists')).toBe('previous-playlists');
+    expect(values.get('diva_playlistFolders')).toBe('previous-folders');
   });
 });
+
+const JAPANESE = /[぀-ヿ一-鿿]/;
+
+function emptyLegacyBackup(): FullBackupPreview {
+  const preview = parseFullBackup({
+    kind: 'diva-player-full-backup',
+    version: 1,
+    sections: {
+      history: { events: [] },
+      ratings: {},
+      playlists: { folders: [], playlists: [] },
+    },
+  });
+  if (!preview) throw new Error('fixture should parse');
+  return preview;
+}
+
+/**
+ * Just enough of indexedDB for reading the history snapshot (getAll on each store).
+ * openHistoryDb() keeps the first database it opens, so every test installs the same shape.
+ */
+function installHistoryDatabase() {
+  const historyStores = ['plays', 'stats_pending', 'stats_applied', 'song_stats', 'year_stats', 'month_stats', 'stats_meta'];
+  const database = {
+    transaction: () => {
+      let completedRequests = 0;
+      const transaction: { error: null; oncomplete: (() => void) | null; onerror: (() => void) | null; onabort: (() => void) | null; objectStore: () => { getAll: () => { result: unknown[]; onsuccess: (() => void) | null } } } = {
+        error: null,
+        oncomplete: null,
+        onerror: null,
+        onabort: null,
+        objectStore: () => ({
+          getAll: () => {
+            const request = { result: [], onsuccess: null as (() => void) | null };
+            queueMicrotask(() => {
+              request.onsuccess?.();
+              completedRequests += 1;
+              if (completedRequests === historyStores.length) transaction.oncomplete?.();
+            });
+            return request;
+          },
+        }),
+      };
+      return transaction;
+    },
+  };
+  vi.stubGlobal('indexedDB', {
+    open: () => {
+      const request: { result: typeof database; onsuccess: (() => void) | null; onerror: (() => void) | null } = {
+        result: database,
+        onsuccess: null,
+        onerror: null,
+      };
+      queueMicrotask(() => request.onsuccess?.());
+      return request;
+    },
+  });
+}

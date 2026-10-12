@@ -1,9 +1,14 @@
 import { useEffect } from 'react';
-import { syncDueYouTubePlaylists } from '../services/youtubePlaylistSync';
-import { syncDueNicoPlaylists } from '../services/nicoPlaylistSync';
 import { usePlaylistStore } from '../stores/playlistStore';
 
 const CHECK_INTERVAL_MS = 15 * 60 * 1000;
+
+// The sync services are only needed once the app is up; loading them on the first run keeps them
+// out of the initial JavaScript (DESIGN_SPEC §1-12).
+const loadSyncServices = () => Promise.all([
+  import('../services/youtubePlaylistSync'),
+  import('../services/nicoPlaylistSync'),
+]);
 
 export function useYouTubePlaylistSync(): void {
   const loadPlaylists = usePlaylistStore(state => state.loadPlaylists);
@@ -15,6 +20,14 @@ export function useYouTubePlaylistSync(): void {
       if (running || !navigator.onLine) return;
       running = true;
       try {
+        let services: Awaited<ReturnType<typeof loadSyncServices>>;
+        try {
+          services = await loadSyncServices();
+        } catch {
+          // The chunk could not be fetched (offline, new deploy): the next check retries.
+          return;
+        }
+        const [{ syncDueYouTubePlaylists }, { syncDueNicoPlaylists }] = services;
         await syncDueYouTubePlaylists();
         await syncDueNicoPlaylists();
       } finally {

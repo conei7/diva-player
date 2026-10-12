@@ -191,7 +191,8 @@ try {
     const list = drawer.querySelector('.overflow-y-auto');
     list.scrollTop = list.scrollHeight;
     const rect = drawer.getBoundingClientRect();
-    const last = list.querySelector('li:last-child').getBoundingClientRect();
+    // Autoplay songs follow a 「自動再生」 divider in their own list, so take the last row overall.
+    const last = [...list.querySelectorAll('li')].at(-1).getBoundingClientRect();
     const bottom = list.getBoundingClientRect().bottom;
     return { left: rect.left, right: rect.right, bottom: rect.bottom, lastBottom: last.bottom,
       listBottom: bottom, locked: document.body.style.overflow === 'hidden' };

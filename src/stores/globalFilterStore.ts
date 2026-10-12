@@ -21,6 +21,8 @@ export interface GlobalFilterSettings {
   minYoutubeViews: number;
   minNicoViews: number;
   excludedSongTypes: SongType[];
+  /** Self-covers (a cover by the original producer). Filtered in the app: the API has no such option. */
+  excludeSelfCovers: boolean;
   vocalistFilters: GlobalVocalistFilter[];
   vocalistMatchMode: VocalistMatchMode;
   cooldownHours: number;
@@ -43,6 +45,7 @@ export const DEFAULT_GLOBAL_FILTER_SETTINGS: GlobalFilterSettings = {
   minYoutubeViews: 0,
   minNicoViews: 0,
   excludedSongTypes: [],
+  excludeSelfCovers: false,
   vocalistFilters: [],
   vocalistMatchMode: 'Any',
   cooldownHours: 0,
@@ -106,6 +109,7 @@ export function normalizeGlobalFilterSettings(value: unknown): GlobalFilterSetti
     minYoutubeViews: normalizeNonNegativeInteger(source.minYoutubeViews, 0),
     minNicoViews: normalizeNonNegativeInteger(source.minNicoViews, 0),
     excludedSongTypes,
+    excludeSelfCovers: source.excludeSelfCovers === true,
     vocalistFilters: normalizeVocalistFilters(source.vocalistFilters),
     vocalistMatchMode: source.vocalistMatchMode === 'All' || source.vocalistMatchMode === 'Exact'
       ? source.vocalistMatchMode
@@ -136,6 +140,7 @@ export const useGlobalFilterStore = create<GlobalFilterState>()(
         minYoutubeViews: state.minYoutubeViews,
         minNicoViews: state.minNicoViews,
         excludedSongTypes: state.excludedSongTypes,
+        excludeSelfCovers: state.excludeSelfCovers,
         vocalistFilters: state.vocalistFilters,
         vocalistMatchMode: state.vocalistMatchMode,
         cooldownHours: state.cooldownHours,
@@ -147,11 +152,11 @@ export const useGlobalFilterStore = create<GlobalFilterState>()(
 
 export function getGlobalFilterSettings(): GlobalFilterSettings {
   const {
-    enabled, minYoutubeViews, minNicoViews, excludedSongTypes,
+    enabled, minYoutubeViews, minNicoViews, excludedSongTypes, excludeSelfCovers,
     vocalistFilters, vocalistMatchMode, cooldownHours, excludeRatedFromDiscovery,
   } = useGlobalFilterStore.getState();
   return {
-    enabled, minYoutubeViews, minNicoViews, excludedSongTypes,
+    enabled, minYoutubeViews, minNicoViews, excludedSongTypes, excludeSelfCovers,
     vocalistFilters, vocalistMatchMode, cooldownHours, excludeRatedFromDiscovery,
   };
 }

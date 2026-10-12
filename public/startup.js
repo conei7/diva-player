@@ -23,5 +23,6 @@
     return request;
   }
 
-  window.__DIVA_STARTUP_POPULAR__ = startPopularPage(0, 12);
+  // The same first page as HomePage (FIRST_HOME_PAGE_SIZE).
+  window.__DIVA_STARTUP_POPULAR__ = startPopularPage(0, 24);
 }(window.location));

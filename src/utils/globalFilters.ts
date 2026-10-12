@@ -1,5 +1,7 @@
 import type { Song, SongType } from '../types/vocadb';
 import type { GlobalFilterSettings } from '../stores/globalFilterStore';
+import type { AppLanguage } from '../stores/languageStore';
+import { songTypeLabel } from './songMeta';
 
 export interface DiscoveryFilterContext {
   settings: GlobalFilterSettings;
@@ -43,7 +45,7 @@ export const SONG_TYPE_LABELS: Record<SongType, string> = {
   Arrangement: 'アレンジ',
   Instrumental: 'インスト',
   Mashup: 'マッシュアップ',
-  MusicPV: '音楽PV',
+  MusicPV: 'PV',
   DramaPV: 'ドラマPV',
   Other: 'その他',
   Unspecified: '未分類',
@@ -54,6 +56,7 @@ export function hasConfiguredSongFilters(settings: GlobalFilterSettings): boolea
   return settings.minYoutubeViews > 0
     || settings.minNicoViews > 0
     || settings.excludedSongTypes.length > 0
+    || settings.excludeSelfCovers
     || settings.vocalistFilters.length > 0;
 }
 
@@ -78,6 +81,7 @@ export function areGlobalFilterSettingsEqual(
     || first.minNicoViews !== second.minNicoViews
     || first.cooldownHours !== second.cooldownHours
     || first.excludeRatedFromDiscovery !== second.excludeRatedFromDiscovery
+    || first.excludeSelfCovers !== second.excludeSelfCovers
     || first.vocalistMatchMode !== second.vocalistMatchMode
     || first.vocalistFilters.length !== second.vocalistFilters.length
     || first.excludedSongTypes.length !== second.excludedSongTypes.length) {
@@ -93,25 +97,70 @@ export function areGlobalFilterSettingsEqual(
   });
 }
 
-export function getGlobalFilterSummary(settings: GlobalFilterSettings): string[] {
-  const summary: string[] = [];
-  if (settings.enabled && settings.minYoutubeViews > 0) summary.push(`YouTube ${settings.minYoutubeViews.toLocaleString()}以上`);
-  if (settings.enabled && settings.minNicoViews > 0) summary.push(`ニコニコ ${settings.minNicoViews.toLocaleString()}以上`);
-  if (settings.enabled && settings.excludedSongTypes.length > 0) {
-    summary.push(`${settings.excludedSongTypes.map(type => SONG_TYPE_LABELS[type]).join('・')}を除外`);
+/** 「最近聴いた曲を除く」の期間: 1時間 / 24時間 / 3日 / 7日（英語 1 hour / 1 day / 3 days / 7 days）。 */
+export function formatCooldownDuration(hours: number, language: AppLanguage = 'ja'): string {
+  const value = Number.isFinite(hours) ? Math.max(0, Math.round(hours)) : 0;
+  if (language === 'en') {
+    if (value > 0 && value % 24 === 0) {
+      const days = value / 24;
+      return days === 1 ? '1 day' : `${days} days`;
+    }
+    return value === 1 ? '1 hour' : `${value} hours`;
   }
-  if (settings.enabled && settings.vocalistFilters.length > 0) {
-    const visible = settings.vocalistFilters.filter((filter, index, all) => (
+  return value >= 48 && value % 24 === 0 ? `${value / 24}日` : `${value}時間`;
+}
+
+/** Vocalist names as the user picked them (voicebank variants collapse into their group). */
+function summarizedVocalistNames(settings: GlobalFilterSettings): string[] {
+  return settings.vocalistFilters
+    .filter((filter, index, all) => (
       !filter.variantGroup
       || all.findIndex(candidate => candidate.variantGroup === filter.variantGroup) === index
-    ));
-    const mode = settings.vocalistMatchMode === 'Any'
-      ? 'いずれか'
-      : settings.vocalistMatchMode === 'All' ? 'すべて' : '完全一致';
-    summary.push(`歌手: ${visible.map(filter => filter.variantGroup ?? filter.name).join('・')}（${mode}）`);
+    ))
+    .map(filter => filter.variantGroup ?? filter.name);
+}
+
+const VOCALIST_MATCH_LABELS: Record<GlobalFilterSettings['vocalistMatchMode'], { ja: string; en: string }> = {
+  Any: { ja: 'いずれかを含む', en: 'Any of these' },
+  All: { ja: 'すべて含む', en: 'All of these' },
+  Exact: { ja: 'このボーカルだけ', en: 'Only these' },
+};
+
+/** 表示フィルターの要約（設定・上部バーで共通）。言語ごとの文はこの関数の中で作る。 */
+export function getGlobalFilterSummary(settings: GlobalFilterSettings, language: AppLanguage = 'ja'): string[] {
+  const en = language === 'en';
+  const summary: string[] = [];
+  if (settings.enabled && settings.minYoutubeViews > 0) {
+    summary.push(en
+      ? `YouTube ≥ ${settings.minYoutubeViews.toLocaleString('en-US')} views`
+      : `YouTube ${settings.minYoutubeViews.toLocaleString('ja-JP')}以上`);
   }
-  if (settings.cooldownHours > 0) summary.push(`再生クールダウン ${settings.cooldownHours}時間`);
-  if (settings.excludeRatedFromDiscovery) summary.push('評価済みを発見候補から除外');
+  if (settings.enabled && settings.minNicoViews > 0) {
+    summary.push(en
+      ? `Niconico ≥ ${settings.minNicoViews.toLocaleString('en-US')} views`
+      : `ニコニコ ${settings.minNicoViews.toLocaleString('ja-JP')}以上`);
+  }
+  if (settings.enabled && (settings.excludedSongTypes.length > 0 || settings.excludeSelfCovers)) {
+    // 設定の「除外する種類」のチップと同じ名前（songTypeLabel）・同じ並びにそろえる
+    const labels = settings.excludedSongTypes.map(type => songTypeLabel(type, language));
+    if (settings.excludeSelfCovers) labels.push(en ? 'Self-cover' : 'セルフカバー');
+    summary.push(en ? `${labels.join(', ')} excluded` : `${labels.join('・')}を除外`);
+  }
+  if (settings.enabled && settings.vocalistFilters.length > 0) {
+    const names = summarizedVocalistNames(settings);
+    // 1人の時は一致方法に意味がないので付けない
+    const mode = names.length > 1 ? VOCALIST_MATCH_LABELS[settings.vocalistMatchMode] ?? VOCALIST_MATCH_LABELS.Any : null;
+    if (en) {
+      summary.push(`${names.length > 1 ? 'Vocalists' : 'Vocalist'}: ${names.join(', ')}${mode ? ` (${mode.en})` : ''}`);
+    } else {
+      summary.push(`ボーカル: ${names.join('・')}${mode ? `（${mode.ja}）` : ''}`);
+    }
+  }
+  if (settings.cooldownHours > 0) {
+    const duration = formatCooldownDuration(settings.cooldownHours, language);
+    summary.push(en ? `Skip recently played (${duration})` : `最近聴いた曲を除く（${duration}）`);
+  }
+  if (settings.excludeRatedFromDiscovery) summary.push(en ? 'Skip rated songs' : '評価した曲を除く');
   return summary;
 }
 
@@ -157,7 +206,7 @@ function meetsMinimumViews(
 
 export function getGlobalSongFilterDecision(song: Song, settings: GlobalFilterSettings): SongFilterDecision {
   if (!settings.enabled) return { accepted: true };
-  if (settings.excludedSongTypes.includes(song.songType)) {
+  if (settings.excludedSongTypes.includes(song.songType) || (settings.excludeSelfCovers && song.isSelfCover)) {
     return { accepted: false, reason: 'excluded-song-type' };
   }
   if (!matchesVocalistFilter(song, settings)) {
@@ -283,14 +332,38 @@ export function filterDiscoverySourcePage(
     : { items: applyDiscoveryFilter(songs, context), relaxedConditions: [] };
 }
 
-export function getDiscoveryRelaxationMessage(conditions: DiscoveryRelaxedCondition[]): string | null {
+const RELAXATION_LABELS: Record<DiscoveryRelaxedCondition, { ja: string; en: string }> = {
+  cooldown: { ja: '最近再生した曲を含める', en: 'including recently played songs' },
+  'rated-songs': { ja: '評価した曲を含める', en: 'including rated songs' },
+  'view-thresholds-reduced': { ja: '再生数の条件を半分にする', en: 'halving the minimum views' },
+  'view-thresholds-removed': { ja: '再生数の条件を一時的に外す', en: 'ignoring the minimum views for now' },
+};
+
+const RELAXATION_ORDER: DiscoveryRelaxedCondition[] = [
+  'cooldown',
+  'rated-songs',
+  'view-thresholds-reduced',
+  'view-thresholds-removed',
+];
+
+/** 緩和の詳細（InfoTip などに出す文）。緩和が無ければ null。 */
+export function getDiscoveryRelaxationMessage(
+  conditions: DiscoveryRelaxedCondition[],
+  language: AppLanguage = 'ja',
+): string | null {
   if (conditions.length === 0) return null;
-  const labels: string[] = [];
-  if (conditions.includes('cooldown')) labels.push('最近再生した曲を含める');
-  if (conditions.includes('rated-songs')) labels.push('評価済みの曲を含める');
-  if (conditions.includes('view-thresholds-reduced')) labels.push('再生数条件を半分にする');
-  if (conditions.includes('view-thresholds-removed')) labels.push('再生数条件を一時解除する');
-  return `候補不足のため、${labels.join('・')}調整を適用しています。曲種と歌手の条件は維持されます。`;
+  const labels = RELAXATION_ORDER
+    .filter(condition => conditions.includes(condition))
+    .map(condition => RELAXATION_LABELS[condition][language === 'en' ? 'en' : 'ja']);
+  if (language === 'en') {
+    return `Not enough songs matched, so some filters were relaxed (${labels.join(', ')}). Song type and vocalist filters still apply.`;
+  }
+  return `候補が足りないため、条件をゆるめています（${labels.join('・')}）。曲の種類とボーカルの条件はそのままです。`;
+}
+
+/** ホーム・再生ページで1行に出す短い表示（詳細は getDiscoveryRelaxationMessage）。 */
+export function getDiscoveryRelaxationShortLabel(language: AppLanguage = 'ja'): string {
+  return language === 'en' ? 'Some filters were relaxed' : '一部の条件をゆるめて表示しています';
 }
 
 export function requiresExternalViewCounts(settings: GlobalFilterSettings): boolean {

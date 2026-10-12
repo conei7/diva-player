@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest';
 import type { SmartPlaylistRule, Song } from '../types/vocadb';
 import {
   buildSmartPlaylistSearchParams,
+  describeSmartPlaylistRule,
   filterSmartPlaylistSongs,
-  formatSmartPlaylistRule,
+  isSameSmartPlaylistRule,
+  smartPlaylistSortLabel,
   SMART_DERIVED_SONG_TYPES,
   normalizeSmartPlaylistRule,
   applySmartPlaylistPreset,
@@ -34,31 +36,53 @@ describe('smart playlist UI summaries', () => {
     expect(validateSmartPlaylistRule(rule({ publishYearFrom: '2020', publishYearTo: '2025', lengthMinSeconds: '60', lengthMaxSeconds: '300' }))).toBeNull();
   });
   it('shows a useful empty condition summary', () => {
-    expect(formatSmartPlaylistRule(rule())).toEqual(['条件なし', '上限 200曲', 'VocaDB支持順']);
+    expect(describeSmartPlaylistRule(rule())).toEqual([
+      { kind: 'noRules' },
+      { kind: 'maxSongs', count: 200 },
+      { kind: 'sort', sortBy: 'FavoritedTimes' },
+    ]);
   });
 
-  it('formats thresholds, producer and exclusions for the builder and header', () => {
-    expect(formatSmartPlaylistRule(rule({
+  it('describes thresholds, producer and exclusions for the header chips', () => {
+    expect(describeSmartPlaylistRule(rule({
       producerName: 'テストP',
       minYoutubeViews: 100000,
       minNicoViews: 5000,
       excludedSongTypes: SMART_DERIVED_SONG_TYPES,
+      publishYearFrom: '2020',
+      lengthMaxSeconds: '360',
+      pvService: 'both',
+      audioComputed: 'no',
     }))).toEqual([
-      'P: テストP',
-      'YouTube 100,000以上',
-      'ニコニコ 5,000以上',
-      '除外: カバー・リミックス・アレンジ・マッシュアップ',
-      '上限 200曲',
-      'VocaDB支持順',
+      { kind: 'producer', name: 'テストP' },
+      { kind: 'minViews', service: 'youtube', count: 100000 },
+      { kind: 'minViews', service: 'niconico', count: 5000 },
+      { kind: 'excludedSongTypes', types: SMART_DERIVED_SONG_TYPES },
+      { kind: 'publishYear', from: '2020', to: '' },
+      { kind: 'length', min: '', max: '360' },
+      { kind: 'video', service: 'both' },
+      { kind: 'audioAnalysis', analyzed: false },
+      { kind: 'maxSongs', count: 200 },
+      { kind: 'sort', sortBy: 'FavoritedTimes' },
     ]);
   });
 
-  it('formats custom limit and sort choices', () => {
-    expect(formatSmartPlaylistRule(rule({ maxSongs: 50, sortBy: 'YoutubeViews' }))).toEqual([
-      '条件なし',
-      '上限 50曲',
-      'YouTube再生数順',
+  it('compares rules by value, not by object', () => {
+    const saved = rule({ minYoutubeViews: 1000, sortBy: 'YoutubeViews' });
+    expect(isSameSmartPlaylistRule(saved, JSON.parse(JSON.stringify(saved)) as SmartPlaylistRule)).toBe(true);
+    expect(isSameSmartPlaylistRule(saved, normalizeSmartPlaylistRule(saved))).toBe(true);
+    expect(isSameSmartPlaylistRule(saved, rule({ minYoutubeViews: 2000, sortBy: 'YoutubeViews' }))).toBe(false);
+    expect(isSameSmartPlaylistRule(saved, undefined)).toBe(false);
+    expect(isSameSmartPlaylistRule(undefined, undefined)).toBe(true);
+  });
+
+  it('describes custom limit and sort choices', () => {
+    expect(describeSmartPlaylistRule(rule({ maxSongs: 50, sortBy: 'YoutubeViews' }))).toEqual([
+      { kind: 'noRules' },
+      { kind: 'maxSongs', count: 50 },
+      { kind: 'sort', sortBy: 'YoutubeViews' },
     ]);
+    expect(smartPlaylistSortLabel('YoutubeViews')).toBe('YouTube再生数順');
   });
 
   it('builds a database query that applies the saved conditions before pagination', () => {

@@ -1,103 +1,145 @@
-import { useMemo, useState } from 'react';
-import { Link } from 'react-router';
-import { useHiddenSongStore } from '../stores/hiddenSongStore';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useHiddenSongStore, type HiddenSongRecord } from '../stores/hiddenSongStore';
 import { useLanguageStore } from '../stores/languageStore';
+import { confirmDialog } from '../stores/confirmStore';
+import { showToast } from '../stores/toastStore';
 import { useTranslateSourceText } from '../i18n';
+import { MOBILE_MEDIA_QUERY, useMediaQuery } from '../hooks/useMediaQuery';
+import { formatArtistLine, formatCount } from '../utils/songMeta';
+import { formatRelativeTime } from '../utils/relativeDate';
+import { filterSongsByText } from '../utils/ratedSongs';
+import Button from '../components/ui/Button';
+import EmptyState from '../components/ui/EmptyState';
+import IconButton from '../components/ui/IconButton';
+import Menu, { MenuItem } from '../components/ui/Menu';
+import { PageHeader, PageShell } from '../components/ui/PageHeader';
+import SearchField from '../components/ui/SearchField';
+import SongListRow from '../components/ui/SongListRow';
+import SortMenu from '../components/ui/SortMenu';
+import { EyeIcon, EyeOffIcon, MoreVertIcon } from '../components/ui/icons';
 
 type SortMode = 'recent' | 'name';
 
-function thumbnail(song: { thumbUrl?: string; pvs?: Array<{ service: string; pvId: string }> }): string | null {
-  if (song.thumbUrl) return song.thumbUrl;
-  const youtube = song.pvs?.find(pv => pv.service === 'Youtube');
-  return youtube ? `https://img.youtube.com/vi/${youtube.pvId}/mqdefault.jpg` : null;
-}
-
+/**
+ * HiddenSongsPage - 表示しない曲（おすすめ・自動再生から外した曲。明示的な検索では今までどおり出る）
+ */
 export default function HiddenSongsPage() {
   const t = useTranslateSourceText();
   const language = useLanguageStore(state => state.language);
+  const isMobile = useMediaQuery(MOBILE_MEDIA_QUERY);
   const hiddenSongs = useHiddenSongStore(state => state.hiddenSongs);
-  const restoreSong = useHiddenSongStore(state => state.restoreSong);
   const [query, setQuery] = useState('');
   const [sortMode, setSortMode] = useState<SortMode>('recent');
 
+  const allRecords = useMemo(() => Object.values(hiddenSongs), [hiddenSongs]);
   const records = useMemo(() => {
-    const normalized = query.trim().toLocaleLowerCase('ja');
-    const items = Object.values(hiddenSongs).filter(record => !normalized
-      || record.song.name.toLocaleLowerCase('ja').includes(normalized)
-      || record.song.artistString?.toLocaleLowerCase('ja').includes(normalized));
-    return items.sort((a, b) => sortMode === 'name'
-      ? a.song.name.localeCompare(b.song.name, 'ja')
-      : b.hiddenAt - a.hiddenAt);
-  }, [hiddenSongs, query, sortMode]);
+    const matchingIds = new Set(filterSongsByText(allRecords.map(record => record.song), query).map(song => song.id));
+    return allRecords
+      .filter(record => matchingIds.has(record.song.id))
+      .sort((a, b) => sortMode === 'name'
+        ? a.song.name.localeCompare(b.song.name, 'ja')
+        : b.hiddenAt - a.hiddenAt);
+  }, [allRecords, query, sortMode]);
+
+  // The pressed 再表示 leaves with its row: keyboard and screen reader users continue from the next row
+  // (the previous one at the end), or from the empty state when nothing is left.
+  const unhideButtons = useRef(new Map<number, HTMLButtonElement>());
+  const emptyRef = useRef<HTMLDivElement>(null);
+  const pendingFocus = useRef<number | 'empty' | null>(null);
+  useEffect(() => {
+    const target = pendingFocus.current;
+    if (target === null) return;
+    pendingFocus.current = null;
+    const element = target === 'empty' ? emptyRef.current : unhideButtons.current.get(target);
+    element?.focus();
+  });
+
+  const unhide = (record: HiddenSongRecord) => {
+    const index = records.findIndex(item => item.song.id === record.song.id);
+    const neighbour = records[index + 1] ?? records[index - 1];
+    pendingFocus.current = neighbour ? neighbour.song.id : 'empty';
+    useHiddenSongStore.getState().restoreSong(record.song.id);
+    showToast(t('再表示しました'), {
+      action: {
+        label: t('元に戻す'),
+        // Restore the same record so the song keeps its original "hidden" time.
+        onAction: () => useHiddenSongStore.setState(state => ({
+          hiddenSongs: { ...state.hiddenSongs, [String(record.song.id)]: record },
+        })),
+      },
+    });
+  };
+
+  const unhideAll = async () => {
+    const confirmed = await confirmDialog({ title: t('すべての曲を再表示しますか？'), confirmLabel: t('再表示') });
+    if (!confirmed) return;
+    pendingFocus.current = 'empty';
+    useHiddenSongStore.getState().replaceHiddenSongs({});
+    showToast(t('再表示しました'));
+  };
+
+  const count = allRecords.length;
+  const now = Date.now();
 
   return (
-    <div className="w-full px-4 py-5 sm:px-6 lg:px-8">
-      <div className="mx-auto max-w-4xl">
-        <div className="mb-6">
-          <p className="mb-1 text-xs font-medium uppercase tracking-[0.18em]" style={{ color: '#fb7185' }}>Preference controls</p>
-          <h1 className="text-2xl font-bold" style={{ color: 'var(--color-text-primary)' }}>{t('表示しない曲')}</h1>
-          <p className="mt-2 text-sm" style={{ color: 'var(--color-text-secondary)' }}>
-            {t('ここにある曲は検索、おすすめ、自動再生候補に表示されません。星評価や履歴、プレイリストの記録は削除していません。')}
-          </p>
+    <PageShell>
+      <PageHeader
+        title={t('表示しない曲')}
+        meta={count > 0
+          ? `${formatCount(count, 'song', language)} · ${t('おすすめと自動再生に表示されません')}`
+          : undefined}
+        actions={count > 0 ? (
+          <>
+            <SearchField expandable value={query} onChange={setQuery} label={t('表示しない曲を検索')} width={isMobile ? 200 : 240} />
+            <SortMenu
+              value={sortMode}
+              options={[
+                { value: 'recent', label: t('新しい順') },
+                { value: 'name', label: t('曲名順') },
+              ]}
+              onChange={setSortMode}
+              compact={isMobile}
+            />
+            <Menu trigger={<IconButton label={t('その他の操作')} icon={<MoreVertIcon />} />} align="end">
+              <MenuItem icon={<EyeIcon />} onSelect={() => void unhideAll()}>{t('すべて再表示')}</MenuItem>
+            </Menu>
+          </>
+        ) : undefined}
+      />
+
+      {count === 0 || records.length === 0 ? (
+        <div ref={emptyRef} tabIndex={-1} className="outline-none">
+          {count === 0
+            ? <EmptyState icon={<EyeOffIcon />} title={t('表示しない曲はありません')} />
+            : <EmptyState compact title={t('一致する曲はありません')} />}
         </div>
-
-        <div className="mb-5 flex flex-col gap-2 sm:flex-row">
-          <input
-            type="search"
-            value={query}
-            onChange={event => setQuery(event.target.value)}
-            placeholder={t('曲名・アーティスト')}
-            className="min-w-0 flex-1 rounded-xl border px-3 py-2.5 text-sm outline-none"
-            style={{ background: 'var(--color-surface)', borderColor: 'var(--color-border)', color: 'var(--color-text-primary)' }}
-          />
-          <select
-            value={sortMode}
-            onChange={event => setSortMode(event.target.value as SortMode)}
-            className="ui-select sm:w-40"
-            aria-label={t('並び順')}
-          >
-            <option value="recent">{t('追加が新しい順')}</option>
-            <option value="name">{t('曲名順')}</option>
-          </select>
+      ) : (
+        <div className="-mx-2">
+          {records.map(record => (
+            <SongListRow
+              key={record.song.id}
+              song={record.song}
+              size={isMobile ? 'sm' : 'md'}
+              meta={[
+                `${formatArtistLine(record.song)} · ${t('{time}に非表示', { time: formatRelativeTime(record.hiddenAt, now, language) })}`,
+              ]}
+              trailing={(
+                <Button
+                  ref={element => {
+                    if (element) unhideButtons.current.set(record.song.id, element);
+                    else unhideButtons.current.delete(record.song.id);
+                  }}
+                  icon={isMobile ? undefined : <EyeIcon />}
+                  className="max-sm:h-10"
+                  onClick={() => unhide(record)}
+                >
+                  {t('再表示')}
+                </Button>
+              )}
+            />
+          ))}
         </div>
-
-        <p className="mb-3 text-xs" style={{ color: 'var(--color-text-muted)' }}>{t('{count} 曲', { count: records.length.toLocaleString() })}</p>
-
-        {records.length === 0 ? (
-          <div className="rounded-2xl border px-6 py-16 text-center" style={{ borderColor: 'var(--color-border)', background: 'var(--color-surface)' }}>
-            <p className="text-base font-medium" style={{ color: 'var(--color-text-primary)' }}>
-              {t(Object.keys(hiddenSongs).length === 0 ? '表示しない曲はありません' : '条件に合う曲がありません')}
-            </p>
-            <p className="mt-2 text-sm" style={{ color: 'var(--color-text-muted)' }}>{t('再生画面の「表示しない」から追加できます。')}</p>
-          </div>
-        ) : (
-          <div className="overflow-hidden rounded-2xl border" style={{ borderColor: 'var(--color-border)', background: 'var(--color-surface)' }}>
-            {records.map(record => {
-              const image = thumbnail(record.song);
-              return (
-                <div key={record.song.id} className="flex flex-wrap items-center gap-3 border-b p-3 last:border-b-0 sm:flex-nowrap" style={{ borderColor: 'var(--color-border)' }}>
-                  <div className="h-14 w-24 flex-shrink-0 overflow-hidden rounded-lg" style={{ background: 'var(--color-bg-secondary)' }}>
-                    {image && <img src={image} alt="" className="h-full w-full object-cover" loading="lazy" />}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-semibold" style={{ color: 'var(--color-text-primary)' }}>{record.song.name}</p>
-                    <p className="truncate text-xs" style={{ color: 'var(--color-text-secondary)' }}>{record.song.artistString}</p>
-                    <p className="mt-1 text-[11px]" style={{ color: 'var(--color-text-muted)' }}>
-                      {new Date(record.hiddenAt).toLocaleDateString(language === 'ja' ? 'ja-JP' : 'en')}{t(' に非表示')}
-                    </p>
-                  </div>
-                  <div className="ml-auto flex w-full justify-end gap-2 sm:w-auto">
-                    <Link className="btn-ghost rounded-full px-3 py-2 text-xs" to={`/watch?v=${record.song.id}&autoplay=0`}>{t('確認')}</Link>
-                    <button type="button" className="btn-secondary rounded-full px-3 py-2 text-xs" onClick={() => restoreSong(record.song.id)}>
-                      {t('再表示')}
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
-    </div>
+      )}
+    </PageShell>
   );
 }

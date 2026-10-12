@@ -9,7 +9,7 @@ function song(overrides: Partial<Song>): Song {
 describe('formatWeeklyRankingReason', () => {
   it('shows the measured average daily playback increase', () => {
     expect(formatWeeklyRankingReason(song({ averageDailyGrowth: 12_345.4 })))
-      .toBe('1日平均 +1.2万再生');
+      .toBe('1日平均 +1.2万回再生');
   });
 
   it('does not manufacture a metric without positive growth', () => {

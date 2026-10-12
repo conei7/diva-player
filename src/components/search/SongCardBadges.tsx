@@ -1,122 +1,59 @@
+import { Fragment } from 'react';
+import type { MouseEvent, PointerEvent, ReactNode } from 'react';
+import { Link } from 'react-router';
 import type { Song } from '../../types/vocadb';
-import { formatJapaneseViews } from '../../utils/formatViews';
-import { getPVBadgeStyle, isUnofficialOnly } from '../../utils/pvBadge';
-import { AUDIO_INSTRUMENT_LABELS } from '../../config/audioInstruments';
-import { useTranslateSourceText } from '../../i18n';
-import { useLanguageStore } from '../../stores/languageStore';
+import { getVocalistNames } from '../../utils/songMeta';
+import { artistPath } from '../../utils/routes';
+import { getSongProducerLinks } from './songCardMeta';
 
-interface SongCardBadgesProps {
+/*
+ * Small presentational pieces shared by the home tile (SongCard) and the search result row:
+ * the artist line and the gray tag (view counts: ui/ViewCounts).
+ */
+
+const stopPropagation = (event: MouseEvent | PointerEvent) => event.stopPropagation();
+
+/**
+ * 「wowaka · 初音ミク, GUMI」 (tile) or 「wowaka feat. 初音ミク」 (row). Producer names link to their song
+ * list unless `linked` is false (selection mode).
+ */
+export function SongArtistLine({ song, linked = true, vocalistSeparator = ' · ' }: {
   song: Song;
-  pvServices: Set<string>;
-  isYTUnofficialOnly: boolean;
-  isNicoUnofficialOnly: boolean;
-  relativeDate?: string | null;
+  linked?: boolean;
+  vocalistSeparator?: string;
+}) {
+  const producers = getSongProducerLinks(song);
+  // A producer who also sings (self-covers) is named once.
+  const producerNames = new Set(producers.map(producer => producer.name));
+  const vocalists = getVocalistNames(song).filter(name => !producerNames.has(name)).join(', ');
+  if (producers.length === 0 && !vocalists) return <>{song.artistString}</>;
+  return (
+    <>
+      {producers.map((producer, index) => (
+        <Fragment key={`${producer.id ?? 'name'}-${producer.name}`}>
+          {index > 0 && ', '}
+          {linked && producer.id ? (
+            <Link
+              to={artistPath({ id: producer.id, name: producer.name })}
+              onClick={stopPropagation}
+              onPointerDown={stopPropagation}
+              className="text-inherit no-underline transition-colors duration-150 hover:text-yt-text"
+            >
+              {producer.name}
+            </Link>
+          ) : producer.name}
+        </Fragment>
+      ))}
+      {vocalists && (producers.length > 0 ? `${vocalistSeparator}${vocalists}` : vocalists)}
+    </>
+  );
 }
 
-/** Presentation-only metadata row for a song card. */
-export default function SongCardBadges({
-  song,
-  pvServices,
-  isYTUnofficialOnly,
-  isNicoUnofficialOnly,
-  relativeDate,
-}: SongCardBadgesProps) {
-  const t = useTranslateSourceText();
-  const language = useLanguageStore(state => state.language);
-  const formatViews = (value: number) => language === 'en'
-    ? new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(value)
-    : formatJapaneseViews(value);
-  const isSoundCloudUnofficialOnly = isUnofficialOnly(song.pvs ?? [], 'SoundCloud');
-  const isBilibiliUnofficialOnly = isUnofficialOnly(song.pvs ?? [], 'Bilibili');
-
+/** The gray 12px tag (song type, self-cover, hidden). */
+export function MetaTag({ children }: { children: ReactNode }) {
   return (
-    <div className="flex items-center flex-wrap gap-2 mt-2">
-      {(pvServices.has('Youtube') || (song.youtubeViews || 0) > 0) && (
-        <span
-          className="text-[10px] font-bold px-1.5 py-0.5 rounded flex items-center gap-1"
-          style={{
-            ...getPVBadgeStyle('Youtube', isYTUnofficialOnly ? 'Reprint' : 'Original'),
-            opacity: isYTUnofficialOnly ? 0.8 : 1,
-          }}
-          title={t('YouTube 再生回数')}
-        >
-          <span aria-hidden="true">▶</span>
-          {song.youtubeViews && song.youtubeViews > 0
-            ? formatViews(song.youtubeViews)
-            : (isYTUnofficialOnly ? t('非公式YT') : 'YT')}
-        </span>
-      )}
-
-      {(pvServices.has('NicoNicoDouga') || (song.nicoViews || 0) > 0) && (
-        <span
-          className="text-[10px] font-bold px-1.5 py-0.5 rounded flex items-center gap-1"
-          style={{
-            ...getPVBadgeStyle('NicoNicoDouga', isNicoUnofficialOnly ? 'Reprint' : 'Original'),
-            opacity: isNicoUnofficialOnly ? 0.8 : 1,
-          }}
-          title={t('ニコニコ動画 再生回数')}
-        >
-          <span aria-hidden="true">N</span>
-          {song.nicoViews && song.nicoViews > 0
-            ? formatViews(song.nicoViews)
-            : (isNicoUnofficialOnly ? t('非公式ニコ') : t('ニコ'))}
-        </span>
-      )}
-
-      {pvServices.has('SoundCloud') && (
-        <span
-          className="text-[10px] font-bold px-1.5 py-0.5 rounded"
-          style={{
-            ...getPVBadgeStyle('SoundCloud', isSoundCloudUnofficialOnly ? 'Reprint' : 'Original'),
-            opacity: isSoundCloudUnofficialOnly ? 0.8 : 1,
-          }}
-          title={t('SoundCloudで再生可能')}
-        >
-          SC
-        </span>
-      )}
-
-      {pvServices.has('Bilibili') && (
-        <span
-          className="text-[10px] font-bold px-1.5 py-0.5 rounded"
-          style={{
-            ...getPVBadgeStyle('Bilibili', isBilibiliUnofficialOnly ? 'Reprint' : 'Original'),
-            opacity: isBilibiliUnofficialOnly ? 0.8 : 1,
-          }}
-          title={t('Bilibiliで再生可能')}
-        >
-          Bili
-        </span>
-      )}
-
-      {relativeDate && (
-        <span className="text-[10px]" style={{ color: 'var(--color-text-muted)' }}>
-          {relativeDate}
-        </span>
-      )}
-
-      {song.audioInstruments?.slice(0, 2).map(instrument => (
-        <span key={instrument.key} className="rounded bg-white/[0.05] px-1.5 py-0.5 text-[10px] text-neutral-400" title={t('音源解析による推定（信頼度 {confidence}%）', { confidence: Math.round(instrument.score * 100) })}>
-          {t(AUDIO_INSTRUMENT_LABELS.get(instrument.key) ?? instrument.key)}
-        </span>
-      ))}
-
-      <div className="flex-1" />
-
-      {song.isSelfCover && (
-        <span className="rounded bg-fuchsia-400/15 px-1.5 py-0.5 text-[10px] font-semibold text-fuchsia-200" title={t('原曲と同じプロデューサーによるカバー')}>
-          Self Cover
-        </span>
-      )}
-
-      {!song.isSelfCover && song.songType !== 'Original' && song.songType !== 'Unspecified' && (
-        <span
-          className="text-[10px] px-1.5 py-0.5 rounded font-medium leading-none"
-          style={{ background: 'rgba(139, 92, 246, 0.12)', color: 'var(--color-accent-purple)' }}
-        >
-          {song.songType}
-        </span>
-      )}
-    </div>
+    <span className="inline-flex h-5 shrink-0 items-center rounded-badge bg-yt-tonal px-1.5 text-xs leading-4 font-medium text-yt-text-secondary">
+      {children}
+    </span>
   );
 }

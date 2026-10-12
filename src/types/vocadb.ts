@@ -198,7 +198,10 @@ export interface Playlist {
   folderId?: string;       // null / undefined = ルート直下
   songs: Song[];
   createdAt: number;
+  /** 利用者が最後に変更した時刻（「最終更新」・ライブラリの並び）。自動の更新では進めない。 */
   updatedAt: number;
+  /** スマートの再計算や同期で曲が最後に入れ替わった時刻（updatedAt は進めない）。 */
+  songsRefreshedAt?: number;
   /** true = 削除・移動不可のシステムプレイリスト（後で聴く等） */
   isPinned?: boolean;
   /** 条件保存型プレイリスト。曲一覧は表示時に再計算される。 */

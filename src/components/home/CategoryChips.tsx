@@ -1,10 +1,11 @@
-import { useRef, useEffect } from 'react';
+import { useEffect, useRef } from 'react';
+import type { ReactNode } from 'react';
+import { useTranslateSourceText } from '../../i18n';
+import { Chip, ChipBar } from '../ui/Chip';
 
 /**
- * CategoryChips - YouTube風のカテゴリーフィルターチップ
- *
- * 横スクロール可能な丸薬型（Pill型）ボタン群。
- * ユーザーの気分に合わせてホームの表示内容を切り替える。
+ * CategoryChips - the home feed's chip bar (おすすめ / ランキング / …).
+ * Hovering or focusing a chip prefetches its feed.
  */
 
 export interface CategoryChip {
@@ -17,57 +18,41 @@ interface CategoryChipsProps {
   activeChip: string;
   onSelect: (id: string) => void;
   onPrefetch?: (id: string) => void;
+  /** Fixed at the right end, outside the scrolling chips (the selection-mode button). */
+  trailing?: ReactNode;
 }
 
-export default function CategoryChips({ chips, activeChip, onSelect, onPrefetch }: CategoryChipsProps) {
-  const scrollRef = useRef<HTMLDivElement>(null);
+export default function CategoryChips({ chips, activeChip, onSelect, onPrefetch, trailing }: CategoryChipsProps) {
+  const t = useTranslateSourceText();
+  const containerRef = useRef<HTMLDivElement>(null);
 
-  // アクティブチップが見えるようにスクロール
+  // Keep the active chip in view. Only the chip row scrolls (scrollIntoView could also move the page,
+  // which would fight the restored feed scroll position).
   useEffect(() => {
-    const container = scrollRef.current;
-    if (!container) return;
-    const activeEl = container.querySelector('[data-active="true"]') as HTMLElement;
-    if (activeEl) {
-      const containerRect = container.getBoundingClientRect();
-      const chipRect = activeEl.getBoundingClientRect();
-      if (chipRect.left < containerRect.left || chipRect.right > containerRect.right) {
-        activeEl.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
-      }
-    }
+    const chip = containerRef.current?.querySelector<HTMLElement>('[data-active="true"]');
+    const scroller = chip?.closest<HTMLElement>('.overflow-x-auto');
+    if (!chip || !scroller) return;
+    const chipRect = chip.getBoundingClientRect();
+    const scrollerRect = scroller.getBoundingClientRect();
+    if (chipRect.left >= scrollerRect.left && chipRect.right <= scrollerRect.right) return;
+    scroller.scrollLeft += chipRect.left - scrollerRect.left - (scrollerRect.width - chipRect.width) / 2;
   }, [activeChip]);
 
   return (
-    <div className="relative">
-      <div
-        ref={scrollRef}
-        className="flex gap-2 overflow-x-auto pb-1 scrollbar-hide"
-        style={{
-          scrollbarWidth: 'none',
-          msOverflowStyle: 'none',
-        }}
-      >
-        <style>{`.scrollbar-hide::-webkit-scrollbar { display: none; }`}</style>
-        {chips.map((chip) => {
-          const isActive = chip.id === activeChip;
-          return (
-            <button
-              key={chip.id}
-              data-active={isActive}
-              onMouseEnter={() => onPrefetch?.(chip.id)}
-              onFocus={() => onPrefetch?.(chip.id)}
-              onClick={() => onSelect(chip.id)}
-              className="yt-chip flex-shrink-0"
-              style={{
-                background: isActive ? 'var(--color-yt-chip-active)' : 'var(--color-yt-chip)',
-                color: isActive ? '#0f0f0f' : 'var(--color-yt-text)',
-                fontWeight: isActive ? 600 : 400,
-              }}
-            >
-              {chip.label}
-            </button>
-          );
-        })}
-      </div>
+    <div ref={containerRef}>
+      <ChipBar label={t('カテゴリ')} trailing={trailing}>
+        {chips.map(chip => (
+          <Chip
+            key={chip.id}
+            selected={chip.id === activeChip}
+            onMouseEnter={() => onPrefetch?.(chip.id)}
+            onFocus={() => onPrefetch?.(chip.id)}
+            onClick={() => onSelect(chip.id)}
+          >
+            {chip.label}
+          </Chip>
+        ))}
+      </ChipBar>
     </div>
   );
 }

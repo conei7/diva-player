@@ -213,11 +213,18 @@ try {
     throw new Error(`Browser language detection mismatch: ${initialLanguage} !== ${detectedLanguage}`);
   }
   if (initialLanguage === 'ja') {
-    await page.click('button[aria-label="表示言語を英語に切り替え"]');
+    // The display language lives in the top bar's ⋮ menu (MenuLabel 表示言語 + radios).
+    await page.click('header button[aria-label="その他の操作"]');
+    await page.waitForSelector('[role="menu"] [role="menuitemradio"]', { timeout: 10_000 });
+    await page.evaluate(() => [...document.querySelectorAll('[role="menu"] [role="menuitemradio"]')]
+      .find(item => item.textContent?.trim() === 'English')?.click());
   }
   await page.waitForFunction(() => document.documentElement.lang === 'en');
-  await page.waitForSelector('button[aria-label="Switch display language to Japanese"]', { timeout: 60_000 });
+  await page.waitForSelector('header button[aria-label="More actions"]', { timeout: 60_000 });
   await page.waitForSelector('button[aria-label="Share"]', { timeout: 60_000 });
+  // With several producers the favorite-producer pill opens a menu with one item per producer.
+  await page.click('[data-testid="watch-favorite-producer-pill"]');
+  await page.waitForSelector('[role="menu"] .watch-favorite-producer-button', { timeout: 10_000 });
   const englishWatch = await page.evaluate(() => ({
     shareButton: [...document.querySelectorAll('button')].some(button => button.getAttribute('aria-label') === 'Share'),
     starRating: document.querySelector('[role="group"][aria-label="Star rating"]') !== null,
@@ -228,11 +235,12 @@ try {
   if (!englishWatch.shareButton || !englishWatch.starRating || !englishWatch.favoriteProducerButton || !englishWatch.recommendationTab || !englishWatch.sourceSelector) {
     throw new Error(`English watch interface is incomplete: ${JSON.stringify(englishWatch)}`);
   }
+  await page.keyboard.press('Escape');
   await page.goto(base, { waitUntil: 'domcontentloaded', timeout: 60_000 });
   await page.waitForFunction(() => document.body.innerText.includes('For you'));
   const englishShell = await page.evaluate(() => ({
     language: document.documentElement.lang,
-    searchPlaceholder: document.querySelector('input[placeholder="Search Vocaloid producers or songs"]') !== null,
+    searchPlaceholder: document.querySelector('input[placeholder="Search songs & producers"]') !== null,
     soundMap: document.body.innerText.includes('Sound map'),
   }));
   if (englishShell.language !== 'en' || !englishShell.searchPlaceholder || !englishShell.soundMap) {
@@ -240,15 +248,12 @@ try {
   }
   await page.click('button[aria-label="Advanced search"]');
   await page.waitForFunction(() => document.querySelector('button[aria-label="Advanced search"]')?.getAttribute('aria-pressed') === 'true');
-  await page.waitForSelector('.filter-section-header', { timeout: 10_000 });
-  const advancedSearchEnglish = await page.evaluate(() => document.body.innerText);
-  if (!advancedSearchEnglish.includes('QUICK FILTERS')) {
-    throw new Error(`Quick-filter heading translation is missing: ${advancedSearchEnglish.slice(0, 1200)}`);
-  }
+  await page.waitForSelector('[data-testid="advanced-search-dialog"] .filter-section-header', { timeout: 10_000 });
+  const advancedSearchEnglish = await page.$eval('[data-testid="advanced-search-dialog"]', dialog => dialog.innerText);
   if (!advancedSearchEnglish.includes('Early Vocaloid era')
-    || !advancedSearchEnglish.includes('Release year & duration')
+    || !advancedSearchEnglish.includes('Release year & length')
     || !advancedSearchEnglish.includes('Views & favorites')
-    || !advancedSearchEnglish.includes('Search with these filters')) {
+    || !advancedSearchEnglish.includes('Apply')) {
     throw new Error(`Advanced-search filters are not translated: ${advancedSearchEnglish.slice(0, 500)}`);
   }
   const filterSections = await page.$$('button.filter-section-header');
@@ -257,75 +262,74 @@ try {
   if (audioSectionIndex < 0) throw new Error('English audio-filter section is missing');
   await filterSections[audioSectionIndex].click();
   await page.waitForFunction(() => document.body.innerText.includes('Electric piano'));
-  await page.click('button[aria-label="Advanced search"]');
-  const homeSongMenu = 'button[aria-label="Menu for DIVA E2E Home Song"]';
+  await page.click('[data-testid="advanced-search-dialog"] button[aria-label="Close"]');
+  await page.waitForFunction(() => !document.querySelector('[data-testid="advanced-search-dialog"]'));
+  const homeSongMenu = 'button[aria-label="More actions for “DIVA E2E Home Song”"]';
   await page.waitForSelector(homeSongMenu, { timeout: 30_000 });
   const homeSongMenuLocator = page.locator(homeSongMenu);
   await homeSongMenuLocator.hover();
   await homeSongMenuLocator.click();
   await page.waitForSelector('[role="menu"]', { timeout: 10_000 });
   const songMenuEnglish = await page.$eval('[role="menu"]', menu => menu.innerText);
-  if (!songMenuEnglish.includes('Listen Later')
+  if (!songMenuEnglish.includes('Save to Listen later')
     || !songMenuEnglish.includes('Save to playlist')
-    || !songMenuEnglish.includes('Share song')
-    || !songMenuEnglish.includes('Hide this song')) {
+    || !songMenuEnglish.includes('Share')
+    || !songMenuEnglish.includes('Hide')) {
     throw new Error(`Song-card menu is not translated: ${songMenuEnglish}`);
   }
   await page.keyboard.press('Escape');
   console.log('PASS English player controls, song-card menu, and advanced-search filters');
   await page.goto(new URL('playlists', base), { waitUntil: 'domcontentloaded', timeout: 60_000 });
-  await page.waitForSelector('aside[aria-label="Playlist library"]', { timeout: 60_000 });
-  await page.evaluate(() => [...document.querySelectorAll('aside[aria-label="Playlist library"] button')].find(button => button.textContent?.trim() === 'New playlist')?.click());
-  await page.waitForSelector('input[placeholder="New playlist"]', { timeout: 60_000 });
-  await page.type('input[placeholder="New playlist"]', 'DIVA English UI E2E');
+  // The library's 「New」 menu: New playlist → dialog; Smart playlist → the rules dialog.
+  const openNewMenuItem = async label => {
+    await page.waitForSelector('section[aria-label="Playlist library"]', { timeout: 60_000 });
+    await page.evaluate(() => [...document.querySelectorAll('section[aria-label="Playlist library"] button')].find(button => button.textContent?.trim() === 'New')?.click());
+    await page.waitForSelector('[role="menu"]', { timeout: 60_000 });
+    await page.evaluate(text => [...document.querySelectorAll('[role="menu"] [role="menuitem"]')].find(item => item.textContent?.trim() === text)?.click(), label);
+  };
+  await openNewMenuItem('New playlist');
+  await page.waitForSelector('[role="dialog"] input[placeholder="Add a title"]', { timeout: 60_000 });
+  await page.type('[role="dialog"] input[placeholder="Add a title"]', 'DIVA English UI E2E');
   await page.click('button[aria-label="Create playlist"]');
-  await page.waitForFunction(() => document.body.innerText.includes('DIVA English UI E2E'));
-  await page.click('button[title="Create smart playlist"]');
-  await page.waitForSelector('[role="dialog"] h2#smart-playlist-builder-title', { timeout: 60_000 });
-  const smartPlaylistEnglish = await page.$eval('#smart-playlist-builder-title', heading => heading.textContent);
-  if (smartPlaylistEnglish !== 'Collect songs by rules') {
+  await page.waitForFunction(() => document.querySelector('main section h1')?.textContent === 'DIVA English UI E2E');
+  await page.goBack({ waitUntil: 'domcontentloaded' });
+  await openNewMenuItem('Smart playlist');
+  await page.waitForSelector('[role="dialog"] h2', { timeout: 60_000 });
+  const smartPlaylistEnglish = await page.$eval('[role="dialog"] h2', heading => heading.textContent);
+  if (smartPlaylistEnglish !== 'New smart playlist') {
     throw new Error(`Smart-playlist dialog is not translated: ${smartPlaylistEnglish}`);
   }
   await page.click('[role="dialog"] button[aria-label="Close"]');
+  await page.waitForFunction(() => !document.querySelector('[role="dialog"][aria-modal="true"]'));
   await page.click('button[aria-label="Settings"]');
   await page.waitForSelector('[role="dialog"][aria-label="Settings"]', { timeout: 60_000 });
   const settingsEnglish = await page.$eval('[role="dialog"][aria-label="Settings"]', dialog => dialog.innerText);
-  if (!settingsEnglish.includes('Global discovery filters') || !settingsEnglish.includes('Playback & controls')) {
+  if (!settingsEnglish.includes('Use filters') || !settingsEnglish.includes('General')) {
     throw new Error(`Settings dialog is not translated: ${settingsEnglish.slice(0, 300)}`);
   }
   await page.click('#settings-tab-data');
-  await page.evaluate(() => {
-    const button = [...document.querySelectorAll('button')].find(item => item.textContent?.trim() === 'Open data & backups');
-    if (!button) throw new Error('Open data & backups button is missing');
-    button.click();
-  });
-  await new Promise(resolve => setTimeout(resolve, 500));
-  const backupDialogs = await page.$$eval('[role="dialog"]', dialogs => dialogs.map(dialog => ({
-    label: dialog.getAttribute('aria-label'),
-    text: dialog.innerText.slice(0, 200),
-  })));
-  if (!backupDialogs.some(dialog => dialog.label === 'Data & backups')) {
-    throw new Error(`Backup dialog did not open: ${JSON.stringify(backupDialogs)}`);
-  }
-  const backupEnglish = await page.$eval('[role="dialog"][aria-label="Data & backups"]', dialog => dialog.innerText);
-  if (!backupEnglish.includes('Save everything from your history to settings in one file')
-    || !backupEnglish.includes('Audio and video files are not included')) {
-    throw new Error(`Backup dialog is not translated: ${backupEnglish.slice(0, 350)}`);
+  await page.waitForSelector('#settings-panel-data', { timeout: 60_000 });
+  const dataActionsEnglish = await page.$$eval('#settings-panel-data button', buttons => buttons.map(button => button.textContent?.trim()));
+  if (!dataActionsEnglish.includes('Save backup') || !dataActionsEnglish.includes('Restore from file')) {
+    throw new Error(`Backup actions are not translated: ${JSON.stringify(dataActionsEnglish)}`);
   }
   await page.reload({ waitUntil: 'domcontentloaded' });
   console.log('PASS English playlist library, smart-playlist builder, and settings dialog');
   await page.reload({ waitUntil: 'domcontentloaded' });
-  await page.waitForSelector('button[aria-label="Switch display language to Japanese"]', { timeout: 60_000 });
-  await page.click('button[aria-label="Switch display language to Japanese"]');
+  await page.waitForSelector('header button[aria-label="More actions"]', { timeout: 60_000 });
+  await page.click('header button[aria-label="More actions"]');
+  await page.waitForSelector('[role="menu"] [role="menuitemradio"]', { timeout: 10_000 });
+  await page.evaluate(() => [...document.querySelectorAll('[role="menu"] [role="menuitemradio"]')]
+    .find(item => item.textContent?.trim() === '日本語')?.click());
   await page.waitForFunction(() => document.documentElement.lang === 'ja');
   await page.reload({ waitUntil: 'domcontentloaded' });
-  await page.waitForSelector('button[aria-label="表示言語を英語に切り替え"]', { timeout: 60_000 });
+  await page.waitForSelector('header button[aria-label="その他の操作"]', { timeout: 60_000 });
   await page.goto(new URL('watch?v=1501', base), { waitUntil: 'domcontentloaded', timeout: 60_000 });
-  await page.waitForSelector('button[aria-label="表示言語を英語に切り替え"]', { timeout: 60_000 });
+  await page.waitForSelector('header button[aria-label="その他の操作"]', { timeout: 60_000 });
   console.log('PASS browser language detection, language switch, discovery translations, and persistence');
-  await page.waitForSelector('a[aria-label="DIVA Player home"]', { timeout: 60_000 });
-  await page.waitForSelector('a[aria-label$=" の曲を表示"]', { timeout: 60_000 });
-  const producerHref = await page.$eval('a[aria-label$=" の曲を表示"]', element => element.getAttribute('href'));
+  await page.waitForSelector('a[aria-label="DIVA Player ホーム"]', { timeout: 60_000 });
+  await page.waitForSelector('a[aria-label$="の曲を表示"]', { timeout: 60_000 });
+  const producerHref = await page.$eval('a[aria-label$="の曲を表示"]', element => element.getAttribute('href'));
   if (!producerHref?.includes('artistId=') && !producerHref?.includes('?q=')) {
     throw new Error(`Watch-page producer is not a searchable link: ${producerHref}`);
   }
@@ -348,27 +352,51 @@ try {
     throw new Error(`Unexpected watch action layout: ${JSON.stringify(compactWatchLayout)}`);
   }
   await page.waitForSelector('button[aria-label="他1名のPを表示"]');
-  const collapsedProducerButtons = await page.$$eval('.watch-favorite-producer-button', buttons => buttons.length);
-  if (collapsedProducerButtons !== 3) throw new Error(`Expected 3 collapsed producers, got ${collapsedProducerButtons}`);
+  const producerLinks = 'a[aria-label$="の曲を表示"]';
+  const collapsedProducerLinks = await page.$$eval(`#watch-producer-list ${producerLinks}`, links => links.length);
+  if (collapsedProducerLinks !== 3) throw new Error(`Expected 3 collapsed producers, got ${collapsedProducerLinks}`);
   await page.click('button[aria-label="他1名のPを表示"]');
   await page.waitForSelector('button[aria-label="P一覧を折りたたむ"]');
-  const expandedProducerButtons = await page.$$eval('.watch-favorite-producer-button', buttons => buttons.length);
-  if (expandedProducerButtons !== 4) throw new Error(`Expected 4 expanded producers, got ${expandedProducerButtons}`);
+  const expandedProducerLinks = await page.$$eval(`#watch-producer-list ${producerLinks}`, links => links.length);
+  if (expandedProducerLinks !== 4) throw new Error(`Expected 4 expanded producers, got ${expandedProducerLinks}`);
   await page.click('button[aria-label="P一覧を折りたたむ"]');
   await page.waitForSelector('button[aria-label="他1名のPを表示"]');
+  // One favorite-producer toggle per producer, in the menu of the お気に入りP pill.
+  await page.click('[data-testid="watch-favorite-producer-pill"]');
+  await page.waitForSelector('[role="menu"] .watch-favorite-producer-button');
+  const favoriteProducerItems = await page.$$eval('[role="menu"] .watch-favorite-producer-button', items => items.length);
+  if (favoriteProducerItems !== 4) throw new Error(`Expected 4 favorite-producer items, got ${favoriteProducerItems}`);
+  await page.keyboard.press('Escape');
   console.log('PASS compact watch metadata, producer collapse, and action layout');
-  await page.waitForSelector('[data-testid="song-albums"] button[aria-label="「DIVA E2E Album」をプレイリストに追加"]');
+  await page.waitForSelector('button[aria-label="概要を展開する"]', { timeout: 60_000 });
+  await page.click('button[aria-label="概要を展開する"]');
+  await page.waitForSelector('button[aria-label="概要を折りたたむ"]', { timeout: 60_000 });
+  const descriptionState = await page.$eval('[data-testid="watch-description"]', root => {
+    const text = root.querySelector('p');
+    text?.click();
+    return {
+      expanded: root.getAttribute('data-expanded'),
+      whiteSpace: text ? getComputedStyle(text).whiteSpace : null,
+      linkCount: root.querySelectorAll('p a[href^="http"]').length,
+    };
+  });
+  if (descriptionState.expanded !== 'true' || descriptionState.whiteSpace !== 'pre-wrap') {
+    throw new Error(`Unexpected description state: ${JSON.stringify(descriptionState)}`);
+  }
+  console.log(`PASS description expansion UX (${descriptionState.linkCount} inline links)`);
+  // Albums are part of the expanded description.
+  await page.waitForSelector('[data-testid="song-albums"] button[aria-label="「DIVA E2E Album」からプレイリストを作成"]');
   const albumSection = await page.$eval('[data-testid="song-albums"]', section => ({
-    inDescription: Boolean(section.closest('div[aria-expanded]')),
+    inDescription: Boolean(section.closest('[data-testid="watch-description"]')),
     inActions: Boolean(section.closest('[data-testid="watch-action-bar"]')),
     names: [...section.querySelectorAll('a')].map(link => link.textContent),
   }));
   if (!albumSection.inDescription || albumSection.inActions || albumSection.names.length !== 2) {
     throw new Error(`Unexpected album placement: ${JSON.stringify(albumSection)}`);
   }
-  await page.click('[data-testid="song-albums"] button[aria-label="「DIVA E2E Album」をプレイリストに追加"]');
-  await page.waitForFunction(() => document.querySelector('[data-testid="song-albums"] [role="status"]')?.textContent?.includes('2曲を「DIVA E2E Album」へ追加しました。'));
-  if (!await page.$('button[aria-label="概要を展開する"]')) throw new Error('Album action unexpectedly expanded the description');
+  await page.click('[data-testid="song-albums"] button[aria-label="「DIVA E2E Album」からプレイリストを作成"]');
+  await page.waitForFunction(() => document.querySelector('[data-testid="toast-host"]')?.textContent?.includes('「DIVA E2E Album」を作成しました'));
+  if (!await page.$('button[aria-label="概要を折りたたむ"]')) throw new Error('Album action unexpectedly collapsed the description');
   const albumPlaylist = await page.evaluate(() => {
     const playlists = JSON.parse(localStorage.getItem('diva_playlists') ?? '[]');
     return playlists?.find(playlist => playlist.name === 'DIVA E2E Album')?.songs.map(song => song.id);
@@ -379,27 +407,22 @@ try {
   if (albumOverflow) throw new Error('Album rows overflow at 390px');
   await page.setViewport({ width: 1440, height: 900 });
   console.log('PASS album names and adjacent playlist actions in description, saved track order, and mobile layout');
+  // The album toast stays at the bottom-left for 8 seconds (DESIGN_SPEC §4.8) and covers whatever is
+  // under it, like YouTube's. After the viewport resize the collapse button can sit right there, so
+  // bring it to the middle of the screen as a user would, and press it once nothing covers it.
+  const collapseDescription = 'button[aria-label="概要を折りたたむ"]';
+  await page.$eval(collapseDescription, button => button.scrollIntoView({ block: 'center' }));
+  await page.waitForFunction(selector => {
+    const button = document.querySelector(selector);
+    if (!button) return false;
+    const rect = button.getBoundingClientRect();
+    const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+    return Boolean(hit && button.contains(hit));
+  }, { timeout: 15_000 }, collapseDescription);
+  await page.click(collapseDescription);
   await page.waitForSelector('button[aria-label="概要を展開する"]', { timeout: 60_000 });
-  await page.click('button[aria-label="概要を展開する"]');
-  await page.waitForSelector('button[aria-label="概要を折りたたむ"]', { timeout: 60_000 });
-  const descriptionState = await page.$eval('button[aria-label="概要を折りたたむ"]', button => {
-    const root = button.closest('div[aria-expanded]');
-    const text = root?.querySelector('p');
-    text?.click();
-    return {
-      expanded: root?.getAttribute('aria-expanded'),
-      whiteSpace: text ? getComputedStyle(text).whiteSpace : null,
-      linkCount: root?.querySelectorAll('p a[href^="http"]').length ?? 0,
-    };
-  });
-  if (descriptionState.expanded !== 'true' || descriptionState.whiteSpace !== 'pre-wrap') {
-    throw new Error(`Unexpected description state: ${JSON.stringify(descriptionState)}`);
-  }
-  await page.click('button[aria-label="概要を折りたたむ"]');
-  await page.waitForSelector('button[aria-label="概要を展開する"]', { timeout: 60_000 });
-  console.log(`PASS description expansion UX (${descriptionState.linkCount} inline links)`);
-  const href = await page.$eval('a[aria-label="DIVA Player home"]', element => element.getAttribute('href'));
-  await page.click('a[aria-label="DIVA Player home"]');
+  const href = await page.$eval('a[aria-label="DIVA Player ホーム"]', element => element.getAttribute('href'));
+  await page.click('a[aria-label="DIVA Player ホーム"]');
   await page.waitForFunction(path => (location.pathname.replace(/\/+$/, '') || '/') === path, {}, expectedRoot);
   if (normalizePath(href ?? '') !== expectedRoot) {
     throw new Error(`Unexpected home link href: ${href}; expected ${expectedRoot}`);
@@ -412,11 +435,11 @@ try {
   await page.type(searchInput, '千本桜');
   await page.keyboard.press('Enter');
   await page.waitForFunction(() => document.body.textContent?.includes('検索結果'), { timeout: 60_000 });
-  await page.click('a[aria-label="DIVA Player home"]');
+  await page.click('a[aria-label="DIVA Player ホーム"]');
   await page.waitForFunction(() => {
     const activeCategory = document.querySelector('button[data-active="true"]');
     const input = document.querySelector('input[placeholder="ボカロP名や曲名で検索"]');
-    return activeCategory?.textContent?.includes('あなたへのおすすめ')
+    return activeCategory?.textContent?.trim() === 'おすすめ'
       && input instanceof HTMLInputElement
       && input.value === '';
   }, { timeout: 60_000 });
@@ -502,7 +525,7 @@ try {
   console.log(`PASS browser Back restores home mix order without regenerating (${retainedMixIds.length} retained songs)`);
 
   const discoveryMixState = await page.evaluate(() => {
-    const buttons = [...document.querySelectorAll('button[aria-label="発掘ミックスを生成して再生"]')];
+    const buttons = [...document.querySelectorAll('button[aria-label="発掘ミックスを再生"]')];
     const visibleButton = buttons.find(button => {
       const rect = button.getBoundingClientRect();
       return rect.width > 0 && rect.height > 0;
@@ -521,10 +544,10 @@ try {
     throw new Error(`Discovery mix is not an independent lower-sidebar action: ${JSON.stringify(discoveryMixState)}`);
   }
   const pathBeforeDiscovery = normalizePath(new URL(page.url()).pathname);
-  await page.click('button[aria-label="発掘ミックスを生成して再生"]');
-  await page.waitForFunction(() => [...document.querySelectorAll('button[aria-label="発掘ミックスを生成して再生"]')]
+  await page.click('button[aria-label="発掘ミックスを再生"]');
+  await page.waitForFunction(() => [...document.querySelectorAll('button[aria-label="発掘ミックスを再生"]')]
     .find(button => button.getBoundingClientRect().width > 0)?.textContent?.includes('曲を再生中'), { timeout: 60_000 });
-  const discoveryResultText = await page.$$eval('button[aria-label="発掘ミックスを生成して再生"]', buttons => (
+  const discoveryResultText = await page.$$eval('button[aria-label="発掘ミックスを再生"]', buttons => (
     buttons.find(button => button.getBoundingClientRect().width > 0)?.textContent?.trim() ?? ''
   ));
   // The watch-page fixture song was just played and must be excluded, leaving
@@ -548,8 +571,11 @@ try {
 
   const albumsLoaded = page.waitForResponse(response => new URL(response.url()).searchParams.get('fields') === 'Albums');
   await page.goto(new URL('watch?v=1502', base), { waitUntil: 'domcontentloaded', timeout: 60_000 });
-  await albumsLoaded;
+  // Albums are listed (and requested) only in the expanded description.
   await page.waitForSelector('button[aria-label="概要を展開する"]');
+  await page.click('button[aria-label="概要を展開する"]');
+  await albumsLoaded;
+  await page.waitForSelector('button[aria-label="概要を折りたたむ"]');
   if (await page.$('[data-testid="song-albums"]')) throw new Error('Album section remained visible for a song without albums');
   console.log('PASS songs without albums hide the album section');
 

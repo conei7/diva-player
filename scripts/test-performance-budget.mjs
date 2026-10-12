@@ -270,11 +270,11 @@ async function installApiFixtures(page, counters) {
           await new Promise(resolve => setTimeout(resolve, counters.startupPopularDelayMs));
         }
         counters.startupPopularRequests += 1;
-        body = { items: Array.from({ length: 12 }, (_, index) => fixtureSongForId(2501 + index)), totalCount: 40 };
-      } else if (isStartupPopular && url.searchParams.get('start') === '12'
-        && url.searchParams.get('maxResults') === '28') {
+        body = { items: Array.from({ length: 24 }, (_, index) => fixtureSongForId(2501 + index)), totalCount: 60 };
+      } else if (isStartupPopular && url.searchParams.get('start') === '24'
+        && url.searchParams.get('maxResults') === '36') {
         counters.startupPopularMoreRequests += 1;
-        body = { items: Array.from({ length: 28 }, (_, index) => fixtureSongForId(2503 + index)), totalCount: 40 };
+        body = { items: Array.from({ length: 36 }, (_, index) => fixtureSongForId(2503 + index)), totalCount: 60 };
       } else {
         body = { items: [fixtureSong, fixtureSongForId(2502), fixtureSongForId(2503)], totalCount: 3 };
       }
@@ -581,13 +581,13 @@ async function main() {
       prefetchedCategoryMs <= BUDGETS_MS['home.prefetched-category'],
       `Prefetched Home category exceeded ${BUDGETS_MS['home.prefetched-category']}ms (${prefetchedCategoryMs}ms).`,
     );
-    assert(rankingCopy.includes('1日平均 +1,235再生'), 'Weekly ranking did not show its average daily increase.');
+    assert(rankingCopy.includes('1日平均 +1,235回再生'), 'Weekly ranking did not show its average daily increase.');
     assert(!rankingCopy.includes('直近約7日間の再生増加が平常時より加速している曲'), 'The removed trending explanation is still visible.');
     console.log(`PASS home.prefetched-category: ${prefetchedCategoryMs}ms / ${BUDGETS_MS['home.prefetched-category']}ms`);
 
     // This producer name is present in the SBC/VocaDB fixture and keeps the
     // search paint budget independent of a single localized song title.
-    const searchInput = 'form input[type="text"]';
+    const searchInput = 'form[role="search"] input[type="search"]';
     await page.waitForSelector(searchInput);
     await page.click(searchInput);
     await page.type(searchInput, 'wowaka');

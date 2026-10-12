@@ -865,11 +865,13 @@ export async function getSearchSuggestions(query: string): Promise<SearchSuggest
     const key = `song:${song.id}`;
     if (seen.has(key)) continue;
     seen.add(key);
+    // Sub labels are data only (artist line / artist type); the search box builds and
+    // translates the visible text (e.g. 「ボカロP」 from the type).
     suggestions.push({
       kind: 'song',
       id: song.id,
       label: song.name,
-      sublabel: song.artistString || '曲',
+      sublabel: song.artistString,
       song,
     });
   }
@@ -882,7 +884,7 @@ export async function getSearchSuggestions(query: string): Promise<SearchSuggest
       kind: 'producer',
       id: artist.id,
       label: artist.name,
-      sublabel: `${artist.artistType} の曲を検索`,
+      sublabel: artist.artistType,
       artist,
     });
   }
@@ -895,7 +897,7 @@ export async function getSearchSuggestions(query: string): Promise<SearchSuggest
       kind: 'vocalist',
       id: artist.id,
       label: artist.name,
-      sublabel: `${artist.artistType} で絞り込み`,
+      sublabel: artist.artistType,
       artist,
     });
   }

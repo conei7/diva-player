@@ -30,11 +30,13 @@ try {
     await page.focus('input[placeholder="ボカロP名や曲名で検索"]');
     await page.waitForFunction(() => document.body.textContent.includes('検索履歴 9'));
     const suggestions = await page.evaluate(() => {
-      const button = [...document.querySelectorAll('button')].find(element => element.textContent.trim() === '検索履歴 9');
-      const panel = button.closest('ul').parentElement.parentElement;
+      // The search box is a combobox: #search-suggestions is its listbox, the panel around it scrolls.
+      const listbox = document.getElementById('search-suggestions');
+      const option = [...listbox.querySelectorAll('[role="option"]')].find(element => element.textContent.trim() === '検索履歴 9');
+      const panel = listbox.closest('[data-testid="search-suggestions-panel"]');
       panel.scrollTop = panel.scrollHeight;
       const rect = panel.getBoundingClientRect();
-      const last = button.getBoundingClientRect();
+      const last = option.getBoundingClientRect();
       return { top: rect.top, bottom: rect.bottom, lastBottom: last.bottom, height: innerHeight };
     });
     assert(suggestions.top >= 0 && suggestions.bottom <= height + 1
@@ -42,15 +44,19 @@ try {
     `Search history cannot reach last entry at ${width}x${height}: ${JSON.stringify(suggestions)}`);
     await page.keyboard.press('Escape');
     await page.goto(new URL('history', baseUrl), { waitUntil: 'domcontentloaded' });
-    await page.waitForSelector('h1');
-    const layout = await page.evaluate(() => {
-      const heading = document.querySelector('h1').getBoundingClientRect();
-      const actions = [...document.querySelectorAll('main button')].filter(button => button.textContent.includes('エクスポート'));
+    await page.waitForSelector('main h1');
+    // History actions live in the right column from 1024px and in the header's ⋮ below that.
+    const historyActions = 'main [data-testid="history-actions"] button, main [data-testid="history-actions-menu"]';
+    await page.waitForSelector(historyActions);
+    const layout = await page.evaluate(selector => {
+      const heading = document.querySelector('main h1').getBoundingClientRect();
+      const actions = [...document.querySelectorAll(selector)];
       return { heading, actions: actions.map(button => {
         const rect = button.getBoundingClientRect();
         return { left: rect.left, right: rect.right, top: rect.top };
       }), width: document.documentElement.scrollWidth };
-    });
+    }, historyActions);
+    assert(layout.actions.length > 0, `History controls are missing at ${width}`);
     assert(layout.width <= width + 1 && layout.actions.every(rect => rect.left >= 0 && rect.right <= width),
       `History controls overflow at ${width}: ${JSON.stringify(layout)}`);
     await page.click('button[aria-label="設定"]');
@@ -69,9 +75,10 @@ try {
   await page.goto(baseUrl, { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => !document.documentElement.classList.contains('diva-startup-home'));
   await page.click('button[aria-label="詳細検索"]');
+  await page.waitForSelector('[data-testid="advanced-search-dialog"] .filter-section-header');
   await page.evaluate(() => [...document.querySelectorAll('.filter-section-header')]
     .find(button => button.textContent.includes('参加者・役割')).click());
-  await page.type('input[placeholder="P、絵師、動画師、演奏者…"]', 'Layout');
+  await page.type('input[placeholder="クリエイターを検索"]', 'Layout');
   await page.waitForFunction(() => document.body.textContent.includes('Layout fixture 19'));
   // A fast fixture response may arrive during the section's opening transition.
   // Measure its final layout, while retaining the clipping assertion below.
@@ -81,7 +88,7 @@ try {
       && animation.effect.getComputedTiming().iterations !== Infinity)
     .map(animation => animation.finished.catch(() => {}))));
   const list = await page.evaluate(() => {
-    const input = document.querySelector('input[placeholder="P、絵師、動画師、演奏者…"]');
+    const input = document.querySelector('input[placeholder="クリエイターを検索"]');
     const section = input.closest('.filter-section-content');
     const panel = section.querySelector('ul');
     const rect = panel.getBoundingClientRect();

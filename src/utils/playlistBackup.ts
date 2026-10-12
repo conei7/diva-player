@@ -1,5 +1,7 @@
 import type { Playlist, PlaylistFolder, Song, SmartPlaylistRule } from '../types/vocadb';
+import type { AppLanguage } from '../stores/languageStore';
 import { normalizeSmartPlaylistRule } from './smartPlaylist';
+import { formatTotalDuration as formatTotalDurationForLanguage } from './songMeta';
 
 export type PlaylistBackupFolder = {
   id: string;
@@ -22,15 +24,19 @@ export function toSafeFileName(name: string): string {
   return name.trim().replace(/[\\/:*?"<>|]+/g, '_').replace(/\s+/g, '_') || 'playlist';
 }
 
-export function formatTotalDuration(totalSeconds: number): string {
-  const seconds = Math.max(0, Math.floor(totalSeconds));
-  const hours = Math.floor(seconds / 3600);
-  const minutes = Math.floor((seconds % 3600) / 60);
-  const restSeconds = seconds % 60;
+/** Total length of a playlist: 1時間19分 / 34分 (English: 1 hr 19 min / 34 min). */
+export function formatTotalDuration(totalSeconds: number, language: AppLanguage = 'ja'): string {
+  return formatTotalDurationForLanguage(totalSeconds, language);
+}
 
-  if (hours > 0) return `${hours}時間${String(minutes).padStart(2, '0')}分`;
-  if (minutes > 0) return `${minutes}分${String(restSeconds).padStart(2, '0')}秒`;
-  return `${restSeconds}秒`;
+/** The name itself when it is free, otherwise 「{name} (2)」, 「{name} (3)」… */
+export function uniquePlaylistName(name: string, existingNames: Iterable<string>): string {
+  const base = name.trim();
+  const used = new Set(existingNames);
+  if (!used.has(base)) return base;
+  let suffix = 2;
+  while (used.has(`${base} (${suffix})`)) suffix += 1;
+  return `${base} (${suffix})`;
 }
 
 export function downloadJson(fileName: string, data: unknown): void {

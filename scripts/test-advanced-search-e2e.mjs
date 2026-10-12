@@ -34,7 +34,8 @@ try {
   // test does not click a button that is present in the DOM but still covered.
   await page.waitForFunction(() => !document.documentElement.classList.contains('diva-startup-home'));
   await page.click('button[aria-label="詳細検索"]');
-  const requiredSections = ['再生数・支持', 'VocaDBタグ', '参加者・役割', '音源からの推定'];
+  await page.waitForSelector('[role="dialog"][data-testid="advanced-search-dialog"]', { timeout: 30_000 });
+  const requiredSections = ['再生数・お気に入り数', 'VocaDBタグ', '参加者・役割', '音源からの推定'];
   await page.evaluate(sectionTitles => {
     for (const title of sectionTitles) {
       const titleElement = [...document.querySelectorAll('.filter-section-title')]
@@ -57,7 +58,7 @@ try {
     tagButton.click();
 
     const audioFilters = document.querySelector('[data-testid="audio-analysis-filters"]');
-    const bpmInput = audioFilters?.querySelector('input[placeholder="80"]');
+    const bpmInput = audioFilters?.querySelector('input[aria-label="BPM（最小）"]');
     const instrumentButton = [...(audioFilters?.querySelectorAll('button') ?? [])].find(button => button.textContent?.trim() === 'ピアノ');
     if (!(bpmInput instanceof HTMLInputElement)) throw new Error('BPM input not found');
     if (!instrumentButton) throw new Error('instrument button not found');
@@ -65,21 +66,21 @@ try {
     bpmInput.dispatchEvent(new Event('input', { bubbles: true }));
     instrumentButton.click();
   });
-  await page.type('input[placeholder="P、絵師、動画師、演奏者…"]', 'Fixture');
+  await page.type('input[placeholder="クリエイターを検索"]', 'Fixture');
   await page.waitForFunction(() => document.body.textContent?.includes('Fixture illustrator'));
-  await page.evaluate(() => [...document.querySelectorAll('button')].find(button => button.textContent?.includes('Fixture illustrator'))?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })));
+  await page.evaluate(() => [...document.querySelectorAll('[role="dialog"] button')].find(button => button.textContent?.includes('Fixture illustrator'))?.click());
   await page.evaluate(() => {
     const role = [...document.querySelectorAll('select')].find(select => [...select.options].some(option => option.value === 'Illustrator'));
     if (!role) throw new Error('credit role select not found');
     role.value = 'Illustrator';
     role.dispatchEvent(new Event('change', { bubbles: true }));
-    const group = [...document.querySelectorAll('label')].find(label => label.textContent?.includes('YouTube再生数'));
-    const input = group?.querySelector('input');
-    if (!input) throw new Error('YouTube range input not found');
+    const input = document.querySelector('input[aria-label="YouTube再生数（最小）"]');
+    if (!(input instanceof HTMLInputElement)) throw new Error('YouTube range input not found');
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, '1000000');
     input.dispatchEvent(new Event('input', { bubbles: true }));
   });
-  await page.evaluate(() => [...document.querySelectorAll('button')].find(button => button.textContent?.includes('この条件で検索'))?.click());
+  await page.click('[data-testid="advanced-search-apply"]');
+  await page.waitForFunction(() => !document.querySelector('[data-testid="advanced-search-dialog"]'));
   await page.waitForFunction(name => document.body.textContent?.includes('321') && document.body.textContent?.includes(name), {}, fixtureSong.defaultName);
   if (await page.$eval('body', body => body.textContent?.includes('詳細検索 fixture'))) throw new Error('search results displayed the alternate title instead of the default title');
 

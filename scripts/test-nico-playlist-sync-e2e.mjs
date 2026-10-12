@@ -49,19 +49,25 @@ try {
     localStorage.setItem('diva_playlistFolders', JSON.stringify([]));
   });
   await page.goto(`${baseUrl.replace(/\/$/, '')}/playlists`, { waitUntil: 'domcontentloaded', timeout: 60_000 });
-  await page.waitForFunction(() => [...document.querySelectorAll('button')].some(button => button.textContent?.includes('取込先')), { timeout: 60_000 });
-  await page.evaluate(() => [...document.querySelectorAll('button')].find(button => button.textContent?.includes('取込先'))?.click());
-  await page.waitForSelector('button[title="その他の操作"]');
-  await page.$$eval('button[title="その他の操作"]', buttons => buttons.at(-1)?.click());
-  await page.waitForFunction(() => [...document.querySelectorAll('button')].some(button => button.textContent?.includes('ニコニコからインポート')));
-  await page.evaluate(() => [...document.querySelectorAll('button')].find(button => button.textContent?.includes('ニコニコからインポート'))?.click());
-  await page.waitForSelector('input[placeholder*="nicovideo.jp/mylist"]');
-  await page.type('input[placeholder*="nicovideo.jp/mylist"]', `https://www.nicovideo.jp/mylist/${sourceId}`);
-  await page.evaluate(() => [...document.querySelectorAll('button')].find(button => button.textContent?.trim() === '取得')?.click());
-  await page.waitForFunction(() => document.body.textContent?.includes('Nico imported fixture') && document.body.textContent?.includes('2本中 1曲を照合'));
-  await page.evaluate(() => [...document.querySelectorAll('label')].find(label => label.textContent?.includes('自動同期としてリンク'))?.click());
-  await page.evaluate(() => [...document.querySelectorAll('button')].find(button => button.textContent?.includes('同期プレイリストを作成'))?.click());
-  await page.waitForFunction(() => document.body.textContent?.includes('ニコニコ自動同期') && document.body.textContent?.includes('Nico sync fixture'));
+  // Open the playlist from its library card, then 「このプレイリストにインポート」 in the hero's ⋮.
+  await page.waitForFunction(() => [...document.querySelectorAll('[data-testid="playlist-card"] a')].some(link => link.textContent?.includes('取込先')), { timeout: 60_000 });
+  await page.evaluate(() => [...document.querySelectorAll('[data-testid="playlist-card"] a')].find(link => link.textContent?.includes('取込先'))?.click());
+  await page.waitForFunction(() => document.querySelector('main section h1')?.textContent === '取込先');
+  await page.click('main section button[aria-label="その他の操作"]');
+  await page.waitForSelector('[role="menu"]');
+  await page.evaluate(() => [...document.querySelectorAll('[role="menu"] [role="menuitem"]')].find(item => item.textContent?.includes('このプレイリストにインポート'))?.click());
+  await page.waitForSelector('[role="dialog"] #playlist-import-url');
+  await page.type('#playlist-import-url', `https://www.nicovideo.jp/mylist/${sourceId}`);
+  await page.evaluate(() => [...document.querySelectorAll('[role="dialog"] button')].find(button => button.textContent?.trim() === '読み込む')?.click());
+  await page.waitForFunction(() => document.body.textContent?.includes('Nico imported fixture') && document.body.textContent?.includes('2本中 1曲が見つかりました'));
+  await page.evaluate(() => {
+    const toggle = [...document.querySelectorAll('[role="dialog"] input[role="switch"]')].find(input => input.closest('label')?.textContent?.includes('元のリストと同期'));
+    if (!(toggle instanceof HTMLInputElement)) throw new Error('sync switch not found');
+    toggle.click();
+  });
+  await page.waitForFunction(() => document.querySelector('[data-testid="playlist-import-save"]')?.disabled === false);
+  await page.click('[data-testid="playlist-import-save"]');
+  await page.waitForFunction(() => document.body.textContent?.includes('ニコニコと同期') && document.body.textContent?.includes('Nico sync fixture'));
   const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('diva_playlists') || '[]'));
   if (!saved.some(playlist => playlist.nicoSync?.sourceId === '26375614' && playlist.songs?.[0]?.id === 903001)) {
     throw new Error('linked NicoNico playlist was not persisted');

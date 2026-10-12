@@ -24,19 +24,48 @@ type SupportedBackupVersion = 1 | 2 | 3 | 4 | 5 | 6;
 const MAX_HISTORY_EVENTS = 1_000_000;
 const MAX_PLAYLISTS = 10_000;
 
+/** 復元で書き換えるデータ。表示名は表示側で訳す（DESIGN_SPEC §6.8.2）。 */
+export type FullBackupSection = 'history' | 'ratings' | 'playlists' | 'hiddenSongs' | 'favoriteProducers' | 'globalFilters';
+
+/**
+ * 復元に失敗した理由。表示文はここでは作らず、表示側で訳す。
+ * - not-validated: 検証に合格していないので、何も変えずに止めた
+ * - read-failed: 復元前の今のデータを読めなかったので、何も変えずに止めた
+ *   （section が 'history' なら再生履歴。無ければそのほかの保存データ）
+ * - write-failed: section を書き込む途中で失敗した。変えたデータは元に戻す
+ *   （section が無いのは、書き込みの後の件数の読み直しで失敗した時）
+ */
+export type FullBackupImportErrorCode = 'not-validated' | 'read-failed' | 'write-failed';
+
+/** 元に戻せなかったデータ。error は console に出すための元の例外（画面には出さない）。 */
+export interface FullBackupRollbackFailure {
+  section: FullBackupSection;
+  error: unknown;
+}
+
 export class FullBackupImportError extends Error {
+  readonly code: FullBackupImportErrorCode;
+  readonly section: FullBackupSection | undefined;
+  /** 何も変えていないか、変えたデータをすべて元に戻せた */
   readonly recoveryComplete: boolean;
-  readonly rollbackErrors: string[];
+  readonly rollbackFailures: FullBackupRollbackFailure[];
 
   constructor(
-    message: string,
-    recoveryComplete: boolean,
-    rollbackErrors: string[] = [],
+    code: FullBackupImportErrorCode,
+    { section, cause, rollbackFailures = [] }: {
+      section?: FullBackupSection;
+      /** 元の例外（QuotaExceededError など）。console 用 */
+      cause?: unknown;
+      rollbackFailures?: FullBackupRollbackFailure[];
+    } = {},
   ) {
-    super(message);
+    // message は console 用。画面には code と section を訳して出す
+    super(`Full backup restore failed: ${code}${section ? ` (${section})` : ''}`, cause === undefined ? undefined : { cause });
     this.name = 'FullBackupImportError';
-    this.recoveryComplete = recoveryComplete;
-    this.rollbackErrors = rollbackErrors;
+    this.code = code;
+    this.section = section;
+    this.recoveryComplete = rollbackFailures.length === 0;
+    this.rollbackFailures = rollbackFailures;
   }
 }
 
@@ -68,6 +97,17 @@ export interface FullBackupManifest extends FullBackupCounts {
   schemaVersion: 4 | 5 | 6;
 }
 
+/**
+ * 読み込んだファイルの問題。表示文はここでは作らず、表示側で訳す。
+ * - legacy-format: v1〜v3（manifest が無く件数を確かめられない。復元はできる）
+ * - manifest-mismatch: manifest と中身の件数が合わない（復元できない）
+ * - invalid-items: 読めない項目がある（復元できない）
+ */
+export type FullBackupValidationIssue =
+  | { kind: 'legacy-format' }
+  | { kind: 'manifest-mismatch' }
+  | { kind: 'invalid-items'; count: number };
+
 export interface FullBackupPreview {
   historyCount: number;
   ratingCount: number;
@@ -81,7 +121,7 @@ export interface FullBackupPreview {
   manifestValid: boolean;
   legacyFormat: boolean;
   canRestore: boolean;
-  validationMessages: string[];
+  validationIssues: FullBackupValidationIssue[];
   parsed: FullBackupPayload;
 }
 
@@ -304,7 +344,7 @@ export function parseFullBackup(data: unknown): FullBackupPreview | null {
   if (!isRecord(data) || data.kind !== BACKUP_KIND || ![1, 2, 3, 4, 5, BACKUP_VERSION].includes(data.version as number) || !isRecord(data.sections)) return null;
   const version = data.version as SupportedBackupVersion;
   let invalidItems = 0;
-  const validationMessages: string[] = [];
+  const validationIssues: FullBackupValidationIssue[] = [];
   const rawHistory = isRecord(data.sections.history) && Array.isArray(data.sections.history.events) ? data.sections.history.events : [];
   if (rawHistory.length > MAX_HISTORY_EVENTS) return null;
   const events = rawHistory.map(normalizeImportedEvent).filter((event): event is ListeningPlayEvent => {
@@ -356,9 +396,9 @@ export function parseFullBackup(data: unknown): FullBackupPreview | null {
   const counts = getCountsFromSections(parsed.sections);
   const legacyFormat = version < 4;
   const manifestValid = legacyFormat || manifestMatches(data.manifest, counts, version as 4 | 5 | 6);
-  if (legacyFormat) validationMessages.push('旧形式のバックアップです。内容の件数検証は行われません。');
-  if (version >= 4 && !manifestValid) validationMessages.push('manifestと実データの件数が一致しません。');
-  if (invalidItems > 0) validationMessages.push(`${invalidItems}件の無効な項目があります。`);
+  if (legacyFormat) validationIssues.push({ kind: 'legacy-format' });
+  if (version >= 4 && !manifestValid) validationIssues.push({ kind: 'manifest-mismatch' });
+  if (invalidItems > 0) validationIssues.push({ kind: 'invalid-items', count: invalidItems });
   const canRestore = manifestValid && invalidItems === 0;
   return {
     historyCount: events.length,
@@ -373,7 +413,7 @@ export function parseFullBackup(data: unknown): FullBackupPreview | null {
     manifestValid,
     legacyFormat,
     canRestore,
-    validationMessages,
+    validationIssues,
     parsed,
   };
 }
@@ -478,10 +518,20 @@ function mergePlaylists(current: Playlist[], incoming: Playlist[], currentFolder
   return { playlists: [...retained, ...imported], folders };
 }
 
+/** 復元の前に控えておく保存キーと、そのデータ（保存キーは画面には出さない）。 */
+const STORAGE_KEY_SECTIONS: ReadonlyArray<readonly [key: string, section: Exclude<FullBackupSection, 'history'>]> = [
+  ['diva_playlists', 'playlists'],
+  ['diva_playlistFolders', 'playlists'],
+  ['diva-ratings', 'ratings'],
+  ['diva-hidden-songs', 'hiddenSongs'],
+  ['diva-global-filters', 'globalFilters'],
+  ['diva-favorite-producers', 'favoriteProducers'],
+];
+
 export async function executeFullBackupImport(preview: FullBackupPreview, options: FullBackupImportOptions): Promise<FullBackupImportResult> {
   const validatedPreview = parseFullBackup(preview?.parsed);
   if (preview?.canRestore !== true || !validatedPreview?.canRestore) {
-    throw new FullBackupImportError('検証に合格していないバックアップは復元できません。', true);
+    throw new FullBackupImportError('not-validated');
   }
   const currentRatings = { ...useRatingStore.getState().ratings };
   const currentPlaylists = usePlaylistStore.getState().playlists.map(playlist => ({ ...playlist, songs: [...playlist.songs] }));
@@ -493,32 +543,24 @@ export async function executeFullBackupImport(preview: FullBackupPreview, option
   try {
     currentHistorySnapshot = await readHistoryStoreSnapshot();
   } catch (error) {
-    throw new FullBackupImportError(
-      `復元前の履歴を読み取れませんでした: ${error instanceof Error ? error.message : String(error)}`,
-      true,
-    );
+    console.error('[FullBackup] Could not read the current history', error);
+    throw new FullBackupImportError('read-failed', { section: 'history', cause: error });
   }
   const currentHistory = currentHistorySnapshot[HISTORY_STORES.plays] as ListeningPlayEvent[];
-  const storageKeys = [
-    'diva_playlists',
-    'diva_playlistFolders',
-    'diva-ratings',
-    'diva-hidden-songs',
-    'diva-global-filters',
-    'diva-favorite-producers',
-  ];
   const storageSnapshot = new Map<string, string | null>();
   try {
     if (typeof localStorage !== 'undefined') {
-      for (const key of storageKeys) storageSnapshot.set(key, localStorage.getItem(key));
+      for (const [key] of STORAGE_KEY_SECTIONS) storageSnapshot.set(key, localStorage.getItem(key));
     }
   } catch (error) {
-    throw new FullBackupImportError(
-      `復元前の保存状態を読み取れませんでした: ${error instanceof Error ? error.message : String(error)}`,
-      true,
-    );
+    console.error('[FullBackup] Could not read the current saved data', error);
+    throw new FullBackupImportError('read-failed', { cause: error });
   }
-  const changed = { playlists: false, ratings: false, hiddenSongs: false, globalFilters: false, favoriteProducers: false, history: false };
+  const changed: Record<FullBackupSection, boolean> = {
+    playlists: false, ratings: false, hiddenSongs: false, globalFilters: false, favoriteProducers: false, history: false,
+  };
+  /** いま書き込んでいるデータ（失敗した時に、どこで止まったかを返す） */
+  let writing: FullBackupSection | undefined;
   try {
     const incoming = validatedPreview.parsed.sections;
     const merged = options.mode === 'replace'
@@ -532,36 +574,42 @@ export async function executeFullBackupImport(preview: FullBackupPreview, option
       const watchLater = currentPlaylists.find(playlist => playlist.id === WATCH_LATER_ID);
       if (watchLater) nextPlaylists.unshift(watchLater);
     }
+    writing = 'playlists';
     changed.playlists = true;
     const playlistWrite = storage.setMany([
       { key: 'playlists', value: nextPlaylists },
       { key: 'playlistFolders', value: nextFolders },
     ]);
-    if (!playlistWrite.success) throw new Error('プレイリストまたはフォルダを保存できませんでした。');
+    if (!playlistWrite.success) throw new Error('Could not save playlists and folders');
     usePlaylistStore.setState({ playlists: nextPlaylists, folders: nextFolders });
 
     const nextRatings = options.mode === 'replace'
       ? { ...incoming.ratings }
       : options.ratingPriority === 'backup' ? { ...currentRatings, ...incoming.ratings } : { ...incoming.ratings, ...currentRatings };
+    writing = 'ratings';
     changed.ratings = true;
     useRatingStore.setState({ ratings: nextRatings });
     const nextHiddenSongs = options.mode === 'replace'
       ? incoming.hiddenSongs
       : { ...currentHiddenSongs, ...incoming.hiddenSongs };
+    writing = 'hiddenSongs';
     changed.hiddenSongs = true;
     useHiddenSongStore.getState().replaceHiddenSongs(nextHiddenSongs);
     if (options.mode === 'replace' && incoming.preferences?.globalFilters) {
+      writing = 'globalFilters';
       changed.globalFilters = true;
       useGlobalFilterStore.getState().setSettings(incoming.preferences.globalFilters);
     }
     const incomingFavoriteProducers = incoming.preferences?.favoriteProducers;
     if (incomingFavoriteProducers) {
+      writing = 'favoriteProducers';
       changed.favoriteProducers = true;
       const favoriteById = new Map<number, FavoriteProducer>();
       if (options.mode !== 'replace') currentFavoriteProducers.forEach(producer => favoriteById.set(producer.id, producer));
       incomingFavoriteProducers.forEach(producer => favoriteById.set(producer.id, producer));
       useFavoriteProducerStore.setState({ producers: [...favoriteById.values()] });
     }
+    writing = 'history';
     if (options.mode === 'replace') {
       await replaceHistory(incoming.history.events);
       changed.history = true;
@@ -569,6 +617,8 @@ export async function executeFullBackupImport(preview: FullBackupPreview, option
       changed.history = await mergeHistory(incoming.history.events);
     }
     await useHistoryStore.getState().reloadHistory();
+    // ここからは件数を読み直すだけ（失敗したら元に戻すが、どのデータの書き込みでもない）
+    writing = undefined;
     return {
       before: getCountsFromSections({
         history: { events: currentHistory },
@@ -581,57 +631,41 @@ export async function executeFullBackupImport(preview: FullBackupPreview, option
       mode: options.mode,
     };
   } catch (error) {
-    const rollbackErrors: string[] = [];
+    const rollbackFailures: FullBackupRollbackFailure[] = [];
+    const rollBack = (section: FullBackupSection, restore: () => void) => {
+      try { restore(); }
+      catch (rollbackError) { rollbackFailures.push({ section, error: rollbackError }); }
+    };
     if (changed.history) {
       try {
         await restoreHistoryStoreSnapshot(currentHistorySnapshot);
         await useHistoryStore.getState().reloadHistory();
       } catch (rollbackError) {
-        rollbackErrors.push(`履歴: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`);
+        rollbackFailures.push({ section: 'history', error: rollbackError });
       }
     }
-    if (changed.favoriteProducers) {
-      try { useFavoriteProducerStore.setState({ producers: currentFavoriteProducers }); }
-      catch (rollbackError) { rollbackErrors.push(`お気に入りP: ${String(rollbackError)}`); }
-    }
-    if (changed.globalFilters) {
-      try { useGlobalFilterStore.getState().setSettings(currentGlobalFilters); }
-      catch (rollbackError) { rollbackErrors.push(`全体フィルター: ${String(rollbackError)}`); }
-    }
-    if (changed.hiddenSongs) {
-      try { useHiddenSongStore.getState().replaceHiddenSongs(currentHiddenSongs); }
-      catch (rollbackError) { rollbackErrors.push(`非表示曲: ${String(rollbackError)}`); }
-    }
-    if (changed.ratings) {
-      try { useRatingStore.setState({ ratings: currentRatings }); }
-      catch (rollbackError) { rollbackErrors.push(`評価: ${String(rollbackError)}`); }
-    }
-    if (changed.playlists) {
-      try { usePlaylistStore.setState({ playlists: currentPlaylists, folders: currentFolders }); }
-      catch (rollbackError) { rollbackErrors.push(`プレイリスト: ${String(rollbackError)}`); }
-    }
-    for (const key of [...storageSnapshot.keys()].reverse()) {
-      const shouldRestore = (key === 'diva_playlists' || key === 'diva_playlistFolders')
-        ? changed.playlists
-        : key === 'diva-ratings' ? changed.ratings
-          : key === 'diva-hidden-songs' ? changed.hiddenSongs
-            : key === 'diva-global-filters' ? changed.globalFilters
-              : changed.favoriteProducers;
-      if (!shouldRestore || typeof localStorage === 'undefined') continue;
-      try {
-        const value = storageSnapshot.get(key) ?? null;
-        if (value === null) localStorage.removeItem(key);
-        else localStorage.setItem(key, value);
-      } catch (rollbackError) {
-        rollbackErrors.push(`${key}: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`);
+    if (changed.favoriteProducers) rollBack('favoriteProducers', () => useFavoriteProducerStore.setState({ producers: currentFavoriteProducers }));
+    if (changed.globalFilters) rollBack('globalFilters', () => useGlobalFilterStore.getState().setSettings(currentGlobalFilters));
+    if (changed.hiddenSongs) rollBack('hiddenSongs', () => useHiddenSongStore.getState().replaceHiddenSongs(currentHiddenSongs));
+    if (changed.ratings) rollBack('ratings', () => useRatingStore.setState({ ratings: currentRatings }));
+    if (changed.playlists) rollBack('playlists', () => usePlaylistStore.setState({ playlists: currentPlaylists, folders: currentFolders }));
+    if (typeof localStorage !== 'undefined') {
+      for (const [key, section] of [...STORAGE_KEY_SECTIONS].reverse()) {
+        if (!changed[section] || !storageSnapshot.has(key)) continue;
+        rollBack(section, () => {
+          const value = storageSnapshot.get(key) ?? null;
+          // 書き込みが最初から失敗していた・ストアが書き戻し済みなど、変わっていないキーは書き戻さない
+          // （書き込めない状態では、同じ値の書き戻しも失敗して「元に戻せなかった」と誤って伝えるため）
+          let stored: string | null | undefined;
+          try { stored = localStorage.getItem(key); } catch { stored = undefined; }
+          if (stored === value) return;
+          if (value === null) localStorage.removeItem(key);
+          else localStorage.setItem(key, value);
+        });
       }
     }
-    console.error('[FullBackup] Import failed', error);
-    if (rollbackErrors.length > 0) console.error('[FullBackup] Rollback incomplete', rollbackErrors);
-    throw new FullBackupImportError(
-      error instanceof Error ? error.message : String(error),
-      rollbackErrors.length === 0,
-      rollbackErrors,
-    );
+    console.error('[FullBackup] Import failed', writing ?? '(after writing)', error);
+    if (rollbackFailures.length > 0) console.error('[FullBackup] Rollback incomplete', rollbackFailures);
+    throw new FullBackupImportError('write-failed', { section: writing, cause: error, rollbackFailures });
   }
 }

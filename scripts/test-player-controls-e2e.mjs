@@ -21,6 +21,10 @@ const fixtureSong = {
   pvs: [{ author: '', disabled: false, id: 9001011, length: 30, name: 'fixture', pvId: 'fixture', service: 'Youtube', pvType: 'Original', url: 'https://youtu.be/fixture' }],
 };
 
+// The mini player's play / pause toggle (its aria-label tells the state).
+const PAUSE_BUTTON = '[data-testid="global-mini-player-toggle"][aria-label="一時停止"]';
+const PLAY_BUTTON = '[data-testid="global-mini-player-toggle"][aria-label="再生"]';
+
 try {
   const first = await browser.newPage();
   await pinAppLanguage(first);
@@ -102,7 +106,7 @@ try {
   // Native iframe play updates the store first; the resulting React effect must
   // not arm another startup timeout while the player is already playing.
   await first.evaluate(() => window.__yt.playVideo());
-  await first.waitForSelector('button[title="一時停止"]');
+  await first.waitForSelector(PAUSE_BUTTON);
   await new Promise(resolve => setTimeout(resolve, 12_500));
   const assertSameVideo = async label => {
     const state = await first.evaluate(() => ({
@@ -123,9 +127,9 @@ try {
       window.__ytOmitPlaying = true;
     }, hidden);
     for (let i = 0; i < 3; i++) {
-      await first.$eval('button[title="一時停止"]', button => button.click());
+      await first.$eval(PAUSE_BUTTON, button => button.click());
       await first.waitForFunction(() => window.__yt.getPlayerState() === 2);
-      await first.$eval('button[title="再生"]', button => button.click());
+      await first.$eval(PLAY_BUTTON, button => button.click());
       await first.waitForFunction(() => window.__yt.getPlayerState() === 1);
     }
     await new Promise(resolve => setTimeout(resolve, 12_500));
@@ -133,7 +137,7 @@ try {
     const position = await first.evaluate(() => window.__yt.getCurrentTime());
     if (position !== 20) throw new Error(`Resume reset position to ${position}`);
   }
-  await first.$eval('button[title="一時停止"]', button => button.click());
+  await first.$eval(PAUSE_BUTTON, button => button.click());
   await first.waitForFunction(() => window.__yt.getPlayerState() === 2);
   await new Promise(resolve => setTimeout(resolve, 12_500));
   const pausedState = await first.evaluate(() => ({
@@ -142,7 +146,7 @@ try {
   if (pausedState.state !== 2 || pausedState.mutes !== 0 || pausedState.stops !== 0) {
     throw new Error(`Long pause triggered recovery: ${JSON.stringify(pausedState)}`);
   }
-  await first.$eval('button[title="再生"]', button => button.click());
+  await first.$eval(PLAY_BUTTON, button => button.click());
   await first.waitForFunction(() => window.__yt.getPlayerState() === 1);
   await assertSameVideo('long YouTube pause preserves the same video on resume');
   await first.evaluate(() => window.__yt.fail());

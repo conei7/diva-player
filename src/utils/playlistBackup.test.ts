@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parsePlaylistBackup } from './playlistBackup';
+import { formatTotalDuration, parsePlaylistBackup, uniquePlaylistName } from './playlistBackup';
 
 describe('smart playlist backup compatibility', () => {
   it('fills new options for legacy playlist exports', () => {
@@ -97,5 +97,19 @@ describe('smart playlist backup compatibility', () => {
 
     expect(parsed?.playlists[0].nicoSync).toMatchObject({ sourceKind: 'series', sourceId: '359827' });
     expect(parsed?.playlists[1].nicoSync).toBeUndefined();
+  });
+});
+
+describe('playlist names and totals', () => {
+  it('keeps the original name and only numbers it when it is already taken', () => {
+    expect(uniquePlaylistName('作業用BGM', ['後で聴く'])).toBe('作業用BGM');
+    expect(uniquePlaylistName('作業用BGM', ['作業用BGM'])).toBe('作業用BGM (2)');
+    expect(uniquePlaylistName(' 作業用BGM ', ['作業用BGM', '作業用BGM (2)'])).toBe('作業用BGM (3)');
+  });
+
+  it('formats the total length in the UI language', () => {
+    expect(formatTotalDuration(4_740)).toBe('1時間19分');
+    expect(formatTotalDuration(2_059, 'ja')).toBe('34分');
+    expect(formatTotalDuration(4_740, 'en')).toBe('1 hr 19 min');
   });
 });

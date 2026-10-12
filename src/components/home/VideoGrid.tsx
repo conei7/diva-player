@@ -1,4 +1,5 @@
-import { useEffect } from 'react';
+import { useCallback, useEffect, useMemo } from 'react';
+import type { ReactNode } from 'react';
 import { useNavigate } from 'react-router';
 import type { Song } from '../../types/vocadb';
 import SongCard from '../search/SongCard';
@@ -6,14 +7,16 @@ import { useSelectionStore } from '../../stores/selectionStore';
 import { useRecommendationExposureStore, type ExposureSurface } from '../../stores/recommendationExposureStore';
 import { useRecommendationDisplayStore } from '../../stores/recommendationDisplayStore';
 import { useHiddenSongStore } from '../../stores/hiddenSongStore';
-import { useMemo } from 'react';
 import { useTranslate } from '../../i18n';
 import { filterSongsForVisibilityIntent, type SongVisibilityIntent } from '../../utils/songVisibility';
+import { watchPath } from '../../utils/routes';
+import EmptyState from '../ui/EmptyState';
+import { SkeletonTile } from '../ui/Skeleton';
+import { MusicNoteIcon } from '../ui/icons';
 
 /**
- * VideoGrid - YouTube風のレスポンシブ動画グリッド
- *
- * CSS Grid で 1列（スマホ）〜 4列（大画面PC）まで可変。
+ * VideoGrid - YouTube-style grid of song tiles.
+ * repeat(auto-fill, minmax(320px, 1fr)): 3 columns at 1440px, 4 at 1920px; one full-bleed column on phones.
  */
 interface VideoGridProps {
   songs: Song[];
@@ -22,21 +25,16 @@ interface VideoGridProps {
   recommendationReasons?: Record<number, string>;
   alwaysShowReasons?: boolean;
   exposureSurface?: ExposureSurface;
+  /** Title of the default empty state. */
   emptyMessage?: string;
+  /** Replaces the default empty state (an EmptyState with an action, for example). */
+  emptyState?: ReactNode;
   visibilityIntent?: SongVisibilityIntent;
+  /** Ranking feeds show 1, 2, 3… at the top-left of each thumbnail. */
+  showRanks?: boolean;
 }
 
-function SkeletonCard() {
-  return (
-    <div className="rounded-xl overflow-hidden" style={{ background: 'var(--color-bg-card)' }}>
-      <div className="aspect-video skeleton" />
-      <div className="p-3 space-y-2">
-        <div className="h-4 w-3/4 rounded skeleton" />
-        <div className="h-3 w-1/2 rounded skeleton" />
-      </div>
-    </div>
-  );
-}
+const GRID_CLASS = 'grid grid-cols-1 gap-y-6 sm:grid-cols-[repeat(auto-fill,minmax(320px,1fr))] sm:gap-x-4 sm:gap-y-10';
 
 export default function VideoGrid({
   songs,
@@ -45,7 +43,9 @@ export default function VideoGrid({
   alwaysShowReasons = false,
   exposureSurface,
   emptyMessage,
+  emptyState,
   visibilityIntent = 'discovery',
+  showRanks = false,
 }: VideoGridProps) {
   const t = useTranslate();
   const navigate = useNavigate();
@@ -59,44 +59,37 @@ export default function VideoGrid({
     [hiddenSongs, songs, visibilityIntent],
   );
 
-  // 表示中の曲リストをselectionStoreに登録（FABの全選択・フィルター用）
+  // 表示中の曲リストをselectionStoreに登録（選択バーの「すべて選択」「条件で選択」用）
   useEffect(() => {
     setVisibleSongs(visibleSongs);
   }, [visibleSongs, setVisibleSongs]);
 
-  const handlePlay = (song: Song) => {
-    navigate(`/watch?v=${song.id}`);
-  };
+  const handlePlay = useCallback((song: Song) => {
+    navigate(watchPath(song.id));
+  }, [navigate]);
+
   if (loading && visibleSongs.length === 0) {
     return (
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-3">
+      <div className={GRID_CLASS} aria-busy="true">
         {Array.from({ length: 12 }).map((_, i) => (
-          <SkeletonCard key={i} />
+          <SkeletonTile key={i} />
         ))}
       </div>
     );
   }
 
   if (!loading && visibleSongs.length === 0) {
-    return (
-      <div className="flex flex-col items-center justify-center py-20 gap-4">
-        <svg width="64" height="64" viewBox="0 0 24 24" fill="currentColor" style={{ color: 'var(--color-text-muted)', opacity: 0.2 }}>
-          <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z" />
-        </svg>
-        <p className="text-base" style={{ color: 'var(--color-text-muted)' }}>
-          {emptyMessage ?? t('noSongsFound')}
-        </p>
-      </div>
-    );
+    return emptyState ?? <EmptyState icon={<MusicNoteIcon />} title={emptyMessage ?? t('noSongsFound')} />;
   }
 
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-3">
+    <div className={GRID_CLASS}>
       {visibleSongs.map((song, index) => (
         <SongCard
           key={song.id}
           song={song}
           index={index}
+          rank={showRanks ? index + 1 : undefined}
           showHidden={visibilityIntent === 'search'}
           onPlay={handlePlay}
           recommendationReason={showRecommendationHints || alwaysShowReasons ? recommendationReasons?.[song.id] : undefined}

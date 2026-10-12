@@ -66,12 +66,12 @@ try {
     localStorage.setItem('diva_playlistFolders', JSON.stringify([]));
   }, linkedPlaylist);
   await page.goto(`${baseUrl.replace(/\/$/, '')}/playlists`, { waitUntil: 'domcontentloaded', timeout: 60_000 });
-  await page.waitForSelector('button', { timeout: 60_000 });
-  await page.waitForFunction(name => [...document.querySelectorAll('button')].some(button => button.textContent?.includes(name)), { timeout: 60_000 }, linkedPlaylist.name);
+  await page.waitForSelector('[data-testid="playlist-library"]', { timeout: 60_000 });
+  await page.waitForFunction(name => [...document.querySelectorAll('[data-testid="playlist-card"] a')].some(link => link.textContent?.includes(name)), { timeout: 60_000 }, linkedPlaylist.name);
   await page.evaluate(name => {
-    const button = [...document.querySelectorAll('button')].find(item => item.textContent?.includes(name));
-    if (!button) throw new Error('linked playlist button not found');
-    button.click();
+    const link = [...document.querySelectorAll('[data-testid="playlist-card"] a')].find(item => item.textContent?.includes(name));
+    if (!link) throw new Error('linked playlist card not found');
+    link.click();
   }, linkedPlaylist.name);
   await page.waitForFunction(() => document.body.textContent?.includes('YouTube') && document.body.textContent?.includes('同期'));
   const songCount = await page.$eval('body', body => body.textContent?.includes('YouTube sync fixture') ?? false);

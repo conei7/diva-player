@@ -209,6 +209,7 @@ export function hasGlobalSongFilters(settings: GlobalFilterSettings): boolean {
     && (settings.minYoutubeViews > 0
       || settings.minNicoViews > 0
       || settings.excludedSongTypes.length > 0
+      || settings.excludeSelfCovers
       || settings.vocalistFilters.length > 0);
 }
 
@@ -232,13 +233,67 @@ export function getGlobalVocalistGroups(settings: GlobalFilterSettings): number[
   return groups;
 }
 
-export function getSearchErrorMessage(error: unknown, requiresBackend: boolean): string {
+/** Shown when a search with advanced-search conditions fails (their data service is unreachable). */
+export const ADVANCED_SEARCH_UNAVAILABLE_ERROR = 'いまは詳細検索を使えません';
+/** Any other search failure. Internal causes (HTTP status, service names) are never shown. */
+export const SEARCH_FAILED_ERROR = '検索できませんでした';
+
+/**
+ * The store keeps one of the two source texts above (the UI translates them), or a range
+ * validation message when filters were applied without going through the dialog.
+ * `usesAdvancedSearch`: the search had advanced-search conditions. A search that only reached the
+ * backend for its sort or the display filters is a plain 「検索できませんでした」.
+ */
+export function getSearchErrorMessage(error: unknown, usesAdvancedSearch: boolean): string {
   if (error instanceof Error
     && (error.message.includes('指定してください') || error.message.includes('以下にしてください'))) {
     return error.message;
   }
-  if (requiresBackend) {
-    return 'SBCのデータサービスに接続できないため、詳細検索と外部再生数順は現在利用できません。';
+  return usesAdvancedSearch ? ADVANCED_SEARCH_UNAVAILABLE_ERROR : SEARCH_FAILED_ERROR;
+}
+
+export type AdvancedRangeKey = 'publishYear' | 'length' | 'youtubeViews' | 'nicoViews' | 'favorites' | 'bpm';
+/** 'bounds' = a value outside the accepted range, 'order' = minimum larger than maximum. */
+export type AdvancedRangeError = 'bounds' | 'order';
+
+const RANGE_FIELDS: Record<AdvancedRangeKey, {
+  from: keyof AdvancedSearchFilters;
+  to: keyof AdvancedSearchFilters;
+  min: number;
+  max: number;
+}> = {
+  publishYear: { from: 'publishYearFrom', to: 'publishYearTo', min: ADVANCED_SEARCH_LIMITS.publishYearMin, max: ADVANCED_SEARCH_LIMITS.publishYearMax },
+  length: { from: 'lengthMinSeconds', to: 'lengthMaxSeconds', min: ADVANCED_SEARCH_LIMITS.lengthMinSeconds, max: ADVANCED_SEARCH_LIMITS.lengthMaxSeconds },
+  youtubeViews: { from: 'minYoutubeViews', to: 'maxYoutubeViews', min: 0, max: ADVANCED_SEARCH_LIMITS.viewCountMax },
+  nicoViews: { from: 'minNicoViews', to: 'maxNicoViews', min: 0, max: ADVANCED_SEARCH_LIMITS.viewCountMax },
+  favorites: { from: 'minFavoritedTimes', to: 'maxFavoritedTimes', min: 0, max: ADVANCED_SEARCH_LIMITS.favoriteCountMax },
+  bpm: { from: 'bpmFrom', to: 'bpmTo', min: ADVANCED_SEARCH_LIMITS.bpmMin, max: ADVANCED_SEARCH_LIMITS.bpmMax },
+};
+
+function isOutOfBounds(value: string, min: number, max: number): boolean {
+  const trimmed = value.trim();
+  if (trimmed === '') return false;
+  if (!/^\d+$/.test(trimmed)) return true;
+  const numeric = Number(trimmed);
+  return !Number.isSafeInteger(numeric) || numeric < min || numeric > max;
+}
+
+/** Per-range errors for the advanced search dialog (shown under each field; Apply stays disabled). */
+export function getAdvancedRangeErrors(filters: AdvancedSearchFilters): Partial<Record<AdvancedRangeKey, AdvancedRangeError>> {
+  const errors: Partial<Record<AdvancedRangeKey, AdvancedRangeError>> = {};
+  for (const [key, field] of Object.entries(RANGE_FIELDS) as [AdvancedRangeKey, typeof RANGE_FIELDS[AdvancedRangeKey]][]) {
+    const from = String(filters[field.from] ?? '');
+    const to = String(filters[field.to] ?? '');
+    if (isOutOfBounds(from, field.min, field.max) || isOutOfBounds(to, field.min, field.max)) {
+      errors[key] = 'bounds';
+    } else if (from.trim() && to.trim() && Number(from) > Number(to)) {
+      errors[key] = 'order';
+    }
   }
-  return error instanceof Error ? error.message : '検索中にエラーが発生しました';
+  return errors;
+}
+
+/** The accepted bounds of a range (for the dialog's error line). */
+export function getAdvancedRangeLimits(key: AdvancedRangeKey): { min: number; max: number } {
+  return { min: RANGE_FIELDS[key].min, max: RANGE_FIELDS[key].max };
 }

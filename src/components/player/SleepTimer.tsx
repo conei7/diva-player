@@ -1,123 +1,59 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect } from 'react';
+import { translateSourceText } from '../../i18n';
 import { usePlayerStore } from '../../stores/playerStore';
-import { storage } from '../../utils/storage';
-import { useTranslate } from '../../i18n';
+import { useLanguageStore } from '../../stores/languageStore';
+import { useSleepTimerStore } from '../../stores/sleepTimerStore';
+import { showToast } from '../../stores/toastStore';
+import { recordSleepTimerChoice } from './playerUi';
 
-const SLEEP_TIMER_KEY = 'sleepTimerUntil';
-const TIMER_OPTIONS = [15, 30, 60, 90];
+/** Timers are clamped to this (the largest delay setTimeout accepts). */
+const MAX_TIMEOUT_MS = 2_147_483_647;
 
-function formatRemaining(ms: number): string {
-  const totalSeconds = Math.max(0, Math.ceil(ms / 1000));
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  return `${minutes}:${seconds.toString().padStart(2, '0')}`;
-}
+/**
+ * SleepTimerWatcher (DESIGN_SPEC §6.2.3): no UI, always mounted inside GlobalPlayer.
+ * Pauses playback when sleepTimerStore's deadline passes, clears the timer and says so in a toast.
+ * Throttled background timers can fire late, so the deadline is checked again whenever the tab
+ * becomes visible or the device wakes up.
+ */
+export default function SleepTimerWatcher() {
+  const until = useSleepTimerStore(state => state.until);
 
-export default function SleepTimer() {
-  const t = useTranslate();
-  const pause = usePlayerStore(s => s.pause);
-  const [timerUntil, setTimerUntil] = useState<number | null>(() => storage.get<number>(SLEEP_TIMER_KEY));
-  const [now, setNow] = useState(() => Date.now());
-  const [isOpen, setIsOpen] = useState(false);
-
-  const remainingMs = useMemo(() => {
-    if (!timerUntil) return 0;
-    return timerUntil - now;
-  }, [now, timerUntil]);
-
-  const isActive = !!timerUntil && remainingMs > 0;
+  // Remember which option started each new deadline (any menu may start it).
+  useEffect(() => useSleepTimerStore.subscribe((state, prev) => {
+    if (state.until !== prev.until) recordSleepTimerChoice(state.until);
+  }), []);
 
   useEffect(() => {
-    if (!timerUntil) return;
-
-    const intervalId = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(intervalId);
-  }, [timerUntil]);
-
-  useEffect(() => {
-    if (!timerUntil || remainingMs > 0) return;
-
-    pause();
-    storage.remove(SLEEP_TIMER_KEY);
-    setTimerUntil(null);
-    setIsOpen(false);
-  }, [pause, remainingMs, timerUntil]);
-
-  const setTimer = (minutes: number) => {
-    const next = Date.now() + minutes * 60 * 1000;
-    storage.set(SLEEP_TIMER_KEY, next);
-    setNow(Date.now());
-    setTimerUntil(next);
-    setIsOpen(false);
-  };
-
-  const clearTimer = () => {
-    storage.remove(SLEEP_TIMER_KEY);
-    setTimerUntil(null);
-    setIsOpen(false);
-  };
-
-  return (
-    <div className="relative" onBlur={(event) => {
-      if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
-        setIsOpen(false);
+    if (until === null) return undefined;
+    let timer: number | undefined;
+    const check = () => {
+      if (useSleepTimerStore.getState().until !== until) return;
+      if (Date.now() < until) {
+        window.clearTimeout(timer);
+        timer = window.setTimeout(check, Math.min(MAX_TIMEOUT_MS, until - Date.now()));
+        return;
       }
-    }}>
-      <button
-        className="btn-ghost p-1.5 rounded-lg"
-        onClick={() => setIsOpen(open => !open)}
-        title={isActive ? t('sleepUntil', { time: formatRemaining(remainingMs) }) : t('sleepTimer')}
-        style={{ color: isActive ? 'var(--color-accent-cyan)' : 'var(--color-text-muted)' }}
-      >
-        <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor">
-          <path d="M12 2a10 10 0 1 0 10 10h-2a8 8 0 1 1-8-8V2zm1 5h-2v6l5 3 .98-1.74L13 11.87V7z"/>
-        </svg>
-      </button>
+      const { isPlaying, pause } = usePlayerStore.getState();
+      useSleepTimerStore.getState().clear();
+      if (isPlaying) {
+        pause();
+        showToast(translateSourceText(useLanguageStore.getState().language, 'スリープタイマーで停止しました'));
+      }
+    };
+    check();
+    document.addEventListener('visibilitychange', check);
+    document.addEventListener('resume', check);
+    window.addEventListener('focus', check);
+    return () => {
+      window.clearTimeout(timer);
+      document.removeEventListener('visibilitychange', check);
+      document.removeEventListener('resume', check);
+      window.removeEventListener('focus', check);
+    };
+  }, [until]);
 
-      {isActive && (
-        <span
-          className="absolute -top-1 -right-1 text-[9px] font-bold rounded-full px-1 leading-4 min-w-4 text-center"
-          style={{ background: 'var(--color-accent-cyan)', color: '#071014' }}
-        >
-          {Math.ceil(remainingMs / 60000)}
-        </span>
-      )}
-
-      {isOpen && (
-        <div
-          className="absolute right-0 bottom-full mb-2 w-40 p-2 rounded-lg border shadow-xl"
-          style={{
-            background: 'var(--color-surface)',
-            borderColor: 'var(--color-border)',
-            color: 'var(--color-text-primary)',
-          }}
-          tabIndex={-1}
-        >
-          <div className="text-xs font-semibold px-2 pb-1" style={{ color: 'var(--color-text-secondary)' }}>
-            {t('sleep')}
-          </div>
-          <div className="grid grid-cols-2 gap-1">
-            {TIMER_OPTIONS.map(minutes => (
-              <button
-                key={minutes}
-                className="btn-ghost rounded-md px-2 py-1.5 text-xs"
-                onClick={() => setTimer(minutes)}
-              >
-                {t('minutes', { count: minutes })}
-              </button>
-            ))}
-          </div>
-          {isActive && (
-            <button
-              className="btn-ghost mt-2 w-full rounded-md px-2 py-1.5 text-xs"
-              onClick={clearTimer}
-              style={{ color: 'var(--color-accent-pink)' }}
-            >
-              {t('cancelTimer', { time: formatRemaining(remainingMs) })}
-            </button>
-          )}
-        </div>
-      )}
-    </div>
-  );
+  return null;
 }
+
+// The ⋮ menu group (SleepTimerMenuItems) lives in its own module so this always-mounted watcher
+// does not bring the Menu code into the initial JavaScript.

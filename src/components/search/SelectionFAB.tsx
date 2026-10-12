@@ -1,460 +1,226 @@
 /**
  * SelectionFAB.tsx
  *
- * 複数選択モード中に画面下部に固定表示されるフローティングアクションバー。
- * ・モード終了ボタン (×)
- * ・選択数 / 全体数テキスト
- * ・全選択 / 全解除ボタン
- * ・アクションドロップダウン (⋮)
- * ・フィルター選択モーダル
+ * 複数選択モードの文脈バー（上部に固定）と「条件で選択」ダイアログ。
+ * [×] 「{n}曲を選択中」 [すべて選択] … [キューに追加] [プレイリストに保存] [⋮]
+ * export 名・props・data-testid="selection-fab" は Layout と e2e のために変えない。
  */
 
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useCallback, useEffect, useId, useMemo, useState } from 'react';
 import type { Song } from '../../types/vocadb';
 import { useSelectionStore } from '../../stores/selectionStore';
 import { usePlayerStore } from '../../stores/playerStore';
 import { useUiStore } from '../../stores/uiStore';
+import { showToast } from '../../stores/toastStore';
 import { useTranslateSourceText } from '../../i18n';
+import { MOBILE_MEDIA_QUERY, useMediaQuery } from '../../hooks/useMediaQuery';
+import { SelectionBar } from '../ui/SelectionBar';
+import Button from '../ui/Button';
+import IconButton from '../ui/IconButton';
+import Dialog from '../ui/Dialog';
+import { Chip } from '../ui/Chip';
+import SearchField from '../ui/SearchField';
+import { MenuItem } from '../ui/Menu';
+import { CloseIcon, CopyIcon, PlaylistAddIcon, QueueMusicIcon, TuneIcon } from '../ui/icons';
 
-// ─── フィルターモーダル ────────────────────────────────────────────────────────
+// ─── 条件で選択 ───────────────────────────────────────────────────────────────
 
-type FilterTarget = 'title' | 'artist' | 'tag';
+type MatchTarget = 'title' | 'artist' | 'tag';
 
-interface FilterModalProps {
-  songs: Song[];
-  onClose: () => void;
+function matchesKeyword(song: Song, target: MatchTarget, keyword: string, caseSensitive: boolean): boolean {
+  const needle = caseSensitive ? keyword : keyword.toLowerCase();
+  if (!needle.trim()) return true;
+  const haystack = target === 'title'
+    ? song.name
+    : target === 'artist'
+      ? song.artistString ?? ''
+      : (song.tags ?? []).map(tag => tag.tag.name).join(' ');
+  return (caseSensitive ? haystack : haystack.toLowerCase()).includes(needle);
 }
 
-function FilterModal({ songs, onClose }: FilterModalProps) {
+/** Mounted only while open, so every opening starts from an empty keyword. */
+function SelectMatchingDialog({ songs, onClose }: { songs: Song[]; onClose: () => void }) {
   const t = useTranslateSourceText();
-  const [target, setTarget] = useState<FilterTarget>('title');
-  const [query, setQuery] = useState('');
+  const caseId = useId();
+  const [target, setTarget] = useState<MatchTarget>('title');
+  const [keyword, setKeyword] = useState('');
   const [caseSensitive, setCaseSensitive] = useState(false);
-  const selectAll = useSelectionStore(s => s.selectAll);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const selectAll = useSelectionStore(state => state.selectAll);
+  const matched = useMemo(
+    () => (keyword.trim() ? songs.filter(song => matchesKeyword(song, target, keyword, caseSensitive)) : []),
+    [caseSensitive, keyword, songs, target],
+  );
 
-  useEffect(() => {
-    inputRef.current?.focus();
-    const handleKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    document.addEventListener('keydown', handleKey);
-    return () => document.removeEventListener('keydown', handleKey);
-  }, [onClose]);
-
-  const handleApply = useCallback(() => {
-    const q = caseSensitive ? query : query.toLowerCase();
-    if (!q.trim()) { onClose(); return; }
-
-    const matched = songs.filter(song => {
-      let haystack = '';
-      if (target === 'title') haystack = song.name;
-      else if (target === 'artist') haystack = song.artistString ?? '';
-      else if (target === 'tag') {
-        haystack = (song.tags ?? []).map(t => t.tag.name).join(' ');
-      }
-      if (!caseSensitive) haystack = haystack.toLowerCase();
-      return haystack.includes(q);
-    });
-
-    selectAll(matched);
+  const apply = () => {
+    if (matched.length > 0) selectAll(matched);
     onClose();
-  }, [query, caseSensitive, target, songs, selectAll, onClose]);
+  };
 
-  const targetOptions: { value: FilterTarget; label: string }[] = [
-    { value: 'title',  label: t('タイトル') },
-    { value: 'artist', label: t('プロデューサー / アーティスト') },
-    { value: 'tag',    label: t('タグ') },
+  const targets: { value: MatchTarget; label: string }[] = [
+    { value: 'title', label: t('タイトル') },
+    { value: 'artist', label: t('アーティスト') },
+    { value: 'tag', label: t('タグ') },
   ];
 
   return (
-    <div
-      className="fixed inset-0 z-[300] flex items-end sm:items-center justify-center"
-      style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)' }}
-      onClick={onClose}
+    <Dialog
+      open
+      onClose={onClose}
+      title={t('条件で選択')}
+      size="sm"
+      footer={(
+        <>
+          <Button variant="ghost" onClick={onClose}>{t('キャンセル')}</Button>
+          <Button variant="primary" disabled={matched.length === 0} onClick={apply}>
+            {matched.length === 1 ? t('1曲を選択') : t('{count}曲を選択', { count: matched.length })}
+          </Button>
+        </>
+      )}
     >
-      <div
-        className="w-full sm:w-[440px] rounded-t-2xl sm:rounded-2xl p-5 space-y-4"
-        style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)' }}
-        onClick={e => e.stopPropagation()}
-      >
-        {/* ヘッダー */}
-        <div className="flex items-center justify-between">
-          <h2 className="font-bold text-base" style={{ color: 'var(--color-text-primary)' }}>
-            {t('フィルターで選ぶ')}
-          </h2>
-          <button
-            onClick={onClose}
-            className="p-1.5 rounded-lg hover:bg-white/10 transition-colors"
-            style={{ color: 'var(--color-text-muted)' }}
-            aria-label={t('閉じる')}
-          >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
-            </svg>
-          </button>
+      <div className="flex flex-col gap-4 pt-1">
+        <div role="group" aria-label={t('対象')} className="flex flex-wrap gap-2">
+          {targets.map(option => (
+            <Chip key={option.value} selected={target === option.value} onClick={() => setTarget(option.value)}>
+              {option.label}
+            </Chip>
+          ))}
         </div>
-
-        {/* フィルター対象ラジオ */}
-        <div className="space-y-2">
-          <p className="text-xs font-medium" style={{ color: 'var(--color-text-secondary)' }}>{t('フィルター対象')}</p>
-          <div className="flex flex-wrap gap-2">
-            {targetOptions.map(opt => (
-              <label
-                key={opt.value}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full cursor-pointer text-sm transition-all"
-                style={{
-                  background: target === opt.value ? 'var(--gradient-primary)' : 'var(--color-bg-card)',
-                  color: target === opt.value ? '#fff' : 'var(--color-text-secondary)',
-                  border: '1px solid var(--color-border)',
-                }}
-              >
-                <input
-                  type="radio"
-                  className="sr-only"
-                  checked={target === opt.value}
-                  onChange={() => setTarget(opt.value)}
-                />
-                {opt.label}
-              </label>
-            ))}
-          </div>
-        </div>
-
-        {/* 検索文字列 */}
-        <div className="space-y-1.5">
-          <p className="text-xs font-medium" style={{ color: 'var(--color-text-secondary)' }}>{t('検索文字列')}</p>
+        <SearchField value={keyword} onChange={setKeyword} label={t('キーワード')} autoFocus onSubmit={apply} />
+        <label htmlFor={caseId} className="flex min-h-10 cursor-pointer select-none items-center gap-3 text-sm leading-5 text-yt-text">
           <input
-            ref={inputRef}
-            type="text"
-            value={query}
-            onChange={e => setQuery(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter') handleApply(); }}
-            placeholder={t('キーワードを入力...')}
-            className="w-full px-3 py-2 rounded-xl text-sm outline-none transition-all"
-            style={{
-              background: 'var(--color-bg-card)',
-              border: '1px solid var(--color-border)',
-              color: 'var(--color-text-primary)',
-            }}
+            id={caseId}
+            type="checkbox"
+            checked={caseSensitive}
+            onChange={event => setCaseSensitive(event.target.checked)}
+            className="h-[18px] w-[18px] shrink-0 cursor-pointer accent-yt-link"
           />
-        </div>
-
-        {/* 大文字小文字区別 */}
-        <label className="flex items-center gap-2 cursor-pointer select-none">
-          <div
-            className="w-4 h-4 rounded flex items-center justify-center transition-all flex-shrink-0"
-            style={{
-              background: caseSensitive ? 'var(--color-primary)' : 'transparent',
-              border: `2px solid ${caseSensitive ? 'var(--color-primary)' : 'var(--color-border)'}`,
-            }}
-            onClick={() => setCaseSensitive(v => !v)}
-          >
-            {caseSensitive && (
-              <svg width="10" height="10" viewBox="0 0 24 24" fill="white">
-                <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
-              </svg>
-            )}
-          </div>
-          <span className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
-            {t('大文字と小文字を区別')}
-          </span>
+          {t('大文字と小文字を区別')}
         </label>
-
-        {/* 適用ボタン */}
-        <button
-          onClick={handleApply}
-          className="w-full py-2.5 rounded-xl font-semibold text-sm text-white transition-opacity hover:opacity-90 active:opacity-80"
-          style={{ background: 'var(--gradient-primary)' }}
-        >
-          {t('適用 ({count} 件を選択)', { count: songs.filter(song => {
-            const q = caseSensitive ? query : query.toLowerCase();
-            if (!q.trim()) return true;
-            const haystack =
-              target === 'title'
-                ? song.name
-                : target === 'artist'
-                  ? song.artistString ?? ''
-                  : (song.tags ?? []).map(t => t.tag.name).join(' ');
-            const normalizedHaystack = caseSensitive ? haystack : haystack.toLowerCase();
-            return normalizedHaystack.includes(q);
-          }).length })}
-        </button>
       </div>
-    </div>
+    </Dialog>
   );
 }
 
-// ─── メインFABコンポーネント ─────────────────────────────────────────────────
+// ─── 選択バー ──────────────────────────────────────────────────────────────
 
 interface SelectionFABProps {
-  /** 現在の画面に表示されている全曲（全選択/フィルター対象） */
+  /** 現在の画面に表示されている全曲（すべて選択・条件で選択の対象） */
   visibleSongs: Song[];
 }
 
 export default function SelectionFAB({ visibleSongs }: SelectionFABProps) {
   const t = useTranslateSourceText();
-  const {
-    isSelectionMode,
-    selectedSongIds,
-    selectedSongs,
-    exitSelectionMode,
-    selectAll,
-    clearSelection,
-  } = useSelectionStore();
+  const isSelectionMode = useSelectionStore(state => state.isSelectionMode);
+  const selectedSongIds = useSelectionStore(state => state.selectedSongIds);
+  const selectedSongs = useSelectionStore(state => state.selectedSongs);
+  const exitSelectionMode = useSelectionStore(state => state.exitSelectionMode);
+  const selectAll = useSelectionStore(state => state.selectAll);
+  const clearSelection = useSelectionStore(state => state.clearSelection);
+  const addManyToQueue = usePlayerStore(state => state.addManyToQueue);
+  const openSaveToPlaylist = useUiStore(state => state.openSaveToPlaylist);
+  const isMobile = useMediaQuery(MOBILE_MEDIA_QUERY);
+  const [matchingDialogOpen, setMatchingDialogOpen] = useState(false);
 
-  const { addManyToQueue, queueDrawerOpen, toggleQueueDrawer } = usePlayerStore();
-  const { openSaveToPlaylist } = useUiStore();
-
-  const [menuOpen, setMenuOpen] = useState(false);
-  const [showFilterModal, setShowFilterModal] = useState(false);
-  const [toast, setToast] = useState<string | null>(null);
-
-  const menuRef = useRef<HTMLDivElement>(null);
-
-  // メニュー外クリックで閉じる
-  useEffect(() => {
-    if (!menuOpen) return;
-    const handler = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        setMenuOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, [menuOpen]);
-
-  // ESCで終了
+  // Esc closes only the top layer (DESIGN_SPEC §6.5.4): a menu, a dialog, the queue or the guide
+  // drawer first, selection mode after them. The listener is on window, so the document-level
+  // handlers of those layers run first and their preventDefault is already visible here.
   useEffect(() => {
     if (!isSelectionMode) return;
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') exitSelectionMode();
+    const handler = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.defaultPrevented || event.isComposing) return;
+      if (document.querySelector('[aria-modal="true"]')) return;
+      exitSelectionMode();
     };
-    document.addEventListener('keydown', handler);
-    return () => document.removeEventListener('keydown', handler);
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
   }, [isSelectionMode, exitSelectionMode]);
 
-  const showToast = useCallback((msg: string) => {
-    setToast(msg);
-    setTimeout(() => setToast(null), 2500);
-  }, []);
+  // The bar covers the toggle that opened it: keyboard focus moves to the bar's 選択を解除 (×) and
+  // returns to the toggle when selection mode ends.
+  useEffect(() => {
+    if (!isSelectionMode) return;
+    const opener = document.activeElement instanceof HTMLElement && document.activeElement !== document.body
+      ? document.activeElement
+      : null;
+    document.querySelector<HTMLElement>('[data-testid="selection-fab"] button')?.focus({ preventScroll: true });
+    return () => {
+      // Only when focus was in the bar (it is gone now); a click elsewhere keeps its own focus.
+      if (document.activeElement && document.activeElement !== document.body) return;
+      const target = opener?.isConnected && opener.closest('[inert]') === null
+        ? opener
+        : document.querySelector<HTMLElement>('[data-selection-toggle]');
+      target?.focus({ preventScroll: true });
+    };
+  }, [isSelectionMode]);
 
-  // 選択時点のSongオブジェクトを取得。表示タブや絞り込みが変わっても選択を維持する。
-  const getSelectedSongs = useCallback((): Song[] => {
-    return [...selectedSongs.values()];
-  }, [selectedSongs]);
+  // 選択時点のSongオブジェクトを使う。表示タブや絞り込みが変わっても選択を維持する。
+  const getSelectedSongs = useCallback((): Song[] => [...selectedSongs.values()], [selectedSongs]);
 
   const handleAddToQueue = useCallback(() => {
     const songs = getSelectedSongs();
+    if (songs.length === 0) return;
     addManyToQueue(songs);
-    if (!queueDrawerOpen) toggleQueueDrawer();
-    setMenuOpen(false);
-    showToast(t('{count} 曲をキューに追加しました', { count: songs.length }));
-  }, [getSelectedSongs, addManyToQueue, queueDrawerOpen, toggleQueueDrawer, showToast, t]);
+    if (!usePlayerStore.getState().queueDrawerOpen) usePlayerStore.getState().toggleQueueDrawer();
+    showToast(t('キューに追加しました'));
+  }, [addManyToQueue, getSelectedSongs, t]);
 
   const handleSaveToPlaylist = useCallback(() => {
     const songs = getSelectedSongs();
     if (songs.length === 0) return;
-    setMenuOpen(false);
     openSaveToPlaylist(songs);
   }, [getSelectedSongs, openSaveToPlaylist]);
 
   const handleCopyIds = useCallback(() => {
     const ids = [...selectedSongIds].join(', ');
-    navigator.clipboard.writeText(ids).catch(() => {});
-    setMenuOpen(false);
-    showToast(t('IDをコピーしました'));
-  }, [selectedSongIds, showToast, t]);
-
-  const handleOpenFilterModal = useCallback(() => {
-    setMenuOpen(false);
-    setShowFilterModal(true);
-  }, []);
+    if (!navigator.clipboard?.writeText) {
+      showToast(t('コピーできませんでした'));
+      return;
+    }
+    navigator.clipboard.writeText(ids)
+      .then(() => showToast(t('曲IDをコピーしました')))
+      .catch(() => showToast(t('コピーできませんでした')));
+  }, [selectedSongIds, t]);
 
   if (!isSelectionMode) return null;
 
   const selectedCount = selectedSongIds.size;
-  const totalCount = visibleSongs.length;
+  const nothingSelected = selectedCount === 0;
 
   return (
     <>
-      {/* FABバー */}
-      <div
-        className="fixed bottom-4 left-1/2 z-[250] flex items-center gap-1 px-4 py-2.5 rounded-full shadow-2xl"
+      <SelectionBar
         data-testid="selection-fab"
-        style={{
-          transform: 'translateX(-50%)',
-          background: 'var(--color-surface)',
-          border: '1px solid var(--color-border)',
-          backdropFilter: 'blur(12px)',
-          animation: 'fab-slide-up 0.25s cubic-bezier(0.34,1.56,0.64,1) both',
-          minWidth: 'min(90vw, 360px)',
-          maxWidth: '90vw',
-        }}
+        count={selectedCount}
+        onClose={exitSelectionMode}
+        onSelectAll={() => selectAll(visibleSongs)}
+        overflow={(
+          <>
+            <MenuItem icon={<TuneIcon />} onSelect={() => setMatchingDialogOpen(true)}>{t('条件で選択')}</MenuItem>
+            <MenuItem icon={<CopyIcon />} disabled={nothingSelected} onSelect={handleCopyIds}>{t('曲IDをコピー')}</MenuItem>
+            <MenuItem icon={<CloseIcon />} disabled={nothingSelected} onSelect={clearSelection}>{t('選択を解除')}</MenuItem>
+          </>
+        )}
       >
-        {/* × 終了ボタン */}
-        <button
-          onClick={exitSelectionMode}
-          className="p-2 rounded-xl hover:bg-white/10 transition-colors flex-shrink-0"
-          style={{ color: 'var(--color-text-muted)' }}
-          title={t('選択モード終了')}
-          aria-label={t('選択モード終了')}
-        >
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
-          </svg>
-        </button>
+        {isMobile ? (
+          <>
+            <IconButton label={t('キューに追加')} icon={<QueueMusicIcon />} disabled={nothingSelected} onClick={handleAddToQueue} />
+            <IconButton label={t('プレイリストに保存')} icon={<PlaylistAddIcon />} disabled={nothingSelected} onClick={handleSaveToPlaylist} />
+          </>
+        ) : (
+          <>
+            <Button icon={<QueueMusicIcon />} disabled={nothingSelected} onClick={handleAddToQueue}>
+              {t('キューに追加')}
+            </Button>
+            <Button variant="primary" icon={<PlaylistAddIcon />} disabled={nothingSelected} onClick={handleSaveToPlaylist}>
+              {t('プレイリストに保存')}
+            </Button>
+          </>
+        )}
+      </SelectionBar>
 
-        {/* 選択数テキスト */}
-        <span
-          className="text-sm font-semibold flex-1 min-w-0 text-center"
-          style={{ color: 'var(--color-text-primary)' }}
-        >
-          {t('{selected} / {total} 選択済み', { selected: selectedCount.toLocaleString(), total: totalCount.toLocaleString() })}
-        </span>
-
-        {/* 全選択 */}
-        <button
-          onClick={() => selectAll(visibleSongs)}
-          className="p-2 rounded-xl hover:bg-white/10 transition-colors flex-shrink-0"
-          style={{ color: 'var(--color-accent-cyan)' }}
-          title={t('全て選択')}
-          aria-label={t('全て選択')}
-        >
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <rect x="3" y="3" width="18" height="18" rx="3"/>
-            <path d="M9 12l2 2 4-4"/>
-          </svg>
-        </button>
-
-        {/* 全解除 */}
-        <button
-          onClick={clearSelection}
-          className="p-2 rounded-xl hover:bg-white/10 transition-colors flex-shrink-0"
-          style={{ color: selectedCount > 0 ? 'var(--color-text-muted)' : 'var(--color-text-disabled, var(--color-text-muted))' }}
-          title={t('全て解除')}
-          aria-label={t('全て解除')}
-          disabled={selectedCount === 0}
-        >
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <rect x="3" y="3" width="18" height="18" rx="3"/>
-            <path d="M6 6l12 12M18 6L6 18"/>
-          </svg>
-        </button>
-
-        {/* ⋮ アクションメニュー */}
-        <div className="relative flex-shrink-0" ref={menuRef}>
-          <button
-            onClick={() => setMenuOpen(v => !v)}
-            className="p-2 rounded-xl hover:bg-white/10 transition-colors"
-            style={{
-              color: 'var(--color-text-primary)',
-              background: menuOpen ? 'rgba(255,255,255,0.08)' : 'transparent',
-            }}
-            title={t('アクション')}
-            aria-label={t('アクション')}
-            disabled={selectedCount === 0}
-          >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-              <circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/>
-            </svg>
-          </button>
-
-          {/* ドロップダウン */}
-          {menuOpen && (
-            <div
-              className="absolute bottom-full mb-2 right-0 rounded-xl overflow-hidden shadow-2xl min-w-[200px] z-10"
-              style={{ background: 'var(--color-bg-card)', border: '1px solid var(--color-border)' }}
-            >
-              {/* キューに追加 */}
-              <button
-                className="w-full flex items-center gap-3 px-4 py-2.5 text-sm hover:bg-white/5 transition-colors text-left"
-                style={{ color: 'var(--color-text-primary)' }}
-                onClick={handleAddToQueue}
-              >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="flex-shrink-0">
-                  <path d="M3 18h13v-2H3v2zm0-5h10v-2H3v2zm0-7v2h13V6H3zm18 9.59L17.42 12 21 8.41 19.59 7l-5 5 5 5L21 15.59z"/>
-                </svg>
-                {t('キューに追加')}
-                <span className="ml-auto text-xs opacity-50">{selectedCount}</span>
-              </button>
-
-              {/* プレイリストに保存 */}
-              <button
-                className="w-full flex items-center gap-3 px-4 py-2.5 text-sm hover:bg-white/5 transition-colors text-left"
-                style={{ color: 'var(--color-text-primary)' }}
-                onClick={handleSaveToPlaylist}
-              >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="flex-shrink-0">
-                  <path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/>
-                  <polyline points="17 21 17 13 7 13 7 21"/>
-                  <polyline points="7 3 7 8 15 8"/>
-                </svg>
-                {t('プレイリストに保存')}
-                <span className="ml-auto text-xs opacity-50">{selectedCount}</span>
-              </button>
-
-              <div className="border-t" style={{ borderColor: 'var(--color-border)' }} />
-
-              {/* フィルターで選ぶ */}
-              <button
-                className="w-full flex items-center gap-3 px-4 py-2.5 text-sm hover:bg-white/5 transition-colors text-left"
-                style={{ color: 'var(--color-text-primary)' }}
-                onClick={handleOpenFilterModal}
-              >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="flex-shrink-0">
-                  <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>
-                </svg>
-                {t('フィルターで選ぶ')}
-              </button>
-
-              {/* IDをコピー */}
-              <button
-                className="w-full flex items-center gap-3 px-4 py-2.5 text-sm hover:bg-white/5 transition-colors text-left"
-                style={{ color: 'var(--color-text-primary)' }}
-                onClick={handleCopyIds}
-              >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="flex-shrink-0">
-                  <rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
-                </svg>
-                {t('選択曲のIDをコピー')}
-              </button>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* フィルターモーダル */}
-      {showFilterModal && (
-        <FilterModal
-          songs={visibleSongs}
-          onClose={() => setShowFilterModal(false)}
-        />
+      {matchingDialogOpen && (
+        <SelectMatchingDialog songs={visibleSongs} onClose={() => setMatchingDialogOpen(false)} />
       )}
-
-      {/* トースト通知 */}
-      {toast && (
-        <div
-          className="fixed bottom-20 left-1/2 z-[260] px-4 py-2.5 rounded-xl text-sm font-medium shadow-lg"
-          style={{
-            transform: 'translateX(-50%)',
-            background: 'var(--color-surface)',
-            border: '1px solid var(--color-border)',
-            color: 'var(--color-text-primary)',
-            animation: 'fab-slide-up 0.2s ease both',
-          }}
-        >
-          {toast}
-        </div>
-      )}
-
-      {/* アニメーション定義 */}
-      <style>{`
-        @keyframes fab-slide-up {
-          from { opacity: 0; transform: translateX(-50%) translateY(12px); }
-          to   { opacity: 1; transform: translateX(-50%) translateY(0); }
-        }
-      `}</style>
     </>
   );
 }

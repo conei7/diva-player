@@ -91,7 +91,7 @@ async function main() {
       ['settings/hidden-songs', 'h1', 'hidden songs'],
       ['favorites', 'h1', 'favorites'],
       ['favorite-producers', 'h1', 'favorite producers'],
-      ['playlists', 'aside[aria-label="プレイリストライブラリ"]', 'playlists'],
+      ['playlists', 'section[data-testid="playlist-library"]', 'playlists'],
       ['watch?v=1501', 'main', 'watch'],
     ]) {
       const response = await page.goto(new URL(route, baseUrl), { waitUntil: 'domcontentloaded' });
@@ -105,20 +105,25 @@ async function main() {
 
     await page.goto(new URL('playlists', baseUrl), { waitUntil: 'domcontentloaded' });
     await waitForLayout(page);
-    await page.evaluate(() => [...document.querySelectorAll('aside[aria-label="プレイリストライブラリ"] button')].find(button => button.textContent?.trim() === '新規作成')?.click());
-    await page.waitForSelector('input[placeholder="新しいプレイリスト"]');
+    // 新規作成 (＋ on phones) opens a menu; 「新しいプレイリスト」 opens the dialog.
+    await page.waitForSelector('section[data-testid="playlist-library"] button[aria-label="新規作成"]');
+    await page.click('section[data-testid="playlist-library"] button[aria-label="新規作成"]');
+    await page.waitForSelector('[role="menu"]');
+    await page.evaluate(() => [...document.querySelectorAll('[role="menu"] [role="menuitem"]')].find(item => item.textContent?.trim() === '新しいプレイリスト')?.click());
+    await page.waitForSelector('[role="dialog"] input[placeholder="タイトルを入力"]');
     const createButtonLayout = await page.$eval('button[aria-label="プレイリストを作成"]', button => {
       const style = getComputedStyle(button);
       return { display: style.display, alignItems: style.alignItems, justifyContent: style.justifyContent };
     });
-    assert(createButtonLayout.display === 'flex'
+    assert(['flex', 'inline-flex'].includes(createButtonLayout.display)
       && createButtonLayout.alignItems === 'center'
       && createButtonLayout.justifyContent === 'center',
     `Playlist create button is not centered: ${JSON.stringify(createButtonLayout)}`);
-    await page.type('input[placeholder="新しいプレイリスト"]', '長いタイトルでも操作が重ならないことを確認するプレイリスト');
+    const createdName = '長いタイトルでも操作が重ならないことを確認するプレイリスト';
+    await page.type('input[placeholder="タイトルを入力"]', createdName);
     await page.click('button[aria-label="プレイリストを作成"]');
-    await page.waitForSelector('main h1');
-    const headerLayout = await page.$eval('main h1', heading => {
+    await page.waitForFunction(name => document.querySelector('main section h1')?.textContent === name, {}, createdName);
+    const headerLayout = await page.$eval('main section h1', heading => {
       const section = heading.closest('section');
       if (!section) return { sectionBottom: 0, lastButtonBottom: 1 };
       const sectionRect = section.getBoundingClientRect();
@@ -209,25 +214,27 @@ async function main() {
       `The settings panel is not scrollable: ${JSON.stringify(settingsPanel)}`);
     console.log('PASS mobile settings dialog');
 
-    await page.evaluate(() => {
-      const button = [...document.querySelectorAll('button')].find(element => element.textContent?.includes('データとバックアップを開く'));
-      if (button instanceof HTMLButtonElement) button.click();
+    // バックアップの保存・復元はデータタブに直接ある（別のダイアログは無い）。開く時の拡大が終わってから測る
+    await page.waitForFunction(() => document.getAnimations().every(animation => {
+      const target = animation.effect?.target;
+      return animation.playState !== 'running' || !(target instanceof Element && target.closest('[role="dialog"]'));
+    }));
+    const dataActions = await page.$$eval('#settings-panel-data button', buttons => buttons.map(button => {
+      const rect = button.getBoundingClientRect();
+      return { text: button.textContent?.trim(), width: rect.width, height: rect.height, left: rect.left, right: rect.right };
+    }));
+    for (const label of ['バックアップを保存', 'ファイルから復元']) {
+      const action = dataActions.find(item => item.text === label);
+      assert(action && action.height >= 40 && action.left >= 0 && action.right <= 390,
+        `Data tab action "${label}" is missing, too small, or off screen: ${JSON.stringify(dataActions)}`);
+    }
+    const closeTarget = await page.$eval('[role="dialog"][aria-label="設定"] button[aria-label="閉じる"]', button => {
+      const rect = button.getBoundingClientRect();
+      return { width: rect.width, height: rect.height };
     });
-    await page.waitForSelector('[role="dialog"][aria-label="データとバックアップ"]', { visible: true });
-    const backupPanel = await page.$eval('[role="dialog"][aria-label="データとバックアップ"] > div', element => {
-      const rect = element.getBoundingClientRect();
-      const tapTargets = [...element.querySelectorAll('button')].map(button => {
-        const buttonRect = button.getBoundingClientRect();
-        return { width: buttonRect.width, height: buttonRect.height, text: button.textContent?.trim() };
-      });
-      return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom, viewportWidth: innerWidth, viewportHeight: innerHeight, tapTargets };
-    });
-    assert(backupPanel.left >= 0 && backupPanel.right <= backupPanel.viewportWidth
-      && backupPanel.top >= 0 && backupPanel.bottom <= backupPanel.viewportHeight,
-    `The backup panel does not fit the viewport: ${JSON.stringify(backupPanel)}`);
-    assert(backupPanel.tapTargets.filter(target => target.text?.includes('設定に戻る') || target.text === '').every(target => target.width >= 40 && target.height >= 40),
-      `Backup navigation tap targets are too small: ${JSON.stringify(backupPanel.tapTargets)}`);
-    console.log('PASS separated backup dialog and mobile layout');
+    assert(closeTarget.width >= 40 && closeTarget.height >= 40,
+      `The settings close button is too small: ${JSON.stringify(closeTarget)}`);
+    console.log('PASS mobile data tab actions and tap targets');
     console.log('Mobile browser E2E test passed.');
   } finally {
     await browser.close();

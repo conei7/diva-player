@@ -1,10 +1,13 @@
 import type { ListeningPlayEvent } from '../stores/historyStore';
+import type { AppLanguage } from '../stores/languageStore';
+import type { Song } from '../types/vocadb';
 import { HISTORY_STORES, openHistoryDb } from './historyDatabase';
 import { getSongsByIds } from '../api/vocadb';
 import { serializeCsv } from '../utils/csv';
 
 const STATS_VERSION = 2;
-const DEFAULT_TIME_ZONE = 'Asia/Tokyo';
+/** Calendar days, months and years of the history and reports are counted in this time zone. */
+export const DEFAULT_TIME_ZONE = 'Asia/Tokyo';
 const HISTORY_METADATA_BATCH_SIZE = 100;
 
 export interface HistorySongStats {
@@ -51,17 +54,30 @@ interface MonthSongStats extends HistorySongStats {
   month: string;
 }
 
+/** 'month' buckets by day, 'year' by month, 'all' (key 'all') by year. */
+export type ReportPeriod = 'month' | 'year' | 'all';
+
 export interface ReportBucket {
   key: string;
   starts: number;
   qualifiedPlays: number;
   listenedSeconds: number;
+  /** Plays counted as listened to the end. */
+  completes: number;
+  /** Distinct songs with at least one play in the bucket. */
+  uniqueSongs: number;
+  /** The part of starts / qualifiedPlays / listenedSeconds / completes that autoplay started (the rest was played by hand). */
+  autoStarts: number;
+  autoQualifiedPlays: number;
+  autoListenedSeconds: number;
+  autoCompletes: number;
 }
 
 export interface HistoryReport extends HistoryOverview {
-  period: 'month' | 'year';
+  period: ReportPeriod;
   key: string;
-  topSongsWithMeta: Array<HistorySongStats & { songName: string; artistString: string; thumbUrl?: string }>;
+  /** `song` is the full metadata when it could be loaded (for thumbnails and links). */
+  topSongsWithMeta: Array<HistorySongStats & { songName: string; artistString: string; thumbUrl?: string; song?: Song }>;
   buckets: ReportBucket[];
 }
 
@@ -380,33 +396,148 @@ export async function getSongHistoryStats(songId: number): Promise<HistorySongSt
   return stats ?? emptyHistorySongStats(songId);
 }
 
-function emptyBucket(key: string): ReportBucket {
-  return { key, starts: 0, qualifiedPlays: 0, listenedSeconds: 0 };
+export function emptyReportBucket(key: string): ReportBucket {
+  return {
+    key,
+    starts: 0,
+    qualifiedPlays: 0,
+    listenedSeconds: 0,
+    completes: 0,
+    uniqueSongs: 0,
+    autoStarts: 0,
+    autoQualifiedPlays: 0,
+    autoListenedSeconds: 0,
+    autoCompletes: 0,
+  };
 }
 
 function addEventToBucket(bucket: ReportBucket, event: ListeningPlayEvent): void {
+  const qualified = isQualifiedPlay(event) ? 1 : 0;
+  const listened = Math.max(0, Math.round(event.p ?? 0));
+  const completed = event.c === 1 ? 1 : 0;
   bucket.starts += 1;
-  bucket.qualifiedPlays += isQualifiedPlay(event) ? 1 : 0;
-  bucket.listenedSeconds += Math.max(0, Math.round(event.p ?? 0));
+  bucket.qualifiedPlays += qualified;
+  bucket.listenedSeconds += listened;
+  bucket.completes += completed;
+  // Same split as the manual / auto counts of the song statistics: o === 1 is autoplay.
+  if (event.o === 1) {
+    bucket.autoStarts += 1;
+    bucket.autoQualifiedPlays += qualified;
+    bucket.autoListenedSeconds += listened;
+    bucket.autoCompletes += completed;
+  }
 }
+
+/**
+ * Groups the finalized events of one report period into buckets: days of a month,
+ * months of a year ('YYYY-MM') or years of all time ('YYYY'). Only buckets with plays are returned.
+ */
+export function buildReportBuckets(
+  events: readonly ListeningPlayEvent[],
+  period: ReportPeriod,
+  key: string | number,
+  timeZone = DEFAULT_TIME_ZONE,
+): ReportBucket[] {
+  const normalizedKey = String(key);
+  const buckets = new Map<string, ReportBucket>();
+  const songsByBucket = new Map<string, Set<number>>();
+  for (const event of events) {
+    if (!isFinalizedPlayEvent(event)) continue;
+    const { year, month } = getYearAndMonth(event.t, timeZone);
+    const matches = period === 'all'
+      || (period === 'year' ? year === Number(normalizedKey) : month === normalizedKey);
+    if (!matches) continue;
+    const bucketKey = period === 'all'
+      ? String(year)
+      : period === 'year' ? getDateKey(event.t, timeZone).slice(0, 7) : getDateKey(event.t, timeZone);
+    const bucket = buckets.get(bucketKey) ?? emptyReportBucket(bucketKey);
+    addEventToBucket(bucket, event);
+    buckets.set(bucketKey, bucket);
+    const songs = songsByBucket.get(bucketKey) ?? new Set<number>();
+    songs.add(event.s);
+    songsByBucket.set(bucketKey, songs);
+  }
+  for (const [bucketKey, songs] of songsByBucket) {
+    const bucket = buckets.get(bucketKey);
+    if (bucket) bucket.uniqueSongs = songs.size;
+  }
+  return [...buckets.values()].sort((a, b) => a.key.localeCompare(b.key));
+}
+
+/**
+ * Words of the CSV exports, and the name used for a song whose details could not be loaded.
+ * Both languages have the same columns in the same order and the same value formats;
+ * the column names match the metric names on screen (再生回数 / 最後まで聴いた / 再生開始).
+ */
+const HISTORY_TEXT = {
+  ja: {
+    unknownSong: (songId: number) => `曲ID ${songId}`,
+    yes: 'はい',
+    no: 'いいえ',
+    manual: '手動',
+    auto: '自動',
+    overview: '概要',
+    trend: '推移',
+    topSongs: '上位曲',
+    historyHeaders: [
+      'イベントID', '再生日時(ISO)', '再生日時(表示)', '曲ID', '曲名', 'アーティスト', '再生方式',
+      '再生時間(秒)', '曲の長さ(秒)', '再生率', '再生回数に数える', '最後まで聴いた',
+    ],
+    reportHeaders: [
+      'セクション', '期間', 'キー', '曲ID', '曲名', 'アーティスト', '再生開始', '再生回数', '最後まで聴いた',
+      '手動再生', '自動再生', '再生時間(秒)', '最初の再生日時(ISO)', '最後の再生日時(ISO)',
+    ],
+  },
+  en: {
+    unknownSong: (songId: number) => `Song ID ${songId}`,
+    yes: 'Yes',
+    no: 'No',
+    manual: 'Manual',
+    auto: 'Auto',
+    overview: 'Overview',
+    trend: 'Trend',
+    topSongs: 'Top songs',
+    historyHeaders: [
+      'Event ID', 'Played at (ISO)', 'Played at', 'Song ID', 'Title', 'Artist', 'Play type',
+      'Listening time (sec)', 'Length (sec)', 'Portion played', 'Counts as a play', 'Finished',
+    ],
+    reportHeaders: [
+      'Section', 'Period', 'Key', 'Song ID', 'Title', 'Artist', 'Starts', 'Plays', 'Finished',
+      'Manual starts', 'Auto starts', 'Listening time (sec)', 'First played at (ISO)', 'Last played at (ISO)',
+    ],
+  },
+} satisfies Record<AppLanguage, {
+  unknownSong: (songId: number) => string;
+  yes: string;
+  no: string;
+  manual: string;
+  auto: string;
+  overview: string;
+  trend: string;
+  topSongs: string;
+  historyHeaders: string[];
+  reportHeaders: string[];
+}>;
 
 export async function enrichTopSongs(
   stats: HistorySongStats[],
   loadSongs: typeof getSongsByIds = getSongsByIds,
+  language: AppLanguage = 'ja',
 ): Promise<HistoryReport['topSongsWithMeta']> {
   const songs = await loadSongs(stats.map(stat => stat.songId)).catch(() => []);
   const songsById = new Map(songs.map(song => [song.id, song]));
   return stats.map(stat => {
     const song = songsById.get(stat.songId);
     return song
-      ? { ...stat, songName: song.name, artistString: song.artistString, thumbUrl: song.thumbUrl }
-      : { ...stat, songName: `曲ID ${stat.songId}`, artistString: '' };
+      ? { ...stat, songName: song.name, artistString: song.artistString, thumbUrl: song.thumbUrl, song }
+      : { ...stat, songName: HISTORY_TEXT[language].unknownSong(stat.songId), artistString: '' };
   }).sort(compareHistoryStats);
 }
 
 export async function enrichSongMetadata(
   songIds: readonly number[],
   loadSongs: typeof getSongsByIds = getSongsByIds,
+  language: AppLanguage = 'ja',
 ): Promise<Map<number, HistorySongCsvMeta>> {
   const uniqueIds = [...new Set(songIds)];
   const songs = [];
@@ -420,21 +551,28 @@ export async function enrichSongMetadata(
     const song = songsById.get(songId);
     result.set(songId, song
       ? { songName: song.name, artistString: song.artistString }
-      : { songName: `曲ID ${songId}`, artistString: '' });
+      : { songName: HISTORY_TEXT[language].unknownSong(songId), artistString: '' });
   }
   return result;
 }
 
+/**
+ * `key` is 'YYYY-MM' for a month, the year for a year and 'all' for all time.
+ * `language` only names the top songs whose details could not be loaded.
+ */
 export async function getHistoryReport(
-  period: 'month' | 'year',
+  period: ReportPeriod,
   key: string | number,
   timeZone = DEFAULT_TIME_ZONE,
+  language: AppLanguage = 'ja',
 ): Promise<HistoryReport> {
   const db = await ensureStats(timeZone);
   const normalizedKey = String(key);
-  const stats = period === 'year'
-    ? await readYearStats(db, Number(key))
-    : await readMonthStats(db, normalizedKey);
+  const stats = period === 'all'
+    ? await readSongStats(db)
+    : period === 'year'
+      ? await readYearStats(db, Number(key))
+      : await readMonthStats(db, normalizedKey);
   const overview: HistoryOverview = {
     totalStarts: stats.reduce((sum, item) => sum + item.startCount, 0),
     manualPlayCount: stats.reduce((sum, item) => sum + item.manualPlayCount, 0),
@@ -448,23 +586,12 @@ export async function getHistoryReport(
     topSongs: [...stats].sort(compareHistoryStats).slice(0, 20),
   };
   const events = await readAllEvents(db);
-  const buckets = new Map<string, ReportBucket>();
-  for (const event of events) {
-    if (!isFinalizedPlayEvent(event)) continue;
-    const { year, month } = getYearAndMonth(event.t, timeZone);
-    const matches = period === 'year' ? year === Number(key) : month === normalizedKey;
-    if (!matches) continue;
-    const bucketKey = period === 'year' ? getDateKey(event.t, timeZone).slice(0, 7) : getDateKey(event.t, timeZone);
-    const bucket = buckets.get(bucketKey) ?? emptyBucket(bucketKey);
-    addEventToBucket(bucket, event);
-    buckets.set(bucketKey, bucket);
-  }
   return {
     ...overview,
     period,
     key: normalizedKey,
-    topSongsWithMeta: await enrichTopSongs([...stats].sort(compareHistoryStats).slice(0, 20)),
-    buckets: [...buckets.values()].sort((a, b) => a.key.localeCompare(b.key)),
+    topSongsWithMeta: await enrichTopSongs([...stats].sort(compareHistoryStats).slice(0, 20), getSongsByIds, language),
+    buckets: buildReportBuckets(events, period, normalizedKey, timeZone),
   };
 }
 
@@ -486,27 +613,15 @@ export function buildHistoryCsv(
   events: readonly ListeningPlayEvent[],
   songs: ReadonlyMap<number, HistorySongCsvMeta> = new Map(),
   timeZone = DEFAULT_TIME_ZONE,
+  language: AppLanguage = 'ja',
 ): string {
-  const headers = [
-    'イベントID',
-    '再生日時(ISO)',
-    '再生日時(表示)',
-    '曲ID',
-    '曲名',
-    'アーティスト',
-    '再生方式',
-    '再生時間(秒)',
-    '曲の長さ(秒)',
-    '再生率',
-    '有効再生',
-    '完走',
-  ];
+  const text = HISTORY_TEXT[language];
   const rows = events
     .filter(isFinalizedPlayEvent)
     .slice()
     .sort((a, b) => a.t - b.t || (a.id ?? 0) - (b.id ?? 0))
     .map(event => {
-      const metadata = songs.get(event.s) ?? { songName: `曲ID ${event.s}`, artistString: '' };
+      const metadata = songs.get(event.s) ?? { songName: text.unknownSong(event.s), artistString: '' };
       const progress = event.d && event.d > 0 && event.p !== undefined
         ? Number((Math.max(0, event.p) / event.d).toFixed(4))
         : '';
@@ -517,60 +632,45 @@ export function buildHistoryCsv(
         event.s,
         metadata.songName,
         metadata.artistString,
-        event.o === 1 ? '自動' : '手動',
+        event.o === 1 ? text.auto : text.manual,
         event.p === undefined ? '' : Math.max(0, Math.round(event.p)),
         event.d === undefined ? '' : Math.max(0, Math.round(event.d)),
         progress,
-        isQualifiedPlay(event) ? 'はい' : 'いいえ',
-        event.c === 1 ? 'はい' : 'いいえ',
+        isQualifiedPlay(event) ? text.yes : text.no,
+        event.c === 1 ? text.yes : text.no,
       ];
     });
-  return serializeCsv(headers, rows);
+  return serializeCsv(text.historyHeaders, rows);
 }
 
-export async function createHistoryCsv(timeZone = DEFAULT_TIME_ZONE): Promise<string> {
+export async function createHistoryCsv(timeZone = DEFAULT_TIME_ZONE, language: AppLanguage = 'ja'): Promise<string> {
   const db = await ensureStats(timeZone);
   const events = await readAllEvents(db);
   const songIds = events.filter(isFinalizedPlayEvent).map(event => event.s);
-  const songs = await enrichSongMetadata(songIds);
-  return buildHistoryCsv(events, songs, timeZone);
+  const songs = await enrichSongMetadata(songIds, getSongsByIds, language);
+  return buildHistoryCsv(events, songs, timeZone, language);
 }
 
-export function buildHistoryReportCsv(report: HistoryReport): string {
-  const headers = [
-    'セクション',
-    '期間',
-    'キー',
-    '曲ID',
-    '曲名',
-    'アーティスト',
-    '開始回数',
-    '有効再生',
-    '完走',
-    '手動再生',
-    '自動再生',
-    '再生時間(秒)',
-    '最初の再生日時(ISO)',
-    '最後の再生日時(ISO)',
-  ];
+export function buildHistoryReportCsv(report: HistoryReport, language: AppLanguage = 'ja'): string {
+  const text = HISTORY_TEXT[language];
   const rows: unknown[][] = [[
-    '概要', report.period, report.key, '', '', '',
+    text.overview, report.period, report.key, '', '', '',
     report.totalStarts, report.totalQualifiedPlays, report.totalCompletes,
     report.manualPlayCount, report.autoPlayCount, report.totalListenedSeconds,
     report.firstPlayedAt === null ? '' : new Date(report.firstPlayedAt).toISOString(),
     report.lastPlayedAt === null ? '' : new Date(report.lastPlayedAt).toISOString(),
   ]];
   for (const bucket of report.buckets) {
-    rows.push(['推移', report.period, bucket.key, '', '', '', bucket.starts, bucket.qualifiedPlays, '', '', '', bucket.listenedSeconds, '', '']);
+    rows.push([text.trend, report.period, bucket.key, '', '', '', bucket.starts, bucket.qualifiedPlays, '', '', '', bucket.listenedSeconds, '', '']);
   }
   for (const song of report.topSongsWithMeta) {
     rows.push([
-      '上位曲', report.period, report.key, song.songId, song.songName, song.artistString,
+      text.topSongs, report.period, report.key, song.songId, song.songName, song.artistString,
       song.startCount, song.qualifiedPlayCount, song.completeCount, song.manualPlayCount,
       song.autoPlayCount, song.listenedSeconds,
       song.firstPlayedAt === null ? '' : new Date(song.firstPlayedAt).toISOString(),
       song.lastPlayedAt === null ? '' : new Date(song.lastPlayedAt).toISOString(),
     ]);
   }
-  return serializeCsv(headers, rows);
+  return serializeCsv(text.reportHeaders, rows);
 }

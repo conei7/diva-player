@@ -54,9 +54,23 @@ export function analyzePlaylistHealth(songs: Song[]): PlaylistHealthReport {
   return { totalSongs: songs.length, entries, counts };
 }
 
+/** Source texts (translate with t()). */
 export const PLAYLIST_HEALTH_ISSUE_LABELS: Record<PlaylistHealthIssueKind, string> = {
   duplicate: '重複',
-  'no-pv': 'PVなし',
-  'all-pv-disabled': 'PVがすべて無効',
-  'no-playable-pv': '再生対応PVなし',
+  'no-pv': '動画なし',
+  'all-pv-disabled': '動画が削除済み',
+  'no-playable-pv': '再生できない動画',
 };
+
+export const PLAYLIST_HEALTH_ISSUE_ORDER: readonly PlaylistHealthIssueKind[] = [
+  'duplicate',
+  'no-pv',
+  'all-pv-disabled',
+  'no-playable-pv',
+];
+
+/** Counts for the one-line notice above the song list: songs that can't play, and extra copies. */
+export function summarizePlaylistHealth(report: PlaylistHealthReport): { unplayable: number; duplicates: number } {
+  const unplayable = report.entries.filter(entry => entry.issues.some(issue => issue !== 'duplicate')).length;
+  return { unplayable, duplicates: report.counts.duplicate };
+}

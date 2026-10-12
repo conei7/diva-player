@@ -3,8 +3,10 @@ import {
   applyHistoryEventToStats,
   buildHistoryCsv,
   buildHistoryReportCsv,
+  buildReportBuckets,
   compareHistoryStats,
   emptyHistorySongStats,
+  emptyReportBucket,
   enrichSongMetadata,
   enrichTopSongs,
   isFinalizedPlayEvent,
@@ -85,6 +87,19 @@ describe('history statistics', () => {
     expect(csv.indexOf('\r\n2,')).toBe(-1);
   });
 
+  it('names the CSV columns like the metrics on screen, in the display language', () => {
+    const events = [event({ id: 1, t: 1_000, p: 30, c: 1, o: 1 })];
+    const japanese = buildHistoryCsv(events);
+    const header = japanese.replace('\uFEFF', '').split('\r\n')[0];
+    expect(header).toBe('イベントID,再生日時(ISO),再生日時(表示),曲ID,曲名,アーティスト,再生方式,再生時間(秒),曲の長さ(秒),再生率,再生回数に数える,最後まで聴いた');
+    expect(japanese).toContain(',曲ID 42,,自動,30,120,0.25,はい,はい');
+
+    const english = buildHistoryCsv(events, new Map(), 'Asia/Tokyo', 'en').replace('\uFEFF', '').split('\r\n');
+    expect(english[0]).toBe('Event ID,Played at (ISO),Played at,Song ID,Title,Artist,Play type,Listening time (sec),Length (sec),Portion played,Counts as a play,Finished');
+    // Same columns and value formats; only the words follow the language.
+    expect(english[1]).toBe('1,1970-01-01T00:00:01.000Z,1970/01/01 09:00:01,42,Song ID 42,,Auto,30,120,0.25,Yes,Yes');
+  });
+
   it('exports report overview, buckets, and top songs even when sections are empty', () => {
     const csv = buildHistoryReportCsv({
       period: 'month',
@@ -106,10 +121,12 @@ describe('history statistics', () => {
     expect(csv).toContain('セクション');
     expect(csv).toContain('概要,month,2026-01');
     expect(csv).not.toContain('推移');
+    expect(csv.replace('\uFEFF', '').split('\r\n')[0])
+      .toBe('セクション,期間,キー,曲ID,曲名,アーティスト,再生開始,再生回数,最後まで聴いた,手動再生,自動再生,再生時間(秒),最初の再生日時(ISO),最後の再生日時(ISO)');
   });
 
   it('includes report bucket and top-song rows', () => {
-    const csv = buildHistoryReportCsv({
+    const report = {
       period: 'year',
       key: '2026',
       totalStarts: 2,
@@ -135,11 +152,70 @@ describe('history statistics', () => {
         firstPlayedAt: 1_000,
         lastPlayedAt: 2_000,
       }],
-      buckets: [{ key: '2026-01', starts: 2, qualifiedPlays: 1, listenedSeconds: 90 }],
-    });
+      buckets: [{
+        ...emptyReportBucket('2026-01'),
+        starts: 2,
+        qualifiedPlays: 1,
+        listenedSeconds: 90,
+        completes: 1,
+        uniqueSongs: 1,
+        autoStarts: 1,
+        autoListenedSeconds: 10,
+      }],
+    } satisfies Parameters<typeof buildHistoryReportCsv>[0];
+    const csv = buildHistoryReportCsv(report);
 
     expect(csv).toContain('推移,year,2026-01');
+    expect(csv).toContain('推移,year,2026-01,,,,2,1,,,,90,,');
     expect(csv).toContain('上位曲,year,2026,42,曲名,作者');
+
+    const english = buildHistoryReportCsv(report, 'en');
+    expect(english.replace('\uFEFF', '').split('\r\n')[0])
+      .toBe('Section,Period,Key,Song ID,Title,Artist,Starts,Plays,Finished,Manual starts,Auto starts,Listening time (sec),First played at (ISO),Last played at (ISO)');
+    expect(english).toContain('Overview,year,2026,,,,2,1,1,1,1,90,');
+    expect(english).toContain('Trend,year,2026-01,,,,2,1,,,,90,,');
+    expect(english).toContain('Top songs,year,2026,42,曲名,作者');
+  });
+
+  it('buckets a month by Tokyo day with plays, completes, distinct songs and the autoplay share', () => {
+    const buckets = buildReportBuckets([
+      // 2026-01-31 23:30 JST and 2026-02-01 00:30 JST fall in different months.
+      event({ s: 1, t: Date.UTC(2026, 0, 31, 14, 30), p: 60, d: 120, c: 1 }),
+      event({ s: 1, t: Date.UTC(2026, 0, 31, 15, 30), p: 10, d: 120 }),
+      event({ s: 2, t: Date.UTC(2026, 0, 3, 3, 0), p: 90, d: 120, c: 1 }),
+      event({ s: 2, t: Date.UTC(2026, 0, 3, 4, 0), p: 40, d: 120, o: 1 }),
+      event({ s: 3, t: Date.UTC(2026, 0, 3, 5, 0), p: 20, d: 120, o: 1 }),
+      event({ s: 4, t: Date.UTC(2026, 0, 3, 6, 0), f: 0 }),
+    ], 'month', '2026-01');
+
+    expect(buckets).toEqual([
+      {
+        key: '2026-01-03',
+        starts: 3,
+        qualifiedPlays: 2,
+        listenedSeconds: 150,
+        completes: 1,
+        uniqueSongs: 2,
+        autoStarts: 2,
+        autoQualifiedPlays: 1,
+        autoListenedSeconds: 60,
+        autoCompletes: 0,
+      },
+      { ...emptyReportBucket('2026-01-31'), starts: 1, qualifiedPlays: 1, listenedSeconds: 60, completes: 1, uniqueSongs: 1 },
+    ]);
+  });
+
+  it('buckets a year by month and all time by year', () => {
+    const events = [
+      event({ s: 1, t: Date.UTC(2025, 11, 31, 16, 0) }), // 2026-01-01 01:00 JST
+      event({ s: 2, t: Date.UTC(2026, 4, 10) }),
+      event({ s: 3, t: Date.UTC(2024, 6, 1) }),
+    ];
+
+    expect(buildReportBuckets(events, 'year', 2026).map(bucket => [bucket.key, bucket.starts]))
+      .toEqual([['2026-01', 1], ['2026-05', 1]]);
+    expect(buildReportBuckets(events, 'all', 'all').map(bucket => [bucket.key, bucket.starts, bucket.uniqueSongs]))
+      .toEqual([['2024', 1, 1], ['2026', 2, 2]]);
   });
 
   it('enriches report songs with one compact batch and keeps missing-song placeholders', async () => {
@@ -158,8 +234,9 @@ describe('history statistics', () => {
     expect(loadSongs).toHaveBeenCalledWith([1, 2]);
     expect(enriched).toMatchObject([
       { songId: 1, songName: '曲ID 1', artistString: '' },
-      { songId: 2, songName: '軽量曲', artistString: '作者', thumbUrl: 'thumb.jpg' },
+      { songId: 2, songName: '軽量曲', artistString: '作者', thumbUrl: 'thumb.jpg', song: { id: 2 } },
     ]);
+    expect(enriched[0].song).toBeUndefined();
   });
 
   it('deduplicates CSV metadata ids into one compact batch', async () => {

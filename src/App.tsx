@@ -1,75 +1,71 @@
-import { lazy, useCallback, useEffect, useRef, useState } from 'react';
-import { BrowserRouter, Routes, Route, useLocation } from 'react-router';
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
+import { BrowserRouter, Navigate, Routes, Route, useLocation } from 'react-router';
 import Layout from './components/layout/Layout';
-import MediaSession from './components/player/MediaSession';
 import KeyboardShortcuts from './components/player/KeyboardShortcuts';
 import GlobalPlayer from './components/player/GlobalPlayer';
 import { usePlayerStore } from './stores/playerStore';
 import { useHistoryStore } from './stores/historyStore';
-import { useRatingStore } from './stores/ratingStore';
 import { useProgressStore } from './stores/progressStore';
-import { usePlaylistStore } from './stores/playlistStore';
 import { useImplicitFeedbackStore } from './stores/implicitFeedbackStore';
 import { useAutoPlaySessionStore } from './stores/autoPlaySessionStore';
 import { useAutoQueueDecisionStore } from './stores/autoQueueDecisionStore';
 import { useAutoQueueBanditStore } from './stores/autoQueueBanditStore';
-import { useAutoQueue } from './hooks/useAutoQueue';
 import AppErrorBoundary from './components/AppErrorBoundary';
+import NotFoundPage from './components/layout/NotFoundPage';
+import { DeferredBoundary } from './components/layout/RouteErrorBoundary';
+import ToastHost from './components/ui/ToastHost';
+import ConfirmHost from './components/ui/ConfirmHost';
 import {
   formatDocumentTitle,
-  WATCH_LOADING_DOCUMENT_TITLE,
-  WATCH_UNAVAILABLE_DOCUMENT_TITLE,
+  watchLoadingDocumentTitle,
+  watchUnavailableDocumentTitle,
 } from './utils/documentTitle';
 import { shouldRecordPlayback } from './utils/playbackHistory';
+import { isWatchPath } from './utils/routes';
 import { useLanguageStore } from './stores/languageStore';
+import { loadRoute } from './routes/routeLoaders';
 import type { WatchPageDocumentTitleState } from './pages/WatchPage';
 
-// Root navigation is the dominant entry path. Start its split-chunk download
-// while App is being evaluated instead of waiting for the first React render.
-const initialPath = typeof window !== 'undefined'
-  ? window.location.pathname.replace(/\/+$/, '')
-  : '';
-const initialHomePageImport = typeof window !== 'undefined'
-  && (initialPath === '' || initialPath === '/diva-player')
-  ? import('./pages/HomePage')
-  : null;
-const HomePage = lazy(() => initialHomePageImport ?? import('./pages/HomePage'));
-const WatchPage = lazy(() => import('./pages/WatchPage'));
-const PlaylistPage = lazy(() => import('./pages/PlaylistPage'));
-const HistoryPage = lazy(() => import('./pages/HistoryPage'));
-const FavoritesPage = lazy(() => import('./pages/FavoritesPage'));
-const FavoriteProducersPage = lazy(() => import('./pages/FavoriteProducersPage'));
-const ReportsPage = lazy(() => import('./pages/ReportsPage'));
-const HiddenSongsPage = lazy(() => import('./pages/HiddenSongsPage'));
-const ChorusHighlightsPage = lazy(() => import('./pages/ChorusHighlightsPage'));
-const KnowledgeMapPage = lazy(() => import('./pages/KnowledgeMapPage'));
-const SoundMapPage = lazy(() => import('./pages/SoundMapPage'));
+// Page chunks are shared with the guide's hover preloading (routes/routeLoaders.ts), which also
+// starts the entry page's download while App is being evaluated.
+const HomePage = lazy(() => loadRoute('home'));
+const WatchPage = lazy(() => loadRoute('watch'));
+const PlaylistPage = lazy(() => loadRoute('playlists'));
+const HistoryPage = lazy(() => loadRoute('history'));
+const FavoritesPage = lazy(() => loadRoute('favorites'));
+const FavoriteProducersPage = lazy(() => loadRoute('favoriteProducers'));
+const ReportsPage = lazy(() => loadRoute('reports'));
+const HiddenSongsPage = lazy(() => loadRoute('hiddenSongs'));
+const ChorusHighlightsPage = lazy(() => loadRoute('chorusHighlights'));
+const KnowledgeMapPage = lazy(() => loadRoute('knowledgeMap'));
+const SoundMapPage = lazy(() => loadRoute('soundMap'));
+// Not needed for the first paint: loaded right after it, outside the initial JavaScript (§1-12).
+const AutoQueueRunner = lazy(() => import('./components/player/AutoQueueRunner'));
+const MediaSession = lazy(() => import('./components/player/MediaSession'));
+
+/** The old song page URL: /playing?v=… → /watch?v=… (replace, so Back skips it). */
+function LegacyPlayingRedirect() {
+  const { search } = useLocation();
+  return <Navigate to={{ pathname: '/watch', search }} replace />;
+}
 
 /**
  * App - ルートコンポーネント
- * 
+ *
  * BrowserRouter + Layout でSPA構成を実現。
- * ページ遷移してもLayout内のPlayerBarは維持され、
- * 音楽再生が途切れない。
+ * GlobalPlayer はルートの外に常駐させ、ページを移っても再生が途切れない。
  */
 
 function PlayerTracker() {
   const currentSong = usePlayerStore(s => s.currentSong);
-  const rootSeed = usePlayerStore(s => s.rootSeed);
-  const queue = usePlayerStore(s => s.queue);
-  const queueIndex = usePlayerStore(s => s.queueIndex);
-  const addManyToQueue = usePlayerStore(s => s.addManyToQueue);
   const currentPlaybackSource = usePlayerStore(s => s.currentPlaybackSource);
   const currentPlaybackSequence = usePlayerStore(s => s.playbackSequence);
   const progress = useProgressStore(s => s.progress);
   const duration = useProgressStore(s => s.duration);
-  
-  const { addToHistory, finalizeHistoryEntry, entries: historyEntries, hasHydrated: historyHydrated } = useHistoryStore();
-  const { ratings } = useRatingStore();
-  const { playlists } = usePlaylistStore();
-  const implicitFeedback = useImplicitFeedbackStore(s => s.feedback);
-  const autoPlaySession = useAutoPlaySessionStore(s => s.session);
-  const autoPlayedCount = autoPlaySession?.autoPlayedCount ?? 0;
+
+  const addToHistory = useHistoryStore(s => s.addToHistory);
+  const finalizeHistoryEntry = useHistoryStore(s => s.finalizeHistoryEntry);
+  const historyHydrated = useHistoryStore(s => s.hasHydrated);
 
   // 再生完了率トラッキング
   const prevSongRef = useRef<{
@@ -174,25 +170,6 @@ function PlayerTracker() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  useAutoQueue({
-    currentSong,
-    playbackSequence: currentPlaybackSequence,
-    rootSeed,
-    queue,
-    queueIndex,
-    historyEntries,
-    ratings,
-    playlists,
-    implicitFeedback,
-    autoPlayedCount,
-    adaptation: {
-      autoCompletedCount: autoPlaySession?.autoCompletedCount ?? 0,
-      autoSkippedCount: autoPlaySession?.autoSkippedCount ?? 0,
-      consecutiveSkips: autoPlaySession?.consecutiveSkips ?? 0,
-    },
-    addManyToQueue,
-  });
-
   return null;
 }
 
@@ -200,7 +177,7 @@ function AppContent() {
   const currentSong = usePlayerStore(s => s.currentSong);
   const language = useLanguageStore(s => s.language);
   const location = useLocation();
-  const isWatchRoute = location.pathname === '/watch' || location.pathname === '/playing';
+  const isWatchRoute = isWatchPath(location.pathname);
   const parsedRequestedSongId = isWatchRoute
     ? Number(new URLSearchParams(location.search).get('v'))
     : Number.NaN;
@@ -216,23 +193,23 @@ function AppContent() {
     if (isWatchRoute && requestedSongId) {
       const state = watchTitleState?.songId === requestedSongId ? watchTitleState : null;
       if (state?.status === 'loaded') {
-        document.title = formatDocumentTitle(state.song);
+        document.title = formatDocumentTitle(state.song, language);
       } else if (currentSong?.id === requestedSongId) {
         // Show the locally known song immediately while WatchPage refreshes its
         // page metadata, then replace it with the fetched page song.
-        document.title = formatDocumentTitle(currentSong);
+        document.title = formatDocumentTitle(currentSong, language);
       } else if (state?.status === 'error') {
-        document.title = WATCH_UNAVAILABLE_DOCUMENT_TITLE;
+        document.title = watchUnavailableDocumentTitle(language);
       } else {
         // A new tab can restore another tab's player state before its own URL
         // finishes loading. Never label that tab with the unrelated old song.
-        document.title = WATCH_LOADING_DOCUMENT_TITLE;
+        document.title = watchLoadingDocumentTitle(language);
       }
       return;
     }
 
-    document.title = formatDocumentTitle(currentSong);
-  }, [currentSong, isWatchRoute, requestedSongId, watchTitleState]);
+    document.title = formatDocumentTitle(currentSong, language);
+  }, [currentSong, isWatchRoute, language, requestedSongId, watchTitleState]);
 
   useEffect(() => {
     document.documentElement.lang = language;
@@ -241,7 +218,12 @@ function AppContent() {
   return (
     <>
       <PlayerTracker />
-      <MediaSession />
+      <DeferredBoundary>
+        <Suspense fallback={null}>
+          <AutoQueueRunner />
+          <MediaSession />
+        </Suspense>
+      </DeferredBoundary>
       <KeyboardShortcuts />
       {/* Keep the playback iframe outside route rendering and lazy-page suspension. */}
       <GlobalPlayer />
@@ -259,9 +241,14 @@ function AppContent() {
           <Route path="/sound-map" element={<SoundMapPage />} />
           <Route path="/settings/hidden-songs" element={<HiddenSongsPage />} />
           {/* 旧ルートの互換性 */}
-          <Route path="/playing" element={<WatchPage onDocumentTitleStateChange={reportWatchTitleState} />} />
+          <Route path="/playing" element={<LegacyPlayingRedirect />} />
+          {/* Old links and typos: keep the frame and say so instead of an empty screen. */}
+          <Route path="*" element={<NotFoundPage />} />
         </Route>
       </Routes>
+      {/* After <Routes> so the toast live region comes after <main> in the DOM. */}
+      <ToastHost />
+      <ConfirmHost />
     </>
   );
 }

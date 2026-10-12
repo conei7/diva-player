@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Song } from '../types/vocadb';
-import { LEGACY_DIG_PLAYLIST_ID, usePlaylistStore } from './playlistStore';
+import { getSongsRefreshedAt, LEGACY_DIG_PLAYLIST_ID, usePlaylistStore } from './playlistStore';
+import { clearToasts, useToastStore } from './toastStore';
 import { useUiStore } from './uiStore';
 
 function createLocalStorage() {
@@ -120,6 +121,14 @@ describe('playlist bulk save regression', () => {
     expect(usePlaylistStore.getState().playlists).toEqual([]);
     expect(values.has('diva_playlists')).toBe(true);
     expect(values.get('diva_playlists')).not.toBe('previous-value');
+
+    // One short sentence, and the backup (settings › data) as the one action.
+    const toast = useToastStore.getState().toasts.at(-1);
+    expect(toast?.message).toBe('プレイリストを保存できませんでした');
+    toast?.action?.onAction();
+    expect(useUiStore.getState().settingsDialog).toEqual({ open: true, tab: 'data' });
+    clearToasts();
+    useUiStore.getState().closeSettings();
   });
 });
 
@@ -172,6 +181,45 @@ describe('playlist undo snapshots', () => {
     expect(snapshot?.removed.map(item => item.index)).toEqual([2]);
     expect(usePlaylistStore.getState().restoreRemovedSongs(snapshot!, { allowDuplicateIds: true })).toBe(1);
     expect(usePlaylistStore.getState().playlists[0].songs.map(item => item.id)).toEqual([1, 2, 1]);
+  });
+
+  it('brings back a removed copy of a duplicated song', () => {
+    vi.stubGlobal('localStorage', createLocalStorage());
+    vi.stubGlobal('crypto', undefined);
+    const playlist = usePlaylistStore.getState().createPlaylist('row undo');
+    usePlaylistStore.setState({ playlists: [{ ...playlist, songs: [song(1), song(2), song(1)] }] });
+
+    const second = usePlaylistStore.getState().removeSong(playlist.id, 2);
+    expect(usePlaylistStore.getState().restoreRemovedSongs(second!)).toBe(1);
+    expect(usePlaylistStore.getState().playlists[0].songs.map(item => item.id)).toEqual([1, 2, 1]);
+
+    const first = usePlaylistStore.getState().removeSong(playlist.id, 0);
+    expect(usePlaylistStore.getState().restoreRemovedSongs(first!)).toBe(1);
+    expect(usePlaylistStore.getState().playlists[0].songs.map(item => item.id)).toEqual([1, 2, 1]);
+  });
+
+  it('brings back every copy when all songs, duplicates included, are removed', () => {
+    vi.stubGlobal('localStorage', createLocalStorage());
+    vi.stubGlobal('crypto', undefined);
+    const playlist = usePlaylistStore.getState().createPlaylist('select all');
+    usePlaylistStore.setState({ playlists: [{ ...playlist, songs: [song(1), song(2), song(1), song(3)] }] });
+
+    const snapshot = usePlaylistStore.getState().removeSongs(playlist.id, [0, 1, 2, 3]);
+    expect(usePlaylistStore.getState().playlists[0].songs).toEqual([]);
+    expect(usePlaylistStore.getState().restoreRemovedSongs(snapshot!)).toBe(4);
+    expect(usePlaylistStore.getState().playlists[0].songs.map(item => item.id)).toEqual([1, 2, 1, 3]);
+  });
+
+  it('does not add more copies than there were when a song was added again before undo', () => {
+    vi.stubGlobal('localStorage', createLocalStorage());
+    vi.stubGlobal('crypto', undefined);
+    const playlist = usePlaylistStore.getState().createPlaylist('re-added');
+    usePlaylistStore.setState({ playlists: [{ ...playlist, songs: [song(1), song(2), song(1)] }] });
+
+    const snapshot = usePlaylistStore.getState().removeSongs(playlist.id, [0, 2]);
+    usePlaylistStore.getState().addSong(playlist.id, song(1));
+    expect(usePlaylistStore.getState().restoreRemovedSongs(snapshot!)).toBe(1);
+    expect(usePlaylistStore.getState().playlists[0].songs.filter(item => item.id === 1)).toHaveLength(2);
   });
 
   it('does not delete a pinned playlist', () => {
@@ -234,6 +282,42 @@ describe('NicoNico linked playlists', () => {
     expect(usePlaylistStore.getState().unlinkNicoSync(linked.id)).toBe(true);
     expect(usePlaylistStore.getState().playlists.find(item => item.id === linked.id)?.nicoSync).toBeUndefined();
     expect(usePlaylistStore.getState().playlists.find(item => item.id === linked.id)?.songs.map(item => item.id)).toEqual([3]);
+  });
+});
+
+describe('automatic song refreshes', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    usePlaylistStore.setState({ playlists: [], folders: [] });
+  });
+
+  it('records smart refreshes and syncs without changing the last user update', () => {
+    vi.stubGlobal('localStorage', createLocalStorage());
+    vi.stubGlobal('crypto', undefined);
+    const sync = {
+      playlistId: 'PL1234567890',
+      sourceUrl: 'https://www.youtube.com/playlist?list=PL1234567890',
+      enabled: true,
+      intervalHours: 24,
+    };
+    usePlaylistStore.setState({
+      playlists: [
+        { id: 'smart', name: 'smart', songs: [], createdAt: 1, updatedAt: 1, smartRule: { minYoutubeViews: 0, minNicoViews: 0, excludedSongTypes: [] } },
+        { id: 'linked', name: 'linked', songs: [], createdAt: 1, updatedAt: 1, youtubeSync: sync },
+      ],
+    });
+
+    usePlaylistStore.getState().replacePlaylistSongs('smart', [song(1)]);
+    usePlaylistStore.getState().applyYouTubeSync('linked', [song(2)], { ...sync, lastStatus: 'success' });
+
+    const [smart, linked] = usePlaylistStore.getState().playlists;
+    expect(smart.songs.map(item => item.id)).toEqual([1]);
+    expect(linked.songs.map(item => item.id)).toEqual([2]);
+    expect(smart.updatedAt).toBe(1);
+    expect(linked.updatedAt).toBe(1);
+    expect(getSongsRefreshedAt(smart)).toBeGreaterThan(1);
+    expect(getSongsRefreshedAt(linked)).toBeGreaterThan(1);
+    expect(getSongsRefreshedAt({ id: 'x', name: 'x', songs: [], createdAt: 1, updatedAt: 1 })).toBeUndefined();
   });
 });
 

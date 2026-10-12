@@ -1,182 +1,107 @@
-import { useState } from 'react';
 import StarRating from '../player/StarRating';
+import PVSourceSelector from '../player/PVSourceSelector';
 import { useRatingStore } from '../../stores/ratingStore';
 import { useUiStore } from '../../stores/uiStore';
 import { usePlaylistStore, WATCH_LATER_ID } from '../../stores/playlistStore';
-import type { Song } from '../../types/vocadb';
 import { useHiddenSongStore } from '../../stores/hiddenSongStore';
-import { usePlayerStore } from '../../stores/playerStore';
-import PVSourceSelector from '../player/PVSourceSelector';
-import OriginalVersionLink from './OriginalVersionLink';
-import { useTranslate } from '../../i18n';
+import { showToast } from '../../stores/toastStore';
+import type { Song } from '../../types/vocadb';
+import { useTranslateSourceText } from '../../i18n';
+import { useMediaQuery } from '../../hooks/useMediaQuery';
+import Button, { buttonClassName } from '../ui/Button';
+import Tooltip from '../ui/Tooltip';
+import { CheckIcon, ClockIcon, EyeIcon, EyeOffIcon, OpenInNewIcon, PlaylistAddIcon, ShareIcon } from '../ui/icons';
+import { cx } from '../ui/overlay';
+import { hideSongWithUndo, shareSong, toggleWatchLater } from './watchActions';
+
+/** 1024–1279px: the side column leaves little room, so 「保存」 and 「VocaDB」 show only their icons. */
+const NARROW_DESKTOP_QUERY = '(min-width: 1024px) and (max-width: 1279.98px)';
 
 /**
- * ActionBar - YouTube風アクションバー
- *
- * 上段: 5段階星評価 + アクションボタン（共有・保存・後で聴く・非表示・VocaDB）
- * 下段: PVソース選択・原曲リンク
+ * 操作 (right of the producer row), all as pills without a ⋮:
+ * rating · 共有 · 保存 · 後で聴く · video source · VocaDB · 表示しない.
+ * They wrap on wide screens and scroll sideways under 640px.
  */
-interface ActionBarProps {
-  song: Song;
-}
+export default function ActionBar({ song }: { song: Song }) {
+  const t = useTranslateSourceText();
+  const rating = useRatingStore(state => state.ratings[String(song.id)] ?? 0);
+  const setRating = useRatingStore(state => state.setRating);
+  const openSaveToPlaylist = useUiStore(state => state.openSaveToPlaylist);
+  const inWatchLater = usePlaylistStore(state => state.playlists
+    .find(playlist => playlist.id === WATCH_LATER_ID)?.songs.some(item => item.id === song.id) ?? false);
+  const hiddenRecord = useHiddenSongStore(state => state.hiddenSongs[String(song.id)]);
+  const narrow = useMediaQuery(NARROW_DESKTOP_QUERY);
 
-export default function ActionBar({ song }: ActionBarProps) {
-  const t = useTranslate();
-  const { getRating, setRating } = useRatingStore();
-  const { openSaveToPlaylist } = useUiStore();
-  const toggleSongInPlaylist = usePlaylistStore(state => state.toggleSongInPlaylist);
-  const getOrCreateWatchLater = usePlaylistStore(state => state.getOrCreateWatchLater);
-  const isSongInPlaylist = usePlaylistStore(state => state.isSongInPlaylist);
-  const hidden = useHiddenSongStore(state => Boolean(state.hiddenSongs[String(song.id)]));
-  const hideSong = useHiddenSongStore(state => state.hideSong);
-  const restoreSong = useHiddenSongStore(state => state.restoreSong);
-  const { currentSong, queue, queueIndex, removeFromQueue, closePlayer } = usePlayerStore();
-  const rating = getRating(song.id);
-  const isWatchLater = isSongInPlaylist(WATCH_LATER_ID, song.id);
-  const [shareToast, setShareToast] = useState(false);
-
-  const handleShare = async () => {
-    const url = window.location.href;
-    try {
-      await navigator.clipboard.writeText(url);
-      setShareToast(true);
-      setTimeout(() => setShareToast(false), 2000);
-    } catch {
-      // フォールバック
-      const textArea = document.createElement('textarea');
-      textArea.value = url;
-      document.body.appendChild(textArea);
-      textArea.select();
-      document.execCommand('copy');
-      document.body.removeChild(textArea);
-      setShareToast(true);
-      setTimeout(() => setShareToast(false), 2000);
-    }
-  };
-
-  const handleSave = () => {
-    openSaveToPlaylist(song);
-  };
-
-  const handleWatchLater = () => {
-    // Layout loads playlists asynchronously; ensure the system playlist exists
-    // even if the user clicks immediately after opening a watch page.
-    getOrCreateWatchLater();
-    toggleSongInPlaylist(WATCH_LATER_ID, song);
-  };
-
-  const handleHidden = () => {
-    if (hidden) {
-      restoreSong(song.id);
+  const toggleHidden = () => {
+    if (!hiddenRecord) {
+      hideSongWithUndo(song, t);
       return;
     }
-    hideSong(song);
-    if (currentSong?.id !== song.id) return;
-    if (queueIndex >= 0 && queue[queueIndex]?.id === song.id) removeFromQueue(queueIndex);
-    else closePlayer();
+    const songKey = String(song.id);
+    useHiddenSongStore.getState().restoreSong(song.id);
+    showToast(t('再表示しました'), {
+      action: {
+        label: t('元に戻す'),
+        onAction: () => useHiddenSongStore.setState(state => ({
+          hiddenSongs: { ...state.hiddenSongs, [songKey]: hiddenRecord },
+        })),
+      },
+    });
   };
 
-
   return (
-    <div data-testid="watch-action-bar" className="mt-3 space-y-2 pb-3 border-b" style={{ borderColor: 'var(--color-border)' }}>
-      {/* ─── 上段: 星評価 + アクションボタン ─── */}
-      <div className="flex flex-wrap items-center gap-2">
-        {/* 5段階スター評価 */}
-        <div
-          className="watch-action-rating flex items-center gap-1 rounded-full px-2 py-1 sm:gap-2 sm:px-4 sm:py-2"
-          style={{ background: 'var(--color-yt-chip)' }}
+    <div
+      data-testid="watch-action-bar"
+      className="flex min-w-0 items-center gap-2 max-sm:-mx-3 max-sm:overflow-x-auto max-sm:px-3 max-sm:[scrollbar-width:none] sm:flex-wrap max-sm:[&::-webkit-scrollbar]:hidden"
+    >
+      <div className="flex h-9 shrink-0 items-center rounded-full bg-yt-tonal px-3 max-sm:h-10 max-sm:px-1">
+        <StarRating rating={rating} onRate={value => setRating(song.id, value)} size="md" />
+      </div>
+
+      <Button icon={<ShareIcon />} aria-label={t('共有')} onClick={() => shareSong(song, t)}>
+        {t('共有')}
+      </Button>
+
+      <Tooltip content={t('プレイリストに保存')}>
+        <Button
+          icon={<PlaylistAddIcon />}
+          aria-label={t('プレイリストに保存')}
+          className={narrow ? 'w-9 px-0!' : undefined}
+          onClick={() => openSaveToPlaylist(song)}
         >
-          <StarRating
-            rating={rating}
-            onRate={(r) => setRating(song.id, r)}
-            size="md"
-          />
-        </div>
+          {narrow ? undefined : t('保存')}
+        </Button>
+      </Tooltip>
 
-        {/* アクションボタン群 */}
-        <div className="flex flex-wrap items-center gap-1.5">
-          {/* 共有 */}
-          <div className="relative">
-            <button type="button" className="yt-action-btn" onClick={handleShare} aria-label={t('share')} title={t('share')}>
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M14 9V3.5L20.5 10 14 16.5V11c-5.5 0-9.35 1.65-12 5.5C3 11 6.5 5.5 14 4.5V9z" />
-              </svg>
-              <span className="hidden sm:inline">{t('share')}</span>
-            </button>
-            {shareToast && (
-              <div
-                className="absolute -bottom-10 left-1/2 -translate-x-1/2 px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap animate-fade-in"
-                style={{ background: 'var(--color-accent-cyan)', color: '#000' }}
-              >
-                {t('linkCopied')}
-              </div>
-            )}
-          </div>
+      <Button
+        icon={inWatchLater ? <CheckIcon /> : <ClockIcon />}
+        aria-pressed={inWatchLater}
+        onClick={() => toggleWatchLater(song, t)}
+      >
+        {t('後で聴く')}
+      </Button>
 
-          {/* 保存 */}
-          <button type="button" className="yt-action-btn" onClick={handleSave} aria-label={t('saveToPlaylist')} title={t('saveToPlaylist')}>
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M14 10H2v2h12v-2zm0-4H2v2h12V6zm4 8v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zM2 16h8v-2H2v2z" />
-            </svg>
-            <span className="hidden sm:inline">{t('save')}</span>
-          </button>
+      <PVSourceSelector song={song} />
 
-          {/* 後で聴く */}
-          <button
-            className="yt-action-btn"
-            onClick={handleWatchLater}
-            title={isWatchLater ? t('removeListenLater') : t('listenLater')}
-            aria-label={isWatchLater ? t('removeListenLater') : t('listenLater')}
-            style={isWatchLater ? { color: 'var(--color-accent-cyan)' } : undefined}
-          >
-            <svg width="20" height="20" viewBox="0 0 24 24" fill={isWatchLater ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2">
-              <circle cx="12" cy="12" r="9" />
-              <polyline points="12 7 12 12 15.5 14" />
-            </svg>
-            <span className="hidden sm:inline">{t('listenLater')}</span>
-          </button>
+      <Tooltip content={t('VocaDBで開く')}>
+        <a
+          href={`https://vocadb.net/S/${song.id}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-label={t('VocaDBで開く')}
+          className={cx(buttonClassName(), narrow ? 'w-9 px-0!' : 'pl-3')}
+        >
+          <span aria-hidden="true" className="flex shrink-0 items-center [&>svg]:size-5"><OpenInNewIcon /></span>
+          {!narrow && <span className="min-w-0 truncate">VocaDB</span>}
+        </a>
+      </Tooltip>
 
-          {/* 表示しない */}
-          <button
-            type="button"
-            className="yt-action-btn"
-            onClick={handleHidden}
-            title={hidden ? t('unhideSong') : t('hideSong')}
-            aria-label={hidden ? t('unhideSong') : t('hideSong')}
-            aria-pressed={hidden}
-            style={hidden ? { color: '#fb7185', background: 'rgba(244, 63, 94, 0.12)' } : undefined}
-          >
-            <svg width="20" height="20" viewBox="0 0 24 24" fill={hidden ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M17 3H6.7a2 2 0 0 0-1.9 1.4L3 10v2h5.5L7 18.2A2.3 2.3 0 0 0 9.2 21L15 13V5a2 2 0 0 1 2-2Z" />
-              <path d="M17 3h4v10h-6" />
-            </svg>
-            <span className="hidden sm:inline">{hidden ? t('showAgain') : t('hide')}</span>
-          </button>
-
-          {/* VocaDB */}
-          <a
-            href={`https://vocadb.net/S/${song.id}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="yt-action-btn"
-            aria-label={t('openInVocaDb')}
-            title={t('openInVocaDb')}
-          >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M19 19H5V5h7V3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z" />
-            </svg>
-            <span className="hidden sm:inline">VocaDB</span>
-          </a>
-        </div>
-      </div>
-
-      {/* ─── 下段: PVソース選択 + 原曲 ─── */}
-      <div className="flex min-w-0 flex-wrap items-center gap-2">
-        <div className="min-w-0 basis-full sm:flex-1 sm:basis-auto">
-          <PVSourceSelector song={song} />
-        </div>
-        <OriginalVersionLink song={song} />
-      </div>
+      <Button
+        icon={hiddenRecord ? <EyeIcon /> : <EyeOffIcon />}
+        onClick={toggleHidden}
+      >
+        {hiddenRecord ? t('再表示') : t('表示しない')}
+      </Button>
     </div>
   );
 }

@@ -1,21 +1,62 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
-import { useSearchParams } from 'react-router';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useLocation, useNavigate, useSearchParams } from 'react-router';
 import { fetchSoundMap, SoundMapRequestError, type SoundMapPoint, type SoundMapResponse } from '../api/soundMap';
 import { getDemoSoundMap } from '../api/soundMapDemo';
 import { fetchSoundMapPilot } from '../api/soundMapPilot';
 import { getSongsByIds } from '../api/vocadb';
+import { MOBILE_MEDIA_QUERY, useMediaQuery } from '../hooks/useMediaQuery';
+import { translateSourceText, useTranslateSourceText } from '../i18n';
 import { getPlayedSongIds } from '../services/historyDatabase';
 import { useHiddenSongStore } from '../stores/hiddenSongStore';
+import { useHistoryStore } from '../stores/historyStore';
+import { useLanguageStore, type AppLanguage } from '../stores/languageStore';
 import { usePlayerStore } from '../stores/playerStore';
+import { usePlaylistStore } from '../stores/playlistStore';
 import { useRatingStore } from '../stores/ratingStore';
+import { showToast } from '../stores/toastStore';
 import { useUiStore } from '../stores/uiStore';
-import { clampSoundMapZoom, centerSoundMapOnPoint, fitSoundMapItems, visibleSoundMapItems, type SoundMapViewport } from '../utils/soundMap';
+import type { Song } from '../types/vocadb';
 import { getRatedSongIds } from '../utils/ratedSongs';
-import { useLanguageStore } from '../stores/languageStore';
-import { useTranslateSourceText } from '../i18n';
-import { changeSoundMapAxes, randomSoundMapAxes, readSoundMapAxes } from '../utils/soundMapAxes';
+import { watchPath } from '../utils/routes';
+import {
+  DEFAULT_SOUND_MAP_VIEWPORT,
+  centerSoundMapOnPoint,
+  clampSoundMapZoom,
+  fitSoundMapItems,
+  pickSoundMapFallbackSeed,
+  pushSoundMapTrail,
+  readSoundMapTrail,
+  visibleSoundMapItems,
+  type SoundMapViewport,
+} from '../utils/soundMap';
+import { changeSoundMapAxes, readSoundMapAxes } from '../utils/soundMapAxes';
+import { Chip } from '../components/ui/Chip';
+import EmptyState, { type EmptyStateAction } from '../components/ui/EmptyState';
+import InfoTip from '../components/ui/InfoTip';
+import InlineNotice from '../components/ui/InlineNotice';
+import { PageHeader, PageShell } from '../components/ui/PageHeader';
+import { SkeletonBlock, SkeletonListRow } from '../components/ui/Skeleton';
+import { ErrorIcon, ScatterIcon } from '../components/ui/icons';
+import SoundMapAxisForm from '../components/discovery/SoundMapAxisForm';
+import SoundMapCanvas from '../components/discovery/SoundMapCanvas';
+import SoundMapGuide from '../components/discovery/SoundMapGuide';
+import SoundMapNearby from '../components/discovery/SoundMapNearby';
+import SoundMapOriginMenu from '../components/discovery/SoundMapOriginMenu';
+import SoundMapSelectionCard, { SoundMapSelectionBar } from '../components/discovery/SoundMapSelection';
+import SoundMapSettings from '../components/discovery/SoundMapSettings';
+import { placeholderSong, useSongsById } from '../components/discovery/discoverySongs';
 
 const SOUND_MAP_GUIDE_STORAGE_KEY = 'diva_sound_map_guide_dismissed_v1';
+/** Nearby rows shown before 「もっと見る」. */
+const NEARBY_INITIAL_COUNT = 20;
+
+type SoundMapErrorKind = 'unavailable' | 'not_mapped' | 'features_unavailable' | 'dependency' | 'pilot' | 'generic';
+
+interface SoundMapError {
+  kind: SoundMapErrorKind;
+  /** Developer-only message of the local pilot file. */
+  message?: string;
+}
 
 function readSoundMapGuideDismissed(): boolean {
   try {
@@ -30,27 +71,90 @@ function readId(value: string | null): number | null {
   return Number.isInteger(id) && id > 0 ? id : null;
 }
 
-function pointClass(known: boolean, selected: boolean, origin: boolean): string {
-  if (origin) return 'fill-cyan-300 stroke-white';
-  if (selected) return 'fill-white stroke-cyan-300';
-  return known ? 'fill-fuchsia-400 stroke-fuchsia-100' : 'fill-none stroke-neutral-400';
+/** The viewport written in the URL (zoom / center), or null when the map should fit its songs. */
+function readViewport(params: URLSearchParams): SoundMapViewport | null {
+  if (!params.has('centerX') && !params.has('centerY')) return null;
+  return {
+    zoom: clampSoundMapZoom(Number(params.get('zoom')) || 1),
+    centerX: Number(params.get('centerX')) || 0,
+    centerY: Number(params.get('centerY')) || 0,
+  };
 }
 
-function mapErrorMessage(error: unknown): string {
+function classifyError(error: unknown): SoundMapError {
   if (error instanceof SoundMapRequestError) {
-    if (error.code === 'sound_map_unavailable') return '曲調マップの座標がまだ公開されていません。座標生成後に利用できます。';
-    if (error.code === 'seed_not_mapped') return 'この曲は曲調マップにまだ含まれていません。別の起点を選んでください。';
-    if (error.code === 'sound_map_features_unavailable') return 'この曲の特徴軸を取得できませんでした。別の曲かPCA配置を選んでください。';
-    if (error.code === 'sound_map_dependency_unavailable') return '音響検索に接続できませんでした。少し待って再試行してください。';
-    if (error.code === 'sound_map_pilot_missing' || error.code === 'sound_map_pilot_invalid') return error.message;
+    if (error.code === 'sound_map_unavailable') return { kind: 'unavailable' };
+    if (error.code === 'seed_not_mapped') return { kind: 'not_mapped' };
+    if (error.code === 'sound_map_features_unavailable') return { kind: 'features_unavailable' };
+    if (error.code === 'sound_map_dependency_unavailable') return { kind: 'dependency' };
+    if (error.code === 'sound_map_pilot_missing' || error.code === 'sound_map_pilot_invalid') {
+      return { kind: 'pilot', message: error.message };
+    }
   }
-  return '曲調マップを読み込めませんでした。データAPIへの接続を確認して再試行してください。';
+  return { kind: 'generic' };
+}
+
+interface RequestKeyParts {
+  demo: boolean;
+  pilot: boolean;
+  seedId: number;
+  mapVersion: string | undefined;
+  featureMode: boolean;
+  axisX: number;
+  axisY: number;
+  retryKey: number;
+}
+
+/** Identifies one map request; the map version we just wrote to the URL must not fetch again. */
+function requestKey(parts: RequestKeyParts): string {
+  return JSON.stringify([
+    parts.demo,
+    parts.pilot,
+    parts.seedId,
+    parts.mapVersion ?? null,
+    parts.featureMode,
+    parts.featureMode ? parts.axisX : null,
+    parts.featureMode ? parts.axisY : null,
+    parts.retryKey,
+  ]);
+}
+
+function formatMapDate(iso: string, language: AppLanguage): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return '';
+  return new Intl.DateTimeFormat(
+    language === 'ja' ? 'ja-JP' : 'en-US',
+    language === 'ja' ? { year: 'numeric', month: 'numeric', day: 'numeric' } : { year: 'numeric', month: 'short', day: 'numeric' },
+  ).format(date);
+}
+
+/** Starting song when the URL has none and nothing is playing (history → ratings → playlists). */
+async function findFallbackSeed(): Promise<number | null> {
+  const excludedIds = new Set(Object.keys(useHiddenSongStore.getState().hiddenSongs).map(Number));
+  try {
+    await useHistoryStore.getState().initializeHistory();
+  } catch {
+    // The listening history is optional here.
+  }
+  const fromHistory = pickSoundMapFallbackSeed({
+    lastPlayedAtBySongId: useHistoryStore.getState().lastPlayedAtBySongId,
+    excludedIds,
+  });
+  if (fromHistory) return fromHistory;
+  const playedIds = await getPlayedSongIds().catch(() => new Set<number>());
+  return pickSoundMapFallbackSeed({
+    playedIds,
+    ratings: useRatingStore.getState().ratings,
+    playlistSongIds: usePlaylistStore.getState().playlists.flatMap(playlist => playlist.songs.map(song => song.id)),
+    excludedIds,
+  });
 }
 
 export default function SoundMapPage() {
   const t = useTranslateSourceText();
   const language = useLanguageStore(state => state.language);
   const currentSong = usePlayerStore(state => state.currentSong);
+  const playSong = usePlayerStore(state => state.playSong);
   const ratings = useRatingStore(state => state.ratings);
   const hiddenSongs = useHiddenSongStore(state => state.hiddenSongs);
   const hiddenIds = useMemo(
@@ -59,40 +163,51 @@ export default function SoundMapPage() {
   );
   const openSongDetail = useUiStore(state => state.openSongDetail);
   const openSaveToPlaylist = useUiStore(state => state.openSaveToPlaylist);
-  const playSong = usePlayerStore(state => state.playSong);
+  const isMobile = useMediaQuery(MOBILE_MEDIA_QUERY);
+  const navigate = useNavigate();
+  const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
   const [result, setResult] = useState<SoundMapResponse | null>(null);
-  const [fallbackSeedId, setFallbackSeedId] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
+  const [error, setError] = useState<SoundMapError | null>(null);
   const [retryKey, setRetryKey] = useState(0);
+  const [noSeed, setNoSeed] = useState(false);
   const [guideDismissed, setGuideDismissed] = useState(readSoundMapGuideDismissed);
-  const [explorationHistory, setExplorationHistory] = useState<number[]>([]);
-  const [selectedId, setSelectedId] = useState<number | null>(() => readId(searchParams.get('selectedSongId')));
-  const [viewport, setViewport] = useState<SoundMapViewport>(() => ({
-    zoom: clampSoundMapZoom(Number(searchParams.get('zoom')) || 1),
-    centerX: Number(searchParams.get('centerX')) || 0,
-    centerY: Number(searchParams.get('centerY')) || 0,
-  }));
+  const [fittedViewport, setFittedViewport] = useState<SoundMapViewport>(DEFAULT_SOUND_MAP_VIEWPORT);
+  const [playedIds, setPlayedIds] = useState<Set<number>>(() => new Set());
+  const [nearbyExpanded, setNearbyExpanded] = useState(false);
   const requestRevision = useRef(0);
-  const latestSearchParams = useRef(searchParams);
-  const latestSetSearchParams = useRef(setSearchParams);
-  useEffect(() => {
-    latestSearchParams.current = searchParams;
-    latestSetSearchParams.current = setSearchParams;
-  }, [searchParams, setSearchParams]);
+  const loadedKeyRef = useRef<string | null>(null);
+  const resultRef = useRef<SoundMapResponse | null>(null);
+  const latest = useRef({ searchParams, setSearchParams, state: location.state as unknown });
+  useLayoutEffect(() => {
+    latest.current = { searchParams, setSearchParams, state: location.state as unknown };
+  }, [location.state, searchParams, setSearchParams]);
+
   const demoMode = import.meta.env.DEV && searchParams.get('demo') === '1';
   const pilotMode = import.meta.env.DEV && searchParams.get('pilot') === '1';
   const localPreviewMode = demoMode || pilotMode;
-  const seedId = readId(searchParams.get('seedSongId')) ?? fallbackSeedId ?? currentSong?.id ?? null;
+  const seedId = readId(searchParams.get('seedSongId'));
   const mapVersion = searchParams.get('mapVersion') || undefined;
   const featureMode = !localPreviewMode && (searchParams.get('layout') === 'features' || (!searchParams.has('layout') && !mapVersion));
   const [axisX, axisY] = readSoundMapAxes(searchParams);
-  const applyAxes = (axes: [number, number] | null) => {
-    setSearchParams(changeSoundMapAxes(searchParams, axes));
-    setExplorationHistory([]);
-  };
-  const [playedIds, setPlayedIds] = useState<Set<number>>(new Set());
+  const trail = readSoundMapTrail(location.state);
+  const viewport = readViewport(searchParams) ?? fittedViewport;
+
+  /** URL changes that belong to the current history entry (selection, zoom, version) keep its trail. */
+  const replaceParams = useCallback((params: URLSearchParams) => {
+    latest.current.setSearchParams(params, { replace: true, state: latest.current.state, preventScrollReset: true });
+  }, []);
+
+  const applyAxes = useCallback((axes: [number, number] | null) => {
+    latest.current.setSearchParams(changeSoundMapAxes(latest.current.searchParams, axes), {
+      state: { soundMapTrail: [] },
+      preventScrollReset: true,
+    });
+  }, []);
+
+  const retry = useCallback(() => setRetryKey(key => key + 1), []);
+
   const knownIds = useMemo(() => {
     const ids = new Set(getRatedSongIds(ratings));
     playedIds.forEach(id => ids.add(id));
@@ -106,30 +221,47 @@ export default function SoundMapPage() {
     });
     return ids;
   }, [demoMode, knownIds, result]);
+
   useEffect(() => {
     getPlayedSongIds().then(setPlayedIds).catch(() => setPlayedIds(new Set()));
   }, [currentSong?.id]);
+
+  // Starting song: the URL, else the song in the player, else history → ratings → playlists.
   useEffect(() => {
-    if (readId(searchParams.get('seedSongId')) || fallbackSeedId || !currentSong?.id) return;
-    const next = new URLSearchParams(searchParams);
-    next.set('seedSongId', String(currentSong.id));
-    setSearchParams(next, { replace: true });
-  }, [currentSong?.id, fallbackSeedId, searchParams, setSearchParams]);
+    if (seedId) {
+      setNoSeed(false);
+      return undefined;
+    }
+    if (currentSong?.id) {
+      const params = new URLSearchParams(latest.current.searchParams);
+      params.set('seedSongId', String(currentSong.id));
+      replaceParams(params);
+      return undefined;
+    }
+    let active = true;
+    void findFallbackSeed().then(id => {
+      if (!active) return;
+      if (!id) {
+        setNoSeed(true);
+        return;
+      }
+      const params = new URLSearchParams(latest.current.searchParams);
+      params.set('seedSongId', String(id));
+      replaceParams(params);
+    });
+    return () => {
+      active = false;
+    };
+  }, [currentSong?.id, replaceParams, seedId]);
 
   useEffect(() => {
-    if (readId(searchParams.get('seedSongId')) || fallbackSeedId || currentSong?.id) return;
-    getPlayedSongIds().then(ids => {
-      const first = [...ids][0] ?? null;
-      if (first) setFallbackSeedId(first);
-    }).catch(() => undefined);
-  }, [currentSong?.id, fallbackSeedId, searchParams]);
-
-  useEffect(() => {
-    if (!seedId) return;
+    if (!seedId) return undefined;
+    const keyParts: RequestKeyParts = { demo: demoMode, pilot: pilotMode, seedId, mapVersion, featureMode, axisX, axisY, retryKey };
+    // The map version (and axes) written to the URL after a response describe the map on screen.
+    if (requestKey(keyParts) === loadedKeyRef.current) return undefined;
     const revision = ++requestRevision.current;
     const controller = new AbortController();
     setLoading(true);
-    setError('');
     const request = demoMode
       ? Promise.resolve(getDemoSoundMap(seedId, mapVersion ?? 'demo-v1'))
       : pilotMode
@@ -138,19 +270,26 @@ export default function SoundMapPage() {
     request
       .then(next => {
         if (revision !== requestRevision.current) return;
-        const currentParams = latestSearchParams.current;
+        const currentParams = latest.current.searchParams;
+        resultRef.current = next;
+        setResult(next);
+        setError(null);
         if (featureMode && !next.axes) {
-          // Older API slots ignore the new query parameters during rollout.
-          setResult(next);
-          latestSetSearchParams.current(changeSoundMapAxes(currentParams, null), { replace: true });
+          // Older API slots ignore the axis parameters during rollout: this is the automatic layout.
+          const params = changeSoundMapAxes(currentParams, null);
+          params.set('mapVersion', next.mapVersion);
+          params.set('seedSongId', String(seedId));
+          loadedKeyRef.current = requestKey({ ...keyParts, mapVersion: next.mapVersion, featureMode: false });
+          setFittedViewport(fitSoundMapItems(next.items));
+          replaceParams(params);
           return;
         }
-        setResult(next);
-        setSelectedId(readId(currentParams.get('selectedSongId')) ?? next.origin.songId);
         if (!currentParams.has('centerX') && !currentParams.has('centerY')) {
-          setViewport(fitSoundMapItems(next.items));
+          setFittedViewport(fitSoundMapItems(next.items));
         }
-        if (!mapVersion || mapVersion !== next.mapVersion || (pilotMode && seedId !== next.origin.songId)) {
+        const writtenSeedId = pilotMode ? next.origin.songId : seedId;
+        loadedKeyRef.current = requestKey({ ...keyParts, seedId: writtenSeedId, mapVersion: next.mapVersion });
+        if (!mapVersion || mapVersion !== next.mapVersion || writtenSeedId !== seedId) {
           const params = new URLSearchParams(currentParams);
           params.set('mapVersion', next.mapVersion);
           if (featureMode) {
@@ -158,63 +297,82 @@ export default function SoundMapPage() {
             params.set('axisX', String(axisX));
             params.set('axisY', String(axisY));
           }
-          params.set('seedSongId', String(pilotMode ? next.origin.songId : seedId));
-          latestSetSearchParams.current(params, { replace: true });
+          params.set('seedSongId', String(writtenSeedId));
+          replaceParams(params);
         }
       })
       .catch(requestError => {
-        if (revision === requestRevision.current && !(requestError instanceof Error && requestError.name === 'AbortError')) {
-          setError(mapErrorMessage(requestError));
+        if (revision !== requestRevision.current) return;
+        if (requestError instanceof Error && requestError.name === 'AbortError') return;
+        const failure = classifyError(requestError);
+        loadedKeyRef.current = null;
+        if (resultRef.current) {
+          // The previous map stays on screen. (The wording follows the language at failure time,
+          // so a language switch doesn't refetch the map.)
+          const currentLanguage = useLanguageStore.getState().language;
+          if (failure.kind === 'features_unavailable') {
+            showToast(translateSourceText(currentLanguage, 'この曲では特徴軸を使えません'), {
+              action: { label: translateSourceText(currentLanguage, 'おまかせに切り替え'), onAction: () => applyAxes(null) },
+            });
+          } else {
+            showToast(translateSourceText(currentLanguage, '更新できませんでした'), {
+              action: { label: translateSourceText(currentLanguage, '再試行'), onAction: retry },
+            });
+          }
+          return;
         }
+        setError(failure);
       })
-      .finally(() => { if (revision === requestRevision.current) setLoading(false); });
+      .finally(() => {
+        if (revision === requestRevision.current) setLoading(false);
+      });
     return () => controller.abort();
-  }, [axisX, axisY, demoMode, featureMode, mapVersion, pilotMode, retryKey, seedId]);
+  }, [applyAxes, axisX, axisY, demoMode, featureMode, mapVersion, pilotMode, replaceParams, retry, retryKey, seedId]);
 
-  const items = useMemo(
-    () => result ? visibleSoundMapItems(result.items, hiddenIds) : [],
-    [hiddenIds, result],
-  );
+  const items = useMemo(() => (result ? visibleSoundMapItems(result.items, hiddenIds) : []), [hiddenIds, result]);
+  const selectedId = readId(searchParams.get('selectedSongId')) ?? result?.origin.songId ?? null;
   const selected = items.find(item => item.songId === selectedId) ?? result?.origin ?? null;
+  const neighbors = useMemo(
+    () => (result ? items.filter(item => item.songId !== result.origin.songId) : []),
+    [items, result],
+  );
+  const songIds = useMemo(() => {
+    if (demoMode || !result) return [];
+    const visibleNeighbors = nearbyExpanded ? neighbors : neighbors.slice(0, NEARBY_INITIAL_COUNT);
+    return [result.origin.songId, ...(selected ? [selected.songId] : []), ...visibleNeighbors.map(point => point.songId)];
+  }, [demoMode, nearbyExpanded, neighbors, result, selected]);
+  const songsById = useSongsById(songIds);
+
   const selectPoint = (point: SoundMapPoint) => {
-    setSelectedId(point.songId);
     const params = new URLSearchParams(searchParams);
     params.set('selectedSongId', String(point.songId));
-    setSearchParams(params, { replace: true });
+    replaceParams(params);
   };
   const updateViewport = (next: SoundMapViewport) => {
-    setViewport(next);
     const params = new URLSearchParams(searchParams);
     params.set('zoom', String(next.zoom));
     params.set('centerX', next.centerX.toFixed(4));
     params.set('centerY', next.centerY.toFixed(4));
-    setSearchParams(params, { replace: true });
+    replaceParams(params);
   };
-  const setOrigin = (point: SoundMapPoint) => {
-    if (seedId === point.songId) return;
-    if (seedId && seedId !== point.songId) {
-      setExplorationHistory(history => [...history, seedId].slice(-20));
-    }
+  const setOrigin = (songId: number) => {
+    if (!songId || songId === seedId) return;
     const params = new URLSearchParams(searchParams);
-    params.set('seedSongId', String(point.songId));
+    params.set('seedSongId', String(songId));
     params.delete('selectedSongId');
     params.delete('centerX');
     params.delete('centerY');
-    setSearchParams(params);
-    setViewport(centerSoundMapOnPoint(point, 1));
+    // A new history entry: the browser's back button and 「前の起点に戻る」 do the same thing.
+    setSearchParams(params, { state: { soundMapTrail: pushSoundMapTrail(trail, seedId) }, preventScrollReset: true });
+    const point = items.find(item => item.songId === songId);
+    if (point) setFittedViewport(centerSoundMapOnPoint(point, 1));
   };
-  const goBackToPreviousExploration = () => {
-    const previous = explorationHistory.at(-1);
-    if (!previous) return;
-    setExplorationHistory(history => history.slice(0, -1));
-    const params = new URLSearchParams(searchParams);
-    params.set('seedSongId', String(previous));
-    params.delete('selectedSongId');
-    params.delete('centerX');
-    params.delete('centerY');
-    setSearchParams(params);
+  const goBackToPreviousOrigin = () => {
+    if (trail.length > 0) navigate(-1);
   };
-  const focusOrigin = () => result && updateViewport(centerSoundMapOnPoint(result.origin, Math.max(1, viewport.zoom)));
+  const focusOrigin = () => {
+    if (result) updateViewport(centerSoundMapOnPoint(result.origin, Math.max(1, viewport.zoom)));
+  };
   const dismissGuide = () => {
     setGuideDismissed(true);
     try {
@@ -223,245 +381,222 @@ export default function SoundMapPage() {
       // The guide can still be dismissed for this page view when storage is unavailable.
     }
   };
-  const loadSong = useCallback(async (songId: number) => (await getSongsByIds([songId]))[0], []);
 
-  const playSelected = async () => {
+  const withSelectedSong = async (action: (song: Song) => void) => {
     if (!selected) return;
-    const song = await loadSong(selected.songId);
-    if (song) playSong(song, true);
+    const song = songsById.get(selected.songId) ?? (await getSongsByIds([selected.songId]))[0];
+    if (song) action(song);
   };
-  const saveSelected = async () => {
-    if (!selected) return;
-    const song = await loadSong(selected.songId);
-    if (song) openSaveToPlaylist(song);
+
+  const originSong = result ? songsById.get(result.origin.songId) ?? placeholderSong(result.origin) : null;
+  const selectedSong = selected ? songsById.get(selected.songId) ?? placeholderSong(selected) : null;
+  const playingSongId = !localPreviewMode && currentSong && result && currentSong.id !== result.origin.songId ? currentSong.id : null;
+  const selectionProps = selected && selectedSong && result ? {
+    point: selected,
+    song: selectedSong,
+    isOrigin: selected.songId === result.origin.songId,
+    playing: !localPreviewMode && currentSong?.id === selected.songId,
+    known: displayKnownIds.has(selected.songId),
+    actionsDisabled: localPreviewMode,
+    onPlay: () => void withSelectedSong(song => playSong(song, true)),
+    onExplore: () => setOrigin(selected.songId),
+    onSave: () => void withSelectedSong(song => openSaveToPlaylist(song)),
+    onDetails: () => void withSelectedSong(song => openSongDetail(song)),
+    onOpenWatch: () => navigate(watchPath(selected.songId)),
+    onQueue: () => void withSelectedSong(song => {
+      // With nothing playing, an added song would sit in a queue nobody can see: start it instead.
+      const player = usePlayerStore.getState();
+      if (player.currentSong) player.addToQueue(song);
+      else player.setQueue([song], 0);
+      showToast(t('キューに追加しました'));
+    }),
+  } : null;
+
+  const errorView = (failure: SoundMapError) => {
+    const title = failure.kind === 'unavailable'
+      ? t('曲調マップは準備中です')
+      : failure.kind === 'not_mapped'
+        ? t('この曲はまだマップにありません')
+        : failure.kind === 'features_unavailable'
+          ? t('この曲では特徴軸を使えません')
+          : failure.kind === 'dependency'
+            ? t('接続できませんでした')
+            : failure.kind === 'pilot' && failure.message
+              ? failure.message
+              : t('曲調マップを読み込めませんでした');
+    const action: EmptyStateAction = failure.kind === 'features_unavailable'
+      ? { label: t('おまかせに切り替え'), onClick: () => applyAxes(null) }
+      : failure.kind === 'not_mapped'
+        ? { label: t('曲を探す'), to: '/' }
+        : { label: t('再試行'), onClick: retry };
+    return (
+      <div
+        role="alert"
+        className="flex min-h-[420px] items-center justify-center rounded-card bg-yt-raised max-sm:-mx-3 max-sm:rounded-none"
+      >
+        <EmptyState icon={<ErrorIcon />} title={title} action={action} />
+      </div>
+    );
   };
-  const showDetails = async () => {
-    if (!selected) return;
-    const song = await loadSong(selected.songId);
-    if (song) openSongDetail(song);
-  };
+
+  const uniformAxes = Boolean(result?.axes && (result.axes.minX === result.axes.maxX || result.axes.minY === result.axes.maxY));
 
   return (
-    <main className="mx-auto w-full max-w-7xl px-3 py-4 pb-32 sm:px-6 sm:py-6" data-testid="sound-map-page">
-      <div className="mb-5 max-w-3xl">
-        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-300">Sound Map</p>
-        <h1 className="mt-1 text-2xl font-bold text-white sm:text-3xl">{t('曲調マップ')}</h1>
-        {seedId && !guideDismissed ? (
-          <section className="mt-2 flex items-start gap-2 text-xs leading-5 text-neutral-300" data-testid="sound-map-guide" aria-labelledby="sound-map-guide-title">
-            <div className="min-w-0 flex-1">
-              <h2 id="sound-map-guide-title" className="inline font-semibold text-cyan-100">{t('はじめての方へ')} </h2>
-              <span>{t(featureMode ? '1024個の音響特徴からX・Yを選んで探索できます。特徴には決まった名前はなく、選択だけで再生されません。' : '点を選んで曲を確認し、「この曲の近くを探す」で次を発掘。軸はジャンルではなく、選択だけで再生されません。色つきは履歴／評価あり、輪郭は未再生です。')}</span>
+    <PageShell className="pb-8 max-sm:pb-28">
+      <div data-testid="sound-map-page">
+        <PageHeader
+          title={t('曲調マップ')}
+          meta={(
+            <span className="relative inline-flex h-5 items-center gap-2 align-top sm:-top-0.5">
+              <InfoTip label={t('このマップについて')}>
+                <p className="m-0">{t('近い点ほど音が似ています。軸はジャンルではありません。')}</p>
+                {result && (
+                  <p className="m-0 mt-2 text-xs leading-[18px] text-yt-text-secondary tabular-nums">
+                    {t('{count}曲 · 更新 {date}', {
+                      count: result.coordinateCount.toLocaleString(language === 'ja' ? 'ja-JP' : 'en-US'),
+                      date: formatMapDate(result.generatedAt, language),
+                    })}
+                  </p>
+                )}
+              </InfoTip>
+              {localPreviewMode && (
+                <span
+                  data-testid="sound-map-preview-chip"
+                  className="inline-flex h-6 items-center rounded-chip bg-yt-tonal px-2 text-xs font-medium leading-4 text-yt-text"
+                >
+                  {demoMode ? t('デモ') : t('パイロット')}
+                </span>
+              )}
+            </span>
+          )}
+          actions={result && originSong ? (
+            <>
+              <SoundMapOriginMenu
+                song={originSong}
+                playing={!localPreviewMode && currentSong?.id === result.origin.songId}
+                playingSongId={playingSongId}
+                canGoBack={trail.length > 0}
+                onUsePlaying={() => {
+                  if (playingSongId) setOrigin(playingSongId);
+                }}
+                onBack={goBackToPreviousOrigin}
+              />
+              {featureMode && result.axes && (
+                <SoundMapSettings
+                  axes={result.axes}
+                  items={items}
+                  selected={selected}
+                  disabled={loading}
+                  onSelect={selectPoint}
+                  renderAxisForm={isMobile ? close => (
+                    <SoundMapAxisForm
+                      axisX={axisX}
+                      axisY={axisY}
+                      disabled={loading}
+                      onApply={axes => {
+                        close();
+                        applyAxes(axes);
+                      }}
+                    />
+                  ) : undefined}
+                />
+              )}
+            </>
+          ) : undefined}
+        />
+
+        {!seedId ? (
+          noSeed ? (
+            <div className="rounded-card bg-yt-raised">
+              <EmptyState icon={<ScatterIcon />} title={t('曲を再生すると、その曲の近くが表示されます')} action={{ label: t('曲を探す'), to: '/' }} />
             </div>
-            <button type="button" className="btn-ghost shrink-0 rounded-lg px-2 py-0.5 text-xs" onClick={dismissGuide} aria-label={t('案内を閉じる')} title={t('案内を閉じる')}>×</button>
-          </section>
+          ) : (
+            <SoundMapSkeleton label={t('読み込み中…')} />
+          )
         ) : (
-          <p className="mt-2 text-sm leading-6 text-neutral-400">{t(featureMode ? '1024個の音響特徴からX・Yを選んで探索できます。特徴には決まった名前はなく、選択だけで再生されません。' : '音響特徴を2次元に配置した探索用マップです。軸にジャンルなどの意味はなく、点同士の近さは似ている目安です。点を選ぶだけでは再生されません。')}</p>
+          <>
+            {!localPreviewMode && (
+              <div data-testid="sound-map-axes" className="mb-4 flex flex-wrap items-center gap-x-4 gap-y-3">
+                <div role="group" aria-label={t('配置')} data-testid="sound-map-layout" className="flex gap-2 sm:gap-3">
+                  <Chip selected={!featureMode} data-layout="pca" onClick={() => { if (featureMode) applyAxes(null); }}>
+                    {t('おまかせ')}
+                  </Chip>
+                  <Chip selected={featureMode} data-layout="features" onClick={() => { if (!featureMode) applyAxes([axisX, axisY]); }}>
+                    {t('特徴軸')}
+                  </Chip>
+                </div>
+                {featureMode && !isMobile && (
+                  <SoundMapAxisForm axisX={axisX} axisY={axisY} disabled={loading} onApply={applyAxes} />
+                )}
+              </div>
+            )}
+
+            {!result ? (
+              error ? errorView(error) : <SoundMapSkeleton label={t('読み込み中…')} />
+            ) : (
+              <>
+                {result.state !== 'ready' && (
+                  <InlineNotice className="mb-3">
+                    {result.state === 'no_audio' ? t('この曲は音のデータがありません') : t('近い曲がまだありません')}
+                  </InlineNotice>
+                )}
+                {uniformAxes && <InlineNotice tone="warning" className="mb-3">{t('この軸では差が出ません')}</InlineNotice>}
+                <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_400px]">
+                  <SoundMapCanvas
+                    items={items}
+                    knownIds={displayKnownIds}
+                    originId={result.origin.songId}
+                    selectedId={selected?.songId ?? null}
+                    viewport={viewport}
+                    axes={result.axes}
+                    loading={loading}
+                    guide={guideDismissed ? null : <SoundMapGuide onDismiss={dismissGuide} />}
+                    canGoBack={trail.length > 0}
+                    onSelect={selectPoint}
+                    onViewportChange={updateViewport}
+                    onFocusOrigin={focusOrigin}
+                    onBack={goBackToPreviousOrigin}
+                  />
+                  <div className="flex min-w-0 flex-col gap-6">
+                    {!isMobile && selectionProps && <SoundMapSelectionCard {...selectionProps} />}
+                    <SoundMapNearby
+                      points={neighbors}
+                      selectedId={selected?.songId ?? null}
+                      songsById={songsById}
+                      actionsDisabled={localPreviewMode}
+                      initialCount={NEARBY_INITIAL_COUNT}
+                      expanded={nearbyExpanded}
+                      onExpandedChange={setNearbyExpanded}
+                      onSelect={selectPoint}
+                    />
+                  </div>
+                </div>
+                {isMobile && selectionProps && <SoundMapSelectionBar {...selectionProps} />}
+              </>
+            )}
+          </>
         )}
-        {!localPreviewMode && currentSong && <p className="mt-3 text-xs text-cyan-200">{t('再生中: {song}', { song: currentSong.name })}</p>}
-        {demoMode && <p className="mt-3 rounded-lg bg-cyan-300/10 px-3 py-2 text-xs text-cyan-100">{t('画面確認用デモです。点の選択・ズーム・起点変更を試せます。')}</p>}
-        {pilotMode && <p className="mt-3 rounded-lg bg-emerald-300/10 px-3 py-2 text-xs text-emerald-100">{t('実データpilotです。Qdrantの音響ベクトルとPostgreSQLの曲名から生成した小規模マップを表示しています。')}</p>}
       </div>
-
-      {!localPreviewMode && <section className="mb-4 rounded-2xl border border-white/[0.08] bg-white/[0.03] p-3" data-testid="sound-map-axes">
-        <div className="flex flex-wrap items-center gap-3 text-sm">
-          <label>{t('配置方法')}
-            <select aria-label={t('配置方法')} className="ml-2 rounded-lg bg-neutral-900 px-2 py-2" value={featureMode ? 'features' : 'pca'} onChange={event => applyAxes(event.target.value === 'features' ? [axisX, axisY] : null)}>
-              <option value="features">{t('特徴軸を選ぶ')}</option><option value="pca">PCA</option>
-            </select>
-          </label>
-          {featureMode && <form key={`${axisX}-${axisY}`} className="flex flex-wrap items-center gap-2" onInput={event => {
-            (event.currentTarget.elements.namedItem('axisY') as HTMLInputElement).setCustomValidity('');
-          }} onSubmit={event => {
-            event.preventDefault();
-            const data = new FormData(event.currentTarget);
-            const x = Number(data.get('axisX')) - 1;
-            const y = Number(data.get('axisY')) - 1;
-            const input = event.currentTarget.elements.namedItem('axisY') as HTMLInputElement;
-            input.setCustomValidity(x === y ? t('XとYには異なる特徴を選んでください。') : '');
-            if (event.currentTarget.reportValidity()) applyAxes([x, y]);
-          }}>
-            <label>X <input aria-label={t('Xの特徴番号')} className="w-20 rounded-lg bg-neutral-900 px-2 py-2" type="number" name="axisX" min="1" max="1024" step="1" required defaultValue={axisX + 1} /></label>
-            <label>Y <input aria-label={t('Yの特徴番号')} className="w-20 rounded-lg bg-neutral-900 px-2 py-2" type="number" name="axisY" min="1" max="1024" step="1" required defaultValue={axisY + 1} onInput={event => event.currentTarget.setCustomValidity('')} /></label>
-            <button className="btn-ghost rounded-lg px-3 py-2 disabled:opacity-40" disabled={loading}>{t('軸を適用')}</button>
-            <button type="button" className="btn-ghost rounded-lg px-3 py-2 disabled:opacity-40" disabled={loading} onClick={() => applyAxes(randomSoundMapAxes([axisX, axisY]))}>{t('ランダムな軸')}</button>
-            <button type="button" className="btn-ghost rounded-lg px-3 py-2 disabled:opacity-40" disabled={loading} onClick={() => applyAxes([axisY, axisX])}>{t('XとYを入れ替え')}</button>
-          </form>}
-        </div>
-        {featureMode && <p className="mt-2 text-xs text-neutral-400">{t('候補曲は1024次元全体の音響類似度で選び、表示は選択した2つの特徴だけを使います。軸の範囲は表示候補に合わせて調整します。')}</p>}
-      </section>}
-
-      {!seedId ? (
-        <section className="rounded-2xl border border-white/[0.08] bg-white/[0.03] p-6 text-sm text-neutral-300">
-          {t('曲を再生するか、履歴のある曲から曲調マップを開いてください。')}
-        </section>
-      ) : loading && !result ? (
-        <div className="rounded-3xl border border-white/[0.06] bg-white/[0.03] py-24 text-center text-neutral-400" aria-busy="true">{t('音響特徴と座標を読み込んでいます…')}</div>
-      ) : error && !result ? (
-        <section className="rounded-2xl border border-red-400/20 bg-red-400/10 p-6 text-red-100" role="alert">
-          <p>{t(error)}</p>
-          <button type="button" onClick={() => setRetryKey(key => key + 1)} className="mt-4 rounded-lg bg-white px-4 py-2 text-sm font-semibold text-black">{t('再試行')}</button>
-        </section>
-      ) : result ? (
-        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_20rem]">
-          <section className="overflow-hidden rounded-2xl border border-white/[0.08] bg-neutral-950 p-2 sm:p-3">
-            {error && <p className="mb-2 rounded-lg bg-amber-400/10 px-2 py-1.5 text-xs text-amber-100" role="alert">{t(error)}{t(' 前回のマップを表示しています。')}</p>}
-            <div className="mb-2 flex flex-wrap items-center justify-between gap-2 px-1 text-xs text-neutral-400">
-              <span>{t('起点')}: <strong className="text-white">{result.origin.name}</strong></span>
-              <span>{result.coordinateCount.toLocaleString()}{language === 'ja' ? '曲' : ` ${t('曲')}`} · {result.method} · <time dateTime={result.generatedAt}>{t('データ更新: ')}{new Intl.DateTimeFormat(language === 'ja' ? 'ja-JP' : 'en').format(new Date(result.generatedAt))}</time></span>
-            </div>
-            <SoundMapCanvas items={items} knownIds={displayKnownIds} result={result} selectedId={selectedId} viewport={viewport} onSelect={selectPoint} />
-            {result.axes && <p className="mt-2 px-1 text-xs text-neutral-400">X: {t('特徴')}{result.axes.x + 1} ({result.axes.minX.toFixed(4)} → {result.axes.maxX.toFixed(4)}) · Y: {t('特徴')}{result.axes.y + 1} ({result.axes.minY.toFixed(4)} → {result.axes.maxY.toFixed(4)}){loading && ` · ${t('切替中…')}`}</p>}
-            {result.axes && (result.axes.minX === result.axes.maxX || result.axes.minY === result.axes.maxY) && <p className="mt-1 px-1 text-xs text-amber-200">{t('この候補では値が同じ特徴があります。別の軸も試してみてください。')}</p>}
-            {result.axes && <div className="mt-2 flex flex-wrap gap-2 px-1">
-              {(['featureX', 'featureY'] as const).flatMap((key, axis) => [true, false].map(high => {
-                const candidates = items.filter(point => point[key] != null);
-                const point = candidates.reduce<SoundMapPoint | null>((best, candidate) => !best || (high ? candidate[key]! > best[key]! : candidate[key]! < best[key]!) ? candidate : best, null);
-                return <button key={`${key}-${high}`} type="button" className="btn-ghost rounded-lg px-2 py-1.5 text-xs disabled:opacity-40" disabled={!point || loading} onClick={() => point && selectPoint(point)}>{axis === 0 ? 'X' : 'Y'} · {t(high ? '値が高い曲' : '値が低い曲')}</button>;
-              }))}
-            </div>}
-            {result.state !== 'ready' && <p className="mt-2 px-1 text-xs text-amber-200">{t(result.state === 'no_audio' ? '起点の音響特徴がないため、座標だけを表示しています。' : '近い曲の候補がまだマップにありません。')}</p>}
-            <div className="mt-2 flex flex-wrap items-center gap-2 px-1">
-              <button type="button" className="btn-ghost rounded-lg px-3 py-2 text-xs" onClick={() => updateViewport({ ...viewport, zoom: clampSoundMapZoom(viewport.zoom - 0.35) })}>−</button>
-              <span className="min-w-14 text-center text-xs text-neutral-400">{Math.round(viewport.zoom * 100)}%</span>
-              <button type="button" className="btn-ghost rounded-lg px-3 py-2 text-xs" onClick={() => updateViewport({ ...viewport, zoom: clampSoundMapZoom(viewport.zoom + 0.35) })}>＋</button>
-              <button type="button" className="btn-ghost rounded-lg px-3 py-2 text-xs" onClick={focusOrigin}>{t('起点を表示')}</button>
-              <button type="button" className="btn-ghost rounded-lg px-3 py-2 text-xs disabled:cursor-not-allowed disabled:opacity-40" onClick={goBackToPreviousExploration} disabled={explorationHistory.length === 0}>{t('前の探索に戻る')}</button>
-              <span className="ml-auto text-[11px] text-neutral-500">◆ {t('起点')} · ● {t('再生/履歴あり')} · ○ {t('未再生')}</span>
-            </div>
-          </section>
-          <SoundMapDetails
-            selected={selected}
-            neighbors={items.filter(item => item.songId !== result.origin.songId).slice(0, 8)}
-            selectedId={selectedId}
-            currentSong={localPreviewMode ? null : currentSong}
-            actionsDisabled={localPreviewMode}
-            onSelect={selectPoint}
-            onSelectOrigin={setOrigin}
-            onPlay={playSelected}
-            onSave={saveSelected}
-            onDetails={showDetails}
-          />
-        </div>
-      ) : null}
-    </main>
+    </PageShell>
   );
 }
 
-function SoundMapCanvas({ items, knownIds, result, selectedId, viewport, onSelect }: {
-  items: SoundMapPoint[];
-  knownIds: ReadonlySet<number>;
-  result: SoundMapResponse;
-  selectedId: number | null;
-  viewport: SoundMapViewport;
-  onSelect: (point: SoundMapPoint) => void;
-}) {
-  const t = useTranslateSourceText();
-  const viewWidth = 2 / viewport.zoom;
-  const viewHeight = 2 / viewport.zoom;
-  const viewX = viewport.centerX - viewWidth / 2;
-  const viewY = viewport.centerY - viewHeight / 2;
-  const selectNearestPoint = (event: ReactMouseEvent<SVGSVGElement>) => {
-    const matrix = event.currentTarget.getScreenCTM();
-    if (!matrix) return;
-    const cursor = event.currentTarget.createSVGPoint();
-    cursor.x = event.clientX;
-    cursor.y = event.clientY;
-    const mapPosition = cursor.matrixTransform(matrix.inverse());
-    let nearest: SoundMapPoint | null = null;
-    let nearestDistance = Number.POSITIVE_INFINITY;
-    for (const point of items) {
-      const distance = Math.hypot(point.x - mapPosition.x, point.y - mapPosition.y);
-      if (distance < nearestDistance) {
-        nearest = point;
-        nearestDistance = distance;
-      }
-    }
-    if (nearest && nearestDistance <= 0.08 / viewport.zoom) onSelect(nearest);
-  };
+function SoundMapSkeleton({ label }: { label: string }) {
   return (
-    <div className="relative h-[420px] w-full overflow-hidden rounded-xl bg-[radial-gradient(circle_at_center,rgba(34,211,238,.1),rgba(10,10,12,1)_70%)] sm:h-[clamp(340px,calc(100vh-24rem),520px)]" data-testid="sound-map-canvas">
-      <svg className="h-full w-full cursor-crosshair" viewBox={`${viewX} ${viewY} ${viewWidth} ${viewHeight}`} role="img" aria-label={t('曲調マップ。点を選択すると詳細を表示します。')} preserveAspectRatio="xMidYMid meet" onClick={selectNearestPoint}>
-        {items.map(point => {
-          const origin = point.songId === result.origin.songId;
-          const selected = point.songId === selectedId;
-          return (
-            <g
-              key={point.songId}
-              data-song-id={point.songId}
-              transform={`translate(${point.x} ${point.y})`}
-              onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') onSelect(point); }}
-              role="button"
-              aria-label={`${point.name} / ${point.artistString}`}
-              tabIndex={0}
-              className="cursor-pointer"
-            >
-              <g transform={`scale(${1 / viewport.zoom})`}>
-                {selected && <circle r={0.036} fill="none" stroke="white" strokeWidth={0.008} opacity=".9" />}
-                <circle r={origin ? 0.028 : 0.018} className={pointClass(knownIds.has(point.songId), selected, origin)} strokeWidth={0.006} />
-                {origin && <path d="M0,-0.052 L0.052,0 L0,0.052 L-0.052,0 Z" className="fill-cyan-300 stroke-white" strokeWidth=".006" />}
-              </g>
-              <title>{point.name} / {point.artistString}</title>
-            </g>
-          );
-        })}
-      </svg>
-      {result.axes && <>
-        <span data-testid="sound-map-axis-x" data-feature-index={result.axes.x} className="pointer-events-none absolute bottom-2 right-3 rounded bg-black/60 px-2 py-1 text-xs text-cyan-100">X · {t('特徴')}{result.axes.x + 1} →</span>
-        <span data-testid="sound-map-axis-y" data-feature-index={result.axes.y} className="pointer-events-none absolute left-2 top-2 rounded bg-black/60 px-2 py-1 text-xs text-cyan-100">↑ Y · {t('特徴')}{result.axes.y + 1}</span>
-      </>}
-      {items.length === 0 && <div className="absolute inset-0 flex items-center justify-center text-sm text-neutral-500">{t('表示できる曲がありません')}</div>}
+    <div aria-busy="true" className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_400px]">
+      <span className="sr-only">{label}</span>
+      <SkeletonBlock className="h-[clamp(420px,calc(100vh-240px),640px)] rounded-card max-sm:-mx-3 max-sm:h-[56vh] max-sm:rounded-none" />
+      <div className="hidden min-w-0 lg:block">
+        <div className="rounded-card bg-yt-raised p-4">
+          <SkeletonBlock className="aspect-video w-full rounded-chip" />
+          <SkeletonBlock className="mt-3 h-5 w-4/5 rounded-badge" />
+          <SkeletonBlock className="mt-2 h-4 w-1/2 rounded-badge" />
+          <SkeletonBlock className="mt-4 h-9 w-full rounded-full" />
+        </div>
+        <div className="mt-6">
+          {[0, 1, 2, 3].map(row => <SkeletonListRow key={row} />)}
+        </div>
+      </div>
     </div>
-  );
-}
-
-function SoundMapDetails({ selected, neighbors, selectedId, currentSong, actionsDisabled, onSelect, onSelectOrigin, onPlay, onSave, onDetails }: {
-  selected: SoundMapPoint | null;
-  neighbors: SoundMapPoint[];
-  selectedId: number | null;
-  currentSong: ReturnType<typeof usePlayerStore.getState>['currentSong'];
-  actionsDisabled: boolean;
-  onSelect: (point: SoundMapPoint) => void;
-  onSelectOrigin: (point: SoundMapPoint) => void;
-  onPlay: () => void;
-  onSave: () => void;
-  onDetails: () => void;
-}) {
-  const t = useTranslateSourceText();
-  if (!selected) return <section className="rounded-2xl border border-white/[0.08] bg-white/[0.03] p-5 text-sm text-neutral-400">{t('点を選択してください。')}</section>;
-  const playing = currentSong?.id === selected.songId;
-  return (
-    <section className="rounded-2xl border border-white/[0.08] bg-white/[0.03] p-5">
-      <p className="text-xs font-semibold uppercase tracking-[0.16em] text-cyan-300">{t('選択中')}</p>
-      <h2 className="mt-2 text-lg font-bold text-white" data-testid="sound-map-selected-title">{selected.name}</h2>
-      <p className="mt-1 text-sm text-neutral-400">{selected.artistString || t('アーティスト情報なし')}</p>
-      {playing && <p className="mt-3 text-xs text-cyan-200">{t('現在再生中')}</p>}
-      {selected.similarity != null && <p className="mt-3 text-xs text-neutral-500">{t('音響類似度 ')}{(selected.similarity * 100).toFixed(1)}%</p>}
-      {selected.featureX != null && selected.featureY != null && <p className="mt-2 text-xs text-cyan-200">X: {selected.featureX.toFixed(5)} · Y: {selected.featureY.toFixed(5)}</p>}
-      {actionsDisabled && <p className="mt-3 text-xs text-neutral-500">{t('再生・保存・詳細は実データ接続後に利用できます。')}</p>}
-      <div className="mt-5 grid grid-cols-2 gap-2">
-        <button type="button" disabled={actionsDisabled} className="rounded-lg bg-cyan-300 px-3 py-2 text-sm font-semibold text-black disabled:cursor-not-allowed disabled:opacity-35" onClick={onPlay}>{t('再生')}</button>
-        <button type="button" className="btn-ghost rounded-lg px-3 py-2 text-sm" onClick={() => onSelectOrigin(selected)}>{t('この曲の近くを探す')}</button>
-        <button type="button" disabled={actionsDisabled} className="btn-ghost rounded-lg px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-35" onClick={onSave}>{t('保存')}</button>
-        <button type="button" disabled={actionsDisabled} className="btn-ghost rounded-lg px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-35" onClick={onDetails}>{t('詳細')}</button>
-      </div>
-      {neighbors.length > 0 && (
-        <div className="mt-6 border-t border-white/[0.08] pt-4">
-          <p className="text-xs font-semibold text-neutral-400">{t('近くの曲')}</p>
-          <div className="mt-2 space-y-1">
-            {neighbors.map(point => (
-              <button
-                key={point.songId}
-                type="button"
-                onClick={() => onSelect(point)}
-                className={`block w-full rounded-lg px-2.5 py-2 text-left text-xs transition ${point.songId === selectedId ? 'bg-white/[0.12] text-white' : 'text-neutral-400 hover:bg-white/[0.06] hover:text-white'}`}
-              >
-                <span className="block truncate">{point.name}</span>
-                <span className="mt-0.5 block truncate text-[10px] text-neutral-500">{point.artistString || t('アーティスト情報なし')}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-    </section>
   );
 }

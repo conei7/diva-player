@@ -47,3 +47,17 @@ export function tokenizeDescriptionText(value: string): DescriptionTextToken[] {
   if (cursor < normalized.length) pushText(normalized.slice(cursor));
   return tokens.length > 0 ? tokens : [{ type: 'text', value: normalized }];
 }
+
+const DISPLAY_URL_MAX_LENGTH = 32;
+
+/**
+ * Short form of a description link for display ("hitorie.jp", "asmart.jp/Form/Product/…").
+ * The protocol and a leading "www." are dropped and long addresses end with "…".
+ * The link itself (href) keeps the full URL.
+ */
+export function shortenUrlForDisplay(url: string, maxLength = DISPLAY_URL_MAX_LENGTH): string {
+  const withoutProtocol = url.replace(/^[a-z][a-z\d+.-]*:\/\//i, '').replace(/^www\./i, '');
+  const trimmed = withoutProtocol.replace(/\/$/, '');
+  if (trimmed.length <= maxLength) return trimmed;
+  return `${trimmed.slice(0, Math.max(1, maxLength - 1))}…`;
+}

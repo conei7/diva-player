@@ -11,7 +11,7 @@ export function formatTrendingReason(song: Song, language: 'ja' | 'en' = 'ja'): 
   const growthCount = Math.round(growth);
   const growthLabel = language === 'en'
     ? `${new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(growthCount)} more views in ${windowDays} days`
-    : `${windowDays}日で+${formatJapaneseViews(growthCount, { zeroIsMissing: false })}再生`;
+    : `${windowDays}日で+${formatJapaneseViews(growthCount, { zeroIsMissing: false })}回再生`;
   const surgeRate = Number(song.surgeRate);
 
   if (!Number.isFinite(surgeRate) || surgeRate < 1) return growthLabel;
@@ -20,5 +20,5 @@ export function formatTrendingReason(song: Song, language: 'ja' | 'en' = 'ja'): 
     : surgeRate.toFixed(1);
   return language === 'en'
     ? `${growthLabel} · ${rateLabel}× usual`
-    : `${growthLabel}・平常時の${rateLabel}倍`;
+    : `${growthLabel} · 平常時の${rateLabel}倍`;
 }

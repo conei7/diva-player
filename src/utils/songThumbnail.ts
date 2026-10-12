@@ -35,3 +35,30 @@ export function getSongThumbnailCandidates(song: SongThumbnailSources): string[]
 
   return candidates;
 }
+
+const YOUTUBE_VIDEO_ID = /^[\w-]{11}$/;
+
+/**
+ * Candidates for a 16:9 frame: the YouTube `mqdefault` (16:9, no letterbox) and
+ * `hqdefault` of active YouTube PVs first (official PVs before reuploads), then
+ * everything from getSongThumbnailCandidates(), without duplicates.
+ */
+export function getWideSongThumbnailCandidates(song: SongThumbnailSources): string[] {
+  const candidates: string[] = [];
+  const add = (url: string) => {
+    if (!candidates.includes(url)) candidates.push(url);
+  };
+
+  const youtubePvs = (song.pvs ?? [])
+    .filter(pv => !pv.disabled && pv.service === 'Youtube' && YOUTUBE_VIDEO_ID.test(pv.pvId))
+    .sort((a, b) => Number(b.pvType === 'Original') - Number(a.pvType === 'Original'));
+
+  for (const pv of youtubePvs) {
+    const videoId = encodeURIComponent(pv.pvId);
+    add(`https://img.youtube.com/vi/${videoId}/mqdefault.jpg`);
+    add(`https://img.youtube.com/vi/${videoId}/hqdefault.jpg`);
+  }
+
+  for (const url of getSongThumbnailCandidates(song)) add(url);
+  return candidates;
+}

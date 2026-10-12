@@ -4,7 +4,7 @@ const baseUrl = new URL(process.argv[2] || 'http://127.0.0.1:5173/diva-player/')
 const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox', '--lang=ja-JP'] });
 
 async function clickButtonByText(page, label) {
-  const buttons = await page.$$('button');
+  const buttons = await page.$$('[data-testid="sound-map-page"] button');
   for (const button of buttons) {
     const text = await button.evaluate(element => element.textContent?.trim());
     if (text === label) {
@@ -13,6 +13,16 @@ async function clickButtonByText(page, label) {
     }
   }
   throw new Error(`Button not found: ${label}`);
+}
+
+async function readAboutPopover(page, label) {
+  await page.click(`[data-testid="sound-map-page"] button[aria-label="${label}"]`);
+  const selector = `[role="dialog"][aria-label="${label}"]`;
+  await page.waitForSelector(selector);
+  const text = await page.$eval(selector, element => element.textContent ?? '');
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(dialogSelector => !document.querySelector(dialogSelector), {}, selector);
+  return text;
 }
 
 try {
@@ -26,18 +36,18 @@ try {
 
   const state = await page.evaluate(() => {
     const canvas = document.querySelector('[data-testid="sound-map-canvas"]');
-    const disabledLabels = [...document.querySelectorAll('button:disabled')]
-      .map(button => button.textContent?.trim());
+    const disabledLabels = [...document.querySelectorAll('[data-testid="sound-map-page"] button:disabled')]
+      .map(button => button.textContent?.trim() || button.getAttribute('aria-label'));
     return {
       backendNotice: Boolean(document.querySelector('[data-testid="backend-status-notice"]')),
       crosshairLines: canvas?.querySelectorAll('line').length ?? -1,
       pointCount: canvas?.querySelectorAll('g[role="button"]').length ?? 0,
-      knownPointCount: canvas?.querySelectorAll('circle.fill-fuchsia-400').length ?? 0,
+      knownPointCount: canvas?.querySelectorAll('g[role="button"][data-known="true"]').length ?? 0,
       disabledLabels,
-      text: document.querySelector('[data-testid="sound-map-page"]')?.textContent ?? '',
+      previewChip: document.querySelector('[data-testid="sound-map-preview-chip"]')?.textContent?.trim() ?? '',
+      guideText: document.querySelector('[data-testid="sound-map-guide"]')?.textContent ?? '',
       canvasHeight: canvas?.getBoundingClientRect().height ?? 0,
-      focusOriginBottom: [...document.querySelectorAll('button')]
-        .find(button => button.textContent?.trim() === '起点を表示')
+      focusOriginBottom: document.querySelector('[data-testid="sound-map-canvas"] button[aria-label="起点へ移動"]')
         ?.getBoundingClientRect().bottom ?? Number.POSITIVE_INFINITY,
       viewportHeight: innerHeight,
     };
@@ -47,12 +57,11 @@ try {
   if (state.crosshairLines !== 0) throw new Error(`Sound map rendered ${state.crosshairLines} axis lines.`);
   if (state.pointCount !== 29) throw new Error(`Expected 29 demo points, received ${state.pointCount}.`);
   if (state.knownPointCount === 0) throw new Error('Demo map does not illustrate known-song styling.');
-  if (!state.text.includes('画面確認用デモです。')) throw new Error('Local demo explanation is missing.');
-  if (!state.text.includes('軸はジャンルではなく')) throw new Error('Map projection explanation is missing.');
-  if (!state.text.includes('選択だけで再生されません。')) throw new Error('No-autoplay explanation is missing.');
-  if (!state.text.includes('はじめての方へ') || !state.text.includes('「この曲の近くを探す」で次を発掘。')) throw new Error('First-visit sound map guide is missing.');
-  if (!state.text.includes('データ更新:')) throw new Error('Map generation date is missing.');
-  if (!['再生', '保存', '詳細'].every(label => state.disabledLabels.includes(label))) {
+  if (state.previewChip !== 'デモ') throw new Error(`Local demo chip is missing: ${state.previewChip}`);
+  if (!state.guideText.includes('点を選ぶと曲の情報が出ます（再生はされません）')) {
+    throw new Error(`First-visit sound map guide is missing the no-autoplay hint: ${state.guideText}`);
+  }
+  if (!['再生', '保存', 'その他の操作'].every(label => state.disabledLabels.includes(label))) {
     throw new Error(`Backend-dependent demo actions are not disabled: ${JSON.stringify(state.disabledLabels)}`);
   }
   if (state.canvasHeight > 521) throw new Error(`Desktop map is too tall for a 720px viewport: ${state.canvasHeight}px.`);
@@ -60,11 +69,14 @@ try {
     throw new Error(`Map controls are below the viewport: ${JSON.stringify(state)}`);
   }
 
-  await page.click('button[aria-label="案内を閉じる"]');
-  if (await page.$('[data-testid="sound-map-guide"]')) throw new Error('Sound map guide remained visible after dismissal.');
-  if (!(await page.$eval('[data-testid="sound-map-page"]', element => element.textContent ?? '')).includes('点同士の近さは似ている目安です。')) {
-    throw new Error('Map explanation is missing after dismissing the first-visit guide.');
+  const aboutText = await readAboutPopover(page, 'このマップについて');
+  if (!aboutText.includes('近い点ほど音が似ています。軸はジャンルではありません。')) {
+    throw new Error(`Map projection explanation is missing: ${aboutText}`);
   }
+  if (!aboutText.includes('更新')) throw new Error(`Map generation date is missing: ${aboutText}`);
+
+  await page.click('[data-testid="sound-map-guide"] button');
+  if (await page.$('[data-testid="sound-map-guide"]')) throw new Error('Sound map guide remained visible after dismissal.');
   await page.reload({ waitUntil: 'domcontentloaded' });
   await page.waitForSelector('[data-testid="sound-map-canvas"] g[role="button"]');
   if (await page.$('[data-testid="sound-map-guide"]')) throw new Error('Dismissed sound map guide returned after reload.');
@@ -72,13 +84,22 @@ try {
   const points = await page.$$('[data-testid="sound-map-canvas"] g[role="button"]');
   const pointBox = await points[1].boundingBox();
   await points[1].click();
-  await new Promise(resolve => setTimeout(resolve, 100));
+  await page.waitForFunction(
+    () => document.querySelector('[data-testid="sound-map-selected-title"]')?.textContent === '近傍デモ曲 124',
+    { timeout: 5_000 },
+  ).catch(() => undefined);
   const selectedTitle = await page.$eval('[data-testid="sound-map-selected-title"]', element => element.textContent);
   if (selectedTitle !== '近傍デモ曲 124') {
     throw new Error(`Click did not select demo point 124: ${JSON.stringify({ pointBox, selectedTitle })}`);
   }
   await clickButtonByText(page, 'この曲の近くを探す');
   await page.waitForFunction(() => new URL(location.href).searchParams.get('seedSongId') === '124');
+  await page.waitForFunction(() => !document.querySelector('[data-testid="sound-map-canvas"] button[aria-label="前の起点に戻る"]')?.disabled);
+
+  // 「前の起点に戻る」 is the browser history: it returns to the previous starting song.
+  await page.click('[data-testid="sound-map-canvas"] button[aria-label="前の起点に戻る"]');
+  await page.waitForFunction(() => new URL(location.href).searchParams.get('seedSongId') === '123');
+  await page.waitForFunction(() => document.querySelector('[data-testid="sound-map-canvas"] button[aria-label="前の起点に戻る"]')?.disabled === true);
 
   await page.evaluate(() => {
     localStorage.setItem('diva_uiLanguage', JSON.stringify('en'));
@@ -87,9 +108,16 @@ try {
   await page.reload({ waitUntil: 'domcontentloaded' });
   await page.waitForSelector('[data-testid="sound-map-guide"]');
   const englishGuide = await page.$eval('[data-testid="sound-map-guide"]', element => element.textContent ?? '');
-  if (!englishGuide.includes('New to the sound map?') || !englishGuide.includes('Explore songs like this')) {
+  if (!englishGuide.includes("Select a dot to see the song. It won't start playing.")) {
     throw new Error(`Sound map guide did not localize to English: ${englishGuide}`);
   }
+  const englishAbout = await readAboutPopover(page, 'About this map');
+  if (!englishAbout.includes("Closer dots sound more alike. The axes aren't genres.")) {
+    throw new Error(`Sound map explanation did not localize to English: ${englishAbout}`);
+  }
+  const exploreButton = await page.$$eval('[data-testid="sound-map-page"] button', buttons => buttons
+    .some(button => button.textContent?.trim() === 'Explore songs like this'));
+  if (!exploreButton) throw new Error('The explore action did not localize to English.');
 
   console.log('Sound map local demo E2E passed.');
 } finally {

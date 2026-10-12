@@ -19,11 +19,11 @@ try {
   const initial = await page.evaluate(() => ({
     pointCount: document.querySelectorAll('[data-testid="sound-map-canvas"] g[role="button"]').length,
     selectedTitle: document.querySelector('[data-testid="sound-map-selected-title"]')?.textContent,
-    hasPilotCopy: document.querySelector('[data-testid="sound-map-page"]')?.textContent?.includes('実データpilotです。'),
+    hasPilotCopy: document.querySelector('[data-testid="sound-map-preview-chip"]')?.textContent?.trim() === 'パイロット',
     hasBackendNotice: Boolean(document.querySelector('[data-testid="backend-status-notice"]')),
   }));
   if (initial.pointCount !== 200) throw new Error(`Expected 200 rendered pilot points, received ${initial.pointCount}.`);
-  if (!initial.hasPilotCopy) throw new Error('Real-data pilot explanation is missing.');
+  if (!initial.hasPilotCopy) throw new Error('Real-data pilot chip is missing.');
   if (initial.hasBackendNotice) throw new Error('Backend connection notice is visible in pilot mode.');
 
   const points = await page.$$('[data-testid="sound-map-canvas"] g[role="button"]');

@@ -1,269 +1,181 @@
-import { useEffect } from 'react';
+import { useRef } from 'react';
 import { useUiStore } from '../../stores/uiStore';
 import { usePlayerStore } from '../../stores/playerStore';
 import { useRatingStore } from '../../stores/ratingStore';
+import { useLanguageStore } from '../../stores/languageStore';
+import { showToast } from '../../stores/toastStore';
 import StarRating from './StarRating';
 import OriginalVersionLink from '../watch/OriginalVersionLink';
-import { isPlayablePV } from '../../utils/playablePV';
-import { getPVServiceLabel } from '../../utils/pvService';
-import { getPVBadgeStyle } from '../../utils/pvBadge';
 import SongAlbums from '../playlist/SongAlbums';
-import { useLanguageStore } from '../../stores/languageStore';
-import { useTranslateSourceText } from '../../i18n';
+import { isPlayablePV } from '../../utils/playablePV';
+import {
+  formatArtistLine,
+  formatClockDuration,
+  serviceLabel,
+  songTypeLabel,
+} from '../../utils/songMeta';
+import { useTranslate, useTranslateSourceText } from '../../i18n';
+import { MOBILE_MEDIA_QUERY, useMediaQuery } from '../../hooks/useMediaQuery';
+import Dialog from '../ui/Dialog';
+import Button from '../ui/Button';
+import IconButton from '../ui/IconButton';
+import Menu, { MenuDivider, MenuItem } from '../ui/Menu';
+import SongThumbnail from '../ui/SongThumbnail';
+import { CloseIcon, MoreVertIcon, OpenInNewIcon, PlayIcon, PlaylistAddIcon, QueueMusicIcon } from '../ui/icons';
+import { formatCalendarDate } from '../watch/watchFormat';
+import { videoSourceLabel, withVideoName } from '../watch/videoLabels';
 
 const VOCADB_BASE = 'https://vocadb.net';
 
-/** 秒数を m:ss 形式に変換 */
-function formatDuration(seconds: number): string {
-  if (!seconds) return '--:--';
-  const m = Math.floor(seconds / 60);
-  const s = Math.floor(seconds % 60);
-  return `${m}:${s.toString().padStart(2, '0')}`;
-}
+/** A video chip. max-w-full + the truncating span keep a long video name inside the dialog. */
+const CHIP_LINK =
+  'inline-flex h-10 max-w-full items-center rounded-chip bg-yt-tonal px-3 text-sm font-medium leading-5 text-yt-text no-underline transition-colors duration-150 hover:bg-yt-tonal-hover sm:h-8';
 
-/** 日付文字列を表示用にフォーマット */
-function formatDate(dateStr: string | undefined, locale: string): string {
-  if (!dateStr) return '不明';
-  const d = new Date(dateStr);
-  return d.toLocaleDateString(locale, { year: 'numeric', month: 'long', day: 'numeric' });
-}
-
-/** 曲タイプの日本語マッピング */
-const SONG_TYPE_JA: Record<string, string> = {
-  Original: 'オリジナル曲',
-  Remaster: 'リマスター',
-  Remix: 'リミックス',
-  Cover: 'カバー',
-  Arrangement: 'アレンジ',
-  Instrumental: 'インストゥルメンタル',
-  Mashup: 'マッシュアップ',
-  MusicPV: 'ミュージックPV',
-  DramaPV: 'ドラマPV',
-  Other: 'その他',
-  Unspecified: '未分類',
-};
-
+/**
+ * 曲の詳細 (opened from the sound map). Thumbnail, title, producer and rating at the top,
+ * then 再生 / キューに追加 / 保存 / ⋮, a two-column fact list, albums and the videos.
+ * Rows without a value are left out. On phones the rating gets its own row under the thumbnail
+ * (the 40px stars do not fit next to it).
+ */
 export default function SongDetailsModal() {
   const t = useTranslateSourceText();
+  const tk = useTranslate();
   const language = useLanguageStore(state => state.language);
-  const { detailSong, closeSongDetail } = useUiStore();
-  const { setQueue } = usePlayerStore();
-  const { getRating, setRating } = useRatingStore();
-
-  // ESC キーで閉じる
-  useEffect(() => {
-    if (!detailSong) return;
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') closeSongDetail();
-    };
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-  }, [detailSong, closeSongDetail]);
-
-  // スクロール抑制
-  useEffect(() => {
-    if (detailSong) {
-      document.body.style.overflow = 'hidden';
-    } else {
-      document.body.style.overflow = '';
-    }
-    return () => { document.body.style.overflow = ''; };
-  }, [detailSong]);
+  const detailSong = useUiStore(state => state.detailSong);
+  const closeSongDetail = useUiStore(state => state.closeSongDetail);
+  const openSaveToPlaylist = useUiStore(state => state.openSaveToPlaylist);
+  const setQueue = usePlayerStore(state => state.setQueue);
+  const addToQueue = usePlayerStore(state => state.addToQueue);
+  const rating = useRatingStore(state => (detailSong ? state.ratings[String(detailSong.id)] ?? 0 : 0));
+  const setRating = useRatingStore(state => state.setRating);
+  const playRef = useRef<HTMLButtonElement>(null);
+  const closeRef = useRef<HTMLButtonElement>(null);
+  const isMobile = useMediaQuery(MOBILE_MEDIA_QUERY);
 
   if (!detailSong) return null;
-
   const song = detailSong;
 
-  // サムネイル取得
-  const ytPv = song.pvs?.find(p => p.service === 'Youtube');
-  const thumbUrl = song.thumbUrl
-    ?? (ytPv ? `https://img.youtube.com/vi/${ytPv.pvId}/hqdefault.jpg` : null);
-
-  // プロデューサー / ボーカリスト分類
-  const producers  = song.artists?.filter(a => a.categories.includes('Producer'))  ?? [];
-  const vocalists  = song.artists?.filter(a => a.categories.includes('Vocalist'))  ?? [];
-
-  // PV一覧 (有効なもの)
   const pvLinks = (song.pvs ?? []).filter(isPlayablePV);
+  const canPlay = pvLinks.length > 0;
+  const publishDate = formatCalendarDate(song.publishDate, language);
+  /**
+   * 「YouTube」/「ニコニコ（転載）」. Where it is shown, withVideoName() adds a short video name when the song
+   * has two videos of the same service and kind: 「YouTube · {name}」/「YouTubeで開く · {name}」.
+   */
+  const pvLabel = (pv: (typeof pvLinks)[number]) => (pv.pvType === 'Original'
+    ? serviceLabel(pv.service, language)
+    : videoSourceLabel(pv, language, t));
+  const ratingControl = <StarRating rating={rating} onRate={value => setRating(song.id, value)} />;
+
+  const facts: { label: string; value: string }[] = [];
+  facts.push({
+    label: t('曲の種類'),
+    value: song.isSelfCover ? t('セルフカバー') : songTypeLabel(song.songType, language),
+  });
+  if (publishDate) facts.push({ label: t('公開日'), value: publishDate });
+  if (song.lengthSeconds > 0) facts.push({ label: t('長さ'), value: formatClockDuration(song.lengthSeconds) });
+  if (song.chorusStartSeconds != null) {
+    const end = song.chorusEndSeconds ?? song.chorusStartSeconds + 15;
+    facts.push({
+      label: t('サビ（推定）'),
+      // 0:43〜0:58 / 0:43–0:58 (an en dash in English)
+      value: `${formatClockDuration(song.chorusStartSeconds)}${language === 'ja' ? '〜' : '–'}${formatClockDuration(end)}`,
+    });
+  }
 
   const handlePlay = () => {
     setQueue([song], 0);
     closeSongDetail();
   };
 
+  const handleQueue = () => {
+    // With nothing playing, start the song (the mini player appears) instead of an invisible queue.
+    if (usePlayerStore.getState().currentSong) addToQueue(song);
+    else setQueue([song], 0);
+    showToast(t('キューに追加しました'));
+  };
+
   return (
-    <>
-      {/* オーバーレイ */}
-      <div
-        className="fixed inset-0 z-[60]"
-        style={{ background: 'rgba(0,0,0,0.65)', backdropFilter: 'blur(4px)' }}
-        onClick={closeSongDetail}
-        aria-hidden="true"
-      />
-
-      {/* モーダル本体 */}
-      <div
-        className="fixed z-[61] inset-0 flex items-center justify-center p-4"
-        role="dialog"
-        aria-modal="true"
-        aria-label={t('{song} の詳細', { song: song.name })}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div
-          className="relative w-full max-w-lg rounded-2xl overflow-hidden shadow-2xl"
-          style={{
-            background: 'var(--color-surface)',
-            border: '1px solid var(--color-border)',
-            maxHeight: '90vh',
-            overflowY: 'auto',
-          }}
-        >
-          {/* 閉じるボタン */}
-          <button
-            className="absolute top-3 right-3 z-10 btn-ghost p-1.5 rounded-full"
-            onClick={closeSongDetail}
-            aria-label={t('閉じる')}
-            style={{
-              background: 'rgba(0,0,0,0.4)',
-              color: 'white',
-            }}
-          >
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
-            </svg>
-          </button>
-
-          {/* サムネイル */}
-          <div className="relative aspect-video w-full" style={{ background: 'var(--color-bg-secondary)' }}>
-            {thumbUrl ? (
-              <img src={thumbUrl} alt={song.name} className="w-full h-full object-cover" />
-            ) : (
-              <div className="w-full h-full flex items-center justify-center">
-                <svg className="w-16 h-16" style={{ color: 'var(--color-text-muted)' }} viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/>
-                </svg>
-              </div>
-            )}
-          </div>
-
-          {/* コンテンツ */}
-          <div className="p-5 flex flex-col gap-4">
-
-            {/* タイトル + 評価 */}
-            <div>
-              <h2 className="text-lg font-bold leading-snug" style={{ color: 'var(--color-text-primary)' }}>
-                {song.name}
-              </h2>
-              <div className="mt-2">
-                <StarRating
-                  rating={getRating(song.id)}
-                  onRate={(r) => setRating(song.id, r)}
-                  size="md"
-                />
-              </div>
-              <OriginalVersionLink song={song} />
-            </div>
-
-            {/* メタデータグリッド */}
-            <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
-              {producers.length > 0 && (
-                <>
-                  <dt style={{ color: 'var(--color-text-muted)' }}>{t('プロデューサー')}</dt>
-                  <dd style={{ color: 'var(--color-text-primary)' }}>
-                    {producers.map(a => a.name).join(', ')}
-                  </dd>
-                </>
-              )}
-              {vocalists.length > 0 && (
-                <>
-                  <dt style={{ color: 'var(--color-text-muted)' }}>{t('ボーカリスト')}</dt>
-                  <dd style={{ color: 'var(--color-text-primary)' }}>
-                    {vocalists.map(a => a.name).join(', ')}
-                  </dd>
-                </>
-              )}
-              {producers.length === 0 && vocalists.length === 0 && song.artistString && (
-                <>
-                  <dt style={{ color: 'var(--color-text-muted)' }}>{t('アーティスト')}</dt>
-                  <dd style={{ color: 'var(--color-text-primary)' }}>{song.artistString}</dd>
-                </>
-              )}
-              <dt style={{ color: 'var(--color-text-muted)' }}>{t('曲タイプ')}</dt>
-              <dd style={{ color: 'var(--color-text-primary)' }}>
-                {song.isSelfCover ? t('セルフカバー') : t(SONG_TYPE_JA[song.songType] ?? song.songType)}
-              </dd>
-              {song.chorusStartSeconds != null && (
-                <>
-                  <dt style={{ color: 'var(--color-text-muted)' }}>{t('サビ候補')}</dt>
-                  <dd style={{ color: 'var(--color-text-primary)' }}>
-                    {formatDuration(song.chorusStartSeconds)}〜{formatDuration(song.chorusEndSeconds ?? song.chorusStartSeconds + 15)}
-                    <span className="ml-1 text-xs text-neutral-500">{t('（自動推定）')}</span>
-                  </dd>
-                </>
-              )}
-              {song.publishDate && (
-                <>
-                  <dt style={{ color: 'var(--color-text-muted)' }}>{t('投稿日')}</dt>
-                  <dd style={{ color: 'var(--color-text-primary)' }}>{formatDate(song.publishDate, language === 'ja' ? 'ja-JP' : 'en-US')}</dd>
-                </>
-              )}
-              {song.lengthSeconds > 0 && (
-                <>
-                  <dt style={{ color: 'var(--color-text-muted)' }}>{t('再生時間')}</dt>
-                  <dd style={{ color: 'var(--color-text-primary)' }}>{formatDuration(song.lengthSeconds)}</dd>
-                </>
-              )}
-
-            </dl>
-            <SongAlbums key={song.id} songId={song.id} />
-
-            {/* PVリンク */}
-            {pvLinks.length > 0 && (
-              <div className="flex flex-wrap gap-2">
-                {pvLinks.map(pv => (
-                  <a
-                    key={pv.id}
-                    href={pv.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-xs px-3 py-1.5 rounded-lg transition-colors"
-                    style={getPVBadgeStyle(pv.service, pv.pvType)}
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    ▶ {getPVServiceLabel(pv.service, language)}
-                    {pv.pvType !== 'Original' && (
-                      <span className="ml-1 opacity-70">{t('(非公式)')}</span>
-                    )}
-                  </a>
-                ))}
-                <a
-                  href={`${VOCADB_BASE}/S/${song.id}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-xs px-3 py-1.5 rounded-lg transition-colors"
-                  style={{
-                    background: 'rgba(139, 92, 246, 0.12)',
-                    color: 'var(--color-accent-purple)',
-                    border: '1px solid rgba(139, 92, 246, 0.25)',
-                  }}
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  {t('VocaDB で見る')}
-                </a>
-              </div>
-            )}
-
-            {/* 再生ボタン */}
-            <button
-              className="w-full py-2.5 rounded-xl text-sm font-semibold transition-opacity hover:opacity-90"
-              style={{ background: 'var(--gradient-primary)', color: 'white' }}
-              onClick={handlePlay}
-            >
-              ▶ {t('この曲を再生')}
-            </button>
-          </div>
+    <Dialog
+      open
+      onClose={closeSongDetail}
+      ariaLabel={t('{song}の詳細', { song: song.name })}
+      size="md"
+      mobile="sheet"
+      hideClose
+      initialFocusRef={canPlay ? playRef : closeRef}
+    >
+      <div className="flex gap-4">
+        <IconButton
+          ref={closeRef}
+          label={t('閉じる')}
+          icon={<CloseIcon />}
+          onClick={closeSongDetail}
+          className="order-last -mr-3 -mt-3 max-sm:-mt-1"
+        />
+        <SongThumbnail song={song} className="w-[160px] max-sm:w-[120px]" radius="sm" loading="eager" />
+        <div className="min-w-0 flex-1">
+          <h2 className="m-0 line-clamp-2 break-words text-lg font-bold leading-[26px] text-yt-text">{song.name}</h2>
+          <p className="m-0 mt-1 truncate text-sm leading-5 text-yt-text-secondary">{formatArtistLine(song, { withVocalists: true })}</p>
+          {!isMobile && <div className="mt-1">{ratingControl}</div>}
         </div>
       </div>
-    </>
+
+      {/* -ml-2.5 lines the first star up with the thumbnail (the 40px button is wider than the 20px star). */}
+      {isMobile && <div className="-ml-2.5 mt-2">{ratingControl}</div>}
+
+      <div className={isMobile ? 'mt-2 flex flex-wrap items-center gap-2' : 'mt-4 flex flex-wrap items-center gap-2'}>
+        <Button ref={playRef} variant="primary" icon={<PlayIcon />} disabled={!canPlay} onClick={handlePlay}>
+          {t('再生')}
+        </Button>
+        <Button icon={<QueueMusicIcon />} disabled={!canPlay} onClick={handleQueue}>
+          {t('キューに追加')}
+        </Button>
+        <Button icon={<PlaylistAddIcon />} aria-label={t('プレイリストに保存')} onClick={() => openSaveToPlaylist(song)}>
+          {t('保存')}
+        </Button>
+        <Menu trigger={<IconButton label={t('その他の操作')} icon={<MoreVertIcon />} variant="tonal" className="size-9!" />} align="end">
+          <MenuItem icon={<OpenInNewIcon />} href={`${VOCADB_BASE}/S/${song.id}`} external>
+            {t('VocaDBで開く')}
+          </MenuItem>
+          {pvLinks.length > 0 && <MenuDivider />}
+          {pvLinks.map(pv => (
+            <MenuItem key={pv.id} icon={<OpenInNewIcon />} href={pv.url} external>
+              {withVideoName(t('{service}で開く', { service: pvLabel(pv) }), pv, pvLinks, language)}
+            </MenuItem>
+          ))}
+        </Menu>
+      </div>
+
+      <dl className="mt-5 grid grid-cols-[auto_1fr] gap-x-6 gap-y-2 text-sm leading-5 sm:grid-cols-[auto_1fr_auto_1fr]">
+        {facts.map(fact => (
+          <div key={fact.label} className="contents">
+            <dt className="text-yt-text-secondary">{fact.label}</dt>
+            <dd className="m-0 min-w-0 tabular-nums text-yt-text">{fact.value}</dd>
+          </div>
+        ))}
+      </dl>
+
+      <div className="mt-2 text-sm leading-5 text-yt-text-secondary empty:hidden">
+        <OriginalVersionLink song={song} />
+      </div>
+
+      <div className="mt-5 empty:hidden">
+        <SongAlbums key={song.id} songId={song.id} />
+      </div>
+
+      {pvLinks.length > 0 && (
+        <section className="mt-5" aria-label={tk('pvLinks')}>
+          <h3 className="m-0 text-base font-bold leading-[22px] text-yt-text">{tk('pvLinks')}</h3>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {pvLinks.map(pv => (
+              <a key={pv.id} href={pv.url} target="_blank" rel="noopener noreferrer" className={CHIP_LINK}>
+                <span className="truncate">{withVideoName(pvLabel(pv), pv, pvLinks, language)}</span>
+              </a>
+            ))}
+          </div>
+        </section>
+      )}
+    </Dialog>
   );
 }

@@ -13,9 +13,16 @@ const song = {
   pvs: [{ id: 100, pvId: 'sm12345', service: 'NicoNicoDouga', disabled: false, pvType: 'Original' }, { id: 101, pvId: 'fixture', service: 'Youtube', disabled: false, pvType: 'Original' }],
 };
 const assert = (condition, message) => { if (!condition) throw new Error(message); };
+/** Clicks the button (or menu item) whose text or aria-label is exactly `text`. */
 async function clickText(page, text) {
-  await page.waitForFunction(value => [...document.querySelectorAll('button')].some(button => button.textContent?.trim() === value || button.textContent?.replace(/↓$/, '').trim() === value), {}, text);
-  await page.evaluate(value => [...document.querySelectorAll('button')].find(button => button.textContent?.trim() === value || button.textContent?.replace(/↓$/, '').trim() === value)?.click(), text);
+  const find = value => [...document.querySelectorAll('button, [role="menuitem"]')]
+    .find(button => button.textContent?.trim() === value || button.getAttribute('aria-label') === value);
+  await page.waitForFunction(find, {}, text);
+  await page.evaluate(value => {
+    const button = [...document.querySelectorAll('button, [role="menuitem"]')]
+      .find(item => item.textContent?.trim() === value || item.getAttribute('aria-label') === value);
+    button?.click();
+  }, text);
 }
 async function screenshot(page, name) {
   if (!screenshotDir) return;
@@ -58,57 +65,75 @@ try {
     page.on('pageerror', error => errors.push(String(error)));
     await fixtures(page);
     await page.goto(new URL('playlists', baseUrl), { waitUntil: 'domcontentloaded', timeout: 60000 });
-    await page.waitForSelector('aside[aria-label="プレイリストライブラリ"]');
+    await page.waitForSelector('[data-testid="playlist-library"]');
     if (width < 1280) {
-      const layout = await page.evaluate(() => ({
-        padding: parseFloat(getComputedStyle(document.querySelector('.playlist-page')).paddingBottom),
-        overflow: getComputedStyle(document.querySelector('[data-testid="playlist-library-content"]')).overflowY,
-        border: getComputedStyle(document.querySelector('aside[aria-label="プレイリストライブラリ"]')).borderTopWidth,
-      }));
-      assert(layout.padding <= 24 && layout.overflow === 'visible' && layout.border === '0px', `empty library wastes mobile viewport: ${JSON.stringify(layout)}`);
+      // The bottom spacing belongs to <main> (mini player + phone navigation), not to the page.
+      const layout = await page.evaluate(() => {
+        // A bar fixed to the bottom of the viewport (the phone navigation) needs its own space.
+        const bar = [...document.querySelectorAll('nav')].find(item => {
+          const box = item.getBoundingClientRect();
+          return getComputedStyle(item).position === 'fixed' && box.height > 0 && box.bottom >= innerHeight - 1 && box.top > innerHeight / 2;
+        });
+        return {
+          padding: parseFloat(getComputedStyle(document.querySelector('main')).paddingBottom),
+          bottomBar: bar ? bar.getBoundingClientRect().height : 0,
+          overflow: getComputedStyle(document.querySelector('[data-testid="playlist-library"]')).overflowY,
+          nestedAside: Boolean(document.querySelector('main aside')),
+        };
+      });
+      assert(layout.padding <= layout.bottomBar + 24 && layout.overflow === 'visible' && !layout.nestedAside, `empty library wastes mobile viewport: ${JSON.stringify(layout)}`);
     }
     await screenshot(page, `library-${width}`);
-    await clickText(page, '外部から読み込む');
+    await clickText(page, '新規作成');
+    await page.waitForSelector('[role="menu"]');
     const menuBounds = await page.$eval('[role="menu"]', element => { const r = element.getBoundingClientRect(); return { left: r.left, right: r.right, top: r.top, bottom: r.bottom }; });
     assert(menuBounds.left >= 0 && menuBounds.right <= width && menuBounds.top >= 0 && menuBounds.bottom <= 900, `menu clipped at ${width}: ${JSON.stringify(menuBounds)}`);
-    await clickText(page, 'ニコニコからインポート');
-    await page.waitForSelector('[role="dialog"]');
-    await page.type('#nico-source-url', 'https://www.nicovideo.jp/mylist/12345');
-    await clickText(page, '取得');
-    await page.waitForFunction(() => document.body.textContent.includes('2本中 1曲を照合'));
+    await clickText(page, 'URLからインポート');
+    await page.waitForSelector('[role="dialog"] #playlist-import-url');
+    await page.type('#playlist-import-url', 'https://www.nicovideo.jp/mylist/12345');
+    await clickText(page, '読み込む');
+    await page.waitForFunction(() => document.body.textContent.includes('2本中 1曲が見つかりました'));
     await screenshot(page, `nico-import-${width}`);
     // Changing the URL must invalidate the old result before it can be saved.
-    await page.focus('#nico-source-url'); await page.keyboard.down('Control'); await page.keyboard.press('KeyA'); await page.keyboard.up('Control');
-    await page.type('#nico-source-url', 'https://www.nicovideo.jp/series/54321');
-    assert(!await page.$eval('[role="dialog"]', element => element.textContent.includes('1曲を保存')), 'old URL result remained saveable');
-    await clickText(page, '取得');
+    await page.focus('#playlist-import-url'); await page.keyboard.down('Control'); await page.keyboard.press('KeyA'); await page.keyboard.up('Control');
+    await page.type('#playlist-import-url', 'https://www.nicovideo.jp/series/54321');
+    assert(await page.$eval('[data-testid="playlist-import-save"]', button => button.disabled), 'old URL result remained saveable');
+    await clickText(page, '読み込む');
     await page.waitForFunction(() => document.body.textContent.includes('変更後のシリーズ'));
-    await clickText(page, '1曲を保存');
-    await page.waitForFunction(() => document.querySelector('h1')?.textContent === '変更後のシリーズ');
+    await page.waitForFunction(() => document.querySelector('[data-testid="playlist-import-save"]')?.disabled === false);
+    await page.click('[data-testid="playlist-import-save"]');
+    await page.waitForFunction(() => document.querySelector('main section h1')?.textContent === '変更後のシリーズ');
     const imported = await page.evaluate(() => JSON.parse(localStorage.getItem('diva_playlists')));
     assert(imported.some(item => item.name === '変更後のシリーズ' && item.songs[0]?.id === song.id && !item.nicoSync), 'one-time import without target did not persist');
     await screenshot(page, `detail-${width}`);
     if (width === 390) {
-      await clickText(page, '再生');
+      await clickText(page, 'すべて再生');
       await page.waitForSelector('.global-mini-player', { visible: true });
       await page.waitForFunction(() => {
         const player = document.querySelector('.global-mini-player');
-        return player && parseFloat(getComputedStyle(document.querySelector('.playlist-page')).paddingBottom) >= player.getBoundingClientRect().height + 16;
+        return player && parseFloat(getComputedStyle(document.querySelector('main')).paddingBottom) >= player.getBoundingClientRect().height + 16;
       });
     }
-    if (width < 1280) await clickText(page, '← ライブラリ');
-    await clickText(page, '条件で自動作成');
-    await page.waitForFunction(() => document.body.textContent.includes('総一致 1曲 / 保存予定 1曲'));
+    // Back to the library: the phone layout has its own back button, wider screens use the browser's Back.
+    if (width < 640) await page.click('main button[aria-label="プレイリスト一覧に戻る"]');
+    else await page.goBack();
+    await page.waitForSelector('[data-testid="playlist-library"]');
+    await clickText(page, '新規作成');
+    await clickText(page, 'スマートプレイリスト');
+    // Wide dialogs show 「1曲が一致 · 上位1曲を保存」; phones show 「1曲が一致」 in the footer.
+    await page.waitForFunction(() => document.querySelector('[role="dialog"]')?.textContent.includes('1曲が一致'));
     await page.locator('input[placeholder="2020"]').fill('2025');
     await page.locator('input[placeholder="2026"]').fill('2020');
-    await page.waitForFunction(() => document.body.textContent.includes('公開年の開始は終了以前にしてください。'));
-    assert(await page.$eval('[role="dialog"] .btn-primary', button => button.disabled), 'invalid range can be saved');
+    await page.waitForFunction(() => document.body.textContent.includes('公開年の範囲が正しくありません'));
+    assert(await page.$eval('[data-testid="smart-playlist-submit"]', button => button.disabled), 'invalid range can be saved');
     await page.evaluate(() => [...document.querySelectorAll('[role="dialog"] button')].find(button => button.textContent?.includes('ニコニコ中心'))?.click());
-    await page.waitForFunction(() => document.body.textContent.includes('総一致 1曲 / 保存予定 1曲'));
+    await page.waitForFunction(() => document.querySelector('[role="dialog"]')?.textContent.includes('1曲が一致'));
     const preset = await page.evaluate(() => ({ year: document.querySelector('input[placeholder="2020"]').value, yt: document.querySelector('input[type="number"]').value }));
-    assert(preset.year === '' && preset.yt === '0', `preset retained prior conditions: ${JSON.stringify(preset)}`);
+    // A minimum of 0 views shows as an empty field (placeholder 「指定なし」).
+    assert(preset.year === '' && (preset.yt === '' || preset.yt === '0'), `preset retained prior conditions: ${JSON.stringify(preset)}`);
     await screenshot(page, `smart-${width}`);
-    await clickText(page, '条件を保存して作成');
+    await page.waitForFunction(() => document.querySelector('[data-testid="smart-playlist-submit"]')?.disabled === false);
+    await page.click('[data-testid="smart-playlist-submit"]');
     await page.waitForFunction(() => JSON.parse(localStorage.getItem('diva_playlists')).some(item => item.smartRule?.pvService === 'niconico' && item.songs.length === 1));
     assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `horizontal overflow at ${width}`);
     assert(errors.length === 0, `page errors at ${width}: ${errors.join('; ')}`);

@@ -6,8 +6,10 @@ import {
   applyDiscoveryFilterWithRelaxation,
   applyGlobalSongFilter,
   areGlobalFilterSettingsEqual,
+  formatCooldownDuration,
   getGlobalFilterSummary,
   getDiscoveryRelaxationMessage,
+  getDiscoveryRelaxationShortLabel,
   getGlobalSongFilterDecision,
   filterDiscoverySourcePage,
   hasConfiguredSongFilters,
@@ -87,6 +89,16 @@ describe('global filters', () => {
     const settings = { ...DEFAULT_GLOBAL_FILTER_SETTINGS, enabled: true, excludedSongTypes: ['Remix' as const] };
     expect(matchesGlobalSongFilter(song({ songType: 'Remix' }), settings)).toBe(false);
     expect(matchesGlobalSongFilter(song({ songType: 'Original' }), settings)).toBe(true);
+  });
+
+  it('excludes self-covers when asked, whatever their song type', () => {
+    const settings = { ...DEFAULT_GLOBAL_FILTER_SETTINGS, enabled: true, excludeSelfCovers: true };
+    expect(matchesGlobalSongFilter(song({ songType: 'Cover', isSelfCover: true }), settings)).toBe(false);
+    expect(matchesGlobalSongFilter(song({ songType: 'Cover' }), settings)).toBe(true);
+    expect(matchesGlobalSongFilter(song({ isSelfCover: true }), { ...settings, enabled: false })).toBe(true);
+    expect(hasConfiguredSongFilters({ ...DEFAULT_GLOBAL_FILTER_SETTINGS, excludeSelfCovers: true })).toBe(true);
+    expect(normalizeGlobalFilterSettings({ excludeSelfCovers: 'yes' }).excludeSelfCovers).toBe(false);
+    expect(areGlobalFilterSettingsEqual(settings, { ...settings, excludeSelfCovers: false })).toBe(false);
   });
 
   it('applies global vocalist Any, All, grouped variants, and Exact matching', () => {
@@ -249,5 +261,82 @@ describe('global filters', () => {
       relaxedConditions: [],
     });
     expect(filterDiscoverySourcePage(candidates, context, 2, true).items).toHaveLength(2);
+  });
+});
+
+describe('filter summaries', () => {
+  const configured: GlobalFilterSettings = {
+    ...DEFAULT_GLOBAL_FILTER_SETTINGS,
+    enabled: true,
+    minYoutubeViews: 10_000,
+    excludedSongTypes: ['Cover', 'Remix'],
+    cooldownHours: 24,
+    excludeRatedFromDiscovery: true,
+  };
+
+  it('summarizes the filters in Japanese and English', () => {
+    expect(getGlobalFilterSummary(configured)).toEqual([
+      'YouTube 10,000以上',
+      'カバー・リミックスを除外',
+      '最近聴いた曲を除く（24時間）',
+      '評価した曲を除く',
+    ]);
+    expect(getGlobalFilterSummary(configured, 'en')).toEqual([
+      'YouTube ≥ 10,000 views',
+      'Cover, Remix excluded',
+      'Skip recently played (1 day)',
+      'Skip rated songs',
+    ]);
+  });
+
+  it('lists self-covers after the excluded song types', () => {
+    const selfCovers = { ...DEFAULT_GLOBAL_FILTER_SETTINGS, enabled: true, excludedSongTypes: ['Remix' as const], excludeSelfCovers: true };
+    expect(getGlobalFilterSummary(selfCovers)).toEqual(['リミックス・セルフカバーを除外']);
+    expect(getGlobalFilterSummary(selfCovers, 'en')).toEqual(['Remix, Self-cover excluded']);
+  });
+
+  it('names song types the same way as the settings chips', () => {
+    const musicVideos = { ...DEFAULT_GLOBAL_FILTER_SETTINGS, enabled: true, excludedSongTypes: ['MusicPV' as const] };
+    expect(getGlobalFilterSummary(musicVideos)).toEqual(['PVを除外']);
+    expect(getGlobalFilterSummary(musicVideos, 'en')).toEqual(['Music video excluded']);
+  });
+
+  it('adds the match mode only when two or more vocalists are chosen', () => {
+    const one = { ...DEFAULT_GLOBAL_FILTER_SETTINGS, enabled: true, vocalistFilters: [{ id: 1, name: '初音ミク' }] };
+    expect(getGlobalFilterSummary(one)).toEqual(['ボーカル: 初音ミク']);
+    expect(getGlobalFilterSummary(one, 'en')).toEqual(['Vocalist: 初音ミク']);
+
+    const two: GlobalFilterSettings = {
+      ...one,
+      vocalistMatchMode: 'All',
+      vocalistFilters: [
+        { id: 1, name: 'Miku V2', variantGroup: '初音ミク' },
+        { id: 2, name: 'Miku NT', variantGroup: '初音ミク' },
+        { id: 3, name: '重音テト' },
+      ],
+    };
+    expect(getGlobalFilterSummary(two)).toEqual(['ボーカル: 初音ミク・重音テト（すべて含む）']);
+    expect(getGlobalFilterSummary(two, 'en')).toEqual(['Vocalists: 初音ミク, 重音テト (All of these)']);
+  });
+
+  it('formats cooldown lengths as hours or days', () => {
+    expect(formatCooldownDuration(1)).toBe('1時間');
+    expect(formatCooldownDuration(24)).toBe('24時間');
+    expect(formatCooldownDuration(72)).toBe('3日');
+    expect(formatCooldownDuration(168)).toBe('7日');
+    expect(formatCooldownDuration(1, 'en')).toBe('1 hour');
+    expect(formatCooldownDuration(6, 'en')).toBe('6 hours');
+    expect(formatCooldownDuration(24, 'en')).toBe('1 day');
+    expect(formatCooldownDuration(72, 'en')).toBe('3 days');
+  });
+
+  it('describes relaxed discovery conditions in both languages', () => {
+    expect(getDiscoveryRelaxationMessage([])).toBeNull();
+    expect(getDiscoveryRelaxationMessage(['cooldown', 'view-thresholds-removed'])).toContain('最近再生した曲');
+    const english = getDiscoveryRelaxationMessage(['cooldown', 'rated-songs'], 'en');
+    expect(english).toContain('recently played songs');
+    expect(english).toContain('rated songs');
+    expect(getDiscoveryRelaxationShortLabel()).toBe('一部の条件をゆるめて表示しています');
+    expect(getDiscoveryRelaxationShortLabel('en')).toBe('Some filters were relaxed');
   });
 });

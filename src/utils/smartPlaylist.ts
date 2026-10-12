@@ -11,7 +11,7 @@ import { applyGlobalSongFilter, SONG_TYPE_LABELS } from './globalFilters';
 export const SMART_DERIVED_SONG_TYPES: SongType[] = ['Cover', 'Remix', 'Arrangement', 'Mashup'];
 export const SMART_PLAYLIST_MAX_SONGS: SmartPlaylistMaxSongs[] = [50, 100, 200];
 export const SMART_PLAYLIST_SORTS: Array<{ value: SmartPlaylistSortBy; label: string }> = [
-  { value: 'FavoritedTimes', label: 'VocaDB支持順' },
+  { value: 'FavoritedTimes', label: 'お気に入り数順' },
   { value: 'YoutubeViews', label: 'YouTube再生数順' },
   { value: 'NicoViews', label: 'ニコニコ再生数順' },
   { value: 'PublishDate', label: '新着順' },
@@ -32,7 +32,7 @@ export const SMART_PLAYLIST_PRESETS: Array<{ id: string; label: string; rule: Pa
   },
   {
     id: 'audio',
-    label: '音響データあり',
+    label: '解析済みの曲',
     rule: { audioComputed: 'yes', sortBy: 'FavoritedTimes' },
   },
 ];
@@ -45,12 +45,12 @@ export function applySmartPlaylistPreset(id: string, maxSongs?: SmartPlaylistMax
 
 export function validateSmartPlaylistRule(rule: SmartPlaylistRule): string | null {
   if ((rule.publishYearFrom && rule.publishYearFrom.length !== 4)
-    || (rule.publishYearTo && rule.publishYearTo.length !== 4)) return '公開年は4桁で入力してください。';
+    || (rule.publishYearTo && rule.publishYearTo.length !== 4)) return '公開年は4桁で入力してください';
   if (rule.publishYearFrom && rule.publishYearTo && Number(rule.publishYearFrom) > Number(rule.publishYearTo)) {
-    return '公開年の開始は終了以前にしてください。';
+    return '公開年の範囲が正しくありません';
   }
   if (rule.lengthMinSeconds && rule.lengthMaxSeconds && Number(rule.lengthMinSeconds) > Number(rule.lengthMaxSeconds)) {
-    return '最短の長さは最長以下にしてください。';
+    return '長さの範囲が正しくありません';
   }
   return null;
 }
@@ -96,29 +96,53 @@ export function normalizeSmartPlaylistRule(rule?: Partial<SmartPlaylistRule> | n
   };
 }
 
-function formatViewThreshold(value: number): string {
-  return value.toLocaleString('ja-JP');
+/**
+ * Whether two rules select the same songs. Compares values: re-reading the playlists from storage
+ * creates new rule objects, so identity says nothing.
+ */
+export function isSameSmartPlaylistRule(a?: SmartPlaylistRule | null, b?: SmartPlaylistRule | null): boolean {
+  if (!a || !b) return !a && !b;
+  return JSON.stringify(normalizeSmartPlaylistRule(a)) === JSON.stringify(normalizeSmartPlaylistRule(b));
 }
 
-export function formatSmartPlaylistRule(rule: SmartPlaylistRule): string[] {
+/** One rule of a smart playlist, as values (the screen turns it into text with t()). */
+export type SmartPlaylistRuleItem =
+  | { kind: 'producer'; name: string }
+  | { kind: 'minViews'; service: 'youtube' | 'niconico'; count: number }
+  | { kind: 'excludedSongTypes'; types: SongType[] }
+  | { kind: 'publishYear'; from: string; to: string }
+  | { kind: 'length'; min: string; max: string }
+  | { kind: 'video'; service: 'youtube' | 'niconico' | 'both' }
+  | { kind: 'audioAnalysis'; analyzed: boolean }
+  | { kind: 'noRules' }
+  | { kind: 'maxSongs'; count: SmartPlaylistMaxSongs }
+  | { kind: 'sort'; sortBy: SmartPlaylistSortBy };
+
+/** The rules in the order shown on the detail page (then the limit and the sort). */
+export function describeSmartPlaylistRule(rule: SmartPlaylistRule): SmartPlaylistRuleItem[] {
   const normalized = normalizeSmartPlaylistRule(rule);
-  const summary: string[] = [];
-  if (normalized.producerName) summary.push(`P: ${normalized.producerName}`);
-  if (normalized.minYoutubeViews > 0) summary.push(`YouTube ${formatViewThreshold(normalized.minYoutubeViews)}以上`);
-  if (normalized.minNicoViews > 0) summary.push(`ニコニコ ${formatViewThreshold(normalized.minNicoViews)}以上`);
-  if (normalized.excludedSongTypes.length > 0) {
-    const labels = normalized.excludedSongTypes.map(type => SONG_TYPE_LABELS[type] ?? type);
-    summary.push(`除外: ${labels.join('・')}`);
+  const items: SmartPlaylistRuleItem[] = [];
+  if (normalized.producerName) items.push({ kind: 'producer', name: normalized.producerName });
+  if (normalized.minYoutubeViews > 0) items.push({ kind: 'minViews', service: 'youtube', count: normalized.minYoutubeViews });
+  if (normalized.minNicoViews > 0) items.push({ kind: 'minViews', service: 'niconico', count: normalized.minNicoViews });
+  if (normalized.excludedSongTypes.length > 0) items.push({ kind: 'excludedSongTypes', types: normalized.excludedSongTypes });
+  if (normalized.publishYearFrom || normalized.publishYearTo) {
+    items.push({ kind: 'publishYear', from: normalized.publishYearFrom ?? '', to: normalized.publishYearTo ?? '' });
   }
-  if (normalized.publishYearFrom || normalized.publishYearTo) summary.push('公開年 ' + (normalized.publishYearFrom || '指定なし') + '〜' + (normalized.publishYearTo || '指定なし'));
-  if (normalized.lengthMinSeconds || normalized.lengthMaxSeconds) summary.push('長さ ' + (normalized.lengthMinSeconds || '0') + '〜' + (normalized.lengthMaxSeconds || '∞') + '秒');
-  if (normalized.pvService !== 'any') summary.push('PV: ' + (normalized.pvService === 'both' ? 'YouTube＋ニコニコ' : normalized.pvService === 'youtube' ? 'YouTube' : 'ニコニコ'));
-  if (normalized.audioComputed !== 'any') summary.push('音響データ: ' + (normalized.audioComputed === 'yes' ? 'あり' : 'なし'));
-  if (summary.length === 0) summary.push('条件なし');
-  const sortLabel = SMART_PLAYLIST_SORTS.find(option => option.value === normalized.sortBy)?.label ?? 'VocaDB支持順';
-  summary.push(`上限 ${normalized.maxSongs}曲`);
-  summary.push(sortLabel);
-  return summary;
+  if (normalized.lengthMinSeconds || normalized.lengthMaxSeconds) {
+    items.push({ kind: 'length', min: normalized.lengthMinSeconds ?? '', max: normalized.lengthMaxSeconds ?? '' });
+  }
+  if (normalized.pvService && normalized.pvService !== 'any') items.push({ kind: 'video', service: normalized.pvService });
+  if (normalized.audioComputed && normalized.audioComputed !== 'any') items.push({ kind: 'audioAnalysis', analyzed: normalized.audioComputed === 'yes' });
+  if (items.length === 0) items.push({ kind: 'noRules' });
+  items.push({ kind: 'maxSongs', count: normalized.maxSongs });
+  items.push({ kind: 'sort', sortBy: normalized.sortBy });
+  return items;
+}
+
+/** Source text (for t()) of a sort choice. */
+export function smartPlaylistSortLabel(sortBy: SmartPlaylistSortBy): string {
+  return SMART_PLAYLIST_SORTS.find(option => option.value === sortBy)?.label ?? 'お気に入り数順';
 }
 
 export function buildSmartPlaylistSearchParams(
@@ -158,6 +182,7 @@ export function filterSmartPlaylistSongs(songs: Song[], rule: SmartPlaylistRule)
     minYoutubeViews: normalized.minYoutubeViews,
     minNicoViews: normalized.minNicoViews,
     excludedSongTypes: normalized.excludedSongTypes,
+    excludeSelfCovers: false,
     vocalistFilters: [],
     vocalistMatchMode: 'Any',
     cooldownHours: 0,

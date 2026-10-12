@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Song } from '../types/vocadb';
-import { sortPlaylistSongs } from './playlistSorting';
+import { sortPlaylistEntries, sortPlaylistSongs } from './playlistSorting';
 
 function song(id: number, name: string, artistString: string, publishDate: string): Song {
   return {
@@ -33,5 +33,11 @@ describe('playlist display sorting', () => {
 
   it('sorts publish dates newest first', () => {
     expect(sortPlaylistSongs(addedOrder, 'publishDate').map(item => item.id)).toEqual([2, 3, 1]);
+  });
+
+  it('keeps the saved position of each row, including both copies of a duplicate', () => {
+    const entries = [...addedOrder, addedOrder[1]].map((item, index) => ({ song: item, index }));
+    expect(sortPlaylistEntries(entries, 'name').map(entry => entry.index)).toEqual([1, 3, 2, 0]);
+    expect(sortPlaylistEntries(entries, 'addedOrder').map(entry => entry.index)).toEqual([0, 1, 2, 3]);
   });
 });

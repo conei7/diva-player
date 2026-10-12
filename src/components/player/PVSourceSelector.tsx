@@ -1,17 +1,32 @@
 import type { Song } from '../../types/vocadb';
 import { usePlayerStore } from '../../stores/playerStore';
-import { getPVServiceLabel } from '../../utils/pvService';
 import { isPlayablePV } from '../../utils/playablePV';
-import { useTranslate } from '../../i18n';
+import { useTranslate, useTranslateSourceText } from '../../i18n';
 import { useLanguageStore } from '../../stores/languageStore';
+import { ChevronDownIcon, PlayIcon } from '../ui/icons';
+import { cx } from '../ui/overlay';
+import { videoSourceLabel, withVideoName } from '../watch/videoLabels';
 
 interface PVSourceSelectorProps {
   song?: Song | null;
+  /** Narrower pill (kept for older callers). */
   compact?: boolean;
 }
 
+type PlayablePV = NonNullable<Song['pvs']>[number];
+
+function pvKey(pv: PlayablePV): string {
+  return `${pv.service}:${pv.pvId || pv.id}`;
+}
+
+/**
+ * 再生する動画の切替（tonal の pill の見た目をした select）。
+ * 選択肢は「YouTube（公式）」「ニコニコ（転載）」/ 'YouTube (official)'。同じサービス・種別が複数ある時だけ短い動画名を足す。
+ * PV が 2 つ以上あり、この曲を再生中の時だけ出す。
+ */
 export default function PVSourceSelector({ song, compact = false }: PVSourceSelectorProps) {
-  const t = useTranslate();
+  const tk = useTranslate();
+  const t = useTranslateSourceText();
   const language = useLanguageStore(state => state.language);
   const currentSong = usePlayerStore(state => state.currentSong);
   const currentPV = usePlayerStore(state => state.currentPV);
@@ -19,53 +34,46 @@ export default function PVSourceSelector({ song, compact = false }: PVSourceSele
   const targetSong = song ?? currentSong;
   const playablePVs = targetSong?.pvs?.filter(isPlayablePV) ?? [];
 
-  const labelForPV = (pv: NonNullable<Song['pvs']>[number]): string => {
-    const type = pv.pvType === 'Original' ? t('officialPv') : pv.pvType === 'Reprint' ? t('reprintPv') : t('otherPv');
-    const service = language === 'en' && pv.service === 'NicoNicoDouga' ? 'Niconico' : getPVServiceLabel(pv.service);
-    return `${service} · ${type}${pv.name ? `: ${pv.name}` : ''}`;
-  };
-
   if (!targetSong || playablePVs.length < 2 || currentSong?.id !== targetSong.id) return null;
 
+  const baseLabel = (pv: PlayablePV): string => videoSourceLabel(pv, language, t);
+  /** In the list, a short video name tells apart several videos of the same service and kind. */
+  const optionLabel = (pv: PlayablePV): string => withVideoName(baseLabel(pv), pv, playablePVs, language);
+
   const currentKey = currentPV ? `${currentPV.service}:${currentPV.pvId || currentPV.id}` : '';
+  const selected = playablePVs.find(pv => pvKey(pv) === currentKey) ?? playablePVs[0];
+
   return (
-    <label className={compact ? 'inline-flex min-w-0 items-center' : 'flex w-full min-w-0 items-center gap-2'}>
-      {!compact && <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>{t('pvSelectorLabel')}</span>}
-      <span className={`relative min-w-0 ${compact ? 'w-[min(20rem,42vw)] max-w-[20rem]' : 'w-full max-w-[32rem]'}`}>
-        <select
-          className="input w-full min-w-0 appearance-none truncate pr-10 text-xs"
-          value={currentKey}
-          onChange={event => {
-            const next = playablePVs.find(pv => `${pv.service}:${pv.pvId || pv.id}` === event.target.value);
-            if (next) selectPV(next);
-          }}
-          aria-label={t('pvSelectorAria')}
-          style={{
-            color: 'var(--color-text-primary)',
-            background: 'var(--color-bg-secondary)',
-            colorScheme: 'dark',
-          }}
-        >
-          {playablePVs.map(pv => (
-            <option
-              key={`${pv.service}:${pv.pvId || pv.id}`}
-              value={`${pv.service}:${pv.pvId || pv.id}`}
-              style={{ background: 'var(--color-bg-secondary)', color: 'var(--color-text-primary)' }}
-            >
-              {labelForPV(pv)}
-            </option>
-          ))}
-        </select>
-        <span
-          aria-hidden="true"
-          className="pointer-events-none absolute inset-y-0 right-0 flex w-9 items-center justify-center border-l"
-          style={{ color: 'var(--color-text-secondary)', borderColor: 'var(--color-border)' }}
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-            <path d="m7 10 5 5 5-5z" />
-          </svg>
-        </span>
-      </span>
-    </label>
+    <span
+      className={cx(
+        'relative inline-flex h-9 min-w-0 shrink-0 items-center gap-1.5 rounded-full bg-yt-tonal pl-3 pr-2 text-sm font-medium leading-5 text-yt-text transition-colors duration-150 hover:bg-yt-tonal-hover',
+        'has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-yt-focus',
+        compact ? 'max-w-[12rem]' : 'max-w-[16rem]',
+      )}
+    >
+      <PlayIcon size={20} />
+      <span aria-hidden="true" className="min-w-0 truncate">{baseLabel(selected)}</span>
+      <ChevronDownIcon size={20} />
+      <select
+        className="absolute inset-0 h-full w-full cursor-pointer appearance-none rounded-full opacity-0"
+        value={currentKey}
+        onChange={event => {
+          const next = playablePVs.find(pv => pvKey(pv) === event.target.value);
+          if (next) selectPV(next);
+        }}
+        aria-label={tk('pvSelectorAria')}
+        style={{ colorScheme: 'dark' }}
+      >
+        {playablePVs.map(pv => (
+          <option
+            key={pvKey(pv)}
+            value={pvKey(pv)}
+            style={{ background: 'var(--color-yt-menu)', color: 'var(--color-yt-text)' }}
+          >
+            {optionLabel(pv)}
+          </option>
+        ))}
+      </select>
+    </span>
   );
 }

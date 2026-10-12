@@ -51,8 +51,8 @@ describe('language preference', () => {
 
   it('translates source copy while keeping Japanese fallback and interpolated values', async () => {
     await ensureEnglishTranslations();
-    expect(translateSourceText('en', '★{rating} の曲はまだありません', { rating: 4 })).toBe('No songs rated ★4 yet');
-    expect(translateSourceText('ja', '★{rating} の曲はまだありません', { rating: 4 })).toBe('★4 の曲はまだありません');
+    expect(translateSourceText('en', '★{rating}の曲はありません', { rating: 4 })).toBe('No ★4 songs');
+    expect(translateSourceText('ja', '★{rating}の曲はありません', { rating: 4 })).toBe('★4の曲はありません');
     expect(translateSourceText('en', '未登録の文字列')).toBe('未登録の文字列');
   });
 
@@ -60,8 +60,8 @@ describe('language preference', () => {
     await ensureEnglishTranslations();
     expect(translateSourceText('en', '音響的に近いおすすめ')).toBe('Recommended for its audio similarity');
     expect(translateSourceText('en', '音が近い')).toBe('Similar sound');
-    expect(translateSourceText('en', '再生対応PVなし')).toBe('No playable video');
-    expect(translateSourceText('en', 'その他の未再生曲')).toBe('Other undiscovered songs');
-    expect(translateSourceText('en', 'ニコ')).toBe('Nico');
+    expect(translateSourceText('en', '再生できない動画')).toBe('Unplayable video');
+    expect(translateSourceText('en', 'その他のまだ知らない曲')).toBe('Other undiscovered songs');
+    expect(translateSourceText('en', 'ニコニコ')).toBe('Niconico');
   });
 });

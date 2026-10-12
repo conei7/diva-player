@@ -14,17 +14,19 @@ import {
 import { formatJapaneseViews } from '../../utils/formatViews';
 import { useTranslateSourceText } from '../../i18n';
 import { useLanguageStore } from '../../stores/languageStore';
+import { Chip } from '../ui/Chip';
+import Button from '../ui/Button';
 
 interface ChartState {
   songId: number;
   data: ViewHistoryData[];
   status: 'loading' | 'success' | 'error';
-  errorMessage?: string;
 }
 
+/** Series colors are data visualization (DESIGN_SPEC §1.2); each series also has a text label. */
 const SERIES = {
   youtube: { label: "YouTube", color: "#ef4444" },
-  nico: { label: "ニコニコ動画", color: "#3b82f6" },
+  nico: { label: "ニコニコ", color: "#3b82f6" },
 } as const;
 
 const Y_TICK_COUNT = 5;
@@ -165,7 +167,7 @@ export default function ViewHistoryChart({ songId }: { songId: number }) {
       .catch((err) => {
         if (!active || err?.name === "AbortError") return;
         console.error("Failed to fetch view history:", err);
-        setChartState({ songId, data: [], status: 'error', errorMessage: '閲覧履歴を取得できませんでした。' });
+        setChartState({ songId, data: [], status: 'error' });
       });
 
     return () => {
@@ -282,126 +284,78 @@ export default function ViewHistoryChart({ songId }: { songId: number }) {
     };
   }, [data, language, metric, visibleSeries]);
 
+  const legend = (chart.hasYoutube || chart.hasNico) && (
+    <div className="flex flex-wrap gap-2" role="group" aria-label={t('表示する系列')}>
+      {chart.hasYoutube && (
+        <Chip
+          selected={visibleSeries.youtube}
+          icon={<span className="block size-2.5 rounded-full" style={{ background: SERIES.youtube.color }} />}
+          onClick={() => setVisibleSeries(value => ({ ...value, youtube: !value.youtube }))}
+        >
+          {SERIES.youtube.label}
+        </Chip>
+      )}
+      {chart.hasNico && (
+        <Chip
+          selected={visibleSeries.nico}
+          icon={<span className="block size-2.5 rounded-full" style={{ background: SERIES.nico.color }} />}
+          onClick={() => setVisibleSeries(value => ({ ...value, nico: !value.nico }))}
+        >
+          {nicoLabel}
+        </Chip>
+      )}
+    </div>
+  );
+
   return (
-    <div
-      className="w-full min-h-[250px] p-4 rounded-lg my-4 shadow-sm flex flex-col"
-      style={{ background: "var(--color-bg-secondary)" }}
-    >
-      <div className="mb-4 flex flex-col gap-3">
-        <div className="flex items-center justify-between gap-3">
-          <h3
-            className="text-sm font-bold"
-            style={{ color: "var(--color-text-primary)" }}
-          >
-            {t('再生回数の推移')}
-          </h3>
-          <div className="flex gap-1 shrink-0 max-w-full overflow-x-auto" role="group" aria-label={t('表示指標')}>
+    <section className="flex min-w-0 flex-col" aria-label={t('再生数の推移')}>
+      <h3 className="text-base font-bold leading-[22px] text-yt-text">{t('再生数の推移')}</h3>
+      <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">
+        <div className="flex flex-wrap gap-2" role="group" aria-label={t('表示指標')}>
           {(['growth', 'cumulative'] as const).map(option => (
-            <button
-              key={option}
-              type="button"
-              aria-pressed={metric === option}
-              className="px-2 py-1 rounded text-[10px] border"
-              style={{
-                color: metric === option ? 'var(--color-text-primary)' : 'var(--color-text-muted)',
-                borderColor: metric === option ? 'var(--color-accent-cyan)' : 'var(--color-border)',
-              }}
-              onClick={() => setMetric(option)}
-            >
+            <Chip key={option} selected={metric === option} onClick={() => setMetric(option)}>
               {t(option === 'growth' ? '増加数' : '累計')}
-            </button>
+            </Chip>
           ))}
-          </div>
         </div>
-        <div className="flex min-w-0 flex-wrap items-center justify-between gap-3">
-          <div className="flex gap-1 shrink-0 max-w-full overflow-x-auto" role="group" aria-label={t('期間')}>
-            {(['7d', '30d', '90d', 'all'] as const).map(option => (
-              <button
-                key={option}
-                type="button"
-                aria-pressed={range === option}
-                className="px-2 py-1 rounded text-[10px] border"
-                style={{
-                  color: range === option ? 'var(--color-text-primary)' : 'var(--color-text-muted)',
-                  borderColor: range === option ? 'var(--color-accent-cyan)' : 'var(--color-border)',
-                }}
-                onClick={() => setRange(option)}
-              >
-                {option === 'all' ? t('全期間') : t('{count}日', { count: Number.parseInt(option, 10) })}
-              </button>
-            ))}
-          </div>
-          <div className="flex gap-2 text-xs font-semibold shrink-0">
-          {chart.hasYoutube && (
-            <button
-              type="button"
-              aria-pressed={visibleSeries.youtube}
-              className="flex items-center gap-1 opacity-100 aria-[pressed=false]:opacity-40"
-              onClick={() => setVisibleSeries(value => ({ ...value, youtube: !value.youtube }))}
-            >
-              <span
-                className="w-2 h-2 rounded-full"
-                style={{ background: SERIES.youtube.color }}
-              ></span>
-              {SERIES.youtube.label}
-            </button>
-          )}
-          {chart.hasNico && (
-            <button
-              type="button"
-              aria-pressed={visibleSeries.nico}
-              className="flex items-center gap-1 opacity-100 aria-[pressed=false]:opacity-40"
-              onClick={() => setVisibleSeries(value => ({ ...value, nico: !value.nico }))}
-            >
-              <span
-                className="w-2 h-2 rounded-full"
-                style={{ background: SERIES.nico.color }}
-              ></span>
-              {nicoLabel}
-            </button>
-          )}
-          </div>
+        <div className="flex flex-wrap gap-2" role="group" aria-label={t('期間')}>
+          {(['7d', '30d', '90d', 'all'] as const).map(option => (
+            <Chip key={option} selected={range === option} onClick={() => setRange(option)}>
+              {option === 'all' ? t('全期間') : t('{count}日', { count: Number.parseInt(option, 10) })}
+            </Chip>
+          ))}
         </div>
+        {legend}
       </div>
 
       {loading ? (
-        <div className="grow min-h-[170px] flex items-center justify-center text-sm" style={{ color: "var(--color-text-muted)" }}>
-          {t('履歴を読み込んでいます…')}
+        <div className="mt-4 flex h-[200px] items-center justify-center text-sm text-yt-text-secondary">
+          {t('読み込み中…')}
         </div>
       ) : chartState.status === 'error' ? (
-        <div className="grow min-h-[170px] flex flex-col items-center justify-center gap-3 text-center" role="alert">
-          <span className="text-sm" style={{ color: "var(--color-text-muted)" }}>{t(chartState.errorMessage ?? '')}</span>
-          <button
-            type="button"
-            className="px-3 py-1.5 rounded-md text-xs font-semibold border"
-            style={{ color: "var(--color-text-primary)", borderColor: "var(--color-border)" }}
-            onClick={() => setRetryToken(value => value + 1)}
-          >
+        <div className="mt-4 flex h-[200px] flex-col items-center justify-center gap-2 text-center" role="alert">
+          <span className="text-sm text-yt-text-secondary">{t('再生数の推移を読み込めませんでした')}</span>
+          <Button variant="text" size="sm" onClick={() => setRetryToken(value => value + 1)}>
             {t('再試行')}
-          </button>
+          </Button>
         </div>
       ) : !chart.ready ? (
-        <div className="grow min-h-[170px] p-4 flex flex-col items-center justify-center text-center">
-          <span className="text-xs" style={{ color: "var(--color-text-muted)" }}>
-            {data.length === 0
-              ? t('この期間の再生履歴はありません。別の期間を選択できます。')
-              : data.length === 1
-                ? t('比較できる再生履歴が1点しかありません。別の期間を選択できます。')
-                : t('有効な再生数の変化がまだありません。')}
-          </span>
+        <div className="mt-4 flex h-[200px] items-center justify-center text-center text-sm text-yt-text-secondary">
+          {data.length === 0
+            ? t('この期間のデータはありません')
+            : data.length === 1
+              ? t('データが足りません')
+              : t('まだ変化はありません')}
         </div>
       ) : (
-      <div className="relative grow min-h-[170px] ml-16 mb-7">
+      <div className="relative mb-7 ml-16 mt-4 h-[200px]">
         {chart.yTicks.map((tick) => (
           <div
             key={tick.value}
             className="absolute inset-x-0"
             style={{ top: `${tick.y}%` }}
           >
-            <div
-              className="absolute -left-16 w-14 -translate-y-1/2 text-right text-[10px] tabular-nums"
-              style={{ color: "var(--color-text-muted)" }}
-            >
+            <div className="absolute -left-16 w-14 -translate-y-1/2 text-right text-xs tabular-nums text-yt-text-secondary">
               {tick.label}
             </div>
             <div
@@ -457,7 +411,7 @@ export default function ViewHistoryChart({ songId }: { songId: number }) {
                 left: `${point.x}%`,
                 top: `${point.y}%`,
                 background: SERIES.youtube.color,
-                borderColor: "var(--color-bg-secondary)",
+                borderColor: "var(--color-yt-tonal-solid)",
                 zIndex: hoveredPoint?.date === point.date && hoveredPoint?.label === SERIES.youtube.label ? 10 : 1,
               }}
               onMouseEnter={() => showPoint(point, SERIES.youtube.label, SERIES.youtube.color)}
@@ -483,7 +437,7 @@ export default function ViewHistoryChart({ songId }: { songId: number }) {
                 left: `${point.x}%`,
                 top: `${point.y}%`,
                 background: SERIES.nico.color,
-                borderColor: "var(--color-bg-secondary)",
+                borderColor: "var(--color-yt-tonal-solid)",
                 zIndex: hoveredPoint?.date === point.date && hoveredPoint?.label === nicoLabel ? 10 : 1,
               }}
               onMouseEnter={() => showPoint(point, nicoLabel, SERIES.nico.color)}
@@ -502,21 +456,14 @@ export default function ViewHistoryChart({ songId }: { songId: number }) {
             className="absolute z-50 pointer-events-none transform -translate-x-1/2 -translate-y-full pb-3"
             style={{ left: `${Math.min(96, Math.max(4, hoveredPoint.x))}%`, top: `${Math.max(16, hoveredPoint.y)}%` }}
           >
-            <div
-              className="px-3 py-2 rounded-lg shadow-xl text-xs font-medium flex flex-col gap-1 whitespace-nowrap border"
-              style={{ 
-                background: "var(--color-bg-card)", 
-                borderColor: "var(--color-border)",
-                color: "var(--color-text-primary)" 
-              }}
-            >
-              <div style={{ color: "var(--color-text-muted)" }}>{hoveredPoint.date}</div>
+            <div className="flex flex-col gap-1 whitespace-nowrap rounded-chip bg-yt-menu px-3 py-2 text-xs font-medium text-yt-text shadow-[0_4px_32px_rgba(0,0,0,0.5)]">
+              <div className="text-yt-text-secondary">{hoveredPoint.date}</div>
               <div className="flex items-center gap-1.5 mt-0.5">
                 <span className="w-2 h-2 rounded-full" style={{ background: hoveredPoint.color }}></span>
                 <span>{hoveredPoint.label}:</span>
                 <span className="font-bold text-sm ml-1 tabular-nums">{formatExactViewCount(hoveredPoint.value)}</span>
               </div>
-              {hoveredPoint.corrected && <div className="text-amber-300">{t('異常値を補正')}</div>}
+              {hoveredPoint.corrected && <div className="text-yt-text-secondary">{t('異常値を補正')}</div>}
             </div>
           </div>
         )}
@@ -524,14 +471,14 @@ export default function ViewHistoryChart({ songId }: { songId: number }) {
         {chart.xLabels.map((label) => (
           <div
             key={label.label}
-            className="absolute -bottom-6 text-[10px] transform -translate-x-1/2 tabular-nums"
-            style={{ left: `${label.x}%`, color: "var(--color-text-muted)" }}
+            className="absolute -bottom-6 -translate-x-1/2 text-xs tabular-nums text-yt-text-secondary"
+            style={{ left: `${label.x}%` }}
           >
             {label.label}
           </div>
         ))}
       </div>
       )}
-    </div>
+    </section>
   );
 }

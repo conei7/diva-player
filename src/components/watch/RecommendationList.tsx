@@ -1,520 +1,186 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
-import { Link, useNavigate } from 'react-router';
+import { useCallback, useMemo } from 'react';
+import { useNavigate } from 'react-router';
 import type { Song } from '../../types/vocadb';
 import { usePlayerStore } from '../../stores/playerStore';
-import { useUiStore } from '../../stores/uiStore';
-import { usePlaylistStore, WATCH_LATER_ID } from '../../stores/playlistStore';
 import { useSelectionStore } from '../../stores/selectionStore';
-import { formatSongRelativeDate } from '../../utils/relativeDate';
-import { formatJapaneseViews } from '../../utils/formatViews';
 import { useRecommendationExposureStore, type ExposureSurface } from '../../stores/recommendationExposureStore';
 import { useRecommendationDisplayStore } from '../../stores/recommendationDisplayStore';
-import RecommendationHint from '../recommendation/RecommendationHint';
 import { excludeHiddenSongs, useHiddenSongStore } from '../../stores/hiddenSongStore';
-import { useMemo } from 'react';
-import { useTranslate } from '../../i18n';
 import { useLanguageStore } from '../../stores/languageStore';
-import { getSongThumbnailCandidates } from '../../utils/songThumbnail';
+import { formatSongRelativeDate } from '../../utils/relativeDate';
+import { formatArtistLine, songTypeLabel } from '../../utils/songMeta';
+import ViewCounts from '../ui/ViewCounts';
+import { hasViewCounts, joinMetaParts } from '../ui/songMetaParts';
+import { watchPath } from '../../utils/routes';
+import RecommendationHint from '../recommendation/RecommendationHint';
+import SongListRow from '../ui/SongListRow';
+import SongActionsMenu from '../ui/SongActionsMenu';
+import type { SongActionKey } from '../ui/SongActionsMenu';
+import EmptyState from '../ui/EmptyState';
+import { SkeletonListRow, SkeletonTile } from '../ui/Skeleton';
+import { MusicNoteIcon } from '../ui/icons';
+import RelatedSongCard from './RelatedSongCard';
+import { useExposureObserver } from './useExposureObserver';
 
-/**
- * RecommendationList - 推薦動画リスト
- *
- * WatchPage右側パネル。サムネイル + 曲名 + P名 の縦リスト。
- * クリックで /watch?v=songId へSPA遷移（ページリロードなし）
- */
+export interface RecommendationListEmpty {
+  title: string;
+  action?: { label: string; onClick: () => void };
+}
+
 interface RecommendationListProps {
   songs: Song[];
   loading: boolean;
   hasMore: boolean;
   recommendationReasons?: Record<number, string>;
   exposureSurface?: ExposureSurface;
-  emptyMessage?: string;
+  empty: RecommendationListEmpty;
+  /** Phones: full-width cards instead of 168px rows. */
+  cards?: boolean;
 }
 
-function RecommendationThumbnail({ song, hiddenMode }: { song: Song; hiddenMode: boolean }) {
-  const candidates = useMemo(() => getSongThumbnailCandidates(song), [song]);
-  const signature = candidates.join('\u0000');
-  const [failedState, setFailedState] = useState({ signature, index: 0 });
-  const imageIndex = failedState.signature === signature ? failedState.index : 0;
-  const imageUrl = candidates[imageIndex];
+/** Actions from ⋮ that count as an interaction with the recommendation. */
+const ENGAGING_ACTIONS = new Set<SongActionKey>(['queue', 'watchLater', 'save']);
 
-  if (hiddenMode || !imageUrl) {
+function RelatedItem({
+  song,
+  rank,
+  active,
+  reason,
+  surface,
+  cards,
+}: {
+  song: Song;
+  rank: number;
+  active: boolean;
+  reason?: string;
+  surface?: ExposureSurface;
+  cards: boolean;
+}) {
+  const navigate = useNavigate();
+  const language = useLanguageStore(state => state.language);
+  const recordVisible = useRecommendationExposureStore(state => state.recordVisible);
+  const recordClicked = useRecommendationExposureStore(state => state.recordClicked);
+  const isSelectionMode = useSelectionStore(state => state.isSelectionMode);
+  const selected = useSelectionStore(state => state.selectedSongIds.has(song.id));
+  const toggleSong = useSelectionStore(state => state.toggleSong);
+
+  const onVisible = useCallback(() => {
+    if (surface) recordVisible(song.id, surface, rank);
+  }, [rank, recordVisible, song.id, surface]);
+  const ref = useExposureObserver<HTMLDivElement>(surface ? onVisible : undefined, song.id);
+
+  const activate = () => {
+    if (surface) recordClicked(song.id);
+    navigate(watchPath(song.id));
+  };
+
+  const viewBadges = hasViewCounts(song) ? <ViewCounts key="views" song={song} /> : null;
+  const dateText = formatSongRelativeDate(song, Date.now(), language);
+  const typeText = song.songType !== 'Original' && song.songType !== 'Unspecified'
+    ? songTypeLabel(song.songType, language)
+    : null;
+  const badges = reason ? <RecommendationHint reason={reason} /> : undefined;
+  const menu = isSelectionMode ? undefined : (
+    <SongActionsMenu
+      song={song}
+      alwaysVisible={cards}
+      onAction={key => {
+        if (surface && ENGAGING_ACTIONS.has(key)) recordClicked(song.id);
+      }}
+    />
+  );
+
+  if (cards) {
     return (
-      <div className="w-full h-full flex items-center justify-center" style={{ background: 'var(--color-bg-secondary)' }}>
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" style={{ color: 'var(--color-text-muted)', opacity: 0.3 }}>
-          <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z" />
-        </svg>
-      </div>
+      <RelatedSongCard
+        cardRef={ref}
+        song={song}
+        href={watchPath(song.id, { autoplay: false })}
+        onActivate={activate}
+        meta={joinMetaParts([formatArtistLine(song), viewBadges, dateText])}
+        badges={badges}
+        trailing={menu}
+        active={active}
+        selectionMode={isSelectionMode}
+        selected={selected}
+        onToggleSelect={() => toggleSong(song)}
+      />
     );
   }
 
   return (
-    <img
-      src={imageUrl}
-      alt=""
-      aria-hidden="true"
-      className="w-full h-full object-cover"
-      loading="lazy"
-      onError={() => setFailedState(previous => ({
-        signature,
-        index: previous.signature === signature ? previous.index + 1 : 1,
-      }))}
+    <SongListRow
+      ref={ref}
+      song={song}
+      size="md"
+      hoverBackground={false}
+      onActivate={activate}
+      meta={[
+        formatArtistLine(song, { withVocalists: true }),
+        joinMetaParts([viewBadges, dateText, typeText]),
+      ]}
+      badges={badges}
+      trailing={menu}
+      active={active}
+      selectionMode={isSelectionMode}
+      selected={selected}
+      onToggleSelect={() => toggleSong(song)}
+      className="-mx-2 py-1!"
     />
   );
 }
 
-/** 再生時間フォーマット */
-function formatDuration(seconds: number): string {
-  if (!seconds) return '';
-  const m = Math.floor(seconds / 60);
-  const s = Math.floor(seconds % 60);
-  return `${m}:${s.toString().padStart(2, '0')}`;
-}
-
-function formatViews(value: number | undefined, language: 'ja' | 'en'): string {
-  if (language === 'ja') return formatJapaneseViews(value);
-  return new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(value || 0);
-}
-
-/** 個別曲アイテム（⋮メニュー付き） */
-function RecItemRow({
-  song,
-  isActive,
-  hiddenMode,
-  isPlaying,
-  recommendationReason,
-  onVisible,
-  onExposureClick,
-}: {
-  song: Song;
-  isActive: boolean;
-  hiddenMode: boolean;
-  isPlaying: boolean;
-  recommendationReason?: string;
-  onVisible?: () => void;
-  onExposureClick?: () => void;
-}) {
-  const t = useTranslate();
-  const language = useLanguageStore(state => state.language);
-  const navigate = useNavigate();
-  const { openSaveToPlaylist } = useUiStore();
-  const toggleSongInPlaylist = usePlaylistStore(s => s.toggleSongInPlaylist);
-  const isSongIn   = usePlaylistStore(s => s.isSongInPlaylist);
-  const isWatchLater = isSongIn(WATCH_LATER_ID, song.id);
-  const hideSong = useHiddenSongStore(s => s.hideSong);
-
-  const isSelectionMode = useSelectionStore(s => s.isSelectionMode);
-  const selectedSongIds = useSelectionStore(s => s.selectedSongIds);
-  const toggleSelection = useSelectionStore(s => s.toggleSong);
-  const isSelected = selectedSongIds.has(song.id);
-
-  const [menuOpen, setMenuOpen] = useState(false);
-  const [menuPos, setMenuPos] = useState<{ top: number; right: number } | null>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
-  const btnRef  = useRef<HTMLButtonElement>(null);
-  const itemRef = useRef<HTMLDivElement>(null);
-  const visibilityReportedRef = useRef(false);
-
-  useEffect(() => {
-    visibilityReportedRef.current = false;
-  }, [song.id]);
-
-  useEffect(() => {
-    if (!onVisible || !itemRef.current || typeof IntersectionObserver === 'undefined') return;
-    const observer = new IntersectionObserver(entries => {
-      if (!visibilityReportedRef.current && entries[0]?.isIntersecting && (entries[0].intersectionRatio ?? 0) >= 0.35) {
-        visibilityReportedRef.current = true;
-        onVisible();
-      }
-    }, { threshold: [0.35] });
-    observer.observe(itemRef.current);
-    return () => observer.disconnect();
-  }, [onVisible]);
-
-  // メニュー外クリックで閉じる（Portal 対応: btnRef と menuRef 両方をチェック）
-  useEffect(() => {
-    if (!menuOpen) return;
-    const handler = (e: MouseEvent) => {
-      if (btnRef.current?.contains(e.target as Node)) return;
-      if (menuRef.current?.contains(e.target as Node)) return;
-      setMenuOpen(false);
-      setMenuPos(null);
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, [menuOpen]);
-
-  const handleMenuToggle = useCallback((e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (menuOpen) { setMenuOpen(false); setMenuPos(null); return; }
-    const rect = btnRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    const menuHeight = 175;
-    const fitsBelow = rect.bottom + 4 + menuHeight <= window.innerHeight;
-    setMenuPos({
-      top: fitsBelow ? rect.bottom + 4 : rect.top - menuHeight - 4,
-      right: window.innerWidth - rect.right,
-    });
-    setMenuOpen(true);
-  }, [menuOpen]);
-
-  const handleWatchLater = useCallback((e: React.MouseEvent) => {
-    e.stopPropagation();
-    setMenuOpen(false); setMenuPos(null);
-    toggleSongInPlaylist(WATCH_LATER_ID, song);
-  }, [toggleSongInPlaylist, song]);
-
-  const handleSave = useCallback((e: React.MouseEvent) => {
-    e.stopPropagation();
-    setMenuOpen(false); setMenuPos(null);
-    openSaveToPlaylist(song);
-  }, [openSaveToPlaylist, song]);
-
-  const handleShare = useCallback((e: React.MouseEvent) => {
-    e.stopPropagation();
-    setMenuOpen(false); setMenuPos(null);
-    navigator.clipboard.writeText(`https://vocadb.net/S/${song.id}`).catch(() => {});
-  }, [song.id]);
-
-  const handleHide = useCallback((e: React.MouseEvent) => {
-    e.stopPropagation();
-    setMenuOpen(false); setMenuPos(null);
-    hideSong(song);
-  }, [hideSong, song]);
-
-  const duration = formatDuration(song.lengthSeconds);
-
-  // YouTubeにOriginalがない（非公式のみ: ReprntまたはOtherのみ）
-  const ytPVs = song.pvs?.filter(pv => !pv.disabled && pv.service === 'Youtube') ?? [];
-  const isYTUnofficialOnly = ytPVs.length > 0 && ytPVs.every(pv => pv.pvType !== 'Original');
-
-  // ニコニコにOriginalがない（非公式のみ）
-  const nicoPVs = song.pvs?.filter(pv => !pv.disabled && pv.service === 'NicoNicoDouga') ?? [];
-  const isNicoUnofficialOnly = nicoPVs.length > 0 && nicoPVs.every(pv => pv.pvType !== 'Original');
-
-  // アーティスト名の抽出
-  const producers = song.artists?.filter(a => a.categories?.includes('Producer')) || [];
-  const producerName = producers.map(a => a.name || a.artist?.name).filter(Boolean).join(', ');
-  const vocalists = song.artists?.filter(a => a.categories === 'Vocalist') || [];
-  const vocalistName = vocalists.map(a => a.name || a.artist?.name).filter(Boolean).join(', ');
-  const relativeDate = formatSongRelativeDate(song, Date.now(), language);
-
-  const handleCardClick = useCallback((e: React.MouseEvent) => {
-    if (isSelectionMode) {
-      e.stopPropagation();
-      e.preventDefault();
-      toggleSelection(song);
-    } else {
-      onExposureClick?.();
-      navigate(`/watch?v=${song.id}`);
-    }
-  }, [isSelectionMode, toggleSelection, song, navigate, onExposureClick]);
-
-  const handleItemLinkClick = useCallback((e: React.MouseEvent<HTMLAnchorElement>) => {
-    if (isSelectionMode) {
-      e.preventDefault();
-      e.stopPropagation();
-      toggleSelection(song);
-      return;
-    }
-    if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) {
-      e.stopPropagation();
-      return;
-    }
-    e.preventDefault();
-    e.stopPropagation();
-    handleCardClick(e);
-  }, [handleCardClick, isSelectionMode, song, toggleSelection]);
-
-  const handleItemLinkAuxClick = useCallback((e: React.MouseEvent<HTMLAnchorElement>) => {
-    if (isSelectionMode) e.preventDefault();
-    e.stopPropagation();
-  }, [isSelectionMode]);
-
-  return (
-    <>
-    <div
-      ref={itemRef}
-      className="rec-item animate-fade-in group relative"
-      style={{
-        background: isSelected
-          ? 'color-mix(in srgb, #1a73e8 15%, var(--color-bg-card))'
-          : isActive ? 'var(--color-surface)' : 'transparent',
-        outline: isSelected ? '2px solid #1a73e8' : 'none',
-        outlineOffset: '-2px',
-        userSelect: isSelectionMode ? 'none' : undefined,
-      }}
-      onClick={handleCardClick}
-    >
-      {/* \u30b5\u30e0\u30cd\u30a4\u30eb */}
-      <Link
-        to={`/watch?v=${song.id}&autoplay=0`}
-        className="block relative w-40 flex-shrink-0 rounded-lg overflow-hidden"
-        style={{ aspectRatio: '16/9', background: 'var(--color-surface)' }}
-        onClick={handleItemLinkClick}
-        onAuxClick={handleItemLinkAuxClick}
-        aria-label={t('playSong', { song: song.name })}
-      >
-        <RecommendationThumbnail song={song} hiddenMode={hiddenMode} />
-        {isActive && isPlaying && (
-          <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
-            <div className="flex items-end gap-0.5 h-4">
-              {[0, 1, 2, 3].map(i => (
-                <span key={i} className="equalizer-bar" style={{ height: '3px', animationDelay: `${i * 0.15}s` }} />
-              ))}
-            </div>
-          </div>
-        )}
-        <div className="absolute bottom-1 right-1 flex items-center gap-1 z-10">
-          {duration && (
-            <span
-              className="px-1 py-0.5 rounded text-[10px] font-medium leading-none"
-              style={{ background: 'rgba(0,0,0,0.8)', color: '#fff' }}
-            >
-              {duration}
-            </span>
-          )}
-        </div>
-        {/* 選択モード: チェックボックスオーバーレイ */}
-        {isSelectionMode && (
-          <div
-            className="absolute inset-0 flex items-end justify-end p-1.5 pointer-events-none z-10"
-            style={{
-              background: isSelected ? 'rgba(0,0,0,0.1)' : 'rgba(0,0,0,0.3)',
-              transition: 'background 0.15s',
-            }}
-          >
-            <div
-              className="w-5 h-5 rounded flex items-center justify-center transition-all shadow-md"
-              style={{
-                background: isSelected ? '#1a73e8' : 'rgba(255,255,255,0.7)',
-                border: isSelected ? 'none' : '2px solid rgba(255,255,255,0.9)',
-              }}
-            >
-              {isSelected && (
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="white">
-                  <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
-                </svg>
-              )}
-            </div>
-          </div>
-        )}
-      </Link>
-
-      {/* \u30c6\u30ad\u30b9\u30c8 + \u22ee\u30dc\u30bf\u30f3 */}
-      <div className="flex-1 min-w-0 py-0.5 flex items-start gap-1">
-        <div className="flex-1 min-w-0">
-          <Link
-          to={`/watch?v=${song.id}&autoplay=0`}
-            className="block line-clamp-2 text-sm font-medium leading-5"
-            style={{ color: isActive ? 'var(--color-accent-cyan)' : 'var(--color-text-primary)' }}
-            title={song.name}
-            onClick={handleItemLinkClick}
-            onAuxClick={handleItemLinkAuxClick}
-          >
-            {song.name}
-          </Link>
-          
-          {vocalistName ? (
-            <p className="text-xs mt-0.5 truncate" style={{ color: 'var(--color-text-secondary)' }}>
-              feat. {vocalistName}
-            </p>
-          ) : (
-            <div className="h-0" />
-          )}
-
-          <p className="text-xs mt-0.5 truncate" style={{ color: 'var(--color-text-muted)' }}>
-            {producerName || song.artistString}
-          </p>
-          {recommendationReason && (
-            <RecommendationHint reason={recommendationReason} className="mt-1" />
-          )}
-
-          <div className="flex items-center gap-2 mt-1 flex-wrap">
-            {(ytPVs.length > 0 || (song.youtubeViews || 0) > 0) && (
-              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded flex items-center gap-0.5"
-                    style={{
-                      background: isYTUnofficialOnly ? 'rgba(100, 30, 30, 0.3)' : 'rgba(239, 68, 68, 0.12)',
-                      color: isYTUnofficialOnly ? '#b91c1c' : '#ef4444',
-                      opacity: isYTUnofficialOnly ? 0.8 : 1
-                    }}>
-                <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M21.582 6.186a2.665 2.665 0 0 0-1.876-1.884C17.95 3.84 12 3.84 12 3.84s-5.95 0-7.706.462A2.665 2.665 0 0 0 2.418 6.186C2 7.952 2 12 2 12s0 4.048.418 5.814a2.665 2.665 0 0 0 1.876 1.884C6.05 20.16 12 20.16 12 20.16s5.95 0 7.706-.462a2.665 2.665 0 0 0 1.876-1.884C22 16.048 22 12 22 12s0-4.048-.418-5.814zM9.75 15.02v-6.04L15.05 12l-5.3 3.02z"/>
-                </svg>
-                {formatViews(song.youtubeViews, language)}
-              </span>
-            )}
-            {(nicoPVs.length > 0 || (song.nicoViews || 0) > 0) && (
-              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded flex items-center gap-0.5"
-                    style={{
-                      background: isNicoUnofficialOnly ? 'rgba(30, 30, 100, 0.3)' : 'rgba(59, 130, 246, 0.12)',
-                      color: isNicoUnofficialOnly ? '#1e40af' : '#3b82f6',
-                      opacity: isNicoUnofficialOnly ? 0.8 : 1
-                    }}>
-                📺 {formatViews(song.nicoViews, language)}
-              </span>
-            )}
-            {relativeDate && (
-              <span className="text-[10px]" style={{ color: 'var(--color-text-muted)' }}>
-                {relativeDate}
-              </span>
-            )}
-
-            
-            <div className="flex-1" />
-            
-            {song.songType !== 'Original' && song.songType !== 'Unspecified' && (
-              <span
-                className="px-1.5 py-0.5 rounded text-[10px] font-medium leading-none"
-                style={{ background: 'var(--color-accent-purple)', color: '#fff' }}
-              >
-                {song.songType}
-              </span>
-            )}
-          </div>
-
-        </div>
-
-        {/* ⋮ ボタン (選択モード中は非表示) */}
-        {!isSelectionMode && (
-        <div className="relative flex-shrink-0">
-          <button
-            ref={btnRef}
-            className="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded-md hover:bg-white/10"
-            style={{ color: 'var(--color-text-muted)' }}
-            onClick={handleMenuToggle}
-            title={t('moreOptions')}
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-              <circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/>
-            </svg>
-          </button>
-        </div>
-        )}
-      </div>
-    </div>
-
-    {/* メニュー Portal: position:fixed が transform 親の影響を受けないよう document.body に描画 */}
-    {menuOpen && menuPos && createPortal(
-      <div
-        ref={menuRef}
-        className="fixed z-[200] rounded-xl overflow-hidden shadow-2xl min-w-[180px]"
-        style={{ top: menuPos.top, right: menuPos.right, background: 'var(--color-bg-card)', border: '1px solid var(--color-border)' }}
-      >
-        <button className="w-full flex items-center gap-3 px-4 py-2.5 text-sm hover:bg-white/5 transition-colors text-left"
-                style={{ color: isWatchLater ? 'var(--color-accent-cyan)' : 'var(--color-text-primary)' }}
-                onClick={handleWatchLater}>
-          <svg width="16" height="16" viewBox="0 0 24 24" fill={isWatchLater ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2" className="flex-shrink-0">
-            <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
-          </svg>
-          {isWatchLater ? t('removeListenLater') : t('listenLater')}
-        </button>
-        <button className="w-full flex items-center gap-3 px-4 py-2.5 text-sm hover:bg-white/5 transition-colors text-left"
-                style={{ color: 'var(--color-text-primary)' }}
-                onClick={handleSave}>
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="flex-shrink-0">
-            <path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/>
-            <polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/>
-          </svg>
-          {t('saveToPlaylist')}
-        </button>
-        <div className="border-t" style={{ borderColor: 'var(--color-border)' }} />
-        <button className="w-full flex items-center gap-3 px-4 py-2.5 text-sm hover:bg-white/5 transition-colors text-left"
-                style={{ color: '#fb7185' }}
-                onClick={handleHide}>
-          <span aria-hidden="true">⊘</span>
-          {t('hide')}
-        </button>
-        <div className="border-t" style={{ borderColor: 'var(--color-border)' }} />
-        <button className="w-full flex items-center gap-3 px-4 py-2.5 text-sm hover:bg-white/5 transition-colors text-left"
-                style={{ color: 'var(--color-text-primary)' }}
-                onClick={handleShare}>
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="flex-shrink-0">
-            <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
-            <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
-          </svg>
-          {t('share')}
-        </button>
-      </div>,
-      document.body
-    )}
-    </>
-  );
-}
-
-function SkeletonItem() {  return (
-    <div className="flex gap-2 p-1">
-      <div className="w-40 flex-shrink-0 rounded-lg skeleton" style={{ aspectRatio: '16/9' }} />
-      <div className="flex-1 space-y-1.5 py-0.5">
-        <div className="h-3.5 w-full rounded skeleton" />
-        <div className="h-3.5 w-3/4 rounded skeleton" />
-        <div className="h-3 w-1/2 rounded skeleton" />
-      </div>
-    </div>
-  );
-}
-
+/**
+ * 関連一覧 of the watch page (right column / below the description on phones).
+ * Clicking a song moves to its page in the SPA; modifier clicks open it in a new tab
+ * (with autoplay=0). Hidden songs are left out.
+ */
 export default function RecommendationList({
   songs,
   loading,
   recommendationReasons,
   exposureSurface,
-  emptyMessage,
+  empty,
+  cards = false,
 }: RecommendationListProps) {
-  const t = useTranslate();
-  const { currentSong, isPlaying, hiddenMode } = usePlayerStore();
-  const recordVisible = useRecommendationExposureStore(s => s.recordVisible);
-  const recordClicked = useRecommendationExposureStore(s => s.recordClicked);
-  const showRecommendationHints = useRecommendationDisplayStore(s => s.showHints);
-  const hiddenSongs = useHiddenSongStore(s => s.hiddenSongs);
+  const currentSongId = usePlayerStore(state => state.currentSong?.id);
+  const showRecommendationHints = useRecommendationDisplayStore(state => state.showHints);
+  const hiddenSongs = useHiddenSongStore(state => state.hiddenSongs);
   const visibleSongs = useMemo(() => excludeHiddenSongs(songs, hiddenSongs), [hiddenSongs, songs]);
 
+  const skeletons = (count: number) => Array.from({ length: count }, (_, index) => (
+    cards ? <SkeletonTile key={`skeleton-${index}`} /> : <SkeletonListRow key={`skeleton-${index}`} size="md" />
+  ));
+
   if (loading && visibleSongs.length === 0) {
-    return (
-      <div className="space-y-2">
-        {Array.from({ length: 8 }).map((_, i) => (
-          <SkeletonItem key={i} />
-        ))}
-      </div>
-    );
+    return <div className={cards ? 'space-y-6' : '-mx-2'}>{skeletons(cards ? 3 : 8)}</div>;
   }
 
   if (!loading && visibleSongs.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center py-12 gap-3">
-        <svg width="32" height="32" viewBox="0 0 24 24" fill="currentColor" style={{ color: 'var(--color-text-muted)', opacity: 0.3 }}>
-          <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z" />
-        </svg>
-        <p className="max-w-xs text-center text-sm" style={{ color: 'var(--color-text-muted)' }}>{emptyMessage ?? t('noSongsFound')}</p>
-      </div>
+      <EmptyState
+        compact
+        icon={<MusicNoteIcon />}
+        title={empty.title}
+        action={empty.action ? { label: empty.action.label, onClick: empty.action.onClick } : undefined}
+      />
     );
   }
 
   return (
-    <div className="space-y-1">
+    <div className={cards ? 'space-y-6' : undefined}>
       {visibleSongs.map((song, index) => (
-        <div key={song.id} className="animate-fade-in" style={{ animationDelay: `${(index % 20) * 30}ms` }}>
-          <RecItemRow
-            song={song}
-            isActive={currentSong?.id === song.id}
-            hiddenMode={hiddenMode}
-            isPlaying={isPlaying}
-            recommendationReason={showRecommendationHints ? recommendationReasons?.[song.id] : undefined}
-            onVisible={exposureSurface ? () => recordVisible(song.id, exposureSurface, index + 1) : undefined}
-            onExposureClick={exposureSurface ? () => recordClicked(song.id) : undefined}
-          />
-        </div>
+        <RelatedItem
+          key={song.id}
+          song={song}
+          rank={index + 1}
+          active={currentSongId === song.id}
+          reason={showRecommendationHints ? recommendationReasons?.[song.id] : undefined}
+          surface={exposureSurface}
+          cards={cards}
+        />
       ))}
-
-      {/* ローディング */}
-      {loading && songs.length > 0 && (
-        <div className="space-y-2 mt-1">
-          {Array.from({ length: 3 }).map((_, i) => (
-            <SkeletonItem key={`skel-${i}`} />
-          ))}
-        </div>
-      )}
+      {loading && <div className={cards ? 'space-y-6' : '-mx-2'}>{skeletons(cards ? 1 : 3)}</div>}
     </div>
   );
 }

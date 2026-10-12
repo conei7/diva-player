@@ -3,10 +3,18 @@
  */
 
 import { create } from 'zustand';
-import type { Song, SongSortRule, SongType, VocalistMatchMode } from '../types/vocadb';
-import { findArtistByName, searchSongs } from '../api/vocadb';
+import type { ArtistType, Song, SongSortRule, SongType, VocalistMatchMode } from '../types/vocadb';
+import {
+  findArtistByName,
+  resolveProducerByName,
+  searchSongs,
+  searchVocalistsByName,
+  selectVocalistVariants,
+} from '../api/vocadb';
 import { getGlobalFilterSettings, type GlobalFilterSettings } from './globalFilterStore';
+import { registerSearchReset } from './searchReset';
 import { refreshSearchRandomSeed, searchSongsBackend } from '../search/searchBackendClient';
+import type { SearchType } from '../utils/routes';
 import {
   DEFAULT_ADVANCED_FILTERS,
   LOCAL_SORT_RULES,
@@ -40,11 +48,45 @@ export type {
 } from '../search/searchModel';
 export { searchSongsBackend } from '../search/searchBackendClient';
 
+/**
+ * Where the current results came from:
+ * 'url' = `/?q=…&type=…` or `/?artistId=…` (HomePage resets it when the URL no longer has them),
+ * 'advanced' = the advanced search dialog without a text query (tied to the history entry it opened),
+ * 'direct' = a search started by calling the store directly (the legacy top-bar flow).
+ */
+export type SearchOrigin = 'url' | 'advanced' | 'direct';
+
+/** The producer (or other artist) the results are limited to; shown as the producer header. */
+export interface ResolvedSearchArtist {
+  id: number;
+  name: string;
+  artistType?: ArtistType;
+}
+
+/** Identifies a URL-driven search so the same URL does not search twice. */
+export function textSearchKey(query: string, type: SearchType = 'all'): string {
+  return `q:${type}:${query.trim()}`;
+}
+
+export function artistSearchKey(artistId: number, artistRole?: string | null): string {
+  return `artist:${artistId}:${artistRole ?? ''}`;
+}
+
 interface SearchState {
   // 検索パラメータ
   query: string;
   sort: ExtendedSortRule;
   sortOrder: SortOrder;
+  /** すべて / 曲名 / ボカロP / ボーカル (the result-toolbar chips). */
+  searchType: SearchType;
+  searchOrigin: SearchOrigin | null;
+  /** textSearchKey / artistSearchKey of the URL the current results belong to. */
+  urlSearchKey: string | null;
+  /** Router location key the URL search ran for (a new submit of the same URL searches again). */
+  urlSearchLocationKey: string | null;
+  resolvedArtist: ResolvedSearchArtist | null;
+  /** Vocalists set by the ボーカル search mode itself (they are the query, not removable conditions). */
+  modeVocalistIds: number[];
 
   // アーティスト検索モード時に使うアーティストID（null = 曲名検索）
   resolvedArtistId: number | null;
@@ -84,9 +126,21 @@ interface SearchState {
   setSongTypeFilter: (filter: 'All' | 'Original') => void;
   setAdvancedFilters: (filters: Partial<AdvancedSearchFilters>) => void;
   resetAdvancedFilters: () => void;
+  /** Clears vocalist, song-type and advanced conditions (sort and query stay). Does not search. */
+  clearSearchConditions: () => void;
   search: () => Promise<void>;
   searchTitleOnly: (query: string) => Promise<void>;
   searchByArtistId: (artistId: number, artistName: string, artistRole?: string) => Promise<void>;
+  /**
+   * URL-driven text search (`/?q=…&type=…`): auto (title or producer), title only,
+   * producer name → artist id (title search when no producer matches), or vocalist name → all of its
+   * voicebank variants combined with Any (title search when no vocalist matches).
+   */
+  searchWithMode: (query: string, type?: SearchType, locationKey?: string) => Promise<void>;
+  /** URL-driven song list of one artist (`/?artistId=…&artistName=…&artistRole=…`). */
+  searchArtistFromUrl: (artistId: number, artistName: string, artistRole?: string, locationKey?: string) => Promise<void>;
+  /** Re-runs the current search after the advanced search dialog applied its conditions. */
+  applyAdvancedSearch: () => Promise<void>;
   loadMore: () => Promise<void>;
   reset: () => void;
 }
@@ -95,6 +149,37 @@ const PAGE_SIZE = 24;
 
 // ホームへ戻ったあと、古い非同期検索レスポンスが結果を復活させないための世代番号。
 let searchGeneration = 0;
+// P名・ボーカル名の解決は検索の前に走る。後から始まった検索を古い解決結果で上書きしないための世代番号。
+let modeGeneration = 0;
+
+type SearchMeta = Partial<Pick<
+  SearchState,
+  'searchType' | 'searchOrigin' | 'urlSearchKey' | 'urlSearchLocationKey' | 'resolvedArtist' | 'modeVocalistIds'
+>>;
+
+const DIRECT_SEARCH_META: SearchMeta = {
+  searchOrigin: 'direct',
+  urlSearchKey: null,
+  urlSearchLocationKey: null,
+  modeVocalistIds: [],
+};
+
+/**
+ * Whether a failed search used advanced-search conditions (the dialog's filters and vocalists, or a
+ * credit role): only then is the error 「いまは詳細検索を使えません」. A plain keyword search also goes
+ * through the backend (for its default sort, for example) but just says 「検索できませんでした」.
+ */
+function usesAdvancedConditions(
+  advancedFilters: AdvancedSearchFilters,
+  artistRole: string | null | undefined,
+  vocalistFilters: readonly VocalistFilter[] = [],
+  modeVocalistIds: readonly number[] = [],
+): boolean {
+  return hasAdvancedFilters(advancedFilters)
+    || Boolean(artistRole)
+    // The ボーカル search mode's own vocalists are the query, not a condition.
+    || vocalistFilters.some(filter => !modeVocalistIds.includes(filter.id));
+}
 
 /** ローカルソートをVocaDB APIソートに変換 */
 function toApiSort(sort: ExtendedSortRule): SongSortRule {
@@ -317,63 +402,14 @@ async function fetchByArtistIds(
   };
 }
 
-export const useSearchStore = create<SearchState>((set, get) => ({
-  query: '',
-  sort: 'TotalViews' as ExtendedSortRule,
-  sortOrder: 'desc' as SortOrder,
-  resolvedArtistId: null,
-  artistRole: null,
-  vocalistFilters: [],
-  vocalistMatchMode: 'All',
-  songTypeFilter: 'All',
-  advancedFilters: DEFAULT_ADVANCED_FILTERS,
-  results: [],
-  totalCount: 0,
-  currentPage: 0,
-  exactApiOffset: 0,
-  isLoading: false,
-  error: null,
-  hasSearched: false,
-
-  // Typing a new query leaves an artist-detail result behind otherwise; the
-  // next submit would keep searching the previously resolved artist.
-  setQuery: (query: string) => set({ query, resolvedArtistId: null, artistRole: null }),
-
-  setSort: (sort: ExtendedSortRule) => {
-    if (sort === 'Random') refreshSearchRandomSeed();
-    set({ sort });
-  },
-  setSortOrder: (order: SortOrder) => set({ sortOrder: order }),
-
-  setResolvedArtistId: (id: number | null) => set({ resolvedArtistId: id }),
-
-  addVocalistFilter: (vocalist: VocalistFilter) => {
-    const { vocalistFilters } = get();
-    if (vocalistFilters.some(v => v.id === vocalist.id)) return;
-    set({ vocalistFilters: [...vocalistFilters, vocalist] });
-  },
-
-  setVocalistFilters: (vocalists: VocalistFilter[]) => set({ vocalistFilters: vocalists }),
-
-  removeVocalistFilter: (id: number) => {
-    const { vocalistFilters } = get();
-    set({ vocalistFilters: vocalistFilters.filter(v => v.id !== id) });
-  },
-
-  setVocalistMatchMode: (mode: VocalistMatchMode) => set({ vocalistMatchMode: mode }),
-
-  setSongTypeFilter: (filter: 'All' | 'Original') => set({ songTypeFilter: filter }),
-  setAdvancedFilters: (filters: Partial<AdvancedSearchFilters>) => set((state) => ({
-    advancedFilters: { ...state.advancedFilters, ...filters },
-  })),
-  resetAdvancedFilters: () => set({ advancedFilters: DEFAULT_ADVANCED_FILTERS }),
-
-  searchTitleOnly: async (query: string) => {
+export const useSearchStore = create<SearchState>((set, get) => {
+  const runTitleOnly = async (query: string, meta: SearchMeta) => {
     const generation = ++searchGeneration;
     const { sort, sortOrder, songTypeFilter, advancedFilters } = get();
     const globalFilters = getGlobalFilterSettings();
     const trimmed = query.trim();
     set({
+      ...meta,
       query: trimmed,
       isLoading: true,
       error: null,
@@ -383,6 +419,7 @@ export const useSearchStore = create<SearchState>((set, get) => ({
       hasSearched: true,
       resolvedArtistId: null,
       artistRole: null,
+      resolvedArtist: null,
       vocalistFilters: [],
       exactApiOffset: 0,
     });
@@ -412,18 +449,20 @@ export const useSearchStore = create<SearchState>((set, get) => ({
     } catch (error) {
       if (generation !== searchGeneration) return;
       set({
-        error: getSearchErrorMessage(error, useBackend),
+        error: getSearchErrorMessage(error, usesAdvancedConditions(advancedFilters, null)),
         isLoading: false,
         results: [],
       });
     }
-  },
+  };
 
-  searchByArtistId: async (artistId: number, artistName: string, artistRole?: string) => {
+  const runByArtistId = async (artistId: number, artistName: string, artistRole: string | undefined, meta: SearchMeta) => {
     const generation = ++searchGeneration;
     const { sort, sortOrder, songTypeFilter, advancedFilters } = get();
     const globalFilters = getGlobalFilterSettings();
     set({
+      resolvedArtist: { id: artistId, name: artistName },
+      ...meta,
       isLoading: true,
       error: null,
       results: [],
@@ -452,7 +491,7 @@ export const useSearchStore = create<SearchState>((set, get) => ({
         set({ results: result.items, totalCount: result.totalCount, isLoading: false });
         return;
       }
-      
+
       const result = await searchSongsPreferBackend({
         artistIds: [artistId],
         sort,
@@ -466,13 +505,20 @@ export const useSearchStore = create<SearchState>((set, get) => ({
       set({ results: result.items, totalCount: result.totalCount, isLoading: false });
     } catch (error) {
       if (generation !== searchGeneration) return;
-      set({ error: getSearchErrorMessage(error, useBackend), isLoading: false, results: [] });
+      set({ error: getSearchErrorMessage(error, usesAdvancedConditions(advancedFilters, artistRole)), isLoading: false, results: [] });
     }
-  },
+  };
 
-  search: async () => {
+  const runSearch = async () => {
+    const { query, searchType, resolvedArtistId, vocalistFilters } = get();
+    // 曲名だけの検索は、並べ替えや詳細検索を変えた後も曲名だけで検索し直す。
+    if (searchType === 'song' && !resolvedArtistId && vocalistFilters.length === 0 && query.trim()) {
+      await runTitleOnly(query, {});
+      return;
+    }
+
     const generation = ++searchGeneration;
-    const { query, sort, sortOrder, resolvedArtistId, artistRole, vocalistFilters, vocalistMatchMode, songTypeFilter, advancedFilters } = get();
+    const { sort, sortOrder, artistRole, vocalistMatchMode, songTypeFilter, advancedFilters, resolvedArtist } = get();
     const globalFilters = getGlobalFilterSettings();
     set({
       isLoading: true,
@@ -536,6 +582,9 @@ export const useSearchStore = create<SearchState>((set, get) => ({
       // vocalist filters are added; name resolution is producer-only and can
       // otherwise drop a singer constraint.
       const producerArtistId = resolvedArtistId ?? artist?.id;
+      const producerArtist: ResolvedSearchArtist | null = resolvedArtistId
+        ? resolvedArtist
+        : artist ? { id: artist.id, name: artist.name, artistType: artist.artistType } : null;
       const titleHasExactMatch = hasExactSongTitleMatch(titleResult.items, query);
 
       if (vocalistFilters.length > 0) {
@@ -557,6 +606,7 @@ export const useSearchStore = create<SearchState>((set, get) => ({
           results: isLocal ? items : applyLocalSort(items, sort, sortOrder),
           totalCount,
           resolvedArtistId: producerArtistId ?? null,
+          resolvedArtist: producerArtist,
           exactApiOffset: nextApiStart ?? 0,
           isLoading: false,
         });
@@ -582,6 +632,7 @@ export const useSearchStore = create<SearchState>((set, get) => ({
           results: merged,
           totalCount: artistResult.totalCount,
           resolvedArtistId: producerArtistId,
+          resolvedArtist: producerArtist,
           isLoading: false,
         });
       } else {
@@ -593,115 +644,334 @@ export const useSearchStore = create<SearchState>((set, get) => ({
           results: titleResult.items,
           totalCount: titleResult.totalCount,
           resolvedArtistId: null,
+          resolvedArtist: null,
           isLoading: false,
         });
       }
     } catch (error) {
       if (generation !== searchGeneration) return;
       set({
-        error: getSearchErrorMessage(error, requiresBackend),
+        error: getSearchErrorMessage(
+          error,
+          usesAdvancedConditions(advancedFilters, artistRole, vocalistFilters, get().modeVocalistIds),
+        ),
         isLoading: false,
         results: [],
       });
     }
-  },
+  };
 
-  loadMore: async () => {
-    const generation = searchGeneration;
-    const {
-      query, sort, sortOrder, results, currentPage, isLoading, totalCount,
-      resolvedArtistId, artistRole, vocalistFilters, vocalistMatchMode, exactApiOffset, songTypeFilter,
-      advancedFilters,
-    } = get();
-    const globalFilters = getGlobalFilterSettings();
-    if (isLoading || results.length >= totalCount) return;
+  return {
+    query: '',
+    sort: 'TotalViews' as ExtendedSortRule,
+    sortOrder: 'desc' as SortOrder,
+    searchType: 'all',
+    searchOrigin: null,
+    urlSearchKey: null,
+    urlSearchLocationKey: null,
+    resolvedArtist: null,
+    modeVocalistIds: [],
+    resolvedArtistId: null,
+    artistRole: null,
+    vocalistFilters: [],
+    vocalistMatchMode: 'All',
+    songTypeFilter: 'All',
+    advancedFilters: DEFAULT_ADVANCED_FILTERS,
+    results: [],
+    totalCount: 0,
+    currentPage: 0,
+    exactApiOffset: 0,
+    isLoading: false,
+    error: null,
+    hasSearched: false,
 
-    const nextPage = currentPage + 1;
-    const songTypes = requestedSongTypes(songTypeFilter, advancedFilters);
-    set({ isLoading: true });
-
-    try {
-      if (vocalistFilters.length > 0) {
-        const existingIds = new Set(results.map(s => s.id));
-        const apiStart = vocalistMatchMode === 'Exact'
-          ? exactApiOffset
-          : nextPage * PAGE_SIZE;
-        const { items, nextApiStart } = await fetchByArtistIds(
-          resolvedArtistId ?? undefined,
-          vocalistFilters,
-          vocalistMatchMode,
-          sort,
-          sortOrder,
-          apiStart,
-          existingIds,
-          songTypes,
-          advancedFilters,
-          globalFilters,
-          artistRole || undefined,
-        );
-        if (generation !== searchGeneration) return;
-        set({
-          results: LOCAL_SORT_RULES.has(sort) ? [...results, ...items] : applyLocalSort([...results, ...items], sort, sortOrder),
-          currentPage: nextPage,
-          exactApiOffset: nextApiStart ?? exactApiOffset,
-          isLoading: false,
-        });
-      } else {
-        const useBackend = LOCAL_SORT_RULES.has(sort)
-          || !!artistRole
-          || hasAdvancedFilters(advancedFilters)
-          || hasGlobalSongFilters(globalFilters);
-        const result = useBackend
-          ? await searchSongsBackend({
-              query: resolvedArtistId ? undefined : query,
-              artistIds: resolvedArtistId ? [resolvedArtistId] : undefined,
-              artistRole: resolvedArtistId ? (artistRole || undefined) : undefined,
-              sort, sortOrder, start: nextPage * PAGE_SIZE, maxResults: PAGE_SIZE, songTypes, filters: advancedFilters, globalFilters
-            })
-          : await searchSongsPreferBackend({
-              query: resolvedArtistId ? undefined : query,
-              artistIds: resolvedArtistId ? [resolvedArtistId] : undefined,
-              sort,
-              sortOrder,
-              maxResults: PAGE_SIZE,
-              start: nextPage * PAGE_SIZE,
-              getTotalCount: false,
-              songTypes,
-            });
-        if (generation !== searchGeneration) return;
-        set({
-          results: [...results, ...result.items],
-          currentPage: nextPage,
-          isLoading: false
-        });
-      }
-    } catch (error) {
-      if (generation !== searchGeneration) return;
+    // Typing a new query leaves an artist-detail result behind otherwise; the
+    // next submit would keep searching the previously resolved artist.
+    setQuery: (query: string) => {
+      modeGeneration += 1;
       set({
-        error: getSearchErrorMessage(error, !!artistRole || LOCAL_SORT_RULES.has(sort) || hasAdvancedFilters(advancedFilters) || hasGlobalSongFilters(globalFilters)),
-        isLoading: false,
+        ...DIRECT_SEARCH_META,
+        query,
+        searchType: 'all',
+        resolvedArtistId: null,
+        artistRole: null,
+        resolvedArtist: null,
       });
-    }
-  },
+    },
 
-  reset: () => {
-    searchGeneration += 1;
-    set({
-      query: '',
-      sort: 'TotalViews' as ExtendedSortRule,
-      sortOrder: 'desc' as SortOrder,
-      resolvedArtistId: null,
-      artistRole: null,
-      vocalistFilters: [],
+    setSort: (sort: ExtendedSortRule) => {
+      if (sort === 'Random') refreshSearchRandomSeed();
+      set({ sort });
+    },
+    setSortOrder: (order: SortOrder) => set({ sortOrder: order }),
+
+    setResolvedArtistId: (id: number | null) => set({ resolvedArtistId: id }),
+
+    addVocalistFilter: (vocalist: VocalistFilter) => {
+      const { vocalistFilters } = get();
+      if (vocalistFilters.some(v => v.id === vocalist.id)) return;
+      set({ vocalistFilters: [...vocalistFilters, vocalist] });
+    },
+
+    setVocalistFilters: (vocalists: VocalistFilter[]) => set({ vocalistFilters: vocalists }),
+
+    removeVocalistFilter: (id: number) => {
+      const { vocalistFilters } = get();
+      set({ vocalistFilters: vocalistFilters.filter(v => v.id !== id) });
+    },
+
+    setVocalistMatchMode: (mode: VocalistMatchMode) => set({ vocalistMatchMode: mode }),
+
+    setSongTypeFilter: (filter: 'All' | 'Original') => set({ songTypeFilter: filter }),
+    setAdvancedFilters: (filters: Partial<AdvancedSearchFilters>) => set((state) => ({
+      advancedFilters: { ...state.advancedFilters, ...filters },
+    })),
+    resetAdvancedFilters: () => set({ advancedFilters: DEFAULT_ADVANCED_FILTERS }),
+
+    clearSearchConditions: () => set(state => ({
+      // The vocalists of the ボーカル search mode are the query itself, not a removable condition.
+      vocalistFilters: state.vocalistFilters.filter(filter => state.modeVocalistIds.includes(filter.id)),
       songTypeFilter: 'All',
       advancedFilters: DEFAULT_ADVANCED_FILTERS,
-      results: [],
-      totalCount: 0,
-      currentPage: 0,
-      exactApiOffset: 0,
-      isLoading: false,
-      error: null,
-      hasSearched: false,
-    });
-  },
-}));
+    })),
+
+    searchTitleOnly: async (query: string) => {
+      modeGeneration += 1;
+      await runTitleOnly(query, { ...DIRECT_SEARCH_META, searchType: 'song' });
+    },
+
+    searchByArtistId: async (artistId: number, artistName: string, artistRole?: string) => {
+      modeGeneration += 1;
+      await runByArtistId(artistId, artistName, artistRole, { ...DIRECT_SEARCH_META, searchType: 'producer' });
+    },
+
+    search: async () => {
+      modeGeneration += 1;
+      await runSearch();
+    },
+
+    searchWithMode: async (rawQuery: string, type: SearchType = 'all', locationKey?: string) => {
+      const trimmed = rawQuery.trim();
+      const generation = ++modeGeneration;
+      const meta: SearchMeta = {
+        searchOrigin: 'url',
+        searchType: type,
+        urlSearchKey: textSearchKey(trimmed, type),
+        urlSearchLocationKey: locationKey ?? null,
+        modeVocalistIds: [],
+      };
+      // Vocalists chosen by the ボーカル mode belong to that query; another mode starts without them.
+      const previousModeVocalists = new Set(get().modeVocalistIds);
+      const keptVocalists = get().vocalistFilters.filter(filter => !previousModeVocalists.has(filter.id));
+
+      if (type === 'song') {
+        await runTitleOnly(trimmed, meta);
+        return;
+      }
+
+      if (type === 'producer' || type === 'vocalist') {
+        // Show the loading state while the name resolves instead of the previous results.
+        searchGeneration += 1;
+        set({
+          ...meta,
+          query: trimmed,
+          isLoading: true,
+          error: null,
+          results: [],
+          totalCount: 0,
+          currentPage: 0,
+          hasSearched: true,
+          resolvedArtistId: null,
+          artistRole: null,
+          resolvedArtist: null,
+          vocalistFilters: keptVocalists,
+          exactApiOffset: 0,
+        });
+        try {
+          if (type === 'producer') {
+            const producer = await resolveProducerByName(trimmed);
+            if (generation !== modeGeneration) return;
+            if (producer) {
+              await runByArtistId(producer.id, producer.name, undefined, {
+                ...meta,
+                resolvedArtist: { id: producer.id, name: producer.name, artistType: producer.artistType },
+              });
+            } else {
+              await runTitleOnly(trimmed, meta);
+            }
+            return;
+          }
+
+          const vocalists = selectVocalistVariants(await searchVocalistsByName(trimmed, 50), trimmed);
+          if (generation !== modeGeneration) return;
+          if (vocalists.length === 0) {
+            await runTitleOnly(trimmed, meta);
+            return;
+          }
+          const vocalistIds = new Set(vocalists.map(vocalist => vocalist.id));
+          set({
+            query: '',
+            vocalistFilters: [
+              ...keptVocalists.filter(filter => !vocalistIds.has(filter.id)),
+              ...vocalists.map(vocalist => ({
+                id: vocalist.id,
+                name: vocalist.name,
+                variantGroup: vocalists.length > 1 ? trimmed : undefined,
+              })),
+            ],
+            vocalistMatchMode: vocalists.length > 1 ? 'Any' : 'All',
+            modeVocalistIds: [...vocalistIds],
+          });
+          await runSearch();
+        } catch (error) {
+          if (generation !== modeGeneration) return;
+          searchGeneration += 1;
+          set({ error: getSearchErrorMessage(error, false), isLoading: false, results: [] });
+        }
+        return;
+      }
+
+      set({
+        ...meta,
+        query: trimmed,
+        resolvedArtistId: null,
+        artistRole: null,
+        resolvedArtist: null,
+        vocalistFilters: keptVocalists,
+      });
+      await runSearch();
+    },
+
+    searchArtistFromUrl: async (artistId: number, artistName: string, artistRole?: string, locationKey?: string) => {
+      modeGeneration += 1;
+      await runByArtistId(artistId, artistName, artistRole, {
+        searchOrigin: 'url',
+        searchType: 'all',
+        urlSearchKey: artistSearchKey(artistId, artistRole),
+        urlSearchLocationKey: locationKey ?? null,
+        modeVocalistIds: [],
+      });
+    },
+
+    applyAdvancedSearch: async () => {
+      modeGeneration += 1;
+      const { searchOrigin, hasSearched } = get();
+      if (searchOrigin !== 'url' || !hasSearched) {
+        set({ searchOrigin: 'advanced', urlSearchKey: null, urlSearchLocationKey: null });
+      }
+      await runSearch();
+    },
+
+    loadMore: async () => {
+      const generation = searchGeneration;
+      const {
+        query, sort, sortOrder, results, currentPage, isLoading, totalCount,
+        resolvedArtistId, artistRole, vocalistFilters, vocalistMatchMode, exactApiOffset, songTypeFilter,
+        advancedFilters,
+      } = get();
+      const globalFilters = getGlobalFilterSettings();
+      if (isLoading || results.length >= totalCount) return;
+
+      const nextPage = currentPage + 1;
+      const songTypes = requestedSongTypes(songTypeFilter, advancedFilters);
+      set({ isLoading: true });
+
+      try {
+        if (vocalistFilters.length > 0) {
+          const existingIds = new Set(results.map(s => s.id));
+          const apiStart = vocalistMatchMode === 'Exact'
+            ? exactApiOffset
+            : nextPage * PAGE_SIZE;
+          const { items, nextApiStart } = await fetchByArtistIds(
+            resolvedArtistId ?? undefined,
+            vocalistFilters,
+            vocalistMatchMode,
+            sort,
+            sortOrder,
+            apiStart,
+            existingIds,
+            songTypes,
+            advancedFilters,
+            globalFilters,
+            artistRole || undefined,
+          );
+          if (generation !== searchGeneration) return;
+          set({
+            results: LOCAL_SORT_RULES.has(sort) ? [...results, ...items] : applyLocalSort([...results, ...items], sort, sortOrder),
+            currentPage: nextPage,
+            exactApiOffset: nextApiStart ?? exactApiOffset,
+            isLoading: false,
+          });
+        } else {
+          const useBackend = LOCAL_SORT_RULES.has(sort)
+            || !!artistRole
+            || hasAdvancedFilters(advancedFilters)
+            || hasGlobalSongFilters(globalFilters);
+          const result = useBackend
+            ? await searchSongsBackend({
+                query: resolvedArtistId ? undefined : query,
+                artistIds: resolvedArtistId ? [resolvedArtistId] : undefined,
+                artistRole: resolvedArtistId ? (artistRole || undefined) : undefined,
+                sort, sortOrder, start: nextPage * PAGE_SIZE, maxResults: PAGE_SIZE, songTypes, filters: advancedFilters, globalFilters
+              })
+            : await searchSongsPreferBackend({
+                query: resolvedArtistId ? undefined : query,
+                artistIds: resolvedArtistId ? [resolvedArtistId] : undefined,
+                sort,
+                sortOrder,
+                maxResults: PAGE_SIZE,
+                start: nextPage * PAGE_SIZE,
+                getTotalCount: false,
+                songTypes,
+              });
+          if (generation !== searchGeneration) return;
+          set({
+            results: [...results, ...result.items],
+            currentPage: nextPage,
+            isLoading: false
+          });
+        }
+      } catch (error) {
+        if (generation !== searchGeneration) return;
+        set({
+          error: getSearchErrorMessage(
+            error,
+            usesAdvancedConditions(advancedFilters, artistRole, vocalistFilters, get().modeVocalistIds),
+          ),
+          isLoading: false,
+        });
+      }
+    },
+
+    reset: () => {
+      searchGeneration += 1;
+      modeGeneration += 1;
+      set({
+        query: '',
+        sort: 'TotalViews' as ExtendedSortRule,
+        sortOrder: 'desc' as SortOrder,
+        searchType: 'all',
+        searchOrigin: null,
+        urlSearchKey: null,
+        urlSearchLocationKey: null,
+        resolvedArtist: null,
+        modeVocalistIds: [],
+        resolvedArtistId: null,
+        artistRole: null,
+        vocalistFilters: [],
+        songTypeFilter: 'All',
+        advancedFilters: DEFAULT_ADVANCED_FILTERS,
+        results: [],
+        totalCount: 0,
+        currentPage: 0,
+        exactApiOffset: 0,
+        isLoading: false,
+        error: null,
+        hasSearched: false,
+      });
+    },
+  };
+});
+
+// The frame resets the search through this without importing the store (see searchReset.ts).
+registerSearchReset(() => useSearchStore.getState().reset());

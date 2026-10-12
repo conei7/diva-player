@@ -1,20 +1,19 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { lazy, Suspense, useState, useEffect, useEffectEvent, useCallback, useMemo, useRef } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { useLocation, useNavigationType, useSearchParams } from 'react-router';
 import CategoryChips, { type CategoryChip } from '../components/home/CategoryChips';
 import VideoGrid from '../components/home/VideoGrid';
+import SearchResults, { type UrlArtist } from '../components/search/SearchResults';
 import { attachExternalViews, filterDiscoveryEligibleSongs, getAudioSimilarSongs, getRecommendedSongs, getSimilarSongs, getTrendingSongs } from '../api/vocadb';
 import { useHistoryStore } from '../stores/historyStore';
 import { usePlayerStore } from '../stores/playerStore';
 import { useRatingStore } from '../stores/ratingStore';
-import { searchSongsBackend, useSearchStore } from '../stores/searchStore';
+import { artistSearchKey, searchSongsBackend, textSearchKey, useSearchStore } from '../stores/searchStore';
 import { usePlaylistStore } from '../stores/playlistStore';
 import { useImplicitFeedbackStore } from '../stores/implicitFeedbackStore';
 import { useGlobalFilterStore } from '../stores/globalFilterStore';
 import { useUiStore } from '../stores/uiStore';
 import type { Song } from '../types/vocadb';
-import SearchFilters from '../components/search/SearchFilters';
-import SearchSortControls from '../components/search/SearchSortControls';
 import {
   getPlaylistSongs,
   rankKnownSongs,
@@ -28,10 +27,9 @@ import { rerankDisplayedSongs, useRecommendationExposureStore } from '../stores/
 import {
   applyDiscoveryFilter,
   applyDiscoveryFilterWithRelaxation,
-  applyGlobalSongFilter,
   getDiscoveryRelaxationMessage,
+  getDiscoveryRelaxationShortLabel,
   isDiscoveryFilterActive,
-  isGlobalSongFilterActive,
   requiresExternalViewCounts,
 } from '../utils/globalFilters';
 import { useFavoriteProducerStore } from '../stores/favoriteProducerStore';
@@ -44,7 +42,8 @@ import { formatWeeklyRankingReason } from '../utils/weeklyRankingReason';
 import { excludeHiddenSongs, useHiddenSongStore } from '../stores/hiddenSongStore';
 import { selectRotatingStartupSongs } from '../utils/startupRecommendations';
 import { getProgressiveWindow } from '../utils/progressiveWindow';
-import { useTranslate, type TranslationKey } from '../i18n';
+import { isSearchType, type SearchType } from '../utils/routes';
+import { useTranslate, useTranslateSourceText, type TranslationKey } from '../i18n';
 import { useLanguageStore } from '../stores/languageStore';
 import {
   loadRecentPlayedAtBySongId,
@@ -58,6 +57,14 @@ import {
   saveHomeFeedSnapshot,
   updateHomeFeedSnapshotScroll,
 } from '../utils/homeFeedSnapshot';
+import Button from '../components/ui/Button';
+import EmptyState from '../components/ui/EmptyState';
+import { InfoTip } from '../components/ui/InfoTip';
+import { InlineNotice } from '../components/ui/InlineNotice';
+import { ErrorIcon, MusicNoteIcon, PersonStarIcon, SpinnerIcon } from '../components/ui/icons';
+
+// The advanced search dialog is only needed after the user opens it.
+const SearchFilters = lazy(() => import('../components/search/SearchFilters'));
 
 type HomeCategoryId =
   | 'recommended'
@@ -73,14 +80,14 @@ type HomeCategoryId =
 type PrefetchableHomeCategoryId = Exclude<HomeCategoryId, 'recommended'>;
 
 const CATEGORIES: CategoryChip[] = [
-  { id: 'recommended', label: 'あなたへのおすすめ' },
+  { id: 'recommended', label: 'おすすめ' },
   { id: 'ranking', label: 'ランキング' },
-  { id: 'popular', label: '人気の曲' },
-  { id: 'pace', label: '再生ペース' },
+  { id: 'popular', label: '人気' },
+  { id: 'pace', label: '伸びている曲' },
   { id: 'trending', label: '急上昇' },
   { id: 'recent', label: '新着' },
-  { id: 'deep', label: 'マイナー発掘' },
-  { id: 'history_based', label: '最近聴いたPの曲' },
+  { id: 'deep', label: '隠れた名曲' },
+  { id: 'history_based', label: '最近聴いたP' },
   { id: 'favorite_producers', label: 'お気に入りP' },
 ];
 
@@ -96,14 +103,28 @@ const CATEGORY_LABELS: Record<HomeCategoryId, TranslationKey> = {
   favorite_producers: 'categoryFavoriteProducers',
 };
 
+/** Feeds shown as rankings: their thumbnails carry the position. */
+const RANKED_CATEGORIES = new Set<HomeCategoryId>(['ranking', 'popular', 'pace', 'trending']);
+
 const PAGE_SIZE = 24;
-const FIRST_HOME_PAGE_SIZE = 12;
-const APPEND_HOME_PAGE_SIZE = 28;
+// The first page fills about two screens of tiles; public/startup.js requests the same first page.
+const FIRST_HOME_PAGE_SIZE = 24;
+const APPEND_HOME_PAGE_SIZE = 36;
+/**
+ * Below this many songs after the filters, the feed relaxes them (once the source is exhausted) and
+ * leaves loading more to the bounded auto-fill instead of infinite scroll. Independent of the page size.
+ */
+const DISCOVERY_MIN_COUNT = 12;
+/** The next page starts loading this far before the end of the feed comes into view. */
+const PREFETCH_MARGIN_PX = 1200;
 const STARTUP_POOL_SIZE = PAGE_SIZE * 2;
 const STARTUP_ROTATION_KEY = 'diva-startup-rotation-v1';
 const MAX_FAVORITE_PRODUCER_REQUESTS = 4;
 const MAX_AUTOFILL_PAGES = 2;
 const HOME_CATEGORY_PREFETCH_DELAY_MS = 500;
+/** history.state marker of the entry an advanced-only search (no `q`) was applied in. */
+const ADVANCED_SEARCH_ENTRY_STATE = 'divaAdvancedSearch';
+
 function asHomeCategoryId(id: string): HomeCategoryId {
   return CATEGORIES.some(category => category.id === id)
     ? (id as HomeCategoryId)
@@ -134,18 +155,118 @@ function nextStartupRotation(): number {
   }
 }
 
+function isAdvancedSearchEntry(state: unknown): boolean {
+  return Boolean(state && typeof state === 'object' && (state as Record<string, unknown>)[ADVANCED_SEARCH_ENTRY_STATE]);
+}
+
+/**
+ * True while the browser's current history entry is still the one with this router key. A
+ * navigation changes the entry (pushState / popstate) before the old page unmounts.
+ */
+function isCurrentHistoryEntry(locationKey: string): boolean {
+  const state: unknown = window.history.state;
+  const key = state && typeof state === 'object' ? (state as Record<string, unknown>).key : undefined;
+  // The router calls the first entry of a tab 'default' (its history.state has no key).
+  return (typeof key === 'string' && key ? key : 'default') === locationKey;
+}
+
+function parseUrlArtist(idParam: string | null, nameParam: string | null, roleParam: string | null): UrlArtist | null {
+  if (!idParam || !/^\d+$/.test(idParam)) return null;
+  const id = Number(idParam);
+  if (!Number.isSafeInteger(id) || id <= 0) return null;
+  return { id, name: nameParam ?? '', role: roleParam || undefined };
+}
+
+/**
+ * `/` is the home feed, `/?q=…&type=…` the search results and `/?artistId=…` an artist's songs.
+ * The URL is the source of truth: this page keeps the search store in sync with it, so Back,
+ * reload and shared links always show the same screen.
+ */
 export default function HomePage() {
-  const t = useTranslate();
-  const language = useLanguageStore(state => state.language);
   const location = useLocation();
   const navigationType = useNavigationType();
   const [searchParams] = useSearchParams();
-  const searchQuery = searchParams.get('q') || '';
+  const urlQuery = (searchParams.get('q') ?? '').trim();
+  const typeParam = searchParams.get('type');
+  const urlType: SearchType = isSearchType(typeParam) ? typeParam : 'all';
   const artistIdParam = searchParams.get('artistId');
+  const artistNameParam = searchParams.get('artistName');
   const artistRoleParam = searchParams.get('artistRole');
-  const artistNameParam = searchParams.get('artistName') || '';
+  const urlArtist = useMemo(
+    () => (urlQuery ? null : parseUrlArtist(artistIdParam, artistNameParam, artistRoleParam)),
+    [artistIdParam, artistNameParam, artistRoleParam, urlQuery],
+  );
+  const urlKey = urlQuery
+    ? textSearchKey(urlQuery, urlType)
+    : urlArtist ? artistSearchKey(urlArtist.id, urlArtist.role) : null;
+  const { hasSearched, searchOrigin, storeUrlKey } = useSearchStore(useShallow(state => ({
+    hasSearched: state.hasSearched,
+    searchOrigin: state.searchOrigin,
+    storeUrlKey: state.urlSearchKey,
+  })));
+  const advancedSearchOpen = useUiStore(state => state.advancedSearchOpen);
+  const advancedEntry = isAdvancedSearchEntry(location.state);
+
+  const runUrlSearch = useCallback(() => {
+    const store = useSearchStore.getState();
+    if (urlQuery) void store.searchWithMode(urlQuery, urlType, location.key);
+    else if (urlArtist) void store.searchArtistFromUrl(urlArtist.id, urlArtist.name, urlArtist.role, location.key);
+    else void store.search();
+  }, [location.key, urlArtist, urlQuery, urlType]);
+
+  useEffect(() => {
+    const store = useSearchStore.getState();
+    if (urlKey) {
+      // A new submit of the same URL (a new history entry) searches again; Back to it does not.
+      const resubmitted = navigationType === 'PUSH' && store.urlSearchLocationKey !== location.key;
+      if (store.urlSearchKey !== urlKey || !store.hasSearched || resubmitted) runUrlSearch();
+      return;
+    }
+    if (!store.hasSearched) return;
+    // Leaving a URL search (Back, the logo, the guide's ホーム) always returns to the feed.
+    if (store.searchOrigin === 'url' || (store.searchOrigin === 'advanced' && !advancedEntry)) store.reset();
+  }, [advancedEntry, location.key, navigationType, runUrlSearch, urlKey]);
+
+  // The dialog belongs to the home page: close it when another page is opened (not on StrictMode's re-mount).
+  useEffect(() => () => {
+    const base = (import.meta.env.BASE_URL ?? '/').replace(/\/+$/, '');
+    if (window.location.pathname.replace(/\/+$/, '') !== base) useUiStore.getState().setAdvancedSearchOpen(false);
+  }, []);
+
+  const showResults = Boolean(urlKey)
+    || (hasSearched && (searchOrigin === 'direct' || (searchOrigin === 'advanced' && advancedEntry)));
+
+  return (
+    <>
+      {showResults ? (
+        <SearchResults
+          urlQuery={urlQuery}
+          urlType={urlType}
+          urlArtist={urlArtist}
+          pending={Boolean(urlKey) && storeUrlKey !== urlKey}
+          onRetry={runUrlSearch}
+        />
+      ) : (
+        <HomeFeed />
+      )}
+      {advancedSearchOpen && (
+        <Suspense fallback={null}>
+          <SearchFilters advancedEntryState={ADVANCED_SEARCH_ENTRY_STATE} />
+        </Suspense>
+      )}
+    </>
+  );
+}
+
+function HomeFeed() {
+  const t = useTranslate();
+  const ts = useTranslateSourceText();
+  const language = useLanguageStore(state => state.language);
+  const location = useLocation();
+  const navigationType = useNavigationType();
+  const openSettings = useUiStore(state => state.openSettings);
   const [restoredHomeFeed] = useState(() => {
-    if (navigationType !== 'POP' || searchQuery || artistIdParam) return undefined;
+    if (navigationType !== 'POP') return undefined;
     return getHomeFeedSnapshot(location.key);
   });
 
@@ -155,11 +276,13 @@ export default function HomePage() {
   const [loading, setLoading] = useState(() => restoredHomeFeed?.initialLoadPending ?? true);
   const [page, setPage] = useState(() => restoredHomeFeed?.page ?? 0);
   const [hasMore, setHasMore] = useState(() => restoredHomeFeed?.hasMore ?? true);
-  const advancedSearchOpen = useUiStore(s => s.advancedSearchOpen);
-  const setAdvancedSearchOpen = useUiStore(s => s.setAdvancedSearchOpen);
   const [recommendationReasons, setRecommendationReasons] = useState<Record<number, string>>(
     () => restoredHomeFeed?.recommendationReasons ?? {},
   );
+  // A failed request: 'first' = the first page (nothing to show), 'more' = a later page.
+  const [loadError, setLoadError] = useState<'first' | 'more' | null>(null);
+  // Bumped by 再試行 to rebuild the feed from its first page.
+  const [feedReload, setFeedReload] = useState(0);
 
   const sentinelRef = useRef<HTMLDivElement>(null);
   const fetchingRef = useRef(false);
@@ -172,7 +295,6 @@ export default function HomePage() {
   const pendingHomePaintRef = useRef<{ startedAt: number; category: HomeCategoryId } | null>(
     restoredHomeFeed ? null : { startedAt: 0, category: 'recommended' },
   );
-  const pendingSearchPaintRef = useRef<number | null>(null);
   const startupCacheStartedRef = useRef(Boolean(restoredHomeFeed));
   const firstHomeContentRecordedRef = useRef(Boolean(restoredHomeFeed));
   const firstHomePaintRecordedRef = useRef(Boolean(restoredHomeFeed));
@@ -181,11 +303,13 @@ export default function HomePage() {
   const restoredRecommendedEntryRef = useRef(Boolean(restoredHomeFeed));
   const suppressStaleHomeFeedCacheRef = useRef(Boolean(restoredHomeFeed?.initialLoadPending));
   const restoredScrollYRef = useRef<number | null>(restoredHomeFeed?.scrollY ?? null);
+  // The last scroll position recorded while this entry was the current one (see recordScrollPosition).
+  const lastScrollYRef = useRef(restoredHomeFeed?.scrollY ?? window.scrollY);
 
   const { entries, hasHydrated, lastPlayedAtBySongId } = useHistoryStore();
-  const { currentSong } = usePlayerStore();
-  const { ratings } = useRatingStore();
-  const { playlists } = usePlaylistStore();
+  const currentSong = usePlayerStore(state => state.currentSong);
+  const ratings = useRatingStore(state => state.ratings);
+  const playlists = usePlaylistStore(state => state.playlists);
   const implicitFeedback = useImplicitFeedbackStore(state => state.feedback);
   const favoriteProducers = useFavoriteProducerStore(state => state.producers);
   const hiddenSongs = useHiddenSongStore(state => state.hiddenSongs);
@@ -194,26 +318,13 @@ export default function HomePage() {
     minYoutubeViews: state.minYoutubeViews,
     minNicoViews: state.minNicoViews,
     excludedSongTypes: state.excludedSongTypes,
+    excludeSelfCovers: state.excludeSelfCovers,
     vocalistFilters: state.vocalistFilters,
     vocalistMatchMode: state.vocalistMatchMode,
     cooldownHours: state.cooldownHours,
     excludeRatedFromDiscovery: state.excludeRatedFromDiscovery,
   })));
-  const {
-    results: searchResults,
-    isLoading: searchLoading,
-    hasSearched,
-    totalCount,
-    error: searchError,
-    loadMore: searchLoadMore,
-    searchByArtistId,
-  } = useSearchStore();
-  const isSearchMode = searchQuery.length > 0;
-  const isArtistMode = !!artistIdParam;
-  const isRecommendedHomeView = activeCategory === 'recommended'
-    && !isSearchMode
-    && !isArtistMode
-    && !hasSearched;
+  const isRecommendedHomeView = activeCategory === 'recommended';
   const recentProducerIds = useMemo(() => selectRecentProducerIds(entries), [entries]);
   const homeSourceContextKey = useMemo(() => JSON.stringify({
     filters: globalFilterSettings,
@@ -222,28 +333,16 @@ export default function HomePage() {
     recentSongIds: entries.slice(0, 50).map(entry => entry.song.id),
     rankingSeed: rankingSeedRef.current,
   }), [entries, favoriteProducers, globalFilterSettings, recentProducerIds]);
+  // What the shown feed depends on: changing it rebuilds the feed. Playlists, ratings, the playing
+  // song and the history only shape the next request (saving or rating a tile keeps the feed as it is).
   const homeFeedContextKey = useMemo(() => JSON.stringify({
     language,
     filters: globalFilterSettings,
     favoriteProducerIds: favoriteProducers.map(producer => producer.id),
-    ratings: Object.entries(ratings).sort(([left], [right]) => left.localeCompare(right)),
-    playlists: playlists.map(playlist => [playlist.id, playlist.songs.map(song => song.id)]),
-  }), [favoriteProducers, globalFilterSettings, language, playlists, ratings]);
+  }), [favoriteProducers, globalFilterSettings, language]);
 
   useEffect(() => {
-    if (!artistIdParam) return;
-    const artistId = Number(artistIdParam);
-    if (!Number.isInteger(artistId) || artistId <= 0) return;
-
-    setAdvancedSearchOpen(true);
-    searchByArtistId(artistId, decodeURIComponent(artistNameParam), artistRoleParam || undefined);
-  }, [artistIdParam, artistNameParam, artistRoleParam, searchByArtistId, setAdvancedSearchOpen]);
-
-  useEffect(() => {
-    if (startupCacheStartedRef.current
-      || activeCategory !== 'recommended'
-      || isSearchMode
-      || isArtistMode) return;
+    if (startupCacheStartedRef.current || activeCategory !== 'recommended') return;
 
     startupCacheStartedRef.current = true;
     let cancelled = false;
@@ -288,12 +387,12 @@ export default function HomePage() {
     return () => {
       cancelled = true;
     };
-  }, [activeCategory, globalFilterSettings, hiddenSongs, isArtistMode, isSearchMode, ratings]);
+  }, [activeCategory, globalFilterSettings, hiddenSongs, ratings]);
 
   useEffect(() => {
-    if (activeCategory === 'recommended' && !isSearchMode && !isArtistMode) return;
+    if (activeCategory === 'recommended') return;
     setStartupSongs([]);
-  }, [activeCategory, isArtistMode, isSearchMode]);
+  }, [activeCategory]);
 
   const fetchRecommendedHomeSongs = useCallback(async (pageNum: number): Promise<Song[]> => {
     const { start, count } = getProgressiveWindow(pageNum, FIRST_HOME_PAGE_SIZE, APPEND_HOME_PAGE_SIZE);
@@ -535,7 +634,6 @@ export default function HomePage() {
   const fetchSongs = useCallback(async (
     category: HomeCategoryId,
     pageNum: number,
-    query: string,
     requestId: number,
   ) => {
     if (pageNum > 0 && fetchingRef.current) return;
@@ -549,32 +647,9 @@ export default function HomePage() {
     try {
       let result: Song[] = [];
       const sourceStartedAt = performanceNow();
-      const { start, count } = getProgressiveWindow(pageNum, FIRST_HOME_PAGE_SIZE, APPEND_HOME_PAGE_SIZE);
+      const { count } = getProgressiveWindow(pageNum, FIRST_HOME_PAGE_SIZE, APPEND_HOME_PAGE_SIZE);
 
-      if (artistIdParam) {
-        const searchResult = await searchSongsBackend({
-          artistIds: [Number(artistIdParam)],
-          artistRole: artistRoleParam || undefined,
-          sort: 'FavoritedTimes',
-          sortOrder: 'desc',
-          maxResults: count,
-          start,
-          compactCards: true,
-          priority: 'foreground',
-        });
-        result = searchResult.items;
-      } else if (query) {
-        const searchResult = await searchSongsBackend({
-          query,
-          sort: 'FavoritedTimes',
-          sortOrder: 'desc',
-          maxResults: count,
-          start,
-          compactCards: true,
-          priority: 'foreground',
-        });
-        result = searchResult.items;
-      } else if (category === 'recommended') {
+      if (category === 'recommended') {
         result = await fetchRecommendedHomeSongs(pageNum);
       } else {
         result = await loadPrefetchableHomeSongs(category, pageNum, 'foreground');
@@ -594,7 +669,7 @@ export default function HomePage() {
       const sourceIds = result.map(song => song.id);
       const newSourceCount = sourceIds.filter(id => !sourceSongIdsRef.current.has(id)).length;
       sourceIds.forEach(id => sourceSongIdsRef.current.add(id));
-      if (!query && !artistIdParam && category !== 'recommended' && !isDeterministicHomeRankingCategory(category)) {
+      if (category !== 'recommended' && !isDeterministicHomeRankingCategory(category)) {
         result = rerankDisplayedSongs(result, rankingSeedRef.current);
       }
       if (requiresExternalViewCounts(globalFilterSettings)) {
@@ -647,6 +722,7 @@ export default function HomePage() {
       // still has more candidates. Continue until the source is exhausted or
       // a broken fallback repeats the same page.
       setHasMore(fetchedCount >= count && (pageNum === 0 || newSourceCount > 0));
+      setLoadError(null);
       suppressStaleHomeFeedCacheRef.current = false;
       recordPerformanceMetric({
         name: 'home.load',
@@ -664,13 +740,21 @@ export default function HomePage() {
       if (requestId !== requestIdRef.current) return;
       console.error('Failed to fetch songs:', error);
       setHasMore(false);
+      // Shown as 「読み込めませんでした」［再試行］, never as an empty feed.
+      setLoadError(pageNum === 0 ? 'first' : 'more');
     } finally {
       if (requestId === requestIdRef.current) {
         setLoading(false);
       }
       fetchingRef.current = false;
     }
-  }, [artistIdParam, artistRoleParam, favoriteProducers, fetchRecommendedHomeSongs, globalFilterSettings, language, loadPrefetchableHomeSongs]);
+  }, [favoriteProducers, fetchRecommendedHomeSongs, globalFilterSettings, language, loadPrefetchableHomeSongs]);
+
+  // The first request reads the latest playlists, ratings and history without them becoming a reason
+  // to rebuild the feed (fetchSongs changes whenever any of them does).
+  const fetchFirstPage = useEffectEvent((category: HomeCategoryId, requestId: number) => {
+    fetchSongs(category, 0, requestId);
+  });
 
   useEffect(() => {
     if (restoredRecommendedEntryRef.current) {
@@ -689,23 +773,19 @@ export default function HomePage() {
     setSongs([]);
     setPage(0);
     setHasMore(true);
+    setLoadError(null);
     autoFillPagesRef.current = 0;
     sourceSongIdsRef.current.clear();
 
     const requestId = requestIdRef.current + 1;
     requestIdRef.current = requestId;
 
-    if (isArtistMode) {
-      setLoading(false);
+    if (!hasHydrated && (activeCategory === 'recommended' || activeCategory === 'history_based')) {
       return;
     }
 
-    if (!isSearchMode && !isArtistMode && !hasHydrated && (activeCategory === 'recommended' || activeCategory === 'history_based')) {
-      return;
-    }
-
-    fetchSongs(activeCategory, 0, searchQuery, requestId);
-  }, [activeCategory, searchQuery, artistIdParam, isSearchMode, isArtistMode, hasHydrated, fetchSongs, hasSearched, homeFeedContextKey, isRecommendedHomeView, location.key, restoredHomeFeed]);
+    fetchFirstPage(activeCategory, requestId);
+  }, [activeCategory, feedReload, hasHydrated, homeFeedContextKey, isRecommendedHomeView, location.key, restoredHomeFeed]);
 
   useEffect(() => {
     if (!isRecommendedHomeView) {
@@ -719,13 +799,15 @@ export default function HomePage() {
       return;
     }
 
+    // A failed later page is fetched again after Back (it is not counted as loaded).
+    const pageIncomplete = loading || loadError === 'more';
     saveHomeFeedSnapshot(location.key, {
       songs,
       startupSongs,
-      page: loading && page > 0 ? page - 1 : page,
-      hasMore,
+      page: pageIncomplete && page > 0 ? page - 1 : page,
+      hasMore: hasMore || loadError === 'more',
       recommendationReasons,
-      scrollY: window.scrollY,
+      scrollY: lastScrollYRef.current,
       initialLoadPending: loading && songs.length === 0 && startupSongs.length > 0,
       sourceContextKey: homeFeedContextKey,
     });
@@ -733,6 +815,7 @@ export default function HomePage() {
     hasMore,
     homeFeedContextKey,
     isRecommendedHomeView,
+    loadError,
     loading,
     location.key,
     page,
@@ -741,56 +824,69 @@ export default function HomePage() {
     startupSongs,
   ]);
 
+  // Back restores the feed at this position. It is recorded only while this history entry is the
+  // current one: leaving scrolls the song page to the top and shortens the document, and neither
+  // may overwrite where the user was.
+  const recordScrollPosition = useCallback(() => {
+    if (!isCurrentHistoryEntry(location.key)) return;
+    lastScrollYRef.current = window.scrollY;
+    updateHomeFeedSnapshotScroll(location.key, window.scrollY);
+  }, [location.key]);
+
   useEffect(() => {
-    if (!isRecommendedHomeView) return;
-    const saveScrollPosition = () => updateHomeFeedSnapshotScroll(location.key, window.scrollY);
-    window.addEventListener('scroll', saveScrollPosition, { passive: true });
-    return () => {
-      saveScrollPosition();
-      window.removeEventListener('scroll', saveScrollPosition);
-    };
-  }, [isRecommendedHomeView, location.key]);
+    window.addEventListener('scroll', recordScrollPosition, { passive: true });
+    return () => window.removeEventListener('scroll', recordScrollPosition);
+  }, [recordScrollPosition]);
 
   useEffect(() => {
     if (!restoredRecommendedEntryRef.current || restoredScrollYRef.current === null) return;
     const scrollY = restoredScrollYRef.current;
-    restoredScrollYRef.current = null;
+    // At the top there is nothing to restore (scrolling there would undo the browser's own restoration).
+    if (scrollY <= 0) {
+      restoredScrollYRef.current = null;
+      return;
+    }
     let secondFrame = 0;
     const firstFrame = requestAnimationFrame(() => {
-      secondFrame = requestAnimationFrame(() => window.scrollTo(0, scrollY));
+      secondFrame = requestAnimationFrame(() => {
+        // Cleared only once applied: StrictMode's effect re-run must not lose the position.
+        restoredScrollYRef.current = null;
+        window.scrollTo(0, scrollY);
+        recordScrollPosition();
+      });
     });
     return () => {
       cancelAnimationFrame(firstFrame);
       if (secondFrame) cancelAnimationFrame(secondFrame);
     };
-  }, [location.key]);
+  }, [location.key, recordScrollPosition]);
 
   const loadMore = useCallback(() => {
-    if (hasSearched) {
-      if (!searchLoading && searchResults.length < totalCount) {
-        searchLoadMore();
-      }
-      return;
-    }
-
     if (loading || !hasMore || fetchingRef.current) return;
     const nextPage = page + 1;
     setPage(nextPage);
     setLoading(true);
-    fetchSongs(activeCategory, nextPage, searchQuery, requestIdRef.current);
+    fetchSongs(activeCategory, nextPage, requestIdRef.current);
   }, [
     loading,
     hasMore,
     page,
     activeCategory,
-    searchQuery,
     fetchSongs,
-    hasSearched,
-    searchLoading,
-    searchResults.length,
-    totalCount,
-    searchLoadMore,
   ]);
+
+  // 再試行: a failed later page is requested again; a failed first page rebuilds the feed.
+  const retryFeed = useCallback(() => {
+    if (loadError === 'more' && page > 0) {
+      if (fetchingRef.current) return;
+      setLoadError(null);
+      setHasMore(true);
+      setLoading(true);
+      fetchSongs(activeCategory, page, requestIdRef.current);
+      return;
+    }
+    setFeedReload(value => value + 1);
+  }, [activeCategory, fetchSongs, loadError, page]);
 
   const discoveryContext = useMemo(() => ({
     settings: globalFilterSettings,
@@ -806,13 +902,12 @@ export default function HomePage() {
     () => applyDiscoveryFilter(unhiddenFreshSongs, discoveryContext),
     [discoveryContext, unhiddenFreshSongs],
   );
-  const shouldRelaxFreshDiscovery = !hasSearched
-    && !loading
-    && freshStrictDiscoverySongs.length < FIRST_HOME_PAGE_SIZE
+  const shouldRelaxFreshDiscovery = !loading
+    && freshStrictDiscoverySongs.length < DISCOVERY_MIN_COUNT
     && !hasMore;
   const freshDiscoveryResult = useMemo(
     () => shouldRelaxFreshDiscovery
-      ? applyDiscoveryFilterWithRelaxation(unhiddenFreshSongs, discoveryContext, FIRST_HOME_PAGE_SIZE)
+      ? applyDiscoveryFilterWithRelaxation(unhiddenFreshSongs, discoveryContext, DISCOVERY_MIN_COUNT)
       : { items: freshStrictDiscoverySongs, relaxedConditions: [] },
     [discoveryContext, freshStrictDiscoverySongs, shouldRelaxFreshDiscovery, unhiddenFreshSongs],
   );
@@ -821,9 +916,6 @@ export default function HomePage() {
     [discoveryContext, unhiddenStartupSongs],
   );
   const showingStartupCache = activeCategory === 'recommended'
-    && !isSearchMode
-    && !isArtistMode
-    && !hasSearched
     && startupDiscoverySongs.length > 0;
   const discoveryResult = showingStartupCache
     ? {
@@ -833,19 +925,10 @@ export default function HomePage() {
     : freshDiscoveryResult;
   const homeLoading = loading && !showingStartupCache;
   const startupRefreshTarget = showingStartupCache ? 40 : FIRST_HOME_PAGE_SIZE;
-  const displaySongs = useMemo(
-    () => hasSearched
-      ? applyGlobalSongFilter(searchResults, globalFilterSettings)
-      : discoveryResult.items,
-    [discoveryResult.items, globalFilterSettings, hasSearched, searchResults],
-  );
+  const displaySongs = discoveryResult.items;
 
   useEffect(() => {
-    if (activeCategory !== 'recommended'
-      || isSearchMode
-      || isArtistMode
-      || hasSearched
-      || displaySongs.length === 0) return;
+    if (activeCategory !== 'recommended' || displaySongs.length === 0) return;
 
     let cancelled = false;
     const timer = window.setTimeout(() => {
@@ -878,12 +961,10 @@ export default function HomePage() {
       const idleWindow = window as Window & { cancelIdleCallback?: (id: number) => void };
       if (idleCallbackId !== undefined) idleWindow.cancelIdleCallback?.(idleCallbackId);
     };
-  }, [activeCategory, displaySongs.length, hasSearched, isArtistMode, isSearchMode, loadPrefetchableHomeSongs]);
+  }, [activeCategory, displaySongs.length, loadPrefetchableHomeSongs]);
 
   useEffect(() => {
     if (activeCategory !== 'recommended'
-      || isSearchMode
-      || isArtistMode
       || !hasHydrated
       || loading
       || songs.length === 0
@@ -898,8 +979,6 @@ export default function HomePage() {
     freshDiscoveryResult.items,
     hasHydrated,
     hasMore,
-    isArtistMode,
-    isSearchMode,
     loading,
     songs.length,
     startupRefreshTarget,
@@ -909,58 +988,28 @@ export default function HomePage() {
     // An underfilled first screen is handled by the bounded auto-fill below.
     // Observing its already-visible sentinel as well caused an endless stream
     // of placeholder cards on large displays with strict filters.
-    if (!hasSearched && freshStrictDiscoverySongs.length < FIRST_HOME_PAGE_SIZE) return;
+    if (freshStrictDiscoverySongs.length < DISCOVERY_MIN_COUNT) return;
     const el = sentinelRef.current;
     if (!el) return;
     const observer = new IntersectionObserver(
       observerEntries => {
         if (observerEntries[0].isIntersecting) loadMore();
       },
-      { threshold: 0.1 },
+      { rootMargin: `0px 0px ${PREFETCH_MARGIN_PX}px 0px` },
     );
     observer.observe(el);
     return () => observer.disconnect();
-  }, [freshStrictDiscoverySongs.length, hasSearched, loadMore]);
+  }, [freshStrictDiscoverySongs.length, loadMore]);
 
   useEffect(() => {
-    if (hasSearched || isSearchMode || isArtistMode || loading || !hasMore || page !== 0 || songs.length < FIRST_HOME_PAGE_SIZE) return;
+    if (loading || !hasMore || page !== 0 || songs.length < DISCOVERY_MIN_COUNT) return;
     const timer = window.setTimeout(loadMore, 180);
     return () => window.clearTimeout(timer);
-  }, [hasMore, hasSearched, isArtistMode, isSearchMode, loadMore, loading, page, songs.length]);
-
-  const relaxationMessage = hasSearched
-    ? null
-    : getDiscoveryRelaxationMessage(discoveryResult.relaxedConditions);
-
-  useEffect(() => {
-    if (searchLoading) {
-      pendingSearchPaintRef.current ??= performanceNow();
-      return;
-    }
-    if (!hasSearched || pendingSearchPaintRef.current === null || typeof requestAnimationFrame === 'undefined') return;
-
-    const startedAt = pendingSearchPaintRef.current;
-    let secondFrame = 0;
-    const firstFrame = requestAnimationFrame(() => {
-      secondFrame = requestAnimationFrame(() => {
-        if (pendingSearchPaintRef.current !== startedAt) return;
-        pendingSearchPaintRef.current = null;
-        recordPerformanceMetric({
-          name: 'search.paint',
-          startedAt,
-          detail: { displayedCount: displaySongs.length },
-        });
-      });
-    });
-    return () => {
-      cancelAnimationFrame(firstFrame);
-      if (secondFrame) cancelAnimationFrame(secondFrame);
-    };
-  }, [displaySongs.length, hasSearched, searchLoading]);
+  }, [hasMore, loadMore, loading, page, songs.length]);
 
   useEffect(() => {
     const pending = pendingHomePaintRef.current;
-    if (homeLoading || hasSearched || !pending || typeof requestAnimationFrame === 'undefined') return;
+    if (homeLoading || !pending || typeof requestAnimationFrame === 'undefined') return;
 
     let secondFrame = 0;
     const firstFrame = requestAnimationFrame(() => {
@@ -979,14 +1028,13 @@ export default function HomePage() {
       cancelAnimationFrame(firstFrame);
       if (secondFrame) cancelAnimationFrame(secondFrame);
     };
-  }, [displaySongs.length, hasSearched, homeLoading]);
+  }, [displaySongs.length, homeLoading]);
 
   // 足切り後の表示件数が少ない場合は追加ページを先読みするが、
   // 2ページで打ち切って既存の段階緩和へ渡し、終わらないloading表示を作らない。
   useEffect(() => {
     if (
-      hasSearched
-      || loading
+      loading
       || !hasMore
       || fetchingRef.current
       || freshStrictDiscoverySongs.length >= startupRefreshTarget
@@ -998,120 +1046,92 @@ export default function HomePage() {
     }
     autoFillPagesRef.current += 1;
     loadMore();
-  }, [freshStrictDiscoverySongs.length, hasSearched, loading, hasMore, loadMore, startupRefreshTarget]);
+  }, [freshStrictDiscoverySongs.length, loading, hasMore, loadMore, startupRefreshTarget]);
+
+  const selectCategory = useCallback((id: string) => {
+    const nextCategory = asHomeCategoryId(id);
+    if (nextCategory === activeCategory) return;
+    restoredRecommendedEntryRef.current = false;
+    clearHomeFeedSnapshot(location.key);
+    firstHomePaintRecordedRef.current = false;
+    pendingHomePaintRef.current = null;
+    setStartupSongs([]);
+    setActiveCategory(nextCategory);
+  }, [activeCategory, location.key]);
+
+  // 「最近聴いたP」 needs listening history; without it the chip would only repeat 人気.
+  const visibleCategories = useMemo(
+    () => CATEGORIES
+      .filter(chip => chip.id !== 'history_based' || recentProducerIds.length > 0 || activeCategory === 'history_based')
+      .map(chip => ({ ...chip, label: t(CATEGORY_LABELS[asHomeCategoryId(chip.id)]) })),
+    [activeCategory, recentProducerIds.length, t],
+  );
+
+  const relaxedConditions = discoveryResult.relaxedConditions;
+  const relaxationDetail = getDiscoveryRelaxationMessage(relaxedConditions, language);
+
+  const emptyState = loadError ? (
+    <EmptyState icon={<ErrorIcon />} title={ts('読み込めませんでした')} action={{ label: ts('再試行'), onClick: retryFeed }} />
+  ) : activeCategory === 'favorite_producers' && favoriteProducers.length === 0 ? (
+    <EmptyState
+      icon={<PersonStarIcon />}
+      title={ts('お気に入りPはまだいません')}
+      action={{ label: ts('おすすめを見る'), onClick: () => selectCategory('recommended') }}
+    />
+  ) : isDiscoveryFilterActive(globalFilterSettings) ? (
+    <EmptyState
+      icon={<MusicNoteIcon />}
+      title={t('noSongsMatchFilters')}
+      action={{ label: ts('フィルターを変更'), onClick: () => openSettings('filter') }}
+    />
+  ) : undefined;
 
   return (
-    <div className="w-full px-4 sm:px-6 lg:px-8 py-4">
-      {(advancedSearchOpen || isSearchMode || isArtistMode || hasSearched) && (
-        <div className="mb-3 flex justify-end">
-          <SearchSortControls />
-        </div>
-      )}
-      {advancedSearchOpen && (
-        <div className="mb-6">
-          <SearchFilters />
-        </div>
-      )}
-
-      {(isSearchMode || hasSearched) && !isArtistMode && (
-        <div className="mb-6">
-          <div>
-            <h1 className="text-xl font-bold mb-1" style={{ color: 'var(--color-text-primary)' }}>
-              {searchQuery ? t('searchResults', { query: searchQuery }) : t('searchResultsTitle')}
-            </h1>
-            <p className="text-sm" style={{ color: 'var(--color-text-muted)' }}>
-              {hasSearched
-                ? searchLoading ? t('searching') : t('resultCount', { count: totalCount.toLocaleString() })
-                : t('resultCount', { count: songs.length })}
-            </p>
-          </div>
-        </div>
-      )}
-
-      {isArtistMode && !isSearchMode && (
-        <div className="mb-6 flex items-center justify-between">
-          <div>
-            <h1 className="text-xl font-bold mb-1" style={{ color: 'var(--color-text-primary)' }}>
-              {t('artistSongs', { artist: `${decodeURIComponent(artistNameParam)}${artistRoleParam ? ` (${artistRoleParam})` : ''}` })}
-            </h1>
-            <p className="text-sm" style={{ color: 'var(--color-text-muted)' }}>
-              {searchLoading ? t('searching') : t('resultCount', { count: totalCount.toLocaleString() })}
-            </p>
-          </div>
-        </div>
-      )}
-
-
-
-      {!isSearchMode && !isArtistMode && !hasSearched && (
-        <div
-          className="sticky z-20 pb-2 pt-3 -mx-4 sm:-mx-6 lg:-mx-8 px-4 sm:px-6 lg:px-8 mb-4"
-          style={{ top: 'var(--header-height)', background: 'var(--color-bg-primary)' }}
-        >
+    // A click that opens a song also records where the feed was (for Back).
+    <div className="w-full px-3 pb-6 sm:px-4 lg:px-6" onClickCapture={recordScrollPosition}>
+      <div className="sticky top-[calc(var(--header-height,56px)_+_var(--selection-bar-height,0px))] z-[var(--z-sticky,20)] -mx-3 bg-yt-bg px-3 py-3 sm:-mx-4 sm:px-4 lg:-mx-6 lg:px-6">
         <CategoryChips
-            chips={CATEGORIES.map(chip => ({
-              ...chip,
-              label: t(CATEGORY_LABELS[asHomeCategoryId(chip.id)]),
-            }))}
-            activeChip={activeCategory}
-            onPrefetch={(id) => {
-              if (id === 'recommended' || !CATEGORIES.some(category => category.id === id)) return;
-              void loadPrefetchableHomeSongs(asHomeCategoryId(id) as PrefetchableHomeCategoryId, 0, 'background');
-            }}
-            onSelect={(id) => {
-              const nextCategory = asHomeCategoryId(id);
-              if (nextCategory === activeCategory) return;
-              restoredRecommendedEntryRef.current = false;
-              clearHomeFeedSnapshot(location.key);
-              firstHomePaintRecordedRef.current = false;
-              pendingHomePaintRef.current = null;
-              setStartupSongs([]);
-              setActiveCategory(nextCategory);
-            }}
-          />
+          chips={visibleCategories}
+          activeChip={activeCategory}
+          onPrefetch={(id) => {
+            if (id === 'recommended' || !CATEGORIES.some(category => category.id === id)) return;
+            void loadPrefetchableHomeSongs(asHomeCategoryId(id) as PrefetchableHomeCategoryId, 0, 'background');
+          }}
+          onSelect={selectCategory}
+        />
+      </div>
+
+      {relaxationDetail && (
+        <div className="mb-3 flex min-h-8 flex-wrap items-center gap-x-1 text-xs leading-4 text-yt-text-secondary">
+          <span>{getDiscoveryRelaxationShortLabel(language)}</span>
+          <InfoTip label={ts('詳細')}>{relaxationDetail}</InfoTip>
+          <Button variant="text" size="sm" onClick={() => openSettings('filter')}>
+            {ts('設定')}
+          </Button>
         </div>
       )}
 
-      {hasSearched && searchError && (
-        <p className="mb-4 text-sm" role="alert" style={{ color: 'var(--color-error)' }}>
-          {searchError}
-        </p>
-      )}
+      <div className={relaxationDetail ? undefined : 'mt-3'}>
+        <VideoGrid
+          songs={displaySongs}
+          loading={homeLoading}
+          visibilityIntent="discovery"
+          emptyState={emptyState}
+          showRanks={RANKED_CATEGORIES.has(activeCategory)}
+          recommendationReasons={activeCategory === 'recommended' || activeCategory === 'ranking' || activeCategory === 'trending'
+            ? recommendationReasons
+            : undefined}
+          alwaysShowReasons={activeCategory === 'ranking'}
+          exposureSurface={activeCategory === 'recommended' ? 'home-recommended' : 'home-discovery'}
+        />
+      </div>
 
-      {relaxationMessage && (
-        <p
-          className="mb-4 rounded-lg border px-3 py-2 text-sm"
-          role="status"
-          style={{ borderColor: 'var(--color-border)', color: 'var(--color-text-secondary)', background: 'var(--color-surface)' }}
-        >
-          {relaxationMessage}
-        </p>
-      )}
-
-      <VideoGrid
-        songs={displaySongs}
-        loading={hasSearched ? searchLoading : homeLoading}
-        visibilityIntent={hasSearched ? 'search' : 'discovery'}
-        emptyMessage={(hasSearched
-          ? isGlobalSongFilterActive(globalFilterSettings)
-          : isDiscoveryFilterActive(globalFilterSettings))
-          ? t('noSongsMatchFilters')
-          : undefined}
-        recommendationReasons={!isSearchMode && !isArtistMode && !hasSearched && (activeCategory === 'recommended' || activeCategory === 'ranking' || activeCategory === 'trending')
-          ? recommendationReasons
-          : undefined}
-        alwaysShowReasons={!isSearchMode && !isArtistMode && !hasSearched && activeCategory === 'ranking'}
-        exposureSurface={!isSearchMode && !isArtistMode && !hasSearched
-          ? activeCategory === 'recommended' ? 'home-recommended' : 'home-discovery'
-          : undefined}
-      />
-
-      <div ref={sentinelRef} className="h-8 mt-6 flex items-center justify-center">
-        {(hasSearched ? searchLoading : homeLoading) && displaySongs.length > 0 && (
-          <div
-            className="w-6 h-6 rounded-full border-2 animate-spin"
-            style={{ borderColor: 'var(--color-accent-cyan)', borderTopColor: 'transparent' }}
-          />
+      <div ref={sentinelRef} className="mt-6 flex min-h-8 items-center justify-center text-yt-text-secondary">
+        {homeLoading && displaySongs.length > 0 && <SpinnerIcon />}
+        {loadError && !homeLoading && displaySongs.length > 0 && (
+          <InlineNotice tone="error" className="w-full max-w-md" action={{ label: ts('再試行'), onClick: retryFeed }}>
+            {ts('読み込めませんでした')}
+          </InlineNotice>
         )}
       </div>
     </div>

@@ -141,8 +141,8 @@ async function startAndOpenMiniPlayer(page) {
     const owner = JSON.parse(localStorage.getItem('diva-playback-owner-v1') || 'null');
     return owner?.type === 'claim' && owner.tabId === sessionStorage.getItem('diva-playback-tab-v1');
   });
-  await page.waitForSelector('[aria-label="DIVA Player home"]', { visible: true });
-  await page.click('[aria-label="DIVA Player home"]');
+  await page.waitForSelector('header [aria-label="DIVA Player ホーム"]', { visible: true });
+  await page.click('header [aria-label="DIVA Player ホーム"]');
   await page.waitForSelector('.global-mini-player', { visible: true });
 }
 

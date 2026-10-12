@@ -54,6 +54,17 @@ try {
       await request.respond({ contentType: 'application/json', body: JSON.stringify({ 900009: { youtubeViews: 0, nicoViews: 0 } }) });
       return;
     }
+    // Song lookups through the data API: serve the fixture so a live backend (which has a real song
+    // with this id) cannot replace its name.
+    if (url.includes('/backend-api/api/songs/details?ids=') || url.includes('/backend-api/api/songs/batch?ids=')) {
+      const ids = (new URL(url).searchParams.get('ids') ?? '').split(',').map(Number);
+      await request.respond({
+        contentType: 'application/json',
+        headers: { 'access-control-allow-origin': '*' },
+        body: JSON.stringify({ items: ids.includes(song.id) ? [song] : [] }),
+      });
+      return;
+    }
     if (url === 'https://www.youtube.com/iframe_api') {
       await request.respond({
         contentType: 'application/javascript',
@@ -65,8 +76,12 @@ try {
   });
 
   await page.goto(new URL('watch?v=900009&autoplay=0', baseUrl), { waitUntil: 'domcontentloaded', timeout: 60_000 });
-  await page.waitForSelector('[aria-label="好みではない・今後表示しない"]', { visible: true });
-  await page.$eval('[aria-label="好みではない・今後表示しない"]', button => button.click());
+  // 表示しない is a pill of the watch page's action bar (the bar has no ⋮).
+  await page.waitForFunction(() => [...document.querySelectorAll('[data-testid="watch-action-bar"] button')]
+    .some(button => button.textContent?.trim() === '表示しない'), { timeout: 30_000 });
+  await page.$$eval('[data-testid="watch-action-bar"] button', buttons => {
+    buttons.find(button => button.textContent?.trim() === '表示しない')?.click();
+  });
   await page.waitForFunction(() => {
     const persisted = JSON.parse(localStorage.getItem('diva-hidden-songs') || 'null');
     return persisted?.state?.hiddenSongs?.['900009']?.song?.name === 'Hidden song fixture';

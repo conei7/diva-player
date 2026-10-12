@@ -35,6 +35,34 @@ export function sortPlaylistsForDisplay(
   });
 }
 
+/**
+ * The four orders offered by the library's 並べ替え menu. They map onto the stored
+ * sortKey × sortOrder pair, whose shape stays as it is.
+ */
+export type PlaylistLibrarySort = 'recent' | 'oldest' | 'name' | 'songs';
+
+export const PLAYLIST_LIBRARY_SORTS: readonly PlaylistLibrarySort[] = ['recent', 'oldest', 'name', 'songs'];
+
+export function getPlaylistLibrarySort(preferences: Pick<PlaylistListPreferences, 'sortKey' | 'sortOrder'>): PlaylistLibrarySort {
+  if (preferences.sortKey === 'name') return 'name';
+  if (preferences.sortKey === 'songCount') return 'songs';
+  return preferences.sortOrder === 'asc' ? 'oldest' : 'recent';
+}
+
+export function withPlaylistLibrarySort(preferences: PlaylistListPreferences, sort: PlaylistLibrarySort): PlaylistListPreferences {
+  switch (sort) {
+    case 'oldest':
+      return { ...preferences, sortKey: 'updatedAt', sortOrder: 'asc' };
+    case 'name':
+      return { ...preferences, sortKey: 'name', sortOrder: 'asc' };
+    case 'songs':
+      return { ...preferences, sortKey: 'songCount', sortOrder: 'desc' };
+    case 'recent':
+    default:
+      return { ...preferences, sortKey: 'updatedAt', sortOrder: 'desc' };
+  }
+}
+
 export function normalizePlaylistListPreferences(value: unknown): PlaylistListPreferences {
   if (!value || typeof value !== 'object') return DEFAULT_PLAYLIST_LIST_PREFERENCES;
   const candidate = value as Partial<PlaylistListPreferences>;

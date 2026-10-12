@@ -32,3 +32,26 @@ export function formatRelativeDate(date: string | undefined, now = Date.now(), l
 export function formatSongRelativeDate(song: Song, now = Date.now(), language: 'ja' | 'en' = 'ja'): string | null {
   return formatRelativeDate(getSongPublishedAt(song), now, language);
 }
+
+const MINUTE_MS = 60 * 1000;
+const HOUR_MS = 60 * MINUTE_MS;
+
+/**
+ * Relative time of an event such as a play or an addition:
+ * たった今 / {n}分前 / {n}時間前, then the same day/week/month/year steps as formatRelativeDate.
+ * Future timestamps count as "just now"; invalid ones return ''.
+ */
+export function formatRelativeTime(timestamp: number, now = Date.now(), language: 'ja' | 'en' = 'ja'): string {
+  if (!Number.isFinite(timestamp) || !Number.isFinite(now)) return '';
+  const elapsed = Math.max(0, now - timestamp);
+  if (elapsed < MINUTE_MS) return language === 'en' ? 'just now' : 'たった今';
+  if (elapsed < HOUR_MS) {
+    const minutes = Math.floor(elapsed / MINUTE_MS);
+    return language === 'en' ? `${minutes} min ago` : `${minutes}分前`;
+  }
+  if (elapsed < DAY_MS) {
+    const hours = Math.floor(elapsed / HOUR_MS);
+    return language === 'en' ? `${hours} hr ago` : `${hours}時間前`;
+  }
+  return formatRelativeDate(new Date(timestamp).toISOString(), now, language) ?? '';
+}

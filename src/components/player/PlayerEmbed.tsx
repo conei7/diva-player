@@ -1,5 +1,6 @@
 /// <reference types="@types/youtube" />
-import { useEffect, useRef, useCallback, useLayoutEffect } from 'react';
+import { Component, lazy, Suspense, useEffect, useRef, useCallback, useLayoutEffect } from 'react';
+import type { ErrorInfo, ReactNode } from 'react';
 import { usePlayerStore } from '../../stores/playerStore';
 import { useProgressStore } from '../../stores/progressStore';
 import {
@@ -24,9 +25,8 @@ import {
 } from '../../services/nicoPlayerSync';
 import { getPlaybackRecoveryCheckDelayMs, hasReachedPlaybackEnd } from '../../services/playbackEndRecovery';
 import { getSafeWakePosition } from '../../services/playbackWakeRecovery';
-import SoundCloudEmbed from './SoundCloudEmbed';
-import BilibiliEmbed from './BilibiliEmbed';
 import { useTranslate } from '../../i18n';
+import { isVolumeHeldByMute } from './playerMute';
 
 /**
  * PlayerEmbed - YouTube / ニコニコ / SoundCloud / Bilibili 埋め込みプレイヤー
@@ -36,7 +36,46 @@ import { useTranslate } from '../../i18n';
  * ニコニコ: connector protocolで再生状態・音量・進捗を同期。
  * SoundCloud: Widget APIで再生状態・音量・進捗を同期。
  * Bilibili: 公式iframeとネイティブ操作を使用。
+ * 音量の報告（YouTube のポーリング・ニコニコのメッセージ）は、M のミュート中とその直後は反映しない（playerMute.ts）。
  */
+
+// SoundCloud and Bilibili videos are rare: their players are downloaded only when one of them is
+// chosen, outside the initial JavaScript (DESIGN_SPEC §1-12). YouTube and Niconico stay here.
+const SoundCloudEmbed = lazy(() => import('./SoundCloudEmbed'));
+const BilibiliEmbed = lazy(() => import('./BilibiliEmbed'));
+
+/** The black frame shown while the SoundCloud / Bilibili player downloads, or when it could not. */
+const LAZY_EMBED_FALLBACK = <div className="h-full w-full bg-black" />;
+
+/** Recorded in playerStore.error when that player could not be downloaded. Internal text (never shown). */
+const LAZY_EMBED_FAILED = '動画プレイヤーを読み込めませんでした';
+let lazyEmbedFailures = 0;
+
+/**
+ * A SoundCloud / Bilibili player that could not be downloaded (offline, a new deploy) or that broke
+ * counts as a failed video, so GlobalPlayer's failure toast says what happened. The first failure
+ * moves on like any failed video; later ones only pause, so a queue of such songs cannot spin.
+ */
+class LazyEmbedBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+  state = { failed: false };
+
+  static getDerivedStateFromError(): { failed: boolean } {
+    return { failed: true };
+  }
+
+  componentDidCatch(error: Error, errorInfo: ErrorInfo): void {
+    console.error('DIVA Player embedded player failed', error, errorInfo);
+    const player = usePlayerStore.getState();
+    player.setError(LAZY_EMBED_FAILED);
+    lazyEmbedFailures += 1;
+    if (lazyEmbedFailures === 1) player.tryNextPV();
+    else player.pause();
+  }
+
+  render() {
+    return this.state.failed ? LAZY_EMBED_FALLBACK : this.props.children;
+  }
+}
 
 // YouTube IFrame API の型
 declare global {
@@ -50,13 +89,23 @@ declare global {
 }
 
 /**
+ * Recorded in playerStore.error before a failed Niconico PV hands over to tryNextPV, like the other
+ * embeds do, so GlobalPlayer can tell the user what happened. Internal text (never shown).
+ */
+const NICO_PLAYBACK_FAILED = 'ニコニコ動画の再生を開始できませんでした';
+
+/**
  * NicoEmbed - ニコニコ動画専用コンポーネント
  *
  * embed.nicovideo.jp の postMessage API でプログレス同期を試み、
  * 失敗した場合はタイマーベースのフォールバックで経過時間を推定する。
  */
 function NicoEmbed({ pvId, playbackSequence, name, duration: songDuration, isPlaying }: { pvId: string; playbackSequence: number; name?: string; duration?: number; isPlaying: boolean }) {
-  const { volume, setVolume, setIsPlaying, next, markPVHealthy, tryNextPV } = usePlayerStore();
+  const { volume, setVolume, setIsPlaying, next, markPVHealthy, setError } = usePlayerStore();
+  const tryNextPV = useCallback(() => {
+    setError(NICO_PLAYBACK_FAILED);
+    usePlayerStore.getState().tryNextPV();
+  }, [setError]);
   const markCurrentPVHealthy = useCallback(() => {
     const pv = usePlayerStore.getState().currentPV;
     if (pv) markPVHealthy(pv);
@@ -318,7 +367,7 @@ function NicoEmbed({ pvId, playbackSequence, name, duration: songDuration, isPla
           break;
         }
         case 'progress': {
-          if (message.volume !== undefined && usePlayerStore.getState().volume !== message.volume) {
+          if (message.volume !== undefined && usePlayerStore.getState().volume !== message.volume && !isVolumeHeldByMute()) {
             setVolume(message.volume);
           }
           // App seeks already update the tracker in applySeek. Delayed playback
@@ -344,7 +393,7 @@ function NicoEmbed({ pvId, playbackSequence, name, duration: songDuration, isPla
           break;
         }
         case 'volume':
-          if (usePlayerStore.getState().volume !== message.volume) setVolume(message.volume);
+          if (usePlayerStore.getState().volume !== message.volume && !isVolumeHeldByMute()) setVolume(message.volume);
           break;
         case 'playing':
           // A late iframe event must not undo an app pause or a remote claim.
@@ -525,7 +574,8 @@ export default function PlayerEmbed() {
         const playerVolume = player.getVolume?.();
         if (typeof playerVolume !== 'number' || !Number.isFinite(playerVolume)) return;
         const nextVolume = Math.round(Math.max(0, Math.min(100, playerVolume)));
-        if (usePlayerStore.getState().volume !== nextVolume) {
+        // getVolume() still returns the old volume for a few milliseconds after a change.
+        if (usePlayerStore.getState().volume !== nextVolume && !isVolumeHeldByMute()) {
           setVolume(nextVolume);
         }
       } catch {
@@ -831,6 +881,14 @@ export default function PlayerEmbed() {
                   }
                   desired.started = true;
                   youtubePauseRequestedAtRef.current = null;
+                  // A seek requested while this video was still loading (サビ発掘 jumps to the
+                  // chorus right after choosing a song) would have been undone by the load.
+                  const pendingSeek = usePlayerStore.getState().seekTarget;
+                  if (pendingSeek !== null) {
+                    event.target.seekTo?.(pendingSeek, true);
+                    useProgressStore.getState().setProgress(pendingSeek);
+                    usePlayerStore.getState().clearSeekTarget();
+                  }
                   if (!playbackState.isPlaying) {
                     ownership?.claim(playbackState.currentSong?.id ?? null);
                   }
@@ -1052,9 +1110,12 @@ export default function PlayerEmbed() {
     }
   }, [volume, currentPV]);
 
-  // シーク: seekTarget が設定されたらシーク実行してクリア
+  // シーク: seekTarget が設定されたらシーク実行してクリア。読み込み中の動画へのシークは
+  // 読み込みで打ち消されるので、その動画の再生が始まった時（onStateChange の PLAYING）に行う。
   useEffect(() => {
     if (seekTarget === null || !ytPlayerRef.current || !currentPV || currentPV.service !== 'Youtube') return;
+    const desired = youtubeDesiredVideoRef.current;
+    if (desired && desired.pvId === currentPV.pvId && !desired.started) return;
     try {
       ytPlayerRef.current.seekTo?.(seekTarget, true);
       setProgress(seekTarget);
@@ -1072,11 +1133,16 @@ export default function PlayerEmbed() {
       {currentPV?.service === 'NicoNicoDouga' && (
         <NicoEmbed key={`${currentPV.pvId}:${playbackSequence}`} pvId={currentPV.pvId} playbackSequence={playbackSequence} name={currentPV.name} duration={currentSong?.lengthSeconds} isPlaying={isPlaying} />
       )}
-      {currentPV?.service === 'SoundCloud' && (
-        <SoundCloudEmbed key={`${currentPV.pvId}:${playbackSequence}`} pv={currentPV} isPlaying={isPlaying} />
-      )}
-      {currentPV?.service === 'Bilibili' && (
-        <BilibiliEmbed key={`${currentPV.pvId}:${playbackSequence}`} pv={currentPV} isPlaying={isPlaying} duration={currentSong?.lengthSeconds} />
+      {(currentPV?.service === 'SoundCloud' || currentPV?.service === 'Bilibili') && (
+        // Only these two players wait for their code; the YouTube container and the Niconico
+        // iframe above are outside this Suspense boundary and never hidden by it.
+        <LazyEmbedBoundary key={`${currentPV.service}:${currentPV.pvId}:${playbackSequence}`}>
+          <Suspense fallback={LAZY_EMBED_FALLBACK}>
+            {currentPV.service === 'SoundCloud'
+              ? <SoundCloudEmbed pv={currentPV} isPlaying={isPlaying} />
+              : <BilibiliEmbed pv={currentPV} isPlaying={isPlaying} duration={currentSong?.lengthSeconds} />}
+          </Suspense>
+        </LazyEmbedBoundary>
       )}
     </>
   );

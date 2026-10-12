@@ -1,54 +1,102 @@
-import { lazy, Suspense, useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useLayoutEffect, useState } from 'react';
 import { Outlet, useLocation } from 'react-router';
 import TopNav from './TopNav';
-import Sidebar from './Sidebar';
+import Sidebar, { type GuideMode } from './Sidebar';
+import BottomNav from './BottomNav';
+import TopLoadingBar from './TopLoadingBar';
+import PageSkeleton from './PageSkeleton';
+import RouteErrorBoundary, { DeferredBoundary, OverlayErrorBoundary } from './RouteErrorBoundary';
 import { useUiStore } from '../../stores/uiStore';
 import { useSelectionStore } from '../../stores/selectionStore';
-import BackendStatusNotice from './BackendStatusNotice';
 import { usePlayerStore } from '../../stores/playerStore';
 import { useYouTubePlaylistSync } from '../../hooks/useYouTubePlaylistSync';
+import { GUIDE_EXPANDED_MEDIA_QUERY, MOBILE_MEDIA_QUERY, useMediaQuery } from '../../hooks/useMediaQuery';
+import { isWatchPath } from '../../utils/routes';
+import { preloadMainRoutesWhenIdle } from '../../routes/routeLoaders';
 import {
   RECOMMENDATION_DEBUG_STORAGE_KEY,
   useRecommendationDebugStore,
 } from '../../stores/recommendationDebugStore';
 
-const HistoryDrawer = lazy(() => import('../player/HistoryDrawer'));
+// The connection band only shows when something is wrong; its checks start right after the first paint.
+const BackendStatusNotice = lazy(() => import('./BackendStatusNotice'));
 const QueueDrawer = lazy(() => import('../player/QueueDrawer'));
 const SongDetailsModal = lazy(() => import('../player/SongDetailsModal'));
 const SaveToPlaylistModal = lazy(() => import('../playlist/SaveToPlaylistModal').then(module => ({
   default: module.SaveToPlaylistModal,
 })));
 const SelectionFAB = lazy(() => import('../search/SelectionFAB'));
+const SettingsModal = lazy(() => import('../settings/SettingsModal'));
 const RecommendationDebugPanel = lazy(() => import('../debug/RecommendationDebugPanel'));
 
+function closeQueueDrawer() {
+  const player = usePlayerStore.getState();
+  if (player.queueDrawerOpen) player.toggleQueueDrawer();
+}
+
 /**
- * メインレイアウト (YouTube風)
- *
- * TopNav (固定ヘッダー) + Sidebar (左) + メインコンテンツ
- *
- * WatchPage (/watch) ではサイドバーを非表示にし、全幅レイアウトを使用。
- * 再生中は GlobalPlayer が WatchPage に重なるか、右下にフローティングします。
+ * The app frame (DESIGN_SPEC §6.1.1): top bar, connection band, guide (expanded 240px from
+ * 1312px, mini 72px from 640px, none on phones and on the song page), drawer, bottom nav on
+ * phones, and the page in <main>. `<html data-guide>` / `data-bottom-nav` set the layout
+ * variables (--guide-offset, --bottom-nav-height) used by main, the band and fixed bars.
+ * GlobalPlayer lives outside (App) so page changes never touch the playing iframe.
  */
 export default function Layout() {
   const location = useLocation();
-  const { sidebarExpanded } = useUiStore();
+  const isWatch = isWatchPath(location.pathname);
+  const isMobile = useMediaQuery(MOBILE_MEDIA_QUERY);
+  const isWideGuide = useMediaQuery(GUIDE_EXPANDED_MEDIA_QUERY);
+  const sidebarExpanded = useUiStore(s => s.sidebarExpanded);
+  const drawerOpen = useUiStore(s => s.mobileDrawerOpen);
+  const closeMobileDrawer = useUiStore(s => s.closeMobileDrawer);
+  const finishNavigation = useUiStore(s => s.finishNavigation);
   const visibleSongs = useSelectionStore(s => s.visibleSongs);
   const isSelectionMode = useSelectionStore(s => s.isSelectionMode);
-  const historyDrawerOpen = usePlayerStore(s => s.historyDrawerOpen);
+  const exitSelectionMode = useSelectionStore(s => s.exitSelectionMode);
   const queueDrawerOpen = usePlayerStore(s => s.queueDrawerOpen);
   const detailSong = useUiStore(s => s.detailSong);
+  const closeSongDetail = useUiStore(s => s.closeSongDetail);
   const saveToPlaylistSongs = useUiStore(s => s.saveToPlaylistSongs);
+  const closeSaveToPlaylist = useUiStore(s => s.closeSaveToPlaylist);
+  const settingsDialog = useUiStore(s => s.settingsDialog);
+  const closeSettings = useUiStore(s => s.closeSettings);
   const debugEnabled = useRecommendationDebugStore(s => s.enabled);
   const setDebugEnabled = useRecommendationDebugStore(s => s.setEnabled);
-  const [mountedOverlays, setMountedOverlays] = useState({ history: false, queue: false });
+  const [queueDrawerMounted, setQueueDrawerMounted] = useState(false);
   useYouTubePlaylistSync();
 
-  const isWatchPage = location.pathname === '/watch';
+  const guideMode: GuideMode = isWatch || isMobile ? 'none' : isWideGuide && sidebarExpanded ? 'expanded' : 'mini';
+  // The drawer exists wherever the expanded guide is not shown next to the page.
+  const drawerAvailable = isWatch || !isWideGuide;
+  const showBottomNav = isMobile && !isWatch;
   const isLocalSoundMapPreview = import.meta.env.DEV
     && location.pathname === '/sound-map'
     && ['demo', 'pilot'].some(parameter => new URLSearchParams(location.search).get(parameter) === '1');
-  // /watch ではサイドバーを非表示
-  const showSidebar = !isWatchPage;
+
+  useLayoutEffect(() => {
+    const root = document.documentElement;
+    root.dataset.guide = guideMode;
+    if (showBottomNav) root.dataset.bottomNav = 'true';
+    else delete root.dataset.bottomNav;
+  }, [guideMode, showBottomNav]);
+
+  useEffect(() => () => {
+    const root = document.documentElement;
+    delete root.dataset.guide;
+    delete root.dataset.bottomNav;
+  }, []);
+
+  // A new page has rendered: stop the loading bar, close the drawer.
+  useEffect(() => {
+    finishNavigation();
+    closeMobileDrawer();
+  }, [location.key, finishNavigation, closeMobileDrawer]);
+
+  useEffect(() => {
+    if (!drawerAvailable && drawerOpen) closeMobileDrawer();
+  }, [closeMobileDrawer, drawerAvailable, drawerOpen]);
+
+  useEffect(() => preloadMainRoutesWhenIdle(), []);
 
   useEffect(() => {
     const requested = new URLSearchParams(location.search).get('recDebug');
@@ -58,58 +106,93 @@ export default function Layout() {
   }, [location.search, setDebugEnabled]);
 
   useEffect(() => {
-    if (!historyDrawerOpen && !queueDrawerOpen) return;
-    setMountedOverlays(current => ({
-      history: current.history || historyDrawerOpen,
-      queue: current.queue || queueDrawerOpen,
-    }));
-  }, [historyDrawerOpen, queueDrawerOpen]);
+    if (queueDrawerOpen) setQueueDrawerMounted(true);
+  }, [queueDrawerOpen]);
 
   return (
-    <div className="min-h-screen flex flex-col" style={{ background: 'var(--color-bg-primary)' }}>
+    <div className="flex min-h-dvh flex-col bg-yt-bg text-yt-text">
+      <TopLoadingBar />
       <TopNav />
       <div
         data-testid="backend-status-layout"
-        style={{ paddingTop: 'var(--header-height)' }}
+        className="pt-[calc(var(--header-height)_+_var(--selection-bar-height,0px))] ml-[var(--guide-offset)]"
       >
-        {!isLocalSoundMapPreview && <BackendStatusNotice />}
+        {!isLocalSoundMapPreview && (
+          <DeferredBoundary>
+            <Suspense fallback={null}>
+              <BackendStatusNotice />
+            </Suspense>
+          </DeferredBoundary>
+        )}
       </div>
-      <Sidebar />
+      <Sidebar guideMode={guideMode} drawerAvailable={drawerAvailable} isMobile={isMobile} />
 
-      {/* メインコンテンツ */}
-      <main
-        className="flex-1 transition-all duration-300"
-        style={{
-          marginLeft: showSidebar
-            ? `max(0px, ${sidebarExpanded ? 'var(--sidebar-width)' : 'var(--sidebar-collapsed-width)'})`
-            : '0px',
-          overflowX: 'clip',
-        }}
-      >
-        {/* lg以上でサイドバーがある場合のマージン適用 */}
-        <style>{`
-          @media (max-width: 1023px) {
-            main { margin-left: 0 !important; }
-          }
-        `}</style>
-        {/*
-          Lazy page modules may suspend on their first visit. Keep that boundary
-          inside the route content so GlobalPlayer never falls back with the page
-          and its iframe remains visible and mounted during navigation.
-        */}
-        <Suspense fallback={<div className="min-h-screen bg-zinc-950" aria-busy="true" />}>
-          <Outlet />
+      {/*
+        The selection bar sits under the top bar, above the page: keep it before <main> in the DOM
+        so its actions come right after the top bar in the Tab order (not after the whole list).
+        Each lazy overlay has its own Suspense boundary: one loading for the first time must not
+        hide the others (React hides the shown siblings of a suspending child).
+      */}
+      {isSelectionMode && (
+        <Suspense fallback={null}>
+          <OverlayErrorBoundary onError={exitSelectionMode}>
+            <SelectionFAB visibleSongs={visibleSongs} />
+          </OverlayErrorBoundary>
         </Suspense>
+      )}
+
+      <main
+        className="min-w-0 flex-1 ml-[var(--guide-offset)] pb-[calc(var(--floating-player-clearance,0px)_+_var(--bottom-nav-height,0px))] [overflow-x:clip]"
+      >
+        <RouteErrorBoundary resetKey={`${location.pathname}${location.search}`}>
+          {/*
+            Lazy page modules may suspend on their first visit. Keep that boundary inside the
+            route content so GlobalPlayer never falls back with the page and its iframe remains
+            visible and mounted during navigation.
+          */}
+          <Suspense fallback={<PageSkeleton />}>
+            <Outlet />
+          </Suspense>
+        </RouteErrorBoundary>
       </main>
 
-      <Suspense fallback={null}>
-        {mountedOverlays.history && <HistoryDrawer />}
-        {mountedOverlays.queue && <QueueDrawer />}
-        {detailSong && <SongDetailsModal />}
-        {saveToPlaylistSongs && <SaveToPlaylistModal />}
-        {isSelectionMode && <SelectionFAB visibleSongs={visibleSongs} />}
-        {debugEnabled && <RecommendationDebugPanel />}
-      </Suspense>
+      {showBottomNav && <BottomNav />}
+
+      {queueDrawerMounted && (
+        <Suspense fallback={null}>
+          <OverlayErrorBoundary onError={closeQueueDrawer} resetKey={queueDrawerOpen}>
+            <QueueDrawer />
+          </OverlayErrorBoundary>
+        </Suspense>
+      )}
+      {detailSong && (
+        <Suspense fallback={null}>
+          <OverlayErrorBoundary onError={closeSongDetail} resetKey={detailSong}>
+            <SongDetailsModal />
+          </OverlayErrorBoundary>
+        </Suspense>
+      )}
+      {saveToPlaylistSongs && (
+        <Suspense fallback={null}>
+          <OverlayErrorBoundary onError={closeSaveToPlaylist} resetKey={saveToPlaylistSongs}>
+            <SaveToPlaylistModal />
+          </OverlayErrorBoundary>
+        </Suspense>
+      )}
+      {settingsDialog.open && (
+        <Suspense fallback={null}>
+          <OverlayErrorBoundary onError={closeSettings}>
+            <SettingsModal isOpen initialTab={settingsDialog.tab} onClose={closeSettings} />
+          </OverlayErrorBoundary>
+        </Suspense>
+      )}
+      {debugEnabled && (
+        <Suspense fallback={null}>
+          <OverlayErrorBoundary onError={() => setDebugEnabled(false)}>
+            <RecommendationDebugPanel />
+          </OverlayErrorBoundary>
+        </Suspense>
+      )}
     </div>
   );
 }

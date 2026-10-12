@@ -1,130 +1,31 @@
-import { useState } from 'react';
 import type { Song } from '../../types/vocadb';
-import { useTranslate } from '../../i18n';
-import { Link } from 'react-router';
-import FavoriteProducerButton from './FavoriteProducerButton';
-import { getSongProducerEntries } from '../../utils/songArtists';
-
+import { getFeaturedVocalistNames } from '../../utils/songMeta';
+import ActionBar from './ActionBar';
+import OwnerRow from './OwnerRow';
 
 /**
- * VideoInfo - 曲名、ボカロP名、ボーカリストなどのメタデータ
- *
- * 洗練されたレイアウト: タイトル → P名(コンパクト) → feat. 歌手名
- * P名が多い場合は折りたたんで表示
+ * Title (with 「feat. vocalists」 right after it), producer row and actions under the video.
+ * `watch-video-info` (title + producers) and `watch-action-bar` stay siblings: the info wrapper uses
+ * `display: contents`, so from 640px the actions sit next to the producers when both fit on one
+ * line and wrap below them otherwise. Under 640px everything is stacked.
  */
-interface VideoInfoProps {
-  song: Song;
-}
-
-const PRODUCER_COLLAPSE_THRESHOLD = 3;
-
-export default function VideoInfo({ song }: VideoInfoProps) {
-  const t = useTranslate();
-  const [showAllProducers, setShowAllProducers] = useState(false);
-
-  // P名を抽出
-  const producers = getSongProducerEntries(song);
-
-  // ボーカリスト名を抽出
-  const vocalists = song.artists
-    ?.filter(a => a.categories === 'Vocalist')
-    .map(a => a.name || a.artist?.name || '')
-    .filter(Boolean) || [];
-
-  const visibleProducers = showAllProducers || producers.length <= PRODUCER_COLLAPSE_THRESHOLD
-    ? producers
-    : producers.slice(0, PRODUCER_COLLAPSE_THRESHOLD);
-  const hiddenCount = producers.length - visibleProducers.length;
-
+export default function VideoInfo({ song }: { song: Song }) {
+  const vocalists = getFeaturedVocalistNames(song);
   return (
-    <div data-testid="watch-video-info" className="mt-3">
-      {/* 曲名 */}
-      <h1 className="text-xl font-bold leading-tight" style={{ color: 'var(--color-text-primary)' }}>
-        {song.name}
-      </h1>
-
-      {/* アーティスト行: P名 + 曲タイプ + feat. ボーカリスト */}
-      <div id="watch-producer-list" className="mt-1.5 flex flex-wrap items-center gap-x-1 gap-y-1 text-sm">
-        {/* プロデューサー */}
-        {producers.length > 0 ? (
-          <>
-            {visibleProducers.map((producer, index) => (
-              <span key={`${producer.id ?? producer.name}-${index}`} className="inline-flex items-center">
-                {producer.href ? (
-                  <Link
-                    to={producer.href}
-                    className="font-medium hover:underline"
-                    style={{ color: 'var(--color-text-primary)' }}
-                    aria-label={t('showProducerSongs', { producer: producer.name })}
-                  >
-                    {producer.name}
-                  </Link>
-                ) : (
-                  <span className="font-medium" style={{ color: 'var(--color-text-primary)' }}>
-                    {producer.name}
-                  </span>
-                )}
-                {producer.id && (
-                  <FavoriteProducerButton
-                    id={producer.id}
-                    name={producer.name}
-                    artistType={producer.artistType}
-                  />
-                )}
-                {index < visibleProducers.length - 1 && (
-                  <span style={{ color: 'var(--color-text-muted)', margin: '0 2px' }}>,</span>
-                )}
+    <div className="mt-3 min-w-0 max-sm:px-3">
+      <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:gap-x-6">
+        <div data-testid="watch-video-info" className="contents">
+          <div className="line-clamp-2 break-words text-xl leading-7 sm:basis-full max-sm:text-lg max-sm:leading-[26px]">
+            <h1 className="inline font-bold text-yt-text">{song.name}</h1>
+            {vocalists.length > 0 && (
+              <span className="ml-2 text-base font-normal text-yt-text-secondary max-sm:text-sm">
+                feat. {vocalists.join(', ')}
               </span>
-            ))}
-            {hiddenCount > 0 && (
-              <button
-                type="button"
-                className="min-h-10 rounded px-2 text-xs transition-colors hover:bg-white/10 sm:min-h-7"
-                style={{ color: 'var(--color-text-secondary)' }}
-                onClick={() => setShowAllProducers(true)}
-                aria-expanded="false"
-                aria-controls="watch-producer-list"
-                aria-label={t('producerShow', { count: hiddenCount })}
-              >
-                {t('producerShowShort', { count: hiddenCount })}
-              </button>
             )}
-            {showAllProducers && producers.length > PRODUCER_COLLAPSE_THRESHOLD && (
-              <button
-                type="button"
-                className="min-h-10 rounded px-2 text-xs transition-colors hover:bg-white/10 sm:min-h-7"
-                style={{ color: 'var(--color-text-secondary)' }}
-                onClick={() => setShowAllProducers(false)}
-                aria-expanded="true"
-                aria-controls="watch-producer-list"
-                aria-label={t('producerCollapse')}
-              >
-                {t('collapse')}
-              </button>
-            )}
-          </>
-        ) : (
-          <span className="font-medium" style={{ color: 'var(--color-text-primary)' }}>
-            {song.artistString}
-          </span>
-        )}
-
-        {/* 曲タイプバッジ */}
-        {song.songType !== 'Original' && song.songType !== 'Unspecified' && (
-          <span
-            className="rounded-full px-2 py-0.5 text-[10px] font-medium"
-            style={{ background: 'rgba(139, 92, 246, 0.15)', color: 'var(--color-accent-purple)' }}
-          >
-            {song.songType}
-          </span>
-        )}
-
-        {/* ボーカリスト */}
-        {vocalists.length > 0 && (
-          <span style={{ color: 'var(--color-text-secondary)' }}>
-            feat. {vocalists.join(', ')}
-          </span>
-        )}
+          </div>
+          <OwnerRow song={song} />
+        </div>
+        <ActionBar song={song} />
       </div>
     </div>
   );

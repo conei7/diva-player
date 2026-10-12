@@ -214,6 +214,7 @@ export function useAutoQueue({
     minYoutubeViews: state.minYoutubeViews,
     minNicoViews: state.minNicoViews,
     excludedSongTypes: state.excludedSongTypes,
+    excludeSelfCovers: state.excludeSelfCovers,
     vocalistFilters: state.vocalistFilters,
     vocalistMatchMode: state.vocalistMatchMode,
     cooldownHours: state.cooldownHours,

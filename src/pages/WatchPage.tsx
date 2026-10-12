@@ -1,13 +1,15 @@
 import { useEffect, useState, useRef, useCallback, useLayoutEffect } from 'react';
 import { useShallow } from 'zustand/react/shallow';
-import { useSearchParams, Navigate, useNavigate } from 'react-router';
+import { useSearchParams, Navigate, useNavigate, Link } from 'react-router';
 import VideoPlayer from '../components/watch/VideoPlayer';
+import NoVideoFrame from '../components/watch/NoVideoFrame';
 import VideoInfo from '../components/watch/VideoInfo';
-import ActionBar from '../components/watch/ActionBar';
 import Description from '../components/watch/Description';
 import FilterChips, { type RecTabKey } from '../components/watch/FilterChips';
-import RecommendationList from '../components/watch/RecommendationList';
-import { usePlayerStore } from '../stores/playerStore';
+import RecommendationList, { type RecommendationListEmpty } from '../components/watch/RecommendationList';
+import PlaylistPanel from '../components/watch/PlaylistPanel';
+import { VIDEO_FRAME_CLASS } from '../components/watch/videoFrame';
+import { getPlayablePV, usePlayerStore } from '../stores/playerStore';
 import { useRatingStore } from '../stores/ratingStore';
 import { useHistoryStore } from '../stores/historyStore';
 import { usePlaylistStore } from '../stores/playlistStore';
@@ -22,7 +24,6 @@ import {
 } from '../api/vocadb';
 import type { Song } from '../types/vocadb';
 import { useSelectionStore } from '../stores/selectionStore';
-import QueueSidebar from '../components/player/QueueSidebar';
 import { rerankRecommendationCandidatesDetailed } from '../utils/recommendationReranking';
 import { useRecommendationDebugStore } from '../stores/recommendationDebugStore';
 import { createRankingSeed } from '../utils/rankingRandomization';
@@ -30,9 +31,11 @@ import { rerankDisplayedSongs, useRecommendationExposureStore } from '../stores/
 import { useGlobalFilterStore } from '../stores/globalFilterStore';
 import { useFavoriteProducerStore } from '../stores/favoriteProducerStore';
 import { useUiStore } from '../stores/uiStore';
+import { useLanguageStore } from '../stores/languageStore';
 import {
   filterDiscoverySourcePage,
   getDiscoveryRelaxationMessage,
+  getDiscoveryRelaxationShortLabel,
   isDiscoveryFilterActive,
   requiresExternalViewCounts,
   type DiscoveryRelaxedCondition,
@@ -40,73 +43,22 @@ import {
 import { excludeHiddenSongs, useHiddenSongStore } from '../stores/hiddenSongStore';
 import { getPlaybackOwnership } from '../services/playbackOwnership';
 import { isCurrentWatchSongRequest, watchUrlPlaybackTarget } from '../utils/watchNavigation';
-import { useTranslate } from '../i18n';
+import { useTranslate, useTranslateSourceText } from '../i18n';
 import { getProgressiveWindow } from '../utils/progressiveWindow';
-import { getQueueDisplayWindow } from '../utils/queueUtils';
-
-function WatchQueue() {
-  const t = useTranslate();
-  const queue = usePlayerStore(s => s.queue);
-  const queueIndex = usePlayerStore(s => s.queueIndex);
-  const queueTitle = usePlayerStore(s => s.queueTitle);
-  const { items: displayedQueue, startIndex: displayedQueueStartIndex } = getQueueDisplayWindow(queue, queueIndex);
-  const openSaveToPlaylist = useUiStore(s => s.openSaveToPlaylist);
-  const [expanded, setExpanded] = useState(false);
-
-  if (queue.length <= 1) return null;
-  const nextSong = queue[queueIndex + 1];
-
-  return (
-    <div className="mb-4 rounded-xl overflow-hidden" style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)' }}>
-      <div className="flex items-center transition-colors hover:bg-white/5">
-        <button
-          className="flex min-w-0 flex-1 items-center justify-between px-4 py-3"
-          onClick={() => setExpanded(!expanded)}
-          aria-expanded={expanded}
-        >
-          <div className="min-w-0 text-left">
-            <h3 className="truncate text-sm font-semibold max-w-[180px] sm:max-w-[280px]" style={{ color: 'var(--color-text-primary)' }}>
-              {t('nextLabel')}: {nextSong?.name || t('finished')}
-            </h3>
-            <p className="mt-0.5 text-xs" style={{ color: 'var(--color-text-muted)' }}>{queueTitle} - {t('queuePosition', { current: queueIndex - displayedQueueStartIndex + 1, total: displayedQueue.length })}</p>
-          </div>
-          <svg
-            width="24" height="24" viewBox="0 0 24 24" fill="currentColor"
-            className={`ml-2 shrink-0 transition-transform duration-200 ${expanded ? 'rotate-180' : ''}`}
-          >
-            <path d="M7 10l5 5 5-5z" />
-          </svg>
-        </button>
-        <button
-          type="button"
-          className="btn-ghost mr-2 shrink-0 rounded-lg p-2"
-          onClick={() => openSaveToPlaylist(queue, { source: 'queue', queueIndex })}
-          title={t('saveQueueToPlaylist')}
-          aria-label={t('saveQueueToPlaylist')}
-          style={{ color: 'var(--color-accent-cyan)' }}
-        >
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M12 5v14M5 12h14" />
-            <path d="M4 4h16v16H4z" opacity=".35" />
-          </svg>
-        </button>
-      </div>
-      
-      {expanded && (
-        <div className="border-t" style={{ borderColor: 'var(--color-border)', height: 'min(400px, 50dvh)' }}>
-          <QueueSidebar hideHeader={true} />
-        </div>
-      )}
-    </div>
-  );
-}
+import { getProducerNames } from '../utils/songMeta';
+import { watchPath } from '../utils/routes';
+import { MOBILE_MEDIA_QUERY, useMediaQuery } from '../hooks/useMediaQuery';
+import Button, { buttonClassName } from '../components/ui/Button';
+import { InfoTip } from '../components/ui/InfoTip';
+import { SkeletonBlock, SkeletonListRow } from '../components/ui/Skeleton';
+import { ErrorIcon } from '../components/ui/icons';
+import { cx } from '../components/ui/overlay';
 
 /**
- * WatchPage - YouTube風の再生画面 (/watch?v=楽曲ID)
+ * WatchPage - YouTube風の再生ページ (/watch?v=楽曲ID)
  *
- * 2ペイン構成:
- * - 左: VideoPlayer + VideoInfo + ActionBar + Description
- * - 右: FilterChips + RecommendationList
+ * 1024px 以上は2カラム（左: 動画・タイトル・操作・概要 / 右: 再生中リスト・チップ・関連一覧）。
+ * それ未満は1カラムで、再生中リストは動画のすぐ下に出す（動画より上には高さの変わる物を置かない）。
  *
  * URLの ?v= パラメータ変更で、ページリロードなしに
  * メインの IFrame とメタデータだけがスムーズに切り替わる。
@@ -125,6 +77,16 @@ interface TabState {
 const PAGE_SIZE = 40;
 const FIRST_WATCH_PAGE_SIZE = 12;
 const APPEND_WATCH_PAGE_SIZE = 28;
+const DESKTOP_MEDIA_QUERY = '(min-width: 1024px)';
+
+function emptyTabs(): Record<RecTabKey, TabState> {
+  return {
+    producer: { items: [], relaxedConditions: [], loading: false, hasMore: true, page: 0 },
+    related: { items: [], relaxedConditions: [], loading: false, hasMore: true, page: 0 },
+    recommended: { items: [], relaxedConditions: [], loading: false, hasMore: true, page: 0 },
+    deep: { items: [], relaxedConditions: [], loading: false, hasMore: true, page: 0 },
+  };
+}
 
 export type WatchPageDocumentTitleState =
   | { songId: number; status: 'loading' | 'error' }
@@ -135,7 +97,11 @@ interface WatchPageProps {
 }
 
 export default function WatchPage({ onDocumentTitleStateChange }: WatchPageProps = {}) {
-  const t = useTranslate();
+  const t = useTranslateSourceText();
+  const tk = useTranslate();
+  const language = useLanguageStore(state => state.language);
+  const isDesktop = useMediaQuery(DESKTOP_MEDIA_QUERY);
+  const isMobile = useMediaQuery(MOBILE_MEDIA_QUERY);
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const songIdStr = searchParams.get('v');
@@ -147,7 +113,7 @@ export default function WatchPage({ onDocumentTitleStateChange }: WatchPageProps
   const shouldAutoplay = searchParams.get('autoplay') !== '0'
     || getPlaybackOwnership().getState() !== 'remote';
 
-  const { currentSong, setQueue, setRootSeed, resume } = usePlayerStore();
+  const { currentSong, setQueue, setRootSeed, resume, pause } = usePlayerStore();
   const currentSongId = currentSong?.id;
   const { ratings } = useRatingStore();
   const { entries, hasHydrated } = useHistoryStore();
@@ -155,11 +121,13 @@ export default function WatchPage({ onDocumentTitleStateChange }: WatchPageProps
   const implicitFeedback = useImplicitFeedbackStore(state => state.feedback);
   const favoriteProducers = useFavoriteProducerStore(state => state.producers);
   const hiddenSongs = useHiddenSongStore(state => state.hiddenSongs);
+  const openSettings = useUiStore(state => state.openSettings);
   const globalFilterSettings = useGlobalFilterStore(useShallow(state => ({
     enabled: state.enabled,
     minYoutubeViews: state.minYoutubeViews,
     minNicoViews: state.minNicoViews,
     excludedSongTypes: state.excludedSongTypes,
+    excludeSelfCovers: state.excludeSelfCovers,
     vocalistFilters: state.vocalistFilters,
     vocalistMatchMode: state.vocalistMatchMode,
     cooldownHours: state.cooldownHours,
@@ -177,16 +145,12 @@ export default function WatchPage({ onDocumentTitleStateChange }: WatchPageProps
 
   const [song, setSong] = useState<Song | null>(null);
   const [loadingSong, setLoadingSong] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [retryToken, setRetryToken] = useState(0);
   const setVisibleSongs = useSelectionStore(s => s.setVisibleSongs);
 
   const [activeTab, setActiveTab] = useState<RecTabKey>('recommended');
-  const [tabs, setTabs] = useState<Record<RecTabKey, TabState>>({
-    producer: { items: [], relaxedConditions: [], loading: false, hasMore: true, page: 0 },
-    related: { items: [], relaxedConditions: [], loading: false, hasMore: true, page: 0 },
-    recommended: { items: [], relaxedConditions: [], loading: false, hasMore: true, page: 0 },
-    deep: { items: [], relaxedConditions: [], loading: false, hasMore: true, page: 0 },
-  });
+  const [tabs, setTabs] = useState<Record<RecTabKey, TabState>>(emptyTabs);
 
   const fetchedForRef = useRef<number | null>(null);
   const songRequestGenerationRef = useRef(0);
@@ -195,6 +159,9 @@ export default function WatchPage({ onDocumentTitleStateChange }: WatchPageProps
   const rankingSeedRef = useRef(createRankingSeed());
   // URLからのロード中はナビゲーションエフェクトをブロックするフラグ
   const loadingFromUrlRef = useRef(false);
+  // A song without a playable video is shown without touching the queue. Until the playing
+  // song changes, the URL must not be synced back to it.
+  const unplayableRef = useRef<{ songId: number; playingSongId: number | null } | null>(null);
   const seenSets = useRef<Record<RecTabKey, Set<number>>>({
     producer: new Set(),
     related: new Set(),
@@ -222,18 +189,14 @@ export default function WatchPage({ onDocumentTitleStateChange }: WatchPageProps
     randomOffsetRef.current = Math.floor(Math.random() * 20);
     rankingSeedRef.current = createRankingSeed();
     loadingFromUrlRef.current = true;
+    unplayableRef.current = null;
 
     setLoadingSong(true);
-    setError(null);
+    setLoadFailed(false);
     setSong(null);
 
     // タブリセット
-    setTabs({
-      producer: { items: [], relaxedConditions: [], loading: false, hasMore: true, page: 0 },
-      related: { items: [], relaxedConditions: [], loading: false, hasMore: true, page: 0 },
-      recommended: { items: [], relaxedConditions: [], loading: false, hasMore: true, page: 0 },
-      deep: { items: [], relaxedConditions: [], loading: false, hasMore: true, page: 0 },
-    });
+    setTabs(emptyTabs());
     seenSets.current = {
       producer: new Set([songId]),
       related: new Set([songId]),
@@ -246,45 +209,49 @@ export default function WatchPage({ onDocumentTitleStateChange }: WatchPageProps
         // A slower response for the previous URL must never replace the song
         // selected by a newer navigation.
         if (!isCurrentWatchSongRequest(requestGeneration, songRequestGenerationRef.current, songId, fetchedForRef.current)) return;
+        const player = usePlayerStore.getState();
+        if (getPlayablePV(loadedSong)) {
+          // 再生開始（現在の曲と違う場合のみ）
+          if (player.currentSong?.id !== loadedSong.id) {
+            setRootSeed(loadedSong); // ユーザーが能動的に選んだ曲をRoot Seedに
+            setQueue([loadedSong], 0, shouldAutoplay);
+          } else if (shouldAutoplay) {
+            resume();
+          }
+        } else {
+          // No playable video: keep the queue and the playing song, just stop the sound.
+          unplayableRef.current = { songId: loadedSong.id, playingSongId: player.currentSong?.id ?? null };
+          if (player.isPlaying) pause();
+        }
         loadingFromUrlRef.current = false;
         setSong(loadedSong);
         setLoadingSong(false);
         onDocumentTitleStateChange?.({ songId, status: 'loaded', song: loadedSong });
 
-        // 再生開始（現在の曲と違う場合のみ）
-        if (currentSong?.id !== loadedSong.id) {
-          setRootSeed(loadedSong); // ユーザーが能動的に選んだ曲をRoot Seedに
-          setQueue([loadedSong], 0, shouldAutoplay);
-        } else if (shouldAutoplay) {
-          resume();
-        }
-
         // The active tab loads first. Other recommendation modes load when selected.
       })
-      .catch((err) => {
+      .catch(() => {
         if (!isCurrentWatchSongRequest(requestGeneration, songRequestGenerationRef.current, songId, fetchedForRef.current)) return;
         loadingFromUrlRef.current = false;
-        setError(err.message || t('watchLoadError'));
+        setLoadFailed(true);
         setLoadingSong(false);
         onDocumentTitleStateChange?.({ songId, status: 'error' });
       });
     return () => {
       requestAbortController.abort();
       if (songRequestAbortRef.current === requestAbortController) songRequestAbortRef.current = null;
+      // StrictMode (dev) runs effects twice. Forget the request here so the second run
+      // starts a fresh one instead of leaving the recommendation tabs without a signal.
+      if (fetchedForRef.current === songId) fetchedForRef.current = null;
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [songId]);
+  }, [songId, retryToken]);
 
   // --- フェッチ関数 ---
 
   useEffect(() => {
     if (!song || !songId || loadingFromUrlRef.current) return;
-    setTabs({
-      producer: { items: [], relaxedConditions: [], loading: false, hasMore: true, page: 0 },
-      related: { items: [], relaxedConditions: [], loading: false, hasMore: true, page: 0 },
-      recommended: { items: [], relaxedConditions: [], loading: false, hasMore: true, page: 0 },
-      deep: { items: [], relaxedConditions: [], loading: false, hasMore: true, page: 0 },
-    });
+    setTabs(emptyTabs());
     seenSets.current = {
       producer: new Set([song.id]),
       related: new Set([song.id]),
@@ -334,7 +301,7 @@ export default function WatchPage({ onDocumentTitleStateChange }: WatchPageProps
       }));
     } catch {
       if (signal.aborted || fetchedForRef.current !== s.id) return;
-      setTabs(prev => ({ ...prev, producer: { ...prev.producer, loading: false, hasMore: false } }));
+      setTabs(prev => ({ ...prev, producer: { ...prev.producer, loading: false, hasMore: false, loadError: true } }));
     }
   }, [filterDiscoverySongs, globalFilterSettings]);
 
@@ -461,7 +428,7 @@ export default function WatchPage({ onDocumentTitleStateChange }: WatchPageProps
       }));
     } catch {
       if (signal.aborted || fetchedForRef.current !== s.id) return;
-      setTabs(prev => ({ ...prev, recommended: { ...prev.recommended, loading: false, hasMore: false } }));
+      setTabs(prev => ({ ...prev, recommended: { ...prev.recommended, loading: false, hasMore: false, loadError: true } }));
     }
   }, [entries, favoriteProducers, globalFilterSettings, implicitFeedback, playlists, ratings, filterDiscoverySongs]);
 
@@ -498,7 +465,7 @@ export default function WatchPage({ onDocumentTitleStateChange }: WatchPageProps
       }));
     } catch {
       if (signal.aborted || fetchedForRef.current !== s.id) return;
-      setTabs(prev => ({ ...prev, deep: { ...prev.deep, loading: false, hasMore: false } }));
+      setTabs(prev => ({ ...prev, deep: { ...prev.deep, loading: false, hasMore: false, loadError: true } }));
     }
   }, [filterDiscoverySongs, globalFilterSettings]);
 
@@ -537,6 +504,11 @@ export default function WatchPage({ onDocumentTitleStateChange }: WatchPageProps
     }
   }, [song, tabs, activeTab, fetchProducer, fetchRelated, fetchRecommended, fetchDeep, globalFilterSettings.cooldownHours, hasHydrated]);
 
+  // Retry a recommendation tab that failed to load (its first page or a later one).
+  const retryTab = useCallback(() => {
+    setTabs(prev => ({ ...prev, [activeTab]: { ...prev[activeTab], loadError: false, hasMore: true } }));
+  }, [activeTab]);
+
   // 無限スクロール
   useEffect(() => {
     const el = sentinelRef.current;
@@ -551,9 +523,7 @@ export default function WatchPage({ onDocumentTitleStateChange }: WatchPageProps
 
   const currentTab = tabs[activeTab];
   const displayTabItems = currentTab.items;
-  const relaxationMessage = getDiscoveryRelaxationMessage(currentTab.relaxedConditions);
-
-
+  const relaxationMessage = getDiscoveryRelaxationMessage(currentTab.relaxedConditions, language);
 
   // 現在のタブの表示曲をselectionStoreに登録（FABの全選択・フィルター用）
   useEffect(() => {
@@ -563,123 +533,120 @@ export default function WatchPage({ onDocumentTitleStateChange }: WatchPageProps
   // 動画が自動再生で次に進んだ場合などにURLを同期する
   // loadingFromUrlRef が true の間 (URL変更後のフェッチ中) はナビゲートしない
   useEffect(() => {
+    const unplayable = unplayableRef.current;
+    if (
+      unplayable
+      && unplayable.songId === songId
+      && song?.id === songId
+      && (currentSongId ?? null) === unplayable.playingSongId
+    ) return;
     const target = watchUrlPlaybackTarget({
       requestedSongId: songId,
       displayedSongId: song?.id ?? null,
       playingSongId: currentSongId ?? null,
       loadingFromUrl: loadingFromUrlRef.current,
     });
-    if (target) navigate(`/watch?v=${target}`);
+    if (target) navigate(watchPath(target));
   }, [currentSongId, song?.id, songId, navigate]);
 
   // songId がない場合はホームへ
   if (!songId) return <Navigate to="/" replace />;
 
-  const counts: Record<RecTabKey, number> = {
-    producer: tabs.producer.items.length,
-    related: tabs.related.items.length,
-    recommended: tabs.recommended.items.length,
-    deep: tabs.deep.items.length,
-  };
+  const playable = song ? Boolean(getPlayablePV(song)) : true;
+  const producerName = song ? getProducerNames(song)[0] : undefined;
+
+  const empty: RecommendationListEmpty = currentTab.loadError
+    ? { title: t('読み込めませんでした'), action: { label: t('再試行'), onClick: retryTab } }
+    : isDiscoveryFilterActive(globalFilterSettings)
+      ? { title: t('フィルターに合う曲がありません'), action: { label: t('フィルターを変更'), onClick: () => openSettings('filter') } }
+      : activeTab === 'related'
+        ? { title: t('関連曲が見つかりません'), action: { label: t('おすすめを見る'), onClick: () => setActiveTab('recommended') } }
+        : { title: tk('noSongsFound') };
+
+  if (loadFailed) {
+    return (
+      <div className="flex flex-col items-center px-4 py-16 text-center">
+        <span aria-hidden="true" className="mb-4 flex text-yt-text-disabled [&>svg]:size-16"><ErrorIcon /></span>
+        <p className="m-0 text-base font-medium leading-6 text-yt-text">{t('曲を読み込めませんでした')}</p>
+        <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
+          <Button variant="primary" onClick={() => setRetryToken(value => value + 1)}>{t('再試行')}</Button>
+          {/* Same words as the app-wide error screen (RouteErrorBoundary): a verb, not 「ホームへ」. */}
+          <Link to="/" className={buttonClassName({ variant: 'tonal' })}>{t('ホームに戻る')}</Link>
+        </div>
+      </div>
+    );
+  }
+
+  const videoArea = loadingSong || !song
+    ? <div aria-hidden="true" className={cx(VIDEO_FRAME_CLASS, 'bg-yt-tonal-solid')} />
+    : playable ? <VideoPlayer /> : <NoVideoFrame song={song} />;
+
+  const relatedSection = (
+    <>
+      <FilterChips
+        activeTab={activeTab}
+        onTabChange={setActiveTab}
+        producerName={producerName}
+        sticky={isDesktop}
+        className="py-3 max-sm:px-3"
+      />
+      {relaxationMessage && (
+        <div className="mb-2 flex items-center gap-1 text-xs leading-[18px] text-yt-text-secondary max-sm:px-3">
+          <span>{getDiscoveryRelaxationShortLabel(language)}</span>
+          <InfoTip label={t('詳細')}>{relaxationMessage}</InfoTip>
+        </div>
+      )}
+      <div className="max-sm:px-3">
+        {song ? (
+          <RecommendationList
+            songs={displayTabItems}
+            loading={currentTab.loading || (!currentTab.loadError && currentTab.items.length === 0 && currentTab.hasMore)}
+            hasMore={currentTab.hasMore}
+            recommendationReasons={activeTab === 'recommended' ? currentTab.reasons : undefined}
+            exposureSurface={activeTab === 'producer' ? 'watch-producer' : activeTab === 'related' ? 'watch-related' : activeTab === 'recommended' ? 'watch-recommended' : 'watch-deep'}
+            empty={empty}
+            cards={isMobile}
+          />
+        ) : (
+          <div className="-mx-2">
+            {Array.from({ length: 6 }, (_, index) => <SkeletonListRow key={index} size="md" />)}
+          </div>
+        )}
+      </div>
+      {/* 無限スクロールセンチネル */}
+      <div ref={sentinelRef} className="mt-4 h-8" />
+    </>
+  );
 
   return (
-    <div className="w-full px-4 lg:px-6 py-4">
-      {/* ローディング */}
-      {loadingSong && (
-        <div className="flex flex-col lg:flex-row gap-6">
-          <div className="flex-1 min-w-0">
-            <div className="video-player-wrapper skeleton" style={{ borderRadius: '12px' }} />
-            <div className="mt-3 space-y-2">
-              <div className="h-6 w-3/4 rounded skeleton" />
-              <div className="h-4 w-1/2 rounded skeleton" />
-            </div>
-          </div>
-          <div className="lg:w-96 xl:w-[420px] flex-shrink-0 space-y-2">
-            {Array.from({ length: 6 }).map((_, i) => (
-              <div key={i} className="flex gap-2">
-                <div className="w-40 rounded-lg skeleton" style={{ aspectRatio: '16/9' }} />
-                <div className="flex-1 space-y-1.5">
-                  <div className="h-3.5 w-full rounded skeleton" />
-                  <div className="h-3 w-3/4 rounded skeleton" />
-                </div>
+    <div className="w-full pb-6 sm:px-4 sm:pt-4 lg:px-6 lg:pt-6">
+      <div className="flex flex-col gap-6 lg:flex-row max-sm:gap-0">
+        {/* ─── 左: 動画・タイトル・操作・概要 ─── */}
+        <div className="min-w-0 flex-1">
+          {videoArea}
+          {!isDesktop && <PlaylistPanel variant={isMobile ? 'sheet' : 'inline'} startCollapsed className="mt-3 max-sm:mt-0" />}
+          {song && !loadingSong ? (
+            <>
+              <VideoInfo song={song} />
+              <Description song={song} />
+            </>
+          ) : (
+            <div className="mt-3 space-y-3 max-sm:px-3" aria-hidden="true">
+              <SkeletonBlock className="h-7 w-3/4 rounded-badge" />
+              <div className="flex items-center gap-3">
+                <SkeletonBlock className="size-10 shrink-0 rounded-full" />
+                <SkeletonBlock className="h-5 w-40 rounded-badge" />
               </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* エラー */}
-      {error && (
-        <div className="flex flex-col items-center justify-center py-20 gap-4">
-          <svg width="48" height="48" viewBox="0 0 24 24" fill="currentColor" style={{ color: 'var(--color-error)', opacity: 0.5 }}>
-            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z" />
-          </svg>
-          <p className="text-base" style={{ color: 'var(--color-text-muted)' }}>{error}</p>
-        </div>
-      )}
-
-      {/* メインコンテンツ */}
-      {song && !loadingSong && (
-        <div className="flex flex-col lg:flex-row gap-6">
-
-          {/* ─── 左: メインプレイヤーエリア ─── */}
-          <div className="flex-1 min-w-0">
-            {/* YouTube Player */}
-            <VideoPlayer />
-
-            {/* タイトル + メタデータ */}
-            <VideoInfo song={song} />
-
-            {/* アクションバー (5段階星評価) */}
-            <ActionBar song={song} />
-
-            {/* 概要欄 */}
-            <Description song={song} />
-          </div>
-
-          {/* ─── 右: 推薦リスト ─── */}
-          <div className="lg:w-96 xl:w-[420px] flex-shrink-0">
-            
-            {/* キュー (ミックスリスト) */}
-            <WatchQueue />
-
-            {/* フィルターチップス */}
-            <div className="sticky z-30 pb-2 pt-2 -mx-2 px-2 bg-[#0f0f0f]" style={{ top: 'var(--header-height)' }}>
-              <FilterChips
-                activeTab={activeTab}
-                onTabChange={setActiveTab}
-                counts={counts}
-              />
             </div>
-
-            {/* 推薦リスト */}
-            {relaxationMessage && (
-              <p
-                className="mb-2 rounded-lg border px-3 py-2 text-xs"
-                role="status"
-                style={{ borderColor: 'var(--color-border)', color: 'var(--color-text-secondary)', background: 'var(--color-surface)' }}
-              >
-                {relaxationMessage}
-              </p>
-            )}
-            <RecommendationList
-              songs={displayTabItems}
-              loading={currentTab.loading}
-              hasMore={currentTab.hasMore}
-              recommendationReasons={activeTab === 'recommended' ? currentTab.reasons : undefined}
-              exposureSurface={activeTab === 'producer' ? 'watch-producer' : activeTab === 'related' ? 'watch-related' : activeTab === 'recommended' ? 'watch-recommended' : 'watch-deep'}
-              emptyMessage={isDiscoveryFilterActive(globalFilterSettings)
-                ? t('emptyRecommendationsWithFilters')
-                : activeTab === 'related'
-                  ? t(currentTab.loadError ? 'relatedSongsLoadFailed' : 'relatedSongsNoEvidence')
-                : undefined}
-            />
-
-            {/* 無限スクロールセンチネル */}
-            <div ref={sentinelRef} className="h-8 mt-4" />
-          </div>
+          )}
         </div>
-      )}
+
+        {/* ─── 右: 再生中リスト・チップ・関連一覧 ─── */}
+        <div className="w-full shrink-0 lg:w-[402px] min-[1440px]:w-[426px] max-sm:mt-3">
+          {isDesktop && <PlaylistPanel className="mb-3" />}
+          {relatedSection}
+        </div>
+      </div>
     </div>
   );
 }

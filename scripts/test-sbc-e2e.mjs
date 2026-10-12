@@ -42,13 +42,15 @@ async function waitForDownloadedJson(downloadDir) {
   throw new Error('The history export did not create a JSON file.');
 }
 
+// The history page runs at 1280px or wider here, where its actions are in the right column
+// (below 1024px they are in the header's ⋮ menu).
 async function importHistory(page, filePath) {
   const fileChooserPromise = page.waitForFileChooser();
-  await page.click('button[title="履歴バックアップを追加"]');
+  await page.click('[data-testid="history-actions"] [data-testid="history-backup-import"]');
   const fileChooser = await fileChooserPromise;
   await fileChooser.accept([filePath]);
   await page.waitForFunction(() =>
-    document.querySelector('[role="status"]')?.textContent?.includes('2 件を追加しました。') === true,
+    document.querySelector('[data-testid="toast-host"]')?.textContent?.includes('2件を追加しました') === true,
   );
 }
 
@@ -57,8 +59,8 @@ async function inspectPage(page) {
     title: document.title,
     searchInput: Boolean(document.querySelector('input[placeholder="ボカロP名や曲名で検索"]')),
     cards: document.querySelectorAll('a[href*="/watch?v="]').length,
-    warningVisible: [...document.querySelectorAll('[role="status"]')]
-      .some(element => element.textContent?.includes('SBCのデータサービスに接続できません')),
+    warningVisible: [...document.querySelectorAll('[role="status"], [role="alert"]')]
+      .some(element => element.textContent?.includes('いまは詳細検索を使えません')),
   }));
 }
 
@@ -72,7 +74,8 @@ async function main() {
   page.on('console', message => {
     if (message.type() === 'error') {
       const location = message.location();
-      if (location.url?.startsWith('https://i.ytimg.com/') && message.text().includes('404')) return;
+      // Thumbnails of deleted videos 404 on either YouTube image host; the UI falls back to the next candidate.
+      if (/^https:\/\/(?:i\.ytimg|img\.youtube)\.com\//.test(location.url ?? '') && message.text().includes('404')) return;
       const source = location.url ? ` (${location.url}:${location.lineNumber ?? 0})` : '';
       failures.push(`console error: ${message.text()}${source}`);
     }
@@ -134,12 +137,12 @@ async function main() {
       return selected;
     });
     assert(selectedSongIds.length === 2, 'The home page did not provide two selectable songs.');
-    await selectionPage.waitForFunction(() => document.querySelector('[data-testid="selection-fab"]')?.textContent?.includes('2 /') === true);
+    await selectionPage.waitForFunction(() => document.querySelector('[data-testid="selection-fab"]')?.textContent?.includes('2曲を選択中') === true);
 
     const addSelectedToQueue = async () => {
-      await selectionPage.click('button[title="アクション"]');
       const clicked = await selectionPage.evaluate(() => {
-        const button = [...document.querySelectorAll('button')]
+        const bar = document.querySelector('[data-testid="selection-fab"]');
+        const button = [...(bar?.querySelectorAll('button') ?? [])]
           .find(element => element.textContent?.includes('キューに追加'));
         button?.click();
         return Boolean(button);
@@ -193,28 +196,28 @@ async function main() {
     console.log(`PASS autoplay refill (${autoplay.queueLength} queued, ${autoplay.autoCount} auto, ${autoplay.reasonCount} reasons)`);
 
     await page.goto(`${baseUrl}history`, { waitUntil: 'networkidle2' });
-    await page.waitForSelector('h1');
+    await page.waitForSelector('main h1');
+    await page.waitForSelector('[data-testid="history-actions"] [data-testid="history-backup-import"]');
     const history = await page.evaluate(() => ({
-      heading: document.querySelector('h1')?.textContent?.trim(),
-      exportEnabled: !document.querySelector('button[title="履歴をJSONで保存"]')?.hasAttribute('disabled'),
-      importEnabled: !document.querySelector('button[title="履歴バックアップを追加"]')?.hasAttribute('disabled'),
-      statsVisible: Boolean(document.querySelector('[aria-label="視聴統計"]')),
+      heading: document.querySelector('main h1')?.textContent?.trim(),
+      importEnabled: document.querySelector('[data-testid="history-backup-import"]')?.hasAttribute('disabled') === false,
     }));
-    assert(history.heading === '視聴履歴', 'The history page heading was not rendered.');
-    assert(history.exportEnabled, 'The history export control is unavailable.');
+    assert(history.heading === '再生履歴', 'The history page heading was not rendered.');
     assert(history.importEnabled, 'The history import control is unavailable.');
-    assert(history.statsVisible, 'The history statistics region was not rendered.');
-    console.log('PASS history controls and statistics');
 
     const fixturePath = join(tempDir, 'history-fixture.json');
     const downloadDir = join(tempDir, 'downloads');
     await mkdir(downloadDir);
     await writeFile(fixturePath, JSON.stringify(createHistoryFixture()), 'utf8');
     await importHistory(page, fixturePath);
+    // Backup, CSV and the statistics appear once there is history.
+    await page.waitForSelector('[data-testid="history-actions"] [data-testid="history-backup-export"]:not([disabled])');
+    await page.waitForSelector('[aria-label="視聴統計"]');
+    console.log('PASS history controls and statistics');
 
     const cdp = await browser.target().createCDPSession();
     await cdp.send('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: downloadDir });
-    await page.click('button[title="履歴をJSONで保存"]');
+    await page.click('[data-testid="history-actions"] [data-testid="history-backup-export"]');
     const exportedPath = await waitForDownloadedJson(downloadDir);
     const exported = JSON.parse(await readFile(exportedPath, 'utf8'));
     assert(exported.kind === 'diva-player-history', 'The exported history file has an invalid kind.');
@@ -228,15 +231,29 @@ async function main() {
     try {
       const restorePage = await restoreContext.newPage();
       restorePage.setDefaultTimeout(PAGE_TIMEOUT_MS);
+      // The statistics are in the right column, which needs 1024px or more.
+      await restorePage.setViewport({ width: 1280, height: 800 });
       await restorePage.goto(`${baseUrl}history`, { waitUntil: 'networkidle2' });
-      await restorePage.waitForSelector('h1');
+      await restorePage.waitForSelector('main h1');
       await importHistory(restorePage, exportedPath);
       await restorePage.waitForFunction(() =>
-        document.querySelector('[aria-label="視聴統計"]')?.textContent?.replace(/\s/g, '').includes('開始回数2') === true,
+        document.querySelector('[aria-label="視聴統計"]')?.textContent?.replace(/\s/g, '').includes('再生開始2') === true,
       );
-      const restored = await restorePage.evaluate(() => ({
-        total: document.querySelector('main')?.textContent?.includes('2 件'),
-        starts: document.querySelector('[aria-label="視聴統計"]')?.textContent?.replace(/\s/g, '').includes('開始回数2'),
+      const restored = await restorePage.evaluate(async () => ({
+        // The page shows the count once (再生開始); the raw log must hold both restored events.
+        total: await new Promise(resolve => {
+          const request = indexedDB.open('diva-listening-history');
+          request.onerror = () => resolve(false);
+          request.onsuccess = () => {
+            const counting = request.result.transaction('plays', 'readonly').objectStore('plays').count();
+            counting.onerror = () => resolve(false);
+            counting.onsuccess = () => {
+              request.result.close();
+              resolve(counting.result === 2);
+            };
+          };
+        }),
+        starts: document.querySelector('[aria-label="視聴統計"]')?.textContent?.replace(/\s/g, '').includes('再生開始2'),
       }));
       assert(restored.total, 'The restored history count is not 2.');
       assert(restored.starts, 'The restored history statistics were not rebuilt.');

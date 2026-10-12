@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { PV } from '../types/vocadb';
-import { getSongThumbnailCandidates } from './songThumbnail';
+import { getSongThumbnailCandidates, getWideSongThumbnailCandidates } from './songThumbnail';
 
 function pv(overrides: Partial<PV> & Pick<PV, 'service' | 'pvId'>): PV {
   return {
@@ -47,5 +47,44 @@ describe('getSongThumbnailCandidates', () => {
         pv({ service: 'Youtube', pvId: 'too-short' }),
       ],
     })).toEqual(['https://images.example/song.jpg']);
+  });
+});
+
+describe('getWideSongThumbnailCandidates', () => {
+  it('puts the 16:9 YouTube images first and keeps the remaining candidates once', () => {
+    expect(getWideSongThumbnailCandidates({
+      thumbUrl: 'https://vocadb.example/song.jpg',
+      pvs: [
+        pv({ service: 'NicoNicoDouga', pvId: 'sm123', thumbUrl: 'https://nico.example/pv.jpg' }),
+        pv({ service: 'Youtube', pvId: 'abcdefghijk' }),
+      ],
+    })).toEqual([
+      'https://img.youtube.com/vi/abcdefghijk/mqdefault.jpg',
+      'https://img.youtube.com/vi/abcdefghijk/hqdefault.jpg',
+      'https://vocadb.example/song.jpg',
+      'https://nico.example/pv.jpg',
+    ]);
+  });
+
+  it('prefers the official YouTube PV and skips disabled ones', () => {
+    expect(getWideSongThumbnailCandidates({
+      pvs: [
+        pv({ service: 'Youtube', pvId: 'reupload111', pvType: 'Reprint' }),
+        pv({ service: 'Youtube', pvId: 'disabled111', disabled: true }),
+        pv({ service: 'Youtube', pvId: 'official111' }),
+      ],
+    })).toEqual([
+      'https://img.youtube.com/vi/official111/mqdefault.jpg',
+      'https://img.youtube.com/vi/official111/hqdefault.jpg',
+      'https://img.youtube.com/vi/reupload111/mqdefault.jpg',
+      'https://img.youtube.com/vi/reupload111/hqdefault.jpg',
+    ]);
+  });
+
+  it('falls back to the regular candidates when there is no YouTube PV', () => {
+    expect(getWideSongThumbnailCandidates({
+      thumbUrl: 'https://vocadb.example/song.jpg',
+      pvs: [pv({ service: 'NicoNicoDouga', pvId: 'sm1' })],
+    })).toEqual(['https://vocadb.example/song.jpg']);
   });
 });

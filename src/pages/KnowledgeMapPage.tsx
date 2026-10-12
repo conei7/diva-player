@@ -1,68 +1,57 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link } from 'react-router';
 import {
   fetchKnowledgeMap,
   type KnowledgeMapPlatform,
   type KnowledgeMapResponse,
   type PlatformKnowledgeMap,
 } from '../api/knowledgeMap';
+import { translateSourceText, useTranslateSourceText } from '../i18n';
 import { getPlayedSongIds } from '../services/historyDatabase';
-import { useRatingStore } from '../stores/ratingStore';
-import { buildKnowledgeMapItems, layoutKnowledgeMap, type KnowledgeMapRect } from '../utils/knowledgeMap';
-import { getRatedSongIds } from '../utils/ratedSongs';
 import { useLanguageStore } from '../stores/languageStore';
-import { useTranslateSourceText } from '../i18n';
+import { useRatingStore } from '../stores/ratingStore';
+import { showToast } from '../stores/toastStore';
+import { buildKnowledgeMapItems, capKnowledgeMapSongTiles, formatKnowledgePercent } from '../utils/knowledgeMap';
+import { getRatedSongIds } from '../utils/ratedSongs';
+import { formatCompactCount, serviceLabel } from '../utils/songMeta';
+import { Chip } from '../components/ui/Chip';
+import EmptyState from '../components/ui/EmptyState';
+import InfoTip from '../components/ui/InfoTip';
+import { PageHeader, PageShell } from '../components/ui/PageHeader';
+import { SkeletonBlock, SkeletonListRow } from '../components/ui/Skeleton';
+import { ErrorIcon } from '../components/ui/icons';
+import DiscoveryMixAction from '../components/discovery/DiscoveryMixAction';
+import KnowledgeRanking from '../components/discovery/KnowledgeRanking';
+import KnowledgeTreemap, { type KnowledgeViewMode } from '../components/discovery/KnowledgeTreemap';
+import { useSongsById } from '../components/discovery/discoverySongs';
+import { KNOWLEDGE_MAP_COLORS, KNOWN_SERVICE_COLOR } from '../components/discovery/mapColors';
 
-type ViewMode = 'all' | 'known' | 'unknown';
+const RANKING_SIZE = 8;
 
-function formatViews(value: number, language: 'ja' | 'en'): string {
-  const compactNumber = new Intl.NumberFormat(language === 'ja' ? 'ja-JP' : 'en', { notation: 'compact', maximumFractionDigits: 1 });
-  const formatted = compactNumber.format(Math.max(0, value));
-  return language === 'ja' ? `${formatted}回` : `${formatted} views`;
+function topTiles(data: PlatformKnowledgeMap | null, known: boolean): PlatformKnowledgeMap['tiles'] {
+  return data?.tiles
+    .filter(tile => tile.known === known)
+    .sort((left, right) => right.views - left.views)
+    .slice(0, RANKING_SIZE) ?? [];
 }
-
-function formatPercent(ratio: number): string {
-  const percent = Math.max(0, Math.min(1, ratio)) * 100;
-  return `${percent < 1 && percent > 0 ? percent.toFixed(2) : percent.toFixed(1)}%`;
-}
-
-function platformLabel(platform: KnowledgeMapPlatform): string {
-  return platform === 'youtube' ? 'YouTube' : 'ニコニコ';
-}
-
-function tileBackground(rect: KnowledgeMapRect, platform: KnowledgeMapPlatform, index: number): string {
-  if (rect.known) {
-    return platform === 'youtube'
-      ? `linear-gradient(145deg, hsl(${348 + index % 12} 78% 48%), hsl(${330 + index % 18} 65% 28%))`
-      : `linear-gradient(145deg, hsl(${174 + index % 16} 72% 42%), hsl(${205 + index % 16} 70% 24%))`;
-  }
-  return rect.aggregate
-    ? 'linear-gradient(145deg, rgba(55,65,81,.92), rgba(24,24,27,.98))'
-    : 'linear-gradient(145deg, rgba(82,82,91,.9), rgba(39,39,42,.98))';
-}
-
-const VIEW_MODES: { value: ViewMode; label: string }[] = [
-  { value: 'all', label: '全体' },
-  { value: 'known', label: '知っている曲' },
-  { value: 'unknown', label: 'まだ知らない曲' },
-];
 
 export default function KnowledgeMapPage() {
   const t = useTranslateSourceText();
+  const language = useLanguageStore(state => state.language);
   const ratings = useRatingStore(state => state.ratings);
   const [result, setResult] = useState<KnowledgeMapResponse | null>(null);
   const [platform, setPlatform] = useState<KnowledgeMapPlatform>('youtube');
-  const [viewMode, setViewMode] = useState<ViewMode>('all');
+  const [viewMode, setViewMode] = useState<KnowledgeViewMode>('all');
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+  const [failed, setFailed] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
   const ratedSongIds = useMemo(() => getRatedSongIds(ratings), [ratings]);
+  const hasResultRef = useRef(false);
 
   useEffect(() => {
     const controller = new AbortController();
     let active = true;
     setLoading(true);
-    setError('');
+    setFailed(false);
     getPlayedSongIds()
       .then(playedSongIds => {
         // Explicit ratings stay inside the API's 50,000-id limit even for an
@@ -71,10 +60,20 @@ export default function KnowledgeMapPage() {
         playedSongIds.forEach(id => knownSongIds.add(id));
         return fetchKnowledgeMap(knownSongIds, controller.signal);
       })
-      .then(next => { if (active) setResult(next); })
+      .then(next => {
+        if (!active) return;
+        hasResultRef.current = true;
+        setResult(next);
+      })
       .catch(requestError => {
-        if (active && requestError instanceof Error && requestError.name !== 'AbortError') {
-          setError('知ってる度を集計できませんでした。データAPIへの接続を確認して再試行してください。');
+        if (!active || !(requestError instanceof Error) || requestError.name === 'AbortError') return;
+        setFailed(true);
+        if (hasResultRef.current) {
+          // The previous map stays on screen.
+          const currentLanguage = useLanguageStore.getState().language;
+          showToast(translateSourceText(currentLanguage, '更新できませんでした'), {
+            action: { label: translateSourceText(currentLanguage, '再試行'), onAction: () => setReloadKey(key => key + 1) },
+          });
         }
       })
       .finally(() => { if (active) setLoading(false); });
@@ -85,298 +84,186 @@ export default function KnowledgeMapPage() {
   }, [ratedSongIds, reloadKey]);
 
   const data = result?.[platform] ?? null;
-  const allItems = useMemo(
-    () => data ? buildKnowledgeMapItems(data) : [],
-    [data],
-  );
-  const filteredItems = useMemo(
-    () => viewMode === 'all'
+  const allItems = useMemo(() => (data ? buildKnowledgeMapItems(data) : []), [data]);
+  const mapItems = useMemo(
+    () => capKnowledgeMapSongTiles(viewMode === 'all'
       ? allItems
-      : allItems.filter(item => viewMode === 'known' ? item.known : !item.known),
+      : allItems.filter(item => (viewMode === 'known' ? item.known : !item.known))),
     [allItems, viewMode],
   );
-  const rectangles = useMemo(
-    () => layoutKnowledgeMap(filteredItems),
-    [filteredItems],
+  const topUnknown = useMemo(() => topTiles(data, false), [data]);
+  const topKnown = useMemo(() => topTiles(data, true), [data]);
+  const songIds = useMemo(
+    () => [
+      ...topUnknown.map(tile => tile.songId),
+      ...topKnown.map(tile => tile.songId),
+      ...mapItems.flatMap(item => (item.songId === undefined ? [] : [item.songId])),
+    ],
+    [mapItems, topKnown, topUnknown],
   );
-  const topKnown = useMemo(
-    () => data?.tiles.filter(tile => tile.known).sort((left, right) => right.views - left.views).slice(0, 8) ?? [],
-    [data],
-  );
-  const topUnknown = useMemo(
-    () => data?.tiles.filter(tile => !tile.known).sort((left, right) => right.views - left.views).slice(0, 8) ?? [],
-    [data],
-  );
+  const songsById = useSongsById(songIds);
   const retry = useCallback(() => setReloadKey(key => key + 1), []);
 
+  const service = (value: KnowledgeMapPlatform) => serviceLabel(value === 'youtube' ? 'Youtube' : 'NicoNicoDouga', language);
+  const count = (value: number) => value.toLocaleString(language === 'ja' ? 'ja-JP' : 'en-US');
+  const showSkeleton = loading && !result;
+
   return (
-    <main className="mx-auto w-full max-w-7xl px-3 py-4 pb-32 sm:px-6 sm:py-6" data-testid="knowledge-map-page">
-      <div className="mb-5 max-w-3xl sm:mb-6">
-        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-300">Your Vocal Synth Map</p>
-          <h1 className="mt-1 text-2xl font-bold text-white sm:text-3xl">{t('知ってる度マップ')}</h1>
-        <p className="mt-2 text-sm leading-6 text-neutral-400">
-          {t('ボカロ曲全体の再生規模に対して、端末の再生履歴にある曲、または星1〜5で評価した曲が占める面積を表示します。YouTubeとニコニコは換算・合算せず、それぞれの再生数で集計します。')}
-        </p>
-      </div>
+    <PageShell className="pb-8">
+      <div data-testid="knowledge-map-page" aria-busy={showSkeleton || undefined}>
+        <PageHeader
+          title={t('知ってる度')}
+          meta={(
+            <span className="relative inline-flex h-5 items-center align-top sm:-top-0.5">
+              <InfoTip label={t('このマップについて')}>
+                <p className="m-0">{t('再生した曲と星をつけた曲を「知っている曲」として数えます')}</p>
+                <p className="m-0 mt-2">{t('面積は再生数です。YouTube とニコニコは別々に集計します')}</p>
+                <p className="m-0 mt-2">{t('送信するのは曲IDだけで、保存されません。星の数は送りません')}</p>
+                {result && (
+                  <p className="m-0 mt-2 text-xs leading-[18px] text-yt-text-secondary tabular-nums">
+                    {t('対象 {eligible}曲 · 一致 {matched} / {history}曲', {
+                      eligible: count(result.eligibleSongCount),
+                      matched: count(result.matchedHistorySongCount),
+                      history: count(result.historySongCount),
+                    })}
+                  </p>
+                )}
+              </InfoTip>
+            </span>
+          )}
+        />
 
-      <div className="mb-3 grid min-h-11 w-full grid-cols-2 rounded-xl border border-white/[0.08] bg-white/[0.03] p-1 sm:inline-flex sm:w-auto" role="group" aria-label={t('再生数のサービス')}>
-        {(['youtube', 'nico'] as const).map(value => (
-          <button
-            key={value}
-            type="button"
-            onClick={() => setPlatform(value)}
-            aria-pressed={platform === value}
-            className={`min-h-10 rounded-lg px-4 py-2 text-sm font-semibold transition sm:min-w-32 ${platform === value ? 'bg-white text-black' : 'text-neutral-400 hover:bg-white/[0.06] hover:text-white'}`}
-          >
-            {t(platformLabel(value))}
-          </button>
-        ))}
-      </div>
+        {failed && !result ? (
+          <div role="alert" className="rounded-card bg-yt-raised">
+            <EmptyState icon={<ErrorIcon />} title={t('知ってる度を読み込めませんでした')} action={{ label: t('再試行'), onClick: retry }} />
+          </div>
+        ) : showSkeleton || !data ? (
+          <KnowledgeMapSkeleton label={t('読み込み中…')} />
+        ) : (
+          <>
+            <section aria-label={t('知ってる度')} className="mb-6">
+              {data.knownSongCount === 0 ? (
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-3">
+                  <p className="m-0 text-base font-medium leading-6 text-yt-text">{t('まだ知っている曲がありません')}</p>
+                  <DiscoveryMixAction />
+                </div>
+              ) : (
+                <>
+                  <p className="m-0 text-4xl font-bold leading-[44px] text-yt-text sm:text-5xl sm:leading-[56px]">
+                    {formatKnowledgePercent(data.coverageRatio)}
+                  </p>
+                  <div
+                    aria-hidden="true"
+                    className="mt-3 h-1 w-full max-w-[360px] overflow-hidden rounded-full"
+                    style={{ backgroundColor: KNOWLEDGE_MAP_COLORS.meterTrack }}
+                  >
+                    <div
+                      className="h-full rounded-full"
+                      style={{
+                        width: `${Math.max(0, Math.min(1, data.coverageRatio)) * 100}%`,
+                        backgroundColor: KNOWN_SERVICE_COLOR[platform],
+                      }}
+                    />
+                  </div>
+                </>
+              )}
+              <p className="m-0 mt-3 text-sm leading-5 text-yt-text-secondary tabular-nums">
+                {t('{known} / {total}曲 · 再生数 {knownViews} / {totalViews}回', {
+                  known: count(data.knownSongCount),
+                  total: count(data.totalSongCount),
+                  knownViews: formatCompactCount(data.knownViews, language),
+                  totalViews: formatCompactCount(data.totalViews, language),
+                })}
+              </p>
+            </section>
 
-      <div className="mb-5 grid grid-cols-3 gap-1.5 sm:mb-6 sm:flex sm:flex-wrap sm:items-center" role="group" aria-label={t('マップ表示')}>
-        {VIEW_MODES.map(({ value, label }) => (
-          <button
-            key={value}
-            type="button"
-            onClick={() => setViewMode(value)}
-            aria-pressed={viewMode === value}
-            className={`min-h-10 rounded-lg px-1.5 py-1.5 text-xs font-medium leading-tight transition sm:min-h-0 sm:px-3 ${
-              viewMode === value
-                ? 'bg-white/[0.12] text-white ring-1 ring-white/20'
-                : 'text-neutral-500 hover:bg-white/[0.05] hover:text-neutral-300'
-            }`}
-          >
-            {t(label)}
-          </button>
-        ))}
-        {viewMode !== 'all' && (
-          <span className="col-span-3 mt-0.5 text-[11px] text-neutral-600 sm:col-auto sm:ml-2 sm:mt-0">
-            {t('マップをフィルター中 — タイルが拡大されています')}
-          </span>
+            <div className="mb-3 flex flex-wrap items-center gap-3">
+              <div role="group" aria-label={t('再生数のサービス')} className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:gap-3">
+                {(['youtube', 'nico'] as const).map(value => (
+                  <Chip
+                    key={value}
+                    selected={platform === value}
+                    onClick={() => setPlatform(value)}
+                    className="justify-center"
+                  >
+                    {service(value)}
+                  </Chip>
+                ))}
+              </div>
+              <span aria-hidden="true" className="hidden h-6 w-px bg-yt-divider sm:block" />
+              <div role="group" aria-label={t('マップ表示')} className="flex min-w-0 max-w-full gap-2 overflow-x-auto [scrollbar-width:none] sm:gap-3 [&::-webkit-scrollbar]:hidden">
+                <Chip selected={viewMode === 'all'} onClick={() => setViewMode('all')}>{t('すべて')}</Chip>
+                <Chip
+                  selected={viewMode === 'known'}
+                  onClick={() => setViewMode('known')}
+                  icon={<span className="block size-2.5 rounded-full" style={{ backgroundColor: KNOWN_SERVICE_COLOR[platform] }} />}
+                >
+                  {t('知っている曲')}
+                </Chip>
+                <Chip
+                  selected={viewMode === 'unknown'}
+                  onClick={() => setViewMode('unknown')}
+                  icon={<span className="block size-2.5 rounded-full border-[1.5px] border-current opacity-70" />}
+                >
+                  {t('まだ知らない曲')}
+                </Chip>
+              </div>
+            </div>
+
+            <KnowledgeTreemap
+              key={`${platform}-${viewMode}`}
+              platform={platform}
+              items={mapItems}
+              viewMode={viewMode}
+              songsById={songsById}
+              totalViews={data.totalViews}
+            />
+
+            <div className="mt-8 grid min-w-0 gap-8 xl:grid-cols-2 xl:gap-6">
+              <KnowledgeRanking
+                title={t('まだ知らない人気曲')}
+                headingId="knowledge-map-unknown-heading"
+                tiles={topUnknown}
+                empty={t('人気曲はすべて知っています')}
+                songsById={songsById}
+                playSource="discovery"
+              />
+              <KnowledgeRanking
+                title={t('知っている人気曲')}
+                headingId="knowledge-map-known-heading"
+                tiles={topKnown}
+                empty={t('まだありません')}
+                songsById={songsById}
+                playSource="manual"
+              />
+            </div>
+          </>
         )}
       </div>
-
-      {loading ? (
-        <div className="rounded-3xl border border-white/[0.06] bg-white/[0.03] py-24 text-center text-neutral-400" aria-busy="true">{t('再生履歴・評価と曲全体を集計しています…')}</div>
-      ) : error ? (
-        <div className="rounded-2xl border border-red-400/20 bg-red-400/10 p-6 text-red-100" role="alert">
-          <p>{t(error)}</p>
-          <button type="button" onClick={retry} className="mt-4 rounded-lg bg-white px-4 py-2 text-sm font-semibold text-black">{t('再試行')}</button>
-        </div>
-      ) : result && data ? (
-        <KnowledgeMapContent
-          result={result}
-          data={data}
-          platform={platform}
-          viewMode={viewMode}
-          rectangles={rectangles}
-          topKnown={topKnown}
-          topUnknown={topUnknown}
-        />
-      ) : null}
-    </main>
+    </PageShell>
   );
 }
 
-function KnowledgeMapContent({
-  result,
-  data,
-  platform,
-  viewMode,
-  rectangles,
-  topKnown,
-  topUnknown,
-}: {
-  result: KnowledgeMapResponse;
-  data: PlatformKnowledgeMap;
-  platform: KnowledgeMapPlatform;
-  viewMode: ViewMode;
-  rectangles: KnowledgeMapRect[];
-  topKnown: PlatformKnowledgeMap['tiles'];
-  topUnknown: PlatformKnowledgeMap['tiles'];
-}) {
-  const t = useTranslateSourceText();
-  const language = useLanguageStore(state => state.language);
-  const rectLabel = (rect: KnowledgeMapRect) => rect.aggregate ? t(rect.label) : rect.label;
-  const [hovered, setHovered] = useState<{ rect: KnowledgeMapRect; x: number; y: number } | null>(null);
-  const tooltipRef = useRef<HTMLDivElement>(null);
-
-  // Position tooltip directly via DOM to avoid per-pixel re-renders.
-  useEffect(() => {
-    if (!hovered) return;
-    const positionTooltip = (clientX: number, clientY: number) => {
-      const el = tooltipRef.current;
-      if (!el) return;
-      let left = clientX + 14;
-      let top = clientY + 14;
-      const rect = el.getBoundingClientRect();
-      if (left + rect.width > window.innerWidth - 8) left = clientX - rect.width - 8;
-      if (top + rect.height > window.innerHeight - 8) top = clientY - rect.height - 8;
-      left = Math.max(8, left);
-      top = Math.max(8, top);
-      el.style.left = `${left}px`;
-      el.style.top = `${top}px`;
-    };
-    positionTooltip(hovered.x, hovered.y);
-    const handleMouseMove = (e: MouseEvent) => positionTooltip(e.clientX, e.clientY);
-    document.addEventListener('mousemove', handleMouseMove, { passive: true });
-    return () => document.removeEventListener('mousemove', handleMouseMove);
-  }, [hovered]);
-
+function KnowledgeMapSkeleton({ label }: { label: string }) {
   return (
-    <>
-      <section className="mb-5 grid grid-cols-2 gap-3 lg:grid-cols-4" aria-label={`${t(platformLabel(platform))} ${t('知ってる度')}`}>
-        <Metric label={t('知ってる度')} value={formatPercent(data.coverageRatio)} accent />
-        <Metric label={t('知っている曲の再生規模')} value={formatViews(data.knownViews, language)} />
-        <Metric label={`${t(platformLabel(platform))}${language === 'ja' ? '' : ' '}${t('再生数の総量')}`} value={formatViews(data.totalViews, language)} />
-        <Metric label={t('知っている曲')} value={language === 'ja' ? `${data.knownSongCount.toLocaleString()} / ${data.totalSongCount.toLocaleString()}曲` : `${data.knownSongCount.toLocaleString()} / ${data.totalSongCount.toLocaleString()} songs`} />
-      </section>
-
-      <section className="overflow-hidden rounded-2xl border border-white/[0.08] bg-neutral-950 p-1.5 shadow-2xl sm:rounded-3xl sm:p-3">
-        <div
-          className="relative h-[420px] w-full overflow-hidden rounded-xl bg-neutral-900 sm:h-[560px] sm:rounded-2xl"
-          data-testid={`${platform}-knowledge-treemap`}
-          onMouseLeave={() => setHovered(null)}
-        >
-          {rectangles.length === 0 ? (
-            <div className="flex h-full items-center justify-center text-sm text-neutral-500">
-              {t(viewMode === 'known' ? '知っている曲がこのサービスにありません' : viewMode === 'unknown' ? '未再生の曲がありません' : '表示する曲がありません')}
-            </div>
-          ) : rectangles.map((rect, index) => {
-            const showFullLabel = rect.width >= 8 && rect.height >= 7;
-            const showShortLabel = !showFullLabel && rect.width >= 3.5 && rect.height >= 3.5;
-            const showDot = !showFullLabel && !showShortLabel && rect.width >= 1.5 && rect.height >= 1.5;
-            const style = {
-              left: `${rect.x}%`,
-              top: `${rect.y}%`,
-              width: `${rect.width}%`,
-              height: `${rect.height}%`,
-              background: tileBackground(rect, platform, index),
-            };
-            const content = (
-              <>
-                {rect.thumbUrl && <img src={rect.thumbUrl} alt="" className={`absolute inset-0 h-full w-full object-cover ${rect.known ? 'opacity-30' : 'opacity-10'} mix-blend-luminosity`} />}
-                <span className="absolute inset-0 border border-black/35" />
-                {rect.known && <span className={`absolute inset-y-0 left-0 w-[3px] ${platform === 'youtube' ? 'bg-rose-400/80' : 'bg-teal-400/80'}`} />}
-                {(showFullLabel || showShortLabel) && (
-                  <span className="relative z-10 flex h-full min-w-0 flex-col justify-end overflow-hidden p-1.5 text-left sm:p-2">
-                    <span className={`${showFullLabel ? 'text-xs sm:text-sm' : 'text-[9px]'} truncate font-bold text-white`}>{rectLabel(rect)}</span>
-                    {showFullLabel && <span className="mt-0.5 truncate text-[10px] text-white/65">{rect.secondaryLabel || formatViews(rect.views, language)}</span>}
-                    {showFullLabel && rect.secondaryLabel && <span className="text-[10px] text-white/75">{formatViews(rect.views, language)}</span>}
-                  </span>
-                )}
-                {showDot && (
-                  <span className="absolute inset-0 flex items-center justify-center">
-                    <span className={`h-1 w-1 rounded-full ${rect.known ? (platform === 'youtube' ? 'bg-rose-400/70' : 'bg-teal-400/70') : 'bg-neutral-500/50'}`} />
-                  </span>
-                )}
-              </>
-            );
-            const title = `${t(rect.known ? '知っている' : 'まだ知らない')}: ${rectLabel(rect)} — ${formatViews(rect.views, language)}`;
-            return rect.songId ? (
-              <Link
-                key={rect.id}
-                to={`/watch?v=${rect.songId}`}
-                className="absolute overflow-hidden outline-none ring-inset transition-shadow duration-100 hover:ring-2 hover:ring-white/60 focus-visible:ring-2 focus-visible:ring-white"
-                style={style}
-                aria-label={title}
-                onMouseEnter={(e) => setHovered({ rect, x: e.clientX, y: e.clientY })}
-                onFocus={(e) => {
-                  const bounds = e.currentTarget.getBoundingClientRect();
-                  setHovered({ rect, x: bounds.left + bounds.width / 2, y: bounds.bottom });
-                }}
-                onBlur={() => setHovered(null)}
-              >
-                {content}
-              </Link>
-            ) : (
-              <div
-                key={rect.id}
-                className="absolute overflow-hidden transition-shadow duration-100 hover:ring-1 hover:ring-inset hover:ring-white/30"
-                style={style}
-                aria-label={title}
-                onMouseEnter={(e) => setHovered({ rect, x: e.clientX, y: e.clientY })}
-              >
-                {content}
-              </div>
-            );
-          })}
-        </div>
-        <div className="grid gap-2 px-2 pb-1 pt-3 text-[11px] text-neutral-400 sm:flex sm:flex-wrap sm:items-center sm:gap-x-5 sm:gap-y-2 sm:text-xs">
-          <span className="inline-flex items-center gap-2"><span className={`h-3 w-3 rounded-sm ${platform === 'youtube' ? 'bg-rose-500' : 'bg-teal-400'}`} />{t('履歴または星評価がある曲')}</span>
-          <span className="inline-flex items-center gap-2"><span className="h-3 w-3 rounded-sm bg-neutral-600" />{t('履歴・星評価がない曲')}</span>
-          <span>{t('長方形の面積＝')}{t(platformLabel(platform))}{language === 'ja' ? '再生数' : ' views'}</span>
-        </div>
-      </section>
-
-      {/* Tooltip rendered outside the overflow container for correct visibility */}
-      {hovered && (
-        <div
-          ref={tooltipRef}
-          role="tooltip"
-          data-testid="knowledge-map-tooltip"
-          className="pointer-events-none fixed z-50 max-w-[260px] rounded-xl border border-white/[0.12] bg-neutral-900/95 px-3.5 py-2.5 shadow-2xl backdrop-blur-sm"
-          style={{ left: hovered.x + 14, top: hovered.y + 14 }}
-        >
-          {hovered.rect.thumbUrl && (
-            <img src={hovered.rect.thumbUrl} alt="" className="mb-2 h-16 w-full rounded-lg object-cover" />
-          )}
-          <p className="truncate text-sm font-bold text-white">{rectLabel(hovered.rect)}</p>
-          {hovered.rect.secondaryLabel && <p className="mt-0.5 truncate text-xs text-neutral-400">{hovered.rect.secondaryLabel}</p>}
-          <div className="mt-1.5 flex items-center gap-2">
-            <span className="text-xs font-medium text-neutral-200">{formatViews(hovered.rect.views, language)}</span>
-            <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${
-              hovered.rect.known
-                ? platform === 'youtube' ? 'bg-rose-500/20 text-rose-300' : 'bg-teal-500/20 text-teal-300'
-                : 'bg-neutral-700/50 text-neutral-400'
-            }`}>
-              {t(hovered.rect.known ? '知っている' : 'まだ知らない')}
-            </span>
+    <div>
+      <span className="sr-only">{label}</span>
+      <SkeletonBlock className="h-12 w-36 rounded-badge" />
+      <SkeletonBlock className="mt-3 h-1 w-full max-w-[360px] rounded-full" />
+      <SkeletonBlock className="mt-3 mb-6 h-4 w-64 max-w-full rounded-badge" />
+      <div className="mb-3 flex gap-3">
+        {[0, 1, 2, 3, 4].map(index => <SkeletonBlock key={index} className="h-10 w-20 rounded-chip sm:h-8" />)}
+      </div>
+      <SkeletonBlock className="h-[clamp(360px,60vh,560px)] w-full rounded-card max-sm:-mx-3 max-sm:h-80 max-sm:w-auto max-sm:rounded-none" />
+      <SkeletonBlock className="mt-2 h-10 w-full rounded-card max-sm:-mx-3 max-sm:w-auto max-sm:rounded-none" />
+      <div className="mt-8 grid gap-8 xl:grid-cols-2 xl:gap-6">
+        {[0, 1].map(column => (
+          <div key={column}>
+            <SkeletonBlock className="mb-3 h-6 w-48 rounded-badge" />
+            {[0, 1, 2, 3].map(row => <SkeletonListRow key={row} size="sm" />)}
           </div>
-          {hovered.rect.songId && <p className="mt-1 text-[10px] text-neutral-600">{t('クリックで曲ページへ')}</p>}
-        </div>
-      )}
-
-      <section className="mt-5 grid min-w-0 gap-3 sm:mt-6 sm:gap-4 lg:grid-cols-2">
-        <SongRanking title={t('知っている曲の上位')} songs={topKnown} empty={t('このサービスで再生数を取得できた履歴・評価済み曲はありません。')} />
-        <SongRanking title={t('まだ知らない上位曲')} songs={topUnknown} empty={t('表示対象の上位曲はすべて履歴または星評価に含まれています。')} />
-      </section>
-
-      <p className="mt-5 text-xs leading-5 text-neutral-500">
-        {t('対象は発見品質条件を満たす{eligible}曲です。履歴・評価から抽出した既知曲{history}曲のうち{matched}曲が対象に一致しました。曲ごとの上位表示に入りきらない分も「その他」として面積へ含めています。履歴と評価は端末内に保持され、重複除去した曲IDだけをこの集計時に送信し保存しません。星の数は送信しません。', { eligible: result.eligibleSongCount.toLocaleString(), history: result.historySongCount.toLocaleString(), matched: result.matchedHistorySongCount.toLocaleString() })}
-      </p>
-    </>
-  );
-}
-
-function Metric({ label, value, accent = false }: { label: string; value: string; accent?: boolean }) {
-  return (
-    <div className={`rounded-2xl border p-4 ${accent ? 'border-cyan-300/20 bg-cyan-300/[0.08]' : 'border-white/[0.06] bg-white/[0.03]'}`}>
-      <p className="text-xs text-neutral-500">{label}</p>
-      <p className={`mt-1 font-bold ${accent ? 'text-2xl text-cyan-200' : 'text-base text-white sm:text-lg'}`}>{value}</p>
-    </div>
-  );
-}
-
-function SongRanking({ title, songs, empty }: { title: string; songs: PlatformKnowledgeMap['tiles']; empty: string }) {
-  const language = useLanguageStore(state => state.language);
-  return (
-    <div className="min-w-0 overflow-hidden rounded-2xl border border-white/[0.06] bg-white/[0.03] p-3 sm:p-4" data-testid="knowledge-map-ranking">
-      <h2 className="font-bold text-white">{title}</h2>
-      {songs.length === 0 ? <p className="py-8 text-center text-sm text-neutral-500">{empty}</p> : (
-        <ol className="mt-3 space-y-1">
-          {songs.map((song, index) => (
-            <li key={song.songId}>
-              <Link to={`/watch?v=${song.songId}`} className="grid min-h-14 min-w-0 grid-cols-[1.25rem_3rem_minmax(0,1fr)] items-center gap-x-2 rounded-xl px-1 py-1.5 hover:bg-white/[0.05] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 sm:min-h-12 sm:grid-cols-[1.25rem_3.5rem_minmax(0,1fr)_auto] sm:gap-x-3 sm:px-2">
-                <span className="w-5 text-center text-xs text-neutral-600">{index + 1}</span>
-                <span className="h-9 w-12 overflow-hidden rounded-md bg-neutral-800 sm:w-14">{song.thumbUrl && <img src={song.thumbUrl} alt="" className="h-full w-full object-cover" />}</span>
-                <span className="min-w-0"><span className="block truncate text-sm font-medium text-neutral-200">{song.name}</span><span className="block truncate text-xs text-neutral-500">{song.artistString}</span><span className="mt-0.5 block text-[11px] text-neutral-400 sm:hidden">{formatViews(song.views, language)}</span></span>
-                <span className="hidden shrink-0 text-xs text-neutral-400 sm:block">{formatViews(song.views, language)}</span>
-              </Link>
-            </li>
-          ))}
-        </ol>
-      )}
+        ))}
+      </div>
     </div>
   );
 }

@@ -1,42 +1,32 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Link } from 'react-router';
 import {
   checkBackendHealth,
   resolveBackendConnectivityStatus,
-  type BackendConnectivityStatus,
 } from '../../api/backendHealth';
 import { useTranslateSourceText } from '../../i18n';
+import { showToast } from '../../stores/toastStore';
+import Button from '../ui/Button';
+import Popover from '../ui/Popover';
+import { OfflineIcon, WarningIcon } from '../ui/icons';
 
 const CHECK_INTERVAL_MS = 30_000;
 const CHECK_TIMEOUT_MS = 5_000;
 
-const STATUS_COPY: Record<Exclude<BackendConnectivityStatus, 'healthy' | 'checking'>, {
-  title: string;
-  message: string;
-  background: string;
-  color: string;
-}> = {
-  offline: {
-    title: 'オフラインモードです',
-    message: 'ブラウザがオフラインのため、データAPIサービスを利用できません。保存済みプレイリスト・履歴・評価は引き続き利用できます。',
-    background: 'color-mix(in srgb, #fbbf24 12%, var(--color-bg-primary))',
-    color: '#fbbf24',
-  },
-  unavailable: {
-    title: 'データAPIサービスに接続できません',
-    message: '通常のVocaDB検索・再生と保存済みプレイリスト・履歴・評価は利用できます。詳細検索、外部再生数、人気急上昇、関連曲・推薦の一部は利用できないか簡易候補に切り替わります。',
-    background: 'color-mix(in srgb, var(--color-error) 12%, var(--color-bg-primary))',
-    color: 'var(--color-text-secondary)',
-  },
-};
-
-/** Keeps local playback and saved data discoverable while SBC-only features degrade. */
+/**
+ * One-line connection band under the top bar (DESIGN_SPEC §6.1.6). Offline: 「オフラインです」
+ * (re-checked automatically when the browser is back online). Server unreachable:
+ * 「一部の機能を利用できません」 with [詳細] (what is unavailable) and [再試行].
+ * Checked every 30 seconds and on online / offline events.
+ */
 export default function BackendStatusNotice() {
   const t = useTranslateSourceText();
   const [available, setAvailable] = useState<boolean | null>(null);
   const [online, setOnline] = useState(() => typeof navigator === 'undefined' || navigator.onLine);
   const [checking, setChecking] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const checkInFlightRef = useRef<Promise<void> | null>(null);
+  const detailsButtonRef = useRef<HTMLButtonElement>(null);
+  const wasOfflineRef = useRef(false);
 
   const check = useCallback(async () => {
     if (checkInFlightRef.current) return checkInFlightRef.current;
@@ -69,6 +59,8 @@ export default function BackendStatusNotice() {
     };
     const handleOnline = () => {
       setOnline(true);
+      // Hide the band while the server is checked again instead of flashing the outage message.
+      setAvailable(null);
       void runCheck();
     };
     const handleOffline = () => {
@@ -91,41 +83,58 @@ export default function BackendStatusNotice() {
 
   const status = resolveBackendConnectivityStatus({ available, online });
 
+  // Coming back from offline is announced once; the server band simply disappears when it recovers.
+  useEffect(() => {
+    if (status === 'offline') {
+      wasOfflineRef.current = true;
+    } else if (status === 'healthy' && wasOfflineRef.current) {
+      wasOfflineRef.current = false;
+      showToast(t('オンラインに戻りました'));
+    }
+  }, [status, t]);
+
   if (status === 'healthy' || status === 'checking') return null;
 
-  const copy = STATUS_COPY[status];
+  const offline = status === 'offline';
 
   return (
     <div
-      className="border-b px-4 py-2.5 text-sm"
       data-testid="backend-status-notice"
-      role="status"
-      aria-live="polite"
-      style={{
-        background: copy.background,
-        borderColor: 'var(--color-border)',
-        color: copy.color,
-      }}
+      className="flex h-10 items-center gap-3 bg-yt-tonal-solid px-4 text-sm leading-5 text-yt-text max-sm:h-9 max-sm:gap-2 max-sm:px-3"
     >
-      <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-x-3 gap-y-2">
-        <div className="min-w-0 flex-1">
-          <p className="font-semibold" style={{ color: copy.color }}>{t(copy.title)}</p>
-          <p className="mt-0.5 text-xs leading-5" style={{ color: 'var(--color-text-secondary)' }}>{t(copy.message)}</p>
-          <nav className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1 text-xs" aria-label={t('利用可能なローカル機能')}>
-            <Link className="underline decoration-dotted underline-offset-2" to="/playlists">{t('プレイリスト')}</Link>
-            <Link className="underline decoration-dotted underline-offset-2" to="/history">{t('履歴')}</Link>
-            <Link className="underline decoration-dotted underline-offset-2" to="/favorites">{t('評価・お気に入り')}</Link>
-          </nav>
+      {offline
+        ? <OfflineIcon size={20} className="text-yt-text-secondary" />
+        : <WarningIcon size={20} className="text-yt-warning" />}
+      <span role="status" aria-live="polite" className="min-w-0 flex-1 truncate">
+        {offline ? t('オフラインです') : t('一部の機能を利用できません')}
+      </span>
+      {!offline && (
+        <div className="-mr-2 flex shrink-0 items-center">
+          <Button
+            ref={detailsButtonRef}
+            variant="text"
+            size="sm"
+            aria-haspopup="dialog"
+            aria-expanded={detailsOpen}
+            onClick={() => setDetailsOpen(open => !open)}
+          >
+            {t('詳細')}
+          </Button>
+          <Button variant="text" size="sm" disabled={checking} onClick={() => void check()}>
+            {checking ? t('確認中…') : t('再試行')}
+          </Button>
+          <Popover
+            anchor={detailsButtonRef}
+            open={detailsOpen}
+            onClose={() => setDetailsOpen(false)}
+            placement="bottom-end"
+            width={320}
+            label={t('詳細')}
+          >
+            {t('使えない機能: 詳細検索・再生数・急上昇・一部のおすすめ')}
+          </Popover>
         </div>
-        <button
-          type="button"
-          onClick={() => void check()}
-          disabled={checking || status === 'offline'}
-          className="shrink-0 rounded-lg border border-white/20 px-3 py-1.5 text-xs font-semibold transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {t(checking ? '再確認中…' : '再接続を確認')}
-        </button>
-      </div>
+      )}
     </div>
   );
 }

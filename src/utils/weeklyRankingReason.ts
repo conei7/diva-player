@@ -8,5 +8,5 @@ export function formatWeeklyRankingReason(song: Song, language: 'ja' | 'en' = 'j
   const count = Math.round(average);
   return language === 'en'
     ? `Average +${new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(count)} views/day`
-    : `1日平均 +${formatJapaneseViews(count, { zeroIsMissing: false })}再生`;
+    : `1日平均 +${formatJapaneseViews(count, { zeroIsMissing: false })}回再生`;
 }

@@ -33,6 +33,7 @@
     "test:performance-budget": "node scripts/test-performance-budget.mjs",
     "test:e2e:player-controls": "node scripts/test-player-controls-e2e.mjs",
     "test:e2e:queue-window": "node scripts/test-queue-window-e2e.mjs",
+    "test:e2e:chorus-highlights": "node scripts/test-chorus-highlights-e2e.mjs",
     "test:e2e:player-service-switch": "node scripts/test-player-service-switch-e2e.mjs",
     "test:e2e:external-players": "node scripts/test-external-players-e2e.mjs",
     "test:e2e:mobile-player-gestures": "node scripts/test-mobile-player-gestures-e2e.mjs",
@@ -65,6 +66,7 @@
     "test:e2e:advanced-search": "node scripts/test-advanced-search-e2e.mjs",
     "analyze:surge-quality": "node scripts/analyze-surge-quality.mjs",
     "audit:custom-producers": "node scripts/audit-custom-producer-shape.mjs",
+    "audit:i18n": "node scripts/audit-i18n.mjs",
     "preview": "vite preview",
     "test:e2e:playlist-workflows": "node scripts/test-playlist-workflows-e2e.mjs"
   },

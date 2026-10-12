@@ -1,179 +1,205 @@
 /**
- * PlaylistPage – プレイリスト管理ページ
- *
- * UI改善版:
- * - サイドバーの情報整理（⋯メニューにスマート作成・インポート・エクスポートを格納）
- * - 右パネルヘッダーのアクションボタン整理（テキスト付き + ⋯メニュー）
- * - 統一トースト通知
- * - フォルダフィルターの「フォルダなし」→「未分類」
- * - 空状態UI改善
- * - モバイル遷移アニメーション
- * - シャッフル再生ボタン
+ * PlaylistPage — /playlists (library grid) and /playlists?list=<id> (one playlist).
+ * The open playlist lives in the URL, so Back, reload and shared links land on the same view.
+ * This container owns the playlist-level actions and dialogs; the views are
+ * PlaylistLibrary and PlaylistDetail.
  */
-import { useEffect, useLayoutEffect, useState, useRef, useCallback, useMemo } from 'react';
-import { useNavigate, useSearchParams } from 'react-router';
-import {
-  DndContext,
-  closestCenter,
-  PointerSensor,
-  KeyboardSensor,
-  useSensor,
-  useSensors,
-  type DragEndEvent,
-} from '@dnd-kit/core';
-import {
-  SortableContext,
-  sortableKeyboardCoordinates,
-  verticalListSortingStrategy,
-} from '@dnd-kit/sortable';
-import { usePlaylistStore, type SortKey } from '../stores/playlistStore';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useLocation, useNavigate, useNavigationType, useSearchParams } from 'react-router';
+import { usePlaylistStore } from '../stores/playlistStore';
 import { usePlayerStore } from '../stores/playerStore';
-import { useUiStore } from '../stores/uiStore';
-import type { Playlist, Song } from '../types/vocadb';
+import { showToast } from '../stores/toastStore';
+import { confirmDialog } from '../stores/confirmStore';
+import type { NicoPlaylistSync, Playlist, PlaylistFolder, YouTubePlaylistSync } from '../types/vocadb';
 import {
   createAllPlaylistsBackupPayload,
   createPlaylistExportPayload,
   downloadJson,
-  formatTotalDuration,
   parsePlaylistBackup,
   parsePlaylistImport,
   toSafeFileName,
+  uniquePlaylistName,
 } from '../utils/playlistBackup';
-import YouTubeImportModal from '../components/playlist/YouTubeImportModal';
-import NicoImportModal from '../components/playlist/NicoImportModal';
-import { createPlaylistShareUrl, decodePlaylistShare } from '../utils/playlistShare';
-import { searchSmartPlaylistSongs } from '../api/vocadb';
-import { filterSmartPlaylistSongs, normalizeSmartPlaylistRule } from '../utils/smartPlaylist';
-import { sortPlaylistSongs } from '../utils/playlistSorting';
-import {
-  SortableSongRow,
-  PlainSongRow,
-  VirtualSongList,
-  VIRTUAL_THRESHOLD,
-} from '../components/playlist/PlaylistSongRow';
-import PlaylistToast from '../components/playlist/PlaylistToast';
-import { usePlaylistToast } from '../hooks/usePlaylistToast';
-import SmartPlaylistBuilder, {
-  type SmartPlaylistBuilderValues,
-} from '../components/playlist/SmartPlaylistBuilder';
-import PlaylistHealthModal from '../components/playlist/PlaylistHealthModal';
-import { analyzePlaylistHealth } from '../utils/playlistHealth';
+import { createPlaylistShareUrl, decodePlaylistShare, orderSharedSongs } from '../utils/playlistShare';
+import { getSongsByIds, searchSmartPlaylistSongs } from '../api/vocadb';
+import { filterSmartPlaylistSongs, isSameSmartPlaylistRule, normalizeSmartPlaylistRule } from '../utils/smartPlaylist';
 import { normalizeYouTubePlaylistUrl, type YouTubePlaylistSongsResponse } from '../api/youtubePlaylist';
 import { syncYouTubePlaylist } from '../services/youtubePlaylistSync';
 import { normalizeNicoPlaylistUrl, type NicoPlaylistSongsResponse } from '../api/nicoPlaylist';
 import { syncNicoPlaylist } from '../services/nicoPlaylistSync';
-import PlaylistLibrarySidebar from '../components/playlist/PlaylistLibrarySidebar';
-import PlaylistHero from '../components/playlist/PlaylistHero';
-import PlaylistToolbar from '../components/playlist/PlaylistToolbar';
 import { useTranslateSourceText } from '../i18n';
+import { useLanguageStore } from '../stores/languageStore';
+import { formatCount } from '../utils/songMeta';
+import { displayPlaylistName } from '../utils/displayNames';
+import { playlistPath, playlistsPath } from '../utils/routes';
+import EmptyState from '../components/ui/EmptyState';
+import { PageShell } from '../components/ui/PageHeader';
+import { ErrorIcon, PlaylistIcon, SpinnerIcon } from '../components/ui/icons';
+import PlaylistLibrary from '../components/playlist/PlaylistLibrary';
+import PlaylistDetail from '../components/playlist/PlaylistDetail';
+import type { PlaylistActionHandlers } from '../components/playlist/PlaylistActionsMenu';
+import type { SmartPlaylistRefreshStatus } from '../components/playlist/PlaylistHero';
+import NewPlaylistDialog from '../components/playlist/NewPlaylistDialog';
+import PlaylistEditDialog, { type PlaylistEditValues } from '../components/playlist/PlaylistEditDialog';
+import PlaylistFolderDialog from '../components/playlist/PlaylistFolderDialog';
+import PlaylistShareDialog from '../components/playlist/PlaylistShareDialog';
+import PlaylistImportDialog, { type PlaylistImportSaveOptions } from '../components/playlist/PlaylistImportDialog';
+import SmartPlaylistBuilder, { type SmartPlaylistBuilderValues } from '../components/playlist/SmartPlaylistBuilder';
+import type { PlaylistImportResult } from '../components/playlist/usePlaylistImport';
+import { copyText, folderIdOfFilter, type PlaylistLibraryFilter } from '../components/playlist/playlistDisplay';
+import { addSongsToQueue } from '../components/playlist/playlistQueue';
 
-// ─── メインコンポーネント ──────────────────────────────────────────────────────
+/** Library scroll position, restored when coming back from a playlist with the Back button. */
+let savedLibraryScrollY = 0;
+
+function youtubeSyncFrom(response: YouTubePlaylistSongsResponse): YouTubePlaylistSync {
+  const now = Date.now();
+  return {
+    playlistId: response.playlistId,
+    sourceUrl: normalizeYouTubePlaylistUrl(response.playlistId),
+    enabled: true,
+    intervalHours: 24,
+    lastAttemptAt: now,
+    lastSuccessfulAt: now,
+    nextSyncAt: now + 24 * 60 * 60 * 1000,
+    lastStatus: response.unmatchedVideoIds.length > 0 || response.truncated ? 'partial' : 'success',
+    lastVideoCount: response.videoCount,
+    lastMatchedCount: response.matchedCount,
+    lastUnmatchedCount: response.unmatchedVideoIds.length,
+  };
+}
+
+function nicoSyncFrom(response: NicoPlaylistSongsResponse): NicoPlaylistSync {
+  const now = Date.now();
+  return {
+    sourceKind: response.sourceKind,
+    sourceId: response.sourceId,
+    sourceUrl: normalizeNicoPlaylistUrl({ kind: response.sourceKind, id: response.sourceId }),
+    enabled: true,
+    intervalHours: 24,
+    lastAttemptAt: now,
+    lastSuccessfulAt: now,
+    nextSyncAt: now + 24 * 60 * 60 * 1000,
+    lastStatus: response.unmatchedVideoIds.length > 0 || response.truncated ? 'partial' : 'success',
+    lastVideoCount: response.videoCount,
+    lastMatchedCount: response.matchedCount,
+    lastUnmatchedCount: response.unmatchedVideoIds.length,
+  };
+}
+
+type FolderDialogState = { mode: 'create' } | { mode: 'rename'; folder: PlaylistFolder };
+
 export default function PlaylistPage() {
   const t = useTranslateSourceText();
+  const language = useLanguageStore(state => state.language);
   const navigate = useNavigate();
+  const location = useLocation();
+  const navigationType = useNavigationType();
   const [searchParams] = useSearchParams();
-  const {
-    playlists, folders,
-    loadPlaylists,
-    createPlaylist, createPlaylistWithSongs, deletePlaylist, restoreDeletedPlaylist, updatePlaylist,
-    createSmartPlaylist, createYouTubeLinkedPlaylist, unlinkYouTubeSync,
-    createNicoLinkedPlaylist, unlinkNicoSync, replacePlaylistSongs,
-    createFolder, deleteFolder,
-    addSongs, removeSong, removeSongs, restoreRemovedSongs, reorderSongs, removeDuplicateSongsWithUndo,
-  } = usePlaylistStore();
-  const { setQueue, setQueueShuffled, addToQueue } = usePlayerStore();
-  const openSaveToPlaylist = useUiStore(s => s.openSaveToPlaylist);
+  const listId = searchParams.get('list');
+  const shareParam = searchParams.get('share');
 
-  const [selectedPlaylistId, setSelectedPlaylistId] = useState<string | null>(null);
-  useLayoutEffect(() => {
-    if (window.matchMedia('(max-width: 1279px)').matches) window.scrollTo(0, 0);
-  }, [selectedPlaylistId]);
-  const [selectedFolderId, setSelectedFolderId]     = useState<string | null>(null);
+  const playlists = usePlaylistStore(state => state.playlists);
+  const folders = usePlaylistStore(state => state.folders);
+  const loadPlaylists = usePlaylistStore(state => state.loadPlaylists);
+  const replacePlaylistSongs = usePlaylistStore(state => state.replacePlaylistSongs);
 
-  const [filterText, setFilterText]     = useState('');
-  const [songSortKey, setSongSortKey] = useState<SortKey>('addedOrder');
-  const [selectionMode, setSelectionMode] = useState(false);
-  const [selectedIds, setSelectedIds]   = useState<Set<number>>(new Set());
-
-  const [editingPlaylist, setEditingPlaylist] = useState<Playlist | null>(null);
-  const [editName, setEditName]   = useState('');
-  const [editDesc, setEditDesc]   = useState('');
-  const [editCover, setEditCover] = useState('');
-  const [editFolderId, setEditFolderId] = useState<string>('');
-
-  const [showYTImport, setShowYTImport] = useState(false);
-  const [showNicoImport, setShowNicoImport] = useState(false);
-  const [showHealthModal, setShowHealthModal] = useState(false);
-  const [showSmartBuilder, setShowSmartBuilder] = useState(false);
-  const [smartEditingPlaylist, setSmartEditingPlaylist] = useState<Playlist | null>(null);
-  const [smartRefreshStatuses, setSmartRefreshStatuses] = useState<Record<string, {
-    state: 'loading' | 'success' | 'empty' | 'error';
-    refreshedAt?: number;
-    matchedCount?: number;
-    loadedCount?: number;
-  }>>({});
+  const [libraryFilter, setLibraryFilter] = useState<PlaylistLibraryFilter>('all');
+  const [libraryQuery, setLibraryQuery] = useState('');
+  const [newPlaylistOpen, setNewPlaylistOpen] = useState(false);
+  const [folderDialog, setFolderDialog] = useState<FolderDialogState | null>(null);
+  const [editState, setEditState] = useState<{ playlistId: string; focus?: 'folder' } | null>(null);
+  const [smartBuilder, setSmartBuilder] = useState<{ playlistId: string | null } | null>(null);
+  const [importState, setImportState] = useState<{ targetId: string | null } | null>(null);
+  const [shareUrl, setShareUrl] = useState<string | null>(null);
+  /** The ?share= link whose songs could not be loaded (shown with 再試行). */
+  const [shareFailed, setShareFailed] = useState<string | null>(null);
+  const [syncingId, setSyncingId] = useState<string | null>(null);
+  const [smartRefreshStatuses, setSmartRefreshStatuses] = useState<Record<string, SmartPlaylistRefreshStatus>>({});
   const smartRefreshRef = useRef<string | null>(null);
   const smartRefreshRetryRef = useRef(new Set<string>());
   const smartRefreshRetryTimerRef = useRef<number | null>(null);
   const [smartRefreshRetryTick, setSmartRefreshRetryTick] = useState(0);
-
-  // 統一トースト
-  const { toasts, showToast, dismissToast } = usePlaylistToast();
+  const shareHandledRef = useRef<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => { loadPlaylists(); }, [loadPlaylists]);
+  // 後で聴く always exists once the playlists are loaded.
+  const loaded = playlists.length > 0;
+  const selectedPlaylist = listId ? playlists.find(playlist => playlist.id === listId) ?? null : null;
+  const selectedFolderId = folderIdOfFilter(libraryFilter);
+  const folderNames = useMemo(() => new Map(folders.map(folder => [folder.id, folder.name])), [folders]);
 
-  useEffect(() => {
-    const encoded = searchParams.get('share');
-    if (!encoded) return;
-    const payload = decodePlaylistShare(encoded);
-    if (!payload) {
-      showToast(t('共有リンクを読み込めませんでした。'), 'warning');
-      navigate('/playlists', { replace: true });
+  // Opening a playlist starts at the top; Back to the library returns to where it was.
+  useLayoutEffect(() => {
+    if (!listId && navigationType === 'POP') window.scrollTo(0, savedLibraryScrollY);
+    else window.scrollTo(0, 0);
+    // Only when the view changes (navigationType belongs to that same navigation).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [listId]);
+
+  /** Saved and shown names, so a new list never looks like a second 後で聴く (「Listen later」 in English). */
+  const takenPlaylistNames = useCallback(() => {
+    const current = usePlaylistStore.getState().playlists;
+    return [...current.map(playlist => playlist.name), ...current.map(playlist => displayPlaylistName(playlist, t))];
+  }, [t]);
+
+  // ── Shared links (/playlists?share=…) ────────────────────────────────────
+  const openSharedLink = useCallback(async (encoded: string) => {
+    const shared = decodePlaylistShare(encoded);
+    if (!shared) {
+      showToast(t('共有リンクを開けませんでした'));
+      navigate(playlistsPath(), { replace: true });
       return;
     }
-    const imported = createPlaylistWithSongs(
-      `${payload.name} (${t('共有')})`, payload.songs, selectedFolderId ?? undefined,
-      { description: payload.description, coverArtUrl: payload.coverArtUrl },
-    );
-    setSelectedPlaylistId(imported.id);
-    showToast(t('{name} を共有リンクから追加しました。', { name: payload.name }), 'info');
-    navigate('/playlists', { replace: true });
-  }, [createPlaylistWithSongs, navigate, searchParams, selectedFolderId, showToast, t]);
+    setShareFailed(null);
+    let songs = shared.songs;
+    if (!songs) {
+      // Version 2 links carry only the song ids.
+      const fetched = shared.songIds.length > 0 ? await getSongsByIds(shared.songIds).catch(() => []) : [];
+      // Left the link while loading.
+      if (new URLSearchParams(window.location.search).get('share') !== encoded) return;
+      songs = orderSharedSongs(shared.songIds, fetched);
+      if (shared.songIds.length > 0 && songs.length === 0) {
+        setShareFailed(encoded);
+        return;
+      }
+    }
+    try {
+      const store = usePlaylistStore.getState();
+      const name = uniquePlaylistName(shared.name, takenPlaylistNames());
+      const imported = store.createPlaylistWithSongs(name, songs, selectedFolderId ?? undefined, {
+        description: shared.description,
+        coverArtUrl: shared.coverArtUrl,
+      });
+      showToast(t('「{name}」を追加しました', { name }));
+      navigate(playlistPath(imported.id), { replace: true });
+    } catch {
+      navigate(playlistsPath(), { replace: true });
+    }
+  }, [navigate, selectedFolderId, t, takenPlaylistNames]);
 
   useEffect(() => {
-    setSelectionMode(false);
-    setSelectedIds(new Set());
-    setFilterText('');
-    setSongSortKey('addedOrder');
-    smartRefreshRef.current = null;
-    smartRefreshRetryRef.current.clear();
-    if (smartRefreshRetryTimerRef.current !== null) {
-      window.clearTimeout(smartRefreshRetryTimerRef.current);
-      smartRefreshRetryTimerRef.current = null;
-    }
-  }, [selectedPlaylistId]);
+    if (!shareParam || shareHandledRef.current === shareParam || !loaded) return;
+    shareHandledRef.current = shareParam;
+    void openSharedLink(shareParam);
+  }, [loaded, openSharedLink, shareParam]);
 
-  const selectedPlaylist = playlists.find(p => p.id === selectedPlaylistId) ?? null;
-  const isYouTubeLinked = selectedPlaylist?.youtubeSync?.enabled === true;
-  const isNicoLinked = selectedPlaylist?.nicoSync?.enabled === true;
-  const isExternalLinked = isYouTubeLinked || isNicoLinked;
-
+  // ── Smart playlists refresh every time they are opened ───────────────────
   const refreshSmartPlaylist = useCallback(async (playlist: Playlist) => {
     if (!playlist.smartRule) return;
-    setSmartRefreshStatuses(current => ({
-      ...current,
-      [playlist.id]: { state: 'loading' },
-    }));
+    setSmartRefreshStatuses(current => ({ ...current, [playlist.id]: { state: 'loading' } }));
     try {
       const rule = normalizeSmartPlaylistRule(playlist.smartRule);
       const result = await searchSmartPlaylistSongs(rule, rule.maxSongs);
       const current = usePlaylistStore.getState().playlists.find(item => item.id === playlist.id);
-      if (!current || current.smartRule !== playlist.smartRule) return;
+      // Only a changed rule makes the result stale (the playlists may have been re-read meanwhile).
+      if (!current || !isSameSmartPlaylistRule(current.smartRule, playlist.smartRule)) return;
       const matchingSongs = filterSmartPlaylistSongs(result.items, rule);
       replacePlaylistSongs(playlist.id, matchingSongs);
       smartRefreshRetryRef.current.delete(playlist.id);
-      setSmartRefreshStatuses(current => ({
-        ...current,
+      setSmartRefreshStatuses(statuses => ({
+        ...statuses,
         [playlist.id]: {
           state: matchingSongs.length > 0 ? 'success' : 'empty',
           refreshedAt: Date.now(),
@@ -183,15 +209,13 @@ export default function PlaylistPage() {
       }));
     } catch (error) {
       smartRefreshRef.current = null;
-      setSmartRefreshStatuses(current => ({
-        ...current,
-        [playlist.id]: { state: 'error' },
-      }));
+      setSmartRefreshStatuses(statuses => ({ ...statuses, [playlist.id]: { state: 'error' } }));
+      // One automatic retry after 5 seconds.
       if (!smartRefreshRetryRef.current.has(playlist.id)) {
         smartRefreshRetryRef.current.add(playlist.id);
         smartRefreshRetryTimerRef.current = window.setTimeout(() => {
           smartRefreshRetryTimerRef.current = null;
-          setSmartRefreshRetryTick(current => current + 1);
+          setSmartRefreshRetryTick(tick => tick + 1);
         }, 5000);
       }
       throw error;
@@ -199,7 +223,16 @@ export default function PlaylistPage() {
   }, [replacePlaylistSongs]);
 
   useEffect(() => {
-    if (!selectedPlaylist?.smartRule || smartRefreshRef.current === selectedPlaylist.id) return;
+    smartRefreshRef.current = null;
+    smartRefreshRetryRef.current.clear();
+    if (smartRefreshRetryTimerRef.current !== null) {
+      window.clearTimeout(smartRefreshRetryTimerRef.current);
+      smartRefreshRetryTimerRef.current = null;
+    }
+  }, [listId]);
+
+  useEffect(() => {
+    if (!selectedPlaylist?.smartRule || smartRefreshRef.current === selectedPlaylist.id) return undefined;
     smartRefreshRef.current = selectedPlaylist.id;
     void refreshSmartPlaylist(selectedPlaylist).catch(() => undefined);
     return () => {
@@ -210,320 +243,186 @@ export default function PlaylistPage() {
     };
   }, [refreshSmartPlaylist, selectedPlaylist, smartRefreshRetryTick]);
 
-  const selectedPlaylistDuplicateCount = selectedPlaylist
-    ? selectedPlaylist.songs.length - new Set(selectedPlaylist.songs.map(s => s.id)).size
-    : 0;
-  const selectedPlaylistHealth = useMemo(
-    () => analyzePlaylistHealth(selectedPlaylist?.songs ?? []),
-    [selectedPlaylist],
-  );
-  const selectedPlaylistDurationText = selectedPlaylist
-    ? formatTotalDuration(selectedPlaylist.songs.reduce((sum, song) => sum + (song.lengthSeconds || 0), 0))
-    : '';
-  const selectedSmartRefreshStatus = selectedPlaylist
-    ? smartRefreshStatuses[selectedPlaylist.id]
-    : undefined;
-
-  const filteredSongs = useMemo(() => {
-    const q = filterText.trim().toLowerCase();
-    const songs = (selectedPlaylist?.songs ?? []).filter(song => !q
-      || song.name.toLowerCase().includes(q)
-      || (song.artistString ?? '').toLowerCase().includes(q));
-    return sortPlaylistSongs(songs, songSortKey);
-  }, [filterText, selectedPlaylist, songSortKey]);
-
-  const handleCreate = useCallback((name: string, folderId?: string) => {
-    const p = createPlaylist(name, folderId);
-    setSelectedPlaylistId(p.id);
-  }, [createPlaylist]);
-
-  const openSmartBuilder = useCallback((playlist?: Playlist) => {
-    setSmartEditingPlaylist(playlist ?? null);
-    setShowSmartBuilder(true);
-  }, []);
-
-  const closeSmartBuilder = useCallback(() => {
-    setShowSmartBuilder(false);
-    setSmartEditingPlaylist(null);
-  }, []);
-
-  const handleSmartSubmit = useCallback(({ name, rule }: SmartPlaylistBuilderValues) => {
-    if (smartEditingPlaylist) {
-      updatePlaylist(smartEditingPlaylist.id, { name, smartRule: rule });
-      smartRefreshRef.current = null;
-      setSmartRefreshStatuses(current => ({ ...current, [smartEditingPlaylist.id]: { state: 'loading' } }));
-      showToast(t('スマートプレイリストの条件を更新しました'), 'success');
-    } else {
-      const playlist = createSmartPlaylist(name, rule, selectedFolderId ?? undefined);
-      setSelectedPlaylistId(playlist.id);
-      showToast(t('スマートプレイリストを作成しました'), 'success');
-    }
-    closeSmartBuilder();
-  }, [closeSmartBuilder, createSmartPlaylist, selectedFolderId, showToast, smartEditingPlaylist, t, updatePlaylist]);
-
-  const sensors = useSensors(
-    useSensor(PointerSensor),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
-  );
-
-  const handleDragEnd = useCallback((event: DragEndEvent) => {
-    if (!selectedPlaylist) return;
-    const { active, over } = event;
-    if (!over || active.id === over.id) return;
-    const songs = selectedPlaylist.songs;
-    const readDisplayedIndex = (id: string | number) => Number(String(id).split('-').at(-1));
-    const activeSong = filteredSongs[readDisplayedIndex(active.id)];
-    const overSong = filteredSongs[readDisplayedIndex(over.id)];
-    const fromIndex = activeSong ? songs.findIndex(s => s.id === activeSong.id) : -1;
-    const toIndex = overSong ? songs.findIndex(s => s.id === overSong.id) : -1;
-    if (fromIndex !== -1 && toIndex !== -1) reorderSongs(selectedPlaylist.id, fromIndex, toIndex);
-  }, [filteredSongs, selectedPlaylist, reorderSongs]);
-
-  const toggleSelect = useCallback((songId: number) => {
-    setSelectedIds(prev => {
-      const next = new Set(prev);
-      if (next.has(songId)) {
-        next.delete(songId);
-      } else {
-        next.add(songId);
-      }
-      return next;
-    });
-  }, []);
-
-  const selectAll    = useCallback(() => setSelectedIds(new Set(filteredSongs.map(s => s.id))), [filteredSongs]);
-  const clearSelection = useCallback(() => setSelectedIds(new Set()), []);
-
-  const deleteSelected = useCallback(() => {
-    if (!selectedPlaylist) return;
-    const songs = selectedPlaylist.songs;
-    const indexes = songs.flatMap((song, index) => selectedIds.has(song.id) ? [index] : []);
-    const snapshot = removeSongs(selectedPlaylist.id, indexes);
-    setSelectedIds(new Set());
-    setSelectionMode(false);
-    if (snapshot) {
-      showToast(t('{count} 曲を削除しました', { count: snapshot.removed.length }), 'info', {
-        label: t('元に戻す'),
-        onAction: () => {
-          const restored = restoreRemovedSongs(snapshot);
-          if (restored > 0) showToast(t('{count} 曲を元に戻しました', { count: restored }), 'success');
-        },
-      });
-    }
-  }, [selectedPlaylist, selectedIds, removeSongs, restoreRemovedSongs, showToast, t]);
-
-  const removeDuplicatesFromSelectedPlaylist = useCallback(() => {
-    if (!selectedPlaylist) return;
-    const snapshot = removeDuplicateSongsWithUndo(selectedPlaylist.id);
-    if (snapshot) {
-      const count = snapshot.removed.length;
-      setSelectedIds(new Set());
-      setSelectionMode(false);
-      showToast(t('{count} 曲の重複を削除しました', { count }), 'success', {
-        label: t('元に戻す'),
-        onAction: () => {
-          const restored = restoreRemovedSongs(snapshot, { allowDuplicateIds: true });
-          if (restored > 0) showToast(t('{count} 曲を元に戻しました', { count: restored }), 'success');
-        },
-      });
-    }
-  }, [selectedPlaylist, removeDuplicateSongsWithUndo, restoreRemovedSongs, showToast, t]);
-
-  const removeSongWithUndo = useCallback((playlistId: string, songIndex: number) => {
-    const snapshot = removeSong(playlistId, songIndex);
-    if (!snapshot) return;
-    const title = snapshot.removed[0]?.song.name;
-    showToast(title ? t('「{title}」を削除しました', { title }) : t('曲を削除しました'), 'info', {
-      label: t('元に戻す'),
-      onAction: () => {
-        const restored = restoreRemovedSongs(snapshot);
-        if (restored > 0) showToast(t('{count} 曲を元に戻しました', { count: restored }), 'success');
-      },
-    });
-  }, [removeSong, restoreRemovedSongs, showToast, t]);
-
-  const removeHealthIssues = useCallback((indexes: number[]) => {
-    if (!selectedPlaylist || indexes.length === 0) return;
-    const snapshot = removeSongs(selectedPlaylist.id, indexes);
-    setShowHealthModal(false);
-    if (!snapshot) return;
-    showToast(t('{count}曲を削除しました', { count: snapshot.removed.length }), 'info', {
-      label: t('元に戻す'),
-      onAction: () => {
-        const restored = restoreRemovedSongs(snapshot, { allowDuplicateIds: true });
-        if (restored > 0) showToast(t('{count}曲を元に戻しました', { count: restored }), 'success');
-      },
-    });
-  }, [removeSongs, restoreRemovedSongs, selectedPlaylist, showToast, t]);
-
-  const addSelectedToQueue = useCallback(() => {
-    if (!selectedPlaylist) return;
-    selectedPlaylist.songs.filter(s => selectedIds.has(s.id)).forEach(s => addToQueue(s));
-    setSelectedIds(new Set());
-    setSelectionMode(false);
-  }, [selectedPlaylist, selectedIds, addToQueue]);
-
-  const copySelectedToPlaylist = useCallback(() => {
-    if (!selectedPlaylist) return;
-    const songs = selectedPlaylist.songs.filter(s => selectedIds.has(s.id));
-    if (songs.length === 0) return;
-    openSaveToPlaylist(songs);
-    setSelectedIds(new Set());
-    setSelectionMode(false);
-  }, [selectedPlaylist, selectedIds, openSaveToPlaylist]);
-
-  const handleYTImport = useCallback((songs: Song[]) => {
-    if (!selectedPlaylist || selectedPlaylist.smartRule || selectedPlaylist.youtubeSync || selectedPlaylist.nicoSync) {
-      const created = createPlaylistWithSongs(t('YouTubeから取り込んだ曲'), songs, selectedFolderId ?? undefined);
-      setSelectedPlaylistId(created.id);
-      showToast(t('{count}曲を保存しました。', { count: created.songs.length }), 'success');
-      return;
-    }
-    const result = addSongs(selectedPlaylist.id, songs);
-    if (!result.success) {
-      showToast(t('プレイリストに追加できませんでした。'), 'warning');
-      return;
-    }
-    if (result.duplicates > 0) {
-      showToast(t('{count} 曲は既にプレイリストにあるためスキップしました', { count: result.duplicates }), 'warning');
-    }
-  }, [selectedPlaylist, addSongs, createPlaylistWithSongs, selectedFolderId, showToast, t]);
-
-  const handleNicoImport = useCallback((songs: Song[], title: string, intoExisting: boolean) => {
-    if (intoExisting && selectedPlaylist && !selectedPlaylist.smartRule && !selectedPlaylist.youtubeSync && !selectedPlaylist.nicoSync) {
-      const result = addSongs(selectedPlaylist.id, songs);
-      if (!result.success) throw new Error(t('プレイリストに追加できませんでした。'));
-      showToast(t('{count}曲を保存しました。', { count: result.added }), 'success');
-    } else {
-      const created = createPlaylistWithSongs(title, songs, selectedFolderId ?? undefined);
-      setSelectedPlaylistId(created.id);
-      showToast(t('{count}曲を保存しました。', { count: created.songs.length }), 'success');
-    }
-  }, [addSongs, createPlaylistWithSongs, selectedPlaylist, selectedFolderId, showToast, t]);
-
-  const handleYTLink = useCallback((response: YouTubePlaylistSongsResponse) => {
-    const now = Date.now();
-    const sync = {
-      playlistId: response.playlistId,
-      sourceUrl: normalizeYouTubePlaylistUrl(response.playlistId),
-      enabled: true,
-      intervalHours: 24,
-      lastAttemptAt: now,
-      lastSuccessfulAt: now,
-      nextSyncAt: now + 24 * 60 * 60 * 1000,
-      lastStatus: response.unmatchedVideoIds.length > 0 || response.truncated ? 'partial' as const : 'success' as const,
-      lastVideoCount: response.videoCount,
-      lastMatchedCount: response.matchedCount,
-      lastUnmatchedCount: response.unmatchedVideoIds.length,
-    };
-    const linked = createYouTubeLinkedPlaylist(response.title, response.songs, sync, selectedFolderId ?? undefined);
-    setSelectedPlaylistId(linked.id);
-    showToast(t('「{title}」を自動同期プレイリストとして追加しました', { title: response.title }), 'success');
-  }, [createYouTubeLinkedPlaylist, selectedFolderId, showToast, t]);
-
-  const refreshYouTubePlaylist = useCallback(async () => {
-    if (!selectedPlaylist) return;
-    const result = await syncYouTubePlaylist(selectedPlaylist, { refresh: true });
-    showToast(
-      result === 'error' ? t('YouTubeプレイリストの同期に失敗しました')
-        : result === 'partial' ? t('同期しました（一部の動画はVocaDB未登録です）')
-          : t('YouTubeプレイリストを同期しました'),
-      result === 'error' ? 'warning' : 'success',
-    );
-  }, [selectedPlaylist, showToast, t]);
-
-  const handleNicoLink = useCallback((response: NicoPlaylistSongsResponse) => {
-    const now = Date.now();
-    const sync = {
-      sourceKind: response.sourceKind,
-      sourceId: response.sourceId,
-      sourceUrl: normalizeNicoPlaylistUrl({ kind: response.sourceKind, id: response.sourceId }),
-      enabled: true,
-      intervalHours: 24,
-      lastAttemptAt: now,
-      lastSuccessfulAt: now,
-      nextSyncAt: now + 24 * 60 * 60 * 1000,
-      lastStatus: response.unmatchedVideoIds.length > 0 || response.truncated ? 'partial' as const : 'success' as const,
-      lastVideoCount: response.videoCount,
-      lastMatchedCount: response.matchedCount,
-      lastUnmatchedCount: response.unmatchedVideoIds.length,
-    };
-    const linked = createNicoLinkedPlaylist(response.title, response.songs, sync, selectedFolderId ?? undefined);
-    setSelectedPlaylistId(linked.id);
-    showToast(t('「{title}」をニコニコ自動同期プレイリストとして追加しました', { title: response.title }), 'success');
-  }, [createNicoLinkedPlaylist, selectedFolderId, showToast, t]);
-
-  const refreshNicoPlaylist = useCallback(async () => {
-    if (!selectedPlaylist) return;
-    const result = await syncNicoPlaylist(selectedPlaylist, { refresh: true });
-    showToast(
-      result === 'error' ? t('ニコニコプレイリストの同期に失敗しました')
-        : result === 'partial' ? t('同期しました（一部の動画はVocaDB未登録です）')
-          : t('ニコニコプレイリストを同期しました'),
-      result === 'error' ? 'warning' : 'success',
-    );
-  }, [selectedPlaylist, showToast, t]);
-
-  const handleSetCover   = useCallback((song: Song) => {
-    if (!selectedPlaylist) return;
-    updatePlaylist(selectedPlaylist.id, { coverArtUrl: song.thumbUrl });
-  }, [selectedPlaylist, updatePlaylist]);
-
-  const moveToTop    = useCallback((idx: number) => {
-    if (selectedPlaylist) reorderSongs(selectedPlaylist.id, idx, 0);
-  }, [selectedPlaylist, reorderSongs]);
-
-  const moveToBottom = useCallback((idx: number) => {
-    if (selectedPlaylist) reorderSongs(selectedPlaylist.id, idx, selectedPlaylist.songs.length - 1);
-  }, [selectedPlaylist, reorderSongs]);
-
-  const openEdit = useCallback((p: Playlist) => {
-    setEditingPlaylist(p);
-    setEditName(p.name);
-    setEditDesc(p.description ?? '');
-    setEditCover(p.coverArtUrl ?? '');
-    setEditFolderId(p.folderId ?? '');
-  }, []);
-
-  const saveEdit = useCallback(() => {
-    if (!editingPlaylist) return;
-    updatePlaylist(editingPlaylist.id, {
-      name: editName.trim() || editingPlaylist.name,
-      description: editDesc.trim() || undefined,
-      coverArtUrl: editCover.trim() || undefined,
-      folderId: editFolderId || undefined,
-    });
-    setEditingPlaylist(null);
-  }, [editingPlaylist, editName, editDesc, editCover, editFolderId, updatePlaylist]);
-
+  // ── Playlist-level actions ────────────────────────────────────────────────
+  // Shared and exported under the shown name (後で聴く is 「Listen later」 in English).
   const exportPlaylist = useCallback((playlist: Playlist) => {
     const exportedAt = new Date().toISOString();
-    downloadJson(`${toSafeFileName(playlist.name)}.diva-playlist.json`, createPlaylistExportPayload(playlist, exportedAt));
-  }, []);
+    const name = displayPlaylistName(playlist, t);
+    downloadJson(`${toSafeFileName(name)}.diva-playlist.json`, createPlaylistExportPayload({ ...playlist, name }, exportedAt));
+  }, [t]);
 
   const sharePlaylist = useCallback(async (playlist: Playlist) => {
-    const url = createPlaylistShareUrl(playlist);
-    try {
-      await navigator.clipboard.writeText(url);
-      showToast(t('共有リンクをクリップボードにコピーしました'), 'info');
-    } catch {
-      showToast(t('共有リンク: {url}', { url }), 'info');
+    const url = createPlaylistShareUrl(playlist, { name: displayPlaylistName(playlist, t) });
+    if (!url) {
+      showToast(t('曲が多すぎて共有できません'), {
+        action: { label: t('JSONでエクスポート'), onAction: () => exportPlaylist(playlist) },
+      });
+      return;
     }
-  }, [showToast, t]);
+    if (await copyText(url)) showToast(t('リンクをコピーしました'));
+    else setShareUrl(url);
+  }, [exportPlaylist, t]);
 
-  const exportAllPlaylists = useCallback(() => {
+  const exportAllPlaylists = () => {
     const exportedAt = new Date().toISOString();
-    downloadJson(`diva-playlists-backup-${exportedAt.slice(0, 10)}.json`, createAllPlaylistsBackupPayload(folders, playlists, exportedAt));
-  }, [folders, playlists]);
+    const store = usePlaylistStore.getState();
+    downloadJson(`diva-playlists-backup-${exportedAt.slice(0, 10)}.json`, createAllPlaylistsBackupPayload(store.folders, store.playlists, exportedAt));
+  };
 
-  const importPlaylistJson = useCallback(async (file: File) => {
+  const deletePlaylistWithUndo = useCallback((playlist: Playlist) => {
+    if (playlist.isPinned) return;
+    const snapshot = usePlaylistStore.getState().deletePlaylist(playlist.id);
+    if (!snapshot) return;
+    if (listId === playlist.id) navigate(playlistsPath(), { replace: true });
+    showToast(t('プレイリストを削除しました'), {
+      action: {
+        label: t('元に戻す'),
+        onAction: () => { usePlaylistStore.getState().restoreDeletedPlaylist(snapshot); },
+      },
+    });
+  }, [listId, navigate, t]);
+
+  const libraryActions = useMemo<PlaylistActionHandlers>(() => ({
+    onPlayAll: playlist => {
+      if (playlist.songs.length === 0) return;
+      usePlayerStore.getState().setQueue(playlist.songs, 0, true, 'manual', playlist.name);
+    },
+    onShufflePlay: playlist => {
+      if (playlist.songs.length === 0) return;
+      usePlayerStore.getState().setQueueShuffled(playlist.songs, playlist.name);
+    },
+    onAddToQueue: playlist => {
+      if (playlist.songs.length === 0) return;
+      addSongsToQueue(playlist.songs, playlist.name);
+      showToast(t('キューに追加しました'));
+    },
+    onEdit: (playlist, focus) => setEditState({ playlistId: playlist.id, focus }),
+    onShare: playlist => { void sharePlaylist(playlist); },
+    onExport: exportPlaylist,
+    onDelete: deletePlaylistWithUndo,
+  }), [deletePlaylistWithUndo, exportPlaylist, sharePlaylist, t]);
+
+  const syncNow = useCallback(async (playlist: Playlist) => {
+    setSyncingId(playlist.id);
     try {
-      const data = JSON.parse(await file.text());
+      const result = playlist.youtubeSync?.enabled
+        ? await syncYouTubePlaylist(playlist, { refresh: true })
+        : await syncNicoPlaylist(playlist, { refresh: true });
+      if (result === 'error') {
+        showToast(t('同期できませんでした'), {
+          action: {
+            label: t('再試行'),
+            onAction: () => {
+              const latest = usePlaylistStore.getState().playlists.find(item => item.id === playlist.id);
+              if (latest) void syncNow(latest);
+            },
+          },
+        });
+      } else if (result === 'partial') {
+        showToast(t('同期しました（一部は未登録）'));
+      } else if (result === 'success') {
+        showToast(t('同期しました'));
+      }
+    } finally {
+      setSyncingId(current => (current === playlist.id ? null : current));
+    }
+  }, [t]);
+
+  const unlinkSync = (playlist: Playlist) => {
+    const store = usePlaylistStore.getState();
+    const unlinked = playlist.youtubeSync ? store.unlinkYouTubeSync(playlist.id) : store.unlinkNicoSync(playlist.id);
+    if (unlinked) showToast(t('同期を解除しました'));
+  };
+
+  const goBack = () => {
+    if (location.key !== 'default') navigate(-1);
+    else navigate(playlistsPath());
+  };
+
+  // ── Creating ──────────────────────────────────────────────────────────────
+  const createPlaylist = (name: string, folderId?: string) => {
+    const playlist = usePlaylistStore.getState().createPlaylist(name, folderId);
+    setNewPlaylistOpen(false);
+    navigate(playlistPath(playlist.id));
+  };
+
+  const submitSmartPlaylist = ({ name, rule }: SmartPlaylistBuilderValues) => {
+    const store = usePlaylistStore.getState();
+    const editing = smartBuilder?.playlistId ? store.playlists.find(playlist => playlist.id === smartBuilder.playlistId) : null;
+    if (editing) {
+      store.updatePlaylist(editing.id, { name, smartRule: rule });
+      smartRefreshRef.current = null;
+      smartRefreshRetryRef.current.delete(editing.id);
+      setSmartRefreshStatuses(current => ({ ...current, [editing.id]: { state: 'loading' } }));
+      showToast(t('条件を保存しました'));
+    } else {
+      const playlist = store.createSmartPlaylist(name, rule, selectedFolderId ?? undefined);
+      navigate(playlistPath(playlist.id));
+      showToast(t('「{title}」を作成しました', { title: name }));
+    }
+    setSmartBuilder(null);
+  };
+
+  const saveImport = (result: PlaylistImportResult, { sync, targetId }: PlaylistImportSaveOptions) => {
+    const store = usePlaylistStore.getState();
+    const names = takenPlaylistNames();
+    const fallbackName = result.service === 'youtube' ? t('YouTubeのプレイリスト') : t('ニコニコのプレイリスト');
+    const folderId = selectedFolderId ?? undefined;
+
+    if (sync) {
+      const name = uniquePlaylistName(result.title || fallbackName, names);
+      let created: Playlist;
+      if (result.service === 'youtube' && result.youtube) {
+        created = store.createYouTubeLinkedPlaylist(name, result.songs, youtubeSyncFrom(result.youtube), folderId);
+      } else if (result.service === 'niconico' && result.nico) {
+        created = store.createNicoLinkedPlaylist(name, result.songs, nicoSyncFrom(result.nico), folderId);
+      } else {
+        throw new Error('sync source missing');
+      }
+      setImportState(null);
+      navigate(playlistPath(created.id));
+      showToast(t('「{name}」を追加しました', { name }));
+      return;
+    }
+
+    if (targetId) {
+      const target = store.playlists.find(playlist => playlist.id === targetId);
+      if (!target) throw new Error('target missing');
+      const added = store.addSongs(targetId, result.songs);
+      if (!added.success) throw new Error('save failed');
+      setImportState(null);
+      const name = displayPlaylistName(target, t);
+      const openAction = listId !== targetId
+        ? { action: { label: t('開く'), onAction: () => navigate(playlistPath(targetId)) } }
+        : undefined;
+      if (added.added === 0) {
+        showToast(added.duplicates === 1 ? t('1曲は追加済みです') : t('{count}曲は追加済みです', { count: added.duplicates }), openAction);
+      } else {
+        showToast(added.added === 1
+          ? t('1曲を「{name}」に保存しました', { name })
+          : t('{count}曲を「{name}」に保存しました', { name, count: added.added }), openAction);
+      }
+      return;
+    }
+
+    const name = uniquePlaylistName(result.title || fallbackName, names);
+    const created = store.createPlaylistWithSongs(name, result.songs, folderId);
+    setImportState(null);
+    navigate(playlistPath(created.id));
+    showToast(created.songs.length === 1
+      ? t('1曲を「{name}」に保存しました', { name })
+      : t('{count}曲を「{name}」に保存しました', { name, count: created.songs.length }));
+  };
+
+  const importJsonFile = async (file: File) => {
+    try {
+      const data: unknown = JSON.parse(await file.text());
+      const store = usePlaylistStore.getState();
+      const names = new Set(takenPlaylistNames());
       const backup = parsePlaylistBackup(data);
       if (backup) {
         const folderIdMap = new Map<string, string>();
         const pendingFolders = [...backup.folders];
-
         while (pendingFolders.length > 0) {
           const folder = pendingFolders.shift();
           if (!folder) break;
@@ -532,361 +431,208 @@ export default function PlaylistPage() {
             pendingFolders.push(folder);
             continue;
           }
-          const created = createFolder(folder.name, folder.parentId ? folderIdMap.get(folder.parentId) : undefined);
+          const created = store.createFolder(folder.name, folder.parentId ? folderIdMap.get(folder.parentId) : undefined);
           folderIdMap.set(folder.id, created.id);
         }
-
         let addedSongs = 0;
         backup.playlists.forEach(item => {
-          const playlist = createPlaylistWithSongs(
-            `${item.name} (import)`, item.songs, item.folderId ? folderIdMap.get(item.folderId) : selectedFolderId ?? undefined,
+          const name = uniquePlaylistName(item.name, names);
+          names.add(name);
+          const playlist = usePlaylistStore.getState().createPlaylistWithSongs(
+            name,
+            item.songs,
+            item.folderId ? folderIdMap.get(item.folderId) : selectedFolderId ?? undefined,
             { description: item.description, coverArtUrl: item.coverArtUrl, smartRule: item.smartRule },
           );
           addedSongs += playlist.songs.length;
         });
-
-        showToast(t('プレイリストバックアップをインポートしました ({count} 曲)', { count: addedSongs }), 'success');
+        showToast(t('バックアップをインポートしました（{songs}）', { songs: formatCount(addedSongs, 'song', language) }));
         return;
       }
 
       const parsed = parsePlaylistImport(data);
       if (!parsed) throw new Error('Invalid playlist JSON');
-
-      const playlist = createPlaylistWithSongs(
-        `${parsed.name} (import)`, parsed.songs, selectedFolderId ?? undefined,
-        { description: parsed.description, coverArtUrl: parsed.coverArtUrl },
-      );
-      setSelectedPlaylistId(playlist.id);
-      showToast(t('「{name}」をインポートしました ({count} 曲)', { name: playlist.name, count: playlist.songs.length }), 'success');
-    } catch {
-      window.alert(t('プレイリストJSONを読み込めませんでした。DIVA PlayerからエクスポートしたJSONを選択してください。'));
-    }
-  }, [createFolder, createPlaylistWithSongs, selectedFolderId, showToast, t]);
-
-  const handleDelete = useCallback((p: Playlist) => {
-    if (p.isPinned) return;
-    if (!window.confirm(t('「{name}」を削除してもよいですか？', { name: p.name }))) return;
-    const snapshot = deletePlaylist(p.id);
-    setSelectedPlaylistId(null);
-    if (snapshot) {
-      showToast(t('「{name}」を削除しました', { name: p.name }), 'info', {
-        label: t('元に戻す'),
-        onAction: () => {
-          if (restoreDeletedPlaylist(snapshot)) {
-            setSelectedPlaylistId(snapshot.playlist.id);
-            showToast(t('「{name}」を元に戻しました', { name: snapshot.playlist.name }), 'success');
-          }
-        },
+      const name = uniquePlaylistName(parsed.name, names);
+      const playlist = store.createPlaylistWithSongs(name, parsed.songs, selectedFolderId ?? undefined, {
+        description: parsed.description,
+        coverArtUrl: parsed.coverArtUrl,
       });
+      navigate(playlistPath(playlist.id));
+      showToast(t('「{name}」をインポートしました（{songs}）', { name, songs: formatCount(playlist.songs.length, 'song', language) }));
+    } catch {
+      showToast(t('このファイルはインポートできません'));
     }
-  }, [deletePlaylist, restoreDeletedPlaylist, showToast, t]);
+  };
 
-  const handleShufflePlay = useCallback(() => {
-    if (!selectedPlaylist || selectedPlaylist.songs.length === 0) return;
-    setQueueShuffled(selectedPlaylist.songs, selectedPlaylist.name);
-  }, [selectedPlaylist, setQueueShuffled]);
+  const openFilePicker = () => {
+    setImportState(null);
+    fileInputRef.current?.click();
+  };
 
-  return (
-    <div
-      className="playlist-page flex min-h-0 flex-col gap-4 px-3 py-3 xl:flex-row md:px-4 md:py-4"
-    >
-      {/* ─── 統一トースト ───────────────────────────────────────────── */}
-      <PlaylistToast toasts={toasts} onDismiss={dismissToast} />
+  // ── Folders ───────────────────────────────────────────────────────────────
+  const submitFolder = (name: string) => {
+    if (!folderDialog) return;
+    const store = usePlaylistStore.getState();
+    if (folderDialog.mode === 'create') store.createFolder(name);
+    else store.renameFolder(folderDialog.folder.id, name);
+    setFolderDialog(null);
+  };
 
-      <PlaylistLibrarySidebar
+  const deleteFolder = async (folder: PlaylistFolder) => {
+    const confirmed = await confirmDialog({
+      title: t('フォルダー「{name}」を削除しますか？', { name: folder.name }),
+      message: t('中のプレイリストは未分類に移ります'),
+      confirmLabel: t('削除'),
+    });
+    if (!confirmed) return;
+    usePlaylistStore.getState().deleteFolder(folder.id);
+    setLibraryFilter(current => (current === `folder:${folder.id}` ? 'all' : current));
+  };
+
+  const saveEdit = (values: PlaylistEditValues) => {
+    if (!editState) return;
+    usePlaylistStore.getState().updatePlaylist(editState.playlistId, values);
+    setEditState(null);
+  };
+
+  const editingPlaylist = editState ? playlists.find(playlist => playlist.id === editState.playlistId) ?? null : null;
+  const smartEditingPlaylist = smartBuilder?.playlistId ? playlists.find(playlist => playlist.id === smartBuilder.playlistId) ?? null : null;
+
+  let view;
+  if (listId) {
+    if (selectedPlaylist) {
+      view = (
+        <PlaylistDetail
+          key={selectedPlaylist.id}
+          playlist={selectedPlaylist}
+          folderName={selectedPlaylist.folderId ? folderNames.get(selectedPlaylist.folderId) : undefined}
+          smartStatus={smartRefreshStatuses[selectedPlaylist.id]}
+          syncing={syncingId === selectedPlaylist.id}
+          onBack={goBack}
+          onEdit={focus => setEditState({ playlistId: selectedPlaylist.id, focus })}
+          onShare={() => { void sharePlaylist(selectedPlaylist); }}
+          onExport={() => exportPlaylist(selectedPlaylist)}
+          onDelete={() => deletePlaylistWithUndo(selectedPlaylist)}
+          onImportInto={() => setImportState({ targetId: selectedPlaylist.id })}
+          onRefreshSmart={() => { void refreshSmartPlaylist(selectedPlaylist).catch(() => undefined); }}
+          onEditRules={() => setSmartBuilder({ playlistId: selectedPlaylist.id })}
+          onSyncNow={() => { void syncNow(selectedPlaylist); }}
+          onUnlinkSync={() => unlinkSync(selectedPlaylist)}
+        />
+      );
+    } else if (loaded && !shareParam) {
+      view = (
+        <PageShell>
+          <EmptyState
+            icon={<PlaylistIcon />}
+            title={t('プレイリストが見つかりませんでした')}
+            action={{ label: t('プレイリスト一覧に戻る'), to: playlistsPath() }}
+          />
+        </PageShell>
+      );
+    } else {
+      view = null;
+    }
+  } else if (shareParam) {
+    // Opening a shared link: its songs are being fetched (or could not be).
+    view = (
+      <PageShell>
+        {shareFailed === shareParam ? (
+          <EmptyState
+            icon={<ErrorIcon />}
+            title={t('共有リンクを開けませんでした')}
+            action={{ label: t('再試行'), onClick: () => { void openSharedLink(shareParam); } }}
+          />
+        ) : (
+          <div role="status" aria-label={t('読み込み中…')} className="flex justify-center py-16 text-yt-text-secondary">
+            <SpinnerIcon size={32} />
+          </div>
+        )}
+      </PageShell>
+    );
+  } else {
+    view = (
+      <PlaylistLibrary
         playlists={playlists}
         folders={folders}
-        selectedPlaylistId={selectedPlaylistId}
-        selectedFolderId={selectedFolderId}
-        hasSelectedPlaylist={Boolean(selectedPlaylist)}
-        onSelectPlaylist={setSelectedPlaylistId}
-        onSelectFolder={setSelectedFolderId}
-        onCreatePlaylist={handleCreate}
-        onCreateFolder={name => { createFolder(name); }}
-        onDeleteFolder={deleteFolder}
-        onOpenSmartBuilder={() => openSmartBuilder()}
-        onOpenNicoImport={() => setShowNicoImport(true)}
-        onOpenYouTubeImport={() => setShowYTImport(true)}
-        onImportJson={importPlaylistJson}
+        filter={libraryFilter}
+        onFilterChange={setLibraryFilter}
+        query={libraryQuery}
+        onQueryChange={setLibraryQuery}
+        actions={libraryActions}
+        onOpenPlaylist={() => { savedLibraryScrollY = window.scrollY; }}
+        onNewPlaylist={() => setNewPlaylistOpen(true)}
+        onNewSmartPlaylist={() => setSmartBuilder({ playlistId: null })}
+        onImportFromUrl={() => setImportState({ targetId: null })}
+        onImportFromFile={openFilePicker}
+        onCreateFolder={() => setFolderDialog({ mode: 'create' })}
+        onRenameFolder={folder => setFolderDialog({ mode: 'rename', folder })}
+        onDeleteFolder={folder => { void deleteFolder(folder); }}
         onExportAll={exportAllPlaylists}
       />
+    );
+  }
 
-      {/* ─── 右パネル ────────────────────────────────────────────────── */}
-      <main className={`playlist-detail min-h-0 min-w-0 flex-1 space-y-3 overflow-visible xl:overflow-y-auto ${selectedPlaylist ? 'block animate-slide-in-right xl:animate-none' : 'hidden xl:block'}`}>
-        {!selectedPlaylist ? (
-          /* ── 空状態 ── */
-          <div className="flex h-full min-h-[360px] flex-col items-center justify-center rounded-2xl border border-white/[0.07] bg-white/[0.02] px-6 text-center">
-            <div className="relative mb-6">
-              <svg className="h-16 w-16 text-neutral-700" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1">
-                <path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>
-              </svg>
-              <div className="absolute -bottom-1 -right-1 rounded-full bg-emerald-500/20 p-1">
-                <svg className="h-5 w-5 text-emerald-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M12 5v14M5 12h14"/>
-                </svg>
-              </div>
-            </div>
-            <p className="text-base font-medium text-neutral-300">{t('プレイリストを選んで始めましょう')}</p>
-            <p className="mt-2 max-w-xs text-sm leading-relaxed text-neutral-500">
-              {t('ライブラリから選んで再生。新しいリストは、手動・外部読み込み・条件で自動作成の3つの方法で作れます。')}
-            </p>
-          </div>
-        ) : (
-          <>
-            {/* ── モバイル戻るボタン（固定） ── */}
-            <button
-              type="button"
-              className="xl:hidden min-h-11 self-start rounded-xl border border-white/10 bg-black/90 px-3 text-sm text-neutral-300 transition-colors hover:bg-white/10"
-              onClick={() => setSelectedPlaylistId(null)}
-            >
-              ← {t('ライブラリ')}
-            </button>
+  return (
+    <>
+      {view}
 
-            <PlaylistHero
-              playlist={selectedPlaylist}
-              durationText={selectedPlaylistDurationText}
-              filteredSongCount={filteredSongs.length}
-              isFiltered={Boolean(filterText) && filteredSongs.length !== selectedPlaylist.songs.length}
-              smartRefreshStatus={selectedSmartRefreshStatus}
-              onPlay={() => setQueue(selectedPlaylist.songs, 0, true, 'manual', selectedPlaylist.name)}
-              onShuffle={handleShufflePlay}
-              onEdit={() => openEdit(selectedPlaylist)}
-              onDelete={() => handleDelete(selectedPlaylist)}
-              onEditSmartRule={() => openSmartBuilder(selectedPlaylist)}
-              onRefreshSmart={() => void refreshSmartPlaylist(selectedPlaylist).catch(() => undefined)}
-              onRefreshYouTube={() => void refreshYouTubePlaylist()}
-              onRefreshNico={() => void refreshNicoPlaylist()}
-              onUnlinkYouTube={() => {
-                if (unlinkYouTubeSync(selectedPlaylist.id)) showToast(t('同期を解除しました。現在の曲一覧は保持されます'), 'info');
-              }}
-              onUnlinkNico={() => {
-                if (unlinkNicoSync(selectedPlaylist.id)) showToast(t('同期を解除しました。現在の曲一覧は保持されます'), 'info');
-              }}
-              onOpenYouTubeImport={() => setShowYTImport(true)}
-              onOpenNicoImport={() => setShowNicoImport(true)}
-              onExport={() => exportPlaylist(selectedPlaylist)}
-              onShare={() => void sharePlaylist(selectedPlaylist)}
-            />
-
-            {selectedPlaylist.songs.length > 0 && (
-              <PlaylistToolbar
-                query={filterText}
-                sortKey={songSortKey}
-                resultCount={filteredSongs.length}
-                totalCount={selectedPlaylist.songs.length}
-                selectionMode={selectionMode}
-                duplicateCount={selectedPlaylistDuplicateCount}
-                healthIssueCount={selectedPlaylistHealth.entries.length}
-                externalLinked={isExternalLinked}
-                onQueryChange={setFilterText}
-                onSortChange={setSongSortKey}
-                onRemoveDuplicates={removeDuplicatesFromSelectedPlaylist}
-                onOpenHealth={() => setShowHealthModal(true)}
-                onToggleSelection={() => {
-                  setSelectionMode(current => !current);
-                  clearSelection();
-                }}
-                onSelectAll={selectAll}
-              />
-            )}
-
-            {/* ── 曲リスト ── */}
-            {filteredSongs.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-16 gap-3 text-neutral-500">
-                {filterText ? (
-                  <>
-                    <svg className="w-12 h-12 text-neutral-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1">
-                      <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
-                    </svg>
-                    <p className="text-sm font-medium text-neutral-400">{t('「{query}」に一致する曲はありません', { query: filterText })}</p>
-                  </>
-                ) : (
-                  <>
-                    <div className="rounded-2xl border border-dashed border-white/10 p-6">
-                      <svg className="w-12 h-12 text-neutral-600 mx-auto" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1">
-                        <path d="M12 5v14m-7-7h14"/>
-                      </svg>
-                    </div>
-                    <p className="text-sm font-medium text-neutral-400">{t('曲がまだありません')}</p>
-                    <p className="text-xs max-w-xs text-center leading-relaxed">
-                      {selectedPlaylist.smartRule ? t('条件に合う曲が見つかると、ここに表示されます。「条件を編集」から対象を見直せます。') : isExternalLinked ? t('元の外部リストにある、DIVA登録済みの曲がここに表示されます。') : t('検索画面の保存ボタンから追加するか、外部プレイリストを読み込めます。')}
-                    </p>
-                  </>
-                )}
-              </div>
-            ) : (
-              filteredSongs.length > VIRTUAL_THRESHOLD ? (
-                <>
-                  <p className="text-xs text-neutral-500 mb-1">
-                    {t('{count} 件（表示を軽くするため仮想スクロールを使用）', { count: filteredSongs.length })}
-                  </p>
-                  <VirtualSongList
-                    songs={filteredSongs}
-                    playlistId={selectedPlaylist.id}
-                    selectionMode={selectionMode}
-                    selectedIds={selectedIds}
-                    onToggleSelect={toggleSelect}
-                    onSetCover={handleSetCover}
-                    onRemoveSong={idx => removeSongWithUndo(selectedPlaylist.id, idx)}
-                    onMoveTop={moveToTop}
-                    onMoveBottom={moveToBottom}
-                    allSongs={selectedPlaylist.songs}
-                  />
-                </>
-              ) : songSortKey === 'addedOrder' ? (
-                <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-                  <SortableContext items={filteredSongs.map((song, index) => `${song.id}-${index}`)} strategy={verticalListSortingStrategy}>
-                    <div className="overflow-hidden rounded-2xl border border-white/[0.07] bg-white/[0.025]">
-                      {filteredSongs.map((song, filteredIdx) => {
-                        const globalIndex = selectedPlaylist.songs.findIndex(s => s.id === song.id);
-                        return (
-                          <SortableSongRow
-                            key={`${song.id}-${filteredIdx}`}
-                            id={`${song.id}-${filteredIdx}`}
-                            index={filteredIdx}
-                            song={song}
-                            selectionMode={selectionMode}
-                            selected={selectedIds.has(song.id)}
-                            onToggleSelect={() => toggleSelect(song.id)}
-                            onPlay={() => setQueue(filteredSongs, filteredIdx, true, 'manual', selectedPlaylist.name)}
-                            onRemove={() => removeSongWithUndo(selectedPlaylist.id, globalIndex)}
-                            onMoveTop={() => moveToTop(globalIndex)}
-                            onMoveBottom={() => moveToBottom(globalIndex)}
-                            onSetCover={() => handleSetCover(song)}
-                          />
-                        );
-                      })}
-                    </div>
-                  </SortableContext>
-                </DndContext>
-              ) : (
-                <div className="overflow-hidden rounded-2xl border border-white/[0.07] bg-white/[0.025]">
-                  {filteredSongs.map((song, filteredIdx) => {
-                    const globalIndex = selectedPlaylist.songs.findIndex(s => s.id === song.id);
-                    return (
-                      <div key={`${song.id}-${filteredIdx}`} className="h-16">
-                        <PlainSongRow
-                          index={filteredIdx}
-                          song={song}
-                          selectionMode={selectionMode}
-                          selected={selectedIds.has(song.id)}
-                          onToggleSelect={() => toggleSelect(song.id)}
-                          onPlay={() => setQueue(filteredSongs, filteredIdx, true, 'manual', selectedPlaylist.name)}
-                          onRemove={() => removeSongWithUndo(selectedPlaylist.id, globalIndex)}
-                          onMoveTop={() => moveToTop(globalIndex)}
-                          onMoveBottom={() => moveToBottom(globalIndex)}
-                          onSetCover={() => handleSetCover(song)}
-                        />
-                      </div>
-                    );
-                  })}
-                </div>
-              )
-            )}
-          </>
-        )}
-      </main>
-
-      {/* ─── 一括選択フローティングバー ───────────────────────────────── */}
-      {selectionMode && selectedIds.size > 0 && (
-        <div
-          className="fixed bottom-20 left-1/2 -translate-x-1/2 z-50 flex w-max max-w-[calc(100vw-1.5rem)] flex-wrap justify-center items-center gap-2 px-3 py-2.5 rounded-2xl shadow-2xl animate-slide-up"
-          style={{ background: 'var(--color-bg-card)', border: '1px solid var(--color-border)' }}
-        >
-          <span className="text-sm font-medium">{t('{count} 件選択中', { count: selectedIds.size })}</span>
-          <button onClick={addSelectedToQueue} className="btn-secondary text-xs px-3 py-1.5 flex items-center gap-1.5">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 5v14M5 12h14" /></svg>
-            {t('キューに追加')}
-          </button>
-          <button onClick={copySelectedToPlaylist} className="btn-secondary text-xs px-3 py-1.5 flex items-center gap-1.5">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M8 7h10a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2z"/>
-              <path d="M4 15H3a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
-            </svg>
-            {t('コピー')}
-          </button>
-          <button onClick={deleteSelected}
-            className="text-xs px-3 py-1.5 rounded-xl flex items-center gap-1.5 transition-colors hover:bg-red-900/30"
-            style={{ color: 'var(--color-error)', border: '1px solid var(--color-error)' }}
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/>
-              <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/>
-            </svg>
-            {t('削除')}
-          </button>
-          <button onClick={clearSelection} className="text-xs text-neutral-400 hover:text-white transition-colors">✕</button>
-        </div>
-      )}
-
-      {/* ─── 編集モーダル ─────────────────────────────────────────────── */}
-      {editingPlaylist && !editingPlaylist.isPinned && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center"
-          style={{ background: 'rgba(0,0,0,0.7)' }}
-          onClick={e => e.target === e.currentTarget && setEditingPlaylist(null)}
-        >
-          <div className="rounded-2xl p-6 w-full max-w-md flex flex-col gap-4 animate-slide-up"
-               style={{ background: 'var(--color-bg-card)', border: '1px solid var(--color-border)' }}>
-            <h2 className="text-lg font-bold">{t('プレイリストを編集')}</h2>
-            <label className="flex flex-col gap-1">
-              <span className="text-xs text-neutral-400">{t('名前')}</span>
-              <input className="search-input text-sm" style={{ paddingLeft: '0.75rem' }}
-                value={editName} onChange={e => setEditName(e.target.value)} />
-            </label>
-            <label className="flex flex-col gap-1">
-              <span className="text-xs text-neutral-400">{t('説明')}</span>
-              <textarea className="search-input text-sm resize-none" style={{ paddingLeft: '0.75rem', height: '80px' }}
-                value={editDesc} onChange={e => setEditDesc(e.target.value)} placeholder={t('プレイリストの説明...')} />
-            </label>
-            <label className="flex flex-col gap-1">
-              <span className="text-xs text-neutral-400">{t('カバーアート URL')}</span>
-              <input className="search-input text-sm" style={{ paddingLeft: '0.75rem' }}
-                value={editCover} onChange={e => setEditCover(e.target.value)} placeholder="https://..." />
-              {editCover && <img src={editCover} alt="" className="mt-1 w-16 h-16 rounded object-cover" />}
-            </label>
-            <label className="flex flex-col gap-1">
-              <span className="text-xs text-neutral-400">{t('フォルダ')}</span>
-              <select className="search-input text-sm" style={{ paddingLeft: '0.75rem' }}
-                value={editFolderId} onChange={e => setEditFolderId(e.target.value)}>
-                <option value="">{t('なし（ルート）')}</option>
-                {folders.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
-              </select>
-            </label>
-            <div className="flex gap-3 justify-end">
-              <button className="btn-secondary text-sm" onClick={() => setEditingPlaylist(null)}>{t('キャンセル')}</button>
-              <button className="btn-primary text-sm" onClick={saveEdit}>{t('保存')}</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {showHealthModal && selectedPlaylist && (
-        <PlaylistHealthModal
-          songs={selectedPlaylist.songs}
-          onClose={() => setShowHealthModal(false)}
-          onRemove={removeHealthIssues}
+      <NewPlaylistDialog
+        open={newPlaylistOpen}
+        folders={folders}
+        defaultFolderId={selectedFolderId ?? undefined}
+        onClose={() => setNewPlaylistOpen(false)}
+        onCreate={createPlaylist}
+      />
+      {folderDialog && (
+        <PlaylistFolderDialog
+          mode={folderDialog.mode}
+          initialName={folderDialog.mode === 'rename' ? folderDialog.folder.name : ''}
+          onClose={() => setFolderDialog(null)}
+          onSubmit={submitFolder}
         />
       )}
-
-      {showSmartBuilder && (
+      {editingPlaylist && editState && (
+        <PlaylistEditDialog
+          // A sibling of <PlaylistDetail key={id}>, so the key must differ from it.
+          key={`edit-${editingPlaylist.id}`}
+          playlist={editingPlaylist}
+          folders={folders}
+          focus={editState.focus}
+          onClose={() => setEditState(null)}
+          onSave={saveEdit}
+        />
+      )}
+      {smartBuilder && (smartBuilder.playlistId === null || smartEditingPlaylist) && (
         <SmartPlaylistBuilder
           mode={smartEditingPlaylist ? 'edit' : 'create'}
           initialName={smartEditingPlaylist?.name}
           initialRule={smartEditingPlaylist?.smartRule}
-          onClose={closeSmartBuilder}
-          onSubmit={handleSmartSubmit}
+          onClose={() => setSmartBuilder(null)}
+          onSubmit={submitSmartPlaylist}
         />
       )}
-
-      {/* ─── YouTube インポートモーダル ──────────────────────────────── */}
-      {showYTImport && (
-        <YouTubeImportModal onClose={() => setShowYTImport(false)} onImport={handleYTImport} onLink={handleYTLink} />
+      {importState && (
+        <PlaylistImportDialog
+          initialTargetId={importState.targetId}
+          playlists={playlists}
+          onClose={() => setImportState(null)}
+          onImportFile={openFilePicker}
+          onSave={saveImport}
+        />
       )}
-      {showNicoImport && (
-        <NicoImportModal onClose={() => setShowNicoImport(false)} onImport={handleNicoImport} onLink={handleNicoLink}
-          targetName={selectedPlaylist && !selectedPlaylist.smartRule && !selectedPlaylist.youtubeSync && !selectedPlaylist.nicoSync ? selectedPlaylist.name : undefined} />
-      )}
-    </div>
+      {shareUrl && <PlaylistShareDialog url={shareUrl} onClose={() => setShareUrl(null)} />}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="application/json,.json"
+        className="hidden"
+        onChange={event => {
+          const file = event.target.files?.[0];
+          if (file) void importJsonFile(file);
+          event.currentTarget.value = '';
+        }}
+      />
+    </>
   );
 }

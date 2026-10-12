@@ -1,52 +1,99 @@
-import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from 'react';
+import { Link, useNavigate } from 'react-router';
 import { searchHistoryEntries, useHistoryStore, type HistoryEntry } from '../stores/historyStore';
-import VideoGrid from '../components/home/VideoGrid';
-import type { Song } from '../types/vocadb';
-import { createHistoryCsv, getHistoryOverview, type HistoryOverview } from '../services/historyStats';
+import { useHiddenSongStore } from '../stores/hiddenSongStore';
+import { useLanguageStore } from '../stores/languageStore';
+import { useSelectionStore } from '../stores/selectionStore';
+import { confirmDialog } from '../stores/confirmStore';
+import { showToast } from '../stores/toastStore';
+import { createHistoryCsv, DEFAULT_TIME_ZONE, getHistoryOverview, type HistoryOverview } from '../services/historyStats';
 import { createHistoryBackup, importHistoryBackup } from '../services/historyBackup';
 import { downloadCsv } from '../utils/csv';
 import { downloadJson } from '../utils/playlistBackup';
-import { useAutoPlaySessionStore } from '../stores/autoPlaySessionStore';
-import { useAutoQueueDecisionStore } from '../stores/autoQueueDecisionStore';
-import { useLanguageStore } from '../stores/languageStore';
-import { useTranslateSourceText } from '../i18n';
+import { watchPath } from '../utils/routes';
+import { formatArtistLine, formatCount, formatTotalDuration } from '../utils/songMeta';
+import ViewCounts from '../components/ui/ViewCounts';
+import { hasViewCounts, joinMetaParts } from '../components/ui/songMetaParts';
+import { formatRelativeTime } from '../utils/relativeDate';
+import { MOBILE_MEDIA_QUERY, useMediaQuery } from '../hooks/useMediaQuery';
+import { useTranslate, useTranslateSourceText } from '../i18n';
+import Button from '../components/ui/Button';
+import EmptyState from '../components/ui/EmptyState';
+import IconButton from '../components/ui/IconButton';
+import Menu, { MenuDivider, MenuItem, MenuItemRadio, MenuLabel } from '../components/ui/Menu';
+import { PageHeader, PageShell } from '../components/ui/PageHeader';
+import SearchField from '../components/ui/SearchField';
+import { SkeletonListRow } from '../components/ui/Skeleton';
+import SongActionsMenu from '../components/ui/SongActionsMenu';
+import SongListRow, { type SongRowSize } from '../components/ui/SongListRow';
+import {
+  BarChartIcon,
+  DownloadIcon,
+  HistoryIcon,
+  MoreVertIcon,
+  SortIcon,
+  SpinnerIcon,
+  TrashIcon,
+  UploadIcon,
+} from '../components/ui/icons';
+import { RailButton, RailDivider } from '../components/library/LibraryRail';
+import RowBadge from '../components/library/RowBadge';
+import {
+  formatHistoryDayLabel,
+  formatHistoryTime,
+  groupHistoryByDay,
+  latestPlayPerSong,
+  type HistoryRowItem,
+} from '../components/library/historyGroups';
 
 type HistorySortMode = 'recent' | 'name' | 'artist';
-type BackupMessage = { source: string; values?: Record<string, string | number> };
 
-function formatDuration(seconds: number, language: 'ja' | 'en'): string {
-  const totalMinutes = Math.floor(seconds / 60);
-  if (totalMinutes < 60) return language === 'ja' ? `${totalMinutes}分` : `${totalMinutes} min`;
-  const hours = Math.floor(totalMinutes / 60);
-  const minutes = totalMinutes % 60;
-  return language === 'ja'
-    ? minutes > 0 ? `${hours}時間${minutes}分` : `${hours}時間`
-    : minutes > 0 ? `${hours} hr ${minutes} min` : `${hours} hr`;
-}
+const WIDE_MEDIA_QUERY = '(min-width: 1024px)';
+const XL_MEDIA_QUERY = '(min-width: 1280px)';
+const SEARCH_DEBOUNCE_MS = 180;
 
 /**
- * HistoryPage - 視聴履歴ページ
+ * HistoryPage - 再生履歴（日付ごとの一覧。1024px 以上は右に検索・操作・統計の列）
  */
 export default function HistoryPage() {
   const t = useTranslateSourceText();
+  const tk = useTranslate();
   const language = useLanguageStore(state => state.language);
-  const { entries, totalPlays, hasHydrated, hasMoreEntries, isLoadingMore, clearHistory, reloadHistory, loadMoreHistory } = useHistoryStore();
+  const navigate = useNavigate();
+  const isWide = useMediaQuery(WIDE_MEDIA_QUERY);
+  const isXl = useMediaQuery(XL_MEDIA_QUERY);
+  const isMobile = useMediaQuery(MOBILE_MEDIA_QUERY);
+  const rowSize: SongRowSize = isMobile || (isWide && !isXl) ? 'md' : 'lg';
+
+  const entries = useHistoryStore(state => state.entries);
+  const totalPlays = useHistoryStore(state => state.totalPlays);
+  const hasHydrated = useHistoryStore(state => state.hasHydrated);
+  const hasMoreEntries = useHistoryStore(state => state.hasMoreEntries);
+  const isLoadingMore = useHistoryStore(state => state.isLoadingMore);
+  const clearHistory = useHistoryStore(state => state.clearHistory);
+  const reloadHistory = useHistoryStore(state => state.reloadHistory);
+  const loadMoreHistory = useHistoryStore(state => state.loadMoreHistory);
+  const hiddenSongs = useHiddenSongStore(state => state.hiddenSongs);
+  const isSelectionMode = useSelectionStore(state => state.isSelectionMode);
+  const selectedSongIds = useSelectionStore(state => state.selectedSongIds);
+  const toggleSong = useSelectionStore(state => state.toggleSong);
+  const setVisibleSongs = useSelectionStore(state => state.setVisibleSongs);
+
   const [filterText, setFilterText] = useState('');
   const [searchedEntries, setSearchedEntries] = useState<HistoryEntry[] | null>(null);
   const [sortMode, setSortMode] = useState<HistorySortMode>('recent');
   const [overview, setOverview] = useState<HistoryOverview | null>(null);
-  const [backupMessage, setBackupMessage] = useState<BackupMessage | null>(null);
   const [isImporting, setIsImporting] = useState(false);
   const [isExportingCsv, setIsExportingCsv] = useState(false);
+  const [loadMoreFailed, setLoadMoreFailed] = useState(false);
   const importInputRef = useRef<HTMLInputElement>(null);
-  const autoPlaySession = useAutoPlaySessionStore(s => s.session);
-  const autoQueueDecisionCount = useAutoQueueDecisionStore(s => s.decisions.length);
-  const autoSkipRate = autoPlaySession
-    ? autoPlaySession.autoSkippedCount / Math.max(1, autoPlaySession.autoCompletedCount + autoPlaySession.autoSkippedCount)
-    : 0;
+  const sentinelRef = useRef<HTMLDivElement>(null);
 
+  const query = filterText.trim();
+  const hasHistory = totalPlays > 0 || entries.length > 0;
+
+  // The search covers the complete IndexedDB history, not only the loaded pages.
   useEffect(() => {
-    const query = filterText.trim();
     if (!query || !hasHydrated) {
       setSearchedEntries(null);
       return;
@@ -61,12 +108,12 @@ export default function HistoryPage() {
         console.error('[History] Failed to search the complete history', error);
         if (!cancelled) setSearchedEntries([]);
       });
-    }, 180);
+    }, SEARCH_DEBOUNCE_MS);
     return () => {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [filterText, hasHydrated, totalPlays]);
+  }, [query, hasHydrated, totalPlays]);
 
   useEffect(() => {
     if (!hasHydrated) return;
@@ -79,41 +126,79 @@ export default function HistoryPage() {
     return () => { cancelled = true; };
   }, [hasHydrated, totalPlays]);
 
-  const songs: Song[] = useMemo(() => {
-    const sourceEntries = filterText.trim() ? (searchedEntries ?? []) : entries;
-    const filtered = sourceEntries.map(e => e.song);
+  const sourceEntries = useMemo(() => (query ? (searchedEntries ?? []) : entries), [entries, query, searchedEntries]);
+  const isSearching = query !== '' && searchedEntries === null;
 
-    if (sortMode === 'name') {
-      return [...filtered].sort((a, b) => a.name.localeCompare(b.name, 'ja'));
-    }
-    if (sortMode === 'artist') {
-      return [...filtered].sort((a, b) => (a.artistString ?? '').localeCompare(b.artistString ?? '', 'ja'));
-    }
-    return filtered;
-  }, [entries, filterText, searchedEntries, sortMode]);
+  const groups = useMemo(
+    () => (sortMode === 'recent' ? groupHistoryByDay(sourceEntries, DEFAULT_TIME_ZONE) : []),
+    [sortMode, sourceEntries],
+  );
+  const flatRows = useMemo(() => {
+    if (sortMode === 'recent') return [];
+    const rows = latestPlayPerSong(sourceEntries);
+    return sortMode === 'name'
+      ? rows.sort((a, b) => a.song.name.localeCompare(b.song.name, 'ja'))
+      : rows.sort((a, b) => (a.song.artistString ?? '').localeCompare(b.song.artistString ?? '', 'ja'));
+  }, [sortMode, sourceEntries]);
+  const orderedRows = useMemo(
+    () => (sortMode === 'recent' ? groups.flatMap(group => group.items) : flatRows),
+    [flatRows, groups, sortMode],
+  );
+
+  // The selection bar's "select all" works on what this page shows.
+  const visibleSongs = useMemo(() => {
+    const seen = new Set<number>();
+    return orderedRows.flatMap(row => {
+      if (seen.has(row.song.id)) return [];
+      seen.add(row.song.id);
+      return [row.song];
+    });
+  }, [orderedRows]);
+  useEffect(() => {
+    setVisibleSongs(visibleSongs);
+  }, [setVisibleSongs, visibleSongs]);
+
+  const loadMore = useCallback(async () => {
+    const before = useHistoryStore.getState().entries.length;
+    await loadMoreHistory();
+    const after = useHistoryStore.getState();
+    // loadMoreHistory reports failures only in the console: no new rows while more remain means it failed.
+    setLoadMoreFailed(after.hasMoreEntries && after.entries.length === before);
+  }, [loadMoreHistory]);
+
+  const canAutoLoad = !query && hasMoreEntries && !isLoadingMore && !loadMoreFailed;
+  useEffect(() => {
+    const target = sentinelRef.current;
+    if (!canAutoLoad || !target || typeof IntersectionObserver === 'undefined') return;
+    const observer = new IntersectionObserver(items => {
+      if (!items.some(item => item.isIntersecting)) return;
+      observer.disconnect();
+      void loadMore();
+    }, { rootMargin: '800px 0px' });
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [canAutoLoad, entries.length, loadMore]);
 
   const handleExport = async () => {
     try {
-      const { payload, summary } = await createHistoryBackup();
-      const date = payload.exportedAt.slice(0, 10);
-      downloadJson(`diva-listening-history-${date}.json`, payload);
-      setBackupMessage({ source: '{count} 件の再生履歴を保存しました。', values: { count: summary.eventCount.toLocaleString() } });
+      const { payload } = await createHistoryBackup();
+      downloadJson(`diva-listening-history-${payload.exportedAt.slice(0, 10)}.json`, payload);
+      showToast(tk('libraryBackupSaved'));
     } catch (error) {
       console.error('[History] Failed to export history', error);
-      setBackupMessage({ source: '履歴のエクスポートに失敗しました。ブラウザの保存領域を確認してください。' });
+      showToast(tk('libraryBackupSaveFailed'));
     }
   };
 
   const handleCsvExport = async () => {
     setIsExportingCsv(true);
     try {
-      const csv = await createHistoryCsv();
-      const date = new Date().toISOString().slice(0, 10);
-      downloadCsv(`diva-listening-history-${date}.csv`, csv);
-      setBackupMessage({ source: '再生履歴CSVを保存しました。' });
+      const csv = await createHistoryCsv(DEFAULT_TIME_ZONE, language);
+      downloadCsv(`diva-listening-history-${new Date().toISOString().slice(0, 10)}.csv`, csv);
+      showToast(t('CSVをエクスポートしました'));
     } catch (error) {
       console.error('[History] Failed to export CSV', error);
-      setBackupMessage({ source: '再生履歴CSVのエクスポートに失敗しました。' });
+      showToast(t('CSVをエクスポートできませんでした'));
     } finally {
       setIsExportingCsv(false);
     }
@@ -129,183 +214,286 @@ export default function HistoryPage() {
       const data: unknown = JSON.parse(await file.text());
       const result = await importHistoryBackup(data);
       await reloadHistory();
-      setBackupMessage({
-        source: '{imported} 件を追加しました。重複 {duplicates} 件は除外しました。',
-        values: { imported: result.imported.toLocaleString(), duplicates: result.duplicates.toLocaleString() },
-      });
+      const imported = formatCount(result.imported, 'item', language);
+      showToast(result.duplicates > 0
+        ? t('{imported}を追加しました（重複{duplicates}はスキップ）', {
+          imported,
+          duplicates: formatCount(result.duplicates, 'item', language),
+        })
+        : t('{imported}を追加しました', { imported }));
     } catch (error) {
       console.error('[History] Failed to import history', error);
-      setBackupMessage({ source: '履歴を読み込めませんでした。DIVA Playerの履歴バックアップJSONを選択してください。' });
+      showToast(t('読み込めませんでした（DIVA Player の履歴バックアップを選んでください）'));
     } finally {
       setIsImporting(false);
     }
   };
 
-  return (
-    <div className="w-full px-4 sm:px-6 lg:px-8 py-4">
-      <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-xl font-bold" style={{ color: 'var(--color-text-primary)' }}>
-            {t('視聴履歴')}
-          </h1>
-          <p className="text-sm mt-1" style={{ color: 'var(--color-text-muted)' }}>
-            {language === 'ja' ? `${totalPlays} 件` : t('{count} 件', { count: totalPlays })}
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2 sm:justify-end">
-          <input
-            ref={importInputRef}
-            type="file"
-            accept="application/json,.json"
-            className="hidden"
-            onChange={handleImport}
-          />
-          <button className="yt-action-btn" onClick={handleExport} title={t('履歴をJSONで保存')}>
-            <span>{t('エクスポート')}</span>
-          </button>
-          <button
-            className="yt-action-btn"
-            onClick={handleCsvExport}
-            disabled={isExportingCsv}
-            title={t('履歴をCSVで保存')}
-          >
-            <span>{isExportingCsv ? t('CSV作成中…') : t('CSV保存')}</span>
-          </button>
-          <button
-            className="yt-action-btn"
-            onClick={() => importInputRef.current?.click()}
-            disabled={isImporting}
-            title={t('履歴バックアップを追加')}
-          >
-            <span>{isImporting ? t('読み込み中') : t('インポート')}</span>
-          </button>
-          {entries.length > 0 && (
-            <button
-              className="yt-action-btn"
-              onClick={clearHistory}
-              title={t('履歴を削除')}
-            >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" />
-              </svg>
-              <span className="hidden sm:inline">{t('履歴を削除')}</span>
-            </button>
-          )}
-        </div>
+  const openImport = () => importInputRef.current?.click();
+
+  const handleClear = async () => {
+    const confirmed = await confirmDialog({ title: t('再生履歴をすべて削除しますか？'), confirmLabel: t('削除') });
+    if (!confirmed) return;
+    try {
+      await clearHistory();
+      showToast(t('再生履歴を削除しました'));
+    } catch (error) {
+      console.error('[History] Failed to clear history', error);
+      showToast(t('再生履歴を削除できませんでした'));
+      // A failed clear may still have removed part of the data: show what is stored now.
+      await reloadHistory().catch(reloadError => console.error('[History] Failed to reload history', reloadError));
+    }
+  };
+
+  const sortOptions: Array<{ value: HistorySortMode; label: string }> = [
+    { value: 'recent', label: t('新しい順') },
+    { value: 'name', label: t('曲名順') },
+    { value: 'artist', label: t('アーティスト順') },
+  ];
+  const sortLabel = sortOptions.find(option => option.value === sortMode)?.label ?? '';
+
+  const now = Date.now();
+  const renderRow = (row: HistoryRowItem) => {
+    const playedText = sortMode === 'recent'
+      ? formatHistoryTime(row.playedAt, DEFAULT_TIME_ZONE, language)
+      : formatRelativeTime(row.playedAt, now, language);
+    return (
+      <SongListRow
+        key={row.key}
+        song={row.song}
+        size={rowSize}
+        onActivate={() => navigate(watchPath(row.song.id))}
+        meta={[
+          formatArtistLine(row.song, { withVocalists: true }),
+          joinMetaParts([playedText, hasViewCounts(row.song) ? <ViewCounts key="views" song={row.song} /> : null]),
+        ]}
+        badges={hiddenSongs[String(row.song.id)] ? <RowBadge>{t('非表示中')}</RowBadge> : undefined}
+        trailing={isSelectionMode ? undefined : <SongActionsMenu song={row.song} />}
+        selectionMode={isSelectionMode}
+        selected={selectedSongIds.has(row.song.id)}
+        onToggleSelect={() => toggleSong(row.song)}
+        className="-mx-2"
+      />
+    );
+  };
+
+  let list: ReactNode;
+  if (!hasHydrated || isSearching) {
+    list = (
+      <div aria-busy="true" className="-mx-2">
+        {Array.from({ length: isSearching ? 3 : 6 }, (_, index) => <SkeletonListRow key={index} size={rowSize} />)}
       </div>
+    );
+  } else if (orderedRows.length === 0) {
+    list = query
+      ? <EmptyState compact title={t('一致する曲はありません')} />
+      : <EmptyState icon={<HistoryIcon />} title={t('再生履歴はありません')} action={{ label: t('曲を探す'), to: '/' }} />;
+  } else {
+    list = (
+      <div aria-busy={isLoadingMore || undefined}>
+        {sortMode === 'recent' ? groups.map((group, index) => (
+          <section key={group.dayKey} aria-labelledby={`history-day-${group.dayKey}`} className={index > 0 ? 'mt-6' : undefined}>
+            <h2 id={`history-day-${group.dayKey}`} className="m-0 mb-2 text-base leading-[22px] font-bold text-yt-text sm:text-xl sm:leading-7">
+              {formatHistoryDayLabel(group.dayKey, now, DEFAULT_TIME_ZONE, language)}
+            </h2>
+            {group.items.map(renderRow)}
+          </section>
+        )) : flatRows.map(renderRow)}
+        {!query && hasMoreEntries && (
+          <div ref={sentinelRef} className="flex min-h-16 items-center justify-center py-4">
+            {loadMoreFailed ? (
+              <Button
+                variant="text"
+                onClick={() => {
+                  setLoadMoreFailed(false);
+                  void loadMore();
+                }}
+              >
+                {t('さらに読み込む')}
+              </Button>
+            ) : (
+              <SpinnerIcon className="text-yt-text-secondary" />
+            )}
+          </div>
+        )}
+      </div>
+    );
+  }
 
-      {backupMessage && (
-        <p className="mb-4 text-sm" role="status" style={{ color: 'var(--color-text-secondary)' }}>
-          {t(backupMessage.source, backupMessage.values)}
-        </p>
-      )}
+  const backupLabel = tk('libraryBackupSave');
+  const csvLabel = isExportingCsv ? t('エクスポート中…') : t('CSVでエクスポート');
+  const importLabel = isImporting ? t('読み込み中…') : t('バックアップを読み込む');
 
-      {overview && (
-        <section
-          aria-label={t('視聴統計')}
-          className="mb-6 grid grid-cols-2 gap-2 sm:grid-cols-4"
-        >
-          <div className="rounded-lg border p-3" style={{ borderColor: 'var(--color-border)', background: 'var(--color-surface)' }}>
-            <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>{t('有効再生')}</p>
-            <p className="mt-1 text-lg font-semibold" style={{ color: 'var(--color-text-primary)' }}>{overview.totalQualifiedPlays}</p>
-          </div>
-          <div className="rounded-lg border p-3" style={{ borderColor: 'var(--color-border)', background: 'var(--color-surface)' }}>
-            <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>{t('完走')}</p>
-            <p className="mt-1 text-lg font-semibold" style={{ color: 'var(--color-text-primary)' }}>{overview.totalCompletes}</p>
-          </div>
-          <div className="rounded-lg border p-3" style={{ borderColor: 'var(--color-border)', background: 'var(--color-surface)' }}>
-            <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>{t('総再生時間')}</p>
-            <p className="mt-1 text-lg font-semibold" style={{ color: 'var(--color-text-primary)' }}>{formatDuration(overview.totalListenedSeconds, language)}</p>
-          </div>
-          <div className="rounded-lg border p-3" style={{ borderColor: 'var(--color-border)', background: 'var(--color-surface)' }}>
-            <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>{t('開始回数')}</p>
-            <p className="mt-1 text-lg font-semibold" style={{ color: 'var(--color-text-primary)' }}>{overview.totalStarts}</p>
-          </div>
-        </section>
-      )}
+  const fileInput = (
+    <input
+      ref={importInputRef}
+      type="file"
+      accept="application/json,.json"
+      className="hidden"
+      tabIndex={-1}
+      aria-hidden="true"
+      onChange={handleImport}
+    />
+  );
 
-      {(autoPlaySession || autoQueueDecisionCount > 0) && (
-        <section
-          aria-label={t('自動再生の状況')}
-          className="mb-6 rounded-lg border p-4"
-          style={{ borderColor: 'var(--color-border)', background: 'var(--color-surface)' }}
-        >
-          <div className="flex items-baseline justify-between gap-3">
-            <h2 className="text-sm font-semibold" style={{ color: 'var(--color-text-primary)' }}>{t('自動再生の状況')}</h2>
-            <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>{t('判断ログ: {count}件', { count: autoQueueDecisionCount })}</span>
+  if (isWide) {
+    return (
+      <PageShell>
+        {fileInput}
+        <div className="flex items-start gap-6">
+          <div className="min-w-0 flex-1">
+            <PageHeader title={t('再生履歴')} />
+            {list}
           </div>
-          {autoPlaySession ? (
-            <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
-              <div><p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>{t('自動再生')}</p><p className="text-base font-semibold">{autoPlaySession.autoPlayedCount}</p></div>
-              <div><p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>{t('完走')}</p><p className="text-base font-semibold">{autoPlaySession.autoCompletedCount}</p></div>
-              <div><p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>{t('スキップ率')}</p><p className="text-base font-semibold">{Math.round(autoSkipRate * 100)}%</p></div>
-              <div><p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>{t('手動介入')}</p><p className="text-base font-semibold">{autoPlaySession.manualOverrideCount}</p></div>
-            </div>
-          ) : (
-            <p className="mt-2 text-sm" style={{ color: 'var(--color-text-muted)' }}>{t('直近の自動再生セッションはありません。')}</p>
-          )}
-        </section>
-      )}
-
-      {(entries.length > 0 || totalPlays > 0) && (
-        <div className="mb-4 max-w-2xl">
-          <div className="flex flex-col gap-2 sm:flex-row">
-            <input
-              type="search"
-              value={filterText}
-              onChange={(event) => setFilterText(event.target.value)}
-              placeholder={t('履歴を検索')}
-              className="w-full rounded-lg border px-3 py-2 text-sm outline-none"
-              style={{
-                background: 'var(--color-surface)',
-                borderColor: 'var(--color-border)',
-                color: 'var(--color-text-primary)',
-              }}
-            />
-            <select
-              value={sortMode}
-              onChange={(event) => setSortMode(event.target.value as HistorySortMode)}
-              className="rounded-lg border px-3 py-2 text-sm outline-none sm:w-40"
-              style={{
-                background: 'var(--color-surface)',
-                borderColor: 'var(--color-border)',
-                color: 'var(--color-text-primary)',
-              }}
+          <div
+            data-testid="history-actions"
+            className="sticky top-[calc(var(--header-height,56px)_+_var(--selection-bar-height,0px)_+_24px)] w-[280px] shrink-0 pb-6 xl:w-[320px]"
+          >
+            {hasHistory && (
+              <>
+                <SearchField
+                  variant="underline"
+                  value={filterText}
+                  onChange={setFilterText}
+                  label={t('再生履歴を検索')}
+                  className="mb-2"
+                />
+                <Menu
+                  trigger={(
+                    <RailButton icon={<SortIcon />}>
+                      {t('並べ替え')}
+                      <span className="ml-2 text-yt-text-secondary">{sortLabel}</span>
+                    </RailButton>
+                  )}
+                  label={t('並べ替え')}
+                >
+                  {sortOptions.map(option => (
+                    <MenuItemRadio
+                      key={option.value}
+                      checked={option.value === sortMode}
+                      onSelect={() => setSortMode(option.value)}
+                    >
+                      {option.label}
+                    </MenuItemRadio>
+                  ))}
+                </Menu>
+                <RailDivider />
+                <RailButton icon={<TrashIcon />} onClick={() => void handleClear()} data-testid="history-clear">
+                  {t('すべての再生履歴を削除')}
+                </RailButton>
+                <RailButton icon={<DownloadIcon />} onClick={() => void handleExport()} data-testid="history-backup-export">
+                  {backupLabel}
+                </RailButton>
+                <RailButton
+                  icon={<DownloadIcon />}
+                  loading={isExportingCsv}
+                  onClick={() => void handleCsvExport()}
+                  data-testid="history-csv-export"
+                >
+                  {csvLabel}
+                </RailButton>
+              </>
+            )}
+            <RailButton
+              icon={<UploadIcon />}
+              loading={isImporting}
+              onClick={openImport}
+              data-testid="history-backup-import"
             >
-              <option value="recent">{t('最近')}</option>
-              <option value="name">{t('曲名')}</option>
-              <option value="artist">{t('アーティスト')}</option>
-            </select>
+              {importLabel}
+            </RailButton>
+            {hasHistory && overview && overview.totalStarts > 0 && (
+              <>
+                <RailDivider />
+                <section aria-label={t('視聴統計')} className="px-3">
+                  <h2 className="m-0 mb-3 text-base leading-6 font-medium text-yt-text">{t('視聴統計')}</h2>
+                  <dl className="m-0 grid grid-cols-2 gap-x-4 gap-y-3">
+                    <Stat label={t('再生回数')} value={overview.totalQualifiedPlays.toLocaleString()} />
+                    <Stat label={t('再生時間')} value={formatTotalDuration(overview.totalListenedSeconds, language)} />
+                    <Stat label={t('最後まで聴いた')} value={overview.totalCompletes.toLocaleString()} />
+                    <Stat label={t('再生開始')} value={overview.totalStarts.toLocaleString()} />
+                  </dl>
+                  {/* The record count is not repeated here: it is the 再生開始 number above. */}
+                  <p className="m-0 mt-3 text-xs leading-[18px]">
+                    <Link to="/reports" className="text-yt-link no-underline hover:underline">{t('レポートを見る')}</Link>
+                  </p>
+                </section>
+              </>
+            )}
           </div>
-          {filterText.trim() && (
-            <p className="text-xs mt-1" style={{ color: 'var(--color-text-muted)' }}>
-              {searchedEntries === null ? t('履歴を読み込み中…') : t('{visible} / {total} 件を表示中', { visible: songs.length, total: totalPlays })}
-            </p>
-          )}
         </div>
-      )}
+      </PageShell>
+    );
+  }
 
-      {entries.length > 0 && !filterText.trim() && (
-        <div className="mb-4 flex items-center gap-3">
-          {hasMoreEntries ? (
-            <button
-              type="button"
-              className="yt-action-btn"
-              onClick={() => void loadMoreHistory()}
-              disabled={isLoadingMore}
+  return (
+    <PageShell>
+      {fileInput}
+      <PageHeader
+        title={t('再生履歴')}
+        actions={(
+          <>
+            {hasHistory && (
+              <SearchField expandable value={filterText} onChange={setFilterText} label={t('再生履歴を検索')} width={220} />
+            )}
+            <Menu
+              trigger={(
+                <IconButton label={t('その他の操作')} icon={<MoreVertIcon />} data-testid="history-actions-menu" />
+              )}
+              align="end"
             >
-              {isLoadingMore ? t('履歴を読み込み中…') : t('さらに読み込む')}
-            </button>
-          ) : (
-            <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>{t('全履歴を読み込み済み')}</span>
-          )}
-          <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
-            {t('表示中 {loaded} / {total} 件', { loaded: entries.length.toLocaleString(), total: totalPlays.toLocaleString() })}
-          </span>
-        </div>
-      )}
+              {hasHistory && (
+                <>
+                  <MenuLabel>{t('並べ替え')}</MenuLabel>
+                  {sortOptions.map(option => (
+                    <MenuItemRadio
+                      key={option.value}
+                      checked={option.value === sortMode}
+                      onSelect={() => setSortMode(option.value)}
+                    >
+                      {option.label}
+                    </MenuItemRadio>
+                  ))}
+                  <MenuDivider />
+                  <MenuItem icon={<DownloadIcon />} onSelect={() => void handleExport()} data-testid="history-backup-export">
+                    {backupLabel}
+                  </MenuItem>
+                  <MenuItem
+                    icon={<DownloadIcon />}
+                    disabled={isExportingCsv}
+                    onSelect={() => void handleCsvExport()}
+                    data-testid="history-csv-export"
+                  >
+                    {csvLabel}
+                  </MenuItem>
+                </>
+              )}
+              <MenuItem icon={<UploadIcon />} disabled={isImporting} onSelect={openImport} data-testid="history-backup-import">
+                {importLabel}
+              </MenuItem>
+              {hasHistory && (
+                <>
+                  <MenuItem icon={<BarChartIcon />} href="/reports">{t('レポートを見る')}</MenuItem>
+                  <MenuDivider />
+                  <MenuItem icon={<TrashIcon />} onSelect={() => void handleClear()} data-testid="history-clear">
+                    {t('すべての再生履歴を削除')}
+                  </MenuItem>
+                </>
+              )}
+            </Menu>
+          </>
+        )}
+      />
+      {list}
+    </PageShell>
+  );
+}
 
-      <VideoGrid songs={songs} loading={false} />
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0">
+      <dt className="truncate text-xs leading-4 text-yt-text-secondary">{label}</dt>
+      <dd className="m-0 mt-0.5 truncate text-base leading-6 font-medium text-yt-text tabular-nums">{value}</dd>
     </div>
   );
 }

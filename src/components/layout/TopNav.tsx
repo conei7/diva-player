@@ -1,627 +1,203 @@
-import { lazy, Suspense, useState, useRef, useEffect } from 'react';
-import { Link, useNavigate, useLocation } from 'react-router';
+import { lazy, Suspense, useEffect, useId, useRef, useState } from 'react';
+import type { MouseEvent } from 'react';
+import { useLocation } from 'react-router';
 import { useShallow } from 'zustand/react/shallow';
 import { useUiStore } from '../../stores/uiStore';
 import { usePlayerStore } from '../../stores/playerStore';
-import { useSearchStore } from '../../stores/searchStore';
 import { useSelectionStore } from '../../stores/selectionStore';
-import {
-  getSearchSuggestions,
-  resolveProducerByName,
-  selectVocalistVariants,
-  searchVocalistsByName,
-  type SearchSuggestion,
-} from '../../api/vocadb';
 import { useGlobalFilterStore } from '../../stores/globalFilterStore';
 import { getGlobalFilterSummary, isDiscoveryFilterActive } from '../../utils/globalFilters';
 import { useLanguageStore } from '../../stores/languageStore';
-import { useTranslate } from '../../i18n';
+import { useTranslate, useTranslateSourceText } from '../../i18n';
+import { GUIDE_EXPANDED_MEDIA_QUERY, MOBILE_MEDIA_QUERY, useMediaQuery } from '../../hooks/useMediaQuery';
+import { isWatchPath } from '../../utils/routes';
+import IconButton from '../ui/IconButton';
+import Tooltip from '../ui/Tooltip';
+import {
+  CloseIcon,
+  MenuIcon,
+  MoreVertIcon,
+  SelectMultipleFilledIcon,
+  SelectMultipleIcon,
+  SettingsIcon,
+} from '../ui/iconsChrome';
+import { whenIdle } from '../../routes/routeLoaders';
+import BrandLogo from './BrandLogo';
+import { DeferredBoundary } from './RouteErrorBoundary';
+import SearchBox from './SearchBox';
+import { useFocusHandoff } from './focusHandoff';
+import { isPlainLeftClick, resetHomeState } from './navItems';
 
-const SettingsModal = lazy(() => import('../settings/SettingsModal'));
+const HIDDEN_MODE_CLICKS = 5;
 
-const SEARCH_HISTORY_KEY = 'divaSearchHistory';
-const MAX_SEARCH_HISTORY = 10;
+/** Pages whose song lists use the shared multi-select (the selection bar under the top bar). */
+const SELECTION_PATHS = new Set(['/', '/history', '/favorites']);
+const HIDDEN_MODE_CLICK_WINDOW_MS = 1000;
 
-function readSearchHistory(): string[] {
-  try {
-    const raw = window.localStorage.getItem(SEARCH_HISTORY_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter((item): item is string => typeof item === 'string').slice(0, MAX_SEARCH_HISTORY);
-  } catch {
-    return [];
-  }
-}
-
-function writeSearchHistory(history: string[]) {
-  try {
-    window.localStorage.setItem(SEARCH_HISTORY_KEY, JSON.stringify(history));
-  } catch {
-    // Ignore storage failures; search itself should keep working.
-  }
-}
+// The ⋮ menu (and the Menu code) loads after the first paint, outside the initial JavaScript (§1-12).
+const loadMoreMenu = () => import('./TopNavMoreMenu');
+const TopNavMoreMenu = lazy(loadMoreMenu);
+const preloadMoreMenu = () => void loadMoreMenu().catch(() => undefined);
 
 /**
- * TopNav - YouTube風のトップナビゲーションバー
- *
- * 左端: ハンバーガーメニュー + DIVAロゴ
- * 中央: 検索バー
- * 右端: ユーザーアイコン
+ * Top bar (DESIGN_SPEC §6.1.2). Desktop 56px: [≡][logo][hidden mode chip] … [search][advanced search] … [☑][⋮][⚙].
+ * Mobile 48px, one row: [≡ only on the song page][logo mark][search field][☑][⚙].
+ * ☑ (multi-select) shows on the pages with selectable song lists (home / search, song page, history, rated songs).
+ * Opaque #0f0f0f without a bottom border, blur or glow.
  */
 export default function TopNav() {
-  const navigate = useNavigate();
   const location = useLocation();
-  const t = useTranslate();
+  const tk = useTranslate();
+  const t = useTranslateSourceText();
+  const isMobile = useMediaQuery(MOBILE_MEDIA_QUERY);
+  const isWideGuide = useMediaQuery(GUIDE_EXPANDED_MEDIA_QUERY);
+  const isWatch = isWatchPath(location.pathname);
   const language = useLanguageStore(state => state.language);
-  const setLanguage = useLanguageStore(state => state.setLanguage);
-  const isWatchPage = location.pathname === '/watch';
-  const {
-    toggleSidebar,
-    toggleMobileDrawer,
-    advancedSearchOpen,
-    toggleAdvancedSearch,
-    setAdvancedSearchOpen,
-  } = useUiStore();
-  const { hiddenMode, toggleHiddenMode } = usePlayerStore();
-  const {
-    setQuery: setSearchStoreQuery,
-    search: runSearch,
-    searchTitleOnly,
-    searchByArtistId,
-    setVocalistFilters,
-    setVocalistMatchMode,
-    reset: resetSearch,
-  } = useSearchStore();
-  const isSelectionMode = useSelectionStore(s => s.isSelectionMode);
-  const enterSelectionMode = useSelectionStore(s => s.enterSelectionMode);
-  const exitSelectionMode  = useSelectionStore(s => s.exitSelectionMode);
-  const selectedCount = useSelectionStore(s => s.selectedSongIds.size);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [searchMode, setSearchMode] = useState<'auto' | 'song' | 'producer' | 'vocalist'>('auto');
-  const [searchFocused, setSearchFocused] = useState(false);
-  const [suggestions, setSuggestions] = useState<SearchSuggestion[]>([]);
-  const [isSuggestLoading, setIsSuggestLoading] = useState(false);
-  const [showSuggestions, setShowSuggestions] = useState(false);
-  const [recentSearches, setRecentSearches] = useState<string[]>(() => readSearchHistory());
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const toggleSidebar = useUiStore(state => state.toggleSidebar);
+  const toggleMobileDrawer = useUiStore(state => state.toggleMobileDrawer);
+  const drawerOpen = useUiStore(state => state.mobileDrawerOpen);
+  const openSettings = useUiStore(state => state.openSettings);
+  const hiddenMode = usePlayerStore(state => state.hiddenMode);
+  const toggleHiddenMode = usePlayerStore(state => state.toggleHiddenMode);
+  const isSelectionMode = useSelectionStore(state => state.isSelectionMode);
+  const enterSelectionMode = useSelectionStore(state => state.enterSelectionMode);
+  const exitSelectionMode = useSelectionStore(state => state.exitSelectionMode);
+  const showSelectionToggle = isWatch || SELECTION_PATHS.has(location.pathname.replace(/(.)\/+$/, '$1'));
   const globalFilterSettings = useGlobalFilterStore(useShallow(state => ({
     enabled: state.enabled,
     minYoutubeViews: state.minYoutubeViews,
     minNicoViews: state.minNicoViews,
     excludedSongTypes: state.excludedSongTypes,
+    excludeSelfCovers: state.excludeSelfCovers,
     vocalistFilters: state.vocalistFilters,
     vocalistMatchMode: state.vocalistMatchMode,
     cooldownHours: state.cooldownHours,
     excludeRatedFromDiscovery: state.excludeRatedFromDiscovery,
   })));
-  const searchInputRef = useRef<HTMLInputElement>(null);
-  const searchFormRef = useRef<HTMLFormElement>(null);
-  const showRecentSearches = showSuggestions && searchQuery.trim().length === 0 && recentSearches.length > 0;
+  const filtersActive = isDiscoveryFilterActive(globalFilterSettings);
+  const filterStatusId = useId();
+  const [moreMenuOpen, setMoreMenuOpen] = useState(false);
+  // The loaded ⋮ replaces the placeholder button; a keyboard focus on it moves along.
+  const moreMenuTriggerRef = useFocusHandoff<HTMLButtonElement>();
+  useEffect(() => (isMobile ? undefined : whenIdle(preloadMoreMenu)), [isMobile]);
 
-  const rememberSearch = (term: string) => {
-    const normalized = term.trim();
-    if (!normalized) return;
+  // The menu button opens the drawer on the song page and under 1312px; above that it switches
+  // the guide between expanded and mini. On phones (except the song page) the bottom nav has it.
+  const menuOpensDrawer = isWatch || !isWideGuide;
+  const showMenuButton = !isMobile || isWatch;
 
-    setRecentSearches(current => {
-      const next = [
-        normalized,
-        ...current.filter(item => item.toLowerCase() !== normalized.toLowerCase()),
-      ].slice(0, MAX_SEARCH_HISTORY);
-      writeSearchHistory(next);
-      return next;
-    });
-  };
-
-  const clearSearchHistory = () => {
-    setRecentSearches([]);
-    writeSearchHistory([]);
-    setShowSuggestions(false);
-  };
-
-  // ロゴ5回クリックで隠しモードトグル
-  const clickCountRef = useRef(0);
-  const clickTimerRef = useRef<number | null>(null);
-  const handleLogoClick = (event: React.MouseEvent<HTMLAnchorElement>) => {
-    // Ctrl/⌘クリックや中クリックは別タブ用なので、現在の検索状態を変更しない。
-    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-
-    resetSearch();
-    setSearchQuery('');
-    setSearchMode('auto');
-    setShowSuggestions(false);
-    if (isSelectionMode) exitSelectionMode();
-
-    clickCountRef.current += 1;
-    if (clickTimerRef.current) clearTimeout(clickTimerRef.current);
-    clickTimerRef.current = window.setTimeout(() => {
-      clickCountRef.current = 0;
-    }, 1000);
-    if (clickCountRef.current >= 5) {
-      clickCountRef.current = 0;
+  // Logo: a plain click resets the search; five clicks within a second toggle hidden mode.
+  const logoClicksRef = useRef(0);
+  const logoTimerRef = useRef<number | undefined>(undefined);
+  const handleLogoClick = (event: MouseEvent<HTMLAnchorElement>) => {
+    if (!isPlainLeftClick(event)) return;
+    resetHomeState();
+    logoClicksRef.current += 1;
+    window.clearTimeout(logoTimerRef.current);
+    logoTimerRef.current = window.setTimeout(() => {
+      logoClicksRef.current = 0;
+    }, HIDDEN_MODE_CLICK_WINDOW_MS);
+    if (logoClicksRef.current >= HIDDEN_MODE_CLICKS) {
+      logoClicksRef.current = 0;
       toggleHiddenMode();
     }
   };
 
-  const handleSearch = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const trimmed = searchQuery.trim();
-    if (!trimmed) return;
+  const filterSummary = filtersActive ? getGlobalFilterSummary(globalFilterSettings, language) : [];
 
-    rememberSearch(trimmed);
-    setShowSuggestions(false);
-    navigate('/');
-
-    if (searchMode === 'song') {
-      await searchTitleOnly(trimmed);
-      return;
-    }
-
-    if (searchMode === 'producer') {
-      const producer = await resolveProducerByName(trimmed);
-      if (producer) {
-        await searchByArtistId(producer.id, producer.name);
-      } else {
-        await searchTitleOnly(trimmed);
-      }
-      return;
-    }
-
-    if (searchMode === 'vocalist') {
-      const vocalists = selectVocalistVariants(
-        await searchVocalistsByName(trimmed, 50),
-        trimmed,
-      );
-      if (vocalists.length > 0) {
-        setSearchStoreQuery('');
-        setVocalistFilters(vocalists.map(vocalist => ({
-          id: vocalist.id,
-          name: vocalist.name,
-          variantGroup: vocalists.length > 1 ? trimmed : undefined,
-        })));
-        setVocalistMatchMode(vocalists.length > 1 ? 'Any' : 'All');
-        await runSearch();
-      } else {
-        await searchTitleOnly(trimmed);
-      }
-      return;
-    }
-
-    setSearchStoreQuery(trimmed);
-    await runSearch();
+  // The same ⋮ button until the menu code has loaded; a press made meanwhile opens the menu once it
+  // is here, and a focus on it moves to the loaded button (moreMenuTriggerRef on both).
+  const openMoreMenu = () => {
+    preloadMoreMenu();
+    setMoreMenuOpen(true);
   };
-
-  useEffect(() => {
-    const trimmed = searchQuery.trim();
-    if (trimmed.length < 2) {
-      setSuggestions([]);
-      setIsSuggestLoading(false);
-      return;
-    }
-
-    const controller = new AbortController();
-    const timer = window.setTimeout(async () => {
-      setIsSuggestLoading(true);
-      try {
-        const results = await getSearchSuggestions(trimmed);
-        if (!controller.signal.aborted) {
-          setSuggestions(results);
-          setShowSuggestions(document.activeElement === searchInputRef.current);
-        }
-      } catch {
-        if (!controller.signal.aborted) setSuggestions([]);
-      } finally {
-        if (!controller.signal.aborted) setIsSuggestLoading(false);
-      }
-    }, 220);
-
-    return () => {
-      controller.abort();
-      window.clearTimeout(timer);
-    };
-  }, [searchQuery]);
-
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (!searchFormRef.current?.contains(e.target as Node)) {
-        setShowSuggestions(false);
-      }
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, []);
-
-  const handleSuggestionSelect = async (suggestion: SearchSuggestion) => {
-    rememberSearch(suggestion.label);
-    setShowSuggestions(false);
-    if (suggestion.kind === 'song') {
-      setSearchQuery(suggestion.label);
-      navigate(`/watch?v=${suggestion.id}`);
-      return;
-    }
-
-    if (suggestion.kind === 'producer') {
-      setSearchQuery(suggestion.label);
-      searchByArtistId(suggestion.id, suggestion.label);
-      navigate('/');
-      return;
-    }
-
-    const vocalistQuery = searchQuery.trim() || suggestion.label;
-    const matchedVocalists = selectVocalistVariants(
-      await searchVocalistsByName(vocalistQuery, 50),
-      vocalistQuery,
-    );
-    const vocalists = matchedVocalists.length > 0 ? matchedVocalists : [suggestion.artist];
-
-    setSearchQuery(vocalistQuery);
-    setSearchStoreQuery('');
-    setVocalistFilters(vocalists.map(vocalist => ({
-      id: vocalist.id,
-      name: vocalist.name,
-      variantGroup: vocalists.length > 1 ? vocalistQuery : undefined,
-    })));
-    setVocalistMatchMode(vocalists.length > 1 ? 'Any' : 'All');
-    navigate('/');
-    await runSearch();
-  };
-
-  const handleRecentSearchSelect = async (term: string) => {
-    setSearchQuery(term);
-    setShowSuggestions(false);
-    rememberSearch(term);
-    setSearchStoreQuery(term);
-    navigate('/');
-    await runSearch();
-  };
-
-  const kindLabel = (kind: SearchSuggestion['kind']) => {
-    if (kind === 'song') return t('suggestionSong');
-    if (kind === 'producer') return 'P';
-    return t('suggestionVocalist');
-  };
-
-  const searchModes: Array<{ key: typeof searchMode; label: string; title: string }> = [
-    { key: 'auto', label: t('autoSearch'), title: t('autoSearchTitle') },
-    { key: 'song', label: t('songSearch'), title: t('songSearchTitle') },
-    { key: 'producer', label: t('producerSearch'), title: t('producerSearchTitle') },
-    { key: 'vocalist', label: t('vocalistSearch'), title: t('vocalistSearchTitle') },
-  ];
-
-  // キーボードショートカット: / で検索にフォーカス
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === '/' && !['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement)?.tagName)) {
-        e.preventDefault();
-        searchInputRef.current?.focus();
-      }
-    };
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-  }, []);
+  const moreMenuFallback = (
+    <IconButton
+      ref={moreMenuTriggerRef}
+      label={t('その他の操作')}
+      icon={<MoreVertIcon />}
+      className="topnav-action-btn"
+      aria-haspopup="menu"
+      aria-expanded={moreMenuOpen}
+      onPointerEnter={preloadMoreMenu}
+      onFocus={preloadMoreMenu}
+      onClick={openMoreMenu}
+      onKeyDown={event => {
+        if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+        event.preventDefault();
+        openMoreMenu();
+      }}
+    />
+  );
 
   return (
-    <header
-      className="topnav-header fixed top-0 left-0 right-0 z-50 glass-strong"
-      style={{ height: 'var(--header-height)' }}
-    >
-      <div className="topnav-inner h-full flex items-center px-4 gap-3">
-
-        {/* ─── 左: ハンバーガー + ロゴ ─── */}
-        <div className="topnav-brand flex items-center gap-2 flex-shrink-0">
-          {/* ハンバーガーメニュー */}
-          <button
-            className="btn-ghost p-2 rounded-full"
-            onClick={() => {
-              // WatchPageまたはモバイルではドロワー、それ以外のデスクトップではサイドバートグル
-              if (isWatchPage || window.innerWidth < 1024) {
-                toggleMobileDrawer();
-              } else {
-                toggleSidebar();
-              }
-            }}
-            title={t('menu')}
-            aria-label={t('menu')}
-          >
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z" />
-            </svg>
-          </button>
-
-          {/* ロゴ */}
-          <Link
-            to="/"
-            aria-label="DIVA Player home"
-            className="flex items-center gap-2 group"
-            onClick={handleLogoClick}
-          >
-            <div
-              className="w-8 h-8 rounded-lg flex items-center justify-center"
-              style={{ background: hiddenMode ? 'rgba(100,100,100,0.5)' : 'var(--gradient-primary)' }}
-            >
-              <svg className="w-5 h-5 text-white" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z" />
-              </svg>
-            </div>
-            <span className="text-lg font-bold tracking-tight hidden sm:inline">
-              <span
-                className="glow-text"
-                style={{ color: hiddenMode ? 'var(--color-text-muted)' : 'var(--color-accent-cyan)' }}
+    <header className="fixed inset-x-0 top-0 z-[var(--z-header)] h-[var(--header-height)] bg-yt-bg text-yt-text">
+      <div className="flex h-full items-center gap-4 px-4 max-sm:gap-2 max-sm:pl-3 max-sm:pr-1">
+        <div className="flex shrink-0 items-center gap-4 max-sm:gap-2">
+          {showMenuButton && (
+            <IconButton
+              label={tk('menu')}
+              icon={<MenuIcon />}
+              aria-haspopup={menuOpensDrawer ? 'dialog' : undefined}
+              aria-expanded={menuOpensDrawer ? drawerOpen : undefined}
+              onClick={menuOpensDrawer ? toggleMobileDrawer : toggleSidebar}
+            />
+          )}
+          <BrandLogo showText={!isMobile} onClick={handleLogoClick} />
+          {hiddenMode && !isMobile && (
+            <Tooltip content={t('隠しモードを終了')}>
+              <button
+                type="button"
+                aria-label={t('隠しモードを終了')}
+                onClick={toggleHiddenMode}
+                className="ml-[-8px] inline-flex h-7 shrink-0 cursor-pointer items-center gap-1 rounded-chip bg-yt-tonal pl-2.5 pr-1.5 text-xs font-medium leading-4 text-yt-text transition-colors duration-150 hover:bg-yt-tonal-hover"
               >
-                DIVA
-              </span>
-              <span style={{ color: 'var(--color-text-primary)' }}> Player</span>
-            </span>
-          </Link>
+                {tk('hiddenMode')}
+                <CloseIcon size={16} />
+              </button>
+            </Tooltip>
+          )}
         </div>
 
-        {/* ─── 中央: 検索バー ─── */}
-        <div className="topnav-search flex-1 flex justify-center max-w-2xl mx-auto">
-          <form ref={searchFormRef} onSubmit={handleSearch} className="relative flex w-full">
-            <div
-              className="hidden sm:flex h-10 items-center rounded-l-full border border-r-0 px-1"
-              style={{
-                background: searchFocused ? '#121212' : 'var(--color-bg-primary)',
-                borderColor: searchFocused ? 'var(--color-accent-purple)' : 'var(--color-border)',
-              }}
-            >
-              {searchModes.map(mode => {
-                const isActive = searchMode === mode.key;
-                return (
-                  <button
-                    key={mode.key}
-                    type="button"
-                    title={mode.title}
-                    className="h-7 min-w-8 rounded-full px-2 text-[11px] font-medium transition-colors"
-                    style={{
-                      background: isActive ? 'var(--color-accent-purple)' : 'transparent',
-                      color: isActive ? '#fff' : 'var(--color-text-muted)',
-                    }}
-                    onMouseDown={(e) => e.preventDefault()}
-                    onClick={() => setSearchMode(mode.key)}
-                  >
-                    {mode.label}
-                  </button>
-                );
-              })}
-            </div>
-            <div className="relative flex-1">
-              <input
-                ref={searchInputRef}
-                type="text"
-                placeholder={t('searchPlaceholder')}
-                value={searchQuery}
-                onChange={(e) => {
-                  setSearchQuery(e.target.value);
-                  if (e.target.value.trim().length === 0 && recentSearches.length > 0) {
-                    setShowSuggestions(true);
-                  }
-                }}
-                onFocus={() => {
-                  setSearchFocused(true);
-                  if (searchQuery.trim().length >= 2 || recentSearches.length > 0) setShowSuggestions(true);
-                }}
-                onBlur={() => setSearchFocused(false)}
-                className="w-full h-10 pl-4 pr-4 rounded-l-full sm:rounded-l-none text-sm outline-none transition-all"
-                style={{
-                  background: searchFocused ? '#121212' : 'var(--color-bg-primary)',
-                  border: `1px solid ${searchFocused ? 'var(--color-accent-purple)' : 'var(--color-border)'}`,
-                  borderRight: 'none',
-                  color: 'var(--color-text-primary)',
-                }}
-              />
-            </div>
-            <button
-              type="submit"
-              className="px-5 h-10 rounded-r-full border border-l-0 flex items-center justify-center transition-colors"
-              style={{
-                background: 'var(--color-surface)',
-                borderColor: searchFocused ? 'var(--color-accent-purple)' : 'var(--color-border)',
-              }}
-              aria-label={t('search')}
-            >
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" style={{ color: 'var(--color-text-secondary)' }}>
-                <path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z" />
-              </svg>
-            </button>
-
-            {showSuggestions && (showRecentSearches || suggestions.length > 0 || isSuggestLoading) && (
-              <div
-                className="absolute left-0 right-0 top-full z-50 mt-2 max-h-[calc(100dvh-var(--header-height)-1rem)] overflow-y-auto overscroll-contain rounded-lg shadow-2xl"
-                style={{
-                  background: 'var(--color-surface-elevated)',
-                  border: '1px solid var(--color-border)',
-                }}
-              >
-                {showRecentSearches ? (
-                  <div>
-                    <div className="flex items-center justify-between px-4 py-2 text-xs" style={{ color: 'var(--color-text-muted)' }}>
-                      <span>{t('recentSearches')}</span>
-                      <button
-                        type="button"
-                        className="transition-colors hover:text-white"
-                        onMouseDown={(e) => {
-                          e.preventDefault();
-                          clearSearchHistory();
-                        }}
-                      >
-                        {t('clear')}
-                      </button>
-                    </div>
-                    <ul className="py-1">
-                      {recentSearches.map(term => (
-                        <li key={term}>
-                          <button
-                            type="button"
-                            className="w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors hover:bg-white/5"
-                            onMouseDown={(e) => {
-                              e.preventDefault();
-                              void handleRecentSearchSelect(term);
-                            }}
-                          >
-                            <span
-                              className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full"
-                              style={{ background: 'rgba(255,255,255,0.08)', color: 'var(--color-text-muted)' }}
-                            >
-                              <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                <circle cx="12" cy="12" r="9" />
-                                <path d="M12 7v5l3 2" />
-                              </svg>
-                            </span>
-                            <span className="min-w-0 flex-1 truncate text-sm font-medium" style={{ color: 'var(--color-text-primary)' }}>
-                              {term}
-                            </span>
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                ) : isSuggestLoading && suggestions.length === 0 ? (
-                  <div className="px-4 py-3 text-sm" style={{ color: 'var(--color-text-muted)' }}>
-                    {t('suggestionsLoading')}
-                  </div>
-                ) : (
-                  <ul className="py-1">
-                    {suggestions.map((suggestion) => (
-                      <li key={`${suggestion.kind}-${suggestion.id}`}>
-                        <button
-                          type="button"
-                          className="w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors hover:bg-white/5"
-                          onMouseDown={(e) => {
-                            e.preventDefault();
-                            handleSuggestionSelect(suggestion);
-                          }}
-                        >
-                          <span
-                            className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full text-[11px] font-bold"
-                            style={{
-                              background: suggestion.kind === 'song'
-                                ? 'rgba(34, 211, 238, 0.15)'
-                                : suggestion.kind === 'producer'
-                                  ? 'rgba(139, 92, 246, 0.18)'
-                                  : 'rgba(59, 130, 246, 0.16)',
-                              color: suggestion.kind === 'song'
-                                ? 'var(--color-accent-cyan)'
-                                : suggestion.kind === 'producer'
-                                  ? 'var(--color-accent-purple)'
-                                  : '#60a5fa',
-                            }}
-                          >
-                            {kindLabel(suggestion.kind)}
-                          </span>
-                          <span className="min-w-0 flex-1">
-                            <span className="block truncate text-sm font-medium" style={{ color: 'var(--color-text-primary)' }}>
-                              {suggestion.label}
-                            </span>
-                            <span className="block truncate text-xs" style={{ color: 'var(--color-text-muted)' }}>
-                              {suggestion.sublabel}
-                            </span>
-                          </span>
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-            )}
-          </form>
+        <div className="flex min-w-0 flex-1 justify-center">
+          <SearchBox compact={isMobile} />
         </div>
 
-        {/* ─── 右: 統一アクションボタン ─── */}
-        <div className="topnav-actions flex items-center gap-1.5 flex-shrink-0">
-          <button
-            type="button"
-            className="topnav-action-btn min-w-9 px-2 text-xs font-semibold"
-            onClick={() => setLanguage(language === 'ja' ? 'en' : 'ja')}
-            title={t('switchLanguage')}
-            aria-label={t('switchLanguage')}
-          >
-            {language === 'ja' ? 'EN' : 'JA'}
-          </button>
-
-          {/* 隠しモード表示 */}
-          {hiddenMode && (
-            <span
-              className="text-[10px] font-bold px-2 py-1 rounded-full mr-0.5 hidden sm:inline"
-              style={{ background: 'rgba(100,100,100,0.3)', color: 'var(--color-text-muted)' }}
-            >
-              {t('hiddenMode')}
+        <div className="flex shrink-0 items-center gap-2 max-sm:gap-0">
+          {showSelectionToggle && (
+            <IconButton
+              label={tk('multiSelect')}
+              icon={isSelectionMode ? <SelectMultipleFilledIcon /> : <SelectMultipleIcon />}
+              pressed={isSelectionMode}
+              className="topnav-action-btn max-sm:size-11!"
+              onClick={() => (isSelectionMode ? exitSelectionMode() : enterSelectionMode())}
+              // The selection bar returns focus here when selection mode ends.
+              data-selection-toggle=""
+            />
+          )}
+          {!isMobile && (
+            <DeferredBoundary fallback={moreMenuFallback}>
+              <Suspense fallback={moreMenuFallback}>
+                <TopNavMoreMenu open={moreMenuOpen} onOpenChange={setMoreMenuOpen} triggerRef={moreMenuTriggerRef} />
+              </Suspense>
+            </DeferredBoundary>
+          )}
+          <IconButton
+            label={tk('settings')}
+            icon={<SettingsIcon />}
+            className="topnav-action-btn max-sm:size-11!"
+            dot={filtersActive}
+            tooltip={filtersActive ? t('設定・表示フィルター適用中') : undefined}
+            aria-describedby={filtersActive ? filterStatusId : undefined}
+            onClick={() => openSettings()}
+          />
+          {filtersActive && (
+            <span id={filterStatusId} className="sr-only">
+              {filterSummary.length > 0 ? `${tk('filtersActive')}: ${filterSummary.join(' / ')}` : tk('filtersActive')}
             </span>
           )}
-
-          {/* 複数選択モード */}
-          <button
-            className="topnav-action-btn"
-            data-active={isSelectionMode}
-            onClick={() => isSelectionMode ? exitSelectionMode() : enterSelectionMode()}
-            title={isSelectionMode ? t('exitSelection', { count: selectedCount }) : t('multiSelect')}
-            aria-label={t('multiSelect')}
-            aria-pressed={isSelectionMode}
-          >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={isSelectionMode ? 2.5 : 2}>
-              <rect x="3" y="3" width="18" height="18" rx="3"/>
-              <path d="M9 12l2 2 4-4" strokeOpacity={isSelectionMode ? 1 : 0.5}/>
-            </svg>
-            {isSelectionMode && selectedCount > 0 && (
-              <span
-                className="absolute -top-1 -right-1 min-w-[16px] h-4 rounded-full text-[9px] font-bold flex items-center justify-center px-1"
-                style={{ background: 'var(--color-accent-cyan)', color: '#000' }}
-              >
-                {selectedCount > 99 ? '99+' : selectedCount}
-              </span>
-            )}
-          </button>
-
-          {/* 詳細検索 */}
-          <button
-            className="topnav-action-btn"
-            data-active={advancedSearchOpen}
-            onClick={() => {
-              if (location.pathname !== '/') {
-                setAdvancedSearchOpen(true);
-                navigate('/');
-                return;
-              }
-              toggleAdvancedSearch();
-            }}
-            title={advancedSearchOpen ? t('closeAdvancedSearch') : t('advancedSearch')}
-            aria-label={t('advancedSearch')}
-            aria-pressed={advancedSearchOpen}
-          >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-              <line x1="4" y1="7" x2="20" y2="7" />
-              <line x1="4" y1="12" x2="20" y2="12" />
-              <line x1="4" y1="17" x2="20" y2="17" />
-              <circle cx="8" cy="7" r="2" fill="currentColor" />
-              <circle cx="16" cy="12" r="2" fill="currentColor" />
-              <circle cx="10" cy="17" r="2" fill="currentColor" />
-            </svg>
-          </button>
-
-          {/* 設定 */}
-          <button
-            className="topnav-action-btn"
-            onClick={() => setSettingsOpen(true)}
-            title={t('settings')}
-            aria-label={t('settings')}
-          >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.484.484 0 0 0-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.49.49 0 0 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.07.62-.07.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6A3.6 3.6 0 1 1 12 8.4a3.6 3.6 0 0 1 0 7.2z" />
-            </svg>
-            {/* フィルター適用中のドットインジケーター */}
-            {isDiscoveryFilterActive(globalFilterSettings) && (
-              <span className="action-dot" title={language === 'en'
-                ? t('filtersActive')
-                : `${t('filtersActive')}: ${getGlobalFilterSummary(globalFilterSettings).join(' / ')}`} />
-            )}
-          </button>
         </div>
       </div>
-      {settingsOpen && (
-        <Suspense fallback={null}>
-          <SettingsModal isOpen onClose={() => setSettingsOpen(false)} />
-        </Suspense>
-      )}
     </header>
   );
 }

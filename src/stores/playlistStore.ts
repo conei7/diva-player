@@ -10,6 +10,10 @@ import { storage } from '../utils/storage';
 import { createStableId } from '../utils/id';
 import { normalizeSmartPlaylistRule } from '../utils/smartPlaylist';
 import { withDefaultSongName } from '../utils/entryNames';
+import { translate, translateSourceText } from '../i18n';
+import { useLanguageStore } from './languageStore';
+import { showToast } from './toastStore';
+import { useUiStore } from './uiStore';
 
 const PLAYLISTS_KEY = 'playlists';
 const FOLDERS_KEY   = 'playlistFolders';
@@ -55,6 +59,12 @@ export interface RemovedSong {
 export interface RemovedSongsSnapshot {
   playlistId: string;
   removed: RemovedSong[];
+  /**
+   * Copies of each removed song id left in the playlist right after the removal. Undo brings
+   * back as many copies as there were before (a removed duplicate comes back), but no more
+   * (a song added again in the meantime is not doubled).
+   */
+  remainingCounts?: Record<number, number>;
   previousCoverArtUrl?: string;
   kind: 'remove' | 'duplicates';
 }
@@ -62,6 +72,17 @@ export interface RemovedSongsSnapshot {
 export interface DeletedPlaylistSnapshot {
   playlist: Playlist;
   index: number;
+}
+
+/**
+ * `songsRefreshedAt`: when a smart refresh or a sync last replaced the songs. Those automatic
+ * updates leave `updatedAt` (the user's last change, shown as 「最終更新」 and used for the
+ * library order) untouched. Stored data from before this field, or a hand-edited file, may
+ * hold anything there, so read it through this guard.
+ */
+export function getSongsRefreshedAt(playlist: Playlist): number | undefined {
+  const value: unknown = playlist.songsRefreshedAt;
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
 }
 
 // ─── 並べ替えキー ────────────────────────────────────────────────────────────
@@ -175,7 +196,15 @@ export const usePlaylistStore = create<PlaylistState>((set, get) => {
     const result = save(playlists, folders);
     if (!result.success) {
       const error = new PlaylistPersistenceError(result.rollbackSucceeded);
-      if (typeof window !== 'undefined') window.setTimeout(() => window.alert(error.message), 0);
+      // Tell the user (the thrown error keeps the technical message for callers and logs).
+      // When even the rollback failed, offer the backup from the settings' data tab.
+      const language = useLanguageStore.getState().language;
+      showToast(translateSourceText(language, 'プレイリストを保存できませんでした'), result.rollbackSucceeded ? undefined : {
+        action: {
+          label: translate(language, 'settingsSaveBackup'),
+          onAction: () => useUiStore.getState().openSettings('data'),
+        },
+      });
       throw error;
     }
     set({ playlists, folders });
@@ -382,13 +411,21 @@ export const usePlaylistStore = create<PlaylistState>((set, get) => {
     if (indexes.length === 0) return null;
 
     const indexSet = new Set(indexes);
+    const songs = target.songs.filter((_, index) => !indexSet.has(index));
+    const removed = indexes.map(index => ({ song: target.songs[index], index }));
+    const removedIds = new Set(removed.map(item => item.song.id));
+    const remainingCounts: Record<number, number> = {};
+    removedIds.forEach(id => { remainingCounts[id] = 0; });
+    songs.forEach(song => {
+      if (removedIds.has(song.id)) remainingCounts[song.id] += 1;
+    });
     const snapshot: RemovedSongsSnapshot = {
       playlistId,
-      removed: indexes.map(index => ({ song: target.songs[index], index })),
+      removed,
+      remainingCounts,
       previousCoverArtUrl: target.coverArtUrl,
       kind: 'remove',
     };
-    const songs = target.songs.filter((_, index) => !indexSet.has(index));
     const removedCover = snapshot.removed.some(item => item.song.thumbUrl === target.coverArtUrl);
     const updated = current.map(p => p.id !== playlistId ? p : {
       ...p,
@@ -407,14 +444,30 @@ export const usePlaylistStore = create<PlaylistState>((set, get) => {
     if (isLinked(target)) return 0;
 
     const allowDuplicateIds = options?.allowDuplicateIds ?? false;
-    const existingIds = new Set(target.songs.map(song => song.id));
+    // How many copies of each id may come back: as many as the playlist had before the removal.
+    const restorable = new Map<number, number>();
+    if (!allowDuplicateIds) {
+      const currentCounts = new Map<number, number>();
+      target.songs.forEach(song => currentCounts.set(song.id, (currentCounts.get(song.id) ?? 0) + 1));
+      const removedCounts = new Map<number, number>();
+      snapshot.removed.forEach(item => removedCounts.set(item.song.id, (removedCounts.get(item.song.id) ?? 0) + 1));
+      removedCounts.forEach((removedCount, id) => {
+        const current = currentCounts.get(id) ?? 0;
+        const remaining = snapshot.remainingCounts?.[id];
+        // Without the counts: one copy, and only when the song is not in the playlist again.
+        restorable.set(id, remaining === undefined ? (current > 0 ? 0 : 1) : Math.max(0, remaining + removedCount - current));
+      });
+    }
     const restored = [...target.songs];
     let count = 0;
     for (const removed of [...snapshot.removed].sort((a, b) => a.index - b.index)) {
-      if (!allowDuplicateIds && existingIds.has(removed.song.id)) continue;
+      if (!allowDuplicateIds) {
+        const left = restorable.get(removed.song.id) ?? 0;
+        if (left <= 0) continue;
+        restorable.set(removed.song.id, left - 1);
+      }
       const index = Math.max(0, Math.min(removed.index, restored.length));
       restored.splice(index, 0, removed.song);
-      if (!allowDuplicateIds) existingIds.add(removed.song.id);
       count++;
     }
     if (count === 0) return 0;
@@ -503,7 +556,7 @@ export const usePlaylistStore = create<PlaylistState>((set, get) => {
           songs,
           youtubeSync: sync,
           coverArtUrl: playlist.coverArtUrl ?? songs[0]?.thumbUrl,
-          updatedAt: Date.now(),
+          songsRefreshedAt: Date.now(),
         }
       : playlist);
     commit(updated, get().folders);
@@ -548,7 +601,7 @@ export const usePlaylistStore = create<PlaylistState>((set, get) => {
           songs,
           nicoSync: sync,
           coverArtUrl: playlist.coverArtUrl ?? songs[0]?.thumbUrl,
-          updatedAt: Date.now(),
+          songsRefreshedAt: Date.now(),
         }
       : playlist);
     commit(updated, get().folders);
@@ -567,7 +620,7 @@ export const usePlaylistStore = create<PlaylistState>((set, get) => {
 
   replacePlaylistSongs: (playlistId, songs) => {
     const updated = get().playlists.map(playlist => playlist.id === playlistId && !isLinked(playlist)
-      ? { ...playlist, songs, updatedAt: Date.now() }
+      ? { ...playlist, songs, songsRefreshedAt: Date.now() }
       : playlist);
     commit(updated, get().folders);
   },

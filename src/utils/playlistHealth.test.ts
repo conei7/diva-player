@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { PVService, Song } from '../types/vocadb';
-import { analyzePlaylistHealth } from './playlistHealth';
+import { analyzePlaylistHealth, summarizePlaylistHealth } from './playlistHealth';
 
 const song = (id: number, pvs?: Song['pvs']): Song => ({
   id,
@@ -49,6 +49,12 @@ describe('analyzePlaylistHealth', () => {
     });
     expect(report.entries.map(entry => entry.index)).toEqual([0, 1, 2, 4]);
     expect(report.entries[3].issues).toEqual(['duplicate']);
+    expect(summarizePlaylistHealth(report)).toEqual({ unplayable: 3, duplicates: 1 });
+  });
+
+  it('counts an unplayable duplicate once in each group', () => {
+    const report = analyzePlaylistHealth([song(1), song(1)]);
+    expect(summarizePlaylistHealth(report)).toEqual({ unplayable: 2, duplicates: 1 });
   });
 
   it('does not flag a song with an enabled supported PV', () => {

@@ -17,8 +17,11 @@ try {
   const page = await browser.newPage();
   await pinAppLanguage(page);
   await page.setViewport({ width: 1440, height: 1000 });
-  const clickControl = async title => {
-    const selector = `button[title="${title}"]`;
+  // Mini player controls are found by their aria-label (the same text as their tooltip).
+  const clickControl = async label => {
+    const selector = `[data-testid="global-player"] button[aria-label="${label}"]`;
+    // The controls are a separate chunk that loads once a song is set (performance budget).
+    await page.waitForSelector(selector);
     for (const button of await page.$$(selector)) {
       const box = await button.boundingBox();
       if (box && box.width > 0 && box.height > 0) {
@@ -105,12 +108,12 @@ try {
   await page.waitForFunction(() => window.__yt?.getVideoData().video_id === 'fixture-0');
   await clickControl('再生');
   await page.waitForFunction(() => window.__yt.getPlayerState() === 1);
-  await clickControl('次の曲へ進む');
+  await clickControl('次の曲');
   await page.waitForSelector('iframe[src*="embed.nicovideo.jp"]', { timeout: 10_000 }).catch(async error => {
     const state = await page.evaluate(() => ({
       title: document.title,
       iframes: [...document.querySelectorAll('iframe')].map(iframe => iframe.src),
-      controls: [...document.querySelectorAll('button[title]')].map(button => button.title),
+      controls: [...document.querySelectorAll('[data-testid="global-player"] button[aria-label]')].map(button => button.getAttribute('aria-label')),
       queue: JSON.parse(localStorage.getItem('diva_playerQueue') || 'null'),
       body: document.body.innerText.slice(0, 1200),
     }));
@@ -149,7 +152,7 @@ try {
   console.log('PASS service switch rejects late YouTube play/end and preserves Nico audio');
 
   await frame.click('#pause');
-  await page.waitForSelector('button[title="再生"]');
+  await page.waitForSelector('[data-testid="global-mini-player-toggle"][aria-label="再生"]');
   // Focus stays in the native iframe after pausing. Once transient activation
   // expires, a delayed PLAYING must not be mistaken for a fresh native click.
   await frame.evaluate(() => {
@@ -158,7 +161,7 @@ try {
   await new Promise(resolve => setTimeout(resolve, 7_000));
   assert.equal(await frame.evaluate(() => playing), false, 'Native pause must not be retried');
   await frame.click('#play');
-  await page.waitForSelector('button[title="一時停止"]');
+  await page.waitForSelector('[data-testid="global-mini-player-toggle"][aria-label="一時停止"]');
   await frame.evaluate(() => { window.omitPaused = true; });
   await clickControl('一時停止');
   await frame.waitForFunction(() => !playing);
@@ -185,7 +188,7 @@ try {
   assert.equal(await page.evaluate(() => window.__ytPlays), ytPlays, 'Retired YouTube recovery must not run');
   assert.equal(await frame.evaluate(() => playing), false, 'Delayed Nico PLAYING must be paused');
   assert.equal(await frame.evaluate(() => commands.filter(c => c.eventName === 'play').length), nicoPlayCount);
-  assert.ok(await page.$('button[title="再生"]'), 'UI must remain paused');
+  assert.ok(await page.$('[data-testid="global-mini-player-toggle"][aria-label="再生"]'), 'UI must remain paused');
   assert.ok(await page.$('iframe[src*="fixture-1"]'), 'Paused duration/ENDED must not advance queue');
   assert.equal(await frame.evaluate(() => volume), 0.37, 'Inactive YouTube must not overwrite volume');
   await page.bringToFront();
@@ -197,7 +200,7 @@ try {
   assert.ok(await page.$('iframe[src*="fixture-1"]'), 'Late paused progress must not corrupt resume position');
   console.log('PASS native/app Nico pause, hidden/resume/focus, 85s late events, 90s idle and explicit resume');
 
-  await clickControl('次の曲へ進む');
+  await clickControl('次の曲');
   await page.waitForFunction(() => JSON.parse(localStorage.getItem('diva_playerQueue') || 'null')?.queueIndex === 2, { timeout: 5_000 });
   await page.waitForFunction(() => window.__yt.getVideoData().video_id === 'fixture-2' && window.__yt.getPlayerState() === 1);
   await other.bringToFront();
@@ -211,7 +214,7 @@ try {
   assert.equal(backgroundNicoUrl.searchParams.get('autoplay'), '0');
   assert.equal(await backgroundNicoFrame.evaluate(() => playing), false, 'A hidden queue transition must not start Nico playback');
   assert.equal(await backgroundNicoFrame.evaluate(() => commands.filter(command => command.eventName === 'play').length), 0);
-  assert.ok(await page.$('button[title="再生"]'), 'A hidden transition to Nico must leave the app paused');
+  assert.ok(await page.$('[data-testid="global-mini-player-toggle"][aria-label="再生"]'), 'A hidden transition to Nico must leave the app paused');
   assert.notEqual(await page.evaluate(() => window.__yt.getPlayerState()), 1, 'Previous YouTube PV must stop at the hidden service boundary');
   await page.bringToFront();
   await new Promise(resolve => setTimeout(resolve, 1_000));

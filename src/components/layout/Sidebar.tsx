@@ -1,220 +1,179 @@
-import { Link, useLocation } from 'react-router';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
+import type { ButtonHTMLAttributes, MouseEvent } from 'react';
+import { useTranslate, useTranslateSourceText } from '../../i18n';
+import { useDialogFocus } from '../../hooks/useDialogFocus';
+import { useLanguageStore } from '../../stores/languageStore';
+import { usePlayerStore } from '../../stores/playerStore';
 import { useUiStore } from '../../stores/uiStore';
-import DiscoveryMixButton from './DiscoveryMixButton';
-import { useTranslate, type TranslationKey } from '../../i18n';
+import { whenIdle } from '../../routes/routeLoaders';
+import IconButton from '../ui/IconButton';
+import { EyeIcon, LanguageIcon, MenuIcon } from '../ui/iconsChrome';
+import { cx } from '../ui/overlay';
+import BrandLogo from './BrandLogo';
+import GuideNav, { MiniGuideNav } from './GuideNav';
+import { DeferredBoundary } from './RouteErrorBoundary';
+import { useFocusHandoff } from './focusHandoff';
+import { GUIDE_ROW_CLASS, guideRowStateClass, isPlainLeftClick, resetHomeState } from './navItems';
 
-/**
- * Sidebar - YouTube風の左サイドバー
- *
- * PC: 常時表示（展開 or 縮小アイコンのみ）
- * モバイル: ドロワーとしてオーバーレイ表示
- */
+// The language sheet (and the Menu code) loads after the first paint, outside the initial JavaScript (§1-12).
+const loadLanguageMenu = () => import('./DrawerLanguageMenu');
+const DrawerLanguageMenu = lazy(loadLanguageMenu);
+const preloadLanguageMenu = () => void loadLanguageMenu().catch(() => undefined);
 
-interface MenuItem {
-  path: string;
-  label: TranslationKey;
-  icon: React.ReactNode;
-}
+export type GuideMode = 'expanded' | 'mini' | 'none';
 
-const menuItems: MenuItem[] = [
-  {
-    path: '/',
-    label: 'sidebarHome',
-    icon: (
-      <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
-        <path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z" />
-      </svg>
-    ),
-  },
-  {
-    path: '/chorus-highlights',
-    label: 'sidebarChorus',
-    icon: (
-      <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
-        <path d="M4 18h2V8H4v10zm4 3h2V3H8v18zm4-5h2V6h-2v10zm4 4h2V4h-2v16zm4-5h2V9h-2v6z" />
-      </svg>
-    ),
-  },
-  {
-    path: '/history',
-    label: 'sidebarHistory',
-    icon: (
-      <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
-        <path d="M13 3a9 9 0 0 0-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42A8.954 8.954 0 0 0 13 21a9 9 0 0 0 0-18zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z" />
-      </svg>
-    ),
-  },
-  {
-    path: '/favorites',
-    label: 'sidebarRatings',
-    icon: (
-      <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
-        <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z" />
-      </svg>
-    ),
-  },
-  {
-    path: '/playlists',
-    label: 'navPlaylists',
-    icon: (
-      <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
-        <path d="M15 6H3v2h12V6zm0 4H3v2h12v-2zM3 16h8v-2H3v2zM17 6v8.18c-.31-.11-.65-.18-1-.18-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3V8h3V6h-5z" />
-      </svg>
-    ),
-  },
-  {
-    path: '/reports',
-    label: 'sidebarReports',
-    icon: (
-      <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
-        <path d="M5 19h14v2H5zM7 17H5V9h2zm6 0h-2V3h2zm6 0h-2v-5h2z" />
-      </svg>
-    ),
-  },
-  {
-    path: '/knowledge-map',
-    label: 'sidebarKnowledgeMap',
-    icon: (
-      <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
-        <path d="M3 3h8v8H3V3zm10 0h8v5h-8V3zm0 7h8v11h-8V10zM3 13h8v8H3v-8z" />
-      </svg>
-    ),
-  },
-  {
-    path: '/sound-map',
-    label: 'sidebarSoundMap',
-    icon: (
-      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-        <circle cx="6" cy="7" r="2" fill="currentColor" stroke="none" />
-        <circle cx="17" cy="5" r="2" fill="currentColor" stroke="none" />
-        <circle cx="14" cy="17" r="2" fill="currentColor" stroke="none" />
-        <path d="M7.8 7.2 15.2 5.7M7.4 8.7l5.2 6.1M16 6.8l-1.4 8.3" />
-      </svg>
-    ),
-  },
-  {
-    path: '/favorite-producers',
-    label: 'sidebarFavoriteProducers',
-    icon: (
-      <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
-        <path d="m12 3 2.78 5.63 6.22.9-4.5 4.39 1.06 6.2L12 17.2l-5.56 2.92 1.06-6.2L3 9.53l6.22-.9L12 3z" />
-      </svg>
-    ),
-  },
-];
+const GUIDE_ASIDE_CLASS =
+  'fixed bottom-0 left-0 top-[var(--header-height)] z-[var(--z-guide)] overflow-y-auto overflow-x-hidden overscroll-contain bg-yt-bg text-yt-text [scrollbar-color:transparent_transparent] [scrollbar-width:thin] hover:[scrollbar-color:#717171_transparent]';
 
-export default function Sidebar() {
-  const location = useLocation();
-  const t = useTranslate();
-  const isWatchPage = location.pathname === '/watch';
-  const { sidebarExpanded, mobileDrawerOpen, closeMobileDrawer } = useUiStore();
+/** Language and hidden mode rows at the end of the drawer on phones (no top-bar ⋮ there). */
+function DrawerPhoneItems() {
+  const t = useTranslateSourceText();
+  const language = useLanguageStore(state => state.language);
+  const hiddenMode = usePlayerStore(state => state.hiddenMode);
+  const toggleHiddenMode = usePlayerStore(state => state.toggleHiddenMode);
+  const [languageMenuOpen, setLanguageMenuOpen] = useState(false);
+  // The loaded sheet's row replaces the placeholder row; a keyboard focus on it moves along.
+  const languageRowRef = useFocusHandoff<HTMLButtonElement>();
+  useEffect(() => whenIdle(preloadLanguageMenu), []);
 
-  const content = (
-    <nav className="flex flex-col py-2 h-full">
-      {menuItems.map((item) => {
-        const isActive = location.pathname === item.path;
-        return (
-          <Link
-            key={item.path}
-            to={item.path}
-            className="flex items-center gap-5 px-3 py-2.5 mx-2 rounded-xl transition-all duration-150"
-            style={{
-              color: isActive ? 'var(--color-text-primary)' : 'var(--color-text-secondary)',
-              background: isActive ? 'var(--color-surface)' : 'transparent',
-              fontWeight: isActive ? 600 : 400,
-              fontSize: sidebarExpanded ? '14px' : '10px',
-              flexDirection: sidebarExpanded ? 'row' : 'column',
-              justifyContent: sidebarExpanded ? 'flex-start' : 'center',
-              padding: sidebarExpanded ? '10px 12px' : '14px 0 10px 0',
-            }}
-            onClick={() => closeMobileDrawer()}
-            onMouseEnter={(e) => {
-              if (!isActive) e.currentTarget.style.background = 'var(--color-surface-hover)';
-            }}
-            onMouseLeave={(e) => {
-              if (!isActive) e.currentTarget.style.background = 'transparent';
-            }}
-          >
-            <span className="flex-shrink-0" style={{ opacity: isActive ? 1 : 0.7 }}>
-              {item.icon}
-            </span>
-            <span className={sidebarExpanded ? '' : 'text-center mt-0.5'}>{t(item.label)}</span>
-          </Link>
-        );
-      })}
-
-      <DiscoveryMixButton expanded={sidebarExpanded} onStarted={closeMobileDrawer} />
-
-      {/* 下部区切り線 + ブランディング */}
-      {sidebarExpanded && (
-        <div className="px-4 pb-4 pt-3">
-          <div className="border-t pt-4" style={{ borderColor: 'var(--color-border)' }}>
-            <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
-              DIVA Player v0.1
-            </p>
-            <p className="text-xs mt-1" style={{ color: 'var(--color-text-muted)' }}>
-              Powered by VocaDB API
-            </p>
-          </div>
-        </div>
-      )}
-    </nav>
+  const languageRow = (props: ButtonHTMLAttributes<HTMLButtonElement> = {}) => (
+    <button ref={languageRowRef} type="button" {...props} className={cx(GUIDE_ROW_CLASS, guideRowStateClass(false), 'cursor-pointer')}>
+      <LanguageIcon />
+      <span className="min-w-0 flex-1 truncate">
+        {t('表示言語: {language}', { language: language === 'ja' ? '日本語' : 'English' })}
+      </span>
+    </button>
   );
+
+  // The same row until the sheet's code has loaded; a press made meanwhile opens it once it is
+  // here, and a focus on it moves to the loaded row (languageRowRef on both).
+  const openLanguageMenu = () => {
+    preloadLanguageMenu();
+    setLanguageMenuOpen(true);
+  };
+  const languageFallback = languageRow({
+    'aria-haspopup': 'menu',
+    'aria-expanded': languageMenuOpen,
+    onFocus: preloadLanguageMenu,
+    onClick: openLanguageMenu,
+    onKeyDown: event => {
+      if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+      event.preventDefault();
+      openLanguageMenu();
+    },
+  });
 
   return (
     <>
-      {/* デスクトップサイドバー (WatchPageでは非表示) */}
-      {!isWatchPage && (
-      <aside
-        className="hidden lg:flex flex-col fixed top-0 left-0 z-40 transition-all duration-300"
-        style={{
-          width: sidebarExpanded ? 'var(--sidebar-width)' : 'var(--sidebar-collapsed-width)',
-          top: 'var(--header-height)',
-          bottom: 'var(--player-bar-height)',
-          background: 'var(--color-bg-primary)',
-          overflowY: 'auto',
-          overflowX: 'hidden',
-        }}
-      >
-        {content}
-      </aside>
-      )}
-
-      {/* モバイルオーバーレイ (WatchPageではデスクトップでも表示) */}
-      <div
-        className={`sidebar-overlay ${isWatchPage ? '' : 'lg:hidden'} ${mobileDrawerOpen ? 'active' : ''}`}
-        onClick={closeMobileDrawer}
-        style={{ zIndex: 49 }}
-      />
-
-      {/* モバイルドロワー (WatchPageではデスクトップでも表示) */}
-      <aside
-        className={`${isWatchPage ? '' : 'lg:hidden'} fixed top-0 left-0 z-50 flex flex-col transition-transform duration-300`}
-        style={{
-          width: 'var(--sidebar-width)',
-          height: '100dvh',
-          background: 'var(--color-bg-secondary)',
-          transform: mobileDrawerOpen ? 'translateX(0)' : 'translateX(-100%)',
-        }}
-      >
-        {/* ドロワーヘッダー */}
-        <div className="h-14 flex items-center px-4 gap-3 border-b" style={{ borderColor: 'var(--color-border)' }}>
+      <li>
+        <DeferredBoundary fallback={languageFallback}>
+          <Suspense fallback={languageFallback}>
+            <DrawerLanguageMenu trigger={languageRow()} open={languageMenuOpen} onOpenChange={setLanguageMenuOpen} />
+          </Suspense>
+        </DeferredBoundary>
+      </li>
+      {hiddenMode && (
+        <li>
           <button
-            className="btn-ghost p-2 rounded-full"
-            onClick={closeMobileDrawer}
-            aria-label={t('menuClose')}
+            type="button"
+            className={cx(GUIDE_ROW_CLASS, guideRowStateClass(false), 'cursor-pointer')}
+            onClick={toggleHiddenMode}
           >
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z" />
-            </svg>
+            <EyeIcon />
+            <span className="min-w-0 flex-1 truncate">{t('隠しモードを終了')}</span>
           </button>
-          <span className="text-lg font-bold">
-            <span style={{ color: 'var(--color-accent-cyan)' }}>DIVA</span>
-            <span> Player</span>
-          </span>
+        </li>
+      )}
+    </>
+  );
+}
+
+/**
+ * The guide drawer (DESIGN_SPEC §6.1.3): under 1312px, on phones and on the song page. It stays in
+ * the DOM while closed (moved off screen, `inert`, `aria-hidden`) and is a modal dialog while open
+ * (Esc, focus trap, scroll lock and focus return through useDialogFocus).
+ */
+function GuideDrawer({ open, onClose, isMobile }: { open: boolean; onClose: () => void; isMobile: boolean }) {
+  const tk = useTranslate();
+  const drawerRef = useRef<HTMLElement>(null);
+  useDialogFocus(drawerRef, open, onClose);
+
+  // useDialogFocus has focused the close button (and remembered the opener); start on Home instead.
+  useEffect(() => {
+    if (!open) return;
+    drawerRef.current?.querySelector<HTMLElement>('nav a[href]')?.focus({ preventScroll: true });
+  }, [open]);
+
+  const onLogoClick = (event: MouseEvent<HTMLAnchorElement>) => {
+    if (!isPlainLeftClick(event)) return;
+    resetHomeState();
+    onClose();
+  };
+
+  return (
+    <>
+      <div
+        aria-hidden="true"
+        onClick={onClose}
+        className={cx(
+          'fixed inset-0 z-[var(--z-drawer)] bg-overlay transition-opacity duration-200 motion-reduce:transition-none',
+          open ? 'opacity-100' : 'pointer-events-none opacity-0',
+        )}
+      />
+      <aside
+        ref={drawerRef}
+        role={open ? 'dialog' : undefined}
+        aria-modal={open ? true : undefined}
+        aria-label={tk('menu')}
+        aria-hidden={open ? undefined : true}
+        inert={!open}
+        tabIndex={-1}
+        className={cx(
+          'fixed inset-y-0 left-0 z-[var(--z-drawer)] flex w-60 flex-col bg-yt-bg text-yt-text outline-none transition-transform duration-200 ease-out motion-reduce:transition-none max-sm:w-[min(280px,85vw)]',
+          open ? 'translate-x-0' : '-translate-x-full',
+        )}
+      >
+        <div className="flex h-14 shrink-0 items-center gap-4 pl-4 pr-3 max-sm:h-12 max-sm:pl-3">
+          <IconButton label={tk('menuClose')} icon={<MenuIcon />} onClick={onClose} />
+          <BrandLogo onClick={onLogoClick} />
         </div>
-        {content}
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+          <GuideNav inDrawer onNavigate={onClose} extraItems={isMobile ? <DrawerPhoneItems /> : null} />
+        </div>
       </aside>
+    </>
+  );
+}
+
+/**
+ * The left guide (DESIGN_SPEC §6.1.1): expanded 240px or mini 72px next to the page, plus the
+ * drawer where the expanded guide does not fit.
+ */
+export default function Sidebar({
+  guideMode,
+  drawerAvailable,
+  isMobile,
+}: {
+  guideMode: GuideMode;
+  drawerAvailable: boolean;
+  isMobile: boolean;
+}) {
+  const drawerOpen = useUiStore(state => state.mobileDrawerOpen);
+  const closeMobileDrawer = useUiStore(state => state.closeMobileDrawer);
+
+  return (
+    <>
+      {guideMode === 'expanded' && (
+        <aside className={cx(GUIDE_ASIDE_CLASS, 'w-60')}>
+          <GuideNav />
+        </aside>
+      )}
+      {guideMode === 'mini' && (
+        <aside className={cx(GUIDE_ASIDE_CLASS, 'w-[72px]')}>
+          <MiniGuideNav />
+        </aside>
+      )}
+      {drawerAvailable && <GuideDrawer open={drawerOpen} onClose={closeMobileDrawer} isMobile={isMobile} />}
     </>
   );
 }
