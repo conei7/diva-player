@@ -47,6 +47,10 @@ async function preparePage(fixtureSong, savedVolume = 23) {
   const page = await context.newPage();
   await pinAppLanguage(page);
   await page.evaluateOnNewDocument((currentSong, currentVolume) => {
+    // Puppeteer also runs this hook in child frames. A new about:blank player
+    // frame shares the app's storage and can overwrite a native volume report
+    // with the initial fixture value during a slow render. Seed only the app.
+    if (window !== window.top) return;
     const tabId = `external-player-fixture-${currentSong.id}`;
     sessionStorage.setItem('diva-playback-tab-v1', tabId);
     localStorage.setItem('diva-playback-owner-v1', JSON.stringify({
@@ -243,7 +247,7 @@ try {
 
   const nicoPage = await preparePage(nicoSong);
   const nicoSession = await nicoPage.createCDPSession();
-  await nicoSession.send('Emulation.setCPUThrottlingRate', { rate: 4 });
+  await nicoSession.send('Emulation.setCPUThrottlingRate', { rate: Number(process.env.DIVA_E2E_CPU_RATE || 4) });
   await nicoPage.goto(baseUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
   await nicoPage.bringToFront();
   await nicoPage.waitForFunction(() => document.visibilityState === 'visible');
@@ -257,8 +261,32 @@ try {
   // An attached iframe can precede React's player effects. Wait for the app's
   // initial volume command before testing the reverse (native control) path.
   await nicoFrame.waitForFunction(() => window.__nicoInitialVolume === 0.23, { timeout: 15_000 });
-  await nicoPage.waitForFunction(() => localStorage.getItem('diva_volume') === '42', { timeout: 5_000 });
+  try {
+    await nicoPage.waitForFunction(() => localStorage.getItem('diva_volume') === '42', { timeout: 5_000 });
+  } catch (error) {
+    throw new Error(`Immediate Niconico volume was not persisted: ${JSON.stringify({
+      savedVolume: await nicoPage.evaluate(() => localStorage.getItem('diva_volume')),
+      initialVolume: await nicoFrame.evaluate(() => window.__nicoInitialVolume),
+      appliedVolume: await nicoFrame.evaluate(() => window.__nicoAppliedVolume),
+    })}`, { cause: error });
+  }
   console.log('PASS immediate Niconico volume report during a throttled initial render');
+  // A provider may create a same-origin blank child frame after the native
+  // report. Its document must not rerun the top-level fixture initialization.
+  await nicoPage.evaluate(() => new Promise(resolve => {
+    const frame = document.createElement('iframe');
+    frame.onload = () => {
+      frame.remove();
+      resolve();
+    };
+    frame.src = 'about:blank';
+    document.body.append(frame);
+  }));
+  const volumeAfterChildFrame = await nicoPage.evaluate(() => localStorage.getItem('diva_volume'));
+  if (volumeAfterChildFrame !== '42') {
+    throw new Error(`Child-frame initialization overwrote Niconico volume: ${volumeAfterChildFrame}`);
+  }
+  console.log('PASS child-frame initialization preserves native volume');
   await nicoPage.evaluate(() => {
     const iframe = document.querySelector('iframe[src*="embed.nicovideo.jp/watch/sm-nico-volume-fixture"]');
     window.__nicoVolumeMessageProbe = [];
