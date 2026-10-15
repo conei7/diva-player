@@ -105,6 +105,14 @@ try {
     await page.waitForFunction(() => document.querySelector('main section h1')?.textContent === '変更後のシリーズ');
     const imported = await page.evaluate(() => JSON.parse(localStorage.getItem('diva_playlists')));
     assert(imported.some(item => item.name === '変更後のシリーズ' && item.songs[0]?.id === song.id && !item.nicoSync), 'one-time import without target did not persist');
+    await page.waitForSelector('[data-testid="toast-host"] > div:not([aria-hidden])');
+    const toastPlacement = await page.evaluate(() => {
+      const rect = document.querySelector('[data-testid="toast-host"]').getBoundingClientRect();
+      const guideOffset = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--guide-offset'));
+      return { left: rect.left, right: rect.right, guideOffset };
+    });
+    assert(toastPlacement.left >= toastPlacement.guideOffset && toastPlacement.right <= width,
+      `Toast covers the guide or leaves the viewport at ${width}: ${JSON.stringify(toastPlacement)}`);
     await screenshot(page, `detail-${width}`);
     if (width === 390) {
       await clickText(page, 'すべて再生');

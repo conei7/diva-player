@@ -151,6 +151,41 @@ try {
   // The chorus window (60–66s) ends and the next song starts at its own chorus.
   await waitForChorus('chorus-2', 40, 'next song follows at the end of the chorus and starts at its chorus');
 
+  for (const [width, height] of [[320, 568], [390, 667], [320, 360]]) {
+    await page.setViewport({ width, height });
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.waitForFunction(() => [...document.querySelectorAll('main button')]
+      .some(button => button.textContent?.trim() === '再生' && !button.disabled));
+    await page.evaluate(() => [...document.querySelectorAll('main button')]
+      .find(button => button.textContent?.trim() === '再生' && !button.disabled)?.click());
+    await page.waitForSelector('main [role="progressbar"]');
+    await page.waitForSelector('.global-mini-player');
+    await page.waitForFunction(() => window.__yt?.getPlayerState() === 1);
+    await page.evaluate(() => window.__yt.pauseVideo());
+    // Starting highlights must bring the actions into the usable space above the fixed player.
+    await new Promise(resolve => setTimeout(resolve, 250));
+    const layout = await page.evaluate(() => {
+      const section = document.querySelector('main [role="progressbar"]').closest('section');
+      const actions = [...section.querySelectorAll('button')].filter(button =>
+        ['保存', 'フルで聴く', 'スキップ'].includes(button.getAttribute('aria-label') || button.textContent.trim()));
+      const player = document.querySelector('.global-mini-player').getBoundingClientRect();
+      return {
+        actions: actions.map(button => { const r = button.getBoundingClientRect(); return { top: r.top, bottom: r.bottom, left: r.left, right: r.right }; }),
+        playerTop: player.top,
+        headerHeight: parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--header-height')),
+        width: document.documentElement.scrollWidth,
+      };
+    });
+    if (layout.actions.length !== 3 || layout.width > width + 1
+      || layout.actions.some(r => r.top < layout.headerHeight || r.bottom > layout.playerTop || r.left < 0 || r.right > width)) {
+      throw new Error(`Chorus actions are covered at ${width}x${height}: ${JSON.stringify(layout)}`);
+    }
+    if (process.env.DIVA_CHORUS_SCREENSHOTS) {
+      await page.screenshot({ path: `${process.env.DIVA_CHORUS_SCREENSHOTS}/chorus-${width}x${height}.png` });
+    }
+    console.log(`PASS chorus actions above the mini player ${width}x${height}`);
+  }
+
   if (pageErrors.length > 0) throw new Error(`Page errors: ${pageErrors.join(' | ')}`);
   console.log('PASS chorus highlights playback');
 } finally {

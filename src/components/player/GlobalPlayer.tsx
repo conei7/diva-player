@@ -313,7 +313,7 @@ export default function GlobalPlayer() {
 
       {/* プレイヤー本体 (iframe) */}
       <div
-        className={cx('w-full bg-black', renderAsWatchPage ? 'h-full' : 'aspect-video', showMiniPlayer && 'cursor-pointer')}
+        className={cx('global-player-video w-full bg-black', renderAsWatchPage ? 'h-full' : 'aspect-video', showMiniPlayer && 'cursor-pointer')}
         onClick={() => {
           if (showMiniPlayer) openSongPage();
         }}

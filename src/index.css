@@ -307,6 +307,10 @@ html[data-bottom-nav="true"] {
     width: auto;
     max-width: none;
   }
+  /* Keep page controls reachable on short phones; the embed letterboxes its video as needed. */
+  .global-mini-player .global-player-video {
+    max-height: calc(50dvh - 60px);
+  }
 }
 
 .global-mini-player button {

@@ -498,9 +498,8 @@ function HomeFeed() {
     ]));
     const eligibleDiscoveryIds = new Set(eligibleDiscoverySongs.map(song => song.id));
 
-    const knownStart = start;
     const detailed = rerankRecommendationCandidatesDetailed({
-      known: knownSongs.slice(knownStart, knownStart + 18),
+      known: knownSongs.slice(start, start + count),
       hybrid: hybridCandidates.filter(song => eligibleDiscoveryIds.has(song.id)),
       audio: audioCandidates.filter(song => eligibleDiscoveryIds.has(song.id)),
       popular: popularResult.items,

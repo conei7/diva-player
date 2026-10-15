@@ -12,7 +12,7 @@ const ToastBehavior = lazy(loadToastBehavior);
 /**
  * Renders the visible toast (DESIGN_SPEC §4.8). One per app, placed after <Routes> in App.
  * The live region is always in the DOM (after <main>) so screen readers announce new toasts.
- * ≥1024px: bottom-left. Smaller: bottom-center above the mini player, the bottom navigation and
+ * ≥1024px: bottom-left of the content, beside the guide. Smaller: bottom-center above the mini player, the bottom navigation and
  * any bar fixed above them (`--bottom-bar-clearance`); while a bottom sheet or modal dialog is open,
  * next to it instead (ToastBehavior).
  *
@@ -84,7 +84,7 @@ export default function ToastHost() {
       className={cx(
         'pointer-events-none fixed z-[var(--z-toast,100)] flex',
         'inset-x-2 bottom-[calc(var(--floating-player-clearance,0px)_+_var(--bottom-nav-height,0px)_+_var(--bottom-bar-clearance,0px)_+_8px)] justify-center',
-        'lg:inset-x-auto lg:bottom-6 lg:left-6 lg:justify-start',
+        'lg:inset-x-auto lg:bottom-6 lg:left-[calc(var(--guide-offset,0px)_+_24px)] lg:justify-start',
       )}
     >
       <div

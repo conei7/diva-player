@@ -1,4 +1,4 @@
-import { useId } from 'react';
+import { useId, type Ref } from 'react';
 import type { Song } from '../../types/vocadb';
 import { useTranslateSourceText } from '../../i18n';
 import { MOBILE_MEDIA_QUERY, useMediaQuery } from '../../hooks/useMediaQuery';
@@ -29,6 +29,7 @@ export interface ChorusNowPlayingProps {
   onSave: () => void;
   onToggleFullSong: () => void;
   onSkip: () => void;
+  actionsRef?: Ref<HTMLDivElement>;
 }
 
 /** The song that is playing in the chorus highlights: thumbnail, title, chorus progress and actions. */
@@ -47,6 +48,7 @@ export default function ChorusNowPlaying({
   onSave,
   onToggleFullSong,
   onSkip,
+  actionsRef,
 }: ChorusNowPlayingProps) {
   const t = useTranslateSourceText();
   const titleId = useId();
@@ -69,7 +71,7 @@ export default function ChorusNowPlaying({
           loading="eager"
         />
       )}
-      <div className="min-w-0 flex-1 p-4 sm:p-6">
+      <div className="min-w-0 flex-1 p-3 sm:p-6">
         <p className="m-0 text-xs leading-4 text-yt-text-secondary tabular-nums">
           {t('{current} / {total} · サビ {time}〜', {
             current: position,
@@ -107,7 +109,10 @@ export default function ChorusNowPlaying({
         <div className="mt-3 flex items-center">
           <StarRating rating={rating} onRate={onRate} />
         </div>
-        <div className="mt-3 flex flex-wrap items-center gap-2">
+        <div
+          ref={actionsRef}
+          className="mt-3 flex flex-wrap items-center gap-2 scroll-mt-[calc(var(--header-height,48px)_+_var(--selection-bar-height,0px)_+_8px)] scroll-mb-[calc(var(--floating-player-clearance,0px)_+_var(--bottom-nav-height,0px)_+_8px)]"
+        >
           {isMobile ? (
             <IconButton label={t('保存')} icon={<PlaylistAddIcon />} variant="tonal" onClick={onSave} />
           ) : (

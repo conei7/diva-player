@@ -370,6 +370,52 @@ async function waitForCards(page, label) {
   }
 }
 
+async function assertKnownPagination(browser, baseUrl, counters) {
+  const context = await browser.createBrowserContext();
+  try {
+    const page = await context.newPage();
+    await page.setViewport({ width: 390, height: 640 });
+    await pinAppLanguage(page);
+    const knownSongs = Array.from({ length: 80 }, (_, index) => fixtureSongForId(900_001 + index));
+    await page.evaluateOnNewDocument(songs => {
+      localStorage.setItem('diva_playlists', JSON.stringify([{
+        id: 'known-pagination', name: 'Known pagination', songs, createdAt: 1, updatedAt: 1,
+      }]));
+      sessionStorage.setItem('diva-recommendation-debug-enabled', '1');
+    }, knownSongs);
+    await installApiFixtures(page, { ...counters, historyMetadataDelayMs: 0, startupPopularDelayMs: 0, homeRankingDelayMs: 0 });
+    await page.goto(baseUrl, { waitUntil: 'domcontentloaded' });
+    const waitForSnapshots = count => page.waitForFunction(minimum => [...document.querySelectorAll('button')]
+      .some(button => Number(button.textContent?.match(/^推薦デバッグ \((\d+)\)/)?.[1]) >= minimum),
+    { timeout: PAGE_TIMEOUT_MS }, count);
+    const readKnownCandidates = async () => {
+      await page.evaluate(() => [...document.querySelectorAll('button')]
+        .find(button => button.textContent?.startsWith('推薦デバッグ (')).click());
+      await page.waitForSelector('[role="dialog"][aria-label="推薦デバッグ"] table');
+      const snapshots = await page.$$eval('[role="dialog"][aria-label="推薦デバッグ"] table', tables => tables.reverse().map(table =>
+        [...table.querySelectorAll('tbody > tr')]
+          .filter(row => row.cells[2]?.textContent.includes('known#'))
+          .map(row => Number(row.cells[1].textContent.match(/#(\d+)/)[1]))));
+      await page.evaluate(() => [...document.querySelectorAll('[role="dialog"][aria-label="推薦デバッグ"] button')]
+        .find(button => button.textContent === '閉じる').click());
+      return snapshots;
+    };
+    await waitForSnapshots(1);
+    const initial = await readKnownCandidates();
+    assert(initial[0].length === 24, `First Home page omitted known candidates: ${JSON.stringify(initial)}`);
+    await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+    await waitForSnapshots(2);
+    const appended = await readKnownCandidates();
+    assert(appended[1].length === 36, `Home append omitted known candidates: ${JSON.stringify(appended)}`);
+    const ids = [...appended[0], ...appended[1]].sort((a, b) => a - b);
+    assert(JSON.stringify(ids) === JSON.stringify(knownSongs.slice(0, 60).map(song => song.id)),
+      `Known candidate pagination skipped or repeated songs: ${JSON.stringify(ids)}`);
+    console.log('PASS home.known-pagination: 24 + 36 contiguous known candidates');
+  } finally {
+    await context.close();
+  }
+}
+
 async function main() {
   await assertInitialBundleBudget();
   const baseUrl = getBaseUrl();
@@ -661,6 +707,7 @@ async function main() {
       assert(metric.durationMs <= budget, `${name} exceeded ${budget}ms (${Math.round(metric.durationMs)}ms).`);
       console.log(`PASS ${name}: ${Math.round(metric.durationMs)}ms / ${budget}ms`);
     }
+    await assertKnownPagination(browser, getBaseUrl(), counters);
   } finally {
     await browser.close();
   }

@@ -39,6 +39,7 @@ export default function ChorusHighlightsPage() {
   const [fullSongId, setFullSongId] = useState<number | null>(null);
   const soughtSongId = useRef<number | null>(null);
   const advancedSongId = useRef<number | null>(null);
+  const actionsRef = useRef<HTMLDivElement>(null);
 
   const currentSong = usePlayerStore(state => state.currentSong);
   const queue = usePlayerStore(state => state.queue);
@@ -80,6 +81,26 @@ export default function ChorusHighlightsPage() {
   const candidateIds = useMemo(() => new Set(candidates.map(song => song.id)), [candidates]);
   const isHighlightSong = active && !!currentSong && candidateIds.has(currentSong.id);
   const startSeconds = isHighlightSong ? currentSong?.chorusStartSeconds ?? 0 : 0;
+  // Keep the active actions above the fixed player when playback starts or its size changes.
+  // Listening for the shared clearance also covers the player controls finishing their lazy load.
+  useEffect(() => {
+    if (!isMobile || !isHighlightSong) return;
+    let frame = 0;
+    const schedule = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => actionsRef.current?.scrollIntoView({ block: 'nearest' }));
+    };
+    const layout = new MutationObserver(schedule);
+    layout.observe(document.documentElement, { attributes: true, attributeFilter: ['style'] });
+    const actions = new ResizeObserver(schedule);
+    if (actionsRef.current) actions.observe(actionsRef.current);
+    schedule();
+    return () => {
+      cancelAnimationFrame(frame);
+      layout.disconnect();
+      actions.disconnect();
+    };
+  }, [isMobile, isHighlightSong]);
   const endSeconds = isHighlightSong
     ? Math.min(
       duration || currentSong?.lengthSeconds || startSeconds + DEFAULT_WINDOW_SECONDS,
@@ -244,6 +265,7 @@ export default function ChorusHighlightsPage() {
                       onSave={() => useUiStore.getState().openSaveToPlaylist(currentSong)}
                       onToggleFullSong={() => setFullSongId(previous => (previous === currentSong.id ? null : currentSong.id))}
                       onSkip={skip}
+                      actionsRef={actionsRef}
                     />
                   </div>
                 )}
