@@ -173,17 +173,25 @@ class CapacityMonitoringTests(unittest.TestCase):
             snap = health.evaluate_runtime_snapshot({'capacityViolations': violations}, {})
             self.assertTrue(any(x['id'] == 'capacity:operation-headroom' for x in snap['violations']))
 
-    def test_seven_days_growth_and_cleanup_reset(self):
+    def test_seven_completed_days_growth_and_cleanup_segment(self):
         with tempfile.TemporaryDirectory() as temp:
             start = datetime(2026, 10, 1, tzinfo=timezone.utc)
-            for i in range(7):
+            for i in range(8):
                 now = start + timedelta(days=i)
                 info, violations = health.operation_capacity(self.disk((45 - i) * 1024**3), {'capacity': self.info(now)}, Path(temp), now)
             self.assertEqual(info['forecastStatus'], 'growing')
             self.assertAlmostEqual(info['estimatedDailyGrowthBytes'], 1024**3)
             self.assertTrue(any(x['id'] == 'capacity:forecast' for x in violations))
             info, _ = health.operation_capacity(self.disk(70 * 1024**3), {'capacity': self.info(now)}, Path(temp), now)
-            self.assertEqual(info['growthSampleCount'], 1)
+            self.assertEqual(info['growthSampleCount'], 0)
+            self.assertEqual(info['retainedDayCount'], 8)
+            self.assertEqual(info['forecastBaselineReason'], 'physical-cleanup')
+            saved = json.loads((Path(temp) / 'capacity_daily_samples.json').read_text())
+            self.assertEqual(saved['schemaVersion'], 2)
+            self.assertEqual(len(saved['samples']), 8)
+            self.assertEqual(saved['samples'][0]['durableUsedBytes'], 50 * 1024**3)
+            self.assertEqual(saved['baselineChanges'][0]['previousDurableUsedBytes'], 57 * 1024**3)
+            self.assertEqual(saved['baselineChanges'][0]['durableUsedBytes'], 25 * 1024**3)
 
     def test_capacity_collection_failure_is_unknown(self):
         with tempfile.TemporaryDirectory() as temp, patch.object(health, '_run_command', side_effect=RuntimeError('offline')):
@@ -194,12 +202,12 @@ class CapacityMonitoringTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             state = Path(temp)
             start = datetime(2026, 10, 1, tzinfo=timezone.utc)
-            for i in range(7):
+            for i in range(8):
                 now = start + timedelta(days=i)
                 info, _ = health.operation_capacity(self.disk((45 - i) * 1024**3), {'capacity': self.info(now)}, state, now)
             self.assertIsNotNone(info['daysUntilReserveExhaustion'])
             updated, _ = health.operation_capacity(self.disk(70 * 1024**3), {'capacity': info}, state, now)
-            self.assertEqual(updated['growthSampleCount'], 1)
+            self.assertEqual(updated['growthSampleCount'], 0)
             self.assertEqual(updated['forecastStatus'], 'insufficient-samples')
             for key in ['estimatedDailyGrowthBytes', 'daysUntilReserveExhaustion', 'estimatedExhaustionAt']:
                 self.assertIsNone(updated[key])
@@ -209,7 +217,7 @@ class CapacityMonitoringTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             state = Path(temp)
             start = datetime(2026, 10, 1, tzinfo=timezone.utc)
-            for i in range(7):
+            for i in range(8):
                 now = start + timedelta(days=i)
                 health.operation_capacity(self.disk(45 * 1024**3), {'capacity': self.info(now)}, state, now)
             previous = self.info(now)
@@ -223,19 +231,124 @@ class CapacityMonitoringTests(unittest.TestCase):
     def test_invalid_duplicate_and_future_samples_do_not_break_collection(self):
         with tempfile.TemporaryDirectory() as temp:
             state = Path(temp)
-            now = datetime(2026, 10, 7, tzinfo=timezone.utc)
+            now = datetime(2026, 10, 8, tzinfo=timezone.utc)
             rows = [{'date': f'2026-10-{i:02d}', 'totalBytes': 100 * 1024**3,
-                     'durableUsedBytes': (50 + i) * 1024**3} for i in range(1, 7)]
+                     'durableUsedBytes': (50 + i) * 1024**3} for i in range(1, 8)]
             rows += [rows[0], None, {}, {'date': 'invalid'},
-                     {**rows[0], 'date': '2026-10-08'},
+                     {**rows[0], 'date': '2026-10-09'},
                      {**rows[0], 'date': '2026-10-02', 'durableUsedBytes': True},
                      {**rows[0], 'date': '2026-10-03', 'totalBytes': 1}]
             (state / 'capacity_daily_samples.json').write_text(json.dumps({'samples': list(reversed(rows))}))
-            info, _ = health.operation_capacity(self.disk(38 * 1024**3), {'capacity': self.info(now)}, state, now)
+            info, _ = health.operation_capacity(self.disk(37 * 1024**3), {'capacity': self.info(now)}, state, now)
             self.assertEqual(info['growthSampleCount'], 7)
             self.assertEqual(info['estimatedDailyGrowthBytes'], 1024**3)
             saved = json.loads((state / 'capacity_daily_samples.json').read_text())['samples']
-            self.assertEqual([row['date'] for row in saved], [f'2026-10-{i:02d}' for i in range(1, 8)])
+            self.assertEqual([row['date'] for row in saved], [f'2026-10-{i:02d}' for i in range(1, 9)])
+
+    def test_repeated_temporary_allocations_do_not_erase_or_split_history(self):
+        with tempfile.TemporaryDirectory() as temp:
+            state = Path(temp)
+            start = datetime(2026, 10, 1, tzinfo=timezone.utc)
+            for i in range(8):
+                now = start + timedelta(days=i)
+                health.operation_capacity(self.disk((45 - i) * 1024**3), {'capacity': self.info(now)}, state, now)
+                for minute in range(1, 5):
+                    moment = now + timedelta(minutes=minute)
+                    free = (42 - i if minute % 2 else 45 - i) * 1024**3
+                    info, _ = health.operation_capacity(self.disk(free), {'capacity': self.info(moment)}, state, moment)
+            self.assertEqual(info['growthSampleCount'], 7)
+            self.assertEqual(info['estimatedDailyGrowthBytes'], 1024**3)
+            saved = json.loads((state / 'capacity_daily_samples.json').read_text())
+            self.assertEqual(len(saved['samples']), 8)
+            self.assertEqual(saved['baselineChanges'], [])
+            self.assertEqual(saved['samples'][-1]['durableUsedBytes'], 57 * 1024**3)
+            self.assertEqual(saved['samples'][-1]['maximumDurableUsedBytes'], 60 * 1024**3)
+            self.assertEqual(saved['samples'][-1]['observationCount'], 5)
+
+    def test_current_jst_day_is_provisional_and_does_not_change_forecast(self):
+        with tempfile.TemporaryDirectory() as temp:
+            state = Path(temp)
+            start = datetime(2026, 10, 1, tzinfo=timezone.utc)
+            for i in range(7):
+                now = start + timedelta(days=i)
+                info, _ = health.operation_capacity(self.disk((45 - i) * 1024**3), {'capacity': self.info(now)}, state, now)
+            self.assertEqual(info['growthSampleCount'], 6)
+            self.assertEqual(info['forecastStatus'], 'insufficient-samples')
+            # 15:00 UTC is midnight on the following JST day.
+            now += timedelta(hours=15)
+            info, _ = health.operation_capacity(self.disk(30 * 1024**3), {'capacity': self.info(now)}, state, now)
+            self.assertEqual(info['provisionalDay'], '2026-10-08')
+            self.assertEqual(info['growthSampleCount'], 7)
+            self.assertEqual(info['estimatedDailyGrowthBytes'], 1024**3)
+
+    def test_first_observation_of_day_can_be_a_temporary_peak(self):
+        with tempfile.TemporaryDirectory() as temp:
+            state = Path(temp)
+            start = datetime(2026, 10, 1, tzinfo=timezone.utc)
+            for i in range(8):
+                now = start + timedelta(days=i)
+                health.operation_capacity(self.disk((42 - i) * 1024**3), {'capacity': self.info(now)}, state, now)
+                now += timedelta(minutes=1)
+                info, _ = health.operation_capacity(self.disk((45 - i) * 1024**3), {'capacity': self.info(now)}, state, now)
+            self.assertEqual(info['growthSampleCount'], 7)
+            self.assertEqual(info['estimatedDailyGrowthBytes'], 1024**3)
+            saved = json.loads((state / 'capacity_daily_samples.json').read_text())
+            # Only the very first day lacks any preceding baseline to compare.
+            self.assertEqual(len(saved['baselineChanges']), 1)
+            self.assertEqual(saved['baselineChanges'][0]['date'], '2026-10-01')
+
+    def test_growth_after_cleanup_uses_only_new_segment_without_losing_old_days(self):
+        with tempfile.TemporaryDirectory() as temp:
+            state = Path(temp)
+            start = datetime(2026, 10, 1, tzinfo=timezone.utc)
+            for i in range(8):
+                now = start + timedelta(days=i)
+                health.operation_capacity(self.disk((45 - i) * 1024**3), {'capacity': self.info(now)}, state, now)
+            for i in range(8):
+                now = start + timedelta(days=7 + i, minutes=1)
+                info, _ = health.operation_capacity(self.disk((70 - i) * 1024**3), {'capacity': self.info(now)}, state, now)
+            self.assertEqual(info['forecastBaselineDate'], '2026-10-08')
+            self.assertEqual(info['growthSampleCount'], 7)
+            self.assertEqual(info['retainedDayCount'], 15)
+            self.assertEqual(info['estimatedDailyGrowthBytes'], 1024**3)
+            saved = json.loads((state / 'capacity_daily_samples.json').read_text())
+            self.assertEqual(len(saved['baselineChanges']), 1)
+
+    def test_storage_resize_keeps_previous_capacity_and_starts_new_segment(self):
+        with tempfile.TemporaryDirectory() as temp:
+            state = Path(temp)
+            now = datetime(2026, 10, 1, tzinfo=timezone.utc)
+            health.operation_capacity(self.disk(40 * 1024**3), {'capacity': self.info(now)}, state, now)
+            now += timedelta(days=1)
+            disk = {'disk': {'availableBytes': 60 * 1024**3, 'totalBytes': 120 * 1024**3}}
+            info, _ = health.operation_capacity(disk, {'capacity': self.info(now)}, state, now)
+            self.assertEqual(info['retainedDayCount'], 2)
+            self.assertEqual(info['growthSampleCount'], 0)
+            self.assertEqual(info['forecastBaselineReason'], 'storage-resize')
+            saved = json.loads((state / 'capacity_daily_samples.json').read_text())
+            self.assertEqual([r['totalBytes'] for r in saved['samples']], [100 * 1024**3, 120 * 1024**3])
+
+    def test_history_is_bounded_to_thirty_days(self):
+        with tempfile.TemporaryDirectory() as temp:
+            state = Path(temp)
+            start = datetime(2026, 9, 1, tzinfo=timezone.utc)
+            for i in range(40):
+                now = start + timedelta(days=i)
+                info, _ = health.operation_capacity(self.disk(45 * 1024**3), {'capacity': self.info(now)}, state, now)
+            self.assertEqual(info['retainedDayCount'], 30)
+            self.assertEqual(info['growthSampleCount'], 29)
+            saved = json.loads((state / 'capacity_daily_samples.json').read_text())
+            self.assertEqual(saved['samples'][0]['date'], '2026-09-11')
+
+    def test_invalid_baseline_changes_are_not_used(self):
+        with tempfile.TemporaryDirectory() as temp:
+            state = Path(temp)
+            now = datetime(2026, 10, 8, tzinfo=timezone.utc)
+            invalid = [None, {}, {'checkedAt': 'bad'}, {'checkedAt': now.replace(tzinfo=None).isoformat()},
+                       {'checkedAt': (now + timedelta(days=1)).isoformat()}]
+            (state / 'capacity_daily_samples.json').write_text(json.dumps({'baselineChanges': invalid}))
+            health.operation_capacity(self.disk(40 * 1024**3), {'capacity': self.info(now)}, state, now)
+            self.assertEqual(json.loads((state / 'capacity_daily_samples.json').read_text())['baselineChanges'], [])
 
     def test_invalid_disk_does_not_record_or_keep_forecast(self):
         with tempfile.TemporaryDirectory() as temp:

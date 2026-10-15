@@ -1253,6 +1253,109 @@ def collect_runtime_inputs(
         return snapshot_future.result(), public_probes_future.result()
 
 
+def capacity_growth_history(state_dir: Path, now: datetime, total: int, durable: int) -> tuple[dict, list]:
+    """Retain daily lower envelopes and mark physical baseline changes, never erase history."""
+    from datetime import timedelta
+
+    local_day = now.astimezone(timezone(timedelta(hours=9))).date()
+    day = local_day.isoformat()
+    cutoff = local_day - timedelta(days=29)
+    path = state_dir / "capacity_daily_samples.json"
+    document = load_json(path)
+    by_day = {}
+    rows = document.get("samples")
+    for row in rows if isinstance(rows, list) else []:
+        if not isinstance(row, dict):
+            continue
+        try:
+            sample_day = datetime.fromisoformat(row["date"]).date()
+        except (KeyError, ValueError, TypeError):
+            continue
+        used, size = row.get("durableUsedBytes"), row.get("totalBytes")
+        if (row.get("date") != sample_day.isoformat() or not cutoff <= sample_day <= local_day
+                or type(size) is not int or size <= 0 or type(used) is not int or not 0 <= used <= size):
+            continue
+        high = row.get("maximumDurableUsedBytes", used)
+        last = row.get("lastDurableUsedBytes", used)
+        count = row.get("observationCount", 1)
+        if type(high) is not int or not used <= high <= size:
+            high = used
+        if type(last) is not int or not used <= last <= high:
+            last = used
+        if type(count) is not int or count < 1:
+            count = 1
+        normalized = {"date": row["date"], "totalBytes": size, "durableUsedBytes": used,
+                      "maximumDurableUsedBytes": high, "lastDurableUsedBytes": last,
+                      "observationCount": count}
+        old = by_day.get(row["date"])
+        if old and old["totalBytes"] == size:
+            normalized["durableUsedBytes"] = min(old["durableUsedBytes"], used)
+            normalized["maximumDurableUsedBytes"] = max(old["maximumDurableUsedBytes"], high)
+        by_day[row["date"]] = normalized
+
+    changes = []
+    raw_changes = document.get("baselineChanges")
+    for change in raw_changes if isinstance(raw_changes, list) else []:
+        if not isinstance(change, dict):
+            continue
+        try:
+            checked = datetime.fromisoformat(change["checkedAt"])
+            change_day = checked.astimezone(timezone(timedelta(hours=9))).date()
+        except (KeyError, ValueError, TypeError):
+            continue
+        if (checked.tzinfo is None or checked > now or not cutoff <= change_day <= local_day
+                or change.get("date") != change_day.isoformat()
+                or change.get("reason") not in ("physical-cleanup", "storage-resize")):
+            continue
+        values = [change.get(k) for k in ("previousTotalBytes", "totalBytes",
+                                         "previousDurableUsedBytes", "durableUsedBytes")]
+        if (any(type(v) is not int or v < 0 for v in values) or min(values[:2]) == 0
+                or values[2] > values[0] or values[3] > values[1]):
+            continue
+        changes.append({k: change[k] for k in ("date", "checkedAt", "reason", "previousTotalBytes",
+                                               "totalBytes", "previousDurableUsedBytes", "durableUsedBytes")})
+    changes.sort(key=lambda x: datetime.fromisoformat(x["checkedAt"]))
+
+    latest = by_day[max(by_day)] if by_day else None
+    reference = latest
+    if latest and latest["date"] == day and latest["totalBytes"] == total:
+        previous_days = [row for date, row in by_day.items() if date < day and row["totalBytes"] == total]
+        if previous_days:
+            yesterday = max(previous_days, key=lambda row: row["date"])
+            if yesterday["durableUsedBytes"] < latest["durableUsedBytes"]:
+                reference = yesterday
+    reason = None
+    if latest:
+        if latest["totalBytes"] != total:
+            reason = "storage-resize"
+        elif durable < reference["durableUsedBytes"] - 2 * 1024**3:
+            reason = "physical-cleanup"
+    if reason:
+        changes.append({"date": day, "checkedAt": now.isoformat(), "reason": reason,
+                        "previousTotalBytes": latest["totalBytes"], "totalBytes": total,
+                        "previousDurableUsedBytes": latest["durableUsedBytes"], "durableUsedBytes": durable})
+
+    current = by_day.get(day)
+    if current and current["totalBytes"] == total:
+        current.update({"durableUsedBytes": min(current["durableUsedBytes"], durable),
+                        "maximumDurableUsedBytes": max(current["maximumDurableUsedBytes"], durable),
+                        "lastDurableUsedBytes": durable, "observationCount": current["observationCount"] + 1})
+    else:
+        by_day[day] = {"date": day, "totalBytes": total, "durableUsedBytes": durable,
+                       "maximumDurableUsedBytes": durable, "lastDurableUsedBytes": durable,
+                       "observationCount": 1}
+    samples = [by_day[d] for d in sorted(by_day)]
+    # Daily minima reject temporary allocations. A real new low records a
+    # separate segment, while the previous days and before/after evidence stay.
+    baseline = changes[-1]["date"] if changes else samples[0]["date"]
+    completed = [row for row in samples if baseline <= row["date"] < day and row["totalBytes"] == total]
+    write_json_atomic(path, {"schemaVersion": 2, "samples": samples, "baselineChanges": changes[-64:]})
+    return {"growthSampleCount": len(completed), "retainedDayCount": len(samples),
+            "provisionalDay": day, "dailySampleMethod": "minimum-durable-used-bytes",
+            "forecastBaselineDate": baseline,
+            "forecastBaselineReason": changes[-1]["reason"] if changes else "initial"}, completed
+
+
 def operation_capacity(collected: dict, previous: dict, state_dir: Path, now: datetime) -> tuple[dict, list]:
     """Reuse exact backup preflight; keep a bounded daily growth baseline."""
     from datetime import timedelta
@@ -1290,34 +1393,9 @@ def operation_capacity(collected: dict, previous: dict, state_dir: Path, now: da
                      "headroomBytes": free - required, "reserveRequiredBytes": required + margin})
         if free < required + margin:
             violations.append({"id": "capacity:operation-headroom", "message": "作業必要容量＋8GiBの余裕が不足"})
-        path = state_dir / "capacity_daily_samples.json"
-        document = load_json(path)
         durable = total - free - transient
-        local_day = now.astimezone(timezone(timedelta(hours=9))).date()
-        cutoff = local_day - timedelta(days=30)
-        by_day = {}
-        rows = document.get("samples")
-        for row in rows if isinstance(rows, list) else []:
-            if not isinstance(row, dict):
-                continue
-            try:
-                sample_day = datetime.fromisoformat(row["date"]).date()
-            except (KeyError, ValueError, TypeError):
-                continue
-            used = row.get("durableUsedBytes")
-            if (row.get("date") != sample_day.isoformat() or not cutoff <= sample_day <= local_day
-                    or type(row.get("totalBytes")) is not int or row["totalBytes"] != total
-                    or type(used) is not int or not 0 <= used <= total):
-                continue
-            by_day[row["date"]] = row
-        samples = [by_day[day] for day in sorted(by_day)]
-        if samples and (samples[-1].get("totalBytes") != total or durable < samples[-1]["durableUsedBytes"] - 2 * 1024**3):
-            samples = []  # A storage resize or large physical cleanup starts a new baseline.
-        day = local_day.isoformat()
-        samples = [x for x in samples if x["date"] != day]
-        samples.append({"date": day, "totalBytes": total, "durableUsedBytes": durable})
-        write_json_atomic(path, {"schemaVersion": 1, "samples": samples[-30:]})
-        info["growthSampleCount"] = len(samples)
+        growth_info, samples = capacity_growth_history(state_dir, now, total, durable)
+        info.update(growth_info)
         info["forecastStatus"] = "insufficient-samples"
         info["estimatedExhaustionAt"] = None
         if len(samples) >= 7:
