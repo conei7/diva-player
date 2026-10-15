@@ -189,7 +189,7 @@ assert.deepEqual(databaseDockerignore.trim().split('\n'), [
 assert.match(webDockerignore, /(?:^|\n)\*\*\/__pycache__\/(?:\n|$)/);
 assert.match(webDockerfile, /node:22\.22\.2-alpine@sha256:8ea2348b068a9544dae7317b4f3aafcdc032df1647bb7d768a05a5cad1a7683f/);
 assert.match(webDockerfile, /nginxinc\/nginx-unprivileged:alpine@sha256:901e944d1f4fc2bd077e8f5568b98c1f6f8cdacf6b97a87747c43134a339b9a7/);
-assert.match(apiDockerfile, /aspnet:8\.0-alpine-extra@sha256:bfb8d74a4b0130c7e4abf88a4dede4f51929b91e26d76ae8ccf3f571a21db3b9/);
+assert.match(apiDockerfile, /aspnet:8\.0-alpine-extra@sha256:930703110dcac1eb6efe4865bda1cca69515ca1605fcacec6e7ba94f29e6b0ec/);
 assert.match(apiDockerfile, /sdk:8\.0-alpine@sha256:8a80a27ddac789b4cb6d09d244f9c8d840da599c5ad22f7233c04be470e55261/);
 assert.match(gatewayDockerfile, /haproxy:3\.0-alpine@sha256:34cc7d1f6142464d7d2b73e2a1eef7392556dbf304160aef543e513cfd9e5162/);
 assert.match(

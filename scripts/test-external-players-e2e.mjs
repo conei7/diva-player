@@ -161,6 +161,15 @@ async function preparePage(fixtureSong, savedVolume = 23) {
           window.addEventListener('message', event => {
             if (event.source !== window.parent || event.data?.eventName !== 'volumeChange') return;
             window.__nicoAppliedVolume = event.data.data?.volume;
+            if (window.__nicoInitialVolume === undefined) {
+              window.__nicoInitialVolume = window.__nicoAppliedVolume;
+              // Native controls can report immediately after the app's first command.
+              window.parent.postMessage({
+                sourceConnectorType: 0,
+                playerId: new URL(location.href).searchParams.get('playerId'),
+                eventName: 'playerMetadataChange', data: { volume: 0.42 },
+              }, '*');
+            }
           });
         </script>` });
       return;
@@ -233,6 +242,8 @@ try {
   console.log('PASS Bilibili aid embed keeps native player audio enabled');
 
   const nicoPage = await preparePage(nicoSong);
+  const nicoSession = await nicoPage.createCDPSession();
+  await nicoSession.send('Emulation.setCPUThrottlingRate', { rate: 4 });
   await nicoPage.goto(baseUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
   await nicoPage.bringToFront();
   await nicoPage.waitForFunction(() => document.visibilityState === 'visible');
@@ -245,7 +256,9 @@ try {
   if (!nicoFrame) throw new Error('Niconico volume fixture frame was not attached');
   // An attached iframe can precede React's player effects. Wait for the app's
   // initial volume command before testing the reverse (native control) path.
-  await nicoFrame.waitForFunction(() => window.__nicoAppliedVolume === 0.23, { timeout: 15_000 });
+  await nicoFrame.waitForFunction(() => window.__nicoInitialVolume === 0.23, { timeout: 15_000 });
+  await nicoPage.waitForFunction(() => localStorage.getItem('diva_volume') === '42', { timeout: 5_000 });
+  console.log('PASS immediate Niconico volume report during a throttled initial render');
   await nicoPage.evaluate(() => {
     const iframe = document.querySelector('iframe[src*="embed.nicovideo.jp/watch/sm-nico-volume-fixture"]');
     window.__nicoVolumeMessageProbe = [];
@@ -261,7 +274,7 @@ try {
   });
   const volumeUpdateDeadline = Date.now() + 5_000;
   while (Date.now() < volumeUpdateDeadline) {
-    if (await nicoPage.evaluate(() => localStorage.getItem('diva_volume') === '42')) break;
+    if (await nicoPage.evaluate(() => localStorage.getItem('diva_volume') === '57')) break;
     // Send from the embedded document so Chromium supplies a real origin and
     // source WindowProxy. A synthetic top-window MessageEvent can lose those
     // properties across browser/runtime versions and silently miss the app's
@@ -273,13 +286,13 @@ try {
         sourceConnectorType: 0,
         playerId,
         eventName: 'playerMetadataChange',
-        data: { volume: 0.42 },
+        data: { volume: 0.57 },
       }, '*');
     });
     await new Promise(resolve => setTimeout(resolve, 25));
   }
   const savedNicoVolume = await nicoPage.evaluate(() => localStorage.getItem('diva_volume'));
-  if (savedNicoVolume !== '42') {
+  if (savedNicoVolume !== '57') {
     throw new Error(`Niconico volume event was not persisted: ${JSON.stringify({
       savedVolume: savedNicoVolume,
       iframeUrls: await nicoPage.$$eval('iframe[src*="embed.nicovideo.jp/watch/sm-nico-volume-fixture"]', frames => frames.map(frame => frame.src)),

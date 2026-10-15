@@ -1,0 +1,99 @@
+name: Build SBC Web image
+
+on:
+  workflow_dispatch:
+    inputs:
+      revision:
+        description: Reviewed main commit (full SHA)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sbc-web-image
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 40
+    env:
+      SOURCE_REVISION: ${{ inputs.revision }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.revision }}
+          fetch-depth: 0
+      - name: Verify source and build ARM64 Web
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_REVISION" =~ ^[0-9a-f]{40}$ ]]
+          [[ $(git rev-parse HEAD) == "$SOURCE_REVISION" ]]
+          git merge-base --is-ancestor "$SOURCE_REVISION" origin/main
+          [[ $(uname -m) == aarch64 ]]
+          docker build --pull --platform linux/arm64 \
+            --label "org.opencontainers.image.revision=$SOURCE_REVISION" \
+            --tag "diva-player-web:revision-$SOURCE_REVISION" \
+            --iidfile "$RUNNER_TEMP/web-image-id" --file Dockerfile.web .
+      - name: Validate exact image vulnerability scan
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo install -d -m 0755 /usr/local/libexec
+          sudo /bin/sh scripts/install-sbc-trivy.sh
+          scanner=/usr/local/libexec/diva-player/trivy-0.74.0
+          image_id=$(cat "$RUNNER_TEMP/web-image-id")
+          output="$RUNNER_TEMP/sbc-web-release"
+          cache="$RUNNER_TEMP/sbc-web-trivy"
+          mkdir -p "$output" "$cache" "$RUNNER_TEMP/trivy-home"
+          printf '{}\n' > "$RUNNER_TEMP/empty-trivy.yaml"
+          : > "$RUNNER_TEMP/empty-trivy.ignore"
+          started=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          env -i HOME="$RUNNER_TEMP/trivy-home" PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+            "$scanner" image --config "$RUNNER_TEMP/empty-trivy.yaml" \
+            --ignorefile "$RUNNER_TEMP/empty-trivy.ignore" --cache-dir "$cache" \
+            --image-src docker --scanners vuln --severity HIGH,CRITICAL --list-all-pkgs \
+            --format json --output "$output/report.json" --exit-code 1 --timeout 30m "$image_id"
+          completed=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          python3 -B scripts/validate-container-image-scan.py validate \
+            --service web --expected-image-id "$image_id" --expected-architecture arm64 \
+            --expected-os linux --expected-os-family alpine --inventory-bound os-pkgs:alpine:70:70:1 \
+            --report "$output/report.json" --receipt "$output/receipt.json" \
+            --db-metadata "$cache/db/metadata.json" --db "$cache/db/trivy.db" \
+            --scanner-version 0.74.0 \
+            --scanner-sha256 fed2c9ca7d27191ada34524b5eaf5216a845c6d6f3246143c3b475552ffe5358 \
+            --scan-started-at "$started" --scan-completed-at "$completed"
+      - name: Package verified image
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$RUNNER_TEMP/sbc-web-release"
+          image_id=$(cat "$RUNNER_TEMP/web-image-id")
+          docker save "$image_id" | gzip -1 > "$output/web-image.tar.gz"
+          python3 -B - <<'PY'
+          import hashlib, json, os, subprocess
+          from pathlib import Path
+          root = Path(os.environ['RUNNER_TEMP']) / 'sbc-web-release'
+          image_id = (root.parent / 'web-image-id').read_text().strip()
+          image = json.loads(subprocess.check_output(['docker', 'image', 'inspect', image_id]))[0]
+          revision = os.environ['SOURCE_REVISION']
+          assert image['Os'] == 'linux' and image['Architecture'] == 'arm64'
+          assert image['Config']['Labels']['org.opencontainers.image.revision'] == revision
+          hashes = {name: hashlib.file_digest((root / name).open('rb'), 'sha256').hexdigest()
+                    for name in ['web-image.tar.gz', 'report.json', 'receipt.json']}
+          manifest = dict(schemaVersion=1, sourceCommit=revision, imageId=image_id,
+                          os='linux', architecture='arm64', workflowRunId=os.environ['GITHUB_RUN_ID'],
+                          dockerfileSha256=hashlib.sha256(Path('Dockerfile.web').read_bytes()).hexdigest(),
+                          sha256=hashes)
+          (root / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
+          PY
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: diva-sbc-web-${{ inputs.revision }}
+          path: ${{ runner.temp }}/sbc-web-release/
+          if-no-files-found: error
+          retention-days: 7
