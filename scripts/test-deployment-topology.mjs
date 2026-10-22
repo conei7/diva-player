@@ -200,7 +200,7 @@ assert.doesNotMatch(webDockerfile, /apk upgrade/u);
 assert.match(webDockerfile, /RUN apk update && \\\s+apk add --no-cache/u);
 assert.match(
   webDockerfile,
-  /apk add --no-cache[\s\S]*libcrypto3=3\.5\.9-r0[\s\S]*libssl3=3\.5\.9-r0[\s\S]*libexpat=2\.8\.5-r0/u,
+  /apk add --no-cache[\s\S]*libcrypto3=3\.5\.9-r0[\s\S]*libssl3=3\.5\.9-r0[\s\S]*libexpat=2\.9\.0-r0[\s\S]*libx11=1\.8\.14-r0/u,
 );
 assert.doesNotMatch(apiDockerfile, /apk upgrade/u);
 const webApkUpdateStart = webDockerfile.indexOf('RUN apk update &&');

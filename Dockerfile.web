@@ -40,23 +40,25 @@ RUN set -eux; \
     rm /tmp/libcrypto3-3.5.9-r0.apk /tmp/libssl3-3.5.9-r0.apk
 # The immutable base predates Alpine fixes for the OpenSSL, Expat, and TIFF findings
 # enforced by the deployable-image scan gate.
-# Preserve the signed fixed Expat APKs: CDN regions can disagree on availability.
-COPY vendor/alpine/v3.24/ /tmp/diva-expat/
+# Preserve signed security APKs: CDN regions can disagree on availability.
+COPY vendor/alpine/v3.24/ /tmp/diva-security/
 RUN set -eux; \
     arch="$(apk --print-arch)"; \
     case "$arch" in \
-      x86_64) expat_sha=2e56946bc495cbed9eb1ad70859a79cba9db6420016453e065a0628848b32c7e ;; \
-      aarch64) expat_sha=568a12a4889a00711d1c80c197a5540ee1cdec26c1c59da38f8342ad69e7eff9 ;; \
+      x86_64) expat_sha=32b127f31e0a919110a18a7f0bb3780d8fb66ba4d8d61b2d301d633f0e319d0e; x11_sha=016efc189c6d566061ffe206ed0780e32686c1a8c832a3917d35d2c66d61a40f ;; \
+      aarch64) expat_sha=7128bfe18b8a315b9cf90ddf0beffeee454648ae72ff7898ff7d7b09803a559d; x11_sha=d460c111c1fc40e8f84367907b3e50a58a2b19c3e9d54f7c1f0e4aea7a376e3b ;; \
       *) exit 1 ;; \
     esac; \
-    echo "$expat_sha  /tmp/diva-expat/$arch/libexpat-2.8.5-r0.apk" | sha256sum -c -; \
-    apk add --no-network "/tmp/diva-expat/$arch/libexpat-2.8.5-r0.apk"; \
-    rm -r /tmp/diva-expat
+    echo "$expat_sha  /tmp/diva-security/$arch/libexpat-2.9.0-r0.apk" | sha256sum -c -; \
+    echo "$x11_sha  /tmp/diva-security/$arch/libx11-1.8.14-r0.apk" | sha256sum -c -; \
+    apk add --no-network "/tmp/diva-security/$arch/libexpat-2.9.0-r0.apk" "/tmp/diva-security/$arch/libx11-1.8.14-r0.apk"; \
+    rm -r /tmp/diva-security
 RUN apk update && \
     apk add --no-cache \
       libcrypto3=3.5.9-r0 \
       libssl3=3.5.9-r0 \
-      libexpat=2.8.5-r0 \
+      libexpat=2.9.0-r0 \
+      libx11=1.8.14-r0 \
       libuuid=2.42.3-r1 \
       tiff=4.7.2-r0 && \
     test "$(awk '$0=="P:tiff"{p=1;next} p && /^V:/{print substr($0,3);exit}' /lib/apk/db/installed)" = 4.7.2-r0
