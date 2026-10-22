@@ -283,6 +283,61 @@ async function runViewport(page, baseUrl, width, height, backupPath, { restore =
   console.log(`PASS settings tabs, filter draft, data tab, and restore dialog ${label}`);
 }
 
+async function runTheme(page, baseUrl, browser) {
+  const color = () => page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--color-brand').trim());
+  const openGeneral = async () => {
+    await page.waitForSelector('button[aria-label="設定"]');
+    await page.click('button[aria-label="設定"]');
+    await page.waitForSelector('#settings-tab-playback');
+    await page.click('#settings-tab-playback');
+    await page.waitForSelector('input[aria-label="カスタムカラー"]');
+  };
+  await page.setViewport({ width: 320, height: 568 });
+  await page.goto(baseUrl, { waitUntil: 'domcontentloaded' });
+  await openGeneral();
+  await page.click('button[aria-label="ピンク"]');
+  assert(await color() === '#ff8fc7', 'Preset did not change the live accent');
+  assert(await page.evaluate(() => JSON.parse(localStorage.getItem('diva_accentColor'))) === '#ff8fc7', 'Accent was not saved');
+  await assertDialogFits(page, 'theme settings 320px', SETTINGS);
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await openGeneral();
+  assert(await color() === '#ff8fc7', 'Accent did not survive reload');
+  assert(await page.$eval('input[aria-label="カスタムカラー"]', input => input.value) === '#ff8fc7', 'Color control lost the saved choice');
+  await page.$eval('input[aria-label="カスタムカラー"]', input => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, '#000000');
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  assert(await color() !== '#000000', 'Dark custom accent was not brightened');
+  assert(await page.evaluate(() => JSON.parse(localStorage.getItem('diva_accentColor'))) === '#000000', 'Custom color was not saved');
+  await clickButton(page, SETTINGS, '初期色に戻す');
+  assert(await color() === '#06d6a0', 'Reset did not restore the original accent');
+  const other = await browser.newPage();
+  try {
+    await other.goto(baseUrl, { waitUntil: 'domcontentloaded' });
+    await other.evaluate(() => localStorage.setItem('diva_accentColor', JSON.stringify('#6dbbff')));
+    await page.waitForFunction(() => document.documentElement.style.getPropertyValue('--color-brand') === '#6dbbff');
+    assert(await page.$eval('input[aria-label="カスタムカラー"]', input => input.value) === '#6dbbff', 'Other-tab update did not reach open settings');
+    await other.evaluate(() => localStorage.removeItem('diva_accentColor'));
+    await page.waitForFunction(() => document.documentElement.style.getPropertyValue('--color-brand') === '#06d6a0');
+  } finally { await other.close(); }
+  await page.evaluate(() => {
+    const original = Storage.prototype.setItem;
+    Storage.prototype.setItem = function (key, value) {
+      if (key === 'diva_accentColor') {
+        Storage.prototype.setItem = original;
+        throw new DOMException('quota', 'QuotaExceededError');
+      }
+      return original.call(this, key, value);
+    };
+  });
+  await page.click('button[aria-label="レッド"]');
+  await page.waitForFunction(() => document.body.textContent.includes('色は適用しましたが保存できませんでした'));
+  assert(await color() === '#ff8585', 'Storage failure prevented the live accent');
+  await clickButton(page, SETTINGS, '初期色に戻す');
+  console.log('PASS accent presets, custom color readability, persistence, reset, cross-tab updates, and storage failure');
+}
+
 async function main() {
   const baseUrl = getBaseUrl();
   const fixtureDir = await mkdtemp(join(tmpdir(), 'diva-settings-e2e-'));
@@ -295,6 +350,7 @@ async function main() {
     await runViewport(page, baseUrl, 390, 844, backupPath);
     await runViewport(page, baseUrl, 320, 568, backupPath);
     await runViewport(page, baseUrl, 1280, 900, backupPath, { restore: true });
+    await runTheme(page, baseUrl, browser);
     console.log('Settings browser E2E test passed.');
   } finally {
     await browser.close();

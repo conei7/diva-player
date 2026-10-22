@@ -3,6 +3,9 @@ import { createRoot } from 'react-dom/client';
 import { ensureEnglishTranslations, useLanguageStore } from './stores/languageStore';
 import './index.css';
 import App from './App';
+import { initializeTheme } from './stores/themeStore';
+
+initializeTheme();
 
 async function renderApp() {
   if (useLanguageStore.getState().language === 'en') {

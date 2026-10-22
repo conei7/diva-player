@@ -35,6 +35,7 @@ import DataSettingsPanel from './DataSettingsPanel';
 import FilterSettingsPanel from './FilterSettingsPanel';
 import type { UpdateFilterDraft, ViewThresholdService } from './FilterSettingsPanel';
 import { SettingRow, SettingsSelect } from './settingsControls';
+import ThemeSettings from './ThemeSettings';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -363,6 +364,7 @@ function GeneralSettingsPanel() {
           <option value="en" lang="en">English</option>
         </SettingsSelect>
       </SettingRow>
+      <ThemeSettings />
       <SettingRow label={t('優先する動画サービス')} htmlFor={`${ids}-pv`}>
         <SettingsSelect
           id={`${ids}-pv`}

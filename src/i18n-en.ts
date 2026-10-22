@@ -1046,5 +1046,18 @@ export const englishSourceText: Record<string, string> = {
   '表示しない曲を元に戻せませんでした': "Couldn't undo the changes to your hidden songs",
   'お気に入りPを元に戻せませんでした': "Couldn't undo the changes to your favorite producers",
   'フィルターを元に戻せませんでした': "Couldn't undo the changes to your filters",
+  'アクセントカラー': 'Accent color',
+  'カスタムカラー': 'Custom color',
+  '再生中・進捗・オンの色': 'Playing, progress, and active controls',
+  'おすすめの色': 'Color presets',
+  'ミント': 'Mint',
+  'ピンク': 'Pink',
+  'パープル': 'Purple',
+  'ブルー': 'Blue',
+  'オレンジ': 'Orange',
+  'レッド': 'Red',
+  '初期色に戻す': 'Reset color',
+  '暗い色は見やすい明るさに調整します': 'Dark colors are brightened for readability',
+  '色は適用しましたが保存できませんでした': "Color applied, but couldn't be saved",
   // ── /area:settings ──
 };
