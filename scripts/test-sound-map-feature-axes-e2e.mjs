@@ -17,6 +17,17 @@ try {
   let legacyApi = false;
   page.on('request', request => {
     const url = new URL(request.url());
+    // Point selection must not race live metadata replacing the fixture name.
+    // Keep both the map and its card hydration at the same network boundary.
+    if (/\/api\/songs\/(?:batch|details|\d+)$/.test(url.pathname)) {
+      const song = id => ({ id, name: `試験曲 ${id}`, defaultName: `試験曲 ${id}`, artistString: 'Test artist', songType: 'Original', artists: [], pvs: [] });
+      const ids = (url.searchParams.get('ids') ?? '').split(',').filter(Boolean).map(Number);
+      const body = /\/\d+$/.test(url.pathname)
+        ? song(Number(url.pathname.split('/').at(-1)))
+        : { items: ids.map(song) };
+      void request.respond({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
+      return;
+    }
     if (!url.pathname.endsWith('/api/discovery/sound-map')) { void request.continue(); return; }
     requests++;
     const x = Number(url.searchParams.get('axisX'));

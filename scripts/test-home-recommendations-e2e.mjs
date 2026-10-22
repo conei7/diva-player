@@ -52,7 +52,7 @@ try {
   await page.goto(base, { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => document.querySelector('[role="status"]')?.textContent.includes('Loading songs'));
   await page.waitForFunction(() => new Set([...document.querySelectorAll('a[href*="/watch?v="]')].map(link => new URL(link.href).searchParams.get('v'))).size > 40, { timeout: 45000 });
-  const displayed = await page.$$eval('a[href*="/watch?v="]', links => [...new Set(links.map(link => Number(new URL(link.href).searchParams.get('v'))))]);
+  const displayed = await page.$$eval('.song-card h3 a[href*="/watch?v="]', links => links.map(link => Number(new URL(link.href).searchParams.get('v'))));
   assert(displayed.length > 40, 'Cached startup feed must allow more than 40 songs');
   assert(recommendationOffsets.includes(0), 'Personal discovery must run on the first page');
   assert(recommendationOffsets.includes(24), 'Second source window must start at 24');
