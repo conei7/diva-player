@@ -313,7 +313,7 @@ export default function SmartPlaylistBuilder({ mode, initialName = '', initialRu
             aria-labelledby={`${ids}-preview`}
             aria-live="polite"
             aria-busy={preview.state === 'loading' && !validation}
-            className={cx('min-w-0 self-start rounded-card bg-white/5 p-4 md:sticky md:top-20')}
+            className={cx('min-w-0 self-start rounded-card bg-yt-tonal p-4 md:sticky md:top-20')}
           >
             <h3 id={`${ids}-preview`} className="m-0 mb-2 text-sm font-medium leading-5 text-yt-text">{t('プレビュー')}</h3>
             {previewBody ?? <p className="m-0 text-sm leading-5 text-yt-text-secondary">—</p>}

@@ -95,7 +95,7 @@ function HeroBackdrop({ playlist }: { playlist: Playlist }) {
               index: (previous.signature === signature ? previous.index : 0) + 1,
             }))}
           />
-          <div className="absolute inset-0 bg-[linear-gradient(to_bottom,rgba(15,15,15,0.2),rgba(15,15,15,0.7)_55%,#0f0f0f)]" />
+          <div className="absolute inset-0 bg-[image:var(--hero-gradient)]" />
         </>
       ) : (
         <div data-testid="playlist-hero-surface" className="absolute inset-0 bg-[linear-gradient(to_bottom,var(--color-yt-raised),var(--color-yt-bg))]" />

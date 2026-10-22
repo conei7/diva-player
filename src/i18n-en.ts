@@ -1061,4 +1061,15 @@ export const englishSourceText: Record<string, string> = {
   '色は適用しましたが保存できませんでした': "Color applied, but couldn't be saved",
   '曲を読み込み中…': 'Loading songs…',
   // ── /area:settings ──
+  '見た目': 'Appearance',
+  'テーマとアクセントカラーも保存します': 'Theme and accent color are also saved',
+  '見た目の設定も復元します': 'Appearance settings will also be restored.',
+  'テーマ': 'Theme',
+  'ダーク': 'Dark',
+  'ライト': 'Light',
+  'テーマは適用しましたが保存できませんでした': "Theme applied, but couldn't be saved",
+  'テーマに合わせて色の明るさを調整します': 'Color brightness adapts to your theme',
+  '見た目を保存できませんでした': "Couldn't save your appearance settings",
+  '見た目を元に戻せませんでした': "Couldn't undo the changes to your appearance settings",
+  '見た目の設定を含みます。置き換える場合のみ復元します': 'Includes appearance settings. Restored only when replacing data.',
 };

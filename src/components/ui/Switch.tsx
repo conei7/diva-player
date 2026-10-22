@@ -51,7 +51,7 @@ export default function Switch({
       />
       <span
         aria-hidden="true"
-        className="pointer-events-none absolute inset-0 rounded-full bg-white/30 transition-colors duration-150 peer-checked:bg-brand peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-yt-focus peer-disabled:opacity-40"
+        className="pointer-events-none absolute inset-0 rounded-full bg-yt-outline transition-colors duration-150 peer-checked:bg-brand peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-yt-focus peer-disabled:opacity-40"
       />
       <span
         aria-hidden="true"

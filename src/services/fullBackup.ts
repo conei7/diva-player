@@ -17,15 +17,17 @@ import {
 import { normalizeFavoriteProducers, useFavoriteProducerStore, type FavoriteProducer } from '../stores/favoriteProducerStore';
 import { createStableId } from '../utils/id';
 import { normalizeHiddenSongs, useHiddenSongStore, type HiddenSongRecord } from '../stores/hiddenSongStore';
+import { useThemeStore } from '../stores/themeStore';
+import { applyAccentColor, type ThemePreferences } from '../utils/theme';
 
 const BACKUP_KIND = 'diva-player-full-backup';
-const BACKUP_VERSION = 6 as const;
-type SupportedBackupVersion = 1 | 2 | 3 | 4 | 5 | 6;
+const BACKUP_VERSION = 7 as const;
+type SupportedBackupVersion = 1 | 2 | 3 | 4 | 5 | 6 | 7;
 const MAX_HISTORY_EVENTS = 1_000_000;
 const MAX_PLAYLISTS = 10_000;
 
 /** 復元で書き換えるデータ。表示名は表示側で訳す（DESIGN_SPEC §6.8.2）。 */
-export type FullBackupSection = 'history' | 'ratings' | 'playlists' | 'hiddenSongs' | 'favoriteProducers' | 'globalFilters';
+export type FullBackupSection = 'history' | 'ratings' | 'playlists' | 'hiddenSongs' | 'favoriteProducers' | 'globalFilters' | 'theme';
 
 /**
  * 復元に失敗した理由。表示文はここでは作らず、表示側で訳す。
@@ -79,7 +81,7 @@ export interface FullBackupPayload {
     ratings: Record<string, number>;
     playlists: { folders: PlaylistFolder[]; playlists: Playlist[] };
     hiddenSongs: Record<string, HiddenSongRecord>;
-    preferences?: { globalFilters: GlobalFilterSettings; favoriteProducers?: FavoriteProducer[] };
+    preferences?: { globalFilters: GlobalFilterSettings; favoriteProducers?: FavoriteProducer[]; theme?: ThemePreferences };
   };
 }
 
@@ -94,7 +96,7 @@ export interface FullBackupCounts {
 }
 
 export interface FullBackupManifest extends FullBackupCounts {
-  schemaVersion: 4 | 5 | 6;
+  schemaVersion: 4 | 5 | 6 | 7;
 }
 
 /**
@@ -277,7 +279,7 @@ function createManifest(sections: FullBackupPayload['sections']): FullBackupMani
   return { schemaVersion: BACKUP_VERSION, ...getCountsFromSections(sections) };
 }
 
-function manifestMatches(manifest: unknown, counts: FullBackupCounts, schemaVersion: 4 | 5 | 6): boolean {
+function manifestMatches(manifest: unknown, counts: FullBackupCounts, schemaVersion: 4 | 5 | 6 | 7): boolean {
   if (!isRecord(manifest) || manifest.schemaVersion !== schemaVersion) return false;
   const keys = Object.keys(counts).filter(key => schemaVersion >= 6 || key !== 'hiddenSongCount');
   return keys.every(key => manifest[key] === counts[key as keyof FullBackupCounts]);
@@ -321,6 +323,7 @@ export async function createFullBackup(): Promise<FullBackupPayload> {
     preferences: {
       globalFilters: getGlobalFilterSettings(),
       favoriteProducers: useFavoriteProducerStore.getState().producers.map(producer => ({ ...producer })),
+      theme: { mode: useThemeStore.getState().mode, accentColor: useThemeStore.getState().accentColor },
     },
   };
   return {
@@ -341,7 +344,7 @@ export function downloadFullBackup(payload: FullBackupPayload): void {
 }
 
 export function parseFullBackup(data: unknown): FullBackupPreview | null {
-  if (!isRecord(data) || data.kind !== BACKUP_KIND || ![1, 2, 3, 4, 5, BACKUP_VERSION].includes(data.version as number) || !isRecord(data.sections)) return null;
+  if (!isRecord(data) || data.kind !== BACKUP_KIND || ![1, 2, 3, 4, 5, 6, BACKUP_VERSION].includes(data.version as number) || !isRecord(data.sections)) return null;
   const version = data.version as SupportedBackupVersion;
   let invalidItems = 0;
   const validationIssues: FullBackupValidationIssue[] = [];
@@ -372,6 +375,14 @@ export function parseFullBackup(data: unknown): FullBackupPreview | null {
     ? rawPreferences.globalFilters
     : undefined;
   if (rawPreferences && !rawGlobalFilters) invalidItems += 1;
+  let theme: ThemePreferences | undefined;
+  if (version >= 7 && rawPreferences && 'theme' in rawPreferences) {
+    const raw = rawPreferences.theme;
+    if (isRecord(raw) && (raw.mode === 'dark' || raw.mode === 'light')
+      && typeof raw.accentColor === 'string' && /^#[\da-f]{6}$/i.test(raw.accentColor)) {
+      theme = { mode: raw.mode, accentColor: raw.accentColor.toLowerCase() };
+    } else invalidItems += 1;
+  }
   const rawFavoriteProducers = rawPreferences && 'favoriteProducers' in rawPreferences
     ? normalizeFavoriteProducers(rawPreferences.favoriteProducers)
     : undefined;
@@ -389,13 +400,14 @@ export function parseFullBackup(data: unknown): FullBackupPreview | null {
         preferences: {
           globalFilters: normalizeGlobalFilterSettings(rawGlobalFilters),
           ...(rawFavoriteProducers ? { favoriteProducers: rawFavoriteProducers } : {}),
+          ...(theme ? { theme } : {}),
         },
       } : {}),
     },
   };
   const counts = getCountsFromSections(parsed.sections);
   const legacyFormat = version < 4;
-  const manifestValid = legacyFormat || manifestMatches(data.manifest, counts, version as 4 | 5 | 6);
+  const manifestValid = legacyFormat || manifestMatches(data.manifest, counts, version as 4 | 5 | 6 | 7);
   if (legacyFormat) validationIssues.push({ kind: 'legacy-format' });
   if (version >= 4 && !manifestValid) validationIssues.push({ kind: 'manifest-mismatch' });
   if (invalidItems > 0) validationIssues.push({ kind: 'invalid-items', count: invalidItems });
@@ -526,6 +538,8 @@ const STORAGE_KEY_SECTIONS: ReadonlyArray<readonly [key: string, section: Exclud
   ['diva-hidden-songs', 'hiddenSongs'],
   ['diva-global-filters', 'globalFilters'],
   ['diva-favorite-producers', 'favoriteProducers'],
+  ['diva_accentColor', 'theme'],
+  ['diva_themeMode', 'theme'],
 ];
 
 export async function executeFullBackupImport(preview: FullBackupPreview, options: FullBackupImportOptions): Promise<FullBackupImportResult> {
@@ -539,6 +553,7 @@ export async function executeFullBackupImport(preview: FullBackupPreview, option
   const currentGlobalFilters = getGlobalFilterSettings();
   const currentFavoriteProducers = useFavoriteProducerStore.getState().producers.map(producer => ({ ...producer }));
   const currentHiddenSongs = normalizeHiddenSongs(useHiddenSongStore.getState().hiddenSongs);
+  const currentTheme = { mode: useThemeStore.getState().mode, accentColor: useThemeStore.getState().accentColor };
   let currentHistorySnapshot: HistoryStoreSnapshot;
   try {
     currentHistorySnapshot = await readHistoryStoreSnapshot();
@@ -557,7 +572,7 @@ export async function executeFullBackupImport(preview: FullBackupPreview, option
     throw new FullBackupImportError('read-failed', { cause: error });
   }
   const changed: Record<FullBackupSection, boolean> = {
-    playlists: false, ratings: false, hiddenSongs: false, globalFilters: false, favoriteProducers: false, history: false,
+    playlists: false, ratings: false, hiddenSongs: false, globalFilters: false, favoriteProducers: false, history: false, theme: false,
   };
   /** いま書き込んでいるデータ（失敗した時に、どこで止まったかを返す） */
   let writing: FullBackupSection | undefined;
@@ -609,6 +624,11 @@ export async function executeFullBackupImport(preview: FullBackupPreview, option
       incomingFavoriteProducers.forEach(producer => favoriteById.set(producer.id, producer));
       useFavoriteProducerStore.setState({ producers: [...favoriteById.values()] });
     }
+    if (options.mode === 'replace' && incoming.preferences?.theme) {
+      writing = 'theme';
+      changed.theme = true;
+      if (!useThemeStore.getState().setPreferences(incoming.preferences.theme)) throw new Error('Could not save theme');
+    }
     writing = 'history';
     if (options.mode === 'replace') {
       await replaceHistory(incoming.history.events);
@@ -636,6 +656,10 @@ export async function executeFullBackupImport(preview: FullBackupPreview, option
       try { restore(); }
       catch (rollbackError) { rollbackFailures.push({ section, error: rollbackError }); }
     };
+    if (changed.theme) rollBack('theme', () => {
+      useThemeStore.setState(currentTheme);
+      applyAccentColor(currentTheme.accentColor, currentTheme.mode);
+    });
     if (changed.history) {
       try {
         await restoreHistoryStoreSnapshot(currentHistorySnapshot);

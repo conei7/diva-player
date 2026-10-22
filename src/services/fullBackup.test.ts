@@ -15,6 +15,23 @@ function createLocalStorage(initial: Record<string, string> = {}) {
 }
 
 describe('parseFullBackup', () => {
+  it('validates v7 appearance without changing legacy backup behavior', () => {
+    const payload = {
+      kind: 'diva-player-full-backup', version: 7,
+      manifest: { schemaVersion: 7, historyEvents: 0, ratingCount: 0, playlistCount: 0,
+        playlistSongCount: 0, folderCount: 0, favoriteProducerCount: 0, hiddenSongCount: 0 },
+      sections: { history: { events: [] }, ratings: {}, playlists: { folders: [], playlists: [] },
+        hiddenSongs: {}, preferences: { globalFilters: {}, theme: { mode: 'light', accentColor: '#AABBCC' } } },
+    };
+    const preview = parseFullBackup(payload);
+    expect(preview?.canRestore).toBe(true);
+    expect(preview?.parsed.sections.preferences?.theme).toEqual({ mode: 'light', accentColor: '#aabbcc' });
+    for (const theme of [null, {}, { mode: 'system', accentColor: '#123456' }, { mode: 'dark', accentColor: 'red' }]) {
+      expect(parseFullBackup({ ...payload, sections: { ...payload.sections,
+        preferences: { globalFilters: {}, theme } } })?.canRestore).toBe(false);
+    }
+    expect(emptyLegacyBackup().parsed.sections.preferences?.theme).toBeUndefined();
+  });
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();

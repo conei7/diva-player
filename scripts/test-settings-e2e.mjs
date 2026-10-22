@@ -338,6 +338,107 @@ async function runTheme(page, baseUrl, browser) {
   console.log('PASS accent presets, custom color readability, persistence, reset, cross-tab updates, and storage failure');
 }
 
+async function runAppearanceBackup(page, baseUrl, browser, fixtureDir) {
+  const modeSelector = `${SETTINGS} section[aria-label="見た目"] select`;
+  const openGeneral = async () => {
+    await page.waitForSelector('button[aria-label="設定"]');
+    await page.click('button[aria-label="設定"]');
+    await page.waitForSelector('#settings-tab-playback');
+    await page.click('#settings-tab-playback');
+    await page.waitForSelector(modeSelector);
+  };
+  const mode = () => page.evaluate(() => document.documentElement.dataset.theme);
+  const upload = async path => {
+    await page.click('#settings-tab-data');
+    await page.waitForSelector('#settings-panel-data input[type="file"]');
+    await (await page.$('#settings-panel-data input[type="file"]')).uploadFile(path);
+    await page.waitForSelector(RESTORE, { visible: true });
+  };
+  const replace = async () => {
+    await page.$eval(`${RESTORE} input[value="replace"]`, input => input.click());
+    await clickButton(page, RESTORE, '置き換える');
+    await page.waitForSelector(CONFIRM, { visible: true });
+    await clickButton(page, CONFIRM, '置き換える');
+  };
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await openGeneral();
+  await page.select(modeSelector, 'light');
+  await page.click('button[aria-label="ピンク"]');
+  assert(await mode() === 'light', 'Light mode was not applied');
+  const colors = await page.evaluate(() => ({
+    background: getComputedStyle(document.body).backgroundColor,
+    text: getComputedStyle(document.body).color,
+    accent: document.documentElement.style.getPropertyValue('--color-brand'),
+    scheme: getComputedStyle(document.documentElement).colorScheme,
+  }));
+  assert(colors.background === 'rgb(255, 255, 255)' && colors.text === 'rgb(15, 15, 15)'
+    && colors.scheme === 'light' && colors.accent !== '#ff8fc7', `Light palette is incomplete: ${JSON.stringify(colors)}`);
+  await assertDialogFits(page, 'light theme 320px', SETTINGS);
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  assert(await mode() === 'light', 'Light mode did not survive reload');
+  await openGeneral();
+  const other = await browser.newPage();
+  try {
+    await other.goto(baseUrl, { waitUntil: 'domcontentloaded' });
+    await other.evaluate(() => localStorage.setItem('diva_themeMode', JSON.stringify('dark')));
+    await page.waitForFunction(() => document.documentElement.dataset.theme === 'dark');
+    await other.evaluate(() => localStorage.setItem('diva_themeMode', JSON.stringify('light')));
+    await page.waitForFunction(() => document.documentElement.dataset.theme === 'light');
+  } finally { await other.close(); }
+  await page.evaluate(() => {
+    const original = URL.createObjectURL;
+    URL.createObjectURL = function (blob) {
+      window.__backupBlob = blob;
+      return original.call(this, blob);
+    };
+  });
+  await page.click('#settings-tab-data');
+  await clickButton(page, SETTINGS, 'バックアップを保存');
+  await page.waitForFunction(() => window.__backupBlob instanceof Blob);
+  const exported = JSON.parse(await page.evaluate(() => window.__backupBlob.text()));
+  assert(exported.version === 7 && exported.manifest.schemaVersion === 7
+    && exported.sections.preferences.theme.mode === 'light'
+    && exported.sections.preferences.theme.accentColor === '#ff8fc7', 'Export did not include the selected appearance');
+  const path = join(fixtureDir, 'appearance-v7.json');
+  await writeFile(path, JSON.stringify(exported));
+  await page.click('#settings-tab-playback');
+  await page.select(modeSelector, 'dark');
+  await page.click('button[aria-label="ブルー"]');
+  await upload(path);
+  assert(await page.$eval(RESTORE, root => root.textContent.includes('見た目の設定を含みます')), 'Restore does not explain appearance behavior');
+  await clickButton(page, RESTORE, '復元');
+  await page.waitForSelector(RESTORE, { hidden: true });
+  assert(await mode() === 'dark', 'Merge overwrote the current appearance');
+  // A failed theme write must roll back both the live palette and persisted values.
+  await upload(path);
+  await page.evaluate(() => {
+    const original = Storage.prototype.setItem;
+    Storage.prototype.setItem = function (key, value) {
+      if (key === 'diva_themeMode') {
+        Storage.prototype.setItem = original;
+        throw new DOMException('quota', 'QuotaExceededError');
+      }
+      return original.call(this, key, value);
+    };
+  });
+  await replace();
+  await page.waitForSelector(`${RESTORE} [role="alert"]`);
+  assert(await mode() === 'dark', 'Failed restore changed the live theme');
+  assert(await page.evaluate(() => JSON.parse(localStorage.getItem('diva_accentColor'))) === '#6dbbff', 'Failed restore did not roll back the accent');
+  await replace();
+  await page.waitForSelector(RESTORE, { hidden: true });
+  assert(await mode() === 'light', 'Replace did not restore the theme');
+  assert(await page.evaluate(() => JSON.parse(localStorage.getItem('diva_accentColor'))) === '#ff8fc7', 'Replace did not restore the original selected accent');
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  assert(await mode() === 'light', 'Restored appearance did not persist');
+  await openGeneral();
+  await upload(join(fixtureDir, 'diva_full_backup_2026-10-11.json'));
+  await replace();
+  await page.waitForSelector(RESTORE, { hidden: true });
+  assert(await mode() === 'light', 'Legacy backup reset the current appearance');
+  console.log('PASS light/dark palette, persistence, cross-tab, v7 export/merge/replace, rollback, and v6 compatibility');
+}
+
 async function main() {
   const baseUrl = getBaseUrl();
   const fixtureDir = await mkdtemp(join(tmpdir(), 'diva-settings-e2e-'));
@@ -351,6 +452,7 @@ async function main() {
     await runViewport(page, baseUrl, 320, 568, backupPath);
     await runViewport(page, baseUrl, 1280, 900, backupPath, { restore: true });
     await runTheme(page, baseUrl, browser);
+    await runAppearanceBackup(page, baseUrl, browser, fixtureDir);
     console.log('Settings browser E2E test passed.');
   } finally {
     await browser.close();

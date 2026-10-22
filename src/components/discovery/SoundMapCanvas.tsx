@@ -266,7 +266,7 @@ export default function SoundMapCanvas({
         })}
       </svg>
 
-      <div className="pointer-events-none absolute left-3 top-3 flex max-w-[calc(100%-24px)] flex-wrap items-center gap-x-3 gap-y-1 rounded-chip bg-black/60 px-3 py-1.5 text-xs leading-4 text-yt-text-secondary">
+      <div className="pointer-events-none absolute left-3 top-3 flex max-w-[calc(100%-24px)] flex-wrap items-center gap-x-3 gap-y-1 rounded-chip bg-yt-menu/95 px-3 py-1.5 text-xs leading-4 text-yt-text-secondary">
         <span className="flex items-center gap-1.5">
           <svg width="12" height="12" viewBox="-6 -6 12 12" aria-hidden="true"><path d="M0,-5.5 L5.5,0 L0,5.5 L-5.5,0 Z" fill={SOUND_MAP_COLORS.origin} /></svg>
           {t('起点')}
@@ -286,14 +286,14 @@ export default function SoundMapCanvas({
           <span
             data-testid="sound-map-axis-y"
             data-feature-index={axes.y}
-            className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 rounded-badge bg-black/60 px-2 py-0.5 text-xs leading-5 text-yt-text"
+            className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 rounded-badge bg-yt-menu/95 px-2 py-0.5 text-xs leading-5 text-yt-text"
           >
             ↑ {t('Y · 特徴{n}', { n: axes.y + 1 })}
           </span>
           <span
             data-testid="sound-map-axis-x"
             data-feature-index={axes.x}
-            className="pointer-events-none absolute bottom-3 left-1/2 -translate-x-1/2 rounded-badge bg-black/60 px-2 py-0.5 text-xs leading-5 text-yt-text"
+            className="pointer-events-none absolute bottom-3 left-1/2 -translate-x-1/2 rounded-badge bg-yt-menu/95 px-2 py-0.5 text-xs leading-5 text-yt-text"
           >
             {t('X · 特徴{n}', { n: axes.x + 1 })} →
           </span>

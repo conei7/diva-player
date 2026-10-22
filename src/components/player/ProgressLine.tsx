@@ -122,7 +122,7 @@ export default function ProgressLine({ seekable }: { seekable: boolean }) {
           ref={trackRef}
           aria-hidden="true"
           className={cx(
-            'pointer-events-none absolute inset-x-0 top-1 h-0.5 bg-white/20 transition-[height,top] duration-150 ease-out motion-reduce:transition-none',
+            'pointer-events-none absolute inset-x-0 top-1 h-0.5 bg-yt-outline transition-[height,top] duration-150 ease-out motion-reduce:transition-none',
             (interactive || scrub !== null) && 'group-hover/progress:top-[3px] group-hover/progress:h-1 group-focus-visible/progress:top-[3px] group-focus-visible/progress:h-1',
             scrub !== null && 'top-[3px] h-1',
           )}
@@ -130,7 +130,7 @@ export default function ProgressLine({ seekable }: { seekable: boolean }) {
           <div className="absolute inset-y-0 left-0 bg-brand" style={{ width: percent(fraction) }} />
           {/* Over the fill so the chorus stays visible after it has played (lighter green there). */}
           {chorus && (
-            <div className="absolute inset-y-0 bg-white/40" style={{ left: percent(chorus.start), width: percent(chorus.end - chorus.start) }} />
+            <div className="absolute inset-y-0 bg-yt-text-secondary/40" style={{ left: percent(chorus.start), width: percent(chorus.end - chorus.start) }} />
           )}
           {interactive && (
             <div

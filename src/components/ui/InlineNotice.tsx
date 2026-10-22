@@ -47,7 +47,7 @@ export function InlineNotice({
     <div
       role={role}
       className={cx(
-        'flex min-h-10 flex-wrap items-center gap-x-3 gap-y-1 rounded-chip bg-white/5 px-3 py-2 text-sm leading-5 text-yt-text',
+        'flex min-h-10 flex-wrap items-center gap-x-3 gap-y-1 rounded-chip bg-yt-tonal px-3 py-2 text-sm leading-5 text-yt-text',
         className,
       )}
     >

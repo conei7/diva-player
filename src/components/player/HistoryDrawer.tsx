@@ -160,7 +160,7 @@ export default function HistoryDrawer() {
                     <div
                       role="button"
                       tabIndex={0}
-                      className="w-full flex items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-white/5"
+                      className="w-full flex items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-yt-tonal"
                       onClick={() => {
                         playSong(song, true);
                         toggleHistoryDrawer();

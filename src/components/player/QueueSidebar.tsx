@@ -147,7 +147,7 @@ export default function QueueSidebar({ hideHeader }: QueueSidebarProps = {}) {
                 <div
                   role="button"
                   tabIndex={0}
-                  className="w-full flex items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-white/5"
+                  className="w-full flex items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-yt-tonal"
                   style={{
                     background: isCurrent ? 'rgba(139,92,246,0.12)' : 'transparent',
                     borderLeft: isCurrent ? '3px solid var(--color-accent-purple)' : '3px solid transparent',

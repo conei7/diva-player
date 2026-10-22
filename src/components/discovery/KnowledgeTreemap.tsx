@@ -337,10 +337,10 @@ export default function KnowledgeTreemap({ platform, items, viewMode, songsById,
                     data-tile-id={rect.id}
                     tabIndex={rect.id === activeId ? 0 : -1}
                     className={cx(
-                      'absolute flex overflow-hidden rounded-badge text-white no-underline outline-none transition-[filter,background-color] duration-150',
-                      'focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-white',
-                      rect.known ? 'hover:brightness-110' : 'bg-[#303030] hover:bg-[#3f3f3f]',
-                      selected && 'outline-2 -outline-offset-2 outline-white',
+                      'absolute flex overflow-hidden rounded-badge no-underline outline-none transition-[filter,background-color] duration-150',
+                      'focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-yt-focus',
+                      rect.known ? 'text-white hover:brightness-110' : 'text-yt-text bg-yt-tonal-solid hover:bg-yt-tonal-solid-hover',
+                      selected && 'outline-2 -outline-offset-2 outline-yt-focus',
                     )}
                     style={rect.known ? { ...style, backgroundColor: serviceColor } : style}
                     onClick={onTileClick}

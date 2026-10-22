@@ -4,7 +4,8 @@ import { useThemeStore } from '../../stores/themeStore';
 import { showToast } from '../../stores/toastStore';
 import { DEFAULT_ACCENT_COLOR } from '../../utils/theme';
 import Button from '../ui/Button';
-import { SettingRow } from './settingsControls';
+import { SettingRow, SettingsSelect } from './settingsControls';
+import type { ThemeMode } from '../../utils/theme';
 
 const PRESETS = [
   ['#06d6a0', 'ミント'], ['#ff8fc7', 'ピンク'], ['#be9bff', 'パープル'],
@@ -17,11 +18,21 @@ export default function ThemeSettings() {
   const colorRef = useRef<HTMLInputElement>(null);
   const accentColor = useThemeStore(state => state.accentColor);
   const setAccentColor = useThemeStore(state => state.setAccentColor);
+  const mode = useThemeStore(state => state.mode);
+  const setMode = useThemeStore(state => state.setMode);
   const select = (color: string) => {
     if (!setAccentColor(color)) showToast(t('色は適用しましたが保存できませんでした'));
   };
   return (
-    <section aria-label={t('アクセントカラー')} className="border-b border-yt-divider pb-3">
+    <section aria-label={t('見た目')} className="border-b border-yt-divider pb-3">
+      <SettingRow label={t('テーマ')} htmlFor={`${id}-mode`}>
+        <SettingsSelect id={`${id}-mode`} value={mode} onChange={event => {
+          if (!setMode(event.target.value as ThemeMode)) showToast(t('テーマは適用しましたが保存できませんでした'));
+        }}>
+          <option value="dark">{t('ダーク')}</option>
+          <option value="light">{t('ライト')}</option>
+        </SettingsSelect>
+      </SettingRow>
       <SettingRow label={t('アクセントカラー')} htmlFor={id} meta={t('再生中・進捗・オンの色')}>
         <input ref={colorRef} id={id} type="color" aria-label={t('カスタムカラー')} value={accentColor}
           onChange={event => select(event.target.value)}
@@ -37,7 +48,7 @@ export default function ThemeSettings() {
         ))}
       </div>
       <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-        <p className="text-xs text-yt-text-secondary">{t('暗い色は見やすい明るさに調整します')}</p>
+        <p className="text-xs text-yt-text-secondary">{t('テーマに合わせて色の明るさを調整します')}</p>
         <Button variant="text" disabled={accentColor === DEFAULT_ACCENT_COLOR}
           onClick={() => {
             colorRef.current?.focus({ preventScroll: true });

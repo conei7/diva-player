@@ -15,8 +15,8 @@ export const KNOWN_SERVICE_COLOR: Record<KnowledgeMapPlatform, string> = {
 /** Not-yet-known song tiles are #303030 (hover #3f3f3f), written as classes in KnowledgeTreemap. */
 export const KNOWLEDGE_MAP_COLORS = {
   /** The "other songs" remainder: a quiet hatched surface. */
-  remainder: '#1f1f1f',
-  meterTrack: '#3f3f3f',
+  remainder: 'var(--color-yt-raised)',
+  meterTrack: 'var(--color-yt-tonal-solid-hover)',
 } as const;
 
 /** A light 45° hatch that marks a tile as a remainder bucket rather than one song. */
@@ -24,10 +24,10 @@ export const REMAINDER_HATCH = 'repeating-linear-gradient(135deg, rgb(255 255 25
 export const KNOWN_REMAINDER_HATCH = 'repeating-linear-gradient(135deg, rgb(0 0 0 / 0.18) 0 2px, transparent 2px 9px)';
 
 export const SOUND_MAP_COLORS = {
-  surface: '#212121',
-  known: '#f1f1f1',
-  unknown: '#aaaaaa',
-  origin: '#06d6a0',
-  selected: '#3ea6ff',
-  focus: '#ffffff',
+  surface: 'var(--color-yt-raised)',
+  known: 'var(--color-yt-text)',
+  unknown: 'var(--color-yt-text-secondary)',
+  origin: 'var(--color-brand)',
+  selected: 'var(--color-yt-focus)',
+  focus: 'var(--color-yt-text)',
 } as const;

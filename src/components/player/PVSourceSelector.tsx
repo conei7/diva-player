@@ -62,7 +62,6 @@ export default function PVSourceSelector({ song, compact = false }: PVSourceSele
           if (next) selectPV(next);
         }}
         aria-label={tk('pvSelectorAria')}
-        style={{ colorScheme: 'dark' }}
       >
         {playablePVs.map(pv => (
           <option

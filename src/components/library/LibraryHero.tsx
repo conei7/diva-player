@@ -61,7 +61,7 @@ export default function LibraryHero({
             className="absolute inset-0 h-full w-full scale-[1.2] object-cover opacity-50 blur-[48px]"
             onError={() => setFailedBackdrop(backdropUrl ?? null)}
           />
-          <div className="absolute inset-0 bg-[linear-gradient(to_bottom,rgba(15,15,15,0.2),rgba(15,15,15,0.7)_55%,#0f0f0f)]" />
+          <div className="absolute inset-0 bg-[image:var(--hero-gradient)]" />
         </div>
       )}
       <div className="sm:flex sm:items-start sm:gap-6 sm:p-6 xl:block xl:h-full xl:overflow-y-auto xl:overscroll-contain">

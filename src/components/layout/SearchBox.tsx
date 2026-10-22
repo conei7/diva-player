@@ -520,7 +520,7 @@ export default function SearchBox({ compact }: { compact: boolean }) {
           <button
             type="submit"
             aria-label={tk('search')}
-            className="flex h-10 w-16 shrink-0 cursor-pointer items-center justify-center rounded-r-full border border-yt-field-border bg-[#222] text-yt-text transition-colors duration-150 hover:bg-yt-tonal-solid-hover"
+            className="flex h-10 w-16 shrink-0 cursor-pointer items-center justify-center rounded-r-full border border-yt-field-border bg-yt-raised text-yt-text transition-colors duration-150 hover:bg-yt-tonal-solid-hover"
           >
             <SearchIcon />
           </button>
