@@ -7,7 +7,7 @@ export function homeRecommendationPools(
 ): Partial<Record<RecommendationSource, Song[]>> {
   const discoveries = (items: Song[]) => items.filter(song => !knownIds.has(song.id));
   return {
-    known: known.slice(0, Math.max(1, Math.floor(count / 4))),
+    known: known.slice(0, Math.max(1, Math.floor(count / 2))),
     hybrid: discoveries(hybrid),
     audio: discoveries(audio),
     popular: discoveries(popular),

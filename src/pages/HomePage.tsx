@@ -360,7 +360,9 @@ function HomeFeed() {
         excludeHiddenSongs(filterVoiceSynthSongs(snapshot.songs), hiddenSongs),
         { settings: globalFilterSettings, ratings, lastPlayedAtBySongId },
       );
-      if (cachedSongs.length === 0) return;
+      // A late IndexedDB/history read must not prepend an old cache after a
+      // fresh grid has already arrived and move the user's visible choices.
+      if (cachedSongs.length === 0 || sourceSongIdsRef.current.size > 0) return;
 
       const rotation = nextStartupRotation();
       const selectedSongs = selectRotatingStartupSongs(cachedSongs, rotation, FIRST_HOME_PAGE_SIZE);
@@ -544,7 +546,7 @@ function HomeFeed() {
       reasons: Object.fromEntries(mixed.map(item => [item.song.id, item.reason])),
       hasMore: popularSongs.length >= count
         || optionalResults.some(results => results.some(items => items.length >= count))
-        || knownSongs.length > Math.max(1, Math.floor(count / 4)),
+        || knownSongs.length > Math.max(1, Math.floor(count / 2)),
     };
   }, [currentSong, entries, favoriteProducers, playlists, ratings, implicitFeedback, songs]);
 
@@ -933,11 +935,13 @@ function HomeFeed() {
     [discoveryContext, unhiddenStartupSongs],
   );
   const showingStartupCache = activeCategory === 'recommended'
-    && startupDiscoverySongs.length > 0 && songs.length === 0;
+    && startupDiscoverySongs.length > 0;
   const discoveryResult = showingStartupCache
     ? {
-        items: uniqueSongsById([...startupDiscoverySongs, ...freshDiscoveryResult.items]).slice(0, 40),
-        relaxedConditions: [],
+        // Keep the visible prefix in place: refreshing candidates may append
+        // songs, but must not remove the tiles someone is about to choose.
+        items: uniqueSongsById([...startupDiscoverySongs, ...freshDiscoveryResult.items]),
+        relaxedConditions: freshDiscoveryResult.relaxedConditions,
       }
     : freshDiscoveryResult;
   const homeLoading = loading && !showingStartupCache;

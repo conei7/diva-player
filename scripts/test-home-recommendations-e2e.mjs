@@ -51,14 +51,18 @@ try {
   });
   await page.goto(base, { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => document.querySelector('[role="status"]')?.textContent.includes('Loading songs'));
+  const initial = await page.$$eval('.song-card h3 a[href*="/watch?v="]', links => links.slice(0, 24).map(link => Number(new URL(link.href).searchParams.get('v'))));
+  assert(initial.length > 0 && initial.every(id => id >= 900000), `Cached familiar songs must render before the refresh completes: ${JSON.stringify(initial)}`);
+  await page.waitForFunction(() => window.__DIVA_PERFORMANCE__?.getMetrics().some(metric => metric.name === 'home.load' && metric.detail?.page === 1), { timeout: 45000 });
   await page.waitForFunction(() => new Set([...document.querySelectorAll('a[href*="/watch?v="]')].map(link => new URL(link.href).searchParams.get('v'))).size > 40, { timeout: 45000 });
   const displayed = await page.$$eval('.song-card h3 a[href*="/watch?v="]', links => links.map(link => Number(new URL(link.href).searchParams.get('v'))));
   assert(displayed.length > 40, 'Cached startup feed must allow more than 40 songs');
   assert(recommendationOffsets.includes(0), 'Personal discovery must run on the first page');
   assert(recommendationOffsets.includes(24), 'Second source window must start at 24');
-  assert(displayed.filter(id => id >= 900000).length <= 15, 'Saved five-star songs must not fill the feed');
-  assert(displayed.slice(0, 4).some(id => id >= 300000 && id < 900000), 'First cards must include personal similarity candidates');
+  assert.deepEqual(displayed.slice(0, initial.length), initial, 'Refreshing must not remove or reorder any visible cached songs');
+  assert(displayed.filter(id => id >= 900000 && !initial.includes(id)).length <= 30, 'Fresh pages must limit familiar candidates to half');
+  assert(displayed.some(id => id >= 300000 && id < 900000), 'Fresh discovery must append alongside the stable familiar songs');
   assert(quotaResponses >= 2, 'Quota response must recover without losing the feed');
   assert.equal(new Set(displayed).size, displayed.length);
-  console.log(`PASS home recommendations: ${displayed.length} cards, first-page discovery, bounded saved songs, visible loading, quota recovery, cached pagination >40`);
+  console.log(`PASS home recommendations: ${displayed.length} cards, stable ${initial.length}-song prefix, first-page discovery, half familiar candidates, visible loading, quota recovery, pagination >40`);
 } finally { await browser.close(); }

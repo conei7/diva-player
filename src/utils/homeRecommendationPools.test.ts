@@ -10,7 +10,7 @@ describe('home discovery candidates', () => {
     const ids = new Set(known.map(item => item.id));
     for (const count of [24, 36]) {
       const pools = homeRecommendationPools(known, [...known, song(101)], [...known, song(102)], [...known, song(103)], ids, count);
-      expect(pools.known).toHaveLength(count / 4);
+      expect(pools.known).toHaveLength(count / 2);
       expect(pools.hybrid?.map(item => item.id)).toEqual([101]);
       expect(pools.audio?.map(item => item.id)).toEqual([102]);
       expect(pools.popular?.map(item => item.id)).toEqual([103]);

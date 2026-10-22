@@ -403,15 +403,15 @@ async function assertKnownPagination(browser, baseUrl, counters) {
     };
     await waitForSnapshots(1);
     const initial = await readKnownCandidates();
-    assert(initial[0].length === 6, `First Home page must reserve discovery room: ${JSON.stringify(initial)}`);
+    assert(initial[0].length === 12, `First Home page must allow half familiar candidates: ${JSON.stringify(initial)}`);
     await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
     await waitForSnapshots(2);
     const appended = await readKnownCandidates();
-    assert(appended[1].length === 9, `Home append must reserve discovery room: ${JSON.stringify(appended)}`);
+    assert(appended[1].length === 18, `Home append must allow half familiar candidates: ${JSON.stringify(appended)}`);
     const ids = [...appended[0], ...appended[1]].sort((a, b) => a - b);
-    assert(new Set(ids).size === 15 && ids.every(id => knownSongs.some(song => song.id === id)),
+    assert(new Set(ids).size === 30 && ids.every(id => knownSongs.some(song => song.id === id)),
       `Known candidate pagination repeated or invented songs: ${JSON.stringify(ids)}`);
-    console.log('PASS home.known-pagination: 6 + 9 distinct supporting known candidates');
+    console.log('PASS home.known-pagination: 12 + 18 distinct supporting known candidates');
   } finally {
     await context.close();
   }
@@ -482,8 +482,8 @@ async function main() {
       `Loading-more skeletons were appended below an already visible grid: ${JSON.stringify(firstFrame)}`,
     );
     assert(
-      settledFrame.songIds.length > 0 && settledFrame.skeletons === 0,
-      `Fresh personalized recommendations must replace startup content without a blank grid: ${JSON.stringify({ firstFrame, settledFrame })}`,
+      JSON.stringify(settledFrame.songIds) === JSON.stringify(firstFrame.songIds) && settledFrame.skeletons === 0,
+      `Visible startup recommendations must stay in place while new candidates append: ${JSON.stringify({ firstFrame, settledFrame })}`,
     );
     assert(
       firstContent?.detail?.source === 'personalized-cache',
