@@ -48,7 +48,7 @@ RUN set -eux; \
       aarch64) expat_sha=568a12a4889a00711d1c80c197a5540ee1cdec26c1c59da38f8342ad69e7eff9 ;; \
       *) exit 1 ;; \
     esac; \
-    wget -O /tmp/libexpat.apk "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/$arch/libexpat-2.8.5-r0.apk"; \
+    wget -O /tmp/libexpat.apk "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/$arch/libexpat-2.8.5-r0.apk?sha256=$expat_sha"; \
     echo "$expat_sha  /tmp/libexpat.apk" | sha256sum -c -; \
     apk add --no-network /tmp/libexpat.apk; \
     rm /tmp/libexpat.apk
