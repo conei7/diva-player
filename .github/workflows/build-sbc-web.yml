@@ -53,11 +53,25 @@ jobs:
           printf '{}\n' > "$RUNNER_TEMP/empty-trivy.yaml"
           : > "$RUNNER_TEMP/empty-trivy.ignore"
           started=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          scan_exit=0
           env -i HOME="$RUNNER_TEMP/trivy-home" PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
             "$scanner" image --config "$RUNNER_TEMP/empty-trivy.yaml" \
             --ignorefile "$RUNNER_TEMP/empty-trivy.ignore" --cache-dir "$cache" \
             --image-src docker --scanners vuln --severity HIGH,CRITICAL --list-all-pkgs \
-            --format json --output "$output/report.json" --exit-code 1 --timeout 30m "$image_id"
+            --format json --output "$output/report.json" --exit-code 1 --timeout 30m "$image_id" || scan_exit=$?
+          if [[ "$scan_exit" != 0 ]]; then
+            python3 - "$output/report.json" <<'PY'
+          import json, sys
+          from pathlib import Path
+          report = Path(sys.argv[1])
+          if report.is_file():
+              for result in json.loads(report.read_text()).get('Results', []):
+                  for finding in result.get('Vulnerabilities') or []:
+                      print(json.dumps({key: finding.get(key) for key in
+                          ['VulnerabilityID', 'PkgName', 'InstalledVersion', 'FixedVersion', 'Severity']}))
+          PY
+            exit "$scan_exit"
+          fi
           completed=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           python3 -B scripts/validate-container-image-scan.py validate \
             --service web --expected-image-id "$image_id" --expected-architecture arm64 \
@@ -67,6 +81,16 @@ jobs:
             --scanner-version 0.74.0 \
             --scanner-sha256 fed2c9ca7d27191ada34524b5eaf5216a845c6d6f3246143c3b475552ffe5358 \
             --scan-started-at "$started" --scan-completed-at "$completed"
+      - name: Save failed scan diagnostics
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: diva-sbc-web-diagnostics-${{ inputs.revision }}
+          path: |
+            ${{ runner.temp }}/sbc-web-release/report.json
+            ${{ runner.temp }}/sbc-web-trivy/db/metadata.json
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Package verified image
         shell: bash
         run: |
