@@ -218,7 +218,7 @@ async function assertLazyNavigationKeepsPlayback(page) {
   if (!state.isMiniPlayerVisible || state.ownerTabId !== state.thisTabId) {
     throw new Error(`Lazy navigation lost the local mini-player owner: ${JSON.stringify(state)}`);
   }
-  if (state.title !== 'Watch switch fixture — Fixture producer | DIVA Player') {
+  if (state.title !== '知ってる度 | DIVA Player') {
     throw new Error(`Lazy navigation left an inconsistent browser title: ${JSON.stringify(state)}`);
   }
   console.log('PASS lazy page navigation preserves playback, mini-player ownership, and title');

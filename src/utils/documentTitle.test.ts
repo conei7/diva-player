@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   defaultDocumentTitle,
   formatDocumentTitle,
+  pageDocumentTitle,
   watchLoadingDocumentTitle,
   watchUnavailableDocumentTitle,
 } from './documentTitle';
@@ -27,6 +28,18 @@ describe('formatDocumentTitle', () => {
   it('names a song without a title in the display language', () => {
     expect(formatDocumentTitle({ name: ' ', artistString: '' }, 'ja')).toBe('再生中 | DIVA Player');
     expect(formatDocumentTitle({ name: ' ', artistString: 'wowaka' }, 'en')).toBe('Now playing — wowaka | DIVA Player');
+  });
+});
+
+describe('pageDocumentTitle', () => {
+  it('uses the Home title without borrowing a restored or playing song', () => {
+    expect(pageDocumentTitle(undefined, 'ja')).toBe(defaultDocumentTitle('ja'));
+    expect(pageDocumentTitle(' ', 'en')).toBe(defaultDocumentTitle('en'));
+  });
+
+  it('labels other pages with the current translated destination', () => {
+    expect(pageDocumentTitle('履歴', 'ja')).toBe('履歴 | DIVA Player');
+    expect(pageDocumentTitle('Playlists', 'en')).toBe('Playlists | DIVA Player');
   });
 });
 

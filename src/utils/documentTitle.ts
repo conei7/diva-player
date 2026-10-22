@@ -23,9 +23,15 @@ const TITLES: Record<AppLanguage, { default: string; loading: string; unavailabl
 
 type DocumentTitleSong = Pick<Song, 'name' | 'artistString'>;
 
-/** The title while no song is playing (and of index.html in Japanese). */
+/** The Home title (also the Japanese title of index.html). */
 export function defaultDocumentTitle(language: AppLanguage): string {
   return TITLES[language].default;
+}
+
+/** Non-song pages describe the visible destination, independently of the restored player queue. */
+export function pageDocumentTitle(pageName: string | undefined, language: AppLanguage): string {
+  const name = pageName?.trim();
+  return name ? `${name} | DIVA Player` : defaultDocumentTitle(language);
 }
 
 /** The song page while its song is still loading. */

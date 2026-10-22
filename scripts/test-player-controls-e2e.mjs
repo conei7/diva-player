@@ -98,8 +98,16 @@ try {
   });
   await first.goto(baseUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
   await first.waitForSelector('[data-testid="mini-player-close"]', { timeout: 60_000 });
-  await first.waitForFunction(() => document.title === 'Player controls fixture — Fixture producer | DIVA Player');
-  console.log('PASS dynamic browser tab title');
+  await first.waitForFunction(() => document.title === 'DIVA Player — ボカロミュージックプレイヤー');
+  console.log('PASS Home tab title ignores the restored paused queue');
+
+  await first.reload({ waitUntil: 'domcontentloaded' });
+  await first.waitForSelector(PLAY_BUTTON);
+  await first.waitForFunction(() => document.title === 'DIVA Player — ボカロミュージックプレイヤー');
+  if (!await first.evaluate(() => localStorage.getItem('diva_playerQueue'))) {
+    throw new Error('Correcting the reopened Home title must preserve the saved queue');
+  }
+  console.log('PASS reopened Home keeps the page title and paused queue');
 
   await first.waitForFunction(() => window.__yt?.getVideoData().video_id === 'fixture');
   await new Promise(resolve => setTimeout(resolve, 1_100));
@@ -107,6 +115,9 @@ try {
   // not arm another startup timeout while the player is already playing.
   await first.evaluate(() => window.__yt.playVideo());
   await first.waitForSelector(PAUSE_BUTTON);
+  if (await first.title() !== 'DIVA Player — ボカロミュージックプレイヤー') {
+    throw new Error('Home tab title changed to the playing song instead of the visible page');
+  }
   await new Promise(resolve => setTimeout(resolve, 12_500));
   const assertSameVideo = async label => {
     const state = await first.evaluate(() => ({

@@ -17,6 +17,7 @@ import ToastHost from './components/ui/ToastHost';
 import ConfirmHost from './components/ui/ConfirmHost';
 import {
   formatDocumentTitle,
+  pageDocumentTitle,
   watchLoadingDocumentTitle,
   watchUnavailableDocumentTitle,
 } from './utils/documentTitle';
@@ -25,6 +26,18 @@ import { isWatchPath } from './utils/routes';
 import { useLanguageStore } from './stores/languageStore';
 import { loadRoute } from './routes/routeLoaders';
 import type { WatchPageDocumentTitleState } from './pages/WatchPage';
+import { useTranslate, useTranslateSourceText, type TranslationKey } from './i18n';
+
+const PAGE_TITLE_KEYS: Readonly<Record<string, TranslationKey>> = {
+  '/history': 'sidebarHistory',
+  '/favorites': 'sidebarRatings',
+  '/favorite-producers': 'sidebarFavoriteProducers',
+  '/playlists': 'navPlaylists',
+  '/reports': 'sidebarReports',
+  '/chorus-highlights': 'sidebarChorus',
+  '/knowledge-map': 'sidebarKnowledgeMap',
+  '/sound-map': 'sidebarSoundMap',
+};
 
 // Page chunks are shared with the guide's hover preloading (routes/routeLoaders.ts), which also
 // starts the entry page's download while App is being evaluated.
@@ -174,6 +187,8 @@ function PlayerTracker() {
 }
 
 function AppContent() {
+  const tk = useTranslate();
+  const t = useTranslateSourceText();
   const currentSong = usePlayerStore(s => s.currentSong);
   const language = useLanguageStore(s => s.language);
   const location = useLocation();
@@ -194,12 +209,12 @@ function AppContent() {
       const state = watchTitleState?.songId === requestedSongId ? watchTitleState : null;
       if (state?.status === 'loaded') {
         document.title = formatDocumentTitle(state.song, language);
+      } else if (state?.status === 'error') {
+        document.title = watchUnavailableDocumentTitle(language);
       } else if (currentSong?.id === requestedSongId) {
         // Show the locally known song immediately while WatchPage refreshes its
         // page metadata, then replace it with the fetched page song.
         document.title = formatDocumentTitle(currentSong, language);
-      } else if (state?.status === 'error') {
-        document.title = watchUnavailableDocumentTitle(language);
       } else {
         // A new tab can restore another tab's player state before its own URL
         // finishes loading. Never label that tab with the unrelated old song.
@@ -208,8 +223,11 @@ function AppContent() {
       return;
     }
 
-    document.title = formatDocumentTitle(currentSong, language);
-  }, [currentSong, isWatchRoute, language, requestedSongId, watchTitleState]);
+    const path = location.pathname.replace(/\/+$/, '') || '/';
+    const key = PAGE_TITLE_KEYS[path];
+    const name = key ? tk(key) : path === '/settings/hidden-songs' ? t('表示しない曲') : undefined;
+    document.title = pageDocumentTitle(name, language);
+  }, [currentSong, isWatchRoute, language, location.pathname, requestedSongId, t, tk, watchTitleState]);
 
   useEffect(() => {
     document.documentElement.lang = language;
