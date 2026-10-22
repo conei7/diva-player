@@ -40,7 +40,8 @@ RUN set -eux; \
     rm /tmp/libcrypto3-3.5.9-r0.apk /tmp/libssl3-3.5.9-r0.apk
 # The immutable base predates Alpine fixes for the OpenSSL, Expat, and TIFF findings
 # enforced by the deployable-image scan gate.
-# Keep the fixed Expat even when a CDN still serves an older package index.
+# Preserve the signed fixed Expat APKs: CDN regions can disagree on availability.
+COPY vendor/alpine/v3.24/ /tmp/diva-expat/
 RUN set -eux; \
     arch="$(apk --print-arch)"; \
     case "$arch" in \
@@ -48,10 +49,9 @@ RUN set -eux; \
       aarch64) expat_sha=568a12a4889a00711d1c80c197a5540ee1cdec26c1c59da38f8342ad69e7eff9 ;; \
       *) exit 1 ;; \
     esac; \
-    wget -O /tmp/libexpat.apk "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/$arch/libexpat-2.8.5-r0.apk?sha256=$expat_sha"; \
-    echo "$expat_sha  /tmp/libexpat.apk" | sha256sum -c -; \
-    apk add --no-network /tmp/libexpat.apk; \
-    rm /tmp/libexpat.apk
+    echo "$expat_sha  /tmp/diva-expat/$arch/libexpat-2.8.5-r0.apk" | sha256sum -c -; \
+    apk add --no-network "/tmp/diva-expat/$arch/libexpat-2.8.5-r0.apk"; \
+    rm -r /tmp/diva-expat
 RUN apk update && \
     apk add --no-cache \
       libcrypto3=3.5.9-r0 \

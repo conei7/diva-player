@@ -34,6 +34,8 @@ VocaDB API を活用したボカロ特化ミュージックプレイヤー SPA�
 - ダークテーマ UI
 - アクセントカラーのプリセット・任意色・リセット（設定→全般、ブラウザ内に保存）
 
+Web imageの`vendor/alpine/v3.24/`は、公式Alpine配布元から取得したMITライセンスの署名済みExpat APK（2.8.5-r0、x86_64／aarch64）です。CDNの地域差による取得不能を避け、Dockerfileのarchitecture別SHA-256とAlpineの署名検証を通して導入します。固定版の更新時は両APK・hash・image scanを同時に検証します。
+
 ## セットアップ
 
 ### フロントエンドのみ
