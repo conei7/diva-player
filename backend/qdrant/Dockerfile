@@ -5,6 +5,16 @@ ARG DIVA_AUDIT_CONTRACT_SHA256
 ARG DIVA_AUDIT_ARCH
 ARG DIVA_AUDIT_CONTRACT_HELPER_SHA256
 COPY --chown=0:0 audit-contract.sh /tmp/diva-audit-contract.sh
+# Preserve the calibrated audit runtime when the repository advances to a new musl.
+RUN set -eux; \
+    arch="$(apk --print-arch)"; \
+    case "$arch" in \
+      x86_64) musl_sha=4f3c4a7bf9f51d2c91007e333b17459362ffd881b4a343e8da07b6c50c4f4a0d ;; \
+      aarch64) musl_sha=6a3edd924ead1fad88a69e28c5775809af3026b322f58428001cd02fedc5299e ;; \
+      *) exit 1 ;; \
+    esac; \
+    wget -O /tmp/diva-audit-musl.apk "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/$arch/musl-1.2.5-r23.apk"; \
+    echo "$musl_sha  /tmp/diva-audit-musl.apk" | sha256sum -c -
 RUN set -eux; \
     audit=/opt/diva-audit-root; \
     apk_arch=$(apk --print-arch); \
@@ -25,7 +35,7 @@ RUN set -eux; \
       = "$DIVA_AUDIT_CONTRACT_HELPER_SHA256" ]; \
     apk --root "$audit" --repositories-file /etc/apk/repositories \
       --keys-dir /etc/apk/keys --initdb --no-cache --no-scripts add \
-      busybox=1.37.0-r30 busybox-binsh=1.37.0-r30 musl=1.2.5-r23; \
+      busybox=1.37.0-r30 busybox-binsh=1.37.0-r30 musl=1.2.5-r23 /tmp/diva-audit-musl.apk; \
     ln -snf /bin/busybox "$audit/bin/sh"; \
     install -d -m 0755 "$audit/etc" "$audit/usr/share/diva-qdrant"; \
     apk --root "$audit" info -vv | LC_ALL=C sort \
