@@ -4,7 +4,7 @@ import { useLocation, useNavigationType, useSearchParams } from 'react-router';
 import CategoryChips, { type CategoryChip } from '../components/home/CategoryChips';
 import VideoGrid from '../components/home/VideoGrid';
 import SearchResults, { type UrlArtist } from '../components/search/SearchResults';
-import { attachExternalViews, filterDiscoveryEligibleSongs, getAudioSimilarSongs, getRecommendedSongs, getSimilarSongs, getTrendingSongs } from '../api/vocadb';
+import { attachExternalViews, filterDiscoveryEligibleSongs, getAudioSimilarSongs, getRecommendedSongs, getTrendingSongs } from '../api/vocadb';
 import { useHistoryStore } from '../stores/historyStore';
 import { usePlayerStore } from '../stores/playerStore';
 import { useRatingStore } from '../stores/ratingStore';
@@ -42,6 +42,7 @@ import { formatWeeklyRankingReason } from '../utils/weeklyRankingReason';
 import { excludeHiddenSongs, useHiddenSongStore } from '../stores/hiddenSongStore';
 import { selectRotatingStartupSongs } from '../utils/startupRecommendations';
 import { getProgressiveWindow } from '../utils/progressiveWindow';
+import { homeRecommendationPools } from '../utils/homeRecommendationPools';
 import { isSearchType, type SearchType } from '../utils/routes';
 import { useTranslate, useTranslateSourceText, type TranslationKey } from '../i18n';
 import { useLanguageStore } from '../stores/languageStore';
@@ -394,10 +395,11 @@ function HomeFeed() {
     setStartupSongs([]);
   }, [activeCategory]);
 
-  const fetchRecommendedHomeSongs = useCallback(async (pageNum: number): Promise<Song[]> => {
+  const fetchRecommendedHomeSongs = useCallback(async (pageNum: number) => {
     const { start, count } = getProgressiveWindow(pageNum, FIRST_HOME_PAGE_SIZE, APPEND_HOME_PAGE_SIZE);
     const excludeIds = new Set<number>();
     if (currentSong?.id) excludeIds.add(currentSong.id);
+    sourceSongIdsRef.current.forEach(id => excludeIds.add(id));
 
     const localPlaylistSongs = getPlaylistSongs(playlists);
     const eligibleKnownSongs = await filterDiscoveryEligibleSongs(uniqueSongsById([
@@ -416,16 +418,16 @@ function HomeFeed() {
       eligibleEntries,
       playlistSongs,
       ratings,
-      excludeIds,
+      new Set(currentSong ? [currentSong.id] : []),
       implicitFeedback,
     );
-    const knownSongs = rankedKnown.map(item => item.song);
+    const knownSongs = rankedKnown.map(item => item.song).filter(song => !excludeIds.has(song.id));
 
     const seedIds = uniqueSongsById([
       ...eligibleEntries.slice(0, 5).map(entry => entry.song),
       ...(currentSong ? [currentSong] : []),
     ])
-      .filter(song => !excludeIds.has(song.id))
+      .filter(song => song.id !== currentSong?.id)
       .slice(0, 2)
       .map(song => song.id);
 
@@ -440,26 +442,24 @@ function HomeFeed() {
       .slice(0, 3)
       .map(item => item.song.id);
 
-    const audioSeedIds = [...new Set([...seedIds, ...preferenceSeedIds])].slice(0, 2);
+    const discoverySeedIds = [...new Set([...preferenceSeedIds, ...seedIds])].slice(0, 2);
+    const audioSeedIds = discoverySeedIds.slice(0, 1);
 
     const favoriteProducerWindow = selectRotatingWindow(
       favoriteProducers,
       pageNum,
-      MAX_FAVORITE_PRODUCER_REQUESTS,
+      2,
     );
-    const optionalSources = pageNum === 0
-      ? Promise.resolve([[], [], [], []] as Song[][][])
-      : Promise.all([
-          Promise.all(seedIds.map(seedId =>
-            getRecommendedSongs(seedId, Math.min(8, count), 0.0, ratings, start)
-              .catch(() => [] as Song[])
-          )),
-          Promise.all(preferenceSeedIds.map(seedId =>
-            getSimilarSongs(seedId, Math.min(8, count), start)
+    // Use personal discovery on the first page as well. Each source advances
+    // by the same window it actually requests, rather than skipping 24/36 hits
+    // after fetching only eight.
+    const optionalSources = Promise.all([
+          Promise.all(discoverySeedIds.map(seedId =>
+            getRecommendedSongs(seedId, count, 0.0, ratings, start)
               .catch(() => [] as Song[])
           )),
           Promise.all(audioSeedIds.map(seedId =>
-            getAudioSimilarSongs(seedId, Math.min(8, count), start)
+            getAudioSimilarSongs(seedId, count, start)
               .catch(() => [] as Song[])
           )),
           Promise.all(favoriteProducerWindow.map(producer =>
@@ -468,7 +468,7 @@ function HomeFeed() {
               sort: 'FavoritedTimes',
               sortOrder: 'desc',
               start,
-              maxResults: Math.min(12, count),
+              maxResults: count,
               discoveryOnly: true,
               compactCards: true,
             })
@@ -484,11 +484,14 @@ function HomeFeed() {
       discoveryOnly: true,
       compactCards: true,
     });
-    const [popularResult, optionalResults] = await Promise.all([popularPromise, optionalSources]);
-    const [seedResults, preferenceResults, audioResults, favoriteResults] = optionalResults;
+    const [popularOutcome, optionalResults] = await Promise.all([
+      popularPromise.then(result => ({ result, error: null as unknown }), error => ({ result: null, error })),
+      optionalSources,
+    ]);
+    const popularSongs = popularOutcome.result?.items ?? [];
+    const [seedResults, audioResults, favoriteResults] = optionalResults;
     const hybridCandidates = uniqueSongsById([
       ...favoriteResults.flat(),
-      ...preferenceResults.flat(),
       ...seedResults.flat(),
     ]);
     const audioCandidates = uniqueSongsById(audioResults.flat());
@@ -498,12 +501,19 @@ function HomeFeed() {
     ]));
     const eligibleDiscoveryIds = new Set(eligibleDiscoverySongs.map(song => song.id));
 
-    const detailed = rerankRecommendationCandidatesDetailed({
-      known: knownSongs.slice(start, start + count),
-      hybrid: hybridCandidates.filter(song => eligibleDiscoveryIds.has(song.id)),
-      audio: audioCandidates.filter(song => eligibleDiscoveryIds.has(song.id)),
-      popular: popularResult.items,
-    }, {
+    if (popularOutcome.error && eligibleDiscoverySongs.length === 0) throw popularOutcome.error;
+    // Ratings are seeds and supporting evidence, not an entire page of saved
+    // five-star songs. Keep room for unheard candidates throughout the feed.
+    const knownIds = new Set([
+      ...entries.map(entry => entry.song.id), ...playlistSongIds,
+      ...Object.keys(ratings).map(Number), ...Object.keys(implicitFeedback).map(Number),
+    ]);
+    const detailed = rerankRecommendationCandidatesDetailed(homeRecommendationPools(
+      knownSongs,
+      hybridCandidates.filter(song => eligibleDiscoveryIds.has(song.id)),
+      audioCandidates.filter(song => eligibleDiscoveryIds.has(song.id)),
+      popularSongs, knownIds, count,
+    ), {
       total: count,
       historyEntries: eligibleEntries,
       playlists: eligiblePlaylists,
@@ -514,10 +524,10 @@ function HomeFeed() {
       explorationStrength: 0.055,
       exposureEntries: useRecommendationExposureStore.getState().entries,
       favoriteProducerIds: new Set(favoriteProducers.map(producer => producer.id)),
+      recentSongs: songs.slice(-12),
     });
     const mixed = detailed.ranked;
     const result = mixed.map(item => item.song);
-    if (pageNum === 0) setRecommendationReasons(Object.fromEntries(mixed.map(item => [item.song.id, item.reason])));
     useRecommendationDebugStore.getState().recordSnapshot({
       id: `${Date.now()}-home-${pageNum}`,
       surface: 'home',
@@ -529,8 +539,14 @@ function HomeFeed() {
       selectedCount: detailed.ranked.length,
       trace: detailed.trace,
     });
-    return (result.length > 0 ? result : popularResult.items).slice(0, count);
-  }, [currentSong, entries, favoriteProducers, playlists, ratings, implicitFeedback]);
+    return {
+      items: result,
+      reasons: Object.fromEntries(mixed.map(item => [item.song.id, item.reason])),
+      hasMore: popularSongs.length >= count
+        || optionalResults.some(results => results.some(items => items.length >= count))
+        || knownSongs.length > Math.max(1, Math.floor(count / 4)),
+    };
+  }, [currentSong, entries, favoriteProducers, playlists, ratings, implicitFeedback, songs]);
 
   const fetchPrefetchableHomeSongs = useCallback(async (
     category: PrefetchableHomeCategoryId,
@@ -645,11 +661,13 @@ function HomeFeed() {
 
     try {
       let result: Song[] = [];
+      let recommendedPage: Awaited<ReturnType<typeof fetchRecommendedHomeSongs>> | undefined;
       const sourceStartedAt = performanceNow();
       const { count } = getProgressiveWindow(pageNum, FIRST_HOME_PAGE_SIZE, APPEND_HOME_PAGE_SIZE);
 
       if (category === 'recommended') {
-        result = await fetchRecommendedHomeSongs(pageNum);
+        recommendedPage = await fetchRecommendedHomeSongs(pageNum);
+        result = recommendedPage.items;
       } else {
         result = await loadPrefetchableHomeSongs(category, pageNum, 'foreground');
       }
@@ -676,11 +694,12 @@ function HomeFeed() {
         result = await attachExternalViews(result);
         segments.push({ name: 'externalViews', durationMs: performanceNow() - externalViewsStartedAt });
       }
+      if (requestId !== requestIdRef.current) return;
       const filterStartedAt = performanceNow();
       result = filterVoiceSynthSongs(result);
       segments.push({ name: 'voiceFilter', durationMs: performanceNow() - filterStartedAt });
 
-      const categoryReasons = category === 'ranking' || category === 'trending'
+      const categoryReasons = recommendedPage?.reasons ?? (category === 'ranking' || category === 'trending'
         ? result.reduce<Record<number, string>>((reasons, song) => {
             const reason = category === 'ranking'
               ? formatWeeklyRankingReason(song, language)
@@ -688,7 +707,7 @@ function HomeFeed() {
             if (reason) reasons[song.id] = reason;
             return reasons;
           }, {})
-        : {};
+        : {});
 
       if (pageNum === 0) {
         setSongs(result);
@@ -705,22 +724,21 @@ function HomeFeed() {
             },
           });
         }
-        if (category === 'ranking' || category === 'trending') setRecommendationReasons(categoryReasons);
-        else if (category !== 'recommended') setRecommendationReasons({});
+        setRecommendationReasons(categoryReasons);
       } else {
         setSongs(prev => {
           const existingIds = new Set(prev.map(song => song.id));
           const newSongs = result.filter(song => !existingIds.has(song.id));
           return [...prev, ...newSongs];
         });
-        if (category === 'ranking' || category === 'trending') {
+        if (recommendedPage || category === 'ranking' || category === 'trending') {
           setRecommendationReasons(previous => ({ ...previous, ...categoryReasons }));
         }
       }
       // A filtered page may contain no visible songs even though the source
       // still has more candidates. Continue until the source is exhausted or
       // a broken fallback repeats the same page.
-      setHasMore(fetchedCount >= count && (pageNum === 0 || newSourceCount > 0));
+      setHasMore((recommendedPage?.hasMore ?? fetchedCount >= count) && (pageNum === 0 || newSourceCount > 0));
       setLoadError(null);
       suppressStaleHomeFeedCacheRef.current = false;
       recordPerformanceMetric({
@@ -732,7 +750,7 @@ function HomeFeed() {
           page: pageNum,
           fetchedCount,
           displayedCount: result.length,
-          favoriteProducerRequests: Math.min(favoriteProducers.length, MAX_FAVORITE_PRODUCER_REQUESTS),
+          favoriteProducerRequests: Math.min(favoriteProducers.length, category === 'recommended' ? 2 : MAX_FAVORITE_PRODUCER_REQUESTS),
         },
       });
     } catch (error) {
@@ -745,7 +763,7 @@ function HomeFeed() {
       if (requestId === requestIdRef.current) {
         setLoading(false);
       }
-      fetchingRef.current = false;
+      if (requestId === requestIdRef.current) fetchingRef.current = false;
     }
   }, [favoriteProducers, fetchRecommendedHomeSongs, globalFilterSettings, language, loadPrefetchableHomeSongs]);
 
@@ -915,7 +933,7 @@ function HomeFeed() {
     [discoveryContext, unhiddenStartupSongs],
   );
   const showingStartupCache = activeCategory === 'recommended'
-    && startupDiscoverySongs.length > 0;
+    && startupDiscoverySongs.length > 0 && songs.length === 0;
   const discoveryResult = showingStartupCache
     ? {
         items: uniqueSongsById([...startupDiscoverySongs, ...freshDiscoveryResult.items]).slice(0, 40),
@@ -1110,7 +1128,7 @@ function HomeFeed() {
         </div>
       )}
 
-      <div className={relaxationDetail ? undefined : 'mt-3'}>
+      <div className={relaxationDetail ? undefined : 'mt-3'} aria-busy={loading}>
         <VideoGrid
           songs={displaySongs}
           loading={homeLoading}
@@ -1126,8 +1144,12 @@ function HomeFeed() {
       </div>
 
       <div ref={sentinelRef} className="mt-6 flex min-h-8 items-center justify-center text-yt-text-secondary">
-        {homeLoading && displaySongs.length > 0 && <SpinnerIcon />}
-        {loadError && !homeLoading && displaySongs.length > 0 && (
+        {loading && displaySongs.length > 0 && (
+          <div role="status" className="flex items-center gap-2 py-4 text-sm">
+            <SpinnerIcon />{ts('曲を読み込み中…')}
+          </div>
+        )}
+        {loadError && !loading && displaySongs.length > 0 && (
           <InlineNotice tone="error" className="w-full max-w-md" action={{ label: ts('再試行'), onClick: retryFeed }}>
             {ts('読み込めませんでした')}
           </InlineNotice>

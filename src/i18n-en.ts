@@ -1059,5 +1059,6 @@ export const englishSourceText: Record<string, string> = {
   '初期色に戻す': 'Reset color',
   '暗い色は見やすい明るさに調整します': 'Dark colors are brightened for readability',
   '色は適用しましたが保存できませんでした': "Color applied, but couldn't be saved",
+  '曲を読み込み中…': 'Loading songs…',
   // ── /area:settings ──
 };

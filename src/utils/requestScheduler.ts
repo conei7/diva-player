@@ -89,5 +89,29 @@ export function scheduleFetch(
   init?: RequestInit,
   priority: RequestPriority = 'normal',
 ): Promise<Response> {
-  return apiRequestScheduler.run(() => fetch(input, init), priority, init?.signal ?? undefined);
+  return apiRequestScheduler.run(async () => {
+    const response = await fetch(input, init);
+    // A transient quota response must not disable the recommender or fan out
+    // into public fallback requests. Honour a bounded server retry once.
+    if (response.status !== 429) return response;
+    const rawDelay = response.headers.get('Retry-After');
+    const seconds = rawDelay?.trim() ? Number(rawDelay) : NaN;
+    const delay = Number.isFinite(seconds) ? seconds * 1000 : Date.parse(rawDelay ?? '') - Date.now();
+    if (!Number.isFinite(delay) || delay < 0 || delay > 60_000) return response;
+    await new Promise<void>((resolve, reject) => {
+      const signal = init?.signal;
+      const abort = () => {
+        clearTimeout(timer);
+        signal?.removeEventListener('abort', abort);
+        reject(new DOMException('Request was aborted', 'AbortError'));
+      };
+      const timer = setTimeout(() => {
+        signal?.removeEventListener('abort', abort);
+        resolve();
+      }, delay);
+      if (signal?.aborted) abort();
+      else signal?.addEventListener('abort', abort, { once: true });
+    });
+    return fetch(input, init);
+  }, priority, init?.signal ?? undefined);
 }

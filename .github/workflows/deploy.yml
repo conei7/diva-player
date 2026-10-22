@@ -886,6 +886,8 @@ jobs:
         run: npm run test:e2e:navigation -- http://127.0.0.1:4173/diva-player/
       - name: Performance budget E2E
         run: npm run test:performance-budget -- http://127.0.0.1:4173/diva-player/
+      - name: Home recommendation pagination and recovery E2E
+        run: node scripts/test-home-recommendations-e2e.mjs http://127.0.0.1:4173/diva-player/
       - name: Cloudflare release contract
         run: npm run test:cloudflare-release
       - name: Stop local preview server

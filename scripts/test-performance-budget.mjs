@@ -304,7 +304,8 @@ async function installApiFixtures(page, counters) {
     } else if (path.endsWith('/api/recommend')) {
       counters.watchRecommendedRequests += 1;
       const count = Number(url.searchParams.get('count') ?? 12);
-      const ids = Array.from({ length: count }, (_, index) => 700_001 + index);
+      const offset = Number(url.searchParams.get('offset') ?? 0);
+      const ids = Array.from({ length: count }, (_, index) => 300_001 + offset + index);
       body = {
         items: ids.map(songId => ({ songId, name: `Recommended ${songId}`, artist: fixtureProducer.name, score: 1, reason: 'fixture' })),
         cards: ids.map(fixtureSongForId),
@@ -402,15 +403,15 @@ async function assertKnownPagination(browser, baseUrl, counters) {
     };
     await waitForSnapshots(1);
     const initial = await readKnownCandidates();
-    assert(initial[0].length === 24, `First Home page omitted known candidates: ${JSON.stringify(initial)}`);
+    assert(initial[0].length === 6, `First Home page must reserve discovery room: ${JSON.stringify(initial)}`);
     await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
     await waitForSnapshots(2);
     const appended = await readKnownCandidates();
-    assert(appended[1].length === 36, `Home append omitted known candidates: ${JSON.stringify(appended)}`);
+    assert(appended[1].length === 9, `Home append must reserve discovery room: ${JSON.stringify(appended)}`);
     const ids = [...appended[0], ...appended[1]].sort((a, b) => a - b);
-    assert(JSON.stringify(ids) === JSON.stringify(knownSongs.slice(0, 60).map(song => song.id)),
-      `Known candidate pagination skipped or repeated songs: ${JSON.stringify(ids)}`);
-    console.log('PASS home.known-pagination: 24 + 36 contiguous known candidates');
+    assert(new Set(ids).size === 15 && ids.every(id => knownSongs.some(song => song.id === id)),
+      `Known candidate pagination repeated or invented songs: ${JSON.stringify(ids)}`);
+    console.log('PASS home.known-pagination: 6 + 9 distinct supporting known candidates');
   } finally {
     await context.close();
   }
@@ -481,9 +482,8 @@ async function main() {
       `Loading-more skeletons were appended below an already visible grid: ${JSON.stringify(firstFrame)}`,
     );
     assert(
-      JSON.stringify(settledFrame.songIds) === JSON.stringify(firstFrame.songIds)
-        && settledFrame.skeletons === 0,
-      `The visible personalized grid shifted while its refresh ran: ${JSON.stringify({ firstFrame, settledFrame })}`,
+      settledFrame.songIds.length > 0 && settledFrame.skeletons === 0,
+      `Fresh personalized recommendations must replace startup content without a blank grid: ${JSON.stringify({ firstFrame, settledFrame })}`,
     );
     assert(
       firstContent?.detail?.source === 'personalized-cache',
