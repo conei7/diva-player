@@ -620,7 +620,7 @@ export default function WatchPage({ onDocumentTitleStateChange }: WatchPageProps
 
   return (
     <div className="w-full pb-6 sm:px-4 sm:pt-4 lg:px-6 lg:pt-6">
-      <div className="flex flex-col gap-6 lg:flex-row max-sm:gap-0">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,3fr)_minmax(402px,2fr)] max-sm:gap-0">
         {/* ─── 左: 動画・タイトル・操作・概要 ─── */}
         <div className="min-w-0 flex-1">
           {videoArea}
@@ -642,7 +642,7 @@ export default function WatchPage({ onDocumentTitleStateChange }: WatchPageProps
         </div>
 
         {/* ─── 右: 再生中リスト・チップ・関連一覧 ─── */}
-        <div className="w-full shrink-0 lg:w-[402px] min-[1440px]:w-[426px] max-sm:mt-3">
+        <div className="min-w-0 w-full max-sm:mt-3">
           {isDesktop && <PlaylistPanel className="mb-3" />}
           {relatedSection}
         </div>
