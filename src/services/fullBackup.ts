@@ -17,17 +17,18 @@ import {
 import { normalizeFavoriteProducers, useFavoriteProducerStore, type FavoriteProducer } from '../stores/favoriteProducerStore';
 import { createStableId } from '../utils/id';
 import { normalizeHiddenSongs, useHiddenSongStore, type HiddenSongRecord } from '../stores/hiddenSongStore';
+import { restoreLanguage, useLanguageStore, type AppLanguage } from '../stores/languageStore';
 import { useThemeStore } from '../stores/themeStore';
 import { applyAccentColor, type ThemePreferences } from '../utils/theme';
 
 const BACKUP_KIND = 'diva-player-full-backup';
-const BACKUP_VERSION = 7 as const;
-type SupportedBackupVersion = 1 | 2 | 3 | 4 | 5 | 6 | 7;
+const BACKUP_VERSION = 8 as const;
+type SupportedBackupVersion = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
 const MAX_HISTORY_EVENTS = 1_000_000;
 const MAX_PLAYLISTS = 10_000;
 
 /** 復元で書き換えるデータ。表示名は表示側で訳す（DESIGN_SPEC §6.8.2）。 */
-export type FullBackupSection = 'history' | 'ratings' | 'playlists' | 'hiddenSongs' | 'favoriteProducers' | 'globalFilters' | 'theme';
+export type FullBackupSection = 'history' | 'ratings' | 'playlists' | 'hiddenSongs' | 'favoriteProducers' | 'globalFilters' | 'theme' | 'language';
 
 /**
  * 復元に失敗した理由。表示文はここでは作らず、表示側で訳す。
@@ -81,7 +82,7 @@ export interface FullBackupPayload {
     ratings: Record<string, number>;
     playlists: { folders: PlaylistFolder[]; playlists: Playlist[] };
     hiddenSongs: Record<string, HiddenSongRecord>;
-    preferences?: { globalFilters: GlobalFilterSettings; favoriteProducers?: FavoriteProducer[]; theme?: ThemePreferences };
+    preferences?: { globalFilters: GlobalFilterSettings; favoriteProducers?: FavoriteProducer[]; theme?: ThemePreferences; language?: AppLanguage };
   };
 }
 
@@ -96,7 +97,7 @@ export interface FullBackupCounts {
 }
 
 export interface FullBackupManifest extends FullBackupCounts {
-  schemaVersion: 4 | 5 | 6 | 7;
+  schemaVersion: 4 | 5 | 6 | 7 | 8;
 }
 
 /**
@@ -279,7 +280,7 @@ function createManifest(sections: FullBackupPayload['sections']): FullBackupMani
   return { schemaVersion: BACKUP_VERSION, ...getCountsFromSections(sections) };
 }
 
-function manifestMatches(manifest: unknown, counts: FullBackupCounts, schemaVersion: 4 | 5 | 6 | 7): boolean {
+function manifestMatches(manifest: unknown, counts: FullBackupCounts, schemaVersion: 4 | 5 | 6 | 7 | 8): boolean {
   if (!isRecord(manifest) || manifest.schemaVersion !== schemaVersion) return false;
   const keys = Object.keys(counts).filter(key => schemaVersion >= 6 || key !== 'hiddenSongCount');
   return keys.every(key => manifest[key] === counts[key as keyof FullBackupCounts]);
@@ -323,6 +324,7 @@ export async function createFullBackup(): Promise<FullBackupPayload> {
     preferences: {
       globalFilters: getGlobalFilterSettings(),
       favoriteProducers: useFavoriteProducerStore.getState().producers.map(producer => ({ ...producer })),
+      language: useLanguageStore.getState().language,
       theme: { mode: useThemeStore.getState().mode, accentColor: useThemeStore.getState().accentColor },
     },
   };
@@ -344,7 +346,7 @@ export function downloadFullBackup(payload: FullBackupPayload): void {
 }
 
 export function parseFullBackup(data: unknown): FullBackupPreview | null {
-  if (!isRecord(data) || data.kind !== BACKUP_KIND || ![1, 2, 3, 4, 5, 6, BACKUP_VERSION].includes(data.version as number) || !isRecord(data.sections)) return null;
+  if (!isRecord(data) || data.kind !== BACKUP_KIND || ![1, 2, 3, 4, 5, 6, 7, BACKUP_VERSION].includes(data.version as number) || !isRecord(data.sections)) return null;
   const version = data.version as SupportedBackupVersion;
   let invalidItems = 0;
   const validationIssues: FullBackupValidationIssue[] = [];
@@ -378,10 +380,15 @@ export function parseFullBackup(data: unknown): FullBackupPreview | null {
   let theme: ThemePreferences | undefined;
   if (version >= 7 && rawPreferences && 'theme' in rawPreferences) {
     const raw = rawPreferences.theme;
-    if (isRecord(raw) && (raw.mode === 'dark' || raw.mode === 'light')
+    if (isRecord(raw) && (raw.mode === 'dark' || raw.mode === 'light' || (version >= 8 && raw.mode === 'system'))
       && typeof raw.accentColor === 'string' && /^#[\da-f]{6}$/i.test(raw.accentColor)) {
       theme = { mode: raw.mode, accentColor: raw.accentColor.toLowerCase() };
     } else invalidItems += 1;
+  }
+  let language: AppLanguage | undefined;
+  if (version >= 8 && rawPreferences && 'language' in rawPreferences) {
+    if (rawPreferences.language === 'ja' || rawPreferences.language === 'en') language = rawPreferences.language;
+    else invalidItems += 1;
   }
   const rawFavoriteProducers = rawPreferences && 'favoriteProducers' in rawPreferences
     ? normalizeFavoriteProducers(rawPreferences.favoriteProducers)
@@ -401,13 +408,14 @@ export function parseFullBackup(data: unknown): FullBackupPreview | null {
           globalFilters: normalizeGlobalFilterSettings(rawGlobalFilters),
           ...(rawFavoriteProducers ? { favoriteProducers: rawFavoriteProducers } : {}),
           ...(theme ? { theme } : {}),
+          ...(language ? { language } : {}),
         },
       } : {}),
     },
   };
   const counts = getCountsFromSections(parsed.sections);
   const legacyFormat = version < 4;
-  const manifestValid = legacyFormat || manifestMatches(data.manifest, counts, version as 4 | 5 | 6 | 7);
+  const manifestValid = legacyFormat || manifestMatches(data.manifest, counts, version as 4 | 5 | 6 | 7 | 8);
   if (legacyFormat) validationIssues.push({ kind: 'legacy-format' });
   if (version >= 4 && !manifestValid) validationIssues.push({ kind: 'manifest-mismatch' });
   if (invalidItems > 0) validationIssues.push({ kind: 'invalid-items', count: invalidItems });
@@ -540,6 +548,7 @@ const STORAGE_KEY_SECTIONS: ReadonlyArray<readonly [key: string, section: Exclud
   ['diva-favorite-producers', 'favoriteProducers'],
   ['diva_accentColor', 'theme'],
   ['diva_themeMode', 'theme'],
+  ['diva_uiLanguage', 'language'],
 ];
 
 export async function executeFullBackupImport(preview: FullBackupPreview, options: FullBackupImportOptions): Promise<FullBackupImportResult> {
@@ -553,6 +562,7 @@ export async function executeFullBackupImport(preview: FullBackupPreview, option
   const currentGlobalFilters = getGlobalFilterSettings();
   const currentFavoriteProducers = useFavoriteProducerStore.getState().producers.map(producer => ({ ...producer }));
   const currentHiddenSongs = normalizeHiddenSongs(useHiddenSongStore.getState().hiddenSongs);
+  const currentLanguage = useLanguageStore.getState().language;
   const currentTheme = { mode: useThemeStore.getState().mode, accentColor: useThemeStore.getState().accentColor };
   let currentHistorySnapshot: HistoryStoreSnapshot;
   try {
@@ -572,7 +582,7 @@ export async function executeFullBackupImport(preview: FullBackupPreview, option
     throw new FullBackupImportError('read-failed', { cause: error });
   }
   const changed: Record<FullBackupSection, boolean> = {
-    playlists: false, ratings: false, hiddenSongs: false, globalFilters: false, favoriteProducers: false, history: false, theme: false,
+    playlists: false, ratings: false, hiddenSongs: false, globalFilters: false, favoriteProducers: false, history: false, theme: false, language: false,
   };
   /** いま書き込んでいるデータ（失敗した時に、どこで止まったかを返す） */
   let writing: FullBackupSection | undefined;
@@ -629,6 +639,11 @@ export async function executeFullBackupImport(preview: FullBackupPreview, option
       changed.theme = true;
       if (!useThemeStore.getState().setPreferences(incoming.preferences.theme)) throw new Error('Could not save theme');
     }
+    if (options.mode === 'replace' && incoming.preferences?.language) {
+      writing = 'language';
+      changed.language = true;
+      await restoreLanguage(incoming.preferences.language);
+    }
     writing = 'history';
     if (options.mode === 'replace') {
       await replaceHistory(incoming.history.events);
@@ -656,6 +671,7 @@ export async function executeFullBackupImport(preview: FullBackupPreview, option
       try { restore(); }
       catch (rollbackError) { rollbackFailures.push({ section, error: rollbackError }); }
     };
+    if (changed.language) rollBack('language', () => useLanguageStore.setState({ language: currentLanguage }));
     if (changed.theme) rollBack('theme', () => {
       useThemeStore.setState(currentTheme);
       applyAccentColor(currentTheme.accentColor, currentTheme.mode);

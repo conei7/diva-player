@@ -3,10 +3,15 @@ import { storage } from './storage';
 export const DEFAULT_ACCENT_COLOR = '#06d6a0';
 export const ACCENT_COLOR_KEY = 'accentColor';
 export const THEME_MODE_KEY = 'themeMode';
-export type ThemeMode = 'dark' | 'light';
+export type ThemeMode = 'dark' | 'light' | 'system';
+export type ResolvedThemeMode = Exclude<ThemeMode, 'system'>;
+export function resolveThemeMode(mode: ThemeMode): ResolvedThemeMode {
+  if (mode !== 'system') return mode;
+  return typeof window !== 'undefined' && window.matchMedia?.('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+}
 export interface ThemePreferences { accentColor: string; mode: ThemeMode }
 export function normalizeThemeMode(value: unknown): ThemeMode {
-  return value === 'light' ? 'light' : 'dark';
+  return value === 'light' || value === 'system' ? value : 'dark';
 }
 
 export function normalizeAccentColor(value: unknown): string {
@@ -23,7 +28,7 @@ function luminance(channels: number[]): number {
 }
 
 /** Keep accent text readable on the menu surface as well as darker backgrounds. */
-export function accessibleAccentColor(value: string, mode: ThemeMode = 'dark'): string {
+export function accessibleAccentColor(value: string, mode: ResolvedThemeMode = 'dark'): string {
   const color = normalizeAccentColor(value);
   const channels = [1, 3, 5].map(start => parseInt(color.slice(start, start + 2), 16));
   const surface = mode === 'light' ? luminance([240, 240, 240]) : luminance([40, 40, 40]);
@@ -43,8 +48,9 @@ export function readAccentColor(): string {
 
 export function applyAccentColor(color: string, mode: ThemeMode = 'dark'): void {
   if (typeof document === 'undefined') return;
-  document.documentElement.dataset.theme = mode;
-  const accent = accessibleAccentColor(color, mode);
+  const resolved = resolveThemeMode(mode);
+  document.documentElement.dataset.theme = resolved;
+  const accent = accessibleAccentColor(color, resolved);
   document.documentElement.style.setProperty('--color-brand', accent);
   document.documentElement.style.setProperty('--color-accent-cyan', accent);
 }

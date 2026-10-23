@@ -42,6 +42,10 @@ export const useThemeStore = create<ThemeState>((set, get) => ({
 export function initializeTheme(): void {
   const { accentColor, mode } = useThemeStore.getState();
   applyAccentColor(accentColor, mode);
+  window.matchMedia?.('(prefers-color-scheme: light)').addEventListener('change', () => {
+    const current = useThemeStore.getState();
+    if (current.mode === 'system') applyAccentColor(current.accentColor, current.mode);
+  });
   window.addEventListener('storage', event => {
     if (event.storageArea !== localStorage || (event.key !== null && !['diva_accentColor', 'diva_themeMode'].includes(event.key))) return;
     const accentColor = readAccentColor();

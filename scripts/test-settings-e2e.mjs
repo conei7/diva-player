@@ -362,6 +362,21 @@ async function runAppearanceBackup(page, baseUrl, browser, fixtureDir) {
   };
   await page.reload({ waitUntil: 'domcontentloaded' });
   await openGeneral();
+  await page.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: 'light' }]);
+  await page.select(modeSelector, 'system');
+  await page.waitForFunction(() => document.documentElement.dataset.theme === 'light');
+  await page.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: 'dark' }]);
+  await page.waitForFunction(() => document.documentElement.dataset.theme === 'dark');
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  assert(await mode() === 'dark', 'System preference did not survive reload');
+  await openGeneral();
+  assert(await page.$eval(modeSelector, element => element.value) === 'system', 'System choice was not persisted');
+  await page.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: 'light' }]);
+  await page.waitForFunction(() => document.documentElement.dataset.theme === 'light');
+  await page.select(modeSelector, 'dark');
+  await page.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: 'dark' }]);
+  await page.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: 'light' }]);
+  assert(await mode() === 'dark', 'OS change overrode the explicit dark choice');
   await page.select(modeSelector, 'light');
   await page.click('button[aria-label="ピンク"]');
   assert(await mode() === 'light', 'Light mode was not applied');
@@ -396,10 +411,11 @@ async function runAppearanceBackup(page, baseUrl, browser, fixtureDir) {
   await clickButton(page, SETTINGS, 'バックアップを保存');
   await page.waitForFunction(() => window.__backupBlob instanceof Blob);
   const exported = JSON.parse(await page.evaluate(() => window.__backupBlob.text()));
-  assert(exported.version === 7 && exported.manifest.schemaVersion === 7
+  assert(exported.version === 8 && exported.manifest.schemaVersion === 8
+    && exported.sections.preferences.language === 'ja'
     && exported.sections.preferences.theme.mode === 'light'
     && exported.sections.preferences.theme.accentColor === '#ff8fc7', 'Export did not include the selected appearance');
-  const path = join(fixtureDir, 'appearance-v7.json');
+  const path = join(fixtureDir, 'appearance-v8.json');
   await writeFile(path, JSON.stringify(exported));
   await page.click('#settings-tab-playback');
   await page.select(modeSelector, 'dark');
@@ -436,7 +452,53 @@ async function runAppearanceBackup(page, baseUrl, browser, fixtureDir) {
   await replace();
   await page.waitForSelector(RESTORE, { hidden: true });
   assert(await mode() === 'light', 'Legacy backup reset the current appearance');
-  console.log('PASS light/dark palette, persistence, cross-tab, v7 export/merge/replace, rollback, and v6 compatibility');
+  // Restore an English/system backup from Japanese; failures must preserve both live and saved settings.
+  exported.sections.preferences.language = 'en';
+  exported.sections.preferences.theme.mode = 'system';
+  const englishPath = join(fixtureDir, 'language-v8.json');
+  await writeFile(englishPath, JSON.stringify(exported));
+  await upload(englishPath);
+  await clickButton(page, RESTORE, '復元');
+  await page.waitForSelector(RESTORE, { hidden: true });
+  assert(await page.evaluate(() => document.documentElement.lang) === 'ja', 'Merge changed the current language');
+  await upload(englishPath);
+  await page.evaluate(() => {
+    const original = Storage.prototype.setItem;
+    Storage.prototype.setItem = function (key, value) {
+      if (key === 'diva_uiLanguage') {
+        Storage.prototype.setItem = original;
+        throw new DOMException('quota', 'QuotaExceededError');
+      }
+      return original.call(this, key, value);
+    };
+  });
+  await replace();
+  await page.waitForSelector(`${RESTORE} [role="alert"]`);
+  assert(await page.evaluate(() => document.documentElement.lang) === 'ja', 'Failed language save changed live language');
+  assert(await page.evaluate(() => JSON.parse(localStorage.getItem('diva_themeMode'))) === 'light', 'Language failure did not roll back theme');
+  // A later history failure must also undo a successfully applied language.
+  await page.evaluate(() => {
+    const original = IDBObjectStore.prototype.clear;
+    IDBObjectStore.prototype.clear = function () {
+      if (this.name === 'plays') {
+        IDBObjectStore.prototype.clear = original;
+        this.transaction.abort();
+        throw new DOMException('fixture', 'AbortError');
+      }
+      return original.call(this);
+    };
+  });
+  await replace();
+  await page.waitForSelector(`${RESTORE} [role="alert"]`);
+  await page.waitForFunction(() => document.documentElement.lang === 'ja');
+  assert(await page.evaluate(() => JSON.parse(localStorage.getItem('diva_uiLanguage'))) === 'ja', 'Later failure did not restore saved language');
+  await replace();
+  await page.waitForSelector('[role="dialog"][aria-label="Restore from backup"]', { hidden: true });
+  await page.waitForFunction(() => document.documentElement.lang === 'en');
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForFunction(() => document.documentElement.lang === 'en');
+  assert(await page.evaluate(() => JSON.parse(localStorage.getItem('diva_themeMode'))) === 'system', 'Backup lost system mode choice');
+  console.log('PASS system/dark/light, OS changes, persistence, cross-tab, v8 export/merge/replace, language rollback, and v6/v7 compatibility');
 }
 
 async function main() {

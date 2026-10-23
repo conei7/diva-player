@@ -1061,6 +1061,12 @@ export const englishSourceText: Record<string, string> = {
   '色は適用しましたが保存できませんでした': "Color applied, but couldn't be saved",
   '曲を読み込み中…': 'Loading songs…',
   // ── /area:settings ──
+  '端末の設定に合わせる': 'Use device settings',
+  'テーマ・アクセントカラー・言語も保存します': 'Theme, accent color, and language are also saved',
+  '言語設定も復元します': 'Language settings will also be restored.',
+  '言語を保存できませんでした': "Couldn't save your language",
+  '言語を元に戻せませんでした': "Couldn't undo the change to your language",
+  '言語設定を含みます。置き換える場合のみ復元します': 'Includes language settings. Restored only when replacing data.',
   '見た目': 'Appearance',
   'テーマとアクセントカラーも保存します': 'Theme and accent color are also saved',
   '見た目の設定も復元します': 'Appearance settings will also be restored.',

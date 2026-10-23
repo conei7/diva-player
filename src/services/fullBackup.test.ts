@@ -32,6 +32,19 @@ describe('parseFullBackup', () => {
     }
     expect(emptyLegacyBackup().parsed.sections.preferences?.theme).toBeUndefined();
   });
+  it('validates v8 language and system preference while retaining v7 compatibility', () => {
+    const payload = { ...emptyLegacyBackup().parsed, version: 8,
+      manifest: { schemaVersion: 8, historyEvents: 0, ratingCount: 0, playlistCount: 0,
+        playlistSongCount: 0, folderCount: 0, favoriteProducerCount: 0, hiddenSongCount: 0 },
+      sections: { history: { events: [] }, ratings: {}, playlists: { folders: [], playlists: [] },
+        hiddenSongs: {}, preferences: { globalFilters: {}, language: 'en', theme: { mode: 'system', accentColor: '#123456' } } } };
+    expect(parseFullBackup(payload)?.canRestore).toBe(true);
+    expect(parseFullBackup(payload)?.parsed.sections.preferences?.language).toBe('en');
+    for (const language of [null, {}, 'fr', 1]) {
+      expect(parseFullBackup({ ...payload, sections: { ...payload.sections,
+        preferences: { ...payload.sections.preferences, language } } })?.canRestore).toBe(false);
+    }
+  });
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();

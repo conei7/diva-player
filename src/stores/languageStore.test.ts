@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { translate, translateSourceText } from '../i18n';
-import { ensureEnglishTranslations, resolveAppLanguage, useLanguageStore } from './languageStore';
+import { ensureEnglishTranslations, restoreLanguage, resolveAppLanguage, useLanguageStore } from './languageStore';
 
 describe('language preference', () => {
   let values: Map<string, string>;
@@ -41,6 +41,18 @@ describe('language preference', () => {
     expect(useLanguageStore.getState().language).toBe('en');
     expect(JSON.parse(localStorage.getItem('diva_uiLanguage') ?? 'null')).toBe('en');
     expect(JSON.parse(localStorage.getItem('diva_history') ?? 'null')).toEqual([{ songId: 12 }]);
+  });
+
+  it('keeps the live language and stored value when restoring cannot persist', async () => {
+    localStorage.setItem('diva_uiLanguage', JSON.stringify('ja'));
+    const original = localStorage.setItem;
+    localStorage.setItem = () => { throw new DOMException('quota', 'QuotaExceededError'); };
+    await expect(restoreLanguage('en')).rejects.toThrow('Could not save language');
+    expect(useLanguageStore.getState().language).toBe('ja');
+    expect(localStorage.getItem('diva_uiLanguage')).toBe(JSON.stringify('ja'));
+    localStorage.setItem = original;
+    await restoreLanguage('en');
+    expect(useLanguageStore.getState().language).toBe('en');
   });
 
   it('formats translated labels with dynamic values', async () => {

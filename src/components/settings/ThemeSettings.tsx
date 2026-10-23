@@ -29,6 +29,7 @@ export default function ThemeSettings() {
         <SettingsSelect id={`${id}-mode`} value={mode} onChange={event => {
           if (!setMode(event.target.value as ThemeMode)) showToast(t('テーマは適用しましたが保存できませんでした'));
         }}>
+          <option value="system">{t('端末の設定に合わせる')}</option>
           <option value="dark">{t('ダーク')}</option>
           <option value="light">{t('ライト')}</option>
         </SettingsSelect>

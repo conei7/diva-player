@@ -25,7 +25,16 @@ export function ensureEnglishTranslations(): Promise<EnglishTranslations> {
   return englishTranslationsPromise;
 }
 
-const LANGUAGE_STORAGE_KEY = 'uiLanguage';
+export const LANGUAGE_STORAGE_KEY = 'uiLanguage';
+
+/** Restore only after translations and persistence are ready. */
+export async function restoreLanguage(language: AppLanguage): Promise<void> {
+  const request = ++languageChangeRequest;
+  if (language === 'en') await ensureEnglishTranslations();
+  if (request !== languageChangeRequest) throw new Error('Language change superseded');
+  if (!storage.set(LANGUAGE_STORAGE_KEY, language)) throw new Error('Could not save language');
+  useLanguageStore.setState({ language });
+}
 
 export function resolveAppLanguage(stored: unknown, browserLanguages: readonly string[]): AppLanguage {
   if (stored === 'ja' || stored === 'en') return stored;

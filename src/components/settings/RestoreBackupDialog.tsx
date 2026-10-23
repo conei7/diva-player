@@ -146,6 +146,7 @@ export default function RestoreBackupDialog({ preview, currentCounts, onClose, o
           case 'favoriteProducers': return t('お気に入りPを保存できませんでした');
           case 'globalFilters': return t('フィルターを保存できませんでした');
           case 'theme': return t('見た目を保存できませんでした');
+          case 'language': return t('言語を保存できませんでした');
           default: return null;
         }
       default:
@@ -162,6 +163,7 @@ export default function RestoreBackupDialog({ preview, currentCounts, onClose, o
       case 'favoriteProducers': return t('お気に入りPを元に戻せませんでした');
       case 'globalFilters': return t('フィルターを元に戻せませんでした');
       case 'theme': return t('見た目を元に戻せませんでした');
+      case 'language': return t('言語を元に戻せませんでした');
     }
   };
 
@@ -181,7 +183,8 @@ export default function RestoreBackupDialog({ preview, currentCounts, onClose, o
       const confirmed = await confirmDialog({
         title: t('今のデータを置き換えますか？'),
         message: t('履歴・評価・プレイリスト・表示しない曲・お気に入りP・フィルターがバックアップの内容になります')
-          + (preview.parsed.sections.preferences?.theme ? ` ${t('見た目の設定も復元します')}` : ''),
+          + (preview.parsed.sections.preferences?.theme ? ` ${t('見た目の設定も復元します')}` : '')
+          + (preview.parsed.sections.preferences?.language ? ` ${t('言語設定も復元します')}` : ''),
         confirmLabel: t('置き換える'),
       });
       if (!confirmed) return;
@@ -248,6 +251,9 @@ export default function RestoreBackupDialog({ preview, currentCounts, onClose, o
         </tbody>
       </table>
 
+      {preview.parsed.sections.preferences?.language && (
+        <p className="mt-3 text-sm text-yt-text-secondary">{t('言語設定を含みます。置き換える場合のみ復元します')}</p>
+      )}
       {preview.parsed.sections.preferences?.theme && (
         <p className="mt-3 text-sm text-yt-text-secondary">{t('見た目の設定を含みます。置き換える場合のみ復元します')}</p>
       )}

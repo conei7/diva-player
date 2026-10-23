@@ -3,7 +3,8 @@
 (function (location) {
   // Apply the saved mode before React loads, including direct links to other pages.
   try {
-    document.documentElement.dataset.theme = JSON.parse(localStorage.getItem('diva_themeMode')) === 'light' ? 'light' : 'dark';
+    var mode = JSON.parse(localStorage.getItem('diva_themeMode'));
+    document.documentElement.dataset.theme = mode === 'light' || (mode === 'system' && window.matchMedia('(prefers-color-scheme: light)').matches) ? 'light' : 'dark';
   } catch (_) { /* Unavailable storage keeps the default dark theme. */ }
   var normalizedPath = location.pathname.replace(/\/+$/, '');
   var params = new URLSearchParams(location.search);

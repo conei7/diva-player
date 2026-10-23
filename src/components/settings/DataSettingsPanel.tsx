@@ -94,7 +94,7 @@ export default function DataSettingsPanel({ onLinkClick }: DataSettingsPanelProp
   return (
     <div>
       <SettingsSection first title={t('バックアップ')} titleId={`${ids}-backup`}>
-        <p className="text-xs leading-[18px] text-yt-text-secondary">{t('テーマとアクセントカラーも保存します')}</p>
+        <p className="text-xs leading-[18px] text-yt-text-secondary">{t('テーマ・アクセントカラー・言語も保存します')}</p>
         <p className="min-h-[18px] text-xs leading-[18px] tabular-nums text-yt-text-secondary">
           {counts && t('履歴 {history} · 評価 {ratings} · プレイリスト {playlists}', {
             history: format(counts.historyEvents),

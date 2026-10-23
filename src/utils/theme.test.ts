@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { accessibleAccentColor, DEFAULT_ACCENT_COLOR, normalizeAccentColor, normalizeThemeMode } from './theme';
+import { accessibleAccentColor, DEFAULT_ACCENT_COLOR, normalizeAccentColor, normalizeThemeMode, resolveThemeMode } from './theme';
 
 describe('accent color safety and readability', () => {
   it('keeps dark as the compatible default for missing or invalid modes', () => {
     expect(normalizeThemeMode('light')).toBe('light');
-    for (const value of [null, undefined, {}, 'system', 'dark']) expect(normalizeThemeMode(value)).toBe('dark');
+    expect(normalizeThemeMode('system')).toBe('system');
+    expect(resolveThemeMode('system')).toBe('dark');
+    for (const value of [null, undefined, {}, 'invalid', 'dark']) expect(normalizeThemeMode(value)).toBe('dark');
   });
   it('darkens light accents to a 4.5:1 contrast on the light menu surface', () => {
     const luminance = (hex: string) => [1, 3, 5].reduce((sum, offset, index) => {
