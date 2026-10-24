@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 
 const normalizeNewlines = text => text.replaceAll('\r\n', '\n');
@@ -207,6 +208,16 @@ const webApkUpdateStart = webDockerfile.indexOf('RUN apk update &&');
 const webCopyStart = webDockerfile.indexOf('\nCOPY --from=build', webApkUpdateStart);
 assert.ok(webApkUpdateStart >= 0 && webCopyStart > webApkUpdateStart);
 const webApkUpdate = webDockerfile.slice(webApkUpdateStart, webCopyStart);
+assert.match(webApkUpdate, /brotli-libs=1\.2\.1-r0/u);
+for (const [architecture, expectedHash] of [
+  ['x86_64', '62a7e37e43bbfc1f8525a00ad2125fd5897135dc93b849733884cb78ffd8e26c'],
+  ['aarch64', 'f802b9d5a329c216f02e73607cb8f662c434767e41686367ac0afcf6d0d45d64'],
+]) {
+  const apk = await readFile(new URL(`../vendor/alpine/v3.24/${architecture}/brotli-libs-1.2.1-r0.apk`, import.meta.url));
+  assert.equal(createHash('sha256').update(apk).digest('hex'), expectedHash);
+  assert.ok(webDockerfile.includes(`brotli_sha=${expectedHash}`));
+}
+assert.match(webDockerfile, /"\$brotli_sha[^\n]+brotli-libs-1\.2\.1-r0\.apk" \| sha256sum -c -/u);
 assert.match(webApkUpdate, /libuuid=2\.42\.3-r1/u);
 assert.match(webApkUpdate, /tiff=4\.7\.2-r0/u);
 assert.match(webApkUpdate, /test[^\n]*P:tiff[^\n]*4\.7\.2-r0/u);
