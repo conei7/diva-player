@@ -100,7 +100,7 @@ class ContainerImageScanValidatorTests(unittest.TestCase):
                     "Class": "os-pkgs",
                     "Type": "alpine",
                     "Packages": [
-                        {"Name": "musl", "Version": "1.2.5-r23"},
+                        {"Name": "musl", "Version": "1.2.5-r24"},
                         {"Name": "busybox", "Version": "1.37.0-r30"},
                     ],
                     "Vulnerabilities": None,
@@ -806,7 +806,7 @@ class DeployImageScanWorkflowContractTests(unittest.TestCase):
             '"receiptSha256"',
             '"busybox-binsh=1.37.0-r30"',
             '"busybox=1.37.0-r30"',
-            '"musl=1.2.5-r23"',
+            '"musl=1.2.5-r24"',
             'exit "$overall_failure"',
         ):
             with self.subTest(contract=contract):

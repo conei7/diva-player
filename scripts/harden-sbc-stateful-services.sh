@@ -277,7 +277,7 @@ QDRANT_BASE_DIGEST=sha256:a0e04fe623cb064502cd869cefc1dc7ce359d8edd481063b5bd351
 QDRANT_RUNTIME_CONTRACT=rootless-readonly-scratch-v3
 AUDIT_BASE_DIGEST=sha256:25109184c71bdad752c8312a8623239686a9a2071e8825f20acb8f2198c3f659
 AUDIT_BASE_REFERENCE="alpine:3.23.3@$AUDIT_BASE_DIGEST"
-AUDIT_INVENTORY_SHA256=3f18c4f5c16154eeba3ffd4970bf886c1699a3b901a3ddcf7948f99a8d2b8c53
+AUDIT_INVENTORY_SHA256=123f88293024a7a6e4b1e35dcdc400ac4d1ab286d50274dd4d30e012d36e8ebe
 QDRANT_CANDIDATE_VOLUME="diva_qdrant_v119_$RUN_ID"
 QDRANT_UPGRADE_NETWORK="diva_qdrant_upgrade_$RUN_ID"
 QDRANT_UPGRADE_JOURNAL="$RUN_DIR/qdrant-storage-upgrade.json"
@@ -6448,12 +6448,12 @@ case "$audit_docker_arch" in
             || { fail "production Alpine audit base is not arm64"; exit 1; }
         AUDIT_APK_ARCH=x86_64
         expected_audit_busybox=f3547b3d78d08a028a4833ddb83b77cf012838c078bfd2b76355f53d1d8bba62
-        expected_audit_contract=ecf630ad651e1e3b53d257b0d19e1aa2e2f28e543442218f4c3992b073425a61
+        expected_audit_contract=baa8ef04ba2769909637e773c591a0cd55509d9231b2e4c57f8b37e6077602cd
         ;;
     arm64)
         AUDIT_APK_ARCH=aarch64
         expected_audit_busybox=dd10691d81c84f0182f5af5f1583d566ddc0b9d0d9fc46b41b99b83c398306dd
-        expected_audit_contract=7c9d227469c7c5ffe8e1b407619bc4f132bdd68ca8d254a2be28ee458bfcc3aa
+        expected_audit_contract=077ea10a8deb96223b5304b11a6ed62237c0b11aeb80284dcc20957c6a53fe56
         ;;
     *) fail "pinned Alpine audit base architecture is unsupported"; exit 1 ;;
 esac
@@ -6501,7 +6501,7 @@ wait_container_mapping "$ALPINE_ATTEST_CONTAINER" "" \
 AUDIT_CONTRACT_FILE="$RUN_DIR/evidence/audit-contract.expected"
 AUDIT_CONTRACT_HELPER_SHA256=$(sha256sum "$QDRANT_RELEASE_AUDIT_CONTRACT_HELPER" \
     | awk '{print $1}')
-[ "$AUDIT_CONTRACT_HELPER_SHA256" = 05da48154d8001f2f97d707b98f4c5870c66a0909ad204adc3c6a34f7de4b6d8 ] \
+[ "$AUDIT_CONTRACT_HELPER_SHA256" = 8a33b15dfe89841316c2cbc0daced619685414b946612dc2d3ca58c6ba8f0cce ] \
     || { fail "Alpine audit contract helper provenance is invalid"; exit 1; }
 /bin/sh "$QDRANT_RELEASE_AUDIT_CONTRACT_HELPER" \
     "$AUDIT_APK_ARCH" "$AUDIT_BUSYBOX_SHA256" > "$AUDIT_CONTRACT_FILE" \

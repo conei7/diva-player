@@ -385,10 +385,10 @@ jobs:
           qdrant_audit_arch=x86_64
           qdrant_busybox_sha256=f3547b3d78d08a028a4833ddb83b77cf012838c078bfd2b76355f53d1d8bba62
           qdrant_audit_contract_helper_sha256=$(sha256sum backend/qdrant/audit-contract.sh | awk '{print $1}')
-          test "$qdrant_audit_contract_helper_sha256" = 05da48154d8001f2f97d707b98f4c5870c66a0909ad204adc3c6a34f7de4b6d8
+          test "$qdrant_audit_contract_helper_sha256" = 8a33b15dfe89841316c2cbc0daced619685414b946612dc2d3ca58c6ba8f0cce
           qdrant_audit_contract_sha256=$(sh backend/qdrant/audit-contract.sh \
             "$qdrant_audit_arch" "$qdrant_busybox_sha256" | sha256sum | awk '{print $1}')
-          test "$qdrant_audit_contract_sha256" = ecf630ad651e1e3b53d257b0d19e1aa2e2f28e543442218f4c3992b073425a61
+          test "$qdrant_audit_contract_sha256" = baa8ef04ba2769909637e773c591a0cd55509d9231b2e4c57f8b37e6077602cd
           docker build --pull --tag diva-player-ci-api:current backend/api
           docker build --pull --tag diva-player-ci-gateway:current backend/api-gateway
           docker build --pull --file Dockerfile.web --tag diva-player-ci-web:current .
@@ -714,7 +714,7 @@ jobs:
           expected = sorted([
               "busybox-binsh=1.37.0-r30",
               "busybox=1.37.0-r30",
-              "musl=1.2.5-r23",
+              "musl=1.2.5-r24",
           ])
           raise SystemExit(0 if actual == expected else 1)
           PY

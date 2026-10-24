@@ -168,8 +168,8 @@ class PostgresContainerContractTests(unittest.TestCase):
         self.assertNotIn("/migrations", self.migrate)
         self.assertNotRegex(self.migrate, r"(?m)^\s*(?:RUN\s+)?apk\s+(?:update|upgrade)\b")
         for package in (
-            "musl=1.2.5-r23",
-            "musl-utils=1.2.5-r23",
+            "musl=1.2.5-r24",
+            "musl-utils=1.2.5-r24",
             "postgresql16-client=16.15-r0",
         ):
             self.assertIn(package, self.migrate)

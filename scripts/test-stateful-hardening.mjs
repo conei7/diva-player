@@ -618,12 +618,12 @@ for (const [architecture, busyboxSha256, contractSha256] of [
   [
     'x86_64',
     'f3547b3d78d08a028a4833ddb83b77cf012838c078bfd2b76355f53d1d8bba62',
-    'ecf630ad651e1e3b53d257b0d19e1aa2e2f28e543442218f4c3992b073425a61',
+    'baa8ef04ba2769909637e773c591a0cd55509d9231b2e4c57f8b37e6077602cd',
   ],
   [
     'aarch64',
     'dd10691d81c84f0182f5af5f1583d566ddc0b9d0d9fc46b41b99b83c398306dd',
-    '7c9d227469c7c5ffe8e1b407619bc4f132bdd68ca8d254a2be28ee458bfcc3aa',
+    '077ea10a8deb96223b5304b11a6ed62237c0b11aeb80284dcc20957c6a53fe56',
   ],
 ]) {
   const rendered = spawnSync(bashCommand, [
@@ -2015,9 +2015,9 @@ if [ "$1" = image ]; then
         *base-reference*)
           case "$image" in "$q_audit_image") printf '%s\n' alpine:3.23.3@sha256:25109184c71bdad752c8312a8623239686a9a2071e8825f20acb8f2198c3f659 ;; *) printf '%s\n' qdrant/qdrant:v1.19.0-unprivileged@sha256:a0e04fe623cb064502cd869cefc1dc7ce359d8edd481063b5bd351c0a0a2c91e ;; esac
           ;;
-        *audit-contract-sha256*) printf '%s\n' ecf630ad651e1e3b53d257b0d19e1aa2e2f28e543442218f4c3992b073425a61 ;;
-        *audit-contract-helper-sha256*) printf '%s\n' 05da48154d8001f2f97d707b98f4c5870c66a0909ad204adc3c6a34f7de4b6d8 ;;
-        *alpine-inventory-sha256*) printf '%s\n' 3f18c4f5c16154eeba3ffd4970bf886c1699a3b901a3ddcf7948f99a8d2b8c53 ;;
+        *audit-contract-sha256*) printf '%s\n' baa8ef04ba2769909637e773c591a0cd55509d9231b2e4c57f8b37e6077602cd ;;
+        *audit-contract-helper-sha256*) printf '%s\n' 8a33b15dfe89841316c2cbc0daced619685414b946612dc2d3ca58c6ba8f0cce ;;
+        *alpine-inventory-sha256*) printf '%s\n' 123f88293024a7a6e4b1e35dcdc400ac4d1ab286d50274dd4d30e012d36e8ebe ;;
         *busybox-version*) printf '%s\n' 1.37.0-r30 ;;
         *busybox-binary-sha256*) printf '%s\n' f3547b3d78d08a028a4833ddb83b77cf012838c078bfd2b76355f53d1d8bba62 ;;
         *audit-architecture*) printf '%s\n' x86_64 ;;
@@ -2289,7 +2289,7 @@ case "$1" in
           schema=4 \
           alpine_index_digest=sha256:25109184c71bdad752c8312a8623239686a9a2071e8825f20acb8f2198c3f659 \
           alpine_release=3.23.3 \
-          alpine_inventory_sha256=3f18c4f5c16154eeba3ffd4970bf886c1699a3b901a3ddcf7948f99a8d2b8c53 \
+          alpine_inventory_sha256=123f88293024a7a6e4b1e35dcdc400ac4d1ab286d50274dd4d30e012d36e8ebe \
           architecture=x86_64 \
           busybox_binary_sha256=f3547b3d78d08a028a4833ddb83b77cf012838c078bfd2b76355f53d1d8bba62 \
           busybox_package_version=1.37.0-r30 user=65534:65534 \
@@ -2302,7 +2302,7 @@ case "$1" in
           > "$destination"
         ;;
       *:/usr/share/diva-qdrant/audit-contract.sha256)
-        printf '%s\n' ecf630ad651e1e3b53d257b0d19e1aa2e2f28e543442218f4c3992b073425a61 > "$destination"
+        printf '%s\n' baa8ef04ba2769909637e773c591a0cd55509d9231b2e4c57f8b37e6077602cd > "$destination"
         ;;
       *:/usr/share/diva-qdrant/audit-files.sha256)
         printf '%s\n' 'fixture-audit-files' > "$destination"
@@ -2311,7 +2311,7 @@ case "$1" in
         printf '%s\n' \
           'busybox-1.37.0-r30 - Size optimized toolbox of many common UNIX utilities' \
           'busybox-binsh-1.37.0-r30 - busybox ash /bin/sh' \
-          'musl-1.2.5-r23 - the musl c library (libc) implementation' > "$destination"
+          'musl-1.2.5-r24 - the musl c library (libc) implementation' > "$destination"
         ;;
       *:/usr/share/diva-qdrant/busybox-binary.sha256)
         printf '%s\n' f3547b3d78d08a028a4833ddb83b77cf012838c078bfd2b76355f53d1d8bba62 > "$destination"
@@ -3102,7 +3102,7 @@ output=$(/usr/bin/sha256sum "$@")
 target=__D__{1:-}
 case "__D__{target##*/}" in
   audit-packages.txt)
-    printf '%s  %s\n' 3f18c4f5c16154eeba3ffd4970bf886c1699a3b901a3ddcf7948f99a8d2b8c53 "$target"
+    printf '%s  %s\n' 123f88293024a7a6e4b1e35dcdc400ac4d1ab286d50274dd4d30e012d36e8ebe "$target"
     exit 0
     ;;
 esac

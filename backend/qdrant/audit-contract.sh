@@ -23,7 +23,7 @@ printf '%s\n' \
     'schema=4' \
     'alpine_index_digest=sha256:25109184c71bdad752c8312a8623239686a9a2071e8825f20acb8f2198c3f659' \
     'alpine_release=3.23.3' \
-    'alpine_inventory_sha256=3f18c4f5c16154eeba3ffd4970bf886c1699a3b901a3ddcf7948f99a8d2b8c53' \
+    'alpine_inventory_sha256=123f88293024a7a6e4b1e35dcdc400ac4d1ab286d50274dd4d30e012d36e8ebe' \
     "architecture=$architecture" \
     "busybox_binary_sha256=$busybox_sha256" \
     'busybox_package_version=1.37.0-r30' \

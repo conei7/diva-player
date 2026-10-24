@@ -9,11 +9,11 @@ COPY --chown=0:0 audit-contract.sh /tmp/diva-audit-contract.sh
 RUN set -eux; \
     arch="$(apk --print-arch)"; \
     case "$arch" in \
-      x86_64) musl_sha=4f3c4a7bf9f51d2c91007e333b17459362ffd881b4a343e8da07b6c50c4f4a0d ;; \
-      aarch64) musl_sha=6a3edd924ead1fad88a69e28c5775809af3026b322f58428001cd02fedc5299e ;; \
+      x86_64) musl_sha=d49d703392f1a6d2fe822db1b57e61735063077e1ad846d5f40d79fe507ec727 ;; \
+      aarch64) musl_sha=d7043c549029c98d438e9bc94213b006e5c88540eb58d1f5b0f0d1d56dbf9c98 ;; \
       *) exit 1 ;; \
     esac; \
-    wget -O /tmp/diva-audit-musl.apk "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/$arch/musl-1.2.5-r23.apk"; \
+    wget -O /tmp/diva-audit-musl.apk "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/$arch/musl-1.2.5-r24.apk"; \
     echo "$musl_sha  /tmp/diva-audit-musl.apk" | sha256sum -c -
 RUN set -eux; \
     audit=/opt/diva-audit-root; \
@@ -22,26 +22,26 @@ RUN set -eux; \
     case "$apk_arch" in \
       x86_64) \
         expected_busybox=f3547b3d78d08a028a4833ddb83b77cf012838c078bfd2b76355f53d1d8bba62; \
-        expected_contract=ecf630ad651e1e3b53d257b0d19e1aa2e2f28e543442218f4c3992b073425a61 ;; \
+        expected_contract=baa8ef04ba2769909637e773c591a0cd55509d9231b2e4c57f8b37e6077602cd ;; \
       aarch64) \
         expected_busybox=dd10691d81c84f0182f5af5f1583d566ddc0b9d0d9fc46b41b99b83c398306dd; \
-        expected_contract=7c9d227469c7c5ffe8e1b407619bc4f132bdd68ca8d254a2be28ee458bfcc3aa ;; \
+        expected_contract=077ea10a8deb96223b5304b11a6ed62237c0b11aeb80284dcc20957c6a53fe56 ;; \
       *) exit 1 ;; \
     esac; \
     [ "$DIVA_BUSYBOX_BINARY_SHA256" = "$expected_busybox" ]; \
     [ "$DIVA_AUDIT_CONTRACT_SHA256" = "$expected_contract" ]; \
-    [ "$DIVA_AUDIT_CONTRACT_HELPER_SHA256" = 05da48154d8001f2f97d707b98f4c5870c66a0909ad204adc3c6a34f7de4b6d8 ]; \
+    [ "$DIVA_AUDIT_CONTRACT_HELPER_SHA256" = 8a33b15dfe89841316c2cbc0daced619685414b946612dc2d3ca58c6ba8f0cce ]; \
     [ "$(sha256sum /tmp/diva-audit-contract.sh | awk '{print $1}')" \
       = "$DIVA_AUDIT_CONTRACT_HELPER_SHA256" ]; \
     apk --root "$audit" --repositories-file /etc/apk/repositories \
       --keys-dir /etc/apk/keys --initdb --no-cache --no-scripts add \
-      busybox=1.37.0-r30 busybox-binsh=1.37.0-r30 musl=1.2.5-r23 /tmp/diva-audit-musl.apk; \
+      busybox=1.37.0-r30 busybox-binsh=1.37.0-r30 musl=1.2.5-r24 /tmp/diva-audit-musl.apk; \
     ln -snf /bin/busybox "$audit/bin/sh"; \
     install -d -m 0755 "$audit/etc" "$audit/usr/share/diva-qdrant"; \
     apk --root "$audit" info -vv | LC_ALL=C sort \
       > "$audit/usr/share/diva-qdrant/audit-packages.txt"; \
     [ "$(sha256sum "$audit/usr/share/diva-qdrant/audit-packages.txt" | awk '{print $1}')" \
-      = 3f18c4f5c16154eeba3ffd4970bf886c1699a3b901a3ddcf7948f99a8d2b8c53 ]; \
+      = 123f88293024a7a6e4b1e35dcdc400ac4d1ab286d50274dd4d30e012d36e8ebe ]; \
     [ "$($audit/bin/busybox 2>&1 | awk 'NR == 1 { print }')" \
       = 'BusyBox v1.37.0 (2025-12-16 14:19:28 UTC) multi-call binary.' ]; \
     busybox_sha=$(sha256sum "$audit/bin/busybox" | awk '{print $1}'); \
@@ -474,7 +474,7 @@ LABEL com.diva.qdrant.base-digest="sha256:25109184c71bdad752c8312a8623239686a9a2
       com.diva.qdrant.audit-contract="offline-storage-audit-v3-alpine" \
       com.diva.qdrant.audit-contract-sha256="${DIVA_AUDIT_CONTRACT_SHA256}" \
       com.diva.qdrant.audit-contract-helper-sha256="${DIVA_AUDIT_CONTRACT_HELPER_SHA256}" \
-      com.diva.qdrant.alpine-inventory-sha256="3f18c4f5c16154eeba3ffd4970bf886c1699a3b901a3ddcf7948f99a8d2b8c53" \
+      com.diva.qdrant.alpine-inventory-sha256="123f88293024a7a6e4b1e35dcdc400ac4d1ab286d50274dd4d30e012d36e8ebe" \
       com.diva.qdrant.audit-architecture="${DIVA_AUDIT_ARCH}" \
       com.diva.qdrant.busybox-version="1.37.0-r30" \
       com.diva.qdrant.busybox-binary-sha256="${DIVA_BUSYBOX_BINARY_SHA256}"
