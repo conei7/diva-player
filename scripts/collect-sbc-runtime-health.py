@@ -1356,6 +1356,39 @@ def capacity_growth_history(state_dir: Path, now: datetime, total: int, durable:
             "forecastBaselineReason": changes[-1]["reason"] if changes else "initial"}, completed
 
 
+def advance_capacity_forecast(info: dict, previous: dict, now: datetime) -> dict:
+    """Debounce the long-range forecast without delaying actual space alarms."""
+    old = (previous.get("capacity") or {}).get("forecastAlert") or {}
+    active = old.get("active") is True or any(
+        isinstance(item, dict) and item.get("id") == "capacity:forecast"
+        for item in previous.get("critical") or []
+    )
+    days = info.get("daysUntilReserveExhaustion")
+    known = info.get("forecastStatus") in {"growing", "no-positive-growth"}
+    recovering = known and (info.get("forecastStatus") == "no-positive-growth"
+                            or isinstance(days, (int, float)) and days >= 35)
+    breached = known and isinstance(days, (int, float)) and days < 30
+    field = "recoveryStartedAt" if active else "breachStartedAt"
+    state = {"active": active, "breachStartedAt": None, "recoveryStartedAt": None,
+             "confirmationSeconds": 1800, "recoveryDays": 35}
+    if (recovering if active else breached):
+        started = now
+        try:
+            candidate = datetime.fromisoformat(old.get(field) or "")
+            last = datetime.fromisoformat(old.get("observedAt") or "")
+            # Missing probes cannot count as sustained healthy/unhealthy time.
+            if candidate.tzinfo and last.tzinfo and candidate <= last <= now and (now - last).total_seconds() <= 180:
+                started = candidate
+        except (ValueError, TypeError):
+            pass
+        state[field] = started.isoformat()
+        if (now - started).total_seconds() >= 1800:
+            state["active"] = not active
+            state[field] = None
+    state["observedAt"] = now.isoformat()
+    return state
+
+
 def operation_capacity(collected: dict, previous: dict, state_dir: Path, now: datetime) -> tuple[dict, list]:
     """Reuse exact backup preflight; keep a bounded daily growth baseline."""
     from datetime import timedelta
@@ -1409,10 +1442,11 @@ def operation_capacity(collected: dict, previous: dict, state_dir: Path, now: da
                 days = max(0, (free - required - margin) / growth)
                 info["daysUntilReserveExhaustion"] = days
                 info["estimatedExhaustionAt"] = (now + timedelta(days=min(days, 365000))).isoformat()
-                if days < 30:
-                    violations.append({"id": "capacity:forecast", "message": "作業容量の余裕が30日以内に不足する予測"})
     else:
         info["forecastStatus"] = "unknown"
+    info["forecastAlert"] = advance_capacity_forecast(info, previous, now)
+    if info["forecastAlert"]["active"]:
+        violations.append({"id": "capacity:forecast", "message": "作業容量の余裕が30日以内に不足する予測（30分継続確認・復旧は35日以上で30分確認）"})
     cleanup = ((info.get("qdrant") or {}).get("cleanup") or {})
     if cleanup.get("status") == "blocked":
         violations.append({"id": "maintenance:qdrant-cleanup", "message": "旧collection整理が安全条件不一致で保留（内部statusを確認）"})

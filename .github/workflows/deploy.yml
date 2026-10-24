@@ -58,6 +58,8 @@ jobs:
       - name: Capacity retention and API-only deployment contracts
         run: |
           python3 -B scripts/test-sbc-capacity-retention.py
+          python3 -B scripts/test-capacity-forecast-alert.py
+          python3 -B scripts/test-web-scan-db-archive.py
           python3 -B scripts/test-api-only-deployment.py
       - name: Build and start exact PostgreSQL CI artifacts
         shell: bash
