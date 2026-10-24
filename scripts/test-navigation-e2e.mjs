@@ -1,4 +1,6 @@
 import puppeteer from 'puppeteer';
+import { mkdir } from 'node:fs/promises';
+import { join } from 'node:path';
 
 const baseUrl = process.argv[2] || 'https://diva-player.pages.dev/';
 const base = new URL(baseUrl);
@@ -129,7 +131,7 @@ const fixtureResponse = (body, contentType = 'application/json') => ({
   body: typeof body === 'string' ? body : JSON.stringify(body),
 });
 
-async function installApiFixtures(page, homeSongs = fixtureHomeSongs) {
+async function installApiFixtures(page, homeSongs = fixtureHomeSongs, recommendationSongs = []) {
   await page.setRequestInterception(true);
   page.on('request', request => {
     const url = new URL(request.url());
@@ -150,7 +152,10 @@ async function installApiFixtures(page, homeSongs = fixtureHomeSongs) {
     } else if (path.endsWith('/api/recommend/dig')) {
       response = fixtureResponse({ items: fixtureSongs, totalCount: fixtureSongs.length });
     } else if (path.includes('/api/recommend')) {
-      response = fixtureResponse({ items: [] });
+      response = fixtureResponse({
+        items: recommendationSongs.map(song => ({ songId: song.id, score: 1 })),
+        cards: recommendationSongs,
+      });
     } else if (path.includes('/api/songs/search')) {
       const isRecommendedHomeFeed = url.searchParams.get('sort') === 'FavoritedTimes'
         && url.searchParams.get('discoveryOnly') === 'true'
@@ -627,6 +632,53 @@ try {
   }
   await cooldownContext.close();
   console.log('PASS seven-day cooldown survives closing and reopening tabs with >300 plays and older repeated events');
+
+  const layoutContext = await browser.createBrowserContext();
+  const layoutPage = await layoutContext.newPage();
+  await installApiFixtures(layoutPage, fixtureHomeSongs, fixtureHomeSongs);
+  await layoutPage.evaluateOnNewDocument(() => {
+    localStorage.setItem('diva-global-filters', JSON.stringify({ version: 2, state: { enabled: false } }));
+  });
+  const screenshotDirectory = process.env.DIVA_WATCH_LAYOUT_SCREENSHOTS;
+  if (screenshotDirectory) await mkdir(screenshotDirectory, { recursive: true });
+  for (const [width, height] of [[390, 844], [768, 1024], [1024, 768], [1280, 900], [1440, 900], [1920, 1080], [2556, 1267]]) {
+    await layoutPage.setViewport({ width, height });
+    await layoutPage.goto(new URL('watch?v=1501', base), { waitUntil: 'domcontentloaded' });
+    await layoutPage.waitForSelector('[data-testid="watch-video-info"]');
+    if (width >= 1024) await layoutPage.waitForSelector('[data-testid="watch-recommendation-row"]');
+    const dimensions = await layoutPage.evaluate(() => {
+      const video = document.querySelector('[data-testid="watch-video-column"]')?.firstElementChild?.getBoundingClientRect();
+      const sidebar = document.querySelector('[data-testid="watch-recommendations-column"]')?.getBoundingClientRect();
+      const row = document.querySelector('[data-testid="watch-recommendation-row"]');
+      const thumbnail = row?.querySelector('.aspect-video')?.getBoundingClientRect();
+      return {
+        videoWidth: video?.width, videoHeight: video?.height,
+        sidebarWidth: sidebar?.width, sidebarLeft: sidebar?.left, sidebarTop: sidebar?.top,
+        videoRight: video?.right, videoBottom: video?.bottom,
+        rowHeight: row?.getBoundingClientRect().height,
+        thumbnailWidth: thumbnail?.width, thumbnailHeight: thumbnail?.height,
+        titleSize: row ? parseFloat(getComputedStyle(row.querySelector('h3')).fontSize) : null,
+        overflow: document.documentElement.scrollWidth > innerWidth + 1,
+      };
+    });
+    if (dimensions.overflow || Math.abs(dimensions.videoWidth / dimensions.videoHeight - 16 / 9) > 0.01) {
+      throw new Error(`Watch frame overflow or ratio at ${width}: ${JSON.stringify(dimensions)}`);
+    }
+    if (width >= 1024) {
+      if (dimensions.sidebarWidth < 399 || dimensions.sidebarWidth > 601
+        || dimensions.sidebarLeft < dimensions.videoRight
+        || dimensions.thumbnailWidth < 195 || dimensions.thumbnailHeight < 109
+        || dimensions.rowHeight < 125 || dimensions.titleSize < 18
+        || (width >= 1280 && dimensions.videoWidth < dimensions.sidebarWidth * 1.8)) {
+        throw new Error(`Watch video/list balance at ${width}: ${JSON.stringify(dimensions)}`);
+      }
+    } else if (dimensions.sidebarTop < dimensions.videoBottom) {
+      throw new Error(`Watch columns did not stack at ${width}: ${JSON.stringify(dimensions)}`);
+    }
+    if (screenshotDirectory) await layoutPage.screenshot({ path: join(screenshotDirectory, `watch-${width}.png`) });
+    console.log(`PASS Watch video/list balance at ${width}: ${JSON.stringify(dimensions)}`);
+  }
+  await layoutContext.close();
 } finally {
   await browser.close();
 }

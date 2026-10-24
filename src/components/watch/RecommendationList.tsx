@@ -14,6 +14,7 @@ import { hasViewCounts, joinMetaParts } from '../ui/songMetaParts';
 import { watchPath } from '../../utils/routes';
 import RecommendationHint from '../recommendation/RecommendationHint';
 import SongListRow from '../ui/SongListRow';
+import type { SongRowSize } from '../ui/SongListRow';
 import SongActionsMenu from '../ui/SongActionsMenu';
 import type { SongActionKey } from '../ui/SongActionsMenu';
 import EmptyState from '../ui/EmptyState';
@@ -36,6 +37,7 @@ interface RecommendationListProps {
   empty: RecommendationListEmpty;
   /** Phones: full-width cards instead of 168px rows. */
   cards?: boolean;
+  rowSize?: SongRowSize;
 }
 
 /** Actions from ⋮ that count as an interaction with the recommendation. */
@@ -48,6 +50,7 @@ function RelatedItem({
   reason,
   surface,
   cards,
+  rowSize,
 }: {
   song: Song;
   rank: number;
@@ -55,6 +58,7 @@ function RelatedItem({
   reason?: string;
   surface?: ExposureSurface;
   cards: boolean;
+  rowSize: SongRowSize;
 }) {
   const navigate = useNavigate();
   const language = useLanguageStore(state => state.language);
@@ -112,7 +116,8 @@ function RelatedItem({
     <SongListRow
       ref={ref}
       song={song}
-      size="md"
+      size={rowSize}
+      data-testid="watch-recommendation-row"
       hoverBackground={false}
       onActivate={activate}
       meta={[
@@ -125,7 +130,7 @@ function RelatedItem({
       selectionMode={isSelectionMode}
       selected={selected}
       onToggleSelect={() => toggleSong(song)}
-      className="-mx-2 py-1!"
+      className={rowSize === 'lg' ? '-mx-2' : '-mx-2 py-1!'}
     />
   );
 }
@@ -142,6 +147,7 @@ export default function RecommendationList({
   exposureSurface,
   empty,
   cards = false,
+  rowSize = 'md',
 }: RecommendationListProps) {
   const currentSongId = usePlayerStore(state => state.currentSong?.id);
   const showRecommendationHints = useRecommendationDisplayStore(state => state.showHints);
@@ -149,7 +155,7 @@ export default function RecommendationList({
   const visibleSongs = useMemo(() => excludeHiddenSongs(songs, hiddenSongs), [hiddenSongs, songs]);
 
   const skeletons = (count: number) => Array.from({ length: count }, (_, index) => (
-    cards ? <SkeletonTile key={`skeleton-${index}`} /> : <SkeletonListRow key={`skeleton-${index}`} size="md" />
+    cards ? <SkeletonTile key={`skeleton-${index}`} /> : <SkeletonListRow key={`skeleton-${index}`} size={rowSize} />
   ));
 
   if (loading && visibleSongs.length === 0) {
@@ -178,6 +184,7 @@ export default function RecommendationList({
           reason={showRecommendationHints ? recommendationReasons?.[song.id] : undefined}
           surface={exposureSurface}
           cards={cards}
+          rowSize={rowSize}
         />
       ))}
       {loading && <div className={cards ? 'space-y-6' : '-mx-2'}>{skeletons(cards ? 1 : 3)}</div>}
