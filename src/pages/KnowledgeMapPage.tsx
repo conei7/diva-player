@@ -122,9 +122,9 @@ export default function KnowledgeMapPage() {
     () => [
       ...topUnknown.map(tile => tile.songId),
       ...topKnown.map(tile => tile.songId),
-      ...mapItems.flatMap(item => (item.songId === undefined ? [] : [item.songId])),
+      ...(!atlas && !atlasLoading ? mapItems.flatMap(item => (item.songId === undefined ? [] : [item.songId])) : []),
     ],
-    [mapItems, topKnown, topUnknown],
+    [mapItems, topKnown, topUnknown, atlas, atlasLoading],
   );
   const songsById = useSongsById(songIds);
   const retry = useCallback(() => setReloadKey(key => key + 1), []);
@@ -241,6 +241,7 @@ export default function KnowledgeMapPage() {
               data={atlas}
               knownIds={knownIds}
               viewMode={viewMode}
+              initialSongs={data.tiles}
             /> : atlasLoading ? <SkeletonBlock className="h-[clamp(360px,60vh,560px)] max-sm:h-80" /> : atlasFailed ? <div role="alert">
               <EmptyState icon={<ErrorIcon />} title={t('知ってる度を読み込めませんでした')} action={{ label: t('再試行'), onClick: retry }} />
             </div> : <KnowledgeTreemap

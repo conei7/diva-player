@@ -2,6 +2,16 @@ import { describe, expect, it } from 'vitest';
 import { KnowledgeAtlasIndex } from './knowledgeAtlas';
 
 describe('full knowledge atlas', () => {
+  it('makes a stable varied mosaic for similarly sized songs instead of a repeated grid', () => {
+    const atlas = new KnowledgeAtlasIndex(Array.from({ length: 256 }, (_, i) => [i + 1, 1]).flat(), new Set());
+    const rects = Array.from({ length: atlas.length }, (_, i) => atlas.locate(i, 2)!);
+    expect(new Set(rects.map(r => (r.width / r.height).toFixed(2))).size).toBeGreaterThan(30);
+    for (const r of rects) {
+      expect(r.width * r.height).toBeCloseTo(1 / 256, 12);
+      expect(atlas.hit(r.x + r.width / 2, r.y + r.height / 2, 2)?.index).toBe(r.index);
+      expect(atlas.locate(r.index, 2)).toEqual(r);
+    }
+  });
   it('keeps every song, with the same views-to-area ratio across the complete catalog', () => {
     const pairs = Array.from({ length: 2000 }, (_, i) => [i + 1, 2000 - i]).flat();
     const atlas = new KnowledgeAtlasIndex(pairs, new Set([1, 1800]));
@@ -40,6 +50,18 @@ describe('full knowledge atlas', () => {
     expect([...known.ids]).toEqual([1, 3]); expect(known.totalViews).toBe(1001);
     expect([...unknown.ids]).toEqual([2]); expect(unknown.totalViews).toBe(50);
     expect(new KnowledgeAtlasIndex(pairs, new Set(), 'known').hit(0.5, 0.5, 2)).toBeNull();
+  });
+  it('reduces fine paint without hiding any leaf large enough to label', () => {
+    const atlas = new KnowledgeAtlasIndex(Array.from({ length: 1000 }, (_, i) => [i + 1, 1000 - i]).flat(), new Set());
+    const box = { x: 0, y: 0, width: 1, height: 1 };
+    const fine = atlas.visible(box, 1920, 1080, 1920 / 1080);
+    const coarse = atlas.visible(box, 1920, 1080, 1920 / 1080, 48, 24);
+    expect(coarse.length).toBeLessThan(fine.length);
+    const ids = new Set(coarse.map(rect => rect.index));
+    for (let i = 0; i < atlas.length; i++) {
+      const rect = atlas.locate(i, 1920 / 1080)!;
+      if (rect.width * 1920 >= 48 && rect.height * 1080 >= 24) expect(ids.has(i)).toBe(true);
+    }
   });
   it('clips rendering without changing the area or placement at another zoom', () => {
     const atlas = new KnowledgeAtlasIndex([1, 900, 2, 90, 3, 10], new Set());

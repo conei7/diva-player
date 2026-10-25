@@ -441,6 +441,11 @@ try {
   if (maximumAtlas.width !== atlasGeometry.width * 4096
     || maximumAtlas.pageWidth > maximumAtlas.windowWidth + 1
     || !await page.$eval('button[aria-label="拡大"]', element => element.disabled)) throw new Error('Deep atlas zoom exceeded browser or page bounds');
+  const boundedPaint = await page.$eval('[data-testid="knowledge-map-viewport"]', viewport => {
+    const boxes = [...viewport.querySelector('[data-testid="knowledge-map-surface"]').children].map(element => element.getBoundingClientRect());
+    return boxes.every(box => box.width <= viewport.clientWidth + 768 && box.height <= viewport.clientHeight + 768);
+  });
+  if (!boundedPaint) throw new Error('Deep zoom sent world-sized tile boxes to browser layout');
   await page.click('button[aria-label="リセット"]');
   const atlasReset = await readMap();
   if (atlasReset.left !== 0 || atlasReset.top !== 0 || atlasReset.width !== atlasGeometry.width) throw new Error('Full atlas reset did not return to its origin');

@@ -1,7 +1,7 @@
 import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { PointerEvent } from 'react';
 import { createPortal } from 'react-dom';
-import { Link, useNavigate } from 'react-router';
+import { useNavigate } from 'react-router';
 import type { KnowledgeMapAtlasData, KnowledgeMapPlatform } from '../../api/knowledgeMap';
 import { useTranslateSourceText } from '../../i18n';
 import { useLanguageStore } from '../../stores/languageStore';
@@ -12,15 +12,17 @@ import { formatViewCount } from '../../utils/songMeta';
 import { arrowKeyDirection, nearestInDirection } from '../../utils/soundMap';
 import Button from '../ui/Button';
 import SongThumbnail from '../ui/SongThumbnail';
-import { useSongsById } from './discoverySongs';
+import type { DiscoverySongSource } from './discoverySongs';
+import { useAtlasSongs } from './useAtlasSongs';
+import AtlasTile from './AtlasTile';
 import { KNOWLEDGE_MAP_COLORS, KNOWN_SERVICE_COLOR } from './mapColors';
 import type { KnowledgeViewMode } from './KnowledgeTreemap';
 import { isFocusVisible } from './focusVisible';
 
-interface Props { data: KnowledgeMapAtlasData; platform: KnowledgeMapPlatform; knownIds: ReadonlySet<number>; viewMode: KnowledgeViewMode }
+interface Props { data: KnowledgeMapAtlasData; platform: KnowledgeMapPlatform; knownIds: ReadonlySet<number>; viewMode: KnowledgeViewMode; initialSongs: readonly DiscoverySongSource[] }
 interface Target { rect: AtlasRect; x: number; y: number; touch: boolean }
 const MAX_ZOOM = 4096;
-export default function KnowledgeAtlas({ data, platform, knownIds, viewMode }: Props) {
+export default function KnowledgeAtlas({ data, platform, knownIds, viewMode, initialSongs }: Props) {
   const t = useTranslateSourceText();
   const language = useLanguageStore(state => state.language);
   const navigate = useNavigate();
@@ -34,6 +36,7 @@ export default function KnowledgeAtlas({ data, platform, knownIds, viewMode }: P
   const pointer = useRef({ type: 'mouse', x: 0, y: 0, left: 0, top: 0 });
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const scrollFrame = useRef<number | undefined>(undefined);
+  const scrollingUntil = useRef(0);
   const pendingScroll = useRef<{ left: number; top: number } | null>(null);
   useLayoutEffect(() => {
     const element = frameRef.current;
@@ -48,16 +51,33 @@ export default function KnowledgeAtlas({ data, platform, knownIds, viewMode }: P
   const baseWidth = Math.min(4096, Math.max(2048, size.width * 3));
   const baseHeight = Math.min(3072, Math.max(1536, size.height * 3));
   const width = baseWidth * zoom, height = baseHeight * zoom, aspect = baseWidth / baseHeight;
+  const labelWidth = zoom === MAX_ZOOM ? 24 : 48, labelHeight = zoom === MAX_ZOOM ? 20 : 24;
+  const left = Math.max(0, scroll.left - 128), top = Math.max(0, scroll.top - 128);
+  const right = Math.min(width, scroll.left + size.width + 128), bottom = Math.min(height, scroll.top + size.height + 128);
   const rects = useMemo(() => index.visible({
-    x: Math.max(0, scroll.left - 64) / width, y: Math.max(0, scroll.top - 64) / height,
-    width: (size.width + 128) / width, height: (size.height + 128) / height,
-  }, width, height, aspect), [index, scroll, width, height, size, aspect]);
-  const firstLeaf = rects.find(rect => rect.index >= 0)?.index;
+    x: left / width, y: top / height, width: (right - left) / width, height: (bottom - top) / height,
+  }, width, height, aspect, labelWidth, labelHeight), [index, left, top, right, bottom, width, height, aspect, labelWidth, labelHeight]);
+  const prefetchRects = useMemo(() => index.visible({
+    x: Math.max(0, scroll.left - 320) / width, y: Math.max(0, scroll.top - 320) / height,
+    width: (size.width + 768) / width, height: (size.height + 768) / height,
+  }, width, height, aspect, labelWidth, labelHeight), [index, scroll, size, width, height, aspect, labelWidth, labelHeight]);
+  const inViewport = (rect: AtlasRect) => rect.x * width < scroll.left + size.width
+    && (rect.x + rect.width) * width > scroll.left && rect.y * height < scroll.top + size.height
+    && (rect.y + rect.height) * height > scroll.top;
+  const firstLeaf = rects.find(rect => rect.index >= 0 && inViewport(rect))?.index;
   const ids = useMemo(() => [...new Set([
-    ...rects.filter(rect => rect.index >= 0 && rect.width * width >= 24 && rect.height * height >= 20).map(rect => index.ids[rect.index]),
     ...(target ? [index.ids[target.rect.index]] : []),
-  ])], [rects, index, target, width, height]);
-  const songs = useSongsById(ids);
+    ...prefetchRects.filter(rect => rect.index >= 0 && rect.width * width >= labelWidth && rect.height * height >= labelHeight)
+      .sort((a, b) => {
+        const visible = (rect: AtlasRect) => rect.x * width < scroll.left + size.width
+          && (rect.x + rect.width) * width > scroll.left && rect.y * height < scroll.top + size.height
+          && (rect.y + rect.height) * height > scroll.top;
+        const distance = (rect: AtlasRect) => Math.hypot((rect.x + rect.width / 2) * width - scroll.left - size.width / 2,
+          (rect.y + rect.height / 2) * height - scroll.top - size.height / 2);
+        return Number(visible(b)) - Number(visible(a)) || distance(a) - distance(b);
+      }).map(rect => index.ids[rect.index]),
+  ])], [prefetchRects, index, target, width, height, scroll, size, labelWidth, labelHeight]);
+  const songs = useAtlasSongs(ids, initialSongs, scrollingUntil, target ? index.ids[target.rect.index] : undefined);
   const clearHover = () => { clearTimeout(hoverTimer.current); setTarget(previous => previous?.touch ? previous : null); };
   const hit = (clientX: number, clientY: number) => {
     const viewport = viewportRef.current;
@@ -103,12 +123,27 @@ export default function KnowledgeAtlas({ data, platform, knownIds, viewMode }: P
       <div ref={viewportRef} data-testid="knowledge-map-viewport" tabIndex={0} role="group" aria-label={t('知ってる度')}
         className="absolute inset-0 overflow-auto overscroll-contain"
         onScroll={event => {
+          scrollingUntil.current = performance.now() + 80;
           clearHover();
           const element = event.currentTarget;
           if (scrollFrame.current !== undefined) cancelAnimationFrame(scrollFrame.current);
-          scrollFrame.current = requestAnimationFrame(() => setScroll({ left: element.scrollLeft, top: element.scrollTop }));
+          scrollFrame.current = requestAnimationFrame(() => setScroll(previous => {
+            const left = Math.round(element.scrollLeft / 128) * 128, top = Math.round(element.scrollTop / 128) * 128;
+            return previous.left === left && previous.top === top ? previous : { left, top };
+          }));
         }}
         onPointerMove={onPointerMove} onPointerLeave={clearHover}
+        onClickCapture={event => {
+          if (pointer.current.type !== 'mouse' && event.detail !== 0 && (event.target as HTMLElement).closest('a')) event.preventDefault();
+        }}
+        onFocus={event => {
+          const element = (event.target as HTMLElement).closest<HTMLElement>('[data-atlas-index]');
+          if (!element || !isFocusVisible(element)) return;
+          const rect = index.locate(Number(element.dataset.atlasIndex), aspect);
+          if (!rect) return;
+          const bounds = element.getBoundingClientRect();
+          setTarget({ rect, x: bounds.left, y: bounds.bottom, touch: false });
+        }} onBlur={clearHover}
         onPointerDown={event => { const viewport = event.currentTarget; pointer.current = { type: event.pointerType, x: event.clientX, y: event.clientY, left: viewport.scrollLeft, top: viewport.scrollTop }; }}
         onPointerUp={event => {
           const previous = pointer.current;
@@ -133,18 +168,24 @@ export default function KnowledgeAtlas({ data, platform, knownIds, viewMode }: P
         <div data-testid="knowledge-map-surface" className="relative" style={{ width, height }}>
           {rects.map((rect, order) => {
             const w = rect.width * width, h = rect.height * height;
-            const style = { left: rect.x * width, top: rect.y * height, width: Math.max(0, w - (w > 3 ? 1 : 0)), height: Math.max(0, h - (h > 3 ? 1 : 0)),
-              backgroundColor: rect.knownRatio === 1 ? KNOWN_SERVICE_COLOR[platform] : rect.knownRatio === 0 ? KNOWLEDGE_MAP_COLORS.remainder : `color-mix(in srgb, ${KNOWN_SERVICE_COLOR[platform]} ${rect.knownRatio * 100}%, ${KNOWLEDGE_MAP_COLORS.remainder})` };
-            if (rect.index < 0) return <span key={`paint-${order}`} aria-hidden="true" className="absolute" style={style} />;
+            // The world can be millions of pixels wide; real DOM boxes never
+            // need to be. Clip them to the overscan window before browser layout.
+            const x = Math.max(left, rect.x * width), y = Math.max(top, rect.y * height);
+            const clippedWidth = Math.min(right, (rect.x + rect.width) * width) - x;
+            const clippedHeight = Math.min(bottom, (rect.y + rect.height) * height) - y;
+            if (clippedWidth <= 0 || clippedHeight <= 0) return null;
+            const style = { left: x, top: y, width: Math.max(0, clippedWidth - (w > 3 ? 1 : 0)), height: Math.max(0, clippedHeight - (h > 3 ? 1 : 0)) };
+            if (rect.index < 0) return <span key={`paint-${order}`} aria-hidden="true" className="absolute" style={{ ...style,
+              backgroundColor: rect.knownRatio === 0 ? KNOWLEDGE_MAP_COLORS.remainder : rect.knownRatio === 1 ? KNOWN_SERVICE_COLOR[platform]
+                : `color-mix(in srgb, ${KNOWN_SERVICE_COLOR[platform]} ${rect.knownRatio * 100}%, ${KNOWLEDGE_MAP_COLORS.remainder})` }} />;
             const id = index.ids[rect.index], song = songs.get(id), name = song?.name;
-            return <Link key={id} to={watchPath(id, { autoplay: false })} data-tile-id={`song-${id}`} data-views={index.views[rect.index]}
-              aria-label={name ?? String(id)} tabIndex={rect.index === firstLeaf ? 0 : -1}
-              className={`absolute flex items-end overflow-hidden rounded-badge text-xs font-bold leading-4 outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-yt-focus ${rect.knownRatio === 1 ? 'text-white' : 'text-yt-text'}`}
-              style={{ ...style, padding: w >= 24 && h >= 20 ? '4px' : 0 }}
-              onClick={event => { if (pointer.current.type !== 'mouse' && event.detail !== 0) event.preventDefault(); }}
-              onFocus={event => { if (!isFocusVisible(event.currentTarget)) return; const bounds = event.currentTarget.getBoundingClientRect(); setTarget({ rect, x: bounds.left, y: bounds.bottom, touch: false }); }} onBlur={clearHover}>
-              {w >= 24 && h >= 20 && name && <span className="sticky bottom-0 left-0 overflow-hidden break-words [overflow-wrap:anywhere]" style={{ maxWidth: Math.max(20, size.width - 16), display: '-webkit-box', WebkitBoxOrient: 'vertical', WebkitLineClamp: Math.max(1, Math.floor((h - 8) / 16)) }}>{name}</span>}
-            </Link>;
+            const labelLeft = w > size.width ? Math.max(4, Math.min(style.width - 20, scroll.left + 68 - x)) : 4;
+            const labelBottom = h > size.height ? Math.max(4, Math.min(style.height - 20, y + style.height - scroll.top - size.height + 68)) : 4;
+            return <AtlasTile key={id} id={id} index={rect.index} views={index.views[rect.index]} name={name} platform={platform}
+              knownRatio={rect.knownRatio} x={style.left} y={style.top} width={style.width} height={style.height}
+              labelWidth={Math.max(20, Math.min(size.width - 16, style.width - labelLeft - 4))}
+              labelLeft={labelLeft} labelBottom={labelBottom} first={rect.index === firstLeaf}
+              lines={w >= labelWidth && h >= labelHeight ? Math.min(3, Math.max(1, Math.floor((Math.min(h, size.height) - 8) / 16))) : 0} />;
           })}
         </div>
       </div>
