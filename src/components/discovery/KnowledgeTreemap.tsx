@@ -78,7 +78,11 @@ export default function KnowledgeTreemap({ platform, items, viewMode, songsById,
   const t = useTranslateSourceText();
   const language = useLanguageStore(state => state.language);
   const navigate = useNavigate();
+  const frameRef = useRef<HTMLDivElement>(null);
+  const viewportRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<HTMLDivElement>(null);
+  const [zoom, setZoom] = useState(1);
+  const pendingScroll = useRef<{ left: number; top: number } | null>(null);
   const cardRef = useRef<HTMLDivElement>(null);
   const hoverTimerRef = useRef<number | undefined>(undefined);
   const pointerTypeRef = useRef('mouse');
@@ -91,7 +95,7 @@ export default function KnowledgeTreemap({ platform, items, viewMode, songsById,
   const listSeparator = language === 'ja' ? '、' : ', ';
 
   useLayoutEffect(() => {
-    const element = mapRef.current;
+    const element = frameRef.current;
     if (!element) return undefined;
     const measure = () => {
       const { width, height } = element.getBoundingClientRect();
@@ -106,6 +110,29 @@ export default function KnowledgeTreemap({ platform, items, viewMode, songsById,
 
   useEffect(() => () => window.clearTimeout(hoverTimerRef.current), []);
 
+  // Scale around the map origin, retaining the currently visible map coordinates.
+  // The viewport is measured separately so zoom never re-packs the treemap.
+  const changeZoom = (next: number) => {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+    const value = Math.max(1, Math.min(8, next));
+    pendingScroll.current = {
+      left: viewport.scrollLeft * value / zoom,
+      top: viewport.scrollTop * value / zoom,
+    };
+    hideHover();
+    setZoom(value);
+  };
+
+  useLayoutEffect(() => {
+    const viewport = viewportRef.current;
+    const target = pendingScroll.current;
+    if (viewport && target) {
+      viewport.scrollTo(target.left, target.top);
+      pendingScroll.current = null;
+    }
+  }, [zoom]);
+
   const aspectRatio = size.width > 0 && size.height > 0 ? size.width / size.height : DEFAULT_ASPECT_RATIO;
   const { tiles, remainders } = useMemo(() => splitKnowledgeMapRemainders(items), [items]);
   const rects = useMemo(() => layoutKnowledgeMap(tiles, aspectRatio), [aspectRatio, tiles]);
@@ -119,8 +146,8 @@ export default function KnowledgeTreemap({ platform, items, viewMode, songsById,
 
   // Tiles live in a layer 1px larger than the map on every side (so the outer tiles meet the edge)
   // and each tile is inset by 1px: in map pixels a tile starts at x% of the layer.
-  const layerWidth = size.width + GAP_PX;
-  const layerHeight = size.height + GAP_PX;
+  const layerWidth = size.width * zoom + GAP_PX;
+  const layerHeight = size.height * zoom + GAP_PX;
   const boxOf = (rect: KnowledgeMapRect): TileBox => ({
     left: (rect.x / 100) * layerWidth,
     top: (rect.y / 100) * layerHeight,
@@ -277,98 +304,115 @@ export default function KnowledgeTreemap({ platform, items, viewMode, songsById,
         aria-label={t('{service}の再生数マップ', { service: serviceLabel(platform === 'youtube' ? 'Youtube' : 'NicoNicoDouga', language) })}
         data-testid={`${platform}-knowledge-treemap`}
       >
-        <div
-          ref={mapRef}
-          className="relative h-[clamp(360px,60vh,560px)] overflow-hidden rounded-card bg-yt-bg max-sm:-mx-3 max-sm:h-80 max-sm:rounded-none"
-          onPointerDownCapture={event => { pointerTypeRef.current = event.pointerType; }}
-          onPointerLeave={hideHover}
-          onClick={onMapClick}
-          onKeyDown={onMapKeyDown}
-        >
-          {rects.length === 0 ? (
-            <div className="flex h-full items-center justify-center bg-yt-raised px-4 text-center text-sm text-yt-text-secondary">
-              {emptyText}
-            </div>
-          ) : (
-            <div className="absolute -inset-px">
-              {rects.map(rect => {
-                const box = boxOf(rect);
-                const style: CSSProperties = {
-                  left: `calc(${rect.x}% + ${GAP_PX / 2}px)`,
-                  top: `calc(${rect.y}% + ${GAP_PX / 2}px)`,
-                  width: `max(0px, calc(${rect.width}% - ${GAP_PX}px))`,
-                  height: `max(0px, calc(${rect.height}% - ${GAP_PX}px))`,
-                };
+        <div className="mb-2 flex items-center justify-end gap-1">
+          <Button size="sm" variant="ghost" aria-label={t('縮小')} title={t('縮小')} disabled={zoom <= 1} onClick={() => changeZoom(zoom - 0.5)}>−</Button>
+          <Button size="sm" variant="ghost" aria-label={t('リセット')} title={t('リセット')} onClick={() => {
+            hideHover();
+            pendingScroll.current = { left: 0, top: 0 };
+            viewportRef.current?.scrollTo(0, 0);
+            setZoom(1);
+          }}><span className="inline-block w-12 tabular-nums">{Math.round(zoom * 100)}%</span></Button>
+          <Button size="sm" variant="ghost" aria-label={t('拡大')} title={t('拡大')} disabled={zoom >= 8} onClick={() => changeZoom(zoom + 0.5)}>＋</Button>
+        </div>
+        <div ref={frameRef} className="relative h-[clamp(360px,60vh,560px)] overflow-hidden rounded-card bg-yt-bg max-sm:-mx-3 max-sm:h-80 max-sm:rounded-none">
+          <div ref={viewportRef} data-testid="knowledge-map-viewport" className="absolute inset-0 overflow-auto overscroll-contain" onScroll={hideHover}>
+            <div
+              ref={mapRef}
+              data-testid="knowledge-map-surface"
+              className="relative overflow-hidden"
+              style={{ width: size.width > 0 ? size.width * zoom : '100%', height: size.height > 0 ? size.height * zoom : '100%' }}
+              onPointerDownCapture={event => { pointerTypeRef.current = event.pointerType; }}
+              onPointerLeave={hideHover}
+              onClick={onMapClick}
+              onKeyDown={onMapKeyDown}
+            >
+              {rects.length === 0 ? (
+                <div className="flex h-full items-center justify-center bg-yt-raised px-4 text-center text-sm text-yt-text-secondary">
+                  {emptyText}
+                </div>
+              ) : (
+                <div className="absolute -inset-px">
+                  {rects.map(rect => {
+                    const box = boxOf(rect);
+                    const style: CSSProperties = {
+                      left: `calc(${rect.x}% + ${GAP_PX / 2}px)`,
+                      top: `calc(${rect.y}% + ${GAP_PX / 2}px)`,
+                      width: `max(0px, calc(${rect.width}% - ${GAP_PX}px))`,
+                      height: `max(0px, calc(${rect.height}% - ${GAP_PX}px))`,
+                    };
 
-                if (rect.songId === undefined) {
-                  // Only remainders are left (a filter without song tiles): they fill the map.
-                  const showLabel = box.width >= REMAINDER_LABEL_MIN_WIDTH && box.height >= REMAINDER_LABEL_MIN_HEIGHT;
-                  return (
-                    <div
-                      key={rect.id}
-                      role="img"
-                      aria-label={remainderParts(rect).join(listSeparator)}
-                      data-tile-id={rect.id}
-                      className="absolute flex items-center justify-center overflow-hidden rounded-badge px-3 text-center"
-                      style={{ ...style, ...remainderSurface(rect) }}
-                      onPointerEnter={showLabel ? hideHover : event => onTilePointerEnter(event, rect)}
-                    >
-                      {showLabel && (
-                        <span className={cx('line-clamp-2 text-sm leading-5', rect.known ? 'text-white' : 'text-yt-text-secondary')}>
-                          {remainderParts(rect).join(' · ')}
-                        </span>
-                      )}
-                    </div>
-                  );
-                }
-
-                const title = tileTitle(rect);
-                const views = viewsText(rect.views);
-                const showLabel = box.width >= LABEL_MIN_WIDTH && box.height >= LABEL_MIN_HEIGHT;
-                const largeLabel = box.width >= LARGE_LABEL_MIN_WIDTH && box.height >= LARGE_LABEL_MIN_HEIGHT;
-                // As many wrapped lines as fit (padding 8 / 4px, line height 16 / 13px).
-                const labelLines = Math.max(1, Math.floor((box.height - (largeLabel ? 16 : 8)) / (largeLabel ? 16 : 13)));
-                const selected = rect.id === touchSelectedId;
-                return (
-                  <Link
-                    key={rect.id}
-                    to={watchPath(rect.songId, { autoplay: false })}
-                    aria-label={[title, views, statusText(rect)].join(listSeparator)}
-                    data-tile-id={rect.id}
-                    tabIndex={rect.id === activeId ? 0 : -1}
-                    className={cx(
-                      'absolute flex overflow-hidden rounded-badge no-underline outline-none transition-[filter,background-color] duration-150',
-                      'focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-yt-focus',
-                      rect.known ? 'text-white hover:brightness-110' : 'text-yt-text bg-yt-tonal-solid hover:bg-yt-tonal-solid-hover',
-                      selected && 'outline-2 -outline-offset-2 outline-yt-focus',
-                    )}
-                    style={rect.known ? { ...style, backgroundColor: serviceColor } : style}
-                    onClick={onTileClick}
-                    onPointerEnter={event => onTilePointerEnter(event, rect)}
-                    onFocus={event => onTileFocus(event, rect)}
-                    onBlur={hideHover}
-                  >
-                    {showLabel && (
-                      <span
-                        aria-hidden="true"
-                        className={cx(
-                          'flex min-w-0 flex-1 flex-col justify-end text-left font-bold',
-                          largeLabel ? 'p-2 text-xs leading-4' : 'px-1 py-1 text-[11px] leading-[13px]',
-                        )}
-                      >
-                        <span
-                          className="overflow-hidden break-words [overflow-wrap:anywhere]"
-                          style={{ display: '-webkit-box', WebkitBoxOrient: 'vertical', WebkitLineClamp: labelLines }}
+                    if (rect.songId === undefined) {
+                      // Only remainders are left (a filter without song tiles): they fill the map.
+                      const showLabel = box.width >= REMAINDER_LABEL_MIN_WIDTH && box.height >= REMAINDER_LABEL_MIN_HEIGHT;
+                      return (
+                        <div
+                          key={rect.id}
+                          role="img"
+                          aria-label={remainderParts(rect).join(listSeparator)}
+                          data-tile-id={rect.id}
+                          className="absolute flex items-center justify-center overflow-hidden rounded-badge px-3 text-center"
+                          style={{ ...style, ...remainderSurface(rect) }}
+                          onPointerEnter={showLabel ? hideHover : event => onTilePointerEnter(event, rect)}
                         >
-                          {title}
-                        </span>
-                      </span>
-                    )}
-                  </Link>
-                );
-              })}
+                          {showLabel && (
+                            <span className={cx('line-clamp-2 text-sm leading-5', rect.known ? 'text-white' : 'text-yt-text-secondary')}>
+                              {remainderParts(rect).join(' · ')}
+                            </span>
+                          )}
+                        </div>
+                      );
+                    }
+
+                    const title = tileTitle(rect);
+                    const views = viewsText(rect.views);
+                    const showLabel = box.width >= LABEL_MIN_WIDTH && box.height >= LABEL_MIN_HEIGHT;
+                    const largeLabel = box.width >= LARGE_LABEL_MIN_WIDTH && box.height >= LARGE_LABEL_MIN_HEIGHT;
+                    // As many wrapped lines as fit (padding 8 / 4px, line height 16 / 13px).
+                    const labelLines = Math.max(1, Math.floor((box.height - (largeLabel ? 16 : 8)) / (largeLabel ? 16 : 13)));
+                    const selected = rect.id === touchSelectedId;
+                    return (
+                      <Link
+                        key={rect.id}
+                        to={watchPath(rect.songId, { autoplay: false })}
+                        aria-label={[title, views, statusText(rect)].join(listSeparator)}
+                        data-tile-id={rect.id}
+                        tabIndex={rect.id === activeId ? 0 : -1}
+                        className={cx(
+                          'absolute flex overflow-hidden rounded-badge no-underline outline-none transition-[filter,background-color] duration-150',
+                          'focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-yt-focus',
+                          rect.known ? 'text-white hover:brightness-110' : 'text-yt-text bg-yt-tonal-solid hover:bg-yt-tonal-solid-hover',
+                          selected && 'outline-2 -outline-offset-2 outline-yt-focus',
+                        )}
+                        style={rect.known ? { ...style, backgroundColor: serviceColor } : style}
+                        onClick={onTileClick}
+                        onPointerEnter={event => onTilePointerEnter(event, rect)}
+                        onFocus={event => onTileFocus(event, rect)}
+                        onBlur={hideHover}
+                      >
+                        {showLabel && (
+                          <span
+                            aria-hidden="true"
+                            className={cx(
+                              'flex min-w-0 flex-1 flex-col justify-end text-left font-bold',
+                              largeLabel ? 'p-2 text-xs leading-4' : 'px-1 py-1 text-[11px] leading-[13px]',
+                            )}
+                          >
+                            <span
+                              className="overflow-hidden break-words [overflow-wrap:anywhere]"
+                              style={{ display: '-webkit-box', WebkitBoxOrient: 'vertical', WebkitLineClamp: labelLines }}
+                            >
+                              {title}
+                            </span>
+                          </span>
+                        )}
+                      </Link>
+                    );
+                  })}
+                </div>
+              )}
             </div>
-          )}
+
+          </div>
         </div>
 
         {remainders.length > 0 && (

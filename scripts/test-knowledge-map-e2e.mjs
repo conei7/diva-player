@@ -1,9 +1,13 @@
 import puppeteer from 'puppeteer';
+import { mkdir } from 'node:fs/promises';
+import { join } from 'node:path';
 import { pinAppLanguage } from './pin-app-language.mjs';
 
 const baseUrl = new URL(process.argv[2] || 'http://127.0.0.1:4173/diva-player/');
 const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox', '--lang=ja-JP'] });
 let submittedKnownSongIds = null;
+const screenshotDirectory = process.env.DIVA_KNOWLEDGE_MAP_SCREENSHOTS;
+if (screenshotDirectory) await mkdir(screenshotDirectory, { recursive: true });
 
 const fixture = {
   generatedAt: '2026-08-05T00:00:00Z',
@@ -230,6 +234,49 @@ try {
     || !remainderLayout.mapText.includes('面積＝再生数（上位2曲）')) {
     throw new Error(`Knowledge map remainder band is wrong: ${JSON.stringify(remainderLayout)}`);
   }
+  // Zoom expands one stable layout from the top-left; only the map scrolls.
+  const readMap = () => page.evaluate(() => {
+    const viewport = document.querySelector('[data-testid="knowledge-map-viewport"]');
+    const surface = document.querySelector('[data-testid="knowledge-map-surface"]');
+    const tiles = [...surface.querySelectorAll('a[data-tile-id]')].map(tile => ({
+      id: tile.dataset.tileId, left: tile.style.left, top: tile.style.top,
+      width: tile.style.width, height: tile.style.height,
+    }));
+    return { width: surface.offsetWidth, height: surface.offsetHeight,
+      clientWidth: viewport.clientWidth, clientHeight: viewport.clientHeight,
+      scrollWidth: viewport.scrollWidth, scrollHeight: viewport.scrollHeight,
+      left: viewport.scrollLeft, top: viewport.scrollTop, tiles,
+      pageWidth: document.documentElement.scrollWidth, windowWidth: innerWidth };
+  });
+  const initialMap = await readMap();
+  await clickButtonByText(page, '＋');
+  await clickButtonByText(page, '＋');
+  await page.waitForFunction(() => document.querySelector('[data-testid="knowledge-map-page"] button[aria-label="リセット"]')?.textContent === '200%');
+  const enlarged = await readMap();
+  if (screenshotDirectory) await page.screenshot({ path: join(screenshotDirectory, 'desktop-200.png') });
+  if (Math.abs(enlarged.width / initialMap.width - 2) > 0.01
+    || Math.abs(enlarged.height / initialMap.height - 2) > 0.01
+    || JSON.stringify(initialMap.tiles) !== JSON.stringify(enlarged.tiles)
+    || enlarged.pageWidth > enlarged.windowWidth + 1) {
+    throw new Error(`Zoom changed map layout or leaked overflow: ${JSON.stringify({ initialMap, enlarged })}`);
+  }
+  await page.$eval('[data-testid="knowledge-map-viewport"]', element => element.scrollTo(160, 100));
+  await page.waitForFunction(() => {
+    const element = document.querySelector('[data-testid="knowledge-map-viewport"]');
+    return element.scrollLeft === 160 && element.scrollTop === 100;
+  });
+  await clickButtonByText(page, '＋');
+  const retained = await readMap();
+  if (retained.left !== 200 || retained.top !== 125) throw new Error(`Zoom lost visible coordinates: ${JSON.stringify(retained)}`);
+  await clickButtonByText(page, '250%');
+  const reset = await readMap();
+  if (reset.left !== 0 || reset.top !== 0 || reset.width !== initialMap.width
+    || reset.height !== initialMap.height || reset.scrollWidth > reset.clientWidth + 1
+    || reset.scrollHeight > reset.clientHeight + 1) throw new Error(`Reset failed: ${JSON.stringify(reset)}`);
+  for (let step = 0; step < 14; step++) await clickButtonByText(page, '＋');
+  if (!await page.$eval('button[aria-label="拡大"]', element => element.disabled)) throw new Error('Zoom limit must be 800%.');
+  await clickButtonByText(page, '800%');
+
   // The explanation and the privacy notice live in the ⓘ popover.
   await page.click('[data-testid="knowledge-map-page"] button[aria-label="このマップについて"]');
   await page.waitForSelector('[role="dialog"][aria-label="このマップについて"]');
@@ -272,9 +319,26 @@ try {
     throw new Error('NicoNico knowledge map summary or tiles are missing.');
   }
 
-  await page.setViewport({ width: 390, height: 844 });
+  await page.setViewport({ width: 390, height: 844, hasTouch: true, isMobile: true });
   await page.reload({ waitUntil: 'domcontentloaded' });
   await page.waitForSelector('[data-testid="youtube-knowledge-treemap"]');
+  await clickButtonByText(page, '＋');
+  await clickButtonByText(page, '＋');
+  await page.$eval('[data-testid="knowledge-map-viewport"]', element => element.scrollTo(element.scrollWidth, element.scrollHeight));
+  const mobileZoom = await readMap();
+  if (screenshotDirectory) await page.screenshot({ path: join(screenshotDirectory, 'mobile-200.png') });
+  if (mobileZoom.left <= 0 || mobileZoom.top <= 0 || mobileZoom.pageWidth > mobileZoom.windowWidth + 1) {
+    throw new Error(`Mobile zoom must scroll inside map: ${JSON.stringify(mobileZoom)}`);
+  }
+  // Tap coordinates must include both scroll offsets after zoom.
+  await page.$eval('[data-testid="knowledge-map-viewport"]', element => element.scrollIntoView({ block: 'center' }));
+  const tapPoint = await page.$eval('[data-testid="knowledge-map-viewport"]', element => {
+    const bounds = element.getBoundingClientRect();
+    return { x: bounds.left + element.clientWidth / 2, y: bounds.top + element.clientHeight / 2 };
+  });
+  await page.touchscreen.tap(tapPoint.x, tapPoint.y);
+  await page.waitForSelector('[data-testid="youtube-knowledge-treemap"] + div[aria-live="polite"]');
+  await clickButtonByText(page, '200%');
   await clickButtonByText(page, 'まだ知らない曲');
   const width = await page.evaluate(() => ({ viewport: innerWidth, document: document.documentElement.scrollWidth, body: document.body.scrollWidth }));
   if (width.document > width.viewport + 1 || width.body > width.viewport + 1) {
@@ -307,7 +371,7 @@ try {
   if (mobileLayout.platformWidth < mobileLayout.viewport - 40) {
     throw new Error(`Knowledge map platform switch is too narrow on mobile: ${JSON.stringify(mobileLayout)}`);
   }
-  console.log('PASS YouTube/NicoNico knowledge map, known/unknown filtering, tooltip, local history/rating join, and 390px layout');
+  console.log('PASS YouTube/NicoNico knowledge map, known/unknown filtering, tooltip, local history/rating join, zoom 100–800%, stable layout, two-axis scroll, reset, touch selection, and 390px layout');
 } finally {
   await browser.close();
 }
