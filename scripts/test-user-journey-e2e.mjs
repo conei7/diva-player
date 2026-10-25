@@ -15,7 +15,7 @@ const songs = [1, 2].map(number => ({
 
 async function fixtures(page) {
   page.on('pageerror', error => pageErrors.push(error.message));
-  const remote = { songs: [songs[0]], fail: false };
+  const remote = { songs: [songs[0]], fail: false, failSaveChunk: false, saveChunkFailures: 0 };
   await pinAppLanguage(page);
   await page.evaluateOnNewDocument(() => {
     localStorage.setItem('diva-global-filters', JSON.stringify({ version: 2, state: { enabled: false } }));
@@ -23,6 +23,11 @@ async function fixtures(page) {
   await page.setRequestInterception(true);
   page.on('request', request => {
     const url = new URL(request.url());
+    if (remote.failSaveChunk && /\/SaveToPlaylistModal-[\w-]+\.js$/.test(url.pathname)) {
+      remote.saveChunkFailures++;
+      void request.respond({ status: 404, contentType: 'text/html', body: 'Not found' });
+      return;
+    }
     if (url.href === 'https://www.youtube.com/iframe_api') {
       void request.respond({ contentType: 'application/javascript', body: `
         window.YT = { PlayerState: { UNSTARTED:-1, ENDED:0, PLAYING:1, PAUSED:2, CUED:5 },
@@ -182,4 +187,31 @@ try {
   `The exported backup did not contain all data retained by the complete journey: ${JSON.stringify({ ratings: backup.sections.ratings, playlists: backup.sections.playlists.playlists.map(item => item.name), history: backup.sections.history.events })}`);
   console.log('PASS offline save, reload and complete backup retain ratings, playlists, sync contents and listening history');
   assert(pageErrors.length === 0, `Uncaught errors during the user journey: ${pageErrors.join('; ')}`);
+  // An already-open tab can request an old save-dialog chunk after a deployment.
+  // A rejected React.lazy import stays rejected: opening the dialog again cannot fix it.
+  const recovery = await browser.newPage();
+  await recovery.setViewport({ width: 1440, height: 900 });
+  await recovery.setCacheEnabled(false);
+  const unavailable = await fixtures(recovery);
+  unavailable.failSaveChunk = true;
+  await recovery.goto(new URL('watch?v=990101&autoplay=0', base).href, { waitUntil: 'domcontentloaded' });
+  await recovery.waitForSelector('[data-testid="watch-action-bar"]');
+  const beforeFailure = await recovery.evaluate(() => localStorage.getItem('diva_playlists'));
+  await recovery.click('[data-testid="watch-action-bar"] button[aria-label="プレイリストに保存"]');
+  await recovery.waitForFunction(() => document.querySelector('[data-testid="toast-host"]')?.textContent.includes('表示できませんでした'));
+  assert(unavailable.saveChunkFailures > 0, 'The stale save-dialog chunk failure was not exercised');
+  assert(!await recovery.$('[data-testid="save-to-playlist-dialog"]'), 'A failed save dialog remained visible');
+  assert(await recovery.evaluate(() => localStorage.getItem('diva_playlists')) === beforeFailure, 'Opening a failed save dialog changed saved playlists');
+  unavailable.failSaveChunk = false;
+  await Promise.all([
+    recovery.waitForNavigation({ waitUntil: 'domcontentloaded' }),
+    clickText(recovery, '[data-testid="toast-host"]', '再読み込み'),
+  ]);
+  await recovery.waitForSelector('[data-testid="watch-action-bar"]');
+  await saveNewPlaylist(recovery, 'Journey recovered save');
+  const recovered = await recovery.evaluate(() => JSON.parse(localStorage.getItem('diva_playlists')));
+  assert(['Journey saved A', 'Journey saved B', 'Journey external', 'Journey offline', 'Journey recovered save']
+    .every(name => recovered.some(item => item.name === name)), 'Recovering the save dialog lost existing playlists');
+  console.log('PASS unavailable save-dialog code offers reload and saves successfully afterward without losing existing playlists');
+
 } finally { await browser.close(); }

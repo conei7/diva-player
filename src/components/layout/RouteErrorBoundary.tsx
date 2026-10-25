@@ -11,6 +11,8 @@ function isChunkLoadError(error: Error): boolean {
     || /dynamically imported module|Importing a module script failed/i.test(error.message);
 }
 
+const reloadApp = () => window.location.reload();
+
 /**
  * What the page area shows when it has nothing to show (an error, an unknown path): one 20px line
  * centered in <main> and its buttons, no description (DESIGN_SPEC §6.1.7). `alert` announces it.
@@ -57,7 +59,7 @@ export default class RouteErrorBoundary extends Component<RouteErrorBoundaryProp
 
   private retry = (): void => {
     if (this.state.error && isChunkLoadError(this.state.error)) {
-      window.location.reload();
+      reloadApp();
       return;
     }
     this.setState({ error: null });
@@ -91,7 +93,8 @@ interface OverlayErrorBoundaryState {
 /**
  * Wraps one lazy overlay of the layout (queue, song details, save to playlist, selection bar,
  * settings). A failure closes that overlay and shows the toast 「表示できませんでした」 instead of
- * taking the page down.
+ * taking the page down. Unavailable chunks offer an explicit reload: React.lazy caches
+ * their rejection, so reopening alone cannot recover. Playback continues until the user reloads.
  */
 export class OverlayErrorBoundary extends Component<OverlayErrorBoundaryProps, OverlayErrorBoundaryState> {
   state: OverlayErrorBoundaryState = { failed: false, resetKey: this.props.resetKey };
@@ -106,7 +109,13 @@ export class OverlayErrorBoundary extends Component<OverlayErrorBoundaryProps, O
 
   componentDidCatch(error: Error, errorInfo: ErrorInfo): void {
     console.error('DIVA Player overlay error', error, errorInfo);
-    showToast(translateSourceText(useLanguageStore.getState().language, '表示できませんでした'));
+    const language = useLanguageStore.getState().language;
+    showToast(translateSourceText(language, '表示できませんでした'), isChunkLoadError(error) ? {
+      action: {
+        label: translateSourceText(language, '再読み込み'),
+        onAction: reloadApp,
+      },
+    } : {});
     this.props.onError();
   }
 
