@@ -315,7 +315,7 @@ export default function KnowledgeTreemap({ platform, items, viewMode, songsById,
           <Button size="sm" variant="ghost" aria-label={t('拡大')} title={t('拡大')} disabled={zoom >= 8} onClick={() => changeZoom(zoom + 0.5)}>＋</Button>
         </div>
         <div ref={frameRef} className="relative h-[clamp(360px,60vh,560px)] overflow-hidden rounded-card bg-yt-bg max-sm:-mx-3 max-sm:h-80 max-sm:rounded-none">
-          <div ref={viewportRef} data-testid="knowledge-map-viewport" className="absolute inset-0 overflow-auto overscroll-contain" onScroll={hideHover}>
+          <div ref={viewportRef} data-testid="knowledge-map-viewport" className={cx('absolute inset-0 overflow-auto', zoom > 1 && 'overscroll-contain')} onScroll={hideHover}>
             <div
               ref={mapRef}
               data-testid="knowledge-map-surface"

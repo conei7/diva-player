@@ -248,6 +248,16 @@ try {
       left: viewport.scrollLeft, top: viewport.scrollTop, tiles,
       pageWidth: document.documentElement.scrollWidth, windowWidth: innerWidth };
   });
+  // At 100%, a wheel over the map must still scroll the page.
+  const wheelPoint = await page.$eval('[data-testid="knowledge-map-viewport"]', element => {
+    const bounds = element.getBoundingClientRect();
+    return { x: bounds.left + 100, y: bounds.top + 100 };
+  });
+  await page.mouse.move(wheelPoint.x, wheelPoint.y);
+  await page.mouse.wheel({ deltaY: 180 });
+  await page.waitForFunction(() => scrollY > 0);
+  await page.evaluate(() => scrollTo(0, 0));
+  await page.waitForFunction(() => scrollY === 0);
   const initialMap = await readMap();
   await clickButtonByText(page, '＋');
   await clickButtonByText(page, '＋');
@@ -260,7 +270,8 @@ try {
     || enlarged.pageWidth > enlarged.windowWidth + 1) {
     throw new Error(`Zoom changed map layout or leaked overflow: ${JSON.stringify({ initialMap, enlarged })}`);
   }
-  await page.$eval('[data-testid="knowledge-map-viewport"]', element => element.scrollTo(160, 100));
+  await page.mouse.move(wheelPoint.x, wheelPoint.y);
+  await page.mouse.wheel({ deltaX: 160, deltaY: 100 });
   await page.waitForFunction(() => {
     const element = document.querySelector('[data-testid="knowledge-map-viewport"]');
     return element.scrollLeft === 160 && element.scrollTop === 100;
