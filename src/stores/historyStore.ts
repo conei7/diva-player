@@ -99,10 +99,11 @@ function buildPlayEventDetails(progressSeconds: number, durationSeconds: number)
   };
 }
 
-async function updatePlayEventDetails(
+export async function updatePlayEventDetails(
   eventId: number,
   progressSeconds: number,
   durationSeconds: number,
+  expected?: { s: number; t: number },
 ): Promise<void> {
   const db = await openHistoryDb();
   await new Promise<void>((resolve, reject) => {
@@ -113,6 +114,7 @@ async function updatePlayEventDetails(
     request.onsuccess = () => {
       const event = request.result as ListeningPlayEvent | undefined;
       if (!event) return;
+      if (expected && (event.s !== expected.s || event.t !== expected.t || event.f !== 0)) return;
       store.put({
         ...event,
         ...buildPlayEventDetails(progressSeconds, durationSeconds),

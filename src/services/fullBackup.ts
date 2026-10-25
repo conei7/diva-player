@@ -299,6 +299,8 @@ export function readPersistedPlaylistsForBackup(): Pick<FullBackupPayload['secti
 }
 
 export async function createFullBackup(): Promise<FullBackupPayload> {
+  const { recoverHistoryFinalizations } = await import('./historyFinalization');
+  await recoverHistoryFinalizations();
   const db = await openHistoryDb();
   const historyTx = db.transaction(HISTORY_STORES.plays, 'readonly');
   const events = await new Promise<ListeningPlayEvent[]>((resolve, reject) => {

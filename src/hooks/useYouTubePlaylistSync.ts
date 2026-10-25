@@ -5,10 +5,7 @@ const CHECK_INTERVAL_MS = 15 * 60 * 1000;
 
 // The sync services are only needed once the app is up; loading them on the first run keeps them
 // out of the initial JavaScript (DESIGN_SPEC §1-12).
-const loadSyncServices = () => Promise.all([
-  import('../services/youtubePlaylistSync'),
-  import('../services/nicoPlaylistSync'),
-]);
+const loadSyncServices = () => import('../services/librarySync');
 
 export function useYouTubePlaylistSync(): void {
   const loadPlaylists = usePlaylistStore(state => state.loadPlaylists);
@@ -16,8 +13,10 @@ export function useYouTubePlaylistSync(): void {
   useEffect(() => {
     loadPlaylists();
     let running = false;
+    let disposed = false;
+    let stopSavedDataSync: (() => void) | undefined;
     const run = async () => {
-      if (running || !navigator.onLine) return;
+      if (running || disposed) return;
       running = true;
       try {
         let services: Awaited<ReturnType<typeof loadSyncServices>>;
@@ -27,9 +26,12 @@ export function useYouTubePlaylistSync(): void {
           // The chunk could not be fetched (offline, new deploy): the next check retries.
           return;
         }
-        const [{ syncDueYouTubePlaylists }, { syncDueNicoPlaylists }] = services;
+        if (disposed) return;
+        stopSavedDataSync ??= services.startSavedDataSync();
+        if (!navigator.onLine) return;
+        const { syncDueYouTubePlaylists, syncDueNicoPlaylists } = services;
         await syncDueYouTubePlaylists();
-        await syncDueNicoPlaylists();
+        if (!disposed) await syncDueNicoPlaylists();
       } finally {
         running = false;
       }
@@ -43,6 +45,8 @@ export function useYouTubePlaylistSync(): void {
     document.addEventListener('visibilitychange', onVisible);
     window.addEventListener('online', onOnline);
     return () => {
+      disposed = true;
+      stopSavedDataSync?.();
       window.clearInterval(timer);
       document.removeEventListener('visibilitychange', onVisible);
       window.removeEventListener('online', onOnline);

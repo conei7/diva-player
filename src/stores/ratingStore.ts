@@ -36,6 +36,12 @@ export const useRatingStore = create<RatingState>()(
 
       getRating: (songId) => get().ratings[String(songId)] ?? 0,
     }),
-    { name: 'diva-ratings' },
+    {
+      name: 'diva-ratings',
+      merge: (persisted, current) => ({
+        ...current,
+        ratings: (persisted as Partial<RatingState> | undefined)?.ratings ?? {},
+      }),
+    },
   ),
 );

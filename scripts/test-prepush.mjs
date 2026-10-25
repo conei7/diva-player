@@ -165,6 +165,7 @@ async function main() {
       'test:e2e:nico-playlist-sync',
       'test:e2e:playlists',
       'test:e2e:playlist-workflows',
+      'test:e2e:user-journey',
       'test:e2e:knowledge-map',
       'test:e2e:sound-map-feature-axes',
       'test:e2e:advanced-search',

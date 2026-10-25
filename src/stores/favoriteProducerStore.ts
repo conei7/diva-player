@@ -54,6 +54,10 @@ export const useFavoriteProducerStore = create<FavoriteProducerState>()(
     {
       name: 'diva-favorite-producers',
       version: 1,
+      merge: (persisted, current) => ({
+        ...current,
+        producers: normalizeFavoriteProducers((persisted as Partial<FavoriteProducerState> | undefined)?.producers),
+      }),
       migrate: value => {
         if (!value || typeof value !== 'object') return { producers: [] };
         const raw = value as { producers?: unknown };

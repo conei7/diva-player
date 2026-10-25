@@ -13,8 +13,26 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  cloudflare_contract:
+  changes:
     if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      web: ${{ steps.scope.outputs.web }}
+      runtime: ${{ steps.scope.outputs.runtime }}
+      mode: ${{ steps.scope.outputs.mode }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Test change-scope decisions
+        run: python3 -B scripts/test-ci-change-scope.py
+      - name: Classify complete push diff
+        id: scope
+        run: python3 -B scripts/classify-ci-changes.py
+  cloudflare_contract:
+    if: github.ref == 'refs/heads/main' && needs.changes.outputs.web == 'true'
+    needs: changes
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
@@ -45,7 +63,8 @@ jobs:
             --project diva-player \
             --github-output "$GITHUB_OUTPUT"
   runtime_validation:
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && needs.changes.outputs.runtime == 'true'
+    needs: changes
     runs-on: ubuntu-24.04
     # These artifacts run on SBC; Pages publishes only the separately verified
     # static assets and Worker. Keep runtime failures visible and fail closed
@@ -806,8 +825,8 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
   build:
-    if: github.ref == 'refs/heads/main'
-    needs: cloudflare_contract
+    if: github.ref == 'refs/heads/main' && needs.changes.outputs.web == 'true'
+    needs: [changes, cloudflare_contract]
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     outputs:
@@ -870,6 +889,8 @@ jobs:
         run: npm run test:e2e:playlists -- http://127.0.0.1:4173/diva-player/
       - name: Playlist creation and import workflows E2E
         run: npm run test:e2e:playlist-workflows -- http://127.0.0.1:4173/diva-player/
+      - name: Complete user journey E2E
+        run: npm run test:e2e:user-journey -- http://127.0.0.1:4173/diva-player/
       - name: Settings and backup E2E
         run: npm run test:e2e:settings -- --base-url http://127.0.0.1:4173/diva-player/
       - name: Mobile search, history and settings layout E2E

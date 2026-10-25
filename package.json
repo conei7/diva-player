@@ -68,6 +68,7 @@
     "audit:custom-producers": "node scripts/audit-custom-producer-shape.mjs",
     "audit:i18n": "node scripts/audit-i18n.mjs",
     "preview": "vite preview",
+    "test:e2e:user-journey": "node scripts/test-user-journey-e2e.mjs",
     "test:e2e:playlist-workflows": "node scripts/test-playlist-workflows-e2e.mjs"
   },
   "dependencies": {

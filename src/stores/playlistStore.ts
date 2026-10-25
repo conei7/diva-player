@@ -164,6 +164,16 @@ function slimSongForStorage(song: Song): Song {
 }
 
 // ─── 永続化ヘルパー ─────────────────────────────────────────────────────────
+let publishedStorageSnapshot: [string | null, string | null] | undefined;
+
+export const getPlaylistStorageSnapshot = () => publishedStorageSnapshot;
+
+function rememberPublishedStorage() {
+  try {
+    publishedStorageSnapshot = [localStorage.getItem('diva_playlists'), localStorage.getItem('diva_playlistFolders')];
+  } catch { publishedStorageSnapshot = undefined; }
+}
+
 function save(playlists: Playlist[], folders: PlaylistFolder[]): { success: boolean; rollbackSucceeded: boolean } {
   const slimmedPlaylists = playlists.map(pl => ({
     ...pl,
@@ -207,6 +217,7 @@ export const usePlaylistStore = create<PlaylistState>((set, get) => {
       });
       throw error;
     }
+    rememberPublishedStorage();
     set({ playlists, folders });
   };
 
@@ -232,7 +243,10 @@ export const usePlaylistStore = create<PlaylistState>((set, get) => {
       ...stored,
     ];
     if (!hasWL || hadLegacyDigPlaylist) commit(playlists, folders);
-    else set({ playlists, folders });
+    else {
+      rememberPublishedStorage();
+      set({ playlists, folders });
+    }
   },
 
   // ─── プレイリスト CRUD ──────────────────────────────────────────────────────
