@@ -130,7 +130,7 @@ function RelatedItem({
       selectionMode={isSelectionMode}
       selected={selected}
       onToggleSelect={() => toggleSong(song)}
-      className={rowSize === 'lg' ? '-mx-2' : '-mx-2 py-1!'}
+      className={rowSize === 'lg' || rowSize === 'fluid' ? '-mx-2' : '-mx-2 py-1!'}
     />
   );
 }

@@ -3,7 +3,7 @@
  * SongListRow and SkeletonListRow so a skeleton row has the
  * same height as the row that replaces it (no layout shift).
  */
-export type SongRowSize = 'xl' | 'lg' | 'md' | 'sm' | 'xs';
+export type SongRowSize = 'fluid' | 'xl' | 'lg' | 'md' | 'sm' | 'xs';
 
 export interface SongRowLayout {
   /** Thumbnail width (16:9). Capped at half of the row so narrow screens never overflow. */
@@ -18,9 +18,20 @@ export interface SongRowLayout {
   title: string;
   /** Large rows (xl / lg) use the 18px title and top-aligned trailing actions. */
   large: boolean;
+  meta?: string;
 }
 
 export const SONG_ROW_LAYOUT: Record<SongRowSize, SongRowLayout> = {
+  // Watch sidebar establishes an inline-size container; rem bounds preserve text zoom.
+  fluid: {
+    thumb: 'w-[clamp(12.5rem,46cqw,17.25rem)] max-w-[50%]',
+    gap: 'gap-[clamp(0.75rem,2.7cqw,1.25rem)]',
+    padding: 'px-2 py-[clamp(0.5rem,1.7cqw,0.75rem)]',
+    radius: 'md',
+    title: 'text-[clamp(1rem,3.4cqw,1.25rem)] leading-[1.45] font-normal',
+    meta: 'text-[clamp(0.75rem,2.2cqw,0.875rem)] leading-normal',
+    large: true,
+  },
   xl: {
     thumb: 'w-[360px] max-w-[50%]',
     gap: 'gap-4',

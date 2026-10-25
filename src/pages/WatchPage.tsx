@@ -606,11 +606,11 @@ export default function WatchPage({ onDocumentTitleStateChange }: WatchPageProps
             exposureSurface={activeTab === 'producer' ? 'watch-producer' : activeTab === 'related' ? 'watch-related' : activeTab === 'recommended' ? 'watch-recommended' : 'watch-deep'}
             empty={empty}
             cards={isMobile}
-            rowSize={isDesktop ? 'lg' : 'md'}
+            rowSize={isDesktop ? 'fluid' : 'md'}
           />
         ) : (
           <div className="-mx-2">
-            {Array.from({ length: 6 }, (_, index) => <SkeletonListRow key={index} size={isDesktop ? 'lg' : 'md'} />)}
+            {Array.from({ length: 6 }, (_, index) => <SkeletonListRow key={index} size={isDesktop ? 'fluid' : 'md'} />)}
           </div>
         )}
       </div>
@@ -621,7 +621,7 @@ export default function WatchPage({ onDocumentTitleStateChange }: WatchPageProps
 
   return (
     <div className="w-full pb-6 sm:px-4 sm:pt-4 lg:px-6 lg:pt-6">
-      <div data-testid="watch-layout" className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_clamp(400px,30vw,600px)] max-sm:gap-0">
+      <div data-testid="watch-layout" className="grid grid-cols-1 gap-[clamp(1rem,1.25vw,2rem)] lg:grid-cols-[minmax(0,1fr)_clamp(400px,30vw,600px)] max-sm:gap-0">
         {/* ─── 左: 動画・タイトル・操作・概要 ─── */}
         <div data-testid="watch-video-column" className="min-w-0 flex-1">
           {videoArea}
@@ -643,7 +643,7 @@ export default function WatchPage({ onDocumentTitleStateChange }: WatchPageProps
         </div>
 
         {/* ─── 右: 再生中リスト・チップ・関連一覧 ─── */}
-        <div data-testid="watch-recommendations-column" className="min-w-0 w-full max-sm:mt-3">
+        <div data-testid="watch-recommendations-column" className="min-w-0 w-full [container-type:inline-size] max-sm:mt-3">
           {isDesktop && <PlaylistPanel className="mb-3" />}
           {relatedSection}
         </div>

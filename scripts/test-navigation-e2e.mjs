@@ -641,7 +641,8 @@ try {
   });
   const screenshotDirectory = process.env.DIVA_WATCH_LAYOUT_SCREENSHOTS;
   if (screenshotDirectory) await mkdir(screenshotDirectory, { recursive: true });
-  for (const [width, height] of [[390, 844], [768, 1024], [1024, 768], [1280, 900], [1440, 900], [1920, 1080], [2556, 1267]]) {
+  let previousFluidDimensions;
+  for (const [width, height] of [[390, 844], [768, 1024], [1024, 768], [1280, 900], [1440, 900], [1600, 900], [1920, 1080], [2556, 1267]]) {
     await layoutPage.setViewport({ width, height });
     await layoutPage.goto(new URL('watch?v=1501', base), { waitUntil: 'domcontentloaded' });
     await layoutPage.waitForSelector('[data-testid="watch-video-info"]');
@@ -668,12 +669,20 @@ try {
       if (dimensions.sidebarWidth < 399 || dimensions.sidebarWidth > 601
         || dimensions.sidebarLeft < dimensions.videoRight
         || dimensions.thumbnailWidth < 195 || dimensions.thumbnailHeight < 109
-        || dimensions.rowHeight < 125 || dimensions.titleSize < 18
+        || dimensions.rowHeight < 125 || dimensions.titleSize < 16 || dimensions.titleSize > 20.1
         || (width >= 1280 && dimensions.videoWidth < dimensions.sidebarWidth * 1.8)) {
         throw new Error(`Watch video/list balance at ${width}: ${JSON.stringify(dimensions)}`);
       }
     } else if (dimensions.sidebarTop < dimensions.videoBottom) {
       throw new Error(`Watch columns did not stack at ${width}: ${JSON.stringify(dimensions)}`);
+    }
+    if (width >= 1440) {
+      if (previousFluidDimensions && (dimensions.thumbnailWidth <= previousFluidDimensions.thumbnailWidth
+        || dimensions.titleSize <= previousFluidDimensions.titleSize
+        || dimensions.rowHeight <= previousFluidDimensions.rowHeight)) {
+        throw new Error(`Watch elements did not grow with their column at ${width}: ${JSON.stringify(dimensions)}`);
+      }
+      previousFluidDimensions = dimensions;
     }
     if (screenshotDirectory) await layoutPage.screenshot({ path: join(screenshotDirectory, `watch-${width}.png`) });
     console.log(`PASS Watch video/list balance at ${width}: ${JSON.stringify(dimensions)}`);

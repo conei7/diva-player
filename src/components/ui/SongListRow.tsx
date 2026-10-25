@@ -18,7 +18,7 @@ export type { SongRowSize } from './listLayout';
 
 export interface SongListRowProps {
   song: Song;
-  /** Thumbnail width 360 / 246 / 168 / 120 / 100px. Default 'md'. */
+  /** Thumbnail width 360 / 246 / 168 / 120 / 100px, or container-relative 'fluid'. Default 'md'. */
   size?: SongRowSize;
   /** Default watchPath(song.id, { autoplay: false }) (used for new-tab opens and SPA navigation). */
   href?: string;
@@ -189,7 +189,7 @@ export default function SongListRow({
           </Link>
         </h3>
         {visibleMeta.length > 0 && (
-          <div className={cx('mt-1 text-xs leading-[18px] text-yt-text-secondary', CLICK_THROUGH)}>
+          <div className={cx('mt-1 text-yt-text-secondary', layout.meta ?? 'text-xs leading-[18px]', CLICK_THROUGH)}>
             {visibleMeta.map((line, index) => (
               <div key={index} className="truncate">{line}</div>
             ))}

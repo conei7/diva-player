@@ -15,10 +15,10 @@ export default function VideoInfo({ song }: { song: Song }) {
     <div className="mt-3 min-w-0 max-sm:px-3">
       <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:gap-x-6">
         <div data-testid="watch-video-info" className="contents">
-          <div className="line-clamp-2 break-words text-xl leading-7 sm:basis-full max-sm:text-lg max-sm:leading-[26px]">
+          <div className="line-clamp-2 break-words text-[clamp(1.125rem,1rem_+_0.4vw,1.5rem)] leading-[1.4] sm:basis-full">
             <h1 className="inline font-bold text-yt-text">{song.name}</h1>
             {vocalists.length > 0 && (
-              <span className="ml-2 text-base font-normal text-yt-text-secondary max-sm:text-sm">
+              <span className="ml-2 text-[0.8em] font-normal text-yt-text-secondary">
                 feat. {vocalists.join(', ')}
               </span>
             )}
