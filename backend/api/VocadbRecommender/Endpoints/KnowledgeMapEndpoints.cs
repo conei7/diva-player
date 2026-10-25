@@ -37,6 +37,11 @@ internal static class KnowledgeMapEndpoints
     public static IEndpointRouteBuilder MapKnowledgeMapEndpoints(this IEndpointRouteBuilder endpoints)
     {
         endpoints.MapPost("/api/discovery/knowledge-map", GetKnowledgeMapAsync);
+        endpoints.MapGet("/api/discovery/knowledge-map/atlas", async (string platform, DbService db, CancellationToken cancellationToken) =>
+        {
+            if (platform is not ("youtube" or "nico")) return Results.BadRequest(new { error = "platform must be youtube or nico" });
+            return Results.Ok(await db.GetKnowledgeMapAtlasAsync(platform, cancellationToken));
+        });
         return endpoints;
     }
 

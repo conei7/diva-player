@@ -1,4 +1,6 @@
 import puppeteer from 'puppeteer';
+import ts from 'typescript';
+import { readFile } from 'node:fs/promises';
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { pinAppLanguage } from './pin-app-language.mjs';
@@ -6,6 +8,9 @@ import { pinAppLanguage } from './pin-app-language.mjs';
 const baseUrl = new URL(process.argv[2] || 'http://127.0.0.1:4173/diva-player/');
 const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox', '--lang=ja-JP'] });
 let submittedKnownSongIds = null;
+let atlasEnabled = false;
+let atlasFails = false;
+const atlasPairs = Array.from({ length: 5000 }, (_, index) => [index < 2 ? 1501 + index : 200000 + index, 5000 - index]).flat();
 const screenshotDirectory = process.env.DIVA_KNOWLEDGE_MAP_SCREENSHOTS;
 if (screenshotDirectory) await mkdir(screenshotDirectory, { recursive: true });
 
@@ -181,6 +186,18 @@ try {
     const url = new URL(request.url());
     if (!url.pathname.includes('/backend-api/')) {
       void request.continue();
+      return;
+    }
+    if (url.pathname.endsWith('/api/discovery/knowledge-map/atlas')) {
+      if (atlasFails) { void request.respond({ status: 503, body: '{}' }); return; }
+      void request.respond(atlasEnabled ? jsonResponse({ platform: url.searchParams.get('platform'), generatedAt: fixture.generatedAt, songs: atlasPairs }) : { status: 404, body: '{}' });
+      return;
+    }
+    if (atlasEnabled && url.pathname.endsWith('/api/songs/batch')) {
+      const ids = (url.searchParams.get('ids') ?? '').split(',').map(Number);
+      void request.respond(jsonResponse({ items: ids.map(id => ({ id, name: `Atlas song ${id}`, artistString: 'Atlas producer',
+        defaultName: `Atlas song ${id}`, defaultNameLanguage: 'English', createDate: '', favoritedTimes: 0, lengthSeconds: 180,
+        pvServices: 'Youtube', songType: 'Original', status: 'Finished', version: 1 })) }));
       return;
     }
     if (url.pathname.endsWith('/api/discovery/knowledge-map')) {
@@ -383,6 +400,86 @@ try {
     throw new Error(`Knowledge map platform switch is too narrow on mobile: ${JSON.stringify(mobileLayout)}`);
   }
   console.log('PASS YouTube/NicoNico knowledge map, known/unknown filtering, tooltip, local history/rating join, zoom 100–800%, stable layout, two-axis scroll, reset, touch selection, and 390px layout');
+  // The full atlas must reveal real low-view songs beyond the old 120-tile limit.
+  atlasEnabled = true;
+  await page.setViewport({ width: 1440, height: 900, hasTouch: false, isMobile: false });
+  await page.goto(new URL('knowledge-map', baseUrl), { waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('[data-atlas-song-count="5000"]');
+  const atlasGeometry = await readMap();
+  if (atlasGeometry.scrollWidth <= atlasGeometry.clientWidth || atlasGeometry.scrollHeight <= atlasGeometry.clientHeight) {
+    throw new Error('The atlas must scroll in both directions before zooming');
+  }
+  if (await page.$('[data-testid="knowledge-map-remainder"]')) throw new Error('Full atlas still contains an other-songs bucket');
+  const source = await readFile(new URL('../src/utils/knowledgeAtlas.ts', import.meta.url), 'utf8');
+  const compiled = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext } }).outputText;
+  const { KnowledgeAtlasIndex } = await import('data:text/javascript;base64,' + Buffer.from(compiled).toString('base64'));
+  const model = new KnowledgeAtlasIndex(atlasPairs, new Set([1501, 1502]));
+  const last = model.locate(model.length - 1, atlasGeometry.width / atlasGeometry.height);
+  for (let step = 0; step < 7; step++) await clickButtonByText(page, '＋');
+  await page.waitForFunction(() => document.querySelector('button[aria-label="リセット"]')?.textContent === '12,800%');
+  const expanded = await readMap();
+  await page.$eval('[data-testid="knowledge-map-viewport"]', (element, point) => {
+    element.scrollTo(point.x * element.scrollWidth - element.clientWidth / 2, point.y * element.scrollHeight - element.clientHeight / 2);
+  }, { x: last.x + last.width / 2, y: last.y + last.height / 2 });
+  const lastId = atlasPairs[atlasPairs.length - 2];
+  await page.waitForSelector(`[data-tile-id="song-${lastId}"]`);
+  await page.waitForFunction(id => document.querySelector(`[data-tile-id="song-${id}"]`)?.textContent.includes(`Atlas song ${id}`), {}, lastId);
+  const low = await page.$(`[data-tile-id="song-${lastId}"]`);
+  await low.hover();
+  await page.waitForFunction(id => document.querySelector('[data-testid="knowledge-map-tooltip"]')?.textContent.includes(`Atlas song ${id}`), {}, lastId);
+  const count = await page.$$eval('[data-testid="knowledge-map-surface"] [data-tile-id]', elements => elements.length);
+  if (count >= 5000 || expanded.width !== atlasGeometry.width * 128) throw new Error(`Atlas geometry/rendering: ${count} mounted, width ${expanded.width}, expected ${atlasGeometry.width * 128}`);
+  if (screenshotDirectory) await page.screenshot({ path: join(screenshotDirectory, 'atlas-low-views.png') });
+  await low.click();
+  await page.waitForFunction(id => new URLSearchParams(location.search).get('v') === String(id), {}, lastId);
+  console.log('PASS full atlas: initial two-axis scroll, 5,000 individual songs, low-view last song at 128x, virtualized labels, tooltip and watch link');
+  await page.goto(new URL('knowledge-map', baseUrl), { waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('[data-atlas-song-count="5000"]');
+  for (let step = 0; step < 12; step++) await clickButtonByText(page, '＋');
+  await page.waitForFunction(() => document.querySelector('button[aria-label="リセット"]')?.textContent === '409,600%');
+  const maximumAtlas = await readMap();
+  if (maximumAtlas.width !== atlasGeometry.width * 4096
+    || maximumAtlas.pageWidth > maximumAtlas.windowWidth + 1
+    || !await page.$eval('button[aria-label="拡大"]', element => element.disabled)) throw new Error('Deep atlas zoom exceeded browser or page bounds');
+  await page.click('button[aria-label="リセット"]');
+  const atlasReset = await readMap();
+  if (atlasReset.left !== 0 || atlasReset.top !== 0 || atlasReset.width !== atlasGeometry.width) throw new Error('Full atlas reset did not return to its origin');
+  await clickButtonByText(page, '知っている曲');
+  await page.waitForSelector('[data-atlas-song-count="2"]');
+  await clickButtonByText(page, 'まだ知らない曲');
+  await page.waitForSelector('[data-atlas-song-count="4998"]');
+  await clickButtonByText(page, 'ニコニコ');
+  await page.waitForSelector('[data-testid="nico-knowledge-treemap"][data-atlas-song-count="4998"]');
+  await page.setViewport({ width: 390, height: 844, hasTouch: true, isMobile: true });
+  await page.goto(new URL('knowledge-map', baseUrl), { waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('[data-atlas-song-count="5000"]');
+  const mobileAtlas = await readMap();
+  if (mobileAtlas.pageWidth > mobileAtlas.windowWidth + 1) throw new Error('Mobile atlas leaked page overflow');
+  const mobileLast = model.locate(model.length - 1, mobileAtlas.width / mobileAtlas.height);
+  for (let step = 0; step < 7; step++) await clickButtonByText(page, '＋');
+  await page.$eval('[data-testid="knowledge-map-viewport"]', (element, point) => {
+    element.scrollTo(point.x * element.scrollWidth - element.clientWidth / 2, point.y * element.scrollHeight - element.clientHeight / 2);
+    element.scrollIntoView({ block: 'center' });
+  }, { x: mobileLast.x + mobileLast.width / 2, y: mobileLast.y + mobileLast.height / 2 });
+  await page.waitForSelector(`[data-tile-id="song-${lastId}"]`);
+  const point = await page.$eval(`[data-tile-id="song-${lastId}"]`, element => {
+    const rect = element.getBoundingClientRect(); return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+  });
+  await page.touchscreen.tap(point.x, point.y);
+  await page.waitForFunction(id => document.querySelector('[data-testid="knowledge-atlas-touch-card"]')?.textContent.includes(`Atlas song ${id}`), {}, lastId);
+  if (new URL(page.url()).pathname.endsWith('/watch')) throw new Error('A mobile map tap navigated before the open action');
+  console.log('PASS full atlas known/unknown filters, Nico catalog switch, 390px layout and scrolled low-view touch selection');
+  atlasFails = true;
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('[data-testid="knowledge-map-page"] [role="alert"]');
+  if (await page.$('[data-testid="knowledge-map-remainder"]')) throw new Error('An atlas outage silently replaced individual songs with an other-songs bucket');
+  atlasFails = false;
+  await clickButtonByText(page, '再試行');
+  await page.waitForSelector('[data-atlas-song-count="5000"]');
+  console.log('PASS full atlas outage and retry preserve honest loading/error behavior');
+
+
+
 } finally {
   await browser.close();
 }

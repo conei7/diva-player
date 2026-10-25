@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   fetchKnowledgeMap,
+  fetchKnowledgeMapAtlas,
+  type KnowledgeMapAtlasData,
   type KnowledgeMapPlatform,
   type KnowledgeMapResponse,
   type PlatformKnowledgeMap,
@@ -21,6 +23,7 @@ import { SkeletonBlock, SkeletonListRow } from '../components/ui/Skeleton';
 import { ErrorIcon } from '../components/ui/icons';
 import DiscoveryMixAction from '../components/discovery/DiscoveryMixAction';
 import KnowledgeRanking from '../components/discovery/KnowledgeRanking';
+import KnowledgeAtlas from '../components/discovery/KnowledgeAtlas';
 import KnowledgeTreemap, { type KnowledgeViewMode } from '../components/discovery/KnowledgeTreemap';
 import { useSongsById } from '../components/discovery/discoverySongs';
 import { KNOWLEDGE_MAP_COLORS, KNOWN_SERVICE_COLOR } from '../components/discovery/mapColors';
@@ -39,6 +42,10 @@ export default function KnowledgeMapPage() {
   const language = useLanguageStore(state => state.language);
   const ratings = useRatingStore(state => state.ratings);
   const [result, setResult] = useState<KnowledgeMapResponse | null>(null);
+  const [knownIds, setKnownIds] = useState<ReadonlySet<number>>(new Set());
+  const [atlas, setAtlas] = useState<KnowledgeMapAtlasData | null>(null);
+  const [atlasLoading, setAtlasLoading] = useState(true);
+  const [atlasFailed, setAtlasFailed] = useState(false);
   const [platform, setPlatform] = useState<KnowledgeMapPlatform>('youtube');
   const [viewMode, setViewMode] = useState<KnowledgeViewMode>('all');
   const [loading, setLoading] = useState(true);
@@ -58,6 +65,7 @@ export default function KnowledgeMapPage() {
         // unusually large playback history; overlapping IDs still count once.
         const knownSongIds = new Set(ratedSongIds);
         playedSongIds.forEach(id => knownSongIds.add(id));
+        setKnownIds(new Set([...knownSongIds].filter(id => Number.isInteger(id) && id > 0).slice(0, 50_000)));
         return fetchKnowledgeMap(knownSongIds, controller.signal);
       })
       .then(next => {
@@ -82,6 +90,23 @@ export default function KnowledgeMapPage() {
       controller.abort();
     };
   }, [ratedSongIds, reloadKey]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setAtlas(previous => previous?.platform === platform ? previous : null);
+    setAtlasLoading(true);
+    setAtlasFailed(false);
+    fetchKnowledgeMapAtlas(platform, controller.signal)
+      .then(next => { if (!controller.signal.aborted) setAtlas(next); })
+      .catch(error => {
+        if (controller.signal.aborted) return;
+        setAtlasFailed(true);
+        console.error('Knowledge atlas unavailable', error);
+        showToast(translateSourceText(useLanguageStore.getState().language, '更新できませんでした'));
+      })
+      .finally(() => { if (!controller.signal.aborted) setAtlasLoading(false); });
+    return () => controller.abort();
+  }, [platform, reloadKey]);
 
   const data = result?.[platform] ?? null;
   const allItems = useMemo(() => (data ? buildKnowledgeMapItems(data) : []), [data]);
@@ -210,14 +235,22 @@ export default function KnowledgeMapPage() {
               </div>
             </div>
 
-            <KnowledgeTreemap
+            {atlas?.platform === platform ? <KnowledgeAtlas
+              key={`${platform}-${viewMode}`}
+              platform={platform}
+              data={atlas}
+              knownIds={knownIds}
+              viewMode={viewMode}
+            /> : atlasLoading ? <SkeletonBlock className="h-[clamp(360px,60vh,560px)] max-sm:h-80" /> : atlasFailed ? <div role="alert">
+              <EmptyState icon={<ErrorIcon />} title={t('知ってる度を読み込めませんでした')} action={{ label: t('再試行'), onClick: retry }} />
+            </div> : <KnowledgeTreemap
               key={`${platform}-${viewMode}`}
               platform={platform}
               items={mapItems}
               viewMode={viewMode}
               songsById={songsById}
               totalViews={data.totalViews}
-            />
+            />}
 
             <div className="mt-8 grid min-w-0 gap-8 xl:grid-cols-2 xl:gap-6">
               <KnowledgeRanking

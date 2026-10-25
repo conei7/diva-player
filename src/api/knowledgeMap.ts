@@ -50,3 +50,21 @@ export async function fetchKnowledgeMap(
   if (!response.ok) throw new Error(`Knowledge map request failed: ${response.status}`);
   return response.json() as Promise<KnowledgeMapResponse>;
 }
+
+
+export interface KnowledgeMapAtlasData {
+  platform: KnowledgeMapPlatform;
+  generatedAt: string;
+  /** Flat, descending-view pairs: [songId, views, songId, views, ...]. */
+  songs: number[];
+}
+
+export async function fetchKnowledgeMapAtlas(platform: KnowledgeMapPlatform, signal?: AbortSignal): Promise<KnowledgeMapAtlasData | null> {
+  const response = await fetch(`${RECOMMENDER_API}/api/discovery/knowledge-map/atlas?platform=${platform}`, { signal });
+  // API-first rolling and Web release can finish at different times.
+  if (response.status === 404) return null;
+  if (!response.ok) throw new Error(`Knowledge atlas request failed: ${response.status}`);
+  const data = await response.json() as KnowledgeMapAtlasData;
+  if (data.platform !== platform || !Array.isArray(data.songs)) throw new Error('Invalid knowledge atlas');
+  return data;
+}

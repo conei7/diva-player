@@ -37,6 +37,8 @@ public sealed record KnowledgeMapSong(
     long NicoViews,
     string? ThumbUrl);
 
+public sealed record KnowledgeMapAtlasData(string Platform, DateTimeOffset GeneratedAt, long[] Songs);
+
 public sealed record KnowledgeMapCatalog(
     DateTimeOffset GeneratedAt,
     long EligibleSongCount,
@@ -492,6 +494,38 @@ public class DbService
             cancellationToken.ThrowIfCancellationRequested();
             return new DiscoveryQualityHealth(false, stopwatch.ElapsedMilliseconds, 0, 0, 0, 0, 0, null, new Dictionary<string, long>(), 0, null, exception.GetType().Name);
         }
+    }
+
+    // Only public IDs and view counts: labels/cards are fetched for visible songs separately.
+    public async Task<KnowledgeMapAtlasData> GetKnowledgeMapAtlasAsync(string platform, CancellationToken cancellationToken)
+    {
+        if (platform is not ("youtube" or "nico")) throw new ArgumentException("Invalid platform", nameof(platform));
+        var key = "knowledge_atlas_v1_" + platform;
+        if (_objectCache.TryGetValue(key, out KnowledgeMapAtlasData? cached) && cached is not null) return cached;
+        await _knowledgeMapCatalogLock.WaitAsync(cancellationToken);
+        try
+        {
+            if (_objectCache.TryGetValue(key, out cached) && cached is not null) return cached;
+            var column = platform == "youtube" ? "youtube_views" : "nico_views";
+            await using var connection = await OpenAsync(cancellationToken);
+            await using var command = new NpgsqlCommand($@"
+                SELECT s.id, s.{column}
+                FROM songs s
+                JOIN song_discovery_quality quality ON quality.song_id = s.id
+                WHERE quality.discovery_eligible = TRUE AND s.{column} > 0
+                ORDER BY s.{column} DESC, s.id", connection) { CommandTimeout = 30 };
+            var values = new List<long>();
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                values.Add(reader.GetInt32(0));
+                values.Add(reader.GetInt64(1));
+            }
+            var result = new KnowledgeMapAtlasData(platform, DateTimeOffset.UtcNow, values.ToArray());
+            _objectCache.Set(key, result, TimeSpan.FromMinutes(15), 512L + result.Songs.LongLength * sizeof(long));
+            return result;
+        }
+        finally { _knowledgeMapCatalogLock.Release(); }
     }
 
     public async Task<KnowledgeMapCatalog> GetKnowledgeMapCatalogAsync(CancellationToken cancellationToken)
