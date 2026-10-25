@@ -227,6 +227,10 @@ async function installApiFixtures(page, counters) {
   await page.setRequestInterception(true);
   page.on('request', async request => {
     const url = new URL(request.url());
+    if (request.isNavigationRequest() && url.searchParams.get('__performance_seed') === '1') {
+      void request.respond({ contentType: 'text/html', body: '<!doctype html><title>Performance fixture setup</title>' });
+      return;
+    }
     const path = url.pathname;
     const isBackend = path.startsWith('/backend-api/');
     const isVocaDb = url.hostname === 'vocadb.net';
@@ -441,15 +445,18 @@ async function main() {
   await installApiFixtures(page, counters);
 
   try {
-    await page.goto(baseUrl, { waitUntil: 'domcontentloaded' });
-    await waitForCards(page, 'home');
+    // Seed on a same-origin inert document. A running setup Home can start its
+    // delayed auto-fill after counters reset and contaminate the measured startup.
+    const seedUrl = new URL(baseUrl);
+    seedUrl.searchParams.set('__performance_seed', '1');
+    await page.goto(seedUrl.href, { waitUntil: 'domcontentloaded' });
     const seededCacheAt = await seedLargeHistory(page);
 
     counters.historyMetadataRequests = 0;
     counters.startupPopularRequests = 0;
     counters.startupPopularMoreRequests = 0;
     const homeStartedAt = Date.now();
-    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.goto(baseUrl, { waitUntil: 'domcontentloaded' });
     await waitForCards(page, 'home with 300 history entries');
     const firstCardMs = Date.now() - homeStartedAt;
     const firstFrame = await page.evaluate(() => ({
