@@ -21,10 +21,14 @@ export async function searchSmartPlaylistSongs(
   let start = 0;
   do {
     signal?.throwIfAborted();
-    const size = limit === 'all' ? 100 : Math.min(100, limit - items.length);
+    const size = limit === 'all' ? 100 : limit;
     const params = buildSmartPlaylistSearchParams(rule, size);
     params.set('start', String(start));
-    params.set('compact', 'true');
+    if (limit === 'all') {
+      // A unique database order prevents equal scores moving across page boundaries.
+      params.set('sort', 'AdditionDate');
+      params.set('compact', 'true');
+    } else if (size <= 100) params.set('compact', 'true');
     const response = await scheduleFetch(`${RECOMMENDER_API}/api/songs/search?${params.toString()}`, { signal }, start === 0 ? 'foreground' : 'background');
     if (!response.ok) throw new Error(`Smart playlist search failed: ${response.status}`);
     const data = await response.json() as SongSearchResult;
@@ -39,6 +43,22 @@ export async function searchSmartPlaylistSongs(
     start += data.items.length;
     if (data.items.length === 0 || start >= totalCount) break;
   } while (limit === 'all' || items.length < limit);
+  if (limit === 'all') {
+    if (items.length !== totalCount) throw new Error('Incomplete smart playlist; retry the update');
+    const sort = normalizeSmartPlaylistRule(rule).sortBy;
+    const value = (song: Song) => {
+      switch (sort) {
+        case 'YoutubeViews': return song.youtubeViews ?? -Infinity;
+        case 'NicoViews': return song.nicoViews ?? -Infinity;
+        case 'PublishDate': {
+          const date = Date.parse(song.publishDate ?? '');
+          return Number.isFinite(date) ? date : -Infinity;
+        }
+        default: return song.favoritedTimes ?? -Infinity;
+      }
+    };
+    items.sort((a, b) => (value(b) - value(a)) || b.id - a.id);
+  }
   return { items, totalCount };
 }
 

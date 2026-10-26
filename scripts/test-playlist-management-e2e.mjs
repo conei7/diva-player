@@ -220,12 +220,12 @@ async function runWholeSmartPlaylist(browser) {
     await pinAppLanguage(page);
     await page.setViewport({ width, height: 900, deviceScaleFactor: 1 });
     const requests = [];
-    const songs = Array.from({ length: 990 }, (_, i) => ({ ...createSong(i), nicoViews: 1000000,
+    const songs = Array.from({ length: 990 }, (_, i) => ({ ...createSong(i), favoritedTimes: 990 - i, nicoViews: 1000000,
       artists: [{ categories: ['Vocalist'], artist: { id: 1, name: '初音ミク', artistType: 'Vocaloid' } }],
     }));
     await page.evaluateOnNewDocument(playlist => {
       localStorage.setItem('diva_playlists', JSON.stringify([playlist]));
-    }, { ...smartPlaylist, songs: [], smartRule: { ...smartPlaylist.smartRule, minYoutubeViews: 0, minNicoViews: 1000000, maxSongs: 'all' } });
+    }, { ...smartPlaylist, songs: [], smartRule: { ...smartPlaylist.smartRule, minYoutubeViews: 0, minNicoViews: 1000000, maxSongs: 'all', sortBy: 'FavoritedTimes' } });
     await page.setRequestInterception(true);
     page.on('request', request => {
       const url = new URL(request.url());
@@ -233,7 +233,7 @@ async function runWholeSmartPlaylist(browser) {
         const start = Number(url.searchParams.get('start'));
         const size = Number(url.searchParams.get('maxResults'));
         requests.push([start, size]);
-        void request.respond({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: songs.slice(start, start + size), totalCount: 990 }) });
+        void request.respond({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: songs.toReversed().slice(start, start + size), totalCount: 990 }) });
       } else void request.continue();
     });
     await page.goto(new URL(`playlists?list=${smartPlaylist.id}`, baseUrl), { waitUntil: 'domcontentloaded' });
