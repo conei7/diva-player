@@ -21,7 +21,8 @@ import {
   uniquePlaylistName,
 } from '../utils/playlistBackup';
 import { createPlaylistShareUrl, decodePlaylistShare, orderSharedSongs } from '../utils/playlistShare';
-import { getSongsByIds, searchSmartPlaylistSongs } from '../api/vocadb';
+import { getSongsByIds } from '../api/vocadb';
+import { searchSmartPlaylistSongs } from '../api/smartPlaylist';
 import { filterSmartPlaylistSongs, isSameSmartPlaylistRule, normalizeSmartPlaylistRule } from '../utils/smartPlaylist';
 import { normalizeYouTubePlaylistUrl, type YouTubePlaylistSongsResponse } from '../api/youtubePlaylist';
 import { syncYouTubePlaylist } from '../services/youtubePlaylistSync';
@@ -117,6 +118,8 @@ export default function PlaylistPage() {
   const [syncingId, setSyncingId] = useState<string | null>(null);
   const [smartRefreshStatuses, setSmartRefreshStatuses] = useState<Record<string, SmartPlaylistRefreshStatus>>({});
   const smartRefreshRef = useRef<string | null>(null);
+  const smartRequestRef = useRef<AbortController | null>(null);
+  useEffect(() => () => { smartRequestRef.current?.abort(); }, [listId]);
   const smartRefreshRetryRef = useRef(new Set<string>());
   const smartRefreshRetryTimerRef = useRef<number | null>(null);
   const [smartRefreshRetryTick, setSmartRefreshRetryTick] = useState(0);
@@ -188,10 +191,13 @@ export default function PlaylistPage() {
   // ── Smart playlists refresh every time they are opened ───────────────────
   const refreshSmartPlaylist = useCallback(async (playlist: Playlist) => {
     if (!playlist.smartRule) return;
+    smartRequestRef.current?.abort();
+    const controller = new AbortController();
+    smartRequestRef.current = controller;
     setSmartRefreshStatuses(current => ({ ...current, [playlist.id]: { state: 'loading' } }));
     try {
       const rule = normalizeSmartPlaylistRule(playlist.smartRule);
-      const result = await searchSmartPlaylistSongs(rule, rule.maxSongs);
+      const result = await searchSmartPlaylistSongs(rule, undefined, controller.signal);
       const current = usePlaylistStore.getState().playlists.find(item => item.id === playlist.id);
       // Only a changed rule makes the result stale (the playlists may have been re-read meanwhile).
       if (!current || !isSameSmartPlaylistRule(current.smartRule, playlist.smartRule)) return;
@@ -208,6 +214,7 @@ export default function PlaylistPage() {
         },
       }));
     } catch (error) {
+      if (controller.signal.aborted) return;
       smartRefreshRef.current = null;
       setSmartRefreshStatuses(statuses => ({ ...statuses, [playlist.id]: { state: 'error' } }));
       // One automatic retry after 5 seconds.

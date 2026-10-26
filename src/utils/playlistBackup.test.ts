@@ -22,7 +22,7 @@ describe('smart playlist backup compatibility', () => {
     });
   });
 
-  it('preserves explicit limit and sort choices', () => {
+  it.each([50, 'all'])('preserves explicit limit %s and sort choices', (maxSongs) => {
     const parsed = parsePlaylistBackup({
       folders: [],
       playlists: [{
@@ -32,14 +32,14 @@ describe('smart playlist backup compatibility', () => {
           minYoutubeViews: 0,
           minNicoViews: 0,
           excludedSongTypes: [],
-          maxSongs: 50,
+          maxSongs,
           sortBy: 'PublishDate',
         },
       }],
     });
 
     expect(parsed?.playlists[0].smartRule).toMatchObject({
-      maxSongs: 50,
+      maxSongs,
       sortBy: 'PublishDate',
     });
   });

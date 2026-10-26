@@ -289,6 +289,8 @@ export const englishSourceText: Record<string, string> = {
   '指定なし': 'Any',
   '確認中…': 'Checking…',
   '今すぐ同期': 'Sync now',
+  '{matched}曲が一致 · 全曲を保存': '{matched} matches · save all',
+  '全曲': 'All songs',
   'スマートプレイリスト': 'Smart playlist',
   'シャッフル': 'Shuffle',
   '更新中…': 'Updating…',

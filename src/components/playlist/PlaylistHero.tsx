@@ -266,7 +266,7 @@ export default function PlaylistHero({
       // Nothing matched: the list below already says so (「条件に合う曲がありません」).
       meta = matched === 0 || loaded === 0 ? [refreshed] : [
         matched === 1 ? t('1曲が一致') : t('{count}曲が一致', { count: text.number(matched) }),
-        t('上位{count}曲', { count: text.number(loaded) }),
+        playlist.smartRule?.maxSongs === 'all' ? formatCount(loaded, 'song', text.language) : t('上位{count}曲', { count: text.number(loaded) }),
         refreshed,
       ];
     } else {

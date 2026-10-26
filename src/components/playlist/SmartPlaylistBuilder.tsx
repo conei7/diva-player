@@ -1,7 +1,8 @@
 import { useEffect, useId, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { Artist, SmartPlaylistRule, Song } from '../../types/vocadb';
-import { searchProducersByName, searchSmartPlaylistSongs } from '../../api/vocadb';
+import { searchProducersByName } from '../../api/vocadb';
+import { searchSmartPlaylistSongs } from '../../api/smartPlaylist';
 import { useTranslateSourceText } from '../../i18n';
 import { MOBILE_MEDIA_QUERY, useMediaQuery } from '../../hooks/useMediaQuery';
 import { useLanguageStore } from '../../stores/languageStore';
@@ -49,7 +50,7 @@ export default function SmartPlaylistBuilder({ mode, initialName = '', initialRu
   const ids = useId();
   const mobile = useMediaQuery(MOBILE_MEDIA_QUERY);
   const [name, setName] = useState(initialName);
-  const [rule, setRule] = useState<SmartPlaylistRule>(() => normalizeSmartPlaylistRule(initialRule ?? applySmartPlaylistPreset('classics', 50)));
+  const [rule, setRule] = useState<SmartPlaylistRule>(() => normalizeSmartPlaylistRule(initialRule ?? applySmartPlaylistPreset('classics')));
   const [presetId, setPresetId] = useState(initialRule ? '' : 'classics');
   const [producerQuery, setProducerQuery] = useState('');
   const [producers, setProducers] = useState<Artist[]>([]);
@@ -102,9 +103,11 @@ export default function SmartPlaylistBuilder({ mode, initialName = '', initialRu
   };
 
   const matched = preview.matchedCount ?? 0;
-  const saved = Math.min(matched, rule.maxSongs ?? 200);
+  const saved = rule.maxSongs === 'all' ? matched : Math.min(matched, rule.maxSongs ?? 200);
   const formatNumber = (value: number) => value.toLocaleString(language === 'ja' ? 'ja-JP' : 'en-US');
-  const summary = matched === 1
+  const summary = rule.maxSongs === 'all'
+    ? t('{matched}曲が一致 · 全曲を保存', { matched: formatNumber(matched) })
+    : matched === 1
     ? t('1曲が一致 · 上位{saved}曲を保存', { saved: formatNumber(saved) })
     : t('{matched}曲が一致 · 上位{saved}曲を保存', { matched: formatNumber(matched), saved: formatNumber(saved) });
   const shortSummary = matched === 1 ? t('1曲が一致') : t('{count}曲が一致', { count: formatNumber(matched) });
@@ -290,8 +293,8 @@ export default function SmartPlaylistBuilder({ mode, initialName = '', initialRu
           </details>
           <div className="grid grid-cols-2 gap-3">
             <Field label={t('曲数')} htmlFor={`${ids}-max`}>
-              <select id={`${ids}-max`} className={PLAYLIST_FIELD_CLASS} value={rule.maxSongs ?? 200} onChange={event => updateRule({ maxSongs: Number(event.target.value) as SmartPlaylistRule['maxSongs'] })}>
-                {SMART_PLAYLIST_MAX_SONGS.map(value => <option key={value} value={value}>{t('{count}曲', { count: value })}</option>)}
+              <select id={`${ids}-max`} className={PLAYLIST_FIELD_CLASS} value={rule.maxSongs ?? 200} onChange={event => updateRule({ maxSongs: (event.target.value === 'all' ? 'all' : Number(event.target.value)) as SmartPlaylistRule['maxSongs'] })}>
+                {SMART_PLAYLIST_MAX_SONGS.map(value => <option key={value} value={value}>{value === 'all' ? t('全曲') : t('{count}曲', { count: value })}</option>)}
               </select>
             </Field>
             <Field label={t('並び順')} htmlFor={`${ids}-sort`}>

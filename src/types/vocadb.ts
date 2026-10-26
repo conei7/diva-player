@@ -216,7 +216,7 @@ export interface SmartPlaylistRule {
   minYoutubeViews: number;
   minNicoViews: number;
   excludedSongTypes: SongType[];
-  /** 保存する曲数。旧データでは未設定のため200として扱う。 */
+  /** 保存する曲数。allは全件を分割取得。旧データの未設定値は200。 */
   maxSongs?: SmartPlaylistMaxSongs;
   /** 候補の並び順。旧データではFavoritedTimesとして扱う。 */
   sortBy?: SmartPlaylistSortBy;
@@ -230,7 +230,7 @@ export interface SmartPlaylistRule {
   audioComputed?: 'any' | 'yes' | 'no';
 }
 
-export type SmartPlaylistMaxSongs = 50 | 100 | 200;
+export type SmartPlaylistMaxSongs = 50 | 100 | 200 | 'all';
 export type SmartPlaylistSortBy = 'FavoritedTimes' | 'YoutubeViews' | 'NicoViews' | 'PublishDate';
 
 /** プレイリストをまとめるフォルダ（ツリー構造対応） */

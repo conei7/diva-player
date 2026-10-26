@@ -92,7 +92,7 @@ export function formatSmartRuleItem(
     case 'noRules':
       return t('条件なし');
     case 'maxSongs':
-      return t('上限 {count}曲', { count: item.count });
+      return item.count === 'all' ? t('全曲') : t('上限 {count}曲', { count: item.count });
     case 'sort':
       return t(smartPlaylistSortLabel(item.sortBy));
   }

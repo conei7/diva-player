@@ -214,8 +214,53 @@ async function runMobile(page) {
   console.log('PASS 390px playlist detail, back navigation, window scrolling, and touch targets');
 }
 
+async function runWholeSmartPlaylist(browser) {
+  for (const width of [1440, 390]) {
+    const page = await browser.newPage();
+    await pinAppLanguage(page);
+    await page.setViewport({ width, height: 900, deviceScaleFactor: 1 });
+    const requests = [];
+    const songs = Array.from({ length: 990 }, (_, i) => ({ ...createSong(i), nicoViews: 1000000,
+      artists: [{ categories: ['Vocalist'], artist: { id: 1, name: '初音ミク', artistType: 'Vocaloid' } }],
+    }));
+    await page.evaluateOnNewDocument(playlist => {
+      localStorage.setItem('diva_playlists', JSON.stringify([playlist]));
+    }, { ...smartPlaylist, songs: [], smartRule: { ...smartPlaylist.smartRule, minYoutubeViews: 0, minNicoViews: 1000000, maxSongs: 'all' } });
+    await page.setRequestInterception(true);
+    page.on('request', request => {
+      const url = new URL(request.url());
+      if (url.pathname.endsWith('/api/songs/search')) {
+        const start = Number(url.searchParams.get('start'));
+        const size = Number(url.searchParams.get('maxResults'));
+        requests.push([start, size]);
+        void request.respond({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: songs.slice(start, start + size), totalCount: 990 }) });
+      } else void request.continue();
+    });
+    await page.goto(new URL(`playlists?list=${smartPlaylist.id}`, baseUrl), { waitUntil: 'domcontentloaded' });
+    await page.waitForFunction(() => JSON.parse(localStorage.getItem('diva_playlists')).some(list => list.songs.length === 990));
+    assert(JSON.stringify(requests) === JSON.stringify(Array.from({ length: 10 }, (_, i) => [i * 100, 100])), `unbounded/repeated pages: ${JSON.stringify(requests)}`);
+    const rows = await page.$$eval('main h3', elements => elements.length);
+    assert(rows > 0 && rows < 60, `990-song list renders ${rows} rows at ${width}`);
+    await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+    await page.waitForFunction(() => document.body.textContent.includes('Playlist fixture 990'));
+    const endRows = await page.$$eval('main h3', elements => elements.length);
+    assert(endRows < 60, `last page renders ${endRows} rows`);
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.waitForFunction(() => document.body.textContent.includes('Playlist fixture 002'));
+    await page.evaluate(() => [...document.querySelectorAll('main button')].find(button => button.textContent?.trim() === 'すべて再生').click());
+    await page.waitForSelector('.global-mini-player', { visible: true });
+    await page.waitForFunction(() => {
+      const queue = JSON.parse(localStorage.getItem('diva_playerQueue') || 'null');
+      return (queue?.songIds?.length ?? queue?.queue?.length) === 990;
+    });
+    console.log(`PASS ${width}px whole smart playlist: 990 songs, 10 compact bounded requests, ${rows}/${endRows} mounted rows, tail reachable, play all`);
+    await page.close();
+  }
+}
+
 const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox', '--lang=ja-JP'] });
 try {
+  await runWholeSmartPlaylist(browser);
   const page = await browser.newPage();
   await pinAppLanguage(page);
   page.setDefaultTimeout(30_000);

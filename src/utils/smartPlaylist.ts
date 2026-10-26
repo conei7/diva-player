@@ -9,7 +9,7 @@ import { isVoiceSynthArtistType } from '../config/voiceSynthTypes';
 import { applyGlobalSongFilter, SONG_TYPE_LABELS } from './globalFilters';
 
 export const SMART_DERIVED_SONG_TYPES: SongType[] = ['Cover', 'Remix', 'Arrangement', 'Mashup'];
-export const SMART_PLAYLIST_MAX_SONGS: SmartPlaylistMaxSongs[] = [50, 100, 200];
+export const SMART_PLAYLIST_MAX_SONGS: SmartPlaylistMaxSongs[] = [50, 100, 200, 'all'];
 export const SMART_PLAYLIST_SORTS: Array<{ value: SmartPlaylistSortBy; label: string }> = [
   { value: 'FavoritedTimes', label: 'お気に入り数順' },
   { value: 'YoutubeViews', label: 'YouTube再生数順' },
@@ -61,12 +61,8 @@ export interface NormalizedSmartPlaylistRule extends Omit<SmartPlaylistRule, 'ma
 }
 
 export function normalizeSmartPlaylistRule(rule?: Partial<SmartPlaylistRule> | null): NormalizedSmartPlaylistRule {
-  const maxSongs = SMART_PLAYLIST_MAX_SONGS.includes(rule?.maxSongs as SmartPlaylistMaxSongs)
-    ? rule?.maxSongs as SmartPlaylistMaxSongs
-    : DEFAULT_SMART_PLAYLIST_MAX_SONGS;
-  const sortBy = SMART_PLAYLIST_SORTS.some(option => option.value === rule?.sortBy)
-    ? rule?.sortBy as SmartPlaylistSortBy
-    : DEFAULT_SMART_PLAYLIST_SORT;
+  const maxSongs = rule?.maxSongs;
+  const sortBy = rule?.sortBy;
   const normalizeViews = (value: unknown) => typeof value === 'number' && Number.isFinite(value)
     ? Math.max(0, Math.floor(value))
     : 0;
@@ -91,8 +87,10 @@ export function normalizeSmartPlaylistRule(rule?: Partial<SmartPlaylistRule> | n
     lengthMaxSeconds: normalizeText(rule?.lengthMaxSeconds),
     pvService,
     audioComputed,
-    maxSongs,
-    sortBy,
+    maxSongs: SMART_PLAYLIST_MAX_SONGS.includes(maxSongs as SmartPlaylistMaxSongs)
+      ? maxSongs as SmartPlaylistMaxSongs : DEFAULT_SMART_PLAYLIST_MAX_SONGS,
+    sortBy: SMART_PLAYLIST_SORTS.some(option => option.value === sortBy)
+      ? sortBy as SmartPlaylistSortBy : DEFAULT_SMART_PLAYLIST_SORT,
   };
 }
 
@@ -155,7 +153,7 @@ export function buildSmartPlaylistSearchParams(
     sort: normalized.sortBy,
     order: 'desc',
     start: '0',
-    maxResults: String(maxResults ?? normalized.maxSongs),
+    maxResults: String(maxResults ?? (normalized.maxSongs === 'all' ? 200 : normalized.maxSongs)),
     onlyWithPVs: 'true',
     voiceSynthOnly: 'true',
   });
