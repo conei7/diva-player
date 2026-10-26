@@ -45,17 +45,21 @@ COPY vendor/alpine/v3.24/ /tmp/diva-security/
 RUN set -eux; \
     arch="$(apk --print-arch)"; \
     case "$arch" in \
-      x86_64) expat_sha=32b127f31e0a919110a18a7f0bb3780d8fb66ba4d8d61b2d301d633f0e319d0e; x11_sha=016efc189c6d566061ffe206ed0780e32686c1a8c832a3917d35d2c66d61a40f; brotli_sha=62a7e37e43bbfc1f8525a00ad2125fd5897135dc93b849733884cb78ffd8e26c ;; \
-      aarch64) expat_sha=7128bfe18b8a315b9cf90ddf0beffeee454648ae72ff7898ff7d7b09803a559d; x11_sha=d460c111c1fc40e8f84367907b3e50a58a2b19c3e9d54f7c1f0e4aea7a376e3b; brotli_sha=f802b9d5a329c216f02e73607cb8f662c434767e41686367ac0afcf6d0d45d64 ;; \
+      x86_64) expat_sha=32b127f31e0a919110a18a7f0bb3780d8fb66ba4d8d61b2d301d633f0e319d0e; x11_sha=016efc189c6d566061ffe206ed0780e32686c1a8c832a3917d35d2c66d61a40f; brotli_sha=62a7e37e43bbfc1f8525a00ad2125fd5897135dc93b849733884cb78ffd8e26c; curl_sha=531ae298451a4c1c44f563fc3b2eedc2c1d7e0a26a33bdfc0efe6faaff6a5942; libcurl_sha=1f70ca404818805a6465b615bbfe84ef861488a963d7e630108ebd7fbaa51665 ;; \
+      aarch64) expat_sha=7128bfe18b8a315b9cf90ddf0beffeee454648ae72ff7898ff7d7b09803a559d; x11_sha=d460c111c1fc40e8f84367907b3e50a58a2b19c3e9d54f7c1f0e4aea7a376e3b; brotli_sha=f802b9d5a329c216f02e73607cb8f662c434767e41686367ac0afcf6d0d45d64; curl_sha=3748c544ab475033cb028e415858b8a671ca7d43756e0149732c860588882ced; libcurl_sha=64ae89f6e5d318ed5209778232191806ce49644ce9e09540b7d7830a5330d127 ;; \
       *) exit 1 ;; \
     esac; \
     echo "$expat_sha  /tmp/diva-security/$arch/libexpat-2.9.0-r0.apk" | sha256sum -c -; \
     echo "$x11_sha  /tmp/diva-security/$arch/libx11-1.8.14-r0.apk" | sha256sum -c -; \
     echo "$brotli_sha  /tmp/diva-security/$arch/brotli-libs-1.2.1-r0.apk" | sha256sum -c -; \
-    apk add --no-network "/tmp/diva-security/$arch/libexpat-2.9.0-r0.apk" "/tmp/diva-security/$arch/libx11-1.8.14-r0.apk" "/tmp/diva-security/$arch/brotli-libs-1.2.1-r0.apk"; \
+    echo "$curl_sha  /tmp/diva-security/$arch/curl-8.23.0-r0.apk" | sha256sum -c -; \
+    echo "$libcurl_sha  /tmp/diva-security/$arch/libcurl-8.23.0-r0.apk" | sha256sum -c -; \
+    apk add --no-network "/tmp/diva-security/$arch/libexpat-2.9.0-r0.apk" "/tmp/diva-security/$arch/libx11-1.8.14-r0.apk" "/tmp/diva-security/$arch/brotli-libs-1.2.1-r0.apk" "/tmp/diva-security/$arch/curl-8.23.0-r0.apk" "/tmp/diva-security/$arch/libcurl-8.23.0-r0.apk"; \
     rm -r /tmp/diva-security
 RUN apk update && \
     apk add --no-cache \
+      curl=8.23.0-r0 \
+      libcurl=8.23.0-r0 \
       brotli-libs=1.2.1-r0 \
       libcrypto3=3.5.9-r0 \
       libssl3=3.5.9-r0 \

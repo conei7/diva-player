@@ -218,6 +218,17 @@ for (const [architecture, expectedHash] of [
   assert.ok(webDockerfile.includes(`brotli_sha=${expectedHash}`));
 }
 assert.match(webDockerfile, /"\$brotli_sha[^\n]+brotli-libs-1\.2\.1-r0\.apk" \| sha256sum -c -/u);
+for (const [architecture, curlHash, libcurlHash] of [
+  ['x86_64', '531ae298451a4c1c44f563fc3b2eedc2c1d7e0a26a33bdfc0efe6faaff6a5942', '1f70ca404818805a6465b615bbfe84ef861488a963d7e630108ebd7fbaa51665'],
+  ['aarch64', '3748c544ab475033cb028e415858b8a671ca7d43756e0149732c860588882ced', '64ae89f6e5d318ed5209778232191806ce49644ce9e09540b7d7830a5330d127'],
+]) {
+  for (const [name, hash] of [['curl', curlHash], ['libcurl', libcurlHash]]) {
+    const apk = await readFile(new URL(`../vendor/alpine/v3.24/${architecture}/${name}-8.23.0-r0.apk`, import.meta.url));
+    assert.equal(createHash('sha256').update(apk).digest('hex'), hash);
+    assert.ok(webDockerfile.includes(`${name}_sha=${hash}`));
+    assert.ok(webApkUpdate.includes(`${name}=8.23.0-r0`));
+  }
+}
 assert.match(webApkUpdate, /libuuid=2\.42\.3-r1/u);
 assert.match(webApkUpdate, /tiff=4\.7\.2-r0/u);
 assert.match(webApkUpdate, /test[^\n]*P:tiff[^\n]*4\.7\.2-r0/u);
