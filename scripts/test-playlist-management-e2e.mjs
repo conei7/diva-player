@@ -118,6 +118,8 @@ async function runDesktop(page) {
   const response = await page.goto(playlistUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
   assert(response && response.status() < 400, `playlist page returned ${response?.status() ?? 'unknown'}`);
   await page.waitForSelector(LIBRARY, { visible: true });
+  // IndexedDB hydration may finish after the library shell on a cold public connection.
+  await page.waitForFunction(selector => document.querySelector(selector)?.querySelectorAll('[data-testid="playlist-card"]').length >= 3, {}, LIBRARY);
 
   const library = await page.$eval(LIBRARY, element => ({
     cards: element.querySelectorAll('[data-testid="playlist-card"]').length,
