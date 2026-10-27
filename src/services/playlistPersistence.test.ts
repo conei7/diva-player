@@ -100,6 +100,18 @@ describe('durable playlist migration and writes', () => {
     expect(first.getState().playlists.map(item => item.name)).toEqual(expect.arrayContaining(['A', 'B', 'C', 'D']));
   });
 
+  it('rejects a stale row index instead of deleting a different song after another tab edits the list', async () => {
+    const { usePlaylistStore: first } = await import('../stores/playlistStore');
+    await first.getState().loadPlaylists();
+    const list = await first.getState().createPlaylistWithSongs('list', [{id: 1, name: 'first'}, {id: 2, name: 'second'}] as Song[]);
+    vi.resetModules();
+    const { usePlaylistStore: second } = await import('../stores/playlistStore');
+    await second.getState().loadPlaylists();
+    await second.getState().removeSong(list.id, 0);
+    await expect(first.getState().removeSong(list.id, 0)).rejects.toThrow();
+    expect(first.getState().playlists.find(item => item.id === list.id)?.songs.map(song => song.id)).toEqual([2]);
+  });
+
   it('rejects a stale writer instead of overwriting another tab without Web Locks', async () => {
     const db = await import('./playlistDatabase');
     const snapshot = { playlists: [fixture()], folders: [] };

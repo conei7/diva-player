@@ -1,3 +1,4 @@
+import { installSavedLibraryReader } from './saved-library-fixture.mjs';
 import puppeteer from 'puppeteer';
 import { pinAppLanguage } from './pin-app-language.mjs';
 
@@ -23,6 +24,7 @@ const sourceSong = {
 try {
   const page = await browser.newPage();
   await pinAppLanguage(page);
+  await installSavedLibraryReader(page);
   await page.setRequestInterception(true);
   page.on('request', request => {
     if (request.url().includes(`/backend-api/api/nico/playlists/mylist/${sourceId}/songs`)) {
@@ -68,7 +70,7 @@ try {
   await page.waitForFunction(() => document.querySelector('[data-testid="playlist-import-save"]')?.disabled === false);
   await page.click('[data-testid="playlist-import-save"]');
   await page.waitForFunction(() => document.body.textContent?.includes('ニコニコと同期') && document.body.textContent?.includes('Nico sync fixture'));
-  const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('diva_playlists') || '[]'));
+  const saved = await page.evaluate(async () => window.__readSavedPlaylists());
   if (!saved.some(playlist => playlist.nicoSync?.sourceId === '26375614' && playlist.songs?.[0]?.id === 903001)) {
     throw new Error('linked NicoNico playlist was not persisted');
   }

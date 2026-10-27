@@ -728,6 +728,11 @@ export const usePlaylistStore = create<AsyncPlaylistState>((set, readState) => {
                   if (localStorage.getItem('diva_playlistFolders') === legacy.folders) localStorage.removeItem('diva_playlistFolders');
                 } catch { /* Durable IDB copy and exact legacy archive are already verified. */ }
               }
+              if (saved.snapshot && hydrated && ['removeSong', 'removeSongs', 'reorderSongs'].includes(name)) {
+                set(saved.snapshot);
+                playlistDatabaseRevision = saved.revision;
+                throw new Error('Playlist positions changed in another tab; retry from the current list');
+              }
               if (!saved.snapshot && hydrated && name === 'loadPlaylists') return;
               if (saved.snapshot) set(saved.snapshot);
               playlistDatabaseRevision = saved.revision;
