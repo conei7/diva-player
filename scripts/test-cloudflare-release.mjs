@@ -126,8 +126,8 @@ try {
   assert.match(workflow, /build-worker \\\n\s+--compatibility-date "\$COMPATIBILITY_DATE" \\\n\s+--compatibility-flags-json "\$COMPATIBILITY_FLAGS_JSON"/);
   assert.doesNotMatch(workflow, /2026-07-12/);
   assert.match(workflow, /Validate Cloudflare project release contract[\s\S]*--expected-compatibility-date "\$COMPATIBILITY_DATE"[\s\S]*--expected-compatibility-flags-json "\$COMPATIBILITY_FLAGS_JSON"/);
-  assert.match(workflow, /actions\/upload-artifact@[a-f0-9]{40} # v7\.0\.1/);
-  assert.match(workflow, /actions\/download-artifact@[a-f0-9]{40} # v8\.0\.1/);
+  assert.match(workflow, /actions\/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7\.0\.2/);
+  assert.match(workflow, /actions\/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8\.0\.2/);
   assert.match(workflow, /PREVIEW_BRANCH=release-candidate/);
   const baselineIndex = workflow.indexOf('Capture preview deployment baseline');
   const previewUploadIndex = workflow.indexOf('Deploy exact release to isolated preview');

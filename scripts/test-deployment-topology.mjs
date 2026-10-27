@@ -958,7 +958,7 @@ assert.match(workflow, /2ae6fe3ee734b7fdf11335663e18c75ea12dccc76062f09f164a3b0f
 assert.match(workflow, /d89bcc6510a267f11b773398cbf1be5520ce39f9e8b6633178c4487f05b7d791/u);
 assert.match(
   workflow,
-  /name: Preserve deployable image scan evidence\s+if: always\(\)\s+uses: actions\/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a[\s\S]*?scanner\.identity[\s\S]*?cache\/db\/metadata\.json[\s\S]*?\/report\.json[\s\S]*?\/receipt\.json[\s\S]*?retention-days: 30/u,
+  /name: Preserve deployable image scan evidence\s+if: always\(\)\s+uses: actions\/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9[\s\S]*?scanner\.identity[\s\S]*?cache\/db\/metadata\.json[\s\S]*?\/report\.json[\s\S]*?\/receipt\.json[\s\S]*?retention-days: 30/u,
 );
 assert.doesNotMatch(
   workflow.match(/name: Preserve deployable image scan evidence[\s\S]*?retention-days: 30/u)?.[0] ?? '',
@@ -976,7 +976,7 @@ assert.match(statefulHardening, /Docker daemon must be linux\/arm64/u);
 assert.match(statefulHardening, /\[ "\$architecture" = arm64 \]/u);
 assert.match(workflow, /npm run test:rolling-deployment/);
 assert.match(workflow, /npm run test:runtime-health/);
-assert.match(workflow, /actions\/setup-python@[0-9a-f]{40} # v7\.0\.0/);
+assert.match(workflow, /actions\/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7\.1\.0/);
 assert.doesNotMatch(workflow, /uses: actions\/[a-z-]+@v\d/);
 assert.match(workflow, /npm audit --omit=dev --audit-level=high/);
 assert.match(workflow, /package --vulnerable --include-transitive/);
