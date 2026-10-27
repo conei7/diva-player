@@ -44,13 +44,14 @@ async function waitForDownloadedJson(downloadDir) {
 
 // The history page runs at 1280px or wider here, where its actions are in the right column
 // (below 1024px they are in the header's ⋮ menu).
-async function importHistory(page, filePath) {
+async function importHistory(page, filePath, expectedCount = 2) {
   const fileChooserPromise = page.waitForFileChooser();
   await page.click('[data-testid="history-actions"] [data-testid="history-backup-import"]');
   const fileChooser = await fileChooserPromise;
   await fileChooser.accept([filePath]);
-  await page.waitForFunction(() =>
-    document.querySelector('[data-testid="toast-host"]')?.textContent?.includes('2件を追加しました') === true,
+  await page.waitForFunction(count =>
+    document.querySelector('[data-testid="toast-host"]')?.textContent?.includes(`${count}件を追加しました`) === true,
+    {}, expectedCount,
   );
 }
 
@@ -209,6 +210,18 @@ async function main() {
     const downloadDir = join(tempDir, 'downloads');
     await mkdir(downloadDir);
     await writeFile(fixturePath, JSON.stringify(createHistoryFixture()), 'utf8');
+    // Earlier real playback may have already finalized events. Backups must retain them too.
+    const previousEvents = await page.evaluate(() => new Promise((resolve, reject) => {
+      const request = indexedDB.open('diva-listening-history');
+      request.onerror = () => reject(request.error);
+      request.onsuccess = () => {
+        const db = request.result;
+        const tx = db.transaction('plays', 'readonly');
+        const events = tx.objectStore('plays').getAll();
+        tx.oncomplete = () => { db.close(); resolve(events.result.filter(event => event.f !== 0)); };
+        tx.onabort = () => { db.close(); reject(tx.error); };
+      };
+    }));
     await importHistory(page, fixturePath);
     // Backup, CSV and the statistics appear once there is history.
     await page.waitForSelector('[data-testid="history-actions"] [data-testid="history-backup-export"]:not([disabled])');
@@ -222,9 +235,13 @@ async function main() {
     const exported = JSON.parse(await readFile(exportedPath, 'utf8'));
     assert(exported.kind === 'diva-player-history', 'The exported history file has an invalid kind.');
     assert(exported.version === 1, 'The exported history file has an invalid version.');
-    assert(exported.events.length === 2, 'The exported history file does not contain the imported events.');
+    const fingerprint = event => [event.s, event.t, event.o ?? 0, event.p ?? '', event.d ?? '', event.c ?? 0].join(':');
+    const exportedKeys = new Set(exported.events.map(fingerprint));
+    for (const event of [...previousEvents, ...createHistoryFixture().events]) {
+      assert(exportedKeys.has(fingerprint(event)), `Export lost a prior or imported history event: ${fingerprint(event)}`);
+    }
     assert(exported.events.every(event => event.f === 1), 'The exported history contains an active event.');
-    assert(new Set(exported.events.map(event => `${event.s}:${event.t}:${event.p ?? ''}:${event.d ?? ''}`)).size === exported.events.length,
+    assert(exportedKeys.size === exported.events.length,
       'The exported history contains duplicate playback events.');
 
     const restoreContext = await browser.createBrowserContext();
@@ -235,32 +252,33 @@ async function main() {
       await restorePage.setViewport({ width: 1280, height: 800 });
       await restorePage.goto(`${baseUrl}history`, { waitUntil: 'networkidle2' });
       await restorePage.waitForSelector('main h1');
-      await importHistory(restorePage, exportedPath);
-      await restorePage.waitForFunction(() =>
-        document.querySelector('[aria-label="視聴統計"]')?.textContent?.replace(/\s/g, '').includes('再生開始2') === true,
+      await importHistory(restorePage, exportedPath, exported.events.length);
+      await restorePage.waitForFunction(count =>
+        document.querySelector('[aria-label="視聴統計"]')?.textContent?.replace(/\s/g, '').includes(`再生開始${count}`) === true,
+        {}, exported.events.length,
       );
-      const restored = await restorePage.evaluate(async () => ({
-        // The page shows the count once (再生開始); the raw log must hold both restored events.
+      const restored = await restorePage.evaluate(async expectedCount => ({
+        // Compare every restored event, including real playback finalized earlier in this journey.
         total: await new Promise(resolve => {
           const request = indexedDB.open('diva-listening-history');
           request.onerror = () => resolve(false);
           request.onsuccess = () => {
-            const counting = request.result.transaction('plays', 'readonly').objectStore('plays').count();
+            const counting = request.result.transaction('plays', 'readonly').objectStore('plays').getAll();
             counting.onerror = () => resolve(false);
             counting.onsuccess = () => {
               request.result.close();
-              resolve(counting.result === 2);
+              resolve(counting.result.map(event => [event.s, event.t, event.o ?? 0, event.p ?? '', event.d ?? '', event.c ?? 0].join(':')).sort());
             };
           };
         }),
-        starts: document.querySelector('[aria-label="視聴統計"]')?.textContent?.replace(/\s/g, '').includes('再生開始2'),
-      }));
-      assert(restored.total, 'The restored history count is not 2.');
+        starts: document.querySelector('[aria-label="視聴統計"]')?.textContent?.replace(/\s/g, '').includes(`再生開始${expectedCount}`),
+      }), exported.events.length);
+      assert(JSON.stringify(restored.total) === JSON.stringify([...exportedKeys].sort()), 'Restoring history changed or lost exported events.');
       assert(restored.starts, 'The restored history statistics were not rebuilt.');
     } finally {
       await restoreContext.close();
     }
-    console.log('PASS history backup export/import round trip');
+    console.log(`PASS history backup export/import round trip (${previousEvents.length} prior events, ${exported.events.length} exported and exactly restored)`);
 
     if (failures.length > 0) throw new Error(failures.join('\n'));
     console.log('SBC browser E2E test passed.');

@@ -2,7 +2,7 @@ import { installSavedLibraryReader } from './saved-library-fixture.mjs';
 import puppeteer from 'puppeteer';
 import { pinAppLanguage } from './pin-app-language.mjs';
 
-const base = new URL(process.argv[2] || 'http://127.0.0.1:4173/diva-player/');
+const base = new URL(process.argv.slice(2).find(value => /^https?:/.test(value)) || 'http://127.0.0.1:4173/diva-player/');
 const assert = (condition, message) => { if (!condition) throw new Error(message); };
 const pageErrors = [];
 const songs = [1, 2].map(number => ({
@@ -16,15 +16,28 @@ const songs = [1, 2].map(number => ({
 
 async function fixtures(page) {
   page.on('pageerror', error => pageErrors.push(error.message));
-  const remote = { songs: [songs[0]], fail: false, failSaveChunk: false, saveChunkFailures: 0 };
+  const remote = { blockImages: false, songs: [songs[0]], fail: false, failSaveChunk: false, saveChunkFailures: 0 };
   await pinAppLanguage(page);
   await installSavedLibraryReader(page);
+  if (process.argv.some(value => value.startsWith('--soak='))) {
+    await page.evaluateOnNewDocument(() => {
+      const active = new Set();
+      const start = window.setInterval;
+      const stop = window.clearInterval;
+      window.__soakIntervals = active;
+      window.setInterval = (...args) => { const id = start(...args); active.add(id); return id; };
+      window.clearInterval = id => { active.delete(id); stop(id); };
+    });
+  }
   await page.evaluateOnNewDocument(() => {
     localStorage.setItem('diva-global-filters', JSON.stringify({ version: 2, state: { enabled: false } }));
   });
   await page.setRequestInterception(true);
   page.on('request', request => {
     const url = new URL(request.url());
+    if (remote.blockImages && request.resourceType() === 'image' && url.origin !== base.origin) {
+      void request.abort(); return;
+    }
     if (remote.failSaveChunk && /\/SaveToPlaylistModal-[\w-]+\.js$/.test(url.pathname)) {
       remote.saveChunkFailures++;
       void request.respond({ status: 404, contentType: 'text/html', body: 'Not found' });
@@ -91,6 +104,161 @@ async function saveNewPlaylist(page, name) {
   await page.waitForFunction(() => !document.querySelector('[data-testid="save-to-playlist-dialog"]'));
 }
 
+// Opt-in repeated SPA journey: no reload between cycles and no actual user data.
+// GC separates retained growth from temporary allocations; samples always end on the same page.
+async function repeatedJourney(page, remote, cycles) {
+  remote.blockImages = true;
+  const client = await page.createCDPSession();
+  await client.send('Performance.enable');
+  const requests = [];
+  const pending = new Set();
+  const onRequest = request => {
+    if (new URL(request.url()).pathname.startsWith('/backend-api/')) {
+      requests.push(request.url()); pending.add(request);
+    }
+  };
+  const onComplete = request => pending.delete(request);
+  page.on('request', onRequest);
+  page.on('requestfinished', onComplete);
+  page.on('requestfailed', onComplete);
+  await page.evaluate(() => {
+    window.__soakLongTasks = { count: 0, total: 0, max: 0 };
+    new PerformanceObserver(list => {
+      for (const entry of list.getEntries()) {
+        const stats = window.__soakLongTasks;
+        stats.count++; stats.total += entry.duration; stats.max = Math.max(stats.max, entry.duration);
+      }
+    }).observe({ type: 'longtask', buffered: false });
+  });
+  const navigateLibrary = async () => {
+    await page.evaluate(path => {
+      const link = [...document.querySelectorAll('a')].find(item => item.getAttribute('href') === path);
+      if (!link) throw new Error('Missing library navigation');
+      link.click();
+    }, new URL('playlists', base).pathname);
+    await (await page.waitForSelector('[data-testid="playlist-library"]', { visible: true })).dispose();
+  };
+  const clickVisible = async selector => {
+    const buttons = await page.$$(selector);
+    try {
+      for (const button of buttons) {
+        if (await button.isVisible()) { await button.click(); return; }
+      }
+      throw new Error(`Missing visible action: ${selector}`);
+    } finally { await Promise.all(buttons.map(button => button.dispose())); }
+  };
+  const clickStable = async selector => {
+    for (let attempt = 0; ; attempt++) {
+      const element = await page.waitForSelector(selector, { visible: true });
+      try { await element.click(); return; }
+      catch (error) {
+        if (attempt >= 2 || !/detached|not clickable/.test(String(error))) throw error;
+        await new Promise(resolve => setTimeout(resolve, 100));
+      } finally { await element.dispose(); }
+    }
+  };
+  await saveNewPlaylist(page, 'Journey soak');
+  const samples = [];
+  try {
+    for (const width of [1440, 390]) {
+      await page.setViewport({ width, height: 900 });
+      const group = [];
+      for (let cycle = 1; cycle <= cycles; cycle++) {
+        const started = Date.now();
+        const countBefore = requests.length;
+        await clickStable('input[name="search_query"]');
+        await page.keyboard.down('Control'); await page.keyboard.press('A'); await page.keyboard.up('Control');
+        await page.type('input[name="search_query"]', `Journey ${width} ${cycle}`);
+        await page.keyboard.press('Enter');
+        await (await page.waitForSelector('main .song-card a[href*="watch?v=990102"]')).dispose();
+        await clickStable('main .song-card a[href*="watch?v=990102"]');
+        await (await page.waitForSelector('[data-testid="watch-action-bar"]')).dispose();
+        await clickStable('[data-testid="watch-action-bar"] button[aria-label="プレイリストに保存"]');
+        await (await page.waitForSelector('[data-testid="save-to-playlist-dialog"] [role="checkbox"]')).dispose();
+        const toggle = async () => {
+          await page.evaluate(() => {
+            const row = [...document.querySelectorAll('[data-testid="save-to-playlist-dialog"] [role="checkbox"]')]
+              .find(item => item.textContent.includes('Journey soak'));
+            if (!row || row.getAttribute('aria-disabled') === 'true') throw new Error('Save row unavailable');
+            row.click();
+          });
+        };
+        const alreadySaved = await page.evaluate(() => [...document.querySelectorAll('[data-testid="save-to-playlist-dialog"] [role="checkbox"]')]
+          .some(item => item.textContent.includes('Journey soak') && item.getAttribute('aria-checked') === 'true'));
+        if (alreadySaved) {
+          await toggle();
+          await page.waitForFunction(async () => !(await window.__readSavedPlaylists()).find(item => item.name === 'Journey soak').songs.some(song => song.id === 990102));
+        }
+        await toggle();
+        await page.waitForFunction(async () => (await window.__readSavedPlaylists()).find(item => item.name === 'Journey soak').songs.length === 2);
+        await page.keyboard.press('Escape');
+        await page.waitForFunction(() => !document.querySelector('[data-testid="save-to-playlist-dialog"]'));
+        await navigateLibrary();
+        await page.evaluate(() => {
+          const card = [...document.querySelectorAll('[data-testid="playlist-card"]')].find(item => item.textContent.includes('Journey soak'));
+          if (!card?.querySelector('a')) throw new Error('Saved library card missing');
+          card.querySelector('a').click();
+        });
+        await page.waitForFunction(() => document.querySelector('main h1')?.textContent === 'Journey soak');
+        await clickText(page, 'main', 'すべて再生');
+        await page.waitForFunction(() => window.__journeyPlayer?.getVideoData().video_id === 'journey-1');
+        await clickVisible('button[aria-label="次の曲"]');
+        await page.waitForFunction(() => window.__journeyPlayer?.getVideoData().video_id === 'journey-2');
+        await clickVisible('[data-testid="global-mini-player-toggle"]');
+        await page.waitForFunction(() => window.__journeyPlayer?.getPlayerState() === 2);
+        await clickVisible('[data-testid="global-mini-player-toggle"]');
+        await page.waitForFunction(() => window.__journeyPlayer?.getPlayerState() === 1);
+        // Open the playing song through the mini player, then use browser Back.
+        await clickVisible('[data-testid="mini-player-swipe-origin"]');
+        await (await page.waitForSelector('[data-testid="watch-action-bar"]')).dispose();
+        await page.goBack({ waitUntil: 'domcontentloaded' });
+        await page.waitForFunction(() => document.querySelector('main h1')?.textContent === 'Journey soak');
+        await new Promise(resolve => setTimeout(resolve, 350));
+        // A periodic health request can start during the sample; await completion, not an arbitrary instant.
+        for (let wait = 0; pending.size > 0 && wait < 40; wait++) await new Promise(resolve => setTimeout(resolve, 50));
+        await client.send('HeapProfiler.collectGarbage');
+        const metrics = Object.fromEntries((await client.send('Performance.getMetrics')).metrics.map(item => [item.name, item.value]));
+        const sample = { width, cycle, ms: Date.now() - started, requests: requests.length - countBefore,
+          pending: pending.size, heap: metrics.JSHeapUsedSize, nodes: metrics.Nodes,
+          listeners: metrics.JSEventListeners, documents: metrics.Documents,
+          intervals: await page.evaluate(() => window.__soakIntervals.size) };
+        group.push(sample); samples.push(sample);
+        assert(sample.requests <= 45, `Request storm: ${JSON.stringify(sample)}`);
+        assert(sample.pending === 0, `API requests remained unfinished: ${JSON.stringify(sample)}`);
+        if (cycle % 5 === 0 || cycle === cycles) console.log(`SOAK ${JSON.stringify(sample)}`);
+      }
+      const warm = group[Math.min(4, group.length - 1)];
+      const final = group.at(-1);
+      assert(final.heap - warm.heap < 12 * 1024 * 1024, `Retained heap grew over 12 MiB: ${JSON.stringify({ warm, final })}`);
+      assert(final.intervals - warm.intervals <= 2, `Interval timers accumulated: ${JSON.stringify({ warm, final })}`);
+      assert(final.listeners - warm.listeners < 40, `Event listeners accumulated: ${JSON.stringify({ warm, final })}`);
+      assert(final.nodes - warm.nodes < 1000 && final.documents - warm.documents <= 2,
+        `DOM/documents accumulated: ${JSON.stringify({ warm, final })}`);
+      console.log(`PASS repeated journey ${width}px / ${cycles} cycles: ${JSON.stringify({ warm, final })}`);
+    }
+    const endpoints = {};
+    for (const url of requests) {
+      const path = new URL(url).pathname;
+      endpoints[path] = (endpoints[path] ?? 0) + 1;
+    }
+    console.log(`SOAK_REPORT ${JSON.stringify({ samples, endpoints, longTasks: await page.evaluate(() => window.__soakLongTasks) })}`);
+  } catch (error) {
+    if (process.env.SOAK_HEAP_PATH) {
+      let snapshot = '';
+      client.on('HeapProfiler.addHeapSnapshotChunk', ({ chunk }) => { snapshot += chunk; });
+      await client.send('HeapProfiler.takeHeapSnapshot');
+      const { writeFile } = await import('node:fs/promises');
+      await writeFile(process.env.SOAK_HEAP_PATH, snapshot);
+    }
+    throw error;
+  } finally {
+    page.off('request', onRequest); page.off('requestfinished', onComplete); page.off('requestfailed', onComplete);
+    await client.detach();
+    await page.setViewport({ width: 1440, height: 900 });
+    remote.blockImages = false;
+  }
+}
+
 const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox'] });
 try {
   const first = await browser.newPage();
@@ -105,6 +273,15 @@ try {
   await first.waitForSelector('[data-testid="watch-action-bar"]');
   await first.waitForFunction(() => window.__journeyPlayer?.getPlayerState() === 1);
   console.log('PASS search result starts playback');
+  const soakArg = process.argv.find(value => value.startsWith('--soak='));
+  if (soakArg) {
+    const cycles = Number(soakArg.split('=')[1]);
+    assert(Number.isInteger(cycles) && cycles >= 10 && cycles <= 200, '--soak must be between 10 and 200 cycles per viewport');
+    await repeatedJourney(first, remote, cycles);
+    await first.goto(new URL('watch?v=990101&autoplay=0', base).href, { waitUntil: 'domcontentloaded' });
+    await first.waitForSelector('[data-testid="watch-action-bar"]');
+  }
+
 
   // Both tabs are open before either changes saved user data.
   const second = await browser.newPage();
