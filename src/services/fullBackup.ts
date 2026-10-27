@@ -2,7 +2,7 @@ import type { ListeningPlayEvent } from '../stores/historyStore';
 import type { Playlist, PlaylistFolder, Song, SmartPlaylistRule } from '../types/vocadb';
 import { normalizeSmartPlaylistRule } from '../utils/smartPlaylist';
 import { useHistoryStore } from '../stores/historyStore';
-import { LEGACY_DIG_PLAYLIST_ID, usePlaylistStore, WATCH_LATER_ID } from '../stores/playlistStore';
+import { getPlaylistDatabaseRevision, LEGACY_DIG_PLAYLIST_ID, usePlaylistStore, WATCH_LATER_ID } from '../stores/playlistStore';
 import { useRatingStore } from '../stores/ratingStore';
 import { storage } from '../utils/storage';
 import { HISTORY_STORES, openHistoryDb } from './historyDatabase';
@@ -290,10 +290,10 @@ export function getCurrentBackupCounts(payload: FullBackupPayload): FullBackupCo
   return getCountsFromSections(payload.sections);
 }
 
-export function readPersistedPlaylistsForBackup(): Pick<FullBackupPayload['sections']['playlists'], 'folders' | 'playlists'> {
+export async function readPersistedPlaylistsForBackup(): Promise<Pick<FullBackupPayload['sections']['playlists'], 'folders' | 'playlists'>> {
   // playlistStore is hydrated lazily by PlaylistPage. A backup can also be
   // started directly from another page, so load the persisted data explicitly.
-  usePlaylistStore.getState().loadPlaylists();
+  await usePlaylistStore.getState().loadPlaylists();
   const { playlists, folders } = usePlaylistStore.getState();
   return { playlists, folders };
 }
@@ -314,7 +314,7 @@ export async function createFullBackup(): Promise<FullBackupPayload> {
       }));
     request.onerror = () => reject(request.error);
   });
-  const { playlists, folders } = readPersistedPlaylistsForBackup();
+  const { playlists, folders } = await readPersistedPlaylistsForBackup();
   const sections: FullBackupPayload['sections'] = {
     history: { events },
     ratings: { ...useRatingStore.getState().ratings },
@@ -558,6 +558,12 @@ export async function executeFullBackupImport(preview: FullBackupPreview, option
   if (preview?.canRestore !== true || !validatedPreview?.canRestore) {
     throw new FullBackupImportError('not-validated');
   }
+  if (typeof indexedDB !== 'undefined') {
+    try { await usePlaylistStore.getState().loadPlaylists(); }
+    catch (cause) { throw new FullBackupImportError('read-failed', { section: 'playlists', cause }); }
+  }
+  const currentPlaylistRevision = getPlaylistDatabaseRevision();
+  let writtenPlaylistRevision: string | undefined;
   const currentRatings = { ...useRatingStore.getState().ratings };
   const currentPlaylists = usePlaylistStore.getState().playlists.map(playlist => ({ ...playlist, songs: [...playlist.songs] }));
   const currentFolders = usePlaylistStore.getState().folders.map(folder => ({ ...folder }));
@@ -602,13 +608,18 @@ export async function executeFullBackupImport(preview: FullBackupPreview, option
       if (watchLater) nextPlaylists.unshift(watchLater);
     }
     writing = 'playlists';
-    changed.playlists = true;
-    const playlistWrite = storage.setMany([
-      { key: 'playlists', value: nextPlaylists },
-      { key: 'playlistFolders', value: nextFolders },
-    ]);
-    if (!playlistWrite.success) throw new Error('Could not save playlists and folders');
-    usePlaylistStore.setState({ playlists: nextPlaylists, folders: nextFolders });
+    changed.playlists = typeof indexedDB === 'undefined';
+    if (typeof indexedDB !== 'undefined') {
+      writtenPlaylistRevision = await usePlaylistStore.getState().replaceLibrary(nextPlaylists, nextFolders, currentPlaylistRevision);
+      changed.playlists = true;
+    } else {
+      const playlistWrite = storage.setMany([
+        { key: 'playlists', value: nextPlaylists },
+        { key: 'playlistFolders', value: nextFolders },
+      ]);
+      if (!playlistWrite.success) throw new Error('Could not save playlists and folders');
+      usePlaylistStore.setState({ playlists: nextPlaylists, folders: nextFolders });
+    }
 
     const nextRatings = options.mode === 'replace'
       ? { ...incoming.ratings }
@@ -690,10 +701,13 @@ export async function executeFullBackupImport(preview: FullBackupPreview, option
     if (changed.globalFilters) rollBack('globalFilters', () => useGlobalFilterStore.getState().setSettings(currentGlobalFilters));
     if (changed.hiddenSongs) rollBack('hiddenSongs', () => useHiddenSongStore.getState().replaceHiddenSongs(currentHiddenSongs));
     if (changed.ratings) rollBack('ratings', () => useRatingStore.setState({ ratings: currentRatings }));
-    if (changed.playlists) rollBack('playlists', () => usePlaylistStore.setState({ playlists: currentPlaylists, folders: currentFolders }));
+    if (changed.playlists && typeof indexedDB !== 'undefined') {
+      try { await usePlaylistStore.getState().replaceLibrary(currentPlaylists, currentFolders, writtenPlaylistRevision); }
+      catch (error) { rollbackFailures.push({ section: 'playlists', error }); }
+    } else if (changed.playlists) rollBack('playlists', () => usePlaylistStore.setState({ playlists: currentPlaylists, folders: currentFolders }));
     if (typeof localStorage !== 'undefined') {
       for (const [key, section] of [...STORAGE_KEY_SECTIONS].reverse()) {
-        if (!changed[section] || !storageSnapshot.has(key)) continue;
+        if (!changed[section] || !storageSnapshot.has(key) || (section === 'playlists' && typeof indexedDB !== 'undefined')) continue;
         rollBack(section, () => {
           const value = storageSnapshot.get(key) ?? null;
           // 書き込みが最初から失敗していた・ストアが書き戻し済みなど、変わっていないキーは書き戻さない

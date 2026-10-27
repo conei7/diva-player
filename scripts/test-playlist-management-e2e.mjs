@@ -1,3 +1,4 @@
+import { installSavedLibraryReader } from './saved-library-fixture.mjs';
 import puppeteer from 'puppeteer';
 import { pinAppLanguage } from './pin-app-language.mjs';
 
@@ -216,8 +217,10 @@ async function runMobile(page) {
 
 async function runWholeSmartPlaylist(browser) {
   for (const width of [1440, 390]) {
-    const page = await browser.newPage();
+    const context = await browser.createBrowserContext();
+    const page = await context.newPage();
     await pinAppLanguage(page);
+  await installSavedLibraryReader(page);
     await page.setViewport({ width, height: 900, deviceScaleFactor: 1 });
     const requests = [];
     const songs = Array.from({ length: 990 }, (_, i) => ({ ...createSong(i), favoritedTimes: 990 - i, nicoViews: 1000000,
@@ -237,7 +240,8 @@ async function runWholeSmartPlaylist(browser) {
       } else void request.continue();
     });
     await page.goto(new URL(`playlists?list=${smartPlaylist.id}`, baseUrl), { waitUntil: 'domcontentloaded' });
-    await page.waitForFunction(() => JSON.parse(localStorage.getItem('diva_playlists')).some(list => list.songs.length === 990));
+    try { await page.waitForFunction(async () => (await window.__readSavedPlaylists()).some(list => list.songs.length === 990)); }
+    catch (error) { console.error(JSON.stringify({requests, state: await page.evaluate(async () => ({ text: document.body.innerText.slice(-1600), lists: (await window.__readSavedPlaylists()).map(list => ({id:list.id, count:list.songs.length})), legacy:localStorage.getItem('diva_playlists')?.length }))})); throw error; }
     assert(JSON.stringify(requests) === JSON.stringify(Array.from({ length: 10 }, (_, i) => [i * 100, 100])), `unbounded/repeated pages: ${JSON.stringify(requests)}`);
     const rows = await page.$$eval('main h3', elements => elements.length);
     assert(rows > 0 && rows < 60, `990-song list renders ${rows} rows at ${width}`);
@@ -254,7 +258,7 @@ async function runWholeSmartPlaylist(browser) {
       return (queue?.songIds?.length ?? queue?.queue?.length) === 990;
     });
     console.log(`PASS ${width}px whole smart playlist: 990 songs, 10 compact bounded requests, ${rows}/${endRows} mounted rows, tail reachable, play all`);
-    await page.close();
+    await context.close();
   }
 }
 
@@ -263,6 +267,7 @@ try {
   await runWholeSmartPlaylist(browser);
   const page = await browser.newPage();
   await pinAppLanguage(page);
+  await installSavedLibraryReader(page);
   page.setDefaultTimeout(30_000);
   await installFixtures(page);
   await runDesktop(page);

@@ -23,7 +23,7 @@ function reloadIfChanged<T>(store: {
 export function startSavedDataSync(): () => void {
   const stopHistoryRecovery = startHistoryFinalizationRecovery();
   const groups = [
-    { keys: ['diva_playlists', 'diva_playlistFolders'], reload: () => usePlaylistStore.getState().loadPlaylists(), subscribe: usePlaylistStore.subscribe, savesBeforePublish: true },
+    { keys: ['diva_playlists', 'diva_playlistFolders', 'diva_playlistRevision'], reload: async () => (await usePlaylistStore.getState().loadPlaylists()), subscribe: usePlaylistStore.subscribe, savesBeforePublish: true },
     { keys: ['diva-ratings'], reload: () => reloadIfChanged(useRatingStore, 'ratings', {}), subscribe: useRatingStore.subscribe },
     { keys: ['diva-favorite-producers'], reload: () => reloadIfChanged(useFavoriteProducerStore, 'producers', []), subscribe: useFavoriteProducerStore.subscribe },
     { keys: ['diva-hidden-songs'], reload: () => reloadIfChanged(useHiddenSongStore, 'hiddenSongs', {}), subscribe: useHiddenSongStore.subscribe },
@@ -63,13 +63,17 @@ export function startSavedDataSync(): () => void {
   const onStorage = (event: StorageEvent) => {
     if (event.storageArea === localStorage) refresh(event.key);
   };
-  const onFocus = () => refresh();
-  const onVisible = () => { if (document.visibilityState === 'visible') refresh(); };
+  const reloadPlaylists = () => { void usePlaylistStore.getState().loadPlaylists().catch(() => undefined); };
+  const channel = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('diva-playlists') : undefined;
+  if (channel) channel.onmessage = reloadPlaylists;
+  const onFocus = () => { refresh(); if (typeof indexedDB !== 'undefined') reloadPlaylists(); };
+  const onVisible = () => { if (document.visibilityState === 'visible') onFocus(); };
   window.addEventListener('storage', onStorage);
   window.addEventListener('focus', onFocus);
   document.addEventListener('visibilitychange', onVisible);
   return () => {
     stopHistoryRecovery();
+    channel?.close();
     subscriptions.forEach(unsubscribe => unsubscribe());
     window.removeEventListener('storage', onStorage);
     window.removeEventListener('focus', onFocus);

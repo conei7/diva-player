@@ -1,3 +1,4 @@
+import { useAsyncAction } from '../../hooks/useAsyncAction';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
 import {
@@ -82,12 +83,12 @@ function useLatestRef<T>(value: T) {
 type RestoreOptions = { allowDuplicateIds?: boolean };
 
 /** 元に戻す of a removal: puts the songs back where they were and says how many came back. */
-function restoreRemovedSongsWithToast(
+async function restoreRemovedSongsWithToast(
   snapshot: RemovedSongsSnapshot,
   t: ReturnType<typeof useTranslateSourceText>,
   options?: RestoreOptions,
 ) {
-  const restored = usePlaylistStore.getState().restoreRemovedSongs(snapshot, options);
+  const restored = (await usePlaylistStore.getState().restoreRemovedSongs(snapshot, options));
   if (restored > 1) showToast(t('{count}曲を元に戻しました', { count: restored }));
   else if (restored === 1) showToast(t('1曲を元に戻しました'));
 }
@@ -271,29 +272,29 @@ export default function PlaylistDetail({
         return next;
       });
     },
-    remove: index => {
+    remove: async index => {
       const { playlist: current, name: playlistName } = latest.current;
-      const snapshot = usePlaylistStore.getState().removeSong(current.id, index);
+      const snapshot = (await usePlaylistStore.getState().removeSong(current.id, index));
       if (!snapshot) return;
       showToast(t('「{name}」から削除しました', { name: playlistName }), {
         // The snapshot keeps the exact position, so a removed duplicate comes back too.
         action: { label: t('元に戻す'), onAction: () => restoreRemovedSongsWithToast(snapshot, t) },
       });
     },
-    moveToTop: index => {
-      usePlaylistStore.getState().reorderSongs(latest.current.playlist.id, index, 0);
+    moveToTop: async index => {
+      (await usePlaylistStore.getState().reorderSongs(latest.current.playlist.id, index, 0));
     },
-    moveToBottom: index => {
+    moveToBottom: async index => {
       const current = latest.current.playlist;
-      usePlaylistStore.getState().reorderSongs(current.id, index, current.songs.length - 1);
+      (await usePlaylistStore.getState().reorderSongs(current.id, index, current.songs.length - 1));
     },
-    setThumbnail: index => {
+    setThumbnail: async index => {
       const current = latest.current.playlist;
       const song = current.songs[index];
       if (!song) return;
-      usePlaylistStore.getState().updatePlaylist(current.id, {
+      (await usePlaylistStore.getState().updatePlaylist(current.id, {
         coverArtUrl: song.thumbUrl ?? getWideSongThumbnailCandidates(song)[0],
-      });
+      }));
     },
   }), [latest, t]);
 
@@ -325,13 +326,14 @@ export default function PlaylistDetail({
     useUiStore.getState().openSaveToPlaylist(songs, { source: 'default', excludePlaylistId: playlist.id });
     exitSelection();
   };
-  const deleteSelected = () => {
-    const snapshot = usePlaylistStore.getState().removeSongs(playlist.id, [...selected]);
+  const { busy: saving, run: runSave } = useAsyncAction();
+  const deleteSelected = async () => {
+    const snapshot = (await usePlaylistStore.getState().removeSongs(playlist.id, [...selected]));
     exitSelection();
     if (snapshot) removedToast(snapshot);
   };
-  const removeDuplicates = () => {
-    const snapshot = usePlaylistStore.getState().removeDuplicateSongsWithUndo(playlist.id);
+  const removeDuplicates = async () => {
+    const snapshot = (await usePlaylistStore.getState().removeDuplicateSongsWithUndo(playlist.id));
     if (!snapshot) return;
     exitSelection();
     const count = snapshot.removed.length;
@@ -339,10 +341,10 @@ export default function PlaylistDetail({
       action: { label: t('元に戻す'), onAction: () => restoreRemovedSongsWithToast(snapshot, t, { allowDuplicateIds: true }) },
     });
   };
-  const removeHealthIssues = (indexes: number[]) => {
+  const removeHealthIssues = async (indexes: number[]) => {
     setHealthOpen(false);
     if (indexes.length === 0) return;
-    const snapshot = usePlaylistStore.getState().removeSongs(playlist.id, indexes);
+    const snapshot = (await usePlaylistStore.getState().removeSongs(playlist.id, indexes));
     exitSelection();
     if (snapshot) removedToast(snapshot, { allowDuplicateIds: true });
   };
@@ -385,13 +387,13 @@ export default function PlaylistDetail({
   // Manual order is on screen (not sorted, not searched): moving songs means something.
   const reorderable = editable && effectiveSort === 'addedOrder' && query.trim() === '';
   const draggable = reorderable && !selectionMode && !virtualized;
-  const handleDragEnd = (event: DragEndEvent) => {
+  const handleDragEnd = async (event: DragEndEvent) => {
     const { active, over } = event;
     if (!over || active.id === over.id) return;
     const from = entries.findIndex(entry => entry.key === active.id);
     const to = entries.findIndex(entry => entry.key === over.id);
     if (from < 0 || to < 0) return;
-    usePlaylistStore.getState().reorderSongs(playlist.id, entries[from].index, entries[to].index);
+    (await usePlaylistStore.getState().reorderSongs(playlist.id, entries[from].index, entries[to].index));
   };
 
   const renderRow = (entry: Entry, position: number, dragHandle?: ReactNode) => (
@@ -434,7 +436,7 @@ export default function PlaylistDetail({
     list = <VirtualRows entries={entries} estimate={mobile ? 72 : 111} renderRow={(entry, position) => renderRow(entry, position)} />;
   } else if (draggable) {
     list = (
-      <DndContext sensors={sensors} collisionDetection={closestCenter} accessibility={dragAccessibility} onDragEnd={handleDragEnd}>
+      <DndContext sensors={sensors} collisionDetection={closestCenter} accessibility={dragAccessibility} onDragEnd={event => { void runSave(() => handleDragEnd(event)); }}>
         <SortableContext items={entries.map(entry => entry.key)} strategy={verticalListSortingStrategy}>
           {entries.map((entry, position) => (
             <SortableRow key={entry.key} id={entry.key} title={entry.song.name}>
@@ -526,20 +528,20 @@ export default function PlaylistDetail({
             <>
               <IconButton label={t('キューに追加')} icon={<QueueMusicIcon />} disabled={nothingSelected} onClick={queueSelected} />
               <IconButton label={t('プレイリストに保存')} icon={<PlaylistAddIcon />} disabled={nothingSelected} onClick={saveSelected} />
-              {editable && <IconButton label={t('プレイリストから削除')} icon={<TrashIcon />} disabled={nothingSelected} onClick={deleteSelected} />}
+              {editable && <IconButton label={t('プレイリストから削除')} icon={<TrashIcon />} disabled={nothingSelected || saving} onClick={() => { void runSave(deleteSelected); }} />}
             </>
           ) : (
             <>
               <Button icon={<QueueMusicIcon />} disabled={nothingSelected} onClick={queueSelected}>{t('キューに追加')}</Button>
               <Button variant="primary" icon={<PlaylistAddIcon />} disabled={nothingSelected} onClick={saveSelected}>{t('プレイリストに保存')}</Button>
-              {editable && <Button icon={<TrashIcon />} disabled={nothingSelected} onClick={deleteSelected}>{t('プレイリストから削除')}</Button>}
+              {editable && <Button icon={<TrashIcon />} disabled={nothingSelected || saving} onClick={() => { void runSave(deleteSelected); }}>{t('プレイリストから削除')}</Button>}
             </>
           )}
         </SelectionBar>
       )}
 
       {healthOpen && (
-        <PlaylistHealthModal songs={playlist.songs} onClose={() => setHealthOpen(false)} onRemove={removeHealthIssues} />
+        <PlaylistHealthModal songs={playlist.songs} onClose={() => setHealthOpen(false)} onRemove={indexes => { void runSave(() => removeHealthIssues(indexes)); }} />
       )}
     </PageShell>
   );

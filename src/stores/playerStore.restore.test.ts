@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { IDBFactory } from 'fake-indexeddb';
 import type { Song } from '../types/vocadb';
 
 const getSongById = vi.hoisted(() => vi.fn());
+const getSongsByIds = vi.hoisted(() => vi.fn());
 
-vi.mock('../api/vocadb', () => ({ getSongById }));
+vi.mock('../api/vocadb', () => ({ getSongById, getSongsByIds }));
 
 const song: Song = {
   id: 910001,
@@ -155,5 +157,74 @@ describe('player queue startup restoration', () => {
     expect(usePlayerStore.getState().currentSong?.id).toBe(replacement.id);
     const stored = JSON.parse(localStorage.getItem('diva_playerQueue') ?? '{}') as { songIds?: number[] };
     expect(stored.songIds).toEqual([replacement.id]);
+  });
+});
+
+
+describe('large queue restoration', () => {
+  it('restores 990 cached songs offline without detail or card requests, retaining a duplicate position', async () => {
+    vi.stubGlobal('indexedDB', new IDBFactory());
+    const songs = Array.from({ length: 990 }, (_, index) => ({ ...song, id: song.id + index }));
+    songs[600] = songs[0];
+    const cache = await import('../services/playerQueueCache');
+    await cache.cachePlayerQueue(songs);
+    installLocalStorage({ songIds: songs.map(item => item.id), queueIndex: 600, currentSongId: songs[600].id,
+      currentSong: songs[600], rootSeed: songs[0], rootSeedId: songs[0].id });
+    const { usePlayerStore } = await import('./playerStore');
+    await vi.waitFor(() => expect(usePlayerStore.getState().queue).toHaveLength(990));
+    expect(usePlayerStore.getState().queueIndex).toBe(600);
+    expect(getSongById).not.toHaveBeenCalled();
+    expect(getSongsByIds).not.toHaveBeenCalled();
+    expect(usePlayerStore.getState().isPlaying).toBe(false);
+  });
+
+  it('restores the current song before a delayed compact batch and keeps requests bounded', async () => {
+    const songs = Array.from({ length: 990 }, (_, index) => ({ ...song, id: song.id + index }));
+    const byId = new Map(songs.map(item => [item.id, item]));
+    const first = deferred<Song[]>();
+    getSongById.mockImplementation(async (id: number) => byId.get(id));
+    getSongsByIds.mockImplementationOnce(() => first.promise)
+      .mockImplementation(async (ids: number[]) => ids.map(id => byId.get(id)));
+    installLocalStorage({ songIds: songs.map(item => item.id), queueIndex: 500, currentSongId: songs[500].id });
+    const { usePlayerStore } = await import('./playerStore');
+    await vi.waitFor(() => expect(getSongsByIds).toHaveBeenCalledTimes(1));
+    expect(usePlayerStore.getState().currentSong?.id).toBe(songs[500].id);
+    expect(getSongsByIds.mock.calls[0][0].slice(0, 2)).toEqual([songs[501].id, songs[502].id]);
+    expect(usePlayerStore.getState().queueRestoring).toBe(true);
+    expect(usePlayerStore.getState().addManyToQueue([song], 'auto', {currentSongId: songs[500].id, playbackSequence: 0})).toBe(false);
+    usePlayerStore.getState().resume();
+    const firstIds = getSongsByIds.mock.calls[0][0] as number[];
+    first.resolve(firstIds.map(id => byId.get(id)!));
+    await vi.waitFor(() => expect(usePlayerStore.getState().queue).toHaveLength(990));
+    expect(getSongsByIds).toHaveBeenCalledTimes(10);
+    expect(getSongsByIds.mock.calls.every(([ids]) => ids.length <= 100)).toBe(true);
+    expect(getSongById).toHaveBeenCalledTimes(1);
+    expect(usePlayerStore.getState().isPlaying).toBe(true);
+  });
+
+  it('does not lose the saved IDs when a cold batch is incomplete', async () => {
+    getSongById.mockResolvedValue(song);
+    getSongsByIds.mockResolvedValue([]);
+    installLocalStorage({ songIds: [song.id, song.id + 1], queueIndex: 0, currentSongId: song.id });
+    const before = localStorage.getItem('diva_playerQueue');
+    const { usePlayerStore } = await import('./playerStore');
+    await vi.waitFor(() => expect(getSongsByIds).toHaveBeenCalled());
+    expect(usePlayerStore.getState().queue).toEqual([]);
+    expect(localStorage.getItem('diva_playerQueue')).toBe(before);
+  });
+
+  it('stops requesting later pages after the user replaces a cold restoring queue', async () => {
+    const pending = deferred<Song[]>();
+    getSongById.mockResolvedValue(song);
+    getSongsByIds.mockReturnValue(pending.promise);
+    installLocalStorage({ songIds: Array.from({ length: 990 }, (_, index) => song.id + index), queueIndex: 0, currentSongId: song.id });
+    const { usePlayerStore } = await import('./playerStore');
+    await vi.waitFor(() => expect(getSongsByIds).toHaveBeenCalledTimes(1));
+    const replacement = { ...song, id: 77 };
+    usePlayerStore.getState().setQueue([replacement], 0, false);
+    pending.resolve([]);
+    await Promise.resolve(); await Promise.resolve();
+    expect(usePlayerStore.getState().queue).toEqual([replacement]);
+    expect(getSongsByIds).toHaveBeenCalledTimes(1);
   });
 });

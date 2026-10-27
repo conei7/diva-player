@@ -1,3 +1,4 @@
+import { useAsyncAction } from '../../hooks/useAsyncAction';
 /**
  * SaveToPlaylistModal — 「保存先…」 (YouTube's "Save to…").
  * Shown while uiStore.saveToPlaylistSongs is set (mounted by Layout). Checking a playlist saves
@@ -62,6 +63,7 @@ export function SaveToPlaylistModal() {
   const songs = useUiStore(state => state.saveToPlaylistSongs);
   const context = useUiStore(state => state.saveToPlaylistContext);
   const close = useUiStore(state => state.closeSaveToPlaylist);
+  const { busy: saving, run: runSave } = useAsyncAction();
   const playlists = usePlaylistStore(state => state.playlists);
   const loadPlaylists = usePlaylistStore(state => state.loadPlaylists);
 
@@ -73,7 +75,7 @@ export function SaveToPlaylistModal() {
     if (!songs || songs.length === 0) return;
     // Only when nothing is loaded yet: re-reading would replace every playlist object (an open
     // playlist page would then drop its selection).
-    if (usePlaylistStore.getState().playlists.length === 0) loadPlaylists();
+    if (usePlaylistStore.getState().playlists.length === 0) void loadPlaylists().catch(() => undefined);
     setQueueScope('currentAndRemaining');
     setCreating(false);
     setNewName('');
@@ -132,17 +134,17 @@ export function SaveToPlaylistModal() {
     showToast(message, { action: changeAction });
   };
 
-  const toggle = (playlist: Playlist, checked: boolean) => {
+  const toggle = async (playlist: Playlist, checked: boolean) => {
     if (selectedSongs.length === 0) return;
     const name = displayPlaylistName(playlist, t);
     try {
       const store = usePlaylistStore.getState();
       if (checked && !fromQueue) {
-        selectedSongs.forEach(song => store.removeSongById(playlist.id, song.id));
+        for (const song of selectedSongs) await store.removeSongById(playlist.id, song.id);
         showToast(t('「{name}」から削除しました', { name }));
         return;
       }
-      const result = store.addSongs(playlist.id, selectedSongs);
+      const result = (await store.addSongs(playlist.id, selectedSongs));
       if (!result.success) {
         showToast(t('保存できませんでした'));
         return;
@@ -153,11 +155,11 @@ export function SaveToPlaylistModal() {
     }
   };
 
-  const createAndSave = () => {
+  const createAndSave = async () => {
     const name = newName.trim();
     if (!name || selectedSongs.length === 0) return;
     try {
-      const playlist = usePlaylistStore.getState().createPlaylistWithSongs(name, selectedSongs);
+      const playlist = (await usePlaylistStore.getState().createPlaylistWithSongs(name, selectedSongs));
       close();
       const count = playlist.songs.length;
       showToast(count === 1
@@ -188,7 +190,7 @@ export function SaveToPlaylistModal() {
           className="flex min-w-0 flex-1 items-center gap-2"
           onSubmit={event => {
             event.preventDefault();
-            createAndSave();
+            void runSave(createAndSave);
           }}
         >
           <input
@@ -206,7 +208,7 @@ export function SaveToPlaylistModal() {
             maxLength={150}
             autoFocus
           />
-          <Button type="submit" variant="primary" size="sm" disabled={!newName.trim() || selectedSongs.length === 0}>
+          <Button type="submit" variant="primary" size="sm" loading={saving} disabled={!newName.trim() || selectedSongs.length === 0 || saving}>
             {t('作成')}
           </Button>
         </form>
@@ -234,14 +236,14 @@ export function SaveToPlaylistModal() {
           const disabledReason = playlist.smartRule
             ? t('スマートプレイリストには追加できません')
             : isSyncedPlaylist(playlist) ? t('同期中のプレイリストには追加できません') : null;
-          const disabled = disabledReason !== null || selectedSongs.length === 0;
+          const disabled = disabledReason !== null || selectedSongs.length === 0 || saving;
           const row = (
             <button
               type="button"
               role="checkbox"
               aria-checked={mixed ? 'mixed' : checked}
               aria-disabled={disabled || undefined}
-              onClick={disabled ? undefined : () => toggle(playlist, checked)}
+              onClick={disabled ? undefined : () => { void runSave(() => toggle(playlist, checked)); }}
               className={cx(
                 'flex min-h-10 w-full items-center gap-4 rounded-chip px-3 text-left text-sm leading-5 transition-colors duration-150 max-sm:min-h-12',
                 disabled ? 'cursor-default text-yt-text-disabled' : 'cursor-pointer text-yt-text hover:bg-yt-tonal',

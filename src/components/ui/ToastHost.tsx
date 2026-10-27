@@ -68,7 +68,7 @@ export default function ToastHost() {
     if (!action) return;
     const focusWasInToast = Boolean(toastRef.current?.contains(document.activeElement));
     dismissToast(toast.id);
-    action.onAction();
+    void Promise.resolve(action.onAction()).catch(error => { if (error?.name !== 'PlaylistPersistenceError') console.error('[Toast] Action failed', error); });
     // The button is about to go away: don't leave focus on <body>.
     if (focusWasInToast) returnFocus();
   }, [returnFocus]);

@@ -311,6 +311,7 @@ function HomeFeed() {
   const currentSong = usePlayerStore(state => state.currentSong);
   const ratings = useRatingStore(state => state.ratings);
   const playlists = usePlaylistStore(state => state.playlists);
+  const playlistsHydrated = usePlaylistStore(state => state.hasHydrated);
   const implicitFeedback = useImplicitFeedbackStore(state => state.feedback);
   const favoriteProducers = useFavoriteProducerStore(state => state.producers);
   const hiddenSongs = useHiddenSongStore(state => state.hiddenSongs);
@@ -799,12 +800,12 @@ function HomeFeed() {
     const requestId = requestIdRef.current + 1;
     requestIdRef.current = requestId;
 
-    if (!hasHydrated && (activeCategory === 'recommended' || activeCategory === 'history_based')) {
+    if ((!hasHydrated || !playlistsHydrated) && (activeCategory === 'recommended' || activeCategory === 'history_based')) {
       return;
     }
 
     fetchFirstPage(activeCategory, requestId);
-  }, [activeCategory, feedReload, hasHydrated, homeFeedContextKey, isRecommendedHomeView, location.key, restoredHomeFeed]);
+  }, [activeCategory, feedReload, hasHydrated, playlistsHydrated, homeFeedContextKey, isRecommendedHomeView, location.key, restoredHomeFeed]);
 
   useEffect(() => {
     if (!isRecommendedHomeView) {

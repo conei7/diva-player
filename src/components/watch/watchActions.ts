@@ -58,20 +58,20 @@ export function isInWatchLater(songId: number): boolean {
 }
 
 /** 後で聴く: save (toast with 変更 = the save dialog) or remove (toast with 元に戻す). */
-export function toggleWatchLater(song: Song, t: SourceTextTranslator): void {
+export async function toggleWatchLater(song: Song, t: SourceTextTranslator): Promise<void> {
   try {
     const store = usePlaylistStore.getState();
     const watchLater = store.playlists.find(playlist => playlist.id === WATCH_LATER_ID);
     const indexes = watchLater?.songs.flatMap((item, index) => (item.id === song.id ? [index] : [])) ?? [];
     if (indexes.length > 0) {
-      const snapshot = store.removeSongs(WATCH_LATER_ID, indexes);
+      const snapshot = (await store.removeSongs(WATCH_LATER_ID, indexes));
       if (!snapshot) return;
       showToast(t('後で聴くから削除しました'), {
         action: {
           label: t('元に戻す'),
-          onAction: () => {
+          onAction: async () => {
             try {
-              usePlaylistStore.getState().restoreRemovedSongs(snapshot);
+              (await usePlaylistStore.getState().restoreRemovedSongs(snapshot));
             } catch {
               // The playlist store reports persistence errors itself.
             }
@@ -81,8 +81,8 @@ export function toggleWatchLater(song: Song, t: SourceTextTranslator): void {
       return;
     }
     // Layout loads playlists asynchronously; make sure the system playlist exists.
-    if (!watchLater) store.getOrCreateWatchLater();
-    const added = usePlaylistStore.getState().toggleSongInPlaylist(WATCH_LATER_ID, song);
+    if (!watchLater) (await store.getOrCreateWatchLater());
+    const added = (await usePlaylistStore.getState().toggleSongInPlaylist(WATCH_LATER_ID, song));
     if (!added) return;
     showToast(t('後で聴くに保存しました'), {
       action: { label: t('変更'), onAction: () => useUiStore.getState().openSaveToPlaylist(song) },

@@ -1,3 +1,4 @@
+import { useAsyncAction } from '../../hooks/useAsyncAction';
 import { useId, useState } from 'react';
 import type { PlaylistFolder } from '../../types/vocadb';
 import { useTranslateSourceText } from '../../i18n';
@@ -11,10 +12,11 @@ interface NewPlaylistDialogProps {
   /** Folder chosen in the library's chips, used as the default. */
   defaultFolderId?: string;
   onClose: () => void;
-  onCreate: (name: string, folderId?: string) => void;
+  onCreate: (name: string, folderId?: string) => void | Promise<void>;
 }
 
 function NewPlaylistForm({ folders, defaultFolderId, onClose, onCreate }: Omit<NewPlaylistDialogProps, 'open'>) {
+  const { busy: saving, run: runSave } = useAsyncAction();
   const t = useTranslateSourceText();
   const formId = useId();
   const [name, setName] = useState('');
@@ -30,7 +32,7 @@ function NewPlaylistForm({ folders, defaultFolderId, onClose, onCreate }: Omit<N
       footer={(
         <>
           <Button variant="ghost" onClick={onClose}>{t('キャンセル')}</Button>
-          <Button type="submit" form={formId} variant="primary" disabled={!trimmed} aria-label={t('プレイリストを作成')}>
+          <Button type="submit" form={formId} variant="primary" loading={saving} disabled={!trimmed || saving} aria-label={t('プレイリストを作成')}>
             {t('作成')}
           </Button>
         </>
@@ -41,7 +43,7 @@ function NewPlaylistForm({ folders, defaultFolderId, onClose, onCreate }: Omit<N
         className="flex flex-col gap-4 pt-1"
         onSubmit={event => {
           event.preventDefault();
-          if (trimmed) onCreate(trimmed, folderId || undefined);
+          if (trimmed) void runSave(() => onCreate(trimmed, folderId || undefined));
         }}
       >
         <label className="block">

@@ -114,7 +114,7 @@ export default function Menu({
     // row's ⋮ instead of dropping to <body> (where Space would toggle playback).
     const keepFocusOnPage = captureRemovalFocusFallback(triggerRef.current);
     close();
-    onSelect?.();
+    void Promise.resolve(onSelect?.()).catch(error => { if (error?.name !== 'PlaylistPersistenceError') console.error('[Menu] Action failed', error); });
     requestAnimationFrame(keepFocusOnPage);
     window.setTimeout(keepFocusOnPage, LATE_REMOVAL_CHECK_MS);
   }, [close]);
@@ -354,7 +354,7 @@ function MenuItemBase({
       return;
     }
     if (contentRow) return;
-    if (keepOpen || !menu) onSelect?.();
+    if (keepOpen || !menu) void Promise.resolve(onSelect?.()).catch(error => { if (error?.name !== 'PlaylistPersistenceError') console.error('[Menu] Action failed', error); });
     else menu.select(onSelect);
   };
 

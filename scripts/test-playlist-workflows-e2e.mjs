@@ -1,3 +1,4 @@
+import { installSavedLibraryReader } from './saved-library-fixture.mjs';
 import puppeteer from 'puppeteer';
 import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
@@ -35,6 +36,7 @@ async function screenshot(page, name) {
 }
 async function fixtures(page) {
   await pinAppLanguage(page);
+  await installSavedLibraryReader(page);
   await page.evaluateOnNewDocument(() => {
     localStorage.setItem('diva_playlists', '[]'); localStorage.setItem('diva_playlistFolders', '[]');
   });
@@ -58,7 +60,8 @@ async function fixtures(page) {
 const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox', '--lang=ja-JP'] });
 try {
   for (const width of [1440, 1024, 390]) {
-    const page = await browser.newPage();
+    const context = await browser.createBrowserContext();
+    const page = await context.newPage();
     await page.setViewport({ width, height: 900, deviceScaleFactor: 1 });
     page.setDefaultTimeout(30000);
     const errors = [];
@@ -103,7 +106,7 @@ try {
     await page.waitForFunction(() => document.querySelector('[data-testid="playlist-import-save"]')?.disabled === false);
     await page.click('[data-testid="playlist-import-save"]');
     await page.waitForFunction(() => document.querySelector('main section h1')?.textContent === '変更後のシリーズ');
-    const imported = await page.evaluate(() => JSON.parse(localStorage.getItem('diva_playlists')));
+    const imported = await page.evaluate(async () => (await window.__readSavedPlaylists()));
     assert(imported.some(item => item.name === '変更後のシリーズ' && item.songs[0]?.id === song.id && !item.nicoSync), 'one-time import without target did not persist');
     await page.waitForSelector('[data-testid="toast-host"] > div:not([aria-hidden])');
     const toastPlacement = await page.evaluate(() => {
@@ -142,10 +145,10 @@ try {
     await screenshot(page, `smart-${width}`);
     await page.waitForFunction(() => document.querySelector('[data-testid="smart-playlist-submit"]')?.disabled === false);
     await page.click('[data-testid="smart-playlist-submit"]');
-    await page.waitForFunction(() => JSON.parse(localStorage.getItem('diva_playlists')).some(item => item.smartRule?.pvService === 'niconico' && item.songs.length === 1));
+    await page.waitForFunction(async () => (await window.__readSavedPlaylists()).some(item => item.smartRule?.pvService === 'niconico' && item.songs.length === 1));
     assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `horizontal overflow at ${width}`);
     assert(errors.length === 0, `page errors at ${width}: ${errors.join('; ')}`);
     console.log(`PASS ${width}px: library import, source invalidation, saving, smart preset reset, invalid range, preview and persistence`);
-    await page.close();
+    await context.close();
   }
 } finally { await browser.close(); }

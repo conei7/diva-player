@@ -37,7 +37,7 @@ export async function syncNicoPlaylist(
         lastUnmatchedCount: response.unmatchedVideoIds.length,
         lastError: undefined,
       };
-      if (!usePlaylistStore.getState().applyNicoSync(playlist.id, response.songs, next)) return 'skipped' as const;
+      if (!(await usePlaylistStore.getState().applyNicoSync(playlist.id, response.songs, next))) return 'skipped' as const;
       return next.lastStatus === 'partial' ? 'partial' as const : 'success' as const;
     } catch (reason) {
       if (reason instanceof PlaylistPersistenceError) return 'error' as const;
@@ -54,7 +54,7 @@ export async function syncNicoPlaylist(
         || current.nicoSync.sourceId !== sync.sourceId
         || current.nicoSync.intervalHours !== sync.intervalHours) return 'skipped' as const;
       try {
-        usePlaylistStore.getState().applyNicoSync(playlist.id, current.songs, failed);
+        (await usePlaylistStore.getState().applyNicoSync(playlist.id, current.songs, failed));
       } catch {
         // The failed sync result cannot be persisted either; the store reports
         // the persistence failure to the user and leaves memory unchanged.

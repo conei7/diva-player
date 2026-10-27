@@ -75,10 +75,10 @@ export default function SongAlbums({ songId }: { songId: number }) {
       let name = album.name;
       let suffix = 2;
       while (usedNames.has(name)) name = `${album.name} (${suffix++})`;
-      const playlist = store.createPlaylistWithSongs(name, songs, undefined, {
+      const playlist = (await store.createPlaylistWithSongs(name, songs, undefined, {
         coverArtUrl: album.coverUrl ?? songs[0]?.thumbUrl,
         description: album.releaseDate ? `VocaDB album / ${album.releaseDate}` : 'VocaDB album',
-      });
+      }));
       showToast(t('「{title}」を作成しました', { title: name }), {
         action: { label: t('開く'), onAction: () => navigate(playlistPath(playlist.id)) },
       });

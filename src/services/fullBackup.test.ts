@@ -51,7 +51,7 @@ describe('parseFullBackup', () => {
     usePlaylistStore.setState({ playlists: [], folders: [] });
   });
 
-  it('hydrates persisted playlists before creating a backup snapshot', () => {
+  it('hydrates persisted playlists before creating a backup snapshot', async () => {
     vi.stubGlobal('localStorage', createLocalStorage({
       diva_playlists: JSON.stringify([{
         id: 'playlist-1',
@@ -69,7 +69,7 @@ describe('parseFullBackup', () => {
     }));
     usePlaylistStore.setState({ playlists: [], folders: [] });
 
-    const snapshot = readPersistedPlaylistsForBackup();
+    const snapshot = await readPersistedPlaylistsForBackup();
 
     expect(snapshot.playlists.map(playlist => playlist.id)).toEqual(['watch-later', 'playlist-1']);
     expect(snapshot.folders.map(folder => folder.id)).toEqual(['folder-1']);
@@ -281,6 +281,7 @@ describe('parseFullBackup', () => {
   it('reports a failed read of the current data as an identifier, without display text', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     installHistoryDatabase();
+    vi.spyOn(usePlaylistStore.getState(), 'loadPlaylists').mockResolvedValue();
     vi.stubGlobal('localStorage', {
       ...createLocalStorage(),
       getItem: () => { throw new DOMException('denied', 'SecurityError'); },
@@ -298,6 +299,8 @@ describe('parseFullBackup', () => {
   it('names the data whose write failed and keeps the current data when the rollback succeeds', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     installHistoryDatabase();
+    vi.spyOn(usePlaylistStore.getState(), 'loadPlaylists').mockResolvedValue();
+    vi.stubGlobal('indexedDB', undefined);
     const values = new Map<string, string>([
       ['diva_playlists', 'previous-playlists'],
       ['diva_playlistFolders', 'previous-folders'],
@@ -331,6 +334,8 @@ describe('parseFullBackup', () => {
   it('reports an incomplete rollback when playlist storage cannot be restored', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     installHistoryDatabase();
+    vi.spyOn(usePlaylistStore.getState(), 'loadPlaylists').mockResolvedValue();
+    vi.stubGlobal('indexedDB', undefined);
     const values = new Map<string, string>([
       ['diva_playlists', 'previous-playlists'],
       ['diva_playlistFolders', 'previous-folders'],
@@ -371,6 +376,8 @@ describe('parseFullBackup', () => {
   it('does not report an undo failure for data that was never changed', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     installHistoryDatabase();
+    vi.spyOn(usePlaylistStore.getState(), 'loadPlaylists').mockResolvedValue();
+    vi.stubGlobal('indexedDB', undefined);
     const values = new Map<string, string>([
       ['diva_playlists', 'previous-playlists'],
       ['diva_playlistFolders', 'previous-folders'],

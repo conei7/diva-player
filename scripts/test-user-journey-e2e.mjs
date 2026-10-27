@@ -1,3 +1,4 @@
+import { installSavedLibraryReader } from './saved-library-fixture.mjs';
 import puppeteer from 'puppeteer';
 import { pinAppLanguage } from './pin-app-language.mjs';
 
@@ -17,6 +18,7 @@ async function fixtures(page) {
   page.on('pageerror', error => pageErrors.push(error.message));
   const remote = { songs: [songs[0]], fail: false, failSaveChunk: false, saveChunkFailures: 0 };
   await pinAppLanguage(page);
+  await installSavedLibraryReader(page);
   await page.evaluateOnNewDocument(() => {
     localStorage.setItem('diva-global-filters', JSON.stringify({ version: 2, state: { enabled: false } }));
   });
@@ -116,9 +118,9 @@ try {
   await second.bringToFront();
   await second.click('[data-testid="watch-action-bar"] button[aria-label="星5つ"]');
   await saveNewPlaylist(second, 'Journey saved B');
-  const saved = await second.evaluate(() => ({
+  const saved = await second.evaluate(async () => ({
     ratings: JSON.parse(localStorage.getItem('diva-ratings')).state.ratings,
-    playlists: JSON.parse(localStorage.getItem('diva_playlists')),
+    playlists: (await window.__readSavedPlaylists()),
   }));
   assert(saved.ratings['990101'] === 4 && saved.ratings['990102'] === 5
     && ['Journey saved A', 'Journey saved B'].every(name => saved.playlists.some(item => item.name === name)),
@@ -146,11 +148,11 @@ try {
   await first.waitForSelector('main button[aria-label="今すぐ同期"]');
   remote.songs = [...songs];
   await first.click('main button[aria-label="今すぐ同期"]');
-  await first.waitForFunction(() => JSON.parse(localStorage.getItem('diva_playlists')).find(item => item.name === 'Journey external')?.songs.length === 2);
+  await first.waitForFunction(async () => (await window.__readSavedPlaylists()).find(item => item.name === 'Journey external')?.songs.length === 2);
   remote.fail = true;
   await first.click('main button[aria-label="今すぐ同期"]');
-  await first.waitForFunction(() => JSON.parse(localStorage.getItem('diva_playlists')).find(item => item.name === 'Journey external')?.nicoSync.lastStatus === 'error');
-  const retained = await first.evaluate(() => JSON.parse(localStorage.getItem('diva_playlists')).find(item => item.name === 'Journey external').songs.map(song => song.id));
+  await first.waitForFunction(async () => (await window.__readSavedPlaylists()).find(item => item.name === 'Journey external')?.nicoSync.lastStatus === 'error');
+  const retained = await first.evaluate(async () => (await window.__readSavedPlaylists()).find(item => item.name === 'Journey external').songs.map(song => song.id));
   assert(retained.join() === '990101,990102', 'A temporary sync failure erased the saved songs');
   console.log('PASS external playlist updates and a failed refresh preserve local saved songs');
 
@@ -167,7 +169,7 @@ try {
   await clickText(first, 'body', '新しいプレイリスト');
   await first.type('[role="dialog"] input[placeholder="タイトルを入力"]', 'Journey offline');
   await first.click('[role="dialog"] button[aria-label="プレイリストを作成"]');
-  await first.waitForFunction(() => JSON.parse(localStorage.getItem('diva_playlists')).some(item => item.name === 'Journey offline'));
+  await first.waitForFunction(async () => (await window.__readSavedPlaylists()).some(item => item.name === 'Journey offline'));
   await first.setOfflineMode(false);
   await first.reload({ waitUntil: 'domcontentloaded' });
   await first.waitForSelector('button[aria-label="設定"]');
@@ -196,12 +198,12 @@ try {
   unavailable.failSaveChunk = true;
   await recovery.goto(new URL('watch?v=990101&autoplay=0', base).href, { waitUntil: 'domcontentloaded' });
   await recovery.waitForSelector('[data-testid="watch-action-bar"]');
-  const beforeFailure = await recovery.evaluate(() => localStorage.getItem('diva_playlists'));
+  const beforeFailure = await recovery.evaluate(async () => JSON.stringify(await window.__readSavedPlaylists()));
   await recovery.click('[data-testid="watch-action-bar"] button[aria-label="プレイリストに保存"]');
   await recovery.waitForFunction(() => document.querySelector('[data-testid="toast-host"]')?.textContent.includes('表示できませんでした'));
   assert(unavailable.saveChunkFailures > 0, 'The stale save-dialog chunk failure was not exercised');
   assert(!await recovery.$('[data-testid="save-to-playlist-dialog"]'), 'A failed save dialog remained visible');
-  assert(await recovery.evaluate(() => localStorage.getItem('diva_playlists')) === beforeFailure, 'Opening a failed save dialog changed saved playlists');
+  assert(await recovery.evaluate(async () => JSON.stringify(await window.__readSavedPlaylists())) === beforeFailure, 'Opening a failed save dialog changed saved playlists');
   unavailable.failSaveChunk = false;
   await Promise.all([
     recovery.waitForNavigation({ waitUntil: 'domcontentloaded' }),
@@ -209,7 +211,7 @@ try {
   ]);
   await recovery.waitForSelector('[data-testid="watch-action-bar"]');
   await saveNewPlaylist(recovery, 'Journey recovered save');
-  const recovered = await recovery.evaluate(() => JSON.parse(localStorage.getItem('diva_playlists')));
+  const recovered = await recovery.evaluate(async () => (await window.__readSavedPlaylists()));
   assert(['Journey saved A', 'Journey saved B', 'Journey external', 'Journey offline', 'Journey recovered save']
     .every(name => recovered.some(item => item.name === name)), 'Recovering the save dialog lost existing playlists');
   console.log('PASS unavailable save-dialog code offers reload and saves successfully afterward without losing existing playlists');

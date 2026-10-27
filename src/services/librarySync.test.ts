@@ -63,8 +63,8 @@ describe('saved library data across tabs', () => {
     expect(JSON.parse(values.get('diva-ratings')!).state.ratings).toEqual({ 100: 4, 200: 5 });
   });
 
-  it('reads both current playlist keys and preserves another tab’s saved playlist on a subsequent save', () => {
-    const first = playlists.usePlaylistStore.getState().createPlaylist('A');
+  it('reads both current playlist keys and preserves another tab’s saved playlist on a subsequent save', async () => {
+    const first = (await playlists.usePlaylistStore.getState().createPlaylist('A'));
     const remote = { ...first, id: 'remote', name: 'B', folderId: 'folder' };
     const saved = JSON.parse(values.get('diva_playlists')!);
     values.set('diva_playlists', JSON.stringify([...saved, remote]));
@@ -72,16 +72,16 @@ describe('saved library data across tabs', () => {
     writes.mockClear();
     storageEvent('diva_playlists');
     expect(writes).not.toHaveBeenCalled();
-    expect(playlists.usePlaylistStore.getState().folders[0].id).toBe('folder');
-    playlists.usePlaylistStore.getState().createPlaylist('C');
+    await vi.waitFor(() => expect(playlists.usePlaylistStore.getState().folders[0]?.id).toBe('folder'));
+    (await playlists.usePlaylistStore.getState().createPlaylist('C'));
     expect(JSON.parse(values.get('diva_playlists')!).map((item: { name: string }) => item.name)).toEqual(expect.arrayContaining(['A', 'B', 'C']));
     const current = playlists.usePlaylistStore.getState().playlists;
     storageEvent('diva_playlistFolders');
     expect(playlists.usePlaylistStore.getState().playlists).toBe(current);
   });
 
-  it('catches missed events on focus/visibility and leaves unchanged selections alone', () => {
-    const playlist = playlists.usePlaylistStore.getState().createPlaylist('local');
+  it('catches missed events on focus/visibility and leaves unchanged selections alone', async () => {
+    const playlist = (await playlists.usePlaylistStore.getState().createPlaylist('local'));
     windowEvents.dispatchEvent(new Event('focus'));
     expect(playlists.usePlaylistStore.getState().playlists.find(item => item.id === playlist.id)).toBe(playlist);
     values.set('diva-ratings', JSON.stringify({ state: { ratings: { 123: 3 } }, version: 0 }));

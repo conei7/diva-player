@@ -1,3 +1,4 @@
+import { useAsyncAction } from '../../hooks/useAsyncAction';
 import { useId, useState } from 'react';
 import { useTranslateSourceText } from '../../i18n';
 import Button from '../ui/Button';
@@ -9,11 +10,12 @@ interface PlaylistFolderDialogProps {
   mode: 'create' | 'rename';
   initialName?: string;
   onClose: () => void;
-  onSubmit: (name: string) => void;
+  onSubmit: (name: string) => void | Promise<void>;
 }
 
 /** Small dialog with one 「フォルダー名」 field. */
 export default function PlaylistFolderDialog({ mode, initialName = '', onClose, onSubmit }: PlaylistFolderDialogProps) {
+  const { busy: saving, run: runSave } = useAsyncAction();
   const t = useTranslateSourceText();
   const formId = useId();
   const [name, setName] = useState(initialName);
@@ -29,7 +31,7 @@ export default function PlaylistFolderDialog({ mode, initialName = '', onClose, 
       footer={(
         <>
           <Button variant="ghost" onClick={onClose}>{t('キャンセル')}</Button>
-          <Button type="submit" form={formId} variant="primary" disabled={!trimmed || unchanged}>
+          <Button type="submit" form={formId} variant="primary" loading={saving} disabled={!trimmed || unchanged || saving}>
             {mode === 'create' ? t('作成') : t('保存')}
           </Button>
         </>
@@ -40,7 +42,7 @@ export default function PlaylistFolderDialog({ mode, initialName = '', onClose, 
         className="pt-1"
         onSubmit={event => {
           event.preventDefault();
-          if (trimmed && !unchanged) onSubmit(trimmed);
+          if (trimmed && !unchanged) void runSave(() => onSubmit(trimmed));
         }}
       >
         <label className="block">

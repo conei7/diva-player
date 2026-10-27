@@ -11,7 +11,7 @@ export function useYouTubePlaylistSync(): void {
   const loadPlaylists = usePlaylistStore(state => state.loadPlaylists);
 
   useEffect(() => {
-    loadPlaylists();
+
     let running = false;
     let disposed = false;
     let stopSavedDataSync: (() => void) | undefined;
@@ -27,11 +27,14 @@ export function useYouTubePlaylistSync(): void {
           return;
         }
         if (disposed) return;
+        await loadPlaylists();
         stopSavedDataSync ??= services.startSavedDataSync();
         if (!navigator.onLine) return;
         const { syncDueYouTubePlaylists, syncDueNicoPlaylists } = services;
         await syncDueYouTubePlaylists();
         if (!disposed) await syncDueNicoPlaylists();
+      } catch (error) {
+        console.error('[LibrarySync] Could not load saved playlists', error);
       } finally {
         running = false;
       }

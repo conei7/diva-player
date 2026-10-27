@@ -1,3 +1,4 @@
+import { useAsyncAction } from '../../hooks/useAsyncAction';
 import { useId, useRef, useState } from 'react';
 import type { Playlist, PlaylistFolder } from '../../types/vocadb';
 import { useTranslateSourceText } from '../../i18n';
@@ -20,11 +21,12 @@ interface PlaylistEditDialogProps {
   /** 「フォルダーに移動」 opens the dialog with the folder field focused. */
   focus?: 'folder';
   onClose: () => void;
-  onSave: (values: PlaylistEditValues) => void;
+  onSave: (values: PlaylistEditValues) => void | Promise<void>;
 }
 
 /** プレイリストを編集: title, description, folder, and the image URL under 詳細. */
 export default function PlaylistEditDialog({ playlist, folders, focus, onClose, onSave }: PlaylistEditDialogProps) {
+  const { busy: saving, run: runSave } = useAsyncAction();
   const t = useTranslateSourceText();
   const formId = useId();
   const folderRef = useRef<HTMLSelectElement>(null);
@@ -36,12 +38,12 @@ export default function PlaylistEditDialog({ playlist, folders, focus, onClose, 
   const preview = { ...playlist, coverArtUrl: coverArtUrl.trim() || undefined };
 
   const submit = () => {
-    onSave({
+    void runSave(() => onSave({
       name: name.trim() || playlist.name,
       description: description.trim() || undefined,
       coverArtUrl: coverArtUrl.trim() || undefined,
       folderId: folderId || undefined,
-    });
+    }));
   };
 
   return (
@@ -54,7 +56,7 @@ export default function PlaylistEditDialog({ playlist, folders, focus, onClose, 
       footer={(
         <>
           <Button variant="ghost" onClick={onClose}>{t('キャンセル')}</Button>
-          <Button type="submit" form={formId} variant="primary">{t('保存')}</Button>
+          <Button type="submit" form={formId} variant="primary" loading={saving} disabled={saving}>{t('保存')}</Button>
         </>
       )}
     >

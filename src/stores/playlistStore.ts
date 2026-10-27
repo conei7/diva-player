@@ -1,7 +1,7 @@
 /**
  * Playlist Store - プレイリストの永続管理
  *
- * LocalStorage と同期し、プレイリスト／フォルダのCRUD操作を提供。
+ * IndexedDB と同期し、プレイリスト／フォルダのCRUD操作を提供。
  */
 
 import { create } from 'zustand';
@@ -89,8 +89,11 @@ export function getSongsRefreshedAt(playlist: Playlist): number | undefined {
 export type SortKey = 'name' | 'artist' | 'publishDate' | 'addedOrder';
 
 interface PlaylistState {
+  hasHydrated: boolean;
   playlists: Playlist[];
   folders: PlaylistFolder[];
+
+  replaceLibrary: (playlists: Playlist[], folders: PlaylistFolder[], expectedRevision?: string) => string;
 
   // ロード
   loadPlaylists: () => void;
@@ -167,6 +170,8 @@ function slimSongForStorage(song: Song): Song {
 let publishedStorageSnapshot: [string | null, string | null] | undefined;
 
 export const getPlaylistStorageSnapshot = () => publishedStorageSnapshot;
+let playlistDatabaseRevision: string | undefined;
+export const getPlaylistDatabaseRevision = () => playlistDatabaseRevision;
 
 function rememberPublishedStorage() {
   try {
@@ -201,33 +206,40 @@ function sortSongsBy(songs: Song[], by: SortKey): Song[] {
   }
 }
 
-export const usePlaylistStore = create<PlaylistState>((set, get) => {
-  const commit = (playlists: Playlist[], folders: PlaylistFolder[]) => {
-    const result = save(playlists, folders);
-    if (!result.success) {
-      const error = new PlaylistPersistenceError(result.rollbackSucceeded);
-      // Tell the user (the thrown error keeps the technical message for callers and logs).
-      // When even the rollback failed, offer the backup from the settings' data tab.
-      const language = useLanguageStore.getState().language;
-      showToast(translateSourceText(language, 'プレイリストを保存できませんでした'), result.rollbackSucceeded ? undefined : {
-        action: {
-          label: translate(language, 'settingsSaveBackup'),
-          onAction: () => useUiStore.getState().openSettings('data'),
-        },
-      });
-      throw error;
-    }
-    rememberPublishedStorage();
-    set({ playlists, folders });
+type AsyncPlaylistState = {
+  [K in keyof PlaylistState]: PlaylistState[K] extends (...args: infer A) => infer R
+    ? K extends 'isSongInPlaylist' ? PlaylistState[K] : (...args: A) => Promise<R>
+    : PlaylistState[K]
+};
+
+export const usePlaylistStore = create<AsyncPlaylistState>((set, readState) => {
+  let pending: { playlists: Playlist[]; folders: PlaylistFolder[] } | undefined;
+
+  let hydrated = false;
+  let tail: Promise<unknown> = Promise.resolve();
+  const takePending = () => pending;
+  const get = (): PlaylistState => ({ ...actions, playlists: readState().playlists, folders: readState().folders });
+  const reportFailure = (recoveryComplete = true) => {
+    const error = new PlaylistPersistenceError(recoveryComplete);
+    const language = useLanguageStore.getState().language;
+    showToast(translateSourceText(language, 'プレイリストを保存できませんでした'), recoveryComplete ? undefined : { action: { label: translate(language, 'settingsSaveBackup'), onAction: () => useUiStore.getState().openSettings('data') } });
+    return error;
   };
 
-  return {
+  const commit = (playlists: Playlist[], folders: PlaylistFolder[]) => { pending = { playlists, folders }; };
+  const actions: PlaylistState = {
+  hasHydrated: false,
   playlists: [],
   folders:   [],
+  replaceLibrary: (playlists, folders, expectedRevision) => {
+    if (expectedRevision !== undefined && expectedRevision !== playlistDatabaseRevision) throw new Error('Saved library changed during backup restore');
+    commit(playlists, folders);
+    return ''; // The async wrapper returns the committed database revision.
+  },
 
   // ─── ロード ────────────────────────────────────────────────────────────────
   loadPlaylists: () => {
-    const rawStored = storage.get<Playlist[]>(PLAYLISTS_KEY) ?? [];
+    const rawStored = typeof indexedDB !== 'undefined' ? get().playlists : storage.get<Playlist[]>(PLAYLISTS_KEY) ?? [];
     const hadLegacyDigPlaylist = rawStored.some(playlist => playlist.id === LEGACY_DIG_PLAYLIST_ID);
     const stored = rawStored.filter(playlist => playlist.id !== LEGACY_DIG_PLAYLIST_ID).map(playlist => {
       const normalized = playlist.smartRule
@@ -235,7 +247,7 @@ export const usePlaylistStore = create<PlaylistState>((set, get) => {
         : playlist;
       return { ...normalized, songs: normalized.songs.map(withDefaultSongName) };
     });
-    const folders = storage.get<PlaylistFolder[]>(FOLDERS_KEY) ?? [];
+    const folders = typeof indexedDB !== 'undefined' ? get().folders : storage.get<PlaylistFolder[]>(FOLDERS_KEY) ?? [];
     // 「後で聴く」がなければ作成
     const hasWL = stored.some(p => p.id === WATCH_LATER_ID);
     const playlists = hasWL ? stored : [
@@ -687,4 +699,72 @@ export const usePlaylistStore = create<PlaylistState>((set, get) => {
     return wl;
   },
   };
+  const wrapped = { hasHydrated: false, playlists: [], folders: [], isSongInPlaylist: actions.isSongInPlaylist } as unknown as AsyncPlaylistState;
+  for (const name of Object.keys(actions) as Array<keyof PlaylistState>) {
+    if (typeof actions[name] !== 'function' || name === 'isSongInPlaylist') continue;
+    const action = actions[name] as (...args: unknown[]) => unknown;
+    const run = (...args: unknown[]) => {
+      const execute = async () => {
+        try {
+          if (typeof indexedDB !== 'undefined') {
+            const db = await import('../services/playlistDatabase');
+            return await db.withPlaylistLock(async () => {
+              let saved = await db.readPlaylistSnapshot(playlistDatabaseRevision);
+              if (!saved) {
+                // Keep the exact old bytes in IDB before releasing localStorage quota.
+                const legacy = { playlists: localStorage.getItem('diva_playlists'), folders: localStorage.getItem('diva_playlistFolders') };
+                const playlists: Playlist[] = legacy.playlists ? JSON.parse(legacy.playlists) : [];
+                const folders: PlaylistFolder[] = legacy.folders ? JSON.parse(legacy.folders) : [];
+                if (!Array.isArray(playlists) || !Array.isArray(folders)
+                  || playlists.some(item => !item || typeof item.id !== 'string' || !Array.isArray(item.songs))
+                  || folders.some(item => !item || typeof item.id !== 'string')) throw new Error('Invalid legacy playlists');
+                await db.writePlaylistSnapshot({ playlists, folders }, { playlists: [], folders: [] }, null, legacy);
+                saved = await db.readPlaylistSnapshot();
+                if (!saved?.snapshot) throw new Error('Playlist migration could not be verified');
+                if (JSON.stringify(saved.snapshot) !== JSON.stringify({ playlists, folders })) throw new Error('Playlist migration mismatch');
+                // Remove only the exact values we copied, never a newer write from an old tab.
+                try {
+                  if (localStorage.getItem('diva_playlists') === legacy.playlists) localStorage.removeItem('diva_playlists');
+                  if (localStorage.getItem('diva_playlistFolders') === legacy.folders) localStorage.removeItem('diva_playlistFolders');
+                } catch { /* Durable IDB copy and exact legacy archive are already verified. */ }
+              }
+              if (!saved.snapshot && hydrated && name === 'loadPlaylists') return;
+              if (saved.snapshot) set(saved.snapshot);
+              playlistDatabaseRevision = saved.revision;
+              pending = undefined;
+              const result = action(...args);
+              hydrated = true;
+              const next = takePending();
+              if (next) {
+                const before = { playlists: readState().playlists, folders: readState().folders };
+                playlistDatabaseRevision = await db.writePlaylistSnapshot(next, before, playlistDatabaseRevision);
+                set(next);
+                db.notifyPlaylistWrite(playlistDatabaseRevision);
+              }
+              return name === 'replaceLibrary' ? playlistDatabaseRevision : result;
+            });
+          }
+          if (typeof localStorage !== 'undefined' && localStorage.getItem('diva_playlistRevision')) throw new Error('IndexedDB is required for the migrated library');
+          pending = undefined;
+          const result = action(...args);
+          const next = takePending();
+          if (next) {
+            const saved = save(next.playlists, next.folders);
+            if (!saved.success) throw new PlaylistPersistenceError(saved.rollbackSucceeded);
+            rememberPublishedStorage();
+            set(next);
+          }
+          return result;
+        } catch (error) {
+          throw reportFailure(error instanceof PlaylistPersistenceError ? error.recoveryComplete : true);
+        } finally { pending = undefined; if (!readState().hasHydrated) set({ hasHydrated: true }); }
+      };
+      const result = tail.catch(() => undefined).then(execute);
+      // Callers can await the rejection; event handlers which discard it still get the error toast.
+      tail = result.catch(() => undefined);
+      return result;
+    };
+    Object.assign(wrapped, { [name]: run });
+  }
+  return wrapped;
 });

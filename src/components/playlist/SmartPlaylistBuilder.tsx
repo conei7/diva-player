@@ -1,3 +1,4 @@
+import { useAsyncAction } from '../../hooks/useAsyncAction';
 import { useEffect, useId, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { Artist, SmartPlaylistRule, Song } from '../../types/vocadb';
@@ -24,7 +25,7 @@ import { PLAYLIST_FIELD_CLASS, PLAYLIST_FIELD_LABEL_CLASS } from './playlistDisp
 export interface SmartPlaylistBuilderValues { name: string; rule: SmartPlaylistRule }
 interface SmartPlaylistBuilderProps {
   mode: 'create' | 'edit'; initialName?: string; initialRule?: SmartPlaylistRule;
-  onClose: () => void; onSubmit: (values: SmartPlaylistBuilderValues) => void;
+  onClose: () => void; onSubmit: (values: SmartPlaylistBuilderValues) => void | Promise<void>;
 }
 
 type PreviewState = { state: 'loading' | 'success' | 'empty' | 'error'; matchedCount?: number; songs?: Song[] };
@@ -45,6 +46,7 @@ function Field({ label, htmlFor, children, error }: { label: ReactNode; htmlFor?
 
 /** スマートプレイリストを作成 / 条件を編集: rules on the left, a live preview on the right. */
 export default function SmartPlaylistBuilder({ mode, initialName = '', initialRule, onClose, onSubmit }: SmartPlaylistBuilderProps) {
+  const { busy: saving, run: runSave } = useAsyncAction();
   const t = useTranslateSourceText();
   const language = useLanguageStore(state => state.language);
   const ids = useId();
@@ -99,7 +101,7 @@ export default function SmartPlaylistBuilder({ mode, initialName = '', initialRu
   const blocked = Boolean(validation) || preview.state === 'loading' || (preview.state === 'empty' && !allowEmpty);
   const submit = () => {
     if (blocked) return;
-    onSubmit({ name: name.trim() || t(SMART_PLAYLIST_PRESETS.find(item => item.id === presetId)?.label ?? 'スマートプレイリスト'), rule: normalizeSmartPlaylistRule(rule) });
+    void runSave(() => onSubmit({ name: name.trim() || t(SMART_PLAYLIST_PRESETS.find(item => item.id === presetId)?.label ?? 'スマートプレイリスト'), rule: normalizeSmartPlaylistRule(rule) }));
   };
 
   const matched = preview.matchedCount ?? 0;
@@ -166,7 +168,7 @@ export default function SmartPlaylistBuilder({ mode, initialName = '', initialRu
       footer={(
         <>
           <Button variant="ghost" onClick={onClose}>{t('キャンセル')}</Button>
-          <Button variant="primary" disabled={blocked} onClick={submit} data-testid="smart-playlist-submit">
+          <Button variant="primary" loading={saving} disabled={blocked || saving} onClick={submit} data-testid="smart-playlist-submit">
             {mode === 'create' ? t('作成') : t('保存')}
           </Button>
         </>

@@ -1,3 +1,4 @@
+import { installSavedLibraryReader } from './saved-library-fixture.mjs';
 import puppeteer from 'puppeteer';
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -205,6 +206,7 @@ async function pinAppLanguage(page, language = 'en') {
 
 try {
   const page = await browser.newPage();
+  await installSavedLibraryReader(page);
   await page.setViewport({ width: 1440, height: 900 });
   await installApiFixtures(page);
   await page.goto(new URL('watch?v=1501', base), { waitUntil: 'domcontentloaded', timeout: 60_000 });
@@ -402,8 +404,8 @@ try {
   await page.click('[data-testid="song-albums"] button[aria-label="「DIVA E2E Album」からプレイリストを作成"]');
   await page.waitForFunction(() => document.querySelector('[data-testid="toast-host"]')?.textContent?.includes('「DIVA E2E Album」を作成しました'));
   if (!await page.$('button[aria-label="概要を折りたたむ"]')) throw new Error('Album action unexpectedly collapsed the description');
-  const albumPlaylist = await page.evaluate(() => {
-    const playlists = JSON.parse(localStorage.getItem('diva_playlists') ?? '[]');
+  const albumPlaylist = await page.evaluate(async () => {
+    const playlists = (await window.__readSavedPlaylists());
     return playlists?.find(playlist => playlist.name === 'DIVA E2E Album')?.songs.map(song => song.id);
   });
   if (JSON.stringify(albumPlaylist) !== '[1501,1502]') throw new Error(`Album track order was not preserved: ${JSON.stringify(albumPlaylist)}`);
@@ -457,6 +459,7 @@ try {
   const backHistorySession = await backPage.createCDPSession();
   await backPage.setViewport({ width: 1440, height: 900 });
   await pinAppLanguage(backPage);
+  await installSavedLibraryReader(backPage);
   await installApiFixtures(backPage);
   await backPage.goto(base, { waitUntil: 'domcontentloaded', timeout: 60_000 });
   await backPage.waitForSelector('main a[href*="/watch?v=1502"]', { timeout: 60_000 });

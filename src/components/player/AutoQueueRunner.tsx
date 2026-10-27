@@ -12,6 +12,7 @@ import { useAutoPlaySessionStore } from '../../stores/autoPlaySessionStore';
  * (DESIGN_SPEC §1-12). The hook and its inputs are the same as when PlayerTracker called it.
  */
 export default function AutoQueueRunner() {
+  const queueRestoring = usePlayerStore(s => s.queueRestoring);
   const currentSong = usePlayerStore(s => s.currentSong);
   const playbackSequence = usePlayerStore(s => s.playbackSequence);
   const rootSeed = usePlayerStore(s => s.rootSeed);
@@ -21,11 +22,12 @@ export default function AutoQueueRunner() {
   const historyEntries = useHistoryStore(s => s.entries);
   const ratings = useRatingStore(s => s.ratings);
   const playlists = usePlaylistStore(s => s.playlists);
+  const playlistsHydrated = usePlaylistStore(s => s.hasHydrated);
   const implicitFeedback = useImplicitFeedbackStore(s => s.feedback);
   const autoPlaySession = useAutoPlaySessionStore(s => s.session);
 
   useAutoQueue({
-    currentSong,
+    currentSong: queueRestoring || !playlistsHydrated ? null : currentSong,
     playbackSequence,
     rootSeed,
     queue,

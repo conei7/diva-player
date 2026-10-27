@@ -241,15 +241,15 @@ async function runViewport(page, baseUrl, width, height, backupPath, { restore =
     // A failed write: the details name the data in words (no storage keys, no raw exception text),
     // say the current data is unchanged, and focus goes back to「復元」.
     await page.evaluate(() => {
-      const original = Storage.prototype.setItem;
+      const original = IDBObjectStore.prototype.put;
       let failed = false;
-      Storage.prototype.setItem = function setItem(key, value) {
-        if (!failed && String(key) === 'diva_playlistFolders') {
+      IDBObjectStore.prototype.put = function put(value, key) {
+        if (!failed && this.name === 'playlists') {
           failed = true;
-          Storage.prototype.setItem = original;
+          IDBObjectStore.prototype.put = original;
           throw new DOMException('The quota has been exceeded.', 'QuotaExceededError');
         }
-        return original.call(this, key, value);
+        return key === undefined ? original.call(this, value) : original.call(this, value, key);
       };
     });
     await clickButton(page, RESTORE, '復元');

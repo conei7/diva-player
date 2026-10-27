@@ -54,11 +54,11 @@ describe('external playlist sync race handling', () => {
       playlistId: 'PL1234567890', sourceUrl: 'https://www.youtube.com/playlist?list=PL1234567890',
       enabled: true, intervalHours: 24,
     } as const;
-    const playlist = usePlaylistStore.getState().createYouTubeLinkedPlaylist('YT', [], sync);
+    const playlist = (await usePlaylistStore.getState().createYouTubeLinkedPlaylist('YT', [], sync));
     const result = syncYouTubePlaylist(playlist, { refresh: true });
     await vi.waitFor(() => expect(fetchYouTubePlaylistSongs).toHaveBeenCalledOnce());
 
-    expect(usePlaylistStore.getState().unlinkYouTubeSync(playlist.id)).toBe(true);
+    expect((await usePlaylistStore.getState().unlinkYouTubeSync(playlist.id))).toBe(true);
     pending.resolve(youtubeResponse);
 
     await expect(result).resolves.toBe('skipped');
@@ -73,11 +73,11 @@ describe('external playlist sync race handling', () => {
       playlistId: 'PL1234567890', sourceUrl: 'https://www.youtube.com/playlist?list=PL1234567890',
       enabled: true, intervalHours: 24,
     } as const;
-    const playlist = usePlaylistStore.getState().createYouTubeLinkedPlaylist('YT', [], sync);
+    const playlist = (await usePlaylistStore.getState().createYouTubeLinkedPlaylist('YT', [], sync));
     const result = syncYouTubePlaylist(playlist, { refresh: true });
     await vi.waitFor(() => expect(fetchYouTubePlaylistSongs).toHaveBeenCalledOnce());
 
-    expect(usePlaylistStore.getState().unlinkYouTubeSync(playlist.id)).toBe(true);
+    expect((await usePlaylistStore.getState().unlinkYouTubeSync(playlist.id))).toBe(true);
     usePlaylistStore.setState({ playlists: usePlaylistStore.getState().playlists.map(item => item.id === playlist.id
       ? { ...item, youtubeSync: { ...sync } }
       : item) });
@@ -94,11 +94,11 @@ describe('external playlist sync race handling', () => {
       sourceKind: 'mylist', sourceId: '12345678', sourceUrl: 'https://www.nicovideo.jp/mylist/12345678',
       enabled: true, intervalHours: 24,
     } as const;
-    const playlist = usePlaylistStore.getState().createNicoLinkedPlaylist('Nico', [], sync);
+    const playlist = (await usePlaylistStore.getState().createNicoLinkedPlaylist('Nico', [], sync));
     const result = syncNicoPlaylist(playlist, { refresh: true });
     await vi.waitFor(() => expect(fetchNicoPlaylistSongs).toHaveBeenCalledOnce());
 
-    expect(usePlaylistStore.getState().deletePlaylist(playlist.id)).not.toBeNull();
+    expect((await usePlaylistStore.getState().deletePlaylist(playlist.id))).not.toBeNull();
     pending.resolve(nicoResponse);
 
     await expect(result).resolves.toBe('skipped');
@@ -112,7 +112,7 @@ describe('external playlist sync race handling', () => {
       sourceKind: 'mylist', sourceId: '12345678', sourceUrl: 'https://www.nicovideo.jp/mylist/12345678',
       enabled: true, intervalHours: 24,
     } as const;
-    const playlist = usePlaylistStore.getState().createNicoLinkedPlaylist('Nico', [], sync);
+    const playlist = (await usePlaylistStore.getState().createNicoLinkedPlaylist('Nico', [], sync));
     const result = syncNicoPlaylist(playlist, { refresh: true });
     await vi.waitFor(() => expect(fetchNicoPlaylistSongs).toHaveBeenCalledOnce());
 
@@ -132,7 +132,7 @@ describe('external playlist sync race handling', () => {
       playlistId: 'PL1234567890', sourceUrl: 'https://www.youtube.com/playlist?list=PL1234567890',
       enabled: true, intervalHours: 24,
     } as const;
-    const playlist = usePlaylistStore.getState().createYouTubeLinkedPlaylist('YT', [], sync);
+    const playlist = (await usePlaylistStore.getState().createYouTubeLinkedPlaylist('YT', [], sync));
     vi.stubGlobal('localStorage', {
       getItem: () => null,
       setItem: () => { throw new DOMException('storage full', 'QuotaExceededError'); },

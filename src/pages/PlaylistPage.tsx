@@ -126,7 +126,7 @@ export default function PlaylistPage() {
   const shareHandledRef = useRef<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => { loadPlaylists(); }, [loadPlaylists]);
+  useEffect(() => { void loadPlaylists().catch(() => undefined); }, [loadPlaylists]);
   // 後で聴く always exists once the playlists are loaded.
   const loaded = playlists.length > 0;
   const selectedPlaylist = listId ? playlists.find(playlist => playlist.id === listId) ?? null : null;
@@ -171,10 +171,10 @@ export default function PlaylistPage() {
     try {
       const store = usePlaylistStore.getState();
       const name = uniquePlaylistName(shared.name, takenPlaylistNames());
-      const imported = store.createPlaylistWithSongs(name, songs, selectedFolderId ?? undefined, {
+      const imported = (await store.createPlaylistWithSongs(name, songs, selectedFolderId ?? undefined, {
         description: shared.description,
         coverArtUrl: shared.coverArtUrl,
-      });
+      }));
       showToast(t('「{name}」を追加しました', { name }));
       navigate(playlistPath(imported.id), { replace: true });
     } catch {
@@ -202,7 +202,7 @@ export default function PlaylistPage() {
       // Only a changed rule makes the result stale (the playlists may have been re-read meanwhile).
       if (!current || !isSameSmartPlaylistRule(current.smartRule, playlist.smartRule)) return;
       const matchingSongs = filterSmartPlaylistSongs(result.items, rule);
-      replacePlaylistSongs(playlist.id, matchingSongs);
+      await replacePlaylistSongs(playlist.id, matchingSongs);
       smartRefreshRetryRef.current.delete(playlist.id);
       setSmartRefreshStatuses(statuses => ({
         ...statuses,
@@ -276,15 +276,15 @@ export default function PlaylistPage() {
     downloadJson(`diva-playlists-backup-${exportedAt.slice(0, 10)}.json`, createAllPlaylistsBackupPayload(store.folders, store.playlists, exportedAt));
   };
 
-  const deletePlaylistWithUndo = useCallback((playlist: Playlist) => {
+  const deletePlaylistWithUndo = useCallback(async (playlist: Playlist) => {
     if (playlist.isPinned) return;
-    const snapshot = usePlaylistStore.getState().deletePlaylist(playlist.id);
+    const snapshot = (await usePlaylistStore.getState().deletePlaylist(playlist.id));
     if (!snapshot) return;
     if (listId === playlist.id) navigate(playlistsPath(), { replace: true });
     showToast(t('プレイリストを削除しました'), {
       action: {
         label: t('元に戻す'),
-        onAction: () => { usePlaylistStore.getState().restoreDeletedPlaylist(snapshot); },
+        onAction: async () => { (await usePlaylistStore.getState().restoreDeletedPlaylist(snapshot)); },
       },
     });
   }, [listId, navigate, t]);
@@ -335,9 +335,9 @@ export default function PlaylistPage() {
     }
   }, [t]);
 
-  const unlinkSync = (playlist: Playlist) => {
+  const unlinkSync = async (playlist: Playlist) => {
     const store = usePlaylistStore.getState();
-    const unlinked = playlist.youtubeSync ? store.unlinkYouTubeSync(playlist.id) : store.unlinkNicoSync(playlist.id);
+    const unlinked = playlist.youtubeSync ? (await store.unlinkYouTubeSync(playlist.id)) : (await store.unlinkNicoSync(playlist.id));
     if (unlinked) showToast(t('同期を解除しました'));
   };
 
@@ -347,30 +347,30 @@ export default function PlaylistPage() {
   };
 
   // ── Creating ──────────────────────────────────────────────────────────────
-  const createPlaylist = (name: string, folderId?: string) => {
-    const playlist = usePlaylistStore.getState().createPlaylist(name, folderId);
+  const createPlaylist = async (name: string, folderId?: string) => {
+    const playlist = (await usePlaylistStore.getState().createPlaylist(name, folderId));
     setNewPlaylistOpen(false);
     navigate(playlistPath(playlist.id));
   };
 
-  const submitSmartPlaylist = ({ name, rule }: SmartPlaylistBuilderValues) => {
+  const submitSmartPlaylist = async ({ name, rule }: SmartPlaylistBuilderValues) => {
     const store = usePlaylistStore.getState();
     const editing = smartBuilder?.playlistId ? store.playlists.find(playlist => playlist.id === smartBuilder.playlistId) : null;
     if (editing) {
-      store.updatePlaylist(editing.id, { name, smartRule: rule });
+      (await store.updatePlaylist(editing.id, { name, smartRule: rule }));
       smartRefreshRef.current = null;
       smartRefreshRetryRef.current.delete(editing.id);
       setSmartRefreshStatuses(current => ({ ...current, [editing.id]: { state: 'loading' } }));
       showToast(t('条件を保存しました'));
     } else {
-      const playlist = store.createSmartPlaylist(name, rule, selectedFolderId ?? undefined);
+      const playlist = (await store.createSmartPlaylist(name, rule, selectedFolderId ?? undefined));
       navigate(playlistPath(playlist.id));
       showToast(t('「{title}」を作成しました', { title: name }));
     }
     setSmartBuilder(null);
   };
 
-  const saveImport = (result: PlaylistImportResult, { sync, targetId }: PlaylistImportSaveOptions) => {
+  const saveImport = async (result: PlaylistImportResult, { sync, targetId }: PlaylistImportSaveOptions) => {
     const store = usePlaylistStore.getState();
     const names = takenPlaylistNames();
     const fallbackName = result.service === 'youtube' ? t('YouTubeのプレイリスト') : t('ニコニコのプレイリスト');
@@ -380,9 +380,9 @@ export default function PlaylistPage() {
       const name = uniquePlaylistName(result.title || fallbackName, names);
       let created: Playlist;
       if (result.service === 'youtube' && result.youtube) {
-        created = store.createYouTubeLinkedPlaylist(name, result.songs, youtubeSyncFrom(result.youtube), folderId);
+        created = (await store.createYouTubeLinkedPlaylist(name, result.songs, youtubeSyncFrom(result.youtube), folderId));
       } else if (result.service === 'niconico' && result.nico) {
-        created = store.createNicoLinkedPlaylist(name, result.songs, nicoSyncFrom(result.nico), folderId);
+        created = (await store.createNicoLinkedPlaylist(name, result.songs, nicoSyncFrom(result.nico), folderId));
       } else {
         throw new Error('sync source missing');
       }
@@ -395,7 +395,7 @@ export default function PlaylistPage() {
     if (targetId) {
       const target = store.playlists.find(playlist => playlist.id === targetId);
       if (!target) throw new Error('target missing');
-      const added = store.addSongs(targetId, result.songs);
+      const added = (await store.addSongs(targetId, result.songs));
       if (!added.success) throw new Error('save failed');
       setImportState(null);
       const name = displayPlaylistName(target, t);
@@ -413,7 +413,7 @@ export default function PlaylistPage() {
     }
 
     const name = uniquePlaylistName(result.title || fallbackName, names);
-    const created = store.createPlaylistWithSongs(name, result.songs, folderId);
+    const created = (await store.createPlaylistWithSongs(name, result.songs, folderId));
     setImportState(null);
     navigate(playlistPath(created.id));
     showToast(created.songs.length === 1
@@ -438,21 +438,21 @@ export default function PlaylistPage() {
             pendingFolders.push(folder);
             continue;
           }
-          const created = store.createFolder(folder.name, folder.parentId ? folderIdMap.get(folder.parentId) : undefined);
+          const created = (await store.createFolder(folder.name, folder.parentId ? folderIdMap.get(folder.parentId) : undefined));
           folderIdMap.set(folder.id, created.id);
         }
         let addedSongs = 0;
-        backup.playlists.forEach(item => {
+        for (const item of backup.playlists) {
           const name = uniquePlaylistName(item.name, names);
           names.add(name);
-          const playlist = usePlaylistStore.getState().createPlaylistWithSongs(
+          const playlist = (await usePlaylistStore.getState().createPlaylistWithSongs(
             name,
             item.songs,
             item.folderId ? folderIdMap.get(item.folderId) : selectedFolderId ?? undefined,
             { description: item.description, coverArtUrl: item.coverArtUrl, smartRule: item.smartRule },
-          );
+          ));
           addedSongs += playlist.songs.length;
-        });
+        }
         showToast(t('バックアップをインポートしました（{songs}）', { songs: formatCount(addedSongs, 'song', language) }));
         return;
       }
@@ -460,10 +460,10 @@ export default function PlaylistPage() {
       const parsed = parsePlaylistImport(data);
       if (!parsed) throw new Error('Invalid playlist JSON');
       const name = uniquePlaylistName(parsed.name, names);
-      const playlist = store.createPlaylistWithSongs(name, parsed.songs, selectedFolderId ?? undefined, {
+      const playlist = (await store.createPlaylistWithSongs(name, parsed.songs, selectedFolderId ?? undefined, {
         description: parsed.description,
         coverArtUrl: parsed.coverArtUrl,
-      });
+      }));
       navigate(playlistPath(playlist.id));
       showToast(t('「{name}」をインポートしました（{songs}）', { name, songs: formatCount(playlist.songs.length, 'song', language) }));
     } catch {
@@ -477,11 +477,11 @@ export default function PlaylistPage() {
   };
 
   // ── Folders ───────────────────────────────────────────────────────────────
-  const submitFolder = (name: string) => {
+  const submitFolder = async (name: string) => {
     if (!folderDialog) return;
     const store = usePlaylistStore.getState();
-    if (folderDialog.mode === 'create') store.createFolder(name);
-    else store.renameFolder(folderDialog.folder.id, name);
+    if (folderDialog.mode === 'create') (await store.createFolder(name));
+    else (await store.renameFolder(folderDialog.folder.id, name));
     setFolderDialog(null);
   };
 
@@ -492,13 +492,13 @@ export default function PlaylistPage() {
       confirmLabel: t('削除'),
     });
     if (!confirmed) return;
-    usePlaylistStore.getState().deleteFolder(folder.id);
+    (await usePlaylistStore.getState().deleteFolder(folder.id));
     setLibraryFilter(current => (current === `folder:${folder.id}` ? 'all' : current));
   };
 
-  const saveEdit = (values: PlaylistEditValues) => {
+  const saveEdit = async (values: PlaylistEditValues) => {
     if (!editState) return;
-    usePlaylistStore.getState().updatePlaylist(editState.playlistId, values);
+    (await usePlaylistStore.getState().updatePlaylist(editState.playlistId, values));
     setEditState(null);
   };
 

@@ -1,3 +1,4 @@
+import { useAsyncAction } from '../../hooks/useAsyncAction';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Playlist } from '../../types/vocadb';
 import { useTranslateSourceText } from '../../i18n';
@@ -34,13 +35,14 @@ interface PlaylistImportDialogProps {
   /** 「ファイルから」: the JSON import. */
   onImportFile: () => void;
   /** Saves the result; throwing keeps the dialog open with 「保存できませんでした」. */
-  onSave: (result: PlaylistImportResult, options: PlaylistImportSaveOptions) => void;
+  onSave: (result: PlaylistImportResult, options: PlaylistImportSaveOptions) => void | Promise<void>;
 }
 
 const NEW_TARGET = '';
 
 /** プレイリストをインポート / 曲を追加: one dialog for YouTube and Niconico playlist URLs. */
 export default function PlaylistImportDialog({ initialTargetId, playlists, onClose, onImportFile, onSave }: PlaylistImportDialogProps) {
+  const { busy: saving, run: runSave } = useAsyncAction();
   const t = useTranslateSourceText();
   const { phase, load, reset } = usePlaylistImportLoader();
   // The dialog is for pasting a URL: focus goes there (not to the YouTube chip before it).
@@ -81,14 +83,14 @@ export default function PlaylistImportDialog({ initialTargetId, playlists, onClo
 
   const effectiveTarget = sync ? NEW_TARGET : targetId;
   const canSave = result !== null && !needsReload && (sync || result.songs.length > 0);
-  const save = () => {
+  const save = () => { void runSave(async () => {
     if (!result || !canSave) return;
     try {
-      onSave(result, { sync, targetId: effectiveTarget || null });
+      await onSave(result, { sync, targetId: effectiveTarget || null });
     } catch {
       setSaveFailed(true);
     }
-  };
+  }); };
 
   const loading = phase.state === 'loading';
   const progress = phase.state === 'loading' ? phase.progress : undefined;
@@ -112,7 +114,7 @@ export default function PlaylistImportDialog({ initialTargetId, playlists, onClo
       footer={(
         <>
           <Button variant="ghost" onClick={onClose}>{t('キャンセル')}</Button>
-          <Button variant="primary" disabled={!canSave} onClick={save} data-testid="playlist-import-save">{t('保存')}</Button>
+          <Button variant="primary" loading={saving} disabled={!canSave || saving} onClick={save} data-testid="playlist-import-save">{t('保存')}</Button>
         </>
       )}
     >

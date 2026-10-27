@@ -8,7 +8,6 @@ import { useLanguageStore } from '../../stores/languageStore';
 import { showToast } from '../../stores/toastStore';
 import { usePlayerSwipeGesture } from '../../hooks/usePlayerSwipeGesture';
 import { FINE_HOVER_MEDIA_QUERY, MOBILE_MEDIA_QUERY, useMediaQuery } from '../../hooks/useMediaQuery';
-import PlayerEmbed from '../player/PlayerEmbed';
 import { getPlaybackOwnership } from '../../services/playbackOwnership';
 import { translateSourceText } from '../../i18n';
 import { isWatchPath, watchPath } from '../../utils/routes';
@@ -22,6 +21,7 @@ import { isSilentVolume } from './playerMute';
 
 // The mini player's controls are only drawn once a song is loaded, so they stay out of the initial
 // JavaScript (DESIGN_SPEC §1-12). The iframe (PlayerEmbed) is never inside their Suspense boundary.
+const PlayerEmbed = lazy(() => import('./PlayerEmbed'));
 const loadMiniPlayerControls = () => import('./MiniPlayerControls');
 const loadProgressLine = () => import('./ProgressLine');
 const loadMuteBadge = () => import('./MuteBadge');
@@ -318,7 +318,7 @@ export default function GlobalPlayer() {
           if (showMiniPlayer) openSongPage();
         }}
       >
-        <PlayerEmbed />
+        <DeferredBoundary><Suspense fallback={null}>{currentSong && <PlayerEmbed />}</Suspense></DeferredBoundary>
       </div>
 
       <DeferredBoundary>

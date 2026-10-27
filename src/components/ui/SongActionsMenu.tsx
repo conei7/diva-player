@@ -162,20 +162,20 @@ function SongActionsMenuItems({ song, include, extraItems, footerItems, onAction
     onAction?.('queue');
   };
 
-  const toggleWatchLater = () => {
+  const toggleWatchLater = async () => {
     try {
       const store = usePlaylistStore.getState();
       const watchLater = store.playlists.find(playlist => playlist.id === WATCH_LATER_ID);
       const indexes = watchLater?.songs.flatMap((item, index) => (item.id === song.id ? [index] : [])) ?? [];
       if (indexes.length > 0) {
-        const snapshot = store.removeSongs(WATCH_LATER_ID, indexes);
+        const snapshot = (await store.removeSongs(WATCH_LATER_ID, indexes));
         if (!snapshot) return;
         showToast(t('後で聴くから削除しました'), {
           action: {
             label: t('元に戻す'),
-            onAction: () => {
+            onAction: async () => {
               try {
-                usePlaylistStore.getState().restoreRemovedSongs(snapshot);
+                (await usePlaylistStore.getState().restoreRemovedSongs(snapshot));
               } catch {
                 // The store reports persistence errors itself.
               }
@@ -183,8 +183,8 @@ function SongActionsMenuItems({ song, include, extraItems, footerItems, onAction
           },
         });
       } else {
-        if (!watchLater) store.getOrCreateWatchLater();
-        const added = usePlaylistStore.getState().toggleSongInPlaylist(WATCH_LATER_ID, song);
+        if (!watchLater) (await store.getOrCreateWatchLater());
+        const added = (await usePlaylistStore.getState().toggleSongInPlaylist(WATCH_LATER_ID, song));
         if (!added) return;
         showToast(t('後で聴くに保存しました'), {
           action: { label: t('変更'), onAction: () => useUiStore.getState().openSaveToPlaylist(song) },
