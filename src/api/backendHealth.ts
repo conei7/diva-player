@@ -26,7 +26,10 @@ export function resolveBackendConnectivityStatus({
 
 const wait = (delayMs: number) => new Promise(resolve => setTimeout(resolve, delayMs));
 
-export async function checkBackendHealth({
+// Share only active probes with identical policies. A completed result is never cached here.
+const inFlight = new WeakMap<typeof fetch, Map<string, Promise<boolean>>>();
+
+export function checkBackendHealth({
   baseUrl = '/backend-api',
   timeoutMs = DEFAULT_HEALTH_TIMEOUT_MS,
   attempts = 2,
@@ -35,6 +38,25 @@ export async function checkBackendHealth({
 }: BackendHealthOptions = {}): Promise<boolean> {
   const normalizedBaseUrl = baseUrl.replace(/\/$/, '');
   const normalizedAttempts = Math.max(1, Math.floor(attempts));
+
+  let requests = inFlight.get(fetchImpl);
+  if (!requests) { requests = new Map(); inFlight.set(fetchImpl, requests); }
+  const key = JSON.stringify([normalizedBaseUrl, timeoutMs, normalizedAttempts, retryDelayMs]);
+  const existing = requests.get(key);
+  if (existing) return existing;
+  const request = probeBackendHealth(normalizedBaseUrl, timeoutMs, normalizedAttempts, retryDelayMs, fetchImpl)
+    .finally(() => { requests.delete(key); });
+  requests.set(key, request);
+  return request;
+}
+
+async function probeBackendHealth(
+  normalizedBaseUrl: string,
+  timeoutMs: number,
+  normalizedAttempts: number,
+  retryDelayMs: number,
+  fetchImpl: typeof fetch,
+): Promise<boolean> {
 
   for (let attempt = 0; attempt < normalizedAttempts; attempt += 1) {
     try {
