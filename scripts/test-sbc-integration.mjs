@@ -147,6 +147,14 @@ async function main() {
   assert(JSON.stringify(fullBatch.items.map(item => item.id)) === JSON.stringify(batchIds), 'Full song batch changed request order.');
   assert(fullBatch.items.every(item => item.name && Array.isArray(item.artists) && Array.isArray(item.pvs)), 'Full song batch omitted watch-page fields.');
   assert(JSON.stringify(fullBatch).length > JSON.stringify(compactBatch).length, 'Full song batch did not retain more metadata than compact cards.');
+  for (const full of fullBatch.items) {
+    const card = compactBatch.items.find(item => item.id === full.id);
+    for (const field of ['name', 'defaultName', 'artistString', 'youtubeViews', 'nicoViews',
+      'audioComputed', 'bpm', 'bpmAlternative', 'bpmConfidence', 'musicalKey', 'keyMode',
+      'keyConfidence', 'chorusStartSeconds', 'chorusEndSeconds', 'chorusConfidence', 'audioInstruments']) {
+      assert(JSON.stringify(full[field]) === JSON.stringify(card[field]), `Full detail lost or changed ${field} for ${full.id}.`);
+    }
+  }
   console.log(`PASS full song batch (${fullBatch.items.length} ordered songs)`);
 
   const expectedViewIds = [...new Set(batchIds)];

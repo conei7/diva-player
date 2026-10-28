@@ -21,6 +21,7 @@ jobs:
       web: ${{ steps.scope.outputs.web }}
       runtime: ${{ steps.scope.outputs.runtime }}
       mode: ${{ steps.scope.outputs.mode }}
+      release: ${{ steps.scope.outputs.release }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -31,7 +32,7 @@ jobs:
         id: scope
         run: python3 -B scripts/classify-ci-changes.py
   cloudflare_contract:
-    if: github.ref == 'refs/heads/main' && needs.changes.outputs.web == 'true'
+    if: github.ref == 'refs/heads/main' && needs.changes.outputs.release == 'true'
     needs: changes
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -825,7 +826,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
   build:
-    if: github.ref == 'refs/heads/main' && needs.changes.outputs.web == 'true'
+    if: github.ref == 'refs/heads/main' && !cancelled() && needs.changes.result == 'success' && needs.changes.outputs.web == 'true' && (needs.changes.outputs.release == 'false' || needs.cloudflare_contract.result == 'success')
     needs: [changes, cloudflare_contract]
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -920,6 +921,7 @@ jobs:
             kill "$(cat "$RUNNER_TEMP/diva-player-preview.pid")" 2>/dev/null || true
           fi
       - name: Build exact Cloudflare release once
+        if: needs.changes.outputs.release == 'true'
         shell: bash
         env:
           COMPATIBILITY_DATE: ${{ needs.cloudflare_contract.outputs.compatibility_date }}
@@ -931,6 +933,7 @@ jobs:
             --compatibility-flags-json "$COMPATIBILITY_FLAGS_JSON"
           test -s .cloudflare-functions-build/index.js
       - name: Package Cloudflare release with provenance
+        if: needs.changes.outputs.release == 'true'
         id: release_artifact
         shell: bash
         env:
@@ -954,6 +957,7 @@ jobs:
             -cf cloudflare-pages-release.tar \
             .cloudflare-release
       - name: Save exact Cloudflare release artifact
+        if: needs.changes.outputs.release == 'true'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: cloudflare-pages-release
@@ -962,7 +966,8 @@ jobs:
           retention-days: 30
           compression-level: 0
   deploy-cloudflare:
-    needs: [cloudflare_contract, build]
+    if: github.ref == 'refs/heads/main' && needs.changes.outputs.release == 'true'
+    needs: [changes, cloudflare_contract, build]
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:

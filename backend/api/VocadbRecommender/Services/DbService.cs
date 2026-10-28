@@ -1661,6 +1661,16 @@ public class DbService
                        'chorusStartSeconds', (SELECT aa.chorus_start_seconds FROM song_audio_analysis aa WHERE aa.song_id = songs.id),
                        'chorusEndSeconds', (SELECT aa.chorus_end_seconds FROM song_audio_analysis aa WHERE aa.song_id = songs.id),
                        'chorusConfidence', (SELECT aa.chorus_confidence FROM song_audio_analysis aa WHERE aa.song_id = songs.id),
+                       'bpm', (SELECT aa.bpm FROM song_audio_analysis aa WHERE aa.song_id = songs.id),
+                       'bpmAlternative', (SELECT aa.bpm_alternative FROM song_audio_analysis aa WHERE aa.song_id = songs.id),
+                       'bpmConfidence', (SELECT aa.bpm_confidence FROM song_audio_analysis aa WHERE aa.song_id = songs.id),
+                       'musicalKey', (SELECT aa.musical_key FROM song_audio_analysis aa WHERE aa.song_id = songs.id),
+                       'keyMode', (SELECT aa.key_mode FROM song_audio_analysis aa WHERE aa.song_id = songs.id),
+                       'keyConfidence', (SELECT aa.key_confidence FROM song_audio_analysis aa WHERE aa.song_id = songs.id),
+                       'audioInstruments', COALESCE((
+                           SELECT jsonb_agg(jsonb_build_object('key', sai.instrument_key, 'score', sai.score) ORDER BY sai.rank)
+                           FROM song_audio_instruments sai WHERE sai.song_id = songs.id AND sai.score >= 0.08
+                       ), '[]'::jsonb),
                        'thumbUrl', COALESCE(raw_json->>'thumbUrl', raw_json->'pvs'->0->>'thumbUrl')
                    )))::text
             FROM songs

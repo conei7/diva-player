@@ -106,8 +106,8 @@ try {
   assert.match(workflow, /build:\n\s+if: github\.ref == 'refs\/heads\/main'/);
   assert.match(workflow, /cloudflare_contract:\n\s+if: github\.ref == 'refs\/heads\/main'/);
   assert.match(workflow, /Inspect live Cloudflare release contract[\s\S]*--github-output "\$GITHUB_OUTPUT"/);
-  assert.match(workflow, /build:\n\s+if: github\.ref == 'refs\/heads\/main' && needs\.changes\.outputs\.web == 'true'\n\s+needs: \[changes, cloudflare_contract\]/);
-  assert.match(workflow, /deploy-cloudflare:\n\s+needs: \[cloudflare_contract, build\]/);
+  assert.match(workflow, /build:\n[^\n]*needs\.changes\.outputs\.web == 'true'[^\n]*needs\.cloudflare_contract\.result == 'success'[^\n]*\n\s+needs: \[changes, cloudflare_contract\]/);
+  assert.match(workflow, /deploy-cloudflare:\n\s+if:[^\n]*needs\.changes\.outputs\.release == 'true'\n\s+needs: \[changes, cloudflare_contract, build\]/);
   const runtimeJob = workflow.slice(workflow.indexOf('  runtime_validation:'), workflow.indexOf('  build:'));
   const pagesBuildJob = workflow.slice(workflow.indexOf('  build:'), workflow.indexOf('  deploy-cloudflare:'));
   assert.match(runtimeJob, /Attest exact deployable image vulnerability scans/);

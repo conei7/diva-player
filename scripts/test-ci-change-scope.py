@@ -16,7 +16,7 @@ spec.loader.exec_module(scope)
 
 class ScopeTests(unittest.TestCase):
     def test_only_known_frontend_inputs_skip_runtime(self):
-        for path in ['src/pages/WatchPage.tsx', 'src/index.css', 'src/stores/playerStore.test.ts',
+        for path in ['src/pages/WatchPage.tsx', 'src/index.css',
                      'public/icon.svg', 'functions/backend-api/[[path]].ts', *scope.WEB_FILES]:
             with self.subTest(path=path):
                 self.assertEqual(scope.classify([path, 'README.md']), 'web')
@@ -25,11 +25,18 @@ class ScopeTests(unittest.TestCase):
         for path in ['package.json', 'package-lock.json', 'Dockerfile.web', '.dockerignore',
                      'backend/api/main.cs', 'backend/database/migrations/001.sql', 'vendor/alpine/a.apk',
                      '.github/workflows/deploy.yml', 'scripts/classify-ci-changes.py',
-                     'scripts/test-navigation-e2e.mjs', 'NuGet.Config', 'new-build-input',
+                     'scripts/test-rolling-deployment.mjs', 'NuGet.Config', 'new-build-input',
                      'docs/tool.py', '../src/x.ts', '/src/x.ts', 'src\\x.ts', 'src//x.ts']:
             with self.subTest(path=path):
                 self.assertEqual(scope.classify(['src/index.css', path]), 'full')
         self.assertEqual(scope.classify([]), 'full')
+
+    def test_test_only_validates_without_runtime_or_release(self):
+        for path in [*scope.WEB_TEST_FILES, 'src/stores/playerStore.test.ts', 'src/component.test.tsx']:
+            with self.subTest(path=path):
+                self.assertEqual(scope.classify([path, 'README.md']), 'tests')
+                self.assertEqual(scope.classify([path, 'src/main.tsx']), 'web')
+                self.assertEqual(scope.classify([path, 'package-lock.json']), 'full')
 
     def test_documentation_only_and_mixed_changes(self):
         self.assertEqual(scope.classify(['README.md', 'docs/guide.md', 'docs/screen.png']), 'docs')
@@ -52,7 +59,7 @@ class ScopeTests(unittest.TestCase):
                             '--event-path', str(event), '--github-output', str(output)], check=True,
                            stdout=subprocess.PIPE)
             self.assertEqual(dict(line.split('=') for line in output.read_text().splitlines()),
-                             {'mode': 'full', 'web': 'true', 'runtime': 'true'})
+                             {'mode': 'full', 'web': 'true', 'runtime': 'true', 'release': 'true'})
 
 
 class GitScopeTests(unittest.TestCase):
@@ -115,9 +122,12 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn('python3 -B scripts/test-ci-change-scope.py', text)
         self.assertIn('python3 -B scripts/classify-ci-changes.py', text)
         self.assertIn("needs.changes.outputs.runtime == 'true'", text)
-        self.assertEqual(text.count("needs.changes.outputs.web == 'true'"), 2)
+        self.assertEqual(text.count("needs.changes.outputs.web == 'true'"), 1)
         self.assertIn('needs: [changes, cloudflare_contract]', text)
-        self.assertIn('needs: [cloudflare_contract, build]', text)
+        self.assertIn('needs: [changes, cloudflare_contract, build]', text)
+        self.assertIn("needs.changes.outputs.release == 'false' || needs.cloudflare_contract.result == 'success'", text)
+        for name in ['Build exact Cloudflare release once', 'Package Cloudflare release with provenance', 'Save exact Cloudflare release artifact']:
+            self.assertIn(f"- name: {name}\n        if: needs.changes.outputs.release == 'true'", text)
         for gate in ['Attest exact deployable image vulnerability scans', '--severity HIGH,CRITICAL',
                      'Verify preview root, ready, health, and origin headers',
                      'Verify production or perform one bounded rollback']:
