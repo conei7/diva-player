@@ -2,6 +2,7 @@ import puppeteer from 'puppeteer';
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createHash } from 'node:crypto';
 
 const PAGE_TIMEOUT_MS = 60_000;
 
@@ -69,6 +70,37 @@ async function main() {
   const baseUrl = getBaseUrl();
   const browser = await puppeteer.launch({ headless: true, args: ['--lang=ja-JP'] });
   const page = await browser.newPage();
+  const reportIndex = process.argv.indexOf('--network-report');
+  const reportPath = reportIndex >= 0 ? process.argv[reportIndex + 1] : undefined;
+  if (reportIndex >= 0 && (!reportPath || reportPath.startsWith('--'))) throw new Error('--network-report requires a file path.');
+  const network = [];
+  const active = new Map();
+  const requests = new Map();
+  if (reportPath) {
+    page.on('request', request => {
+      const url = new URL(request.url());
+      if (url.origin !== new URL(baseUrl).origin || !url.pathname.includes('/api/')) return;
+      url.searchParams.sort();
+      const key = `${request.method()} ${url.href} ${createHash('sha256').update(request.postData() || '').digest('hex')}`;
+      const record = { method: request.method(), url: url.href, started: Date.now(),
+        duplicateInFlight: (active.get(key) || 0) > 0 };
+      network.push(record); requests.set(request, { record, key });
+      active.set(key, (active.get(key) || 0) + 1);
+    });
+    const complete = request => {
+      const pending = requests.get(request);
+      if (!pending) return;
+      const { record, key } = pending;
+      record.ms = Date.now() - record.started;
+      record.status = request.response()?.status() ?? null;
+      record.failure = request.failure()?.errorText ?? null;
+      record.serverTiming = request.response()?.headers()['server-timing'] ?? null;
+      active.set(key, active.get(key) - 1); requests.delete(request);
+    };
+    page.on('requestfinished', complete);
+    page.on('requestfailed', complete);
+  }
+
   const tempDir = await mkdtemp(join(tmpdir(), 'diva-player-e2e-'));
   const failures = [];
   page.on('pageerror', error => failures.push(`page error: ${error.message}`));
@@ -284,6 +316,20 @@ async function main() {
     console.log('SBC browser E2E test passed.');
   } finally {
     await browser.close();
+    if (reportPath) {
+      const summary = {};
+      for (const request of network) {
+        const key = request.method + ' ' + new URL(request.url).pathname;
+        const group = summary[key] ??= { count: 0, completed: 0, duplicateInFlight: 0, failed: 0, unfinished: 0, maxMs: 0 };
+        group.count++;
+        if (Number.isFinite(request.ms) && request.status >= 200 && request.status < 400 && !request.failure) group.completed++;
+        if (request.duplicateInFlight) group.duplicateInFlight++;
+        if (!Number.isFinite(request.ms)) group.unfinished++;
+        if (request.failure || request.status >= 400) group.failed++;
+        group.maxMs = Math.max(group.maxMs, request.ms ?? 0);
+      }
+      await writeFile(reportPath, JSON.stringify({ baseUrl, checkedAt: new Date().toISOString(), summary, requests: network }, null, 2), 'utf8');
+    }
     await rm(tempDir, { recursive: true, force: true });
   }
 }
