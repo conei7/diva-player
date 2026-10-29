@@ -162,6 +162,66 @@ describe('player queue startup restoration', () => {
 
 
 describe('large queue restoration', () => {
+  it('allows nearby navigation before the last page, retaining all IDs and the latest duplicate index', async () => {
+    const songs = Array.from({ length: 990 }, (_, index) => ({ ...song, id: song.id + index }));
+    songs[501] = songs[500];
+    const byId = new Map(songs.map(item => [item.id, item]));
+    const later = deferred<Song[]>();
+    getSongById.mockImplementation(async (id: number) => byId.get(id));
+    getSongsByIds.mockImplementationOnce(async (ids: number[]) => ids.map(id => byId.get(id)))
+      .mockImplementationOnce(() => later.promise)
+      .mockImplementation(async (ids: number[]) => ids.map(id => byId.get(id)));
+    installLocalStorage({ songIds: songs.map(item => item.id), queueIndex: 500,
+      currentSongId: songs[500].id, rootSeed: songs[0], rootSeedId: songs[0].id });
+    const { usePlayerStore } = await import('./playerStore');
+    await vi.waitFor(() => expect(getSongsByIds).toHaveBeenCalledTimes(2));
+    expect(usePlayerStore.getState().queue).toEqual([]);
+    expect(usePlayerStore.getState().restoringQueueWindow?.offset).toBe(490);
+    usePlayerStore.getState().next();
+    expect(usePlayerStore.getState().queueIndex).toBe(501);
+    usePlayerStore.getState().next();
+    expect(usePlayerStore.getState().currentSong?.id).toBe(songs[502].id);
+    usePlayerStore.getState().previous();
+    expect(usePlayerStore.getState().queueIndex).toBe(501);
+    const stored = JSON.parse(localStorage.getItem('diva_playerQueue')!);
+    expect(stored.songIds).toEqual(songs.map(item => item.id));
+    expect(stored.queueIndex).toBe(501);
+    expect(usePlayerStore.getState().queueRestoring).toBe(true);
+    const appended = { ...song, id: 999999 };
+    usePlayerStore.getState().addToQueue(appended);
+    expect(JSON.parse(localStorage.getItem('diva_playerQueue')!).songIds).toEqual([...songs.map(item => item.id), appended.id]);
+    usePlayerStore.getState().pause();
+    later.resolve((getSongsByIds.mock.calls[1][0] as number[]).map(id => byId.get(id)!));
+    await vi.waitFor(() => expect(usePlayerStore.getState().queue).toHaveLength(991));
+    expect(usePlayerStore.getState().queue.at(-1)?.id).toBe(appended.id);
+    expect(usePlayerStore.getState().queueIndex).toBe(501);
+    expect(usePlayerStore.getState().isPlaying).toBe(false);
+    expect(usePlayerStore.getState().playbackSequence).toBe(3);
+    expect(usePlayerStore.getState().restoringQueueWindow).toBeNull();
+    expect(usePlayerStore.getState().queueRestoring).toBe(false);
+  });
+
+  it('retains the full snapshot after navigation and a later failure; close cannot resurrect it', async () => {
+    const songs = Array.from({ length: 201 }, (_, index) => ({ ...song, id: song.id + index }));
+    const byId = new Map(songs.map(item => [item.id, item]));
+    const later = deferred<Song[]>();
+    getSongById.mockImplementation(async (id: number) => byId.get(id));
+    getSongsByIds.mockImplementationOnce(async (ids: number[]) => ids.map(id => byId.get(id)))
+      .mockImplementationOnce(() => later.promise);
+    installLocalStorage({ songIds: songs.map(item => item.id), queueIndex: 0, currentSongId: song.id });
+    const { usePlayerStore } = await import('./playerStore');
+    await vi.waitFor(() => expect(getSongsByIds).toHaveBeenCalledTimes(2));
+    usePlayerStore.getState().jumpToIndex(3);
+    expect(usePlayerStore.getState().currentSong?.id).toBe(songs[3].id);
+    later.resolve([]);
+    await Promise.resolve(); await Promise.resolve();
+    expect(JSON.parse(localStorage.getItem('diva_playerQueue')!).songIds).toHaveLength(201);
+    expect(usePlayerStore.getState().queue).toEqual([]);
+    usePlayerStore.getState().closePlayer();
+    expect(usePlayerStore.getState().restoringQueueWindow).toBeNull();
+    expect(localStorage.getItem('diva_playerQueue')).toBeNull();
+  });
+
   it('restores 990 cached songs offline without detail or card requests, retaining a duplicate position', async () => {
     vi.stubGlobal('indexedDB', new IDBFactory());
     const songs = Array.from({ length: 990 }, (_, index) => ({ ...song, id: song.id + index }));

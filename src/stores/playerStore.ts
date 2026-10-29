@@ -252,6 +252,55 @@ function snapshotSong(song: Song): Song {
 }
 
 let lastCachedQueue: Song[] | undefined;
+// A cold queue keeps its complete ID list authoritative while only nearby cards
+// are available. Navigation updates that snapshot without publishing a partial queue.
+let restoringQueue: {
+  stored: StoredPlayerQueue;
+  snapshot: string | null;
+  byId: Map<number, Song>;
+  valid: () => boolean;
+} | null = null;
+
+function publishRestoringWindow(): void {
+  const pending = restoringQueue;
+  if (!pending?.valid()) return;
+  const ids = pending.stored.songIds!;
+  const index = usePlayerStore.getState().queueIndex;
+  let start = index;
+  let end = index + 1;
+  if (!pending.byId.has(ids[index])) return;
+  while (start > Math.max(0, index - 10) && pending.byId.has(ids[start - 1])) start--;
+  while (end < Math.min(ids.length, index + 91) && pending.byId.has(ids[end])) end++;
+  usePlayerStore.setState({ restoringQueueWindow: {
+    songs: ids.slice(start, end).map(id => pending.byId.get(id)!), offset: start,
+  } });
+}
+
+function navigateRestoringQueue(index: number, manual: boolean): boolean {
+  const pending = restoringQueue;
+  if (!pending?.valid()) return false;
+  const song = pending.byId.get(pending.stored.songIds![index]);
+  // An unloaded neighbour waits for its bounded page; never skip it or wrap early.
+  if (!song) return true;
+  usePlayerStore.setState({ queueIndex: index });
+  usePlayerStore.getState().playSong(song, manual, false, true, !manual);
+  publishRestoringWindow();
+  return true;
+}
+
+function appendRestoringQueue(songs: Song[], source: PlaybackSource): boolean {
+  const pending = restoringQueue;
+  if (!pending?.valid()) return false;
+  // Append after the complete saved queue, never after just its loaded window.
+  pending.stored.songIds!.push(...songs.map(song => song.id));
+  pending.stored.queueSources!.push(...songs.map(() => source));
+  songs.forEach(song => { if (!pending.byId.has(song.id)) pending.byId.set(song.id, song); });
+  storage.set(PLAYER_QUEUE_KEY, pending.stored);
+  pending.snapshot = localStorage.getItem(`diva_${PLAYER_QUEUE_KEY}`);
+  usePlayerStore.setState({ queueSources: [...pending.stored.queueSources!] });
+  return true;
+}
+
 function savePlayerQueue(
   queue: Song[],
   queueIndex: number,
@@ -261,8 +310,22 @@ function savePlayerQueue(
   queueTitle?: string,
   rootSeed?: Song | null,
 ): void {
+  const pending = restoringQueue;
+  if (pending?.valid() && queue.length === 0
+    && pending.stored.songIds?.[queueIndex] === currentSong?.id) {
+    pending.stored = { ...pending.stored, queueIndex,
+      currentSongId: currentSong?.id, currentSong: currentSong ? snapshotSong(currentSong) : null,
+      queueSources: normalizeQueueSources(pending.stored.songIds!.length, queueSources),
+      currentPlaybackSource,
+      ...(rootSeed === undefined ? {} : { rootSeed, rootSeedId: rootSeed?.id ?? null }),
+    };
+    storage.set(PLAYER_QUEUE_KEY, pending.stored);
+    pending.snapshot = localStorage.getItem(`diva_${PLAYER_QUEUE_KEY}`);
+    return;
+  }
+  restoringQueue = null;
   playerQueuePersistenceRevision += 1;
-  usePlayerStore.setState({ queueRestoring: false });
+  usePlayerStore.setState({ queueRestoring: false, restoringQueueWindow: null });
   const normalizedSources = normalizeQueueSources(queue.length, queueSources);
   const storedQueue = storage.get<StoredPlayerQueue>(PLAYER_QUEUE_KEY);
   storage.set(PLAYER_QUEUE_KEY, {
@@ -298,8 +361,9 @@ function mapSourcesBySongId(
 }
 
 function clearStoredPlayerQueue(): void {
+  restoringQueue = null;
   playerQueuePersistenceRevision += 1;
-  usePlayerStore.setState({ queueRestoring: false });
+  usePlayerStore.setState({ queueRestoring: false, restoringQueueWindow: null });
   storage.remove(PLAYER_QUEUE_KEY);
   lastCachedQueue = undefined;
   if (typeof indexedDB !== 'undefined') void import('../services/playerQueueCache')
@@ -320,6 +384,7 @@ export function getPlayablePV(song: Song): PV | null {
 
 interface PlayerState {
   queueRestoring: boolean;
+  restoringQueueWindow: { songs: Song[]; offset: number } | null;
   // 現在の再生状態
   currentSong: Song | null;
   currentPV: PV | null;
@@ -417,9 +482,10 @@ async function restoreStoredPlayerQueue(): Promise<void> {
   const stored = getStoredPlayerQueue();
   if (!stored) return;
   const storedSnapshot = localStorage.getItem(`diva_${PLAYER_QUEUE_KEY}`);
+  let pending: typeof restoringQueue = null;
   const canCommitRestore = (): boolean => (
     playerQueuePersistenceRevision === restoreRevision
-    && localStorage.getItem(`diva_${PLAYER_QUEUE_KEY}`) === storedSnapshot
+    && localStorage.getItem(`diva_${PLAYER_QUEUE_KEY}`) === (pending?.snapshot ?? storedSnapshot)
   );
 
   const persistedRootSeedId = stored.rootSeedId
@@ -465,6 +531,8 @@ async function restoreStoredPlayerQueue(): Promise<void> {
   }
   if (!canCommitRestore()) return;
   const byId = new Map<number, Song>(cached?.map(song => [song.id, song]));
+  pending = { stored, snapshot: storedSnapshot, byId, valid: canCommitRestore };
+  restoringQueue = pending;
   if (stored.currentSong) byId.set(stored.currentSong.id, stored.currentSong);
   const currentId = stored.currentSongId ?? songIds[Math.max(0, stored.queueIndex)];
   if (!byId.has(currentId)) {
@@ -473,10 +541,13 @@ async function restoreStoredPlayerQueue(): Promise<void> {
   if (!canCommitRestore()) return;
   const current = byId.get(currentId);
   if (current) usePlayerStore.setState({ currentSong: current, currentPV: getPlayablePV(current) });
+  publishRestoringWindow();
 
   // Fetch compact playable cards in bounded pages. Current/next songs go first; no 990-way detail burst.
   const priority = [
     ...songIds.slice(Math.max(0, stored.queueIndex), Math.max(0, stored.queueIndex) + 3),
+    ...songIds.slice(Math.max(0, stored.queueIndex - 10), Math.max(0, stored.queueIndex)),
+    ...songIds.slice(Math.max(0, stored.queueIndex) + 3),
     ...songIds,
   ];
   const missing = [...new Set(priority)].filter(id => !byId.has(id));
@@ -485,6 +556,7 @@ async function restoreStoredPlayerQueue(): Promise<void> {
     const songs = await getSongsByIds(missing.slice(offset, offset + 100));
     if (!canCommitRestore()) return;
     songs.forEach(song => byId.set(song.id, song));
+    publishRestoringWindow();
     // Do not replace the persisted queue with an incomplete result on network/metadata failures.
     if (missing.slice(offset, offset + 100).some(id => !byId.has(id))) return;
     await new Promise<void>(resolve => setTimeout(resolve, 0));
@@ -504,38 +576,37 @@ async function restoreStoredPlayerQueue(): Promise<void> {
   const state = usePlayerStore.getState();
   if (state.queue.length > 0) return;
 
-  const queue = queueItems.map(item => item.song);
-  const queueSources = queueItems.map(item => item.source);
-  const currentIndexById = queue[stored.queueIndex]?.id === stored.currentSongId
-    ? stored.queueIndex // Preserve which copy is current when the queue contains duplicates.
-    : stored.currentSongId ? queue.findIndex(song => song.id === stored.currentSongId) : -1;
-  const queueIndex = currentIndexById >= 0
-    ? currentIndexById
-    : Math.max(0, Math.min(stored.queueIndex, queue.length - 1));
-  const currentSong = queue[queueIndex] ?? null;
-  const currentPlaybackSource = stored.currentPlaybackSource ?? queueSources[queueIndex] ?? 'manual';
-  const rootSeed = await resolveRootSeed(queue);
+  const rootSeed = await resolveRootSeed(queueItems.map(item => item.song));
 
   if (!canCommitRestore()) return;
   const latestState = usePlayerStore.getState();
   if (latestState.queue.length > 0) return;
+  const queue = songIds.map(id => byId.get(id)!);
+  const queueIndex = Math.max(0, Math.min(latestState.queueIndex, queue.length - 1));
+  const currentSong = queue[queueIndex] ?? null;
+  const latestStored = pending.stored;
+  const latestSources = normalizeQueueSources(queue.length, latestStored.queueSources);
+  const currentPlaybackSource = latestStored.currentPlaybackSource ?? latestSources[queueIndex] ?? 'manual';
+  const latestRootSeed = latestStored.rootSeedId !== stored.rootSeedId ? latestStored.rootSeed ?? null : rootSeed;
 
   usePlayerStore.setState({
     queue,
     queueIndex,
-    queueSources,
+    queueSources: latestSources,
     currentSong,
-    currentPV: currentSong ? getPlayablePV(currentSong) : null,
+    currentPV: currentSong?.id === latestState.currentSong?.id
+      ? latestState.currentPV : currentSong ? getPlayablePV(currentSong) : null,
     currentPlaybackSource,
-    rootSeed,
+    rootSeed: latestRootSeed,
     isPlaying: latestState.isPlaying,
   });
   if (cached) lastCachedQueue = queue;
-  savePlayerQueue(queue, queueIndex, currentSong, queueSources, currentPlaybackSource, stored.queueTitle, rootSeed);
+  savePlayerQueue(queue, queueIndex, currentSong, latestSources, currentPlaybackSource, stored.queueTitle, latestRootSeed);
 }
 
 export const usePlayerStore = create<PlayerState>((set, get) => ({
   queueRestoring: !!storedPlayerQueue && !storedPlayerQueue.queue?.length,
+  restoringQueueWindow: null,
   currentSong: initialCurrentSong,
   currentPV: initialCurrentSong ? getPlayablePV(initialCurrentSong) : null,
   pvPreference: getStoredPVPreference(),
@@ -616,6 +687,14 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
 
   next: () => {
     const { queue, queueIndex, loopMode } = get();
+    if (restoringQueue?.valid()) {
+      const length = restoringQueue.stored.songIds!.length;
+      const index = loopMode === 'one' ? queueIndex : queueIndex + 1 < length
+        ? queueIndex + 1 : loopMode === 'all' ? 0 : -1;
+      if (index >= 0) navigateRestoringQueue(index, false);
+      else set({ isPlaying: false });
+      return;
+    }
     if (loopMode === 'one') {
       // 1曲ループ: 同じ曲を再度再生
       useProgressStore.getState().setProgress(0);
@@ -643,6 +722,10 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     // 再生3秒以上なら曲頭に戻る
     if (progress > 3) {
       useProgressStore.getState().setProgress(0);
+      return;
+    }
+    if (restoringQueue?.valid()) {
+      if (queueIndex > 0) navigateRestoringQueue(queueIndex - 1, true);
       return;
     }
     if (queueIndex > 0) {
@@ -717,6 +800,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   },
 
   setQueue: (songs: Song[], startIndex = 0, autoplay = true, source: PlaybackSource = 'manual', queueTitle = 'ミックスリスト') => {
+    restoringQueue = null;
     const { shuffleEnabled } = get();
     const queueSources = songs.map(() => source);
     if (shuffleEnabled && songs.length > 0) {
@@ -766,6 +850,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   },
 
   addToQueue: (song: Song, source: PlaybackSource = 'manual') => {
+    if (appendRestoringQueue([song], source)) return;
     const { queue, queueIndex, queueSources, currentSong, currentPlaybackSource } = get();
     const nextQueue = [...queue, song];
     const nextSources = [...queueSources, source];
@@ -797,6 +882,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       return false;
     }
     if (songs.length === 0) return true;
+    if (appendRestoringQueue(songs, source)) return true;
     const nextQueue = [...queue, ...songs];
     const nextSources = [...queueSources, ...songs.map(() => source)];
     set({ queue: nextQueue, queueSources: nextSources });
@@ -907,6 +993,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   },
 
   jumpToIndex: (index: number) => {
+    if (navigateRestoringQueue(index, true)) return;
     const { queue, queueSources } = get();
     if (index < 0 || index >= queue.length) return;
     const nextSources = queueSources.map((source, i) => i === index ? 'manual' : source);
@@ -955,6 +1042,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   },
 
   toggleShuffle: () => {
+    if (get().queueRestoring) return;
     const { shuffleEnabled, queue, queueIndex, queueSources, currentSong, currentPlaybackSource, originalQueue } = get();
 
     if (shuffleEnabled) {

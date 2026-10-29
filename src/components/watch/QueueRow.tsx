@@ -2,6 +2,7 @@ import type { KeyboardEvent, Ref } from 'react';
 import type { Song } from '../../types/vocadb';
 import { useTranslateSourceText } from '../../i18n';
 import { useRatingStore } from '../../stores/ratingStore';
+import { usePlayerStore } from '../../stores/playerStore';
 import { formatArtistLine } from '../../utils/songMeta';
 import SongThumbnail from '../ui/SongThumbnail';
 import SongActionsMenu from '../ui/SongActionsMenu';
@@ -32,6 +33,7 @@ export default function QueueRow({ song, index, current, hint, onJump, rowRef }:
   const rating = useRatingStore(state => state.ratings[String(song.id)] ?? 0);
   const setRating = useRatingStore(state => state.setRating);
   const artist = formatArtistLine(song);
+  const restoring = usePlayerStore(state => state.queueRestoring);
 
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.target !== event.currentTarget) return;
@@ -83,7 +85,7 @@ export default function QueueRow({ song, index, current, hint, onJump, rowRef }:
         )}
         onHide={() => hideSongWithUndo(song, t, index)}
         footerItems={(
-          <MenuItem icon={<TrashIcon />} onSelect={() => removeQueueItemWithUndo(index, t)}>
+          <MenuItem disabled={restoring} icon={<TrashIcon />} onSelect={() => removeQueueItemWithUndo(index, t)}>
             {t('キューから削除')}
           </MenuItem>
         )}

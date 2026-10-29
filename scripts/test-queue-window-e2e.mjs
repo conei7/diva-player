@@ -56,6 +56,10 @@ try {
   const page = await browser.newPage();
   const apiRequests = [];
   const pageErrors = [];
+  let coldSongs = null;
+  let coldBatches = 0;
+  let releaseColdPage;
+  const coldPage = new Promise(resolve => { releaseColdPage = resolve; });
   await pinAppLanguage(page);
   await page.setViewport({ width: 1280, height: 900 });
   page.on('pageerror', error => pageErrors.push(error.message));
@@ -109,7 +113,8 @@ try {
       await respondJson(request, { items: [], cards: [] });
     } else if (url.pathname === '/backend-api/api/songs/batch') {
       const ids = new Set((url.searchParams.get('ids') ?? '').split(',').map(Number));
-      await respondJson(request, { items: recommendedSongs.filter(song => ids.has(song.id)) });
+      if (coldSongs && ids.size > 10 && ++coldBatches === 2) await coldPage;
+      await respondJson(request, { items: (coldSongs ?? recommendedSongs).filter(song => ids.has(song.id)) });
     } else if (url.pathname === '/backend-api/api/songs/discovery-eligibility') {
       const ids = (url.searchParams.get('ids') ?? '').split(',').map(Number).filter(Number.isInteger);
       await respondJson(request, { items: ids.map(songId => ({ songId, discoveryEligible: true })) });
@@ -214,6 +219,50 @@ try {
   await page.waitForFunction(() => document.querySelector('[data-testid="queue-drawer"]').inert
     && document.body.style.overflow !== 'hidden');
   console.log('PASS mobile queue last row, scroll lock, focus containment and Escape');
+
+  coldSongs = Array.from({ length: 990 }, (_, index) => ({ ...songs[0], id: 910000 + index,
+    name: `Cold queue ${index}`, defaultName: `Cold queue ${index}` }));
+  await page.evaluateOnNewDocument(queue => {
+    if (window !== window.top) return;
+    localStorage.setItem('diva-playback-owner-v1', JSON.stringify({ type: 'claim',
+      tabId: sessionStorage.getItem('diva-playback-tab-v1'), songId: queue[500].id, claimedAt: Date.now() }));
+    localStorage.setItem('diva_playerQueue', JSON.stringify({ songIds: queue.map(song => song.id),
+      queueIndex: 500, currentSongId: queue[500].id, currentSong: queue[500],
+      queueSources: queue.map(() => 'manual'), queueTitle: 'Cold queue' }));
+  }, coldSongs);
+  await page.setViewport({ width: 1280, height: 900 });
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('[data-testid="mini-player-queue"]', { visible: true }).catch(async error => {
+    throw new Error(`${error.message}: ${JSON.stringify(await page.evaluate(() => ({
+      owner: localStorage.getItem('diva-playback-owner-v1'), tab: sessionStorage.getItem('diva-playback-tab-v1'),
+      mini: document.querySelector('.mini-player-controls')?.outerHTML.slice(0, 200),
+      text: document.body.innerText.slice(-600),
+    })))} batches=${coldBatches}; errors=${pageErrors}`);
+  });
+  await page.click('[data-testid="mini-player-queue"]');
+  await page.waitForFunction(() => document.querySelector('[data-testid="queue-drawer"]')?.textContent?.includes('Cold queue 501'));
+  if (coldBatches !== 2) throw new Error(`Expected one loaded and one held page, got ${coldBatches}`);
+  await page.click('[data-testid="queue-drawer"] button[aria-label="次の曲"]');
+  await page.waitForFunction(() => JSON.parse(localStorage.getItem('diva_playerQueue')).queueIndex === 501);
+  const partial = await page.evaluate(() => ({ stored: JSON.parse(localStorage.getItem('diva_playerQueue')),
+    text: document.querySelector('[data-testid="queue-drawer"]').textContent }));
+  if (partial.stored.songIds.length !== 990 || !partial.text.includes('502 / 990')) {
+    throw new Error(`Cold navigation lost the full queue or position: ${partial.stored.songIds.length}`);
+  }
+  // A complete-queue action must not export only the cards loaded so far.
+  await page.click('[data-testid="queue-drawer"] button[aria-label="キューのその他の操作"]');
+  await page.waitForFunction(() => [...document.querySelectorAll('[role="menuitem"]')]
+    .some(item => item.textContent?.includes('キューをプレイリストに保存')
+      && (item.getAttribute('aria-disabled') === 'true' || item.disabled)));
+  await page.keyboard.press('Escape');
+  releaseColdPage();
+  await page.waitForFunction(() => document.querySelector('[data-testid="queue-drawer"]')?.textContent?.includes('Cold queue 989'));
+  const complete = await page.evaluate(() => JSON.parse(localStorage.getItem('diva_playerQueue')));
+  if (complete.songIds.length !== 990 || complete.queueIndex !== 501 || coldBatches !== 10) {
+    throw new Error(`Cold queue completion changed navigation: ${JSON.stringify({ index: complete.queueIndex, coldBatches })}`);
+  }
+  if (pageErrors.length) throw new Error(`Browser errors: ${pageErrors.join('; ')}`);
+  console.log('PASS cold 990-song navigation before remaining pages, full position and ID preservation');
 } finally {
   await browser.close();
 }

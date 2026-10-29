@@ -78,6 +78,7 @@ interface QueueHeaderProps {
 export function QueueHeader({ view, title, end, className }: QueueHeaderProps) {
   const t = useTranslateSourceText();
   const queueLength = usePlayerStore(state => state.queue.length);
+  const restoringLength = usePlayerStore(state => state.restoringQueueWindow?.songs.length ?? 0);
   const previous = usePlayerStore(state => state.previous);
   const next = usePlayerStore(state => state.next);
   const loopMode = usePlayerStore(state => state.loopMode);
@@ -100,7 +101,7 @@ export function QueueHeader({ view, title, end, className }: QueueHeaderProps) {
       )}
       {position && <p className="text-xs leading-[18px] text-yt-text-secondary tabular-nums">{position}</p>}
       <div className="-ml-2 mt-1 flex items-center">
-        <IconButton label={t('前の曲')} icon={<SkipPreviousIcon />} onClick={previous} disabled={queueLength === 0} />
+        <IconButton label={t('前の曲')} icon={<SkipPreviousIcon />} onClick={previous} disabled={queueLength === 0 && restoringLength === 0} />
         <IconButton label={t('次の曲')} icon={<SkipNextIcon />} onClick={next} disabled={!canGoNext} />
         <IconButton
           label={loopLabel}
