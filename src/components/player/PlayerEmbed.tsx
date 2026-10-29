@@ -24,7 +24,8 @@ import {
   parseNicoPlayerMessage,
 } from '../../services/nicoPlayerSync';
 import { getPlaybackRecoveryCheckDelayMs, hasReachedPlaybackEnd } from '../../services/playbackEndRecovery';
-import { getSafeWakePosition } from '../../services/playbackWakeRecovery';
+import { getSafeWakePosition, PLAYBACK_WAKE_GAP_MS, shouldRecoverYouTubePause,
+  type PlaybackWakeSignal } from '../../services/playbackWakeRecovery';
 import { useTranslate } from '../../i18n';
 import { isVolumeHeldByMute } from './playerMute';
 
@@ -544,6 +545,7 @@ export default function PlayerEmbed() {
   const volumeRef = useRef(volume);
   const youtubeAutoplayMutedRef = useRef(false);
   const youtubePauseRequestedAtRef = useRef<number | null>(null);
+  const youtubeLastWakeAtRef = useRef<number | null>(null);
   const ownershipRef = useRef<ReturnType<typeof getPlaybackOwnership> | null>(null);
   const isActiveYouTubePlayer = useCallback((player: YT.Player) => {
     const state = usePlayerStore.getState();
@@ -918,7 +920,22 @@ export default function PlayerEmbed() {
                   const startupPending = Boolean(
                     desired.attempt && attemptControllerRef.current.isCurrent(desired.attempt),
                   );
-                  if (usePlayerStore.getState().isPlaying && (startupPending || document.visibilityState !== 'visible')) {
+                  // Chrome may deliver its freeze-induced PAUSED after resume
+                  // and visibilitychange, while getPlayerState still said PLAYING
+                  // during recovery. Preserve intent across that queued event.
+                  let nativePauseInteraction = false;
+                  try {
+                    nativePauseInteraction = event.target.getIframe?.() === document.activeElement
+                      && (!navigator.userActivation || navigator.userActivation.isActive);
+                  } catch { /* The iframe can be replaced during a PV switch. */ }
+                  if (shouldRecoverYouTubePause({
+                    requestedPlaying: usePlayerStore.getState().isPlaying,
+                    startupPending,
+                    hidden: document.visibilityState !== 'visible',
+                    lastWakeAt: youtubeLastWakeAtRef.current,
+                    now: Date.now(),
+                    nativePauseInteraction,
+                  })) {
                     event.target.playVideo?.();
                     scheduleEndRecovery(event.target);
                     break;
@@ -1045,12 +1062,15 @@ export default function PlayerEmbed() {
     };
   }, [isActiveYouTubePlayer]);
 
-  const recoverYouTubePlayback = useCallback(() => {
+  const recoverYouTubePlayback = useCallback((signal: PlaybackWakeSignal) => {
     const player = ytPlayerRef.current;
     const state = usePlayerStore.getState();
     if (!player || !isActiveYouTubePlayer(player)) return;
     if (!state.isPlaying) return;
     if (ownershipRef.current?.getState() !== 'local') return;
+    if (signal.source === 'resume' || signal.gapMs >= PLAYBACK_WAKE_GAP_MS) {
+      youtubeLastWakeAtRef.current = Date.now();
+    }
     try {
       const currentTime = player.getCurrentTime?.() ?? 0;
       const duration = player.getDuration?.() ?? useProgressStore.getState().duration;

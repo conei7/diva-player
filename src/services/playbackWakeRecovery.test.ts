@@ -3,9 +3,31 @@ import {
   createPlaybackWakeDetector,
   getSafeWakePosition,
   PLAYBACK_WAKE_GAP_MS,
+  shouldRecoverYouTubePause,
 } from './playbackWakeRecovery';
 
 describe('playback wake recovery', () => {
+  const recoveringPause = { requestedPlaying: true, startupPending: false, hidden: false,
+    lastWakeAt: 10_000, now: 10_010, nativePauseInteraction: false };
+
+  it('recovers a delayed visible provider pause following resume', () => {
+    expect(shouldRecoverYouTubePause(recoveringPause)).toBe(true);
+    expect(shouldRecoverYouTubePause({ ...recoveringPause, now: 11_000 })).toBe(false);
+    expect(shouldRecoverYouTubePause({ ...recoveringPause, now: 9_999 })).toBe(false);
+  });
+
+  it('preserves explicit application and native iframe pause during wake recovery', () => {
+    expect(shouldRecoverYouTubePause({ ...recoveringPause, requestedPlaying: false })).toBe(false);
+    expect(shouldRecoverYouTubePause({ ...recoveringPause, nativePauseInteraction: true })).toBe(false);
+    expect(shouldRecoverYouTubePause({ ...recoveringPause, lastWakeAt: null })).toBe(false);
+  });
+
+  it('retains the existing startup and hidden-tab retry without restarting a paused queue', () => {
+    expect(shouldRecoverYouTubePause({ ...recoveringPause, lastWakeAt: null, hidden: true })).toBe(true);
+    expect(shouldRecoverYouTubePause({ ...recoveringPause, lastWakeAt: null, startupPending: true })).toBe(true);
+    expect(shouldRecoverYouTubePause({ ...recoveringPause, hidden: true, requestedPlaying: false })).toBe(false);
+  });
+
   it('detects a long event-loop gap and ignores normal heartbeat drift', () => {
     let now = 1_000;
     const detector = createPlaybackWakeDetector({ now: () => now });

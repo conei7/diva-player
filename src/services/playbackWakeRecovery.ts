@@ -1,5 +1,20 @@
 export const PLAYBACK_WAKE_GAP_MS = 5_000;
 export const PLAYBACK_WAKE_DEBOUNCE_MS = 250;
+const WAKE_PAUSE_GRACE_MS = 1_000;
+
+/** A queued provider pause after resume is different from an explicit pause. */
+export function shouldRecoverYouTubePause(options: {
+  requestedPlaying: boolean;
+  startupPending: boolean;
+  hidden: boolean;
+  lastWakeAt: number | null;
+  now: number;
+  nativePauseInteraction: boolean;
+}): boolean {
+  const elapsed = options.lastWakeAt === null ? -1 : options.now - options.lastWakeAt;
+  return options.requestedPlaying && (options.startupPending || options.hidden
+    || (elapsed >= 0 && elapsed < WAKE_PAUSE_GRACE_MS && !options.nativePauseInteraction));
+}
 
 export type PlaybackWakeSource = 'heartbeat' | 'visibility' | 'pageshow' | 'focus' | 'online' | 'resume';
 

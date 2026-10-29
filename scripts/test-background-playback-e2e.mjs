@@ -165,6 +165,20 @@ try {
               window.__wakeRecoveryPending = true;
               document.dispatchEvent(new Event('resume'));
             };
+            window.__simulateDelayedWakePause = () => {
+              // A real frozen YouTube iframe can report cached PLAYING at
+              // resume, then deliver its queued PAUSED after becoming visible.
+              document.dispatchEvent(new Event('resume'));
+              setTimeout(() => {
+                elapsed = player.getCurrentTime();
+                state = 2;
+                options.events.onStateChange({ data: state, target: player });
+              }, 20);
+            };
+            window.__simulateNativePause = () => {
+              elapsed = player.getCurrentTime(); state = 2;
+              options.events.onStateChange({ data: state, target: player });
+            };
             player.destroy = () => {};
             setTimeout(() => options.events.onReady({ target: player }), 0);
           },
@@ -253,6 +267,25 @@ try {
     throw new Error(`Returning to the DIVA tab changed its YouTube item or restarted playback: ${JSON.stringify(foregroundReturn)}`);
   }
   console.log('PASS returning to the DIVA tab keeps the same YouTube item playing');
+
+  await new Promise(resolve => setTimeout(resolve, 300));
+  const beforeDelayed = await playerPage.evaluate(() => window.__successfulPlayCount);
+  await playerPage.evaluate(() => window.__simulateDelayedWakePause());
+  await playerPage.waitForFunction(before => window.__successfulPlayCount > before
+    && window.__youtubeState() === 1, {}, beforeDelayed);
+  console.log('PASS queued visible PAUSED after resume retains playback intent');
+
+  // An explicit app pause must still win inside the same one-second grace.
+  await playerPage.evaluate(() => document.activeElement?.blur());
+  await playerPage.keyboard.press('Space');
+  await playerPage.waitForFunction(() => window.__youtubeState() === 2);
+  const explicitlyPausedCount = await playerPage.evaluate(() => window.__successfulPlayCount);
+  await playerPage.evaluate(() => window.__simulateNativePause());
+  await new Promise(resolve => setTimeout(resolve, 1_100));
+  if (await playerPage.evaluate(() => window.__successfulPlayCount) !== explicitlyPausedCount) {
+    throw new Error('Wake recovery overrode an explicit application pause');
+  }
+  console.log('PASS explicit pause remains paused during the wake grace');
 } finally {
   await browser.close();
 }
