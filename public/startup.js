@@ -1,6 +1,16 @@
 // Warm only the first page of the default Home ranking before React mounts.
 // Keep this same-origin script compatible with the production script-src CSP.
 (function (location) {
+  // External fonts must not block deferred scripts, the first API request or
+  // first paint. Switch the already downloaded stylesheet to screen media.
+  // Keep the handler here rather than inline so the production CSP still holds.
+  var fonts = document.getElementById('diva-fonts');
+  if (fonts) {
+    var applyFonts = function () { fonts.media = 'all'; };
+    fonts.addEventListener('load', applyFonts, { once: true });
+    // A cached stylesheet may have loaded before this deferred script runs.
+    if (fonts.sheet) applyFonts();
+  }
   // Apply the saved mode before React loads, including direct links to other pages.
   try {
     var mode = JSON.parse(localStorage.getItem('diva_themeMode'));

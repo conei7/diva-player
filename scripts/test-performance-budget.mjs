@@ -232,6 +232,10 @@ async function installApiFixtures(page, counters) {
       return;
     }
     const path = url.pathname;
+    if (url.hostname === 'fonts.googleapis.com' && counters.onFontRequest) {
+      counters.onFontRequest(request);
+      return;
+    }
     const isBackend = path.startsWith('/backend-api/');
     const isVocaDb = url.hostname === 'vocadb.net';
     if (!isBackend && !isVocaDb) {
@@ -445,6 +449,7 @@ async function main() {
   await installApiFixtures(page, counters);
 
   try {
+    await assertFontIndependentStartup(browser, baseUrl, counters);
     // Seed on a same-origin inert document. A running setup Home can start its
     // delayed auto-fill after counters reset and contaminate the measured startup.
     const seedUrl = new URL(baseUrl);
@@ -717,6 +722,51 @@ async function main() {
     await assertKnownPagination(browser, getBaseUrl(), counters);
   } finally {
     await browser.close();
+  }
+}
+
+async function assertFontIndependentStartup(browser, baseUrl, counters) {
+  const context = await browser.createBrowserContext();
+  let heldFont;
+  try {
+    const page = await context.newPage();
+    await pinAppLanguage(page);
+    const fontBody = ':root { --diva-font-ready: 1; }';
+    let mode = 'hold';
+    await installApiFixtures(page, {
+      ...counters, historyMetadataDelayMs: 0, homeRankingDelayMs: 0,
+      onFontRequest(request) {
+        if (mode === 'hold') heldFont = request;
+        else if (mode === 'fail') void request.abort();
+        else void request.respond({ contentType: 'text/css', body: fontBody });
+      },
+    });
+    // No timeout race: the font response stays withheld until cards are visible.
+    await page.goto(baseUrl, { waitUntil: 'domcontentloaded' });
+    await waitForCards(page, 'Home while external font CSS is still pending');
+    assert(heldFont, 'The delayed external font request was not captured.');
+    assert(await page.$eval('#diva-fonts', link => link.media === 'print'),
+      'Pending external fonts became render blocking.');
+    await heldFont.respond({ contentType: 'text/css', body: fontBody });
+    heldFont = undefined;
+    const waitForFonts = () => page.waitForFunction(() =>
+      document.querySelector('#diva-fonts')?.media === 'all'
+      && getComputedStyle(document.documentElement).getPropertyValue('--diva-font-ready').trim() === '1');
+    await waitForFonts();
+    mode = 'ready';
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await waitForFonts();
+    // Fonts also activate on direct links, before startup.js's Home-only return.
+    await page.goto(new URL('history', baseUrl).href, { waitUntil: 'domcontentloaded' });
+    await waitForFonts();
+    mode = 'fail';
+    await page.setCacheEnabled(false);
+    await page.goto(baseUrl, { waitUntil: 'domcontentloaded' });
+    await waitForCards(page, 'Home after external font CSS fails');
+    console.log('PASS home.font-independent: pending/failed fonts allow cards; ready/revisited/direct-link fonts apply');
+  } finally {
+    if (heldFont) await heldFont.abort().catch(() => {});
+    await context.close();
   }
 }
 
