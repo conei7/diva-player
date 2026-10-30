@@ -182,6 +182,10 @@ try {
   await page.waitForFunction(() => document.querySelectorAll('g[data-origin="true"]').length === 7);
   for (const width of [1440, 390]) {
     await page.setViewport({ width, height: 1000 });
+    await page.waitForFunction(() => {
+      const circle = document.querySelector('g[data-origin="true"] circle[r="12"]');
+      return circle && Math.abs(circle.getBoundingClientRect().width - 24) < .5;
+    });
     await page.$eval('[data-testid="sound-map-canvas"]', el => el.scrollIntoView({ block: 'center' }));
     const positions = await page.$$eval('g[data-origin="true"]', els => els.map(el => {
       const b = el.querySelector('circle[r="12"]').getBoundingClientRect(); return { x: b.x+b.width/2, y: b.y+b.height/2 };

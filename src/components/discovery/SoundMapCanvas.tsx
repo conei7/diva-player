@@ -302,8 +302,8 @@ export default function SoundMapCanvas({
                 {focused && <circle r={14} fill="none" stroke={SOUND_MAP_COLORS.focus} strokeWidth={2} />}
                 {selected && <circle r={originNumber ? 16 : origin ? 13 : 10} fill="none" stroke={SOUND_MAP_COLORS.selected} strokeWidth={2.5} />}
                 {originNumber ? <>
-                  <circle r={12} fill={SOUND_MAP_COLORS.origin} stroke={SOUND_MAP_COLORS.surface} strokeWidth={2} />
-                  <text textAnchor="middle" dominantBaseline="central" fontSize={11} fontWeight={700} fill={SOUND_MAP_COLORS.surface} pointerEvents="none">{originNumber}</text>
+                  <circle r={12} fill={SOUND_MAP_COLORS.surface} stroke={SOUND_MAP_COLORS.origin} strokeWidth={2} />
+                  <text textAnchor="middle" dominantBaseline="central" fontSize={11} fontWeight={700} fill={SOUND_MAP_COLORS.known} pointerEvents="none">{originNumber}</text>
                 </> : origin ? (
                   <path d="M0,-9 L9,0 L0,9 L-9,0 Z" fill={SOUND_MAP_COLORS.origin} stroke={SOUND_MAP_COLORS.surface} strokeWidth={2} />
                 ) : known ? (
