@@ -3962,6 +3962,7 @@ create_managed_service_container() {
                 --health-interval 5s --health-timeout 6s --health-retries 12 \
                 --health-start-period 180s --stop-timeout 30 \
                 --cap-drop ALL --security-opt no-new-privileges=true --read-only \
+                --volume "${COMPOSE_PROJECT}_group_map_cache:/var/cache/diva-player/group-map:rw" \
                 --tmpfs /tmp:size=64m,mode=1777 --memory-reservation 256m \
                 --memory 768m --pids-limit 256 --restart no \
                 --log-driver json-file --log-opt max-size=10m --log-opt max-file=5 \

@@ -606,6 +606,7 @@ case "$1" in
         user=""
         network=""
         tmpfs=""
+        group_cache_mount=""
         memory_reservation=""
         memory=""
         pids_limit=""
@@ -630,6 +631,7 @@ case "$1" in
                 --user) user="$2"; shift 2 ;;
                 --network) network="$2"; shift 2 ;;
                 --tmpfs) tmpfs="$2"; shift 2 ;;
+                --volume) group_cache_mount="$2"; shift 2 ;;
                 --memory-reservation) memory_reservation="$2"; shift 2 ;;
                 --memory) memory="$2"; shift 2 ;;
                 --pids-limit) pids_limit="$2"; shift 2 ;;
@@ -655,8 +657,12 @@ case "$1" in
             esac
         done
         case "$name" in
-            vocadb_api_a) id=4444444444444444444444444444444444444444444444444444444444444444 ;;
-            vocadb_api_b) id=5555555555555555555555555555555555555555555555555555555555555555 ;;
+            vocadb_api_a)
+                [ "$group_cache_mount" = 'backend_group_map_cache:/var/cache/diva-player/group-map:rw' ] || exit 65
+                id=4444444444444444444444444444444444444444444444444444444444444444 ;;
+            vocadb_api_b)
+                [ "$group_cache_mount" = 'backend_group_map_cache:/var/cache/diva-player/group-map:rw' ] || exit 65
+                id=5555555555555555555555555555555555555555555555555555555555555555 ;;
             vocadb_api_gateway) id=6666666666666666666666666666666666666666666666666666666666666666 ;;
             vocadb_web) id=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb ;;
             diva_gateway_config_validation_*)
