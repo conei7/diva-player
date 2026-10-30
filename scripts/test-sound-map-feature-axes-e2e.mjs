@@ -15,8 +15,29 @@ try {
   await page.setRequestInterception(true);
   let requests = 0;
   let legacyApi = false;
+  let groupRequests = 0;
+  let groupFailure = false;
+  const pageErrors = [];
+  page.on('pageerror', error => pageErrors.push(error.message));
   page.on('request', request => {
     const url = new URL(request.url());
+    if (url.pathname.endsWith('/api/discovery/sound-map/group')) {
+      groupRequests++;
+      if (groupRequests === 1) { void request.respond({ status: 202, contentType: 'application/json', body: '{"state":"preparing"}' }); return; }
+      if (groupFailure) { void request.respond({ status: 422, contentType: 'application/json', body: '{"error":"group_songs_unavailable","songIds":[9]}' }); return; }
+      const ids = url.searchParams.get('songIds').split(',').map(Number);
+      const items = Array.from({ length: 896 }, (_, i) => ({ songId: 7 + i, name: `試験曲 ${7 + i}`, artistString: 'Test artist',
+        x: i < 40 ? (i % 8 - 4) / 8 : (i * 17 % 61) / 61 - .5,
+        y: i < 40 ? (Math.floor(i / 8) - 2) / 8 : (i * 13 % 67) / 67 - .5, similarity: null }));
+      void request.respond({ status: 200, contentType: 'application/json', body: JSON.stringify({
+        mapVersion: 'test-v1', generatedAt: '2026-10-30T00:00:00Z', method: 'group_feature_axes', state: 'ready', coordinateCount: 68000, matchingCount: 68000,
+        origin: items[0], items, groupSongIds: ids, axes: { x: 17, y: 822, dimensionCount: 1024, minX: -1, maxX: 1, minY: -1, maxY: 1 },
+        initialViewport: { centerX: 0, centerY: 0, zoom: 2 },
+      }) }); return;
+    }
+    if (url.pathname.endsWith('/api/songs/search')) {
+      void request.respond({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: [8, 9].map(id => ({ id, name: `試験曲 ${id}`, defaultName: `試験曲 ${id}`, artistString: 'Test artist', songType: 'Original', artists: [], pvs: [] })), totalCount: 2 }) }); return;
+    }
     // Point selection must not race live metadata replacing the fixture name.
     // Keep both the map and its card hydration at the same network boundary.
     if (/\/api\/songs\/(?:batch|details|\d+)$/.test(url.pathname)) {
@@ -98,5 +119,61 @@ try {
   await page.waitForFunction(() => new URL(location.href).searchParams.get('layout') === 'pca');
   await page.waitForSelector('[data-testid="sound-map-canvas"] g[role="button"]');
   assert.equal(await page.$('[data-testid="sound-map-axis-x"]'), null, 'Legacy PCA must not be labelled as feature axes');
-  console.log('Feature axes E2E passed: bounds, selection, swap, random, reload, PCA, validation, mobile.');
+  await page.setViewport({ width: 1440, height: 1000 });
+  await page.click('[data-layout="group"]');
+  assert.equal(await (await button('マップを作る')).evaluate(el => el.disabled), true);
+  const input = 'input[aria-label="マップに追加する曲を検索"]';
+  for (const id of [8, 9]) {
+    await page.type(input, '試験');
+    await page.waitForFunction(id => [...document.querySelectorAll('button')].some(b => b.textContent?.includes(`試験曲 ${id}`) && b.textContent?.includes('Test artist')), {}, id);
+    const handle = await page.evaluateHandle(id => [...document.querySelectorAll('button')].find(b => b.textContent?.includes(`試験曲 ${id}`) && b.textContent?.includes('Test artist')), id);
+    await handle.asElement().click(); await handle.dispose();
+  }
+  assert.equal(await page.$$eval('[data-testid="sound-map-group-songs"] button[aria-label]', els => els.length), 3);
+  await (await button('マップを作る')).click();
+  await page.waitForSelector('[data-testid="sound-map-canvas"] g[data-origin="true"]');
+  assert.equal(groupRequests, 2, 'Cold catalogue polls 202 and stops on readiness');
+  assert.equal(await page.$$eval('g[data-origin="true"]', els => els.length), 3);
+  assert.equal(await page.$$eval('[data-testid="sound-map-canvas"] g[role="button"]', els => els.length), 896);
+  assert.equal(await page.$eval('[data-testid="sound-map-axis-x"]', el => el.dataset.featureIndex), '17');
+  assert.equal(await page.$eval('[data-testid="sound-map-axis-y"]', el => el.dataset.featureIndex), '822');
+  await page.click('g[data-song-id="18"]');
+  await (await button('選択した曲を追加')).click();
+  assert.equal(new URL(page.url()).searchParams.get('songIds'), '7,8,9', 'Editing the group does not silently recalculate');
+  await (await button('マップを作る')).click();
+  await page.waitForFunction(() => new URL(location.href).searchParams.get('songIds') === '7,8,9,18');
+  await page.waitForSelector('[data-testid="sound-map-canvas"]');
+  await page.click('button[aria-label="拡大"]');
+  await page.waitForFunction(() => Number(new URL(location.href).searchParams.get('zoom')) > 2);
+  await page.waitForFunction(() => !document.querySelector('[data-testid="sound-map-canvas"] [role="status"]'));
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('[data-testid="sound-map-canvas"]');
+  assert.equal(await page.$$eval('g[data-origin="true"]', els => els.length), 4);
+  const canvas = await page.$('[data-testid="sound-map-canvas"] svg');
+  const bounds = await canvas.boundingBox();
+  await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+  await page.mouse.down(); await page.mouse.move(bounds.x + bounds.width / 2 + 55, bounds.y + bounds.height / 2 + 20, { steps: 6 }); await page.mouse.up();
+  await page.waitForFunction(() => Number(new URL(location.href).searchParams.get('centerX')) !== 0);
+  if (process.env.DIVA_GROUP_MAP_SCREENSHOTS) await page.screenshot({ path: `${process.env.DIVA_GROUP_MAP_SCREENSHOTS}-desktop.png`, fullPage: true });
+  await page.setViewport({ width: 390, height: 844 });
+  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'Mobile group controls do not overflow');
+  assert.equal(await page.$eval('[data-testid="sound-map-canvas"] svg', el => el.style.touchAction), 'none');
+  const beforePan = new URL(page.url()).searchParams.get('centerX');
+  const mobileBounds = await canvas.boundingBox();
+  const cdp = await page.createCDPSession();
+  const touch = { x: mobileBounds.x + mobileBounds.width / 2, y: mobileBounds.y + mobileBounds.height / 2 };
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [touch] });
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: touch.x + 30, y: touch.y + 20 }] });
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await page.waitForFunction(previous => new URL(location.href).searchParams.get('centerX') !== previous, {}, beforePan);
+  await cdp.detach(); await canvas.dispose();
+  if (process.env.DIVA_GROUP_MAP_SCREENSHOTS) await page.screenshot({ path: `${process.env.DIVA_GROUP_MAP_SCREENSHOTS}-mobile.png`, fullPage: true });
+  groupFailure = true;
+  await page.goto(new URL('sound-map?layout=group&songIds=7,8,9', baseUrl), { waitUntil: 'domcontentloaded' });
+  await page.waitForFunction(() => document.body.textContent.includes('マップで使えない曲があります: 9'));
+  groupFailure = false;
+  await (await button('再試行')).click();
+  await page.waitForSelector('[data-testid="sound-map-canvas"]');
+  assert.deepEqual(pageErrors, []);
+  console.log('Feature/group axes E2E passed: single-map regression, group search/edit, 202 polling, 3/4 origins, selected-song add, axes, zoom, reload, mobile, unavailable songs and retry.');
 } finally { await browser.close(); }

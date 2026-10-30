@@ -642,6 +642,45 @@ public class QdrantService
         return result;
     }
 
+    internal async Task<Dictionary<int, float[]>> GetGroupSoundMapSeedsAsync(
+        IReadOnlyCollection<int> ids, CancellationToken cancellationToken)
+    {
+        if (ids.Count is < 3 or > 20) throw new ArgumentOutOfRangeException(nameof(ids));
+        var points = await _client.RetrieveAsync(_opts.CollectionAudio,
+            ids.Select(id => new PointId { Num = (ulong)id }).ToArray(),
+            withPayload: false, withVectors: true, cancellationToken: cancellationToken);
+        var result = new Dictionary<int, float[]>();
+        foreach (var point in points)
+        {
+            var vector = ReadDenseVector(point.Vectors?.Vector);
+            if (vector.Length == 1024 && vector.All(float.IsFinite) && vector.Any(x => x != 0))
+                result[checked((int)point.Id.Num)] = vector;
+        }
+        return result;
+    }
+
+    internal async Task<IReadOnlyDictionary<int, Half[]>> ReadGroupSoundMapCatalogueAsync(CancellationToken cancellationToken)
+    {
+        var result = new Dictionary<int, Half[]>();
+        PointId? offset = null;
+        do
+        {
+            var page = await _client.ScrollAsync(_opts.CollectionAudio, limit: 256, offset: offset,
+                payloadSelector: false, vectorsSelector: true, cancellationToken: cancellationToken);
+            foreach (var point in page.Result)
+            {
+                var vector = ReadDenseVector(point.Vectors?.Vector);
+                if (point.Id.Num == 0 || point.Id.Num > int.MaxValue || vector.Length != 1024 ||
+                    vector.Any(x => !float.IsFinite(x) || Math.Abs(x) > (float)Half.MaxValue) || !vector.Any(x => x != 0)) continue;
+                if (result.Count >= GroupSoundMapIndex.MaximumSongs)
+                    throw new InvalidOperationException("Group sound map catalogue exceeds its memory budget");
+                result[(int)point.Id.Num] = vector.Select(x => (Half)x).ToArray();
+            }
+            offset = page.NextPageOffset;
+        } while (offset is not null);
+        return result;
+    }
+
     public async Task<bool> HasAudioVectorAsync(int songId, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();

@@ -62,6 +62,7 @@ internal static class ApiServiceRegistration
         services.AddSingleton<DbService>();
         services.AddSingleton<RecommendationPublicationGuard>();
         services.AddSingleton<QdrantService>();
+        services.AddSingleton<GroupSoundMapIndex>();
         services.AddSingleton<ApiMaintenanceExecutionGate>();
         services.AddSingleton<ApiWarmupState>();
         services.AddHostedService<ApiWarmupService>();

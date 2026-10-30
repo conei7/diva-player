@@ -23,6 +23,9 @@ export interface SoundMapCanvasProps {
   items: SoundMapPoint[];
   knownIds: ReadonlySet<number>;
   originId: number;
+  originIds?: ReadonlySet<number>;
+  maxZoom?: number;
+  allowTouchPan?: boolean;
   selectedId: number | null;
   viewport: SoundMapViewport;
   axes: SoundMapResponse['axes'];
@@ -51,6 +54,9 @@ export default function SoundMapCanvas({
   items,
   knownIds,
   originId,
+  originIds,
+  maxZoom = 5,
+  allowTouchPan = false,
   selectedId,
   viewport,
   axes,
@@ -139,12 +145,12 @@ export default function SoundMapCanvas({
 
   const onSvgPointerDown = (event: PointerEvent<SVGSVGElement>) => {
     suppressClickRef.current = false;
-    if (event.pointerType !== 'mouse' || event.button !== 0) return;
+    if ((!allowTouchPan && event.pointerType !== 'mouse') || event.button !== 0) return;
     dragRef.current = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, moved: false };
   };
 
   const onSvgPointerMove = (event: PointerEvent<SVGSVGElement>) => {
-    if (event.pointerType !== 'mouse') return;
+    if (!allowTouchPan && event.pointerType !== 'mouse') return;
     const drag = dragRef.current;
     if (drag && drag.pointerId === event.pointerId) {
       const dx = event.clientX - drag.startX;
@@ -199,7 +205,9 @@ export default function SoundMapCanvas({
     setFocusVisible(isFocusVisible(event.currentTarget));
   };
 
-  const zoomBy = (delta: number) => onViewportChange({ ...viewport, zoom: clampSoundMapZoom(viewport.zoom + delta) });
+  const zoomBy = (delta: number) => onViewportChange({ ...viewport, zoom: maxZoom === 5
+    ? clampSoundMapZoom(viewport.zoom + delta)
+    : Math.max(.75, Math.min(maxZoom, viewport.zoom * (delta > 0 ? 1.6 : 1 / 1.6))) });
   const hoverScreen = hoverPoint ? projection.toScreen(hoverPoint.x, hoverPoint.y) : null;
   const unit = projection.unit;
 
@@ -212,6 +220,7 @@ export default function SoundMapCanvas({
     >
       <svg
         ref={svgRef}
+        style={allowTouchPan ? { touchAction: 'none' } : undefined}
         className={cx(
           'block h-full w-full select-none transition-opacity duration-150',
           pan ? 'cursor-grabbing' : hoverId !== null ? 'cursor-pointer' : 'cursor-grab',
@@ -229,7 +238,7 @@ export default function SoundMapCanvas({
         onPointerLeave={() => setHoverId(null)}
       >
         {items.map(point => {
-          const origin = point.songId === originId;
+          const origin = originIds?.has(point.songId) ?? point.songId === originId;
           const selected = point.songId === selectedId;
           const known = knownIds.has(point.songId);
           const focused = focusVisible && point.songId === focusId;
@@ -326,7 +335,7 @@ export default function SoundMapCanvas({
           variant="overlay"
           tooltipPlacement="left"
           className="max-sm:size-11!"
-          disabled={viewport.zoom >= 5}
+          disabled={viewport.zoom >= maxZoom}
           onClick={() => zoomBy(ZOOM_STEP)}
         />
         <IconButton

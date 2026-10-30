@@ -260,7 +260,8 @@ internal sealed class ApiBulkheadMiddleware
             || path.StartsWithSegments("/api/songs/search")
             || path.StartsWithSegments("/api/songs/trending")
             || path.StartsWithSegments("/api/search/tags")
-            || path.StartsWithSegments("/api/discovery/knowledge-map"))
+            || path.StartsWithSegments("/api/discovery/knowledge-map")
+            || path.StartsWithSegments("/api/discovery/sound-map/group"))
         {
             return ApiBulkheadLane.Heavy;
         }

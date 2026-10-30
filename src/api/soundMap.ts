@@ -39,6 +39,41 @@ export class SoundMapRequestError extends Error {
   }
 }
 
+export interface GroupSoundMapResponse extends SoundMapResponse {
+  groupSongIds: number[];
+  matchingCount: number;
+  initialViewport: { centerX: number; centerY: number; zoom: number };
+}
+
+/** A first visit prepares a shared server catalogue; aborting a page cancels polling, not that shared job. */
+export async function fetchGroupSoundMap(
+  songIds: number[],
+  options: { viewport?: { centerX: number; centerY: number; zoom: number }; signal: AbortSignal },
+): Promise<GroupSoundMapResponse> {
+  const params = new URLSearchParams({ songIds: songIds.join(',') });
+  if (options.viewport) {
+    for (const [key, value] of Object.entries(options.viewport)) params.set(key, String(value));
+  }
+  for (let attempt = 0; attempt < 65; attempt++) {
+    const response = await fetch(`${RECOMMENDER_API}/api/discovery/sound-map/group?${params}`, { signal: options.signal });
+    if (response.status === 202) {
+      await new Promise<void>((resolve, reject) => {
+        options.signal.throwIfAborted();
+        const onAbort = () => { clearTimeout(timer); reject(new DOMException('Aborted', 'AbortError')); };
+        const timer = setTimeout(() => { options.signal.removeEventListener('abort', onAbort); resolve(); }, 2000);
+        options.signal.addEventListener('abort', onAbort, { once: true });
+      });
+      continue;
+    }
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({})) as { error?: string; songIds?: number[] };
+      throw new SoundMapRequestError(payload.songIds?.join(', ') || 'Group map request failed', response.status, payload.error);
+    }
+    return response.json() as Promise<GroupSoundMapResponse>;
+  }
+  throw new SoundMapRequestError('Catalogue preparation timed out', 503);
+}
+
 export async function fetchSoundMap(
   seedSongId: number,
   options: { mapVersion?: string; limit?: number; axisX?: number; axisY?: number; signal?: AbortSignal } = {},

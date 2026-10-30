@@ -32,6 +32,7 @@ internal static class SoundMapEndpoints
     public static IEndpointRouteBuilder MapSoundMapEndpoints(this IEndpointRouteBuilder endpoints)
     {
         endpoints.MapGet("/api/discovery/sound-map", GetSoundMapAsync);
+        endpoints.MapGet("/api/discovery/sound-map/group", GroupSoundMapEndpoints.GetAsync);
         return endpoints;
     }
 

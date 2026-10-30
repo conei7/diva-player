@@ -21,6 +21,7 @@ public sealed class ApiBulkheadMiddlewareTests
     [InlineData("/api/recommend/audio", "Heavy")]
     [InlineData("/api/songs/search", "Heavy")]
     [InlineData("/api/discovery/knowledge-map", "Heavy")]
+    [InlineData("/api/discovery/sound-map/group", "Heavy")]
     [InlineData("/api/youtube/playlists/abc/songs", "Provider")]
     [InlineData("/api/nico/playlists/series/1/songs", "Provider")]
     [InlineData("/api/songs/batch", "Standard")]

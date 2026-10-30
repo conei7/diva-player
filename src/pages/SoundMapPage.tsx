@@ -45,6 +45,7 @@ import SoundMapOriginMenu from '../components/discovery/SoundMapOriginMenu';
 import SoundMapSelectionCard, { SoundMapSelectionBar } from '../components/discovery/SoundMapSelection';
 import SoundMapSettings from '../components/discovery/SoundMapSettings';
 import { placeholderSong, useSongsById } from '../components/discovery/discoverySongs';
+import GroupSoundMapPage from './GroupSoundMapPage';
 
 const SOUND_MAP_GUIDE_STORAGE_KEY = 'diva_sound_map_guide_dismissed_v1';
 /** Nearby rows shown before 「もっと見る」. */
@@ -151,6 +152,13 @@ async function findFallbackSeed(): Promise<number | null> {
 }
 
 export default function SoundMapPage() {
+  const [params] = useSearchParams();
+  return params.get('layout') === 'group'
+    ? <GroupSoundMapPage key={params.get('songIds') ?? ''} />
+    : <SingleSoundMapPage />;
+}
+
+function SingleSoundMapPage() {
   const t = useTranslateSourceText();
   const language = useLanguageStore(state => state.language);
   const currentSong = usePlayerStore(state => state.currentSong);
@@ -524,6 +532,10 @@ export default function SoundMapPage() {
                   <Chip selected={featureMode} data-layout="features" onClick={() => { if (!featureMode) applyAxes([axisX, axisY]); }}>
                     {t('特徴軸')}
                   </Chip>
+                  <Chip selected={false} data-layout="group" onClick={() => {
+                    const params = new URLSearchParams({ layout: 'group', ...(seedId ? { seedSongId: String(seedId) } : {}) });
+                    setSearchParams(params, { preventScrollReset: true });
+                  }}>{t('複数曲')}</Chip>
                 </div>
                 {featureMode && !isMobile && (
                   <SoundMapAxisForm axisX={axisX} axisY={axisY} disabled={loading} onApply={applyAxes} />
