@@ -1,7 +1,7 @@
 using System.Globalization;
 using VocadbRecommender.Services;
 
-internal sealed record GroupMapCoordinate(int SongId, double X, double Y, double RawX, double RawY);
+internal readonly record struct GroupMapCoordinate(int SongId, double X, double Y, double RawX, double RawY);
 
 internal static class GroupSoundMapEndpoints
 {
@@ -28,26 +28,33 @@ internal static class GroupSoundMapEndpoints
             var missing = ids.Where(id => !seeds.ContainsKey(id) || !mappedSeeds.Any(s => s.SongId == id)).ToArray();
             if (missing.Length > 0)
                 return Results.UnprocessableEntity(new { error = "group_songs_unavailable", songIds = missing });
-            var catalogue = index.GetOrStart();
+            using var catalogue = index.GetOrStart();
             if (catalogue is null)
             {
                 response.Headers.RetryAfter = "2";
                 return Results.Json(new { state = "preparing" }, statusCode: 202);
             }
             var (axisX, axisY) = GroupSoundMapIndex.SelectAxes(ids.Select(id => seeds[id]).ToArray());
-            var raw = catalogue.Select(entry => new GroupMapCoordinate(entry.Key, 0, 0,
-                (double)entry.Value[axisX], (double)entry.Value[axisY])).ToDictionary(p => p.SongId);
+            var points = catalogue.ReadAxes(axisX, axisY);
+            var remaining = ids.ToHashSet();
             // The group's original float32 vectors determine both axes and their displayed positions.
-            foreach (var id in ids) raw[id] = new(id, 0, 0, seeds[id][axisX], seeds[id][axisY]);
-            var minX = raw.Values.Min(p => p.RawX); var maxX = raw.Values.Max(p => p.RawX);
-            var minY = raw.Values.Min(p => p.RawY); var maxY = raw.Values.Max(p => p.RawY);
+            for (var i = 0; i < points.Length; i++)
+                if (seeds.TryGetValue(points[i].SongId, out var vector))
+                {
+                    remaining.Remove(points[i].SongId);
+                    points[i] = points[i] with { RawX = vector[axisX], RawY = vector[axisY] };
+                }
+            if (remaining.Count > 0)
+                points = points.Concat(remaining.Select(id => new GroupMapCoordinate(id, 0, 0, seeds[id][axisX], seeds[id][axisY]))).ToArray();
+            var minX = points.Min(p => p.RawX); var maxX = points.Max(p => p.RawX);
+            var minY = points.Min(p => p.RawY); var maxY = points.Max(p => p.RawY);
             var span = Math.Max(Math.Max(maxX - minX, maxY - minY), 1e-9);
             // One scale for BOTH axes: independent stretching would change the chosen distances.
-            var points = raw.Values.Select(p => p with
+            for (var i = 0; i < points.Length; i++)
             {
-                X = 2 * (p.RawX - (minX + maxX) / 2) / span,
-                Y = -2 * (p.RawY - (minY + maxY) / 2) / span,
-            }).ToArray();
+                var p = points[i];
+                points[i] = p with { X = 2 * (p.RawX - (minX + maxX) / 2) / span, Y = -2 * (p.RawY - (minY + maxY) / 2) / span };
+            }
             var group = points.Where(p => seeds.ContainsKey(p.SongId)).ToArray();
             var groupX = group.Average(p => p.X); var groupY = group.Average(p => p.Y);
             var initialZoom = Math.Clamp(2 / Math.Max(.0078125,

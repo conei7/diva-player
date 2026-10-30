@@ -1,55 +1,80 @@
 namespace VocadbRecommender.Services;
 
-/// <summary>A shared, bounded audio catalogue, loaded only when the experimental group map is used.</summary>
-internal sealed class GroupSoundMapIndex
+/// <summary>Single-flight disk catalogue; refreshes keep the last good snapshot available.</summary>
+internal sealed class GroupSoundMapIndex : IDisposable
 {
-    private readonly Func<CancellationToken, Task<IReadOnlyDictionary<int, Half[]>>> _load;
+    private readonly Func<CancellationToken, Task<GroupSoundMapCatalogue>> _load;
     private readonly IHostApplicationLifetime _lifetime;
     private readonly ILogger<GroupSoundMapIndex> _logger;
+    private readonly TimeProvider _time;
     private readonly object _sync = new();
-    private Task<IReadOnlyDictionary<int, Half[]>>? _loading;
+    private Task<GroupSoundMapCatalogue>? _loading;
+    private GroupSoundMapCatalogue? _current;
     private DateTimeOffset _loadedAt;
     private DateTimeOffset _retryAfter;
-
-    // At most ~196 MiB of dense data per snapshot. Never silently truncate the catalogue.
+    private bool _disposed;
     internal const int MaximumSongs = 100_000;
 
     public GroupSoundMapIndex(QdrantService qdrant, IHostApplicationLifetime lifetime, ILogger<GroupSoundMapIndex> logger)
-        : this(qdrant.ReadGroupSoundMapCatalogueAsync, lifetime, logger) { }
+        : this(qdrant.ReadGroupSoundMapCatalogueAsync, lifetime, logger, TimeProvider.System) { }
 
-    internal GroupSoundMapIndex(Func<CancellationToken, Task<IReadOnlyDictionary<int, Half[]>>> load,
-        IHostApplicationLifetime lifetime, ILogger<GroupSoundMapIndex> logger)
+    internal GroupSoundMapIndex(Func<CancellationToken, Task<GroupSoundMapCatalogue>> load,
+        IHostApplicationLifetime lifetime, ILogger<GroupSoundMapIndex> logger, TimeProvider? time = null)
     {
-        _load = load; _lifetime = lifetime; _logger = logger;
+        _load = load; _lifetime = lifetime; _logger = logger; _time = time ?? TimeProvider.System;
     }
 
-    internal IReadOnlyDictionary<int, Half[]>? GetOrStart()
+    internal GroupSoundMapCatalogue.Lease? GetOrStart()
     {
         lock (_sync)
         {
-            var now = DateTimeOffset.UtcNow;
-            var ready = _loading is { IsCompletedSuccessfully: true } ? _loading.Result : null;
-            if (_loading is { IsCompleted: false }) return null;
-            if (_loading is { IsFaulted: true }) _ = _loading.Exception; // Observe the already logged background failure.
-            if (ready is not null && now - _loadedAt < TimeSpan.FromMinutes(30)) return ready;
-            if (now < _retryAfter) throw new InvalidOperationException("Audio catalogue retry cooldown");
-            _loadedAt = now;
-            _retryAfter = now.AddSeconds(30);
-            _loading = LoadAsync();
-            return null;
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            var now = _time.GetUtcNow();
+            if (_loading is { IsCompletedSuccessfully: true })
+            {
+                var old = _current;
+                _current = _loading.Result; _loading = null; _loadedAt = now;
+                old?.Dispose();
+            }
+            if (_loading is { IsFaulted: true } or { IsCanceled: true })
+            {
+                _ = _loading.Exception; _loading = null; _retryAfter = now.AddSeconds(30);
+            }
+            if (_loading is null && (_current is null || now - _loadedAt >= TimeSpan.FromMinutes(30)))
+            {
+                if (now < _retryAfter)
+                {
+                    if (_current is null) throw new InvalidOperationException("Audio catalogue retry cooldown");
+                }
+                else _loading = LoadAsync();
+            }
+            return _current?.Acquire();
         }
     }
 
-    private async Task<IReadOnlyDictionary<int, Half[]>> LoadAsync()
+    private async Task<GroupSoundMapCatalogue> LoadAsync()
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.ApplicationStopping);
         timeout.CancelAfter(TimeSpan.FromMinutes(2));
         try { return await _load(timeout.Token); }
         catch (Exception error)
         {
-            lock (_sync) _retryAfter = DateTimeOffset.UtcNow.AddSeconds(30);
             _logger.LogWarning(error, "Group sound map audio catalogue could not be loaded");
             throw;
+        }
+    }
+
+    public void Dispose()
+    {
+        lock (_sync)
+        {
+            if (_disposed) return;
+            _disposed = true; _current?.Dispose(); _current = null;
+            if (_loading is not null)
+                _ = _loading.ContinueWith(task => {
+                    if (task.IsCompletedSuccessfully) task.Result.Dispose();
+                    else _ = task.Exception;
+                }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
         }
     }
 

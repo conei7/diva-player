@@ -39,5 +39,6 @@ RUN dotnet publish "VocadbRecommender.csproj" -c Release -o /app/publish /p:UseA
 FROM base AS final
 WORKDIR /app
 COPY --from=publish /app/publish .
+RUN mkdir -p /var/cache/diva-player/group-map && chown "$APP_UID:$APP_UID" /var/cache/diva-player/group-map
 USER $APP_UID
 ENTRYPOINT ["dotnet", "VocadbRecommender.dll"]

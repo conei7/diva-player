@@ -29,6 +29,7 @@ try {
       const items = Array.from({ length: 896 }, (_, i) => ({ songId: 7 + i, name: `試験曲 ${7 + i}`, artistString: 'Test artist',
         x: i < 40 ? (i % 8 - 4) / 8 : (i * 17 % 61) / 61 - .5,
         y: i < 40 ? (Math.floor(i / 8) - 2) / 8 : (i * 13 % 67) / 67 - .5, similarity: null }));
+      if (ids.length === 7) ids.forEach((id, i) => { items[i] = { ...items[i], songId: id, name: `試験曲 ${id}`, x: 0, y: 0 }; });
       void request.respond({ status: 200, contentType: 'application/json', body: JSON.stringify({
         mapVersion: 'test-v1', generatedAt: '2026-10-30T00:00:00Z', method: 'group_feature_axes', state: 'ready', coordinateCount: 68000, matchingCount: 68000,
         origin: items[0], items, groupSongIds: ids, axes: { x: 17, y: 822, dimensionCount: 1024, minX: -1, maxX: 1, minY: -1, maxY: 1 },
@@ -160,6 +161,7 @@ try {
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'Mobile group controls do not overflow');
   assert.equal(await page.$eval('[data-testid="sound-map-canvas"] svg', el => el.style.touchAction), 'none');
   const beforePan = new URL(page.url()).searchParams.get('centerX');
+  await canvas.evaluate(el => el.scrollIntoView({ block: 'center' }));
   const mobileBounds = await canvas.boundingBox();
   const cdp = await page.createCDPSession();
   const touch = { x: mobileBounds.x + mobileBounds.width / 2, y: mobileBounds.y + mobileBounds.height / 2 };
@@ -175,6 +177,35 @@ try {
   groupFailure = false;
   await (await button('再試行')).click();
   await page.waitForSelector('[data-testid="sound-map-canvas"]');
+  const seven = [232181, 280530, 289573, 445817, 1516, 150952, 157906];
+  await page.goto(new URL(`sound-map?layout=group&songIds=${seven.join(',')}`, baseUrl), { waitUntil: 'domcontentloaded' });
+  await page.waitForFunction(() => document.querySelectorAll('g[data-origin="true"]').length === 7);
+  for (const width of [1440, 390]) {
+    await page.setViewport({ width, height: 1000 });
+    await page.$eval('[data-testid="sound-map-canvas"]', el => el.scrollIntoView({ block: 'center' }));
+    const positions = await page.$$eval('g[data-origin="true"]', els => els.map(el => {
+      const b = el.querySelector('circle[r="12"]').getBoundingClientRect(); return { x: b.x+b.width/2, y: b.y+b.height/2 };
+    }));
+    for (let i = 0; i < positions.length; i++) for (let j = i+1; j < positions.length; j++)
+      assert.ok(Math.hypot(positions[i].x-positions[j].x, positions[i].y-positions[j].y) > 15, 'Coincident origins must have individually clickable markers');
+    for (const id of seven) {
+      await page.click(`g[data-song-id="${id}"] text`);
+      try {
+        await page.waitForFunction(id => document.querySelector('[data-testid="sound-map-selected-title"]')?.textContent?.trim() === `試験曲 ${id}`, { timeout: 3000 }, id);
+      } catch (error) {
+        console.log(JSON.stringify({ width, id, selected: await page.$eval('[data-testid="sound-map-selected-title"]', el => el.textContent), url: page.url() }));
+        if (process.env.DIVA_GROUP_MAP_SCREENSHOTS) await page.screenshot({ path: `${process.env.DIVA_GROUP_MAP_SCREENSHOTS}-seven-failed.png`, fullPage: true });
+        throw error;
+      }
+    }
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+    if (process.env.DIVA_GROUP_MAP_SCREENSHOTS) await (await page.$('[data-testid="sound-map-canvas"]')).screenshot({ path: `${process.env.DIVA_GROUP_MAP_SCREENSHOTS}-seven-${width}.png` });
+  }
+  await page.$eval('[data-testid="sound-map-group-songs"]', el => el.scrollIntoView({ block: 'center' }));
+  const selectChip = await page.evaluateHandle(() => [...document.querySelectorAll('[data-testid="sound-map-group-songs"] button')].find(b => b.textContent?.includes('150952')));
+  await selectChip.asElement().click(); await selectChip.dispose();
+  await page.waitForFunction(() => document.querySelector('[data-testid="sound-map-selected-title"]')?.textContent?.trim() === '試験曲 150952');
+  assert.equal(await page.$$eval('[data-testid="sound-map-group-songs"] button[aria-label]', els => els.length), 7, 'Selecting a chip must not remove its origin');
   assert.deepEqual(pageErrors, []);
-  console.log('Feature/group axes E2E passed: single-map regression, group search/edit, 202 polling, 3/4 origins, selected-song add, axes, zoom, reload, mobile, unavailable songs and retry.');
+  console.log('Feature/group axes E2E passed, including seven coincident origins: individually selectable markers and chips at desktop/mobile widths.');
 } finally { await browser.close(); }

@@ -84,15 +84,15 @@ public sealed class GroupSoundMapTests
     [Fact]
     public async Task CatalogueRequestsShareOneLoadAndCompletedData()
     {
-        var completion = new TaskCompletionSource<IReadOnlyDictionary<int, Half[]>>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var completion = new TaskCompletionSource<GroupSoundMapCatalogue>(TaskCreationOptions.RunContinuationsAsynchronously);
         var calls = 0;
-        var index = new GroupSoundMapIndex(_ => { calls++; return completion.Task; }, new Lifetime(), NullLogger<GroupSoundMapIndex>.Instance);
+        using var index = new GroupSoundMapIndex(_ => { calls++; return completion.Task; }, new Lifetime(), NullLogger<GroupSoundMapIndex>.Instance);
         for (var i = 0; i < 20; i++) Assert.Null(index.GetOrStart());
         Assert.Equal(1, calls);
-        IReadOnlyDictionary<int, Half[]> catalogue = new Dictionary<int, Half[]> { [3] = [(Half).5] };
-        completion.SetResult(catalogue);
-        for (var i = 0; i < 100 && index.GetOrStart() is null; i++) await Task.Delay(5);
-        Assert.Same(catalogue, index.GetOrStart());
+        completion.SetResult(Catalogue(3));
+        GroupSoundMapCatalogue.Lease? lease = null;
+        for (var i = 0; i < 100 && lease is null; i++) { lease = index.GetOrStart(); if (lease is null) await Task.Delay(5); }
+        using (lease) Assert.Equal(3, Assert.Single(lease!.ReadAxes(0, 1)).SongId);
         Assert.Equal(1, calls);
     }
 
@@ -100,10 +100,92 @@ public sealed class GroupSoundMapTests
     public void FailedLoadsHaveACooldownInsteadOfStartingOneScanPerRequest()
     {
         var calls = 0;
-        var index = new GroupSoundMapIndex(_ => { calls++; throw new InvalidOperationException("test"); }, new Lifetime(), NullLogger<GroupSoundMapIndex>.Instance);
+        using var index = new GroupSoundMapIndex(_ => { calls++; throw new InvalidOperationException("test"); }, new Lifetime(), NullLogger<GroupSoundMapIndex>.Instance);
         Assert.Null(index.GetOrStart());
         Assert.Throws<InvalidOperationException>(() => index.GetOrStart());
         Assert.Equal(1, calls);
+    }
+
+    [Fact]
+    public void RefreshServesOldDataAndActiveReadersSurviveSnapshotReplacement()
+    {
+        var clock = new Clock();
+        var next = new TaskCompletionSource<GroupSoundMapCatalogue>();
+        var calls = 0;
+        using var index = new GroupSoundMapIndex(_ => ++calls == 1 ? Task.FromResult(Catalogue(3)) : next.Task,
+            new Lifetime(), NullLogger<GroupSoundMapIndex>.Instance, clock);
+        Assert.Null(index.GetOrStart());
+        using var original = index.GetOrStart();
+        clock.Now += TimeSpan.FromMinutes(31);
+        using var refreshing = index.GetOrStart();
+        Assert.Equal(3, Assert.Single(refreshing!.ReadAxes(0, 1)).SongId);
+        next.SetResult(Catalogue(7));
+        using var replaced = index.GetOrStart();
+        Assert.Equal(7, Assert.Single(replaced!.ReadAxes(0, 1)).SongId);
+        Assert.Equal(3, Assert.Single(original!.ReadAxes(0, 1)).SongId);
+        Assert.Equal(2, calls);
+    }
+
+    [Fact]
+    public void FailedRefreshKeepsLastGoodDataWithoutARescanStorm()
+    {
+        var clock = new Clock();
+        var calls = 0;
+        using var index = new GroupSoundMapIndex(_ => ++calls == 1 ? Task.FromResult(Catalogue(3)) : Task.FromException<GroupSoundMapCatalogue>(new IOException("test")),
+            new Lifetime(), NullLogger<GroupSoundMapIndex>.Instance, clock);
+        Assert.Null(index.GetOrStart());
+        using var initial = index.GetOrStart();
+        clock.Now += TimeSpan.FromMinutes(31);
+        for (var i = 0; i < 10; i++)
+        {
+            using var lease = index.GetOrStart();
+            Assert.Equal(3, Assert.Single(lease!.ReadAxes(0, 1)).SongId);
+        }
+        Assert.Equal(2, calls);
+    }
+
+    [Fact]
+    public async Task DiskCatalogueReadsOnlyTwoColumnsWithinABoundedAllocation()
+    {
+        using var builder = new GroupSoundMapCatalogue.Builder(Path.GetTempPath());
+        var vector = Enumerable.Range(0, 1024).Select(d => d / 1024f).ToArray();
+        for (var start = 0; start < 10_000; start += 256)
+            builder.Append(Enumerable.Range(start, Math.Min(256, 10_000-start)).Select(id => (id+1, vector)).ToArray());
+        using var catalogue = builder.Complete();
+        using var lease = catalogue.Acquire();
+        _ = lease.ReadAxes(0, 1023);
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        var points = lease.ReadAxes(17, 822);
+        Assert.True(GC.GetAllocatedBytesForCurrentThread() - before < 1_000_000, "Two-column read must not reconstruct the full dense catalogue");
+        Assert.Equal(10_000, points.Length);
+        Assert.Equal(10_000, points[^1].SongId);
+        Assert.All(points, p => {
+            Assert.Equal((double)(Half)vector[17], p.RawX);
+            Assert.Equal((double)(Half)vector[822], p.RawY);
+        });
+        await Task.WhenAll(Enumerable.Range(0, 4).Select(worker => Task.Run(() => {
+            using var reader = catalogue.Acquire();
+            var x = worker * 100; var y = x + 99;
+            for (var repeat = 0; repeat < 10; repeat++)
+            {
+                var batch = reader.ReadAxes(x, y);
+                Assert.Equal((double)(Half)vector[x], batch[^1].RawX);
+                Assert.Equal((double)(Half)vector[y], batch[0].RawY);
+            }
+        })));
+    }
+
+    private static GroupSoundMapCatalogue Catalogue(int id)
+    {
+        using var builder = new GroupSoundMapCatalogue.Builder(Path.GetTempPath());
+        builder.Append([(id, Enumerable.Repeat(.5f, 1024).ToArray())]);
+        return builder.Complete();
+    }
+
+    private sealed class Clock : TimeProvider
+    {
+        public DateTimeOffset Now = DateTimeOffset.UtcNow;
+        public override DateTimeOffset GetUtcNow() => Now;
     }
 
     private sealed class Lifetime : IHostApplicationLifetime

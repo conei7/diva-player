@@ -14,7 +14,7 @@ import { watchPath } from '../utils/routes';
 import type { Song } from '../types/vocadb';
 import type { SoundMapViewport } from '../utils/soundMap';
 import Button from '../components/ui/Button';
-import { Chip } from '../components/ui/Chip';
+import { Chip, RemovableChip } from '../components/ui/Chip';
 import { PageHeader, PageShell } from '../components/ui/PageHeader';
 import InlineNotice from '../components/ui/InlineNotice';
 import SoundMapCanvas from '../components/discovery/SoundMapCanvas';
@@ -138,11 +138,15 @@ export default function GroupSoundMapPage() {
         <Chip selected>{t('複数曲')}</Chip>
       </div>
       <div className="mb-4 flex flex-wrap items-center gap-2" data-testid="sound-map-group-songs">
-        {draft.map(id => (
-          <Chip key={id} aria-label={t('「{song}」を外す', { song: songs.get(id)?.name ?? String(id) })} onClick={() => setDraft(previous => previous.filter(value => value !== id))}>
-            <span className="inline-block max-w-48 truncate align-middle">{songs.get(id)?.name ?? `#${id}`}</span> ×
-          </Chip>
-        ))}
+        {draft.map((id, index) => {
+          const point = items.find(p => p.songId === id);
+          const number = result ? ids.indexOf(id) + 1 : index + 1;
+          return <RemovableChip key={id} label={`${number > 0 ? `${number} · ` : ''}${songs.get(id)?.name ?? `#${id}`}`}
+            removeLabel={t('「{song}」を外す', { song: songs.get(id)?.name ?? String(id) })}
+            selected={point !== undefined && selected?.songId === id}
+            onSelect={point ? () => { setSelectedPoint(point); updateViewport({ ...viewport, centerX: point.x, centerY: point.y }); } : undefined}
+            onRemove={() => setDraft(previous => previous.filter(value => value !== id))} />;
+        })}
         {currentSong && !draft.includes(currentSong.id) && <Button size="sm" disabled={draft.length >= 20} onClick={() => add(currentSong.id)}>{t('再生中の曲を追加')}</Button>}
         <Button variant="primary" disabled={draft.length < 3 || draft.length > 20} onClick={() => setParams(new URLSearchParams({ layout: 'group', songIds: draft.join(',') }), { preventScrollReset: true })}>{t('マップを作る')}</Button>
       </div>

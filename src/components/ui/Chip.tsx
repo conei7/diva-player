@@ -63,16 +63,20 @@ export interface RemovableChipProps {
   /** Defaults to 「{label}を外す」. Used for the × button's aria-label and tooltip. */
   removeLabel?: string;
   icon?: ReactNode;
+  onSelect?: () => void;
+  selected?: boolean;
 }
 
-export function RemovableChip({ label, onRemove, removeLabel, icon }: RemovableChipProps) {
+export function RemovableChip({ label, onRemove, removeLabel, icon, onSelect, selected }: RemovableChipProps) {
   const t = useTranslateSourceText();
   const removeText = removeLabel ?? t('{label}を外す', { label });
 
   return (
-    <span className="inline-flex h-10 max-w-full shrink-0 items-center gap-1 whitespace-nowrap rounded-chip border border-yt-outline pl-3 pr-1 text-sm font-medium leading-5 text-yt-text sm:h-8">
+    <span className={cx('inline-flex h-10 max-w-full shrink-0 items-center gap-1 whitespace-nowrap rounded-chip border pl-3 pr-1 text-sm font-medium leading-5 text-yt-text sm:h-8', selected ? 'border-brand bg-yt-tonal' : 'border-yt-outline')}>
       {icon && <span aria-hidden="true" className={CHIP_ICON}>{icon}</span>}
-      <span className="min-w-0 truncate">{label}</span>
+      {onSelect
+        ? <button type="button" onClick={onSelect} aria-pressed={selected} className="min-w-0 max-w-56 cursor-pointer truncate py-1">{label}</button>
+        : <span className="min-w-0 truncate">{label}</span>}
       <Tooltip content={removeText}>
         <button
           type="button"

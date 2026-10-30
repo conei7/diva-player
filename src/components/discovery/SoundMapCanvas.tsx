@@ -10,6 +10,7 @@ import { cx } from '../ui/overlay';
 import { MyLocationIcon, RemoveIcon, UndoIcon } from './discoveryIcons';
 import { isFocusVisible } from './focusVisible';
 import { SOUND_MAP_COLORS } from './mapColors';
+import { layoutSoundMapOrigins } from '../../utils/soundMapOrigins';
 
 /** Map size assumed before the first measurement (only the dot sizes depend on it). */
 const FALLBACK_SIZE = { width: 640, height: 480 };
@@ -112,6 +113,23 @@ export default function SoundMapCanvas({
     };
   }, [size.height, size.width, viewSize, viewX, viewY]);
 
+  const originNumbers = useMemo(() => new Map(
+    originIds && originIds.size > 1 ? [...originIds].map((id, index) => [id, index + 1] as const) : [],
+  ), [originIds]);
+  const orderedItems = useMemo(() => originNumbers.size > 0
+    ? [...items.filter(p => !originNumbers.has(p.songId)), ...[...originNumbers.keys()].flatMap(id => items.filter(p => p.songId === id))]
+    : items, [items, originNumbers]);
+  const originOffsets = useMemo(() => layoutSoundMapOrigins(
+    [...originNumbers.keys()].flatMap(id => {
+      const point = items.find(p => p.songId === id);
+      return point ? [{ songId: id, ...projection.toScreen(point.x, point.y) }] : [];
+    }), size.width, size.height,
+  ), [items, originNumbers, projection, size.width, size.height]);
+  const displayPosition = (point: SoundMapPoint) => {
+    const offset = originOffsets.get(point.songId);
+    return { x: point.x + (offset?.dx ?? 0) * projection.unit, y: point.y + (offset?.dy ?? 0) * projection.unit };
+  };
+
   const activeId = items.some(point => point.songId === focusId)
     ? focusId
     : items.some(point => point.songId === selectedId) ? selectedId : items[0]?.songId ?? null;
@@ -123,9 +141,11 @@ export default function SoundMapCanvas({
     let nearest: SoundMapPoint | null = null;
     let nearestDistance = Number.POSITIVE_INFINITY;
     for (const point of items) {
-      const screen = projection.toScreen(point.x, point.y);
+      const position = displayPosition(point);
+      const screen = projection.toScreen(position.x, position.y);
       const distance = Math.hypot(screen.x - (clientX - bounds.left), screen.y - (clientY - bounds.top));
-      if (distance < nearestDistance) {
+      if (distance < nearestDistance || (Math.abs(distance - nearestDistance) < .001
+        && originNumbers.has(point.songId) && (!nearest || !originNumbers.has(nearest.songId)))) {
         nearest = point;
         nearestDistance = distance;
       }
@@ -196,7 +216,7 @@ export default function SoundMapCanvas({
     if (!direction) return;
     event.preventDefault();
     event.stopPropagation();
-    const next = nearestInDirection(items.map(item => ({ id: item.songId, x: item.x, y: item.y })), point.songId, direction);
+    const next = nearestInDirection(items.map(item => ({ id: item.songId, ...displayPosition(item) })), point.songId, direction);
     if (next) focusPoint(next.id);
   };
 
@@ -208,7 +228,7 @@ export default function SoundMapCanvas({
   const zoomBy = (delta: number) => onViewportChange({ ...viewport, zoom: maxZoom === 5
     ? clampSoundMapZoom(viewport.zoom + delta)
     : Math.max(.75, Math.min(maxZoom, viewport.zoom * (delta > 0 ? 1.6 : 1 / 1.6))) });
-  const hoverScreen = hoverPoint ? projection.toScreen(hoverPoint.x, hoverPoint.y) : null;
+  const hoverScreen = hoverPoint ? projection.toScreen(displayPosition(hoverPoint).x, displayPosition(hoverPoint).y) : null;
   const unit = projection.unit;
 
   return (
@@ -237,8 +257,22 @@ export default function SoundMapCanvas({
         onPointerCancel={event => endDrag(event, false)}
         onPointerLeave={() => setHoverId(null)}
       >
-        {items.map(point => {
+        <g pointerEvents="none">
+          {[...originNumbers.keys()].map(id => {
+            const point = items.find(p => p.songId === id);
+            const offset = originOffsets.get(id);
+            if (!point || !offset || (Math.abs(offset.dx) < .5 && Math.abs(offset.dy) < .5)) return null;
+            const position = displayPosition(point);
+            return <g key={id}>
+              <line x1={point.x} y1={point.y} x2={position.x} y2={position.y} stroke={SOUND_MAP_COLORS.origin} strokeWidth={unit} opacity={.55} />
+              <circle cx={point.x} cy={point.y} r={2 * unit} fill={SOUND_MAP_COLORS.origin} />
+            </g>;
+          })}
+        </g>
+        {orderedItems.map(point => {
           const origin = originIds?.has(point.songId) ?? point.songId === originId;
+          const originNumber = originNumbers.get(point.songId);
+          const position = displayPosition(point);
           const selected = point.songId === selectedId;
           const known = knownIds.has(point.songId);
           const focused = focusVisible && point.songId === focusId;
@@ -249,7 +283,7 @@ export default function SoundMapCanvas({
               data-song-id={point.songId}
               data-known={known ? 'true' : 'false'}
               data-origin={origin ? 'true' : undefined}
-              transform={`translate(${point.x} ${point.y})`}
+              transform={`translate(${position.x} ${position.y})`}
               role="button"
               aria-label={soundMapItemLabel(point)}
               aria-current={selected ? 'true' : undefined}
@@ -258,11 +292,19 @@ export default function SoundMapCanvas({
               onKeyDown={event => onPointKeyDown(event, point)}
               onFocus={event => onPointFocus(event, point)}
               onBlur={() => setFocusVisible(false)}
+              onClick={originNumber ? event => {
+                event.stopPropagation();
+                if (suppressClickRef.current) { suppressClickRef.current = false; return; }
+                onSelect(point);
+              } : undefined}
             >
               <g transform={`scale(${unit})`}>
                 {focused && <circle r={14} fill="none" stroke={SOUND_MAP_COLORS.focus} strokeWidth={2} />}
-                {selected && <circle r={origin ? 13 : 10} fill="none" stroke={SOUND_MAP_COLORS.selected} strokeWidth={2.5} />}
-                {origin ? (
+                {selected && <circle r={originNumber ? 16 : origin ? 13 : 10} fill="none" stroke={SOUND_MAP_COLORS.selected} strokeWidth={2.5} />}
+                {originNumber ? <>
+                  <circle r={12} fill={SOUND_MAP_COLORS.origin} stroke={SOUND_MAP_COLORS.surface} strokeWidth={2} />
+                  <text textAnchor="middle" dominantBaseline="central" fontSize={11} fontWeight={700} fill={SOUND_MAP_COLORS.surface} pointerEvents="none">{originNumber}</text>
+                </> : origin ? (
                   <path d="M0,-9 L9,0 L0,9 L-9,0 Z" fill={SOUND_MAP_COLORS.origin} stroke={SOUND_MAP_COLORS.surface} strokeWidth={2} />
                 ) : known ? (
                   <circle r={hovered ? 6.5 : 5} fill={SOUND_MAP_COLORS.known} stroke={SOUND_MAP_COLORS.surface} strokeWidth={2} />

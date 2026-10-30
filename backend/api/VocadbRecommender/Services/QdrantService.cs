@@ -659,26 +659,26 @@ public class QdrantService
         return result;
     }
 
-    internal async Task<IReadOnlyDictionary<int, Half[]>> ReadGroupSoundMapCatalogueAsync(CancellationToken cancellationToken)
+    internal async Task<GroupSoundMapCatalogue> ReadGroupSoundMapCatalogueAsync(CancellationToken cancellationToken)
     {
-        var result = new Dictionary<int, Half[]>();
+        using var builder = new GroupSoundMapCatalogue.Builder(GroupSoundMapCatalogue.CacheDirectory);
         PointId? offset = null;
         do
         {
             var page = await _client.ScrollAsync(_opts.CollectionAudio, limit: 256, offset: offset,
                 payloadSelector: false, vectorsSelector: true, cancellationToken: cancellationToken);
+            var rows = new List<(int Id, float[] Vector)>(256);
             foreach (var point in page.Result)
             {
                 var vector = ReadDenseVector(point.Vectors?.Vector);
                 if (point.Id.Num == 0 || point.Id.Num > int.MaxValue || vector.Length != 1024 ||
                     vector.Any(x => !float.IsFinite(x) || Math.Abs(x) > (float)Half.MaxValue) || !vector.Any(x => x != 0)) continue;
-                if (result.Count >= GroupSoundMapIndex.MaximumSongs)
-                    throw new InvalidOperationException("Group sound map catalogue exceeds its memory budget");
-                result[(int)point.Id.Num] = vector.Select(x => (Half)x).ToArray();
+                rows.Add(((int)point.Id.Num, vector));
             }
+            builder.Append(rows);
             offset = page.NextPageOffset;
         } while (offset is not null);
-        return result;
+        return builder.Complete();
     }
 
     public async Task<bool> HasAudioVectorAsync(int songId, CancellationToken cancellationToken)
