@@ -24,6 +24,16 @@ public sealed class GroupSoundMapTests
     }
 
     [Fact]
+    public async Task TwentySeedsAreSupportedAndTwentyOneAreRejectedBeforeIo()
+    {
+        var seeds = Enumerable.Range(0, 20).Select(_ => new float[1024]).ToArray();
+        Assert.Equal((0, 1), GroupSoundMapIndex.SelectAxes(seeds));
+        var result = await GroupSoundMapEndpoints.GetAsync(string.Join(',', Enumerable.Range(1, 21)), null, null, null, null,
+            null!, null!, null!, new DefaultHttpContext().Response, CancellationToken.None);
+        Assert.Equal(400, ((IStatusCodeHttpResult)result).StatusCode);
+    }
+
+    [Fact]
     public void SelectedPairMinimizesAllPairSquaredDistancesWithoutPairEnumeration()
     {
         var random = new Random(724);

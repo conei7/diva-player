@@ -70,6 +70,7 @@ try {
   await page.waitForSelector('[data-testid="sound-map-canvas"] g[role="button"]');
   await page.waitForFunction(() => [...document.querySelectorAll('button')].some(button => button.textContent === '軸を適用' && !button.disabled));
   async function button(label) {
+    await page.waitForFunction(label => [...document.querySelectorAll('button')].some(button => button.textContent?.trim() === label), {}, label);
     for (const handle of await page.$$('button')) if ((await handle.evaluate(node => node.textContent?.trim())) === label) return handle;
     throw new Error(`Missing button: ${label}`);
   }
@@ -142,7 +143,7 @@ try {
   assert.equal(new URL(page.url()).searchParams.get('songIds'), '7,8,9', 'Editing the group does not silently recalculate');
   await (await button('マップを作る')).click();
   await page.waitForFunction(() => new URL(location.href).searchParams.get('songIds') === '7,8,9,18');
-  await page.waitForSelector('[data-testid="sound-map-canvas"]');
+  await page.waitForFunction(() => document.querySelectorAll('g[data-origin="true"]').length === 4);
   await page.click('button[aria-label="拡大"]');
   await page.waitForFunction(() => Number(new URL(location.href).searchParams.get('zoom')) > 2);
   await page.waitForFunction(() => !document.querySelector('[data-testid="sound-map-canvas"] [role="status"]'));
