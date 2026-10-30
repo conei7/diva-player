@@ -165,7 +165,7 @@ export default function GroupSoundMapPage() {
         <>
           <div className="mb-2 flex flex-wrap items-center gap-3 text-xs text-yt-text-secondary">
             <span>{t('表示 {shown}曲 · 音源データ {total}曲', { shown: items.length, total: result.coordinateCount.toLocaleString() })}</span>
-            {result.matchingCount > 876 && <span>{t('拡大すると、さらに曲が表示されます')}</span>}
+            {result.matchingCount > 876 && viewport.zoom < 256 && <span>{t('拡大すると、さらに曲が表示されます')}</span>}
             {selected && !draft.includes(selected.songId) && <Button size="sm" disabled={draft.length >= 20} onClick={() => add(selected.songId)}>{t('選択した曲を追加')}</Button>}
           </div>
           <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_400px]">

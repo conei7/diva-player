@@ -1081,6 +1081,7 @@ export const englishSourceText: Record<string, string> = {
   '見た目を元に戻せませんでした': "Couldn't undo the changes to your appearance settings",
   '見た目の設定を含みます。置き換える場合のみ復元します': 'Includes appearance settings. Restored only when replacing data.',
   '複数曲': 'Multiple songs',
+  '曲が見つかりませんでした': 'No songs found',
   'マップを作る': 'Create map',
   'マップに追加する曲を検索': 'Search for a song to add to the map',
   '曲を追加（3〜20曲）': 'Add songs (3–20)',
