@@ -224,7 +224,17 @@ try {
   groupAxisVersion = undefined;
   await page.reload({ waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => new URL(location.href).searchParams.get('axisKey') === '1:17:822');
-  await page.click('button[aria-label="拡大"]');
+  const zoomGroup = async () => {
+    await page.$eval('[data-testid="sound-map-canvas"]', el => el.scrollIntoView({ block: 'center' }));
+    await page.waitForFunction(() => {
+      const button = document.querySelector('button[aria-label="拡大"]');
+      if (!button) return false;
+      const box = button.getBoundingClientRect();
+      return document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2)?.closest('button') === button;
+    });
+    await page.click('button[aria-label="拡大"]');
+  };
+  await zoomGroup();
   await page.waitForFunction(() => Number(new URL(location.href).searchParams.get('zoom')) > 2);
   const oldVersionView = new URL(page.url()).searchParams.get('zoom');
   await page.reload({ waitUntil: 'domcontentloaded' });
@@ -234,7 +244,7 @@ try {
   await page.reload({ waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => new URL(location.href).searchParams.get('axisKey') === '2:17:822');
   assert.equal(new URL(page.url()).searchParams.has('centerX'), false, 'An API axis-version change resets the previous coordinate system');
-  await page.click('button[aria-label="拡大"]');
+  await zoomGroup();
   await page.waitForFunction(() => new URL(location.href).searchParams.has('centerX'));
   groupAxisX = 18;
   await page.reload({ waitUntil: 'domcontentloaded' });
