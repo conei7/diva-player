@@ -88,15 +88,13 @@ internal static class GroupSoundMapEndpoints
         }
     }
 
-    // Preserve outlying dots as well as central discoveries without sending/rendering 68k SVG nodes.
+    // Apply the same spatial budget everywhere; extra nearest-to-centre songs create a false dense cluster.
     internal static IEnumerable<GroupMapCoordinate> Sample(GroupMapCoordinate[] points, double x, double y, double radius)
     {
-        if (points.Length <= 876) return points;
+        if (points.Length <= 576) return points;
         return points.GroupBy(p => (
                 X: Math.Clamp((int)((p.X - x + radius) / (2 * radius) * 24), 0, 23),
                 Y: Math.Clamp((int)((p.Y - y + radius) / (2 * radius) * 24), 0, 23)))
-            .Select(bin => bin.MinBy(p => p.SongId)!)
-            .Concat(points.OrderBy(p => Math.Pow(p.X - x, 2) + Math.Pow(p.Y - y, 2)).ThenBy(p => p.SongId).Take(300))
-            .DistinctBy(p => p.SongId);
+            .Select(bin => bin.MinBy(p => p.SongId)!);
     }
 }

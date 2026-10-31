@@ -121,12 +121,36 @@ public sealed class GroupSoundMapTests
         var points = Enumerable.Range(1, 10_000).Select(i => new GroupMapCoordinate(i,
             (i % 100) / 50d - 1, (i / 100) / 50d - 1, 0, 0)).ToArray();
         var sampled = GroupSoundMapEndpoints.Sample(points, 0, 0, 1.1).ToArray();
-        Assert.InRange(sampled.Length, 300, 876);
+        Assert.InRange(sampled.Length, 300, 576);
         Assert.Contains(sampled, p => p.X < -.9 && p.Y < -.9);
         Assert.Contains(sampled, p => p.X > .8 && p.Y > .8);
         var omitted = points.First(p => !sampled.Any(s => s.SongId == p.SongId));
         var zoomed = points.Where(p => Math.Abs(p.X - omitted.X) < .02 && Math.Abs(p.Y - omitted.Y) < .02).ToArray();
         Assert.Contains(GroupSoundMapEndpoints.Sample(zoomed, omitted.X, omitted.Y, .02), p => p.SongId == omitted.SongId);
+    }
+
+    [Fact]
+    public void SamplingDoesNotAddAnArtificialCentralCluster()
+    {
+        // Equal density in all 24x24 cells must remain equal after thinning.
+        var points = Enumerable.Range(0, 24 * 24).SelectMany(cell =>
+            Enumerable.Range(0, 20).Select(j => new GroupMapCoordinate(cell * 20 + j + 1,
+                -1 + (cell % 24 + .1 + j * .03) / 12,
+                -1 + (cell / 24 + .1 + j * .03) / 12, 0, 0))).ToArray();
+        var sampled = GroupSoundMapEndpoints.Sample(points, 0, 0, 1).ToArray();
+        Assert.Equal(576, sampled.Length);
+        Assert.All(sampled.GroupBy(p => ((int)((p.X + 1) * 12), (int)((p.Y + 1) * 12))),
+            cell => Assert.Single(cell));
+        Assert.Equal(sampled.Select(p => p.SongId).Order(),
+            GroupSoundMapEndpoints.Sample(points.Reverse().ToArray(), 0, 0, 1).Select(p => p.SongId).Order());
+    }
+
+    [Fact]
+    public void SamplingKeepsAllSongsWithinTheSpatialBudget()
+    {
+        var points = Enumerable.Range(1, 576).Select(i => new GroupMapCoordinate(i, 0, 0, 0, 0)).ToArray();
+        Assert.Equal(points, GroupSoundMapEndpoints.Sample(points, 0, 0, 1));
+        Assert.Single(GroupSoundMapEndpoints.Sample(points.Append(new(577, 0, 0, 0, 0)).ToArray(), 0, 0, 1));
     }
 
     [Fact]
