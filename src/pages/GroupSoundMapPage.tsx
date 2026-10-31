@@ -26,9 +26,16 @@ function readGroupSongIds(value: string | null): number[] {
   return [...new Set((value ?? '').split(',').map(Number).filter(id => Number.isSafeInteger(id) && id > 0))].slice(0, 20);
 }
 
-function readGroupViewport(params: URLSearchParams): SoundMapViewport | undefined {
-  // Coordinates from the old sparse-axis selection refer to a different map.
-  if (params.get('axisVersion') !== '2') return undefined;
+function groupAxisKey(map: GroupSoundMapResponse | null): string | undefined {
+  return map?.axes ? `${map.axisSelectionVersion ?? 1}:${map.axes.x}:${map.axes.y}` : undefined;
+}
+
+function readGroupViewport(params: URLSearchParams, expectedKey?: string): SoundMapViewport | undefined {
+  // A client can be deployed before its API: bind coordinates to the actual returned axes.
+  const key = params.get('axisKey');
+  if (!key || !/^[12]:\d{1,4}:\d{1,4}$/.test(key) || (expectedKey && key !== expectedKey)) return undefined;
+  const [version, x, y] = key.split(':').map(Number);
+  if (params.get('axisVersion') !== String(version) || x >= 1024 || y >= 1024 || x === y) return undefined;
   if (!params.has('centerX') || !params.has('centerY')) return undefined;
   const centerX = Number(params.get('centerX')), centerY = Number(params.get('centerY')), zoom = Number(params.get('zoom'));
   return [centerX, centerY, zoom].every(Number.isFinite) && Math.abs(centerX) <= 10 && Math.abs(centerY) <= 10 && zoom >= .75 && zoom <= 256
@@ -41,7 +48,6 @@ export default function GroupSoundMapPage() {
   const navigate = useNavigate();
   const idsKey = params.get('songIds') ?? '';
   const ids = useMemo(() => readGroupSongIds(idsKey), [idsKey]);
-  const legacyAxes = params.get('axisVersion') !== '2';
   const currentSong = usePlayerStore(state => state.currentSong);
   const hiddenSongs = useHiddenSongStore(state => state.hiddenSongs);
   const ratings = useRatingStore(state => state.ratings);
@@ -56,7 +62,7 @@ export default function GroupSoundMapPage() {
   const [error, setError] = useState<string | null>(null);
   const [retry, setRetry] = useState(0);
   const [played, setPlayed] = useState<Set<number>>(new Set());
-  const viewport = readGroupViewport(params) ?? result?.initialViewport ?? { centerX: 0, centerY: 0, zoom: 1 };
+  const viewport = readGroupViewport(params, groupAxisKey(result)) ?? result?.initialViewport ?? { centerX: 0, centerY: 0, zoom: 1 };
   const viewportKey = readGroupViewport(params) ? `${params.get('centerX')},${params.get('centerY')},${params.get('zoom')}` : '';
   const [selectedPoint, setSelectedPoint] = useState<SoundMapPoint | null>(null);
   const groupIds = useMemo(() => new Set(ids), [ids]);
@@ -92,18 +98,7 @@ export default function GroupSoundMapPage() {
     const timer = setTimeout(() => {
       setLoading(true); setError(null);
       void fetchGroupSoundMap(ids, { viewport: requestedViewport, signal: controller.signal })
-        .then(next => {
-          if (controller.signal.aborted) return;
-          setResult(next);
-          if (!legacyAxes) return;
-          setParams(current => {
-            if (current.get('axisVersion') === '2') return current;
-            const migrated = new URLSearchParams(current);
-            for (const key of ['centerX', 'centerY', 'zoom']) migrated.delete(key);
-            migrated.set('axisVersion', '2');
-            return migrated;
-          }, { replace: true, preventScrollReset: true });
-        })
+        .then(next => { if (!controller.signal.aborted) setResult(next); })
         .catch((failure: unknown) => {
           if (controller.signal.aborted) return;
           setError(failure instanceof SoundMapRequestError && failure.code === 'group_songs_unavailable'
@@ -112,7 +107,20 @@ export default function GroupSoundMapPage() {
         }).finally(() => { if (!controller.signal.aborted) setLoading(false); });
     }, viewportKey ? 250 : 0);
     return () => { clearTimeout(timer); controller.abort(); };
-  }, [ids, viewportKey, retry, t, setParams, legacyAxes]);
+  }, [ids, viewportKey, retry, t]);
+
+  useEffect(() => {
+    const key = groupAxisKey(result);
+    if (!result || !key || result.groupSongIds.join(',') !== ids.join(',')) return;
+    const version = String(result.axisSelectionVersion ?? 1);
+    if (params.get('axisKey') === key && params.get('axisVersion') === version) return;
+    setParams(current => {
+      const migrated = new URLSearchParams(current);
+      for (const field of ['centerX', 'centerY', 'zoom']) migrated.delete(field);
+      migrated.set('axisVersion', version); migrated.set('axisKey', key);
+      return migrated;
+    }, { replace: true, preventScrollReset: true });
+  }, [result, ids, params, setParams]);
 
   const add = (id: number) => {
     setDraft(previous => previous.includes(id) || previous.length >= 20 ? previous : [...previous, id]);
@@ -121,7 +129,8 @@ export default function GroupSoundMapPage() {
   const updateViewport = (next: SoundMapViewport) => {
     const bounded = { ...next, centerX: Math.max(-10, Math.min(10, next.centerX)), centerY: Math.max(-10, Math.min(10, next.centerY)) };
     const nextParams = new URLSearchParams(params);
-    nextParams.set('axisVersion', '2');
+    const key = groupAxisKey(result);
+    if (key) { nextParams.set('axisKey', key); nextParams.set('axisVersion', String(result?.axisSelectionVersion ?? 1)); }
     nextParams.set('centerX', bounded.centerX.toFixed(6)); nextParams.set('centerY', bounded.centerY.toFixed(6)); nextParams.set('zoom', String(bounded.zoom));
     setParams(nextParams, { replace: true, preventScrollReset: true });
   };
@@ -163,7 +172,7 @@ export default function GroupSoundMapPage() {
             onRemove={() => setDraft(previous => previous.filter(value => value !== id))} />;
         })}
         {currentSong && !draft.includes(currentSong.id) && <Button size="sm" disabled={draft.length >= 20} onClick={() => add(currentSong.id)}>{t('再生中の曲を追加')}</Button>}
-        <Button variant="primary" disabled={draft.length < 3 || draft.length > 20} onClick={() => setParams(new URLSearchParams({ layout: 'group', songIds: draft.join(','), axisVersion: '2' }), { preventScrollReset: true })}>{t('マップを作る')}</Button>
+        <Button variant="primary" disabled={draft.length < 3 || draft.length > 20} onClick={() => setParams(new URLSearchParams({ layout: 'group', songIds: draft.join(',') }), { preventScrollReset: true })}>{t('マップを作る')}</Button>
       </div>
       <div className="relative mb-4 max-w-lg">
         <input className="h-10 w-full rounded-chip border border-yt-field-border bg-yt-field px-3 text-sm text-yt-text outline-none focus:border-yt-focus" aria-label={t('マップに追加する曲を検索')} placeholder={t('曲を追加（3〜20曲）')} value={query} maxLength={200} onChange={e => { setQuery(e.target.value); setSearch([]); setSearching(Boolean(e.target.value.trim())); setSearchError(false); }} />

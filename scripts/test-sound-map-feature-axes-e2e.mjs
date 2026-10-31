@@ -18,6 +18,8 @@ try {
   let groupRequests = 0;
   const groupUrls = [];
   let groupFailure = false;
+  let groupAxisVersion = 2;
+  let groupAxisX = 17;
   const pageErrors = [];
   page.on('pageerror', error => pageErrors.push(error.message));
   page.on('request', request => {
@@ -33,8 +35,8 @@ try {
         y: i < 40 ? (Math.floor(i / 8) - 2) / 8 : (i * 13 % 67) / 67 - .5, similarity: null }));
       if (ids.length === 7) ids.forEach((id, i) => { items[i] = { ...items[i], songId: id, name: `試験曲 ${id}`, x: 0, y: 0 }; });
       void request.respond({ status: 200, contentType: 'application/json', body: JSON.stringify({
-        mapVersion: 'test-v1', generatedAt: '2026-10-30T00:00:00Z', method: 'group_feature_axes', state: 'ready', coordinateCount: 68000, matchingCount: 68000,
-        origin: items[0], items, groupSongIds: ids, axes: { x: 17, y: 822, dimensionCount: 1024, minX: -1, maxX: 1, minY: -1, maxY: 1 },
+        mapVersion: 'test-v1', generatedAt: '2026-10-30T00:00:00Z', method: 'group_feature_axes', state: 'ready', axisSelectionVersion: groupAxisVersion, coordinateCount: 68000, matchingCount: 68000,
+        origin: items[0], items, groupSongIds: ids, axes: { x: groupAxisX, y: 822, dimensionCount: 1024, minX: -1, maxX: 1, minY: -1, maxY: 1 },
         initialViewport: { centerX: 0, centerY: 0, zoom: 2 },
       }) }); return;
     }
@@ -181,12 +183,14 @@ try {
   await (await button('再試行')).click();
   await page.waitForSelector('[data-testid="sound-map-canvas"]');
   const seven = [232181, 280530, 289573, 445817, 1516, 150952, 157906];
-  const legacyStart = groupUrls.length;
-  await page.goto(new URL(`sound-map?layout=group&songIds=${seven.join(',')}&centerX=-.979458&centerY=.482133&zoom=256`, baseUrl), { waitUntil: 'domcontentloaded' });
-  await page.waitForFunction(() => document.querySelectorAll('g[data-origin="true"]').length === 7);
-  await page.waitForFunction(() => new URL(location.href).searchParams.get('axisVersion') === '2');
-  assert.equal(new URL(page.url()).searchParams.has('centerX'), false, 'Legacy coordinates must not place a new-axis map offscreen');
-  assert.ok(groupUrls.slice(legacyStart).every(url => !url.searchParams.has('centerX')), 'Discard stale viewport before the first request');
+  for (const version of ['', '&axisVersion=2']) {
+    const legacyStart = groupUrls.length;
+    await page.goto(new URL(`sound-map?layout=group&songIds=${seven.join(',')}&centerX=-.979458&centerY=.482133&zoom=256${version}`, baseUrl), { waitUntil: 'domcontentloaded' });
+    await page.waitForFunction(() => document.querySelectorAll('g[data-origin="true"]').length === 7);
+    await page.waitForFunction(() => new URL(location.href).searchParams.get('axisKey') === '2:17:822');
+    assert.equal(new URL(page.url()).searchParams.has('centerX'), false, 'Legacy coordinates must not place a new-axis map offscreen');
+    assert.ok(groupUrls.slice(legacyStart).every(url => !url.searchParams.has('centerX')), 'Discard stale viewport before the first request');
+  }
   for (const width of [1440, 390]) {
     await page.setViewport({ width, height: 1000 });
     await page.waitForFunction(() => {
@@ -217,6 +221,25 @@ try {
   await selectChip.asElement().click(); await selectChip.dispose();
   await page.waitForFunction(() => document.querySelector('[data-testid="sound-map-selected-title"]')?.textContent?.trim() === '試験曲 150952');
   assert.equal(await page.$$eval('[data-testid="sound-map-group-songs"] button[aria-label]', els => els.length), 7, 'Selecting a chip must not remove its origin');
+  groupAxisVersion = undefined;
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForFunction(() => new URL(location.href).searchParams.get('axisKey') === '1:17:822');
+  await page.click('button[aria-label="拡大"]');
+  await page.waitForFunction(() => Number(new URL(location.href).searchParams.get('zoom')) > 2);
+  const oldVersionView = new URL(page.url()).searchParams.get('zoom');
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('[data-testid="sound-map-canvas"]');
+  assert.equal(new URL(page.url()).searchParams.get('zoom'), oldVersionView, 'A client deployed before its API must preserve correctly tagged v1 navigation');
+  groupAxisVersion = 2;
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForFunction(() => new URL(location.href).searchParams.get('axisKey') === '2:17:822');
+  assert.equal(new URL(page.url()).searchParams.has('centerX'), false, 'An API axis-version change resets the previous coordinate system');
+  await page.click('button[aria-label="拡大"]');
+  await page.waitForFunction(() => new URL(location.href).searchParams.has('centerX'));
+  groupAxisX = 18;
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForFunction(() => new URL(location.href).searchParams.get('axisKey') === '2:18:822');
+  assert.equal(new URL(page.url()).searchParams.has('centerX'), false, 'A different chosen axis also invalidates coordinates within the same algorithm version');
   assert.deepEqual(pageErrors, []);
   console.log('Feature/group axes E2E passed, including seven coincident origins: individually selectable markers and chips at desktop/mobile widths.');
 } finally { await browser.close(); }
