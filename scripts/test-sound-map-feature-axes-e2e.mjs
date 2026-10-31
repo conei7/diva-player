@@ -16,6 +16,7 @@ try {
   let requests = 0;
   let legacyApi = false;
   let groupRequests = 0;
+  const groupUrls = [];
   let groupFailure = false;
   const pageErrors = [];
   page.on('pageerror', error => pageErrors.push(error.message));
@@ -23,6 +24,7 @@ try {
     const url = new URL(request.url());
     if (url.pathname.endsWith('/api/discovery/sound-map/group')) {
       groupRequests++;
+      groupUrls.push(url);
       if (groupRequests === 1) { void request.respond({ status: 202, contentType: 'application/json', body: '{"state":"preparing"}' }); return; }
       if (groupFailure) { void request.respond({ status: 422, contentType: 'application/json', body: '{"error":"group_songs_unavailable","songIds":[9]}' }); return; }
       const ids = url.searchParams.get('songIds').split(',').map(Number);
@@ -158,6 +160,7 @@ try {
   await page.waitForFunction(() => Number(new URL(location.href).searchParams.get('centerX')) !== 0);
   if (process.env.DIVA_GROUP_MAP_SCREENSHOTS) await page.screenshot({ path: `${process.env.DIVA_GROUP_MAP_SCREENSHOTS}-desktop.png`, fullPage: true });
   await page.setViewport({ width: 390, height: 844 });
+  await page.waitForFunction(() => document.documentElement.scrollWidth <= innerWidth);
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'Mobile group controls do not overflow');
   assert.equal(await page.$eval('[data-testid="sound-map-canvas"] svg', el => el.style.touchAction), 'none');
   const beforePan = new URL(page.url()).searchParams.get('centerX');
@@ -178,8 +181,12 @@ try {
   await (await button('再試行')).click();
   await page.waitForSelector('[data-testid="sound-map-canvas"]');
   const seven = [232181, 280530, 289573, 445817, 1516, 150952, 157906];
-  await page.goto(new URL(`sound-map?layout=group&songIds=${seven.join(',')}`, baseUrl), { waitUntil: 'domcontentloaded' });
+  const legacyStart = groupUrls.length;
+  await page.goto(new URL(`sound-map?layout=group&songIds=${seven.join(',')}&centerX=-.979458&centerY=.482133&zoom=256`, baseUrl), { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => document.querySelectorAll('g[data-origin="true"]').length === 7);
+  await page.waitForFunction(() => new URL(location.href).searchParams.get('axisVersion') === '2');
+  assert.equal(new URL(page.url()).searchParams.has('centerX'), false, 'Legacy coordinates must not place a new-axis map offscreen');
+  assert.ok(groupUrls.slice(legacyStart).every(url => !url.searchParams.has('centerX')), 'Discard stale viewport before the first request');
   for (const width of [1440, 390]) {
     await page.setViewport({ width, height: 1000 });
     await page.waitForFunction(() => {

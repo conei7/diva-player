@@ -9,13 +9,14 @@ internal sealed class GroupSoundMapCatalogue : IDisposable
     private sealed record Block(int[] Ids, long Offset);
     private readonly FileStream _file;
     private readonly Block[] _blocks;
+    private readonly double[] _variances;
     private int _references = 1;
     private int _ownerReleased;
     public int Count { get; }
 
-    private GroupSoundMapCatalogue(FileStream file, Block[] blocks, int count)
+    private GroupSoundMapCatalogue(FileStream file, Block[] blocks, int count, double[] variances)
     {
-        _file = file; _blocks = blocks; Count = count;
+        _file = file; _blocks = blocks; Count = count; _variances = variances;
     }
 
     internal Lease Acquire()
@@ -39,6 +40,7 @@ internal sealed class GroupSoundMapCatalogue : IDisposable
     {
         private GroupSoundMapCatalogue? _owner = owner;
         public int Count => (_owner ?? throw new ObjectDisposedException(nameof(Lease))).Count;
+        public ReadOnlySpan<double> Variances => (_owner ?? throw new ObjectDisposedException(nameof(Lease)))._variances;
         public GroupMapCoordinate[] ReadAxes(int x, int y) =>
             (_owner ?? throw new ObjectDisposedException(nameof(Lease))).ReadAxes(x, y);
         public void Dispose() => Interlocked.Exchange(ref _owner, null)?.Release();
@@ -76,6 +78,8 @@ internal sealed class GroupSoundMapCatalogue : IDisposable
         private FileStream? _file;
         private readonly List<Block> _blocks = [];
         private readonly Half[] _columns = new Half[256 * 1024];
+        private readonly double[] _means = new double[1024];
+        private readonly double[] _m2 = new double[1024];
         public int Count { get; private set; }
 
         public Builder(string directory)
@@ -97,7 +101,14 @@ internal sealed class GroupSoundMapCatalogue : IDisposable
             for (var i = 0; i < rows.Count; i++)
             {
                 if (rows[i].Vector.Length != 1024) throw new ArgumentException("Expected 1024 features");
-                for (var d = 0; d < 1024; d++) _columns[d * rows.Count + i] = (Half)rows[i].Vector[d];
+                for (var d = 0; d < 1024; d++)
+                {
+                    var value = (Half)rows[i].Vector[d];
+                    _columns[d * rows.Count + i] = value;
+                    var delta = (double)value - _means[d];
+                    _means[d] += delta / (Count + i + 1);
+                    _m2[d] += delta * ((double)value - _means[d]);
+                }
             }
             _blocks.Add(new(rows.Select(row => row.Id).ToArray(), file.Position));
             file.Write(MemoryMarshal.AsBytes(_columns.AsSpan(0, rows.Count * 1024)));
@@ -109,7 +120,7 @@ internal sealed class GroupSoundMapCatalogue : IDisposable
             var file = _file ?? throw new ObjectDisposedException(nameof(Builder));
             file.Flush();
             _file = null;
-            return new(file, _blocks.ToArray(), Count);
+            return new(file, _blocks.ToArray(), Count, _m2.Select(value => Count > 0 ? Math.Max(0, value / Count) : 0).ToArray());
         }
 
         public void Dispose() => Interlocked.Exchange(ref _file, null)?.Dispose();

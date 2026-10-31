@@ -40,6 +40,8 @@ export class SoundMapRequestError extends Error {
 }
 
 export interface GroupSoundMapResponse extends SoundMapResponse {
+  axisSelectionVersion?: number;
+  axisStandardDeviations?: { x: number; y: number };
   groupSongIds: number[];
   matchingCount: number;
   initialViewport: { centerX: number; centerY: number; zoom: number };

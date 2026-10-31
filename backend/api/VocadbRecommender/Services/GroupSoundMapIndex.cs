@@ -78,24 +78,40 @@ internal sealed class GroupSoundMapIndex : IDisposable
         }
     }
 
-    /// <summary>Sum of squared pair distances separates by dimension; Welford avoids cancellation.</summary>
-    internal static (int X, int Y) SelectAxes(IReadOnlyList<float[]> seeds)
+    /// <summary>Prefer shared active features, then minimize spread relative to the whole catalogue.</summary>
+    internal static (int X, int Y) SelectAxes(IReadOnlyList<float[]> seeds, ReadOnlySpan<double> variances)
     {
-        if (seeds.Count is < 3 or > 20 || seeds.Any(v => v.Length != 1024 || v.Any(x => !float.IsFinite(x))))
+        if (seeds.Count is < 3 or > 20 || seeds.Any(v => v.Length != 1024 || v.Any(x => !float.IsFinite(x))) || variances.Length != 1024)
             throw new ArgumentException("Expected 3–20 finite 1024-dimensional vectors", nameof(seeds));
-        var scores = new double[1024];
+        var candidates = new List<(int Axis, int Active, double Score)>();
+        var fallback = new List<(int Axis, int Active, double Variance)>();
         for (var d = 0; d < 1024; d++)
         {
+            var variance = variances[d];
+            if (!double.IsFinite(variance) || variance < 0) throw new ArgumentException("Invalid catalogue variance", nameof(variances));
             double mean = 0, m2 = 0;
+            var active = 0;
             for (var i = 0; i < seeds.Count; i++)
             {
+                if (seeds[i][d] != 0) active++;
                 var delta = seeds[i][d] - mean;
                 mean += delta / (i + 1);
                 m2 += delta * (seeds[i][d] - mean);
             }
-            scores[d] = Math.Max(0, m2);
+            fallback.Add((d, active, variance));
+            var score = variance > 0 ? Math.Max(0, m2) / seeds.Count / variance : 0;
+            // A constant group coordinate cannot distinguish these songs; numerical noise is not variation.
+            if (variance > 0 && score > 1e-12 && double.IsFinite(score)) candidates.Add((d, active, score));
         }
-        var axes = Enumerable.Range(0, 1024).OrderBy(d => scores[d]).ThenBy(d => d).Take(2).ToArray();
+        // Use the highest shared activation coverage that still offers two axes.
+        // This prevents mostly-zero dimensions from winning simply because the group is silent there.
+        var coverage = candidates.OrderByDescending(c => c.Active).Skip(1).FirstOrDefault().Active;
+        var axes = candidates.Where(c => c.Active >= coverage).OrderBy(c => c.Score).ThenBy(c => c.Axis)
+            .Select(c => c.Axis).Take(2).ToList();
+        // Identical vectors or genuinely one-dimensional data cannot be separated by choosing other axes.
+        // Keep truthful coordinates and use globally varying context, rather than fabricate differences.
+        axes.AddRange(fallback.Where(c => !axes.Contains(c.Axis)).OrderByDescending(c => c.Active)
+            .ThenByDescending(c => c.Variance).ThenBy(c => c.Axis).Select(c => c.Axis).Take(2 - axes.Count));
         return (axes[0], axes[1]);
     }
 }

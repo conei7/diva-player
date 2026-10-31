@@ -21,6 +21,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\VocadbRecommender\VocadbRecommender.csproj" />
+    <None Update="Fixtures\group-map-seven-seeds.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

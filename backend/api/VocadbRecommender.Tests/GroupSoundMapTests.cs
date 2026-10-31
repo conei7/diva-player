@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.AspNetCore.Http;
+using System.Text.Json;
 using VocadbRecommender.Services;
 
 namespace VocadbRecommender.Tests;
@@ -27,25 +28,26 @@ public sealed class GroupSoundMapTests
     public async Task TwentySeedsAreSupportedAndTwentyOneAreRejectedBeforeIo()
     {
         var seeds = Enumerable.Range(0, 20).Select(_ => new float[1024]).ToArray();
-        Assert.Equal((0, 1), GroupSoundMapIndex.SelectAxes(seeds));
+        Assert.Equal((0, 1), GroupSoundMapIndex.SelectAxes(seeds, Enumerable.Repeat(1d, 1024).ToArray()));
         var result = await GroupSoundMapEndpoints.GetAsync(string.Join(',', Enumerable.Range(1, 21)), null, null, null, null,
             null!, null!, null!, new DefaultHttpContext().Response, CancellationToken.None);
         Assert.Equal(400, ((IStatusCodeHttpResult)result).StatusCode);
     }
 
     [Fact]
-    public void SelectedPairMinimizesAllPairSquaredDistancesWithoutPairEnumeration()
+    public void SelectedPairMinimizesStandardizedPairDistancesAmongFullyActiveVaryingAxes()
     {
         var random = new Random(724);
         var seeds = Enumerable.Range(0, 7).Select(_ => Enumerable.Range(0, 1024).Select(_ => (float)random.NextDouble()).ToArray()).ToArray();
-        var (x, y) = GroupSoundMapIndex.SelectAxes(seeds);
+        var variances = Enumerable.Range(0, 1024).Select(_ => .01 + random.NextDouble()).ToArray();
+        var (x, y) = GroupSoundMapIndex.SelectAxes(seeds, variances);
         double Cost(int d)
         {
             double cost = 0;
             for (var a = 0; a < seeds.Length; a++)
                 for (var b = a + 1; b < seeds.Length; b++)
                     cost += Math.Pow((double)seeds[a][d] - seeds[b][d], 2);
-            return cost;
+            return cost / variances[d];
         }
         var costs = Enumerable.Range(0, 1024).Select(Cost).ToArray();
         var minimum = double.PositiveInfinity;
@@ -56,15 +58,61 @@ public sealed class GroupSoundMapTests
     }
 
     [Fact]
-    public void UniformDimensionsAndTiesAreRetainedRatherThanReplacingTheUsersCriterion()
+    public void ConstantAndSparseAxesAreSkippedAndTrueIdenticalVectorsHaveStableContext()
     {
         var seeds = Enumerable.Range(1, 3).Select(i => Enumerable.Repeat((float)i, 1024).ToArray()).ToArray();
         foreach (var v in seeds) { v[17] = 0; v[822] = .25f; }
-        Assert.Equal((17, 822), GroupSoundMapIndex.SelectAxes(seeds));
-        Assert.Equal((0, 1), GroupSoundMapIndex.SelectAxes([new float[1024], new float[1024], new float[1024]]));
+        var variances = Enumerable.Repeat(1d, 1024).ToArray();
+        seeds[0][99] = 1e-8f; seeds[1][99] = 0; seeds[2][99] = 0;
+        Assert.Equal((0, 1), GroupSoundMapIndex.SelectAxes(seeds, variances));
+        Assert.Equal((0, 1), GroupSoundMapIndex.SelectAxes([new float[1024], new float[1024], new float[1024]], variances));
         seeds[0][100] = float.NaN;
-        Assert.Throws<ArgumentException>(() => GroupSoundMapIndex.SelectAxes(seeds));
-        Assert.Throws<ArgumentException>(() => GroupSoundMapIndex.SelectAxes([new float[1024], new float[1024]]));
+        Assert.Throws<ArgumentException>(() => GroupSoundMapIndex.SelectAxes(seeds, variances));
+        Assert.Throws<ArgumentException>(() => GroupSoundMapIndex.SelectAxes([new float[1024], new float[1024]], variances));
+    }
+
+    [Fact]
+    public void ReportedSevenSongsNoLongerCollapseFiveSongsToZeroAndAxisUnitsDoNotChangeSelection()
+    {
+        using var fixture = JsonDocument.Parse(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Fixtures", "group-map-seven-seeds.json")));
+        var seeds = fixture.RootElement.GetProperty("seeds").EnumerateArray()
+            .Select(row => row.GetProperty("vector").EnumerateArray().Select(value => value.GetSingle()).ToArray()).ToArray();
+        var variances = fixture.RootElement.GetProperty("variances").EnumerateArray().Select(value => value.GetDouble()).ToArray();
+        Assert.Equal(5, seeds.Count(vector => vector[775] == 0 && vector[345] == 0));
+        var axes = GroupSoundMapIndex.SelectAxes(seeds, variances);
+        Assert.Equal((570, 457), axes);
+        Assert.All(seeds, vector => { Assert.NotEqual(0, vector[axes.X]); Assert.NotEqual(0, vector[axes.Y]); });
+        Assert.Equal(7, seeds.Select(vector => (vector[axes.X], vector[axes.Y])).Distinct().Count());
+        foreach (var vector in seeds) vector[570] *= 100;
+        variances[570] *= 10_000;
+        Assert.Equal(axes, GroupSoundMapIndex.SelectAxes(seeds, variances));
+    }
+
+    [Fact]
+    public void CoverageRelaxesOnlyAsNeededAndAnActuallyOneDimensionalGroupRemainsTruthful()
+    {
+        var seeds = Enumerable.Range(1, 4).Select(i => new float[1024]).ToArray();
+        var variances = Enumerable.Repeat(1d, 1024).ToArray();
+        for (var i = 0; i < seeds.Length; i++) { seeds[i][10] = i+1; seeds[i][20] = i == 0 ? 0 : i+1; seeds[i][30] = i < 2 ? 0 : (i+1)*1e-8f; }
+        Assert.Equal((10, 20), GroupSoundMapIndex.SelectAxes(seeds, variances));
+        foreach (var vector in seeds) { vector[20] = 0; vector[30] = 0; }
+        Assert.Equal((10, 0), GroupSoundMapIndex.SelectAxes(seeds, variances));
+    }
+
+    [Fact]
+    public void CatalogueVariancesMatchStoredHalfValuesAcrossBlockBoundaries()
+    {
+        using var builder = new GroupSoundMapCatalogue.Builder(Path.GetTempPath());
+        var values = Enumerable.Range(0, 513).Select(i => (float)Math.Sin(i*.1)).ToArray();
+        for (var start = 0; start < values.Length; start += 256)
+            builder.Append(Enumerable.Range(start, Math.Min(256, values.Length-start)).Select(i => (i+1, Enumerable.Repeat(values[i], 1024).ToArray())).ToArray());
+        using var catalogue = builder.Complete();
+        using var lease = catalogue.Acquire();
+        var stored = values.Select(v => (double)(Half)v).ToArray();
+        var mean = stored.Average();
+        var expected = stored.Average(v => Math.Pow(v-mean, 2));
+        Assert.Equal(expected, lease.Variances[570], 12);
+        Assert.Equal(expected, lease.Variances[457], 12);
     }
 
     [Fact]

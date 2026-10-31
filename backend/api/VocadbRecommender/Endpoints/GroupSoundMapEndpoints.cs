@@ -34,7 +34,9 @@ internal static class GroupSoundMapEndpoints
                 response.Headers.RetryAfter = "2";
                 return Results.Json(new { state = "preparing" }, statusCode: 202);
             }
-            var (axisX, axisY) = GroupSoundMapIndex.SelectAxes(ids.Select(id => seeds[id]).ToArray());
+            var (axisX, axisY) = GroupSoundMapIndex.SelectAxes(ids.Select(id => seeds[id]).ToArray(), catalogue.Variances);
+            var scaleX = catalogue.Variances[axisX] > 0 ? Math.Sqrt(catalogue.Variances[axisX]) : 1;
+            var scaleY = catalogue.Variances[axisY] > 0 ? Math.Sqrt(catalogue.Variances[axisY]) : 1;
             var points = catalogue.ReadAxes(axisX, axisY);
             var remaining = ids.ToHashSet();
             // The group's original float32 vectors determine both axes and their displayed positions.
@@ -48,12 +50,12 @@ internal static class GroupSoundMapEndpoints
                 points = points.Concat(remaining.Select(id => new GroupMapCoordinate(id, 0, 0, seeds[id][axisX], seeds[id][axisY]))).ToArray();
             var minX = points.Min(p => p.RawX); var maxX = points.Max(p => p.RawX);
             var minY = points.Min(p => p.RawY); var maxY = points.Max(p => p.RawY);
-            var span = Math.Max(Math.Max(maxX - minX, maxY - minY), 1e-9);
-            // One scale for BOTH axes: independent stretching would change the chosen distances.
+            var span = Math.Max(Math.Max((maxX - minX) / scaleX, (maxY - minY) / scaleY), 1e-9);
+            // Standardized feature units match the selection score; one final scale preserves that metric.
             for (var i = 0; i < points.Length; i++)
             {
                 var p = points[i];
-                points[i] = p with { X = 2 * (p.RawX - (minX + maxX) / 2) / span, Y = -2 * (p.RawY - (minY + maxY) / 2) / span };
+                points[i] = p with { X = 2 * (p.RawX - (minX + maxX) / 2) / scaleX / span, Y = -2 * (p.RawY - (minY + maxY) / 2) / scaleY / span };
             }
             var group = points.Where(p => seeds.ContainsKey(p.SongId)).ToArray();
             var groupX = group.Average(p => p.X); var groupY = group.Average(p => p.Y);
@@ -73,6 +75,7 @@ internal static class GroupSoundMapEndpoints
             return Results.Ok(new
             {
                 version.MapVersion, version.GeneratedAt, method = "group_feature_axes", state = "ready",
+                axisSelectionVersion = 2, axisStandardDeviations = new { x = scaleX, y = scaleY },
                 coordinateCount = catalogue.Count, matchingCount = visible.Length,
                 items, origin = items.First(p => p.SongId == ids[0]), groupSongIds = ids,
                 axes = new SoundMapAxes(axisX, axisY, 1024, minX, maxX, minY, maxY),
