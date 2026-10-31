@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from 'react';
 import { usePlayerStore } from '../../stores/playerStore';
 import { cx } from '../ui/overlay';
+import { useIsMusicLayout } from '../../hooks/useMusicLayout';
 
 export interface LibraryHeroProps {
   /** The page's h1. */
@@ -38,6 +39,8 @@ export default function LibraryHero({
   className,
 }: LibraryHeroProps) {
   const hiddenMode = usePlayerStore(state => state.hiddenMode);
+  // The music layout keeps the header above the list (its side columns are taken).
+  const sideColumn = !useIsMusicLayout();
   const [failedBackdrop, setFailedBackdrop] = useState<string | null>(null);
   const showBackdrop = Boolean(backdropUrl) && !hiddenMode && failedBackdrop !== backdropUrl;
 
@@ -48,7 +51,7 @@ export default function LibraryHero({
         'relative isolate min-w-0',
         'sm:overflow-hidden sm:rounded-panel',
         !showBackdrop && 'sm:bg-yt-raised',
-        'xl:sticky xl:top-[calc(var(--header-height,56px)_+_var(--selection-bar-height,0px)_+_24px)] xl:h-[calc(100dvh_-_var(--header-height,56px)_-_var(--selection-bar-height,0px)_-_48px)] xl:w-[360px] xl:shrink-0',
+        sideColumn && 'xl:sticky xl:top-[calc(var(--header-height,56px)_+_var(--selection-bar-height,0px)_+_24px)] xl:h-[calc(100dvh_-_var(--header-height,56px)_-_var(--selection-bar-height,0px)_-_var(--bottom-nav-height,0px)_-_48px)] xl:w-[360px] xl:shrink-0',
         className,
       )}
     >
@@ -64,8 +67,8 @@ export default function LibraryHero({
           <div className="absolute inset-0 bg-[image:var(--hero-gradient)]" />
         </div>
       )}
-      <div className="sm:flex sm:items-start sm:gap-6 sm:p-6 xl:block xl:h-full xl:overflow-y-auto xl:overscroll-contain">
-        {cover && <div className="hidden w-[320px] shrink-0 sm:block xl:mb-4 xl:w-full">{cover}</div>}
+      <div className={cx('sm:flex sm:items-start sm:gap-6 sm:p-6', sideColumn && 'xl:block xl:h-full xl:overflow-y-auto xl:overscroll-contain')}>
+        {cover && <div className={cx('hidden shrink-0 sm:block', sideColumn ? 'w-[320px] xl:mb-4 xl:w-full' : 'w-56 lg:w-64')}>{cover}</div>}
         <div className="min-w-0 flex-1">
           <h1
             id={titleId}

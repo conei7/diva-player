@@ -60,6 +60,68 @@ interface PlaylistSongRowProps {
   actions: PlaylistRowActions;
 }
 
+interface PlaylistSongActionsMenuProps {
+  song: Song;
+  index: number;
+  lastIndex: number;
+  playlistName: string;
+  editable: boolean;
+  reorderable: boolean;
+  watchLater: boolean;
+  /** The song's rating (the row already subscribes to it for its meta line). */
+  rating: number;
+  actions: PlaylistRowActions;
+}
+
+/** ⋮ of a playlist song: stars, move to top / bottom, サムネイルに設定, remove. Also used by the music layout's track rows. */
+export function PlaylistSongActionsMenu({
+  song,
+  index,
+  lastIndex,
+  playlistName,
+  editable,
+  reorderable,
+  watchLater,
+  rating,
+  actions,
+}: PlaylistSongActionsMenuProps) {
+  const t = useTranslateSourceText();
+  const setRating = useRatingStore(state => state.setRating);
+  return (
+    <SongActionsMenu
+      song={song}
+      include={watchLater ? WATCH_LATER_ACTIONS : undefined}
+      extraItems={(
+        <>
+          <MenuItem keepOpen icon={<StarIcon />}>
+            <StarRating rating={rating} onRate={value => setRating(song.id, value)} size="md" />
+          </MenuItem>
+          {editable && reorderable && (
+            <>
+              <MenuItem icon={<MoveToTopIcon />} disabled={index === 0} onSelect={() => actions.moveToTop(index)}>
+                {t('一番上に移動')}
+              </MenuItem>
+              <MenuItem icon={<MoveToBottomIcon />} disabled={index === lastIndex} onSelect={() => actions.moveToBottom(index)}>
+                {t('一番下に移動')}
+              </MenuItem>
+            </>
+          )}
+          {editable && (
+            <MenuItem icon={<ImageIcon />} onSelect={() => actions.setThumbnail(index)}>
+              {t('サムネイルに設定')}
+            </MenuItem>
+          )}
+        </>
+      )}
+      footerItems={editable ? (
+        <MenuItem icon={<TrashIcon />} onSelect={() => actions.remove(index)}>
+          {t('「{name}」から削除', { name: playlistName })}
+        </MenuItem>
+      ) : undefined}
+    />
+  );
+}
+
 function PlaylistSongRow({
   song,
   index,
@@ -76,10 +138,8 @@ function PlaylistSongRow({
   dragHandle,
   actions,
 }: PlaylistSongRowProps) {
-  const t = useTranslateSourceText();
   const language = useLanguageStore(state => state.language);
   const rating = useRatingStore(state => state.ratings[String(song.id)] ?? 0);
-  const setRating = useRatingStore(state => state.setRating);
 
   const metaLine = joinMetaParts([
     formatArtistLine(song),
@@ -113,36 +173,16 @@ function PlaylistSongRow({
       onToggleSelect={() => actions.toggleSelect(index)}
       data-testid="playlist-song-row"
       trailing={(
-        <SongActionsMenu
+        <PlaylistSongActionsMenu
           song={song}
-          include={watchLater ? WATCH_LATER_ACTIONS : undefined}
-          extraItems={(
-            <>
-              <MenuItem keepOpen icon={<StarIcon />}>
-                <StarRating rating={rating} onRate={value => setRating(song.id, value)} size="md" />
-              </MenuItem>
-              {editable && reorderable && (
-                <>
-                  <MenuItem icon={<MoveToTopIcon />} disabled={index === 0} onSelect={() => actions.moveToTop(index)}>
-                    {t('一番上に移動')}
-                  </MenuItem>
-                  <MenuItem icon={<MoveToBottomIcon />} disabled={index === lastIndex} onSelect={() => actions.moveToBottom(index)}>
-                    {t('一番下に移動')}
-                  </MenuItem>
-                </>
-              )}
-              {editable && (
-                <MenuItem icon={<ImageIcon />} onSelect={() => actions.setThumbnail(index)}>
-                  {t('サムネイルに設定')}
-                </MenuItem>
-              )}
-            </>
-          )}
-          footerItems={editable ? (
-            <MenuItem icon={<TrashIcon />} onSelect={() => actions.remove(index)}>
-              {t('「{name}」から削除', { name: playlistName })}
-            </MenuItem>
-          ) : undefined}
+          index={index}
+          lastIndex={lastIndex}
+          playlistName={playlistName}
+          editable={editable}
+          reorderable={reorderable}
+          watchLater={watchLater}
+          rating={rating}
+          actions={actions}
         />
       )}
     />

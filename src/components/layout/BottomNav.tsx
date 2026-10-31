@@ -12,8 +12,9 @@ const CELL_CLASS =
 /**
  * Bottom navigation under 640px except on the song page (DESIGN_SPEC §6.1.4): Home / Chorus
  * highlights / Playlists / History / Menu (opens the drawer). 48px + the safe area.
+ * `className` is a hook for the music layout's CSS (the standard layout passes none).
  */
-export default function BottomNav() {
+export default function BottomNav({ className }: { className?: string } = {}) {
   const t = useTranslateSourceText();
   const tk = useTranslate();
   // 後で聴く has no cell here: プレイリスト stays selected while it is open.
@@ -26,7 +27,7 @@ export default function BottomNav() {
   return (
     <nav
       aria-label={t('メイン')}
-      className="fixed inset-x-0 bottom-0 z-[var(--z-header)] border-t border-yt-divider bg-yt-bg pb-[env(safe-area-inset-bottom)]"
+      className={cx('fixed inset-x-0 bottom-0 z-[var(--z-header)] border-t border-yt-divider bg-yt-bg pb-[env(safe-area-inset-bottom)]', className)}
     >
       <ul className="flex h-12">
         {BOTTOM_NAV_ITEMS.map(id => {

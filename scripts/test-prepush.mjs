@@ -173,6 +173,7 @@ async function main() {
       'test:e2e:navigation',
       'test:performance-budget',
       'test:e2e:multi-tab-player',
+      'test:e2e:music-layout',
     ]) {
       await run(npmCommand, [...npmPrefix, 'run', script, '--', baseUrl], { label: `${script} (${baseUrl})` });
     }

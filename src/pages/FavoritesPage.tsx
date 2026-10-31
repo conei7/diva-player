@@ -50,6 +50,7 @@ import {
 } from '../components/ui/icons';
 import LibraryHero from '../components/library/LibraryHero';
 import RowBadge from '../components/library/RowBadge';
+import { useIsMusicLayout } from '../hooks/useMusicLayout';
 
 const MAX_SKELETON_ROWS = 12;
 
@@ -60,6 +61,7 @@ export default function FavoritesPage() {
   const t = useTranslateSourceText();
   const language = useLanguageStore(state => state.language);
   const isMobile = useMediaQuery(MOBILE_MEDIA_QUERY);
+  const musicLayout = useIsMusicLayout();
   const ratings = useRatingStore(state => state.ratings);
   const setRating = useRatingStore(state => state.setRating);
   const entries = useHistoryStore(state => state.entries);
@@ -269,7 +271,7 @@ export default function FavoritesPage() {
 
   return (
     <PageShell>
-      <div className="flex flex-col gap-6 xl:flex-row xl:items-start">
+      <div className={musicLayout ? 'flex flex-col gap-6' : 'flex flex-col gap-6 xl:flex-row xl:items-start'}>
         <LibraryHero
           titleId="favorites-title"
           title={t('評価した曲')}

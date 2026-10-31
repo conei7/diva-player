@@ -48,7 +48,7 @@ export function SelectionBar({
       role="toolbar"
       aria-labelledby={countId}
       data-testid={testId}
-      className="fixed left-[var(--guide-offset,0px)] right-0 top-[var(--header-height,56px)] z-[var(--z-selection,48)] flex h-14 items-center gap-0 border-b border-yt-divider bg-yt-raised px-1 text-yt-text sm:gap-2 sm:px-4"
+      className="fixed left-[var(--guide-offset,0px)] right-[var(--music-panel-offset,0px)] top-[var(--header-height,56px)] z-[var(--z-selection,48)] flex h-14 items-center gap-0 border-b border-yt-divider bg-yt-raised px-1 text-yt-text sm:gap-2 sm:px-4"
     >
       <IconButton label={t('選択を解除')} icon={<CloseIcon />} onClick={onClose} />
       <span id={countId} aria-live="polite" className="min-w-0 truncate px-1 text-base leading-6 font-medium tabular-nums sm:px-0">

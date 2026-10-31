@@ -24,6 +24,7 @@ import { useWindowVirtualizer } from '@tanstack/react-virtual';
 import type { Playlist, Song } from '../../types/vocadb';
 import { useTranslate, useTranslateSourceText } from '../../i18n';
 import { MOBILE_MEDIA_QUERY, useMediaQuery } from '../../hooks/useMediaQuery';
+import { useIsMusicLayout } from '../../hooks/useMusicLayout';
 import { usePlayerStore } from '../../stores/playerStore';
 import { usePlaylistStore, WATCH_LATER_ID, type RemovedSongsSnapshot, type SortKey } from '../../stores/playlistStore';
 import { showToast } from '../../stores/toastStore';
@@ -42,6 +43,9 @@ import { SelectionBar } from '../ui/SelectionBar';
 import Tooltip from '../ui/Tooltip';
 import { DragHandleIcon, PlaylistAddIcon, PlaylistIcon, QueueMusicIcon, SearchIcon, SpinnerIcon, SyncIcon, TrashIcon, TuneIcon } from '../ui/icons';
 import { cx } from '../ui/overlay';
+import TrackListHeader from '../music/playlist/TrackListHeader';
+import TrackRow from '../music/playlist/TrackRow';
+import { TRACK_ROW_HEIGHT, type TrackLeadKind } from '../music/playlist/trackTable';
 import PlaylistHealthModal from './PlaylistHealthModal';
 import PlaylistHero, { type SmartPlaylistRefreshStatus } from './PlaylistHero';
 import PlaylistListHeader from './PlaylistListHeader';
@@ -197,6 +201,8 @@ export default function PlaylistDetail({
   const tk = useTranslate();
   const mobile = useMediaQuery(MOBILE_MEDIA_QUERY);
   const compactSelection = useMediaQuery(COMPACT_SELECTION_QUERY);
+  // Music layout: the songs are a track table (# | タイトル | プロデューサー | 公開日 | 再生時間 | ⋮).
+  const musicLayout = useIsMusicLayout();
   const editable = isPlaylistEditable(playlist);
   const synced = getPlaylistSyncInfo(playlist) !== null;
   const name = displayPlaylistName(playlist, t);
@@ -383,6 +389,12 @@ export default function PlaylistDetail({
     };
     return { screenReaderInstructions, announcements };
   }, [latestEntries, t]);
+  // Music layout: the rows sit in a role="rowgroup", which may only hold rows, so dnd-kit's hidden
+  // instructions and live region (role="status") go to <body> instead of after the rows.
+  const listDragAccessibility = useMemo(
+    () => (musicLayout && typeof document !== 'undefined' ? { ...dragAccessibility, container: document.body } : dragAccessibility),
+    [dragAccessibility, musicLayout],
+  );
   const virtualized = entries.length > VIRTUAL_THRESHOLD;
   // Manual order is on screen (not sorted, not searched): moving songs means something.
   const reorderable = editable && effectiveSort === 'addedOrder' && query.trim() === '';
@@ -396,7 +408,23 @@ export default function PlaylistDetail({
     (await usePlaylistStore.getState().reorderSongs(playlist.id, entries[from].index, entries[to].index));
   };
 
-  const renderRow = (entry: Entry, position: number, dragHandle?: ReactNode) => (
+  const renderRow = (entry: Entry, position: number, dragHandle?: ReactNode) => (musicLayout ? (
+    <TrackRow
+      song={entry.song}
+      index={entry.index}
+      position={position}
+      lastIndex={playlist.songs.length - 1}
+      playlistName={name}
+      editable={editable}
+      reorderable={reorderable}
+      watchLater={playlist.id === WATCH_LATER_ID}
+      active={entry.song.id === currentSongId}
+      selectionMode={selectionMode}
+      selected={selected.has(entry.index)}
+      dragHandle={dragHandle}
+      actions={rowActions}
+    />
+  ) : (
     <PlaylistSongRow
       song={entry.song}
       index={entry.index}
@@ -413,7 +441,7 @@ export default function PlaylistDetail({
       dragHandle={dragHandle}
       actions={rowActions}
     />
-  );
+  ));
 
   let list: ReactNode;
   if (playlist.songs.length === 0) {
@@ -433,10 +461,11 @@ export default function PlaylistDetail({
   } else if (entries.length === 0) {
     list = <EmptyState icon={<SearchIcon />} title={t('「{query}」に一致する曲はありません', { query: query.trim() })} />;
   } else if (virtualized) {
-    list = <VirtualRows entries={entries} estimate={mobile ? 72 : 111} renderRow={(entry, position) => renderRow(entry, position)} />;
+    const estimate = musicLayout ? TRACK_ROW_HEIGHT : mobile ? 72 : 111;
+    list = <VirtualRows entries={entries} estimate={estimate} renderRow={(entry, position) => renderRow(entry, position)} />;
   } else if (draggable) {
     list = (
-      <DndContext sensors={sensors} collisionDetection={closestCenter} accessibility={dragAccessibility} onDragEnd={event => { void runSave(() => handleDragEnd(event)); }}>
+      <DndContext sensors={sensors} collisionDetection={closestCenter} accessibility={listDragAccessibility} onDragEnd={event => { void runSave(() => handleDragEnd(event)); }}>
         <SortableContext items={entries.map(entry => entry.key)} strategy={verticalListSortingStrategy}>
           {entries.map((entry, position) => (
             <SortableRow key={entry.key} id={entry.key} title={entry.song.name}>
@@ -459,13 +488,16 @@ export default function PlaylistDetail({
     : noticeParts[0];
 
   const nothingSelected = selected.size === 0;
+  const listMargin = mobile ? '-mx-2' : musicLayout ? 'mx-0' : '-mx-2 xl:mx-0';
+  // The table's first column holds what the rows' does (checkbox / drag handle + number / number).
+  const trackLead: TrackLeadKind = selectionMode ? 'select' : draggable ? 'handle' : 'number';
 
   return (
     <PageShell>
       {/* ≥1280px: the sticky hero may only move inside this box, so it reaches into <main>'s bottom
           space for the mini player (the list keeps that space as its own padding). Otherwise the
           hero would be pushed off the top at the end of the list while a song is playing. */}
-      <div className="pb-6 xl:-mb-[var(--floating-player-clearance,0px)] xl:flex xl:items-start xl:gap-6">
+      <div className={cx('pb-6', !musicLayout && 'xl:-mb-[var(--floating-player-clearance,0px)] xl:flex xl:items-start xl:gap-6')}>
         <PlaylistHero
           playlist={playlist}
           folderName={folderName}
@@ -490,7 +522,7 @@ export default function PlaylistDetail({
           onUnlinkSync={onUnlinkSync}
         />
 
-        <div className={cx('min-w-0 flex-1 xl:pb-[var(--floating-player-clearance,0px)]', mobile ? 'mt-1' : 'mt-4 xl:mt-0')}>
+        <div className={cx('min-w-0 flex-1', !musicLayout && 'xl:pb-[var(--floating-player-clearance,0px)]', mobile ? 'mt-1' : musicLayout ? 'mt-4' : 'mt-4 xl:mt-0')}>
           {playlist.songs.length > 0 && (
             <PlaylistListHeader
               sortable={editable}
@@ -510,9 +542,24 @@ export default function PlaylistDetail({
               {noticeText}
             </InlineNotice>
           )}
-          <div className={cx(mobile ? '-mx-2' : '-mx-2 xl:mx-0', playlist.songs.length === 0 && 'pt-8')}>
-            {list}
-          </div>
+          {musicLayout && entries.length > 0 ? (
+            // Div rows, not <table>: drag & drop moves a wrapper div and the virtual list positions
+            // rows absolutely. `@container`: columns also hide when the table itself is narrow.
+            <div
+              role="table"
+              aria-label={t('「{name}」の曲一覧', { name })}
+              aria-rowcount={entries.length + 1}
+              data-testid="music-track-table"
+              className={cx('@container', listMargin)}
+            >
+              <TrackListHeader sortable={editable} sortKey={effectiveSort} onSortChange={setSortKey} lead={trackLead} />
+              <div role="rowgroup">{list}</div>
+            </div>
+          ) : (
+            <div className={cx(listMargin, playlist.songs.length === 0 && 'pt-8')}>
+              {list}
+            </div>
+          )}
         </div>
       </div>
 

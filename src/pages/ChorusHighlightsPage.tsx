@@ -22,6 +22,7 @@ import { ChorusIcon, ErrorIcon, PlayIcon, RefreshIcon } from '../components/ui/i
 import ChorusNowPlaying from '../components/library/ChorusNowPlaying';
 import LibraryHero from '../components/library/LibraryHero';
 import RowBadge from '../components/library/RowBadge';
+import { useIsMusicLayout } from '../hooks/useMusicLayout';
 
 /** Stored as the queue name; displayQueueTitle() translates it where it is shown. */
 const QUEUE_TITLE = 'サビ発掘';
@@ -32,6 +33,7 @@ export default function ChorusHighlightsPage() {
   const t = useTranslateSourceText();
   const language = useLanguageStore(state => state.language);
   const isMobile = useMediaQuery(MOBILE_MEDIA_QUERY);
+  const musicLayout = useIsMusicLayout();
   const [candidates, setCandidates] = useState<Song[]>([]);
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
@@ -201,7 +203,7 @@ export default function ChorusHighlightsPage() {
   return (
     <div data-testid="chorus-highlights-page">
       <PageShell>
-        <div className="flex flex-col gap-6 xl:flex-row xl:items-start">
+        <div className={musicLayout ? 'flex flex-col gap-6' : 'flex flex-col gap-6 xl:flex-row xl:items-start'}>
           <LibraryHero
             titleId="chorus-highlights-title"
             title={t('サビ発掘')}

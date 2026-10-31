@@ -4,6 +4,8 @@ import { useLocation, useNavigationType, useSearchParams } from 'react-router';
 import CategoryChips, { type CategoryChip } from '../components/home/CategoryChips';
 import VideoGrid from '../components/home/VideoGrid';
 import SearchResults, { type UrlArtist } from '../components/search/SearchResults';
+import MusicHome from '../components/music/home/MusicHome';
+import { useIsMusicLayout } from '../hooks/useMusicLayout';
 import { attachExternalViews, filterDiscoveryEligibleSongs, getAudioSimilarSongs, getRecommendedSongs, getTrendingSongs } from '../api/vocadb';
 import { useHistoryStore } from '../stores/historyStore';
 import { usePlayerStore } from '../stores/playerStore';
@@ -206,6 +208,8 @@ export default function HomePage() {
     storeUrlKey: state.urlSearchKey,
   })));
   const advancedSearchOpen = useUiStore(state => state.advancedSearchOpen);
+  // The music layout shows Home as shelves of square cards above the same feed.
+  const musicLayout = useIsMusicLayout();
   const advancedEntry = isAdvancedSearchEntry(location.state);
 
   const runUrlSearch = useCallback(() => {
@@ -248,7 +252,11 @@ export default function HomePage() {
           onRetry={runUrlSearch}
         />
       ) : (
-        <HomeFeed />
+        <>
+          {/* Shelves above the same feed; the feed keeps its place, so switching layouts never reloads it. */}
+          {musicLayout && <MusicHome />}
+          <HomeFeed />
+        </>
       )}
       {advancedSearchOpen && (
         <Suspense fallback={null}>

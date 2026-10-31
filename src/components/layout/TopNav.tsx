@@ -9,7 +9,8 @@ import { useGlobalFilterStore } from '../../stores/globalFilterStore';
 import { getGlobalFilterSummary, isDiscoveryFilterActive } from '../../utils/globalFilters';
 import { useLanguageStore } from '../../stores/languageStore';
 import { useTranslate, useTranslateSourceText } from '../../i18n';
-import { GUIDE_EXPANDED_MEDIA_QUERY, MOBILE_MEDIA_QUERY, useMediaQuery } from '../../hooks/useMediaQuery';
+import { GUIDE_EXPANDED_MEDIA_QUERY, MOBILE_MEDIA_QUERY, MUSIC_LIBRARY_FULL_MEDIA_QUERY, useMediaQuery } from '../../hooks/useMediaQuery';
+import { useIsMusicLayout } from '../../hooks/useMusicLayout';
 import { isWatchPath } from '../../utils/routes';
 import IconButton from '../ui/IconButton';
 import Tooltip from '../ui/Tooltip';
@@ -51,6 +52,8 @@ export default function TopNav() {
   const t = useTranslateSourceText();
   const isMobile = useMediaQuery(MOBILE_MEDIA_QUERY);
   const isWideGuide = useMediaQuery(GUIDE_EXPANDED_MEDIA_QUERY);
+  const isMusicLayout = useIsMusicLayout();
+  const isWideMusicLibrary = useMediaQuery(MUSIC_LIBRARY_FULL_MEDIA_QUERY);
   const isWatch = isWatchPath(location.pathname);
   const language = useLanguageStore(state => state.language);
   const toggleSidebar = useUiStore(state => state.toggleSidebar);
@@ -83,8 +86,11 @@ export default function TopNav() {
 
   // The menu button opens the drawer on the song page and under 1312px; above that it switches
   // the guide between expanded and mini. On phones (except the song page) the bottom nav has it.
-  const menuOpensDrawer = isWatch || !isWideGuide;
-  const showMenuButton = !isMobile || isWatch;
+  // The music layout always shows its library: ≡ switches it between names and a rail where both fit
+  // (1280px and up), and below that opens the drawer with every destination by name (on phones only on
+  // the song page, where the bottom nav is hidden).
+  const menuOpensDrawer = isMusicLayout ? isMobile || !isWideMusicLibrary : isWatch || !isWideGuide;
+  const showMenuButton = isMusicLayout ? !isMobile || isWatch : !isMobile || isWatch;
 
   // Logo: a plain click resets the search; five clicks within a second toggle hidden mode.
   const logoClicksRef = useRef(0);

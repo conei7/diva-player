@@ -66,6 +66,48 @@ describe('isVolumeHeldByMute', () => {
   });
 });
 
+describe('setVolumeFromApp', () => {
+  it('saves the chosen volume', () => {
+    mute.setVolumeFromApp(70, 1_000);
+    expect(usePlayerStore.getState().volume).toBe(70);
+    expect(savedVolume()).toBe('70');
+    expect(mute.usePlayerMuteStore.getState()).toMatchObject({ muted: false, changedAt: 1_000 });
+  });
+
+  it('ends a mute, so a later unmute keeps the chosen volume', () => {
+    mute.mutePlayer(1_000);
+    mute.setVolumeFromApp(25, 2_000);
+    expect(mute.usePlayerMuteStore.getState().muted).toBe(false);
+    expect(usePlayerStore.getState().volume).toBe(25);
+    mute.unmutePlayer(3_000);
+    expect(usePlayerStore.getState().volume).toBe(25);
+    expect(savedVolume()).toBe('25');
+  });
+
+  it('holds reports from the embedded players for a moment after each change', () => {
+    mute.setVolumeFromApp(60, 10_000);
+    expect(mute.isVolumeHeldByMute(10_000 + mute.MUTE_REPORT_SETTLE_MS - 1)).toBe(true);
+    mute.setVolumeFromApp(65, 11_000);
+    expect(mute.isVolumeHeldByMute(10_000 + mute.MUTE_REPORT_SETTLE_MS)).toBe(true);
+    expect(mute.isVolumeHeldByMute(11_000 + mute.MUTE_REPORT_SETTLE_MS)).toBe(false);
+  });
+
+  it('keeps the volume between 0 and 100', () => {
+    mute.setVolumeFromApp(150, 1_000);
+    expect(usePlayerStore.getState().volume).toBe(100);
+    mute.setVolumeFromApp(-5, 2_000);
+    expect(usePlayerStore.getState().volume).toBe(0);
+  });
+
+  it('a volume of 0 is saved (not a mute), and unmuting turns it up to the default', () => {
+    mute.setVolumeFromApp(0, 1_000);
+    expect(savedVolume()).toBe('0');
+    expect(mute.usePlayerMuteStore.getState().muted).toBe(false);
+    expect(mute.toggleMute(2_000)).toBe(false);
+    expect(usePlayerStore.getState().volume).toBe(DEFAULT_VOLUME);
+  });
+});
+
 describe('isSilentVolume', () => {
   it('is true only for 0 or less', () => {
     expect(mute.isSilentVolume(0)).toBe(true);

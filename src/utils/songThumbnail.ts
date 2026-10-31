@@ -62,3 +62,13 @@ export function getWideSongThumbnailCandidates(song: SongThumbnailSources): stri
   for (const url of getSongThumbnailCandidates(song)) add(url);
   return candidates;
 }
+
+/**
+ * Candidates for a square frame (object-cover crop): YouTube `mqdefault` (16:9 without bars) first,
+ * then the song and PV images, and `hqdefault` last (its 4:3 letterbox bars would show in a square).
+ */
+export function getSquareSongThumbnailCandidates(song: SongThumbnailSources): string[] {
+  const wide = getWideSongThumbnailCandidates(song);
+  const letterboxed = wide.filter(url => /\/hqdefault\.jpg$/.test(url));
+  return [...wide.filter(url => !letterboxed.includes(url)), ...letterboxed];
+}

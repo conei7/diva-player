@@ -32,6 +32,7 @@ import {
   UploadIcon,
 } from '../ui/icons';
 import { cx } from '../ui/overlay';
+import { useIsMusicLayout } from '../../hooks/useMusicLayout';
 import PlaylistThumbnail from './PlaylistThumbnail';
 import { formatSmartRuleItem, getPlaylistCoverCandidates, getPlaylistSyncInfo } from './playlistDisplay';
 import { usePlaylistText } from './usePlaylistText';
@@ -292,6 +293,9 @@ export default function PlaylistHero({
   );
 
   const iconButtonClass = 'shrink-0';
+  // The music layout keeps the header above the track table at every width (its library and 再生中
+  // panel already take the side columns), instead of a sticky 360px column from 1280px.
+  const sideColumn = !useIsMusicLayout();
   const moreLabel = t('その他の操作');
 
   return (
@@ -301,11 +305,11 @@ export default function PlaylistHero({
         'relative isolate overflow-hidden',
         'max-sm:-mx-3 max-sm:-mt-6',
         'sm:rounded-panel',
-        'xl:sticky xl:top-[calc(var(--header-height,56px)_+_var(--selection-bar-height,0px)_+_24px)] xl:h-[calc(100dvh_-_var(--header-height,56px)_-_var(--selection-bar-height,0px)_-_48px)] xl:w-[360px] xl:shrink-0',
+        sideColumn && 'xl:sticky xl:top-[calc(var(--header-height,56px)_+_var(--selection-bar-height,0px)_+_24px)] xl:h-[calc(100dvh_-_var(--header-height,56px)_-_var(--selection-bar-height,0px)_-_var(--bottom-nav-height,0px)_-_48px)] xl:w-[360px] xl:shrink-0',
       )}
     >
       <HeroBackdrop playlist={playlist} />
-      <div className="relative flex h-full flex-col px-3 pb-4 pt-2 sm:flex-row sm:gap-6 sm:p-6 xl:flex-col xl:gap-0 xl:overflow-y-auto xl:overscroll-contain">
+      <div className={cx('relative flex h-full flex-col px-3 pb-4 pt-2 sm:flex-row sm:gap-6 sm:p-6', sideColumn && 'xl:flex-col xl:gap-0 xl:overflow-y-auto xl:overscroll-contain')}>
         {onBack && (
           <IconButton
             label={t('プレイリスト一覧に戻る')}
@@ -319,7 +323,7 @@ export default function PlaylistHero({
           stacked={false}
           showCount={false}
           loading="eager"
-          className="w-full sm:w-80 xl:w-full"
+          className={cx('w-full', sideColumn ? 'sm:w-80 xl:w-full' : 'sm:w-56 lg:w-64')}
         >
           {hasSongs && (
             <button
@@ -333,7 +337,7 @@ export default function PlaylistHero({
           )}
         </PlaylistThumbnail>
 
-        <div className="mt-4 flex min-w-0 flex-1 flex-col sm:mt-0 xl:mt-4">
+        <div className={cx('mt-4 flex min-w-0 flex-1 flex-col sm:mt-0', sideColumn && 'xl:mt-4')}>
           <h1 id={titleId} className="m-0 line-clamp-3 text-[22px] font-bold leading-[30px] text-yt-text [overflow-wrap:anywhere] sm:text-[28px] sm:leading-9">
             {name}
           </h1>

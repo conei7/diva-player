@@ -25,6 +25,7 @@ WEB_TEST_FILES = {
         'test-mobile-layout-e2e.mjs', 'test-knowledge-map-e2e.mjs',
         'test-sound-map-feature-axes-e2e.mjs', 'test-advanced-search-e2e.mjs',
         'test-background-playback-e2e.mjs', 'test-home-recommendations-e2e.mjs',
+        'test-music-layout-e2e.mjs',
         'pin-app-language.mjs', 'saved-library-fixture.mjs',
     )
 }

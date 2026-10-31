@@ -1,6 +1,10 @@
-import { useId, useRef } from 'react';
+import { useId, useRef, useState } from 'react';
 import { useTranslateSourceText } from '../../i18n';
 import { useThemeStore } from '../../stores/themeStore';
+import { useUiLayoutStore } from '../../stores/uiLayoutStore';
+import { useIsMusicLayout } from '../../hooks/useMusicLayout';
+import { ensureMusicShell } from '../music/musicShellLoader';
+import type { UiLayout } from '../../utils/uiLayout';
 import { showToast } from '../../stores/toastStore';
 import { DEFAULT_ACCENT_COLOR } from '../../utils/theme';
 import Button from '../ui/Button';
@@ -20,8 +24,36 @@ export default function ThemeSettings() {
   const setAccentColor = useThemeStore(state => state.setAccentColor);
   const mode = useThemeStore(state => state.mode);
   const setMode = useThemeStore(state => state.setMode);
+  const setLayout = useUiLayoutStore(state => state.setLayout);
+  // The layout on screen (a music frame that failed to download shows the standard one), and the
+  // choice being prepared while its code downloads, so the select never jumps back meanwhile.
+  const shownLayout: UiLayout = useIsMusicLayout() ? 'music' : 'standard';
+  const [pendingLayout, setPendingLayout] = useState<UiLayout | null>(null);
+  const layoutRequestRef = useRef(0);
   const select = (color: string) => {
     if (!setAccentColor(color)) showToast(t('色は適用しましたが保存できませんでした'));
+  };
+  // The music frame is loaded first, so the page and the player stay as they are while it switches.
+  const changeLayout = async (next: UiLayout) => {
+    const request = ++layoutRequestRef.current;
+    if (next === 'music') {
+      setPendingLayout(next);
+      try {
+        await ensureMusicShell();
+      } catch (error) {
+        console.error('[UiLayout] Could not load the music layout', error);
+        if (request === layoutRequestRef.current) {
+          setPendingLayout(null);
+          showToast(t('レイアウトを切り替えられませんでした'), {
+            action: { label: t('再試行'), onAction: () => void changeLayout(next) },
+          });
+        }
+        return;
+      }
+    }
+    if (request !== layoutRequestRef.current) return;
+    setPendingLayout(null);
+    if (!setLayout(next)) showToast(t('レイアウトは適用しましたが保存できませんでした'));
   };
   return (
     <section aria-label={t('見た目')} className="border-b border-yt-divider pb-3">
@@ -32,6 +64,13 @@ export default function ThemeSettings() {
           <option value="system">{t('端末の設定に合わせる')}</option>
           <option value="dark">{t('ダーク')}</option>
           <option value="light">{t('ライト')}</option>
+        </SettingsSelect>
+      </SettingRow>
+      <SettingRow label={t('レイアウト')} htmlFor={`${id}-layout`} meta={t('ミュージック: 左にライブラリ、右に再生中、下に再生バー')}>
+        <SettingsSelect id={`${id}-layout`} data-testid="settings-ui-layout" value={pendingLayout ?? shownLayout}
+          onChange={event => void changeLayout(event.target.value as UiLayout)}>
+          <option value="standard">{t('標準')}</option>
+          <option value="music">{t('ミュージック')}</option>
         </SettingsSelect>
       </SettingRow>
       <SettingRow label={t('アクセントカラー')} htmlFor={id} meta={t('再生中・進捗・オンの色')}>

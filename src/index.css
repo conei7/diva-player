@@ -539,3 +539,167 @@ html[data-bottom-nav="true"] {
 /* 設定ダイアログ・復元ダイアログの見た目は components/settings の Tailwind と共通部品で付ける。
    .setting-row は行のフック（e2e が探す）だけで、ここでは見た目を持たせない。 */
 /* ===== /area:settings ===== */
+
+/* ===== area:music ===== */
+/* ミュージックレイアウト（設定 > 見た目 > レイアウト）。既定のレイアウトには一切効かない。
+   レイアウト変数は枠が実際に出ている間だけ付く html[data-shell="music"] で切り替える（保存した選択の
+   html[data-ui-layout] ではない。枠のコードを読めなかった時は既定の見た目のまま）。
+   左のライブラリ・本文・右の再生中パネルを 8px の隙間で並べ、下に再生バー。ページのスクロールは
+   今までどおりウィンドウ（パネルとバーは固定）。動画は再生中パネルの枠に重ねる（.music-docked-player）。
+   YouTube の動画はどの状態でも 200×200 以上で、上に何も重ねない。 */
+html[data-shell="music"] {
+  --music-gap: 8px;
+  --music-shell-bg: #000000;
+  --music-library-width: 72px;
+  --music-panel-width: clamp(340px, 24vw, 420px);
+  --music-panel-head: 48px;
+  --music-bar-height: 72px;
+  --music-mini-bar-height: 56px;
+  --guide-offset: calc(var(--music-library-width) + var(--music-gap) * 2);
+  --music-panel-offset: var(--music-gap);
+  --bottom-nav-height: var(--music-bar-height);
+}
+html[data-shell="music"][data-music-library="full"] { --music-library-width: 280px; }
+html[data-shell="music"][data-music-panel="open"] {
+  --music-panel-offset: calc(var(--music-panel-width) + var(--music-gap) * 2);
+}
+html[data-shell="music"]:not([data-theme="light"]) {
+  --color-yt-bg: #121212;
+  --color-yt-raised: #1f1f1f;
+  --color-yt-menu: #282828;
+  --hero-gradient: linear-gradient(to bottom, rgb(18 18 18 / 0.2), rgb(18 18 18 / 0.7) 55%, #121212);
+}
+html[data-shell="music"][data-theme="light"] { --music-shell-bg: #e9e9e9; }
+html[data-shell="music"],
+html[data-shell="music"] body { background: var(--music-shell-bg); }
+
+.music-frame { background: var(--music-shell-bg); }
+.music-frame > header { background: var(--music-shell-bg); }
+/* 本文はライブラリとパネルの間の 1 枚の面。sticky の地（bg-yt-bg）と同じ色 */
+.music-main {
+  border-radius: 8px 8px 0 0;
+  background: var(--color-yt-bg);
+}
+
+/* 左のライブラリと右の再生中パネル（ヘッダーの下からバーの上まで） */
+.music-side-panel {
+  position: fixed;
+  top: var(--header-height);
+  bottom: var(--bottom-nav-height);
+  z-index: var(--z-guide, 40);
+  display: flex;
+  flex-direction: column;
+  /* clip (not hidden): focus can never scroll the column and move the video slot off the fixed video */
+  overflow: clip;
+  border-radius: 8px;
+  background: var(--color-yt-bg);
+}
+.music-library { left: var(--music-gap); width: var(--music-library-width); }
+.music-now-playing { right: var(--music-gap); width: var(--music-panel-width); }
+/* パネルの動画枠と同じ位置・大きさ（パネルの見出しの下、左右 12px の余白の内側） */
+.music-video-slot {
+  position: relative;
+  flex: none;
+  /* The width is the panel's: a min-height with aspect-ratio would otherwise widen the box. */
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  min-height: 200px;
+  overflow: hidden;
+  border-radius: 8px;
+  background: #000;
+}
+.music-docked-player {
+  position: fixed;
+  top: calc(var(--header-height) + var(--music-panel-head));
+  right: calc(var(--music-gap) + 12px);
+  width: calc(var(--music-panel-width) - 24px);
+  z-index: var(--z-mini-player, 45);
+  border-radius: 8px;
+  background: #000;
+}
+.music-docked-player .global-player-video { min-height: 200px; }
+
+/* 下の再生バー */
+.music-player-bar {
+  position: fixed;
+  inset-inline: 0;
+  bottom: 0;
+  z-index: var(--z-guide, 40);
+  height: var(--music-bar-height);
+  background: var(--music-shell-bg);
+}
+
+/* 再生中パネルを閉じた時と 1024px 未満: 動画だけをバーの上の右下に（操作はバー） */
+html[data-shell="music"] .global-mini-player { bottom: calc(var(--bottom-nav-height) + 16px); }
+html[data-shell="music"] .global-mini-player .global-player-video { min-height: 200px; }
+
+/* 再生ページの動画は上部バーと下のバーの間に収める（16:9 のまま幅を絞って中央に。高さ 200px 以上）。
+   枠（VideoPlayer）が小さくなると GlobalPlayer の iframe もその位置・大きさに付いていく */
+html[data-shell="music"] [data-testid="watch-video-column"] > :first-child {
+  margin-inline: auto;
+  max-width: max(356px, calc((100dvh - var(--header-height) - var(--selection-bar-height, 0px) - var(--bottom-nav-height) - 40px) * 16 / 9));
+}
+
+/* 低いウィンドウ（1024px 以上で高さ 400px 未満）: パネルの見出しを省き、動画をヘッダーのすぐ下に。
+   閉じるのは再生バーの「再生中」 */
+@media (min-width: 1024px) and (max-height: 399.98px) {
+  html[data-shell="music"] { --music-panel-head: 0px; }
+  .music-now-playing > :first-child { display: none; }
+}
+
+
+@media (max-width: 639px) {
+  html[data-shell="music"] {
+    --guide-offset: 0px;
+    --music-panel-offset: 0px;
+    /* BottomNav: a 48px row under its 1px top border */
+    --music-bottom-nav: 49px;
+    --bottom-nav-height: calc(var(--music-bottom-nav) + env(safe-area-inset-bottom, 0px));
+  }
+  html[data-shell="music"][data-music-bar="true"] {
+    --bottom-nav-height: calc(var(--music-bottom-nav) + var(--music-mini-bar-height) + env(safe-area-inset-bottom, 0px));
+  }
+  /* 再生ページ: 下部ナビもミニバーも出さない（標準と同じ） */
+  html[data-shell="music"][data-music-bottom="none"] { --bottom-nav-height: 0px; }
+  .music-main { border-radius: 0; }
+  .music-player-bar { display: none; }
+  /* 動画はミニバーのすぐ上。幅いっぱいで高さ 200px 以上（足りない分は動画の上下に帯） */
+  html[data-shell="music"] .global-mini-player {
+    bottom: calc(var(--bottom-nav-height) + 8px);
+  }
+  html[data-shell="music"] .global-mini-player .global-player-video {
+    min-height: 200px;
+    max-height: 240px;
+  }
+  .music-mini-bar {
+    position: fixed;
+    inset-inline: 0;
+    bottom: calc(var(--music-bottom-nav) + env(safe-area-inset-bottom, 0px));
+    z-index: var(--z-header, 50);
+    height: var(--music-mini-bar-height);
+    touch-action: pan-y;
+    user-select: none;
+  }
+}
+@media (min-width: 640px) {
+  .music-mini-bar { display: none; }
+}
+/* 横向きのスマホなど高さ 420px 未満: バーの上に積むと動画がヘッダーの下に潜るので、右下の角に
+   356×200 で置き、下のバーとナビはその左で終わらせる */
+@media (max-height: 419.98px) {
+  html[data-shell="music"] .global-mini-player {
+    left: auto;
+    right: 8px;
+    width: 356px;
+    max-width: calc(100vw - 16px);
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 8px);
+  }
+  html[data-shell="music"] .global-mini-player .global-player-video {
+    min-height: 200px;
+    max-height: 200px;
+  }
+  html[data-shell="music"]:has(.global-mini-player) :is(.music-player-bar, .music-mini-bar, .music-bottom-nav) {
+    right: 372px;
+  }
+}
+/* ===== /area:music ===== */

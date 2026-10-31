@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useLayoutEffect, useState } from 'react';
+import { createElement, lazy, Suspense, useEffect, useLayoutEffect, useState } from 'react';
 import { Outlet, useLocation } from 'react-router';
 import TopNav from './TopNav';
 import Sidebar, { type GuideMode } from './Sidebar';
@@ -10,8 +10,10 @@ import { useUiStore } from '../../stores/uiStore';
 import { useSelectionStore } from '../../stores/selectionStore';
 import { usePlayerStore } from '../../stores/playerStore';
 import { useYouTubePlaylistSync } from '../../hooks/useYouTubePlaylistSync';
-import { GUIDE_EXPANDED_MEDIA_QUERY, MOBILE_MEDIA_QUERY, useMediaQuery } from '../../hooks/useMediaQuery';
+import { useMusicShell } from '../../hooks/useMusicLayout';
+import { GUIDE_EXPANDED_MEDIA_QUERY, MOBILE_MEDIA_QUERY, MUSIC_LIBRARY_FULL_MEDIA_QUERY, useMediaQuery } from '../../hooks/useMediaQuery';
 import { isWatchPath } from '../../utils/routes';
+import { cx } from '../ui/overlay';
 import { preloadMainRoutesWhenIdle } from '../../routes/routeLoaders';
 import {
   RECOMMENDATION_DEBUG_STORAGE_KEY,
@@ -40,12 +42,16 @@ function closeQueueDrawer() {
  * phones, and the page in <main>. `<html data-guide>` / `data-bottom-nav` set the layout
  * variables (--guide-offset, --bottom-nav-height) used by main, the band and fixed bars.
  * GlobalPlayer lives outside (App) so page changes never touch the playing iframe.
+ *
+ * The music layout (Settings > 見た目 > レイアウト) swaps only the guide and the bottom bars for its
+ * library, 再生中 panel and player bar; <main> and the page stay mounted when the layout changes.
  */
 export default function Layout() {
   const location = useLocation();
   const isWatch = isWatchPath(location.pathname);
   const isMobile = useMediaQuery(MOBILE_MEDIA_QUERY);
   const isWideGuide = useMediaQuery(GUIDE_EXPANDED_MEDIA_QUERY);
+  const isWideMusicLibrary = useMediaQuery(MUSIC_LIBRARY_FULL_MEDIA_QUERY);
   const sidebarExpanded = useUiStore(s => s.sidebarExpanded);
   const drawerOpen = useUiStore(s => s.mobileDrawerOpen);
   const closeMobileDrawer = useUiStore(s => s.closeMobileDrawer);
@@ -63,12 +69,15 @@ export default function Layout() {
   const debugEnabled = useRecommendationDebugStore(s => s.enabled);
   const setDebugEnabled = useRecommendationDebugStore(s => s.setEnabled);
   const [queueDrawerMounted, setQueueDrawerMounted] = useState(false);
+  const musicShell = useMusicShell();
   useYouTubePlaylistSync();
 
-  const guideMode: GuideMode = isWatch || isMobile ? 'none' : isWideGuide && sidebarExpanded ? 'expanded' : 'mini';
-  // The drawer exists wherever the expanded guide is not shown next to the page.
-  const drawerAvailable = isWatch || !isWideGuide;
-  const showBottomNav = isMobile && !isWatch;
+  const guideMode: GuideMode = musicShell || isWatch || isMobile ? 'none' : isWideGuide && sidebarExpanded ? 'expanded' : 'mini';
+  // The drawer exists wherever the expanded guide is not shown next to the page. The music layout
+  // always shows its library beside the page; the drawer (every destination by name) is for phones and
+  // for the icon rail below 1280px.
+  const drawerAvailable = musicShell ? isMobile || !isWideMusicLibrary : isWatch || !isWideGuide;
+  const showBottomNav = !musicShell && isMobile && !isWatch;
   const isLocalSoundMapPreview = import.meta.env.DEV
     && location.pathname === '/sound-map'
     && ['demo', 'pilot'].some(parameter => new URLSearchParams(location.search).get(parameter) === '1');
@@ -110,12 +119,15 @@ export default function Layout() {
   }, [queueDrawerOpen]);
 
   return (
-    <div className="flex min-h-dvh flex-col bg-yt-bg text-yt-text">
+    <div className={cx('flex min-h-dvh flex-col text-yt-text', musicShell ? 'music-frame' : 'bg-yt-bg')}>
       <TopLoadingBar />
       <TopNav />
       <div
         data-testid="backend-status-layout"
-        className="pt-[calc(var(--header-height)_+_var(--selection-bar-height,0px))] ml-[var(--guide-offset)]"
+        className={cx(
+          'pt-[calc(var(--header-height)_+_var(--selection-bar-height,0px))] ml-[var(--guide-offset)]',
+          musicShell && 'mr-[var(--music-panel-offset,0px)]',
+        )}
       >
         {!isLocalSoundMapPreview && (
           <DeferredBoundary>
@@ -126,6 +138,7 @@ export default function Layout() {
         )}
       </div>
       <Sidebar guideMode={guideMode} drawerAvailable={drawerAvailable} isMobile={isMobile} />
+      {musicShell && !isMobile && createElement(musicShell.MusicLibrary)}
 
       {/*
         The selection bar sits under the top bar, above the page: keep it before <main> in the DOM
@@ -142,7 +155,10 @@ export default function Layout() {
       )}
 
       <main
-        className="min-w-0 flex-1 ml-[var(--guide-offset)] pb-[calc(var(--floating-player-clearance,0px)_+_var(--bottom-nav-height,0px))] [overflow-x:clip]"
+        className={cx(
+          'min-w-0 flex-1 ml-[var(--guide-offset)] pb-[calc(var(--floating-player-clearance,0px)_+_var(--bottom-nav-height,0px))] [overflow-x:clip]',
+          musicShell && 'music-main mr-[var(--music-panel-offset,0px)]',
+        )}
       >
         <RouteErrorBoundary resetKey={`${location.pathname}${location.search}`}>
           {/*
@@ -156,7 +172,7 @@ export default function Layout() {
         </RouteErrorBoundary>
       </main>
 
-      {showBottomNav && <BottomNav />}
+      {musicShell ? createElement(musicShell.MusicDock) : showBottomNav && <BottomNav />}
 
       {queueDrawerMounted && (
         <Suspense fallback={null}>

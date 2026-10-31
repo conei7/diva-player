@@ -8,6 +8,10 @@ export const COARSE_POINTER_MEDIA_QUERY = '(pointer: coarse)';
 export const FINE_HOVER_MEDIA_QUERY = '(hover: hover) and (pointer: fine)';
 /** Wide enough for the expanded guide (`--breakpoint-guide`, 82rem). */
 export const GUIDE_EXPANDED_MEDIA_QUERY = '(min-width: 1312px)';
+/** Music layout: the 再生中 panel (with the video) beside the page. The CSS in area:music uses the same width. */
+export const MUSIC_PANEL_MEDIA_QUERY = '(min-width: 1024px)';
+/** Music layout: the library with names (a rail of icons and covers below it). */
+export const MUSIC_LIBRARY_FULL_MEDIA_QUERY = '(min-width: 1280px)';
 
 function canMatchMedia(): boolean {
   return typeof window !== 'undefined' && typeof window.matchMedia === 'function';

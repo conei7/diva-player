@@ -1,5 +1,6 @@
 /**
- * Mute for the M shortcut (DESIGN_SPEC §6.2.2) and the mute badge on the video.
+ * Mute for the M shortcut (DESIGN_SPEC §6.2.2), the mute badge on the video and the music layout's
+ * player bar (its volume slider goes through setVolumeFromApp).
  *
  * Muting turns playerStore.volume down to 0 in memory only (setVolume would save the 0): the saved
  * volume is left as it was, so a reload never starts silently, and unmuting goes back to the volume
@@ -61,6 +62,17 @@ export function toggleMute(now = Date.now()): boolean {
   }
   mutePlayer(now);
   return true;
+}
+
+/**
+ * A volume chosen in the app itself (the music layout's volume slider): ends a mute and saves the
+ * volume. Without ending the mute, isVolumeHeldByMute() would stay true and a later unmute would go
+ * back to the volume from before the mute. Each call also restarts the settle window, so the YouTube
+ * poll cannot snap a dragged slider back to the volume it reported a moment earlier.
+ */
+export function setVolumeFromApp(volume: number, now = Date.now()): void {
+  usePlayerMuteStore.setState({ muted: false, changedAt: now });
+  usePlayerStore.getState().setVolume(volume);
 }
 
 /**

@@ -7,7 +7,9 @@ import { usePlayerInteractionStore } from '../../stores/playerInteractionStore';
 import { useLanguageStore } from '../../stores/languageStore';
 import { showToast } from '../../stores/toastStore';
 import { usePlayerSwipeGesture } from '../../hooks/usePlayerSwipeGesture';
-import { FINE_HOVER_MEDIA_QUERY, MOBILE_MEDIA_QUERY, useMediaQuery } from '../../hooks/useMediaQuery';
+import { FINE_HOVER_MEDIA_QUERY, MOBILE_MEDIA_QUERY, MUSIC_PANEL_MEDIA_QUERY, useMediaQuery } from '../../hooks/useMediaQuery';
+import { useIsMusicLayout } from '../../hooks/useMusicLayout';
+import { useMusicLayoutStore } from '../../stores/musicLayoutStore';
 import { getPlaybackOwnership } from '../../services/playbackOwnership';
 import { translateSourceText } from '../../i18n';
 import { isWatchPath, watchPath } from '../../utils/routes';
@@ -135,6 +137,10 @@ function usePlaybackFailureToasts(isWatchPage: boolean) {
  *
  * DOM では body の末尾（ページの後ろ）に置く（portal。置き場所は最初から固定なので iframe は付け替わらない）。
  * キーボードでは上部バー・ガイド・本文の後にミニプレイヤーが来る（YouTube と同じ）。
+ *
+ * ミュージックレイアウトでは、操作は下部の再生バーが持つ。動画は右の「再生中」パネルの枠に CSS で重ねる
+ * （.music-docked-player。パネルを閉じた時と狭い画面はミニプレイヤーの位置に動画だけ）。どの場合も
+ * 200×200 以上で、上に何も重ねない。
  */
 export default function GlobalPlayer() {
   const location = useLocation();
@@ -148,6 +154,9 @@ export default function GlobalPlayer() {
   const swipeGestureEnabled = usePlayerInteractionStore(state => state.swipeGestureEnabled);
   const isMobile = useMediaQuery(MOBILE_MEDIA_QUERY);
   const finePointer = useMediaQuery(FINE_HOVER_MEDIA_QUERY);
+  const isMusicLayout = useIsMusicLayout();
+  const musicPanelWide = useMediaQuery(MUSIC_PANEL_MEDIA_QUERY);
+  const musicNowPlayingOpen = useMusicLayoutStore(state => state.nowPlayingOpen);
   const playbackOwnership = getPlaybackOwnership();
   const ownershipState = useSyncExternalStore(
     playbackOwnership.subscribe,
@@ -207,19 +216,26 @@ export default function GlobalPlayer() {
   // 再生中ならlocal claimが反映されるまでPiPを維持する。停止状態の別タブに
   // 永続queueだけが復元された場合は表示しない。
   const hasLocalPlayback = ownershipState === 'local' || (ownershipState === 'none' && isPlaying);
-  const showMiniPlayer = (!isWatchPage || isLeavingWatchPage)
-    && !renderAsWatchPage
+  const offWatchPage = (!isWatchPage || isLeavingWatchPage) && !renderAsWatchPage;
+  // The music layout's 再生中 panel holds the video (the panel follows the same width and setting).
+  const renderAsDocked = isMusicLayout && musicPanelWide && musicNowPlayingOpen
+    && offWatchPage
     && !!currentSong
     && hasLocalPlayback;
-  const hiddenOffscreen = !(currentSong && renderAsWatchPage) && !showMiniPlayer;
+  const showMiniPlayer = !renderAsDocked
+    && offWatchPage
+    && !!currentSong
+    && hasLocalPlayback;
+  const hiddenOffscreen = !(currentSong && (renderAsWatchPage || renderAsDocked)) && !showMiniPlayer;
   // No placeholder on the song page (a song without a playable video, or between two songs): the
   // player keeps its last spot under the page's own frame, out of reach like when parked off screen.
   const coveredOnWatchPage = renderAsWatchPage && !playerRect;
   const unreachable = hiddenOffscreen || coveredOnWatchPage;
-  const videoVisible = !!currentSong && (showMiniPlayer || (renderAsWatchPage && !coveredOnWatchPage));
+  const videoVisible = !!currentSong && (showMiniPlayer || renderAsDocked || (renderAsWatchPage && !coveredOnWatchPage));
   const floatingPlayerRef = useRef<HTMLDivElement>(null);
-  // The mini player has its own controls; on the song page the video's own controls stay reachable.
-  useIframesOutOfTabOrder(floatingPlayerRef, showMiniPlayer);
+  // The mini player (or the music player bar) has its own controls; on the song page the video's own
+  // controls stay reachable.
+  useIframesOutOfTabOrder(floatingPlayerRef, showMiniPlayer || renderAsDocked);
   useEffect(() => {
     const element = floatingPlayerRef.current;
     const update = () => document.documentElement.style.setProperty(
@@ -277,8 +293,9 @@ export default function GlobalPlayer() {
       };
     }
 
-    // ミニプレイヤーの位置・大きさ・地の色は .global-mini-player（index.css の area:player）
-    if (showMiniPlayer) return undefined;
+    // ミニプレイヤーの位置・大きさ・地の色は .global-mini-player（index.css の area:player）。
+    // ミュージックレイアウトの再生中パネルは .music-docked-player（area:music）
+    if (showMiniPlayer || renderAsDocked) return undefined;
 
     // 非表示モード (アンマウントはしない)
     return {
@@ -296,7 +313,7 @@ export default function GlobalPlayer() {
   return createPortal(
     <div
       ref={floatingPlayerRef}
-      className={cx('overflow-hidden', showMiniPlayer && 'global-mini-player')}
+      className={cx('overflow-hidden', showMiniPlayer && 'global-mini-player', renderAsDocked && 'music-docked-player')}
       data-testid="global-player"
       style={containerStyle}
       aria-hidden={unreachable || undefined}
@@ -304,8 +321,11 @@ export default function GlobalPlayer() {
     >
       <DeferredBoundary>
         <Suspense fallback={null}>
-          {/* Nothing can be heard (M, or a volume of 0): the only sign of it, on the video itself. */}
-          {videoVisible && isSilentVolume(volume) && (
+          {/*
+            Nothing can be heard (M, or a volume of 0): the only sign of it, on the video itself. The
+            music layout shows it on the player bar's volume button instead (nothing over the video).
+          */}
+          {videoVisible && !isMusicLayout && isSilentVolume(volume) && (
             <MuteBadge inset={showMiniPlayer ? 'mini' : 'page'} onUnmuted={keepFocusAfterUnmute} />
           )}
         </Suspense>
@@ -323,13 +343,13 @@ export default function GlobalPlayer() {
 
       <DeferredBoundary>
         <Suspense fallback={null}>
-          {showMiniPlayer && currentSong && <ProgressLine seekable={finePointer && !isMobile} />}
+          {showMiniPlayer && currentSong && !isMusicLayout && <ProgressLine seekable={finePointer && !isMobile} />}
           {/*
             Off the song page the controls stay in the DOM while a song is loaded (hidden until the
             mini player shows), as before. On the song page they are left out entirely: the page has
-            its own 前の曲 / 次の曲 / ⋮ with the same labels.
+            its own 前の曲 / 次の曲 / ⋮ with the same labels. The music layout's player bar has them instead.
           */}
-          {currentSong && (!isWatchPage || isLeavingWatchPage) && (
+          {currentSong && !isMusicLayout && (!isWatchPage || isLeavingWatchPage) && (
             <MiniPlayerControls
               visible={showMiniPlayer}
               mobile={isMobile}

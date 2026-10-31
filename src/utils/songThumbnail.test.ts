@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { PV } from '../types/vocadb';
-import { getSongThumbnailCandidates, getWideSongThumbnailCandidates } from './songThumbnail';
+import { getSongThumbnailCandidates, getSquareSongThumbnailCandidates, getWideSongThumbnailCandidates } from './songThumbnail';
 
 function pv(overrides: Partial<PV> & Pick<PV, 'service' | 'pvId'>): PV {
   return {
@@ -86,5 +86,30 @@ describe('getWideSongThumbnailCandidates', () => {
       thumbUrl: 'https://vocadb.example/song.jpg',
       pvs: [pv({ service: 'NicoNicoDouga', pvId: 'sm1' })],
     })).toEqual(['https://vocadb.example/song.jpg']);
+  });
+});
+
+describe('getSquareSongThumbnailCandidates', () => {
+  it('crops the 16:9 YouTube image first and leaves letterboxed hqdefault images for last', () => {
+    expect(getSquareSongThumbnailCandidates({
+      thumbUrl: 'https://vocadb.example/song.jpg',
+      pvs: [
+        pv({ service: 'Youtube', pvId: 'reupload000', pvType: 'Reprint' }),
+        pv({ service: 'Youtube', pvId: 'official000' }),
+        pv({ service: 'NicoNicoDouga', pvId: 'sm1', thumbUrl: 'https://nico.example/pv.jpg' }),
+      ],
+    })).toEqual([
+      'https://img.youtube.com/vi/official000/mqdefault.jpg',
+      'https://img.youtube.com/vi/reupload000/mqdefault.jpg',
+      'https://vocadb.example/song.jpg',
+      'https://nico.example/pv.jpg',
+      'https://img.youtube.com/vi/official000/hqdefault.jpg',
+      'https://img.youtube.com/vi/reupload000/hqdefault.jpg',
+    ]);
+  });
+
+  it('uses the song image alone when there is no YouTube video', () => {
+    expect(getSquareSongThumbnailCandidates({ thumbUrl: 'https://vocadb.example/song.jpg', pvs: [] }))
+      .toEqual(['https://vocadb.example/song.jpg']);
   });
 });

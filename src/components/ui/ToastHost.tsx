@@ -84,7 +84,7 @@ export default function ToastHost() {
       className={cx(
         'pointer-events-none fixed z-[var(--z-toast,100)] flex',
         'inset-x-2 bottom-[calc(var(--floating-player-clearance,0px)_+_var(--bottom-nav-height,0px)_+_var(--bottom-bar-clearance,0px)_+_8px)] justify-center',
-        'lg:inset-x-auto lg:bottom-6 lg:left-[calc(var(--guide-offset,0px)_+_24px)] lg:justify-start',
+        'lg:inset-x-auto lg:bottom-[calc(var(--bottom-nav-height,0px)_+_24px)] lg:left-[calc(var(--guide-offset,0px)_+_24px)] lg:justify-start',
       )}
     >
       <div

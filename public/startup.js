@@ -16,6 +16,9 @@
     var mode = JSON.parse(localStorage.getItem('diva_themeMode'));
     document.documentElement.dataset.theme = mode === 'light' || (mode === 'system' && window.matchMedia('(prefers-color-scheme: light)').matches) ? 'light' : 'dark';
   } catch (_) { /* Unavailable storage keeps the default dark theme. */ }
+  try {
+    document.documentElement.dataset.uiLayout = JSON.parse(localStorage.getItem('diva_uiLayout')) === 'music' ? 'music' : 'standard';
+  } catch (_) { /* The standard layout. */ }
   var normalizedPath = location.pathname.replace(/\/+$/, '');
   var params = new URLSearchParams(location.search);
   var isHome = normalizedPath === '' || normalizedPath === '/diva-player';
