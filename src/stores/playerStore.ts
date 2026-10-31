@@ -13,6 +13,7 @@ import { dedupeQueueBySongId, shuffleQueue } from '../utils/queueUtils';
 import { storage } from '../utils/storage';
 import { useProgressStore } from './progressStore';
 import { useAutoPlaySessionStore } from './autoPlaySessionStore';
+import type { AutoPlaySession } from './autoPlaySessionStore';
 import { isPlayablePV } from '../utils/playablePV';
 
 type FailedPVMap = Record<string, Record<string, number>>;
@@ -54,6 +55,25 @@ export interface RemovedQueueItem {
   source: PlaybackSource;
   index: number;
   queueTitle: string;
+}
+
+/** What プレイヤーを閉じる took away, so 元に戻す can bring it back (watchActions.closePlayerWithUndo). */
+export interface ClosedPlayer {
+  queue: Song[];
+  queueIndex: number;
+  queueSources: PlaybackSource[];
+  queueTitle: string;
+  originalQueue: Song[];
+  shuffleEnabled: boolean;
+  rootSeed: Song | null;
+  currentSong: Song;
+  currentPV: PV | null;
+  currentPlaybackSource: PlaybackSource;
+  /** 元に戻す continues this playback (the same history event) instead of starting a new one. */
+  playbackSequence: number;
+  isPlaying: boolean;
+  progress: number;
+  autoPlaySession: AutoPlaySession | null;
 }
 
 export interface PlaybackAppendExpectation {
@@ -291,13 +311,22 @@ function navigateRestoringQueue(index: number, manual: boolean): boolean {
 function appendRestoringQueue(songs: Song[], source: PlaybackSource): boolean {
   const pending = restoringQueue;
   if (!pending?.valid()) return false;
-  // Append after the complete saved queue, never after just its loaded window.
-  pending.stored.songIds!.push(...songs.map(song => song.id));
-  pending.stored.queueSources!.push(...songs.map(() => source));
+  const ids = pending.stored.songIds!;
+  const sources = normalizeQueueSources(ids.length, pending.stored.queueSources);
+  // insertIntoQueue's rule over the complete saved queue, never over just its loaded window.
+  const at = source === 'auto'
+    ? ids.length
+    : manualInsertIndex(sources, usePlayerStore.getState().queueIndex, ids.length);
+  // In place: the restore commits its queue from this same array.
+  ids.splice(at, 0, ...songs.map(song => song.id));
+  sources.splice(at, 0, ...songs.map(() => source));
+  pending.stored.queueSources = sources;
   songs.forEach(song => { if (!pending.byId.has(song.id)) pending.byId.set(song.id, song); });
   storage.set(PLAYER_QUEUE_KEY, pending.stored);
   pending.snapshot = localStorage.getItem(`diva_${PLAYER_QUEUE_KEY}`);
-  usePlayerStore.setState({ queueSources: [...pending.stored.queueSources!] });
+  usePlayerStore.setState({ queueSources: [...sources] });
+  // The added songs join the loaded window, so 次の曲 and the queue view see them.
+  publishRestoringWindow();
   return true;
 }
 
@@ -358,6 +387,32 @@ function mapSourcesBySongId(
     }
   });
   return nextQueue.map(song => sourceBySongId.get(song.id) ?? 'manual');
+}
+
+/**
+ * Where songs the user queues go: before the first autoplay song after the current one, so they
+ * play next (after earlier additions) instead of after dozens of recommendations, as on YouTube.
+ * Without upcoming autoplay songs this is the end of the queue.
+ */
+function manualInsertIndex(queueSources: readonly PlaybackSource[], queueIndex: number, length: number): number {
+  const index = queueSources.findIndex((source, i) => i > queueIndex && source === 'auto');
+  return index >= 0 ? index : length;
+}
+
+function insertIntoQueue(
+  queue: Song[],
+  queueSources: PlaybackSource[],
+  queueIndex: number,
+  songs: Song[],
+  source: PlaybackSource,
+): { queue: Song[]; queueSources: PlaybackSource[] } {
+  const sources = normalizeQueueSources(queue.length, queueSources);
+  // Autoplay always appends; its refill counts the songs left after the current one.
+  const at = source === 'auto' ? queue.length : manualInsertIndex(sources, queueIndex, queue.length);
+  return {
+    queue: [...queue.slice(0, at), ...songs, ...queue.slice(at)],
+    queueSources: [...sources.slice(0, at), ...songs.map(() => source), ...sources.slice(at)],
+  };
 }
 
 function clearStoredPlayerQueue(): void {
@@ -448,7 +503,16 @@ interface PlayerState {
   restoreQueueItem: (removed: RemovedQueueItem) => void;
   removeDuplicateQueueSongs: () => number;
   clearQueue: () => void;
-  closePlayer: () => void;
+  /** `undoable`: プレイヤーを閉じる offers 元に戻す (watchActions.closePlayerWithUndo). */
+  closePlayer: (options?: { undoable?: boolean }) => void;
+  restoreClosedPlayer: (closed: ClosedPlayer) => void;
+  /**
+   * The playback an undoable close ended, while its 元に戻す is still offered and the play is not
+   * counted yet; null otherwise. PlayerTracker records that play's history details and feedback
+   * only once this clears without the play coming back (or on pagehide, which clears it), so an
+   * undone close counts as neither a skip nor a second play.
+   */
+  undoableCloseSequence: number | null;
   jumpToIndex: (index: number) => void;
 
   // キュードロワー
@@ -673,6 +737,8 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       playbackSequence,
       queueSources: nextQueueSources,
       isPlaying: shouldStartPlaying,
+      // A seek still waiting for the previous video (paused, or not loaded yet) is not this one's.
+      seekTarget: null,
       error: null,
       ...(isUserAction ? { rootSeed: song } : {}),
     });
@@ -698,8 +764,9 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     if (loopMode === 'one') {
       // 1曲ループ: 同じ曲を再度再生
       useProgressStore.getState().setProgress(0);
-      set({ seekTarget: 0 });
       get().playSong(queue[queueIndex], false, false, true, true);
+      // After playSong, which drops pending seeks.
+      set({ seekTarget: 0 });
       return;
     }
     if (queueIndex < queue.length - 1) {
@@ -852,8 +919,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   addToQueue: (song: Song, source: PlaybackSource = 'manual') => {
     if (appendRestoringQueue([song], source)) return;
     const { queue, queueIndex, queueSources, currentSong, currentPlaybackSource } = get();
-    const nextQueue = [...queue, song];
-    const nextSources = [...queueSources, source];
+    const { queue: nextQueue, queueSources: nextSources } = insertIntoQueue(queue, queueSources, queueIndex, [song], source);
     set({ queue: nextQueue, queueSources: nextSources });
     savePlayerQueue(nextQueue, queueIndex, currentSong, nextSources, currentPlaybackSource);
   },
@@ -883,8 +949,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     }
     if (songs.length === 0) return true;
     if (appendRestoringQueue(songs, source)) return true;
-    const nextQueue = [...queue, ...songs];
-    const nextSources = [...queueSources, ...songs.map(() => source)];
+    const { queue: nextQueue, queueSources: nextSources } = insertIntoQueue(queue, queueSources, queueIndex, songs, source);
     set({ queue: nextQueue, queueSources: nextSources });
     savePlayerQueue(nextQueue, queueIndex, currentSong, nextSources, currentPlaybackSource);
     if (source === 'auto') useAutoPlaySessionStore.getState().recordAutoQueueAdded(songs.length);
@@ -976,7 +1041,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     clearStoredPlayerQueue();
   },
 
-  closePlayer: () => {
+  closePlayer: (options) => {
     // Keep progress intact until PlayerTracker finalizes the active history entry.
     set({
       queue: [],
@@ -987,10 +1052,56 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       currentPlaybackSource: 'manual',
       rootSeed: null,
       isPlaying: false,
+      // A seek still waiting (a paused 元に戻す) belongs to the closed song; 元に戻す sets its own.
+      seekTarget: null,
+      undoableCloseSequence: options?.undoable ? get().playbackSequence : null,
     });
     useAutoPlaySessionStore.getState().clearSession();
     clearStoredPlayerQueue();
   },
+
+  restoreClosedPlayer: (closed) => {
+    // A song started (or queued) after the close wins: 元に戻す must not replace it. A song that
+    // played and was closed again moved the sequence on, and the closed play cannot resume then.
+    const latest = get();
+    if (latest.currentSong || latest.queue.length > 0 || latest.playbackSequence !== closed.playbackSequence) return;
+    // A close already counted (pagehide flushed it, the page came back from the bfcache) cannot
+    // take its skip back: the song comes back as a new play, so PlayerTracker records it again.
+    const counted = latest.undoableCloseSequence !== closed.playbackSequence;
+    const { queue, queueIndex, queueSources, queueTitle, rootSeed, currentSong } = closed;
+    const currentPV = closed.currentPV ?? getPlayablePV(currentSong);
+    // Near the start it simply starts over.
+    const resumeAt = closed.progress > 5 ? closed.progress : 0;
+    savePlayerQueue(queue, queueIndex, currentSong, queueSources, closed.currentPlaybackSource, queueTitle, rootSeed);
+    useProgressStore.getState().setDuration(currentSong.lengthSeconds || currentPV?.length || 0);
+    useProgressStore.getState().setProgress(resumeAt);
+    // Not playSong: the closed play goes on with its sequence, so PlayerTracker neither adds a
+    // history event nor counts it again (a restored song never recorded stays unrecorded), and
+    // the mix seed and the songs' sources stay. The toast press is a user gesture, so playback
+    // may resume when it was playing.
+    set({
+      queue,
+      queueIndex,
+      queueSources,
+      queueTitle,
+      originalQueue: closed.originalQueue,
+      shuffleEnabled: closed.shuffleEnabled,
+      rootSeed,
+      currentSong,
+      currentPV,
+      currentPlaybackSource: closed.currentPlaybackSource,
+      playbackSequence: counted ? closed.playbackSequence + 1 : closed.playbackSequence,
+      isPlaying: !!currentPV && canStartPlayback(currentPV, closed.isPlaying),
+      // The embed applies the seek once the video has loaded (or on 再生 when it stays paused).
+      seekTarget: resumeAt > 0 ? resumeAt : null,
+      undoableCloseSequence: null,
+      error: null,
+    });
+    if (closed.autoPlaySession && !useAutoPlaySessionStore.getState().session) {
+      useAutoPlaySessionStore.setState({ session: closed.autoPlaySession });
+    }
+  },
+  undoableCloseSequence: null,
 
   jumpToIndex: (index: number) => {
     if (navigateRestoringQueue(index, true)) return;

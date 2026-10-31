@@ -7,6 +7,7 @@ import { usePlayerInteractionStore } from '../../stores/playerInteractionStore';
 import { useLanguageStore } from '../../stores/languageStore';
 import { showToast } from '../../stores/toastStore';
 import { usePlayerSwipeGesture } from '../../hooks/usePlayerSwipeGesture';
+import { selectCanGoNext } from '../../hooks/useCanGoNext';
 import { FINE_HOVER_MEDIA_QUERY, MOBILE_MEDIA_QUERY, MUSIC_PANEL_MEDIA_QUERY, useMediaQuery } from '../../hooks/useMediaQuery';
 import { useIsMusicLayout } from '../../hooks/useMusicLayout';
 import { useMusicLayoutStore } from '../../stores/musicLayoutStore';
@@ -262,8 +263,10 @@ export default function GlobalPlayer() {
     if (currentSongId !== null) navigate(watchPath(currentSongId));
   }, [currentSongId, navigate]);
   const handleSwipe = useCallback((direction: 'left' | 'right' | 'up') => {
-    if (direction === 'left') next();
-    else if (direction === 'right') previous();
+    // At the end of the queue next() would stop playback: ignored, like the disabled 次の曲.
+    if (direction === 'left') {
+      if (selectCanGoNext(usePlayerStore.getState())) next();
+    } else if (direction === 'right') previous();
     else openSongPage();
   }, [next, openSongPage, previous]);
   const swipeHandlers = usePlayerSwipeGesture({

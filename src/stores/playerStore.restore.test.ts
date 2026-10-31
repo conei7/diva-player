@@ -273,6 +273,51 @@ describe('large queue restoration', () => {
     expect(localStorage.getItem('diva_playerQueue')).toBe(before);
   });
 
+  it('puts songs the user queues during the restore before the saved autoplay songs', async () => {
+    const autoplay = [song.id + 1, song.id + 2].map(id => ({ ...song, id, name: `Saved autoplay ${id}` }));
+    const added = { ...song, id: song.id + 50, name: 'Queued during the restore' };
+    const page = deferred<Song[]>();
+    getSongById.mockResolvedValue(song);
+    getSongsByIds.mockReturnValueOnce(page.promise);
+    installLocalStorage({ songIds: [song.id, ...autoplay.map(item => item.id)], queueIndex: 0,
+      currentSongId: song.id, queueSources: ['manual', 'auto', 'auto'] });
+    const { usePlayerStore } = await import('./playerStore');
+    await vi.waitFor(() => expect(getSongsByIds).toHaveBeenCalledTimes(1));
+
+    usePlayerStore.getState().addToQueue(added);
+    const stored = JSON.parse(localStorage.getItem('diva_playerQueue')!);
+    expect(stored.songIds).toEqual([song.id, added.id, ...autoplay.map(item => item.id)]);
+    expect(stored.queueSources).toEqual(['manual', 'manual', 'auto', 'auto']);
+    expect(usePlayerStore.getState().queueSources).toEqual(stored.queueSources);
+    // Already part of the loaded window, so 次の曲 can reach it before the page arrives.
+    expect(usePlayerStore.getState().restoringQueueWindow?.songs.map(item => item.id)).toEqual([song.id, added.id]);
+
+    page.resolve(autoplay);
+    await vi.waitFor(() => expect(usePlayerStore.getState().queue).toHaveLength(4));
+    expect(usePlayerStore.getState().queue.map(item => item.id)).toEqual(stored.songIds);
+    expect(usePlayerStore.getState().queueSources).toEqual(['manual', 'manual', 'auto', 'auto']);
+    expect(usePlayerStore.getState().queueIndex).toBe(0);
+  });
+
+  it('lets 次の曲 reach a song queued at the end of a stuck restore', async () => {
+    const earlier = { ...song, id: song.id + 1, name: 'Saved song that no longer loads' };
+    const current = { ...song, id: song.id + 2, name: 'Saved current song' };
+    const added = { ...song, id: song.id + 50, name: 'Queued during the restore' };
+    getSongById.mockResolvedValue(current);
+    getSongsByIds.mockResolvedValue([]);
+    installLocalStorage({ songIds: [earlier.id, current.id], queueIndex: 1, currentSongId: current.id });
+    const { usePlayerStore } = await import('./playerStore');
+    await vi.waitFor(() => expect(getSongsByIds).toHaveBeenCalled());
+    await vi.waitFor(() => expect(usePlayerStore.getState().restoringQueueWindow).not.toBeNull());
+    expect(usePlayerStore.getState().restoringQueueWindow?.songs.map(item => item.id)).toEqual([current.id]);
+
+    usePlayerStore.getState().addToQueue(added);
+    expect(usePlayerStore.getState().restoringQueueWindow?.songs.map(item => item.id)).toEqual([current.id, added.id]);
+    usePlayerStore.getState().next();
+    expect(usePlayerStore.getState().currentSong?.id).toBe(added.id);
+    expect(usePlayerStore.getState().queueIndex).toBe(2);
+  });
+
   it('stops requesting later pages after the user replaces a cold restoring queue', async () => {
     const pending = deferred<Song[]>();
     getSongById.mockResolvedValue(song);

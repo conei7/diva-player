@@ -16,6 +16,8 @@ import { useTranslateSourceText } from '../../i18n';
 import { useLanguageStore } from '../../stores/languageStore';
 import { Chip } from '../ui/Chip';
 import Button from '../ui/Button';
+import { cx } from '../ui/overlay';
+import { pointIndexForKey, showsPointDot } from './viewHistoryPoints';
 
 interface ChartState {
   songId: number;
@@ -28,6 +30,7 @@ const SERIES = {
   youtube: { label: "YouTube", color: "#ef4444" },
   nico: { label: "ニコニコ", color: "#3b82f6" },
 } as const;
+type SeriesKey = keyof typeof SERIES;
 
 const Y_TICK_COUNT = 5;
 const EMPTY_VIEW_HISTORY: ViewHistoryData[] = [];
@@ -90,6 +93,23 @@ export default function ViewHistoryChart({ songId }: { songId: number }) {
   const [visibleSeries, setVisibleSeries] = useState({ youtube: true, nico: true });
   const [retryToken, setRetryToken] = useState(0);
   const touchStart = useRef<{ x: number; y: number } | null>(null);
+  const plotRef = useRef<HTMLDivElement>(null);
+  // Each series is one Tab stop (← → Home End move inside it), on its last point until another one
+  // gets focus. Another song, range or metric starts over at the last point.
+  const tabStopKey = `${songId}:${range}:${metric}`;
+  const [tabStops, setTabStops] = useState<{ key: string } & Record<SeriesKey, number | null>>(
+    () => ({ key: tabStopKey, youtube: null, nico: null }),
+  );
+  const tabStopIndex = (series: SeriesKey, count: number) => {
+    const index = tabStops.key === tabStopKey ? tabStops[series] : null;
+    return index === null ? count - 1 : Math.min(index, count - 1);
+  };
+  const setTabStop = (series: SeriesKey, index: number) => {
+    setTabStops(current => ({
+      ...(current.key === tabStopKey ? current : { key: tabStopKey, youtube: null, nico: null }),
+      [series]: index,
+    }));
+  };
 
   const loading = chartState.songId !== songId || chartState.status === 'loading';
   const rawData = chartState.songId === songId ? chartState.data : EMPTY_VIEW_HISTORY;
@@ -115,7 +135,22 @@ export default function ViewHistoryChart({ songId }: { songId: number }) {
     setHoveredPoint({ ...point, label, color });
   };
 
-  const handlePointKeyDown = (event: React.KeyboardEvent<HTMLDivElement>, point: ChartPoint, label: string, color: string) => {
+  const handlePointKeyDown = (
+    event: React.KeyboardEvent<HTMLDivElement>,
+    series: SeriesKey,
+    index: number,
+    count: number,
+    point: ChartPoint,
+    label: string,
+    color: string,
+  ) => {
+    const target = pointIndexForKey(event.key, index, count);
+    if (target !== null) {
+      event.preventDefault();
+      // Focusing the neighbour makes it the Tab stop and shows its value (onFocus).
+      plotRef.current?.querySelector<HTMLElement>(`[data-series="${series}"][data-index="${target}"]`)?.focus();
+      return;
+    }
     if (event.key !== 'Enter' && event.key !== ' ') return;
     event.preventDefault();
     toggleTouchPoint({ ...point, label, color });
@@ -284,6 +319,54 @@ export default function ViewHistoryChart({ songId }: { songId: number }) {
     };
   }, [data, language, metric, visibleSeries]);
 
+  /**
+   * One series' points: a 24px transparent hit area each, with a 10px dot inside. Long series (all
+   * time, daily) draw only the first, last and highlighted dot so the line stays readable and no
+   * dot covers the y-axis labels.
+   */
+  const renderPoints = (series: SeriesKey, points: ChartPoint[], label: string) => {
+    const { color } = SERIES[series];
+    const tabStop = tabStopIndex(series, points.length);
+    const locale = language === 'en' ? 'en-US' : 'ja-JP';
+    return points.map((point, index) => {
+      const highlighted = hoveredPoint?.date === point.date && hoveredPoint.label === label;
+      return (
+        <div
+          key={`${series}-${point.date}`}
+          className="view-history-point absolute flex size-6 -translate-x-1/2 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full"
+          role="button"
+          tabIndex={index === tabStop ? 0 : -1}
+          data-series={series}
+          data-index={index}
+          aria-label={`${label} ${point.date} ${formatExactViewCount(point.value, locale)}`}
+          style={{ left: `${point.x}%`, top: `${point.y}%`, zIndex: highlighted ? 10 : 1 }}
+          onMouseEnter={() => showPoint(point, label, color)}
+          onMouseLeave={() => setHoveredPoint(null)}
+          onFocus={() => {
+            setTabStop(series, index);
+            showPoint(point, label, color);
+          }}
+          onBlur={() => setHoveredPoint(null)}
+          onKeyDown={(event) => handlePointKeyDown(event, series, index, points.length, point, label, color)}
+          onPointerDown={handlePointPointerDown}
+          onPointerUp={(event) => handlePointPointerUp(event, point, label, color)}
+          onPointerCancel={() => { touchStart.current = null; }}
+        >
+          {showsPointDot(index, points.length, highlighted) && (
+            <span
+              aria-hidden="true"
+              className={cx(
+                'size-2.5 rounded-full ring-2 ring-yt-tonal-solid transition-transform motion-reduce:transition-none',
+                highlighted && 'scale-125',
+              )}
+              style={{ background: color }}
+            />
+          )}
+        </div>
+      );
+    });
+  };
+
   const legend = (chart.hasYoutube || chart.hasNico) && (
     <div className="flex flex-wrap gap-2" role="group" aria-label={t('表示する系列')}>
       {chart.hasYoutube && (
@@ -348,7 +431,7 @@ export default function ViewHistoryChart({ songId }: { songId: number }) {
               : t('まだ変化はありません')}
         </div>
       ) : (
-      <div className="relative mb-7 ml-16 mt-4 h-[200px]">
+      <div ref={plotRef} className="relative mb-7 ml-16 mt-4 h-[200px]">
         {chart.yTicks.map((tick) => (
           <div
             key={tick.value}
@@ -358,14 +441,11 @@ export default function ViewHistoryChart({ songId }: { songId: number }) {
             <div className="absolute -left-16 w-14 -translate-y-1/2 text-right text-xs tabular-nums text-yt-text-secondary">
               {tick.label}
             </div>
-            <div
-              className="border-t border-dashed"
-              style={{ borderColor: "rgba(255,255,255,0.08)" }}
-            ></div>
+            <div className="border-t border-dashed border-yt-divider"></div>
           </div>
         ))}
 
-        <div className="absolute inset-0 border-b border-l border-[rgba(255,255,255,0.16)]"></div>
+        <div className="absolute inset-0 border-b border-l border-yt-outline"></div>
 
         <svg
           className="absolute inset-0 w-full h-full pointer-events-none"
@@ -399,57 +479,8 @@ export default function ViewHistoryChart({ songId }: { songId: number }) {
           ))}
         </svg>
 
-        {chart.hasYoutube && visibleSeries.youtube &&
-          chart.youtubePoints.map((point) => (
-            <div
-              key={`youtube-${point.date}`}
-              className="view-history-point absolute w-6 h-6 p-1 rounded-full -translate-x-1/2 -translate-y-1/2 border-2 cursor-pointer transition-transform hover:scale-125"
-              role="button"
-              tabIndex={0}
-              aria-label={`${SERIES.youtube.label} ${point.date} ${formatExactViewCount(point.value, language === 'en' ? 'en-US' : 'ja-JP')}`}
-              style={{
-                left: `${point.x}%`,
-                top: `${point.y}%`,
-                background: SERIES.youtube.color,
-                borderColor: "var(--color-yt-tonal-solid)",
-                zIndex: hoveredPoint?.date === point.date && hoveredPoint?.label === SERIES.youtube.label ? 10 : 1,
-              }}
-              onMouseEnter={() => showPoint(point, SERIES.youtube.label, SERIES.youtube.color)}
-              onMouseLeave={() => setHoveredPoint(null)}
-              onFocus={() => showPoint(point, SERIES.youtube.label, SERIES.youtube.color)}
-              onBlur={() => setHoveredPoint(null)}
-              onKeyDown={(event) => handlePointKeyDown(event, point, SERIES.youtube.label, SERIES.youtube.color)}
-              onPointerDown={handlePointPointerDown}
-              onPointerUp={(event) => handlePointPointerUp(event, point, SERIES.youtube.label, SERIES.youtube.color)}
-              onPointerCancel={() => { touchStart.current = null; }}
-            ></div>
-          ))}
-
-        {chart.hasNico && visibleSeries.nico &&
-          chart.nicoPoints.map((point) => (
-            <div
-              key={`nico-${point.date}`}
-              className="view-history-point absolute w-6 h-6 p-1 rounded-full -translate-x-1/2 -translate-y-1/2 border-2 cursor-pointer transition-transform hover:scale-125"
-              role="button"
-              tabIndex={0}
-              aria-label={`${nicoLabel} ${point.date} ${formatExactViewCount(point.value, language === 'en' ? 'en-US' : 'ja-JP')}`}
-              style={{
-                left: `${point.x}%`,
-                top: `${point.y}%`,
-                background: SERIES.nico.color,
-                borderColor: "var(--color-yt-tonal-solid)",
-                zIndex: hoveredPoint?.date === point.date && hoveredPoint?.label === nicoLabel ? 10 : 1,
-              }}
-              onMouseEnter={() => showPoint(point, nicoLabel, SERIES.nico.color)}
-              onMouseLeave={() => setHoveredPoint(null)}
-              onFocus={() => showPoint(point, nicoLabel, SERIES.nico.color)}
-              onBlur={() => setHoveredPoint(null)}
-              onKeyDown={(event) => handlePointKeyDown(event, point, nicoLabel, SERIES.nico.color)}
-              onPointerDown={handlePointPointerDown}
-              onPointerUp={(event) => handlePointPointerUp(event, point, nicoLabel, SERIES.nico.color)}
-              onPointerCancel={() => { touchStart.current = null; }}
-            ></div>
-          ))}
+        {chart.hasYoutube && visibleSeries.youtube && renderPoints('youtube', chart.youtubePoints, SERIES.youtube.label)}
+        {chart.hasNico && visibleSeries.nico && renderPoints('nico', chart.nicoPoints, nicoLabel)}
 
         {hoveredPoint && (
           <div

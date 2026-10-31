@@ -110,6 +110,8 @@ html[data-theme="light"] {
   --color-yt-on-inverse: #ffffff;
   --color-yt-link: #065fd4;
   --color-yt-focus: #065fd4;
+  /* The toast is dark (inverse) in the light theme too: its action keeps the dark theme's link blue (about 7.4:1). */
+  --color-yt-toast-action: #3ea6ff;
   --color-yt-danger: #b3261e;
   --color-yt-warning: #895000;
   --color-rating: #936100;
@@ -178,9 +180,16 @@ body {
   overflow-x: hidden;
 }
 
-* {
-  scrollbar-width: thin;
-  scrollbar-color: var(--color-surface-hover) transparent;
+/*
+ * In the base layer: an unlayered rule would beat every utility, so rows that hide their scrollbar
+ * ([scrollbar-width:none]: chips, shelves, the song page's actions) or only show it on hover
+ * ([scrollbar-color:…]: guide, music library) would still draw one.
+ */
+@layer base {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-surface-hover) transparent;
+  }
 }
 
 /* スクロールバー */
@@ -557,7 +566,8 @@ html[data-shell="music"] {
   --music-mini-bar-height: 56px;
   --guide-offset: calc(var(--music-library-width) + var(--music-gap) * 2);
   --music-panel-offset: var(--music-gap);
-  --bottom-nav-height: var(--music-bar-height);
+  /* The bar pads the home indicator (iPad, iPhone held sideways); everything above it follows. */
+  --bottom-nav-height: calc(var(--music-bar-height) + env(safe-area-inset-bottom, 0px));
 }
 html[data-shell="music"][data-music-library="full"] { --music-library-width: 280px; }
 html[data-shell="music"][data-music-panel="open"] {
@@ -619,13 +629,15 @@ html[data-shell="music"] body { background: var(--music-shell-bg); }
 }
 .music-docked-player .global-player-video { min-height: 200px; }
 
-/* 下の再生バー */
+/* 下の再生バー（操作は 72px の中。その下はホームインジケーターの余白） */
 .music-player-bar {
   position: fixed;
   inset-inline: 0;
   bottom: 0;
   z-index: var(--z-guide, 40);
-  height: var(--music-bar-height);
+  box-sizing: border-box;
+  height: var(--bottom-nav-height);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
   background: var(--music-shell-bg);
 }
 
@@ -701,5 +713,29 @@ html[data-shell="music"] [data-testid="watch-video-column"] > :first-child {
   html[data-shell="music"]:has(.global-mini-player) :is(.music-player-bar, .music-mini-bar, .music-bottom-nav) {
     right: 372px;
   }
+  /* The 5 cells of the shortened nav are about 39px wide: icons only (the link names stay for screen
+     readers; the ≡ button has its own aria-label). */
+  html[data-shell="music"]:has(.global-mini-player) .music-bottom-nav li span:not([aria-hidden]) {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  html[data-shell="music"]:has(.global-mini-player) .music-bottom-nav li span[aria-hidden] { display: none; }
+}
+/* Next to the corner video the bar (368px at 740 wide) cannot hold its three columns, and the overflow
+   would be drawn under the video, where taps reach the embed. It keeps the song, 前 / 再生 / 次 with the
+   line, and キュー / ミュート / ⋮ (with プレイヤーを閉じる); only the title shrinks, so it still fits at
+   640px. From 1280px the whole bar fits. Unlayered, so these beat the bar's grid utilities. */
+@media (max-height: 419.98px) and (max-width: 1279.98px) {
+  html[data-shell="music"]:has(.global-mini-player) .music-player-bar {
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    gap: 4px;
+    /* The video's 8px margin is the gap on the right */
+    padding-right: 0;
+  }
+  html[data-shell="music"]:has(.global-mini-player) .music-player-bar [data-bar-optional] { display: none; }
 }
 /* ===== /area:music ===== */

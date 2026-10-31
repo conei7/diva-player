@@ -323,7 +323,13 @@ export default function PlaylistHero({
           stacked={false}
           showCount={false}
           loading="eager"
-          className={cx('w-full', sideColumn ? 'sm:w-80 xl:w-full' : 'sm:w-56 lg:w-64')}
+          // Phones: the music layout keeps the cover small (240px, centred) so songs show sooner. An
+          // empty list without a chosen cover shows none (it would only be the placeholder icon).
+          className={cx(
+            'w-full',
+            sideColumn ? 'sm:w-80 xl:w-full' : 'sm:w-56 lg:w-64 max-sm:w-[min(100%,15rem)] max-sm:self-center',
+            !hasSongs && !playlist.coverArtUrl && 'max-sm:hidden',
+          )}
         >
           {hasSongs && (
             <button

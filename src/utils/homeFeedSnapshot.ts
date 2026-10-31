@@ -1,6 +1,8 @@
 import type { Song } from '../types/vocadb';
 
 export interface HomeFeedSnapshot {
+  /** The chip the feed was built for (missing: おすすめ). Back reopens the same chip. */
+  category?: string;
   songs: Song[];
   startupSongs: Song[];
   page: number;

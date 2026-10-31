@@ -53,9 +53,6 @@ import PlaylistSongRow, { VIRTUAL_THRESHOLD, type PlaylistRowActions } from './P
 import { getPlaylistSyncInfo } from './playlistDisplay';
 import { addSongsToQueue } from './playlistQueue';
 
-/** Below this width the selection bar's actions are icon buttons (three text buttons don't fit). */
-const COMPACT_SELECTION_QUERY = '(max-width: 1023px)';
-
 interface PlaylistDetailProps {
   playlist: Playlist;
   folderName?: string;
@@ -200,7 +197,6 @@ export default function PlaylistDetail({
   const t = useTranslateSourceText();
   const tk = useTranslate();
   const mobile = useMediaQuery(MOBILE_MEDIA_QUERY);
-  const compactSelection = useMediaQuery(COMPACT_SELECTION_QUERY);
   // Music layout: the songs are a track table (# | タイトル | プロデューサー | 公開日 | 再生時間 | ⋮).
   const musicLayout = useIsMusicLayout();
   const editable = isPlaylistEditable(playlist);
@@ -570,20 +566,20 @@ export default function PlaylistDetail({
           onSelectAll={() => setSelected(new Set(entries.map(entry => entry.index)))}
           data-testid="playlist-selection-bar"
         >
-          {/* Same names and weights as the selection bar of home / song page / history. */}
-          {compactSelection ? (
-            <>
-              <IconButton label={t('キューに追加')} icon={<QueueMusicIcon />} disabled={nothingSelected} onClick={queueSelected} />
-              <IconButton label={t('プレイリストに保存')} icon={<PlaylistAddIcon />} disabled={nothingSelected} onClick={saveSelected} />
-              {editable && <IconButton label={t('プレイリストから削除')} icon={<TrashIcon />} disabled={nothingSelected || saving} onClick={() => { void runSave(deleteSelected); }} />}
-            </>
-          ) : (
-            <>
-              <Button icon={<QueueMusicIcon />} disabled={nothingSelected} onClick={queueSelected}>{t('キューに追加')}</Button>
-              <Button variant="primary" icon={<PlaylistAddIcon />} disabled={nothingSelected} onClick={saveSelected}>{t('プレイリストに保存')}</Button>
-              {editable && <Button icon={<TrashIcon />} disabled={nothingSelected || saving} onClick={() => { void runSave(deleteSelected); }}>{t('プレイリストから削除')}</Button>}
-            </>
-          )}
+          {/* Same names and weights as the selection bar of home / song page / history. Text buttons
+              only when the bar (a container) also has room for the whole count: it is narrower in
+              the music layout, between the library and the 再生中 panel. display:none keeps the
+              other set out of the tab order. */}
+          <div className={editable ? 'flex items-center sm:gap-2 @min-[54rem]:hidden' : 'flex items-center sm:gap-2 @min-[44rem]:hidden'}>
+            <IconButton label={t('キューに追加')} icon={<QueueMusicIcon />} disabled={nothingSelected} onClick={queueSelected} />
+            <IconButton label={t('プレイリストに保存')} icon={<PlaylistAddIcon />} disabled={nothingSelected} onClick={saveSelected} />
+            {editable && <IconButton label={t('プレイリストから削除')} icon={<TrashIcon />} disabled={nothingSelected || saving} onClick={() => { void runSave(deleteSelected); }} />}
+          </div>
+          <div className={editable ? 'hidden items-center gap-2 @min-[54rem]:flex' : 'hidden items-center gap-2 @min-[44rem]:flex'}>
+            <Button icon={<QueueMusicIcon />} disabled={nothingSelected} onClick={queueSelected}>{t('キューに追加')}</Button>
+            <Button variant="primary" icon={<PlaylistAddIcon />} disabled={nothingSelected} onClick={saveSelected}>{t('プレイリストに保存')}</Button>
+            {editable && <Button icon={<TrashIcon />} disabled={nothingSelected || saving} onClick={() => { void runSave(deleteSelected); }}>{t('プレイリストから削除')}</Button>}
+          </div>
         </SelectionBar>
       )}
 

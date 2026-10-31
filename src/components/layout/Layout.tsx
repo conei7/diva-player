@@ -4,6 +4,7 @@ import TopNav from './TopNav';
 import Sidebar, { type GuideMode } from './Sidebar';
 import BottomNav from './BottomNav';
 import TopLoadingBar from './TopLoadingBar';
+import SkipLinks, { MAIN_CONTENT_ID } from './SkipLinks';
 import PageSkeleton from './PageSkeleton';
 import RouteErrorBoundary, { DeferredBoundary, OverlayErrorBoundary } from './RouteErrorBoundary';
 import { useUiStore } from '../../stores/uiStore';
@@ -120,6 +121,8 @@ export default function Layout() {
 
   return (
     <div className={cx('flex min-h-dvh flex-col text-yt-text', musicShell ? 'music-frame' : 'bg-yt-bg')}>
+      {/* First in the DOM so the first Tab offers a way past the top bar and the guide / library. */}
+      <SkipLinks />
       <TopLoadingBar />
       <TopNav />
       <div
@@ -155,8 +158,9 @@ export default function Layout() {
       )}
 
       <main
+        id={MAIN_CONTENT_ID}
         className={cx(
-          'min-w-0 flex-1 ml-[var(--guide-offset)] pb-[calc(var(--floating-player-clearance,0px)_+_var(--bottom-nav-height,0px))] [overflow-x:clip]',
+          'min-w-0 flex-1 outline-none ml-[var(--guide-offset)] pb-[calc(var(--floating-player-clearance,0px)_+_var(--bottom-nav-height,0px))] [overflow-x:clip]',
           musicShell && 'music-main mr-[var(--music-panel-offset,0px)]',
         )}
       >

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router';
 import { searchHistoryEntries, useHistoryStore, type HistoryEntry } from '../stores/historyStore';
 import { useHiddenSongStore } from '../stores/hiddenSongStore';
@@ -13,9 +13,11 @@ import { downloadJson } from '../utils/playlistBackup';
 import { watchPath } from '../utils/routes';
 import { formatArtistLine, formatCount, formatTotalDuration } from '../utils/songMeta';
 import ViewCounts from '../components/ui/ViewCounts';
-import { hasViewCounts, joinMetaParts } from '../components/ui/songMetaParts';
+import { hasViewCounts } from '../components/ui/songMetaParts';
 import { formatRelativeTime } from '../utils/relativeDate';
+import { useElementWidth } from '../hooks/useElementWidth';
 import { MOBILE_MEDIA_QUERY, useMediaQuery } from '../hooks/useMediaQuery';
+import { useIsMusicLayout } from '../hooks/useMusicLayout';
 import { useTranslate, useTranslateSourceText } from '../i18n';
 import Button from '../components/ui/Button';
 import EmptyState from '../components/ui/EmptyState';
@@ -45,6 +47,7 @@ import {
   latestPlayPerSong,
   type HistoryRowItem,
 } from '../components/library/historyGroups';
+import { getHistoryLayout } from '../components/library/historyLayout';
 
 type HistorySortMode = 'recent' | 'name' | 'artist';
 
@@ -53,17 +56,40 @@ const XL_MEDIA_QUERY = '(min-width: 1280px)';
 const SEARCH_DEBOUNCE_MS = 180;
 
 /**
- * HistoryPage - 再生履歴（日付ごとの一覧。1024px 以上は右に検索・操作・統計の列）
+ * HistoryPage - 再生履歴（日付ごとの一覧。1024px 以上で本文に幅があれば右に検索・操作・統計の列）
+ * In the music layout the page follows its own width, not the window's: the library and the
+ * 再生中 panel take part of it. The standard layout keeps the window breakpoints.
  */
 export default function HistoryPage() {
+  const musicLayout = useIsMusicLayout();
+  const wideViewport = useMediaQuery(WIDE_MEDIA_QUERY);
+  const xlViewport = useMediaQuery(XL_MEDIA_QUERY);
+  const mobile = useMediaQuery(MOBILE_MEDIA_QUERY);
+  const [measureRef, contentWidth] = useElementWidth<HTMLDivElement>();
+  const { rail, rowSize } = getHistoryLayout({ musicLayout, contentWidth, wideViewport, xlViewport, mobile });
+
+  return (
+    <PageShell>
+      {/* Measured, so it stays mounted when the two variants switch. */}
+      <div ref={measureRef} className="min-w-0">
+        <HistoryContent isWide={rail} rowSize={rowSize} />
+      </div>
+    </PageShell>
+  );
+}
+
+interface HistoryContentProps {
+  /** The right column (else 検索 + ⋮ in the header). */
+  isWide: boolean;
+  rowSize: SongRowSize;
+}
+
+/** memo: while the width changes (a window resize) the list re-renders only when the layout does. */
+const HistoryContent = memo(function HistoryContent({ isWide, rowSize }: HistoryContentProps) {
   const t = useTranslateSourceText();
   const tk = useTranslate();
   const language = useLanguageStore(state => state.language);
   const navigate = useNavigate();
-  const isWide = useMediaQuery(WIDE_MEDIA_QUERY);
-  const isXl = useMediaQuery(XL_MEDIA_QUERY);
-  const isMobile = useMediaQuery(MOBILE_MEDIA_QUERY);
-  const rowSize: SongRowSize = isMobile || (isWide && !isXl) ? 'md' : 'lg';
 
   const entries = useHistoryStore(state => state.entries);
   const totalPlays = useHistoryStore(state => state.totalPlays);
@@ -167,6 +193,8 @@ export default function HistoryPage() {
   }, [loadMoreHistory]);
 
   const canAutoLoad = !query && hasMoreEntries && !isLoadingMore && !loadMoreFailed;
+  // isWide: the two variants mount the list (and its sentinel) in different places, so a switch
+  // (the 再生中 panel opening, or the first measured width) must observe the new sentinel.
   useEffect(() => {
     const target = sentinelRef.current;
     if (!canAutoLoad || !target || typeof IntersectionObserver === 'undefined') return;
@@ -177,7 +205,7 @@ export default function HistoryPage() {
     }, { rootMargin: '800px 0px' });
     observer.observe(target);
     return () => observer.disconnect();
-  }, [canAutoLoad, entries.length, loadMore]);
+  }, [canAutoLoad, entries.length, isWide, loadMore]);
 
   const handleExport = async () => {
     try {
@@ -263,9 +291,11 @@ export default function HistoryPage() {
         song={row.song}
         size={rowSize}
         onActivate={() => navigate(watchPath(row.song.id))}
+        // The view counts get their own line: after the time, in one truncating line, a badge was cut in half.
         meta={[
           formatArtistLine(row.song, { withVocalists: true }),
-          joinMetaParts([playedText, hasViewCounts(row.song) ? <ViewCounts key="views" song={row.song} /> : null]),
+          playedText,
+          hasViewCounts(row.song) ? <ViewCounts key="views" song={row.song} /> : null,
         ]}
         badges={hiddenSongs[String(row.song.id)] ? <RowBadge>{t('非表示中')}</RowBadge> : undefined}
         trailing={isSelectionMode ? undefined : <SongActionsMenu song={row.song} />}
@@ -338,7 +368,7 @@ export default function HistoryPage() {
 
   if (isWide) {
     return (
-      <PageShell>
+      <>
         {fileInput}
         <div className="flex items-start gap-6">
           <div className="min-w-0 flex-1">
@@ -422,12 +452,12 @@ export default function HistoryPage() {
             )}
           </div>
         </div>
-      </PageShell>
+      </>
     );
   }
 
   return (
-    <PageShell>
+    <>
       {fileInput}
       <PageHeader
         title={t('再生履歴')}
@@ -485,9 +515,9 @@ export default function HistoryPage() {
         )}
       />
       {list}
-    </PageShell>
+    </>
   );
-}
+});
 
 function Stat({ label, value }: { label: string; value: string }) {
   return (

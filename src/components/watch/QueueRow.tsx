@@ -58,7 +58,7 @@ export default function QueueRow({ song, index, current, hint, onJump, rowRef }:
         aria-current={current ? 'true' : undefined}
         onClick={() => onJump(index)}
         onKeyDown={onKeyDown}
-        className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-card py-1 pl-1 text-left outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-yt-focus"
+        className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-card py-1 pl-1 text-left outline-none focus-visible:outline-solid focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-yt-focus"
       >
         <span className="flex w-6 shrink-0 items-center justify-center text-xs tabular-nums text-yt-text-secondary">
           {current ? <VolumeBarsIcon size={16} className="text-brand" /> : index + 1}

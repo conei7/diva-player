@@ -4,6 +4,11 @@ import { Link } from 'react-router';
 import { useTranslateSourceText } from '../../../i18n';
 import IconButton from '../../ui/IconButton';
 import { ChevronLeftIcon, ChevronRightIcon } from '../../ui/icons';
+import { cx } from '../../ui/overlay';
+import { SkeletonBlock } from '../../ui/Skeleton';
+import { SHELF_CARD_WIDTH_CLASS } from './musicHomeShelves';
+
+const SKELETON_CARDS = [0, 1, 2, 3, 4, 5, 6, 7];
 
 export interface SongShelfProps {
   /** `data-shelf` of the section (recent, playlists, weekly, …). */
@@ -114,5 +119,36 @@ export default function SongShelf({ shelf, title, seeAllTo, finePointer, childre
         )}
       </div>
     </section>
+  );
+}
+
+/**
+ * Stands in for a shelf whose cards are still loading, with the height of the real one (the
+ * header row, the scroller's py-1 and cards whose title wraps to two lines), so the shelves and
+ * the feed below stay where they are when the cards arrive. aria-hidden: MusicHome says
+ * 「読み込み中…」 once for all of them. No `music-shelf` test id and no `.aspect-square`: the music
+ * layout E2E reads those as real shelves.
+ */
+export function SongShelfSkeleton() {
+  return (
+    <div data-testid="music-shelf-loading" aria-hidden="true" className="min-w-0">
+      <div className="mb-2 flex min-h-10 items-center">
+        <SkeletonBlock className="h-6 w-40 rounded-badge" />
+      </div>
+      <div className="-mx-3 overflow-hidden px-3 py-1 sm:-mx-4 sm:px-4 lg:-mx-6 lg:px-6">
+        <div className="flex w-max items-start gap-3 sm:gap-4">
+          {SKELETON_CARDS.map(index => (
+            <div key={index} className={cx('shrink-0', SHELF_CARD_WIDTH_CLASS)}>
+              <SkeletonBlock className="aspect-[1/1] w-full rounded-[8px]" />
+              {/* 62px: two 20px title lines, mt-0.5 and the 20px artist line of a card. */}
+              <div className="mt-2 h-[62px] space-y-2 pt-1">
+                <SkeletonBlock className="h-3.5 w-11/12 rounded-badge" />
+                <SkeletonBlock className="h-3.5 w-3/5 rounded-badge" />
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
   );
 }

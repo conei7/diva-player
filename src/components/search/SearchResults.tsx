@@ -18,6 +18,7 @@ import { artistPath, searchPath, watchPath, type SearchType } from '../../utils/
 import { useLanguageStore } from '../../stores/languageStore';
 import { MOBILE_MEDIA_QUERY, useMediaQuery } from '../../hooks/useMediaQuery';
 import VideoGrid from '../home/VideoGrid';
+import { PREFETCH_OBSERVER_OPTIONS } from '../home/infiniteScroll';
 import SongListRow, { type SongRowSize } from '../ui/SongListRow';
 import ViewCounts from '../ui/ViewCounts';
 import { hasViewCounts, joinMetaParts } from '../ui/songMetaParts';
@@ -26,6 +27,7 @@ import { MenuItem } from '../ui/Menu';
 import EmptyState from '../ui/EmptyState';
 import { InlineNotice } from '../ui/InlineNotice';
 import { SkeletonListRow } from '../ui/Skeleton';
+import Button from '../ui/Button';
 import { CheckBoxOutlineIcon, PersonIcon, SearchIcon, SpinnerIcon } from '../ui/icons';
 import AppliedFilterChips from './AppliedFilterChips';
 import ProducerHeader from './ProducerHeader';
@@ -134,13 +136,17 @@ export default function SearchResults({ urlQuery, urlType, urlArtist, pending, o
     };
   }, [isLoading, songs.length]);
 
-  const canLoadMore = !pending && !isLoading && results.length > 0 && results.length < totalCount;
+  // Not after a failed page: with the early sentinel it would be requested again at once, over and
+  // over (the error notice's 再試行 searches again).
+  const canLoadMore = !pending && !isLoading && !error && results.length > 0 && results.length < totalCount;
+  const pageFailed = !pending && !isLoading && Boolean(error) && results.length > 0 && results.length < totalCount;
   useEffect(() => {
     const element = sentinelRef.current;
     if (!element || !canLoadMore || typeof IntersectionObserver === 'undefined') return;
+    // Like the home feed, the next page starts loading well before the end comes into view.
     const observer = new IntersectionObserver(entries => {
       if (entries[0]?.isIntersecting) void loadMore();
-    }, { threshold: 0.1 });
+    }, PREFETCH_OBSERVER_OPTIONS);
     observer.observe(element);
     return () => observer.disconnect();
   }, [canLoadMore, loadMore]);
@@ -208,8 +214,11 @@ export default function SearchResults({ urlQuery, urlType, urlArtist, pending, o
         )}
       </div>
 
-      <div ref={sentinelRef} className="mt-6 flex h-8 items-center justify-center text-yt-text-secondary">
-        {isLoading && songs.length > 0 && <SpinnerIcon />}
+      <div ref={sentinelRef} className="mt-6 flex min-h-8 items-center justify-center text-yt-text-secondary">
+        {/* A failed later page stops the automatic paging; this loads just that page again. */}
+        {pageFailed
+          ? <Button variant="text" onClick={() => void loadMore()}>{ts('再試行')}</Button>
+          : isLoading && songs.length > 0 && <SpinnerIcon />}
       </div>
     </div>
   );

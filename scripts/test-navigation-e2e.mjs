@@ -439,9 +439,22 @@ try {
 
   const searchInput = 'input[placeholder="ボカロP名や曲名で検索"]';
   await page.waitForSelector(searchInput, { timeout: 60_000 });
+  // A new search opens its results at the top, also from a scrolled page (the fixture feed is
+  // short, so the page is made taller for this check).
+  await page.evaluate(() => {
+    document.body.style.minHeight = '5000px';
+    window.scrollTo(0, 1500);
+  });
   await page.type(searchInput, '千本桜');
   await page.keyboard.press('Enter');
   await page.waitForFunction(() => document.body.textContent?.includes('検索結果'), { timeout: 60_000 });
+  const searchScrollY = await page.evaluate(() => window.scrollY);
+  await page.evaluate(() => { document.body.style.minHeight = ''; });
+  if (searchScrollY !== 0) throw new Error(`Search results did not open at the top: scrollY=${searchScrollY}`);
+  await page.waitForFunction(() => document.title === '「千本桜」の検索結果 | DIVA Player', { timeout: 10_000 })
+    .catch(async () => {
+      throw new Error(`Search results tab title was not updated: ${await page.title()}`);
+    });
   await page.click('a[aria-label="DIVA Player ホーム"]');
   await page.waitForFunction(() => {
     const activeCategory = document.querySelector('button[data-active="true"]');
@@ -450,7 +463,11 @@ try {
       && input instanceof HTMLInputElement
       && input.value === '';
   }, { timeout: 60_000 });
-  console.log('PASS search state resets on home navigation');
+  await page.waitForFunction(() => document.title === 'DIVA Player — ボカロミュージックプレイヤー', { timeout: 10_000 })
+    .catch(async () => {
+      throw new Error(`Home kept another tab title: ${await page.title()}`);
+    });
+  console.log('PASS search opens at the top with its own tab title, and its state resets on home navigation');
 
   // Use a fresh browser context so earlier smoke tests cannot leak their
   // persisted player queue or cross-tab playback ownership into this flow.
@@ -531,6 +548,52 @@ try {
     throw new Error(`Back regenerated the home mix: before=${JSON.stringify(homeMixIdsBeforeBack)}, after=${JSON.stringify(homeMixIdsAfterBack)}, homeLoads=${repeatedHomeLoads}`);
   }
   console.log(`PASS browser Back restores home mix order without regenerating (${retainedMixIds.length} retained songs)`);
+
+  // Another chip opens its list at the top, and Back returns to that chip (not to For you) with
+  // the same songs, without loading it again.
+  await backPage.evaluate(() => {
+    document.body.style.minHeight = '5000px';
+    window.scrollTo(0, 1500);
+  });
+  await backPage.waitForFunction(() => [...document.querySelectorAll('main button[aria-pressed]')]
+    .some(button => button.textContent?.trim() === 'Rankings'), { timeout: 60_000 });
+  await backPage.evaluate(() => [...document.querySelectorAll('main button[aria-pressed]')]
+    .find(button => button.textContent?.trim() === 'Rankings')?.click());
+  // 1501 is only in the ranking fixture (the mix is 1502-1506), so the old list is gone by then.
+  await backPage.waitForFunction(() => document.querySelector('main button[data-active="true"]')?.textContent?.trim() === 'Rankings'
+    && document.querySelector('main a[href*="/watch?v=1501"]') !== null
+    && document.querySelector('main [aria-busy="true"]') === null, { timeout: 60_000 });
+  const chipSwitchScrollY = await backPage.evaluate(() => window.scrollY);
+  await backPage.evaluate(() => { document.body.style.minHeight = ''; });
+  if (chipSwitchScrollY > 100) throw new Error(`Switching chips kept the old scroll position: scrollY=${chipSwitchScrollY}`);
+  const rankingIdsBeforeBack = await backPage.$$eval('main a[href*="/watch?v="]', links => [...new Set(
+    links.map(link => new URL(link.href).searchParams.get('v')).filter(Boolean),
+  )]);
+  if (rankingIdsBeforeBack.length < 2) {
+    throw new Error(`Navigation fixture did not load enough ranking songs: ${JSON.stringify(rankingIdsBeforeBack)}`);
+  }
+  const openedRankingId = rankingIdsBeforeBack[0];
+  await backPage.evaluate(() => window.__DIVA_PERFORMANCE__?.clear());
+  await backPage.click(`main a[href*="/watch?v=${openedRankingId}"]`);
+  await backPage.waitForFunction(path => (location.pathname.replace(/\/+$/, '') || '/') === path, { timeout: 60_000 }, expectedWatch);
+  await backPage.evaluate(() => window.history.back());
+  await backPage.waitForFunction(path => (location.pathname.replace(/\/+$/, '') || '/') === path, { timeout: 15_000 }, expectedRoot);
+  // Home's own (visually hidden) heading: the song page, which also has chips and song links, is gone.
+  await backPage.waitForFunction(() => document.querySelector('main h1')?.textContent === 'Home'
+    && document.querySelector('main a[href*="/watch?v="]') !== null, { timeout: 60_000 });
+  const rankingBackState = await backPage.evaluate(() => ({
+    activeChip: document.querySelector('main button[data-active="true"]')?.textContent?.trim(),
+    ids: [...new Set([...document.querySelectorAll('main a[href*="/watch?v="]')]
+      .map(link => new URL(link.href).searchParams.get('v')).filter(Boolean))],
+    homeLoads: window.__DIVA_PERFORMANCE__?.getMetrics().filter(metric => metric.name === 'home.load').length ?? 0,
+  }));
+  const retainedRankingIds = rankingIdsBeforeBack.filter(id => id !== openedRankingId);
+  if (rankingBackState.activeChip !== 'Rankings'
+    || JSON.stringify(rankingBackState.ids.filter(id => retainedRankingIds.includes(id))) !== JSON.stringify(retainedRankingIds)
+    || rankingBackState.homeLoads !== 0) {
+    throw new Error(`Back did not restore the Rankings chip: before=${JSON.stringify(rankingIdsBeforeBack)}, after=${JSON.stringify(rankingBackState)}`);
+  }
+  console.log(`PASS chip switch opens at the top and Back restores the Rankings chip (${retainedRankingIds.length} retained songs)`);
 
   const discoveryMixState = await page.evaluate(() => {
     const buttons = [...document.querySelectorAll('button[aria-label="発掘ミックスを再生"]')];

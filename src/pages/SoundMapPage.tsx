@@ -553,34 +553,39 @@ function SingleSoundMapPage() {
                   </InlineNotice>
                 )}
                 {uniformAxes && <InlineNotice tone="warning" className="mb-3">{t('この軸では差が出ません')}</InlineNotice>}
-                <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_400px]">
-                  <SoundMapCanvas
-                    items={items}
-                    knownIds={displayKnownIds}
-                    originId={result.origin.songId}
-                    selectedId={selected?.songId ?? null}
-                    viewport={viewport}
-                    axes={result.axes}
-                    loading={loading}
-                    guide={guideDismissed ? null : <SoundMapGuide onDismiss={dismissGuide} />}
-                    canGoBack={trail.length > 0}
-                    onSelect={selectPoint}
-                    onViewportChange={updateViewport}
-                    onFocusOrigin={focusOrigin}
-                    onBack={goBackToPreviousOrigin}
-                  />
-                  <div className="flex min-w-0 flex-col gap-6">
-                    {!isMobile && selectionProps && <SoundMapSelectionCard {...selectionProps} />}
-                    <SoundMapNearby
-                      points={neighbors}
+                {/* Two columns by the page's width, not the window's (the music layout's library and 再生中
+                    panel take part of it). The fixed SoundMapSelectionBar stays outside: a container is
+                    the containing block of fixed children. */}
+                <div className="@container">
+                  <div className="grid items-start gap-6 @min-[52rem]:grid-cols-[minmax(0,1fr)_400px]">
+                    <SoundMapCanvas
+                      items={items}
+                      knownIds={displayKnownIds}
+                      originId={result.origin.songId}
                       selectedId={selected?.songId ?? null}
-                      songsById={songsById}
-                      actionsDisabled={localPreviewMode}
-                      initialCount={NEARBY_INITIAL_COUNT}
-                      expanded={nearbyExpanded}
-                      onExpandedChange={setNearbyExpanded}
+                      viewport={viewport}
+                      axes={result.axes}
+                      loading={loading}
+                      guide={guideDismissed ? null : <SoundMapGuide onDismiss={dismissGuide} />}
+                      canGoBack={trail.length > 0}
                       onSelect={selectPoint}
+                      onViewportChange={updateViewport}
+                      onFocusOrigin={focusOrigin}
+                      onBack={goBackToPreviousOrigin}
                     />
+                    <div className="flex min-w-0 flex-col gap-6">
+                      {!isMobile && selectionProps && <SoundMapSelectionCard {...selectionProps} />}
+                      <SoundMapNearby
+                        points={neighbors}
+                        selectedId={selected?.songId ?? null}
+                        songsById={songsById}
+                        actionsDisabled={localPreviewMode}
+                        initialCount={NEARBY_INITIAL_COUNT}
+                        expanded={nearbyExpanded}
+                        onExpandedChange={setNearbyExpanded}
+                        onSelect={selectPoint}
+                      />
+                    </div>
                   </div>
                 </div>
                 {isMobile && selectionProps && <SoundMapSelectionBar {...selectionProps} />}
@@ -595,18 +600,20 @@ function SingleSoundMapPage() {
 
 function SoundMapSkeleton({ label }: { label: string }) {
   return (
-    <div aria-busy="true" className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_400px]">
+    <div aria-busy="true" className="@container">
       <span className="sr-only">{label}</span>
-      <SkeletonBlock className="h-[clamp(420px,calc(100vh-240px),640px)] rounded-card max-sm:-mx-3 max-sm:h-[56vh] max-sm:rounded-none" />
-      <div className="hidden min-w-0 lg:block">
-        <div className="rounded-card bg-yt-raised p-4">
-          <SkeletonBlock className="aspect-video w-full rounded-chip" />
-          <SkeletonBlock className="mt-3 h-5 w-4/5 rounded-badge" />
-          <SkeletonBlock className="mt-2 h-4 w-1/2 rounded-badge" />
-          <SkeletonBlock className="mt-4 h-9 w-full rounded-full" />
-        </div>
-        <div className="mt-6">
-          {[0, 1, 2, 3].map(row => <SkeletonListRow key={row} />)}
+      <div className="grid items-start gap-6 @min-[52rem]:grid-cols-[minmax(0,1fr)_400px]">
+        <SkeletonBlock className="h-[clamp(420px,calc(100vh-240px),640px)] rounded-card max-sm:-mx-3 max-sm:h-[56vh] max-sm:rounded-none" />
+        <div className="hidden min-w-0 @min-[52rem]:block">
+          <div className="rounded-card bg-yt-raised p-4">
+            <SkeletonBlock className="aspect-video w-full rounded-chip" />
+            <SkeletonBlock className="mt-3 h-5 w-4/5 rounded-badge" />
+            <SkeletonBlock className="mt-2 h-4 w-1/2 rounded-badge" />
+            <SkeletonBlock className="mt-4 h-9 w-full rounded-full" />
+          </div>
+          <div className="mt-6">
+            {[0, 1, 2, 3].map(row => <SkeletonListRow key={row} />)}
+          </div>
         </div>
       </div>
     </div>

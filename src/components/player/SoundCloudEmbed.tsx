@@ -176,6 +176,14 @@ export default function SoundCloudEmbed({ pv, isPlaying }: SoundCloudEmbedProps)
             setDuration(milliseconds / 1000);
           }
         });
+        // A seek asked for before the widget existed (元に戻す of a closed player) — the seek effect
+        // below found no widget then and does not run again.
+        const pendingSeek = usePlayerStore.getState().seekTarget;
+        if (pendingSeek !== null) {
+          widget.seekTo(pendingSeek * 1000);
+          setProgress(pendingSeek);
+          usePlayerStore.getState().clearSeekTarget();
+        }
         if (requestedPlayingRef.current) scheduleWidgetPlayback(widget);
         else syncWidgetPlayback(widget, false);
       });

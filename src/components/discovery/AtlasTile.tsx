@@ -13,7 +13,7 @@ interface Props {
 export default memo(function AtlasTile({ id, index, views, name, platform, knownRatio, x, y, width, height, labelWidth, labelLeft, labelBottom, lines, first }: Props) {
   return <Link to={watchPath(id, { autoplay: false })} data-tile-id={`song-${id}`} data-atlas-index={index} data-views={views}
     aria-label={name ?? String(id)} tabIndex={first ? 0 : -1}
-    className={`absolute overflow-clip rounded-badge text-xs font-bold leading-4 outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-yt-focus ${knownRatio === 1 ? 'text-white' : 'text-yt-text'}`}
+    className={`absolute overflow-clip rounded-badge text-xs font-bold leading-4 outline-none focus-visible:outline-solid focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-yt-focus ${knownRatio === 1 ? 'text-white' : 'text-yt-text'}`}
     style={{ left: x, top: y, width, height, contain: 'strict',
       fontFamily: 'system-ui, sans-serif',
       backgroundColor: knownRatio === 1 ? KNOWN_SERVICE_COLOR[platform] : knownRatio === 0 ? KNOWLEDGE_MAP_COLORS.remainder

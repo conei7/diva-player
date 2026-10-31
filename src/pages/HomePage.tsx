@@ -1,8 +1,9 @@
-import { lazy, Suspense, useState, useEffect, useEffectEvent, useCallback, useMemo, useRef } from 'react';
+import { lazy, Suspense, useState, useEffect, useEffectEvent, useCallback, useLayoutEffect, useMemo, useRef } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { useLocation, useNavigationType, useSearchParams } from 'react-router';
 import CategoryChips, { type CategoryChip } from '../components/home/CategoryChips';
 import VideoGrid from '../components/home/VideoGrid';
+import { PREFETCH_OBSERVER_OPTIONS } from '../components/home/infiniteScroll';
 import SearchResults, { type UrlArtist } from '../components/search/SearchResults';
 import MusicHome from '../components/music/home/MusicHome';
 import { useIsMusicLayout } from '../hooks/useMusicLayout';
@@ -118,8 +119,6 @@ const APPEND_HOME_PAGE_SIZE = 36;
  * leaves loading more to the bounded auto-fill instead of infinite scroll. Independent of the page size.
  */
 const DISCOVERY_MIN_COUNT = 12;
-/** The next page starts loading this far before the end of the feed comes into view. */
-const PREFETCH_MARGIN_PX = 1200;
 const STARTUP_POOL_SIZE = PAGE_SIZE * 2;
 const STARTUP_ROTATION_KEY = 'diva-startup-rotation-v1';
 const MAX_FAVORITE_PRODUCER_REQUESTS = 4;
@@ -186,6 +185,7 @@ function parseUrlArtist(idParam: string | null, nameParam: string | null, rolePa
  * reload and shared links always show the same screen.
  */
 export default function HomePage() {
+  const t = useTranslate();
   const location = useLocation();
   const navigationType = useNavigationType();
   const [searchParams] = useSearchParams();
@@ -232,6 +232,14 @@ export default function HomePage() {
     if (store.searchOrigin === 'url' || (store.searchOrigin === 'advanced' && !advancedEntry)) store.reset();
   }, [advancedEntry, location.key, navigationType, runUrlSearch, urlKey]);
 
+  // Every new entry of this page opens at the top: a search, a type chip, an artist link, the logo
+  // or ホーム (a replace with a new key when already here). The page stays mounted across them, so
+  // nothing else resets the scroll. Back / forward and the first load (POP) keep their place, so
+  // the feed's own restore and the browser's still apply.
+  useLayoutEffect(() => {
+    if (navigationType !== 'POP') window.scrollTo(0, 0);
+  }, [location.key, navigationType]);
+
   // The dialog belongs to the home page: close it when another page is opened (not on StrictMode's re-mount).
   useEffect(() => () => {
     const base = (import.meta.env.BASE_URL ?? '/').replace(/\/+$/, '');
@@ -253,8 +261,11 @@ export default function HomePage() {
         />
       ) : (
         <>
-          {/* Shelves above the same feed; the feed keeps its place, so switching layouts never reloads it. */}
-          {musicLayout && <MusicHome />}
+          {/*
+            Shelves above the same feed; the feed keeps its place, so switching layouts never reloads it.
+            The page heading is for assistive tech only (MusicHome renders its own).
+          */}
+          {musicLayout ? <MusicHome /> : <h1 className="sr-only">{t('sidebarHome')}</h1>}
           <HomeFeed />
         </>
       )}
@@ -279,7 +290,9 @@ function HomeFeed() {
     return getHomeFeedSnapshot(location.key);
   });
 
-  const [activeCategory, setActiveCategory] = useState<HomeCategoryId>('recommended');
+  // Back reopens the chip the entry was showing (older snapshots without one are おすすめ).
+  const restoredCategory = asHomeCategoryId(restoredHomeFeed?.category ?? 'recommended');
+  const [activeCategory, setActiveCategory] = useState<HomeCategoryId>(restoredCategory);
   const [songs, setSongs] = useState<Song[]>(() => restoredHomeFeed?.songs ?? []);
   const [startupSongs, setStartupSongs] = useState<Song[]>(() => restoredHomeFeed?.startupSongs ?? []);
   const [loading, setLoading] = useState(() => restoredHomeFeed?.initialLoadPending ?? true);
@@ -293,6 +306,8 @@ function HomeFeed() {
   // Bumped by 再試行 to rebuild the feed from its first page.
   const [feedReload, setFeedReload] = useState(0);
 
+  const feedRootRef = useRef<HTMLDivElement>(null);
+  const chipBarRef = useRef<HTMLDivElement>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
   const fetchingRef = useRef(false);
   const autoFillPagesRef = useRef(0);
@@ -309,7 +324,9 @@ function HomeFeed() {
   const firstHomePaintRecordedRef = useRef(Boolean(restoredHomeFeed));
   const persistedStartupSignatureRef = useRef('');
   const homeSourcePromisesRef = useRef<Map<string, Promise<Song[]>>>(new Map());
-  const restoredRecommendedEntryRef = useRef(Boolean(restoredHomeFeed));
+  // The history entry the feed was restored for. Another entry of Home (ホーム / the logo replace
+  // the current one) builds a new feed instead.
+  const restoredEntryKeyRef = useRef<string | null>(restoredHomeFeed ? location.key : null);
   const suppressStaleHomeFeedCacheRef = useRef(Boolean(restoredHomeFeed?.initialLoadPending));
   const restoredScrollYRef = useRef<number | null>(restoredHomeFeed?.scrollY ?? null);
   // The last scroll position recorded while this entry was the current one (see recordScrollPosition).
@@ -334,7 +351,6 @@ function HomeFeed() {
     cooldownHours: state.cooldownHours,
     excludeRatedFromDiscovery: state.excludeRatedFromDiscovery,
   })));
-  const isRecommendedHomeView = activeCategory === 'recommended';
   const recentProducerIds = useMemo(() => selectRecentProducerIds(entries), [entries]);
   const homeSourceContextKey = useMemo(() => JSON.stringify({
     filters: globalFilterSettings,
@@ -785,13 +801,14 @@ function HomeFeed() {
   });
 
   useEffect(() => {
-    if (restoredRecommendedEntryRef.current) {
-      const canRestoreCachedFeed = isRecommendedHomeView
+    if (restoredEntryKeyRef.current !== null) {
+      const canRestoreCachedFeed = restoredEntryKeyRef.current === location.key
+        && restoredCategory === activeCategory
         && restoredHomeFeed?.sourceContextKey === homeFeedContextKey
         && !restoredHomeFeed.initialLoadPending;
       if (canRestoreCachedFeed) return;
 
-      restoredRecommendedEntryRef.current = false;
+      restoredEntryKeyRef.current = null;
       clearHomeFeedSnapshot(location.key);
       // Do not recache the old list while a changed-context request is in flight.
       suppressStaleHomeFeedCacheRef.current = true;
@@ -813,14 +830,10 @@ function HomeFeed() {
     }
 
     fetchFirstPage(activeCategory, requestId);
-  }, [activeCategory, feedReload, hasHydrated, playlistsHydrated, homeFeedContextKey, isRecommendedHomeView, location.key, restoredHomeFeed]);
+  }, [activeCategory, feedReload, hasHydrated, playlistsHydrated, homeFeedContextKey, location.key, restoredCategory, restoredHomeFeed]);
 
+  // Every chip is kept for Back (the startup cache stays おすすめ-only: other chips have no startupSongs).
   useEffect(() => {
-    if (!isRecommendedHomeView) {
-      clearHomeFeedSnapshot(location.key);
-      restoredRecommendedEntryRef.current = false;
-      return;
-    }
     if (suppressStaleHomeFeedCacheRef.current) return;
     if (songs.length === 0 && startupSongs.length === 0) {
       if (!loading) clearHomeFeedSnapshot(location.key);
@@ -830,6 +843,7 @@ function HomeFeed() {
     // A failed later page is fetched again after Back (it is not counted as loaded).
     const pageIncomplete = loading || loadError === 'more';
     saveHomeFeedSnapshot(location.key, {
+      category: activeCategory,
       songs,
       startupSongs,
       page: pageIncomplete && page > 0 ? page - 1 : page,
@@ -840,9 +854,9 @@ function HomeFeed() {
       sourceContextKey: homeFeedContextKey,
     });
   }, [
+    activeCategory,
     hasMore,
     homeFeedContextKey,
-    isRecommendedHomeView,
     loadError,
     loading,
     location.key,
@@ -867,7 +881,7 @@ function HomeFeed() {
   }, [recordScrollPosition]);
 
   useEffect(() => {
-    if (!restoredRecommendedEntryRef.current || restoredScrollYRef.current === null) return;
+    if (restoredEntryKeyRef.current !== location.key || restoredScrollYRef.current === null) return;
     const scrollY = restoredScrollYRef.current;
     // At the top there is nothing to restore (scrolling there would undo the browser's own restoration).
     if (scrollY <= 0) {
@@ -1025,7 +1039,7 @@ function HomeFeed() {
       observerEntries => {
         if (observerEntries[0].isIntersecting) loadMore();
       },
-      { rootMargin: `0px 0px ${PREFETCH_MARGIN_PX}px 0px` },
+      PREFETCH_OBSERVER_OPTIONS,
     );
     observer.observe(el);
     return () => observer.disconnect();
@@ -1081,8 +1095,19 @@ function HomeFeed() {
   const selectCategory = useCallback((id: string) => {
     const nextCategory = asHomeCategoryId(id);
     if (nextCategory === activeCategory) return;
-    restoredRecommendedEntryRef.current = false;
+    // The new list opens at its first song: scrolled below the chips, go back up to them (not to
+    // the page top, which in the music layout would also scroll back over the shelves).
+    const feedRoot = feedRootRef.current;
+    const chipBar = chipBarRef.current;
+    if (feedRoot && chipBar) {
+      const stickyTop = Number.parseFloat(getComputedStyle(chipBar).top) || 0;
+      const feedTop = Math.max(0, feedRoot.getBoundingClientRect().top + window.scrollY - stickyTop);
+      if (window.scrollY > feedTop) window.scrollTo(0, feedTop);
+    }
+    restoredEntryKeyRef.current = null;
     clearHomeFeedSnapshot(location.key);
+    // Until the new chip's first page arrives there is nothing to keep for Back (not the old list).
+    suppressStaleHomeFeedCacheRef.current = true;
     firstHomePaintRecordedRef.current = false;
     pendingHomePaintRef.current = null;
     setStartupSongs([]);
@@ -1118,8 +1143,8 @@ function HomeFeed() {
 
   return (
     // A click that opens a song also records where the feed was (for Back).
-    <div className="w-full px-3 pb-6 sm:px-4 lg:px-6" onClickCapture={recordScrollPosition}>
-      <div className="sticky top-[calc(var(--header-height,56px)_+_var(--selection-bar-height,0px))] z-[var(--z-sticky,20)] -mx-3 bg-yt-bg px-3 py-3 sm:-mx-4 sm:px-4 lg:-mx-6 lg:px-6">
+    <div ref={feedRootRef} className="w-full px-3 pb-6 sm:px-4 lg:px-6" onClickCapture={recordScrollPosition}>
+      <div ref={chipBarRef} className="sticky top-[calc(var(--header-height,56px)_+_var(--selection-bar-height,0px))] z-[var(--z-sticky,20)] -mx-3 bg-yt-bg px-3 py-3 sm:-mx-4 sm:px-4 lg:-mx-6 lg:px-6">
         <CategoryChips
           chips={visibleCategories}
           activeChip={activeCategory}

@@ -269,6 +269,20 @@ try {
     await assertSinglePlayer(page, 'switching back to the standard layout');
     await assertVideoVisible(page, 'standard mini player after switching back');
     console.log('PASS switching back restores the standard frame without touching playback');
+
+    // The top bar's ⋮ offers the same choice, one click away from any page.
+    for (const value of ['music', 'standard']) {
+      const other = value === 'music' ? 'standard' : 'music';
+      await page.click('header button[aria-label="その他の操作"]');
+      await page.waitForSelector(`[data-testid="topnav-layout-${value}"]`, { visible: true });
+      const checked = await page.$eval(`[data-testid="topnav-layout-${other}"]`, item => item.getAttribute('aria-checked'));
+      if (checked !== 'true') throw new Error(`The ⋮ menu must mark the layout on screen (${other}), got ${checked}`);
+      await page.click(`[data-testid="topnav-layout-${value}"]`);
+      await page.waitForFunction(expected => (expected === 'music')
+        === (document.documentElement.dataset.shell === 'music'), { timeout: 15_000 }, value);
+      await assertSinglePlayer(page, `switching to ${value} from the top bar`);
+    }
+    console.log('PASS the top bar ⋮ switches the layout both ways without touching playback');
     await context.close();
   }
 
@@ -433,6 +447,29 @@ try {
     await context.close();
   }
 
+  // Phones: the drawer's switch changes the layout in one tap, both ways.
+  {
+    const context = await browser.createBrowserContext();
+    const page = await preparePage(context, { layout: 'music', viewport: { width: 390, height: 844, isMobile: true, hasTouch: true } });
+    await open(page);
+    await page.waitForFunction(() => document.documentElement.dataset.shell === 'music', { timeout: 30_000 });
+    await startPlayback(page);
+    await page.tap('button[aria-label="メニュー"]');
+    await page.waitForSelector('button[aria-label="メニューを閉じる"]', { visible: true });
+    for (const [checkedBefore, expected] of [[true, 'standard'], [false, 'music']]) {
+      const checked = await page.$eval('#drawer-music-layout', input => input.checked);
+      if (checked !== checkedBefore) throw new Error(`The drawer switch must show the layout on screen (music: ${checkedBefore}), got ${checked}`);
+      await page.tap('label:has(#drawer-music-layout)');
+      await page.waitForFunction(value => (value === 'music')
+        === (document.documentElement.dataset.shell === 'music'), { timeout: 15_000 }, expected);
+      await page.waitForSelector('button[aria-label="メニューを閉じる"]', { visible: true });
+      await assertSinglePlayer(page, `switching to ${expected} from the phone drawer`);
+    }
+    await assertNoHorizontalOverflow(page, 'phone drawer layout switch');
+    console.log('PASS the phone drawer switches the layout both ways in one tap');
+    await context.close();
+  }
+
   // Phones: muted playback can be unmuted from the mini bar, and ✕ closes the player.
   {
     const context = await browser.createBrowserContext();
@@ -451,8 +488,13 @@ try {
     await context.close();
   }
 
-  // Phones held sideways (short): the video sits whole in the corner, the bars end to its left.
-  for (const viewport of [{ width: 568, height: 320, isMobile: true, hasTouch: true }, { width: 740, height: 340, hasTouch: true }]) {
+  // Phones held sideways (short): the video sits whole in the corner, the bars end to its left, and
+  // every control of the bars stays clear of it (the player bar drops its optional parts).
+  for (const viewport of [
+    { width: 568, height: 320, isMobile: true, hasTouch: true },
+    { width: 740, height: 340, hasTouch: true },
+    { width: 844, height: 390, isMobile: true, hasTouch: true },
+  ]) {
     const context = await browser.createBrowserContext();
     const page = await preparePage(context, { layout: 'music', viewport });
     await open(page);
@@ -473,7 +515,74 @@ try {
     });
     if (overlap.underHeader || overlap.barsOverVideo) throw new Error(`Short screens keep the video clear of the header and bars ${JSON.stringify(overlap)}`);
     await assertNoHorizontalOverflow(page, `short screen ${viewport.width}×${viewport.height}`);
-    console.log(`PASS ${viewport.width}×${viewport.height}: video ${Math.round(card.width)}×${Math.round(card.height)} whole in the corner`);
+    // The bars' rects can end left of the video while their contents overflow under it (the fixed bar
+    // does not clip): a tap at each control's centre must reach that control, not the embed.
+    const reach = await page.evaluate(() => {
+      const bars = [...document.querySelectorAll('.music-player-bar, .music-mini-bar, .music-bottom-nav')];
+      const controls = bars.flatMap(bar => [...bar.querySelectorAll('button, a[href], [role="link"]')])
+        .filter(control => {
+          const rect = control.getBoundingClientRect();
+          return rect.width > 0 && rect.height > 0;
+        })
+        .map(control => {
+          const rect = control.getBoundingClientRect();
+          const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+          return {
+            name: control.dataset.testid || control.getAttribute('aria-label') || control.textContent.trim(),
+            reached: Boolean(hit && control.contains(hit)),
+          };
+        });
+      const bar = document.querySelector('[data-testid="music-player-bar"]');
+      const barShown = Boolean(bar && bar.getBoundingClientRect().width > 0);
+      return {
+        controls,
+        barShown,
+        barOverflow: barShown ? bar.scrollWidth - bar.clientWidth : 0,
+        line: barShown ? bar.querySelector('[role="slider"]')?.getBoundingClientRect().width ?? 0 : 0,
+      };
+    });
+    const missed = reach.controls.filter(control => !control.reached).map(control => control.name);
+    if (reach.controls.length === 0 || missed.length > 0) {
+      throw new Error(`Short screen ${viewport.width}×${viewport.height}: controls under the video ${JSON.stringify(missed)} of ${reach.controls.length}`);
+    }
+    if (reach.barShown) {
+      const required = ['music-play-toggle', 'music-player-queue', 'music-mute-toggle', 'music-player-more'];
+      const shown = new Set(reach.controls.map(control => control.name));
+      const absent = required.filter(name => !shown.has(name));
+      if (absent.length > 0 || reach.barOverflow > 1 || reach.line < 100) {
+        throw new Error(`The short-screen bar keeps play, queue, mute, ⋮ and the progress line inside it ${JSON.stringify({ absent, ...reach, controls: undefined })}`);
+      }
+      // The bar's progress line seeks on touch too (the standard mini player's is display-only there).
+      const seekLine = await page.waitForSelector('[data-testid="music-player-bar"] [role="slider"][tabindex="0"]', { timeout: 10_000 });
+      const seekPoint = await seekLine.evaluate(element => {
+        const rect = element.getBoundingClientRect();
+        return { x: rect.left + rect.width * 0.75, y: rect.top + rect.height / 2 };
+      });
+      await page.touchscreen.tap(seekPoint.x, seekPoint.y);
+      await page.waitForFunction(() => Math.abs(window.__yt.getCurrentTime() - 150) < 10, { timeout: 5_000 });
+
+      // プレイヤーを閉じる lives in the bar's ⋮ only.
+      await page.tap('[data-testid="music-player-more"]');
+      await page.waitForSelector('[role="menu"] [role="menuitem"]', { visible: true });
+      // Let the menu's opening scale settle before measuring where to tap.
+      await new Promise(resolve => setTimeout(resolve, 300));
+      const close = await page.evaluate(() => {
+        const item = [...document.querySelectorAll('[role="menu"] [role="menuitem"]')]
+          .find(element => element.textContent.trim() === 'プレイヤーを閉じる');
+        if (!item) return null;
+        item.scrollIntoView({ block: 'nearest' });
+        const rect = item.getBoundingClientRect();
+        const x = rect.left + rect.width / 2;
+        const y = rect.top + rect.height / 2;
+        const hit = document.elementFromPoint(x, y);
+        return { x, y, reached: Boolean(hit && item.contains(hit)) };
+      });
+      if (!close?.reached) throw new Error(`The bar's ⋮ must offer a reachable プレイヤーを閉じる ${JSON.stringify(close)}`);
+      await page.touchscreen.tap(close.x, close.y);
+      // The bar stays in place with nothing loaded.
+      await page.waitForFunction(() => document.querySelector('[data-testid="music-play-toggle"]')?.disabled === true, { timeout: 5_000 });
+    }
+    console.log(`PASS ${viewport.width}×${viewport.height}: video ${Math.round(card.width)}×${Math.round(card.height)} whole in the corner, ${reach.controls.length} controls clear of it${reach.barShown ? ', touch seeks, ⋮ closes the player' : ''}`);
     await context.close();
   }
 

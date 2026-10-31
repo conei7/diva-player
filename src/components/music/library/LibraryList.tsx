@@ -1,17 +1,20 @@
-import { useEffect, useId, useMemo, useRef } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { Link } from 'react-router';
+import { Link, useNavigate } from 'react-router';
 import { useTranslateSourceText } from '../../../i18n';
 import { useMediaQuery } from '../../../hooks/useMediaQuery';
+import { preloadRoute } from '../../../routes/routeLoaders';
 import { usePlaylistStore } from '../../../stores/playlistStore';
 import type { Playlist } from '../../../types/vocadb';
 import { displayPlaylistName } from '../../../utils/displayNames';
 import { playlistPath, playlistsPath } from '../../../utils/routes';
 import { NAV_ITEMS } from '../../layout/navItems';
+import { OverlayErrorBoundary } from '../../layout/RouteErrorBoundary';
 import type { NavId, NavItem } from '../../layout/navItems';
 import { useNavLabels } from '../../layout/navHooks';
 import { getPlaylistCoverCandidates } from '../../playlist/playlistDisplay';
 import { usePlaylistText } from '../../playlist/usePlaylistText';
+import IconButton from '../../ui/IconButton';
 import { SkeletonBlock } from '../../ui/Skeleton';
 import Tooltip from '../../ui/Tooltip';
 import { AddIcon, ChevronDownIcon, FolderIcon, PlaylistFilledIcon, PlaylistIcon } from '../../ui/icons';
@@ -28,6 +31,16 @@ import {
 import type { LibraryFolderGroup, LibrarySelection } from './libraryModel';
 import { LibraryIconTile, LibraryLink, RailTooltip } from './LibraryRow';
 import type { NavLinkHandlers } from './LibraryRow';
+
+// The new-playlist dialog is only fetched for a ＋ press (warmed on hover / focus), not with the frame.
+const loadNewPlaylistDialog = () => import('../../playlist/NewPlaylistDialog');
+const NewPlaylistDialog = lazy(loadNewPlaylistDialog);
+const preloadNewPlaylistDialog = () => void loadNewPlaylistDialog().catch(() => undefined);
+const CREATE_WARM_PROPS = {
+  onPointerEnter: preloadNewPlaylistDialog,
+  onFocus: preloadNewPlaylistDialog,
+  onTouchStart: preloadNewPlaylistDialog,
+};
 
 /** Fixed entries above the user's playlists (プレイリスト一覧 is the heading's link). */
 const FIXED_ENTRIES: readonly NavId[] = ['watchLater', 'ratings', 'history', 'favoriteProducers', 'reports'];
@@ -172,10 +185,11 @@ function LibraryPlaceholder({ rail }: { rail: boolean }) {
 }
 
 /**
- * The library part of the column (scrolls inside it): the 「ライブラリ」 heading with the link to the
- * playlist library, the fixed entries (後で聴く, 評価した曲, 履歴, お気に入りP, レポート) and the
- * user's playlists in the library page's saved order, grouped under their folders. Reads the
- * playlist store as it is (the app loads it); nothing here changes the saved playlists.
+ * The library part of the column (scrolls inside it): the 「ライブラリ」 heading with ＋ (new playlist)
+ * and the link to the playlist library, the fixed entries (後で聴く, 評価した曲, 履歴, お気に入りP,
+ * レポート) and the user's playlists in the library page's saved order, grouped under their folders.
+ * Reads the playlist store as it is (the app loads it); only ＋ adds a playlist, through the library
+ * page's own dialog, and then opens it.
  */
 export default function LibraryList({ rail, selection, linkProps }: LibraryListProps) {
   const t = useTranslateSourceText();
@@ -190,7 +204,26 @@ export default function LibraryList({ rail, selection, linkProps }: LibraryListP
   const nameTooltips = useMediaQuery(RAIL_NAME_TOOLTIP_MEDIA_QUERY);
   const order = useStoredPlaylistOrder();
   const model = useMemo(() => buildLibraryModel(playlists, folders, order), [folders, order, playlists]);
+  const navigate = useNavigate();
+  const [createOpen, setCreateOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const [moreBelow, setMoreBelow] = useState(false);
+
+  // The scrollbar only shows on hover, so a fade at the bottom says the list goes on (laptop heights
+  // and the rail often hide the user's playlists below the fixed entries).
+  const measureOverflow = useCallback(() => {
+    const list = scrollRef.current;
+    if (list) setMoreBelow(list.scrollTop + list.clientHeight < list.scrollHeight - 1);
+  }, []);
+  useEffect(() => {
+    measureOverflow();
+    if (typeof ResizeObserver === 'undefined') return undefined;
+    const observer = new ResizeObserver(() => measureOverflow());
+    if (scrollRef.current) observer.observe(scrollRef.current);
+    if (contentRef.current) observer.observe(contentRef.current);
+    return () => observer.disconnect();
+  }, [measureOverflow]);
 
   // Opening a playlist from elsewhere (a home shelf, the library page) brings its row into view.
   // Only this list scrolls (not the window, which belongs to the page).
@@ -234,12 +267,52 @@ export default function LibraryList({ rail, selection, linkProps }: LibraryListP
   const LibraryIcon = selection.libraryPage ? PlaylistFilledIcon : PlaylistIcon;
   const createLabel = t('プレイリストを作成');
 
+  const openCreate = () => {
+    // The new list opens right after 作成: fetch its page while the name is typed.
+    preloadRoute(playlistsPath());
+    setCreateOpen(true);
+  };
+  const createPlaylist = async (name: string, folderId?: string) => {
+    const playlist = await usePlaylistStore.getState().createPlaylist(name, folderId);
+    setCreateOpen(false);
+    // Its row then becomes the selected one and scrolls into view (selectedKey).
+    navigate(playlistPath(playlist.id));
+  };
+
+  /** The rail's ＋ tile (the full column has ＋ in its heading row). */
+  const railCreateTile = (emptyLibrary: boolean) => (
+    <RailTooltip rail label={createLabel}>
+      <button
+        type="button"
+        aria-label={createLabel}
+        aria-haspopup="dialog"
+        data-testid={emptyLibrary ? 'music-library-empty' : undefined}
+        onClick={openCreate}
+        className={cx(LIBRARY_ROW_CLASS, libraryRowStateClass(false), 'h-12 cursor-pointer justify-center')}
+        {...CREATE_WARM_PROPS}
+      >
+        <LibraryIconTile rail compact><AddIcon /></LibraryIconTile>
+      </button>
+    </RailTooltip>
+  );
+
   return (
-    <section aria-labelledby={headingId} className="flex min-h-[168px] flex-1 flex-col">
+    <section aria-labelledby={headingId} className="relative flex min-h-[168px] flex-1 flex-col">
       <div className={cx('flex shrink-0 items-center', rail ? 'px-2 pb-1 pt-2' : 'h-12 gap-2 pl-4 pr-2 pt-1')}>
         <h2 id={headingId} className={rail ? 'sr-only' : 'm-0 min-w-0 flex-1 truncate text-base font-bold leading-6 text-yt-text'}>
           {t('ライブラリ')}
         </h2>
+        {/* Full column only: the rail is short of height, so its ＋ is a tile after the playlists. */}
+        {!rail && (
+          <IconButton
+            label={createLabel}
+            icon={<AddIcon />}
+            tooltipPlacement="bottom"
+            aria-haspopup="dialog"
+            onClick={openCreate}
+            {...CREATE_WARM_PROPS}
+          />
+        )}
         <Tooltip content={libraryLabel} placement={rail ? 'right' : 'bottom'}>
           <Link
             to={playlistsPath()}
@@ -257,86 +330,98 @@ export default function LibraryList({ rail, selection, linkProps }: LibraryListP
         </Tooltip>
       </div>
 
+      {/* scroll-pb-8: a row reached with Tab stops above the bottom fade, not under it. */}
       <div
         ref={scrollRef}
-        className={cx('min-h-0 flex-1 pb-2 pt-1', rail ? 'px-1' : 'px-2', SCROLL_CLASS)}
+        onScroll={measureOverflow}
+        className={cx('min-h-0 flex-1 scroll-pb-8 pb-2 pt-1', rail ? 'px-1' : 'px-2', SCROLL_CLASS)}
         data-testid="music-library-list"
       >
-        <ul className="flex flex-col gap-0.5">
-          {FIXED_ENTRIES.map(id => {
-            const item = NAV_ITEMS[id];
-            const active = selection.navId === id;
-            const Icon = active ? item.activeIcon : item.icon;
-            const watchLater = id === 'watchLater' ? model.watchLater : null;
-            return (
-              <li key={id}>
-                <LibraryLink
-                  to={item.to}
-                  label={full[id]}
-                  meta={watchLater ? playlistMeta(watchLater) : undefined}
-                  art={<LibraryIconTile rail={rail}><Icon /></LibraryIconTile>}
-                  active={active}
-                  rail={rail}
-                  handlers={linkProps(item)}
-                />
-              </li>
-            );
-          })}
-        </ul>
-
-        <hr aria-hidden="true" className="mx-2 my-2 h-px border-0 bg-yt-divider" />
-
-        {!hasHydrated ? (
-          <LibraryPlaceholder rail={rail} />
-        ) : model.count === 0 ? (
-          rail ? (
-            <RailTooltip rail label={createLabel}>
-              <Link
-                to={playlistsPath()}
-                aria-label={createLabel}
-                data-testid="music-library-empty"
-                className={cx(LIBRARY_ROW_CLASS, libraryRowStateClass(false), 'h-14 justify-center')}
-                {...linkProps(NAV_ITEMS.playlists)}
-              >
-                <LibraryIconTile rail><AddIcon /></LibraryIconTile>
-              </Link>
-            </RailTooltip>
-          ) : (
-            <div className="rounded-lg bg-yt-tonal px-4 py-3" data-testid="music-library-empty">
-              <p className="m-0 text-sm font-medium leading-5 text-yt-text">{t('まだプレイリストはありません')}</p>
-              <Link
-                to={playlistsPath()}
-                className="mt-3 inline-flex h-9 items-center gap-1.5 rounded-full bg-yt-inverse pl-3 pr-4 text-sm font-medium leading-5 text-yt-on-inverse no-underline transition-colors duration-150 hover:bg-yt-inverse-hover"
-                {...linkProps(NAV_ITEMS.playlists)}
-              >
-                <AddIcon size={20} />
-                {createLabel}
-              </Link>
-            </div>
-          )
-        ) : (
-          <ul aria-label={t('プレイリスト')} className="flex flex-col gap-0.5">
-            {model.pinned.map(playlist => renderPlaylist(playlist))}
-            {model.folders.map(group => {
-              const open = !collapsedFolderIds.includes(group.folder.id);
+        {/* Observed for its height: a folder opening or the playlists arriving can start the overflow. */}
+        <div ref={contentRef}>
+          <ul className="flex flex-col gap-0.5">
+            {FIXED_ENTRIES.map(id => {
+              const item = NAV_ITEMS[id];
+              const active = selection.navId === id;
+              const Icon = active ? item.activeIcon : item.icon;
+              const watchLater = id === 'watchLater' ? model.watchLater : null;
               return (
-                <FolderEntry
-                  key={`folder:${group.folder.id}`}
-                  group={group}
-                  open={open}
-                  rail={rail}
-                  holdsActive={folderHoldsList(group, selection.listId)}
-                  tooltip={nameTooltips}
-                  onToggle={() => toggleFolder(group.folder.id)}
-                >
-                  {group.playlists.map(playlist => renderPlaylist(playlist, true))}
-                </FolderEntry>
+                <li key={id}>
+                  <LibraryLink
+                    to={item.to}
+                    label={full[id]}
+                    meta={watchLater ? playlistMeta(watchLater) : undefined}
+                    art={<LibraryIconTile rail={rail} compact><Icon /></LibraryIconTile>}
+                    active={active}
+                    rail={rail}
+                    compact
+                    handlers={linkProps(item)}
+                  />
+                </li>
               );
             })}
-            {model.unfiled.map(playlist => renderPlaylist(playlist))}
           </ul>
-        )}
+
+          <hr aria-hidden="true" className="mx-2 my-2 h-px border-0 bg-yt-divider" />
+
+          {!hasHydrated ? (
+            <LibraryPlaceholder rail={rail} />
+          ) : model.count === 0 ? (
+            rail ? railCreateTile(true) : (
+              <div className="rounded-lg bg-yt-tonal px-4 py-3" data-testid="music-library-empty">
+                <p className="m-0 text-sm font-medium leading-5 text-yt-text">{t('まだプレイリストはありません')}</p>
+                <button
+                  type="button"
+                  aria-haspopup="dialog"
+                  onClick={openCreate}
+                  className="mt-3 inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-full bg-yt-inverse pl-3 pr-4 text-sm font-medium leading-5 text-yt-on-inverse transition-colors duration-150 hover:bg-yt-inverse-hover"
+                  {...CREATE_WARM_PROPS}
+                >
+                  <AddIcon size={20} />
+                  {createLabel}
+                </button>
+              </div>
+            )
+          ) : (
+            <>
+              <ul aria-label={t('プレイリスト')} className="flex flex-col gap-0.5">
+                {model.pinned.map(playlist => renderPlaylist(playlist))}
+                {model.folders.map(group => {
+                  const open = !collapsedFolderIds.includes(group.folder.id);
+                  return (
+                    <FolderEntry
+                      key={`folder:${group.folder.id}`}
+                      group={group}
+                      open={open}
+                      rail={rail}
+                      holdsActive={folderHoldsList(group, selection.listId)}
+                      tooltip={nameTooltips}
+                      onToggle={() => toggleFolder(group.folder.id)}
+                    >
+                      {group.playlists.map(playlist => renderPlaylist(playlist, true))}
+                    </FolderEntry>
+                  );
+                })}
+                {model.unfiled.map(playlist => renderPlaylist(playlist))}
+              </ul>
+              {rail && <div className="mt-0.5">{railCreateTile(false)}</div>}
+            </>
+          )}
+        </div>
       </div>
+
+      {moreBelow && (
+        <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 bottom-0 h-8 bg-linear-to-t from-yt-bg to-transparent" />
+      )}
+
+      {/* The column sits outside the route boundary: a dialog chunk that fails to load closes the dialog only. */}
+      {createOpen && (
+        <Suspense fallback={null}>
+          <OverlayErrorBoundary onError={() => setCreateOpen(false)}>
+            <NewPlaylistDialog open folders={folders} onClose={() => setCreateOpen(false)} onCreate={createPlaylist} />
+          </OverlayErrorBoundary>
+        </Suspense>
+      )}
     </section>
   );
 }

@@ -11,8 +11,8 @@ import { useRatingStore } from '../../../stores/ratingStore';
 import { applyDiscoveryFilter, type DiscoveryFilterContext } from '../../../utils/globalFilters';
 import { playlistsPath } from '../../../utils/routes';
 import { NAV_ITEMS } from '../../layout/navItems';
+import { useNavLabels } from '../../layout/navHooks';
 import {
-  greetingPeriod,
   orderShelfPlaylists,
   readPlaylistListPreferences,
   selectRecentShelfSongs,
@@ -26,32 +26,33 @@ import {
 } from './musicHomeSources';
 import ShelfPlaylistCard from './ShelfPlaylistCard';
 import ShelfSongCard from './ShelfSongCard';
-import SongShelf from './SongShelf';
+import SongShelf, { SongShelfSkeleton } from './SongShelf';
 import { useShelfSongs } from './useShelfSongs';
 
 const NO_PLAYS: ReadonlyMap<number, number> = new Map();
 
 /**
- * Home in the music layout: a greeting, horizontal shelves of square cards (recently played, your
- * playlists, rankings, favourite producers) and the 「あなたへのおすすめ」 heading. HomePage renders the
+ * Home in the music layout: horizontal shelves of square cards (recently played, your playlists,
+ * rankings, favourite producers) and the 「あなたへのおすすめ」 heading. The page heading (ホーム) is
+ * for assistive tech only: the shelves start right under the top bar. HomePage renders the
  * existing feed (chips, grid, infinite scroll) right after it as a sibling, so switching the layout
- * never remounts or reloads the feed. Shelves load on their own, appear when ready and disappear
- * quietly when empty or failed.
+ * never remounts or reloads the feed. Shelves load on their own and never block the page. A shelf
+ * that almost always has cards (the network shelves, 最近再生した曲 when plays are stored) keeps its
+ * place with a skeleton while it loads, so nothing below jumps when it arrives; shelves that
+ * settle empty or fail disappear quietly.
  */
 export default function MusicHome() {
   const t = useTranslateSourceText();
   const finePointer = useMediaQuery(FINE_HOVER_MEDIA_QUERY);
-  // Fixed while the page is open, so the heading does not change under the reader.
-  const [period] = useState(() => greetingPeriod(new Date().getHours()));
-  const greeting = period === 'morning'
-    ? t('おはようございます')
-    : period === 'afternoon' ? t('こんにちは') : t('こんばんは');
+  const { full } = useNavLabels();
 
   return (
     <div data-testid="music-home" className="w-full">
-      <div className="w-full px-3 pt-4 sm:px-4 lg:px-6">
-        <h1 className="m-0 text-2xl font-bold leading-8 text-yt-text">{greeting}</h1>
-        <div className="mt-4 flex flex-col gap-6 sm:gap-8">
+      <div className="group/shelves w-full px-3 pt-4 sm:px-4 lg:px-6">
+        <h1 className="sr-only">{full.home}</h1>
+        {/* The skeletons are aria-hidden: one label for all of them, there while any is shown. */}
+        <span className="sr-only hidden group-has-[[data-testid=music-shelf-loading]]/shelves:block">{t('読み込み中…')}</span>
+        <div className="flex flex-col gap-6 sm:gap-8">
           <RecentShelf finePointer={finePointer} />
           <PlaylistShelf finePointer={finePointer} />
           <NetworkShelves finePointer={finePointer} />
@@ -71,6 +72,7 @@ export default function MusicHome() {
 function RecentShelf({ finePointer }: { finePointer: boolean }) {
   const t = useTranslateSourceText();
   const hydrated = useHistoryStore(state => state.hasHydrated);
+  const hasStoredPlays = useHistoryStore(state => (state.storedPlayCount ?? 0) > 0);
   const cleared = useHistoryStore(state => state.entries.length === 0);
   const hiddenSongs = useHiddenSongStore(state => state.hiddenSongs);
   const entriesRef = useRef<HistoryEntry[] | null>(null);
@@ -81,7 +83,9 @@ function RecentShelf({ finePointer }: { finePointer: boolean }) {
     [entries, hiddenSongs],
   );
 
-  if (!hydrated || cleared || songs.length === 0) return null;
+  // The song metadata takes a network round trip; the play count is read locally long before.
+  if (!hydrated) return hasStoredPlays ? <SongShelfSkeleton /> : null;
+  if (cleared || songs.length === 0) return null;
   return (
     <SongShelf shelf="recent" title={t('最近再生した曲')} seeAllTo={NAV_ITEMS.history.to} finePointer={finePointer}>
       {songs.map(song => <ShelfSongCard key={song.id} song={song} finePointer={finePointer} />)}
@@ -168,14 +172,16 @@ interface NetworkShelfProps {
 
 function NetworkShelf({ id, title, showRanks = false, sourceContext, discovery, hiddenSongs, ready, finePointer }: NetworkShelfProps) {
   const key = networkShelfKey(id, sourceContext);
-  const songs = useShelfSongs(id, key, () => loadNetworkShelfSongs(id, sourceContext));
+  const { songs, failed } = useShelfSongs(id, key, () => loadNetworkShelfSongs(id, sourceContext));
   // The same render-time filters as HomeFeed: hidden songs, then the discovery filter.
   const visible = useMemo(
     () => (songs ? applyDiscoveryFilter(excludeHiddenSongs(songs, hiddenSongs), discovery).slice(0, SHELF_SONG_LIMIT) : []),
     [discovery, hiddenSongs, songs],
   );
 
-  if (!ready || visible.length === 0) return null;
+  if (failed) return null;
+  if (!ready || songs === null) return <SongShelfSkeleton />;
+  if (visible.length === 0) return null;
   return (
     <SongShelf shelf={id} title={title} finePointer={finePointer}>
       {visible.map((song, index) => (

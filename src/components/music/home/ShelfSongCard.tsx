@@ -25,7 +25,8 @@ interface ShelfSongCardProps {
 
 /**
  * Square song card of a Home shelf. The artwork (and its ▶) plays the song here, Home stays open;
- * the title opens the song page (`…&autoplay=0`, so a new tab never takes over playback).
+ * the title (and the artist line under it) opens the song page (`…&autoplay=0`, so a new tab never
+ * takes over playback).
  * In selection mode the artwork selects the song instead.
  */
 export default function ShelfSongCard({ song, rank, finePointer }: ShelfSongCardProps) {
@@ -129,14 +130,15 @@ export default function ShelfSongCard({ song, rank, finePointer }: ShelfSongCard
       </div>
 
       <div className="mt-2 flex items-start gap-0.5">
-        <div className="min-w-0 flex-1">
+        {/* relative: the title link's ::after covers the title and artist lines (a touch-sized target). */}
+        <div className="relative min-w-0 flex-1">
           <h3 className={cx('m-0 text-sm font-medium leading-5', isCurrent ? 'text-brand' : 'text-yt-text')}>
             {isSelectionMode ? (
               <span className="line-clamp-2 break-words">{song.name}</span>
             ) : (
               <Link
                 to={href}
-                className="line-clamp-2 break-words rounded-sm text-inherit no-underline hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-yt-focus"
+                className="line-clamp-2 break-words rounded-sm text-inherit no-underline hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-yt-focus after:absolute after:inset-x-0 after:-top-1 after:bottom-0 after:content-['']"
               >
                 {song.name}
               </Link>

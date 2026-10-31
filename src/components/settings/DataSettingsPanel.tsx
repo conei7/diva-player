@@ -151,7 +151,7 @@ export default function DataSettingsPanel({ onLinkClick }: DataSettingsPanelProp
         </Link>
       </div>
 
-      <p className="mt-2 text-xs leading-[18px] text-yt-text-disabled">{t('データはこのブラウザに保存されています')}</p>
+      <p className="mt-2 text-xs leading-[18px] text-yt-text-secondary">{t('データはこのブラウザに保存されています')}</p>
 
       {restore && (
         <RestoreBackupDialog

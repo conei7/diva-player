@@ -1,6 +1,6 @@
 /**
  * Pure helpers of the music layout's Home shelves (no network, no React): which songs and
- * playlists a shelf shows, the shelf result cache and the greeting.
+ * playlists a shelf shows and the shelf result cache.
  */
 import type { Playlist, Song } from '../../../types/vocadb';
 import { latestPlayPerSong } from '../../library/historyGroups';
@@ -66,15 +66,6 @@ export function orderShelfPlaylists(
     order.sortOrder,
   );
   return [...pinned, ...rest].slice(0, Math.max(0, limit));
-}
-
-export type GreetingPeriod = 'morning' | 'afternoon' | 'evening';
-
-/** おはようございます 5:00–10:59, こんにちは 11:00–17:59, こんばんは otherwise. */
-export function greetingPeriod(hour: number): GreetingPeriod {
-  if (hour >= 5 && hour < 11) return 'morning';
-  if (hour >= 11 && hour < 18) return 'afternoon';
-  return 'evening';
 }
 
 /* ─── Shelf result cache ─────────────────────────────────────────────────── */

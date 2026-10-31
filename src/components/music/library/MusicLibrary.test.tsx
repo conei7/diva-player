@@ -13,7 +13,7 @@ import type { Playlist } from '../../../types/vocadb';
 import MusicLibrary from '../MusicLibrary';
 import { useLibraryFolderStore } from './libraryHooks';
 
-const media = vi.hoisted(() => ({ wide: false }));
+const media = vi.hoisted(() => ({ wide: false, captions: false }));
 
 /*
  * Static rendering reads a zustand store's server snapshot, which is its initial state. These stores
@@ -39,9 +39,14 @@ vi.mock('zustand', async importOriginal => {
 
 vi.mock('../../../hooks/useMediaQuery', async importOriginal => {
   const actual = await importOriginal<typeof import('../../../hooks/useMediaQuery')>();
+  const { RAIL_CAPTION_MEDIA_QUERY } = await import('./libraryModel');
   return {
     ...actual,
-    useMediaQuery: (query: string) => (query === actual.MUSIC_LIBRARY_FULL_MEDIA_QUERY ? media.wide : false),
+    useMediaQuery: (query: string) => {
+      if (query === actual.MUSIC_LIBRARY_FULL_MEDIA_QUERY) return media.wide;
+      if (query === RAIL_CAPTION_MEDIA_QUERY) return media.captions;
+      return false;
+    },
   };
 });
 
@@ -52,6 +57,14 @@ function playlist(id: string, patch: Partial<Playlist> = {}): Playlist {
 const initialPlaylistState = usePlaylistStore.getState();
 const initialUiState = useUiStore.getState();
 const initialFolderState = useLibraryFolderStore.getState();
+
+/** The opening tag of the first element that has `attribute` (e.g. 'href="/history"'). */
+function tagWith(html: string, attribute: string): string {
+  const end = html.indexOf(attribute);
+  expect(end).toBeGreaterThan(-1);
+  const start = html.lastIndexOf('<', end);
+  return html.slice(start, html.indexOf('>', end) + 1);
+}
 
 function render(path: string): string {
   return renderToStaticMarkup(
@@ -65,6 +78,7 @@ describe('MusicLibrary', () => {
   beforeEach(() => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     media.wide = false;
+    media.captions = false;
     useUiStore.setState({ sidebarExpanded: true, pendingNavigation: null });
     usePlaylistStore.setState({
       hasHydrated: true,
@@ -133,5 +147,57 @@ describe('MusicLibrary', () => {
     const html = render('/');
     expect(html).toContain('data-testid="music-library-empty"');
     expect(html).toContain('まだプレイリストはありません');
+    // 「＋ プレイリストを作成」 opens the new-playlist dialog here (it used to only open /playlists).
+    const empty = html.slice(html.indexOf('data-testid="music-library-empty"'));
+    expect(empty).toMatch(/^[^<]*<p[^>]*>まだプレイリストはありません<\/p><button type="button" aria-haspopup="dialog"[^>]*>.*?プレイリストを作成<\/button>/);
+    expect(html.match(/aria-haspopup="dialog"/g)).toHaveLength(2);
+    // The rail's empty state is the ＋ tile itself.
+    media.wide = false;
+    expect(render('/')).toMatch(/<button type="button" aria-label="プレイリストを作成" aria-haspopup="dialog" data-testid="music-library-empty"/);
+  });
+
+  it('can create a playlist once there are playlists: ＋ in the heading, or as the last tile of the rail', () => {
+    media.wide = true;
+    const full = render('/');
+    expect(full).not.toContain('data-testid="music-library-empty"');
+    expect(full).toMatch(/<button type="button" aria-label="プレイリストを作成" aria-haspopup="dialog"[^>]*>/);
+    // Before the プレイリスト一覧 link, in the heading row.
+    expect(full.indexOf('aria-label="プレイリストを作成"')).toBeLessThan(full.indexOf('aria-label="プレイリスト一覧"'));
+    expect(full).not.toContain('role="dialog"');
+
+    media.wide = false;
+    const rail = render('/');
+    expect(rail.match(/aria-label="プレイリストを作成"/g)).toHaveLength(1);
+    expect(tagWith(rail, 'aria-label="プレイリストを作成"')).toMatch(/^<button type="button"[^>]*aria-haspopup="dialog"/);
+    expect(rail.indexOf('aria-label="プレイリストを作成"')).toBeGreaterThan(rail.indexOf('aria-label="List orphan"'));
+  });
+
+  it('keeps the fixed entries in 48px rows and the playlists in 56px cover rows', () => {
+    for (const wide of [true, false]) {
+      media.wide = wide;
+      const html = render('/');
+      expect(tagWith(html, 'href="/history"')).toMatch(/class="[^"]*\bh-12\b/);
+      expect(tagWith(html, 'href="/playlists?list=loose"')).toMatch(/class="[^"]*\bh-14\b/);
+    }
+  });
+
+  it('names the top destinations under their icons in the rail of a touch tablet', () => {
+    media.captions = true;
+    const rail = render('/');
+    // The caption is visual only: the link's accessible name stays its aria-label.
+    expect(rail).toMatch(/<a aria-label="サビ発掘"[^>]*class="[^"]*flex-col[^"]*"[^>]*><svg[^>]*>.*?<\/svg><span aria-hidden="true" class="[^"]*text-\[10px\][^"]*">サビ発掘<\/span><\/a>/);
+    expect(rail).toMatch(/<span aria-hidden="true" class="[^"]*">曲調マップ<\/span>/);
+    // 64px rows (not the rail's 56px), so 発掘ミックス fits without 「…」.
+    expect(rail).toContain('<nav aria-label="メイン" class="shrink-0 px-1 py-2">');
+    expect(rail).toContain('[&amp;&gt;button]:px-0 ');
+    // 発掘ミックス keeps its visible label (no sr-only in the caption variant).
+    expect(rail).not.toContain('[&amp;&gt;button&gt;span]:sr-only');
+
+    media.wide = true;
+    const full = render('/');
+    expect(full).not.toMatch(/<span aria-hidden="true" class="[^"]*text-\[10px\]/);
+    media.wide = false;
+    media.captions = false;
+    expect(render('/')).toContain('[&amp;&gt;button&gt;span]:sr-only');
   });
 });

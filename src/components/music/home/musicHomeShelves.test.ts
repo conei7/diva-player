@@ -3,7 +3,6 @@ import type { Playlist, Song } from '../../../types/vocadb';
 import { DEFAULT_PLAYLIST_LIST_PREFERENCES } from '../../../utils/playlistListPreferences';
 import {
   clearShelfCacheForTests,
-  greetingPeriod,
   orderShelfPlaylists,
   peekShelfSongs,
   pendingShelfSongs,
@@ -81,14 +80,6 @@ describe('orderShelfPlaylists', () => {
   it('shows at most the limit', () => {
     const lists = Array.from({ length: 30 }, (_, index) => playlist(`p${index}`, `P${index}`, index));
     expect(orderShelfPlaylists(lists, DEFAULT_PLAYLIST_LIST_PREFERENCES, 24)).toHaveLength(24);
-  });
-});
-
-describe('greetingPeriod', () => {
-  it('says good morning from 5:00, good afternoon from 11:00 and good evening from 18:00', () => {
-    expect([4, 5, 10, 11, 17, 18, 23, 0].map(greetingPeriod)).toEqual([
-      'evening', 'morning', 'morning', 'afternoon', 'afternoon', 'evening', 'evening', 'evening',
-    ]);
   });
 });
 

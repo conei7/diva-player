@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect } from 'react';
 import { translateSourceText } from '../../i18n';
 import { useLanguageStore } from '../../stores/languageStore';
+import { selectCanGoNext } from '../../hooks/useCanGoNext';
 import { usePlayerStore } from '../../stores/playerStore';
 import { useProgressStore } from '../../stores/progressStore';
 import { dismissToast, showToast } from '../../stores/toastStore';
@@ -67,8 +68,10 @@ export default function KeyboardShortcuts() {
         event.preventDefault();
         const forward = event.key === 'ArrowRight';
         if (event.shiftKey) {
-          if (forward) player.next();
-          else player.previous();
+          // At the end of the queue next() would stop playback, so Shift+→ does nothing there (like 次の曲).
+          if (forward) {
+            if (selectCanGoNext(player)) player.next();
+          } else player.previous();
           return;
         }
         const { progress, duration } = useProgressStore.getState();

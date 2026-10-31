@@ -196,12 +196,15 @@ export default function GroupSoundMapPage() {
             {result.matchingCount > 876 && viewport.zoom < 256 && <span>{t('拡大すると、さらに曲が表示されます')}</span>}
             {selected && !draft.includes(selected.songId) && <Button size="sm" disabled={draft.length >= 20} onClick={() => add(selected.songId)}>{t('選択した曲を追加')}</Button>}
           </div>
-          <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_400px]">
-            <SoundMapCanvas items={items} knownIds={known} originId={ids[0]} originIds={groupIds} maxZoom={256} allowTouchPan selectedId={selected?.songId ?? null} viewport={viewport} axes={result.axes} loading={loading} canGoBack={false}
-              onSelect={setSelectedPoint} onViewportChange={updateViewport} onFocusOrigin={() => updateViewport(result.initialViewport)} onBack={() => undefined} />
-            <div className="flex min-w-0 flex-col gap-6">
-              {!mobile && selectionProps && <SoundMapSelectionCard {...selectionProps} />}
-              <SoundMapNearby points={nearby} selectedId={selected?.songId ?? null} songsById={songs} actionsDisabled={false} initialCount={20} expanded={false} onExpandedChange={() => undefined} onSelect={setSelectedPoint} />
+          {/* Columns by the page's width, as on the single-song map; the fixed bar below stays outside. */}
+          <div className="@container">
+            <div className="grid items-start gap-6 @min-[52rem]:grid-cols-[minmax(0,1fr)_400px]">
+              <SoundMapCanvas items={items} knownIds={known} originId={ids[0]} originIds={groupIds} maxZoom={256} allowTouchPan selectedId={selected?.songId ?? null} viewport={viewport} axes={result.axes} loading={loading} canGoBack={false}
+                onSelect={setSelectedPoint} onViewportChange={updateViewport} onFocusOrigin={() => updateViewport(result.initialViewport)} onBack={() => undefined} />
+              <div className="flex min-w-0 flex-col gap-6">
+                {!mobile && selectionProps && <SoundMapSelectionCard {...selectionProps} />}
+                <SoundMapNearby points={nearby} selectedId={selected?.songId ?? null} songsById={songs} actionsDisabled={false} initialCount={20} expanded={false} onExpandedChange={() => undefined} onSelect={setSelectedPoint} />
+              </div>
             </div>
           </div>
           {mobile && selectionProps && <SoundMapSelectionBar {...selectionProps} />}

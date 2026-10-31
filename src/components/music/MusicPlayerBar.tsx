@@ -55,7 +55,7 @@ function PlayerBarSong({ song }: { song: Song | null }) {
   return (
     <div className="flex min-w-0 items-center gap-3">
       {/* The title is the same link for the keyboard and screen readers. */}
-      <Link to={songPath} tabIndex={-1} aria-hidden="true" className="shrink-0 rounded-[4px]">
+      <Link to={songPath} tabIndex={-1} aria-hidden="true" data-bar-optional="" className="shrink-0 rounded-[4px]">
         <SquareArt song={song} className="size-14" loading="eager" />
       </Link>
       <div className="min-w-0">
@@ -74,6 +74,7 @@ function PlayerBarSong({ song }: { song: Song | null }) {
         label={t('プレイリストに保存')}
         icon={<PlaylistAddIcon />}
         tooltipPlacement="top"
+        data-bar-optional=""
         onClick={() => openSaveToPlaylist(song)}
       />
     </div>
@@ -112,8 +113,9 @@ function PlayerBarExtras({ view, wide }: { view: QueueView; wide: boolean }) {
         <IconButton
           label={t('再生中')}
           icon={<NowPlayingViewIcon />}
-          // The song page shows the video in the page instead of the panel.
-          pressed={nowPlayingOpen && !isWatch}
+          // Off while it is disabled: the song page shows the video in the page instead of the panel,
+          // and without a song there is no panel (the saved choice still opens it with the next one).
+          pressed={hasSong && nowPlayingOpen && !isWatch}
           disabled={!hasSong || isWatch}
           tooltipPlacement="left"
           data-testid="music-now-playing-toggle"
@@ -143,7 +145,9 @@ function PlayerBarExtras({ view, wide }: { view: QueueView; wide: boolean }) {
  * MusicMiniBar). Three areas: the song on the left, the transport and progress in the middle (at most
  * 720px, always centred), and the extras on the right. Everything stays in place but disabled while no
  * song is loaded. It holds the same controls and rules as the standard layout's mini player, which the
- * music layout does not show.
+ * music layout does not show. While the video sits in the corner of a short screen (a phone held
+ * sideways) the bar ends left of it, and index.css hides the `data-bar-optional` parts so the rest
+ * (the song, 前 / 再生 / 次, キュー, ミュート and ⋮ with プレイヤーを閉じる) stays clear of the video.
  */
 export default function MusicPlayerBar() {
   const t = useTranslateSourceText();
@@ -165,7 +169,7 @@ export default function MusicPlayerBar() {
       data-testid="music-player-bar"
     >
       <PlayerBarSong song={song} />
-      <PlayerBarTransport view={view} />
+      <PlayerBarTransport />
       <PlayerBarExtras view={view} wide={wide} />
     </section>
   );

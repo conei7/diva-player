@@ -14,7 +14,8 @@ import { useSelectionStore } from '../../../stores/selectionStore';
 import { playShelfPlaylist, playShelfSong } from './musicHomeSources';
 import ShelfPlaylistCard from './ShelfPlaylistCard';
 import ShelfSongCard from './ShelfSongCard';
-import SongShelf from './SongShelf';
+import { SHELF_CARD_WIDTH_CLASS } from './musicHomeShelves';
+import SongShelf, { SongShelfSkeleton } from './SongShelf';
 
 /*
  * Static rendering reads a zustand store's server snapshot, which is its initial state. These stores
@@ -95,6 +96,13 @@ describe('ShelfSongCard', () => {
     expect(html).not.toContain('data-now-playing');
   });
 
+  it('opens the song page from the title and the artist line (one touch-sized link)', () => {
+    const html = render(<ul><ShelfSongCard song={song} finePointer={false} /></ul>);
+    // The link's ::after fills its positioned text column; the ⋮ beside the column keeps its own target.
+    expect(html).toMatch(/<div class="relative min-w-0 flex-1"><h3[^>]*><a [^>]*class="[^"]*after:absolute after:inset-x-0 after:-top-1 after:bottom-0[^"]*"[^>]*>Fixture song<\/a><\/h3><p /);
+    expect(html.match(/href="\/watch\?v=4242&amp;autoplay=0"/g)).toHaveLength(1);
+  });
+
   it('shows the rank and the playing state, and offers 一時停止 for the playing song', () => {
     usePlayerStore.setState({ currentSong: song, isPlaying: true });
     const html = render(<ul><ShelfSongCard song={song} rank={3} finePointer /></ul>);
@@ -126,6 +134,8 @@ describe('ShelfPlaylistCard', () => {
     expect(html).toContain('aria-label="「Drive」を再生"');
     expect(html).toContain('2曲');
     expect(html).toContain('aspect-square');
+    // The name link also covers the kind line under it (a positioned wrapper, not the whole card).
+    expect(html).toMatch(/<div class="relative mt-2"><h3[^>]*><a [^>]*class="[^"]*after:absolute after:inset-x-0[^"]*"[^>]*>Drive<\/a><\/h3><p /);
   });
 
   it('has no ▶ for an empty playlist', () => {
@@ -149,6 +159,20 @@ describe('SongShelf', () => {
     expect(html).toContain('overflow-x-auto');
     expect(html).toContain('snap-x');
     expect(html).toContain('<ul role="list"');
+  });
+
+  it('has a skeleton with the geometry of a shelf that the E2E does not count as one', () => {
+    const html = render(<SongShelfSkeleton />);
+    expect(html).toMatch(/^<div data-testid="music-shelf-loading" aria-hidden="true"/);
+    // The header row, the scroller's py-1 and cards of the real width with two title lines.
+    expect(html).toContain('class="mb-2 flex min-h-10 items-center"');
+    expect(html).toContain('py-1');
+    expect(html.split(`class="shrink-0 ${SHELF_CARD_WIDTH_CLASS}"`).length - 1).toBeGreaterThanOrEqual(6);
+    expect(html).toContain('aspect-[1/1]');
+    expect(html).toContain('h-[62px]');
+    expect(html).not.toContain('music-shelf"');
+    expect(html).not.toContain('aspect-square');
+    expect(html).not.toContain('<h2');
   });
 });
 

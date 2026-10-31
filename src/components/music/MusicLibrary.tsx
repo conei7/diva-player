@@ -68,7 +68,8 @@ function LibraryFooter({
  * The music layout's library column (from 640px; phones keep the drawer): the main destinations,
  * the library (fixed entries and the user's playlists by folder) and 表示しない曲 / 設定. 280px with
  * names when the window is wide (MUSIC_LIBRARY_FULL_MEDIA_QUERY) and the top bar's ≡ has the guide
- * expanded, otherwise a 72px rail of icons and covers whose names are tooltips. The width itself
+ * expanded, otherwise a 72px rail of icons and covers whose names are tooltips (touch tablets, which
+ * get no tooltips, show the top destinations' names under their icons). The width itself
  * comes from `<html data-music-library>` (set by MusicDock with the same rule) and index.css.
  */
 export default function MusicLibrary() {

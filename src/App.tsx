@@ -56,6 +56,18 @@ const SoundMapPage = lazy(() => loadRoute('soundMap'));
 const AutoQueueRunner = lazy(() => import('./components/player/AutoQueueRunner'));
 const MediaSession = lazy(() => import('./components/player/MediaSession'));
 
+/**
+ * Home's URL searches and artist song lists get their own tab title, so the browser history tells
+ * them apart (the same name as the results' heading). The feed keeps the default title.
+ */
+function homeTitleName(search: string, tk: ReturnType<typeof useTranslate>): string | undefined {
+  const params = new URLSearchParams(search);
+  const query = params.get('q')?.trim();
+  if (query) return tk('searchResults', { query });
+  const artistName = params.get('artistName')?.trim();
+  return artistName && /^\d+$/.test(params.get('artistId') ?? '') ? artistName : undefined;
+}
+
 /** The old song page URL: /playing?v=… → /watch?v=… (replace, so Back skips it). */
 function LegacyPlayingRedirect() {
   const { search } = useLocation();
@@ -69,10 +81,12 @@ function LegacyPlayingRedirect() {
  * GlobalPlayer はルートの外に常駐させ、ページを移っても再生が途切れない。
  */
 
-function PlayerTracker() {
+/** Listening history and implicit feedback of each playback (exported for its tests). */
+export function PlayerTracker() {
   const currentSong = usePlayerStore(s => s.currentSong);
   const currentPlaybackSource = usePlayerStore(s => s.currentPlaybackSource);
   const currentPlaybackSequence = usePlayerStore(s => s.playbackSequence);
+  const undoableCloseSequence = usePlayerStore(s => s.undoableCloseSequence);
   const progress = useProgressStore(s => s.progress);
   const duration = useProgressStore(s => s.duration);
 
@@ -109,7 +123,11 @@ function PlayerTracker() {
       const outcome = previous.progress < 30 || completionRate < 0.2
         ? 'skip'
         : completionRate >= 0.7 ? 'complete' : 'neutral';
-      useAutoPlaySessionStore.getState().recordAutoPlaybackOutcome(outcome);
+      // The close of a play still waiting for its 元に戻す ended that play's session: a session
+      // started since (another song played meanwhile) is not its.
+      if (previous.playbackSequence !== usePlayerStore.getState().undoableCloseSequence) {
+        useAutoPlaySessionStore.getState().recordAutoPlaybackOutcome(outcome);
+      }
       const decision = useAutoQueueDecisionStore.getState().getLatestDecisionForSong(previous.id);
       if (decision) useAutoQueueBanditStore.getState().recordOutcome(decision.strategyArm, outcome);
     }
@@ -118,7 +136,10 @@ function PlayerTracker() {
   // 視聴履歴 + 暗黙的フィードバック
   useEffect(() => {
     if (!currentSong) {
-      if (prevSongRef.current) finalizePreviousPlayback(prevSongRef.current);
+      // An undoable close waits for its 元に戻す to go (below): undone, the same play goes on.
+      if (prevSongRef.current && prevSongRef.current.playbackSequence !== undoableCloseSequence) {
+        finalizePreviousPlayback(prevSongRef.current);
+      }
       useProgressStore.getState().resetProgress();
       return;
     }
@@ -160,12 +181,24 @@ function PlayerTracker() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentSong?.id, currentPlaybackSequence, historyHydrated]);
 
+  // The undo window of a close ended without 元に戻す: the closed play counts now. (Another song
+  // started meanwhile has already finalized it above; pagehide finalizes it too.)
+  useEffect(() => {
+    if (undoableCloseSequence === null && !usePlayerStore.getState().currentSong && prevSongRef.current) {
+      finalizePreviousPlayback(prevSongRef.current);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [undoableCloseSequence]);
+
   // progress/duration を prevSongRef に反映
   useEffect(() => {
     if (prevSongRef.current && currentSong && prevSongRef.current.id === currentSong.id) {
+      const { isPlaying, seekTarget } = usePlayerStore.getState();
       prevSongRef.current = {
         id: currentSong.id,
-        progress,
+        // A paused 元に戻す only cues the video: until 再生 applies its seek, the play is at the
+        // seek target, not at the 0 the embed shows meanwhile.
+        progress: !isPlaying && seekTarget !== null ? seekTarget : progress,
         duration,
         source: currentPlaybackSource,
         playbackSequence: prevSongRef.current.playbackSequence,
@@ -176,7 +209,15 @@ function PlayerTracker() {
 
   useEffect(() => {
     const finalizeOnPageHide = () => {
-      if (prevSongRef.current) finalizePreviousPlayback(prevSongRef.current);
+      const previous = prevSongRef.current;
+      if (!previous) return;
+      finalizePreviousPlayback(previous);
+      // A close waiting for its 元に戻す is counted now, so an undo after a bfcache return
+      // starts a new play instead of going on with this finalized one.
+      const player = usePlayerStore.getState();
+      if (!player.currentSong && player.undoableCloseSequence === previous.playbackSequence) {
+        usePlayerStore.setState({ undoableCloseSequence: null });
+      }
     };
     window.addEventListener('pagehide', finalizeOnPageHide);
     return () => window.removeEventListener('pagehide', finalizeOnPageHide);
@@ -225,9 +266,11 @@ function AppContent() {
 
     const path = location.pathname.replace(/\/+$/, '') || '/';
     const key = PAGE_TITLE_KEYS[path];
-    const name = key ? tk(key) : path === '/settings/hidden-songs' ? t('表示しない曲') : undefined;
+    let name = key ? tk(key) : undefined;
+    if (path === '/settings/hidden-songs') name = t('表示しない曲');
+    else if (path === '/') name = homeTitleName(location.search, tk);
     document.title = pageDocumentTitle(name, language);
-  }, [currentSong, isWatchRoute, language, location.pathname, requestedSongId, t, tk, watchTitleState]);
+  }, [currentSong, isWatchRoute, language, location.pathname, location.search, requestedSongId, t, tk, watchTitleState]);
 
   useEffect(() => {
     document.documentElement.lang = language;

@@ -162,6 +162,16 @@ describe('MusicNowPlayingPanel', () => {
     expect(html).toContain('最後の曲です');
   });
 
+  it('keeps ⋮ by 次に再生 but leaves the transport to the player bar under the panel', () => {
+    usePlayerStore.setState({ isPlaying: true });
+    const html = render();
+    const queue = html.slice(html.indexOf('data-testid="music-now-playing-queue"'));
+    expect(queue).toContain('aria-label="キューのその他の操作"');
+    for (const label of ['前の曲', '一時停止', '再生', '次の曲', 'シャッフル', 'ループ: オフ']) {
+      expect(queue).not.toContain(`aria-label="${label}"`);
+    }
+  });
+
   it('renders nothing without a song', () => {
     usePlayerStore.setState({ currentSong: null });
     expect(render()).toBe('');

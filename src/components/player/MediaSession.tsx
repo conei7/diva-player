@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import { selectCanGoNext } from '../../hooks/useCanGoNext';
 import { usePlayerStore } from '../../stores/playerStore';
 import { useProgressStore } from '../../stores/progressStore';
 
@@ -51,7 +52,10 @@ export default function MediaSession() {
     navigator.mediaSession.setActionHandler('play', resume);
     navigator.mediaSession.setActionHandler('pause', pause);
     navigator.mediaSession.setActionHandler('previoustrack', previous);
-    navigator.mediaSession.setActionHandler('nexttrack', next);
+    // At the end of the queue next() would stop playback: ignored there, like the disabled 次の曲.
+    navigator.mediaSession.setActionHandler('nexttrack', () => {
+      if (selectCanGoNext(usePlayerStore.getState())) next();
+    });
     navigator.mediaSession.setActionHandler('seekbackward', () => seekTo(Math.max(0, progress - 10)));
     navigator.mediaSession.setActionHandler('seekforward', () => seekTo(Math.min(duration, progress + 10)));
 

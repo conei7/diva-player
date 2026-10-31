@@ -9,6 +9,7 @@ import {
 } from '../services/historyStats';
 import { useAutoPlaySessionStore } from '../stores/autoPlaySessionStore';
 import { useAutoQueueDecisionStore } from '../stores/autoQueueDecisionStore';
+import { useHistoryStore } from '../stores/historyStore';
 import { useLanguageStore } from '../stores/languageStore';
 import { showToast } from '../stores/toastStore';
 import { useTranslateSourceText } from '../i18n';
@@ -24,7 +25,7 @@ import Menu, { MenuItem } from '../components/ui/Menu';
 import { PageHeader, PageShell } from '../components/ui/PageHeader';
 import { SkeletonBlock } from '../components/ui/Skeleton';
 import SongListRow from '../components/ui/SongListRow';
-import { BarChartIcon, ChevronDownIcon, DownloadIcon, ErrorIcon, MoreVertIcon } from '../components/ui/icons';
+import { BarChartIcon, ChevronDownIcon, DownloadIcon, ErrorIcon, HistoryIcon, MoreVertIcon } from '../components/ui/icons';
 import MetricTabs from '../components/library/MetricTabs';
 import PeriodMenu from '../components/library/PeriodMenu';
 import ReportChart from '../components/library/ReportChart';
@@ -83,6 +84,8 @@ export default function ReportsPage() {
   const [showAllTopSongs, setShowAllTopSongs] = useState(false);
   const autoPlaySession = useAutoPlaySessionStore(state => state.session);
   const autoQueueDecisionCount = useAutoQueueDecisionStore(state => state.decisions.length);
+  // Nothing was ever played (or the history was cleared): every period is empty, so 「前の期間」 would lead nowhere.
+  const noHistory = useHistoryStore(state => state.hasHydrated && state.totalPlays === 0 && state.entries.length === 0);
 
   useEffect(() => {
     let current = true;
@@ -157,6 +160,8 @@ export default function ReportsPage() {
         action={{ label: t('再試行'), onClick: () => setReloadToken(token => token + 1) }}
       />
     );
+  } else if (noHistory) {
+    body = <EmptyState icon={<HistoryIcon />} title={t('再生履歴はありません')} action={{ label: t('曲を探す'), to: '/' }} />;
   } else if (!currentReport) {
     body = (
       <div aria-busy="true">

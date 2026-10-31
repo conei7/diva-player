@@ -11,13 +11,24 @@ import { clampFraction, getChorusRange, pointerFraction } from './playerUi';
 const SEEK_SETTLE_MS = 700;
 const KEY_STEP_SECONDS = 5;
 
+interface ProgressLineProps {
+  /** Click / drag seeks. The mini player passes it for a mouse only (its row below is a swipe surface). */
+  seekable: boolean;
+  /**
+   * A 24px tall hit area on touch screens, mostly below the line, without moving the visuals. For
+   * the music layout's player bar, which seeks on touch and has room under its line.
+   */
+  touchTarget?: boolean;
+}
+
 /**
  * The mini player's 2px progress line (DESIGN_SPEC §6.2.1): brand-colored progress, the estimated
  * chorus as a lighter band. With a mouse it grows to 4px on hover, shows the time under the
- * pointer and seeks on click / drag. On touch screens it only shows progress (the row below is the
- * swipe surface). Keyboard: ← → 5 seconds, Home / End.
+ * pointer and seeks on click / drag. The mini player only shows progress on touch screens (the row
+ * below is the swipe surface); the music layout's player bar also seeks there (tap or drag, no hover
+ * time). Keyboard: ← → 5 seconds, Home / End.
  */
-export default function ProgressLine({ seekable }: { seekable: boolean }) {
+export default function ProgressLine({ seekable, touchTarget = false }: ProgressLineProps) {
   const t = useTranslateSourceText();
   const progress = useProgressStore(state => state.progress);
   const duration = useProgressStore(state => state.duration);
@@ -110,6 +121,8 @@ export default function ProgressLine({ seekable }: { seekable: boolean }) {
         className={cx(
           'group/progress absolute inset-x-0 -top-1 h-3 touch-none select-none focus-visible:outline-offset-[-2px]',
           interactive ? 'cursor-pointer' : 'pointer-events-none',
+          // Pointer events on ::before count for the slider, and the seek position only uses X.
+          interactive && touchTarget && "pointer-coarse:before:absolute pointer-coarse:before:inset-x-0 pointer-coarse:before:-top-1 pointer-coarse:before:-bottom-2 pointer-coarse:before:content-['']",
         )}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}

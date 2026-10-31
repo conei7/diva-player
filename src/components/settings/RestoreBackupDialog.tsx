@@ -182,9 +182,12 @@ export default function RestoreBackupDialog({ preview, currentCounts, onClose, o
     if (mode === 'replace') {
       const confirmed = await confirmDialog({
         title: t('今のデータを置き換えますか？'),
-        message: t('履歴・評価・プレイリスト・表示しない曲・お気に入りP・フィルターがバックアップの内容になります')
-          + (preview.parsed.sections.preferences?.theme ? ` ${t('見た目の設定も復元します')}` : '')
-          + (preview.parsed.sections.preferences?.language ? ` ${t('言語設定も復元します')}` : ''),
+        // One sentence per line (ConfirmHost keeps the line breaks), so the extra restores stay readable.
+        message: [
+          t('履歴・評価・プレイリスト・表示しない曲・お気に入りP・フィルターがバックアップの内容になります'),
+          preview.parsed.sections.preferences?.theme ? t('見た目の設定も復元します') : null,
+          preview.parsed.sections.preferences?.language ? t('言語設定も復元します') : null,
+        ].filter(Boolean).join('\n'),
         confirmLabel: t('置き換える'),
       });
       if (!confirmed) return;

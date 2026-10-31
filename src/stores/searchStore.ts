@@ -874,7 +874,8 @@ export const useSearchStore = create<SearchState>((set, get) => {
 
       const nextPage = currentPage + 1;
       const songTypes = requestedSongTypes(songTypeFilter, advancedFilters);
-      set({ isLoading: true });
+      // A retry of a failed page clears its error (and the notice) as it starts.
+      set({ isLoading: true, error: null });
 
       try {
         if (vocalistFilters.length > 0) {

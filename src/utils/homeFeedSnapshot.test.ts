@@ -32,6 +32,16 @@ describe('home feed history snapshots', () => {
     expect(getHomeFeedSnapshot(key)).toBeUndefined();
   });
 
+  it('keeps the chip the feed was built for', () => {
+    const key = `category-${Date.now()}-${Math.random()}`;
+    saveHomeFeedSnapshot(key, { ...createSnapshot(44), category: 'ranking' });
+
+    updateHomeFeedSnapshotScroll(key, 1500);
+
+    expect(getHomeFeedSnapshot(key)).toMatchObject({ category: 'ranking', songs: [{ id: 44 }], scrollY: 1500 });
+    clearHomeFeedSnapshot(key);
+  });
+
   it('updates scroll position without discarding the feed snapshot', () => {
     const key = `scroll-${Date.now()}-${Math.random()}`;
     saveHomeFeedSnapshot(key, createSnapshot(43));

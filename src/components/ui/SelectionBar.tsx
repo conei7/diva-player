@@ -13,7 +13,7 @@ export interface SelectionBarProps {
   onClose: () => void;
   /** Shows the 「すべて選択」 text button. */
   onSelectAll?: () => void;
-  /** Main actions (tonal / primary Buttons; pass IconButtons below 640px). */
+  /** Main actions (tonal / primary Buttons; IconButtons below 640px or when the bar is too narrow). */
   children?: ReactNode;
   /** MenuItems for the ⋮ at the end. */
   overflow?: ReactNode;
@@ -29,6 +29,9 @@ const SELECTION_BAR_HEIGHT = '3.5rem';
  * While it is shown, <html> carries `--selection-bar-height` (0 otherwise) so <main> and the
  * sticky rows (ChipBar etc.: `top: calc(var(--header-height) + var(--selection-bar-height, 0px))`)
  * move below it instead of being covered.
+ * The bar is a container (`@container`): callers can switch between text and icon actions by the
+ * bar's own width, which in the music layout is only the space between the library and the 再生中
+ * panel. Its menus and tooltips are portals, so the containment does not affect them.
  */
 export function SelectionBar({
   count,
@@ -48,7 +51,7 @@ export function SelectionBar({
       role="toolbar"
       aria-labelledby={countId}
       data-testid={testId}
-      className="fixed left-[var(--guide-offset,0px)] right-[var(--music-panel-offset,0px)] top-[var(--header-height,56px)] z-[var(--z-selection,48)] flex h-14 items-center gap-0 border-b border-yt-divider bg-yt-raised px-1 text-yt-text sm:gap-2 sm:px-4"
+      className="@container fixed left-[var(--guide-offset,0px)] right-[var(--music-panel-offset,0px)] top-[var(--header-height,56px)] z-[var(--z-selection,48)] flex h-14 items-center gap-0 border-b border-yt-divider bg-yt-raised px-1 text-yt-text sm:gap-2 sm:px-4"
     >
       <IconButton label={t('選択を解除')} icon={<CloseIcon />} onClick={onClose} />
       <span id={countId} aria-live="polite" className="min-w-0 truncate px-1 text-base leading-6 font-medium tabular-nums sm:px-0">

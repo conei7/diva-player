@@ -2,12 +2,14 @@ import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import type { ButtonHTMLAttributes, MouseEvent } from 'react';
 import { useTranslate, useTranslateSourceText } from '../../i18n';
 import { useDialogFocus } from '../../hooks/useDialogFocus';
+import { useLayoutSwitch } from '../../hooks/useLayoutSwitch';
 import { useLanguageStore } from '../../stores/languageStore';
 import { usePlayerStore } from '../../stores/playerStore';
 import { useUiStore } from '../../stores/uiStore';
 import { whenIdle } from '../../routes/routeLoaders';
 import IconButton from '../ui/IconButton';
-import { EyeIcon, LanguageIcon, MenuIcon } from '../ui/iconsChrome';
+import Switch from '../ui/Switch';
+import { EyeIcon, LanguageIcon, MenuIcon, MusicNoteIcon } from '../ui/iconsChrome';
 import { cx } from '../ui/overlay';
 import BrandLogo from './BrandLogo';
 import GuideNav, { MiniGuideNav } from './GuideNav';
@@ -25,12 +27,16 @@ export type GuideMode = 'expanded' | 'mini' | 'none';
 const GUIDE_ASIDE_CLASS =
   'fixed bottom-0 left-0 top-[var(--header-height)] z-[var(--z-guide)] overflow-y-auto overflow-x-hidden overscroll-contain bg-yt-bg text-yt-text [scrollbar-color:transparent_transparent] [scrollbar-width:thin] hover:[scrollbar-color:#717171_transparent]';
 
-/** Language and hidden mode rows at the end of the drawer on phones (no top-bar ⋮ there). */
+/**
+ * Language, layout and hidden mode rows at the end of the drawer on phones (no top-bar ⋮ there).
+ * The layout row is a switch (ミュージック表示 on = ミュージック, off = 標準): one tap from the drawer.
+ */
 function DrawerPhoneItems() {
   const t = useTranslateSourceText();
   const language = useLanguageStore(state => state.language);
   const hiddenMode = usePlayerStore(state => state.hiddenMode);
   const toggleHiddenMode = usePlayerStore(state => state.toggleHiddenMode);
+  const { layout, changeLayout } = useLayoutSwitch();
   const [languageMenuOpen, setLanguageMenuOpen] = useState(false);
   // The loaded sheet's row replaces the placeholder row; a keyboard focus on it moves along.
   const languageRowRef = useFocusHandoff<HTMLButtonElement>();
@@ -71,6 +77,20 @@ function DrawerPhoneItems() {
             <DrawerLanguageMenu trigger={languageRow()} open={languageMenuOpen} onOpenChange={setLanguageMenuOpen} />
           </Suspense>
         </DeferredBoundary>
+      </li>
+      <li>
+        <Switch
+          checked={layout === 'music'}
+          onChange={checked => void changeLayout(checked ? 'music' : 'standard')}
+          label={(
+            <span className="flex min-w-0 items-center gap-6">
+              <MusicNoteIcon />
+              <span className="min-w-0 flex-1 truncate">{t('ミュージック表示')}</span>
+            </span>
+          )}
+          className={cx(GUIDE_ROW_CLASS, guideRowStateClass(false))}
+          id="drawer-music-layout"
+        />
       </li>
       {hiddenMode && (
         <li>

@@ -14,6 +14,8 @@ import {
   ChevronDownIcon,
   ChevronUpIcon,
   MoreVertIcon,
+  PauseIcon,
+  PlayIcon,
   PlaylistAddIcon,
   RepeatIcon,
   RepeatOneIcon,
@@ -71,14 +73,23 @@ interface QueueHeaderProps {
   title?: string;
   /** Collapse / close button at the right of the title. */
   end?: ReactNode;
+  /**
+   * The previous · play · next · repeat · shuffle · ⋮ row (default true). The music layout's 再生中
+   * panel leaves it out: the player bar right under it has the same controls.
+   */
+  controls?: boolean;
   className?: string;
 }
 
-/** Queue name, 「{current} / {total}」, previous · next · repeat · shuffle and ⋮. */
-export function QueueHeader({ view, title, end, className }: QueueHeaderProps) {
+/** Queue name, 「{current} / {total}」, previous · play/pause · next · repeat · shuffle and ⋮. */
+export function QueueHeader({ view, title, end, controls = true, className }: QueueHeaderProps) {
   const t = useTranslateSourceText();
   const queueLength = usePlayerStore(state => state.queue.length);
   const restoringLength = usePlayerStore(state => state.restoringQueueWindow?.songs.length ?? 0);
+  const hasSong = usePlayerStore(state => state.currentSong !== null);
+  const isPlaying = usePlayerStore(state => state.isPlaying);
+  const pause = usePlayerStore(state => state.pause);
+  const resume = usePlayerStore(state => state.resume);
   const previous = usePlayerStore(state => state.previous);
   const next = usePlayerStore(state => state.next);
   const loopMode = usePlayerStore(state => state.loopMode);
@@ -100,26 +111,36 @@ export function QueueHeader({ view, title, end, className }: QueueHeaderProps) {
         </div>
       )}
       {position && <p className="text-xs leading-[18px] text-yt-text-secondary tabular-nums">{position}</p>}
-      <div className="-ml-2 mt-1 flex items-center">
-        <IconButton label={t('前の曲')} icon={<SkipPreviousIcon />} onClick={previous} disabled={queueLength === 0 && restoringLength === 0} />
-        <IconButton label={t('次の曲')} icon={<SkipNextIcon />} onClick={next} disabled={!canGoNext} />
-        <IconButton
-          label={loopLabel}
-          icon={loopMode === 'one' ? <RepeatOneIcon /> : <RepeatIcon />}
-          pressed={loopMode !== 'none'}
-          onClick={toggleLoopMode}
-        />
-        <IconButton
-          label={t('シャッフル')}
-          icon={<ShuffleIcon />}
-          pressed={shuffleEnabled}
-          onClick={toggleShuffle}
-          disabled={queueLength < 2 && !shuffleEnabled}
-        />
-        <div className="-mr-2 ml-auto">
-          <QueueMoreMenu view={view} />
+      {controls && (
+        <div className="-ml-2 mt-1 flex items-center">
+          <IconButton label={t('前の曲')} icon={<SkipPreviousIcon />} onClick={previous} disabled={queueLength === 0 && restoringLength === 0} />
+          {/* The drawer's overlay covers the mini player / player bar, and Space is not a shortcut inside it. */}
+          <IconButton
+            label={isPlaying ? t('一時停止') : t('再生')}
+            icon={isPlaying ? <PauseIcon /> : <PlayIcon />}
+            data-testid="queue-play-toggle"
+            onClick={() => (isPlaying ? pause() : resume())}
+            disabled={!hasSong}
+          />
+          <IconButton label={t('次の曲')} icon={<SkipNextIcon />} onClick={next} disabled={!canGoNext} />
+          <IconButton
+            label={loopLabel}
+            icon={loopMode === 'one' ? <RepeatOneIcon /> : <RepeatIcon />}
+            pressed={loopMode !== 'none'}
+            onClick={toggleLoopMode}
+          />
+          <IconButton
+            label={t('シャッフル')}
+            icon={<ShuffleIcon />}
+            pressed={shuffleEnabled}
+            onClick={toggleShuffle}
+            disabled={queueLength < 2 && !shuffleEnabled}
+          />
+          <div className="-mr-2 ml-auto">
+            <QueueMoreMenu view={view} />
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }
@@ -240,7 +261,7 @@ function CollapsedBar({ view, title, expandLabel, onExpand, className }: {
         type="button"
         onClick={onExpand}
         aria-expanded={false}
-        className="min-h-10 min-w-0 flex-1 cursor-pointer rounded-chip text-left outline-none focus-visible:outline-2 focus-visible:outline-yt-focus"
+        className="min-h-10 min-w-0 flex-1 cursor-pointer rounded-chip text-left outline-none focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-yt-focus"
       >
         <span className="block truncate text-sm font-bold leading-5 text-yt-text">
           {view.nextSong ? t('次の曲: {song}', { song: view.nextSong.name }) : t('最後の曲です')}

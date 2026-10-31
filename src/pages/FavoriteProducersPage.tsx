@@ -17,6 +17,9 @@ import { CheckIcon, PersonStarFilledIcon, PersonStarIcon } from '../components/u
 
 type ProducerSortMode = 'added' | 'name';
 
+/** formatRelativeTime() says 「たった今」 below this. */
+const JUST_NOW_MS = 60 * 1000;
+
 /**
  * FavoriteProducersPage - お気に入りP（YouTube の登録チャンネルの一覧と同じ形）
  */
@@ -54,6 +57,13 @@ export default function FavoriteProducersPage() {
 
   const now = Date.now();
   const count = producers.length;
+  // 「ボカロP · 3分前に登録」 (「たった今登録」, not 「たった今に登録」)
+  const addedText = (producer: FavoriteProducer) => {
+    const type = artistTypeLabel(producer.artistType, language);
+    return now - producer.createdAt < JUST_NOW_MS
+      ? t('{type} · たった今登録', { type })
+      : t('{type} · {time}に登録', { type, time: formatRelativeTime(producer.createdAt, now, language) });
+  };
 
   return (
     <PageShell>
@@ -94,10 +104,7 @@ export default function FavoriteProducersPage() {
                     </Link>
                   </h2>
                   <p className="m-0 mt-0.5 truncate text-xs leading-[18px] text-yt-text-secondary sm:text-sm sm:leading-5">
-                    {t('{type} · {time}に登録', {
-                      type: artistTypeLabel(producer.artistType, language),
-                      time: formatRelativeTime(producer.createdAt, now, language),
-                    })}
+                    {addedText(producer)}
                   </p>
                 </div>
                 <div className="relative z-[1] shrink-0">

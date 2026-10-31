@@ -7,7 +7,7 @@ import { FINE_HOVER_MEDIA_QUERY, useMediaQuery } from '../../hooks/useMediaQuery
 import { useLanguageStore, type AppLanguage } from '../../stores/languageStore';
 import { useUiStore } from '../../stores/uiStore';
 import { artistPath, searchPath, watchPath, type SearchType } from '../../utils/routes';
-import { artistTypeLabel, formatArtistLine } from '../../utils/songMeta';
+import { artistTypeLabel, formatArtistLine, songTypeLabel } from '../../utils/songMeta';
 import Button from '../ui/Button';
 import IconButton from '../ui/IconButton';
 import Tooltip from '../ui/Tooltip';
@@ -182,6 +182,29 @@ export default function SearchBox({ compact }: { compact: boolean }) {
     return [...historyOptions, ...suggestionOptions];
   }, [history, suggestions, trimmed]);
 
+  // The visible detail of each song suggestion. Covers, remasters and reprints often share the
+  // original's title and producer, so the song type comes first (the same tag as the result cards,
+  // and not cut off by a long artist line); entries that still look alike also get their year.
+  const songDetails = useMemo(() => {
+    const songs = suggestions.flatMap(suggestion => (suggestion.kind === 'song' ? [suggestion] : []));
+    const details = new Map(songs.map(({ id, song, sublabel }) => {
+      const typeTag = song.isSelfCover
+        ? t('セルフカバー')
+        : song.songType && song.songType !== 'Original' && song.songType !== 'Unspecified'
+          ? songTypeLabel(song.songType, language)
+          : '';
+      return [id, [typeTag, formatArtistLine(song) || sublabel].filter(Boolean).join(' · ')] as const;
+    }));
+    const looks = songs.map(({ id, label }) => `${label}\n${details.get(id)}`);
+    songs.forEach(({ id, song }, index) => {
+      const year = song.publishDate?.slice(0, 4);
+      if (year && looks.indexOf(looks[index]) !== looks.lastIndexOf(looks[index])) {
+        details.set(id, [details.get(id), year].filter(Boolean).join(' · '));
+      }
+    });
+    return details;
+  }, [language, suggestions, t]);
+
   const panelVisible = open && options.length > 0;
   const showClearHistory = panelVisible && !trimmed && history.length > 0;
   const activeOption = panelVisible && activeIndex >= 0 ? options[activeIndex] : undefined;
@@ -348,7 +371,7 @@ export default function SearchBox({ compact }: { compact: boolean }) {
       kind = kindLabel(suggestion.kind);
       if (suggestion.kind === 'song') {
         icon = <MusicNoteIcon />;
-        detail = formatArtistLine(suggestion.song) || suggestion.sublabel;
+        detail = songDetails.get(suggestion.id) ?? '';
       } else if (suggestion.kind === 'producer') {
         icon = <PersonIcon />;
         detail = artistTypeLabel(suggestion.artist.artistType, language);

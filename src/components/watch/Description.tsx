@@ -56,7 +56,7 @@ export default function Description({ song }: { song: Song }) {
     <button
       type="button"
       className={cx(
-        'inline-flex cursor-pointer items-center font-medium text-yt-text outline-none focus-visible:outline-2 focus-visible:outline-yt-focus max-sm:min-h-9',
+        'inline-flex cursor-pointer items-center font-medium text-yt-text outline-none focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-yt-focus max-sm:min-h-9',
         descriptionTokens.length > 0 && 'sm:absolute sm:bottom-0 sm:right-0 sm:bg-yt-tonal-solid sm:pl-1 sm:group-hover/desc:bg-yt-tonal-solid-hover sm:before:pointer-events-none sm:before:absolute sm:before:inset-y-0 sm:before:right-full sm:before:w-10 sm:before:bg-linear-to-r sm:before:from-transparent sm:before:to-yt-tonal-solid sm:group-hover/desc:before:to-yt-tonal-solid-hover',
       )}
       aria-expanded={false}
@@ -174,7 +174,7 @@ export default function Description({ song }: { song: Song }) {
 
           <button
             type="button"
-            className="inline-flex cursor-pointer items-center font-medium text-yt-text outline-none focus-visible:outline-2 focus-visible:outline-yt-focus max-sm:min-h-9"
+            className="inline-flex cursor-pointer items-center font-medium text-yt-text outline-none focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-yt-focus max-sm:min-h-9"
             aria-expanded
             aria-controls={bodyId}
             aria-label={tk('descriptionCollapseAria')}

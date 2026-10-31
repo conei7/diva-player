@@ -118,6 +118,13 @@ export function folderHoldsList(group: LibraryFolderGroup, listId: string | null
  */
 export const RAIL_NAME_TOOLTIP_MEDIA_QUERY = '(min-width: 720px)';
 
+/**
+ * Touch tablets never see the rail's tooltips, so the top destinations there get a 10px name under
+ * the icon (like the standard layout's mini guide). Not on short screens (a phone on its side),
+ * where the taller rows would push 発掘ミックス below the column's fold.
+ */
+export const RAIL_CAPTION_MEDIA_QUERY = '(pointer: coarse) and (min-height: 600px)';
+
 /** A row of the column: 8px corners, the music shell's hover / selected backgrounds. */
 export const LIBRARY_ROW_CLASS =
   'flex w-full min-w-0 items-center rounded-lg text-left no-underline transition-colors duration-150 [-webkit-tap-highlight-color:transparent]';

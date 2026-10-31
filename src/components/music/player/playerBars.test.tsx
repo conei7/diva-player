@@ -215,4 +215,35 @@ describe('MusicMiniBar', () => {
     expect(tag(html, 'aria-label="次の曲"')).toContain('size-11!');
     expect(html).toContain('Fixture song 4242');
   });
+
+  it('disables 次の曲 at the end of the queue, like the player bar', () => {
+    // A shelf song starts as a one-song queue: next() would stop the music until autoplay adds more.
+    // Soft-disabled (aria-disabled), so a focused button keeps focus.
+    play([first]);
+    expect(tag(render(<MusicMiniBar />), 'aria-label="次の曲"')).toContain('aria-disabled="true"');
+
+    play([first, second]);
+    expect(tag(render(<MusicMiniBar />), 'aria-label="次の曲"')).not.toContain('aria-disabled="');
+
+    play([first]);
+    setPlayer({ loopMode: 'all' });
+    expect(tag(render(<MusicMiniBar />), 'aria-label="次の曲"')).not.toContain('aria-disabled="');
+  });
+
+  it('keeps vertical drags for the up swipe only while swipes are on', async () => {
+    const { usePlayerInteractionStore } = await import('../../../stores/playerInteractionStore');
+    const setSwipe = (swipeGestureEnabled: boolean) => {
+      usePlayerInteractionStore.setState({ swipeGestureEnabled });
+      Object.assign(usePlayerInteractionStore.getInitialState(), { swipeGestureEnabled });
+    };
+    play([first]);
+    try {
+      setSwipe(true);
+      expect(tag(render(<MusicMiniBar />), 'data-testid="music-mini-bar"')).toContain('touch-none!');
+      setSwipe(false);
+      expect(tag(render(<MusicMiniBar />), 'data-testid="music-mini-bar"')).not.toContain('touch-none');
+    } finally {
+      setSwipe(true);
+    }
+  });
 });

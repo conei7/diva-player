@@ -8,12 +8,15 @@ import { displayQueueTitle } from '../../utils/displayNames';
 import IconButton from '../ui/IconButton';
 import { CloseIcon } from '../ui/icons';
 import { captureRemovalFocusFallback, focusElement } from '../ui/overlay';
-import { QueueHeader, QueueList } from '../watch/PlaylistPanel';
+import { QueueHeader, QueueList, QueueMoreMenu } from '../watch/PlaylistPanel';
 import { useQueueView } from '../watch/useQueueView';
 import NowPlayingSongInfo from './nowPlaying/NowPlayingSongInfo';
 import NowPlayingVideoSlot from './nowPlaying/NowPlayingVideoSlot';
 
-/** 次に再生: the queue (the same header and rows as the queue drawer). The panel scrolls, not the list. */
+/**
+ * 次に再生: the queue (the same header and rows as the queue drawer). The panel scrolls, not the list.
+ * No transport row: the player bar right under the panel has those controls; ⋮ stays by the title.
+ */
 function UpNext() {
   const t = useTranslateSourceText();
   const { queue, view } = useQueueView();
@@ -27,7 +30,13 @@ function UpNext() {
 
   return (
     <section data-testid="music-now-playing-queue" className="mt-6">
-      <QueueHeader view={view} title={t('次に再生')} className="px-0! pt-0!" />
+      <QueueHeader
+        view={view}
+        title={t('次に再生')}
+        controls={false}
+        end={<QueueMoreMenu view={view} />}
+        className="px-0! pt-0!"
+      />
       <QueueList view={view} scroll={false} className="-mx-1 pb-0!" />
       {isLastSong && (
         <p className="m-0 px-1 pt-1 text-xs leading-4 text-yt-text-secondary">{t('最後の曲です')}</p>

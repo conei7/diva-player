@@ -1,5 +1,7 @@
 import type { KeyboardEvent, PointerEvent } from 'react';
+import { useCanGoNext } from '../../hooks/useCanGoNext';
 import { useTranslateSourceText } from '../../i18n';
+import { usePlayerInteractionStore } from '../../stores/playerInteractionStore';
 import { usePlayerStore } from '../../stores/playerStore';
 import { showToast } from '../../stores/toastStore';
 import { useUiStore } from '../../stores/uiStore';
@@ -26,6 +28,7 @@ import {
   TimerIcon,
 } from '../ui/icons';
 import { cx } from '../ui/overlay';
+import { closePlayerWithUndo } from '../watch/watchActions';
 import SleepTimerMenuItems from './SleepTimerMenuItems';
 import { copyTextToClipboard, formatRemainingClock, getQueuePosition } from './playerUi';
 import { useSleepTimerRemaining } from './useSleepTimerRemaining';
@@ -82,7 +85,12 @@ export default function MiniPlayerControls({ visible, mobile, onOpenSongPage, sw
   const resume = usePlayerStore(state => state.resume);
   const next = usePlayerStore(state => state.next);
   const previous = usePlayerStore(state => state.previous);
-  const closePlayer = usePlayerStore(state => state.closePlayer);
+  // Off at the end of the queue (next() would stop playback). Soft-disabled, so a keyboard user who
+  // just pressed it onto the last song keeps focus there until autoplay appends songs.
+  const canGoNext = useCanGoNext();
+  const goNext = () => {
+    if (canGoNext) next();
+  };
   const shuffleEnabled = usePlayerStore(state => state.shuffleEnabled);
   const toggleShuffle = usePlayerStore(state => state.toggleShuffle);
   const loopMode = usePlayerStore(state => state.loopMode);
@@ -93,11 +101,16 @@ export default function MiniPlayerControls({ visible, mobile, onOpenSongPage, sw
   const queueTitle = usePlayerStore(state => state.queueTitle);
   const queueDrawerOpen = usePlayerStore(state => state.queueDrawerOpen);
   const toggleQueueDrawer = usePlayerStore(state => state.toggleQueueDrawer);
+  // With swipes on, a vertical drag is the 上スワイプ (song page): with the pan-y of index.css the
+  // browser would take it for scrolling and cancel the pointer, as in the music mini bar.
+  const swipeGestureEnabled = usePlayerInteractionStore(state => state.swipeGestureEnabled);
+  const swipeLock = swipeGestureEnabled && 'touch-none!';
 
   if (!currentSong) return null;
 
   const playLabel = isPlaying ? t('一時停止') : t('再生');
   const togglePlayback = () => (isPlaying ? pause() : resume());
+  const closePlayer = () => closePlayerWithUndo(t);
   const artist = formatArtistLine(currentSong);
   // 「wowaka · 作業用BGM 3/28」: the position stays visible when the names are cut short.
   const position = mobile ? null : getQueuePosition(queueSources, queueIndex);
@@ -130,7 +143,7 @@ export default function MiniPlayerControls({ visible, mobile, onOpenSongPage, sw
   if (mobile) {
     return (
       <div
-        className={cx('mini-player-controls h-14 items-center gap-1 pl-3 pr-1', visible ? 'flex' : 'hidden')}
+        className={cx('mini-player-controls h-14 items-center gap-1 pl-3 pr-1', visible ? 'flex' : 'hidden', swipeLock)}
         data-testid="mini-player-gesture-surface"
         {...swipeHandlers}
       >
@@ -143,7 +156,13 @@ export default function MiniPlayerControls({ visible, mobile, onOpenSongPage, sw
           className={MOBILE_BUTTON}
           onClick={togglePlayback}
         />
-        <IconButton label={t('次の曲')} icon={<SkipNextIcon />} className={MOBILE_BUTTON} onClick={next} />
+        <IconButton
+          label={t('次の曲')}
+          icon={<SkipNextIcon />}
+          aria-disabled={!canGoNext || undefined}
+          className={cx(MOBILE_BUTTON, SOFT_DISABLED)}
+          onClick={goNext}
+        />
         <IconButton
           label={t('ミニプレイヤーを閉じる')}
           icon={<CloseIcon />}
@@ -170,7 +189,7 @@ export default function MiniPlayerControls({ visible, mobile, onOpenSongPage, sw
 
   return (
     <div
-      className={cx('mini-player-controls flex-col', visible ? 'flex' : 'hidden')}
+      className={cx('mini-player-controls flex-col', visible ? 'flex' : 'hidden', swipeLock)}
       data-testid="mini-player-gesture-surface"
       {...swipeHandlers}
     >
@@ -196,7 +215,14 @@ export default function MiniPlayerControls({ visible, mobile, onOpenSongPage, sw
             data-testid="global-mini-player-toggle"
             onClick={togglePlayback}
           />
-          <IconButton label={t('次の曲')} icon={<SkipNextIcon />} tooltipPlacement="top" onClick={next} />
+          <IconButton
+            label={t('次の曲')}
+            icon={<SkipNextIcon />}
+            aria-disabled={!canGoNext || undefined}
+            className={SOFT_DISABLED}
+            tooltipPlacement="top"
+            onClick={goNext}
+          />
         </div>
         <div className="flex items-center">
           <IconButton

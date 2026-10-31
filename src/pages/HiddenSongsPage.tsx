@@ -20,6 +20,9 @@ import { EyeIcon, EyeOffIcon, MoreVertIcon } from '../components/ui/icons';
 
 type SortMode = 'recent' | 'name';
 
+/** formatRelativeTime() says 「たった今」 below this. */
+const JUST_NOW_MS = 60 * 1000;
+
 /**
  * HiddenSongsPage - 表示しない曲（おすすめ・自動再生から外した曲。明示的な検索では今までどおり出る）
  */
@@ -80,6 +83,10 @@ export default function HiddenSongsPage() {
 
   const count = allRecords.length;
   const now = Date.now();
+  // 「3分前に非表示」 (「たった今非表示」, not 「たった今に非表示」)
+  const hiddenText = (hiddenAt: number) => (now - hiddenAt < JUST_NOW_MS
+    ? t('たった今非表示')
+    : t('{time}に非表示', { time: formatRelativeTime(hiddenAt, now, language) }));
 
   return (
     <PageShell>
@@ -121,7 +128,7 @@ export default function HiddenSongsPage() {
               song={record.song}
               size={isMobile ? 'sm' : 'md'}
               meta={[
-                `${formatArtistLine(record.song)} · ${t('{time}に非表示', { time: formatRelativeTime(record.hiddenAt, now, language) })}`,
+                `${formatArtistLine(record.song)} · ${hiddenText(record.hiddenAt)}`,
               ]}
               trailing={(
                 <Button

@@ -36,7 +36,9 @@ export default function ConfirmHost() {
           </>
         )}
       >
-        {request.message && <p className="line-clamp-2 text-sm leading-5 text-yt-text-secondary">{request.message}</p>}
+        {/* Not clamped: this can be the last warning before an irreversible action. Callers put each
+            sentence on its own line with '\n'; the dialog body scrolls when it gets long. */}
+        {request.message && <p className="whitespace-pre-line text-sm leading-5 text-yt-text-secondary">{request.message}</p>}
       </Dialog>
     </Suspense>
   );

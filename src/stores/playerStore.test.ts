@@ -370,6 +370,279 @@ describe('player queue autoplay', () => {
   });
 });
 
+describe('songs the user queues', () => {
+  const a = song;
+  const b = { ...song, id: song.id + 10, name: 'Queued B' };
+  const c = { ...song, id: song.id + 11, name: 'Queued C' };
+  const x = { ...song, id: song.id + 20, name: 'Autoplay X' };
+  const y = { ...song, id: song.id + 21, name: 'Autoplay Y' };
+  const ids = () => usePlayerStore.getState().queue.map(item => item.id);
+
+  afterEach(() => {
+    usePlayerStore.getState().closePlayer();
+  });
+
+  function playWithAutoplay(songs: Song[], autoSongs: Song[]) {
+    usePlayerStore.getState().setQueue(songs, 0);
+    const { currentSong, playbackSequence } = usePlayerStore.getState();
+    expect(usePlayerStore.getState().addManyToQueue(autoSongs, 'auto', {
+      currentSongId: currentSong!.id,
+      playbackSequence,
+    })).toBe(true);
+  }
+
+  it('go before the autoplay songs, after earlier additions', () => {
+    playWithAutoplay([a], [x, y]);
+
+    usePlayerStore.getState().addToQueue(b);
+    expect(ids()).toEqual([a.id, b.id, x.id, y.id]);
+    usePlayerStore.getState().addToQueue(c);
+    expect(ids()).toEqual([a.id, b.id, c.id, x.id, y.id]);
+
+    const state = usePlayerStore.getState();
+    expect(state.queueSources).toEqual(['manual', 'manual', 'manual', 'auto', 'auto']);
+    expect(state.queueIndex).toBe(0);
+    expect(state.currentSong?.id).toBe(a.id);
+    const stored = JSON.parse(localStorage.getItem('diva_playerQueue') ?? '{}') as {
+      songIds?: number[];
+      queueSources?: string[];
+    };
+    expect(stored.songIds).toEqual(ids());
+    expect(stored.queueSources).toEqual(state.queueSources);
+  });
+
+  it('play right after an autoplay song that is playing', () => {
+    playWithAutoplay([a], [x, y]);
+    usePlayerStore.getState().next();
+    expect(usePlayerStore.getState().currentSong?.id).toBe(x.id);
+
+    usePlayerStore.getState().addToQueue(b);
+    expect(ids()).toEqual([a.id, x.id, b.id, y.id]);
+    expect(usePlayerStore.getState().queueIndex).toBe(1);
+  });
+
+  it('are appended when no autoplay song follows', () => {
+    usePlayerStore.getState().setQueue([a, b], 0);
+    usePlayerStore.getState().addToQueue(c);
+    expect(ids()).toEqual([a.id, b.id, c.id]);
+  });
+
+  it('keep their order when several are added at once, and autoplay still appends', () => {
+    playWithAutoplay([a], [x]);
+
+    expect(usePlayerStore.getState().addManyToQueue([b, c], 'manual')).toBe(true);
+    expect(ids()).toEqual([a.id, b.id, c.id, x.id]);
+
+    const { currentSong, playbackSequence } = usePlayerStore.getState();
+    usePlayerStore.getState().addManyToQueue([y], 'auto', { currentSongId: currentSong!.id, playbackSequence });
+    expect(ids()).toEqual([a.id, b.id, c.id, x.id, y.id]);
+  });
+});
+
+describe('closing the player with 元に戻す', () => {
+  const second = { ...song, id: song.id + 30, name: 'Close fixture 2' };
+  const third = { ...song, id: song.id + 31, name: 'Close fixture 3' };
+  const other = { ...song, id: song.id + 40, name: 'Started after the close' };
+
+  afterEach(async () => {
+    usePlayerStore.getState().closePlayer();
+    const { clearToasts } = await import('./toastStore');
+    clearToasts();
+  });
+
+  async function closeWithUndo() {
+    const { closePlayerWithUndo } = await import('../components/watch/watchActions');
+    const { useToastStore } = await import('./toastStore');
+    closePlayerWithUndo(source => source);
+    const toast = useToastStore.getState().toasts[0];
+    expect(toast?.message).toBe('プレイヤーを閉じました');
+    expect(toast?.action?.label).toBe('元に戻す');
+    return toast!.action!.onAction;
+  }
+
+  it('brings back the queue, its position, title and mix seed', async () => {
+    const { useProgressStore } = await import('./progressStore');
+    usePlayerStore.getState().setQueue([song, second, third], 0, true, 'manual', 'テストプレイリスト');
+    usePlayerStore.getState().next();
+    useProgressStore.getState().setProgress(42);
+
+    const undo = await closeWithUndo();
+    expect(usePlayerStore.getState().currentSong).toBeNull();
+    expect(usePlayerStore.getState().queue).toEqual([]);
+    // Nothing is written back until 元に戻す is pressed.
+    expect(localStorage.getItem('diva_playerQueue')).toBeNull();
+
+    undo();
+    const state = usePlayerStore.getState();
+    expect(state.queue.map(item => item.id)).toEqual([song.id, second.id, third.id]);
+    expect(state.queueIndex).toBe(1);
+    expect(state.currentSong?.id).toBe(second.id);
+    expect(state.queueTitle).toBe('テストプレイリスト');
+    expect(state.rootSeed?.id).toBe(song.id);
+    expect(state.isPlaying).toBe(true);
+    expect(state.seekTarget).toBe(42);
+    const stored = JSON.parse(localStorage.getItem('diva_playerQueue') ?? '{}') as {
+      songIds?: number[];
+      queueIndex?: number;
+      queueTitle?: string;
+      rootSeedId?: number;
+    };
+    expect(stored.songIds).toEqual([song.id, second.id, third.id]);
+    expect(stored.queueIndex).toBe(1);
+    expect(stored.queueTitle).toBe('テストプレイリスト');
+    expect(stored.rootSeedId).toBe(song.id);
+  });
+
+  it('does nothing once another song was started', async () => {
+    usePlayerStore.getState().setQueue([song, second], 0);
+    const undo = await closeWithUndo();
+
+    usePlayerStore.getState().setQueue([other], 0);
+    undo();
+    const state = usePlayerStore.getState();
+    expect(state.currentSong?.id).toBe(other.id);
+    expect(state.queue.map(item => item.id)).toEqual([other.id]);
+  });
+
+  it('keeps songs queued after the close (SelectionFAB adds without starting them)', async () => {
+    usePlayerStore.getState().setQueue([song, second], 0);
+    const undo = await closeWithUndo();
+
+    usePlayerStore.getState().addManyToQueue([other], 'manual');
+    undo();
+    const state = usePlayerStore.getState();
+    expect(state.currentSong).toBeNull();
+    expect(state.queue.map(item => item.id)).toEqual([other.id]);
+  });
+
+  it('resumes the closed playback itself (same sequence and PV), not a new one', async () => {
+    usePlayerStore.getState().setQueue([song, second], 0, true, 'auto');
+    const { playbackSequence, currentPV } = usePlayerStore.getState();
+    const undo = await closeWithUndo();
+    expect(usePlayerStore.getState().undoableCloseSequence).toBe(playbackSequence);
+
+    undo();
+    const state = usePlayerStore.getState();
+    expect(state.playbackSequence).toBe(playbackSequence);
+    expect(state.currentPV).toEqual(currentPV);
+    expect(state.currentPlaybackSource).toBe('auto');
+    expect(state.queueSources).toEqual(['auto', 'auto']);
+    expect(state.undoableCloseSequence).toBeNull();
+  });
+
+  it('offers the undo window only while its toast is up', async () => {
+    const { clearToasts } = await import('./toastStore');
+    usePlayerStore.getState().setQueue([song, second], 0);
+    await closeWithUndo();
+    expect(usePlayerStore.getState().undoableCloseSequence).not.toBeNull();
+
+    clearToasts();
+    await Promise.resolve();
+    expect(usePlayerStore.getState().undoableCloseSequence).toBeNull();
+  });
+
+  it('goes on with the play when the toast is removed just before 元に戻す runs (as ToastHost does)', async () => {
+    const { dismissToast, useToastStore } = await import('./toastStore');
+    usePlayerStore.getState().setQueue([song, second], 0);
+    const { playbackSequence } = usePlayerStore.getState();
+    const undo = await closeWithUndo();
+
+    dismissToast(useToastStore.getState().toasts[0]!.id);
+    undo();
+    await Promise.resolve();
+    expect(usePlayerStore.getState().currentSong?.id).toBe(song.id);
+    expect(usePlayerStore.getState().playbackSequence).toBe(playbackSequence);
+    expect(usePlayerStore.getState().undoableCloseSequence).toBeNull();
+  });
+
+  it('brings back a close that was already counted as a new play', async () => {
+    usePlayerStore.getState().setQueue([song, second], 0);
+    const { playbackSequence } = usePlayerStore.getState();
+    const undo = await closeWithUndo();
+
+    // What PlayerTracker's pagehide does with a close still waiting for its 元に戻す.
+    usePlayerStore.setState({ undoableCloseSequence: null });
+    undo();
+    expect(usePlayerStore.getState().currentSong?.id).toBe(song.id);
+    expect(usePlayerStore.getState().playbackSequence).toBe(playbackSequence + 1);
+  });
+
+  it('marks a close without undo as such', () => {
+    usePlayerStore.getState().setQueue([song, second], 0);
+    usePlayerStore.getState().closePlayer();
+    expect(usePlayerStore.getState().undoableCloseSequence).toBeNull();
+  });
+
+  it('cannot resume once another song has played and been closed', async () => {
+    usePlayerStore.getState().setQueue([song, second], 0);
+    const undo = await closeWithUndo();
+
+    usePlayerStore.getState().setQueue([other], 0);
+    usePlayerStore.getState().closePlayer();
+    undo();
+    expect(usePlayerStore.getState().currentSong).toBeNull();
+    expect(usePlayerStore.getState().queue).toEqual([]);
+  });
+
+  it('does not carry a paused undo\'s pending seek over to the next song', async () => {
+    const { useProgressStore } = await import('./progressStore');
+    usePlayerStore.getState().setQueue([song, second], 0, false);
+    useProgressStore.getState().setProgress(133);
+    const undo = await closeWithUndo();
+
+    undo();
+    expect(usePlayerStore.getState().isPlaying).toBe(false);
+    expect(usePlayerStore.getState().seekTarget).toBe(133);
+    usePlayerStore.getState().next();
+    expect(usePlayerStore.getState().currentSong?.id).toBe(second.id);
+    expect(usePlayerStore.getState().seekTarget).toBeNull();
+  });
+});
+
+describe('pending seeks', () => {
+  const second = { ...song, id: song.id + 50, name: 'Seek fixture 2' };
+
+  afterEach(() => {
+    usePlayerStore.setState({ loopMode: 'none' });
+    usePlayerStore.getState().closePlayer();
+  });
+
+  it('belong to the playback they were asked for', () => {
+    usePlayerStore.getState().setQueue([song, second], 0, false);
+    usePlayerStore.getState().seekTo(90);
+    usePlayerStore.getState().next();
+    expect(usePlayerStore.getState().seekTarget).toBeNull();
+
+    // Replaying the same song is a new playback too.
+    usePlayerStore.getState().seekTo(60);
+    usePlayerStore.getState().jumpToIndex(1);
+    expect(usePlayerStore.getState().seekTarget).toBeNull();
+  });
+
+  it('are dropped when the player closes', () => {
+    usePlayerStore.getState().setQueue([song, second], 0, false);
+    usePlayerStore.getState().seekTo(90);
+    usePlayerStore.getState().closePlayer();
+    expect(usePlayerStore.getState().seekTarget).toBeNull();
+  });
+
+  it('still take a seek asked for right after the song starts', () => {
+    usePlayerStore.getState().setQueue([song, second], 0);
+    usePlayerStore.getState().seekTo(45);
+    expect(usePlayerStore.getState().seekTarget).toBe(45);
+  });
+
+  it('keep the 1曲ループ restart from the top', () => {
+    usePlayerStore.getState().setQueue([song, second], 0);
+    usePlayerStore.setState({ loopMode: 'one' });
+    const { playbackSequence } = usePlayerStore.getState();
+    usePlayerStore.getState().next();
+    expect(usePlayerStore.getState().currentSong?.id).toBe(song.id);
+    expect(usePlayerStore.getState().playbackSequence).toBe(playbackSequence + 1);
+    expect(usePlayerStore.getState().seekTarget).toBe(0);
+  });
+});
+
 describe('player volume persistence', () => {
   it('defaults to 50% and persists volume changes for every player service', () => {
     expect(DEFAULT_VOLUME).toBe(50);

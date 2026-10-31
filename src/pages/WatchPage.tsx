@@ -8,6 +8,7 @@ import Description from '../components/watch/Description';
 import FilterChips, { type RecTabKey } from '../components/watch/FilterChips';
 import RecommendationList, { type RecommendationListEmpty } from '../components/watch/RecommendationList';
 import PlaylistPanel from '../components/watch/PlaylistPanel';
+import WatchScrolledControls from '../components/watch/WatchScrolledControls';
 import { VIDEO_FRAME_CLASS } from '../components/watch/videoFrame';
 import { getPlayablePV, usePlayerStore } from '../stores/playerStore';
 import { useRatingStore } from '../stores/ratingStore';
@@ -48,6 +49,7 @@ import { getProgressiveWindow } from '../utils/progressiveWindow';
 import { getProducerNames } from '../utils/songMeta';
 import { watchPath } from '../utils/routes';
 import { MOBILE_MEDIA_QUERY, useMediaQuery } from '../hooks/useMediaQuery';
+import { useIsMusicLayout } from '../hooks/useMusicLayout';
 import Button, { buttonClassName } from '../components/ui/Button';
 import { InfoTip } from '../components/ui/InfoTip';
 import { SkeletonBlock, SkeletonListRow } from '../components/ui/Skeleton';
@@ -59,6 +61,8 @@ import { cx } from '../components/ui/overlay';
  *
  * 1024px 以上は2カラム（左: 動画・タイトル・操作・概要 / 右: 再生中リスト・チップ・関連一覧）。
  * それ未満は1カラムで、再生中リストは動画のすぐ下に出す（動画より上には高さの変わる物を置かない）。
+ * ミニプレイヤーも再生バーも無い幅（スマホ、標準レイアウトは 1024px 未満）では、動画が画面から
+ * 出たら下端に曲名・再生/一時停止・次の曲の行（WatchScrolledControls）を出す。
  *
  * URLの ?v= パラメータ変更で、ページリロードなしに
  * メインの IFrame とメタデータだけがスムーズに切り替わる。
@@ -102,6 +106,10 @@ export default function WatchPage({ onDocumentTitleStateChange }: WatchPageProps
   const language = useLanguageStore(state => state.language);
   const isDesktop = useMediaQuery(DESKTOP_MEDIA_QUERY);
   const isMobile = useMediaQuery(MOBILE_MEDIA_QUERY);
+  const isMusicLayout = useIsMusicLayout();
+  // No mini player or player bar on this page: phones (both layouts) and standard-layout tablets
+  // get a bottom control row once the video has scrolled off (the music layout's tablets keep their bar).
+  const hasScrolledControls = isMobile || (!isDesktop && !isMusicLayout);
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const songIdStr = searchParams.get('v');
@@ -170,6 +178,9 @@ export default function WatchPage({ onDocumentTitleStateChange }: WatchPageProps
   });
 
   const sentinelRef = useRef<HTMLDivElement>(null);
+  const videoColumnRef = useRef<HTMLDivElement>(null);
+  const [afterVideo, setAfterVideo] = useState<HTMLDivElement | null>(null);
+  const [videoScrolledOff, setVideoScrolledOff] = useState(false);
 
   useLayoutEffect(() => {
     if (!songId) return;
@@ -521,6 +532,25 @@ export default function WatchPage({ onDocumentTitleStateChange }: WatchPageProps
     return () => observer.disconnect();
   }, [loadMore]);
 
+  // The empty marker right under the video: once it is above the header, the video is off screen.
+  // The header is 48px on phones and 56px above, so a width change re-reads it. The root reaches far
+  // below the window, so the marker only ever crosses the header line: on a landscape phone the video
+  // ends below the window, and an instant jump to the top (次の曲 opens the next song there) would
+  // otherwise go from "above" to "below" without a callback and leave the row over the video.
+  useEffect(() => {
+    if (!hasScrolledControls || !afterVideo || typeof IntersectionObserver === 'undefined') return;
+    const header = Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--header-height')) || 56;
+    const observer = new IntersectionObserver(
+      entries => {
+        const entry = entries[entries.length - 1];
+        setVideoScrolledOff(!entry.isIntersecting && entry.boundingClientRect.top < (entry.rootBounds?.top ?? 0));
+      },
+      { rootMargin: `-${header}px 0px 100000px 0px` },
+    );
+    observer.observe(afterVideo);
+    return () => observer.disconnect();
+  }, [afterVideo, hasScrolledControls, isMobile]);
+
   const currentTab = tabs[activeTab];
   const displayTabItems = currentTab.items;
   const relaxationMessage = getDiscoveryRelaxationMessage(currentTab.relaxedConditions, language);
@@ -620,11 +650,19 @@ export default function WatchPage({ onDocumentTitleStateChange }: WatchPageProps
   );
 
   return (
-    <div className="w-full pb-6 sm:px-4 sm:pt-4 lg:px-6 lg:pt-6">
+    <div
+      className={cx(
+        'w-full sm:px-4 sm:pt-4 lg:px-6 lg:pt-6',
+        // Room for the bottom control row is kept all the time, so the page never jumps when it shows.
+        hasScrolledControls ? 'pb-[calc(3.5rem_+_env(safe-area-inset-bottom,0px)_+_1.5rem)]' : 'pb-6',
+      )}
+    >
       <div data-testid="watch-layout" className="grid grid-cols-1 gap-[clamp(1rem,1.25vw,2rem)] lg:grid-cols-[minmax(0,1fr)_clamp(400px,30vw,600px)] max-sm:gap-0">
         {/* ─── 左: 動画・タイトル・操作・概要 ─── */}
-        <div data-testid="watch-video-column" className="min-w-0 flex-1">
+        <div ref={videoColumnRef} data-testid="watch-video-column" className="min-w-0 flex-1">
+          {/* The frame stays the column's first child (the music layout's CSS sizes it by that). */}
           {videoArea}
+          <div ref={setAfterVideo} aria-hidden="true" />
           {!isDesktop && <PlaylistPanel variant={isMobile ? 'sheet' : 'inline'} startCollapsed className="mt-3 max-sm:mt-0" />}
           {song && !loadingSong ? (
             <>
@@ -648,6 +686,7 @@ export default function WatchPage({ onDocumentTitleStateChange }: WatchPageProps
           {relatedSection}
         </div>
       </div>
+      {hasScrolledControls && videoScrolledOff && playable && <WatchScrolledControls videoColumnRef={videoColumnRef} />}
     </div>
   );
 }

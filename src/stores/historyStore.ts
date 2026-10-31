@@ -44,6 +44,12 @@ interface HistoryState {
   entries: HistoryEntry[];
   lastPlayedAtBySongId: ReadonlyMap<number, number>;
   totalPlays: number;
+  /**
+   * Plays stored on this device, known from the raw event log before the song metadata of the
+   * entries loads (null until it has been read). A cheap hint for placeholders while
+   * `hasHydrated` is still false; after that, use the entries and totalPlays.
+   */
+  storedPlayCount: number | null;
   hasMoreEntries: boolean;
   isLoadingMore: boolean;
   hasHydrated: boolean;
@@ -157,16 +163,24 @@ export async function searchHistoryEntries(query: string): Promise<HistoryEntry[
   return filterHistoryEntries(entries, query);
 }
 
-async function loadHistorySnapshot(): Promise<Pick<HistoryState, 'entries' | 'lastPlayedAtBySongId' | 'totalPlays' | 'hasMoreEntries'>> {
+type HistorySnapshot = Pick<HistoryState, 'entries' | 'lastPlayedAtBySongId' | 'totalPlays' | 'storedPlayCount' | 'hasMoreEntries'>;
+
+async function loadHistorySnapshot(allEvents?: ListeningPlayEvent[]): Promise<HistorySnapshot> {
   // Raw events are compact. Restore cooldowns from all of them while keeping
   // the expensive metadata lookup limited to the latest 300 display entries.
-  const allEvents = await readAllPlayEvents();
+  allEvents ??= await readAllPlayEvents();
   const events = allEvents.slice(-RECENT_ENTRY_LIMIT).reverse();
   const entries = await loadEntriesFromEvents(events);
   const totalPlays = allEvents.length;
   oldestLoadedEventId = events.at(-1)?.id;
   historyPageHasMore = events.length >= RECENT_ENTRY_LIMIT && oldestLoadedEventId !== undefined;
-  return { entries, lastPlayedAtBySongId: latestPlayedAtBySongId(allEvents), totalPlays, hasMoreEntries: historyPageHasMore };
+  return {
+    entries,
+    lastPlayedAtBySongId: latestPlayedAtBySongId(allEvents),
+    totalPlays,
+    storedPlayCount: totalPlays,
+    hasMoreEntries: historyPageHasMore,
+  };
 }
 
 async function readRecentPlayEvents(limit: number, beforeId?: number): Promise<ListeningPlayEvent[]> {
@@ -270,6 +284,7 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
   entries: [],
   lastPlayedAtBySongId: new Map(),
   totalPlays: 0,
+  storedPlayCount: null,
   hasMoreEntries: false,
   isLoadingMore: false,
   hasHydrated: false,
@@ -287,7 +302,11 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
         return;
       }
       await migrateLegacyHistory();
-      const snapshot = await loadHistorySnapshot();
+      // The local read takes milliseconds, the song metadata a network round trip: say early
+      // whether there is any history, so Home can keep the 最近再生した曲 shelf's place meanwhile.
+      const allEvents = await readAllPlayEvents();
+      set({ storedPlayCount: allEvents.length });
+      const snapshot = await loadHistorySnapshot(allEvents);
       set({ ...snapshot, hasHydrated: true });
     })().catch(error => {
       console.error('[History] Failed to initialize listening history', error);
@@ -403,6 +422,7 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
       entries: [],
       lastPlayedAtBySongId: new Map(),
       totalPlays: 0,
+      storedPlayCount: 0,
       hasMoreEntries: false,
       isLoadingMore: false,
       activePlayEventId: undefined,

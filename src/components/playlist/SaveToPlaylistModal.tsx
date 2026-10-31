@@ -243,7 +243,10 @@ export function SaveToPlaylistModal() {
               role="checkbox"
               aria-checked={mixed ? 'mixed' : checked}
               aria-disabled={disabled || undefined}
-              onClick={disabled ? undefined : () => { void runSave(() => toggle(playlist, checked)); }}
+              // The tooltip never opens on touch, so a press on a smart / synced row says why instead.
+              onClick={disabledReason
+                ? () => showToast(disabledReason)
+                : disabled ? undefined : () => { void runSave(() => toggle(playlist, checked)); }}
               className={cx(
                 'flex min-h-10 w-full items-center gap-4 rounded-chip px-3 text-left text-sm leading-5 transition-colors duration-150 max-sm:min-h-12',
                 disabled ? 'cursor-default text-yt-text-disabled' : 'cursor-pointer text-yt-text hover:bg-yt-tonal',

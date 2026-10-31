@@ -22,8 +22,9 @@ interface ShelfPlaylistCardProps {
 }
 
 /**
- * Square playlist card of the あなたのプレイリスト shelf: the cover and the name open the playlist,
- * the ▶ plays it from the first song (like the playlist page's すべて再生) without leaving Home.
+ * Square playlist card of the あなたのプレイリスト shelf: the cover and the name (with the kind line
+ * under it) open the playlist, the ▶ plays it from the first song (like the playlist page's すべて再生)
+ * without leaving Home.
  */
 export default function ShelfPlaylistCard({ playlist, finePointer }: ShelfPlaylistCardProps) {
   const t = useTranslateSourceText();
@@ -64,19 +65,22 @@ export default function ShelfPlaylistCard({ playlist, finePointer }: ShelfPlayli
           </button>
         )}
       </div>
-      <h3 className="m-0 mt-2 text-sm font-medium leading-5 text-yt-text">
-        <Link
-          to={href}
-          className="line-clamp-2 rounded-sm text-inherit no-underline [overflow-wrap:anywhere] hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-yt-focus"
-        >
-          {name}
-        </Link>
-      </h3>
-      <p className="m-0 mt-0.5 truncate text-sm leading-5 text-yt-text-secondary">
-        {text.syncFailed(playlist) ? <span className="text-yt-danger">{t('同期エラー')}</span> : text.kind(playlist)}
-        {' · '}
-        {formatCount(playlist.songs.length, 'song', language)}
-      </p>
+      {/* relative: the name link's ::after also covers the kind line (a touch-sized target). */}
+      <div className="relative mt-2">
+        <h3 className="m-0 text-sm font-medium leading-5 text-yt-text">
+          <Link
+            to={href}
+            className="line-clamp-2 rounded-sm text-inherit no-underline [overflow-wrap:anywhere] hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-yt-focus after:absolute after:inset-x-0 after:-top-1 after:bottom-0 after:content-['']"
+          >
+            {name}
+          </Link>
+        </h3>
+        <p className="m-0 mt-0.5 truncate text-sm leading-5 text-yt-text-secondary">
+          {text.syncFailed(playlist) ? <span className="text-yt-danger">{t('同期エラー')}</span> : text.kind(playlist)}
+          {' · '}
+          {formatCount(playlist.songs.length, 'song', language)}
+        </p>
+      </div>
     </li>
   );
 }

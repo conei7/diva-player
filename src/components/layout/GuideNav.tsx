@@ -22,7 +22,7 @@ function GuideHeading({ id, children }: { id: string; children: ReactNode }) {
  * The expanded guide (240px) and the drawer (DESIGN_SPEC §6.1.3): Home / Chorus highlights /
  * Favorite producers ─ Library ─ Explore (with the Discovery mix button) ─ Settings / Hidden songs
  * ─ footer. `inDrawer` closes the drawer after a press (`onNavigate`); `extraItems` go at the end
- * of the last section (the drawer adds the language and hidden mode rows on phones).
+ * of the last section (the drawer adds the language, layout and hidden mode rows on phones).
  */
 export default function GuideNav({
   inDrawer = false,

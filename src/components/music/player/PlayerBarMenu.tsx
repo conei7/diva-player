@@ -8,18 +8,18 @@ import { copyTextToClipboard } from '../../player/playerUi';
 import IconButton from '../../ui/IconButton';
 import Menu, { MenuDivider, MenuItem } from '../../ui/Menu';
 import { CloseIcon, LinkIcon, MoreVertIcon, PlaylistAddIcon } from '../../ui/icons';
+import { closePlayerWithUndo } from '../../watch/watchActions';
 
 /**
  * The player bar's ⋮: the sleep timer, リンクをコピー and キューをプレイリストに保存 as in the mini player,
- * and プレイヤーを閉じる (the bar has no ✕ of its own). The bar is at the bottom of the window, so the
- * menu opens upwards (Menu flips when there is no room below).
+ * and プレイヤーを閉じる (the bar has no ✕ of its own; the toast's 元に戻す brings the queue back). The
+ * bar is at the bottom of the window, so the menu opens upwards (Menu flips when there is no room below).
  */
 export default function PlayerBarMenu() {
   const t = useTranslateSourceText();
   const songId = usePlayerStore(state => state.currentSong?.id ?? null);
   const queue = usePlayerStore(state => state.queue);
   const queueIndex = usePlayerStore(state => state.queueIndex);
-  const closePlayer = usePlayerStore(state => state.closePlayer);
 
   const copyLink = () => {
     if (songId === null) return;
@@ -52,7 +52,7 @@ export default function PlayerBarMenu() {
         {t('キューをプレイリストに保存')}
       </MenuItem>
       <MenuDivider />
-      <MenuItem icon={<CloseIcon />} onSelect={closePlayer}>{t('プレイヤーを閉じる')}</MenuItem>
+      <MenuItem icon={<CloseIcon />} onSelect={() => closePlayerWithUndo(t)}>{t('プレイヤーを閉じる')}</MenuItem>
     </Menu>
   );
 }

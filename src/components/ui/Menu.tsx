@@ -332,12 +332,19 @@ function MenuItemBase({
   const sheet = menu?.sheet ?? false;
   const contentRow = role === 'menuitem' && keepOpen && !onSelect && !href;
 
+  // The tint alone is too faint to follow with the keyboard, so keyboard focus also gets an inset ring
+  // (outline-none sets --tw-outline-style: none, hence the explicit outline-solid). Rows focused by the
+  // mouse (onPointerMove) only match :focus-visible after keyboard use. Once focus steps into a content
+  // row's controls, they draw the global ring and the row keeps just the tint.
   const rowClass = cx(
     'flex w-full select-none items-center gap-4 px-4 text-left text-sm font-normal leading-5 no-underline outline-none transition-colors duration-150 [-webkit-tap-highlight-color:transparent]',
     sheet ? 'min-h-12' : 'min-h-9',
     disabled
       ? 'cursor-default text-yt-text-disabled'
-      : cx('text-yt-text hover:bg-yt-tonal focus-visible:bg-yt-tonal', !contentRow && 'cursor-pointer'),
+      : cx(
+        'text-yt-text hover:bg-yt-tonal focus-visible:bg-yt-tonal focus-visible:outline-solid focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-yt-focus',
+        !contentRow && 'cursor-pointer',
+      ),
     contentRow && 'focus-within:bg-yt-tonal',
     className,
   );
@@ -439,8 +446,22 @@ export function MenuDivider() {
 }
 
 /** Small grey heading for a group of items (e.g. 「表示言語」). */
-export function MenuLabel({ children }: { children: ReactNode }) {
-  return <div role="presentation" className="px-4 pb-1 pt-2 text-xs font-medium leading-4 text-yt-text-secondary">{children}</div>;
+export function MenuLabel({ children, id }: { children: ReactNode; id?: string }) {
+  return <div id={id} role="presentation" className="px-4 pb-1 pt-2 text-xs font-medium leading-4 text-yt-text-secondary">{children}</div>;
+}
+
+/**
+ * A labelled set of items under a MenuLabel. A menu with more than one set of radio items needs a
+ * group each (e.g. 表示言語 and レイアウト), or assistive tech reads them as one set with two checked.
+ */
+export function MenuGroup({ label, children }: { label: string; children: ReactNode }) {
+  const id = useId();
+  return (
+    <div role="group" aria-labelledby={id}>
+      <MenuLabel id={id}>{label}</MenuLabel>
+      {children}
+    </div>
+  );
 }
 
 export { Menu };

@@ -67,7 +67,7 @@ export default function NowPlayingSongInfo({ song, titleRef }: NowPlayingSongInf
         <Link
           ref={titleRef}
           to={watchPath(song.id, { autoplay: false })}
-          className="rounded-chip text-inherit no-underline outline-none hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-yt-focus"
+          className="rounded-chip text-inherit no-underline outline-none hover:underline focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-yt-focus"
         >
           {song.name}
         </Link>
