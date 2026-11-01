@@ -6,6 +6,7 @@ import { usePlayerStore } from '../../stores/playerStore';
 import { useProgressStore } from '../../stores/progressStore';
 import { dismissToast, showToast } from '../../stores/toastStore';
 import { useUiStore } from '../../stores/uiStore';
+import { OverlayErrorBoundary } from '../layout/RouteErrorBoundary';
 import { toggleMute } from './playerMute';
 import { hasCommandModifier, isInteractiveTarget, isTextEntryTarget } from './playerUi';
 
@@ -86,9 +87,14 @@ export default function KeyboardShortcuts() {
   }, []);
 
   if (!open) return null;
+  // This sits outside every page boundary: a list whose code cannot be downloaded (a tab older than
+  // the deploy) closes with 「表示できませんでした」 and 再読み込み instead of taking the app down.
+  // The boundary is new on each opening, so a second try says so again (React.lazy keeps the failure).
   return (
     <Suspense fallback={null}>
-      <KeyboardShortcutsDialog open onClose={() => setOpen(false)} />
+      <OverlayErrorBoundary onError={() => setOpen(false)}>
+        <KeyboardShortcutsDialog open onClose={() => setOpen(false)} />
+      </OverlayErrorBoundary>
     </Suspense>
   );
 }

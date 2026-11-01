@@ -1,20 +1,24 @@
 /**
  * Markup contract of the song page's action row: on phones it scrolls sideways with its scrollbar
  * hidden, so a fade marks each side with more actions past it; from 640px it wraps beside the
- * producers exactly as before. Rendered to static HTML with the measured overflow stubbed.
+ * producers exactly as before. While nothing can be heard it starts with ミュートを解除 (standard
+ * layout). Rendered to static HTML with the measured overflow stubbed.
  */
 import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { HorizontalOverflow } from '../../hooks/useHorizontalOverflow';
-import type { Song } from '../../types/vocadb';
+import type { PV, Song } from '../../types/vocadb';
 
 const measured = vi.hoisted(() => ({ overflow: { start: false, end: false } as HorizontalOverflow }));
+const view = vi.hoisted(() => ({ musicLayout: false }));
 
 vi.mock('../../hooks/useHorizontalOverflow', () => ({
   useHorizontalOverflow: () => [() => undefined, measured.overflow],
 }));
+vi.mock('../../hooks/useMusicLayout', () => ({ useIsMusicLayout: () => view.musicLayout }));
 
 let ActionBar: typeof import('./ActionBar').default;
+let usePlayerStore: typeof import('../../stores/playerStore').usePlayerStore;
 const localStorageValues = new Map<string, string>();
 
 const song = {
@@ -37,11 +41,22 @@ beforeAll(async () => {
   });
   const { useLanguageStore } = await import('../../stores/languageStore');
   Object.assign(useLanguageStore.getInitialState(), { language: 'ja' });
+  ({ usePlayerStore } = await import('../../stores/playerStore'));
   ActionBar = (await import('./ActionBar')).default;
 });
 
+type PlayerState = ReturnType<typeof usePlayerStore.getState>;
+
+/** Server rendering reads zustand's initial state, so the fixtures are written into it as well. */
+function setPlayer(state: Partial<PlayerState>) {
+  usePlayerStore.setState(state);
+  Object.assign(usePlayerStore.getInitialState(), state);
+}
+
 beforeEach(() => {
   measured.overflow = { start: false, end: false };
+  view.musicLayout = false;
+  setPlayer({ currentSong: null, currentPV: null, volume: 40 });
 });
 
 function render(overflow: HorizontalOverflow): string {
@@ -110,5 +125,41 @@ describe('ActionBar', () => {
       .toBe('</span></button></div><div aria-hidden="true" ');
     expect(html.indexOf('data-edge-fade="end"')).toBeGreaterThan(html.indexOf('data-edge-fade="start"'));
     expect(html.endsWith('</div></div>')).toBe(true);
+  });
+});
+
+describe('ActionBar ミュートを解除', () => {
+  const youtube = { service: 'Youtube', pvId: 'abcdefghijk', id: 1 } as PV;
+  const unmuteLabel = '>ミュートを解除</span></button>';
+
+  it('comes first in the row while nothing can be heard and a song is loaded', () => {
+    setPlayer({ currentSong: song, currentPV: youtube, volume: 0 });
+    const html = render({ start: false, end: false });
+    const row = html.indexOf('data-testid="watch-action-bar"');
+    expect(row).toBeGreaterThan(0);
+    // The first element in the row is the pill, before the rating.
+    expect(html.slice(row).indexOf('<button ')).toBeLessThan(html.slice(row).indexOf('role="group"'));
+    expect(html.slice(row)).toContain(unmuteLabel);
+  });
+
+  it('is left out while the player can be heard', () => {
+    setPlayer({ currentSong: song, currentPV: youtube, volume: 40 });
+    expect(render({ start: false, end: false })).not.toContain('ミュートを解除');
+  });
+
+  it('is left out with no song loaded (nothing to unmute on this page)', () => {
+    setPlayer({ currentSong: null, currentPV: null, volume: 0 });
+    expect(render({ start: false, end: false })).not.toContain('ミュートを解除');
+  });
+
+  it('is left out in the music layout (its player bar shows it)', () => {
+    view.musicLayout = true;
+    setPlayer({ currentSong: song, currentPV: youtube, volume: 0 });
+    expect(render({ start: false, end: false })).not.toContain('ミュートを解除');
+  });
+
+  it('is left out for Bilibili, which takes no volume from the app', () => {
+    setPlayer({ currentSong: song, currentPV: { ...youtube, service: 'Bilibili' } as PV, volume: 0 });
+    expect(render({ start: false, end: false })).not.toContain('ミュートを解除');
   });
 });

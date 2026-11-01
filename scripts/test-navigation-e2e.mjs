@@ -132,7 +132,8 @@ const fixtureResponse = (body, contentType = 'application/json') => ({
   body: typeof body === 'string' ? body : JSON.stringify(body),
 });
 
-async function installApiFixtures(page, homeSongs = fixtureHomeSongs, recommendationSongs = []) {
+/** `songs`: more songs by id; `external`: a stubbed response for another host (else the network). */
+async function installApiFixtures(page, homeSongs = fixtureHomeSongs, recommendationSongs = [], { songs = [], external } = {}) {
   await page.setRequestInterception(true);
   page.on('request', request => {
     const url = new URL(request.url());
@@ -140,7 +141,9 @@ async function installApiFixtures(page, homeSongs = fixtureHomeSongs, recommenda
     const isBackend = path.startsWith('/backend-api/');
     const isVocaDb = url.hostname === 'vocadb.net';
     if (!isBackend && !isVocaDb) {
-      void request.continue();
+      const stub = external?.(url);
+      if (stub) void request.respond(stub);
+      else void request.continue();
       return;
     }
 
@@ -178,7 +181,8 @@ async function installApiFixtures(page, homeSongs = fixtureHomeSongs, recommenda
     } else if (isVocaDb && path === '/api/albums/901') {
       response = fixtureResponse({ id: 901, name: 'DIVA E2E Album' });
     } else if (path.match(/\/api\/songs\/\d+$/)) {
-      response = fixtureResponse(path.endsWith('/1502') ? fixtureHomeSong : fixtureSong);
+      response = fixtureResponse(songs.find(song => path.endsWith(`/${song.id}`))
+        ?? (path.endsWith('/1502') ? fixtureHomeSong : fixtureSong));
     } else if (isVocaDb && path.match(/\/api\/songs$/)) {
       response = fixtureResponse({ items: fixtureSongs, term: url.searchParams.get('query') ?? '', totalCount: fixtureSongs.length });
     } else if (isVocaDb && path.startsWith('/api/songs/')) {
@@ -758,6 +762,158 @@ try {
     console.log(`PASS Watch video/list balance at ${width}: ${JSON.stringify(dimensions)}`);
   }
   await layoutContext.close();
+
+  // 「Skip to player」 goes to the play button of the player on screen. The song page has none
+  // (apart from the music layout's player bar on wider windows), so there it goes to the video,
+  // which comes after <main> and its endless related list, scrolled into view below the top bar
+  // (only when it is not wholly there already, and never with its top under the bar).
+  // Without a video it goes to <main>. A stub YouTube API puts an iframe where the real one would.
+  {
+    const nicoSong = { ...fixtureSong, id: 1510, name: 'DIVA E2E Nico Song', defaultName: 'DIVA E2E Nico Song', pvs: [fixtureNicoPv], pvServices: 'NicoNicoDouga' };
+    const noVideoSong = { ...fixtureSong, id: 1511, name: 'DIVA E2E No Video Song', defaultName: 'DIVA E2E No Video Song', pvs: [], pvServices: 'Nothing' };
+    const youtubeStub = `
+      window.YT = {
+        PlayerState: { UNSTARTED: -1, ENDED: 0, PLAYING: 1, PAUSED: 2, CUED: 5 },
+        Player: function (id, options) {
+          const player = this;
+          let state = -1;
+          let videoId = '';
+          const frame = document.createElement('iframe');
+          frame.id = id;
+          frame.title = 'YouTube video player';
+          frame.style.cssText = 'width:100%;height:100%;border:0';
+          document.getElementById(id)?.replaceWith(frame);
+          const emit = () => options.events.onStateChange({ data: state, target: player });
+          player.getIframe = () => frame;
+          player.getVideoData = () => ({ video_id: videoId });
+          player.getPlayerState = () => state;
+          player.getCurrentTime = () => 0;
+          player.getDuration = () => 180;
+          player.getVolume = () => 50;
+          player.setVolume = player.mute = player.unMute = player.seekTo = player.destroy = () => {};
+          player.isMuted = () => false;
+          player.cueVideoById = player.loadVideoById = value => { videoId = typeof value === 'string' ? value : value.videoId; state = 5; };
+          player.playVideo = () => { state = 1; emit(); };
+          player.pauseVideo = () => { state = 2; emit(); };
+          player.stopVideo = () => { state = 0; };
+          setTimeout(() => options.events.onReady({ target: player }), 0);
+        },
+      };
+      window.onYouTubeIframeAPIReady();
+    `;
+    const external = url => {
+      if (url.href === 'https://www.youtube.com/iframe_api') return fixtureResponse(youtubeStub, 'application/javascript');
+      if (url.hostname === 'embed.nicovideo.jp') return fixtureResponse('<!doctype html><title>Niconico</title>', 'text/html');
+      if (url.origin !== base.origin) return { status: 204, body: '' };
+      return null;
+    };
+    const cases = [
+      { name: 'standard 1280px song page', layout: 'standard', viewport: { width: 1280, height: 900 }, path: 'watch?v=1501', expected: 'video' },
+      { name: 'standard 1280px song page scrolled down', layout: 'standard', viewport: { width: 1280, height: 900 }, path: 'watch?v=1501', scrolled: true, expected: 'video' },
+      { name: 'standard 390px song page', layout: 'standard', viewport: { width: 390, height: 844, isMobile: true, hasTouch: true }, path: 'watch?v=1501', expected: 'video' },
+      // Short windows: at the top of the page the whole video is already in view below the top bar
+      // (1280×540), or it is taller than the room below the bar (landscape phones).
+      { name: 'standard 1280×540 song page', layout: 'standard', viewport: { width: 1280, height: 540 }, path: 'watch?v=1501', fitsAtTop: true, expected: 'video' },
+      { name: 'standard 1280×540 song page scrolled down', layout: 'standard', viewport: { width: 1280, height: 540 }, path: 'watch?v=1501', scrolled: true, expected: 'video' },
+      { name: 'standard 844×390 song page', layout: 'standard', viewport: { width: 844, height: 390, isMobile: true, hasTouch: true }, path: 'watch?v=1501', expected: 'video' },
+      { name: 'standard 667×375 song page', layout: 'standard', viewport: { width: 667, height: 375, isMobile: true, hasTouch: true }, path: 'watch?v=1501', expected: 'video' },
+      { name: 'standard Home with the mini player', layout: 'standard', viewport: { width: 1280, height: 900 }, path: '', expected: 'global-mini-player-toggle' },
+      { name: 'music 1280px song page', layout: 'music', viewport: { width: 1280, height: 900 }, path: 'watch?v=1501', expected: 'music-play-toggle' },
+      { name: 'music 1280px Home', layout: 'music', viewport: { width: 1280, height: 900 }, path: '', expected: 'music-play-toggle' },
+      { name: 'music 390px Home', layout: 'music', viewport: { width: 390, height: 844, isMobile: true, hasTouch: true }, path: '', expected: 'music-mini-play-toggle' },
+      { name: 'music 390px song page', layout: 'music', viewport: { width: 390, height: 844, isMobile: true, hasTouch: true }, path: 'watch?v=1501', expected: 'video' },
+      // The idle YouTube iframe stays (hidden) before another service's video.
+      { name: 'standard 1280px Niconico song page', layout: 'standard', viewport: { width: 1280, height: 900 }, song: nicoSong, path: 'watch?v=1510', expected: 'video' },
+      // The player (with the queue's video) stays under the page's frame, inert.
+      { name: 'standard 1280px song page without a video', layout: 'standard', viewport: { width: 1280, height: 900 }, path: 'watch?v=1511', expected: 'main' },
+    ];
+    for (const { name, layout, viewport, path, song = fixtureSong, scrolled = false, fitsAtTop = false, expected } of cases) {
+      const skipContext = await browser.createBrowserContext();
+      const skipPage = await skipContext.newPage();
+      await skipPage.setViewport(viewport);
+      await pinAppLanguage(skipPage);
+      await skipPage.evaluateOnNewDocument(seed => {
+        if (window !== window.top || sessionStorage.getItem('skip-link-e2e-seeded')) return;
+        sessionStorage.setItem('skip-link-e2e-seeded', '1');
+        localStorage.setItem('diva_uiLayout', JSON.stringify(seed.layout));
+        localStorage.setItem('diva-global-filters', JSON.stringify({ version: 2, state: { enabled: false } }));
+        const tabId = 'skip-link-e2e-tab';
+        sessionStorage.setItem('diva-playback-tab-v1', tabId);
+        localStorage.setItem('diva-playback-owner-v1', JSON.stringify({ type: 'claim', tabId, songId: seed.song.id, claimedAt: Date.now() }));
+        localStorage.setItem('diva_playerQueue', JSON.stringify({
+          queue: [seed.song],
+          queueIndex: 0,
+          currentSong: seed.song,
+          currentSongId: seed.song.id,
+          queueSources: ['manual'],
+          currentPlaybackSource: 'manual',
+        }));
+      }, { layout, song });
+      await installApiFixtures(skipPage, fixtureHomeSongs, [], { songs: [nicoSong, noVideoSong], external });
+      await skipPage.goto(new URL(path, base), { waitUntil: 'domcontentloaded', timeout: 60_000 });
+      await skipPage.waitForFunction(music => (document.documentElement.dataset.shell === 'music') === music, { timeout: 30_000 }, layout === 'music');
+      await skipPage.waitForFunction(target => {
+        const visible = selector => [...document.querySelectorAll(selector)].some(element => element.getClientRects().length > 0);
+        if (target === 'main') return visible('[data-testid="watch-no-video"]') && document.querySelector('[data-testid="global-player"] iframe');
+        if (target !== 'video') return visible(`[data-testid="${target}"]`);
+        const player = document.querySelector('[data-testid="global-player"]');
+        return player?.style.position === 'absolute'
+          && [...player.querySelectorAll('iframe')].some(frame => frame.getBoundingClientRect().width > 100);
+      }, { timeout: 30_000 }, expected);
+      if (scrolled) {
+        await skipPage.evaluate(() => {
+          document.body.style.minHeight = '5000px';
+          window.scrollTo(0, 1500);
+        });
+      }
+      const skipButton = await skipPage.waitForFunction(() => [...document.querySelectorAll('button')]
+        .find(button => button.textContent?.trim() === 'Skip to player'), { timeout: 10_000 });
+      await skipButton.focus();
+      const before = await skipPage.evaluate(() => {
+        const video = [...document.querySelectorAll('[data-testid="global-player"] iframe')]
+          .find(frame => frame.getBoundingClientRect().width > 1 && !frame.closest('[inert],[aria-hidden="true"]'));
+        const rect = video?.getBoundingClientRect();
+        return { top: rect?.top, bottom: rect?.bottom, scrollY };
+      });
+      await skipPage.keyboard.press('Enter');
+      const landed = await skipPage.evaluate(() => {
+        const active = document.activeElement;
+        const player = document.querySelector('[data-testid="global-player"]');
+        const rect = active?.getBoundingClientRect();
+        return {
+          target: active?.tagName === 'IFRAME' && player?.contains(active) ? 'video'
+            : active?.id === 'main-content' ? 'main'
+              : active?.getAttribute('data-testid') ?? active?.tagName ?? null,
+          title: active?.getAttribute('title') ?? null,
+          top: rect?.top,
+          bottom: rect?.bottom,
+          headerBottom: document.querySelector('header')?.getBoundingClientRect().bottom ?? 0,
+          innerHeight,
+          scrollY,
+        };
+      });
+      if (landed.target !== expected) throw new Error(`Skip to player on the ${name} must reach ${expected}: ${JSON.stringify(landed)}`);
+      if (expected === 'video') {
+        // Never under the top bar; wholly in view when it fits below the bar; not moved when it already was.
+        const inView = rect => rect.top >= landed.headerBottom - 0.5 && rect.bottom <= landed.innerHeight + 0.5;
+        const fits = landed.bottom - landed.top <= landed.innerHeight - landed.headerBottom + 0.5;
+        // The no-scroll check below needs a video already in view: a layout change that ends it must fail here,
+        // not switch that check off.
+        if (fitsAtTop && !inView(before)) {
+          throw new Error(`The ${name} must start with the whole video in view below the top bar: ${JSON.stringify({ before, landed })}`);
+        }
+        if (landed.top < landed.headerBottom - 0.5 || (fits && !inView(landed))) {
+          throw new Error(`Skip to player on the ${name} must bring the video into view below the top bar: ${JSON.stringify({ before, landed })}`);
+        }
+        if (inView(before) && landed.scrollY !== before.scrollY) {
+          throw new Error(`Skip to player on the ${name} must not scroll a video already in view: ${JSON.stringify({ before, landed })}`);
+        }
+      }
+      if (song === nicoSong && landed.title !== fixtureNicoPv.name) throw new Error(`Skip to player must reach the Niconico video: ${JSON.stringify(landed)}`);
+      console.log(`PASS Skip to player on the ${name} reaches ${expected}${expected === 'video' ? ` (scrollY ${before.scrollY} → ${landed.scrollY}, top ${landed.top})` : ''}`);
+      await skipContext.close();
+    }
+  }
 } finally {
   await browser.close();
 }

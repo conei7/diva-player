@@ -359,6 +359,82 @@ html[data-bottom-nav="true"] {
   }
 }
 
+/* 639px 以下で高さ 420px 以上: 動画は高さ 200px 以上（YouTube の埋め込みは 200×200 以上。min-height は上の
+   max-height に勝つ。足りない分は動画の上下に帯）。560px 未満かつ 420px 未満（分割画面など）は上の上限のまま:
+   ヘッダー・200px の動画・操作・下部ナビが縦に収まらない */
+@media (max-width: 639px) and (min-height: 420px) {
+  html:not([data-shell="music"]) .global-mini-player .global-player-video {
+    min-height: 200px;
+  }
+}
+
+/* 560px 以上で高さ 420px 未満（横向きのスマホ・低いウィンドウ）: 積むと動画がヘッダーの下に潜るので、
+   動画だけを右下の角に 356×200 で置き、操作はその左に固定した帯にする（ミュージックレイアウトと同じ形）。
+   帯は動画の箱の中の position:fixed なので、箱（.global-mini-player）に transform・filter・backdrop-filter・
+   contain・container-type・will-change を付けてはいけない（付けると帯が箱の overflow:hidden に閉じ込められる）。
+   639px 以下は下部ナビも動画の左で終わり、アイコンだけにする */
+@media (min-width: 560px) and (max-height: 419.98px) {
+  html:not([data-shell="music"]) .global-mini-player {
+    left: auto;
+    right: 8px;
+    width: 356px;
+    max-width: calc(100vw - 16px);
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 8px);
+  }
+  html:not([data-shell="music"]) .global-mini-player .global-player-video {
+    height: 200px;
+    max-height: none;
+    aspect-ratio: auto;
+  }
+  /* The strip: from the guide to the video's 8px gap, above the bottom navigation (with none, above the
+     safe area like the video). A container, so the song label steps aside when it is narrow
+     (MiniPlayerControls). */
+  html:not([data-shell="music"]) .global-mini-player .mini-player-controls {
+    position: fixed;
+    left: calc(var(--guide-offset, 0px) + 8px);
+    right: 372px;
+    bottom: calc(max(var(--bottom-nav-height, 0px), env(safe-area-inset-bottom, 0px)) + 8px);
+    container-type: inline-size;
+    border-radius: 12px;
+    background: var(--color-yt-raised);
+    box-shadow: 0 4px 32px rgba(0, 0, 0, 0.5);
+  }
+  /* A narrow strip leaves the song label to screen readers, so its keyboard focus ring goes around the
+     strip (always here, so there is one ring whether the label shows or not). */
+  html:not([data-shell="music"]) .global-mini-player .mini-player-controls [data-testid="mini-player-swipe-origin"] {
+    outline: none;
+  }
+  html:not([data-shell="music"]) .global-mini-player .mini-player-controls:has([data-testid="mini-player-swipe-origin"]:focus-visible) {
+    outline: 2px solid var(--color-yt-focus);
+    outline-offset: 2px;
+  }
+  html:not([data-shell="music"]):has(.global-mini-player) .app-bottom-nav {
+    right: 372px;
+  }
+  /* The 5 cells of the shortened nav are 37-53px wide: icons only (the link names stay for screen
+     readers; the ≡ button has its own aria-label). */
+  html:not([data-shell="music"]):has(.global-mini-player) .app-bottom-nav li span:not([aria-hidden]) {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  html:not([data-shell="music"]):has(.global-mini-player) .app-bottom-nav li span[aria-hidden] {
+    display: none;
+  }
+}
+
+/* 1024px 以上の角配置: トーストは左下（ToastHost）で、そこは帯の上なので、帯（2行 52px + 3rem。
+   MiniPlayerControls の h-[52px] と h-12。変えたら合わせる）の 16px 上に出す
+   （1023px 以下は中央で、--floating-player-clearance により動画の上） */
+@media (min-width: 1024px) and (max-height: 419.98px) {
+  html:not([data-shell="music"]):has(.global-mini-player) [data-testid="toast-host"] {
+    bottom: calc(max(var(--bottom-nav-height, 0px), env(safe-area-inset-bottom, 0px)) + 8px + 52px + 3rem + 16px);
+  }
+}
+
 .global-mini-player button {
   touch-action: manipulation;
 }
@@ -727,8 +803,9 @@ html[data-shell="music"] [data-testid="watch-video-column"] > :first-child {
 }
 /* Next to the corner video the bar (368px at 740 wide) cannot hold its three columns, and the overflow
    would be drawn under the video, where taps reach the embed. It keeps the song, 前 / 再生 / 次 with the
-   line, and キュー / ミュート / ⋮ (with プレイヤーを閉じる); only the title shrinks, so it still fits at
-   640px. From 1280px the whole bar fits. Unlayered, so these beat the bar's grid utilities. */
+   line, and キュー / ミュート / ⋮ (with プレイヤーを閉じる) in one row where only the title shrinks. That
+   row leaves no title at all at 640px (a 268px bar), so below 800px the next block makes two rows. From
+   1280px the whole bar fits. Unlayered, so these beat the bar's grid utilities. */
 @media (max-height: 419.98px) and (max-width: 1279.98px) {
   html[data-shell="music"]:has(.global-mini-player) .music-player-bar {
     grid-template-columns: minmax(0, 1fr) auto auto;
@@ -737,5 +814,36 @@ html[data-shell="music"] [data-testid="watch-video-column"] > :first-child {
     padding-right: 0;
   }
   html[data-shell="music"]:has(.global-mini-player) .music-player-bar [data-bar-optional] { display: none; }
+}
+/* Below 800px: 前 / 再生 / 次 and the line on the left across both rows, the title over キュー / ミュート /
+   ⋮ on the right (128px of title at 640 wide instead of none). The artist line goes, with the sleep
+   timer's 残り in it: a third line would overflow the 72px bar (⋮ > スリープタイマー still shows the time
+   left). The title is 24px tall and 6px above the buttons (24 + 6 + 40 of the 72px): a low tap on it
+   misses キュー / ミュート / ⋮, and the queue count (2px over キュー) stays off its focus ring (4px under
+   it). The song page and a closed player keep the three columns. */
+@media (max-height: 419.98px) and (max-width: 799.98px) {
+  html[data-shell="music"]:has(.global-mini-player) .music-player-bar {
+    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-rows: auto auto;
+    align-content: center;
+    row-gap: 6px;
+  }
+  html[data-shell="music"]:has(.global-mini-player) .music-player-bar > [data-bar-song] {
+    grid-column: 2;
+    grid-row: 1;
+  }
+  html[data-shell="music"]:has(.global-mini-player) .music-player-bar > [data-bar-transport] {
+    grid-column: 1;
+    grid-row: 1 / span 2;
+  }
+  html[data-shell="music"]:has(.global-mini-player) .music-player-bar > [data-bar-extras] {
+    grid-column: 2;
+    grid-row: 2;
+    justify-content: flex-start;
+  }
+  html[data-shell="music"]:has(.global-mini-player) .music-player-bar > [data-bar-song] a:not([aria-hidden]) {
+    line-height: 24px;
+  }
+  html[data-shell="music"]:has(.global-mini-player) .music-player-bar [data-bar-artist] { display: none; }
 }
 /* ===== /area:music ===== */

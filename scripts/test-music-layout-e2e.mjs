@@ -545,9 +545,12 @@ try {
   }
 
   // Phones held sideways (short): the video sits whole in the corner, the bars end to its left, and
-  // every control of the bars stays clear of it (the player bar drops its optional parts).
+  // every control of the bars stays clear of it (the player bar drops its optional parts, and below
+  // 800px puts the title over キュー / ミュート / ⋮ so it keeps room).
   for (const viewport of [
     { width: 568, height: 320, isMobile: true, hasTouch: true },
+    { width: 640, height: 360, isMobile: true, hasTouch: true },
+    { width: 667, height: 375, isMobile: true, hasTouch: true },
     { width: 740, height: 340, hasTouch: true },
     { width: 844, height: 390, isMobile: true, hasTouch: true },
   ]) {
@@ -573,41 +576,85 @@ try {
     await assertNoHorizontalOverflow(page, `short screen ${viewport.width}×${viewport.height}`);
     // The bars' rects can end left of the video while their contents overflow under it (the fixed bar
     // does not clip): a tap at each control's centre must reach that control, not the embed.
-    const reach = await page.evaluate(() => {
+    const measureBars = () => page.evaluate(() => {
+      const reached = element => {
+        const rect = element.getBoundingClientRect();
+        const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+        return Boolean(hit && element.contains(hit));
+      };
       const bars = [...document.querySelectorAll('.music-player-bar, .music-mini-bar, .music-bottom-nav')];
       const controls = bars.flatMap(bar => [...bar.querySelectorAll('button, a[href], [role="link"]')])
         .filter(control => {
           const rect = control.getBoundingClientRect();
           return rect.width > 0 && rect.height > 0;
         })
-        .map(control => {
-          const rect = control.getBoundingClientRect();
-          const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
-          return {
-            name: control.dataset.testid || control.getAttribute('aria-label') || control.textContent.trim(),
-            reached: Boolean(hit && control.contains(hit)),
-          };
-        });
+        .map(control => ({
+          name: control.dataset.testid || control.getAttribute('aria-label') || control.textContent.trim(),
+          reached: reached(control),
+        }));
       const bar = document.querySelector('[data-testid="music-player-bar"]');
       const barShown = Boolean(bar && bar.getBoundingClientRect().width > 0);
+      if (!barShown) return { controls, barShown };
+      // The title is the bar's only link to the song page there (the artwork is optional).
+      const title = bar.querySelector('a[href*="watch"]:not([aria-hidden])');
+      const titleBox = title?.getBoundingClientRect();
+      const extras = bar.querySelector('[data-bar-extras]');
+      const artist = bar.querySelector('[data-bar-artist]');
+      const remaining = artist && [...artist.querySelectorAll('span')].find(span => span.textContent.includes('残り'));
+      const remainingBox = remaining?.getBoundingClientRect();
+      // Nor does it clip vertically: each of its parts must sit within its 72px.
+      const box = bar.getBoundingClientRect();
+      const style = getComputedStyle(bar);
+      const top = box.top + Number.parseFloat(style.paddingTop);
+      const bottom = box.bottom - Number.parseFloat(style.paddingBottom);
       return {
         controls,
         barShown,
-        barOverflow: barShown ? bar.scrollWidth - bar.clientWidth : 0,
-        line: barShown ? bar.querySelector('[role="slider"]')?.getBoundingClientRect().width ?? 0 : 0,
+        barOverflow: bar.scrollWidth - bar.clientWidth,
+        line: bar.querySelector('[role="slider"]')?.getBoundingClientRect().width ?? 0,
+        title: Math.round(titleBox?.width ?? 0),
+        titleHeight: Math.round(titleBox?.height ?? 0),
+        titleGap: titleBox && extras ? Math.round(extras.getBoundingClientRect().top - titleBox.bottom) : null,
+        titleReached: Boolean(title && reached(title)),
+        columns: style.gridTemplateColumns.split(' ').length,
+        artist: Math.round(artist?.getBoundingClientRect().height ?? 0),
+        // The <p> clips: its 残り must end inside it.
+        remaining: Boolean(remainingBox && remainingBox.width > 0
+          && remainingBox.right <= artist.getBoundingClientRect().right + 0.5),
+        partsOutside: [...bar.children].map(child => child.getBoundingClientRect())
+          .filter(rect => rect.height > 0 && (rect.top < top - 0.5 || rect.bottom > bottom + 0.5))
+          .map(rect => `${Math.round(rect.top - top)}..${Math.round(rect.bottom - top)} of ${Math.round(bottom - top)}`),
       };
     });
-    const missed = reach.controls.filter(control => !control.reached).map(control => control.name);
-    if (reach.controls.length === 0 || missed.length > 0) {
-      throw new Error(`Short screen ${viewport.width}×${viewport.height}: controls under the video ${JSON.stringify(missed)} of ${reach.controls.length}`);
-    }
-    if (reach.barShown) {
+    const assertBars = (reach, timer = false) => {
+      const when = timer ? ' with a sleep timer' : '';
+      const missed = reach.controls.filter(control => !control.reached).map(control => control.name);
+      if (reach.controls.length === 0 || missed.length > 0) {
+        throw new Error(`Short screen ${viewport.width}×${viewport.height}${when}: controls under the video ${JSON.stringify(missed)} of ${reach.controls.length}`);
+      }
+      if (!reach.barShown) return;
       const required = ['music-play-toggle', 'music-player-queue', 'music-mute-toggle', 'music-player-more'];
       const shown = new Set(reach.controls.map(control => control.name));
       const absent = required.filter(name => !shown.has(name));
-      if (absent.length > 0 || reach.barOverflow > 1 || reach.line < 100) {
-        throw new Error(`The short-screen bar keeps play, queue, mute, ⋮ and the progress line inside it ${JSON.stringify({ absent, ...reach, controls: undefined })}`);
+      // One row beside 前 / 再生 / 次 and キュー / ミュート / ⋮ left the title 0px at 640×360, 27px at 667×375.
+      if (absent.length > 0 || reach.barOverflow > 1 || reach.line < 100 || reach.title < 96 || !reach.titleReached
+        || reach.partsOutside.length > 0) {
+        throw new Error(`The short-screen bar${when} keeps the title, play, queue, mute, ⋮ and the progress line inside it ${JSON.stringify({ absent, ...reach, controls: undefined })}`);
       }
+      // The 800px cut-off: below it two rows, a 24px title 6px over キュー / ミュート / ⋮ and no artist line
+      // (nor the timer's 残り in it); from it the one row of three columns keeps the artist line and 残り.
+      const twoRows = viewport.width < 800;
+      if (twoRows
+        ? reach.columns !== 2 || reach.artist > 0 || reach.titleHeight < 24 || reach.titleGap < 6
+        : reach.columns !== 3 || reach.artist === 0 || (timer && !reach.remaining)) {
+        throw new Error(`Short screen ${viewport.width}×${viewport.height}${when}: ${twoRows
+          ? 'below 800px the bar has two rows, a 24px title 6px over キュー / ミュート / ⋮ and no artist line'
+          : `from 800px the bar keeps one row of three with the artist line${timer ? ' and 残り' : ''}`} ${JSON.stringify({ ...reach, controls: undefined })}`);
+      }
+    };
+    const reach = await measureBars();
+    assertBars(reach);
+    if (reach.barShown) {
       // The bar's progress line seeks on touch too (the standard mini player's is display-only there).
       const seekLine = await page.waitForSelector('[data-testid="music-player-bar"] [role="slider"][tabindex="0"]', { timeout: 10_000 });
       const seekPoint = await seekLine.evaluate(element => {
@@ -616,6 +663,27 @@ try {
       });
       await page.touchscreen.tap(seekPoint.x, seekPoint.y);
       await page.waitForFunction(() => Math.abs(window.__yt.getCurrentTime() - 150) < 10, { timeout: 5_000 });
+
+      // A running sleep timer adds its 残り to the artist line: the bar still holds all its parts.
+      await page.tap('[data-testid="music-player-more"]');
+      await page.waitForSelector('[role="menu"] [role="menuitemradio"]', { visible: true });
+      await new Promise(resolve => setTimeout(resolve, 300));
+      const timer = await page.evaluate(() => {
+        const item = [...document.querySelectorAll('[role="menu"] [role="menuitemradio"]')]
+          .find(element => element.textContent.trim() === '15分');
+        if (!item) return null;
+        item.scrollIntoView({ block: 'nearest' });
+        const rect = item.getBoundingClientRect();
+        const x = rect.left + rect.width / 2;
+        const y = rect.top + rect.height / 2;
+        const hit = document.elementFromPoint(x, y);
+        return { x, y, reached: Boolean(hit && item.contains(hit)) };
+      });
+      if (!timer?.reached) throw new Error(`The bar's ⋮ must offer a reachable 15分 sleep timer ${JSON.stringify(timer)}`);
+      await page.touchscreen.tap(timer.x, timer.y);
+      await page.waitForFunction(() => !document.querySelector('[role="menu"]')
+        && document.querySelector('[data-testid="music-player-bar"]').textContent.includes('残り'), { timeout: 5_000 });
+      assertBars(await measureBars(), true);
 
       // プレイヤーを閉じる lives in the bar's ⋮ only.
       await page.tap('[data-testid="music-player-more"]');
@@ -638,7 +706,7 @@ try {
       // The bar stays in place with nothing loaded.
       await page.waitForFunction(() => document.querySelector('[data-testid="music-play-toggle"]')?.disabled === true, { timeout: 5_000 });
     }
-    console.log(`PASS ${viewport.width}×${viewport.height}: video ${Math.round(card.width)}×${Math.round(card.height)} whole in the corner, ${reach.controls.length} controls clear of it${reach.barShown ? ', touch seeks, ⋮ closes the player' : ''}`);
+    console.log(`PASS ${viewport.width}×${viewport.height}: video ${Math.round(card.width)}×${Math.round(card.height)} whole in the corner, ${reach.controls.length} controls clear of it${reach.barShown ? `, ${reach.title}px title in ${reach.columns === 2 ? 'two rows' : 'one row'}, touch seeks, fits a sleep timer, ⋮ closes the player` : ''}`);
     await context.close();
   }
 
@@ -707,8 +775,148 @@ try {
     await context.close();
   }
 
+  await checkHistoryWidthChanges();
+
   if (pageErrors.length > 0) throw new Error(`Uncaught page errors:\n${pageErrors.join('\n')}`);
   console.log('PASS music layout E2E');
 } finally {
   await browser.close();
+}
+
+// History in the music layout follows the width the page really has (useElementWidth). Opening or
+// closing the 再生中 panel and switching the layout change that width without an event React sees,
+// so the new layout must still be rendered before the frame is painted. Called at the end of the
+// run above (a function declaration, so it is defined by then).
+async function checkHistoryWidthChanges() {
+  const viewport = { width: 1440, height: 900 };
+  const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+  // 12 plays (stored the way test-navigation-e2e seeds them), so the page scrolls in every variant.
+  async function openHistory(page) {
+    await open(page);
+    await page.waitForFunction(() => document.documentElement.dataset.shell === 'music', { timeout: 30_000 });
+    await page.waitForFunction(async () => (await indexedDB.databases()).some(database => database.name === 'diva-listening-history'),
+      { polling: 100, timeout: 20_000 });
+    await page.evaluate(async ids => {
+      const database = await new Promise((resolve, reject) => {
+        const request = indexedDB.open('diva-listening-history', 3);
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      await new Promise((resolve, reject) => {
+        const tx = database.transaction('plays', 'readwrite');
+        const store = tx.objectStore('plays');
+        store.clear();
+        const now = Date.now();
+        ids.forEach((s, index) => store.add({ s, t: now - index * 3_600_000, f: 0 }));
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      });
+      database.close();
+    }, homeSongs.slice(0, 12).map(item => item.id));
+    await open(page, 'history');
+    await page.waitForFunction(() => document.querySelector('main [class*="w-[246px]"], main [class*="w-[168px]"]')
+      && !document.querySelector('main [aria-busy="true"]'), { timeout: 20_000 });
+    await wait(500);
+  }
+
+  const togglePanel = page => page.click('[data-testid="music-now-playing-toggle"]');
+  // Opens the top bar's ⋮ and returns the click on the layout's item.
+  async function layoutSwitch(page, layout) {
+    await page.click('header button[aria-label="その他の操作"]');
+    await page.waitForSelector(`[data-testid="topnav-layout-${layout}"]`, { visible: true });
+    return async () => {
+      await page.click(`[data-testid="topnav-layout-${layout}"]`);
+      await page.waitForFunction(music => (document.documentElement.dataset.shell === 'music') === music,
+        { timeout: 15_000 }, layout === 'music');
+    };
+  }
+
+  // Every painted frame: a ResizeObserver created during the frame (so newer than the app's, and
+  // called after it) records the page at the end of the frame's ResizeObserver delivery. Only
+  // microtasks run between that and the paint. Once a change has settled, every frame that already
+  // had the final width must also have had the final layout (the right column, the rows' size).
+  {
+    const context = await browser.createBrowserContext();
+    const page = await preparePage(context, { layout: 'music', viewport });
+    await openHistory(page);
+    await page.evaluate(() => {
+      const frames = window.__historyFrames = [];
+      const probe = document.createElement('div');
+      probe.style.cssText = 'position:fixed;left:0;top:0;width:1px;height:1px;opacity:0;pointer-events:none';
+      document.body.append(probe);
+      let observer = null;
+      const sample = () => {
+        // The content's box (the parent of its backup file input) is the width the page measures.
+        const content = document.querySelector('main input[type="file"][accept="application/json,.json"]')?.parentElement;
+        frames.push({
+          width: Math.round((content?.getBoundingClientRect().width ?? 0) * 10) / 10,
+          rail: Boolean(document.querySelector('main [data-testid="history-actions"]')),
+          rows: document.querySelector('main [class*="w-[246px]"]') ? 'lg' : document.querySelector('main [class*="w-[168px]"]') ? 'md' : null,
+        });
+      };
+      const frame = () => {
+        observer?.disconnect();
+        observer = new ResizeObserver(sample);
+        // A size it has not reported, so it is called in this frame.
+        probe.style.width = probe.style.width === '1px' ? '2px' : '1px';
+        observer.observe(probe);
+        requestAnimationFrame(frame);
+      };
+      requestAnimationFrame(frame);
+    });
+    await wait(300);
+    const measure = async (label, act) => {
+      await page.evaluate(() => { window.__historyFrames.length = 0; });
+      await act();
+      await wait(600);
+      const frames = await page.evaluate(() => window.__historyFrames.splice(0));
+      const before = frames[0];
+      const settled = frames.at(-1);
+      if (frames.length < 10 || !before || !settled || settled.width === 0) throw new Error(`${label}: History frames were not sampled ${JSON.stringify(frames)}`);
+      if (Math.abs(settled.width - before.width) < 1) throw new Error(`${label}: the page width did not change ${JSON.stringify({ before, settled })}`);
+      const stale = frames.filter(frame => Math.abs(frame.width - settled.width) < 0.5
+        && (frame.rail !== settled.rail || frame.rows !== settled.rows));
+      if (stale.length > 0) {
+        throw new Error(`${label}: History painted ${stale.length} frame(s) at the new width in the previous width's layout ${JSON.stringify({ before, settled, stale })}`);
+      }
+      return settled;
+    };
+    const first = await measure('History: 再生中 panel toggled', () => togglePanel(page));
+    const second = await measure('History: 再生中 panel toggled back', () => togglePanel(page));
+    if (first.rail === second.rail) throw new Error(`History at 1440px must switch its right column with the 再生中 panel ${JSON.stringify({ first, second })}`);
+    await measure('History: music → standard', await layoutSwitch(page, 'standard'));
+    await measure('History: standard → music', await layoutSwitch(page, 'music'));
+    console.log(`PASS History at 1440×900 paints no frame in the previous width's layout (panel ${first.width}px ↔ ${second.width}px, both layout switches)`);
+    await context.close();
+  }
+
+  // The same changes without the sampler, which would hide it: rendered inside the ResizeObserver
+  // callback, a layout switch that resized the measured element would leave its notification for
+  // the next frame and fire "ResizeObserver loop completed with undelivered notifications". Not a
+  // general rule, so pinned to 1440×900 with 12 plays: where a switch also shows or hides the
+  // window's scrollbar (a short history at some heights) it can still fire, benignly (see
+  // useElementWidth).
+  {
+    const context = await browser.createBrowserContext();
+    const page = await preparePage(context, { layout: 'music', viewport });
+    await page.evaluateOnNewDocument(() => {
+      if (window !== window.top) return;
+      window.__windowErrors = [];
+      window.addEventListener('error', event => window.__windowErrors.push(String(event.message)));
+    });
+    await openHistory(page);
+    for (let toggle = 0; toggle < 2; toggle++) {
+      await togglePanel(page);
+      await wait(600);
+    }
+    for (const layout of ['standard', 'music']) {
+      await (await layoutSwitch(page, layout))();
+      await wait(600);
+    }
+    const loopErrors = await page.evaluate(() => window.__windowErrors.filter(message => message.includes('ResizeObserver loop')));
+    if (loopErrors.length > 0) throw new Error(`History width changes must not end a frame with a ResizeObserver loop error ${JSON.stringify(loopErrors)}`);
+    console.log('PASS History width changes leave no ResizeObserver loop error');
+    await context.close();
+  }
 }

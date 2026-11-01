@@ -67,7 +67,7 @@ export default function PlayerBarTransport() {
   const playLabel = isPlaying ? t('一時停止') : t('再生');
 
   return (
-    <div className="flex w-full min-w-0 flex-col items-center gap-1">
+    <div data-bar-transport="" className="flex w-full min-w-0 flex-col items-center gap-1">
       {/* 216px with the narrow gaps: still fits the middle column of a 640px window. */}
       <div className="flex items-center gap-1 lg:gap-2">
         <IconButton

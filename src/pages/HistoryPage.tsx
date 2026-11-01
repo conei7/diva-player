@@ -70,8 +70,13 @@ export default function HistoryPage() {
 
   return (
     <PageShell>
-      {/* Measured, so it stays mounted when the two variants switch. */}
-      <div ref={measureRef} className="min-w-0">
+      {/*
+        Stays mounted when the two variants switch. The measured element is a zero-height sentinel
+        as wide as the page, so a switch rendered inside the ResizeObserver callback does not resize
+        what is observed.
+      */}
+      <div className="min-w-0">
+        <div ref={measureRef} aria-hidden="true" />
         <HistoryContent isWide={rail} rowSize={rowSize} />
       </div>
     </PageShell>

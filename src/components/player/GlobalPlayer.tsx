@@ -8,7 +8,13 @@ import { useLanguageStore } from '../../stores/languageStore';
 import { showToast } from '../../stores/toastStore';
 import { usePlayerSwipeGesture } from '../../hooks/usePlayerSwipeGesture';
 import { selectCanGoNext } from '../../hooks/useCanGoNext';
-import { FINE_HOVER_MEDIA_QUERY, MOBILE_MEDIA_QUERY, MUSIC_PANEL_MEDIA_QUERY, useMediaQuery } from '../../hooks/useMediaQuery';
+import {
+  FINE_HOVER_MEDIA_QUERY,
+  MOBILE_MEDIA_QUERY,
+  MUSIC_PANEL_MEDIA_QUERY,
+  SHORT_COMPACT_MEDIA_QUERY,
+  useMediaQuery,
+} from '../../hooks/useMediaQuery';
 import { useIsMusicLayout } from '../../hooks/useMusicLayout';
 import { useMusicLayoutStore } from '../../stores/musicLayoutStore';
 import { getPlaybackOwnership } from '../../services/playbackOwnership';
@@ -16,26 +22,26 @@ import { translateSourceText } from '../../i18n';
 import { isWatchPath, watchPath } from '../../utils/routes';
 import { serviceLabel } from '../../utils/songMeta';
 import { cx } from '../ui/overlay';
-import { DeferredBoundary } from '../layout/RouteErrorBoundary';
+import { DeferredBoundary, OverlayErrorBoundary } from '../layout/RouteErrorBoundary';
 import { whenIdle } from '../../routes/routeLoaders';
 import SleepTimerWatcher from './SleepTimer';
 import { createPlaybackFailureTracker, type PlaybackNotice } from './playbackNotices';
-import { isSilentVolume } from './playerMute';
 
 // The mini player's controls are only drawn once a song is loaded, so they stay out of the initial
 // JavaScript (DESIGN_SPEC §1-12). The iframe (PlayerEmbed) is never inside their Suspense boundary.
+// It has its own: when its code cannot be downloaded (a tab older than the deploy), playback pauses
+// and a toast offers 再読み込み, instead of a silent black frame that claims to be playing.
 const PlayerEmbed = lazy(() => import('./PlayerEmbed'));
 const loadMiniPlayerControls = () => import('./MiniPlayerControls');
 const loadProgressLine = () => import('./ProgressLine');
-const loadMuteBadge = () => import('./MuteBadge');
 const MiniPlayerControls = lazy(loadMiniPlayerControls);
 const ProgressLine = lazy(loadProgressLine);
-const MuteBadge = lazy(loadMuteBadge);
 const preloadMiniPlayerControls = () => {
   void loadMiniPlayerControls().catch(() => undefined);
   void loadProgressLine().catch(() => undefined);
-  void loadMuteBadge().catch(() => undefined);
 };
+/** The embed failed to load or render: nothing can play, so the player must not claim it does. */
+const pauseAfterEmbedFailure = () => usePlayerStore.getState().pause();
 
 /**
  * While `active`, every iframe under `root` gets tabindex="-1": Tab skips the embedded player and its
@@ -140,8 +146,9 @@ function usePlaybackFailureToasts(isWatchPage: boolean) {
  * キーボードでは上部バー・ガイド・本文の後にミニプレイヤーが来る（YouTube と同じ）。
  *
  * ミュージックレイアウトでは、操作は下部の再生バーが持つ。動画は右の「再生中」パネルの枠に CSS で重ねる
- * （.music-docked-player。パネルを閉じた時と狭い画面はミニプレイヤーの位置に動画だけ）。どの場合も
- * 200×200 以上で、上に何も重ねない。
+ * （.music-docked-player。パネルを閉じた時と狭い画面はミニプレイヤーの位置に動画だけ）。
+ * どちらのレイアウトでも動画の上には何も重ねない（ミュートの表示と解除はミニプレイヤーの操作・再生ページの
+ * 操作の列・再生バーにある）。
  */
 export default function GlobalPlayer() {
   const location = useLocation();
@@ -149,11 +156,13 @@ export default function GlobalPlayer() {
   const currentSong = usePlayerStore(state => state.currentSong);
   const playerRect = usePlayerStore(state => state.playerRect);
   const isPlaying = usePlayerStore(state => state.isPlaying);
-  const volume = usePlayerStore(state => state.volume);
   const next = usePlayerStore(state => state.next);
   const previous = usePlayerStore(state => state.previous);
   const swipeGestureEnabled = usePlayerInteractionStore(state => state.swipeGestureEnabled);
   const isMobile = useMediaQuery(MOBILE_MEDIA_QUERY);
+  // A short window under 768px (a phone held sideways): the controls beside the corner video only
+  // have room for the one-row phone layout (index.css area:player).
+  const shortCompact = useMediaQuery(SHORT_COMPACT_MEDIA_QUERY);
   const finePointer = useMediaQuery(FINE_HOVER_MEDIA_QUERY);
   const isMusicLayout = useIsMusicLayout();
   const musicPanelWide = useMediaQuery(MUSIC_PANEL_MEDIA_QUERY);
@@ -232,25 +241,45 @@ export default function GlobalPlayer() {
   // player keeps its last spot under the page's own frame, out of reach like when parked off screen.
   const coveredOnWatchPage = renderAsWatchPage && !playerRect;
   const unreachable = hiddenOffscreen || coveredOnWatchPage;
-  const videoVisible = !!currentSong && (showMiniPlayer || renderAsDocked || (renderAsWatchPage && !coveredOnWatchPage));
   const floatingPlayerRef = useRef<HTMLDivElement>(null);
+  const navProbeRef = useRef<HTMLDivElement>(null);
   // The mini player (or the music player bar) has its own controls; on the song page the video's own
   // controls stay reachable.
   useIframesOutOfTabOrder(floatingPlayerRef, showMiniPlayer || renderAsDocked);
+  // The room toasts and the page's end keep for the mini player, on top of --bottom-nav-height: the card's
+  // height + 16, as long as that puts a toast 8-16px above the card. In the corner layout of short screens
+  // (index.css) the card sits beside the bottom navigation instead of on it, and its height + 16 would
+  // push toasts off the top of the screen.
   useEffect(() => {
     const element = floatingPlayerRef.current;
-    const update = () => document.documentElement.style.setProperty(
-      '--floating-player-clearance', `${showMiniPlayer && element ? Math.ceil(element.getBoundingClientRect().height) + 16 : 0}px`,
-    );
+    const navProbe = navProbeRef.current;
+    const update = () => {
+      let clearance = 0;
+      if (showMiniPlayer && element && navProbe) {
+        const card = element.getBoundingClientRect();
+        const aboveNav = navProbe.getBoundingClientRect().top - card.top;
+        clearance = Math.ceil(Math.min(Math.max(card.height + 16, aboveNav), aboveNav + 8));
+      }
+      document.documentElement.style.setProperty('--floating-player-clearance', `${clearance}px`);
+    };
     update();
     const observer = new ResizeObserver(update);
     if (element && showMiniPlayer) observer.observe(element);
+    // The navigation can come or go (leaving the song page) while the card keeps its size.
+    if (navProbe && showMiniPlayer) observer.observe(navProbe);
     return () => {
       observer.disconnect();
       document.documentElement.style.removeProperty('--floating-player-clearance');
     };
   }, [showMiniPlayer]);
   const currentSongId = currentSong?.id ?? null;
+  // An embed that failed stays failed (React.lazy keeps a chunk's failure), so every new try to play
+  // (再生, or the song again) tries it again: it pauses and says so again instead of claiming to play
+  // in silence. Counted when isPlaying turns true, which the failure turns back.
+  const [playAttempt, setPlayAttempt] = useState(0);
+  useEffect(() => usePlayerStore.subscribe((state, prev) => {
+    if (state.isPlaying && !prev.isPlaying) setPlayAttempt(attempt => attempt + 1);
+  }), []);
   // Fetch the controls as soon as something is loaded (otherwise when the browser is idle), so they
   // are ready when the mini player shows and are not left to download late in a long session.
   const hasSong = currentSongId !== null;
@@ -273,11 +302,6 @@ export default function GlobalPlayer() {
     enabled: showMiniPlayer && swipeGestureEnabled,
     onSwipe: handleSwipe,
   });
-  // The badge goes away once pressed: keep the keyboard on the mini player (its play button).
-  const keepFocusAfterUnmute = useCallback((badgeHadFocus: boolean) => {
-    if (!badgeHadFocus) return;
-    floatingPlayerRef.current?.querySelector<HTMLElement>('[data-testid="global-mini-player-toggle"]')?.focus();
-  }, []);
 
   const containerStyle: CSSProperties | undefined = (() => {
     if (currentSong && renderAsWatchPage && watchPlayerRect) {
@@ -322,18 +346,6 @@ export default function GlobalPlayer() {
       aria-hidden={unreachable || undefined}
       inert={unreachable || undefined}
     >
-      <DeferredBoundary>
-        <Suspense fallback={null}>
-          {/*
-            Nothing can be heard (M, or a volume of 0): the only sign of it, on the video itself. The
-            music layout shows it on the player bar's volume button instead (nothing over the video).
-          */}
-          {videoVisible && !isMusicLayout && isSilentVolume(volume) && (
-            <MuteBadge inset={showMiniPlayer ? 'mini' : 'page'} onUnmuted={keepFocusAfterUnmute} />
-          )}
-        </Suspense>
-      </DeferredBoundary>
-
       {/* プレイヤー本体 (iframe) */}
       <div
         className={cx('global-player-video w-full bg-black', renderAsWatchPage ? 'h-full' : 'aspect-video', showMiniPlayer && 'cursor-pointer')}
@@ -341,7 +353,9 @@ export default function GlobalPlayer() {
           if (showMiniPlayer) openSongPage();
         }}
       >
-        <DeferredBoundary><Suspense fallback={null}>{currentSong && <PlayerEmbed />}</Suspense></DeferredBoundary>
+        <OverlayErrorBoundary onError={pauseAfterEmbedFailure} resetKey={`${currentSongId}:${playAttempt}`}>
+          <Suspense fallback={null}>{currentSong && <PlayerEmbed />}</Suspense>
+        </OverlayErrorBoundary>
       </div>
 
       <DeferredBoundary>
@@ -355,7 +369,7 @@ export default function GlobalPlayer() {
           {currentSong && !isMusicLayout && (!isWatchPage || isLeavingWatchPage) && (
             <MiniPlayerControls
               visible={showMiniPlayer}
-              mobile={isMobile}
+              mobile={isMobile || shortCompact}
               onOpenSongPage={openSongPage}
               swipeHandlers={swipeHandlers}
             />
@@ -363,6 +377,10 @@ export default function GlobalPlayer() {
         </Suspense>
       </DeferredBoundary>
       <SleepTimerWatcher />
+      {/* Marks the top of the bottom navigation for the clearance above (getComputedStyle leaves the variable unresolved). */}
+      {showMiniPlayer && (
+        <div ref={navProbeRef} aria-hidden="true" className="pointer-events-none invisible fixed bottom-0 left-0 h-[var(--bottom-nav-height,0px)] w-0" />
+      )}
     </div>,
     document.body,
   );

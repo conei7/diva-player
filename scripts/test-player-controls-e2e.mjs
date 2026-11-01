@@ -25,6 +25,114 @@ const fixtureSong = {
 const PAUSE_BUTTON = '[data-testid="global-mini-player-toggle"][aria-label="一時停止"]';
 const PLAY_BUTTON = '[data-testid="global-mini-player-toggle"][aria-label="再生"]';
 
+// Muted (volume 0): ミュートを解除 is one of the mini player's controls and the song page's first action,
+// never drawn on the video (YouTube: nothing in front of any part of the embedded player). This stub
+// builds a real <iframe> where the IFrame API would, and records the volume it is given.
+const MUTED_YOUTUBE_STUB = `
+  window.YT = {
+    PlayerState: { UNSTARTED: -1, ENDED: 0, PLAYING: 1, PAUSED: 2, CUED: 5 },
+    Player: function (id, options) {
+      const player = this; let state = -1; let videoId = ''; let volume = 50;
+      const target = typeof id === 'string' ? document.getElementById(id) : id;
+      const iframe = document.createElement('iframe');
+      iframe.id = target.id; iframe.setAttribute('width', options.width ?? '640'); iframe.setAttribute('height', options.height ?? '390');
+      iframe.src = 'about:blank'; iframe.title = 'YouTube video player';
+      target.replaceWith(iframe);
+      window.__yt = player;
+      player.getIframe = () => iframe;
+      player.getVideoData = () => ({ video_id: videoId });
+      player.getPlayerState = () => state;
+      player.getCurrentTime = () => 0;
+      player.getDuration = () => 300;
+      player.getVolume = () => volume;
+      player.setVolume = value => { volume = value; window.__ytVolume = value; };
+      player.isMuted = () => false; player.mute = () => {}; player.unMute = () => {};
+      player.seekTo = () => {};
+      player.cueVideoById = player.loadVideoById = value => { videoId = typeof value === 'string' ? value : value.videoId; state = 5; };
+      const emit = () => options.events.onStateChange({ data: state, target: player });
+      player.playVideo = () => { if (state === 1) return; state = 1; emit(); };
+      player.pauseVideo = () => { state = 2; emit(); };
+      player.stopVideo = () => { state = 0; };
+      player.destroy = () => {};
+      setTimeout(() => options.events.onReady({ target: player }), 0);
+    },
+  };
+  window.onYouTubeIframeAPIReady();
+`;
+
+/** A fresh context whose tab owns playback of the fixture song with the saved volume at 0. */
+async function openMutedPage([width, height]) {
+  const context = await browser.createBrowserContext();
+  const page = await context.newPage();
+  await page.setViewport({ width, height, isMobile: width < 640, hasTouch: width < 640 });
+  await pinAppLanguage(page);
+  await page.evaluateOnNewDocument(song => {
+    if (window !== window.top || sessionStorage.getItem('muted-fixture-seeded')) return;
+    sessionStorage.setItem('muted-fixture-seeded', '1');
+    localStorage.setItem('diva_volume', '0');
+    const tabId = 'muted-fixture-tab';
+    sessionStorage.setItem('diva-playback-tab-v1', tabId);
+    localStorage.setItem('diva-playback-owner-v1', JSON.stringify({ type: 'claim', tabId, songId: song.id, claimedAt: Date.now() }));
+    localStorage.setItem('diva_playerQueue', JSON.stringify({
+      queue: [song], queueIndex: 0, currentSong: song, currentSongId: song.id,
+      queueSources: ['manual'], currentPlaybackSource: 'manual',
+    }));
+  }, fixtureSong);
+  await page.setRequestInterception(true);
+  page.on('request', request => {
+    if (request.url() === 'https://www.youtube.com/iframe_api') {
+      void request.respond({ contentType: 'application/javascript', body: MUTED_YOUTUBE_STUB });
+    } else void request.continue();
+  });
+  return { context, page };
+}
+
+const SHOWN_IFRAME = '[data-testid="global-player"] .global-player-video iframe';
+
+/**
+ * Nothing painted in front of the embedded player may overlap it. Rect-based, with every element
+ * made hit-testable: tooltips and bubbles ignore the pointer, so elementFromPoint alone misses them.
+ */
+async function assertNothingOverVideo(page, label) {
+  const offenders = await page.evaluate(selector => {
+    const iframe = [...document.querySelectorAll(selector)].find(frame => frame.getBoundingClientRect().width > 0);
+    if (!iframe) return ['no embedded player'];
+    const box = iframe.getBoundingClientRect();
+    const style = document.createElement('style');
+    style.textContent = '* { pointer-events: auto !important; }';
+    document.head.append(style);
+    const found = [];
+    try {
+      for (const element of document.body.querySelectorAll('*')) {
+        if (element === iframe || element.contains(iframe) || iframe.contains(element)) continue;
+        const area = element.getBoundingClientRect();
+        const left = Math.max(area.left, box.left);
+        const right = Math.min(area.right, box.right);
+        const top = Math.max(area.top, box.top);
+        const bottom = Math.min(area.bottom, box.bottom);
+        if (right - left < 1 || bottom - top < 1) continue;
+        const css = getComputedStyle(element);
+        if (css.visibility !== 'visible' || Number(css.opacity) === 0) continue;
+        // Invisible hit boxes (the progress line's) paint nothing.
+        const paints = !/^(transparent|rgba\(0, 0, 0, 0\))$/.test(css.backgroundColor) || css.backgroundImage !== 'none'
+          || css.boxShadow !== 'none' || element instanceof SVGElement || /^(IMG|VIDEO|CANVAS|IFRAME)$/.test(element.tagName)
+          || [...element.childNodes].some(node => node.nodeType === Node.TEXT_NODE && node.textContent.trim());
+        if (!paints) continue;
+        const stack = document.elementsFromPoint((left + right) / 2, (top + bottom) / 2);
+        const at = stack.indexOf(element);
+        const video = stack.indexOf(iframe);
+        if (at !== -1 && (video === -1 || at < video)) {
+          found.push(`${element.tagName}.${String(element.className?.baseVal ?? element.className).slice(0, 50)} ${element.getAttribute('data-testid') ?? element.getAttribute('aria-label') ?? ''}`);
+        }
+      }
+    } finally {
+      style.remove();
+    }
+    return found;
+  }, SHOWN_IFRAME);
+  if (offenders.length) throw new Error(`${label}: drawn in front of the embedded player ${JSON.stringify(offenders)}`);
+}
+
 try {
   const first = await browser.newPage();
   await pinAppLanguage(first);
@@ -185,6 +293,78 @@ try {
   const queueRemainedCleared = await first.evaluate(() => localStorage.getItem('diva_playerQueue') === null);
   if (!queueRemainedCleared) throw new Error('A child document restored the closed player queue.');
   console.log('PASS mini-player close control');
+
+  // 844x390 and 1280x400: the corner layout of short screens (the controls are a strip beside the video).
+  for (const size of [[1280, 800], [390, 844], [844, 390], [1280, 400]]) {
+    const label = size.join('x');
+    const mini = await openMutedPage(size);
+    try {
+      const { page } = mini;
+      await page.goto(baseUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+      await page.waitForFunction(() => window.__yt?.getVideoData?.().video_id === 'fixture', { timeout: 30_000 });
+      await page.evaluate(() => window.__yt.playVideo());
+      await page.waitForSelector('.global-mini-player .global-player-video iframe', { timeout: 30_000 });
+      await page.waitForSelector('[data-testid="player-mute-badge"]', { visible: true, timeout: 30_000 });
+      await assertNothingOverVideo(page, `mini player ${label} muted`);
+      const inControls = await page.$eval('[data-testid="player-mute-badge"]', button => Boolean(
+        button.closest('[data-testid="mini-player-gesture-surface"]') && !button.closest('.global-player-video'),
+      ));
+      if (!inControls) throw new Error(`${label}: ミュートを解除 is not among the mini player's controls`);
+      if (size[0] >= 1024 || size[1] < 420) {
+        // Hover every control: its tooltip opens beside the controls, never over the video.
+        const labels = await page.$$eval('[data-testid="mini-player-gesture-surface"] button[aria-label]', buttons => buttons.map(button => button.getAttribute('aria-label')));
+        for (const name of labels) {
+          await page.hover(`[data-testid="mini-player-gesture-surface"] button[aria-label="${name}"]`);
+          // シャッフル with one song explains why it is off: the tooltip starts with the label. Past its fade-in:
+          // a tooltip still transparent would pass the check unseen.
+          await page.waitForFunction(text => [...document.querySelectorAll('[role="tooltip"]')]
+            .some(tip => tip.textContent.startsWith(text) && getComputedStyle(tip).opacity === '1'), { timeout: 5_000 }, name);
+          await assertNothingOverVideo(page, `mini player ${label} tooltip ${name}`);
+        }
+        await page.mouse.move(5, 5);
+      }
+      await page.focus('[data-testid="player-mute-badge"]');
+      await page.keyboard.press('Enter');
+      await page.waitForFunction(() => window.__yt.getVolume() > 0 && window.__ytVolume > 0, { timeout: 5_000 });
+      await page.waitForFunction(() => !document.querySelector('[data-testid="player-mute-badge"]'), { timeout: 5_000 });
+      const focused = await page.evaluate(() => document.activeElement?.getAttribute('data-testid'));
+      if (focused !== 'global-mini-player-toggle') throw new Error(`${label}: focus after ミュートを解除 went to ${focused}`);
+      console.log(`PASS muted mini player ${label}: ミュートを解除 in the controls, nothing over the video, unmutes and keeps focus`);
+    } finally {
+      await mini.context.close();
+    }
+
+    const watch = await openMutedPage(size);
+    try {
+      const { page } = watch;
+      await page.goto(new URL(`watch?v=${fixtureSong.id}`, baseUrl).href, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+      await page.waitForFunction(selector => {
+        const container = document.querySelector('[data-testid="global-player"]');
+        return container?.style.position === 'absolute' && [...document.querySelectorAll(selector)].some(frame => frame.getBoundingClientRect().width > 0);
+      }, { timeout: 30_000 }, SHOWN_IFRAME);
+      const pill = await page.waitForFunction(() => {
+        const row = document.querySelector('[data-testid="watch-action-bar"]');
+        return [...row?.querySelectorAll('button') ?? []].find(button => button.textContent.trim() === 'ミュートを解除');
+      }, { timeout: 30_000 });
+      if (!await pill.evaluate(button => button === button.closest('[data-testid="watch-action-bar"]').querySelector('button'))) {
+        throw new Error(`${label}: ミュートを解除 is not the song page's first action`);
+      }
+      await assertNothingOverVideo(page, `song page ${label} muted`);
+      await pill.focus();
+      await page.keyboard.press('Enter');
+      await page.waitForFunction(() => window.__yt.getVolume() > 0 && window.__ytVolume > 0, { timeout: 5_000 });
+      const focus = await page.evaluate(() => ({
+        body: document.activeElement === document.body,
+        inRow: Boolean(document.activeElement?.closest('[data-testid="watch-action-bar"]')),
+        pillGone: ![...document.querySelectorAll('[data-testid="watch-action-bar"] button')].some(button => button.textContent.trim() === 'ミュートを解除'),
+      }));
+      if (focus.body || !focus.inRow || !focus.pillGone) throw new Error(`${label}: song page unmute left focus ${JSON.stringify(focus)}`);
+      await pill.dispose();
+      console.log(`PASS muted song page ${label}: ミュートを解除 first in the action row, nothing over the video, unmutes and keeps focus`);
+    } finally {
+      await watch.context.close();
+    }
+  }
 } finally {
   await browser.close();
 }

@@ -2,6 +2,11 @@ import { useCallback, useSyncExternalStore } from 'react';
 
 /** Below the `sm` breakpoint (640px): bottom nav, bottom sheets, full-screen dialogs. */
 export const MOBILE_MEDIA_QUERY = '(max-width: 639px)';
+/**
+ * Short and under 768px (a phone held sideways): the standard mini player's controls sit beside its
+ * corner video in the one-row phone layout. From 768px its two rows fit there (index.css area:player).
+ */
+export const SHORT_COMPACT_MEDIA_QUERY = '(max-height: 419.98px) and (max-width: 767.98px)';
 /** Touch-first devices: no hover-only affordances, no tooltips. */
 export const COARSE_POINTER_MEDIA_QUERY = '(pointer: coarse)';
 /** Mouse-like devices where hover-revealed controls are usable. */

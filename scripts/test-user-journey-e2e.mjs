@@ -16,7 +16,11 @@ const songs = [1, 2].map(number => ({
 
 async function fixtures(page) {
   page.on('pageerror', error => pageErrors.push(error.message));
-  const remote = { blockImages: false, songs: [songs[0]], fail: false, failSaveChunk: false, saveChunkFailures: 0 };
+  const remote = {
+    blockImages: false, songs: [songs[0]], fail: false, failSaveChunk: false, saveChunkFailures: 0,
+    // Code chunks a tab older than the deploy can no longer download (404, as after a deploy).
+    failChunks: null, chunkFailures: 0,
+  };
   await pinAppLanguage(page);
   await installSavedLibraryReader(page);
   if (process.argv.some(value => value.startsWith('--soak='))) {
@@ -43,6 +47,11 @@ async function fixtures(page) {
       void request.respond({ status: 404, contentType: 'text/html', body: 'Not found' });
       return;
     }
+    if (remote.failChunks?.test(url.pathname)) {
+      remote.chunkFailures++;
+      void request.respond({ status: 404, contentType: 'text/html', body: 'Not found' });
+      return;
+    }
     if (url.href === 'https://www.youtube.com/iframe_api') {
       void request.respond({ contentType: 'application/javascript', body: `
         window.YT = { PlayerState: { UNSTARTED:-1, ENDED:0, PLAYING:1, PAUSED:2, CUED:5 },
@@ -51,7 +60,8 @@ async function fixtures(page) {
             window.__journeyPlayer=player;
             player.getVideoData=()=>({video_id:id}); player.getPlayerState=()=>state;
             player.getCurrentTime=()=>position; player.getDuration=()=>180;
-            player.getVolume=()=>50; player.setVolume=player.mute=player.unMute=player.destroy=()=>{};
+            player.getVolume=()=>50; player.setVolume=player.mute=player.unMute=()=>{};
+            window.__journeyDestroys=window.__journeyDestroys||0; player.destroy=()=>{window.__journeyDestroys++;};
             player.seekTo=value=>{position=value;};
             player.loadVideoById=player.cueVideoById=value=>{id=value;position=0;state=5;};
             player.playVideo=()=>{if(state===1)return;state=1;options.events.onStateChange({data:state,target:player});};
@@ -392,5 +402,166 @@ try {
   assert(['Journey saved A', 'Journey saved B', 'Journey external', 'Journey offline', 'Journey recovered save']
     .every(name => recovered.some(item => item.name === name)), 'Recovering the save dialog lost existing playlists');
   console.log('PASS unavailable save-dialog code offers reload and saves successfully afterward without losing existing playlists');
+
+  // The same tab older than the deploy, for the two lazy parts outside every page boundary: the
+  // keyboard shortcut list ('?' or ⋮) and the video player itself. Each in its own context, so no
+  // other tab owns the playback and the second one starts with no song.
+  const overlayErrorCounter = page => {
+    const counter = { count: 0 };
+    page.on('console', message => { if (message.text().includes('DIVA Player overlay error')) counter.count++; });
+    return counter;
+  };
+  const waitForOverlayErrors = async (counter, count, label) => {
+    for (let wait = 0; counter.count < count && wait < 100; wait++) await new Promise(resolve => setTimeout(resolve, 50));
+    assert(counter.count === count, `${label}: expected ${count} failed overlays, saw ${counter.count}`);
+  };
+  const reloadOffered = page => page.waitForFunction(() => {
+    const host = document.querySelector('[data-testid="toast-host"]');
+    return host?.textContent.includes('表示できませんでした') && host.textContent.includes('再読み込み');
+  }, { timeout: 10000 });
+  const openShortcutsFromMenu = async page => {
+    await page.click('header button.topnav-action-btn[aria-label="その他の操作"]');
+    await page.waitForFunction(() => [...document.querySelectorAll('[role="menuitem"]')].some(item => item.textContent.includes('キーボード ショートカット')));
+    await page.evaluate(() => [...document.querySelectorAll('[role="menuitem"]')].find(item => item.textContent.includes('キーボード ショートカット')).click());
+  };
+  const playFromSearch = async (page, id) => {
+    if (!await page.$('main a[href*="watch?v="]')) {
+      await page.goto(base.href, { waitUntil: 'domcontentloaded' });
+      await page.waitForSelector('input[name="search_query"]');
+      await page.type('input[name="search_query"]', 'Journey');
+      await page.keyboard.press('Enter');
+    }
+    await page.waitForSelector(`main a[href*="watch?v=${id}"]`);
+    await page.click(`main a[href*="watch?v=${id}"]`);
+    await page.waitForSelector('[data-testid="watch-action-bar"]');
+  };
+  const pressQuestionMark = async page => {
+    await page.evaluate(() => document.activeElement instanceof HTMLElement && document.activeElement.blur());
+    await page.keyboard.press('?');
+  };
+
+  const shortcutsContext = await browser.createBrowserContext();
+  try {
+    const page = await shortcutsContext.newPage();
+    await page.setViewport({ width: 1440, height: 900 });
+    await page.setCacheEnabled(false);
+    const stale = await fixtures(page);
+    const failures = overlayErrorCounter(page);
+    stale.failChunks = /\/KeyboardShortcutsDialog-[\w-]+\.js$/;
+    await playFromSearch(page, 990101);
+    await page.waitForFunction(() => window.__journeyPlayer?.getPlayerState() === 1);
+    const assertStillPlaying = async label => {
+      const state = await page.evaluate(() => ({
+        main: Boolean(document.getElementById('main-content')),
+        player: Boolean(document.querySelector('[data-testid="global-player"]')),
+        crashed: document.body.innerText.includes('問題が発生しました'),
+        playerState: window.__journeyPlayer?.getPlayerState(),
+        destroys: window.__journeyDestroys,
+      }));
+      assert(state.main && state.player && !state.crashed && state.playerState === 1 && state.destroys === 0,
+        `${label}: the app or the playback went down ${JSON.stringify(state)}`);
+    };
+    await pressQuestionMark(page);
+    await reloadOffered(page);
+    await waitForOverlayErrors(failures, 1, 'First ? with stale shortcut code');
+    assert(stale.chunkFailures > 0, 'The stale shortcut-list chunk failure was not exercised');
+    assert(!await page.$('[role="dialog"]'), 'A failed shortcut list left a dialog behind');
+    await assertStillPlaying('First ? with stale shortcut code');
+    // React.lazy keeps the failure: every new try says so again instead of crashing.
+    await pressQuestionMark(page);
+    await waitForOverlayErrors(failures, 2, 'Second ? with stale shortcut code');
+    await openShortcutsFromMenu(page);
+    await waitForOverlayErrors(failures, 3, '⋮ キーボード ショートカット with stale shortcut code');
+    await reloadOffered(page);
+    await assertStillPlaying('Repeated tries with stale shortcut code');
+    stale.failChunks = null;
+    await Promise.all([
+      page.waitForNavigation({ waitUntil: 'domcontentloaded' }),
+      clickText(page, '[data-testid="toast-host"]', '再読み込み'),
+    ]);
+    await page.waitForSelector('[data-testid="watch-action-bar"]');
+    const shortcutDialog = () => page.waitForFunction(() => [...document.querySelectorAll('[role="dialog"]')]
+      .some(dialog => dialog.textContent.includes('キーボード ショートカット')), { timeout: 10000 });
+    await pressQuestionMark(page);
+    await shortcutDialog();
+    await page.keyboard.press('Escape');
+    await page.waitForFunction(() => !document.querySelector('[role="dialog"]'));
+    await openShortcutsFromMenu(page);
+    await shortcutDialog();
+    console.log('PASS stale shortcut-list code offers reload from ? and ⋮ without stopping playback, and the list opens after reloading');
+  } finally {
+    await shortcutsContext.close();
+  }
+
+  const embedContext = await browser.createBrowserContext();
+  try {
+    const page = await embedContext.newPage();
+    await page.setViewport({ width: 1440, height: 900 });
+    await page.setCacheEnabled(false);
+    // This tab owns the playback (like the tab that played last), so the paused mini player stays on
+    // screen with its 再生 button.
+    await page.evaluateOnNewDocument(() => {
+      if (window !== window.top || sessionStorage.getItem('journey-embed-owner')) return;
+      sessionStorage.setItem('journey-embed-owner', '1');
+      sessionStorage.setItem('diva-playback-tab-v1', 'journey-embed-tab');
+      localStorage.setItem('diva-playback-owner-v1', JSON.stringify({ type: 'claim', tabId: 'journey-embed-tab', songId: null, claimedAt: Date.now() }));
+    });
+    const stale = await fixtures(page);
+    const failures = overlayErrorCounter(page);
+    stale.failChunks = /\/PlayerEmbed-[\w-]+\.js$/;
+    await playFromSearch(page, 990101);
+    await reloadOffered(page);
+    await waitForOverlayErrors(failures, 1, 'First song with stale player code');
+    assert(stale.chunkFailures > 0, 'The stale video-player chunk failure was not exercised');
+    // Nothing can play: the player must not claim it does (its controls, kept off the song page, say 再生).
+    const PAUSED_TOGGLE = '[data-testid="global-mini-player-toggle"][aria-label="再生"]';
+    await page.goBack({ waitUntil: 'domcontentloaded' });
+    await page.waitForSelector(PAUSED_TOGGLE, { visible: true, timeout: 10000 });
+    assert(!await page.evaluate(() => document.body.innerText.includes('問題が発生しました')), 'A stale video player took the app down');
+    // 再生 on the same song, or the song again from the list, is a new try too: it pauses again and says
+    // so again (a new toast), once per try.
+    const markToasts = () => page.evaluate(() => {
+      for (const child of document.querySelector('[data-testid="toast-host"]').children) child.setAttribute('data-e2e-seen', '');
+    });
+    const newReloadOffer = () => page.waitForFunction(() => [...document.querySelector('[data-testid="toast-host"]').children]
+      .some(child => !child.hasAttribute('data-e2e-seen') && child.textContent.includes('表示できませんでした') && child.textContent.includes('再読み込み')),
+    { timeout: 10000 });
+    const assertPausedOnce = async (count, label) => {
+      // No retry loop: it stays paused, with that one more failure.
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      const state = await page.evaluate(() => ({
+        toggle: document.querySelector('[data-testid="global-mini-player-toggle"]')?.getAttribute('aria-label'),
+        iframe: Boolean(document.querySelector('[data-testid="global-player"] iframe')),
+      }));
+      assert(failures.count === count && state.toggle === '再生' && !state.iframe,
+        `${label}: not paused once ${JSON.stringify({ failures: failures.count, ...state })}`);
+    };
+    await markToasts();
+    await page.click(PAUSED_TOGGLE);
+    await waitForOverlayErrors(failures, 2, '再生 again with stale player code');
+    await newReloadOffer();
+    await assertPausedOnce(2, '再生 again with stale player code');
+    await markToasts();
+    await playFromSearch(page, 990101);
+    await waitForOverlayErrors(failures, 3, 'The same song again with stale player code');
+    await newReloadOffer();
+    await page.goBack({ waitUntil: 'domcontentloaded' });
+    await page.waitForSelector(PAUSED_TOGGLE, { visible: true, timeout: 10000 });
+    await assertPausedOnce(3, 'The same song again with stale player code');
+    // A new song is a new try (resetKey): it says so again.
+    await playFromSearch(page, 990102);
+    await waitForOverlayErrors(failures, 4, 'Second song with stale player code');
+    await reloadOffered(page);
+    stale.failChunks = null;
+    await Promise.all([
+      page.waitForNavigation({ waitUntil: 'domcontentloaded' }),
+      clickText(page, '[data-testid="toast-host"]', '再読み込み'),
+    ]);
+    await page.waitForSelector('[data-testid="watch-action-bar"]');
+    await page.waitForFunction(() => window.__journeyPlayer?.getVideoData().video_id === 'journey-2', { timeout: 30000 });
+    console.log('PASS stale video-player code pauses with a reload offer for every new try (再生, the same song, a new song), and plays after reloading');
+  } finally {
+    await embedContext.close();
+  }
 
 } finally { await browser.close(); }

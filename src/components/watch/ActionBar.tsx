@@ -1,5 +1,9 @@
+import type { MouseEvent } from 'react';
 import StarRating from '../player/StarRating';
 import PVSourceSelector from '../player/PVSourceSelector';
+import { isSilentVolume, unmutePlayer } from '../player/playerMute';
+import { ignoresAppVolume } from '../music/player/playerBarUi';
+import { usePlayerStore } from '../../stores/playerStore';
 import { useRatingStore } from '../../stores/ratingStore';
 import { useUiStore } from '../../stores/uiStore';
 import { usePlaylistStore, WATCH_LATER_ID } from '../../stores/playlistStore';
@@ -9,10 +13,11 @@ import type { Song } from '../../types/vocadb';
 import { useTranslateSourceText } from '../../i18n';
 import { useMediaQuery } from '../../hooks/useMediaQuery';
 import { useHorizontalOverflow } from '../../hooks/useHorizontalOverflow';
+import { useIsMusicLayout } from '../../hooks/useMusicLayout';
 import Button, { buttonClassName } from '../ui/Button';
 import Tooltip from '../ui/Tooltip';
-import { CheckIcon, ClockIcon, EyeIcon, EyeOffIcon, OpenInNewIcon, PlaylistAddIcon, ShareIcon } from '../ui/icons';
-import { cx } from '../ui/overlay';
+import { CheckIcon, ClockIcon, EyeIcon, EyeOffIcon, OpenInNewIcon, PlaylistAddIcon, ShareIcon, VolumeOffIcon } from '../ui/icons';
+import { cx, focusElement, getFocusableElements } from '../ui/overlay';
 import { hideSongWithUndo, shareSong, toggleWatchLater } from './watchActions';
 
 /** 1024–1279px: the side column leaves little room, so 「保存」 and 「VocaDB」 show only their icons. */
@@ -23,7 +28,8 @@ const NARROW_DESKTOP_QUERY = '(min-width: 1024px) and (max-width: 1279.98px)';
  * rating · 共有 · 保存 · 後で聴く · video source · VocaDB · 表示しない.
  * They wrap on wide screens and scroll sideways under 640px, edge to edge with the hidden
  * scrollbar of the Home shelves, so a fade marks each side that has more actions past it
- * (most of them start off screen on a phone).
+ * (most of them start off screen on a phone). While nothing can be heard, ミュートを解除 comes
+ * first (the standard layout's sign of silence on this page; nothing is drawn on the video).
  */
 export default function ActionBar({ song }: { song: Song }) {
   const t = useTranslateSourceText();
@@ -35,6 +41,20 @@ export default function ActionBar({ song }: { song: Song }) {
   const hiddenRecord = useHiddenSongStore(state => state.hiddenSongs[String(song.id)]);
   const narrow = useMediaQuery(NARROW_DESKTOP_QUERY);
   const [scrollerRef, overflow] = useHorizontalOverflow<HTMLDivElement>();
+  // The music layout shows it on its player bar; Bilibili takes no volume from the app.
+  const silent = usePlayerStore(state => isSilentVolume(state.volume));
+  const hasSong = usePlayerStore(state => state.currentSong !== null);
+  const service = usePlayerStore(state => state.currentPV?.service);
+  const isMusicLayout = useIsMusicLayout();
+  const showUnmute = silent && hasSong && !isMusicLayout && !ignoresAppVolume(service);
+
+  // The pill goes away once pressed: the keyboard carries on at the next action instead of <body>.
+  const unmute = (event: MouseEvent<HTMLButtonElement>) => {
+    const button = event.currentTarget;
+    const hadFocus = button === document.activeElement;
+    unmutePlayer();
+    if (hadFocus) focusElement(getFocusableElements(button.parentElement).find(element => element !== button));
+  };
 
   const toggleHidden = () => {
     if (!hiddenRecord) {
@@ -64,6 +84,12 @@ export default function ActionBar({ song }: { song: Song }) {
         data-testid="watch-action-bar"
         className="flex min-w-0 items-center gap-2 max-sm:-my-1 max-sm:scroll-pl-3 max-sm:scroll-pr-8 max-sm:overflow-x-auto max-sm:px-3 max-sm:py-1 max-sm:[scrollbar-width:none] sm:flex-wrap max-sm:[&::-webkit-scrollbar]:hidden"
       >
+        {showUnmute && (
+          <Button icon={<VolumeOffIcon />} onClick={unmute}>
+            {t('ミュートを解除')}
+          </Button>
+        )}
+
         <div className="flex h-9 shrink-0 items-center rounded-full bg-yt-tonal px-3 max-sm:h-10 max-sm:px-1">
           <StarRating rating={rating} onRate={value => setRating(song.id, value)} size="md" />
         </div>

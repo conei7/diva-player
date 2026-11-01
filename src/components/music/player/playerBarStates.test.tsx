@@ -1,8 +1,8 @@
 /**
  * More markup contracts of the music layout's player bar: the parts it drops next to the corner video
- * of a short screen (index.css hides `data-bar-optional`), the seek line that also works on touch
- * screens, and the wide bar's 再生中 toggle. Rendered to static HTML like playerBars.test.tsx, with
- * useMediaQuery mocked so the wide (1024px and up) form renders too.
+ * of a short screen (index.css hides `data-bar-optional`) and the areas its two-row form places, the
+ * seek line that also works on touch screens, and the wide bar's 再生中 toggle. Rendered to static HTML
+ * like playerBars.test.tsx, with useMediaQuery mocked so the wide (1024px and up) form renders too.
  */
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter } from 'react-router';
@@ -158,6 +158,31 @@ describe('MusicPlayerBar next to the corner video of a short screen', () => {
     const titleLinks = (html.match(/<a\b[^>]*>/g) ?? []).filter(element => !element.includes('aria-hidden'));
     expect(titleLinks).toHaveLength(1);
     expect(titleLinks[0]).not.toContain('data-bar-optional');
+  });
+
+  it('names the areas the two-row bar places, and the whole artist line with the sleep timer in it', async () => {
+    const { useSleepTimerStore } = await import('../../../stores/sleepTimerStore');
+    setStore(useSleepTimerStore, { until: Date.now() + 15 * 60_000 });
+    try {
+      play([first, second]);
+      const html = render(<MusicPlayerBar />);
+      // index.css places the bar's children by these names, not by their order.
+      expect(html).toMatch(/<section\b[^>]*><div data-bar-song=""/);
+      for (const area of ['data-bar-song', 'data-bar-transport', 'data-bar-extras', 'data-bar-artist']) {
+        expect(html.match(new RegExp(`${area}=""`, 'g'))).toHaveLength(1);
+      }
+      // The timer's 残り sits in the artist line, so the two-row bar drops both (a third line would not fit).
+      const line = html.match(/<p data-bar-artist=""[^>]*>(.*?)<\/p>/)?.[1] ?? '';
+      expect(line).toContain('Fixture P');
+      expect(line).toContain('残り');
+
+      setPlayer({ currentSong: null, currentPV: null, queue: [], queueIndex: -1 });
+      const empty = render(<MusicPlayerBar />);
+      expect(empty).toMatch(/<section\b[^>]*><div data-bar-song=""/);
+      expect(empty).not.toContain('data-bar-artist');
+    } finally {
+      setStore(useSleepTimerStore, { until: null });
+    }
   });
 });
 

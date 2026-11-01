@@ -176,7 +176,7 @@ export default function Layout() {
         </RouteErrorBoundary>
       </main>
 
-      {musicShell ? createElement(musicShell.MusicDock) : showBottomNav && <BottomNav />}
+      {musicShell ? createElement(musicShell.MusicDock) : showBottomNav && <BottomNav className="app-bottom-nav" />}
 
       {queueDrawerMounted && (
         <Suspense fallback={null}>

@@ -12,7 +12,7 @@ const CELL_CLASS =
 /**
  * Bottom navigation under 640px except on the song page (DESIGN_SPEC §6.1.4): Home / Chorus
  * highlights / Playlists / History / Menu (opens the drawer). 48px + the safe area.
- * `className` is a hook for the music layout's CSS (the standard layout passes none).
+ * `className` is a hook for each layout's CSS in index.css (app-bottom-nav / music-bottom-nav).
  */
 export default function BottomNav({ className }: { className?: string } = {}) {
   const t = useTranslateSourceText();

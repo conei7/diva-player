@@ -51,6 +51,23 @@ describe('observeElementWidth', () => {
     expect(observer?.disconnected).toBe(true);
   });
 
+  it('reports the first width to onWidth and later ones to onResize', () => {
+    // useElementWidth renders resizes at once (flushSync), but not the first width: it is read
+    // inside React's commit, while the ref is attached.
+    vi.stubGlobal('ResizeObserver', FakeResizeObserver);
+    const first: number[] = [];
+    const resized: number[] = [];
+    observeElementWidth(fakeElement(734), width => first.push(width), width => resized.push(width));
+    expect(first).toEqual([734]);
+    expect(resized).toEqual([]);
+
+    const [observer] = FakeResizeObserver.instances;
+    observer?.resize(1088);
+    observer?.resize(0);
+    expect(first).toEqual([734]);
+    expect(resized).toEqual([1088, 0]);
+  });
+
   it('still reports the first width without ResizeObserver', () => {
     vi.stubGlobal('ResizeObserver', undefined);
     const widths: number[] = [];

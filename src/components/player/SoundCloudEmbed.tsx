@@ -82,6 +82,8 @@ export default function SoundCloudEmbed({ pv, isPlaying }: SoundCloudEmbedProps)
   const t = useTranslateSourceText();
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const widgetRef = useRef<SoundCloudWidget | null>(null);
+  // The widget drops setter calls (seekTo) made before READY.
+  const widgetReadyRef = useRef(false);
   const requestedPlayingRef = useRef(isPlaying);
   const initialAutoplayRef = useRef(isPlaying);
   const playbackSyncIdRef = useRef(0);
@@ -159,16 +161,21 @@ export default function SoundCloudEmbed({ pv, isPlaying }: SoundCloudEmbedProps)
     let active = true;
     let factory: SoundCloudWidgetFactory | null = null;
     let widget: SoundCloudWidget | null = null;
+    // Kept for the cleanup: React clears iframeRef before it runs.
+    let iframe: HTMLIFrameElement | null = null;
 
     void loadSoundCloudWidgetApi().then(loadedFactory => {
       if (!active || !iframeRef.current) return;
       factory = loadedFactory;
-      widget = factory(iframeRef.current);
+      iframe = iframeRef.current;
+      widget = factory(iframe);
       widgetRef.current = widget;
+      widgetReadyRef.current = false;
       const events = factory.Events;
 
       widget.bind(events.READY, () => {
         if (!active || !widget) return;
+        widgetReadyRef.current = true;
         markPVHealthy(pv);
         widget.setVolume(usePlayerStore.getState().volume);
         widget.getDuration(milliseconds => {
@@ -176,8 +183,8 @@ export default function SoundCloudEmbed({ pv, isPlaying }: SoundCloudEmbedProps)
             setDuration(milliseconds / 1000);
           }
         });
-        // A seek asked for before the widget existed (元に戻す of a closed player) — the seek effect
-        // below found no widget then and does not run again.
+        // A seek asked for before READY, with or without a widget (元に戻す of a closed player, → right
+        // after a song change), stays pending in the seek effect below and is applied here.
         const pendingSeek = usePlayerStore.getState().seekTarget;
         if (pendingSeek !== null) {
           widget.seekTo(pendingSeek * 1000);
@@ -188,13 +195,26 @@ export default function SoundCloudEmbed({ pv, isPlaying }: SoundCloudEmbedProps)
         else syncWidgetPlayback(widget, false);
       });
       widget.bind(events.PLAY, () => {
-        if (!active) return;
-        clearPauseConfirmation();
-        clearPlaybackRetry();
-        pendingPlaybackTargetRef.current = null;
-        requestedPlayingRef.current = true;
-        markPVHealthy(pv);
-        if (!usePlayerStore.getState().isPlaying) setIsPlaying(true);
+        const playingWidget = widget;
+        if (!active || !playingWidget) return;
+        const adopt = () => {
+          clearPauseConfirmation();
+          clearPlaybackRetry();
+          pendingPlaybackTargetRef.current = null;
+          requestedPlayingRef.current = true;
+          markPVHealthy(pv);
+          if (!usePlayerStore.getState().isPlaying) setIsPlaying(true);
+        };
+        if (requestedPlayingRef.current || pendingPlaybackTargetRef.current === true) {
+          adopt();
+          return;
+        }
+        // api.js turns the first PLAY_PROGRESS of a seek on a paused, never-played widget into
+        // PLAY while the widget stays paused; only a confirmed one (its own play button) counts.
+        playingWidget.isPaused(paused => {
+          if (!active || widgetRef.current !== playingWidget || paused) return;
+          adopt();
+        });
       });
       widget.bind(events.PAUSE, () => {
         const activeWidget = widget;
@@ -257,7 +277,9 @@ export default function SoundCloudEmbed({ pv, isPlaying }: SoundCloudEmbedProps)
       playbackSyncIdRef.current += 1;
       pendingPlaybackTargetRef.current = null;
       widgetRef.current = null;
-      if (!factory || !widget) return;
+      widgetReadyRef.current = false;
+      // A removed iframe cannot receive messages, and api.js throws on it (a song change, a close).
+      if (!factory || !widget || !iframe?.isConnected) return;
       Object.values(factory.Events).forEach(eventName => widget?.unbind(eventName));
     };
   }, [clearPauseConfirmation, clearPlaybackRetry, embedUrl, markPVHealthy, next, pv, scheduleWidgetPlayback, setDuration, setError, setIsPlaying, setProgress, syncWidgetPlayback, t, tryNextPV]);
@@ -300,8 +322,14 @@ export default function SoundCloudEmbed({ pv, isPlaying }: SoundCloudEmbedProps)
   }, [volume]);
 
   useEffect(() => {
-    if (seekTarget === null || !widgetRef.current) return;
-    widgetRef.current.seekTo(seekTarget * 1000);
+    if (seekTarget === null) return;
+    const widget = widgetRef.current;
+    if (!widget || !widgetReadyRef.current) {
+      // Pending until READY applies it; the bar shows it meanwhile, so repeated → presses add up.
+      setProgress(seekTarget);
+      return;
+    }
+    widget.seekTo(seekTarget * 1000);
     setProgress(seekTarget);
     clearSeekTarget();
   }, [clearSeekTarget, seekTarget, setProgress]);

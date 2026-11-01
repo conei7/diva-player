@@ -92,8 +92,9 @@ interface OverlayErrorBoundaryState {
 
 /**
  * Wraps one lazy overlay of the layout (queue, song details, save to playlist, selection bar,
- * settings). A failure closes that overlay and shows the toast 「表示できませんでした」 instead of
- * taking the page down. Unavailable chunks offer an explicit reload: React.lazy caches
+ * settings, the keyboard shortcut list) or the embedded video player. A failure closes that overlay
+ * (the video player pauses instead: nothing can play) and shows the toast 「表示できませんでした」
+ * instead of taking the page down. Unavailable chunks offer an explicit reload: React.lazy caches
  * their rejection, so reopening alone cannot recover. Playback continues until the user reloads.
  */
 export class OverlayErrorBoundary extends Component<OverlayErrorBoundaryProps, OverlayErrorBoundaryState> {

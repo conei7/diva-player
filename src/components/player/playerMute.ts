@@ -1,6 +1,7 @@
 /**
- * Mute for the M shortcut (DESIGN_SPEC §6.2.2), the mute badge on the video and the music layout's
- * player bar (its volume slider goes through setVolumeFromApp).
+ * Mute for the M shortcut (DESIGN_SPEC §6.2.2), ミュートを解除 in the mini player's controls and the
+ * song page's action row, and the music layout's player bar (its volume slider goes through
+ * setVolumeFromApp). Nothing about it is drawn on the video.
  *
  * Muting turns playerStore.volume down to 0 in memory only (setVolume would save the 0): the saved
  * volume is left as it was, so a reload never starts silently, and unmuting goes back to the volume
@@ -32,7 +33,7 @@ export const usePlayerMuteStore = create<PlayerMuteState>(() => ({
   changedAt: Number.NEGATIVE_INFINITY,
 }));
 
-/** Nothing can be heard: muted here, or the volume itself is 0. The video then shows the badge. */
+/** Nothing can be heard: muted here, or the volume itself is 0. The player's controls then offer ミュートを解除. */
 export function isSilentVolume(volume: number): boolean {
   return !(volume > 0);
 }

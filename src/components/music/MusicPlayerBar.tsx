@@ -41,7 +41,7 @@ function PlayerBarSong({ song }: { song: Song | null }) {
 
   if (!song) {
     return (
-      <div className="flex min-w-0 items-center gap-3">
+      <div data-bar-song="" className="flex min-w-0 items-center gap-3">
         <SquareArt className="size-14" />
         <p className="line-clamp-2 min-w-0 text-sm leading-5 text-yt-text-secondary">
           {t('曲を選ぶと、ここで操作できます')}
@@ -53,7 +53,7 @@ function PlayerBarSong({ song }: { song: Song | null }) {
   // autoplay=0: opening the page never takes the playback over from another tab (it resumes here as before).
   const songPath = watchPath(song.id, { autoplay: false });
   return (
-    <div className="flex min-w-0 items-center gap-3">
+    <div data-bar-song="" className="flex min-w-0 items-center gap-3">
       {/* The title is the same link for the keyboard and screen readers. */}
       <Link to={songPath} tabIndex={-1} aria-hidden="true" data-bar-optional="" className="shrink-0 rounded-[4px]">
         <SquareArt song={song} className="size-14" loading="eager" />
@@ -65,7 +65,7 @@ function PlayerBarSong({ song }: { song: Song | null }) {
         >
           {song.name}
         </Link>
-        <p className="flex min-w-0 items-center overflow-hidden text-xs leading-[18px] text-yt-text-secondary">
+        <p data-bar-artist="" className="flex min-w-0 items-center overflow-hidden text-xs leading-[18px] text-yt-text-secondary">
           <span className="min-w-0 truncate">{formatArtistLine(song)}</span>
           <SleepTimerRemaining />
         </p>
@@ -108,7 +108,7 @@ function PlayerBarExtras({ view, wide }: { view: QueueView; wide: boolean }) {
 
   // Tooltips open to the left: above the bar's right end sits the video (panel or mini player).
   return (
-    <div className="flex min-w-0 items-center justify-end gap-0.5">
+    <div data-bar-extras="" className="flex min-w-0 items-center justify-end gap-0.5">
       {wide && (
         <IconButton
           label={t('再生中')}
@@ -148,6 +148,10 @@ function PlayerBarExtras({ view, wide }: { view: QueueView; wide: boolean }) {
  * music layout does not show. While the video sits in the corner of a short screen (a phone held
  * sideways) the bar ends left of it, and index.css hides the `data-bar-optional` parts so the rest
  * (the song, 前 / 再生 / 次, キュー, ミュート and ⋮ with プレイヤーを閉じる) stays clear of the video.
+ * Below 800px wide one row would leave the title little or no room, so index.css stacks the
+ * `data-bar-*` areas in two rows: 前 / 再生 / 次 and the line on the left, the title over キュー /
+ * ミュート / ⋮ on the right, without the artist line and the sleep timer's 残り in it (⋮ > スリープタイマー
+ * still shows the time left). Tab still goes title, transport, extras.
  */
 export default function MusicPlayerBar() {
   const t = useTranslateSourceText();
