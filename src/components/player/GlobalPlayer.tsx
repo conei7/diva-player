@@ -249,7 +249,9 @@ export default function GlobalPlayer() {
   // The room toasts and the page's end keep for the mini player, on top of --bottom-nav-height: the card's
   // height + 16, as long as that puts a toast 8-16px above the card. In the corner layout of short screens
   // (index.css) the card sits beside the bottom navigation instead of on it, and its height + 16 would
-  // push toasts off the top of the screen.
+  // push toasts off the top of the screen. In the music layout under 560px wide and 420px tall the card
+  // can reach the top bar, so there is no room above it: index.css (area:music) keeps a one-line toast on
+  // screen, over the top bar rather than over the video.
   useEffect(() => {
     const element = floatingPlayerRef.current;
     const navProbe = navProbeRef.current;

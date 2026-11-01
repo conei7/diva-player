@@ -1,9 +1,25 @@
 /**
  * Helpers shared by the music layout's player bar (640px and up) and the phone mini bar.
  */
+import { MOBILE_MEDIA_QUERY, MUSIC_SHORT_MEDIA_QUERY, useMediaQuery } from '../../../hooks/useMediaQuery';
+import { useIsMusicLayout } from '../../../hooks/useMusicLayout';
 import { usePlayerStore } from '../../../stores/playerStore';
 import { dismissToast, showToast } from '../../../stores/toastStore';
 import { toggleMute } from '../../player/playerMute';
+
+/**
+ * Whether the song page has the music layout's player bar under it. Not on phones (like the standard
+ * layout) nor under 420px tall, where the 72px bar would cover the bottom of the video (at least
+ * 200px tall under the top bar; YouTube's embed must be 200×200 with nothing in front of it). There
+ * the page's own controls take over, as in the standard layout: ミュートを解除 in the action row and,
+ * once the video has scrolled off, the bottom row (WatchScrolledControls). MusicDock follows it.
+ */
+export function useMusicBarOnSongPage(): boolean {
+  const isMusicLayout = useIsMusicLayout();
+  const isMobile = useMediaQuery(MOBILE_MEDIA_QUERY);
+  const isShort = useMediaQuery(MUSIC_SHORT_MEDIA_QUERY);
+  return isMusicLayout && !isMobile && !isShort;
+}
 
 type LoopMode = ReturnType<typeof usePlayerStore.getState>['loopMode'];
 

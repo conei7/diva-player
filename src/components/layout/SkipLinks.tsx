@@ -1,9 +1,7 @@
 import { useTranslateSourceText } from '../../i18n';
 import { usePlayerStore } from '../../stores/playerStore';
 import { cx, focusElement } from '../ui/overlay';
-
-/** Layout's <main>. */
-export const MAIN_CONTENT_ID = 'main-content';
+import { focusMainContent } from './mainContent';
 
 // The play button of whichever player is on screen: the music player bar, the music mini bar on
 // phones, or the standard mini player. Hidden ones (display: none, inert, disabled) are passed over.
@@ -19,17 +17,6 @@ const SKIP_CLASS = cx(
   'focus:not-sr-only focus:fixed focus:left-2 focus:top-2 focus:z-[var(--z-toast,100)] focus:px-4 focus:py-2',
 );
 
-function focusMainContent() {
-  const main = document.getElementById(MAIN_CONTENT_ID);
-  if (!main) return;
-  // Focusable only for the jump: a lasting tabindex would make every click on the page focus <main>.
-  if (!main.hasAttribute('tabindex')) {
-    main.tabIndex = -1;
-    main.addEventListener('blur', () => main.removeAttribute('tabindex'), { once: true });
-  }
-  focusElement(main);
-}
-
 function focusPlayer() {
   const target = Array.from(document.querySelectorAll<HTMLElement>(PLAYER_TARGET_SELECTOR)).find(element => (
     element.getClientRects().length > 0 && !element.matches(':disabled') && !element.closest('[inert]')
@@ -39,10 +26,11 @@ function focusPlayer() {
     return;
   }
   // No play button on screen (the song page has none, apart from the music layout's player bar on
-  // wider windows): the video itself, so its own controls take the keys. It is in a portal after
-  // <main> and its endless related list. Not in the selector above: in document order the mini
-  // player's iframe would beat its play button. The parked player (1px), one kept under the page's
-  // frame (inert) and the idle YouTube iframe behind another service's video are passed over.
+  // windows 640px wide and 420px tall or more): the video itself, so its own controls take the keys.
+  // It is in a portal after <main> and its endless related list. Not in the selector above: in
+  // document order the mini player's iframe would beat its play button. The parked player (1px), one
+  // kept under the page's frame (inert) and the idle YouTube iframe behind another service's video
+  // are passed over.
   const video = Array.from(document.querySelectorAll<HTMLElement>('[data-testid="global-player"] iframe')).find(element => (
     element.getBoundingClientRect().width > 1 && !element.closest('[inert],[aria-hidden="true"]')
   ));

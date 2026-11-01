@@ -12,9 +12,10 @@ const ToastBehavior = lazy(loadToastBehavior);
 /**
  * Renders the visible toast (DESIGN_SPEC §4.8). One per app, placed after <Routes> in App.
  * The live region is always in the DOM (after <main>) so screen readers announce new toasts.
- * ≥1024px: bottom-left of the content, beside the guide. Smaller: bottom-center above the mini player, the bottom navigation and
- * any bar fixed above them (`--bottom-bar-clearance`); while a bottom sheet or modal dialog is open,
- * next to it instead (ToastBehavior).
+ * ≥1024px: bottom-left of the content, beside the guide (above a bar fixed there, `--bottom-bar-clearance`:
+ * the music layout's song-page row). Smaller: bottom-center above the mini player, the bottom navigation and
+ * any bar fixed above them (`--bottom-bar-clearance`; the music layout keeps a one-line toast on screen,
+ * index.css area:music); while a bottom sheet or modal dialog is open, next to it instead (ToastBehavior).
  *
  * Keyboard (ToastBehavior): F6 moves focus to the action button and back, ⌘/Ctrl+Z runs
  * 「元に戻す」. Esc on the toast goes back to where focus came from (a dialog underneath stays
@@ -84,7 +85,7 @@ export default function ToastHost() {
       className={cx(
         'pointer-events-none fixed z-[var(--z-toast,100)] flex',
         'inset-x-2 bottom-[calc(var(--floating-player-clearance,0px)_+_var(--bottom-nav-height,0px)_+_var(--bottom-bar-clearance,0px)_+_8px)] justify-center',
-        'lg:inset-x-auto lg:bottom-[calc(var(--bottom-nav-height,0px)_+_24px)] lg:left-[calc(var(--guide-offset,0px)_+_24px)] lg:justify-start',
+        'lg:inset-x-auto lg:bottom-[calc(var(--bottom-nav-height,0px)_+_var(--bottom-bar-clearance,0px)_+_24px)] lg:left-[calc(var(--guide-offset,0px)_+_24px)] lg:justify-start',
       )}
     >
       <div

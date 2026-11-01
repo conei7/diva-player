@@ -19,6 +19,13 @@ import { closePlayerWithUndo } from '../watch/watchActions';
 import { MOBILE_BUTTON_CLASS, SOFT_DISABLED_CLASS, ignoresAppVolume, toggleMuteWithToast } from './player/playerBarUi';
 import SquareArt from './SquareArt';
 
+/**
+ * With ミュートを解除 the bar has four buttons, which with the gaps need 192px (12rem) of its content: beside
+ * the corner video (560-575px wide windows) they step down to 40px, the phone minimum, like the standard
+ * layout's strip (MiniPlayerControls).
+ */
+const BUTTON_OF_FOUR = 'size-11! @max-[12rem]:size-10!';
+
 /** The 2px progress along the bar's top edge (only shows progress; seeking is on the song page). */
 function MiniBarProgress() {
   const progress = useProgressStore(state => state.progress);
@@ -32,7 +39,8 @@ function MiniBarProgress() {
 }
 
 /**
- * The music layout's bar on phones (MusicDock shows it above the bottom nav while a song is loaded):
+ * The music layout's bar on phones (MusicDock shows it above the bottom nav while a song is loaded; under
+ * 560px wide and 420px tall it is the bottom row, with the video above it and no bottom nav, index.css):
  * artwork, title and artist (a tap or Enter opens the song page), 再生 / 一時停止 and 次の曲. Swipes on
  * the bar work like on the standard mini player: left 次の曲, right 前の曲, up the song page (buttons
  * are left out of the gesture, and it follows the setting). 次の曲 and the left swipe follow the
@@ -40,7 +48,7 @@ function MiniBarProgress() {
  * adds more), where next() would stop the music. While nothing can be heard it offers
  * ミュートを解除 here (nothing is drawn on the video), and ✕ closes the player like the standard one
  * (with 元に戻す). In a narrow bar (a phone held sideways, next to the video card) the artwork steps
- * aside first.
+ * aside first, and the four buttons with ミュートを解除 step down to 40px.
  */
 export default function MusicMiniBar() {
   const t = useTranslateSourceText();
@@ -79,6 +87,9 @@ export default function MusicMiniBar() {
 
   if (!song) return null;
 
+  const canUnmute = silent && !ignoresAppVolume(service);
+  const buttonClass = canUnmute ? BUTTON_OF_FOUR : MOBILE_BUTTON_CLASS;
+
   const openOnKey = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key !== 'Enter') return;
     event.preventDefault();
@@ -111,12 +122,12 @@ export default function MusicMiniBar() {
           <p className="truncate text-xs leading-4 text-yt-text-secondary">{formatArtistLine(song)}</p>
         </div>
       </div>
-      {silent && !ignoresAppVolume(service) && (
+      {canUnmute && (
         <IconButton
           label={t('ミュートを解除')}
           icon={<VolumeOffIcon />}
           data-testid="music-mini-unmute"
-          className={MOBILE_BUTTON_CLASS}
+          className={buttonClass}
           onClick={() => toggleMuteWithToast(t)}
         />
       )}
@@ -125,7 +136,7 @@ export default function MusicMiniBar() {
         label={isPlaying ? t('一時停止') : t('再生')}
         icon={isPlaying ? <PauseIcon /> : <PlayIcon />}
         data-testid="music-mini-play-toggle"
-        className={MOBILE_BUTTON_CLASS}
+        className={buttonClass}
         onClick={() => (isPlaying ? pause() : resume())}
       />
       <IconButton
@@ -133,7 +144,7 @@ export default function MusicMiniBar() {
         icon={<SkipNextIcon />}
         // Soft-disabled at the end of the queue: a focused button keeps focus until autoplay appends songs.
         aria-disabled={!canGoNext || undefined}
-        className={cx(MOBILE_BUTTON_CLASS, SOFT_DISABLED_CLASS)}
+        className={cx(buttonClass, SOFT_DISABLED_CLASS)}
         onClick={() => {
           if (canGoNext) next();
         }}
@@ -142,7 +153,7 @@ export default function MusicMiniBar() {
         label={t('プレイヤーを閉じる')}
         icon={<CloseIcon />}
         data-testid="music-mini-close"
-        className={MOBILE_BUTTON_CLASS}
+        className={buttonClass}
         onClick={() => closePlayerWithUndo(t)}
       />
     </div>

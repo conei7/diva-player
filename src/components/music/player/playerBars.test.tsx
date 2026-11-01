@@ -216,6 +216,25 @@ describe('MusicMiniBar', () => {
     expect(html).toContain('Fixture song 4242');
   });
 
+  it('steps four buttons (with ミュートを解除) down to 40px only in a narrow bar, three keep 44px', () => {
+    // Beside the corner video (560-575px wide windows) the muted bar's four 44px buttons would overflow onto it.
+    play([first]);
+    setPlayer({ volume: 0 });
+    const muted = render(<MusicMiniBar />);
+    expect(muted).toContain('data-testid="music-mini-unmute"');
+    for (const button of ['data-testid="music-mini-play-toggle"', 'aria-label="次の曲"', 'data-testid="music-mini-close"']) {
+      expect(tag(muted, button)).toContain('size-11!');
+      expect(tag(muted, button)).toContain('@max-[12rem]:size-10!');
+    }
+    setPlayer({ volume: 40 });
+    const heard = render(<MusicMiniBar />);
+    expect(heard).not.toContain('data-testid="music-mini-unmute"');
+    for (const button of ['data-testid="music-mini-play-toggle"', 'aria-label="次の曲"', 'data-testid="music-mini-close"']) {
+      expect(tag(heard, button)).toContain('size-11!');
+      expect(tag(heard, button)).not.toContain('@max-');
+    }
+  });
+
   it('disables 次の曲 at the end of the queue, like the player bar', () => {
     // A shelf song starts as a one-song queue: next() would stop the music until autoplay adds more.
     // Soft-disabled (aria-disabled), so a focused button keeps focus.

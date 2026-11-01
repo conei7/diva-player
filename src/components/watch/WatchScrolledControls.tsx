@@ -20,9 +20,10 @@ function focusUnderVideo(videoColumn: HTMLElement | null) {
 }
 
 /**
- * The song page under 1024px has no mini player or player bar. Once its video has scrolled off,
- * WatchPage shows this row (song · play/pause · next) fixed at the bottom, so the related list can
- * be browsed without scrolling back up to pause. It never shows while the video is on screen.
+ * The song page under 1024px has no mini player or player bar, nor does the music layout's under 420px
+ * tall. Once its video has scrolled off, WatchPage shows this row (song · play/pause · next) fixed at
+ * the bottom, so the related list can be browsed without scrolling back up to pause. It never shows
+ * while the video is on screen. In the music layout it spans the page right of the library (index.css area:music).
  */
 export default function WatchScrolledControls({ videoColumnRef }: { videoColumnRef: RefObject<HTMLElement | null> }) {
   const t = useTranslateSourceText();

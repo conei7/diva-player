@@ -2,7 +2,7 @@ import type { MouseEvent } from 'react';
 import StarRating from '../player/StarRating';
 import PVSourceSelector from '../player/PVSourceSelector';
 import { isSilentVolume, unmutePlayer } from '../player/playerMute';
-import { ignoresAppVolume } from '../music/player/playerBarUi';
+import { ignoresAppVolume, useMusicBarOnSongPage } from '../music/player/playerBarUi';
 import { usePlayerStore } from '../../stores/playerStore';
 import { useRatingStore } from '../../stores/ratingStore';
 import { useUiStore } from '../../stores/uiStore';
@@ -13,7 +13,6 @@ import type { Song } from '../../types/vocadb';
 import { useTranslateSourceText } from '../../i18n';
 import { useMediaQuery } from '../../hooks/useMediaQuery';
 import { useHorizontalOverflow } from '../../hooks/useHorizontalOverflow';
-import { useIsMusicLayout } from '../../hooks/useMusicLayout';
 import Button, { buttonClassName } from '../ui/Button';
 import Tooltip from '../ui/Tooltip';
 import { CheckIcon, ClockIcon, EyeIcon, EyeOffIcon, OpenInNewIcon, PlaylistAddIcon, ShareIcon, VolumeOffIcon } from '../ui/icons';
@@ -29,7 +28,8 @@ const NARROW_DESKTOP_QUERY = '(min-width: 1024px) and (max-width: 1279.98px)';
  * They wrap on wide screens and scroll sideways under 640px, edge to edge with the hidden
  * scrollbar of the Home shelves, so a fade marks each side that has more actions past it
  * (most of them start off screen on a phone). While nothing can be heard, ミュートを解除 comes
- * first (the standard layout's sign of silence on this page; nothing is drawn on the video).
+ * first (the sign of silence on this page without the music layout's player bar under it: the standard
+ * layout, music phones and music windows under 420px tall; nothing is drawn on the video).
  */
 export default function ActionBar({ song }: { song: Song }) {
   const t = useTranslateSourceText();
@@ -41,12 +41,13 @@ export default function ActionBar({ song }: { song: Song }) {
   const hiddenRecord = useHiddenSongStore(state => state.hiddenSongs[String(song.id)]);
   const narrow = useMediaQuery(NARROW_DESKTOP_QUERY);
   const [scrollerRef, overflow] = useHorizontalOverflow<HTMLDivElement>();
-  // The music layout shows it on its player bar; Bilibili takes no volume from the app.
+  // Where the music layout's player bar is under the page, its mute button shows it; Bilibili takes
+  // no volume from the app.
   const silent = usePlayerStore(state => isSilentVolume(state.volume));
   const hasSong = usePlayerStore(state => state.currentSong !== null);
   const service = usePlayerStore(state => state.currentPV?.service);
-  const isMusicLayout = useIsMusicLayout();
-  const showUnmute = silent && hasSong && !isMusicLayout && !ignoresAppVolume(service);
+  const musicBar = useMusicBarOnSongPage();
+  const showUnmute = silent && hasSong && !musicBar && !ignoresAppVolume(service);
 
   // The pill goes away once pressed: the keyboard carries on at the next action instead of <body>.
   const unmute = (event: MouseEvent<HTMLButtonElement>) => {

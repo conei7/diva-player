@@ -39,6 +39,8 @@ const homeSongs = Array.from({ length: 24 }, (_, index) => song(971000 + index, 
 const allSongs = [...songs, ...homeSongs];
 const playlistId = 'music-e2e-playlist';
 const pageErrors = [];
+// The cases of short windows (runCase) run to the end and report every failure together.
+const caseFailures = [];
 
 const json = body => ({ status: 200, headers: { 'access-control-allow-origin': '*', 'content-type': 'application/json' }, body: JSON.stringify(body) });
 
@@ -80,7 +82,26 @@ const YOUTUBE_STUB = `
   window.onYouTubeIframeAPIReady();
 `;
 
-async function preparePage(context, { layout, viewport, playing = true, failMusicChunk = false, volume } = {}) {
+// The sound map's response, like src/api/soundMapDemo.ts: the starting song and 28 near it.
+function soundMapFixture(seedSongId) {
+  const origin = { songId: seedSongId, name: `デモ曲 ${seedSongId}`, artistString: 'Demo Producer', x: 0, y: 0, similarity: null };
+  const items = [origin];
+  for (let index = 1; index <= 28; index++) {
+    const angle = index * 2.399963229728653;
+    const radius = 0.12 + (index % 7) * 0.1;
+    items.push({
+      songId: seedSongId + index,
+      name: `近傍デモ曲 ${seedSongId + index}`,
+      artistString: 'Demo Producer',
+      x: Math.cos(angle) * radius,
+      y: Math.sin(angle) * radius,
+      similarity: Math.max(0.51, 0.99 - index * 0.014),
+    });
+  }
+  return { mapVersion: 'demo-v1', generatedAt: '2026-09-12T00:00:00Z', method: 'demo', coordinateCount: items.length, state: 'ready', origin, items };
+}
+
+async function preparePage(context, { layout, viewport, playing = true, failMusicChunk = false, volume, backendDown = false } = {}) {
   const page = await context.newPage();
   page.on('pageerror', error => pageErrors.push(`${page.url()}: ${error.message}`));
   if (viewport) await page.setViewport(viewport);
@@ -138,7 +159,12 @@ async function preparePage(context, { layout, viewport, playing = true, failMusi
     }
     let response = null;
     if (path.endsWith('/api/health') || path.endsWith('/api/ready')) {
-      response = json({ status: path.endsWith('/api/ready') ? 'ready' : 'ok', postgres: true, qdrant: true });
+      // backendDown: the server band under the top bar (BackendStatusNotice)
+      response = backendDown
+        ? { status: 503, headers: { 'access-control-allow-origin': '*', 'content-type': 'application/json' }, body: '{}' }
+        : json({ status: path.endsWith('/api/ready') ? 'ready' : 'ok', postgres: true, qdrant: true });
+    } else if (path.includes('/api/discovery/sound-map')) {
+      response = json(soundMapFixture(Number(url.searchParams.get('seedSongId')) || 123));
     } else if (path.includes('/api/songs/discovery-eligibility')) {
       const ids = (url.searchParams.get('ids') ?? '').split(',').filter(Boolean).map(Number);
       response = json({ items: ids.map(songId => ({ songId, discoveryEligible: true })) });
@@ -208,6 +234,127 @@ async function assertVideoVisible(page, label) {
 async function assertNoHorizontalOverflow(page, label) {
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   if (overflow > 1) throw new Error(`${label}: horizontal overflow ${overflow}px`);
+}
+
+/**
+ * Stricter than assertVideoVisible: an 11×11 grid 4px inside the video (clear of its rounded corners)
+ * where every point on screen must reach the player, and no fixed bar's box over the video's box (a
+ * grid misses overlaps thinner than its rows, like a bar 4px over the bottom of the song page's video).
+ */
+function videoState(page) {
+  return page.evaluate(() => {
+    const container = document.querySelector('[data-testid="global-player"]');
+    const video = container?.querySelector('.global-player-video');
+    if (!container || !video) return { error: 'no player' };
+    const rect = video.getBoundingClientRect();
+    let blocked = 0;
+    let offscreen = 0;
+    for (let i = 0; i <= 10; i++) {
+      for (let j = 0; j <= 10; j++) {
+        const x = rect.left + 4 + (rect.width - 8) * i / 10;
+        const y = rect.top + 4 + (rect.height - 8) * j / 10;
+        if (x < 0 || y < 0 || x >= innerWidth || y >= innerHeight) {
+          offscreen++;
+          continue;
+        }
+        const hit = document.elementFromPoint(x, y);
+        if (!hit || !container.contains(hit)) blocked++;
+      }
+    }
+    const round = value => Math.round(value * 10) / 10;
+    const over = [...document.querySelectorAll(['header', '.music-player-bar', '.music-mini-bar', '.music-bottom-nav',
+      '[data-testid="watch-scrolled-controls"]', '[data-testid="selection-fab"]', '[data-testid="toast-host"] > div:not([aria-hidden])'].join(', '))]
+      .map(element => ({ name: element.dataset.testid || (element.tagName === 'HEADER' ? 'header' : element.className.split(' ')[0]), box: element.getBoundingClientRect() }))
+      .filter(({ box }) => box.width > 0 && box.height > 0
+        && Math.min(box.right, rect.right) - Math.max(box.left, rect.left) > 0.5
+        && Math.min(box.bottom, rect.bottom) - Math.max(box.top, rect.top) > 0.5)
+      .map(({ name, box }) => `${name} ${round(Math.min(box.bottom, rect.bottom) - Math.max(box.top, rect.top))}px`);
+    return {
+      width: round(rect.width),
+      height: round(rect.height),
+      left: round(rect.left),
+      top: round(rect.top),
+      right: round(rect.right),
+      bottom: round(rect.bottom),
+      inside: rect.left >= -0.5 && rect.top >= -0.5 && rect.right <= innerWidth + 0.5 && rect.bottom <= innerHeight + 0.5,
+      blocked,
+      offscreen,
+      over,
+      bar: Boolean(document.querySelector('[data-testid="music-player-bar"]')),
+      musicBottom: document.documentElement.dataset.musicBottom ?? null,
+    };
+  });
+}
+/** ≥200×200, wholly in the window, every point reaching the player and no bar over it. */
+const videoClear = state => !state.error && state.width >= 199.5 && state.height >= 199.5 && state.inside
+  && state.blocked === 0 && state.over.length === 0;
+/** The same, except that it may run past the window's bottom edge (the page scrolls). */
+const videoUncovered = state => !state.error && state.width >= 199.5 && state.height >= 199.5
+  && state.blocked === 0 && state.over.length === 0;
+
+/** The visible toast (after its entrance) and whether it covers the video or a mini bar control. */
+function toastState(page) {
+  return page.evaluate(() => {
+    const toast = [...document.querySelectorAll('[data-testid="toast-host"] > div:not([aria-hidden])')]
+      .map(element => element.getBoundingClientRect()).find(box => box.height > 0);
+    if (!toast) return null;
+    const overlaps = box => Boolean(box) && box.width > 1
+      && Math.min(box.right, toast.right) - Math.max(box.left, toast.left) > 0.5
+      && Math.min(box.bottom, toast.bottom) - Math.max(box.top, toast.top) > 0.5;
+    const video = document.querySelector('[data-testid="global-player"] .global-player-video')?.getBoundingClientRect();
+    return {
+      top: Math.round(toast.top),
+      bottom: Math.round(toast.bottom),
+      overVideo: overlaps(video),
+      overControls: [...document.querySelectorAll('.music-mini-bar :is(button, [role="link"])')]
+        .filter(control => overlaps(control.getBoundingClientRect()))
+        .map(control => control.dataset.testid || control.getAttribute('aria-label')),
+    };
+  });
+}
+
+/** Presses M (nothing focused) and waits for its toast to finish sliding in. */
+async function muteWithKey(page, text) {
+  await page.evaluate(() => document.activeElement?.blur());
+  await page.keyboard.press('m');
+  await page.waitForFunction(expected => document.querySelector('[data-testid="toast-host"]')?.textContent.includes(expected),
+    { timeout: 10_000 }, text);
+  await new Promise(resolve => setTimeout(resolve, 500));
+}
+
+/** The music mini bar beside or under the video: each control reached at its centre and clear of the video. */
+function miniBarState(page) {
+  return page.evaluate(() => {
+    const box = element => element.getBoundingClientRect();
+    const shown = element => Boolean(element && element.getClientRects().length > 0 && box(element).width > 0);
+    const video = box(document.querySelector('[data-testid="global-player"] .global-player-video'));
+    const intersects = rect => Math.min(rect.right, video.right) - Math.max(rect.left, video.left) > 0.5
+      && Math.min(rect.bottom, video.bottom) - Math.max(rect.top, video.top) > 0.5;
+    const bar = document.querySelector('[data-testid="music-mini-bar"]');
+    const barBox = box(bar);
+    const controls = [...bar.querySelectorAll('button, [role="link"]')].filter(shown).map(control => {
+      const rect = box(control);
+      const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+      return {
+        name: control.dataset.testid || control.getAttribute('aria-label'),
+        width: Math.round(rect.width),
+        reached: Boolean(hit && control.contains(hit)),
+        overVideo: intersects(rect),
+      };
+    });
+    return {
+      controls,
+      missed: controls.filter(control => !control.reached || control.overVideo).map(control => control.name),
+      title: controls.find(control => control.name === 'music-mini-open')?.width ?? 0,
+      overflow: bar.scrollWidth - bar.clientWidth,
+      // The 2px progress line reaches 1px above the bar.
+      gap: Math.round((barBox.top - video.bottom) * 10) / 10,
+      fullWidth: barBox.left <= 0.5 && barBox.right >= innerWidth - 0.5 && Math.abs(barBox.bottom - innerHeight) <= 0.5,
+      underHeader: video.top < box(document.querySelector('header')).bottom - 0.5,
+      nav: shown(document.querySelector('.music-bottom-nav')),
+      menu: shown(document.querySelector('header button[aria-label="メニュー"]')),
+    };
+  });
 }
 
 async function switchLayoutInSettings(page, value) {
@@ -510,7 +657,8 @@ try {
     await open(page);
     await page.waitForFunction(() => document.documentElement.dataset.shell === 'music', { timeout: 30_000 });
     await startPlayback(page);
-    await page.tap('button[aria-label="メニュー"]');
+    // The bottom nav's ≡ (the top bar's stays hidden here; it shows only under 560×420 with a song loaded).
+    await page.tap('nav button[aria-label="メニュー"]');
     await page.waitForSelector('button[aria-label="メニューを閉じる"]', { visible: true });
     for (const [checkedBefore, expected] of [[true, 'standard'], [false, 'music']]) {
       const checked = await page.$eval('#drawer-music-layout', input => input.checked);
@@ -710,7 +858,10 @@ try {
     await context.close();
   }
 
-  // The song page: its own video fits between the header and the bars on short windows.
+  await checkNarrowShortWindows();
+
+  // The song page: its own video fits between the header and the bars on short windows (nothing over it,
+  // not even a few pixels of a bar).
   for (const viewport of [{ width: 1000, height: 600 }, { width: 844, height: 390, hasTouch: true }, { width: 568, height: 320, isMobile: true, hasTouch: true }]) {
     const context = await browser.createBrowserContext();
     const page = await preparePage(context, { layout: 'music', viewport });
@@ -720,12 +871,15 @@ try {
     await page.waitForFunction(() => document.querySelector('[data-testid="global-player"]')?.style.position === 'absolute', { timeout: 20_000 });
     await page.evaluate(() => window.scrollTo(0, 0));
     await new Promise(resolve => setTimeout(resolve, 300));
-    const watch = await assertVideoVisible(page, `song page video at ${viewport.width}×${viewport.height}`);
+    const watch = await videoState(page);
+    if (!videoClear(watch)) throw new Error(`Song page video at ${viewport.width}×${viewport.height} must be whole, ≥200×200 and clear ${JSON.stringify(watch)}`);
     const mobileBars = await page.evaluate(() => Boolean(document.querySelector('[data-testid="music-mini-bar"], .music-bottom-nav')));
     if (viewport.isMobile && mobileBars) throw new Error('Phones show no bottom nav or mini bar on the song page, like the standard layout');
     console.log(`PASS song page at ${viewport.width}×${viewport.height}: video ${Math.round(watch.width)}×${Math.round(watch.height)} clear of the bars`);
     await context.close();
   }
+
+  await checkShortSongPages();
 
   // Short desktop window: the docked video stays inside the panel, above the bar.
   {
@@ -777,6 +931,7 @@ try {
 
   await checkHistoryWidthChanges();
 
+  if (caseFailures.length > 0) throw new Error(`${caseFailures.length} short-window case(s) failed:\n${caseFailures.join('\n')}`);
   if (pageErrors.length > 0) throw new Error(`Uncaught page errors:\n${pageErrors.join('\n')}`);
   console.log('PASS music layout E2E');
 } finally {
@@ -919,4 +1074,536 @@ async function checkHistoryWidthChanges() {
     console.log('PASS History width changes leave no ResizeObserver loop error');
     await context.close();
   }
+}
+
+/** A new browser context for one case: a failure is recorded (caseFailures) and the next case runs. */
+async function runCase(label, run) {
+  const context = await browser.createBrowserContext();
+  try {
+    await run(context);
+  } catch (error) {
+    caseFailures.push(`${label}: ${error.message}`);
+    console.log(`FAIL ${label}: ${error.message}`);
+  } finally {
+    await context.close().catch(() => undefined);
+  }
+}
+
+// The music layout under 560px wide and 420px tall (split screen, small windows): beside the corner video
+// no room is left for the bars (320×360 drew the mini bar's ▶ / ✕ on it), so while a song is loaded the
+// mini bar runs along the bottom, the video sits whole above it and the bottom nav steps aside for the
+// top bar's ≡ (index.css area:music). Also the cases next to it: the selection bar, toasts, the muted
+// mini bar beside the corner video from 560px, and the sound map's selection bar.
+async function checkNarrowShortWindows() {
+  const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
+  const phone = (width, height) => ({ width, height, isMobile: true, hasTouch: true });
+  const playOn = async (context, viewport, { path = '', ...options } = {}) => {
+    const page = await preparePage(context, { layout: 'music', viewport, ...options });
+    await open(page, path);
+    await page.waitForFunction(() => document.documentElement.dataset.shell === 'music', { timeout: 30_000 });
+    await startPlayback(page);
+    await page.waitForSelector('[data-testid="global-player"].global-mini-player');
+    // From 640px the player bar instead of the mini bar.
+    await page.waitForSelector(viewport.width < 640 ? '[data-testid="music-mini-bar"]' : '[data-testid="music-player-bar"]');
+    await wait(300);
+    return page;
+  };
+  const selectionBarBottom = page => page.evaluate(() => document.querySelector('[data-testid="selection-fab"]').getBoundingClientRect().bottom);
+  const startSelecting = async page => {
+    await page.tap('[data-selection-toggle]');
+    await page.waitForSelector('[data-testid="selection-fab"]', { timeout: 10_000 });
+    await wait(400);
+  };
+
+  for (const viewport of [phone(320, 360), phone(360, 400), phone(414, 400), { width: 480, height: 400, hasTouch: true }, { width: 559, height: 400, hasTouch: true }]) {
+    const size = `${viewport.width}×${viewport.height}`;
+    await runCase(`narrow short ${size}`, async context => {
+      const page = await playOn(context, viewport);
+      const video = await videoState(page);
+      const bar = await miniBarState(page);
+      if (!videoClear(video) || bar.underHeader || bar.gap < 1 || !bar.fullWidth || bar.overflow > 0 || bar.missed.length > 0
+        || bar.controls.length < 4 || bar.title < 96 || bar.nav || !bar.menu) {
+        throw new Error(`the video whole above a full-width mini bar with every control clear, ≡ instead of the bottom nav ${JSON.stringify({ video, ...bar })}`);
+      }
+      // M: the toast stays on screen and off the video; with ミュートを解除 the five controls still fit.
+      await muteWithKey(page, 'ミュートしました');
+      await page.waitForSelector('[data-testid="music-mini-unmute"]');
+      const toast = await toastState(page);
+      const muted = await miniBarState(page);
+      if (!toast || toast.top < 0 || toast.overVideo || toast.overControls.length > 0
+        || muted.controls.length < 5 || muted.missed.length > 0 || muted.overflow > 0) {
+        throw new Error(`muted: the toast on screen and off the video, five controls clear ${JSON.stringify({ toast, ...muted })}`);
+      }
+      await page.tap('[data-testid="music-mini-unmute"]');
+      await page.waitForFunction(() => !document.querySelector('[data-testid="music-mini-unmute"]'), { timeout: 5_000 });
+      await page.tap('[data-testid="music-mini-play-toggle"]');
+      await page.waitForFunction(() => window.__yt.getPlayerState() === 2, { timeout: 5_000 });
+      await page.tap('[data-testid="music-mini-play-toggle"]');
+      await page.waitForFunction(() => window.__yt.getPlayerState() === 1, { timeout: 5_000 });
+      await assertNoHorizontalOverflow(page, `narrow short ${size}`);
+
+      // ≡ opens the drawer with every destination; Esc closes it and gives focus back to ≡.
+      await page.tap('header button[aria-label="メニュー"]');
+      await page.waitForSelector('aside[role="dialog"] button[aria-label="メニューを閉じる"]', { visible: true, timeout: 5_000 });
+      await page.waitForFunction(() => Math.abs(document.querySelector('aside[role="dialog"]').getBoundingClientRect().left) <= 1, { timeout: 5_000 });
+      const links = await page.$$eval('aside[role="dialog"] a[href]', anchors => anchors.map(anchor => new URL(anchor.href).pathname));
+      const missing = ['/chorus-highlights', '/playlists', '/history'].filter(path => !links.some(link => link.endsWith(path)));
+      if (missing.length > 0) throw new Error(`the drawer must list every destination, missing ${missing.join(', ')}`);
+      await page.keyboard.press('Escape');
+      await page.waitForFunction(() => !document.querySelector('aside[role="dialog"]')
+        && document.querySelector('aside[aria-label="メニュー"]').getBoundingClientRect().right <= 1, { timeout: 5_000 });
+      const focus = await page.evaluate(() => document.activeElement?.matches('header button[aria-label="メニュー"]') ?? false);
+      if (!focus) throw new Error(`Esc must give focus back to ≡, got ${await page.evaluate(() => document.activeElement?.outerHTML.slice(0, 80))}`);
+
+      // ✕ closes the player: the bottom nav comes back with its five names, and ≡ goes.
+      await page.tap('[data-testid="music-mini-close"]');
+      await page.waitForFunction(() => !document.querySelector('[data-testid="music-mini-bar"]'), { timeout: 5_000 });
+      const closed = await page.evaluate(() => {
+        const nav = document.querySelector('.music-bottom-nav');
+        const menu = document.querySelector('header button[aria-label="メニュー"]');
+        return {
+          nav: Boolean(nav && Math.abs(nav.getBoundingClientRect().width - innerWidth) <= 0.5),
+          // Four link names and ≡'s (aria-hidden: the button has its own label).
+          names: nav ? [...nav.querySelectorAll('li span')].filter(span => span.textContent.trim() && span.getBoundingClientRect().width > 2).length : 0,
+          menu: Boolean(menu && menu.getClientRects().length > 0),
+        };
+      });
+      if (!closed.nav || closed.names !== 5 || closed.menu) throw new Error(`✕ must bring the bottom nav back with its names and hide ≡ ${JSON.stringify(closed)}`);
+      console.log(`PASS narrow short ${size}: video ${video.width}×${video.height} whole above the full-width mini bar (${bar.title}px title), ≡ and the drawer instead of the bottom nav, the toast on screen`);
+    });
+  }
+
+  // Heights where header + 200 + the mini bar only just fit (306px), and below (the video takes the room left).
+  for (const { viewport, minHeight } of [
+    { viewport: phone(400, 340), minHeight: 199.5 },
+    { viewport: phone(360, 306), minHeight: 199.5 },
+    { viewport: phone(360, 300), minHeight: 190 },
+  ]) {
+    const size = `${viewport.width}×${viewport.height}`;
+    await runCase(`narrow short ${size}`, async context => {
+      const page = await playOn(context, viewport);
+      const video = await videoState(page);
+      const bar = await miniBarState(page);
+      if (video.error || video.height < minHeight || video.width < 199.5 || !video.inside || video.blocked > 0 || video.over.length > 0
+        || bar.underHeader || bar.gap < 1 || bar.missed.length > 0) {
+        throw new Error(`the video ≥${minHeight}px tall between the header and the mini bar, nothing over it ${JSON.stringify({ video, ...bar })}`);
+      }
+      await muteWithKey(page, 'ミュートしました');
+      const toast = await toastState(page);
+      if (!toast || toast.top < 0 || toast.overVideo) throw new Error(`the toast must stay on screen and off the video ${JSON.stringify(toast)}`);
+      console.log(`PASS narrow short ${size}: video ${video.width}×${video.height} between the header and the mini bar, toast ${toast.top}..${toast.bottom}`);
+    });
+  }
+
+  // The selection bar (z-index 48, over the video's 45) pushes the video down; under 362px tall it shrinks instead.
+  for (const { viewport, minHeight } of [
+    { viewport: phone(360, 400), minHeight: 199.5 },
+    { viewport: phone(320, 360), minHeight: 175 },
+    { viewport: phone(400, 340), minHeight: 175 },
+  ]) {
+    const size = `${viewport.width}×${viewport.height}`;
+    await runCase(`narrow short ${size} while selecting`, async context => {
+      const page = await playOn(context, viewport);
+      await startSelecting(page);
+      const video = await videoState(page);
+      const barBottom = await selectionBarBottom(page);
+      const bar = await miniBarState(page);
+      if (video.error || video.top < barBottom - 0.5 || video.height < minHeight || video.blocked > 0 || video.over.length > 0 || bar.gap < 1) {
+        throw new Error(`the video under the selection bar (${barBottom}) and above the mini bar, ≥${minHeight}px tall ${JSON.stringify({ video, gap: bar.gap })}`);
+      }
+      console.log(`PASS narrow short ${size} while selecting: video ${video.width}×${video.height} from ${video.top}, under the selection bar`);
+    });
+  }
+
+  // Phones from 420px tall stack the video (up to 240px) on the mini bar: never as far up as the selection bar.
+  for (const viewport of [phone(400, 420), phone(600, 430), phone(639, 420), phone(390, 844)]) {
+    const size = `${viewport.width}×${viewport.height}`;
+    await runCase(`phone ${size} while selecting`, async context => {
+      const page = await playOn(context, viewport);
+      await startSelecting(page);
+      const video = await videoState(page);
+      const barBottom = await selectionBarBottom(page);
+      // 390×844 has room: the width's 16:9 as before.
+      const expected = viewport.height > 800 ? (viewport.width - 16) * 9 / 16 : null;
+      if (!videoClear(video) || video.top < barBottom - 0.5 || (expected !== null && Math.abs(video.height - expected) > 0.5)) {
+        throw new Error(`the stacked video must stay under the selection bar (${barBottom}) ${JSON.stringify({ video, expected })}`);
+      }
+      console.log(`PASS phone ${size} while selecting: video ${video.width}×${video.height} from ${video.top}, under the selection bar`);
+    });
+  }
+
+  // From 560px the video stays in the corner at 356×200, the mini bar beside it. Muted, its four buttons
+  // step down to 40px where they would not fit (560-575px) and none reaches the video.
+  for (const viewport of [phone(560, 400), phone(575, 400), phone(576, 400), phone(568, 320), phone(600, 400)]) {
+    const size = `${viewport.width}×${viewport.height}`;
+    await runCase(`corner ${size} muted`, async context => {
+      const page = await playOn(context, viewport, { volume: 0 });
+      await page.waitForSelector('[data-testid="music-mini-unmute"]');
+      const video = await videoState(page);
+      const bar = await miniBarState(page);
+      const buttons = bar.controls.filter(control => control.name !== 'music-mini-open');
+      const size44 = viewport.width >= 576;
+      if (!videoClear(video) || Math.abs(video.height - 200) > 0.5 || buttons.length !== 4 || bar.missed.length > 0 || bar.overflow > 0
+        || buttons.some(control => control.width !== (size44 ? 44 : 40))) {
+        throw new Error(`the corner video 200px tall, four ${size44 ? 44 : 40}px buttons beside it ${JSON.stringify({ video, ...bar })}`);
+      }
+      console.log(`PASS corner ${size} muted: video ${video.width}×${video.height}, four ${buttons[0].width}px buttons clear of it`);
+    });
+  }
+
+  // The corner video is 200px tall under the top bar and the selection bar; only where they leave less
+  // (under 312px tall while selecting, 320px from 640px wide; 256 / 264px without) it takes the room left
+  // instead of going under them (568×300 had the selection bar 12px over it, 667×240 the top bar 24px).
+  for (const { viewport, select } of [
+    { viewport: phone(568, 300), select: true },
+    { viewport: { width: 780, height: 300, hasTouch: true }, select: true },
+    { viewport: phone(667, 240), select: false },
+  ]) {
+    const size = `${viewport.width}×${viewport.height}`;
+    await runCase(`corner ${size}${select ? ' while selecting' : ''}`, async context => {
+      const page = await playOn(context, viewport);
+      if (select) await startSelecting(page);
+      const video = await videoState(page);
+      const above = select
+        ? await selectionBarBottom(page)
+        : await page.evaluate(() => document.querySelector('header').getBoundingClientRect().bottom);
+      if (video.error || video.top < above - 0.5 || video.height < 175 || video.width < 355.5 || !video.inside
+        || video.blocked > 0 || video.over.length > 0) {
+        throw new Error(`the corner video under the ${select ? 'selection bar' : 'top bar'} (${above}), ≥175px tall, nothing over it ${JSON.stringify(video)}`);
+      }
+      await muteWithKey(page, 'ミュートしました');
+      const toast = await toastState(page);
+      if (!toast || toast.top < 0 || toast.overVideo) throw new Error(`the toast must stay on screen and off the video ${JSON.stringify(toast)}`);
+      console.log(`PASS corner ${size}${select ? ' while selecting' : ''}: video ${video.width}×${video.height} from ${video.top}, under the ${select ? 'selection bar' : 'top bar'}, toast ${toast.top}..${toast.bottom}`);
+    });
+  }
+
+  // A restored paused queue: the mini bar is at the bottom from the start, so ▶ does not move when the video appears.
+  await runCase('narrow short 360×400 restored paused queue', async context => {
+    const page = await preparePage(context, { layout: 'music', viewport: phone(360, 400), playing: false });
+    await open(page);
+    await page.waitForFunction(() => document.documentElement.dataset.shell === 'music', { timeout: 30_000 });
+    await page.waitForSelector('[data-testid="music-mini-play-toggle"]');
+    await page.waitForFunction(() => window.__yt?.getVideoData?.().video_id, { timeout: 30_000 });
+    await wait(500);
+    const place = () => page.evaluate(() => {
+      const shown = element => Boolean(element && element.getClientRects().length > 0);
+      return {
+        play: document.querySelector('[data-testid="music-mini-play-toggle"]').getBoundingClientRect().top,
+        barBottom: document.querySelector('[data-testid="music-mini-bar"]').getBoundingClientRect().bottom,
+        video: Boolean(document.querySelector('[data-testid="global-player"].global-mini-player')),
+        nav: shown(document.querySelector('.music-bottom-nav')),
+        menu: shown(document.querySelector('header button[aria-label="メニュー"]')),
+      };
+    });
+    const before = await place();
+    if (before.video || before.nav || !before.menu || Math.abs(before.barBottom - 400) > 0.5) {
+      throw new Error(`a restored queue shows the mini bar at the bottom and ≡ instead of the bottom nav ${JSON.stringify(before)}`);
+    }
+    await page.tap('[data-testid="music-mini-play-toggle"]');
+    await page.waitForSelector('[data-testid="global-player"].global-mini-player', { timeout: 15_000 });
+    await wait(600);
+    const after = await place();
+    if (Math.abs(after.play - before.play) > 0.5) throw new Error(`▶ moved under the finger when the video appeared ${JSON.stringify({ before, after })}`);
+    await assertVideoVisible(page, 'video after playing a restored queue at 360×400');
+    console.log(`PASS narrow short 360×400 restored paused queue: ▶ stays at ${Math.round(before.play)} when the video appears`);
+  });
+
+  // The sound map's selection bar sits above the video card: it stops right under the top bar instead of
+  // going under it, its buttons stay reachable, and toasts stay on screen and off the video. A phone from
+  // 420px tall makes room for it above the stacked video (639×420 had the bar under the top bar). Under
+  // 560px wide and about 354px tall the video shrinks rather than covering the bar's buttons (320×340 had
+  // all three under the 200px video).
+  for (const { viewport, minHeight } of [
+    { viewport: phone(320, 360), minHeight: 199.5 },
+    { viewport: phone(360, 400), minHeight: 199.5 },
+    { viewport: phone(639, 420), minHeight: 199.5 },
+    { viewport: phone(320, 340), minHeight: 160 },
+    { viewport: phone(480, 320), minHeight: 160 },
+  ]) {
+    const size = `${viewport.width}×${viewport.height}`;
+    await runCase(`sound map ${size}`, async context => {
+      const page = await playOn(context, viewport, { path: 'sound-map?seedSongId=123' });
+      await page.waitForSelector('[data-testid="sound-map-canvas"] g[role="button"][tabindex="0"]', { timeout: 30_000 });
+      // Most of the map is under the video on so short a screen: a dot is picked with the keyboard.
+      await page.evaluate(() => document.querySelector('[data-testid="sound-map-canvas"] g[role="button"][tabindex="0"]').focus());
+      await page.keyboard.press('ArrowRight');
+      await page.keyboard.press('Enter');
+      await page.waitForSelector('section[aria-labelledby="sound-map-selected-title"]', { timeout: 10_000 });
+      await wait(400);
+      const bar = await page.evaluate(() => {
+        const section = document.querySelector('section[aria-labelledby="sound-map-selected-title"]');
+        const buttons = [...section.querySelectorAll('button')].filter(button => button.getBoundingClientRect().width > 0);
+        return {
+          top: Math.round(section.getBoundingClientRect().top),
+          headerBottom: document.querySelector('header').getBoundingClientRect().bottom,
+          buttons: buttons.length,
+          missed: buttons.filter(button => {
+            const rect = button.getBoundingClientRect();
+            const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+            return !hit || !button.contains(hit);
+          }).map(button => button.getAttribute('aria-label') || button.textContent.trim()),
+        };
+      });
+      const video = await videoState(page);
+      if (bar.top < bar.headerBottom - 0.5 || bar.buttons < 3 || bar.missed.length > 0 || video.error || video.height < minHeight
+        || video.width < 199.5 || !video.inside || video.blocked > 0 || video.over.length > 0) {
+        throw new Error(`the selection bar under the top bar with its buttons reachable, the video ≥${minHeight}px tall and clear ${JSON.stringify({ bar, video })}`);
+      }
+      await muteWithKey(page, 'ミュートしました');
+      const toast = await toastState(page);
+      if (!toast || toast.top < 0 || toast.overVideo) throw new Error(`the toast must stay on screen and off the video ${JSON.stringify(toast)}`);
+      console.log(`PASS sound map ${size}: the selection bar from ${bar.top} with ${bar.buttons} reachable buttons, the video ${video.width}×${video.height} clear, toast ${toast.top}..${toast.bottom}`);
+    });
+  }
+}
+
+// The music layout's song page under 420px tall: the 72px player bar would cover the bottom of the video
+// (at least 200px tall under the top bar; 4px at 740×340, 44px at 780×300), so it is left out and the
+// page's own controls take over, as in the standard layout: ミュートを解除 in the action row and, once the
+// video has scrolled off, the bottom row. Also the server band, which pushes the video down at any height.
+async function checkShortSongPages() {
+  const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
+  const openSongPage = async (context, viewport, options = {}) => {
+    const page = await preparePage(context, { layout: 'music', viewport, ...options });
+    await open(page, `watch?v=${songs[0].id}`);
+    await page.waitForFunction(() => document.documentElement.dataset.shell === 'music', { timeout: 30_000 });
+    await startPlayback(page);
+    await page.waitForFunction(() => document.querySelector('[data-testid="global-player"]')?.style.position === 'absolute', { timeout: 20_000 });
+    await page.waitForSelector('[data-testid="watch-action-bar"]', { timeout: 20_000 });
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await wait(300);
+    return page;
+  };
+  const toggleSelection = async (page, on) => {
+    await page.click('button[aria-label="複数選択モード"]');
+    await page.waitForFunction(shown => Boolean(document.querySelector('[data-testid="selection-fab"]')) === shown, { timeout: 10_000 }, on);
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await wait(400);
+  };
+  const scrolledRow = async page => {
+    await page.evaluate(() => window.scrollTo(0, 1200));
+    await page.waitForSelector('[data-testid="watch-scrolled-controls"]', { timeout: 5_000 });
+    await wait(400);
+    return page.evaluate(() => {
+      const row = document.querySelector('[data-testid="watch-scrolled-controls"]').getBoundingClientRect();
+      const library = document.querySelector('[data-testid="music-library"]')?.getBoundingClientRect() ?? null;
+      const buttons = [...document.querySelectorAll('[data-testid="watch-scrolled-controls"] button')];
+      return {
+        left: Math.round(row.left),
+        top: row.top,
+        bottom: Math.round(row.bottom),
+        libraryRight: library ? Math.round(library.right) : null,
+        libraryBottom: library ? Math.round(library.bottom * 10) / 10 : null,
+        buttons: buttons.length,
+        missed: buttons.filter(button => {
+          const rect = button.getBoundingClientRect();
+          const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+          return !hit || !button.contains(hit);
+        }).map(button => button.getAttribute('aria-label') || 'song'),
+      };
+    });
+  };
+
+  for (const viewport of [
+    { width: 640, height: 360, isMobile: true, hasTouch: true },
+    { width: 740, height: 340, hasTouch: true },
+    { width: 780, height: 300 },
+    { width: 844, height: 390, isMobile: true, hasTouch: true },
+    { width: 1024, height: 400 },
+    { width: 1280, height: 360 },
+  ]) {
+    const size = `${viewport.width}×${viewport.height}`;
+    await runCase(`short song page ${size}`, async context => {
+      const page = await openSongPage(context, viewport);
+      const top = await videoState(page);
+      if (!videoClear(top) || top.bar || top.musicBottom !== 'none') {
+        throw new Error(`no player bar under the video, the video whole and clear ${JSON.stringify(top)}`);
+      }
+      // The selection bar pushes the video down: from 330px tall still whole; lower, it may run past the
+      // window's bottom edge but nothing is drawn over it.
+      await toggleSelection(page, true);
+      const selecting = await videoState(page);
+      if (!(viewport.height >= 330 ? videoClear(selecting) : videoUncovered(selecting))) {
+        throw new Error(`with the selection bar nothing over the video ${JSON.stringify(selecting)}`);
+      }
+      await toggleSelection(page, false);
+      // Once the video has scrolled off, the bottom row: right of the library, its three controls reachable.
+      // With no bar, the library ends 8px above the window's bottom edge.
+      const row = await scrolledRow(page);
+      if (row.buttons !== 3 || row.missed.length > 0 || (row.libraryRight !== null && row.left < row.libraryRight)
+        || (row.libraryBottom !== null && Math.abs(row.libraryBottom - (viewport.height - 8)) > 0.5)
+        || Math.abs(row.bottom - viewport.height) > 1) {
+        throw new Error(`the bottom row right of the library (which ends 8px above the bottom) with its controls reachable ${JSON.stringify(row)}`);
+      }
+      // Toasts go above the row (from 1024px too, where they sit bottom-left).
+      await muteWithKey(page, 'ミュートしました');
+      const toast = await toastState(page);
+      if (!toast || toast.bottom > row.top + 0.5) throw new Error(`the toast must sit above the bottom row ${JSON.stringify({ toast, rowTop: row.top })}`);
+      await page.keyboard.press('m');
+      await page.click('[data-testid="watch-scrolled-controls"] button[aria-label="一時停止"]');
+      await page.waitForFunction(() => window.__yt.getPlayerState() === 2, { timeout: 5_000 });
+      console.log(`PASS short song page ${size}: video ${top.width}×${top.height} with no bar under it (${selecting.width}×${selecting.height} while selecting), the bottom row from ${row.left}px pauses, toasts above it`);
+    });
+  }
+
+  // 420px tall is where the bar comes back: it fits there even with the selection bar.
+  for (const { viewport, bar } of [
+    { viewport: { width: 960, height: 419 }, bar: false },
+    { viewport: { width: 960, height: 420 }, bar: true },
+    { viewport: { width: 1300, height: 420 }, bar: true },
+  ]) {
+    const size = `${viewport.width}×${viewport.height}`;
+    await runCase(`song page ${size}`, async context => {
+      const page = await openSongPage(context, viewport);
+      const top = await videoState(page);
+      await toggleSelection(page, true);
+      const selecting = await videoState(page);
+      if (top.bar !== bar || !videoClear(top) || !videoClear(selecting)) {
+        throw new Error(`${bar ? 'the bar' : 'no bar'}, the video clear with and without the selection bar ${JSON.stringify({ top, selecting })}`);
+      }
+      console.log(`PASS song page ${size}: ${bar ? 'the bar' : 'no bar'}, video ${top.width}×${top.height} (${selecting.width}×${selecting.height} while selecting) clear`);
+    });
+  }
+
+  // Resizing across 420px: the bar goes and comes back with the video clear, and focus never falls to <body>.
+  await runCase('song page 900×600 ↔ 900×380', async context => {
+    const page = await openSongPage(context, { width: 900, height: 600 });
+    const tall = await videoState(page);
+    if (!videoClear(tall) || !tall.bar || tall.musicBottom !== null) throw new Error(`900×600 keeps the bar, the video clear ${JSON.stringify(tall)}`);
+    await page.focus('[data-testid="music-play-toggle"]');
+    await page.setViewport({ width: 900, height: 380 });
+    await wait(150);
+    const short = await videoState(page);
+    const active = () => page.evaluate(() => (document.activeElement?.id || document.activeElement?.closest('[data-testid]')?.dataset.testid || document.activeElement?.tagName) ?? null);
+    const shortFocus = await active();
+    if (!videoClear(short) || short.bar || short.musicBottom !== 'none' || shortFocus !== 'main-content') {
+      throw new Error(`900×380: no bar, the video clear, focus from the bar's ▶ on the page ${JSON.stringify({ short, shortFocus })}`);
+    }
+    const row = await scrolledRow(page);
+    if (row.buttons !== 3) throw new Error(`900×380: the bottom row once the video has scrolled off ${JSON.stringify(row)}`);
+    await page.focus('[data-testid="watch-scrolled-controls"] button[aria-label="一時停止"]');
+    await page.setViewport({ width: 900, height: 600 });
+    await wait(150);
+    const back = await page.evaluate(() => ({
+      bar: Boolean(document.querySelector('[data-testid="music-player-bar"]')),
+      row: Boolean(document.querySelector('[data-testid="watch-scrolled-controls"]')),
+      underVideo: Boolean(document.activeElement?.closest('[data-testid="watch-video-column"]')),
+    }));
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await wait(300);
+    const again = await videoState(page);
+    if (!back.bar || back.row || !back.underVideo || !videoClear(again)) {
+      throw new Error(`back at 900×600: the bar instead of the row, focus under the video, the video clear ${JSON.stringify({ back, again })}`);
+    }
+    console.log(`PASS song page 900×600 ↔ 900×380: video ${tall.width}×${tall.height} / ${short.width}×${short.height}, the bar goes and comes back, focus kept on the page`);
+  });
+
+  // Enter on the bar's title opens a song page without the bar: focus goes to the page, not <body>.
+  await runCase('740×340 the bar title to the song page', async context => {
+    const page = await preparePage(context, { layout: 'music', viewport: { width: 740, height: 340 } });
+    await open(page);
+    await page.waitForFunction(() => document.documentElement.dataset.shell === 'music', { timeout: 30_000 });
+    await startPlayback(page);
+    await page.waitForSelector('[data-testid="global-player"].global-mini-player');
+    const title = '[data-testid="music-player-bar"] [data-bar-song] a[href*="watch"]:not([aria-hidden])';
+    await page.waitForSelector(title);
+    await page.focus(title);
+    await page.keyboard.press('Enter');
+    await page.waitForFunction(() => location.pathname.endsWith('/watch')
+      && !document.querySelector('[data-testid="music-player-bar"]'), { timeout: 10_000 });
+    await wait(300);
+    const focused = await page.evaluate(() => document.activeElement?.id || document.activeElement?.tagName);
+    if (focused !== 'main-content') throw new Error(`focus must move to the page when the bar goes away, got ${focused}`);
+    console.log('PASS 740×340: Enter on the bar title opens the song page with focus on the page');
+  });
+
+  // The server band (40px under the top bar) pushes the song page's video down: it still clears the bar.
+  for (const viewport of [{ width: 1000, height: 500 }, { width: 1920, height: 700 }, { width: 740, height: 340, hasTouch: true }]) {
+    const size = `${viewport.width}×${viewport.height}`;
+    await runCase(`song page ${size} with the server band`, async context => {
+      const page = await openSongPage(context, viewport, { backendDown: true });
+      await page.waitForSelector('[data-testid="backend-status-notice"]', { timeout: 30_000 });
+      await page.evaluate(() => window.scrollTo(0, 0));
+      await wait(400);
+      const state = await videoState(page);
+      if (!videoClear(state) || state.bar !== viewport.height >= 420) {
+        throw new Error(`with the server band the video must stay whole and clear of the bar ${JSON.stringify(state)}`);
+      }
+      console.log(`PASS song page ${size} with the server band: video ${state.width}×${state.height} from ${state.top}, ${state.bar ? 'above the bar' : 'no bar'}`);
+    });
+  }
+
+  // Muted: without the bar the action row offers ミュートを解除 (phones too); with the bar, its mute button.
+  for (const viewport of [{ width: 740, height: 340, hasTouch: true }, { width: 1280, height: 360 }, { width: 390, height: 844, isMobile: true, hasTouch: true }, { width: 1000, height: 600 }]) {
+    const size = `${viewport.width}×${viewport.height}`;
+    const withBar = viewport.width >= 640 && viewport.height >= 420;
+    await runCase(`muted song page ${size}`, async context => {
+      const page = await openSongPage(context, viewport, { volume: 0 });
+      const pill = '[data-testid="watch-action-bar"] button';
+      const state = await page.evaluate(selector => ({
+        pill: [...document.querySelectorAll(selector)].some(button => button.textContent.includes('ミュートを解除')),
+        barMute: document.querySelector('[data-testid="music-mute-toggle"]')?.getAttribute('aria-label') ?? null,
+      }), pill);
+      if (withBar ? state.pill || state.barMute !== 'ミュートを解除' : !state.pill || state.barMute !== null) {
+        throw new Error(`${withBar ? 'the bar\'s mute button says ミュートを解除 (no pill)' : 'ミュートを解除 in the action row'} ${JSON.stringify(state)}`);
+      }
+      if (!withBar) {
+        await page.evaluate(selector => [...document.querySelectorAll(selector)].find(button => button.textContent.includes('ミュートを解除')).click(), pill);
+        await page.waitForFunction(() => window.__ytVolume > 0, { timeout: 5_000 });
+      }
+      console.log(`PASS muted song page ${size}: ${withBar ? 'the bar\'s ミュートを解除' : 'ミュートを解除 in the action row unmutes'}`);
+    });
+  }
+
+  // From 420px tall the song page keeps the bar and has no bottom row.
+  await runCase('song page 1000×600 keeps the bar', async context => {
+    const page = await openSongPage(context, { width: 1000, height: 600 });
+    const state = await videoState(page);
+    await page.evaluate(() => window.scrollTo(0, 1200));
+    await wait(600);
+    const row = await page.evaluate(() => Boolean(document.querySelector('[data-testid="watch-scrolled-controls"]')));
+    if (!videoClear(state) || !state.bar || state.musicBottom !== null || row) throw new Error(`the bar kept, the video clear, no bottom row ${JSON.stringify({ state, row })}`);
+    console.log('PASS song page 1000×600 keeps the bar and no bottom row');
+  });
+
+  // Leaving a short song page brings the bar back, ending left of the corner video.
+  await runCase('740×340 leaving the song page', async context => {
+    const page = await openSongPage(context, { width: 740, height: 340, hasTouch: true });
+    await page.evaluate(() => [...document.querySelectorAll('[data-testid="music-library"] a[href]')]
+      .find(link => new URL(link.href).pathname === '/diva-player')?.click());
+    await page.waitForSelector('[data-testid="global-player"].global-mini-player', { timeout: 10_000 });
+    await page.waitForSelector('[data-testid="music-player-bar"]', { timeout: 10_000 });
+    await wait(400);
+    const back = await page.evaluate(() => ({
+      musicBottom: document.documentElement.dataset.musicBottom ?? null,
+      barRight: document.querySelector('[data-testid="music-player-bar"]').getBoundingClientRect().right,
+      videoLeft: document.querySelector('[data-testid="global-player"]').getBoundingClientRect().left,
+    }));
+    if (back.musicBottom !== null || back.barRight > back.videoLeft + 0.5) throw new Error(`the bar back, left of the corner video ${JSON.stringify(back)}`);
+    await assertVideoVisible(page, 'the corner video after leaving the short song page');
+    console.log('PASS 740×340: leaving the song page brings the bar back left of the corner video');
+  });
+
+  // 1280×400: Home with the 再生中 panel, the song page (no bar), and back: the panel and its toggle return.
+  await runCase('1280×400 再生中 panel round trip', async context => {
+    const page = await preparePage(context, { layout: 'music', viewport: { width: 1280, height: 400 } });
+    await open(page);
+    await page.waitForFunction(() => document.documentElement.dataset.shell === 'music', { timeout: 30_000 });
+    await startPlayback(page);
+    await page.waitForSelector('[data-testid="global-player"].music-docked-player', { timeout: 15_000 });
+    await page.evaluate(id => {
+      history.pushState({}, '', `${location.pathname.replace(/\/$/, '')}/watch?v=${id}`);
+      dispatchEvent(new PopStateEvent('popstate'));
+    }, songs[0].id);
+    await page.waitForFunction(() => document.querySelector('[data-testid="global-player"]')?.style.position === 'absolute'
+      && !document.querySelector('[data-testid="music-player-bar"]'), { timeout: 20_000 });
+    await page.goBack();
+    await page.waitForSelector('[data-testid="global-player"].music-docked-player', { timeout: 15_000 });
+    await page.waitForSelector('[data-testid="music-now-playing"]');
+    const toggle = await page.$eval('[data-testid="music-now-playing-toggle"]', button => ({ disabled: button.disabled, pressed: button.getAttribute('aria-pressed') }));
+    if (toggle.disabled || toggle.pressed !== 'true') throw new Error(`the 再生中 toggle must be back on ${JSON.stringify(toggle)}`);
+    await assertVideoVisible(page, 'the docked video after the song page');
+    console.log('PASS 1280×400: the 再生中 panel, its video and its toggle come back after the song page');
+  });
 }

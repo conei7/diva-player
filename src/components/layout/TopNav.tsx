@@ -42,7 +42,8 @@ const preloadMoreMenu = () => void loadMoreMenu().catch(() => undefined);
 
 /**
  * Top bar (DESIGN_SPEC §6.1.2). Desktop 56px: [≡][logo][hidden mode chip] … [search][advanced search] … [☑][⋮][⚙].
- * Mobile 48px, one row: [≡ only on the song page][logo mark][search field][☑][⚙].
+ * Mobile 48px, one row: [≡ only on the song page][logo mark][search field][☑][⚙] (the music layout also
+ * shows ≡ under 560px wide and 420px tall while a song is loaded, where its bottom nav steps aside).
  * ☑ (multi-select) shows on the pages with selectable song lists (home / search, song page, history, rated songs).
  * Opaque #0f0f0f without a bottom border, blur or glow.
  */
@@ -87,10 +88,12 @@ export default function TopNav() {
   // The menu button opens the drawer on the song page and under 1312px; above that it switches
   // the guide between expanded and mini. On phones (except the song page) the bottom nav has it.
   // The music layout always shows its library: ≡ switches it between names and a rail where both fit
-  // (1280px and up), and below that opens the drawer with every destination by name (on phones only on
-  // the song page, where the bottom nav is hidden).
+  // (1280px and up), and below that opens the drawer with every destination by name (on phones only
+  // where the bottom nav is hidden: the song page, and under 560px wide and 420px tall while a song is
+  // loaded, where index.css shows this button through `music-nav-menu`).
   const menuOpensDrawer = isMusicLayout ? isMobile || !isWideMusicLibrary : isWatch || !isWideGuide;
-  const showMenuButton = isMusicLayout ? !isMobile || isWatch : !isMobile || isWatch;
+  const musicNavMenu = isMusicLayout && isMobile && !isWatch;
+  const showMenuButton = !isMobile || isWatch || musicNavMenu;
 
   // Logo: a plain click resets the search; five clicks within a second toggle hidden mode.
   const logoClicksRef = useRef(0);
@@ -146,6 +149,7 @@ export default function TopNav() {
               icon={<MenuIcon />}
               aria-haspopup={menuOpensDrawer ? 'dialog' : undefined}
               aria-expanded={menuOpensDrawer ? drawerOpen : undefined}
+              className={musicNavMenu ? 'music-nav-menu' : undefined}
               onClick={menuOpensDrawer ? toggleMobileDrawer : toggleSidebar}
             />
           )}

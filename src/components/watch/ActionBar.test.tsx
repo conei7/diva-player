@@ -1,21 +1,28 @@
 /**
  * Markup contract of the song page's action row: on phones it scrolls sideways with its scrollbar
  * hidden, so a fade marks each side with more actions past it; from 640px it wraps beside the
- * producers exactly as before. While nothing can be heard it starts with ミュートを解除 (standard
- * layout). Rendered to static HTML with the measured overflow stubbed.
+ * producers exactly as before. While nothing can be heard it starts with ミュートを解除 (wherever the
+ * music layout's player bar is not under the page). Rendered to static HTML with the measured overflow
+ * stubbed.
  */
 import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { HorizontalOverflow } from '../../hooks/useHorizontalOverflow';
+import { MOBILE_MEDIA_QUERY, MUSIC_SHORT_MEDIA_QUERY } from '../../hooks/useMediaQuery';
 import type { PV, Song } from '../../types/vocadb';
 
 const measured = vi.hoisted(() => ({ overflow: { start: false, end: false } as HorizontalOverflow }));
-const view = vi.hoisted(() => ({ musicLayout: false }));
+const view = vi.hoisted(() => ({ musicLayout: false, matches: new Set<string>() }));
 
 vi.mock('../../hooks/useHorizontalOverflow', () => ({
   useHorizontalOverflow: () => [() => undefined, measured.overflow],
 }));
 vi.mock('../../hooks/useMusicLayout', () => ({ useIsMusicLayout: () => view.musicLayout }));
+// Static rendering never matches a media query; these tests pick the ones that match.
+vi.mock('../../hooks/useMediaQuery', async importOriginal => ({
+  ...await importOriginal<typeof import('../../hooks/useMediaQuery')>(),
+  useMediaQuery: (query: string) => view.matches.has(query),
+}));
 
 let ActionBar: typeof import('./ActionBar').default;
 let usePlayerStore: typeof import('../../stores/playerStore').usePlayerStore;
@@ -56,6 +63,7 @@ function setPlayer(state: Partial<PlayerState>) {
 beforeEach(() => {
   measured.overflow = { start: false, end: false };
   view.musicLayout = false;
+  view.matches = new Set();
   setPlayer({ currentSong: null, currentPV: null, volume: 40 });
 });
 
@@ -152,10 +160,19 @@ describe('ActionBar ミュートを解除', () => {
     expect(render({ start: false, end: false })).not.toContain('ミュートを解除');
   });
 
-  it('is left out in the music layout (its player bar shows it)', () => {
+  it('is left out in the music layout while its player bar is under the page (the bar shows it)', () => {
     view.musicLayout = true;
     setPlayer({ currentSong: song, currentPV: youtube, volume: 0 });
     expect(render({ start: false, end: false })).not.toContain('ミュートを解除');
+  });
+
+  it('comes back in the music layout where the song page has no player bar: phones and under 420px tall', () => {
+    view.musicLayout = true;
+    setPlayer({ currentSong: song, currentPV: youtube, volume: 0 });
+    for (const query of [MOBILE_MEDIA_QUERY, MUSIC_SHORT_MEDIA_QUERY]) {
+      view.matches = new Set([query]);
+      expect(render({ start: false, end: false })).toContain(unmuteLabel);
+    }
   });
 
   it('is left out for Bilibili, which takes no volume from the app', () => {

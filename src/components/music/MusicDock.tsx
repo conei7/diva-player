@@ -9,13 +9,19 @@ import BottomNav from '../layout/BottomNav';
 import MusicMiniBar from './MusicMiniBar';
 import MusicNowPlayingPanel from './MusicNowPlayingPanel';
 import MusicPlayerBar from './MusicPlayerBar';
+import { useMusicBarOnSongPage } from './player/playerBarUi';
 
 /**
  * The music layout's fixed parts below and beside the page: the 再生中 panel (from 1024px, while a
  * song is loaded and not on the song page), the player bar (from 640px) and, on phones, the mini bar
  * above the bottom nav. On phones the song page shows neither (like the standard layout): its own
- * video and controls fill the screen, and the top bar's ≡ opens the menu. `<html data-shell="music">` and its `data-music-*` set the layout variables
- * in index.css (area:music). They are removed in a layout effect, so the standard layout never sees them.
+ * video and controls fill the screen, and the top bar's ≡ opens the menu. Nor does the song page of a
+ * window under 420px tall show the bar: under the top bar it would cover the bottom of the video
+ * (useMusicBarOnSongPage). Under 560px wide and 420px tall (split screen, small windows) index.css
+ * moves the mini bar to the bottom edge and hides the bottom nav while a song is loaded
+ * (`data-music-bar`, also for a restored paused queue), and the top bar's ≡ opens the menu there too.
+ * `<html data-shell="music">` and its `data-music-*` set the layout variables in index.css
+ * (area:music). They are removed in a layout effect, so the standard layout never sees them.
  */
 export default function MusicDock() {
   const location = useLocation();
@@ -26,11 +32,15 @@ export default function MusicDock() {
   const sidebarExpanded = useUiStore(state => state.sidebarExpanded);
   const nowPlayingOpen = useMusicLayoutStore(state => state.nowPlayingOpen);
   const hasSong = usePlayerStore(state => state.currentSong !== null);
+  const barOnSongPage = useMusicBarOnSongPage();
 
   const libraryFull = !isMobile && libraryWide && sidebarExpanded;
   const showPanel = !isMobile && panelWide && nowPlayingOpen && hasSong && !isWatch;
   const showBottomNav = isMobile && !isWatch;
   const showMiniBar = showBottomNav && hasSong;
+  const showPlayerBar = !isMobile && (!isWatch || barOnSongPage);
+  // Nothing fixed along the bottom (--bottom-nav-height: 0): the song page on phones and short windows.
+  const bareSongPage = isWatch && !barOnSongPage;
 
   useLayoutEffect(() => {
     const root = document.documentElement;
@@ -39,9 +49,9 @@ export default function MusicDock() {
     root.dataset.musicPanel = showPanel ? 'open' : 'closed';
     if (showMiniBar) root.dataset.musicBar = 'true';
     else delete root.dataset.musicBar;
-    if (isMobile && !showBottomNav) root.dataset.musicBottom = 'none';
+    if (bareSongPage) root.dataset.musicBottom = 'none';
     else delete root.dataset.musicBottom;
-  }, [isMobile, libraryFull, showBottomNav, showPanel, showMiniBar]);
+  }, [bareSongPage, libraryFull, showPanel, showMiniBar]);
 
   useLayoutEffect(() => () => {
     const root = document.documentElement;
@@ -55,7 +65,7 @@ export default function MusicDock() {
   return (
     <>
       {showPanel && <MusicNowPlayingPanel />}
-      {!isMobile && <MusicPlayerBar />}
+      {showPlayerBar && <MusicPlayerBar />}
       {showMiniBar && <MusicMiniBar />}
       {showBottomNav && <BottomNav className="music-bottom-nav" />}
     </>

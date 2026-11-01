@@ -44,7 +44,8 @@ function PlayerTimes({ hasSong }: { hasSong: boolean }) {
  * stays focusable and says so in its tooltip), 前の曲 / 次の曲 follow the queue, also while it is
  * being restored. Tooltips open to the side so none rises over the video above the bar. Shuffle, loop
  * and the times are `data-bar-optional`: next to the corner video of a short screen only 前 / 再生 / 次
- * and the line remain (the song page keeps its video in the page and shows the whole bar).
+ * and the line remain (the song page keeps its video in the page: the whole bar from 420px tall, no
+ * bar below that).
  */
 export default function PlayerBarTransport() {
   const t = useTranslateSourceText();

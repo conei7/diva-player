@@ -1,3 +1,4 @@
+import { useLayoutEffect, useRef } from 'react';
 import { Link, useLocation } from 'react-router';
 import { useTranslateSourceText } from '../../i18n';
 import { MUSIC_PANEL_MEDIA_QUERY, useMediaQuery } from '../../hooks/useMediaQuery';
@@ -7,6 +8,7 @@ import { useUiStore } from '../../stores/uiStore';
 import type { Song } from '../../types/vocadb';
 import { isWatchPath, watchPath } from '../../utils/routes';
 import { formatArtistLine } from '../../utils/songMeta';
+import { focusMainContent } from '../layout/mainContent';
 import { formatRemainingClock } from '../player/playerUi';
 import { useSleepTimerRemaining } from '../player/useSleepTimerRemaining';
 import IconButton from '../ui/IconButton';
@@ -151,7 +153,9 @@ function PlayerBarExtras({ view, wide }: { view: QueueView; wide: boolean }) {
  * Below 800px wide one row would leave the title little or no room, so index.css stacks the
  * `data-bar-*` areas in two rows: 前 / 再生 / 次 and the line on the left, the title over キュー /
  * ミュート / ⋮ on the right, without the artist line and the sleep timer's 残り in it (⋮ > スリープタイマー
- * still shows the time left). Tab still goes title, transport, extras.
+ * still shows the time left). Tab still goes title, transport, extras. The song page of a window under
+ * 420px tall has no bar (MusicDock): if it goes away under the keyboard (Enter on the title there, or the
+ * window made lower), focus moves to the page instead of falling to <body>.
  */
 export default function MusicPlayerBar() {
   const t = useTranslateSourceText();
@@ -160,9 +164,18 @@ export default function MusicPlayerBar() {
   const { view } = useQueueView();
   // The same width as the 再生中 panel; the side columns are wide enough for what they hold.
   const wide = useMediaQuery(MUSIC_PANEL_MEDIA_QUERY);
+  const barRef = useRef<HTMLElement>(null);
+  // A layout cleanup still sees the bar in the document.
+  useLayoutEffect(() => {
+    const bar = barRef.current;
+    return () => {
+      if (bar?.contains(document.activeElement)) focusMainContent();
+    };
+  }, []);
 
   return (
     <section
+      ref={barRef}
       className={cx(
         'music-player-bar grid items-center',
         wide

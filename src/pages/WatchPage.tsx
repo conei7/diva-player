@@ -50,6 +50,7 @@ import { getProducerNames } from '../utils/songMeta';
 import { watchPath } from '../utils/routes';
 import { MOBILE_MEDIA_QUERY, useMediaQuery } from '../hooks/useMediaQuery';
 import { useIsMusicLayout } from '../hooks/useMusicLayout';
+import { useMusicBarOnSongPage } from '../components/music/player/playerBarUi';
 import Button, { buttonClassName } from '../components/ui/Button';
 import { InfoTip } from '../components/ui/InfoTip';
 import { SkeletonBlock, SkeletonListRow } from '../components/ui/Skeleton';
@@ -107,9 +108,11 @@ export default function WatchPage({ onDocumentTitleStateChange }: WatchPageProps
   const isDesktop = useMediaQuery(DESKTOP_MEDIA_QUERY);
   const isMobile = useMediaQuery(MOBILE_MEDIA_QUERY);
   const isMusicLayout = useIsMusicLayout();
-  // No mini player or player bar on this page: phones (both layouts) and standard-layout tablets
-  // get a bottom control row once the video has scrolled off (the music layout's tablets keep their bar).
-  const hasScrolledControls = isMobile || (!isDesktop && !isMusicLayout);
+  const musicBar = useMusicBarOnSongPage();
+  // No mini player or player bar on this page: phones (both layouts), standard-layout tablets and the
+  // music layout under 420px tall get a bottom control row once the video has scrolled off (the music
+  // layout keeps its bar from 640px wide and 420px tall).
+  const hasScrolledControls = isMusicLayout ? !musicBar : isMobile || !isDesktop;
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const songIdStr = searchParams.get('v');

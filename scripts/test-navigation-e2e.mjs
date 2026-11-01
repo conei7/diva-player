@@ -764,9 +764,9 @@ try {
   await layoutContext.close();
 
   // 「Skip to player」 goes to the play button of the player on screen. The song page has none
-  // (apart from the music layout's player bar on wider windows), so there it goes to the video,
-  // which comes after <main> and its endless related list, scrolled into view below the top bar
-  // (only when it is not wholly there already, and never with its top under the bar).
+  // (apart from the music layout's player bar on windows 640px wide and 420px tall or more), so
+  // there it goes to the video, which comes after <main> and its endless related list, scrolled into
+  // view below the top bar (only when it is not wholly there already, and never with its top under the bar).
   // Without a video it goes to <main>. A stub YouTube API puts an iframe where the real one would.
   {
     const nicoSong = { ...fixtureSong, id: 1510, name: 'DIVA E2E Nico Song', defaultName: 'DIVA E2E Nico Song', pvs: [fixtureNicoPv], pvServices: 'NicoNicoDouga' };
@@ -822,6 +822,8 @@ try {
       { name: 'music 1280px Home', layout: 'music', viewport: { width: 1280, height: 900 }, path: '', expected: 'music-play-toggle' },
       { name: 'music 390px Home', layout: 'music', viewport: { width: 390, height: 844, isMobile: true, hasTouch: true }, path: '', expected: 'music-mini-play-toggle' },
       { name: 'music 390px song page', layout: 'music', viewport: { width: 390, height: 844, isMobile: true, hasTouch: true }, path: 'watch?v=1501', expected: 'video' },
+      // Under 420px tall the music layout's song page has no player bar either (it would cover the video).
+      { name: 'music 740×340 song page', layout: 'music', viewport: { width: 740, height: 340 }, path: 'watch?v=1501', expected: 'video' },
       // The idle YouTube iframe stays (hidden) before another service's video.
       { name: 'standard 1280px Niconico song page', layout: 'standard', viewport: { width: 1280, height: 900 }, song: nicoSong, path: 'watch?v=1510', expected: 'video' },
       // The player (with the queue's video) stays under the page's frame, inert.

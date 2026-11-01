@@ -3,6 +3,7 @@ import type { SoundMapPoint } from '../../api/soundMap';
 import type { Song } from '../../types/vocadb';
 import { useTranslateSourceText } from '../../i18n';
 import { useRootLayoutVariable } from '../../hooks/useRootLayoutVariable';
+import { useIsMusicLayout } from '../../hooks/useMusicLayout';
 import { soundMapSimilarityPercent } from '../../utils/soundMap';
 import { formatArtistLine } from '../../utils/songMeta';
 import Button from '../ui/Button';
@@ -116,8 +117,16 @@ export default function SoundMapSelectionCard(props: SoundMapSelectionProps) {
   );
 }
 
-const BAR_POSITION: CSSProperties = {
-  bottom: 'calc(var(--floating-player-clearance, 0px) + var(--bottom-nav-height, 0px) + 8px)',
+const BAR_BOTTOM = 'calc(var(--floating-player-clearance, 0px) + var(--bottom-nav-height, 0px) + 8px)';
+const BAR_POSITION: CSSProperties = { bottom: BAR_BOTTOM };
+/**
+ * The music layout's video card can reach high (under 560px wide and 420px tall, or phones under about
+ * 450px tall): the bar stops right under the top bar (and the selection bar) instead of going under it,
+ * and the card may be drawn over the bar's lower 24px, below its buttons' centres. Under 560px wide and
+ * about 354px tall the card shrinks rather than covering more (index.css area:music, --music-card-top).
+ */
+const MUSIC_BAR_POSITION: CSSProperties = {
+  bottom: `min(${BAR_BOTTOM}, calc(100dvh - var(--header-height) - var(--selection-bar-height, 0px) - 72px))`,
 };
 
 /** Under 640px: the selected dot as a 72px bar fixed above the mini player / bottom navigation. */
@@ -125,6 +134,7 @@ export function SoundMapSelectionBar(props: SoundMapSelectionProps) {
   const { point, song, isOrigin, playing, actionsDisabled, onPlay, onExplore } = props;
   const t = useTranslateSourceText();
   const meta = useSelectionText(point, song);
+  const isMusicLayout = useIsMusicLayout();
   // Toasts stay above this bar (72px + 8px gap) instead of covering the title and ▶.
   useRootLayoutVariable('--bottom-bar-clearance', '80px');
 
@@ -132,7 +142,7 @@ export function SoundMapSelectionBar(props: SoundMapSelectionProps) {
     <section
       aria-labelledby="sound-map-selected-title"
       className="fixed inset-x-2 z-[var(--z-sticky,20)] flex h-[72px] items-center gap-2 rounded-card bg-yt-raised py-2 pl-2 pr-1 shadow-[0_4px_24px_rgba(0,0,0,0.5)]"
-      style={BAR_POSITION}
+      style={isMusicLayout ? MUSIC_BAR_POSITION : BAR_POSITION}
     >
       <SongThumbnail song={song} className="w-24" radius="sm" nowPlaying={playing} showDuration={false} />
       <div className="min-w-0 flex-1">

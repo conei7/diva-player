@@ -631,7 +631,10 @@ html[data-bottom-nav="true"] {
    html[data-ui-layout] ではない。枠のコードを読めなかった時は既定の見た目のまま）。
    左のライブラリ・本文・右の再生中パネルを 8px の隙間で並べ、下に再生バー。ページのスクロールは
    今までどおりウィンドウ（パネルとバーは固定）。動画は再生中パネルの枠に重ねる（.music-docked-player）。
-   YouTube の動画はどの状態でも 200×200 以上で、上に何も重ねない。 */
+   YouTube の動画は 200×200 以上で、上に何も重ねない。収まらない画面の例外は各ブロックの注記のとおり:
+   高さ 420px 未満の小さい画面（幅 560px 未満は 306px 未満、角の配置は 256px 未満。選択バーなどが出ていると
+   もっと上から）では動画が重ならずに残る高さに縮み、再生ページはサーバーの帯と選択バーが両方出ている時の
+   高さ 420〜448px だけ再生バーが動画の下端に重なる。ドロワーの overlay は開いている間、動画も暗くする。 */
 html[data-shell="music"] {
   --music-gap: 8px;
   --music-shell-bg: #000000;
@@ -649,6 +652,10 @@ html[data-shell="music"][data-music-library="full"] { --music-library-width: 280
 html[data-shell="music"][data-music-panel="open"] {
   --music-panel-offset: calc(var(--music-panel-width) + var(--music-gap) * 2);
 }
+/* 再生ページのスマホと高さ 420px 未満: 下に何も固定しない（バーは動画の下端に重なるので出さない。MusicDock） */
+html[data-shell="music"][data-music-bottom="none"] { --bottom-nav-height: 0px; }
+/* 上部バーの下のサーバーの帯（BackendStatusNotice、640px 未満は 36px）。再生ページの動画枠の高さから引く */
+html[data-shell="music"]:has([data-testid="backend-status-notice"]) { --music-status-notice-height: 2.5rem; }
 html[data-shell="music"]:not([data-theme="light"]) {
   --color-yt-bg: #121212;
   --color-yt-raised: #1f1f1f;
@@ -679,6 +686,11 @@ html[data-shell="music"] body { background: var(--music-shell-bg); }
   overflow: clip;
   border-radius: 8px;
   background: var(--color-yt-bg);
+}
+/* Without the bar (the song page of a short window) the library ends the gap above the window's bottom
+   edge and the home indicator */
+html[data-shell="music"][data-music-bottom="none"] .music-side-panel {
+  bottom: calc(var(--music-gap) + env(safe-area-inset-bottom, 0px));
 }
 .music-library { left: var(--music-gap); width: var(--music-library-width); }
 .music-now-playing { right: var(--music-gap); width: var(--music-panel-width); }
@@ -721,11 +733,22 @@ html[data-shell="music"] body { background: var(--music-shell-bg); }
 html[data-shell="music"] .global-mini-player { bottom: calc(var(--bottom-nav-height) + 16px); }
 html[data-shell="music"] .global-mini-player .global-player-video { min-height: 200px; }
 
-/* 再生ページの動画は上部バーと下のバーの間に収める（16:9 のまま幅を絞って中央に。高さ 200px 以上）。
-   枠（VideoPlayer）が小さくなると GlobalPlayer の iframe もその位置・大きさに付いていく */
+/* 再生ページの動画は上部バー（とサーバーの帯）と下のバーの間に収める（16:9 のまま幅を絞って中央に。
+   高さ 200px 以上）。枠（VideoPlayer）が小さくなると GlobalPlayer の iframe もその位置・大きさに付いていく。
+   高さ 420px 未満は上部バー・200px の動画・72px のバーが縦に収まらない（352px 未満、選択バーが出ると
+   408px 未満で重なる）ので、バーを出さず（--bottom-nav-height: 0。MusicDock）上部バーと画面の下端の間に
+   収める。サーバーの帯と選択バーが両方出ている時だけは 448px 未満で 200px の下限が勝ち、バーが動画の
+   下端に最大 28px 重なる */
 html[data-shell="music"] [data-testid="watch-video-column"] > :first-child {
   margin-inline: auto;
-  max-width: max(356px, calc((100dvh - var(--header-height) - var(--selection-bar-height, 0px) - var(--bottom-nav-height) - 40px) * 16 / 9));
+  max-width: max(356px, calc((100dvh - var(--header-height) - var(--selection-bar-height, 0px) - var(--music-status-notice-height, 0px) - var(--bottom-nav-height) - 40px) * 16 / 9));
+}
+
+/* 再生ページの下の行（WatchScrolledControls。バーの無い再生ページで動画が画面外に出た時）は本文の幅:
+   ライブラリ（z-index が上）の右から。選択バーと同じ */
+html[data-shell="music"] [data-testid="watch-scrolled-controls"] {
+  left: var(--guide-offset);
+  right: var(--music-panel-offset);
 }
 
 /* 低いウィンドウ（1024px 以上で高さ 400px 未満）: パネルの見出しを省き、動画をヘッダーのすぐ下に。
@@ -747,17 +770,19 @@ html[data-shell="music"] [data-testid="watch-video-column"] > :first-child {
   html[data-shell="music"][data-music-bar="true"] {
     --bottom-nav-height: calc(var(--music-bottom-nav) + var(--music-mini-bar-height) + env(safe-area-inset-bottom, 0px));
   }
-  /* 再生ページ: 下部ナビもミニバーも出さない（標準と同じ） */
-  html[data-shell="music"][data-music-bottom="none"] { --bottom-nav-height: 0px; }
+  html[data-shell="music"]:has([data-testid="backend-status-notice"]) { --music-status-notice-height: 2.25rem; }
   .music-main { border-radius: 0; }
   .music-player-bar { display: none; }
-  /* 動画はミニバーのすぐ上。幅いっぱいで高さ 200px 以上（足りない分は動画の上下に帯） */
+  /* 動画はミニバーのすぐ上。幅いっぱいで高さ 200px 以上（足りない分は動画の上下に帯）。240px までで、
+     選択バー（z-index が動画より上）の下に潜る高さにはしない（400×420 では 216px だと 13px 潜っていた）。
+     上に固定の帯（曲調マップの選択、--bottom-bar-clearance）がある時はその分も空ける（639×420 では帯の
+     ボタンが動画の下になっていた） */
   html[data-shell="music"] .global-mini-player {
     bottom: calc(var(--bottom-nav-height) + 8px);
   }
   html[data-shell="music"] .global-mini-player .global-player-video {
     min-height: 200px;
-    max-height: 240px;
+    max-height: min(240px, calc(100dvh - var(--header-height) - var(--selection-bar-height, 0px) - var(--bottom-nav-height) - var(--bottom-bar-clearance, 0px) - 16px));
   }
   .music-mini-bar {
     position: fixed;
@@ -772,9 +797,10 @@ html[data-shell="music"] [data-testid="watch-video-column"] > :first-child {
 @media (min-width: 640px) {
   .music-mini-bar { display: none; }
 }
-/* 横向きのスマホなど高さ 420px 未満: バーの上に積むと動画がヘッダーの下に潜るので、右下の角に
-   356×200 で置き、下のバーとナビはその左で終わらせる */
-@media (max-height: 419.98px) {
+/* 横向きのスマホなど幅 560px 以上で高さ 420px 未満: バーの上に積むと動画がヘッダーの下に潜るので、
+   右下の角に 356×200 で置き、下のバーとナビはその左で終わらせる（標準の area:player と同じ区切り）。
+   560px 未満は動画の左にバーの幅が残らないので、次のブロックでミニバーの上に置く */
+@media (min-width: 560px) and (max-height: 419.98px) {
   html[data-shell="music"] .global-mini-player {
     left: auto;
     right: 8px;
@@ -782,9 +808,14 @@ html[data-shell="music"] [data-testid="watch-video-column"] > :first-child {
     max-width: calc(100vw - 16px);
     bottom: calc(env(safe-area-inset-bottom, 0px) + 8px);
   }
+  /* 高さ 200px。上部バー（と選択バー。z-index が動画より上）の下に潜る高さ（256px 未満、選択中は 312px 未満。
+     640px 以上は上部バーが 56px なので 264px／320px 未満）だけ、その下に残る高さにする（568×300 の選択中は
+     選択バーが動画の上端に 12px、667×240 は上部バーが 24px 重なっていた） */
   html[data-shell="music"] .global-mini-player .global-player-video {
-    min-height: 200px;
-    max-height: 200px;
+    aspect-ratio: auto;
+    height: min(200px, calc(100dvh - var(--header-height) - var(--selection-bar-height, 0px) - env(safe-area-inset-bottom, 0px) - 8px));
+    min-height: 0;
+    max-height: none;
   }
   html[data-shell="music"]:has(.global-mini-player) :is(.music-player-bar, .music-mini-bar, .music-bottom-nav) {
     right: 372px;
@@ -800,6 +831,57 @@ html[data-shell="music"] [data-testid="watch-video-column"] > :first-child {
     white-space: nowrap;
   }
   html[data-shell="music"]:has(.global-mini-player) .music-bottom-nav li span[aria-hidden] { display: none; }
+}
+/* 上部バーの ≡ はスマホでは再生ページのほか、次のブロックで下部ナビが退く間だけ（TopNav が出し、ここで見せる） */
+.music-nav-menu { display: none; }
+/* 幅 560px 未満で高さ 420px 未満（分割画面・小さいウィンドウ）: 角の動画の左にはバーの幅が残らない
+   （320×360 ではミニバーの ▶ ⏭ ✕ が動画の上に描かれ、下部ナビの 5 つは幅 8px で重なっていた）。曲がある間は
+   （復元した一時停止中のキューでも）下部ナビを出さず上部バーの ≡（ドロワー）に任せ、全幅のミニバーを一番下に、
+   動画（356×200、狭ければ幅いっぱい）をその上に置く。曲が読み込まれた時点で切り替えるので、▶ で動画が
+   出てもミニバーは動かない。上部バー 48 + 動画 200 + 隙間 + ミニバー 56 が収まらない高さ（306px 未満、
+   選択バーの表示中は 362px 未満、曲調マップの選択の帯が出ている時は 354px 未満）だけ、動画はその間に
+   残る高さにする */
+@media (max-width: 559.98px) and (max-height: 419.98px) {
+  /* 動画の上端の下限: 上部バーと選択バーの下。曲調マップの選択の帯（72px、--bottom-bar-clearance は隙間込みの
+     80px。ここでは上部バーの直下）が出ている時は、その下の 24px（ボタンの中心より 12px 下）までしか重ねない
+     （320×340 では帯のボタンが動画の下になり、タップできなかった） */
+  html[data-shell="music"] {
+    --music-card-top: calc(var(--header-height) + var(--selection-bar-height, 0px) + max(0px, var(--bottom-bar-clearance, 0px) - 32px));
+  }
+  html[data-shell="music"][data-music-bar="true"] {
+    --bottom-nav-height: calc(var(--music-mini-bar-height) + env(safe-area-inset-bottom, 0px));
+  }
+  html[data-shell="music"][data-music-bar="true"] .music-bottom-nav { display: none; }
+  html[data-shell="music"][data-music-bar="true"] .music-mini-bar {
+    bottom: 0;
+    height: var(--bottom-nav-height);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  html[data-shell="music"][data-music-bar="true"] .music-nav-menu { display: inline-flex; }
+  /* ミニバーの 8px 上（足りなければ 2px 上まで。上端の進捗線が 1px はみ出す）で、--music-card-top の下 */
+  html[data-shell="music"] .global-mini-player {
+    left: auto;
+    right: 8px;
+    width: 356px;
+    max-width: calc(100vw - 16px);
+    bottom: calc(var(--bottom-nav-height) + clamp(2px, 100dvh - var(--music-card-top) - var(--bottom-nav-height) - 200px, 8px));
+  }
+  html[data-shell="music"] .global-mini-player .global-player-video {
+    aspect-ratio: auto;
+    height: min(200px, calc(100dvh - var(--music-card-top) - var(--bottom-nav-height) - 2px));
+    min-height: 0;
+    max-height: none;
+  }
+}
+/* トーストは画面の上端から出さない（ToastHost の bottom に上限を付けた式）: 上の幅 560px 未満の低い画面
+   では動画が上部バーのすぐ下まで来て、その 16px 上（--floating-player-clearance）が画面の外になる
+   （曲調マップの選択の帯が出ているとさらに上）。そこでは上部バーに重ねる（動画には重ねない）。上限は 1 行
+   （48px）の分で、2 行のトースト（68px）は動画の上に入りきらない高さ（幅 560px 未満で 348px 未満）では
+   上端が画面の外に出る（動画に重ねるよりはそちら） */
+@media (max-width: 1023.98px) {
+  html[data-shell="music"] [data-testid="toast-host"] {
+    bottom: min(calc(var(--floating-player-clearance, 0px) + var(--bottom-nav-height, 0px) + var(--bottom-bar-clearance, 0px) + 8px), calc(100dvh - env(safe-area-inset-top, 0px) - 48px));
+  }
 }
 /* Next to the corner video the bar (368px at 740 wide) cannot hold its three columns, and the overflow
    would be drawn under the video, where taps reach the embed. It keeps the song, 前 / 再生 / 次 with the
@@ -820,7 +902,7 @@ html[data-shell="music"] [data-testid="watch-video-column"] > :first-child {
    timer's 残り in it: a third line would overflow the 72px bar (⋮ > スリープタイマー still shows the time
    left). The title is 24px tall and 6px above the buttons (24 + 6 + 40 of the 72px): a low tap on it
    misses キュー / ミュート / ⋮, and the queue count (2px over キュー) stays off its focus ring (4px under
-   it). The song page and a closed player keep the three columns. */
+   it). A closed player keeps the three columns; the song page shows no bar under 420px tall. */
 @media (max-height: 419.98px) and (max-width: 799.98px) {
   html[data-shell="music"]:has(.global-mini-player) .music-player-bar {
     grid-template-columns: auto minmax(0, 1fr);
