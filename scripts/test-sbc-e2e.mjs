@@ -66,6 +66,58 @@ async function inspectPage(page) {
   }));
 }
 
+// The multi-select bar renders an icon set and a text set of its actions and shows one of them by
+// the bar's own width (a container query: in the music layout the bar is only the space between
+// the library and the 再生中 panel), so actions are looked up among the visible buttons only.
+async function inspectSelectionBar(page) {
+  // Let a viewport change settle first: the guide offset follows the data-guide React sets.
+  await page.evaluate(() => { delete window.__selectionBarFrames; });
+  await page.waitForFunction(() => {
+    const bar = document.querySelector('[data-testid="selection-fab"]');
+    if (!bar) return false;
+    const rect = bar.getBoundingClientRect();
+    const key = `${window.innerWidth}:${rect.left}:${rect.width}`;
+    const frames = window.__selectionBarFrames?.key === key ? window.__selectionBarFrames.frames + 1 : 0;
+    window.__selectionBarFrames = { key, frames };
+    return frames >= 2;
+  }, { polling: 'raf' });
+  return page.evaluate(() => {
+    const bar = document.querySelector('[data-testid="selection-fab"]');
+    const rect = bar.getBoundingClientRect();
+    const style = getComputedStyle(bar);
+    // Container queries read the content box (inside the bar's padding).
+    const left = rect.left + parseFloat(style.paddingLeft);
+    const right = rect.right - parseFloat(style.paddingRight);
+    const rem = parseFloat(getComputedStyle(document.documentElement).fontSize);
+    const buttons = [...bar.querySelectorAll('button')].filter(button => button.getClientRects().length > 0);
+    const name = button => button.getAttribute('aria-label') || button.textContent?.trim() || '';
+    const count = bar.querySelector('[aria-live="polite"]');
+    return {
+      contentWidth: Math.round(right - left),
+      // SelectionFAB's @min-[42rem] threshold.
+      expectsText: right - left >= 42 * rem,
+      names: buttons.map(name),
+      textQueue: buttons.some(button => !button.hasAttribute('aria-label') && name(button) === 'キューに追加'),
+      clipped: buttons.filter(button => {
+        const box = button.getBoundingClientRect();
+        return box.left < left - 0.5 || box.right > right + 0.5;
+      }).map(name),
+      // Both are rounded to whole pixels, so a fractional label width alone must not count as an ellipsis.
+      countTruncated: !count || count.scrollWidth > count.clientWidth + 1,
+    };
+  });
+}
+
+function assertSelectionBarFits(bar, label) {
+  const shown = action => bar.names.filter(name => name === action).length;
+  assert(shown('キューに追加') === 1 && shown('プレイリストに保存') === 1,
+    `${label}: the selection bar did not show exactly one copy of each action: ${JSON.stringify(bar)}`);
+  assert(bar.textQueue === bar.expectsText,
+    `${label}: the selection bar showed its ${bar.textQueue ? 'text' : 'icon'} actions in a ${bar.contentWidth}px bar.`);
+  assert(bar.clipped.length === 0,
+    `${label}: selection bar actions were clipped in a ${bar.contentWidth}px bar: ${bar.clipped.join(', ')}`);
+}
+
 async function main() {
   const baseUrl = getBaseUrl();
   const browser = await puppeteer.launch({ headless: true, args: ['--lang=ja-JP'] });
@@ -172,11 +224,43 @@ async function main() {
     assert(selectedSongIds.length === 2, 'The home page did not provide two selectable songs.');
     await selectionPage.waitForFunction(() => document.querySelector('[data-testid="selection-fab"]')?.textContent?.includes('2曲を選択中') === true);
 
+    // The whole bar fits at every width: the standard layout from a phone up, then the music layout's
+    // page column. The 再生中 panel only opens with a current song, so the music columns are set
+    // directly with area:music's widths (rail 72px below 1280px, library 280px, panel
+    // clamp(340px, 24vw, 420px), 8px gaps): the bar spans --guide-offset to --music-panel-offset.
+    for (const width of [360, 640, 720, 800, 1024, 1180, 1440]) {
+      await selectionPage.setViewport({ width, height: 900 });
+      const bar = await inspectSelectionBar(selectionPage);
+      assertSelectionBarFits(bar, `Standard layout ${width}px`);
+      // Phones may shorten a long count with an ellipsis; from 640px the count always fits.
+      assert(width < 640 || !bar.countTruncated, `Standard layout ${width}px: the selection count was truncated.`);
+    }
+    for (const [width, library] of [[1024, 72], [1100, 72], [1180, 72], [1279, 72], [1280, 280], [1440, 280]]) {
+      await selectionPage.setViewport({ width, height: 900 });
+      await selectionPage.evaluate(libraryWidth => {
+        const root = document.documentElement.style;
+        root.setProperty('--guide-offset', `${libraryWidth + 16}px`);
+        root.setProperty('--music-panel-offset', 'calc(clamp(340px, 24vw, 420px) + 16px)');
+      }, library);
+      const bar = await inspectSelectionBar(selectionPage);
+      assertSelectionBarFits(bar, `Music columns ${width}px`);
+      assert(!bar.countTruncated, `Music columns ${width}px: the selection count was truncated.`);
+    }
+    await selectionPage.evaluate(() => {
+      document.documentElement.style.removeProperty('--guide-offset');
+      document.documentElement.style.removeProperty('--music-panel-offset');
+    });
+    await selectionPage.setViewport({ width: 1440, height: 900 });
+    assert((await inspectSelectionBar(selectionPage)).textQueue, 'The selection bar did not show its text actions at 1440px.');
+    console.log('PASS multi-select bar fits (text actions only where they fit, icons on phones and in the music columns)');
+
     const addSelectedToQueue = async () => {
       const clicked = await selectionPage.evaluate(() => {
         const bar = document.querySelector('[data-testid="selection-fab"]');
+        // The hidden set is display:none (no boxes); text buttons have no aria-label.
         const button = [...(bar?.querySelectorAll('button') ?? [])]
-          .find(element => element.textContent?.includes('キューに追加'));
+          .find(element => element.getClientRects().length > 0
+            && (element.getAttribute('aria-label') || element.textContent?.trim()) === 'キューに追加');
         button?.click();
         return Boolean(button);
       });

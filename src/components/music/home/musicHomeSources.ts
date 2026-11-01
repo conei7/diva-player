@@ -11,7 +11,7 @@ import { rerankDisplayedSongs } from '../../../stores/recommendationExposureStor
 import { searchSongsBackend } from '../../../stores/searchStore';
 import type { Playlist, Song } from '../../../types/vocadb';
 import { requiresExternalViewCounts } from '../../../utils/globalFilters';
-import { isDeterministicHomeRankingCategory } from '../../../utils/homeRanking';
+import { isDeterministicHomeRankingCategory, type DeterministicHomeRankingCategory } from '../../../utils/homeRanking';
 import { selectRotatingWindow } from '../../../utils/pageWindow';
 import { createRankingSeed } from '../../../utils/rankingRandomization';
 import { uniqueSongsById } from '../../../utils/recommendationScoring';
@@ -27,6 +27,20 @@ const HOME_CATEGORY: Record<NetworkShelfId, string> = {
   new: 'recent',
   favoriteProducers: 'favorite_producers',
 };
+
+/** A HomeFeed chip id that a shelf's 「すべて表示」 can select. */
+export type ShelfFeedCategory = DeterministicHomeRankingCategory;
+
+/**
+ * The feed chip a shelf's 「すべて表示」 selects, or null for none. Only chips that keep the API
+ * order qualify: their first page is the shelf's own request, so the feed is the shelf continued
+ * (ランキング, 急上昇, 新着). The お気に入りP feed asks for one producer more and reranks with its own
+ * per-view seed, so its order is not the shelf's: お気に入りPの曲 has no すべて表示.
+ */
+export function networkShelfFeedCategory(id: NetworkShelfId): ShelfFeedCategory | null {
+  const category = HOME_CATEGORY[id];
+  return isDeterministicHomeRankingCategory(category) ? category : null;
+}
 
 /** お気に入りPの曲 asks for the songs of this many favourite producers (HomeFeed's first ones). */
 const FAVORITE_PRODUCER_SHELF_REQUESTS = 3;

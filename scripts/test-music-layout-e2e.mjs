@@ -377,6 +377,62 @@ try {
       await page.waitForSelector('main .song-card', { timeout: 15_000 });
       console.log(`PASS Home shows ${shelves.length} shelves above the existing feed`);
 
+      // 週間ランキング's すべて表示 selects the feed's ランキング chip and brings the chip bar up under the
+      // top bar (the shelves scroll away), with focus on the chip; pressed again, nothing reloads.
+      const seeAll = 'main [data-testid="music-shelf"][data-shelf="weekly"] [data-testid="music-shelf-see-all"]';
+      const rankingChipFocused = () => page.waitForFunction(() => {
+        const chip = document.activeElement;
+        return chip?.closest('main [role="toolbar"][aria-label="カテゴリ"]')
+          && chip.getAttribute('aria-pressed') === 'true' && chip.textContent.trim() === 'ランキング';
+      }, { timeout: 5_000 });
+      const chipBarPlacement = () => page.evaluate(() => {
+        const bar = document.querySelector('main [role="toolbar"][aria-label="カテゴリ"]').closest('.sticky');
+        const top = bar.getBoundingClientRect().top;
+        return {
+          top,
+          stickyTop: Number.parseFloat(getComputedStyle(bar).top),
+          headerBottom: document.querySelector('header').getBoundingClientRect().bottom,
+          shelvesBottom: document.querySelector('main [data-testid="music-shelf"][data-shelf="weekly"]').getBoundingClientRect().bottom,
+          scrollY: window.scrollY,
+        };
+      });
+      const assertChipBarAtTop = placement => {
+        if (Math.abs(placement.top - placement.stickyTop) > 1 || placement.top < placement.headerBottom - 1
+          || placement.shelvesBottom > placement.top + 1 || placement.scrollY <= 0) {
+          throw new Error(`すべて表示 must bring the chip bar right under the top bar: ${JSON.stringify(placement)}`);
+        }
+      };
+      // First pages of the ランキング feed (an appended page has page 1+).
+      const countRankingLoads = () => window.__DIVA_PERFORMANCE__.getMetrics()
+        .filter(metric => metric.name === 'home.load' && metric.detail?.category === 'ranking' && metric.detail?.page === 0).length;
+      const rankingLoads = () => page.evaluate(countRankingLoads);
+      await page.evaluate(() => window.scrollTo(0, 0));
+      // The shelves load on their own: the feed below may have arrived first.
+      await page.waitForSelector(seeAll, { timeout: 15_000 });
+      const shelfFirst = await page.$eval('main [data-shelf="weekly"] [data-testid="music-shelf-card"] h3', title => title.textContent.trim());
+      // Count from here: the buffer keeps only the latest 100 metrics of everything this page did so far.
+      await page.evaluate(() => window.__DIVA_PERFORMANCE__.clear());
+      await page.click(seeAll);
+      await rankingChipFocused();
+      assertChipBarAtTop(await chipBarPlacement());
+      await page.waitForFunction(countRankingLoads, { timeout: 15_000 });
+      await page.waitForFunction(first => document.querySelector('main .song-card h3')?.textContent.trim() === first, { timeout: 15_000 }, shelfFirst)
+        .catch(async () => {
+          const feedFirst = await page.evaluate(() => document.querySelector('main .song-card h3')?.textContent.trim() ?? null);
+          throw new Error(`The ランキング feed must start with the shelf's first song (${feedFirst} ≠ ${shelfFirst})`);
+        });
+      assertChipBarAtTop(await chipBarPlacement());
+      const loadsBefore = await rankingLoads();
+      if (loadsBefore !== 1) throw new Error(`すべて表示 must load the ランキング feed once, got ${loadsBefore}`);
+      await page.evaluate(() => window.scrollTo(0, 0));
+      await page.evaluate(() => document.activeElement?.blur());
+      await page.click(seeAll);
+      await rankingChipFocused();
+      assertChipBarAtTop(await chipBarPlacement());
+      await new Promise(resolve => setTimeout(resolve, 500));
+      if (await rankingLoads() !== loadsBefore) throw new Error('すべて表示 for the chip already shown must not reload the feed');
+      console.log('PASS 週間ランキング すべて表示 selects ランキング with the chip bar under the top bar, and keeps the feed when pressed again');
+
       // Playlists as a track table.
       await open(page, `playlists?list=${playlistId}`);
       await page.waitForSelector('[data-testid="music-track-row"]', { timeout: 20_000 });

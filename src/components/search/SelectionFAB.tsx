@@ -13,7 +13,6 @@ import { usePlayerStore } from '../../stores/playerStore';
 import { useUiStore } from '../../stores/uiStore';
 import { showToast } from '../../stores/toastStore';
 import { useTranslateSourceText } from '../../i18n';
-import { MOBILE_MEDIA_QUERY, useMediaQuery } from '../../hooks/useMediaQuery';
 import { SelectionBar } from '../ui/SelectionBar';
 import Button from '../ui/Button';
 import IconButton from '../ui/IconButton';
@@ -118,7 +117,6 @@ export default function SelectionFAB({ visibleSongs }: SelectionFABProps) {
   const clearSelection = useSelectionStore(state => state.clearSelection);
   const addManyToQueue = usePlayerStore(state => state.addManyToQueue);
   const openSaveToPlaylist = useUiStore(state => state.openSaveToPlaylist);
-  const isMobile = useMediaQuery(MOBILE_MEDIA_QUERY);
   const [matchingDialogOpen, setMatchingDialogOpen] = useState(false);
 
   // Esc closes only the top layer (DESIGN_SPEC §6.5.4): a menu, a dialog, the queue or the guide
@@ -201,21 +199,23 @@ export default function SelectionFAB({ visibleSongs }: SelectionFABProps) {
           </>
         )}
       >
-        {isMobile ? (
-          <>
-            <IconButton label={t('キューに追加')} icon={<QueueMusicIcon />} disabled={nothingSelected} onClick={handleAddToQueue} />
-            <IconButton label={t('プレイリストに保存')} icon={<PlaylistAddIcon />} disabled={nothingSelected} onClick={handleSaveToPlaylist} />
-          </>
-        ) : (
-          <>
-            <Button icon={<QueueMusicIcon />} disabled={nothingSelected} onClick={handleAddToQueue}>
-              {t('キューに追加')}
-            </Button>
-            <Button variant="primary" icon={<PlaylistAddIcon />} disabled={nothingSelected} onClick={handleSaveToPlaylist}>
-              {t('プレイリストに保存')}
-            </Button>
-          </>
-        )}
+        {/* Text buttons by the bar's own width (a container), not the viewport: in the music layout
+            the bar is only the space between the library and the 再生中 panel. 42rem of content box
+            fits × + a 5-digit count + すべて選択 + both text buttons + ⋮ with their gaps (about 662px
+            in Japanese, the wider language). Phones always get the icons. display:none keeps the
+            other set out of the tab order. */}
+        <div className="flex items-center sm:gap-2 @min-[42rem]:hidden">
+          <IconButton label={t('キューに追加')} icon={<QueueMusicIcon />} disabled={nothingSelected} onClick={handleAddToQueue} />
+          <IconButton label={t('プレイリストに保存')} icon={<PlaylistAddIcon />} disabled={nothingSelected} onClick={handleSaveToPlaylist} />
+        </div>
+        <div className="hidden items-center gap-2 @min-[42rem]:flex">
+          <Button icon={<QueueMusicIcon />} disabled={nothingSelected} onClick={handleAddToQueue}>
+            {t('キューに追加')}
+          </Button>
+          <Button variant="primary" icon={<PlaylistAddIcon />} disabled={nothingSelected} onClick={handleSaveToPlaylist}>
+            {t('プレイリストに保存')}
+          </Button>
+        </div>
       </SelectionBar>
 
       {matchingDialogOpen && (

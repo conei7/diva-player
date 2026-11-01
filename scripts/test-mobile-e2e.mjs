@@ -103,6 +103,35 @@ async function main() {
       await assertMobileButtonTargets(page, label);
     }
 
+    // The song page's sideways action row shows an edge fade only on a side with more actions,
+    // and the fade never takes taps (the page is still the watch route from the loop above).
+    await page.waitForSelector('[data-testid="watch-action-bar"]');
+    const readFades = () => page.$eval('[data-testid="watch-action-bar"]', row => {
+      const fade = side => {
+        const element = row.parentElement?.querySelector(`[data-edge-fade="${side}"]`);
+        if (!element) return null;
+        const style = getComputedStyle(element);
+        return { hidden: element.getAttribute('aria-hidden'), pointer: style.pointerEvents, gradient: style.backgroundImage.includes('gradient') };
+      };
+      return { start: fade('start'), end: fade('end'), overflow: row.scrollWidth > row.clientWidth + 1 };
+    });
+    const unscrolled = await readFades();
+    assert(unscrolled.overflow && unscrolled.start === null
+      && unscrolled.end?.hidden === 'true' && unscrolled.end.pointer === 'none' && unscrolled.end.gradient,
+    `The action row must cue more actions on its end only: ${JSON.stringify(unscrolled)}`);
+    await page.$eval('[data-testid="watch-action-bar"]', row => { row.scrollLeft = row.scrollWidth; });
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    const scrolled = await readFades();
+    const lastAction = await page.$eval('[data-testid="watch-action-bar"]', row => {
+      const button = [...row.querySelectorAll('button, a')].at(-1);
+      const rect = button.getBoundingClientRect();
+      const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+      return { right: rect.right, width: innerWidth, hit: Boolean(hit && button.contains(hit)) };
+    });
+    assert(scrolled.start?.pointer === 'none' && scrolled.end === null && lastAction.right <= lastAction.width + 0.5 && lastAction.hit,
+      `Scrolled to the end, the action row must drop its end fade and keep the last action tappable: ${JSON.stringify({ scrolled, lastAction })}`);
+    console.log('PASS song page action row edge fades');
+
     await page.goto(new URL('playlists', baseUrl), { waitUntil: 'domcontentloaded' });
     await waitForLayout(page);
     // 新規作成 (＋ on phones) opens a menu; 「新しいプレイリスト」 opens the dialog.

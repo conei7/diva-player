@@ -416,8 +416,12 @@ try {
   console.log('PASS album names and adjacent playlist actions in description, saved track order, and mobile layout');
   // The album toast stays at the bottom-left for 8 seconds (DESIGN_SPEC §4.8) and covers whatever is
   // under it, like YouTube's. After the viewport resize the collapse button can sit right there, so
-  // bring it to the middle of the screen as a user would, and press it once nothing covers it.
+  // bring it to the middle of the screen as a user would, and press it once nothing covers it. The
+  // toast can still move after the resize (the 390px song page's scrolled-controls row lifted it and
+  // goes away a few frames later), so wait for it to leave instead of trusting one hit test.
   const collapseDescription = 'button[aria-label="概要を折りたたむ"]';
+  await page.waitForFunction(() => !document.querySelector('[data-testid="toast-host"]')?.textContent?.includes('「DIVA E2E Album」を作成しました'),
+    { timeout: 20_000 });
   await page.$eval(collapseDescription, button => button.scrollIntoView({ block: 'center' }));
   await page.waitForFunction(selector => {
     const button = document.querySelector(selector);

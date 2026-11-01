@@ -161,6 +161,21 @@ describe('SongShelf', () => {
     expect(html).toContain('<ul role="list"');
   });
 
+  it('offers 「すべて表示」 as a link to a page or as a button for a list on this page', () => {
+    const link = render(<SongShelf shelf="recent" title="最近再生した曲" seeAllTo="/history" finePointer><li>card</li></SongShelf>);
+    const linkHeading = link.match(/<h2 id="([^"]+)"/)?.[1];
+    expect(link).toMatch(new RegExp(`<a [^>]*href="/history"[^>]*>すべて表示</a>`));
+    expect(link).toContain(`data-testid="music-shelf-see-all" aria-describedby="${linkHeading}"`);
+
+    const button = render(<SongShelf shelf="weekly" title="週間ランキング" onSeeAll={() => {}} finePointer={false}><li>card</li></SongShelf>);
+    const buttonHeading = button.match(/<h2 id="([^"]+)"/)?.[1];
+    // Described by the shelf's title: 「すべて表示, 週間ランキング」.
+    expect(button).toMatch(new RegExp(`<button type="button" data-testid="music-shelf-see-all" aria-describedby="${buttonHeading}" class="[^"]*cursor-pointer[^"]*">すべて表示</button>`));
+    expect(button).not.toContain('<a ');
+
+    expect(render(<SongShelf shelf="surge" title="急上昇" finePointer><li>card</li></SongShelf>)).not.toContain('すべて表示');
+  });
+
   it('has a skeleton with the geometry of a shelf that the E2E does not count as one', () => {
     const html = render(<SongShelfSkeleton />);
     expect(html).toMatch(/^<div data-testid="music-shelf-loading" aria-hidden="true"/);

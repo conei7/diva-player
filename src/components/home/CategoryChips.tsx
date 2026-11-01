@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import type { ReactNode } from 'react';
 import { useTranslateSourceText } from '../../i18n';
 import { Chip, ChipBar } from '../ui/Chip';
+import { revealChipInRow } from './chipRow';
 
 /**
  * CategoryChips - the home feed's chip bar (おすすめ / ランキング / …).
@@ -30,12 +31,7 @@ export default function CategoryChips({ chips, activeChip, onSelect, onPrefetch,
   // which would fight the restored feed scroll position).
   useEffect(() => {
     const chip = containerRef.current?.querySelector<HTMLElement>('[data-active="true"]');
-    const scroller = chip?.closest<HTMLElement>('.overflow-x-auto');
-    if (!chip || !scroller) return;
-    const chipRect = chip.getBoundingClientRect();
-    const scrollerRect = scroller.getBoundingClientRect();
-    if (chipRect.left >= scrollerRect.left && chipRect.right <= scrollerRect.right) return;
-    scroller.scrollLeft += chipRect.left - scrollerRect.left - (scrollerRect.width - chipRect.width) / 2;
+    if (chip) revealChipInRow(chip);
   }, [activeChip]);
 
   return (

@@ -20,9 +20,11 @@ import {
 } from './musicHomeShelves';
 import {
   loadNetworkShelfSongs,
+  networkShelfFeedCategory,
   networkShelfKey,
   type NetworkShelfContext,
   type NetworkShelfId,
+  type ShelfFeedCategory,
 } from './musicHomeSources';
 import ShelfPlaylistCard from './ShelfPlaylistCard';
 import ShelfSongCard from './ShelfSongCard';
@@ -31,17 +33,23 @@ import { useShelfSongs } from './useShelfSongs';
 
 const NO_PLAYS: ReadonlyMap<number, number> = new Map();
 
+interface MusicHomeProps {
+  /** Selects a chip of the feed below and brings its chip bar up (a network shelf's 「すべて表示」). */
+  onShowFeedCategory?: (category: ShelfFeedCategory) => void;
+}
+
 /**
  * Home in the music layout: horizontal shelves of square cards (recently played, your playlists,
  * rankings, favourite producers) and the 「あなたへのおすすめ」 heading. The page heading (ホーム) is
  * for assistive tech only: the shelves start right under the top bar. HomePage renders the
  * existing feed (chips, grid, infinite scroll) right after it as a sibling, so switching the layout
- * never remounts or reloads the feed. Shelves load on their own and never block the page. A shelf
- * that almost always has cards (the network shelves, 最近再生した曲 when plays are stored) keeps its
- * place with a skeleton while it loads, so nothing below jumps when it arrives; shelves that
- * settle empty or fail disappear quietly.
+ * never remounts or reloads the feed. A network shelf that a feed chip continues in the same order
+ * (週間ランキング, 急上昇, 新着) has 「すべて表示」 for that chip. Shelves load on their own and never
+ * block the page. A shelf that almost always has cards (the network shelves, 最近再生した曲 when
+ * plays are stored) keeps its place with a skeleton while it loads, so nothing below jumps when it
+ * arrives; shelves that settle empty or fail disappear quietly.
  */
-export default function MusicHome() {
+export default function MusicHome({ onShowFeedCategory }: MusicHomeProps) {
   const t = useTranslateSourceText();
   const finePointer = useMediaQuery(FINE_HOVER_MEDIA_QUERY);
   const { full } = useNavLabels();
@@ -55,7 +63,7 @@ export default function MusicHome() {
         <div className="flex flex-col gap-6 sm:gap-8">
           <RecentShelf finePointer={finePointer} />
           <PlaylistShelf finePointer={finePointer} />
-          <NetworkShelves finePointer={finePointer} />
+          <NetworkShelves finePointer={finePointer} onShowFeedCategory={onShowFeedCategory} />
         </div>
       </div>
       <h2 className="m-0 mt-8 px-3 text-xl font-bold leading-7 text-yt-text sm:px-4 lg:px-6">
@@ -109,7 +117,7 @@ function PlaylistShelf({ finePointer }: { finePointer: boolean }) {
   );
 }
 
-function NetworkShelves({ finePointer }: { finePointer: boolean }) {
+function NetworkShelves({ finePointer, onShowFeedCategory }: { finePointer: boolean } & MusicHomeProps) {
   const t = useTranslateSourceText();
   const tk = useTranslate();
   const globalFilterSettings = useGlobalFilterStore(useShallow(state => ({
@@ -145,7 +153,7 @@ function NetworkShelves({ finePointer }: { finePointer: boolean }) {
     () => ({ settings: globalFilterSettings, ratings, lastPlayedAtBySongId }),
     [globalFilterSettings, lastPlayedAtBySongId, ratings],
   );
-  const common = { sourceContext, discovery, hiddenSongs, ready: discoveryReady, finePointer };
+  const common = { sourceContext, discovery, hiddenSongs, ready: discoveryReady, finePointer, onShowFeedCategory };
 
   return (
     <>
@@ -159,7 +167,7 @@ function NetworkShelves({ finePointer }: { finePointer: boolean }) {
   );
 }
 
-interface NetworkShelfProps {
+interface NetworkShelfProps extends MusicHomeProps {
   id: NetworkShelfId;
   title: string;
   showRanks?: boolean;
@@ -170,8 +178,11 @@ interface NetworkShelfProps {
   finePointer: boolean;
 }
 
-function NetworkShelf({ id, title, showRanks = false, sourceContext, discovery, hiddenSongs, ready, finePointer }: NetworkShelfProps) {
+function NetworkShelf({
+  id, title, showRanks = false, sourceContext, discovery, hiddenSongs, ready, finePointer, onShowFeedCategory,
+}: NetworkShelfProps) {
   const key = networkShelfKey(id, sourceContext);
+  const feedCategory = networkShelfFeedCategory(id);
   const { songs, failed } = useShelfSongs(id, key, () => loadNetworkShelfSongs(id, sourceContext));
   // The same render-time filters as HomeFeed: hidden songs, then the discovery filter.
   const visible = useMemo(
@@ -183,7 +194,12 @@ function NetworkShelf({ id, title, showRanks = false, sourceContext, discovery, 
   if (!ready || songs === null) return <SongShelfSkeleton />;
   if (visible.length === 0) return null;
   return (
-    <SongShelf shelf={id} title={title} finePointer={finePointer}>
+    <SongShelf
+      shelf={id}
+      title={title}
+      onSeeAll={feedCategory && onShowFeedCategory ? () => onShowFeedCategory(feedCategory) : undefined}
+      finePointer={finePointer}
+    >
       {visible.map((song, index) => (
         <ShelfSongCard key={song.id} song={song} rank={showRanks ? index + 1 : undefined} finePointer={finePointer} />
       ))}

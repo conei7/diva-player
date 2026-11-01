@@ -10,12 +10,16 @@ import { SHELF_CARD_WIDTH_CLASS } from './musicHomeShelves';
 
 const SKELETON_CARDS = [0, 1, 2, 3, 4, 5, 6, 7];
 
+const SEE_ALL_CLASS = 'inline-flex min-h-10 shrink-0 cursor-pointer items-center rounded-chip px-2 text-sm font-medium leading-5 text-yt-text-secondary no-underline hover:text-yt-text hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-yt-focus';
+
 export interface SongShelfProps {
   /** `data-shelf` of the section (recent, playlists, weekly, …). */
   shelf: string;
   title: string;
   /** A page with everything the shelf previews (shown as 「すべて表示」 next to the title). */
   seeAllTo?: string;
+  /** 「すべて表示」 as a button, for a list shown on this page (Home's feed below the shelves). */
+  onSeeAll?: () => void;
   /** Mouse devices: ‹ › buttons next to the title scroll the row by about a screen. */
   finePointer: boolean;
   /** The cards, each an <li>. */
@@ -27,7 +31,7 @@ export interface SongShelfProps {
  * ‹ › buttons as in ChipBar). The row runs to the edges of the page so the next card peeks in;
  * phones show about 2.3 cards per screen.
  */
-export default function SongShelf({ shelf, title, seeAllTo, finePointer, children }: SongShelfProps) {
+export default function SongShelf({ shelf, title, seeAllTo, onSeeAll, finePointer, children }: SongShelfProps) {
   const t = useTranslateSourceText();
   const headingId = useId();
   const scrollerRef = useRef<HTMLDivElement>(null);
@@ -69,14 +73,14 @@ export default function SongShelf({ shelf, title, seeAllTo, finePointer, childre
         <h2 id={headingId} className="m-0 min-w-0 flex-1 truncate text-xl font-bold leading-7 text-yt-text">
           {title}
         </h2>
-        {seeAllTo && (
-          <Link
-            to={seeAllTo}
-            aria-describedby={headingId}
-            className="inline-flex min-h-10 shrink-0 items-center rounded-chip px-2 text-sm font-medium leading-5 text-yt-text-secondary no-underline hover:text-yt-text hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-yt-focus"
-          >
+        {seeAllTo ? (
+          <Link to={seeAllTo} data-testid="music-shelf-see-all" aria-describedby={headingId} className={SEE_ALL_CLASS}>
             {t('すべて表示')}
           </Link>
+        ) : onSeeAll && (
+          <button type="button" data-testid="music-shelf-see-all" aria-describedby={headingId} className={SEE_ALL_CLASS} onClick={onSeeAll}>
+            {t('すべて表示')}
+          </button>
         )}
         {showArrows && (
           // Not in the tab order (as in ChipBar): focusing a card scrolls it into view.

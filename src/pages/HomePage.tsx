@@ -1,7 +1,9 @@
-import { lazy, Suspense, useState, useEffect, useEffectEvent, useCallback, useLayoutEffect, useMemo, useRef } from 'react';
+import { lazy, Suspense, useState, useEffect, useEffectEvent, useCallback, useImperativeHandle, useLayoutEffect, useMemo, useRef } from 'react';
+import type { Ref } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { useLocation, useNavigationType, useSearchParams } from 'react-router';
 import CategoryChips, { type CategoryChip } from '../components/home/CategoryChips';
+import { revealChipInRow } from '../components/home/chipRow';
 import VideoGrid from '../components/home/VideoGrid';
 import { PREFETCH_OBSERVER_OPTIONS } from '../components/home/infiniteScroll';
 import SearchResults, { type UrlArtist } from '../components/search/SearchResults';
@@ -211,6 +213,10 @@ export default function HomePage() {
   // The music layout shows Home as shelves of square cards above the same feed.
   const musicLayout = useIsMusicLayout();
   const advancedEntry = isAdvancedSearchEntry(location.state);
+  // A shelf's 「すべて表示」 hands its chip to the feed below; the chip stays the feed's own state, so
+  // Back restores it from the feed snapshot like any chip the user picked.
+  const feedRef = useRef<HomeFeedHandle>(null);
+  const showFeedCategory = useCallback((category: HomeCategoryId) => feedRef.current?.showCategory(category), []);
 
   const runUrlSearch = useCallback(() => {
     const store = useSearchStore.getState();
@@ -265,8 +271,8 @@ export default function HomePage() {
             Shelves above the same feed; the feed keeps its place, so switching layouts never reloads it.
             The page heading is for assistive tech only (MusicHome renders its own).
           */}
-          {musicLayout ? <MusicHome /> : <h1 className="sr-only">{t('sidebarHome')}</h1>}
-          <HomeFeed />
+          {musicLayout ? <MusicHome onShowFeedCategory={showFeedCategory} /> : <h1 className="sr-only">{t('sidebarHome')}</h1>}
+          <HomeFeed ref={feedRef} belowShelves={musicLayout} />
         </>
       )}
       {advancedSearchOpen && (
@@ -278,7 +284,21 @@ export default function HomePage() {
   );
 }
 
-function HomeFeed() {
+interface HomeFeedHandle {
+  /**
+   * A music Home shelf's 「すべて表示」: selects the chip (the chip already shown is not loaded
+   * again), scrolls its chip bar up to the top bar and moves focus to the chip.
+   */
+  showCategory: (category: HomeCategoryId) => void;
+}
+
+interface HomeFeedProps {
+  ref?: Ref<HomeFeedHandle>;
+  /** The music layout's shelves are above the feed (MusicHome). */
+  belowShelves: boolean;
+}
+
+function HomeFeed({ ref, belowShelves }: HomeFeedProps) {
   const t = useTranslate();
   const ts = useTranslateSourceText();
   const language = useLanguageStore(state => state.language);
@@ -1092,18 +1112,22 @@ function HomeFeed() {
     loadMore();
   }, [freshStrictDiscoverySongs.length, loading, hasMore, loadMore, startupRefreshTarget]);
 
+  /** The window scroll at which the chip bar sits right under the top bar (where it sticks). */
+  const chipBarScrollY = useCallback((): number | null => {
+    const feedRoot = feedRootRef.current;
+    const chipBar = chipBarRef.current;
+    if (!feedRoot || !chipBar) return null;
+    const stickyTop = Number.parseFloat(getComputedStyle(chipBar).top) || 0;
+    return Math.max(0, feedRoot.getBoundingClientRect().top + window.scrollY - stickyTop);
+  }, []);
+
   const selectCategory = useCallback((id: string) => {
     const nextCategory = asHomeCategoryId(id);
     if (nextCategory === activeCategory) return;
     // The new list opens at its first song: scrolled below the chips, go back up to them (not to
     // the page top, which in the music layout would also scroll back over the shelves).
-    const feedRoot = feedRootRef.current;
-    const chipBar = chipBarRef.current;
-    if (feedRoot && chipBar) {
-      const stickyTop = Number.parseFloat(getComputedStyle(chipBar).top) || 0;
-      const feedTop = Math.max(0, feedRoot.getBoundingClientRect().top + window.scrollY - stickyTop);
-      if (window.scrollY > feedTop) window.scrollTo(0, feedTop);
-    }
+    const feedTop = chipBarScrollY();
+    if (feedTop !== null && window.scrollY > feedTop) window.scrollTo(0, feedTop);
     restoredEntryKeyRef.current = null;
     clearHomeFeedSnapshot(location.key);
     // Until the new chip's first page arrives there is nothing to keep for Back (not the old list).
@@ -1112,7 +1136,41 @@ function HomeFeed() {
     pendingHomePaintRef.current = null;
     setStartupSongs([]);
     setActiveCategory(nextCategory);
-  }, [activeCategory, location.key]);
+  }, [activeCategory, chipBarScrollY, location.key]);
+
+  const focusActiveChip = useCallback(() => {
+    const chip = chipBarRef.current?.querySelector<HTMLElement>('[data-active="true"]');
+    if (!chip) return;
+    chip.focus({ preventScroll: true });
+    // preventScroll also keeps the chip row still: the chip already shown may have been scrolled
+    // out of the row since it was picked (CategoryChips only brings a newly picked chip into view).
+    revealChipInRow(chip);
+  }, []);
+
+  // 「すべて表示」 leaves its button scrolled away: focus goes to the chip it selected, once that is the
+  // active one. This effect comes after the one requesting the chip's first page, so the chip's
+  // focus prefetch joins that request instead of starting it at background priority.
+  const focusChipOnSelectRef = useRef(false);
+  useEffect(() => {
+    if (!focusChipOnSelectRef.current) return;
+    focusChipOnSelectRef.current = false;
+    focusActiveChip();
+  }, [activeCategory, focusActiveChip]);
+
+  useImperativeHandle(ref, () => ({
+    showCategory(category) {
+      // The chip bar goes up to the top bar even when the chip is already shown (the shelves
+      // scroll away); the scroll is recorded for Back like any other.
+      const feedTop = chipBarScrollY();
+      if (feedTop !== null) window.scrollTo(0, feedTop);
+      if (category === activeCategory) {
+        focusActiveChip();
+        return;
+      }
+      focusChipOnSelectRef.current = true;
+      selectCategory(category);
+    },
+  }), [activeCategory, chipBarScrollY, focusActiveChip, selectCategory]);
 
   // 「最近聴いたP」 needs listening history; without it the chip would only repeat 人気.
   const visibleCategories = useMemo(
@@ -1142,8 +1200,16 @@ function HomeFeed() {
   ) : undefined;
 
   return (
-    // A click that opens a song also records where the feed was (for Back).
-    <div ref={feedRootRef} className="w-full px-3 pb-6 sm:px-4 lg:px-6" onClickCapture={recordScrollPosition}>
+    // A click that opens a song also records where the feed was (for Back). Below the shelves the feed
+    // is at least a screen tall, so its chip bar can always go up to the top bar (すべて表示, a chip
+    // switch) even while a list loads or is short on a tall screen.
+    <div
+      ref={feedRootRef}
+      className={belowShelves
+        ? 'min-h-[calc(100dvh_-_var(--header-height,56px)_-_var(--selection-bar-height,0px))] w-full px-3 pb-6 sm:px-4 lg:px-6'
+        : 'w-full px-3 pb-6 sm:px-4 lg:px-6'}
+      onClickCapture={recordScrollPosition}
+    >
       <div ref={chipBarRef} className="sticky top-[calc(var(--header-height,56px)_+_var(--selection-bar-height,0px))] z-[var(--z-sticky,20)] -mx-3 bg-yt-bg px-3 py-3 sm:-mx-4 sm:px-4 lg:-mx-6 lg:px-6">
         <CategoryChips
           chips={visibleCategories}
