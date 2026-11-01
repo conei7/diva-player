@@ -661,6 +661,10 @@ try {
     await page.tap('nav button[aria-label="メニュー"]');
     await page.waitForSelector('button[aria-label="メニューを閉じる"]', { visible: true });
     for (const [checkedBefore, expected] of [[true, 'standard'], [false, 'music']]) {
+      // The close button counts as visible while the drawer is still sliding in (0.2s) with the switch
+      // off screen; tap once it has arrived.
+      await page.waitForFunction(() => Math.abs(document.querySelector('aside[role="dialog"]')?.getBoundingClientRect().left ?? -1) <= 1,
+        { timeout: 5_000 });
       const checked = await page.$eval('#drawer-music-layout', input => input.checked);
       if (checked !== checkedBefore) throw new Error(`The drawer switch must show the layout on screen (music: ${checkedBefore}), got ${checked}`);
       await page.tap('label:has(#drawer-music-layout)');
