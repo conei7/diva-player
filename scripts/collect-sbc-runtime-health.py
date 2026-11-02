@@ -8,6 +8,7 @@ payload, and exit-code contract while avoiding a Node.js runtime dependency.
 
 from __future__ import annotations
 
+import argparse
 import concurrent.futures
 import json
 import math
@@ -16,7 +17,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import traceback
 from typing import Any, Callable
 from urllib import error as urllib_error
@@ -1055,7 +1056,11 @@ def _discord_content(
         lines.append(f"  Started: {incident_started_at.get(item_id, checked_at)}")
         lines.append(f"  Check: {_confirmation_target(item_id)}")
     if recovered:
-        lines.append("Recovered after two consecutive healthy checks:")
+        lines.append(
+            "Recovered after at least 10 minutes of stable healthy monitoring:"
+            if "notificationDebounce" in snapshot
+            else "Recovered after two consecutive healthy checks:"
+        )
         for item_id in recovered:
             lines.append(f"- {item_id}")
             lines.append(f"  Incident started: {incident_started_at.get(item_id, 'unknown')}")
@@ -1082,10 +1087,61 @@ def _safe_notification_error(error: Any, webhook: str) -> str:
     return re.sub(r"https?://\S+", "[redacted URL]", message)[:300]
 
 
+def _notification_time(value: Any) -> datetime | None:
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        return parsed if parsed.tzinfo else None
+    except (ValueError, TypeError):
+        return None
+
+
+def notification_quiet_active(state_dir: Path, now: datetime) -> bool:
+    quiet = load_json(state_dir / "runtime_notification_quiet.json")
+    start = _notification_time(quiet.get("createdAt"))
+    end = _notification_time(quiet.get("expiresAt"))
+    return bool(start and end and start <= now < end
+                and 0 < (end - start).total_seconds() <= 1800)
+
+
+def _debounce_notifications(snapshot, previous, incident_ids, recovered_ids,
+                            pending_incident_ids, quiet):
+    now = _notification_time(snapshot.get("checkedAt"))
+    if now is None:
+        # Invalid observation time must not silently disable alert delivery.
+        return snapshot, incident_ids, recovered_ids
+    old = previous.get("notificationDebounce") or {}
+    current_ids = {item["id"] for item in snapshot["critical"]}
+    incidents = {}
+    recoveries = {}
+    for item_id in incident_ids & current_ids:
+        start = _notification_time((old.get("incidents") or {}).get(item_id))
+        incidents[item_id] = (start if start and start <= now else now).isoformat()
+    for item_id in recovered_ids:
+        start = _notification_time((old.get("recoveries") or {}).get(item_id))
+        recoveries[item_id] = (start if start and start <= now else now).isoformat()
+    # Outbox entries were already committed for delivery: keep their retry and
+    # incident-before-recovery semantics. Unsent brief observations never enter it.
+    ready_incidents = pending_incident_ids | {
+        item_id for item_id, start in incidents.items()
+        if (now - _notification_time(start)).total_seconds() >= 300
+    }
+    ready_recoveries = {
+        item_id for item_id, start in recoveries.items()
+        if (now - _notification_time(start)).total_seconds() >= 600
+    }
+    if quiet:
+        ready_incidents = set()
+        ready_recoveries = set()
+    return ({**snapshot, "notificationDebounce": {
+        "incidents": incidents, "recoveries": recoveries,
+    }, "notificationQuiet": quiet}, ready_incidents, ready_recoveries)
+
+
 def apply_critical_notification(
     snapshot: dict[str, Any],
     previous: dict[str, Any],
     state_path: Path | None = None,
+    *, debounce: bool = False, quiet: bool = False,
 ) -> dict[str, Any]:
     webhook = os.environ.get("DIVA_ALERT_WEBHOOK_URL")
     current_ids = {item["id"] for item in snapshot["critical"]}
@@ -1114,10 +1170,16 @@ def apply_critical_notification(
         | (notified_id_set - current_ids)
         | (incident_ids - current_ids)
     ) - current_ids
+    if debounce:
+        snapshot, incident_ids, recovered_ids = _debounce_notifications(
+            snapshot, previous, incident_ids, recovered_ids,
+            pending_incident_ids, quiet,
+        )
     recorded_start_times = previous.get("incidentStartedAt")
     if not isinstance(recorded_start_times, dict):
         recorded_start_times = {}
-    outstanding_ids = current_ids | incident_ids | recovered_ids | notified_id_set
+    outstanding_ids = (current_ids | incident_ids | recovered_ids | notified_id_set
+                       | pending_incident_ids | pending_recovery_ids)
     incident_started_at = {
         item_id: _incident_start_time(
             item_id, snapshot, previous, recorded_start_times
@@ -1128,8 +1190,8 @@ def apply_critical_notification(
     notification_state = {
         **snapshot,
         "notifiedCriticalIds": known_ids,
-        "pendingIncidentIds": sorted(incident_ids),
-        "pendingRecoveryIds": sorted(recovered_ids),
+        "pendingIncidentIds": sorted(incident_ids | pending_incident_ids),
+        "pendingRecoveryIds": sorted((recovered_ids | pending_recovery_ids) - current_ids),
         "incidentStartedAt": incident_started_at,
         "notificationSchemaVersion": 3,
         **({"lastDiscordMessageId": previous_message_id} if previous_message_id else {}),
@@ -1140,14 +1202,18 @@ def apply_critical_notification(
     if not incident_ids and not recovered_ids:
         notification_state["incidentStartedAt"] = {
             item_id: incident_started_at[item_id]
-            for item_id in current_ids
+            for item_id in (current_ids | notified_id_set | pending_incident_ids | pending_recovery_ids)
             if item_id in incident_started_at
         }
         return {
             **notification_state,
-            "pendingIncidentIds": [],
-            "pendingRecoveryIds": [],
-            "notificationStatus": "up-to-date",
+            "pendingIncidentIds": sorted(pending_incident_ids),
+            "pendingRecoveryIds": sorted(pending_recovery_ids - current_ids),
+            "notificationStatus": "deferred" if debounce and (
+                snapshot.get("notificationQuiet")
+                or snapshot.get("notificationDebounce", {}).get("incidents")
+                or snapshot.get("notificationDebounce", {}).get("recoveries")
+            ) else "up-to-date",
         }
 
     # Persist the outbox before contacting Discord. If the process exits after
@@ -1212,12 +1278,12 @@ def apply_critical_notification(
             raise RuntimeError("Discord response did not include a message id")
         return {
             **snapshot,
-            "notifiedCriticalIds": sorted(current_ids),
-            "pendingIncidentIds": [],
-            "pendingRecoveryIds": [],
+            "notifiedCriticalIds": sorted((notified_id_set | incident_ids) - recovered_ids),
+            "pendingIncidentIds": sorted(pending_incident_ids - incident_ids),
+            "pendingRecoveryIds": sorted(pending_recovery_ids - recovered_ids - current_ids),
             "incidentStartedAt": {
                 item_id: incident_started_at[item_id]
-                for item_id in current_ids
+                for item_id in ((notified_id_set | incident_ids | current_ids) - recovered_ids)
                 if item_id in incident_started_at
             },
             "notificationSchemaVersion": 3,
@@ -1453,13 +1519,25 @@ def operation_capacity(collected: dict, previous: dict, state_dir: Path, now: da
     return info, violations
 
 
-def main() -> int:
+def main(argv=None) -> int:
     configured_state_dir = os.environ.get("DIVA_RUNTIME_STATE_DIR")
     state_dir = (
         Path(configured_state_dir)
         if configured_state_dir
         else Path.home() / ".local" / "state" / "diva-player"
     )
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--quiet-minutes", type=int, choices=range(1, 31), metavar="1..30")
+    args = parser.parse_args([] if argv is None else argv)
+    if args.quiet_minutes is not None:
+        now = datetime.now(timezone.utc)
+        write_json_atomic(state_dir / "runtime_notification_quiet.json", {
+            "createdAt": now.isoformat(),
+            "expiresAt": (now + timedelta(minutes=args.quiet_minutes)).isoformat(),
+            "reason": "production verification",
+        })
+        print("Runtime notifications temporarily deferred; monitoring continues.")
+        return 0
     latest_path = state_dir / "runtime_health_latest.json"
     history_path = state_dir / "runtime_health_history.jsonl"
     previous = load_json(latest_path)
@@ -1516,7 +1594,10 @@ def main() -> int:
     # Notification failures are recorded without suppressing the local state.
     # notifiedCriticalIds advances only after delivery, so the next timer run
     # retries while still avoiding duplicate alerts after a successful send.
-    snapshot = apply_critical_notification(snapshot, previous, latest_path)
+    snapshot = apply_critical_notification(
+        snapshot, previous, latest_path, debounce=True,
+        quiet=notification_quiet_active(state_dir, now),
+    )
     write_json_atomic(latest_path, snapshot)
     rotate_history_if_needed(
         history_path,
@@ -1536,7 +1617,7 @@ def main() -> int:
 
 if __name__ == "__main__":
     try:
-        sys.exit(main())
+        sys.exit(main(sys.argv[1:]))
     except Exception:
         traceback.print_exc(file=sys.stderr)
         sys.exit(1)

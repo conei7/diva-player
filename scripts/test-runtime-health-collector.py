@@ -75,6 +75,106 @@ class RuntimeHealthCollectorContractTests(unittest.TestCase):
             "disk": {"usedPercent": 70},
         }
 
+    def test_notification_debounce_short_failure_and_recovery_flapping(self):
+        base = datetime(2026, 11, 2, tzinfo=timezone.utc)
+        def step(seconds, ids, previous):
+            snapshot = {"checkedAt": (base + timedelta(seconds=seconds)).isoformat(),
+                        "critical": [{"id": i, "message": i} for i in ids]}
+            return COLLECTOR.apply_critical_notification(snapshot, previous, debounce=True)
+        context = mock.MagicMock()
+        context.__enter__.return_value.status = 200
+        context.__enter__.return_value.read.return_value = b'{"id":"123456789"}'
+        with mock.patch.dict(os.environ, {"DIVA_ALERT_WEBHOOK_URL": "https://discord.com/api/webhooks/123/fake"}, clear=True), mock.patch.object(COLLECTOR.urllib_request, "urlopen", return_value=context) as send:
+            state = step(0, ["public:root"], {})
+            state = step(120, [], state)
+            send.assert_not_called()
+            self.assertEqual(state["pendingIncidentIds"], [])
+            state = step(180, ["public:root"], state)
+            state = step(479, ["public:root"], state)
+            send.assert_not_called()
+            state = step(480, ["public:root"], state)
+            self.assertEqual(send.call_count, 1)
+            state = step(540, [], state)
+            state = step(900, ["public:root"], state)
+            state = step(960, [], state)
+            state = step(1559, [], state)
+            self.assertEqual(send.call_count, 1)
+            self.assertEqual(state["notifiedCriticalIds"], ["public:root"])
+            self.assertIn("public:root", state["incidentStartedAt"])
+            state = step(1560, [], state)
+            self.assertEqual(send.call_count, 2)
+            self.assertEqual(state["notifiedCriticalIds"], [])
+
+    def test_notification_partial_batch_preserves_other_delayed_events(self):
+        base = datetime(2026, 11, 2, tzinfo=timezone.utc)
+        context = mock.MagicMock()
+        context.__enter__.return_value.status = 200
+        context.__enter__.return_value.read.return_value = b'{"id":"123456789"}'
+        def step(seconds, ids, previous, **kwargs):
+            return COLLECTOR.apply_critical_notification({
+                "checkedAt": (base + timedelta(seconds=seconds)).isoformat(),
+                "critical": [{"id": i, "message": i} for i in ids],
+            }, previous, debounce=True, **kwargs)
+        with mock.patch.dict(os.environ, {"DIVA_ALERT_WEBHOOK_URL": "https://discord.com/api/webhooks/123/fake"}, clear=True), mock.patch.object(COLLECTOR.urllib_request, "urlopen", return_value=context) as send:
+            state = step(0, ["a"], {})
+            state = step(120, ["a", "b"], state)
+            state = step(300, ["a", "b"], state)
+            self.assertEqual(state["notifiedCriticalIds"], ["a"])
+            state = step(420, ["a", "b"], state)
+            self.assertEqual(state["notifiedCriticalIds"], ["a", "b"])
+            state = step(480, ["b"], state)
+            state = step(600, ["b", "c"], state)
+            state = step(900, ["b", "c"], state)
+            self.assertEqual(state["notifiedCriticalIds"], ["a", "b", "c"])
+            self.assertIn("a", state["incidentStartedAt"])
+            state = step(1080, ["b", "c"], state)
+            self.assertEqual(state["notifiedCriticalIds"], ["b", "c"])
+            state = step(1140, ["b", "c", "d"], state, quiet=True)
+            state = step(1500, ["b", "c", "d"], state, quiet=True)
+            self.assertEqual(send.call_count, 4)
+            state = step(1560, ["b", "c", "d"], state)
+            self.assertEqual(send.call_count, 5)
+            self.assertIn("d", state["notifiedCriticalIds"])
+
+    def test_debounced_outbox_survives_delivery_failure_then_recovery(self):
+        base = datetime(2026, 11, 2, tzinfo=timezone.utc)
+        def step(seconds, critical, previous, **kwargs):
+            return COLLECTOR.apply_critical_notification({
+                "checkedAt": (base + timedelta(seconds=seconds)).isoformat(),
+                "critical": [{"id": "public:root", "message": "offline"}] if critical else [],
+            }, previous, debounce=True, **kwargs)
+        context = mock.MagicMock()
+        context.__enter__.return_value.status = 200
+        context.__enter__.return_value.read.return_value = b'{"id":"123456789"}'
+        with mock.patch.dict(os.environ, {"DIVA_ALERT_WEBHOOK_URL": "https://discord.com/api/webhooks/123/fake"}, clear=True), mock.patch.object(COLLECTOR.urllib_request, "urlopen", side_effect=TimeoutError("offline")) as send:
+            state = step(0, True, {})
+            state = step(300, True, state)
+            self.assertEqual(state["pendingIncidentIds"], ["public:root"])
+            state = step(360, False, state, quiet=True)
+            self.assertEqual(state["pendingIncidentIds"], ["public:root"])
+            self.assertEqual(send.call_count, 1)
+            with mock.patch.object(COLLECTOR.urllib_request, "urlopen", return_value=context) as deliver:
+                state = step(420, False, state)
+                self.assertEqual(state["notifiedCriticalIds"], ["public:root"])
+                state = step(960, False, state)
+                self.assertEqual(deliver.call_count, 2)
+                self.assertEqual(state["notifiedCriticalIds"], [])
+
+    def test_notification_quiet_has_bounded_expiry_and_no_probes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)
+            with mock.patch.dict(os.environ, {"DIVA_RUNTIME_STATE_DIR": directory}, clear=True), mock.patch.object(COLLECTOR, "collect_runtime_inputs") as collect:
+                self.assertEqual(COLLECTOR.main(["--quiet-minutes", "20"]), 0)
+                collect.assert_not_called()
+            quiet = json.loads((path / "runtime_notification_quiet.json").read_text())
+            start = datetime.fromisoformat(quiet["createdAt"])
+            self.assertTrue(COLLECTOR.notification_quiet_active(path, start + timedelta(minutes=19)))
+            self.assertFalse(COLLECTOR.notification_quiet_active(path, start + timedelta(minutes=20)))
+            self.assertFalse(COLLECTOR.notification_quiet_active(path, start - timedelta(seconds=1)))
+            quiet["expiresAt"] = (start + timedelta(minutes=31)).isoformat()
+            (path / "runtime_notification_quiet.json").write_text(json.dumps(quiet))
+            self.assertFalse(COLLECTOR.notification_quiet_active(path, start))
+
     def test_runtime_health_timer_preserves_one_minute_probe_cadence(self) -> None:
         timer = (
             Path(__file__)

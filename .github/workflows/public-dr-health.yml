@@ -77,7 +77,7 @@ jobs:
             public-primary-health-result.json
           if-no-files-found: ignore
           retention-days: 90
-      - name: Preserve monitoring failure status
+      - name: Fail only if monitoring or notification delivery failed
         if: always()
         shell: bash
         run: |
@@ -85,4 +85,4 @@ jobs:
             echo "Public health state could not be saved"
             exit 1
           fi
-          node -e 'const r=require("./public-primary-health-result.json"); if (!r.reportOk || r.notificationStatus === "pending" || r.testNotificationStatus === "pending") process.exit(1);'
+          node -e 'const r=require("./public-primary-health-result.json"); if (r.notificationStatus === "pending" || r.testNotificationStatus === "pending") process.exit(1);'

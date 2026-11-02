@@ -216,7 +216,10 @@ async function main() {
     notificationCount: result.notifications.length,
     testNotificationStatus,
   }));
-  if (!result.reportOk || result.notificationStatus === 'pending' || testNotificationStatus === 'pending') {
+  // Endpoint incidents are delivered once through the persistent Discord outbox.
+  // Failing every scheduled run also generates repetitive GitHub failure mail.
+  if (!result.reportOk) console.warn('Public endpoint unhealthy; retained in report and incident state.');
+  if (result.notificationStatus === 'pending' || testNotificationStatus === 'pending') {
     process.exitCode = 1;
   }
 }

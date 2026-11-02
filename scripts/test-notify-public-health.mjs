@@ -1,5 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import {
   advanceGithubHealthState,
   applyGithubNotificationReceipt,
@@ -81,4 +86,22 @@ test('manual Discord test is clearly labeled and does not need or mutate monitor
   assert.match(requestBody.content, /no synthetic state change/);
   assert.deepEqual(requestBody.allowed_mentions.parse, []);
   assert.equal(Object.hasOwn(result, 'state'), false);
+});
+
+test('transient probe failure does not produce GitHub failure mail; undelivered confirmed alert still fails', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'diva-health-mail-'));
+  try {
+    const reportFile = join(directory, 'report.json');
+    writeFileSync(reportFile, JSON.stringify(report(false)));
+    const args = [fileURLToPath(new URL('./notify-public-health.mjs', import.meta.url)),
+      '--report-file', reportFile, '--state-file', join(directory, 'state.json'),
+      '--result-file', join(directory, 'result.json')];
+    const env = { ...process.env, DIVA_ALERT_WEBHOOK_URL: '', DIVA_PUBLIC_HEALTH_DISCORD_TEST: 'false' };
+    const first = spawnSync(process.execPath, args, { env, encoding: 'utf8' });
+    assert.equal(first.status, 0, first.stderr);
+    const confirmed = spawnSync(process.execPath, args, { env, encoding: 'utf8' });
+    assert.equal(confirmed.status, 1, confirmed.stderr);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
