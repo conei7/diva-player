@@ -105,6 +105,17 @@ class RuntimeHealthCollectorContractTests(unittest.TestCase):
             self.assertEqual(send.call_count, 2)
             self.assertEqual(state["notifiedCriticalIds"], [])
 
+    def test_notification_does_not_alert_on_held_but_recovering_health_probe(self):
+        snapshot = {"checkedAt": "2026-11-02T00:10:00Z",
+                    "critical": [{"id": "public:health", "message": "held"}],
+                    "publicMonitor": {"checks": {"public:health": {"consecutiveSuccesses": 1}}}}
+        previous = {"notificationDebounce": {"incidents": {"public:health": "2026-11-02T00:00:00Z"}}}
+        with mock.patch.dict(os.environ, {"DIVA_ALERT_WEBHOOK_URL": "https://discord.com/api/webhooks/123/fake"}, clear=True), mock.patch.object(COLLECTOR.urllib_request, "urlopen") as send:
+            result = COLLECTOR.apply_critical_notification(snapshot, previous, debounce=True)
+            send.assert_not_called()
+            self.assertEqual(result["notificationDebounce"]["incidents"], {})
+            self.assertEqual(result["critical"], snapshot["critical"])
+
     def test_notification_partial_batch_preserves_other_delayed_events(self):
         base = datetime(2026, 11, 2, tzinfo=timezone.utc)
         context = mock.MagicMock()

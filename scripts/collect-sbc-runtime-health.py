@@ -1113,7 +1113,14 @@ def _debounce_notifications(snapshot, previous, incident_ids, recovered_ids,
     current_ids = {item["id"] for item in snapshot["critical"]}
     incidents = {}
     recoveries = {}
+    public_checks = (snapshot.get("publicMonitor") or {}).get("checks") or {}
+    successes = snapshot.get("consecutiveSuccesses") or {}
     for item_id in incident_ids & current_ids:
+        # /health is sampled every five minutes and stays active until two
+        # successes. Do not alert on that held state after its probe recovered.
+        check = public_checks.get(item_id) or {}
+        if successes.get(item_id, 0) > 0 or check.get("consecutiveSuccesses", 0) > 0:
+            continue
         start = _notification_time((old.get("incidents") or {}).get(item_id))
         incidents[item_id] = (start if start and start <= now else now).isoformat()
     for item_id in recovered_ids:
