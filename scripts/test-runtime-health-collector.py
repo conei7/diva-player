@@ -186,6 +186,82 @@ class RuntimeHealthCollectorContractTests(unittest.TestCase):
             (path / "runtime_notification_quiet.json").write_text(json.dumps(quiet))
             self.assertFalse(COLLECTOR.notification_quiet_active(path, start))
 
+    def test_public_connection_recurrence_edits_one_message_and_internal_alerts_still_post(self):
+        base = datetime(2026, 11, 4, tzinfo=timezone.utc)
+        requests = []
+        def deliver(request, **kwargs):
+            requests.append(request)
+            message_id = request.full_url.split("/messages/")[-1].split("?")[0] if request.method == "PATCH" else str(100 + len(requests))
+            context = mock.MagicMock()
+            context.__enter__.return_value.status = 200
+            context.__enter__.return_value.read.return_value = json.dumps({"id": message_id}).encode()
+            return context
+        def step(minutes, ids, state):
+            return COLLECTOR.apply_critical_notification({
+                "checkedAt": (base + timedelta(minutes=minutes)).isoformat(),
+                "critical": [{"id": i, "message": i} for i in ids],
+            }, state, coalesce_public=True)
+        with mock.patch.dict(os.environ, {"DIVA_ALERT_WEBHOOK_URL": "https://discord.com/api/webhooks/123/fake?thread_id=42"}, clear=True), mock.patch.object(COLLECTOR.urllib_request, "urlopen", side_effect=deliver):
+            state = step(0, ["public:root", "public:ready"], {})
+            self.assertEqual(state["notificationStatus"], "sent")
+            state = step(20, ["public:ready"], state)
+            state = step(30, [], state)
+            state = step(60, ["public:health"], state)
+            self.assertEqual(state["notificationStatus"], "updated")
+            state = step(70, ["public:health", "health:vocadb_api_a"], state)
+            self.assertEqual(state["notificationStatus"], "sent")
+            state = step(80, ["health:vocadb_api_a"], state)
+            state = step(90, ["health:vocadb_api_a"], state)
+            self.assertEqual([r.method for r in requests], ["POST", "PATCH", "PATCH", "PATCH", "POST", "PATCH"])
+            self.assertIn('/messages/101?', requests[-1].full_url)
+            self.assertIn('thread_id=42', requests[-1].full_url)
+            self.assertEqual(state["publicNotificationMessage"]["createdAt"], base.isoformat())
+            state = step(24 * 60, ["health:vocadb_api_a", "public:root"], state)
+            self.assertEqual(requests[-1].method, "POST")
+            self.assertNotEqual(state["publicNotificationMessage"]["messageId"], "101")
+
+    def test_public_message_update_failure_keeps_outbox_and_retries_patch(self):
+        webhook = "https://discord.com/api/webhooks/123/fake"
+        previous = {"publicNotificationMessage": {
+            "messageId": "123456", "createdAt": "2026-11-04T00:00:00Z",
+            "webhookFingerprint": COLLECTOR.hashlib.sha256(webhook.encode()).hexdigest(),
+        }}
+        snapshot = {"checkedAt": "2026-11-04T01:00:00Z", "critical": [{"id": "public:ready", "message": "offline"}]}
+        with mock.patch.dict(os.environ, {"DIVA_ALERT_WEBHOOK_URL": webhook}, clear=True), mock.patch.object(COLLECTOR.urllib_request, "urlopen", side_effect=TimeoutError("offline")) as send:
+            failed = COLLECTOR.apply_critical_notification(snapshot, previous, coalesce_public=True)
+            self.assertEqual(failed["pendingIncidentIds"], ["public:ready"])
+            failed = COLLECTOR.apply_critical_notification(snapshot, failed, coalesce_public=True)
+            self.assertEqual([call.args[0].method for call in send.call_args_list], ["PATCH", "PATCH"])
+        context = mock.MagicMock()
+        context.__enter__.return_value.status = 200
+        context.__enter__.return_value.read.return_value = b'{"id":"999"}'
+        with mock.patch.dict(os.environ, {"DIVA_ALERT_WEBHOOK_URL": webhook}, clear=True), mock.patch.object(COLLECTOR.urllib_request, "urlopen", return_value=context):
+            failed = COLLECTOR.apply_critical_notification(snapshot, failed, coalesce_public=True)
+            self.assertEqual(failed["notificationStatus"], "failed")
+            self.assertEqual(failed["publicNotificationMessage"]["messageId"], "123456")
+
+    def test_deleted_public_message_is_replaced_once_on_retry_and_recovery_post_is_silent(self):
+        webhook = "https://discord.com/api/webhooks/123/fake"
+        previous = {"notificationSchemaVersion": 3, "notifiedCriticalIds": ["public:ready"],
+                    "publicNotificationMessage": {
+                        "messageId": "123456", "createdAt": "2026-11-04T00:00:00Z",
+                        "webhookFingerprint": COLLECTOR.hashlib.sha256(webhook.encode()).hexdigest(),
+                    }}
+        snapshot = {"checkedAt": "2026-11-04T01:00:00Z", "critical": []}
+        error = COLLECTOR.urllib_error.HTTPError(webhook, 404, "missing", {}, None)
+        with mock.patch.dict(os.environ, {"DIVA_ALERT_WEBHOOK_URL": webhook}, clear=True), mock.patch.object(COLLECTOR.urllib_request, "urlopen", side_effect=error):
+            failed = COLLECTOR.apply_critical_notification(snapshot, previous, coalesce_public=True)
+            self.assertIsNone(failed["publicNotificationMessage"])
+            self.assertEqual(failed["pendingRecoveryIds"], ["public:ready"])
+        context = mock.MagicMock()
+        context.__enter__.return_value.status = 200
+        context.__enter__.return_value.read.return_value = b'{"id":"999"}'
+        with mock.patch.dict(os.environ, {"DIVA_ALERT_WEBHOOK_URL": webhook}, clear=True), mock.patch.object(COLLECTOR.urllib_request, "urlopen", return_value=context) as send:
+            delivered = COLLECTOR.apply_critical_notification(snapshot, failed, coalesce_public=True)
+            self.assertEqual(send.call_args.args[0].method, "POST")
+            self.assertEqual(json.loads(send.call_args.args[0].data)["flags"], 4096)
+            self.assertEqual(delivered["pendingRecoveryIds"], [])
+
     def test_runtime_health_timer_preserves_one_minute_probe_cadence(self) -> None:
         timer = (
             Path(__file__)

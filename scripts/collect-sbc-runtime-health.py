@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures
+import hashlib
 import json
 import math
 import os
@@ -1148,9 +1149,11 @@ def apply_critical_notification(
     snapshot: dict[str, Any],
     previous: dict[str, Any],
     state_path: Path | None = None,
-    *, debounce: bool = False, quiet: bool = False,
+    *, debounce: bool = False, quiet: bool = False, coalesce_public: bool = False,
 ) -> dict[str, Any]:
     webhook = os.environ.get("DIVA_ALERT_WEBHOOK_URL")
+    if isinstance(previous.get("publicNotificationMessage"), dict):
+        snapshot = {**snapshot, "publicNotificationMessage": previous["publicNotificationMessage"]}
     current_ids = {item["id"] for item in snapshot["critical"]}
     previous_notified_ids = previous.get("notifiedCriticalIds")
     if not isinstance(previous_notified_ids, list):
@@ -1261,14 +1264,50 @@ def apply_critical_notification(
         ensure_ascii=False,
         separators=(",", ":"),
     ).encode("utf-8")
+    public_only = coalesce_public and all(
+        item_id.startswith("public:") for item_id in incident_ids | recovered_ids
+    )
+    previous_public = previous.get("publicNotificationMessage")
+    if not isinstance(previous_public, dict):
+        previous_public = {}
+    public_message_id = _discord_message_id(previous_public.get("messageId"))
+    created_at = _notification_time(previous_public.get("createdAt"))
+    observed_at = _notification_time(snapshot.get("checkedAt"))
+    fingerprint = hashlib.sha256(webhook.encode("utf-8")).hexdigest()
+    update_public = bool(
+        public_only and public_message_id and created_at and observed_at
+        and previous_public.get("webhookFingerprint") == fingerprint
+        and 0 <= (observed_at - created_at).total_seconds() < 86400
+    )
+    if public_only:
+        # Keep the shared message useful when different public probes recover
+        # at different times: include every still-active, acknowledged probe.
+        public_items = {item["id"]: item for item in incident_items}
+        public_items.update({
+            item_id: item for item_id, item in current_critical.items()
+            if item_id.startswith("public:") and item_id in notified_id_set
+        })
+        public_payload = json.loads(payload)
+        public_payload["content"] = _discord_content(
+            snapshot, list(public_items.values()), sorted(recovered_ids), incident_started_at,
+        )
+        payload = json.dumps(public_payload, ensure_ascii=False).encode("utf-8")
+    target = _discord_wait_url(webhook)
+    if update_public:
+        parts = urlsplit(target)
+        target = urlunsplit(parts._replace(path=f"{parts.path.rstrip('/')}/messages/{public_message_id}"))
+    if public_only and not update_public and not incident_ids:
+        recovery_payload = json.loads(payload)
+        recovery_payload["flags"] = 4096  # Discord SUPPRESS_NOTIFICATIONS
+        payload = json.dumps(recovery_payload, ensure_ascii=False).encode("utf-8")
     webhook_request = urllib_request.Request(
-        _discord_wait_url(webhook),
+        target,
         data=payload,
         headers={
             "content-type": "application/json",
             "user-agent": "DIVA-Player-Runtime-Health/1.0",
         },
-        method="POST",
+        method="PATCH" if update_public else "POST",
     )
     try:
         with urllib_request.urlopen(webhook_request, timeout=10) as response:
@@ -1283,6 +1322,14 @@ def apply_critical_notification(
         )
         if not message_id:
             raise RuntimeError("Discord response did not include a message id")
+        if update_public and message_id != public_message_id:
+            raise RuntimeError("Discord update returned a different message id")
+        if public_only:
+            snapshot = {**snapshot, "publicNotificationMessage": {
+                "messageId": message_id,
+                "createdAt": previous_public["createdAt"] if update_public else snapshot.get("checkedAt"),
+                "webhookFingerprint": fingerprint,
+            }}
         return {
             **snapshot,
             "notifiedCriticalIds": sorted((notified_id_set | incident_ids) - recovered_ids),
@@ -1295,9 +1342,13 @@ def apply_critical_notification(
             },
             "notificationSchemaVersion": 3,
             "lastDiscordMessageId": message_id,
-            "notificationStatus": "sent",
+            "notificationStatus": "updated" if update_public else "sent",
         }
     except Exception as exc:
+        # A deleted Discord message can be replaced on the next normal retry.
+        # Other delivery errors keep its identity and retry PATCH, never POST.
+        if update_public and isinstance(exc, urllib_error.HTTPError) and exc.code == 404:
+            notification_state["publicNotificationMessage"] = None
         message = f"HTTP {exc.code}" if isinstance(exc, urllib_error.HTTPError) else exc
         return {
             **notification_state,
@@ -1602,7 +1653,7 @@ def main(argv=None) -> int:
     # notifiedCriticalIds advances only after delivery, so the next timer run
     # retries while still avoiding duplicate alerts after a successful send.
     snapshot = apply_critical_notification(
-        snapshot, previous, latest_path, debounce=True,
+        snapshot, previous, latest_path, debounce=True, coalesce_public=True,
         quiet=notification_quiet_active(state_dir, now),
     )
     write_json_atomic(latest_path, snapshot)
