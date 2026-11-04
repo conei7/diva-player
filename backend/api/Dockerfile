@@ -1,7 +1,7 @@
-FROM mcr.microsoft.com/dotnet/aspnet:8.0-alpine-extra@sha256:930703110dcac1eb6efe4865bda1cca69515ca1605fcacec6e7ba94f29e6b0ec AS base
+FROM mcr.microsoft.com/dotnet/aspnet:8.0-alpine-extra@sha256:c4ffeafa8138a201e633a9a143c55ef2e21c5b00e209765682ddd52eca8657c4 AS base
 USER root
-RUN dotnet --list-runtimes | grep -F 'Microsoft.AspNetCore.App 8.0.32 ' && \
-    dotnet --list-runtimes | grep -F 'Microsoft.NETCore.App 8.0.32 '
+RUN dotnet --list-runtimes | grep -F 'Microsoft.AspNetCore.App 8.0.33 ' && \
+    dotnet --list-runtimes | grep -F 'Microsoft.NETCore.App 8.0.33 '
 # Use checksummed APKs directly: a stale mirror index must not downgrade OpenSSL.
 RUN set -eux; \
     case "$(cat /etc/alpine-release)" in 3.24.*) ;; *) exit 1 ;; esac; \

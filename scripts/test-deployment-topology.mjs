@@ -190,7 +190,7 @@ assert.deepEqual(databaseDockerignore.trim().split('\n'), [
 assert.match(webDockerignore, /(?:^|\n)\*\*\/__pycache__\/(?:\n|$)/);
 assert.match(webDockerfile, /node:22\.22\.2-alpine@sha256:8ea2348b068a9544dae7317b4f3aafcdc032df1647bb7d768a05a5cad1a7683f/);
 assert.match(webDockerfile, /nginxinc\/nginx-unprivileged:alpine@sha256:901e944d1f4fc2bd077e8f5568b98c1f6f8cdacf6b97a87747c43134a339b9a7/);
-assert.match(apiDockerfile, /aspnet:8\.0-alpine-extra@sha256:930703110dcac1eb6efe4865bda1cca69515ca1605fcacec6e7ba94f29e6b0ec/);
+assert.match(apiDockerfile, /aspnet:8\.0-alpine-extra@sha256:c4ffeafa8138a201e633a9a143c55ef2e21c5b00e209765682ddd52eca8657c4/);
 assert.match(apiDockerfile, /sdk:8\.0-alpine@sha256:8a80a27ddac789b4cb6d09d244f9c8d840da599c5ad22f7233c04be470e55261/);
 assert.match(gatewayDockerfile, /haproxy:3\.0-alpine@sha256:34cc7d1f6142464d7d2b73e2a1eef7392556dbf304160aef543e513cfd9e5162/);
 assert.match(
@@ -201,7 +201,7 @@ assert.doesNotMatch(webDockerfile, /apk upgrade/u);
 assert.match(webDockerfile, /RUN apk update && \\\s+apk add --no-cache/u);
 assert.match(
   webDockerfile,
-  /apk add --no-cache[\s\S]*libcrypto3=3\.5\.9-r0[\s\S]*libssl3=3\.5\.9-r0[\s\S]*libexpat=2\.9\.0-r0[\s\S]*libx11=1\.8\.14-r0/u,
+  /apk add --no-cache[\s\S]*libcrypto3=3\.5\.9-r0[\s\S]*libssl3=3\.5\.9-r0[\s\S]*libexpat=2\.10\.0-r0[\s\S]*libx11=1\.8\.14-r0/u,
 );
 assert.doesNotMatch(apiDockerfile, /apk upgrade/u);
 const webApkUpdateStart = webDockerfile.indexOf('RUN apk update &&');
@@ -218,6 +218,14 @@ for (const [architecture, expectedHash] of [
   assert.ok(webDockerfile.includes(`brotli_sha=${expectedHash}`));
 }
 assert.match(webDockerfile, /"\$brotli_sha[^\n]+brotli-libs-1\.2\.1-r0\.apk" \| sha256sum -c -/u);
+for (const [architecture, expectedHash] of [
+  ['x86_64', 'e7e7408ea787ed06d00159b0ff1f9b65a63cf634f36d9e0fa7512ce2c489a503'],
+  ['aarch64', '99144fe0b1bb9316a3bc30c38707996767806661f4a0456fcf4565ac92e79b0f'],
+]) {
+  const apk = await readFile(new URL(`../vendor/alpine/v3.24/${architecture}/libexpat-2.10.0-r0.apk`, import.meta.url));
+  assert.equal(createHash('sha256').update(apk).digest('hex'), expectedHash);
+  assert.ok(webDockerfile.includes(`expat_sha=${expectedHash}`));
+}
 for (const [architecture, curlHash, libcurlHash] of [
   ['x86_64', '531ae298451a4c1c44f563fc3b2eedc2c1d7e0a26a33bdfc0efe6faaff6a5942', '1f70ca404818805a6465b615bbfe84ef861488a963d7e630108ebd7fbaa51665'],
   ['aarch64', '3748c544ab475033cb028e415858b8a671ca7d43756e0149732c860588882ced', '64ae89f6e5d318ed5209778232191806ce49644ce9e09540b7d7830a5330d127'],

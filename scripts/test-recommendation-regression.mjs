@@ -310,26 +310,37 @@ async function getRepresentativeSeeds(baseUrl) {
     ...definition,
     items: (await getJson(baseUrl, definition.path)).data.items ?? [],
   })));
+  return selectRepresentativeSeeds(responses);
+}
+
+export function selectRepresentativeSeeds(responses) {
   const selected = [];
   const seen = new Set();
   const producerCounts = new Map();
   for (const response of responses) {
-    for (const item of response.items) {
-      if (selected.filter(seed => seed.group === response.group).length >= response.count) break;
-      if (!Number.isInteger(item.id) || seen.has(item.id)) continue;
-      const producerKeys = getSongProducerKeys(item);
-      if (producerKeys.some(key => (producerCounts.get(key) ?? 0) >= 2)) continue;
-      seen.add(item.id);
-      selected.push({ ...item, group: response.group });
-      for (const key of producerKeys) producerCounts.set(key, (producerCounts.get(key) ?? 0) + 1);
-    }
-  }
-  for (const response of responses) {
-    for (const item of response.items) {
-      if (selected.length >= SAMPLE_SIZE) break;
-      if (!Number.isInteger(item.id) || seen.has(item.id)) continue;
-      seen.add(item.id);
-      selected.push({ ...item, group: response.group });
+    const groupArtists = new Set();
+    const groupProducers = new Set();
+    let groupCount = 0;
+    // First preserve the global producer balance. If a group cannot fill its
+    // quota, relax that preference only, never its within-group independence.
+    for (const balanceProducers of [true, false]) {
+      for (const item of response.items) {
+        if (groupCount >= response.count) break;
+        if (!Number.isInteger(item.id) || seen.has(item.id)) continue;
+        const artist = normalizeArtist(item.artistString);
+        const producerKeys = getSongProducerKeys(item);
+        if (artist && groupArtists.has(artist)) continue;
+        if (producerKeys.some(key => groupProducers.has(key))) continue;
+        if (balanceProducers && producerKeys.some(key => (producerCounts.get(key) ?? 0) >= 2)) continue;
+        seen.add(item.id);
+        selected.push({ ...item, group: response.group });
+        groupCount += 1;
+        if (artist) groupArtists.add(artist);
+        for (const key of producerKeys) {
+          groupProducers.add(key);
+          producerCounts.set(key, (producerCounts.get(key) ?? 0) + 1);
+        }
+      }
     }
   }
   return selected.slice(0, SAMPLE_SIZE);

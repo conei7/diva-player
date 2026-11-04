@@ -10,6 +10,7 @@ import {
   persistAndAssertRecommendationReport,
   validateRecommendationHealth,
   getJson,
+  selectRepresentativeSeeds,
 } from './test-recommendation-regression.mjs';
 
 const endpoints = ['/api/recommend', '/api/recommend/metadata', '/api/recommend/audio'];
@@ -209,3 +210,37 @@ try {
 }
 
 console.log('PASS recommendation regression per-seed diagnostics and pre-assert report persistence');
+
+const missingAudioSeeds = selectRepresentativeSeeds([{ group: 'audio-missing', count: 2, items: [
+  { id: 1055041, artistString: 'idiocracy' },
+  { id: 1055044, artistString: '  ＩＤＩＯＣＲＡＣＹ  ' },
+  { id: 1501, artistString: 'another producer' },
+] }]);
+assert.deepEqual(missingAudioSeeds.map(seed => seed.id), [1055041, 1501]);
+const producer = id => [{ categories: 'Producer', artist: { id } }];
+const fallbackSeeds = selectRepresentativeSeeds([
+  { group: 'popular', count: 2, items: [
+    { id: 1, artistString: 'a', artists: producer(10) },
+    { id: 2, artistString: 'b', artists: producer(20) },
+  ] },
+  { group: 'recent', count: 2, items: [
+    { id: 3, artistString: 'c', artists: producer(10) },
+    { id: 4, artistString: 'd', artists: producer(20) },
+  ] },
+  { group: 'audio-missing', count: 2, items: [
+    { id: 5, artistString: 'same', artists: producer(10) },
+    { id: 6, artistString: 'same', artists: producer(20) },
+    { id: 7, artistString: 'different', artists: producer(20) },
+  ] },
+]);
+assert.deepEqual(fallbackSeeds.map(seed => seed.id), [1, 2, 3, 4, 5, 7]);
+const sharedProducerSeeds = selectRepresentativeSeeds([{ group: 'recent', count: 2, items: [
+  { id: 1, artistString: 'P feat A', artists: producer(10) },
+  { id: 2, artistString: 'P feat B', artists: producer(10) },
+  { id: 3, artistString: 'Q feat A', artists: producer(20) },
+] }]);
+assert.deepEqual(sharedProducerSeeds.map(seed => seed.id), [1, 3]);
+assert.equal(selectRepresentativeSeeds([{ group: 'audio-missing', count: 2, items: [
+  { id: 1, artistString: 'same' }, { id: 2, artistString: 'same' },
+] }]).length, 1, 'Never fill a missing slot with an equivalent input just to pass the count gate');
+console.log('PASS representative seeds remain independent within each group, including fallback');
