@@ -68,7 +68,8 @@ def offline(release):
             continue
 
 
-def archive_release(release, apply=False):
+def archive_identity(release):
+    """Read receipt metadata without expanding a DB; never authorizes a mutation."""
     root = release.parent
     if not re.fullmatch(r'web-release-[0-9a-f]{7,40}(?:-parallel)?', release.name):
         raise RuntimeError('Expected an exact Web release directory')
@@ -87,7 +88,12 @@ def archive_release(release, apply=False):
         databases.append((database['dbSha256'], database['dbSize']))
     if len(set(databases)) != 1:
         raise RuntimeError('Receipts refer to different databases')
-    expected = databases[0]
+    return databases[0]
+
+
+def archive_release(release, apply=False):
+    root = release.parent
+    expected = archive_identity(release)
     raw = release / 'runtime-scan-cache/db/trivy.db'
     target = raw.with_suffix('.db.gz')
     if not raw.exists():
@@ -142,14 +148,38 @@ def archive_release(release, apply=False):
 
 def deduplicate(root, apply=False):
     """Share archives with identical verified payloads; preserve re-encoding history."""
-    known = {}
-    results = []
+    candidates = {}
+    inodes = {}
     for release in sorted(root.glob('web-release-*')):
         target = release / 'runtime-scan-cache/db/trivy.db.gz'
         if not target.exists():
             continue
+        key = archive_identity(release)
+        safe_file(target, root)
+        inode = identity(target)[:2]
+        if inode in inodes and inodes[inode] != key:
+            raise RuntimeError('Linked archives have inconsistent receipts')
+        inodes[inode] = key
+        candidates.setdefault(key, {}).setdefault(inode, target)
+    known = {}
+    results = []
+    # Unique payloads and already-shared inodes need no mutation or decompression.
+    # Metadata only selects candidates: every distinct candidate's full payload is
+    # still hashed against its scan receipt before it can be linked or replaced.
+    for key, distinct in candidates.items():
+        if len(distinct) < 2:
+            continue
+        for target in distinct.values():
+            if digest(target, True) != key:
+                raise RuntimeError('Archived DB does not match receipt')
+    for release in sorted(root.glob('web-release-*')):
+        target = release / 'runtime-scan-cache/db/trivy.db.gz'
+        if not target.exists():
+            continue
+        key = archive_identity(release)
+        if len(candidates[key]) < 2:
+            continue
         archive_release(release)  # Validate the decompressed payload against all receipts.
-        key = digest(target, True)
         if key not in known:
             known[key] = target
             continue
@@ -157,6 +187,8 @@ def deduplicate(root, apply=False):
         if source.samefile(target):
             continue
         before, source_before = identity(target), identity(source)
+        if digest(target, True) != key or digest(source, True) != key:
+            raise RuntimeError('Candidate payload changed before deduplication')
         old_hash, old_size = digest(target)
         new_hash, new_size = digest(source)
         results.append({'release': release.name, 'duplicateOf': str(source), 'bytes': old_size})

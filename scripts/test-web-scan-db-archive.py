@@ -15,6 +15,34 @@ spec.loader.exec_module(archive)
 
 @unittest.skipUnless(os.name == 'posix', 'SBC filesystem semantics require Linux')
 class ArchiveTests(unittest.TestCase):
+    def test_unique_and_already_shared_payloads_do_not_expand_archives(self):
+        with tempfile.TemporaryDirectory() as temp, patch.object(archive, 'offline'):
+            root = Path(temp).resolve()
+            first, raw, _ = self.fixture(root)
+            archive.archive_release(first, True)
+            with patch.object(archive, 'digest', side_effect=AssertionError('unnecessary hash')):
+                self.assertEqual(archive.deduplicate(root, True), [])
+            second, raw2, _ = self.fixture(root, 'web-release-abcdef0')
+            raw2.unlink()
+            os.link(raw.with_suffix('.db.gz'), raw2.with_suffix('.db.gz'))
+            with patch.object(archive, 'digest', side_effect=AssertionError('unnecessary hash')):
+                self.assertEqual(archive.deduplicate(root, True), [])
+
+    def test_matching_receipts_never_allow_a_corrupt_candidate_to_replace_data(self):
+        with tempfile.TemporaryDirectory() as temp, patch.object(archive, 'offline'):
+            root = Path(temp).resolve()
+            first, raw, _ = self.fixture(root)
+            second, raw2, _ = self.fixture(root, 'web-release-abcdef0')
+            archive.archive_release(first, True)
+            archive.archive_release(second, True)
+            target = raw2.with_suffix('.db.gz')
+            target.write_bytes(gzip.compress(b'corrupt payload'))
+            original = raw.with_suffix('.db.gz').read_bytes()
+            with self.assertRaisesRegex(RuntimeError, 'does not match receipt'):
+                archive.deduplicate(root, True)
+            self.assertEqual(raw.with_suffix('.db.gz').read_bytes(), original)
+            self.assertFalse(raw.with_suffix('.db.gz').samefile(target))
+
     def fixture(self, root, name='web-release-1234567'):
         release = root / name
         db = release / 'runtime-scan-cache/db/trivy.db'

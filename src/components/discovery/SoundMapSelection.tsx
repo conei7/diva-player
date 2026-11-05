@@ -118,7 +118,9 @@ export default function SoundMapSelectionCard(props: SoundMapSelectionProps) {
 }
 
 const BAR_BOTTOM = 'calc(var(--floating-player-clearance, 0px) + var(--bottom-nav-height, 0px) + 8px)';
-const BAR_POSITION: CSSProperties = { bottom: BAR_BOTTOM };
+const BAR_POSITION: CSSProperties = {
+  bottom: `min(${BAR_BOTTOM}, calc(100dvh - var(--header-height) - var(--selection-bar-height, 0px) - 72px))`,
+};
 /**
  * The music layout's video card can reach high (under 560px wide and 420px tall, or phones under about
  * 450px tall): the bar stops right under the top bar (and the selection bar) instead of going under it,

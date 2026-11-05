@@ -665,9 +665,11 @@ public class QdrantService
         PointId? offset = null;
         do
         {
-            var page = await _client.ScrollAsync(_opts.CollectionAudio, limit: 256, offset: offset,
+            // Amortize gRPC round trips while keeping the disk catalogue's 256-row
+            // blocks and two-axis reads unchanged. One bounded page is 4 MiB of floats.
+            var page = await _client.ScrollAsync(_opts.CollectionAudio, limit: 1024, offset: offset,
                 payloadSelector: false, vectorsSelector: true, cancellationToken: cancellationToken);
-            var rows = new List<(int Id, float[] Vector)>(256);
+            var rows = new List<(int Id, float[] Vector)>(1024);
             foreach (var point in page.Result)
             {
                 var vector = ReadDenseVector(point.Vectors?.Vector);

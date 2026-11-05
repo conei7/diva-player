@@ -97,7 +97,35 @@ export default function ToastBehavior({
         if (surface && toastRef.current) resizeObserver?.observe(toastRef.current);
       }
       if (!surface) {
-        onModalBottomChange(null);
+        const toast = toastRef.current?.getBoundingClientRect();
+        const videoElement = document.querySelector<HTMLElement>('[data-testid="global-player"]:not([aria-hidden="true"]) .global-player-video');
+        const video = videoElement?.getBoundingClientRect();
+        if (videoElement) resizeObserver?.observe(videoElement);
+        if (toastRef.current) resizeObserver?.observe(toastRef.current);
+        // On a song page the video can reach the default bottom toast position.
+        // Measure the actual frame (including scrolling), not an assumed aspect ratio.
+        if (toast) {
+          const insets = insetProbeRef.current ? getComputedStyle(insetProbeRef.current) : null;
+          const safeTop = Number.parseFloat(insets?.paddingTop ?? '') || 0;
+          const safeBottom = Number.parseFloat(insets?.paddingBottom ?? '') || 0;
+          let top = Math.max(safeTop, Math.min(toast.top, window.innerHeight - safeBottom - toast.height));
+          if (video && video.width > 1 && video.height > 1
+            && toast.left < video.right && toast.right > video.left
+            && top < video.bottom && top + toast.height > video.top) {
+            if (video.top - toast.height >= safeTop) {
+              top = Math.max(safeTop, video.top - toast.height - 8);
+            } else if (video.bottom + toast.height <= window.innerHeight - safeBottom) {
+              top = Math.min(window.innerHeight - safeBottom - toast.height, video.bottom + 8);
+            }
+          }
+          if (Math.abs(top - toast.top) > .5) {
+            onModalBottomChange(Math.round(window.innerHeight - top - toast.height));
+            return;
+          }
+        }
+        // Keep a safe position until the video leaves: clearing it immediately
+        // would alternate between the overlapping default and its safe position.
+        if (!video || video.bottom <= 0 || video.top >= window.innerHeight) onModalBottomChange(null);
         return;
       }
       const box = layoutBox(surface);
@@ -124,6 +152,7 @@ export default function ToastBehavior({
     const modality = new MutationObserver(schedule);
     modality.observe(document.body, { subtree: true, attributes: true, attributeFilter: ['aria-modal'] });
     window.addEventListener('resize', schedule);
+    window.addEventListener('scroll', schedule, true);
     centered.addEventListener('change', schedule);
     return () => {
       if (frame) cancelAnimationFrame(frame);
@@ -131,6 +160,7 @@ export default function ToastBehavior({
       portals.disconnect();
       modality.disconnect();
       window.removeEventListener('resize', schedule);
+      window.removeEventListener('scroll', schedule, true);
       centered.removeEventListener('change', schedule);
       onModalBottomChange(null);
     };

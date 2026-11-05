@@ -373,6 +373,10 @@ async function switchLayoutInSettings(page, value) {
 }
 
 try {
+  if (process.argv.includes('--maintenance-only')) {
+    await checkRemainingOverlaps();
+    if (caseFailures.length) throw new Error(caseFailures.join('\n'));
+  } else {
   // A. The standard layout is the default and never downloads the music frame.
   {
     const context = await browser.createBrowserContext();
@@ -934,10 +938,12 @@ try {
   }
 
   await checkHistoryWidthChanges();
+  await checkRemainingOverlaps();
 
   if (caseFailures.length > 0) throw new Error(`${caseFailures.length} short-window case(s) failed:\n${caseFailures.join('\n')}`);
   if (pageErrors.length > 0) throw new Error(`Uncaught page errors:\n${pageErrors.join('\n')}`);
   console.log('PASS music layout E2E');
+  }
 } finally {
   await browser.close();
 }
@@ -1609,5 +1615,76 @@ async function checkShortSongPages() {
     if (toggle.disabled || toggle.pressed !== 'true') throw new Error(`the 再生中 toggle must be back on ${JSON.stringify(toggle)}`);
     await assertVideoVisible(page, 'the docked video after the song page');
     console.log('PASS 1280×400: the 再生中 panel, its video and its toggle come back after the song page');
+  });
+}
+
+async function checkRemainingOverlaps() {
+  const settle = () => new Promise(resolve => setTimeout(resolve, 400));
+  for (const layout of ['standard', 'music']) {
+    for (const viewport of [{ width: 1000, height: 500 }, { width: 1920, height: 700 }]) {
+      await runCase(`${layout} song-page toast ${viewport.width}×${viewport.height}`, async context => {
+        const page = await preparePage(context, { layout, viewport });
+        await open(page, `watch?v=${songs[0].id}`);
+        await startPlayback(page);
+        await page.waitForFunction(() => document.querySelector('[data-testid="global-player"]')?.style.position === 'absolute');
+        await page.keyboard.press('m');
+        await page.waitForSelector('[data-testid="toast-host"] > div:not([aria-hidden])');
+        await settle();
+        const toast = await toastState(page);
+        if (!toast || toast.top < 0 || toast.bottom > viewport.height || toast.overVideo) throw new Error(`toast overlaps song-page video ${JSON.stringify(toast)}`);
+        console.log(`PASS ${layout} ${viewport.width}×${viewport.height} song-page toast stays clear of video`);
+      });
+    }
+  }
+  for (const viewport of [{ width: 568, height: 300 }, { width: 667, height: 240 }]) {
+    await runCase(`standard corner ${viewport.width}×${viewport.height}`, async context => {
+      const page = await preparePage(context, { layout: 'standard', viewport });
+      await open(page);
+      await startPlayback(page);
+      await page.waitForSelector('.global-mini-player');
+      await page.click('[data-selection-toggle]');
+      await page.waitForSelector('[data-testid="selection-fab"]');
+      await settle();
+      const state = await videoState(page);
+      if (state.error || state.width < 199.5 || state.height < 100 || !state.inside || state.blocked || state.over.length) throw new Error(`standard corner under selection/header ${JSON.stringify(state)}`);
+      console.log(`PASS standard corner ${viewport.width}×${viewport.height} clears selection/header`);
+    });
+  }
+  for (const viewport of [{ width: 1280, height: 300 }, { width: 1440, height: 280 }, { width: 1280, height: 420 }]) {
+    await runCase(`docked panel ${viewport.width}×${viewport.height}`, async context => {
+      const page = await preparePage(context, { layout: 'music', viewport });
+      await open(page);
+      await startPlayback(page);
+      await page.waitForSelector('.music-docked-player');
+      await settle();
+      const state = await videoState(page);
+      const slot = await page.$eval('.music-video-slot', element => ({ width: element.clientWidth, height: element.clientHeight }));
+      if (state.error || state.width < 199.5 || state.height < 100 || !state.inside || state.blocked || state.over.length || Math.abs(state.height - slot.height) > 1 || Math.abs(state.width - slot.width) > 1) throw new Error(`panel and video must match above transport ${JSON.stringify({ state, slot })}`);
+      console.log(`PASS docked ${viewport.width}×${viewport.height} video matches slot above transport`);
+    });
+  }
+  await runCase('standard phone sound-map selection and toast', async context => {
+    const page = await preparePage(context, { layout: 'standard', viewport: { width: 390, height: 340, isMobile: true, hasTouch: true } });
+    await open(page, 'sound-map?seedSongId=123');
+    await startPlayback(page);
+    const dot = '[data-testid="sound-map-canvas"] g[role="button"][tabindex="0"]';
+    await page.waitForSelector(dot);
+    await page.evaluate(selector => document.querySelector(selector).focus(), dot);
+    await page.keyboard.press('Enter');
+    await page.waitForSelector('section[aria-labelledby="sound-map-selected-title"]');
+    await muteWithKey(page, 'ミュートしました');
+    const state = await page.evaluate(() => {
+      const bar = document.querySelector('section[aria-labelledby="sound-map-selected-title"]');
+      const rect = bar.getBoundingClientRect();
+      const header = document.querySelector('header').getBoundingClientRect();
+      const buttons = [...bar.querySelectorAll('button')].filter(button => !button.disabled).map(button => {
+        const b = button.getBoundingClientRect();
+        return button.contains(document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2));
+      });
+      return { top: rect.top, headerBottom: header.bottom, buttons };
+    });
+    const toast = await toastState(page);
+    if (state.top < state.headerBottom - .5 || state.buttons.some(value => !value) || !toast || toast.top < 0 || toast.overVideo) throw new Error(`sound-map selection/notification must stay reachable ${JSON.stringify({ state, toast })}`);
+    console.log('PASS standard phone sound-map selection buttons reachable and toast on screen');
   });
 }

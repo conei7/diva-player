@@ -382,7 +382,7 @@ html[data-bottom-nav="true"] {
     bottom: calc(env(safe-area-inset-bottom, 0px) + 8px);
   }
   html:not([data-shell="music"]) .global-mini-player .global-player-video {
-    height: 200px;
+    height: min(200px, calc(100dvh - var(--header-height) - var(--selection-bar-height, 0px) - env(safe-area-inset-bottom, 0px) - 10px));
     max-height: none;
     aspect-ratio: auto;
   }
@@ -716,6 +716,15 @@ html[data-shell="music"][data-music-bottom="none"] .music-side-panel {
   background: #000;
 }
 .music-docked-player .global-player-video { min-height: 200px; }
+
+/* The panel's frame must end above the transport bar, even in a short desktop window. */
+@media (min-width: 1024px) {
+  .music-video-slot,
+  .music-docked-player .global-player-video {
+    min-height: min(200px, max(0px, calc(100dvh - var(--header-height) - var(--music-panel-head) - var(--bottom-nav-height) - 8px)));
+    max-height: max(0px, calc(100dvh - var(--header-height) - var(--music-panel-head) - var(--bottom-nav-height) - 8px));
+  }
+}
 
 /* 下の再生バー（操作は 72px の中。その下はホームインジケーターの余白） */
 .music-player-bar {

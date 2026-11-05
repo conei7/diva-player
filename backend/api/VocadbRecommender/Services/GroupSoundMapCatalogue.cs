@@ -95,8 +95,14 @@ internal sealed class GroupSoundMapCatalogue : IDisposable
         public void Append(IReadOnlyList<(int Id, float[] Vector)> rows)
         {
             if (rows.Count == 0) return;
-            if (rows.Count > 256 || Count + rows.Count > GroupSoundMapIndex.MaximumSongs)
+            if (Count + rows.Count > GroupSoundMapIndex.MaximumSongs)
                 throw new InvalidOperationException("Group map catalogue exceeds its bounded disk budget");
+            for (var start = 0; start < rows.Count; start += 256)
+                AppendBlock(rows.Skip(start).Take(256).ToArray());
+        }
+
+        private void AppendBlock(IReadOnlyList<(int Id, float[] Vector)> rows)
+        {
             var file = _file ?? throw new ObjectDisposedException(nameof(Builder));
             for (var i = 0; i < rows.Count; i++)
             {

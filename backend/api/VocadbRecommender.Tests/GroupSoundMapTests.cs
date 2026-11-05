@@ -8,6 +8,24 @@ namespace VocadbRecommender.Tests;
 
 public sealed class GroupSoundMapTests
 {
+    [Fact]
+    public void LargerScrollPagesPreserveAllCoordinatesAndVariances()
+    {
+        var rows = Enumerable.Range(1, 1283).Select(id => (id,
+            Enumerable.Range(0, 1024).Select(d => (float)Math.Sin(id * .1 + d)).ToArray())).ToArray();
+        using var small = new GroupSoundMapCatalogue.Builder(Path.GetTempPath());
+        using var large = new GroupSoundMapCatalogue.Builder(Path.GetTempPath());
+        for (var at = 0; at < rows.Length; at += 256) small.Append(rows.Skip(at).Take(256).ToArray());
+        for (var at = 0; at < rows.Length; at += 1024) large.Append(rows.Skip(at).Take(1024).ToArray());
+        using var oldCatalogue = small.Complete();
+        using var newCatalogue = large.Complete();
+        using var expected = oldCatalogue.Acquire();
+        using var actual = newCatalogue.Acquire();
+        Assert.Equal(expected.Count, actual.Count);
+        Assert.Equal(expected.Variances.ToArray(), actual.Variances.ToArray());
+        Assert.Equal(expected.ReadAxes(570, 457), actual.ReadAxes(570, 457));
+    }
+
     [Theory]
     [InlineData("1,2", null, null, null)]
     [InlineData("1,1,2", null, null, null)]
