@@ -24,10 +24,9 @@ import {
   rankKnownSongs,
   uniqueSongsById,
 } from '../utils/recommendationScoring';
-import { rerankRecommendationCandidatesDetailed } from '../utils/recommendationReranking';
 import { filterVoiceSynthSongs } from '../utils/voiceSynthSongs';
 import { useRecommendationDebugStore } from '../stores/recommendationDebugStore';
-import { createRankingSeed } from '../utils/rankingRandomization';
+import { createRankingSeed, type RankingSeed } from '../utils/rankingRandomization';
 import { rerankDisplayedSongs, useRecommendationExposureStore } from '../stores/recommendationExposureStore';
 import {
   applyDiscoveryFilter,
@@ -45,9 +44,10 @@ import { isDeterministicHomeRankingCategory } from '../utils/homeRanking';
 import { formatTrendingReason } from '../utils/trendingReason';
 import { formatWeeklyRankingReason } from '../utils/weeklyRankingReason';
 import { excludeHiddenSongs, useHiddenSongStore } from '../stores/hiddenSongStore';
-import { selectRotatingStartupSongs } from '../utils/startupRecommendations';
+import { selectStartupSongs } from '../utils/startupRecommendations';
+import { deferRecentlyShown, selectRecentlyShown } from '../utils/recentlyShownSongs';
 import { getProgressiveWindow } from '../utils/progressiveWindow';
-import { homeRecommendationPools } from '../utils/homeRecommendationPools';
+import { homeRecommendationPools, rerankHomeRecommendationsPreferringUnseen } from '../utils/homeRecommendationPools';
 import { isSearchType, type SearchType } from '../utils/routes';
 import { useTranslate, useTranslateSourceText, type TranslationKey } from '../i18n';
 import { useLanguageStore } from '../stores/languageStore';
@@ -122,7 +122,6 @@ const APPEND_HOME_PAGE_SIZE = 36;
  */
 const DISCOVERY_MIN_COUNT = 12;
 const STARTUP_POOL_SIZE = PAGE_SIZE * 2;
-const STARTUP_ROTATION_KEY = 'diva-startup-rotation-v1';
 const MAX_FAVORITE_PRODUCER_REQUESTS = 4;
 const MAX_AUTOFILL_PAGES = 2;
 const HOME_CATEGORY_PREFETCH_DELAY_MS = 500;
@@ -146,17 +145,25 @@ function persistStartupRecommendations(songs: Song[]): void {
   });
 }
 
-function nextStartupRotation(): number {
-  try {
-    // The freshly generated cache is already shown in its base order before
-    // the first reload, so an unset counter starts from the next rotation.
-    const stored = Number.parseInt(sessionStorage.getItem(STARTUP_ROTATION_KEY) || '1', 10);
-    const rotation = Number.isFinite(stored) && stored >= 0 ? stored : 1;
-    sessionStorage.setItem(STARTUP_ROTATION_KEY, String(rotation + 1));
-    return rotation;
-  } catch {
-    return Date.now();
-  }
+interface FeedVariation {
+  /** The history entry (location.key) it was made for. */
+  entryKey: string;
+  seed: RankingSeed;
+  /** Songs on screen in the five minutes before the entry opened (selectRecentlyShown). */
+  recentlyShown: ReadonlyMap<number, number>;
+}
+
+/**
+ * Each new Home entry (reload, the logo, ホーム) gets its own seed and the songs shown in the last
+ * five minutes, so its feeds open with other songs. Chips, Back and later pages of the entry keep
+ * them; the songs the feed itself shows do not move it while it is open.
+ */
+function newFeedVariation(entryKey: string): FeedVariation {
+  return {
+    entryKey,
+    seed: createRankingSeed(),
+    recentlyShown: selectRecentlyShown(useRecommendationExposureStore.getState().entries, Date.now()),
+  };
 }
 
 function isAdvancedSearchEntry(state: unknown): boolean {
@@ -335,7 +342,9 @@ function HomeFeed({ ref, belowShelves }: HomeFeedProps) {
   // fallback starts returning the same page forever.
   const sourceSongIdsRef = useRef<Set<number>>(new Set(restoredHomeFeed?.songs.map(song => song.id) ?? []));
   const requestIdRef = useRef(0);
-  const rankingSeedRef = useRef(createRankingSeed());
+  // The entry's seed and the songs shown before it opened (newFeedVariation); renewed for a new entry.
+  const [initialFeedVariation] = useState(() => newFeedVariation(location.key));
+  const feedVariationRef = useRef(initialFeedVariation);
   const pendingHomePaintRef = useRef<{ startedAt: number; category: HomeCategoryId } | null>(
     restoredHomeFeed ? null : { startedAt: 0, category: 'recommended' },
   );
@@ -377,7 +386,6 @@ function HomeFeed({ ref, belowShelves }: HomeFeedProps) {
     favoriteProducerIds: favoriteProducers.map(producer => producer.id),
     recentProducerIds,
     recentSongIds: entries.slice(0, 50).map(entry => entry.song.id),
-    rankingSeed: rankingSeedRef.current,
   }), [entries, favoriteProducers, globalFilterSettings, recentProducerIds]);
   // What the shown feed depends on: changing it rebuilds the feed. Playlists, ratings, the playing
   // song and the history only shape the next request (saving or rating a tile keeps the feed as it is).
@@ -409,8 +417,11 @@ function HomeFeed({ ref, belowShelves }: HomeFeedProps) {
       // fresh grid has already arrived and move the user's visible choices.
       if (cachedSongs.length === 0 || sourceSongIdsRef.current.size > 0) return;
 
-      const rotation = nextStartupRotation();
-      const selectedSongs = selectRotatingStartupSongs(cachedSongs, rotation, FIRST_HOME_PAGE_SIZE);
+      const selectedSongs = selectStartupSongs(cachedSongs, {
+        seed: feedVariationRef.current.seed,
+        recentlyShown: feedVariationRef.current.recentlyShown,
+        limit: FIRST_HOME_PAGE_SIZE,
+      });
       setStartupSongs(selectedSongs);
       setLoading(false);
       if (!firstHomeContentRecordedRef.current) {
@@ -422,7 +433,7 @@ function HomeFeed({ ref, belowShelves }: HomeFeedProps) {
             category: 'recommended',
             displayedCount: selectedSongs.length,
             poolCount: cachedSongs.length,
-            rotation,
+            recentlyShownCount: selectedSongs.filter(song => feedVariationRef.current.recentlyShown.has(song.id)).length,
             source: 'personalized-cache',
           },
         });
@@ -555,7 +566,7 @@ function HomeFeed({ ref, belowShelves }: HomeFeedProps) {
       ...entries.map(entry => entry.song.id), ...playlistSongIds,
       ...Object.keys(ratings).map(Number), ...Object.keys(implicitFeedback).map(Number),
     ]);
-    const detailed = rerankRecommendationCandidatesDetailed(homeRecommendationPools(
+    const detailed = rerankHomeRecommendationsPreferringUnseen(homeRecommendationPools(
       knownSongs,
       hybridCandidates.filter(song => eligibleDiscoveryIds.has(song.id)),
       audioCandidates.filter(song => eligibleDiscoveryIds.has(song.id)),
@@ -567,19 +578,19 @@ function HomeFeed({ ref, belowShelves }: HomeFeedProps) {
       ratings,
       implicitFeedback,
       excludeIds,
-      rankingSeed: rankingSeedRef.current,
+      rankingSeed: feedVariationRef.current.seed,
       explorationStrength: 0.055,
       exposureEntries: useRecommendationExposureStore.getState().entries,
       favoriteProducerIds: new Set(favoriteProducers.map(producer => producer.id)),
       recentSongs: songs.slice(-12),
-    });
+    }, feedVariationRef.current.recentlyShown);
     const mixed = detailed.ranked;
     const result = mixed.map(item => item.song);
     useRecommendationDebugStore.getState().recordSnapshot({
       id: `${Date.now()}-home-${pageNum}`,
       surface: 'home',
       generatedAt: Date.now(),
-      rankingSeed: rankingSeedRef.current,
+      rankingSeed: feedVariationRef.current.seed,
       seedSongIds: [...seedIds, ...preferenceSeedIds],
       familiarityBias: 0,
       candidateCount: detailed.trace.length,
@@ -734,7 +745,9 @@ function HomeFeed({ ref, belowShelves }: HomeFeedProps) {
       const newSourceCount = sourceIds.filter(id => !sourceSongIdsRef.current.has(id)).length;
       sourceIds.forEach(id => sourceSongIdsRef.current.add(id));
       if (category !== 'recommended' && !isDeterministicHomeRankingCategory(category)) {
-        result = rerankDisplayedSongs(result, rankingSeedRef.current);
+        // The page is a fixed API window: songs shown in the last five minutes move to its end.
+        const { seed, recentlyShown } = feedVariationRef.current;
+        result = deferRecentlyShown(rerankDisplayedSongs(result, seed), recentlyShown);
       }
       if (requiresExternalViewCounts(globalFilterSettings)) {
         const externalViewsStartedAt = performanceNow();
@@ -834,6 +847,9 @@ function HomeFeed({ ref, belowShelves }: HomeFeedProps) {
       suppressStaleHomeFeedCacheRef.current = true;
     }
 
+    if (feedVariationRef.current.entryKey !== location.key) {
+      feedVariationRef.current = newFeedVariation(location.key);
+    }
     setLoading(true);
     setSongs([]);
     setPage(0);

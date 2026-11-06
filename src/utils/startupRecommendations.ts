@@ -1,21 +1,30 @@
 import type { Song } from '../types/vocadb';
+import { rankingNoise, type RankingSeed } from './rankingRandomization';
+import { deferRecentlyShown } from './recentlyShownSongs';
 
-const STABLE_TOP_COUNT = 4;
+/**
+ * How far the per-view seed can move a cached song, as a share of the saved pool (rankingNoise is
+ * within ±2): about ±30% of the positions, so the strongest songs usually stay on the first screen
+ * while the rest of the page changes from one reload to the next.
+ */
+const STARTUP_SHUFFLE = 0.15;
 
-function positiveModulo(value: number, divisor: number): number {
-  if (divisor <= 0) return 0;
-  return ((value % divisor) + divisor) % divisor;
+export interface StartupSongSelection {
+  /** The new Home entry's seed: equal seeds give the same page. */
+  seed: RankingSeed;
+  /** Songs shown in the last few minutes (selectRecentlyShown): placed after unseen ones. */
+  recentlyShown: ReadonlyMap<number, number>;
+  limit: number;
 }
 
 /**
- * Keeps the highest-confidence songs anchored while rotating the remaining
- * personalized pool on each full page load. This changes both content (when
- * the pool exceeds the page size) and order without mixing in generic songs.
+ * The first page shown from the saved personalized pool before the fresh mix arrives. The saved
+ * order is the confidence; the seed shuffles it within a bounded distance, and songs shown in the
+ * last few minutes only fill what unseen ones leave. Generic songs are never mixed in.
  */
-export function selectRotatingStartupSongs(
-  songs: Song[],
-  rotation: number,
-  limit: number,
+export function selectStartupSongs(
+  songs: readonly Song[],
+  { seed, recentlyShown, limit }: StartupSongSelection,
 ): Song[] {
   const target = Math.max(0, Math.floor(limit));
   if (target === 0) return [];
@@ -26,23 +35,12 @@ export function selectRotatingStartupSongs(
     seen.add(song.id);
     return true;
   });
-  if (uniqueSongs.length <= 1) return uniqueSongs.slice(0, target);
-  if (uniqueSongs.length <= STABLE_TOP_COUNT) {
-    const offset = positiveModulo(Math.floor(rotation), uniqueSongs.length);
-    return [...uniqueSongs.slice(offset), ...uniqueSongs.slice(0, offset)].slice(0, target);
-  }
-
-  const coreCount = Math.min(STABLE_TOP_COUNT, target, uniqueSongs.length);
-  const core = uniqueSongs.slice(0, coreCount);
-  const tail = uniqueSongs.slice(coreCount);
-  const remaining = Math.min(target - core.length, tail.length);
-  if (remaining <= 0) return core;
-
-  const rotationStep = tail.length <= remaining ? 1 : remaining;
-  const offset = positiveModulo(Math.floor(rotation) * rotationStep, tail.length);
-  const selected = Array.from(
-    { length: remaining },
-    (_, index) => tail[(offset + index) % tail.length],
-  );
-  return [...core, ...selected];
+  const shuffled = uniqueSongs
+    .map((song, index) => ({
+      song,
+      score: 1 - index / uniqueSongs.length + rankingNoise(seed, song.id) * STARTUP_SHUFFLE,
+    }))
+    .sort((a, b) => b.score - a.score)
+    .map(item => item.song);
+  return deferRecentlyShown(shuffled, recentlyShown, target);
 }

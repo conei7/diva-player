@@ -65,4 +65,90 @@ try {
   assert(quotaResponses >= 2, 'Quota response must recover without losing the feed');
   assert.equal(new Set(displayed).size, displayed.length);
   console.log(`PASS home recommendations: ${displayed.length} cards, stable ${initial.length}-song prefix, first-page discovery, half familiar candidates, visible loading, quota recovery, pagination >40`);
+
+  // A new Home entry (the logo, a reload) opens with songs not on screen in the last five minutes.
+  const context = await browser.createBrowserContext();
+  const variety = await context.newPage();
+  await variety.setViewport({ width: 1440, height: 900 });
+  await variety.evaluateOnNewDocument(songs => {
+    if (sessionStorage.getItem('fixture-seeded')) return;
+    sessionStorage.setItem('fixture-seeded', '1');
+    localStorage.setItem('diva_uiLanguage', JSON.stringify('en'));
+    localStorage.setItem('diva_playlists', JSON.stringify([{ id: 'fixture', name: 'Saved', songs, createdAt: 1, updatedAt: 1 }]));
+    localStorage.setItem('diva_ratings', JSON.stringify(Object.fromEntries(songs.map(s => [s.id, 5]))));
+  }, known);
+  await variety.setRequestInterception(true);
+  variety.on('request', async request => {
+    const url = new URL(request.url());
+    const path = url.pathname;
+    if (!path.includes('/backend-api/') && url.hostname !== 'vocadb.net') return void request.continue();
+    const start = Number(url.searchParams.get('start') ?? url.searchParams.get('offset') ?? 0);
+    const count = Number(url.searchParams.get('maxResults') ?? url.searchParams.get('count') ?? 24);
+    const ids = (url.searchParams.get('ids') ?? '').split(',').filter(Boolean).map(Number);
+    let body = { items: [] };
+    if (path.endsWith('/health') || path.endsWith('/ready')) body = { status: 'ok', postgres: true, qdrant: true };
+    else if (path.endsWith('/discovery-eligibility')) body = { items: ids.map(songId => ({ songId, discoveryEligible: true })) };
+    else if (path.endsWith('/batch') || path.endsWith('/details')) body = { items: ids.map(song) };
+    else if (path.endsWith('/views')) body = {};
+    else if (path.endsWith('/search')) {
+      await new Promise(resolve => setTimeout(resolve, 300));
+      body = { items: Array.from({ length: count }, (_, i) => song(200000 + start + i)), totalCount: 1000 };
+    } else if (path.includes('/recommend')) {
+      await new Promise(resolve => setTimeout(resolve, 300));
+      const items = Array.from({ length: count }, (_, i) => song(300000 + start + i));
+      body = { items: items.map(s => ({ songId: s.id, score: 1 })), cards: items };
+    }
+    void request.respond({ status: 200, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }, body: JSON.stringify(body) });
+  });
+  const feedIds = () => variety.$$eval('.song-card h3 a[href*="/watch?v="]', links => links.map(link => Number(new URL(link.href).searchParams.get('v'))));
+  const shownIds = () => variety.evaluate(() => Object.keys(JSON.parse(localStorage.getItem('diva-recommendation-exposure-v1') || '{}')).map(Number));
+  const firstPageLoads = () => variety.evaluate(() => window.__DIVA_PERFORMANCE__?.getMetrics()
+    .filter(metric => metric.name === 'home.load' && metric.detail?.page === 0 && !metric.detail?.stale).length ?? 0);
+  const waitForShown = async minimum => {
+    await variety.waitForFunction(count => Object.keys(JSON.parse(localStorage.getItem('diva-recommendation-exposure-v1') || '{}')).length >= count, { timeout: 20000 }, minimum);
+    await new Promise(resolve => setTimeout(resolve, 500));
+    return shownIds();
+  };
+
+  await variety.goto(base, { waitUntil: 'domcontentloaded' });
+  await variety.waitForFunction(() => window.__DIVA_PERFORMANCE__?.getMetrics().some(metric => metric.name === 'home.load' && metric.detail?.page === 0), { timeout: 45000 });
+  const firstFeed = (await feedIds()).slice(0, 24);
+  const shownBeforeLogo = await waitForShown(8);
+  assert(shownBeforeLogo.every(id => firstFeed.includes(id)), 'Only songs of the opened feed were recorded as shown');
+
+  const loadsBeforeLogo = await firstPageLoads();
+  await variety.evaluate(() => {
+    const logo = [...document.querySelectorAll('a[aria-label^="DIVA Player"]')].find(link => link.offsetParent !== null);
+    logo.click();
+  });
+  await variety.waitForFunction(previous => (window.__DIVA_PERFORMANCE__?.getMetrics()
+    .filter(metric => metric.name === 'home.load' && metric.detail?.page === 0 && !metric.detail?.stale).length ?? 0) > previous, { timeout: 45000 }, loadsBeforeLogo);
+  const logoFeed = (await feedIds()).slice(0, 24);
+  assert.equal(logoFeed.length, 24, 'The logo opens a full first page');
+  assert.deepEqual(logoFeed.filter(id => shownBeforeLogo.includes(id)), [], `The logo must open with songs not shown in the last five minutes: ${JSON.stringify({ shownBeforeLogo, logoFeed })}`);
+
+  const shownBeforeReload = await waitForShown(shownBeforeLogo.length + 8);
+  await variety.waitForFunction(() => new Promise(resolve => {
+    const request = indexedDB.open('diva-listening-history');
+    request.onsuccess = () => {
+      const db = request.result;
+      const names = [...db.objectStoreNames];
+      db.close();
+      resolve(names.length > 0);
+    };
+    request.onerror = () => resolve(false);
+  }), { timeout: 20000 });
+  await new Promise(resolve => setTimeout(resolve, 1000));
+  // A full page load of Home, as a reload is (vite preview does not serve the logo's `/diva-player` without a slash).
+  await variety.goto(base, { waitUntil: 'domcontentloaded' });
+  await variety.waitForFunction(() => window.__DIVA_PERFORMANCE__?.getMetrics().some(metric => metric.name === 'home.first-content'), { timeout: 45000 });
+  const reloadFirstContent = await variety.evaluate(() => window.__DIVA_PERFORMANCE__.getMetrics().find(metric => metric.name === 'home.first-content'));
+  const reloadFeed = (await feedIds()).slice(0, 24);
+  const firstShownIndex = reloadFeed.findIndex(id => shownBeforeReload.includes(id));
+  const unseenAfterShown = firstShownIndex >= 0 && reloadFeed.slice(firstShownIndex).some(id => !shownBeforeReload.includes(id));
+  assert(reloadFeed.length > 0 && !shownBeforeReload.includes(reloadFeed[0]), `A reload must open with a song not shown in the last five minutes: ${JSON.stringify({ reloadFeed, shownBeforeReload, reloadFirstContent })}`);
+  assert(!unseenAfterShown, `Recently shown songs must only follow the unseen ones: ${JSON.stringify({ reloadFeed, shownBeforeReload })}`);
+  assert.notDeepEqual(reloadFeed.slice(0, 8), logoFeed.slice(0, 8), 'A reload must change the first row');
+  await context.close();
+  console.log(`PASS home variety: logo ${logoFeed.length} songs none of ${shownBeforeLogo.length} recently shown, reload (${reloadFirstContent.detail?.source}) leads with unseen songs`);
 } finally { await browser.close(); }

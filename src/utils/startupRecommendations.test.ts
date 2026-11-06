@@ -1,32 +1,66 @@
 import { describe, expect, it } from 'vitest';
 import type { Song } from '../types/vocadb';
-import { selectRotatingStartupSongs } from './startupRecommendations';
+import { selectStartupSongs } from './startupRecommendations';
 
 function songs(count: number): Song[] {
   return Array.from({ length: count }, (_, index) => ({ id: index + 1 } as Song));
 }
 
-describe('selectRotatingStartupSongs', () => {
-  it('keeps the strongest four songs and changes the remaining content', () => {
-    const first = selectRotatingStartupSongs(songs(48), 0, 24);
-    const second = selectRotatingStartupSongs(songs(48), 1, 24);
+const ids = (items: Song[]) => items.map(song => song.id);
+const NO_RECENT = new Map<number, number>();
 
-    expect(first.slice(0, 4).map(song => song.id)).toEqual([1, 2, 3, 4]);
-    expect(second.slice(0, 4).map(song => song.id)).toEqual([1, 2, 3, 4]);
-    expect(second.map(song => song.id)).not.toEqual(first.map(song => song.id));
-    expect(second.slice(4).some(song => !first.some(candidate => candidate.id === song.id))).toBe(true);
+describe('selectStartupSongs', () => {
+  it('gives the same page for the same seed and another page for another seed', () => {
+    const pool = songs(48);
+    const first = selectStartupSongs(pool, { seed: 11, recentlyShown: NO_RECENT, limit: 24 });
+
+    expect(ids(selectStartupSongs(pool, { seed: 11, recentlyShown: NO_RECENT, limit: 24 }))).toEqual(ids(first));
+    const others = [12, 13, 14, 15].map(seed => ids(selectStartupSongs(pool, { seed, recentlyShown: NO_RECENT, limit: 24 })));
+    expect(others.some(other => other.join() !== ids(first).join())).toBe(true);
+    expect(others.some(other => other.some(id => !ids(first).includes(id)))).toBe(true);
   });
 
-  it('changes ordering even when the pool contains exactly one page', () => {
-    const first = selectRotatingStartupSongs(songs(24), 0, 24);
-    const second = selectRotatingStartupSongs(songs(24), 1, 24);
+  it('keeps the strongest songs on the page and varies the middle of the pool', () => {
+    const pool = songs(48);
+    const pages = 500;
+    const shownTimes = new Map<number, number>();
+    for (let seed = 1; seed <= pages; seed++) {
+      for (const id of ids(selectStartupSongs(pool, { seed: seed * 7919, recentlyShown: NO_RECENT, limit: 24 }))) {
+        shownTimes.set(id, (shownTimes.get(id) ?? 0) + 1);
+      }
+    }
+    const share = (id: number) => (shownTimes.get(id) ?? 0) / pages;
 
-    expect(new Set(second.map(song => song.id))).toEqual(new Set(first.map(song => song.id)));
-    expect(second.map(song => song.id)).not.toEqual(first.map(song => song.id));
+    for (const id of [1, 2, 3, 4, 5, 6, 7]) expect(share(id)).toBeGreaterThanOrEqual(0.98);
+    for (const id of [43, 44, 45, 46, 47, 48]) expect(share(id)).toBeLessThanOrEqual(0.02);
+    for (const id of [16, 20, 24, 28, 32]) {
+      expect(share(id)).toBeGreaterThan(0.1);
+      expect(share(id)).toBeLessThan(0.9);
+    }
   });
 
-  it('deduplicates malformed pools and rotates small pools', () => {
-    const duplicated = [songs(3)[0], songs(3)[0], songs(3)[1], songs(3)[2]];
-    expect(selectRotatingStartupSongs(duplicated, 1, 24).map(song => song.id)).toEqual([2, 3, 1]);
+  it('opens with songs not shown in the last few minutes', () => {
+    const pool = songs(48);
+    const before = ids(selectStartupSongs(pool, { seed: 21, recentlyShown: NO_RECENT, limit: 24 }));
+    const recentlyShown = new Map(before.map(id => [id, 1]));
+    const after = ids(selectStartupSongs(pool, { seed: 22, recentlyShown, limit: 24 }));
+
+    expect(after).toHaveLength(24);
+    expect(after.filter(id => recentlyShown.has(id))).toEqual([]);
+  });
+
+  it('fills with recently shown songs when the pool has nothing else', () => {
+    const pool = songs(24);
+    const recentlyShown = new Map(ids(pool).slice(0, 20).map(id => [id, 1]));
+    const page = ids(selectStartupSongs(pool, { seed: 3, recentlyShown, limit: 24 }));
+
+    expect(page.slice(0, 4).sort((a, b) => a - b)).toEqual([21, 22, 23, 24]);
+    expect(new Set(page)).toEqual(new Set(ids(pool)));
+  });
+
+  it('deduplicates malformed pools', () => {
+    const [a, b, c] = songs(3);
+    expect(ids(selectStartupSongs([a, a, b, c, { id: Number.NaN } as Song], { seed: 1, recentlyShown: NO_RECENT, limit: 24 })).sort())
+      .toEqual([1, 2, 3]);
   });
 });

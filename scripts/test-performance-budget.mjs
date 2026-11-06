@@ -140,7 +140,6 @@ async function seedLargeHistory(page) {
     const startupSnapshot = { version: 2, savedAt: cacheSavedAt, songs: personalizedSongs };
     localStorage.setItem('diva-startup-recommendations', JSON.stringify(startupSnapshot));
     localStorage.removeItem('diva-startup-recommendations-backup');
-    sessionStorage.removeItem('diva-startup-rotation-v1');
     localStorage.setItem('diva-hidden-songs', JSON.stringify({
       state: {
         hiddenSongs: {
