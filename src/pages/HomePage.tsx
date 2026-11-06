@@ -155,8 +155,9 @@ interface FeedVariation {
 
 /**
  * Each new Home entry (reload, the logo, ホーム) gets its own seed and the songs shown in the last
- * five minutes, so its feeds open with other songs. Chips, Back and later pages of the entry keep
- * them; the songs the feed itself shows do not move it while it is open.
+ * five minutes, so its feeds open with other songs. Chips and later pages keep them while the feed
+ * stays open, and the songs it shows meanwhile do not move it. Back restores the list it showed as
+ * it was; the remounted feed makes a new variation for what it loads next.
  */
 function newFeedVariation(entryKey: string): FeedVariation {
   return {
@@ -342,7 +343,7 @@ function HomeFeed({ ref, belowShelves }: HomeFeedProps) {
   // fallback starts returning the same page forever.
   const sourceSongIdsRef = useRef<Set<number>>(new Set(restoredHomeFeed?.songs.map(song => song.id) ?? []));
   const requestIdRef = useRef(0);
-  // The entry's seed and the songs shown before it opened (newFeedVariation); renewed for a new entry.
+  // Made when the feed mounts (Back too: its restored list is kept as it was) and for each new entry.
   const [initialFeedVariation] = useState(() => newFeedVariation(location.key));
   const feedVariationRef = useRef(initialFeedVariation);
   const pendingHomePaintRef = useRef<{ startedAt: number; category: HomeCategoryId } | null>(
