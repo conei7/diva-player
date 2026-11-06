@@ -186,7 +186,7 @@ function LibraryPlaceholder({ rail }: { rail: boolean }) {
 
 /**
  * The library part of the column (scrolls inside it): the 「ライブラリ」 heading with ＋ (new playlist)
- * and the link to the playlist library, the fixed entries (後で聴く, 評価した曲, 履歴, お気に入りP,
+ * and the link to the playlist library, the fixed entries (後で聴く, 評価した曲, 履歴, フォロー中,
  * レポート) and the user's playlists in the library page's saved order, grouped under their folders.
  * Reads the playlist store as it is (the app loads it); only ＋ adds a playlist, through the library
  * page's own dialog, and then opens it.

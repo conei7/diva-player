@@ -5,12 +5,19 @@ import { useTranslate, useTranslateSourceText } from '../../i18n';
 import { useLanguageStore } from '../../stores/languageStore';
 import { ChevronDownIcon, PlayIcon } from '../ui/icons';
 import { cx } from '../ui/overlay';
+import Tooltip from '../ui/Tooltip';
+import ServiceIcon from '../watch/ServiceIcon';
 import { videoSourceLabel, withVideoName } from '../watch/videoLabels';
 
 interface PVSourceSelectorProps {
   song?: Song | null;
   /** Narrower pill (kept for older callers). */
   compact?: boolean;
+  /**
+   * The song page's action row: only the playing video's service mark and ▾ (the full 「YouTube（公式）」
+   * is in the tooltip, the accessible name and the list).
+   */
+  iconOnly?: boolean;
 }
 
 type PlayablePV = NonNullable<Song['pvs']>[number];
@@ -24,7 +31,7 @@ function pvKey(pv: PlayablePV): string {
  * 選択肢は「YouTube（公式）」「ニコニコ（転載）」/ 'YouTube (official)'。同じサービス・種別が複数ある時だけ短い動画名を足す。
  * PV が 2 つ以上あり、この曲を再生中の時だけ出す。
  */
-export default function PVSourceSelector({ song, compact = false }: PVSourceSelectorProps) {
+export default function PVSourceSelector({ song, compact = false, iconOnly = false }: PVSourceSelectorProps) {
   const tk = useTranslate();
   const t = useTranslateSourceText();
   const language = useLanguageStore(state => state.language);
@@ -43,6 +50,46 @@ export default function PVSourceSelector({ song, compact = false }: PVSourceSele
   const currentKey = currentPV ? `${currentPV.service}:${currentPV.pvId || currentPV.id}` : '';
   const selected = playablePVs.find(pv => pvKey(pv) === currentKey) ?? playablePVs[0];
 
+  const select = (
+    <select
+      className="absolute inset-0 h-full w-full cursor-pointer appearance-none rounded-full opacity-0"
+      value={currentKey}
+      onChange={event => {
+        const next = playablePVs.find(pv => pvKey(pv) === event.target.value);
+        if (next) selectPV(next);
+      }}
+      aria-label={tk('pvSelectorAria')}
+    >
+      {playablePVs.map(pv => (
+        <option
+          key={pvKey(pv)}
+          value={pvKey(pv)}
+          style={{ background: 'var(--color-yt-menu)', color: 'var(--color-yt-text)' }}
+        >
+          {optionLabel(pv)}
+        </option>
+      ))}
+    </select>
+  );
+
+  if (iconOnly) {
+    return (
+      <Tooltip content={baseLabel(selected)}>
+        <span
+          data-testid="pv-source-selector"
+          className={cx(
+            'relative inline-flex h-9 shrink-0 items-center gap-0.5 rounded-full bg-yt-tonal pl-2.5 pr-1.5 text-yt-text transition-colors duration-150 hover:bg-yt-tonal-hover max-sm:h-10',
+            'has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-yt-focus',
+          )}
+        >
+          <ServiceIcon service={selected.service} size={20} />
+          <ChevronDownIcon size={18} />
+          {select}
+        </span>
+      </Tooltip>
+    );
+  }
+
   return (
     <span
       className={cx(
@@ -54,25 +101,7 @@ export default function PVSourceSelector({ song, compact = false }: PVSourceSele
       <PlayIcon size={20} />
       <span aria-hidden="true" className="min-w-0 truncate">{baseLabel(selected)}</span>
       <ChevronDownIcon size={20} />
-      <select
-        className="absolute inset-0 h-full w-full cursor-pointer appearance-none rounded-full opacity-0"
-        value={currentKey}
-        onChange={event => {
-          const next = playablePVs.find(pv => pvKey(pv) === event.target.value);
-          if (next) selectPV(next);
-        }}
-        aria-label={tk('pvSelectorAria')}
-      >
-        {playablePVs.map(pv => (
-          <option
-            key={pvKey(pv)}
-            value={pvKey(pv)}
-            style={{ background: 'var(--color-yt-menu)', color: 'var(--color-yt-text)' }}
-          >
-            {optionLabel(pv)}
-          </option>
-        ))}
-      </select>
+      {select}
     </span>
   );
 }

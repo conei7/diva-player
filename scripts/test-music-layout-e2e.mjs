@@ -421,19 +421,18 @@ try {
     await assertVideoVisible(page, 'standard mini player after switching back');
     console.log('PASS switching back restores the standard frame without touching playback');
 
-    // The top bar's ⋮ offers the same choice, one click away from any page.
+    // The top bar's layout switch offers the same choice, one click away from any page.
     for (const value of ['music', 'standard']) {
       const other = value === 'music' ? 'standard' : 'music';
-      await page.click('header button[aria-label="その他の操作"]');
       await page.waitForSelector(`[data-testid="topnav-layout-${value}"]`, { visible: true });
-      const checked = await page.$eval(`[data-testid="topnav-layout-${other}"]`, item => item.getAttribute('aria-checked'));
-      if (checked !== 'true') throw new Error(`The ⋮ menu must mark the layout on screen (${other}), got ${checked}`);
+      const pressed = await page.$eval(`[data-testid="topnav-layout-${other}"]`, item => item.getAttribute('aria-pressed'));
+      if (pressed !== 'true') throw new Error(`The top bar switch must mark the layout on screen (${other}), got ${pressed}`);
       await page.click(`[data-testid="topnav-layout-${value}"]`);
       await page.waitForFunction(expected => (expected === 'music')
         === (document.documentElement.dataset.shell === 'music'), { timeout: 15_000 }, value);
       await assertSinglePlayer(page, `switching to ${value} from the top bar`);
     }
-    console.log('PASS the top bar ⋮ switches the layout both ways without touching playback');
+    console.log('PASS the top bar switch changes the layout both ways without touching playback');
     await context.close();
   }
 
@@ -986,9 +985,8 @@ async function checkHistoryWidthChanges() {
   }
 
   const togglePanel = page => page.click('[data-testid="music-now-playing-toggle"]');
-  // Opens the top bar's ⋮ and returns the click on the layout's item.
+  // Waits for the top bar's layout switch and returns the click on the layout's button.
   async function layoutSwitch(page, layout) {
-    await page.click('header button[aria-label="その他の操作"]');
     await page.waitForSelector(`[data-testid="topnav-layout-${layout}"]`, { visible: true });
     return async () => {
       await page.click(`[data-testid="topnav-layout-${layout}"]`);

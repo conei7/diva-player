@@ -137,7 +137,7 @@ export default function KnowledgeMapPage() {
     <PageShell className="pb-8">
       <div data-testid="knowledge-map-page" aria-busy={showSkeleton || undefined}>
         <PageHeader
-          title={t('知ってる度')}
+          title={t('網羅率')}
           meta={(
             <span className="relative inline-flex h-5 items-center align-top sm:-top-0.5">
               <InfoTip label={t('このマップについて')}>
@@ -160,13 +160,13 @@ export default function KnowledgeMapPage() {
 
         {failed && !result ? (
           <div role="alert" className="rounded-card bg-yt-raised">
-            <EmptyState icon={<ErrorIcon />} title={t('知ってる度を読み込めませんでした')} action={{ label: t('再試行'), onClick: retry }} />
+            <EmptyState icon={<ErrorIcon />} title={t('網羅率を読み込めませんでした')} action={{ label: t('再試行'), onClick: retry }} />
           </div>
         ) : showSkeleton || !data ? (
           <KnowledgeMapSkeleton label={t('読み込み中…')} />
         ) : (
           <>
-            <section aria-label={t('知ってる度')} className="mb-6">
+            <section aria-label={t('網羅率')} className="mb-6">
               {data.knownSongCount === 0 ? (
                 <div className="flex flex-wrap items-center gap-x-4 gap-y-3">
                   <p className="m-0 text-base font-medium leading-6 text-yt-text">{t('まだ知っている曲がありません')}</p>
@@ -243,7 +243,7 @@ export default function KnowledgeMapPage() {
               viewMode={viewMode}
               initialSongs={data.tiles}
             /> : atlasLoading ? <SkeletonBlock className="h-[clamp(360px,60vh,560px)] max-sm:h-80" /> : atlasFailed ? <div role="alert">
-              <EmptyState icon={<ErrorIcon />} title={t('知ってる度を読み込めませんでした')} action={{ label: t('再試行'), onClick: retry }} />
+              <EmptyState icon={<ErrorIcon />} title={t('網羅率を読み込めませんでした')} action={{ label: t('再試行'), onClick: retry }} />
             </div> : <KnowledgeTreemap
               key={`${platform}-${viewMode}`}
               platform={platform}

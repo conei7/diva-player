@@ -16,8 +16,8 @@ function normalizedType(artistType: ArtistType | undefined): 'Producer' | 'Circl
 }
 
 /**
- * 「お気に入りP」 pill next to the producer name (YouTube's subscribe position).
- * Not yet a favorite: white (primary). A favorite: tonal with ✓.
+ * 「フォロー」 pill next to the producer name (YouTube's subscribe position).
+ * Not followed: white (primary) 「フォロー」. Followed: tonal 「フォロー中」 with ✓.
  * Several producers: the pill opens a menu with one check item per producer.
  */
 export default function FavoriteProducerButton({ producers }: { producers: FavoriteProducerTarget[] }) {
@@ -32,9 +32,9 @@ export default function FavoriteProducerButton({ producers }: { producers: Favor
     artistType: normalizedType(producer.artistType),
   });
   const ariaFor = (producer: FavoriteProducerTarget) => (isFavorite(producer.id)
-    ? t('{producer}をお気に入りPから解除', { producer: producer.name })
-    : t('{producer}をお気に入りPに登録', { producer: producer.name }));
-  const label = tk('watchFavoriteProducer');
+    ? t('{producer}のフォローを解除', { producer: producer.name })
+    : t('{producer}をフォロー', { producer: producer.name }));
+  const labelFor = (following: boolean) => (following ? tk('watchFollowingProducer') : tk('watchFavoriteProducer'));
 
   if (producers.length === 0) return null;
 
@@ -54,7 +54,7 @@ export default function FavoriteProducerButton({ producers }: { producers: Favor
           toggle(producer);
         }}
       >
-        {label}
+        {labelFor(favorite)}
       </Button>
     );
   }
@@ -69,10 +69,10 @@ export default function FavoriteProducerButton({ producers }: { producers: Favor
           trailingIcon={<ChevronDownIcon />}
           data-testid="watch-favorite-producer-pill"
         >
-          {label}
+          {labelFor(anyFavorite)}
         </Button>
       )}
-      label={label}
+      label={labelFor(anyFavorite)}
       align="end"
     >
       {producers.map(producer => (

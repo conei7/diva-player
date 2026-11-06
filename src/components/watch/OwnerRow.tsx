@@ -14,7 +14,7 @@ const TOGGLE_BUTTON =
   'inline-flex min-h-10 min-w-10 shrink-0 cursor-pointer items-center justify-center rounded-full px-2 text-sm font-normal text-yt-text-secondary transition-colors duration-150 hover:bg-yt-tonal hover:text-yt-text sm:min-h-7 sm:min-w-0 sm:text-xs';
 
 /**
- * The producer row under the title: producer names (links) · お気に入りP (the vocalists follow the title).
+ * The producer row under the title: producer names (links) · フォロー (the vocalists follow the title).
  * More than three producers collapse into 「他N名」. On phones the one-line name links get a 40px tall
  * hit area (padding inside the clipped line, so the layout does not move).
  */

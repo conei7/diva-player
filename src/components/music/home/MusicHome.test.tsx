@@ -53,7 +53,7 @@ describe('MusicHome while the shelves load', () => {
     useHistoryStore.setState({ hasHydrated: false, storedPlayCount: 12, entries: [] });
     usePlaylistStore.setState({ hasHydrated: false });
     const html = render();
-    // Recent + 週間ランキング, 急上昇 and 新着 (no favourite producers, so no お気に入りP shelf).
+    // Recent + 週間ランキング, 急上昇 and 新着 (no followed producers, so no フォロー中のPの曲 shelf).
     expect(count(html, 'data-testid="music-shelf-loading"')).toBe(4);
     expect(html).not.toContain('data-testid="music-shelf"');
     expect(html).not.toContain('aspect-square');

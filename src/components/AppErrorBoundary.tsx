@@ -1,6 +1,7 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
 import { translateSourceText } from '../i18n';
 import { useLanguageStore } from '../stores/languageStore';
+import BrandMark from './layout/BrandMark';
 
 interface AppErrorBoundaryProps {
   children: ReactNode;
@@ -36,15 +37,7 @@ export default class AppErrorBoundary extends Component<AppErrorBoundaryProps, A
 
     return (
       <main className="flex min-h-dvh flex-col items-center justify-center gap-6 bg-yt-bg px-6 text-center text-yt-text">
-        <span
-          aria-hidden="true"
-          className="flex size-12 items-center justify-center rounded-xl text-white"
-          style={{ background: 'var(--gradient-brand)' }}
-        >
-          <svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-            <path d="m12 3 .01 10.55c-.59-.34-1.27-.55-2-.55C7.79 13 6 14.79 6 17s1.79 4 4.01 4S14 19.21 14 17V7h4V3h-6z" />
-          </svg>
-        </span>
+        <BrandMark size={48} />
         <div role="alert">
           <h1 className="text-xl font-medium leading-7">{translateSourceText(language, '問題が発生しました')}</h1>
         </div>

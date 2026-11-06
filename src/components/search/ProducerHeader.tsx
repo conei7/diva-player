@@ -35,7 +35,7 @@ interface ProducerHeaderProps {
 
 /**
  * Header of a producer's (or another artist's) song list: name, 「ボカロP · 61曲」 and the
- * お気に入りP pill. It has no /watch link on purpose (the first result link must be the first song).
+ * フォロー中 pill. It has no /watch link on purpose (the first result link must be the first song).
  */
 export default function ProducerHeader({ artist, role, songCount, loading, songs }: ProducerHeaderProps) {
   const tk = useTranslate();
@@ -52,8 +52,8 @@ export default function ProducerHeader({ artist, role, songCount, loading, songs
     loading ? null : formatCount(songCount, 'song', language),
   ].filter(Boolean).join(' · ');
 
-  // The same pill as on the song page and the お気に入りP page (“Favorite producer”, singular).
-  const favoriteLabel = tk('watchFavoriteProducer');
+  // The same pill as on the song page and the フォロー中 page (フォロー / フォロー中).
+  const favoriteLabel = isFavorite ? tk('watchFollowingProducer') : tk('watchFavoriteProducer');
 
   const toggleFavorite = () => {
     const favoriteType = artistType === 'Circle' || artistType === 'Band' ? artistType : 'Producer';
@@ -104,8 +104,8 @@ function FavoriteButton({ isFavorite, name, onToggle, label, fullWidth = false }
       size={fullWidth ? 'lg' : 'md'}
       aria-pressed={isFavorite}
       aria-label={isFavorite
-        ? t('{producer}をお気に入りPから解除', { producer: name })
-        : t('{producer}をお気に入りPに登録', { producer: name })}
+        ? t('{producer}のフォローを解除', { producer: name })
+        : t('{producer}をフォロー', { producer: name })}
       onClick={onToggle}
     >
       {label}

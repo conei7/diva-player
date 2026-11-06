@@ -9,9 +9,9 @@ const messages = {
     sidebarHistory: '履歴',
     sidebarRatings: '評価した曲',
     sidebarReports: 'レポート',
-    sidebarKnowledgeMap: '知ってる度',
+    sidebarKnowledgeMap: '網羅率',
     sidebarSoundMap: '曲調マップ',
-    sidebarFavoriteProducers: 'お気に入りP',
+    sidebarFavoriteProducers: 'フォロー中',
     minutes: '{count}分',
     copied: 'コピーしました',
     originalSong: '原曲',
@@ -44,7 +44,7 @@ const messages = {
     categoryRecent: '新着',
     categoryDeep: '隠れた名曲',
     categoryHistoryBased: '最近聴いたP',
-    categoryFavoriteProducers: 'お気に入りP',
+    categoryFavoriteProducers: 'フォロー中',
     searchResults: '「{query}」の検索結果',
     searchResultsTitle: '検索結果',
     noSongsFound: '曲が見つかりませんでした',
@@ -113,7 +113,7 @@ const messages = {
     // ── area:shell ──
     sidebarHomeShort: 'ホーム',
     sidebarChorusShort: 'サビ発掘',
-    sidebarFavoriteProducersShort: 'お気に入りP',
+    sidebarFavoriteProducersShort: 'フォロー中',
     sidebarPlaylistsShort: 'プレイリスト',
     sidebarHistoryShort: '履歴',
     suggestionProducer: 'ボカロP',
@@ -131,8 +131,9 @@ const messages = {
     playlistReviewIssues: '確認',
     // ── /area:playlists ──
     // ── area:watch ──
-    // Keys: the same Japanese is a source text with another English (お気に入りP = Favorite producers, 自動再生 = Autoplayed).
-    watchFavoriteProducer: 'お気に入りP',
+    // Keys: the same Japanese is a source text with another English (フォロー中 = Following, 自動再生 = Autoplayed).
+    watchFavoriteProducer: 'フォロー',
+    watchFollowingProducer: 'フォロー中',
     watchAutoplayDivider: '自動再生',
     // ── /area:watch ──
     // ── area:home ──
@@ -144,8 +145,8 @@ const messages = {
     libraryBackupSaveFailed: 'バックアップを保存できませんでした',
     libraryProducerCount: '{count}人',
     libraryProducerCountOne: '1人',
-    libraryNoFavoriteProducers: 'お気に入りPはまだいません',
-    libraryFavoriteProducerPill: 'お気に入りP',
+    libraryNoFavoriteProducers: 'フォロー中のPはまだいません',
+    libraryFavoriteProducerPill: 'フォロー中',
     // ── /area:library ──
     // ── area:discovery ──
     // ── /area:discovery ──

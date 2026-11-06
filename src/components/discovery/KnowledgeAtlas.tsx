@@ -120,7 +120,7 @@ export default function KnowledgeAtlas({ data, platform, knownIds, viewMode, ini
       <Button size="sm" variant="ghost" aria-label={t('拡大')} disabled={zoom >= MAX_ZOOM} onClick={() => changeZoom(zoom * 2)}>＋</Button>
     </div>
     <div ref={frameRef} className="relative h-[clamp(360px,60vh,560px)] overflow-hidden rounded-card bg-yt-bg max-sm:-mx-3 max-sm:h-80 max-sm:rounded-none">
-      <div ref={viewportRef} data-testid="knowledge-map-viewport" tabIndex={0} role="group" aria-label={t('知ってる度')}
+      <div ref={viewportRef} data-testid="knowledge-map-viewport" tabIndex={0} role="group" aria-label={t('網羅率')}
         className="absolute inset-0 overflow-auto overscroll-contain"
         onScroll={event => {
           scrollingUntil.current = performance.now() + 80;

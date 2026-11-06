@@ -76,10 +76,11 @@ try {
   });
 
   await page.goto(new URL('watch?v=900009&autoplay=0', baseUrl), { waitUntil: 'domcontentloaded', timeout: 60_000 });
-  // 表示しない is a pill of the watch page's action bar (the bar has no ⋮).
-  await page.waitForFunction(() => [...document.querySelectorAll('[data-testid="watch-action-bar"] button')]
-    .some(button => button.textContent?.trim() === '表示しない'), { timeout: 30_000 });
-  await page.$$eval('[data-testid="watch-action-bar"] button', buttons => {
+  // 表示しない is in the action row's ⋯ menu.
+  await page.waitForSelector('[data-testid="watch-more-actions"]', { timeout: 30_000 });
+  await page.click('[data-testid="watch-more-actions"]');
+  await page.waitForSelector('[role="menu"] [data-testid="watch-hide-song"]', { visible: true, timeout: 10_000 });
+  await page.$$eval('[role="menu"] [data-testid="watch-hide-song"]', buttons => {
     buttons.find(button => button.textContent?.trim() === '表示しない')?.click();
   });
   await page.waitForFunction(() => {

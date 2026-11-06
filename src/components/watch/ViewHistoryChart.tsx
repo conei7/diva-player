@@ -392,23 +392,28 @@ export default function ViewHistoryChart({ songId }: { songId: number }) {
 
   return (
     <section className="flex min-w-0 flex-col" aria-label={t('再生数の推移')}>
-      <h3 className="text-base font-bold leading-[22px] text-yt-text">{t('再生数の推移')}</h3>
-      <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">
-        <div className="flex flex-wrap gap-2" role="group" aria-label={t('表示指標')}>
-          {(['growth', 'cumulative'] as const).map(option => (
-            <Chip key={option} selected={metric === option} onClick={() => setMetric(option)}>
-              {t(option === 'growth' ? '増加数' : '累計')}
-            </Chip>
-          ))}
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+        <h3 className="text-base font-bold leading-[22px] text-yt-text">{t('再生数の推移')}</h3>
+        <div className="flex flex-wrap items-center gap-2">
+          <SegmentedChoice
+            label={t('表示指標')}
+            value={metric}
+            onChange={setMetric}
+            options={[
+              { value: 'growth', label: t('増加数') },
+              { value: 'cumulative', label: t('累計') },
+            ]}
+          />
+          <SegmentedChoice
+            label={t('期間')}
+            value={range}
+            onChange={setRange}
+            options={(['7d', '30d', '90d', 'all'] as const).map(option => ({
+              value: option,
+              label: option === 'all' ? t('全期間') : t('{count}日', { count: Number.parseInt(option, 10) }),
+            }))}
+          />
         </div>
-        <div className="flex flex-wrap gap-2" role="group" aria-label={t('期間')}>
-          {(['7d', '30d', '90d', 'all'] as const).map(option => (
-            <Chip key={option} selected={range === option} onClick={() => setRange(option)}>
-              {option === 'all' ? t('全期間') : t('{count}日', { count: Number.parseInt(option, 10) })}
-            </Chip>
-          ))}
-        </div>
-        {legend}
       </div>
 
       {loading ? (
@@ -510,6 +515,45 @@ export default function ViewHistoryChart({ songId }: { songId: number }) {
         ))}
       </div>
       )}
+      {legend && <div className="mt-3">{legend}</div>}
     </section>
+  );
+}
+
+/**
+ * Two to four mutually exclusive options in one pill (増加数 / 累計, the period): lighter than a row of
+ * chips. Each option is a toggle button with aria-pressed, like the chips it replaces.
+ */
+function SegmentedChoice<T extends string>({
+  label,
+  value,
+  onChange,
+  options,
+}: {
+  label: string;
+  value: T;
+  onChange: (value: T) => void;
+  options: readonly { value: T; label: string }[];
+}) {
+  return (
+    <div role="group" aria-label={label} className="inline-flex shrink-0 items-center rounded-full bg-yt-tonal p-0.5">
+      {options.map(option => {
+        const selected = option.value === value;
+        return (
+          <button
+            key={option.value}
+            type="button"
+            aria-pressed={selected}
+            onClick={() => onChange(option.value)}
+            className={cx(
+              'h-9 cursor-pointer whitespace-nowrap rounded-full px-3 text-xs font-medium leading-4 transition-colors duration-150 sm:h-7',
+              selected ? 'bg-yt-inverse text-yt-on-inverse' : 'text-yt-text-secondary hover:text-yt-text',
+            )}
+          >
+            {option.label}
+          </button>
+        );
+      })}
+    </div>
   );
 }

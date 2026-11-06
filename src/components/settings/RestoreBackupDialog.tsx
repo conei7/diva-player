@@ -113,7 +113,7 @@ export default function RestoreBackupDialog({ preview, currentCounts, onClose, o
     { key: 'playlistCount', label: t('プレイリスト'), value: preview.playlistCount },
     { key: 'playlistSongCount', label: t('登録曲'), value: preview.playlistSongCount },
     { key: 'folderCount', label: tk('settingsFolders'), value: preview.folderCount },
-    { key: 'favoriteProducerCount', label: t('お気に入りP'), value: preview.favoriteProducerCount },
+    { key: 'favoriteProducerCount', label: t('フォロー中のP'), value: preview.favoriteProducerCount },
     { key: 'hiddenSongCount', label: t('表示しない曲'), value: preview.hiddenSongCount },
   ];
 
@@ -143,7 +143,7 @@ export default function RestoreBackupDialog({ preview, currentCounts, onClose, o
           case 'ratings': return t('評価を保存できませんでした');
           case 'playlists': return t('プレイリストとフォルダーを保存できませんでした');
           case 'hiddenSongs': return t('表示しない曲を保存できませんでした');
-          case 'favoriteProducers': return t('お気に入りPを保存できませんでした');
+          case 'favoriteProducers': return t('フォロー中のPを保存できませんでした');
           case 'globalFilters': return t('フィルターを保存できませんでした');
           case 'theme': return t('見た目を保存できませんでした');
           case 'language': return t('言語を保存できませんでした');
@@ -160,7 +160,7 @@ export default function RestoreBackupDialog({ preview, currentCounts, onClose, o
       case 'ratings': return t('評価を元に戻せませんでした');
       case 'playlists': return t('プレイリストとフォルダーを元に戻せませんでした');
       case 'hiddenSongs': return t('表示しない曲を元に戻せませんでした');
-      case 'favoriteProducers': return t('お気に入りPを元に戻せませんでした');
+      case 'favoriteProducers': return t('フォロー中のPを元に戻せませんでした');
       case 'globalFilters': return t('フィルターを元に戻せませんでした');
       case 'theme': return t('見た目を元に戻せませんでした');
       case 'language': return t('言語を元に戻せませんでした');
@@ -184,7 +184,7 @@ export default function RestoreBackupDialog({ preview, currentCounts, onClose, o
         title: t('今のデータを置き換えますか？'),
         // One sentence per line (ConfirmHost keeps the line breaks), so the extra restores stay readable.
         message: [
-          t('履歴・評価・プレイリスト・表示しない曲・お気に入りP・フィルターがバックアップの内容になります'),
+          t('履歴・評価・プレイリスト・表示しない曲・フォロー中のP・フィルターがバックアップの内容になります'),
           preview.parsed.sections.preferences?.theme ? t('見た目の設定も復元します') : null,
           preview.parsed.sections.preferences?.language ? t('言語設定も復元します') : null,
         ].filter(Boolean).join('\n'),

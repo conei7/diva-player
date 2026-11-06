@@ -20,6 +20,8 @@ const EXTRA_SHORT_REASONS: Readonly<Record<string, string>> = {
 const FULL_REASON_WORDING: Readonly<Record<string, string>> = {
   '最初に選んだ曲のベクトルに近いおすすめ': '最初に選んだ曲と音が近いおすすめ',
   '人気・話題性を加味した発見枠': '人気・話題性から選んだおすすめ',
+  // The reranker's identifier keeps the feature's old name (お気に入りP, now フォロー中).
+  'お気に入りPの楽曲を優先したおすすめ': 'フォロー中のPの曲を優先したおすすめ',
 };
 
 /** The short label of a recommendation reason, as a source text for t(). */

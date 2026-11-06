@@ -29,7 +29,7 @@ const GUIDE_ASIDE_CLASS =
 
 /**
  * Language, layout and hidden mode rows at the end of the drawer on phones (no top-bar ⋮ there).
- * The layout row is a switch (ミュージック表示 on = ミュージック, off = 標準): one tap from the drawer.
+ * The layout row is a switch (ミュージック表示 on = ミュージック, off = 動画): one tap from the drawer.
  */
 function DrawerPhoneItems() {
   const t = useTranslateSourceText();

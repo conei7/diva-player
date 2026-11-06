@@ -32,8 +32,6 @@
   --color-rating: #facc15;
   --color-overlay: rgb(0 0 0 / 0.6);
   --color-thumb-badge: rgb(0 0 0 / 0.8);
-  /* ロゴマークだけに使う */
-  --gradient-brand: linear-gradient(135deg, #06d6a0, #8b5cf6);
 
   /* ── 角丸（§3.4。rounded-badge / chip / row / card / panel。既定の rounded-sm〜xl は変えない） ── */
   --radius-badge: 4px;

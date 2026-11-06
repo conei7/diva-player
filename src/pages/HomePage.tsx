@@ -94,7 +94,7 @@ const CATEGORIES: CategoryChip[] = [
   { id: 'recent', label: '新着' },
   { id: 'deep', label: '隠れた名曲' },
   { id: 'history_based', label: '最近聴いたP' },
-  { id: 'favorite_producers', label: 'お気に入りP' },
+  { id: 'favorite_producers', label: 'フォロー中' },
 ];
 
 const CATEGORY_LABELS: Record<HomeCategoryId, TranslationKey> = {
@@ -1188,7 +1188,7 @@ function HomeFeed({ ref, belowShelves }: HomeFeedProps) {
   ) : activeCategory === 'favorite_producers' && favoriteProducers.length === 0 ? (
     <EmptyState
       icon={<PersonStarIcon />}
-      title={ts('お気に入りPはまだいません')}
+      title={ts('フォロー中のPはまだいません')}
       action={{ label: ts('おすすめを見る'), onClick: () => selectCategory('recommended') }}
     />
   ) : isDiscoveryFilterActive(globalFilterSettings) ? (

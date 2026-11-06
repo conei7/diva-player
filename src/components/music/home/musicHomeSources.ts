@@ -34,18 +34,18 @@ export type ShelfFeedCategory = DeterministicHomeRankingCategory;
 /**
  * The feed chip a shelf's 「すべて表示」 selects, or null for none. Only chips that keep the API
  * order qualify: their first page is the shelf's own request, so the feed is the shelf continued
- * (ランキング, 急上昇, 新着). The お気に入りP feed asks for one producer more and reranks with its own
- * per-view seed, so its order is not the shelf's: お気に入りPの曲 has no すべて表示.
+ * (ランキング, 急上昇, 新着). The フォロー中 feed asks for one producer more and reranks with its own
+ * per-view seed, so its order is not the shelf's: フォロー中のPの曲 has no すべて表示.
  */
 export function networkShelfFeedCategory(id: NetworkShelfId): ShelfFeedCategory | null {
   const category = HOME_CATEGORY[id];
   return isDeterministicHomeRankingCategory(category) ? category : null;
 }
 
-/** お気に入りPの曲 asks for the songs of this many favourite producers (HomeFeed's first ones). */
+/** フォロー中のPの曲 asks for the songs of this many favourite producers (HomeFeed's first ones). */
 const FAVORITE_PRODUCER_SHELF_REQUESTS = 3;
 
-/** One seed per session: the exposure-reranked お気に入りP shelf keeps its order while browsing. */
+/** One seed per session: the exposure-reranked フォロー中 shelf keeps its order while browsing. */
 const SHELF_RANKING_SEED = createRankingSeed();
 
 export interface NetworkShelfContext {

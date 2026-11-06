@@ -8,7 +8,8 @@ import { showToast } from '../../stores/toastStore';
 import { useTranslate, useTranslateSourceText } from '../../i18n';
 import { playlistPath } from '../../utils/routes';
 import Button from '../ui/Button';
-import { AlbumIcon } from '../ui/icons';
+import { AlbumIcon, PlaylistAddIcon } from '../ui/icons';
+import Tooltip from '../ui/Tooltip';
 
 const COLLAPSED_ALBUM_COUNT = 2;
 
@@ -111,19 +112,21 @@ export default function SongAlbums({ songId }: { songId: number }) {
                 <AlbumCover album={album} />
                 <span className="min-w-0 break-words text-sm font-medium leading-5">{album.name}</span>
               </a>
-              <Button
-                size="sm"
-                className="shrink-0"
-                loading={busyId === album.id}
-                disabled={busyId !== null}
-                aria-label={t('「{album}」からプレイリストを作成', { album: album.name })}
-                onClick={event => {
-                  event.stopPropagation();
-                  void createFromAlbum(album.id);
-                }}
-              >
-                {t('プレイリストを作成')}
-              </Button>
+              <Tooltip content={t('プレイリストを作成')}>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  icon={<PlaylistAddIcon />}
+                  className="w-8 shrink-0 px-0! max-sm:w-9"
+                  loading={busyId === album.id}
+                  disabled={busyId !== null}
+                  aria-label={t('「{album}」からプレイリストを作成', { album: album.name })}
+                  onClick={event => {
+                    event.stopPropagation();
+                    void createFromAlbum(album.id);
+                  }}
+                />
+              </Tooltip>
             </li>
           ))}
         </ul>

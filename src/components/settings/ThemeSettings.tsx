@@ -40,7 +40,7 @@ export default function ThemeSettings() {
       <SettingRow label={t('レイアウト')} htmlFor={`${id}-layout`} meta={t('ミュージック: 左にライブラリ、右に再生中、下に再生バー')}>
         <SettingsSelect id={`${id}-layout`} data-testid="settings-ui-layout" value={layout}
           onChange={event => void changeLayout(event.target.value as UiLayout)}>
-          <option value="standard">{t('標準')}</option>
+          <option value="standard">{t('動画')}</option>
           <option value="music">{t('ミュージック')}</option>
         </SettingsSelect>
       </SettingRow>

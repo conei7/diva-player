@@ -39,10 +39,12 @@ const HIDDEN_MODE_CLICK_WINDOW_MS = 1000;
 const loadMoreMenu = () => import('./TopNavMoreMenu');
 const TopNavMoreMenu = lazy(loadMoreMenu);
 const preloadMoreMenu = () => void loadMoreMenu().catch(() => undefined);
+// The layout switch too: a box of its size holds its place until it is here.
+const LayoutToggle = lazy(() => import('./LayoutToggle'));
 
 /**
- * Top bar (DESIGN_SPEC §6.1.2). Desktop 56px: [≡][logo][hidden mode chip] … [search][advanced search] … [☑][⋮][⚙].
- * Mobile 48px, one row: [≡ only on the song page][logo mark][search field][☑][⚙] (the music layout also
+ * Top bar (DESIGN_SPEC §6.1.2). Desktop 56px: [≡][logo][hidden mode chip] … [search][advanced search] … [動画|ミュージック][☑][⋮][⚙].
+ * Mobile 48px, one row: [≡ only on the song page][logo mark][search field][layout, where there is no ≡][☑][⚙] (the music layout also
  * shows ≡ under 560px wide and 420px tall while a song is loaded, where its bottom nav steps aside).
  * ☑ (multi-select) shows on the pages with selectable song lists (home / search, song page, history, rated songs).
  * Opaque #0f0f0f without a bottom border, blur or glow.
@@ -174,6 +176,15 @@ export default function TopNav() {
         </div>
 
         <div className="flex shrink-0 items-center gap-2 max-sm:gap-0">
+          {/* Phones: only where the bar has no ≡ (the search field keeps its width); with ≡ the drawer's
+              ミュージック表示 switch is one tap away. */}
+          {(!isMobile || !showMenuButton) && (
+            <DeferredBoundary fallback={null}>
+              <Suspense fallback={<span aria-hidden="true" className={isMobile ? 'size-11 shrink-0' : 'h-9 w-[84px] shrink-0'} />}>
+                <LayoutToggle compact={isMobile} />
+              </Suspense>
+            </DeferredBoundary>
+          )}
           {showSelectionToggle && (
             <IconButton
               label={tk('multiSelect')}

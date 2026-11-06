@@ -114,7 +114,7 @@ describe('ActionBar', () => {
     ]));
   });
 
-  it('fades only the start once scrolled to the end, so 表示しない is clear', () => {
+  it('fades only the start once scrolled to the end, so the ⋯ is clear', () => {
     const html = render({ start: true, end: false });
     expect(tag(html, 'data-edge-fade="end"')).toBeNull();
     const fade = tag(html, 'data-edge-fade="start"');
@@ -126,11 +126,14 @@ describe('ActionBar', () => {
 
   it('puts the fades after the row, outside it: above the pills, not among the actions', () => {
     const html = render({ start: true, end: true });
-    const lastAction = html.lastIndexOf('表示しない') + '表示しない'.length;
+    // The ⋯ (後で聴く, VocaDB, 表示しない) is the row's last action.
+    const moreButton = html.indexOf('data-testid="watch-more-actions"');
     expect(html.indexOf('data-testid="watch-action-bar"')).toBeGreaterThan(0);
-    // 表示しない's label and button close, then the row closes, then the fades follow.
+    expect(moreButton).toBeGreaterThan(html.indexOf('data-testid="watch-action-bar"'));
+    const lastAction = html.indexOf('</button>', moreButton) + '</button>'.length;
+    // The ⋯ closes, then the row closes, then the fades follow.
     expect(html.slice(lastAction, html.indexOf('data-edge-fade="start"')))
-      .toBe('</span></button></div><div aria-hidden="true" ');
+      .toBe('</div><div aria-hidden="true" ');
     expect(html.indexOf('data-edge-fade="end"')).toBeGreaterThan(html.indexOf('data-edge-fade="start"'));
     expect(html.endsWith('</div></div>')).toBe(true);
   });

@@ -1,6 +1,6 @@
 /**
  * 「すべて表示」 of the music layout's Home shelves: a network shelf that a HomeFeed chip continues in
- * the same order hands that chip to the feed below; お気に入りPの曲 (whose feed reranks) has none;
+ * the same order hands that chip to the feed below; フォロー中のPの曲 (whose feed reranks) has none;
  * 最近再生した曲 and あなたのプレイリスト keep their page links.
  */
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -82,13 +82,13 @@ describe('networkShelfFeedCategory', () => {
     expect(networkShelfFeedCategory('weekly')).toBe('ranking');
     expect(networkShelfFeedCategory('surge')).toBe('trending');
     expect(networkShelfFeedCategory('new')).toBe('recent');
-    // The お気に入りP feed reranks with its own seed and asks for one producer more.
+    // The フォロー中 feed reranks with its own seed and asks for one producer more.
     expect(networkShelfFeedCategory('favoriteProducers')).toBeNull();
   });
 });
 
 describe('MusicHome すべて表示', () => {
-  it('selects the matching feed chip from 週間ランキング, 急上昇 and 新着, not from お気に入りPの曲', () => {
+  it('selects the matching feed chip from 週間ランキング, 急上昇 and 新着, not from フォロー中のPの曲', () => {
     useFavoriteProducerStore.setState({ producers: [{ id: 77, name: 'Fixture P', artistType: 'Producer', createdAt: 0 }] });
     const onShowFeedCategory = vi.fn();
     const shelves = renderShelves(onShowFeedCategory);

@@ -21,7 +21,7 @@ type ProducerSortMode = 'added' | 'name';
 const JUST_NOW_MS = 60 * 1000;
 
 /**
- * FavoriteProducersPage - お気に入りP（YouTube の登録チャンネルの一覧と同じ形）
+ * FavoriteProducersPage - フォロー中（YouTube の登録チャンネルの一覧と同じ形）
  */
 export default function FavoriteProducersPage() {
   const t = useTranslateSourceText();
@@ -41,7 +41,7 @@ export default function FavoriteProducersPage() {
     if (index < 0) return;
     const record = store.producers[index];
     store.removeProducer(producer.id);
-    showToast(t('{name}をお気に入りPから外しました', { name: producer.name }), {
+    showToast(t('{name}のフォローを解除しました', { name: producer.name }), {
       action: {
         label: t('元に戻す'),
         // Put the same record back where it was (keeps the registration date and order).
@@ -68,7 +68,7 @@ export default function FavoriteProducersPage() {
   return (
     <PageShell>
       <PageHeader
-        title={t('お気に入りP')}
+        title={t('フォロー中')}
         meta={count > 0 ? (count === 1 ? tk('libraryProducerCountOne') : tk('libraryProducerCount', { count: count.toLocaleString() })) : undefined}
         actions={count > 1 ? (
           <SortMenu
@@ -88,7 +88,7 @@ export default function FavoriteProducersPage() {
       ) : (
         <ul className="m-0 -mx-2 list-none p-0">
           {sorted.map(producer => {
-            const removeLabel = t('{producer}をお気に入りPから解除', { producer: producer.name });
+            const removeLabel = t('{producer}のフォローを解除', { producer: producer.name });
             return (
               <li
                 key={producer.id}

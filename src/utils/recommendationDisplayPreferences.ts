@@ -22,7 +22,7 @@ export function writeRecommendationHintsEnabled(
 }
 
 const COMPACT_HINTS: Readonly<Record<string, string>> = {
-  'お気に入りPの楽曲を優先したおすすめ': 'お気に入りP',
+  'お気に入りPの楽曲を優先したおすすめ': 'フォロー中のP',
   '音響・タグ・アーティスト情報が重なるおすすめ': '音・タグ・Pが近い',
   '音響的に近いおすすめ': '音が近い',
   'タグ・アーティスト情報も近いおすすめ': 'タグ・Pが近い',

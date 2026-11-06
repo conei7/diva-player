@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import type { MouseEvent } from 'react';
 import StarRating from '../player/StarRating';
 import PVSourceSelector from '../player/PVSourceSelector';
@@ -13,21 +14,22 @@ import type { Song } from '../../types/vocadb';
 import { useTranslateSourceText } from '../../i18n';
 import { useMediaQuery } from '../../hooks/useMediaQuery';
 import { useHorizontalOverflow } from '../../hooks/useHorizontalOverflow';
-import Button, { buttonClassName } from '../ui/Button';
+import Button from '../ui/Button';
+import IconButton from '../ui/IconButton';
+import Menu, { MenuDivider, MenuItem } from '../ui/Menu';
 import Tooltip from '../ui/Tooltip';
-import { CheckIcon, ClockIcon, EyeIcon, EyeOffIcon, OpenInNewIcon, PlaylistAddIcon, ShareIcon, VolumeOffIcon } from '../ui/icons';
-import { cx, focusElement, getFocusableElements } from '../ui/overlay';
+import { CheckIcon, ClockIcon, EyeIcon, EyeOffIcon, MoreHorizIcon, OpenInNewIcon, PlaylistAddIcon, ShareIcon, VolumeOffIcon } from '../ui/icons';
+import { focusElement, getFocusableElements } from '../ui/overlay';
 import { hideSongWithUndo, shareSong, toggleWatchLater } from './watchActions';
 
-/** 1024–1279px: the side column leaves little room, so 「保存」 and 「VocaDB」 show only their icons. */
+/** 1024–1279px: the side column leaves little room, so 「保存」 shows only its icon. */
 const NARROW_DESKTOP_QUERY = '(min-width: 1024px) and (max-width: 1279.98px)';
 
 /**
- * 操作 (right of the producer row), all as pills without a ⋮:
- * rating · 共有 · 保存 · 後で聴く · video source · VocaDB · 表示しない.
- * They wrap on wide screens and scroll sideways under 640px, edge to edge with the hidden
- * scrollbar of the Home shelves, so a fade marks each side that has more actions past it
- * (most of them start off screen on a phone). While nothing can be heard, ミュートを解除 comes
+ * 操作 (right of the producer row), YouTube's order: rating · 共有 · 保存 · video source (its
+ * service mark) · ⋯ (後で聴く, VocaDBで開く, 表示しない). The row fits beside the producers on wide
+ * screens and wraps under them otherwise; under 640px it scrolls sideways, edge to edge with the hidden
+ * scrollbar of the Home shelves, so a fade marks each side that has more actions past it. While nothing can be heard, ミュートを解除 comes
  * first (the sign of silence on this page without the music layout's player bar under it: the standard
  * layout, music phones and music windows under 420px tall; nothing is drawn on the video).
  */
@@ -40,6 +42,7 @@ export default function ActionBar({ song }: { song: Song }) {
     .find(playlist => playlist.id === WATCH_LATER_ID)?.songs.some(item => item.id === song.id) ?? false);
   const hiddenRecord = useHiddenSongStore(state => state.hiddenSongs[String(song.id)]);
   const narrow = useMediaQuery(NARROW_DESKTOP_QUERY);
+  const [moreOpen, setMoreOpen] = useState(false);
   const [scrollerRef, overflow] = useHorizontalOverflow<HTMLDivElement>();
   // Where the music layout's player bar is under the page, its mute button shows it; Bilibili takes
   // no volume from the app.
@@ -110,35 +113,35 @@ export default function ActionBar({ song }: { song: Song }) {
           </Button>
         </Tooltip>
 
-        <Button
-          icon={inWatchLater ? <CheckIcon /> : <ClockIcon />}
-          aria-pressed={inWatchLater}
-          onClick={() => toggleWatchLater(song, t)}
+        <PVSourceSelector song={song} iconOnly />
+
+        <Menu
+          align="end"
+          label={t('その他の操作')}
+          open={moreOpen}
+          onOpenChange={setMoreOpen}
+          trigger={(
+            <IconButton
+              label={t('その他の操作')}
+              icon={<MoreHorizIcon />}
+              variant="tonal"
+              size="sm"
+              className="sm:size-9!"
+              data-testid="watch-more-actions"
+            />
+          )}
         >
-          {t('後で聴く')}
-        </Button>
-
-        <PVSourceSelector song={song} />
-
-        <Tooltip content={t('VocaDBで開く')}>
-          <a
-            href={`https://vocadb.net/S/${song.id}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            aria-label={t('VocaDBで開く')}
-            className={cx(buttonClassName(), narrow ? 'w-9 px-0!' : 'pl-3')}
-          >
-            <span aria-hidden="true" className="flex shrink-0 items-center [&>svg]:size-5"><OpenInNewIcon /></span>
-            {!narrow && <span className="min-w-0 truncate">VocaDB</span>}
-          </a>
-        </Tooltip>
-
-        <Button
-          icon={hiddenRecord ? <EyeIcon /> : <EyeOffIcon />}
-          onClick={toggleHidden}
-        >
-          {hiddenRecord ? t('再表示') : t('表示しない')}
-        </Button>
+          <MenuItem icon={inWatchLater ? <CheckIcon /> : <ClockIcon />} onSelect={() => toggleWatchLater(song, t)}>
+            {inWatchLater ? t('後で聴くから削除') : t('後で聴くに保存')}
+          </MenuItem>
+          <MenuItem icon={<OpenInNewIcon />} href={`https://vocadb.net/S/${song.id}`} external>
+            {t('VocaDBで開く')}
+          </MenuItem>
+          <MenuDivider />
+          <MenuItem icon={hiddenRecord ? <EyeIcon /> : <EyeOffIcon />} onSelect={toggleHidden} data-testid="watch-hide-song">
+            {hiddenRecord ? t('再表示') : t('表示しない')}
+          </MenuItem>
+        </Menu>
       </div>
       {/* As on the Home shelves: the start fade only covers the 12px gutter, the end one is wider
           because that side hides most of the actions. Each shows only while there is more past it,

@@ -239,7 +239,7 @@ try {
   const englishWatch = await page.evaluate(() => ({
     shareButton: [...document.querySelectorAll('button')].some(button => button.getAttribute('aria-label') === 'Share'),
     starRating: document.querySelector('[role="group"][aria-label="Star rating"]') !== null,
-    favoriteProducerButton: [...document.querySelectorAll('button')].some(button => button.getAttribute('aria-label') === 'Add DIVA E2E Producer to favorite producers'),
+    favoriteProducerButton: [...document.querySelectorAll('button')].some(button => button.getAttribute('aria-label') === 'Follow DIVA E2E Producer'),
     recommendationTab: [...document.querySelectorAll('button')].some(button => button.textContent?.includes('For you')),
     sourceSelector: document.querySelector('select[aria-label="Select playback source"]') !== null,
   }));
@@ -372,7 +372,7 @@ try {
   if (expandedProducerLinks !== 4) throw new Error(`Expected 4 expanded producers, got ${expandedProducerLinks}`);
   await page.click('button[aria-label="P一覧を折りたたむ"]');
   await page.waitForSelector('button[aria-label="他1名のPを表示"]');
-  // One favorite-producer toggle per producer, in the menu of the お気に入りP pill.
+  // One follow toggle per producer, in the menu of the フォロー pill.
   await page.click('[data-testid="watch-favorite-producer-pill"]');
   await page.waitForSelector('[role="menu"] .watch-favorite-producer-button');
   const favoriteProducerItems = await page.$$eval('[role="menu"] .watch-favorite-producer-button', items => items.length);

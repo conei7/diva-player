@@ -2,12 +2,12 @@ import type { MouseEvent } from 'react';
 import { Link } from 'react-router';
 import { useTranslateSourceText } from '../../i18n';
 import { usePlayerStore } from '../../stores/playerStore';
-import { MusicNoteIcon } from '../ui/iconsChrome';
 import { cx } from '../ui/overlay';
+import BrandMark from './BrandMark';
 
 /**
- * The DIVA Player logo (DESIGN_SPEC §6.1.2): a 28px mark (the only place that keeps the brand
- * gradient) and 「DIVA Player」 with DIVA in the brand color. Grey while hidden mode is on.
+ * The DIVA Player logo (DESIGN_SPEC §6.1.2): the 28px flat mark (BrandMark) and the 「DIVA Player」
+ * wordmark (DIVA bold, Player lighter). The mark turns grey while hidden mode is on.
  * The mark alone (phones) keeps its place but gets a 40×40 tap target (6px wider on each side).
  */
 export default function BrandLogo({
@@ -33,16 +33,10 @@ export default function BrandLogo({
         className,
       )}
     >
-      <span
-        aria-hidden="true"
-        className={cx('flex size-7 shrink-0 items-center justify-center rounded-lg text-white', hiddenMode && 'bg-yt-tonal-solid-hover')}
-        style={hiddenMode ? undefined : { background: 'var(--gradient-brand)' }}
-      >
-        <MusicNoteIcon size={18} />
-      </span>
+      <BrandMark muted={hiddenMode} />
       {showText && (
         <span aria-hidden="true" className="whitespace-nowrap text-lg font-bold leading-6 tracking-tight">
-          <span className={hiddenMode ? 'text-yt-text-secondary' : 'text-brand'}>DIVA</span> Player
+          DIVA<span className="font-medium text-yt-text-secondary"> Player</span>
         </span>
       )}
     </Link>

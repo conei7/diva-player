@@ -30,7 +30,7 @@ const MIX_CAPTION_CLASS = `${MIX_ROW_CLASS} [&>button]:h-14 [&>button]:flex-col 
 const RAIL_CAPTION_CLASS = 'max-w-full truncate text-[10px] leading-[14px]';
 
 /**
- * Top of the library column (does not scroll): ホーム, サビ発掘, 曲調マップ, 知ってる度 and the
+ * Top of the library column (does not scroll): ホーム, サビ発掘, 曲調マップ, 網羅率 and the
  * 発掘ミックス button. The selected destination has aria-current="page" and its filled icon.
  * On touch tablets the rail shows each name under its icon (there are no tooltips for touch).
  */

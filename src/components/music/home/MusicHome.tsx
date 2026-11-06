@@ -161,7 +161,7 @@ function NetworkShelves({ finePointer, onShowFeedCategory }: { finePointer: bool
       <NetworkShelf id="surge" title={tk('categoryTrending')} {...common} />
       <NetworkShelf id="new" title={tk('categoryRecent')} {...common} />
       {favoriteProducers.length > 0 && (
-        <NetworkShelf id="favoriteProducers" title={t('お気に入りPの曲')} {...common} />
+        <NetworkShelf id="favoriteProducers" title={t('フォロー中のPの曲')} {...common} />
       )}
     </>
   );
