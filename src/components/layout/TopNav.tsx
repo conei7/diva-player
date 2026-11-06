@@ -9,7 +9,7 @@ import { useGlobalFilterStore } from '../../stores/globalFilterStore';
 import { getGlobalFilterSummary, isDiscoveryFilterActive } from '../../utils/globalFilters';
 import { useLanguageStore } from '../../stores/languageStore';
 import { useTranslate, useTranslateSourceText } from '../../i18n';
-import { GUIDE_EXPANDED_MEDIA_QUERY, MOBILE_MEDIA_QUERY, MUSIC_LIBRARY_FULL_MEDIA_QUERY, useMediaQuery } from '../../hooks/useMediaQuery';
+import { GUIDE_EXPANDED_MEDIA_QUERY, MOBILE_MEDIA_QUERY, MUSIC_LIBRARY_FULL_MEDIA_QUERY, TOPNAV_THEME_TOGGLE_MEDIA_QUERY, useMediaQuery } from '../../hooks/useMediaQuery';
 import { useIsMusicLayout } from '../../hooks/useMusicLayout';
 import { isWatchPath } from '../../utils/routes';
 import IconButton from '../ui/IconButton';
@@ -39,11 +39,13 @@ const HIDDEN_MODE_CLICK_WINDOW_MS = 1000;
 const loadMoreMenu = () => import('./TopNavMoreMenu');
 const TopNavMoreMenu = lazy(loadMoreMenu);
 const preloadMoreMenu = () => void loadMoreMenu().catch(() => undefined);
-// The layout switch too: a box of its size holds its place until it is here.
+// The layout and theme switches too: a box of their size holds their place until they are here.
 const LayoutToggle = lazy(() => import('./LayoutToggle'));
+const ThemeToggle = lazy(() => import('./ThemeToggle'));
 
 /**
- * Top bar (DESIGN_SPEC §6.1.2). Desktop 56px: [≡][logo][hidden mode chip] … [search][advanced search] … [動画|ミュージック][☑][⋮][⚙].
+ * Top bar (DESIGN_SPEC §6.1.2). Desktop 56px: [≡][logo][hidden mode chip] … [search][advanced search] … [動画|ミュージック][☀/☾][☑][⋮][⚙]
+ * (☀/☾, the theme switch, from 768px; the ⋮ menu has the theme too).
  * Mobile 48px, one row: [≡ only on the song page][logo mark][search field][layout, where there is no ≡][☑][⚙] (the music layout also
  * shows ≡ under 560px wide and 420px tall while a song is loaded, where its bottom nav steps aside).
  * ☑ (multi-select) shows on the pages with selectable song lists (home / search, song page, history, rated songs).
@@ -57,6 +59,7 @@ export default function TopNav() {
   const isWideGuide = useMediaQuery(GUIDE_EXPANDED_MEDIA_QUERY);
   const isMusicLayout = useIsMusicLayout();
   const isWideMusicLibrary = useMediaQuery(MUSIC_LIBRARY_FULL_MEDIA_QUERY);
+  const showThemeToggle = useMediaQuery(TOPNAV_THEME_TOGGLE_MEDIA_QUERY);
   const isWatch = isWatchPath(location.pathname);
   const language = useLanguageStore(state => state.language);
   const toggleSidebar = useUiStore(state => state.toggleSidebar);
@@ -182,6 +185,13 @@ export default function TopNav() {
             <DeferredBoundary fallback={null}>
               <Suspense fallback={<span aria-hidden="true" className={isMobile ? 'size-11 shrink-0' : 'h-9 w-[84px] shrink-0'} />}>
                 <LayoutToggle compact={isMobile} />
+              </Suspense>
+            </DeferredBoundary>
+          )}
+          {showThemeToggle && (
+            <DeferredBoundary fallback={null}>
+              <Suspense fallback={<span aria-hidden="true" className="size-10 shrink-0" />}>
+                <ThemeToggle />
               </Suspense>
             </DeferredBoundary>
           )}

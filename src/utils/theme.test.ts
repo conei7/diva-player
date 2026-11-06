@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { accessibleAccentColor, DEFAULT_ACCENT_COLOR, normalizeAccentColor, normalizeThemeMode, resolveThemeMode } from './theme';
+import { accessibleAccentColor, DEFAULT_ACCENT_COLOR, normalizeAccentColor, normalizeThemeMode, oppositeThemeMode, resolveThemeMode, shownThemeMode } from './theme';
 
 describe('accent color safety and readability', () => {
   it('keeps dark as the compatible default for missing or invalid modes', () => {
@@ -41,5 +41,21 @@ describe('accent color safety and readability', () => {
     for (const color of ['#000000', '#000080', '#800000', '#282828', '#660066']) {
       expect((luminance(accessibleAccentColor(color)) + 0.05) / (luminance('#282828') + 0.05)).toBeGreaterThanOrEqual(4.5);
     }
+  });
+});
+
+describe('the theme on screen and the one-press switch', () => {
+  it('follows the device only under the system choice', () => {
+    expect(shownThemeMode('system', true)).toBe('light');
+    expect(shownThemeMode('system', false)).toBe('dark');
+    for (const prefersLight of [true, false]) {
+      expect(shownThemeMode('dark', prefersLight)).toBe('dark');
+      expect(shownThemeMode('light', prefersLight)).toBe('light');
+    }
+  });
+  it('switches to the other theme on screen, an explicit choice', () => {
+    expect(oppositeThemeMode('dark')).toBe('light');
+    expect(oppositeThemeMode('light')).toBe('dark');
+    expect(oppositeThemeMode(shownThemeMode('system', true))).toBe('dark');
   });
 });

@@ -433,6 +433,52 @@ try {
       await assertSinglePlayer(page, `switching to ${value} from the top bar`);
     }
     console.log('PASS the top bar switch changes the layout both ways without touching playback');
+
+    // The top bar's ☀/☾ swaps the theme in one click, and ⋮ offers 端末の設定に合わせる again.
+    const theme = () => page.evaluate(() => ({
+      shown: document.documentElement.dataset.theme,
+      saved: localStorage.getItem('diva_themeMode'),
+      target: document.querySelector('[data-testid="topnav-theme-toggle"]')?.dataset.themeTarget ?? null,
+    }));
+    await page.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: 'dark' }]);
+    await page.waitForSelector('[data-testid="topnav-theme-toggle"]', { visible: true });
+    for (const expected of ['light', 'dark']) {
+      const before = await theme();
+      if (before.target !== expected || before.shown === expected) throw new Error(`☀/☾ must offer ${expected}: ${JSON.stringify(before)}`);
+      await page.click('[data-testid="topnav-theme-toggle"]');
+      await page.waitForFunction(value => document.documentElement.dataset.theme === value
+        && document.querySelector('[data-testid="topnav-theme-toggle"]')?.dataset.themeTarget !== value, { timeout: 5_000 }, expected);
+      const after = await theme();
+      if (after.saved !== JSON.stringify(expected)) throw new Error(`☀/☾ must save ${expected}: ${JSON.stringify(after)}`);
+      await assertSinglePlayer(page, `switching to the ${expected} theme from the top bar`);
+    }
+    const chooseThemeInMoreMenu = async label => {
+      await page.click('header button[aria-label="その他の操作"]');
+      await page.waitForSelector('[role="menu"] [role="menuitemradio"]', { visible: true });
+      const items = await page.$$('[role="menu"] [role="menuitemradio"]');
+      const texts = await Promise.all(items.map(item => item.evaluate(node => node.textContent.trim())));
+      const index = texts.indexOf(label);
+      if (index < 0) throw new Error(`⋮ must offer the theme ${label}: ${JSON.stringify(texts)}`);
+      await items[index].click();
+      await page.waitForFunction(() => !document.querySelector('[role="menu"]'), { timeout: 5_000 });
+    };
+    await chooseThemeInMoreMenu('ライト');
+    await page.waitForFunction(() => document.documentElement.dataset.theme === 'light', { timeout: 5_000 });
+    await chooseThemeInMoreMenu('端末の設定に合わせる');
+    await page.waitForFunction(() => document.documentElement.dataset.theme === 'dark'
+      && localStorage.getItem('diva_themeMode') === '"system"', { timeout: 5_000 });
+    await page.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: 'light' }]);
+    await page.waitForFunction(() => document.documentElement.dataset.theme === 'light'
+      && document.querySelector('[data-testid="topnav-theme-toggle"]')?.dataset.themeTarget === 'dark', { timeout: 5_000 });
+    await page.click('[data-testid="topnav-theme-toggle"]');
+    await page.waitForFunction(() => document.documentElement.dataset.theme === 'dark'
+      && localStorage.getItem('diva_themeMode') === '"dark"', { timeout: 5_000 });
+    await page.reload();
+    await page.waitForSelector('main');
+    const reloaded = await theme();
+    if (reloaded.shown !== 'dark') throw new Error(`A theme chosen with ☀/☾ must survive a reload: ${JSON.stringify(reloaded)}`);
+    await page.emulateMediaFeatures([]);
+    console.log('PASS the top bar ☀/☾ swaps the theme in one click and ⋮ returns it to the device setting');
     await context.close();
   }
 
@@ -663,6 +709,8 @@ try {
     // The bottom nav's ≡ (the top bar's stays hidden here; it shows only under 560×420 with a song loaded).
     await page.tap('nav button[aria-label="メニュー"]');
     await page.waitForSelector('button[aria-label="メニューを閉じる"]', { visible: true });
+    // The phone rows load after the first paint (and when the drawer opens).
+    await page.waitForSelector('#drawer-music-layout', { timeout: 15_000 });
     for (const [checkedBefore, expected] of [[true, 'standard'], [false, 'music']]) {
       // The close button counts as visible while the drawer is still sliding in (0.2s) with the switch
       // off screen; tap once it has arrived.
@@ -678,6 +726,19 @@ try {
     }
     await assertNoHorizontalOverflow(page, 'phone drawer layout switch');
     console.log('PASS the phone drawer switches the layout both ways in one tap');
+
+    // Its ダークモード row swaps the theme in one tap too (the default theme is dark).
+    for (const [checkedBefore, expected] of [[true, 'light'], [false, 'dark']]) {
+      await page.waitForFunction(() => Math.abs(document.querySelector('aside[role="dialog"]')?.getBoundingClientRect().left ?? -1) <= 1,
+        { timeout: 5_000 });
+      const checked = await page.$eval('#drawer-dark-theme', input => input.checked);
+      if (checked !== checkedBefore) throw new Error(`The drawer's ダークモード must show the theme on screen (dark: ${checkedBefore}), got ${checked}`);
+      await page.tap('label:has(#drawer-dark-theme)');
+      await page.waitForFunction(value => document.documentElement.dataset.theme === value
+        && localStorage.getItem('diva_themeMode') === JSON.stringify(value), { timeout: 5_000 }, expected);
+    }
+    await assertSinglePlayer(page, 'switching the theme from the phone drawer');
+    console.log('PASS the phone drawer switches the theme both ways in one tap');
     await context.close();
   }
 

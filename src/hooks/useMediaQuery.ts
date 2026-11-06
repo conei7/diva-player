@@ -17,6 +17,8 @@ export const GUIDE_EXPANDED_MEDIA_QUERY = '(min-width: 1312px)';
 export const MUSIC_PANEL_MEDIA_QUERY = '(min-width: 1024px)';
 /** Music layout: the library with names (a rail of icons and covers below it). */
 export const MUSIC_LIBRARY_FULL_MEDIA_QUERY = '(min-width: 1280px)';
+/** The top bar's ☀/☾ theme switch (TopNav); narrower screens have it in ⋮ (640px and up) or the phone drawer. */
+export const TOPNAV_THEME_TOGGLE_MEDIA_QUERY = '(min-width: 768px)';
 /**
  * Music layout, under 420px tall (a phone held sideways, a low window): the video goes to the corner
  * off the song page, and the song page leaves the player bar out. The CSS in area:music uses the same height.

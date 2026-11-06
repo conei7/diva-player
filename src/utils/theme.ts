@@ -5,9 +5,18 @@ export const ACCENT_COLOR_KEY = 'accentColor';
 export const THEME_MODE_KEY = 'themeMode';
 export type ThemeMode = 'dark' | 'light' | 'system';
 export type ResolvedThemeMode = Exclude<ThemeMode, 'system'>;
+/** The device asks for the light theme (used under 'system'). */
+export const PREFERS_LIGHT_MEDIA_QUERY = '(prefers-color-scheme: light)';
+/** The theme on screen for a choice: under 'system', the device's. */
+export function shownThemeMode(mode: ThemeMode, prefersLight: boolean): ResolvedThemeMode {
+  return mode === 'system' ? (prefersLight ? 'light' : 'dark') : mode;
+}
+/** The other theme: the top bar's one-press switch saves it as an explicit choice (leaving 'system'). */
+export function oppositeThemeMode(mode: ResolvedThemeMode): ResolvedThemeMode {
+  return mode === 'dark' ? 'light' : 'dark';
+}
 export function resolveThemeMode(mode: ThemeMode): ResolvedThemeMode {
-  if (mode !== 'system') return mode;
-  return typeof window !== 'undefined' && window.matchMedia?.('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+  return shownThemeMode(mode, typeof window !== 'undefined' && !!window.matchMedia?.(PREFERS_LIGHT_MEDIA_QUERY).matches);
 }
 export interface ThemePreferences { accentColor: string; mode: ThemeMode }
 export function normalizeThemeMode(value: unknown): ThemeMode {

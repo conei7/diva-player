@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { storage } from '../utils/storage';
-import { ACCENT_COLOR_KEY, THEME_MODE_KEY, applyAccentColor, normalizeAccentColor, normalizeThemeMode, readAccentColor, type ThemeMode, type ThemePreferences } from '../utils/theme';
+import { ACCENT_COLOR_KEY, PREFERS_LIGHT_MEDIA_QUERY, THEME_MODE_KEY, applyAccentColor, normalizeAccentColor, normalizeThemeMode, readAccentColor, type ThemeMode, type ThemePreferences } from '../utils/theme';
 
 interface ThemeState {
   accentColor: string;
@@ -42,7 +42,7 @@ export const useThemeStore = create<ThemeState>((set, get) => ({
 export function initializeTheme(): void {
   const { accentColor, mode } = useThemeStore.getState();
   applyAccentColor(accentColor, mode);
-  window.matchMedia?.('(prefers-color-scheme: light)').addEventListener('change', () => {
+  window.matchMedia?.(PREFERS_LIGHT_MEDIA_QUERY).addEventListener('change', () => {
     const current = useThemeStore.getState();
     if (current.mode === 'system') applyAccentColor(current.accentColor, current.mode);
   });

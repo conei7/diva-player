@@ -163,6 +163,11 @@ export function SparkleIcon(props: IconProps) {
   return <Svg {...props}><path d="m19 9 1.25-2.75L23 5l-2.75-1.25L19 1l-1.25 2.75L15 5l2.75 1.25L19 9zm-7.5.5L9 4 6.5 9.5 1 12l5.5 2.5L9 20l2.5-5.5L17 12l-5.5-2.5zM19 15l-1.25 2.75L15 19l2.75 1.25L19 23l1.25-2.75L23 19l-2.75-1.25L19 15z" /></Svg>;
 }
 
+/** ダーク (the top bar's theme switch and the phone drawer's ダークモード row): a crescent moon. */
+export function MoonIcon(props: IconProps) {
+  return <Svg {...props}><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z" {...STROKE} /></Svg>;
+}
+
 export function MusicNoteIcon(props: IconProps) {
   return <Svg {...props}><path d="m12 3 .01 10.55c-.59-.34-1.27-.55-2-.55C7.79 13 6 14.79 6 17s1.79 4 4.01 4S14 19.21 14 17V7h4V3h-6zm-1.99 16c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2z" /></Svg>;
 }

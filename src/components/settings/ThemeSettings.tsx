@@ -1,6 +1,7 @@
 import { useId, useRef } from 'react';
 import { useTranslateSourceText } from '../../i18n';
 import { useThemeStore } from '../../stores/themeStore';
+import { useThemeSwitch } from '../../hooks/useThemeSwitch';
 import { useLayoutSwitch } from '../../hooks/useLayoutSwitch';
 import type { UiLayout } from '../../utils/uiLayout';
 import { showToast } from '../../stores/toastStore';
@@ -20,8 +21,7 @@ export default function ThemeSettings() {
   const colorRef = useRef<HTMLInputElement>(null);
   const accentColor = useThemeStore(state => state.accentColor);
   const setAccentColor = useThemeStore(state => state.setAccentColor);
-  const mode = useThemeStore(state => state.mode);
-  const setMode = useThemeStore(state => state.setMode);
+  const { mode, changeMode } = useThemeSwitch();
   const { layout, changeLayout } = useLayoutSwitch();
   const select = (color: string) => {
     if (!setAccentColor(color)) showToast(t('色は適用しましたが保存できませんでした'));
@@ -29,9 +29,7 @@ export default function ThemeSettings() {
   return (
     <section aria-label={t('見た目')} className="border-b border-yt-divider pb-3">
       <SettingRow label={t('テーマ')} htmlFor={`${id}-mode`}>
-        <SettingsSelect id={`${id}-mode`} value={mode} onChange={event => {
-          if (!setMode(event.target.value as ThemeMode)) showToast(t('テーマは適用しましたが保存できませんでした'));
-        }}>
+        <SettingsSelect id={`${id}-mode`} value={mode} onChange={event => changeMode(event.target.value as ThemeMode)}>
           <option value="system">{t('端末の設定に合わせる')}</option>
           <option value="dark">{t('ダーク')}</option>
           <option value="light">{t('ライト')}</option>
