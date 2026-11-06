@@ -226,6 +226,26 @@ for (const [architecture, expectedHash] of [
   assert.equal(createHash('sha256').update(apk).digest('hex'), expectedHash);
   assert.ok(webDockerfile.includes(`expat_sha=${expectedHash}`));
 }
+// CVE-2026-85091: both pinned v3.24 bases ship zlib 1.3.2-r0.
+for (const [architecture, expectedHash] of [
+  ['x86_64', '63aeea03c15a2f9018f81805cfc8aa926bdf5cd68921f22149c2fbb5d0ee9f47'],
+  ['aarch64', '1f77a542ac6634761b9fe38d8bdca19b154071dcfa25432e73f2bc8a0740a33f'],
+]) {
+  const apk = await readFile(new URL(`../vendor/alpine/v3.24/${architecture}/zlib-1.3.2-r1.apk`, import.meta.url));
+  assert.equal(createHash('sha256').update(apk).digest('hex'), expectedHash);
+  assert.ok(webDockerfile.includes(`zlib_sha=${expectedHash}`));
+  assert.ok(gatewayDockerfile.includes(`zlib_sha=${expectedHash}`));
+}
+assert.match(webDockerfile, /"\$zlib_sha[^\n]+zlib-1\.3\.2-r1\.apk" \| sha256sum -c -/u);
+assert.match(webDockerfile, /apk add --no-network [^\n]*"\/tmp\/diva-security\/\$arch\/zlib-1\.3\.2-r1\.apk"/u);
+assert.match(webApkUpdate, /zlib=1\.3\.2-r1/u);
+assert.match(gatewayDockerfile, /\/alpine\/v3\.24\/main\/[^\n]*\/zlib-1\.3\.2-r1\.apk"/u);
+assert.match(gatewayDockerfile, /"\$zlib_sha {2}\/tmp\/zlib\.apk" \| sha256sum -c -/u);
+assert.match(gatewayDockerfile, /apk add --no-network \/tmp\/pcre2\.apk \/tmp\/zlib\.apk/u);
+assert.match(gatewayDockerfile, /test[^\n]*P:zlib[^\n]*= 1\.3\.2-r1/u);
+for (const dockerfile of [webDockerfile, gatewayDockerfile]) {
+  assert.doesNotMatch(dockerfile, /zlib[-=]1\.3\.2-r0/u);
+}
 for (const [architecture, curlHash, libcurlHash] of [
   ['x86_64', '531ae298451a4c1c44f563fc3b2eedc2c1d7e0a26a33bdfc0efe6faaff6a5942', '1f70ca404818805a6465b615bbfe84ef861488a963d7e630108ebd7fbaa51665'],
   ['aarch64', '3748c544ab475033cb028e415858b8a671ca7d43756e0149732c860588882ced', '64ae89f6e5d318ed5209778232191806ce49644ce9e09540b7d7830a5330d127'],

@@ -38,15 +38,15 @@ RUN set -eux; \
     echo "$ssl_sha  /tmp/libssl3-3.5.9-r0.apk" | sha256sum -c -; \
     apk add --no-network /tmp/libcrypto3-3.5.9-r0.apk /tmp/libssl3-3.5.9-r0.apk; \
     rm /tmp/libcrypto3-3.5.9-r0.apk /tmp/libssl3-3.5.9-r0.apk
-# The immutable base predates Alpine fixes for the OpenSSL, Expat, and TIFF findings
+# The immutable base predates Alpine fixes for the OpenSSL, Expat, TIFF, and zlib findings
 # enforced by the deployable-image scan gate.
 # Preserve signed security APKs: CDN regions can disagree on availability.
 COPY vendor/alpine/v3.24/ /tmp/diva-security/
 RUN set -eux; \
     arch="$(apk --print-arch)"; \
     case "$arch" in \
-      x86_64) expat_sha=e7e7408ea787ed06d00159b0ff1f9b65a63cf634f36d9e0fa7512ce2c489a503; x11_sha=016efc189c6d566061ffe206ed0780e32686c1a8c832a3917d35d2c66d61a40f; brotli_sha=62a7e37e43bbfc1f8525a00ad2125fd5897135dc93b849733884cb78ffd8e26c; curl_sha=531ae298451a4c1c44f563fc3b2eedc2c1d7e0a26a33bdfc0efe6faaff6a5942; libcurl_sha=1f70ca404818805a6465b615bbfe84ef861488a963d7e630108ebd7fbaa51665 ;; \
-      aarch64) expat_sha=99144fe0b1bb9316a3bc30c38707996767806661f4a0456fcf4565ac92e79b0f; x11_sha=d460c111c1fc40e8f84367907b3e50a58a2b19c3e9d54f7c1f0e4aea7a376e3b; brotli_sha=f802b9d5a329c216f02e73607cb8f662c434767e41686367ac0afcf6d0d45d64; curl_sha=3748c544ab475033cb028e415858b8a671ca7d43756e0149732c860588882ced; libcurl_sha=64ae89f6e5d318ed5209778232191806ce49644ce9e09540b7d7830a5330d127 ;; \
+      x86_64) expat_sha=e7e7408ea787ed06d00159b0ff1f9b65a63cf634f36d9e0fa7512ce2c489a503; x11_sha=016efc189c6d566061ffe206ed0780e32686c1a8c832a3917d35d2c66d61a40f; brotli_sha=62a7e37e43bbfc1f8525a00ad2125fd5897135dc93b849733884cb78ffd8e26c; curl_sha=531ae298451a4c1c44f563fc3b2eedc2c1d7e0a26a33bdfc0efe6faaff6a5942; libcurl_sha=1f70ca404818805a6465b615bbfe84ef861488a963d7e630108ebd7fbaa51665; zlib_sha=63aeea03c15a2f9018f81805cfc8aa926bdf5cd68921f22149c2fbb5d0ee9f47 ;; \
+      aarch64) expat_sha=99144fe0b1bb9316a3bc30c38707996767806661f4a0456fcf4565ac92e79b0f; x11_sha=d460c111c1fc40e8f84367907b3e50a58a2b19c3e9d54f7c1f0e4aea7a376e3b; brotli_sha=f802b9d5a329c216f02e73607cb8f662c434767e41686367ac0afcf6d0d45d64; curl_sha=3748c544ab475033cb028e415858b8a671ca7d43756e0149732c860588882ced; libcurl_sha=64ae89f6e5d318ed5209778232191806ce49644ce9e09540b7d7830a5330d127; zlib_sha=1f77a542ac6634761b9fe38d8bdca19b154071dcfa25432e73f2bc8a0740a33f ;; \
       *) exit 1 ;; \
     esac; \
     echo "$expat_sha  /tmp/diva-security/$arch/libexpat-2.10.0-r0.apk" | sha256sum -c -; \
@@ -54,7 +54,8 @@ RUN set -eux; \
     echo "$brotli_sha  /tmp/diva-security/$arch/brotli-libs-1.2.1-r0.apk" | sha256sum -c -; \
     echo "$curl_sha  /tmp/diva-security/$arch/curl-8.23.0-r0.apk" | sha256sum -c -; \
     echo "$libcurl_sha  /tmp/diva-security/$arch/libcurl-8.23.0-r0.apk" | sha256sum -c -; \
-    apk add --no-network "/tmp/diva-security/$arch/libexpat-2.10.0-r0.apk" "/tmp/diva-security/$arch/libx11-1.8.14-r0.apk" "/tmp/diva-security/$arch/brotli-libs-1.2.1-r0.apk" "/tmp/diva-security/$arch/curl-8.23.0-r0.apk" "/tmp/diva-security/$arch/libcurl-8.23.0-r0.apk"; \
+    echo "$zlib_sha  /tmp/diva-security/$arch/zlib-1.3.2-r1.apk" | sha256sum -c -; \
+    apk add --no-network "/tmp/diva-security/$arch/libexpat-2.10.0-r0.apk" "/tmp/diva-security/$arch/libx11-1.8.14-r0.apk" "/tmp/diva-security/$arch/brotli-libs-1.2.1-r0.apk" "/tmp/diva-security/$arch/curl-8.23.0-r0.apk" "/tmp/diva-security/$arch/libcurl-8.23.0-r0.apk" "/tmp/diva-security/$arch/zlib-1.3.2-r1.apk"; \
     rm -r /tmp/diva-security
 RUN apk update && \
     apk add --no-cache \
@@ -66,6 +67,7 @@ RUN apk update && \
       libexpat=2.10.0-r0 \
       libx11=1.8.14-r0 \
       libuuid=2.42.3-r1 \
+      zlib=1.3.2-r1 \
       tiff=4.7.2-r0 && \
     test "$(awk '$0=="P:tiff"{p=1;next} p && /^V:/{print substr($0,3);exit}' /lib/apk/db/installed)" = 4.7.2-r0
 COPY --from=build /app/dist /usr/share/nginx/html/diva-player

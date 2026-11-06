@@ -72,6 +72,16 @@ class PostgresContainerContractTests(unittest.TestCase):
             "su-exec=0.3-r0",
         ):
             self.assertIn(package, self.postgres)
+        # CVE-2026-85091: the pinned base ships zlib 1.3.2-r0; the checksummed fix must stay installed.
+        for artifact in (
+            "zlib-1.3.2-r1.apk",
+            "zlib_sha=ee62e1864c235901e2aa4d1868c7ae8f7cc5d0740a98c48a2525332eb4bfda73",
+            "zlib_sha=82d52fa82a46c73aae8b9f95d7f31a196137f3ce4a000980cdbbfc05c245e7bf",
+            "/tmp/libssl3-3.5.9-r0.apk /tmp/zlib-1.3.2-r1.apk;",
+            "/lib/apk/db/installed)\" = 1.3.2-r1;",
+        ):
+            self.assertIn(artifact, self.postgres)
+        self.assertNotIn("zlib=1.3.2-r0", self.postgres)
         self.assertIn("x86_64) vector_libc=libc.musl-x86_64.so.1", self.postgres)
         self.assertIn("aarch64) vector_libc=libc.musl-aarch64.so.1", self.postgres)
         self.assertIn("*) echo \"unsupported architecture:", self.postgres)
