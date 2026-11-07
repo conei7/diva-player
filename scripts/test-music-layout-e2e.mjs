@@ -1639,8 +1639,17 @@ async function checkShortSongPages() {
   // Leaving a short song page brings the bar back, ending left of the corner video.
   await runCase('740×340 leaving the song page', async context => {
     const page = await openSongPage(context, { width: 740, height: 340, hasTouch: true });
-    await page.evaluate(() => [...document.querySelectorAll('[data-testid="music-library"] a[href]')]
-      .find(link => new URL(link.href).pathname === '/diva-player')?.click());
+    await page.evaluate(homeUrl => {
+      const normalizePath = path => path.replace(/\/+$/, '') || '/';
+      const home = new URL(homeUrl);
+      const link = [...document.querySelectorAll('[data-testid="music-library"] a[href]')]
+        .find(link => {
+          const target = new URL(link.href);
+          return target.origin === home.origin && normalizePath(target.pathname) === normalizePath(home.pathname);
+        });
+      if (!link) throw new Error(`Home link missing for ${home.href}`);
+      link.click();
+    }, base.href);
     await page.waitForSelector('[data-testid="global-player"].global-mini-player', { timeout: 10_000 });
     await page.waitForSelector('[data-testid="music-player-bar"]', { timeout: 10_000 });
     await wait(400);
