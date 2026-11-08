@@ -2,7 +2,8 @@ import puppeteer from 'puppeteer';
 import { pinAppLanguage } from './pin-app-language.mjs';
 
 const baseUrl = process.argv[2] || 'http://127.0.0.1:5173/diva-player/';
-const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox', '--lang=ja-JP'] });
+const minimizeWindow = process.argv.includes('--minimized-window');
+const browser = await puppeteer.launch({ headless: !minimizeWindow, args: ['--no-sandbox', '--lang=ja-JP'] });
 
 const songs = [
   {
@@ -70,7 +71,7 @@ try {
   playerPage.on('request', async (request) => {
     const requestUrl = request.url();
     const parsedUrl = new URL(requestUrl);
-    if (parsedUrl.pathname === '/backend-api/api/songs/details') {
+    if (['/backend-api/api/songs/details', '/backend-api/api/songs/batch'].includes(parsedUrl.pathname)) {
       const ids = (parsedUrl.searchParams.get('ids') || '').split(',').filter(Boolean).map(Number);
       const items = ids.flatMap(id => {
         const song = songs.find(candidate => candidate.id === id);
@@ -81,6 +82,10 @@ try {
         headers: { 'access-control-allow-origin': '*' },
         body: JSON.stringify({ items }),
       });
+      return;
+    }
+    if (parsedUrl.pathname.startsWith('/backend-api/api/recommend')) {
+      await request.respond({ contentType: 'application/json', body: JSON.stringify({ items: [] }) });
       return;
     }
     if (requestUrl.startsWith('https://vocadb.net/api/songs/167789?')) {
@@ -118,7 +123,16 @@ try {
             let startedAt = 0;
             let elapsed = 0;
             let currentVideoId = options.videoId || null;
-            player.getCurrentTime = () => state === 1 ? elapsed + (Date.now() - startedAt) / 1000 : elapsed;
+            let pendingVideoId = null;
+            let loadGeneration = 0;
+            player.getVideoData = () => ({ video_id: currentVideoId || '' });
+            player.getCurrentTime = () => {
+              if (pendingVideoId) {
+                window.__pendingVideoTimeReads = (window.__pendingVideoTimeReads || 0) + 1;
+                window.__pendingSnapshot = { state, elapsed, currentVideoId };
+              }
+              return state === 1 ? elapsed + (Date.now() - startedAt) / 1000 : elapsed;
+            };
             player.getDuration = () => 30;
             player.getPlayerState = () => state;
             player.getVolume = () => 50;
@@ -127,6 +141,23 @@ try {
             player.unMute = () => {};
             player.seekTo = (seconds) => { elapsed = seconds; startedAt = Date.now(); };
             player.loadVideoById = (videoId) => {
+              const generation = ++loadGeneration;
+              if (window.__delayNextVideoLoad && document.hidden) {
+                pendingVideoId = videoId;
+                window.__delayedVideoLoadCount = (window.__delayedVideoLoadCount || 0) + 1;
+                // The iframe API keeps the previous video's cached ENDED/time
+                // until the hidden iframe finishes loading its next video.
+                setTimeout(() => {
+                  if (generation !== loadGeneration) return;
+                  currentVideoId = videoId;
+                  pendingVideoId = null;
+                  elapsed = 0;
+                  state = 5;
+                  window.__youtubeLoadedVideoIds = [...(window.__youtubeLoadedVideoIds || []), videoId];
+                  player.playVideo();
+                }, 6_000);
+                return;
+              }
               currentVideoId = videoId;
               elapsed = 0;
               state = -1;
@@ -140,6 +171,7 @@ try {
             };
             player.playVideo = () => {
               window.__playVideoAttemptCount = (window.__playVideoAttemptCount || 0) + 1;
+              if (pendingVideoId) return;
               if (state !== 1) startedAt = Date.now();
               state = 1;
               window.__successfulPlayCount = (window.__successfulPlayCount || 0) + 1;
@@ -159,6 +191,11 @@ try {
             };
             player.stopVideo = () => { state = 0; };
             window.__youtubeState = () => state;
+            window.__simulateEnded = () => {
+              elapsed = 30;
+              state = 0;
+              options.events.onStateChange({ data: state, target: player });
+            };
             window.__simulateDeviceWake = () => {
               elapsed = player.getCurrentTime();
               state = 2;
@@ -246,7 +283,7 @@ try {
   await playerPage.evaluate(() => {
     window.__simulateDeviceWake();
   });
-  await playerPage.waitForFunction(() => (window.__wakeRecoveryPlayCount || 0) >= 2);
+  await playerPage.waitForFunction(() => (window.__wakeRecoveryPlayCount || 0) >= 2, { polling: 100 });
   const hiddenWake = await playerPage.evaluate(() => ({
     nativePlayerState: window.__youtubeState?.(),
     successfulPlayCount: window.__successfulPlayCount || 0,
@@ -286,6 +323,53 @@ try {
     throw new Error('Wake recovery overrode an explicit application pause');
   }
   console.log('PASS explicit pause remains paused during the wake grace');
+
+  await playerPage.keyboard.press('Space');
+  await playerPage.waitForFunction(() => window.__youtubeState() === 1);
+  if (minimizeWindow) {
+    const session = await playerPage.createCDPSession();
+    const { windowId } = await session.send('Browser.getWindowForTarget');
+    await session.send('Browser.setWindowBounds', { windowId, bounds: { windowState: 'minimized' } });
+  } else {
+    await otherPage.bringToFront();
+  }
+  await playerPage.waitForFunction(() => document.hidden, { polling: 100 });
+  await playerPage.evaluate(() => {
+    window.__delayNextVideoLoad = true;
+    window.__simulateEnded();
+  });
+  await playerPage.waitForFunction(() => window.__delayedVideoLoadCount === 1, { polling: 100 });
+  // Query recovery as well as the real end callback. It must not interpret the
+  // previous video's ENDED snapshot as the newly selected video's completion.
+  await new Promise(resolve => setTimeout(resolve, 1_000));
+  await playerPage.evaluate(() => document.dispatchEvent(new Event('resume')));
+  try {
+    await playerPage.waitForFunction(() => window.__youtubeLoadedVideoIds?.at(-1) === 'fixture-2'
+      && window.__youtubeState() === 1, { timeout: 15_000, polling: 100 });
+  } catch (error) {
+    const state = await playerPage.evaluate(() => ({
+      loaded: window.__youtubeLoadedVideoIds,
+      playerState: window.__youtubeState(),
+      songId: JSON.parse(localStorage.getItem('diva_playerQueue') || 'null')?.currentSongId,
+    }));
+    throw new Error(`Hidden next video failed: ${JSON.stringify(state)}`, { cause: error });
+  }
+  await new Promise(resolve => setTimeout(resolve, 1_000));
+  const continued = await playerPage.evaluate(() => ({
+    songId: JSON.parse(localStorage.getItem('diva_playerQueue') || 'null')?.currentSongId,
+    state: window.__youtubeState(),
+    constructs: window.__youtubePlayerConstructCount,
+    hidden: document.hidden,
+    pendingTimeReads: window.__pendingVideoTimeReads || 0,
+    appPlaybackState: navigator.mediaSession.playbackState,
+  }));
+  if (continued.songId !== 900002 || continued.state !== 1 || continued.constructs !== 1 || !continued.hidden
+    || continued.pendingTimeReads === 0 || continued.appPlaybackState !== 'playing') {
+    throw new Error(`Delayed hidden next video did not keep playing: ${JSON.stringify(continued)}`);
+  }
+  console.log('PASS hidden next video survives the previous video\'s cached end during delayed load',
+    await playerPage.evaluate(() => window.__pendingSnapshot));
+  if (minimizeWindow) console.log('PASS next video starts while the actual browser window stays minimized');
 } finally {
   await browser.close();
 }

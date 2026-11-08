@@ -555,6 +555,19 @@ export default function PlayerEmbed() {
       && state.currentSong?.id === desired.songId && state.playbackSequence === desired.playbackSequence;
   }, []);
 
+  // During loadVideoById the iframe API can still expose the previous video's
+  // ENDED state, duration and position. Only recover the selected video's end
+  // or seek position after it has actually started and its identity matches.
+  const hasStartedCurrentYouTubeVideo = useCallback((player: YT.Player) => {
+    const desired = youtubeDesiredVideoRef.current;
+    if (!desired?.started || !isActiveYouTubePlayer(player)) return false;
+    try {
+      return isEventForDesiredYouTubePV(player.getVideoData?.().video_id ?? '', desired.pvId);
+    } catch {
+      return false;
+    }
+  }, [isActiveYouTubePlayer]);
+
   useEffect(() => {
     volumeRef.current = volume;
   }, [volume]);
@@ -680,7 +693,8 @@ export default function PlayerEmbed() {
         const currentTime = player.getCurrentTime?.() ?? 0;
         const duration = player.getDuration?.() ?? 0;
         const playerState = player.getPlayerState?.();
-        if (playerState === window.YT.PlayerState.ENDED || hasReachedPlaybackEnd(currentTime, duration)) {
+        if (hasStartedCurrentYouTubeVideo(player)
+          && (playerState === window.YT.PlayerState.ENDED || hasReachedPlaybackEnd(currentTime, duration))) {
           advanceOnce();
           return;
         }
@@ -713,7 +727,7 @@ export default function PlayerEmbed() {
       getPlaybackRecoveryCheckDelayMs(playerNeedsRestart, currentTime, duration),
     );
     if (playerNeedsRestart) player.playVideo?.();
-  }, [advanceOnce, clearEndRecoveryTimer, isActiveYouTubePlayer]);
+  }, [advanceOnce, clearEndRecoveryTimer, hasStartedCurrentYouTubeVideo, isActiveYouTubePlayer]);
 
   const failCurrentYouTubeAttempt = useCallback((message: string) => {
     const desired = youtubeDesiredVideoRef.current;
@@ -946,7 +960,7 @@ export default function PlayerEmbed() {
                   break;
                 }
                 case window.YT.PlayerState.ENDED:
-                  advanceOnce();
+                  if (desired.started) advanceOnce();
                   break;
               }
             },
@@ -1071,6 +1085,10 @@ export default function PlayerEmbed() {
     if (signal.source === 'resume' || signal.gapMs >= PLAYBACK_WAKE_GAP_MS) {
       youtubeLastWakeAtRef.current = Date.now();
     }
+    if (!hasStartedCurrentYouTubeVideo(player)) {
+      scheduleEndRecovery(player);
+      return;
+    }
     try {
       const currentTime = player.getCurrentTime?.() ?? 0;
       const duration = player.getDuration?.() ?? useProgressStore.getState().duration;
@@ -1093,7 +1111,7 @@ export default function PlayerEmbed() {
     } catch {
       // The iframe may be between player generations.
     }
-  }, [advanceOnce, isActiveYouTubePlayer, scheduleEndRecovery, setProgress]);
+  }, [advanceOnce, hasStartedCurrentYouTubeVideo, isActiveYouTubePlayer, scheduleEndRecovery, setProgress]);
   usePlaybackWakeRecovery(recoverYouTubePlayback, currentPV?.service === 'Youtube');
 
   // 再生/一時停止の同期
