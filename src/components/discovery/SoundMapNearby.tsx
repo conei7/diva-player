@@ -23,6 +23,11 @@ export interface SoundMapNearbyProps {
   expanded: boolean;
   onExpandedChange: (expanded: boolean) => void;
   onSelect: (point: SoundMapPoint) => void;
+  /**
+   * The single-song map's origin: 「すべて再生」 then goes on past the listed songs in nearest order
+   * instead of the usual recommendations (services/soundMapQueue). Unset on the group map.
+   */
+  continuationOriginId?: number;
 }
 
 /** 「近くの曲」: the map's songs as rows (also the way to reach them without the map). */
@@ -35,6 +40,7 @@ export default function SoundMapNearby({
   expanded,
   onExpandedChange,
   onSelect,
+  continuationOriginId,
 }: SoundMapNearbyProps) {
   const t = useTranslateSourceText();
   if (points.length === 0) return null;
@@ -53,7 +59,14 @@ export default function SoundMapNearby({
           <Button
             size="sm"
             icon={<PlayIcon />}
-            onClick={() => usePlayerStore.getState().setQueue(playable, 0, true, 'discovery', t('近くの曲'))}
+            onClick={() => usePlayerStore.getState().setQueue(
+              playable,
+              0,
+              true,
+              'discovery',
+              t('近くの曲'),
+              continuationOriginId ? { kind: 'soundMap', originSongId: continuationOriginId } : null,
+            )}
           >
             {t('すべて再生')}
           </Button>

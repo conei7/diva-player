@@ -584,6 +584,7 @@ function SingleSoundMapPage() {
                         expanded={nearbyExpanded}
                         onExpandedChange={setNearbyExpanded}
                         onSelect={selectPoint}
+                        continuationOriginId={result.origin.songId}
                       />
                     </div>
                   </div>

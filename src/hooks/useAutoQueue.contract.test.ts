@@ -38,6 +38,29 @@ describe('auto queue request generation contract', () => {
     expect(decisions).toBeGreaterThan(metadata);
   });
 
+  it('continues a sound-map queue in nearest order before any recommendation work', () => {
+    const branch = source.indexOf("if (queueContinuation?.kind === 'soundMap') {");
+    const fetch = source.indexOf('await nextSoundMapQueueSongs({', branch);
+    const guard = source.indexOf(
+      'if (controller.signal.aborted || generation !== requestGenerationRef.current) return;',
+      fetch,
+    );
+    const append = source.indexOf('const continuationApplied = addManyToQueue(nextSongs, \'auto\', {', guard);
+    const rejected = source.indexOf('if (!continuationApplied) return;', append);
+    const remember = source.indexOf('rememberSoundMapQueueSongs(originSongId, nextSongs);', rejected);
+    const branchEnd = source.indexOf('return () => controller.abort();', remember);
+    const recommendations = source.indexOf('useAutoQueueBanditStore.getState().selectArm(');
+
+    expect(branch).toBeGreaterThanOrEqual(0);
+    expect(fetch).toBeGreaterThan(branch);
+    expect(guard).toBeGreaterThan(fetch);
+    expect(append).toBeGreaterThan(guard);
+    expect(rejected).toBeGreaterThan(append);
+    expect(remember).toBeGreaterThan(rejected);
+    // The branch returns before the usual recommendation pipeline (bandit arm, reranking) starts.
+    expect(recommendations).toBeGreaterThan(branchEnd);
+  });
+
   it('loads root-vector and root-producer evidence without fixed discovery slots', () => {
     expect(source).toContain('getSimilarSongs(anchorSong.id');
     expect(source).toContain('getSongsByProducerFromBackend(anchorSong.id');

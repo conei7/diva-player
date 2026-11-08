@@ -151,6 +151,7 @@ export function closePlayerWithUndo(t: SourceTextTranslator): void {
     originalQueue: player.originalQueue,
     shuffleEnabled: player.shuffleEnabled,
     rootSeed: player.rootSeed,
+    queueContinuation: player.queueContinuation,
     currentSong,
     currentPV: player.currentPV,
     currentPlaybackSource: player.currentPlaybackSource,

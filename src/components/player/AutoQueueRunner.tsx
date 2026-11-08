@@ -16,6 +16,7 @@ export default function AutoQueueRunner() {
   const currentSong = usePlayerStore(s => s.currentSong);
   const playbackSequence = usePlayerStore(s => s.playbackSequence);
   const rootSeed = usePlayerStore(s => s.rootSeed);
+  const queueContinuation = usePlayerStore(s => s.queueContinuation);
   const queue = usePlayerStore(s => s.queue);
   const queueIndex = usePlayerStore(s => s.queueIndex);
   const addManyToQueue = usePlayerStore(s => s.addManyToQueue);
@@ -30,6 +31,7 @@ export default function AutoQueueRunner() {
     currentSong: queueRestoring || !playlistsHydrated ? null : currentSong,
     playbackSequence,
     rootSeed,
+    queueContinuation,
     queue,
     queueIndex,
     historyEntries,

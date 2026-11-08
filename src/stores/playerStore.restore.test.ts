@@ -262,6 +262,30 @@ describe('large queue restoration', () => {
     expect(usePlayerStore.getState().isPlaying).toBe(true);
   });
 
+  it('restores a sound-map continuation after a reload and keeps it through the cold restore', async () => {
+    const songs = [song, { ...song, id: song.id + 1 }];
+    const byId = new Map(songs.map(item => [item.id, item]));
+    getSongById.mockImplementation(async (id: number) => byId.get(id));
+    getSongsByIds.mockImplementation(async (ids: number[]) => ids.map(id => byId.get(id)));
+    installLocalStorage({ songIds: songs.map(item => item.id), queueIndex: 0, currentSongId: song.id,
+      queueTitle: '近くの曲', continuation: { kind: 'soundMap', originSongId: 42 } });
+    const { usePlayerStore } = await import('./playerStore');
+    expect(usePlayerStore.getState().queueContinuation).toEqual({ kind: 'soundMap', originSongId: 42 });
+    await vi.waitFor(() => expect(usePlayerStore.getState().queue).toHaveLength(2));
+    expect(usePlayerStore.getState().queueContinuation).toEqual({ kind: 'soundMap', originSongId: 42 });
+    expect((JSON.parse(localStorage.getItem('diva_playerQueue') ?? '{}') as { continuation?: unknown }).continuation)
+      .toEqual({ kind: 'soundMap', originSongId: 42 });
+  });
+
+  it('ignores a malformed saved continuation', async () => {
+    installLocalStorage({ songIds: [song.id], queueIndex: 0, currentSongId: song.id, currentSong: song,
+      continuation: { kind: 'soundMap', originSongId: -1 } });
+    getSongById.mockResolvedValue(song);
+    getSongsByIds.mockResolvedValue([song]);
+    const { usePlayerStore } = await import('./playerStore');
+    expect(usePlayerStore.getState().queueContinuation).toBeNull();
+  });
+
   it('does not lose the saved IDs when a cold batch is incomplete', async () => {
     getSongById.mockResolvedValue(song);
     getSongsByIds.mockResolvedValue([]);

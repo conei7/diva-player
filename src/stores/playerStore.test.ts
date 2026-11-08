@@ -244,6 +244,55 @@ describe('player queue autoplay', () => {
     expect(state.queueTitle).toBe('発掘ミックス');
   });
 
+  it('keeps a sound-map continuation with its queue until another queue replaces it', () => {
+    const second = { ...song, id: song.id + 1, name: 'Second queue fixture' };
+    const readStored = () => JSON.parse(localStorage.getItem('diva_playerQueue') ?? '{}') as { continuation?: unknown };
+    usePlayerStore.getState().setQueue([song], 0, true, 'discovery', '近くの曲', { kind: 'soundMap', originSongId: 42 });
+
+    expect(usePlayerStore.getState().queueContinuation).toEqual({ kind: 'soundMap', originSongId: 42 });
+    expect(readStored().continuation).toEqual({ kind: 'soundMap', originSongId: 42 });
+
+    // Autoplay additions and queue edits keep it.
+    usePlayerStore.getState().addManyToQueue([second], 'auto', { currentSongId: song.id, playbackSequence: usePlayerStore.getState().playbackSequence });
+    usePlayerStore.getState().addToQueue({ ...song, id: song.id + 2 });
+    expect(usePlayerStore.getState().queueContinuation?.originSongId).toBe(42);
+    expect(readStored().continuation).toEqual({ kind: 'soundMap', originSongId: 42 });
+
+    // Any other new queue goes back to the usual recommendations.
+    usePlayerStore.getState().setQueue([second], 0);
+    expect(usePlayerStore.getState().queueContinuation).toBeNull();
+    expect(readStored().continuation).toBeNull();
+  });
+
+  it('brings a sound-map continuation back with 元に戻す after closing the player', () => {
+    usePlayerStore.getState().setQueue([song], 0, false, 'discovery', '近くの曲', { kind: 'soundMap', originSongId: 42 });
+    const player = usePlayerStore.getState();
+    const closed = {
+      queue: player.queue,
+      queueIndex: player.queueIndex,
+      queueSources: player.queueSources,
+      queueTitle: player.queueTitle,
+      originalQueue: player.originalQueue,
+      shuffleEnabled: player.shuffleEnabled,
+      rootSeed: player.rootSeed,
+      queueContinuation: player.queueContinuation,
+      currentSong: player.currentSong!,
+      currentPV: player.currentPV,
+      currentPlaybackSource: player.currentPlaybackSource,
+      playbackSequence: player.playbackSequence,
+      isPlaying: false,
+      progress: 0,
+      autoPlaySession: null,
+    };
+    usePlayerStore.getState().closePlayer({ undoable: true });
+    expect(usePlayerStore.getState().queueContinuation).toBeNull();
+
+    usePlayerStore.getState().restoreClosedPlayer(closed);
+    expect(usePlayerStore.getState().queueContinuation).toEqual({ kind: 'soundMap', originSongId: 42 });
+    expect((JSON.parse(localStorage.getItem('diva_playerQueue') ?? '{}') as { continuation?: unknown }).continuation)
+      .toEqual({ kind: 'soundMap', originSongId: 42 });
+  });
+
   it('restores a removed queue item at its original position without changing the source title', () => {
     const second = { ...song, id: song.id + 1, name: 'Second queue fixture' };
     usePlayerStore.getState().setQueue([song, second], 0, false, 'manual', 'お気に入り曲');

@@ -37,6 +37,16 @@ let playerQueuePersistenceRevision = 0;
 type LoopMode = 'none' | 'all' | 'one';
 export type PlaybackSource = 'manual' | 'auto' | 'discovery';
 
+/**
+ * What autoplay adds to this queue instead of the usual recommendations. `soundMap`: the
+ * 曲調マップ「近くの曲」 list goes on in nearest order from `originSongId` (services/soundMapQueue).
+ * Set only by setQueue's caller; any other new queue clears it.
+ */
+export interface QueueContinuation {
+  kind: 'soundMap';
+  originSongId: number;
+}
+
 interface StoredPlayerQueue {
   songIds?: number[];
   queue?: Song[];
@@ -48,6 +58,15 @@ interface StoredPlayerQueue {
   queueTitle?: string;
   rootSeedId?: number | null;
   rootSeed?: Song | null;
+  continuation?: QueueContinuation | null;
+}
+
+export function normalizeQueueContinuation(value: unknown): QueueContinuation | null {
+  if (!value || typeof value !== 'object') return null;
+  const { kind, originSongId } = value as Partial<QueueContinuation>;
+  return kind === 'soundMap' && Number.isSafeInteger(originSongId) && (originSongId ?? 0) > 0
+    ? { kind, originSongId: originSongId! }
+    : null;
 }
 
 export interface RemovedQueueItem {
@@ -66,6 +85,7 @@ export interface ClosedPlayer {
   originalQueue: Song[];
   shuffleEnabled: boolean;
   rootSeed: Song | null;
+  queueContinuation?: QueueContinuation | null;
   currentSong: Song;
   currentPV: PV | null;
   currentPlaybackSource: PlaybackSource;
@@ -254,6 +274,7 @@ function getStoredPlayerQueue(): StoredPlayerQueue | null {
     rootSeedId: Number.isInteger(stored.rootSeedId) && (stored.rootSeedId ?? 0) > 0
       ? stored.rootSeedId
       : null,
+    continuation: normalizeQueueContinuation(stored.continuation),
   };
 }
 
@@ -338,6 +359,8 @@ function savePlayerQueue(
   currentPlaybackSource?: PlaybackSource,
   queueTitle?: string,
   rootSeed?: Song | null,
+  /** undefined keeps the saved one, like queueTitle. */
+  continuation?: QueueContinuation | null,
 ): void {
   const pending = restoringQueue;
   if (pending?.valid() && queue.length === 0
@@ -347,6 +370,7 @@ function savePlayerQueue(
       queueSources: normalizeQueueSources(pending.stored.songIds!.length, queueSources),
       currentPlaybackSource,
       ...(rootSeed === undefined ? {} : { rootSeed, rootSeedId: rootSeed?.id ?? null }),
+      ...(continuation === undefined ? {} : { continuation }),
     };
     storage.set(PLAYER_QUEUE_KEY, pending.stored);
     pending.snapshot = localStorage.getItem(`diva_${PLAYER_QUEUE_KEY}`);
@@ -367,6 +391,9 @@ function savePlayerQueue(
     queueTitle: queueTitle ?? storedQueue?.queueTitle ?? 'ミックスリスト',
     rootSeedId: rootSeed === undefined ? storedQueue?.rootSeedId ?? null : rootSeed?.id ?? null,
     rootSeed: rootSeed === undefined ? storedQueue?.rootSeed ?? null : rootSeed ? snapshotSong(rootSeed) : null,
+    continuation: continuation === undefined
+      ? normalizeQueueContinuation(storedQueue?.continuation)
+      : continuation,
   });
   if (typeof indexedDB !== 'undefined' && queue !== lastCachedQueue) {
     lastCachedQueue = queue;
@@ -454,6 +481,8 @@ interface PlayerState {
   queueIndex: number;
   queueSources: PlaybackSource[];
   queueTitle: string;
+  /** null: autoplay adds the usual recommendations. */
+  queueContinuation: QueueContinuation | null;
 
   // エラー状態
   error: string | null;
@@ -494,7 +523,14 @@ interface PlayerState {
   clearSeekTarget: () => void;
   
   // キュー操作
-  setQueue: (songs: Song[], startIndex?: number, autoplay?: boolean, source?: PlaybackSource, queueTitle?: string) => void;
+  setQueue: (
+    songs: Song[],
+    startIndex?: number,
+    autoplay?: boolean,
+    source?: PlaybackSource,
+    queueTitle?: string,
+    continuation?: QueueContinuation | null,
+  ) => void;
   setQueueShuffled: (songs: Song[], queueTitle?: string) => void;
   replaceQueueList: (songs: Song[]) => void;
   addToQueue: (song: Song, source?: PlaybackSource) => void;
@@ -698,6 +734,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   queueIndex: storedPlayerQueue?.queueIndex ?? -1,
   queueSources: storedPlayerQueue?.queueSources ?? [],
   queueTitle: storedPlayerQueue?.queueTitle ?? 'ミックスリスト',
+  queueContinuation: storedPlayerQueue?.continuation ?? null,
   error: null,
 
   playSong: (song: Song, isUserAction?: boolean, startsNewSession = true, startPlaying = true, allowHiddenPlayback = false) => {
@@ -866,28 +903,36 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     }
   },
 
-  setQueue: (songs: Song[], startIndex = 0, autoplay = true, source: PlaybackSource = 'manual', queueTitle = 'ミックスリスト') => {
+  setQueue: (
+    songs: Song[],
+    startIndex = 0,
+    autoplay = true,
+    source: PlaybackSource = 'manual',
+    queueTitle = 'ミックスリスト',
+    continuation: QueueContinuation | null = null,
+  ) => {
     restoringQueue = null;
     const { shuffleEnabled } = get();
     const queueSources = songs.map(() => source);
+    const queueContinuation = normalizeQueueContinuation(continuation);
     if (shuffleEnabled && songs.length > 0) {
       const current = songs[startIndex];
       const rest = songs.filter((_, i) => i !== startIndex);
       const shuffled = current ? [current, ...shuffleQueue(rest)] : shuffleQueue(rest);
       const shuffledSources = shuffled.map(() => source);
-      set({ queue: shuffled, queueIndex: 0, queueSources: shuffledSources, queueTitle, originalQueue: songs });
-      savePlayerQueue(shuffled, 0, shuffled[0] ?? null, shuffledSources, source, queueTitle);
+      set({ queue: shuffled, queueIndex: 0, queueSources: shuffledSources, queueTitle, queueContinuation, originalQueue: songs });
+      savePlayerQueue(shuffled, 0, shuffled[0] ?? null, shuffledSources, source, queueTitle, undefined, queueContinuation);
       get().playSong(shuffled[0], source === 'manual' && autoplay, source === 'manual' && autoplay, autoplay);
     } else {
-      set({ queue: songs, queueIndex: startIndex, queueSources, queueTitle, originalQueue: [] });
-      savePlayerQueue(songs, startIndex, songs[startIndex] ?? null, queueSources, source, queueTitle);
+      set({ queue: songs, queueIndex: startIndex, queueSources, queueTitle, queueContinuation, originalQueue: [] });
+      savePlayerQueue(songs, startIndex, songs[startIndex] ?? null, queueSources, source, queueTitle, undefined, queueContinuation);
       if (songs.length > 0) get().playSong(songs[startIndex], source === 'manual' && autoplay, source === 'manual' && autoplay, autoplay);
     }
   },
 
   setQueueShuffled: (songs: Song[], queueTitle = 'ミックスリスト') => {
     if (songs.length === 0) {
-      set({ shuffleEnabled: true, queue: [], queueIndex: -1, queueSources: [], originalQueue: [] });
+      set({ shuffleEnabled: true, queue: [], queueIndex: -1, queueSources: [], queueContinuation: null, originalQueue: [] });
       clearStoredPlayerQueue();
       return;
     }
@@ -901,9 +946,10 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       queueIndex: 0,
       queueSources: shuffledSources,
       queueTitle,
+      queueContinuation: null,
       originalQueue,
     });
-    savePlayerQueue(shuffled, 0, shuffled[0] ?? null, shuffledSources, 'manual', queueTitle);
+    savePlayerQueue(shuffled, 0, shuffled[0] ?? null, shuffledSources, 'manual', queueTitle, undefined, null);
     get().playSong(shuffled[0], true);
   },
 
@@ -1031,6 +1077,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       queue: [],
       queueIndex: -1,
       queueSources: [],
+      queueContinuation: null,
       currentSong: null,
       currentPV: null,
       currentPlaybackSource: 'manual',
@@ -1047,6 +1094,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       queue: [],
       queueIndex: -1,
       queueSources: [],
+      queueContinuation: null,
       currentSong: null,
       currentPV: null,
       currentPlaybackSource: 'manual',
@@ -1069,10 +1117,11 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     // take its skip back: the song comes back as a new play, so PlayerTracker records it again.
     const counted = latest.undoableCloseSequence !== closed.playbackSequence;
     const { queue, queueIndex, queueSources, queueTitle, rootSeed, currentSong } = closed;
+    const queueContinuation = normalizeQueueContinuation(closed.queueContinuation);
     const currentPV = closed.currentPV ?? getPlayablePV(currentSong);
     // Near the start it simply starts over.
     const resumeAt = closed.progress > 5 ? closed.progress : 0;
-    savePlayerQueue(queue, queueIndex, currentSong, queueSources, closed.currentPlaybackSource, queueTitle, rootSeed);
+    savePlayerQueue(queue, queueIndex, currentSong, queueSources, closed.currentPlaybackSource, queueTitle, rootSeed, queueContinuation);
     useProgressStore.getState().setDuration(currentSong.lengthSeconds || currentPV?.length || 0);
     useProgressStore.getState().setProgress(resumeAt);
     // Not playSong: the closed play goes on with its sequence, so PlayerTracker neither adds a
@@ -1084,6 +1133,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       queueIndex,
       queueSources,
       queueTitle,
+      queueContinuation,
       originalQueue: closed.originalQueue,
       shuffleEnabled: closed.shuffleEnabled,
       rootSeed,

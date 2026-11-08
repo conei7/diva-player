@@ -43,12 +43,15 @@ import {
   type DiscoveryFilterResult,
 } from '../utils/globalFilters';
 import { useHiddenSongStore } from '../stores/hiddenSongStore';
-import type { PlaybackAppendExpectation } from '../stores/playerStore';
+import type { PlaybackAppendExpectation, QueueContinuation } from '../stores/playerStore';
+import { nextSoundMapQueueSongs, rememberSoundMapQueueSongs } from '../services/soundMapQueue';
 
 interface UseAutoQueueArgs {
   currentSong: Song | null;
   playbackSequence: number;
   rootSeed: Song | null;
+  /** Set: the queue goes on with these songs instead of the usual recommendations. */
+  queueContinuation?: QueueContinuation | null;
   queue: Song[];
   queueIndex: number;
   historyEntries: HistoryEntry[];
@@ -196,6 +199,7 @@ export function useAutoQueue({
   currentSong,
   playbackSequence,
   rootSeed,
+  queueContinuation = null,
   queue,
   queueIndex,
   historyEntries,
@@ -265,6 +269,41 @@ export function useAutoQueue({
       setStatus('ready');
       return;
     }
+
+    if (queueContinuation?.kind === 'soundMap') {
+      // 曲調マップの「近くの曲」: keep the nearest order instead of switching to recommendations.
+      const generation = ++requestGenerationRef.current;
+      const controller = new AbortController();
+      const { originSongId } = queueContinuation;
+      const excludeIds = new Set([
+        ...queue.map(song => song.id),
+        ...Object.keys(hiddenSongs).map(Number),
+      ]);
+      setStatus('fetching');
+      void (async () => {
+        try {
+          const nextSongs = await nextSoundMapQueueSongs({
+            originSongId,
+            excludeIds,
+            count: queuePlan.requestedCount,
+            signal: controller.signal,
+          });
+          if (controller.signal.aborted || generation !== requestGenerationRef.current) return;
+          const continuationApplied = addManyToQueue(nextSongs, 'auto', {
+            currentSongId: currentSong.id,
+            playbackSequence,
+          });
+          if (!continuationApplied) return;
+          rememberSoundMapQueueSongs(originSongId, nextSongs);
+          setStatus(nextSongs.length === 0 ? 'exhausted' : 'ready');
+        } catch {
+          if (controller.signal.aborted || generation !== requestGenerationRef.current) return;
+          setStatus('degraded');
+        }
+      })();
+      return () => controller.abort();
+    }
+
     const strategyArm = useAutoQueueBanditStore.getState().selectArm(
       useAutoQueueDecisionStore.getState().decisions.length,
     );
@@ -477,6 +516,7 @@ export function useAutoQueue({
     playlists,
     queue,
     queueIndex,
+    queueContinuation,
     ratings,
     rootSeed,
     globalFilterSettings,
