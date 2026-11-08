@@ -36,7 +36,7 @@ VocaDB API を活用したボカロ特化ミュージックプレイヤー SPA�
 - ライト／ダークテーマと端末の明暗設定への自動追従（設定→全般、既定はダーク）
 - アクセントカラーのプリセット・任意色・リセット（設定→全般、ブラウザ内に保存）
 
-Web imageの`vendor/alpine/v3.24/`は、公式Alpine配布元の署名済みExpat 2.9.0-r0（MIT）とlibX11 1.8.14-r0（X11）のAPK（x86_64／aarch64）です。CDNの地域差による取得不能を避け、Dockerfileのarchitecture別SHA-256とAlpineの署名検証を通して導入します。固定版の更新時は両architectureのAPK・hash・image scanを同時に検証します。
+Web imageの`vendor/alpine/v3.24/`は、公式Alpine配布元の署名済みAPK（x86_64／aarch64）を保持します。現行buildはExpat 2.10.0-r0（MIT）とlibX11 1.8.14-r0（X11）を導入し、旧Expat 2.9.0-r0のfileは保全物です。CDNの地域差による取得不能を避け、Dockerfileのarchitecture別SHA-256とAlpineの署名検証を通して導入します。固定版の更新時は両architectureのAPK・hash・image scanを同時に検証します。
 
 同directoryのmusl／musl-utils 1.2.6-r3（MIT）も両architectureの署名付きAPKを保持します。WebはこれをSHA-256照合後に導入し、API／gatewayも同じ公式APKのhashを固定します。いずれも導入後の版を検査し、Alpine 3.24の旧muslを修正します。稼働imageへの反映状況はprivateのCURRENT_STATUSを参照してください。
 
@@ -46,7 +46,7 @@ Web imageの`vendor/alpine/v3.24/`は、公式Alpine配布元の署名済みExpa
 
 スマートプレイリストの保存件数は50／100／200／全曲から選択でき、新規・未設定の既定は200曲です。全曲取得は100曲ずつ行い、不完全な一覧で保存済みの曲を置き換えません。
 
-完全バックアップはv8で、v1〜v7も読み込めます。キューは別に永続化し、件数と順序が一致するmetadataキャッシュがあれば通信なしで復元します。キャッシュがなければ現在曲を先に取得し、残りを最大100曲ずつ読み込みます。全件がそろうまで次／前のキュー操作には待ち時間が残ります。
+完全バックアップはv8で、v1〜v7も読み込めます。キューは別に永続化し、件数と順序が一致するmetadataキャッシュがあれば通信なしで復元します。キャッシュがなければ現在曲と周辺曲を先に取得し、残りを最大100曲ずつ読み込みます。取得済みの周辺曲は全件完了前から次／前・行選択で再生でき、未取得曲への移動はその曲の取得を待ちます。全体保存・削除・shuffle・自動補充は完全復元まで待ちます。
 
 Pages／LANなど異なるoriginや別端末へ保存データは自動同期されません。ブラウザ全体の保存容量やデータ削除の制約も残るため、端末・originを移る場合は完全バックアップを使ってください。
 
@@ -138,7 +138,7 @@ npm run preview
 
 ## Cloudflare Pagesリリース
 
-`main`のGitHub Actionsは最初にCloudflare projectをread-onlyでinspectし、preview／productionに実際に保存されているcompatibility date／flagsとbinding metadataを検証します。通常のtest／E2Eに成功した後でCloudflare用の`dist`を1回だけbuildし、`functions`もその実測compatibility設定を明示してWranglerで再現可能なminify済み`dist/_worker.js`へ1回だけcompileします。その配備可能な`dist`全体をSHA-256 file manifest付きの単一release artifactへ固定します。配備jobはこのartifactを再build／再bundleせず、download後とproduction upload直前にcommit、compatibility設定、全file hashを検証します。
+`main`のGitHub Actionsはpush差分をdocs／tests／web／fullへ分類します。docsは分類検査だけ、testsはWeb検証を行い公開しません。release対象のweb／fullでCloudflare projectをread-onlyでinspectし、preview／productionに実際に保存されているcompatibility date／flagsとbinding metadataを検証します。通常のtest／E2Eに成功した後でCloudflare用の`dist`を1回だけbuildし、`functions`もその実測compatibility設定を明示してWranglerで再現可能なminify済み`dist/_worker.js`へ1回だけcompileします。その配備可能な`dist`全体をSHA-256 file manifest付きの単一release artifactへ固定します。配備jobはこのartifactを再build／再bundleせず、download後とproduction upload直前にcommit、compatibility設定、全file hashを検証します。backend・共有依存・運用script・未知の差分や手動実行はfullで検証します。
 
 releaseは次の順序で進みます。
 
