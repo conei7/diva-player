@@ -230,6 +230,17 @@ for (const dockerfile of [gatewayDockerfile, apiDockerfile]) {
   assert.match(dockerfile, /"\$musl_utils_sha {2}\/tmp\/musl-utils\.apk" \| sha256sum -c -/u);
   assert.match(dockerfile, /apk add --no-network \/tmp\/musl\.apk \/tmp\/musl-utils\.apk/u);
 }
+for (const hash of [
+  'd49d703392f1a6d2fe822db1b57e61735063077e1ad846d5f40d79fe507ec727',
+  'ee9a8106067ead36b8930f5ccdb3e515574871ac8e07f88cc7bab7049effc945',
+  'd7043c549029c98d438e9bc94213b006e5c88540eb58d1f5b0f0d1d56dbf9c98',
+  'df4a9a4bb81a76af36779d2c5ef28ac5a1778670788bb4cd152def522904df8f',
+]) {
+  assert.ok(postgresDockerfile.includes(hash));
+  assert.ok(postgresMigrateDockerfile.includes(hash));
+}
+assert.match(postgresDockerfile, /apk add --no-network \/tmp\/musl\.apk \/tmp\/musl-utils\.apk/u);
+assert.match(postgresDockerfile, /for package in musl musl-utils; do[\s\S]*?\/lib\/apk\/db\/installed\)" = 1\.2\.5-r24/u);
 assert.match(webApkUpdate, /brotli-libs=1\.2\.1-r0/u);
 for (const [architecture, expectedHash] of [
   ['x86_64', '62a7e37e43bbfc1f8525a00ad2125fd5897135dc93b849733884cb78ffd8e26c'],

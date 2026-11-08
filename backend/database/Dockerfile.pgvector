@@ -35,6 +35,24 @@ ARG DIVA_POSTGRES_DOCKERFILE_SHA256
 ARG DIVA_POSTGRES_BUILD_TIMESTAMP
 ARG DIVA_POSTGRES_SCHEMA_SHA256
 ARG DIVA_POSTGRES_SOURCE_BUNDLE_SHA256
+# CVE-2026-107891: match the reviewed Alpine 3.23 migrate/audit musl fix.
+RUN set -eux; \
+    case "$(cat /etc/alpine-release)" in 3.23.*) ;; *) exit 1 ;; esac; \
+    arch="$(apk --print-arch)"; \
+    case "$arch" in \
+      x86_64) musl_sha=d49d703392f1a6d2fe822db1b57e61735063077e1ad846d5f40d79fe507ec727; utils_sha=ee9a8106067ead36b8930f5ccdb3e515574871ac8e07f88cc7bab7049effc945 ;; \
+      aarch64) musl_sha=d7043c549029c98d438e9bc94213b006e5c88540eb58d1f5b0f0d1d56dbf9c98; utils_sha=df4a9a4bb81a76af36779d2c5ef28ac5a1778670788bb4cd152def522904df8f ;; \
+      *) exit 1 ;; \
+    esac; \
+    wget -O /tmp/musl.apk "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/$arch/musl-1.2.5-r24.apk"; \
+    echo "$musl_sha  /tmp/musl.apk" | sha256sum -c -; \
+    wget -O /tmp/musl-utils.apk "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/$arch/musl-utils-1.2.5-r24.apk"; \
+    echo "$utils_sha  /tmp/musl-utils.apk" | sha256sum -c -; \
+    apk add --no-network /tmp/musl.apk /tmp/musl-utils.apk; \
+    for package in musl musl-utils; do \
+      test "$(awk -F: -v package="$package" '$1=="P"{p=($2==package);next} p && $1=="V"{print $2;exit}' /lib/apk/db/installed)" = 1.2.5-r24; \
+    done; \
+    rm /tmp/musl.apk /tmp/musl-utils.apk
 # Use checksummed APKs directly: a stale mirror index must not downgrade OpenSSL or zlib.
 RUN set -eux; \
     case "$(cat /etc/alpine-release)" in 3.23.*) ;; *) exit 1 ;; esac; \
