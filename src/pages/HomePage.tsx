@@ -1261,6 +1261,7 @@ function HomeFeed({ ref, belowShelves }: HomeFeedProps) {
             : undefined}
           alwaysShowReasons={activeCategory === 'ranking'}
           exposureSurface={activeCategory === 'recommended' ? 'home-recommended' : 'home-discovery'}
+          square={belowShelves}
         />
       </div>
 

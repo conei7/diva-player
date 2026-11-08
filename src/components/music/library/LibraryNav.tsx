@@ -20,7 +20,7 @@ const TOP_NAV_ITEMS: readonly NavId[] = ['home', 'chorus', 'soundMap', 'knowledg
  * keeps its aria-label and the live status text).
  */
 const MIX_ROW_CLASS =
-  '[&>button]:rounded-lg [&>button]:font-medium [&>button]:text-yt-text-secondary [&>button:hover]:text-yt-text';
+  '[&>button]:rounded-lg [&>button]:font-bold [&>button]:text-yt-text-secondary [&>button:hover]:bg-transparent [&>button:hover]:text-yt-text';
 const MIX_FULL_CLASS = `${MIX_ROW_CLASS} [&>button]:gap-4`;
 const MIX_RAIL_CLASS = `${MIX_FULL_CLASS} [&>button]:h-11 [&>button]:justify-center [&>button]:px-0 [&>button>span]:sr-only`;
 /** The rail with captions: the label (and the live status) as a 10px line under the icon. */

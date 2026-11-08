@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { Link } from 'react-router';
 import type { Song } from '../../../types/vocadb';
 import { useTranslateSourceText } from '../../../i18n';
@@ -13,6 +13,7 @@ import { CheckBoxOutlineIcon, CheckIcon, PauseIcon, PersonIcon, PlayIcon, Volume
 import { cx } from '../../ui/overlay';
 import SquareArt from '../SquareArt';
 import { SHELF_CARD_WIDTH_CLASS } from './musicHomeShelves';
+import { ART_SHADOW_CLASS, CARD_HOVER_CLASS } from './SongShelf';
 import { playShelfSong } from './musicHomeSources';
 
 interface ShelfSongCardProps {
@@ -21,6 +22,18 @@ interface ShelfSongCardProps {
   rank?: number;
   /** Mouse devices: ▶ and ⋮ appear on hover / focus (touch screens always show them). */
   finePointer: boolean;
+  /**
+   * A card of Home's feed grid (VideoGrid `square`) instead of a shelf: the grid column's width, the
+   * `song-card` class of the feed's cards, and the feed's exposure records and reason line.
+   */
+  feed?: {
+    /** Once 35% of the card has been on screen. */
+    onVisible?: () => void;
+    /** ▶ or the title. */
+    onExposureClick?: () => void;
+    /** Why it was recommended, a short grey line under the artist. */
+    reason?: string | null;
+  };
 }
 
 /**
@@ -29,8 +42,29 @@ interface ShelfSongCardProps {
  * takes over playback).
  * In selection mode the artwork selects the song instead.
  */
-export default function ShelfSongCard({ song, rank, finePointer }: ShelfSongCardProps) {
+export default function ShelfSongCard({ song, rank, finePointer, feed }: ShelfSongCardProps) {
   const t = useTranslateSourceText();
+  const cardRef = useRef<HTMLLIElement>(null);
+  const onExposureClick = feed?.onExposureClick;
+  // The latest callback (a new function on every render of the grid) without re-observing.
+  const onVisibleRef = useRef(feed?.onVisible);
+  useEffect(() => {
+    onVisibleRef.current = feed?.onVisible;
+  });
+  const observeVisibility = Boolean(feed?.onVisible);
+  // The same rule as the feed's video cards (SongCard): reported once per song, at 35% on screen.
+  useEffect(() => {
+    const card = cardRef.current;
+    if (!observeVisibility || !card || typeof IntersectionObserver === 'undefined') return undefined;
+    const observer = new IntersectionObserver(entries => {
+      if (entries[0]?.isIntersecting && (entries[0].intersectionRatio ?? 0) >= 0.35) {
+        observer.disconnect();
+        onVisibleRef.current?.();
+      }
+    }, { threshold: [0.35] });
+    observer.observe(card);
+    return () => observer.disconnect();
+  }, [observeVisibility, song.id]);
   const isCurrent = usePlayerStore(state => state.currentSong?.id === song.id);
   const isPlaying = usePlayerStore(state => state.currentSong?.id === song.id && state.isPlaying);
   const isSelectionMode = useSelectionStore(state => state.isSelectionMode);
@@ -57,7 +91,9 @@ export default function ShelfSongCard({ song, rank, finePointer }: ShelfSongCard
       useSelectionStore.getState().toggleSong(song);
       return;
     }
-    if (playable) playShelfSong(song);
+    if (!playable) return;
+    onExposureClick?.();
+    playShelfSong(song);
   };
 
   const selectThisSong = () => {
@@ -67,14 +103,19 @@ export default function ShelfSongCard({ song, rank, finePointer }: ShelfSongCard
 
   return (
     <li
-      data-testid="music-shelf-card"
+      ref={cardRef}
+      data-testid={feed ? 'music-feed-card' : 'music-shelf-card'}
       data-now-playing={isCurrent ? 'true' : undefined}
       data-selected={selected ? 'true' : undefined}
-      className={cx('group relative shrink-0 snap-start', SHELF_CARD_WIDTH_CLASS)}
+      className={cx(
+        'group relative',
+        CARD_HOVER_CLASS,
+        feed ? 'song-card min-w-0' : cx('shrink-0 snap-start', SHELF_CARD_WIDTH_CLASS),
+      )}
     >
       {/* The artwork plays the song: a transparent button over it (with the ▶ at the bottom-right). */}
       <div className="relative">
-        <SquareArt song={song} radius="md" className="w-full">
+        <SquareArt song={song} radius="md" className={cx('w-full', ART_SHADOW_CLASS)}>
           {rank !== undefined && !isSelectionMode && (
             <span className="pointer-events-none absolute left-1.5 top-1.5 rounded-badge bg-black/60 px-1.5 text-sm font-bold leading-6 text-white tabular-nums">
               {rank}
@@ -138,6 +179,7 @@ export default function ShelfSongCard({ song, rank, finePointer }: ShelfSongCard
             ) : (
               <Link
                 to={href}
+                onClick={onExposureClick}
                 className="line-clamp-2 break-words rounded-sm text-inherit no-underline hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-yt-focus after:absolute after:inset-x-0 after:-top-1 after:bottom-0 after:content-['']"
               >
                 {song.name}
@@ -145,6 +187,9 @@ export default function ShelfSongCard({ song, rank, finePointer }: ShelfSongCard
             )}
           </h3>
           <p className="m-0 mt-0.5 truncate text-sm leading-5 text-yt-text-secondary">{formatArtistLine(song)}</p>
+          {feed?.reason && (
+            <p className="m-0 mt-0.5 truncate text-xs leading-[18px] text-yt-text-secondary">{feed.reason}</p>
+          )}
         </div>
         {!isSelectionMode && (
           <div className="-mr-2 -mt-1.5">

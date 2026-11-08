@@ -13,6 +13,7 @@ import { ClockIcon, PlayIcon, PlaylistIcon } from '../../ui/icons';
 import { cx } from '../../ui/overlay';
 import SquareArt from '../SquareArt';
 import { SHELF_CARD_WIDTH_CLASS } from './musicHomeShelves';
+import { ART_SHADOW_CLASS, CARD_HOVER_CLASS } from './SongShelf';
 import { playShelfPlaylist } from './musicHomeSources';
 
 interface ShelfPlaylistCardProps {
@@ -36,14 +37,14 @@ export default function ShelfPlaylistCard({ playlist, finePointer }: ShelfPlayli
   const canPlay = playlist.songs.length > 0;
 
   return (
-    <li data-testid="music-shelf-playlist" className={cx('group relative shrink-0 snap-start', SHELF_CARD_WIDTH_CLASS)}>
+    <li data-testid="music-shelf-playlist" className={cx('group relative shrink-0 snap-start', CARD_HOVER_CLASS, SHELF_CARD_WIDTH_CLASS)}>
       <div className="relative">
         {/* The title link below is the focusable one; the cover is a second, mouse-only way in. */}
         <Link to={href} tabIndex={-1} aria-hidden="true" draggable={false} className="block rounded-[8px]">
           <SquareArt
             candidates={candidates}
             radius="md"
-            className="w-full"
+            className={cx('w-full', ART_SHADOW_CLASS)}
             fallbackIcon={playlist.id === WATCH_LATER_ID
               ? <ClockIcon size={40} />
               : <PlaylistIcon size={40} />}

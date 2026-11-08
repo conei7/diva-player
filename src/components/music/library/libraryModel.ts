@@ -2,7 +2,7 @@
  * Pure helpers of the music layout's library column (MusicLibrary): which playlists it lists and in
  * which order, which entry the current location selects, and the shared row classes.
  */
-import type { NavLocation } from '../../layout/navItems';
+import type { NavId, NavLocation } from '../../layout/navItems';
 import { WATCH_LATER_ID } from '../../../stores/playlistStore';
 import type { Playlist, PlaylistFolder } from '../../../types/vocadb';
 import {
@@ -129,14 +129,30 @@ export const RAIL_CAPTION_MEDIA_QUERY = '(pointer: coarse) and (min-height: 600p
 export const LIBRARY_ROW_CLASS =
   'flex w-full min-w-0 items-center rounded-lg text-left no-underline transition-colors duration-150 [-webkit-tap-highlight-color:transparent]';
 
-/** Hover and selected backgrounds of a library row (selected rows are lighter). */
+/** Hover and selected backgrounds of a library row (index.css --music-hover / --music-active). */
 export function libraryRowStateClass(active: boolean): string {
-  return active ? 'bg-yt-tonal text-yt-text hover:bg-yt-tonal-hover' : 'text-yt-text hover:bg-yt-tonal';
+  return active ? 'bg-(--music-active) text-yt-text' : 'text-yt-text hover:bg-(--music-hover)';
 }
 
-/** Top destinations (ホーム …): grey until selected or hovered, like a music app's main links. */
+/**
+ * Top destinations (ホーム …): bold grey names that turn white when hovered or selected, without a
+ * background, like a music app's main links.
+ */
 export function libraryNavStateClass(active: boolean): string {
-  return active
-    ? 'bg-yt-tonal font-semibold text-yt-text hover:bg-yt-tonal-hover'
-    : 'font-medium text-yt-text-secondary hover:bg-yt-tonal hover:text-yt-text';
+  return active ? 'font-bold text-yt-text' : 'font-bold text-yt-text-secondary hover:text-yt-text';
 }
+
+/**
+ * Colour tiles in place of artwork for the fixed entries and the destinations (the library column and
+ * Home's quick tiles): a gradient with a white icon, like a music app's tile for liked songs.
+ */
+export const DESTINATION_TILE_CLASS: Partial<Record<NavId, string>> = {
+  ratings: 'bg-[linear-gradient(135deg,#450af5,#8e8ee5_55%,#c4efd9)] text-white',
+  watchLater: 'bg-[#056952] text-[#1ed760]',
+  history: 'bg-[linear-gradient(135deg,#e8115b,#f59b23)] text-white',
+  favoriteProducers: 'bg-[linear-gradient(135deg,#1e3264,#509bf5)] text-white',
+  reports: 'bg-[linear-gradient(135deg,#2d46b9,#477d95)] text-white',
+  chorus: 'bg-[linear-gradient(135deg,#af2896,#f037a5)] text-white',
+  soundMap: 'bg-[linear-gradient(135deg,#006450,#27856a)] text-white',
+  knowledgeMap: 'bg-[linear-gradient(135deg,#503750,#8d67ab)] text-white',
+};

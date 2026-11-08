@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useId, useRef, useState } from 'react';
 import type { MouseEvent } from 'react';
-import { useLocation } from 'react-router';
+import { Link, useLocation } from 'react-router';
 import { useShallow } from 'zustand/react/shallow';
 import { useUiStore } from '../../stores/uiStore';
 import { usePlayerStore } from '../../stores/playerStore';
@@ -27,7 +27,7 @@ import BrandLogo from './BrandLogo';
 import { DeferredBoundary } from './RouteErrorBoundary';
 import SearchBox from './SearchBox';
 import { useFocusHandoff } from './focusHandoff';
-import { isPlainLeftClick, resetHomeState } from './navItems';
+import { isPlainLeftClick, NAV_ITEMS, resetHomeState } from './navItems';
 
 const HIDDEN_MODE_CLICKS = 5;
 
@@ -174,7 +174,21 @@ export default function TopNav() {
           )}
         </div>
 
-        <div className="flex min-w-0 flex-1 justify-center">
+        <div className="flex min-w-0 flex-1 items-center justify-center gap-2">
+          {/* The music layout: a round ホーム button left of the search pill (index.css). */}
+          {isMusicLayout && !isMobile && (
+            <Tooltip content={tk('sidebarHome')}>
+              <Link
+                to={NAV_ITEMS.home.to}
+                aria-label={tk('sidebarHome')}
+                aria-current={location.pathname === '/' ? 'page' : undefined}
+                className="music-home-button"
+                onClick={event => { if (isPlainLeftClick(event)) resetHomeState(); }}
+              >
+                {location.pathname === '/' ? <NAV_ITEMS.home.activeIcon /> : <NAV_ITEMS.home.icon />}
+              </Link>
+            </Tooltip>
+          )}
           <SearchBox compact={isMobile} />
         </div>
 

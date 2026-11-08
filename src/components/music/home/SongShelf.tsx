@@ -10,7 +10,17 @@ import { SHELF_CARD_WIDTH_CLASS } from './musicHomeShelves';
 
 const SKELETON_CARDS = [0, 1, 2, 3, 4, 5, 6, 7];
 
-const SEE_ALL_CLASS = 'inline-flex min-h-10 shrink-0 cursor-pointer items-center rounded-chip px-2 text-sm font-medium leading-5 text-yt-text-secondary no-underline hover:text-yt-text hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-yt-focus';
+const SEE_ALL_CLASS = 'inline-flex min-h-10 shrink-0 cursor-pointer items-center rounded-chip px-2 text-sm font-bold leading-5 text-yt-text-secondary no-underline hover:text-yt-text hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-yt-focus';
+
+/**
+ * A card's hover panel: a rounded face 8px around the card, behind its content (the card is `isolate`),
+ * like a music app's cards. The shelf's scroller keeps 8px above and below for it.
+ */
+export const CARD_HOVER_CLASS =
+  "isolate before:pointer-events-none before:absolute before:-inset-2 before:-z-10 before:rounded-md before:transition-colors before:duration-150 before:content-[''] hover:before:bg-(--music-hover) focus-within:before:bg-(--music-hover)";
+
+/** The artwork's soft shadow (index.css --music-art-shadow). */
+export const ART_SHADOW_CLASS = 'shadow-[var(--music-art-shadow)]';
 
 export interface SongShelfProps {
   /** `data-shelf` of the section (recent, playlists, weekly, …). */
@@ -70,7 +80,7 @@ export default function SongShelf({ shelf, title, seeAllTo, onSeeAll, finePointe
   return (
     <section data-testid="music-shelf" data-shelf={shelf} aria-labelledby={headingId} className="min-w-0">
       <div className="mb-2 flex min-h-10 items-center gap-2">
-        <h2 id={headingId} className="m-0 min-w-0 flex-1 truncate text-xl font-bold leading-7 text-yt-text">
+        <h2 id={headingId} className="m-0 min-w-0 flex-1 truncate text-2xl font-bold leading-8 text-yt-text">
           {title}
         </h2>
         {seeAllTo ? (
@@ -105,11 +115,11 @@ export default function SongShelf({ shelf, title, seeAllTo, onSeeAll, finePointe
         )}
       </div>
       <div className="relative -mx-3 sm:-mx-4 lg:-mx-6">
-        {/* py-1: room inside the scroll box for the cards' focus rings, which it would clip otherwise. */}
+        {/* py-2: room inside the scroll box for the cards' hover panels and focus rings, which it would clip otherwise. */}
         <div
           ref={scrollerRef}
           onScroll={measure}
-          className="snap-x snap-mandatory scroll-px-3 overflow-x-auto overscroll-x-contain px-3 py-1 sm:scroll-px-4 sm:px-4 lg:scroll-px-6 lg:px-6 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          className="snap-x snap-mandatory scroll-px-3 overflow-x-auto overscroll-x-contain px-3 py-2 sm:scroll-px-4 sm:px-4 lg:scroll-px-6 lg:px-6 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         >
           <ul ref={contentRef} role="list" className="m-0 flex w-max list-none items-start gap-3 p-0 sm:gap-4">
             {children}
@@ -137,9 +147,9 @@ export function SongShelfSkeleton() {
   return (
     <div data-testid="music-shelf-loading" aria-hidden="true" className="min-w-0">
       <div className="mb-2 flex min-h-10 items-center">
-        <SkeletonBlock className="h-6 w-40 rounded-badge" />
+        <SkeletonBlock className="h-7 w-48 rounded-badge" />
       </div>
-      <div className="-mx-3 overflow-hidden px-3 py-1 sm:-mx-4 sm:px-4 lg:-mx-6 lg:px-6">
+      <div className="-mx-3 overflow-hidden px-3 py-2 sm:-mx-4 sm:px-4 lg:-mx-6 lg:px-6">
         <div className="flex w-max items-start gap-3 sm:gap-4">
           {SKELETON_CARDS.map(index => (
             <div key={index} className={cx('shrink-0', SHELF_CARD_WIDTH_CLASS)}>

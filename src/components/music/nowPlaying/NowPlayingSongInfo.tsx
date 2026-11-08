@@ -15,8 +15,11 @@ import Tooltip from '../../ui/Tooltip';
 import { CheckIcon, ClockIcon, InfoIcon, PlaylistAddIcon, ShareIcon } from '../../ui/icons';
 import { shareSong, toggleWatchLater } from '../../watch/watchActions';
 
-/** 36px like the song page's pills; 40px where the pointer is a finger. */
-const PILL = 'pointer-coarse:h-10';
+/**
+ * 36px like the song page's pills; 40px where the pointer is a finger. Outlined in bold, the border
+ * turning white on hover, like a music app's buttons beside a song.
+ */
+const PILL = 'pointer-coarse:h-10 font-bold hover:border-yt-text hover:bg-transparent';
 
 const PRODUCER_LINK = 'text-inherit no-underline transition-colors duration-150 hover:text-yt-text hover:underline focus-visible:text-yt-text';
 
@@ -63,7 +66,7 @@ export default function NowPlayingSongInfo({ song, titleRef }: NowPlayingSongInf
 
   return (
     <div data-testid="music-now-playing-song" className="pt-3">
-      <h2 className="m-0 line-clamp-2 break-words text-xl font-bold leading-7 text-yt-text">
+      <h2 className="m-0 line-clamp-2 break-words text-2xl font-bold leading-8 text-yt-text">
         <Link
           ref={titleRef}
           to={watchPath(song.id, { autoplay: false })}
@@ -83,6 +86,7 @@ export default function NowPlayingSongInfo({ song, titleRef }: NowPlayingSongInf
       <div className="mt-2 flex flex-wrap items-center gap-2">
         <Tooltip content={t('プレイリストに保存')}>
           <Button
+            variant="outline"
             icon={<PlaylistAddIcon />}
             aria-label={t('プレイリストに保存')}
             className={PILL}
@@ -92,6 +96,7 @@ export default function NowPlayingSongInfo({ song, titleRef }: NowPlayingSongInf
           </Button>
         </Tooltip>
         <Button
+          variant="outline"
           icon={inWatchLater ? <CheckIcon /> : <ClockIcon />}
           aria-pressed={inWatchLater}
           className={PILL}
@@ -99,11 +104,11 @@ export default function NowPlayingSongInfo({ song, titleRef }: NowPlayingSongInf
         >
           {t('後で聴く')}
         </Button>
-        <Button icon={<ShareIcon />} className={PILL} onClick={() => shareSong(song, t)}>
+        <Button variant="outline" icon={<ShareIcon />} className={PILL} onClick={() => shareSong(song, t)}>
           {t('共有')}
         </Button>
         <PVSourceSelector song={song} compact />
-        <Button icon={<InfoIcon />} className={PILL} onClick={() => openSongDetail(song)}>
+        <Button variant="outline" icon={<InfoIcon />} className={PILL} onClick={() => openSongDetail(song)}>
           {t('曲の詳細')}
         </Button>
       </div>

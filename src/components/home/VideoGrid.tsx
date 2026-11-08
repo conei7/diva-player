@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import { useNavigate } from 'react-router';
 import type { Song } from '../../types/vocadb';
 import SongCard from '../search/SongCard';
+import SquareSongGrid, { SquareSongGridSkeleton } from '../music/home/SquareSongGrid';
 import { useSelectionStore } from '../../stores/selectionStore';
 import { useRecommendationExposureStore, type ExposureSurface } from '../../stores/recommendationExposureStore';
 import { useRecommendationDisplayStore } from '../../stores/recommendationDisplayStore';
@@ -32,6 +33,8 @@ interface VideoGridProps {
   visibilityIntent?: SongVisibilityIntent;
   /** Ranking feeds show 1, 2, 3… at the top-left of each thumbnail. */
   showRanks?: boolean;
+  /** The music layout's Home: square cards like its shelves (SquareSongGrid) instead of video tiles. */
+  square?: boolean;
 }
 
 const GRID_CLASS = 'grid grid-cols-1 gap-y-6 sm:grid-cols-[repeat(auto-fill,minmax(320px,1fr))] sm:gap-x-4 sm:gap-y-10';
@@ -46,6 +49,7 @@ export default function VideoGrid({
   emptyState,
   visibilityIntent = 'discovery',
   showRanks = false,
+  square = false,
 }: VideoGridProps) {
   const t = useTranslate();
   const navigate = useNavigate();
@@ -68,7 +72,20 @@ export default function VideoGrid({
     navigate(watchPath(song.id));
   }, [navigate]);
 
+  if (square && !(loading && visibleSongs.length === 0) && visibleSongs.length > 0) {
+    return (
+      <SquareSongGrid
+        songs={visibleSongs}
+        showRanks={showRanks}
+        reasons={showRecommendationHints || alwaysShowReasons ? recommendationReasons : undefined}
+        onVisible={exposureSurface ? (song, index) => recordVisible(song.id, exposureSurface, index + 1) : undefined}
+        onExposureClick={exposureSurface ? song => recordClicked(song.id) : undefined}
+      />
+    );
+  }
+
   if (loading && visibleSongs.length === 0) {
+    if (square) return <SquareSongGridSkeleton />;
     return (
       <div className={GRID_CLASS} aria-busy="true">
         {Array.from({ length: 12 }).map((_, i) => (

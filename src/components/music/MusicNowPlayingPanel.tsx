@@ -29,7 +29,8 @@ function UpNext() {
   const isLastSong = !view.nextSong && loopMode === 'none' && !listExplainsEnd;
 
   return (
-    <section data-testid="music-now-playing-queue" className="mt-6">
+    // A card on the panel, like a music app's 「次に再生」 box.
+    <section data-testid="music-now-playing-queue" className="mt-6 rounded-lg bg-(--music-card) px-3 pb-2 pt-3">
       <QueueHeader
         view={view}
         title={t('次に再生')}

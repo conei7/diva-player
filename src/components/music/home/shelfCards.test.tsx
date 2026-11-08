@@ -86,7 +86,8 @@ afterEach(() => {
 describe('ShelfSongCard', () => {
   it('has square artwork, a ▶ over it and the song link without autoplay', () => {
     const html = render(<ul><ShelfSongCard song={song} finePointer /></ul>);
-    expect(html).toMatch(/^<ul><li data-testid="music-shelf-card" class="group relative shrink-0 snap-start /);
+    // A hover panel behind the card (isolate + ::before), then the shelf's fixed width.
+    expect(html).toMatch(/^<ul><li data-testid="music-shelf-card" class="group relative isolate [^"]*hover:before:bg-\(--music-hover\)[^"]* shrink-0 snap-start /);
     expect(html).toContain('aspect-square');
     expect(html).toContain('src="https://img.youtube.com/vi/abcdefghijk/mqdefault.jpg"');
     expect(html).toContain('aria-label="「Fixture song」を再生"');
@@ -122,6 +123,14 @@ describe('ShelfSongCard', () => {
     const html = render(<ul><ShelfSongCard song={song} finePointer /></ul>);
     expect(html).toContain('aria-label="「Fixture song」を選択" aria-pressed="false"');
     expect(html).not.toContain('href="/watch');
+  });
+
+  it('is a fluid `song-card` of the Home feed grid, with the reason line under the artist', () => {
+    const html = render(<ul><ShelfSongCard song={song} finePointer feed={{ reason: '音が近い' }} /></ul>);
+    expect(html).toMatch(/^<ul><li data-testid="music-feed-card" class="group relative isolate [^"]* song-card min-w-0"/);
+    expect(html).not.toContain('snap-start');
+    expect(html).toMatch(/<h3[^>]*><a [^>]*>Fixture song<\/a><\/h3>/);
+    expect(html).toContain('>音が近い</p>');
   });
 });
 
@@ -179,9 +188,10 @@ describe('SongShelf', () => {
   it('has a skeleton with the geometry of a shelf that the E2E does not count as one', () => {
     const html = render(<SongShelfSkeleton />);
     expect(html).toMatch(/^<div data-testid="music-shelf-loading" aria-hidden="true"/);
-    // The header row, the scroller's py-1 and cards of the real width with two title lines.
+    // The header row, the scroller's py-2 (room for the cards' hover panels) and cards of the real
+    // width with two title lines.
     expect(html).toContain('class="mb-2 flex min-h-10 items-center"');
-    expect(html).toContain('py-1');
+    expect(html).toContain('py-2');
     expect(html.split(`class="shrink-0 ${SHELF_CARD_WIDTH_CLASS}"`).length - 1).toBeGreaterThanOrEqual(6);
     expect(html).toContain('aspect-[1/1]');
     expect(html).toContain('h-[62px]');
