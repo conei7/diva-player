@@ -18,6 +18,7 @@ import { usePlayerStore } from '../../stores/playerStore';
 import { useRecommendationDisplayStore } from '../../stores/recommendationDisplayStore';
 import { useSearchStore } from '../../stores/searchStore';
 import { useSelectionStore } from '../../stores/selectionStore';
+import { isFloatingPlayerSupported } from '../../services/floatingPlayerWindow';
 import { showToast } from '../../stores/toastStore';
 import type { SettingsTab } from '../../stores/uiStore';
 import type { PVPreference } from '../../types/vocadb';
@@ -351,6 +352,10 @@ function GeneralSettingsPanel() {
   const setSwipeGestureEnabled = usePlayerInteractionStore(state => state.setSwipeGestureEnabled);
   // ミニプレイヤーのスワイプはタッチ操作だけの機能なので、タッチ端末の時だけ出す
   const touchDevice = useMediaQuery(COARSE_POINTER_MEDIA_QUERY);
+  const floatingPlayerEnabled = usePlayerInteractionStore(state => state.floatingPlayerEnabled);
+  const setFloatingPlayerEnabled = usePlayerInteractionStore(state => state.setFloatingPlayerEnabled);
+  // Document Picture-in-Picture: Chrome / Edge on computers. Elsewhere the row says why it is off.
+  const floatingPlayerSupported = isFloatingPlayerSupported();
 
   return (
     <div>
@@ -387,6 +392,16 @@ function GeneralSettingsPanel() {
         label={t('長押しで複数選択')}
         checked={longPressSelectionEnabled}
         onChange={setLongPressSelectionEnabled}
+      />
+      <Switch
+        className="setting-row min-h-14 py-2"
+        label={t('小窓プレイヤー')}
+        description={floatingPlayerSupported
+          ? t('再生バーのボタンで小さなプレイヤーを開きます。対応ブラウザでは最小化・タブ切替時にも自動で開きます')
+          : t('このブラウザでは使えません（パソコン版のChrome・Edgeで使えます）')}
+        checked={floatingPlayerSupported && floatingPlayerEnabled}
+        disabled={!floatingPlayerSupported}
+        onChange={setFloatingPlayerEnabled}
       />
       {touchDevice && (
         <Switch

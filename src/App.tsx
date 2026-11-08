@@ -55,6 +55,7 @@ const SoundMapPage = lazy(() => loadRoute('soundMap'));
 // Not needed for the first paint: loaded right after it, outside the initial JavaScript (§1-12).
 const AutoQueueRunner = lazy(() => import('./components/player/AutoQueueRunner'));
 const MediaSession = lazy(() => import('./components/player/MediaSession'));
+const FloatingPlayerHost = lazy(() => import('./components/player/FloatingPlayerHost'));
 
 /**
  * Home's URL searches and artist song lists get their own tab title, so the browser history tells
@@ -283,6 +284,7 @@ function AppContent() {
         <Suspense fallback={null}>
           <AutoQueueRunner />
           <MediaSession />
+          <FloatingPlayerHost />
         </Suspense>
       </DeferredBoundary>
       <KeyboardShortcuts />

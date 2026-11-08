@@ -3,8 +3,10 @@ import { usePlayerStore } from '../../../stores/playerStore';
 import { showToast } from '../../../stores/toastStore';
 import { useUiStore } from '../../../stores/uiStore';
 import { songShareUrl } from '../../../utils/routes';
+import FloatingPlayerIcon from '../../player/FloatingPlayerIcon';
 import SleepTimerMenuItems from '../../player/SleepTimerMenuItems';
 import { copyTextToClipboard } from '../../player/playerUi';
+import { useFloatingPlayerToggle } from '../../player/useFloatingPlayerToggle';
 import IconButton from '../../ui/IconButton';
 import Menu, { MenuDivider, MenuItem } from '../../ui/Menu';
 import { CloseIcon, LinkIcon, MoreVertIcon, PlaylistAddIcon } from '../../ui/icons';
@@ -20,6 +22,8 @@ export default function PlayerBarMenu() {
   const songId = usePlayerStore(state => state.currentSong?.id ?? null);
   const queue = usePlayerStore(state => state.queue);
   const queueIndex = usePlayerStore(state => state.queueIndex);
+  // Also here for short screens, where the bar's own 小窓プレイヤー button steps aside (data-bar-optional).
+  const floatingPlayer = useFloatingPlayerToggle();
 
   const copyLink = () => {
     if (songId === null) return;
@@ -51,6 +55,11 @@ export default function PlayerBarMenu() {
       <MenuItem icon={<PlaylistAddIcon />} disabled={queue.length === 0} onSelect={saveQueue}>
         {t('キューをプレイリストに保存')}
       </MenuItem>
+      {floatingPlayer.available && (
+        <MenuItem icon={<FloatingPlayerIcon />} onSelect={floatingPlayer.toggle}>
+          {floatingPlayer.open ? t('小窓プレイヤーを閉じる') : t('小窓プレイヤーを開く')}
+        </MenuItem>
+      )}
       <MenuDivider />
       <MenuItem icon={<CloseIcon />} onSelect={() => closePlayerWithUndo(t)}>{t('プレイヤーを閉じる')}</MenuItem>
     </Menu>

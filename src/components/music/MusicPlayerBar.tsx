@@ -9,7 +9,9 @@ import type { Song } from '../../types/vocadb';
 import { isWatchPath, watchPath } from '../../utils/routes';
 import { formatArtistLine } from '../../utils/songMeta';
 import { focusMainContent } from '../layout/mainContent';
+import FloatingPlayerIcon from '../player/FloatingPlayerIcon';
 import { formatRemainingClock } from '../player/playerUi';
+import { useFloatingPlayerToggle } from '../player/useFloatingPlayerToggle';
 import { useSleepTimerRemaining } from '../player/useSleepTimerRemaining';
 import IconButton from '../ui/IconButton';
 import { PlaylistAddIcon, QueueMusicIcon, TimerIcon } from '../ui/icons';
@@ -83,10 +85,14 @@ function PlayerBarSong({ song }: { song: Song | null }) {
   );
 }
 
-/** Right: 再生中 (where the panel exists), キュー, mute and volume, ⋮. Below 1024px only the essentials. */
+/**
+ * Right: 再生中 (where the panel exists), キュー, 小窓プレイヤー (when on in 設定), mute and volume, ⋮.
+ * Below 1024px only the essentials.
+ */
 function PlayerBarExtras({ view, wide }: { view: QueueView; wide: boolean }) {
   const t = useTranslateSourceText();
   const hasSong = usePlayerStore(state => state.currentSong !== null);
+  const floatingPlayer = useFloatingPlayerToggle();
   const queueDrawerOpen = usePlayerStore(state => state.queueDrawerOpen);
   const toggleQueueDrawer = usePlayerStore(state => state.toggleQueueDrawer);
   const nowPlayingOpen = useMusicLayoutStore(state => state.nowPlayingOpen);
@@ -136,6 +142,18 @@ function PlayerBarExtras({ view, wide }: { view: QueueView; wide: boolean }) {
         className={cx(queueDrawerOpen && 'bg-yt-tonal')}
         onClick={openQueue}
       />
+      {floatingPlayer.available && (
+        <IconButton
+          label={t('小窓プレイヤー')}
+          icon={<FloatingPlayerIcon />}
+          pressed={floatingPlayer.open}
+          disabled={!hasSong}
+          tooltipPlacement="left"
+          data-bar-optional=""
+          data-testid="music-floating-player"
+          onClick={floatingPlayer.toggle}
+        />
+      )}
       <PlayerBarVolume showSlider={wide} />
       <PlayerBarMenu />
     </div>

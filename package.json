@@ -46,6 +46,7 @@
     "test:e2e:sound-map-nearest-queue": "node scripts/test-sound-map-nearest-queue-e2e.mjs",
     "test:e2e:sound-map-pilot": "node scripts/test-sound-map-pilot-e2e.mjs",
     "test:e2e:background-playback": "node scripts/test-background-playback-e2e.mjs",
+    "test:e2e:floating-player": "node scripts/test-floating-player-e2e.mjs",
     "test:e2e:multi-tab-player": "node scripts/test-multi-tab-player-e2e.mjs",
     "test:e2e:hidden-songs": "node scripts/test-hidden-songs-e2e.mjs",
     "test:deployment-topology": "node scripts/test-deployment-topology.mjs",

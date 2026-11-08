@@ -32,7 +32,9 @@ import {
 import { cx, focusElement } from '../ui/overlay';
 import { ignoresAppVolume } from '../music/player/playerBarUi';
 import { closePlayerWithUndo } from '../watch/watchActions';
+import FloatingPlayerIcon from './FloatingPlayerIcon';
 import SleepTimerMenuItems from './SleepTimerMenuItems';
+import { useFloatingPlayerToggle } from './useFloatingPlayerToggle';
 import { isSilentVolume, unmutePlayer } from './playerMute';
 import { copyTextToClipboard, formatRemainingClock, getQueuePosition } from './playerUi';
 import { useSleepTimerRemaining } from './useSleepTimerRemaining';
@@ -136,6 +138,7 @@ export default function MiniPlayerControls({ visible, mobile, onOpenSongPage, sw
   const silent = usePlayerStore(state => isSilentVolume(state.volume));
   const service = usePlayerStore(state => state.currentPV?.service);
   const narrowCornerStrip = useMediaQuery(NARROW_CORNER_STRIP_MEDIA_QUERY);
+  const floatingPlayer = useFloatingPlayerToggle();
 
   if (!currentSong) return null;
 
@@ -335,6 +338,11 @@ export default function MiniPlayerControls({ visible, mobile, onOpenSongPage, sw
               <MenuItem icon={<PlaylistAddIcon />} disabled={queue.length === 0} onSelect={saveQueue}>
                 {t('キューをプレイリストに保存')}
               </MenuItem>
+              {floatingPlayer.available && (
+                <MenuItem icon={<FloatingPlayerIcon />} onSelect={floatingPlayer.toggle}>
+                  {floatingPlayer.open ? t('小窓プレイヤーを閉じる') : t('小窓プレイヤーを開く')}
+                </MenuItem>
+              )}
             </Menu>
           )}
         </div>
