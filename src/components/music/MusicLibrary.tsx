@@ -93,14 +93,10 @@ export default function MusicLibrary() {
           '[scrollbar-width:thin] [scrollbar-color:transparent_transparent] hover:[scrollbar-color:var(--color-yt-text-disabled)_transparent]',
         )}
       >
-        {/* Two panels with the frame's 8px gap between them: the destinations, then the library. */}
-        <div className="music-library-section shrink-0">
-          <LibraryNav rail={rail} activeId={selection.navId} linkProps={linkProps} />
-        </div>
-        <div className="music-library-section mt-2 flex min-h-0 flex-1 flex-col">
-          <LibraryList rail={rail} selection={selection} linkProps={linkProps} />
-          <LibraryFooter rail={rail} activeId={selection.navId} linkProps={linkProps} />
-        </div>
+        <LibraryNav rail={rail} activeId={selection.navId} linkProps={linkProps} />
+        <hr aria-hidden="true" className="mx-3 my-0 h-px shrink-0 border-0 bg-yt-divider" />
+        <LibraryList rail={rail} selection={selection} linkProps={linkProps} />
+        <LibraryFooter rail={rail} activeId={selection.navId} linkProps={linkProps} />
       </div>
     </aside>
   );

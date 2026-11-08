@@ -22,7 +22,6 @@ import { cx } from '../../ui/overlay';
 import SquareArt from '../SquareArt';
 import { useLibraryFolderStore, useStoredPlaylistOrder } from './libraryHooks';
 import {
-  DESTINATION_TILE_CLASS,
   LIBRARY_ROW_CLASS,
   RAIL_NAME_TOOLTIP_MEDIA_QUERY,
   buildLibraryModel,
@@ -352,7 +351,7 @@ export default function LibraryList({ rail, selection, linkProps }: LibraryListP
                     to={item.to}
                     label={full[id]}
                     meta={watchLater ? playlistMeta(watchLater) : undefined}
-                    art={<LibraryIconTile rail={rail} compact tone={DESTINATION_TILE_CLASS[id]}><Icon /></LibraryIconTile>}
+                    art={<LibraryIconTile rail={rail} compact><Icon /></LibraryIconTile>}
                     active={active}
                     rail={rail}
                     compact

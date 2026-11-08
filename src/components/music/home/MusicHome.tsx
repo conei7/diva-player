@@ -26,8 +26,6 @@ import {
   type NetworkShelfId,
   type ShelfFeedCategory,
 } from './musicHomeSources';
-import { greetingFor } from './musicHomeTiles';
-import QuickTiles from './QuickTiles';
 import ShelfPlaylistCard from './ShelfPlaylistCard';
 import ShelfSongCard from './ShelfSongCard';
 import SongShelf, { SongShelfSkeleton } from './SongShelf';
@@ -56,19 +54,13 @@ export default function MusicHome({ onShowFeedCategory }: MusicHomeProps) {
   const finePointer = useMediaQuery(FINE_HOVER_MEDIA_QUERY);
   const { full } = useNavLabels();
 
-  const [greeting] = useState(() => greetingFor(new Date().getHours()));
-
   return (
-    <div data-testid="music-home" className="@container w-full">
-      <div className="group/shelves w-full px-3 pt-4 sm:px-4 sm:pt-6 lg:px-6">
+    <div data-testid="music-home" className="w-full">
+      <div className="group/shelves w-full px-3 pt-4 sm:px-4 lg:px-6">
         <h1 className="sr-only">{full.home}</h1>
         {/* The skeletons are aria-hidden: one label for all of them, there while any is shown. */}
         <span className="sr-only hidden group-has-[[data-testid=music-shelf-loading]]/shelves:block">{t('読み込み中…')}</span>
-        <p data-testid="music-greeting" className="m-0 mb-4 text-2xl font-bold leading-8 text-yt-text sm:text-[32px] sm:leading-10">
-          {greeting === 'morning' ? t('おはようございます') : greeting === 'day' ? t('こんにちは') : t('こんばんは')}
-        </p>
-        <QuickTiles finePointer={finePointer} />
-        <div className="mt-6 flex flex-col gap-6 sm:mt-8 sm:gap-8">
+        <div className="flex flex-col gap-6 sm:gap-8">
           <RecentShelf finePointer={finePointer} />
           <PlaylistShelf finePointer={finePointer} />
           <NetworkShelves finePointer={finePointer} onShowFeedCategory={onShowFeedCategory} />

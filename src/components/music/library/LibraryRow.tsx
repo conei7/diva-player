@@ -20,24 +20,12 @@ export function RailTooltip({ rail, label, children }: { rail: boolean; label: s
  * A square icon tile in place of artwork (後で聴く, 評価した曲, folders …), the size of a cover.
  * `compact` (the fixed entries and ＋ in a 48px row) keeps the rail's tile at the column's 40px.
  */
-export function LibraryIconTile({
-  rail,
-  compact = false,
-  tone,
-  children,
-}: {
-  rail: boolean;
-  compact?: boolean;
-  /** A colour tile (DESTINATION_TILE_CLASS) instead of the grey one. */
-  tone?: string;
-  children: ReactNode;
-}) {
+export function LibraryIconTile({ rail, compact = false, children }: { rail: boolean; compact?: boolean; children: ReactNode }) {
   return (
     <span
       aria-hidden="true"
       className={cx(
-        'flex shrink-0 items-center justify-center rounded-[4px]',
-        tone ?? 'bg-yt-tonal-solid text-yt-text',
+        'flex shrink-0 items-center justify-center rounded-[4px] bg-yt-tonal-solid text-yt-text',
         rail && !compact ? 'size-12' : 'size-10',
       )}
     >
