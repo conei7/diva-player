@@ -326,28 +326,46 @@ try {
 
   await playerPage.keyboard.press('Space');
   await playerPage.waitForFunction(() => window.__youtubeState() === 1);
+  const backgroundSession = minimizeWindow ? await playerPage.createCDPSession() : null;
+  const evaluateBackground = async callback => {
+    if (!backgroundSession) return playerPage.evaluate(callback);
+    // Puppeteer's evaluate uses userGesture=true. End/resume notifications are
+    // asynchronous provider/browser events, not fresh user actions that may
+    // activate a minimized Windows browser while its route changes.
+    const response = await backgroundSession.send('Runtime.evaluate', {
+      expression: `(${callback.toString()})()`, returnByValue: true, userGesture: false,
+    });
+    if (response.exceptionDetails) throw new Error(response.exceptionDetails.text);
+    return response.result.value;
+  };
+  const waitBackground = async (callback, timeout = 15_000) => {
+    const deadline = Date.now() + timeout;
+    while (!await evaluateBackground(callback)) {
+      if (Date.now() >= deadline) throw new Error('Background playback condition timed out');
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+  };
   if (minimizeWindow) {
-    const session = await playerPage.createCDPSession();
-    const { windowId } = await session.send('Browser.getWindowForTarget');
-    await session.send('Browser.setWindowBounds', { windowId, bounds: { windowState: 'minimized' } });
+    const { windowId } = await backgroundSession.send('Browser.getWindowForTarget');
+    await backgroundSession.send('Browser.setWindowBounds', { windowId, bounds: { windowState: 'minimized' } });
   } else {
     await otherPage.bringToFront();
   }
-  await playerPage.waitForFunction(() => document.hidden, { polling: 100 });
-  await playerPage.evaluate(() => {
+  await waitBackground(() => document.hidden);
+  await evaluateBackground(() => {
     window.__delayNextVideoLoad = true;
     window.__simulateEnded();
   });
-  await playerPage.waitForFunction(() => window.__delayedVideoLoadCount === 1, { polling: 100 });
+  await waitBackground(() => window.__delayedVideoLoadCount === 1);
   // Query recovery as well as the real end callback. It must not interpret the
   // previous video's ENDED snapshot as the newly selected video's completion.
   await new Promise(resolve => setTimeout(resolve, 1_000));
-  await playerPage.evaluate(() => document.dispatchEvent(new Event('resume')));
+  await evaluateBackground(() => document.dispatchEvent(new Event('resume')));
   try {
-    await playerPage.waitForFunction(() => window.__youtubeLoadedVideoIds?.at(-1) === 'fixture-2'
-      && window.__youtubeState() === 1, { timeout: 15_000, polling: 100 });
+    await waitBackground(() => window.__youtubeLoadedVideoIds?.at(-1) === 'fixture-2'
+      && window.__youtubeState() === 1);
   } catch (error) {
-    const state = await playerPage.evaluate(() => ({
+    const state = await evaluateBackground(() => ({
       loaded: window.__youtubeLoadedVideoIds,
       playerState: window.__youtubeState(),
       songId: JSON.parse(localStorage.getItem('diva_playerQueue') || 'null')?.currentSongId,
@@ -355,7 +373,7 @@ try {
     throw new Error(`Hidden next video failed: ${JSON.stringify(state)}`, { cause: error });
   }
   await new Promise(resolve => setTimeout(resolve, 1_000));
-  const continued = await playerPage.evaluate(() => ({
+  const continued = await evaluateBackground(() => ({
     songId: JSON.parse(localStorage.getItem('diva_playerQueue') || 'null')?.currentSongId,
     state: window.__youtubeState(),
     constructs: window.__youtubePlayerConstructCount,
@@ -368,7 +386,7 @@ try {
     throw new Error(`Delayed hidden next video did not keep playing: ${JSON.stringify(continued)}`);
   }
   console.log('PASS hidden next video survives the previous video\'s cached end during delayed load',
-    await playerPage.evaluate(() => window.__pendingSnapshot));
+    await evaluateBackground(() => window.__pendingSnapshot));
   if (minimizeWindow) console.log('PASS next video starts while the actual browser window stays minimized');
 } finally {
   await browser.close();
