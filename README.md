@@ -38,6 +38,8 @@ VocaDB API を活用したボカロ特化ミュージックプレイヤー SPA�
 
 Web imageの`vendor/alpine/v3.24/`は、公式Alpine配布元の署名済みExpat 2.9.0-r0（MIT）とlibX11 1.8.14-r0（X11）のAPK（x86_64／aarch64）です。CDNの地域差による取得不能を避け、Dockerfileのarchitecture別SHA-256とAlpineの署名検証を通して導入します。固定版の更新時は両architectureのAPK・hash・image scanを同時に検証します。
 
+同directoryのmusl／musl-utils 1.2.6-r3（MIT）も両architectureの署名付きAPKを保持します。WebはこれをSHA-256照合後に導入し、API／gatewayも同じ公式APKのhashを固定します。いずれも導入後の版を検査し、Alpine 3.24の旧muslを修正します。稼働imageへの反映状況はprivateのCURRENT_STATUSを参照してください。
+
 ## ブラウザの保存データ
 
 プレイリストとフォルダーはIndexedDBへ保存します。旧localStorage形式は初回読込時にコピー・読み戻し照合し、移行時の元データをIndexedDBへ保全してから旧キーの容量を解放します。保存完了後に画面へ反映し、同じoriginの別タブにも変更を通知します。配備前から開いているタブは一度再読み込みしてください。

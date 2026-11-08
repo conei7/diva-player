@@ -2,6 +2,24 @@ FROM mcr.microsoft.com/dotnet/aspnet:8.0-alpine-extra@sha256:c4ffeafa8138a201e63
 USER root
 RUN dotnet --list-runtimes | grep -F 'Microsoft.AspNetCore.App 8.0.33 ' && \
     dotnet --list-runtimes | grep -F 'Microsoft.NETCore.App 8.0.33 '
+# CVE-2026-107891: upgrade the pinned Alpine runtime with signed, checksummed APKs.
+RUN set -eux; \
+    case "$(cat /etc/alpine-release)" in 3.24.*) ;; *) exit 1 ;; esac; \
+    arch="$(apk --print-arch)"; \
+    case "$arch" in \
+      x86_64) musl_sha=e142255d0fa397f14318996bc10378093dcc069dc3dd1b6818c8f28a789c21da; musl_utils_sha=47263d05842c5e12d01e0369e5b5bea51733323501c00ca21968a5102de137ca ;; \
+      aarch64) musl_sha=2e17864102278d9049c3a56f1bceed9e8cf287065617e579325123443daed8a5; musl_utils_sha=bb460bdc009e88989bd5adca8a7c8298c339cba99da11c6196c818e042fbaf49 ;; \
+      *) exit 1 ;; \
+    esac; \
+    wget -O /tmp/musl.apk "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/$arch/musl-1.2.6-r3.apk"; \
+    echo "$musl_sha  /tmp/musl.apk" | sha256sum -c -; \
+    wget -O /tmp/musl-utils.apk "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/$arch/musl-utils-1.2.6-r3.apk"; \
+    echo "$musl_utils_sha  /tmp/musl-utils.apk" | sha256sum -c -; \
+    apk add --no-network /tmp/musl.apk /tmp/musl-utils.apk; \
+    for package in musl musl-utils; do \
+      test "$(awk -F: -v package="$package" '$1=="P"{p=($2==package);next} p && $1=="V"{print $2;exit}' /lib/apk/db/installed)" = 1.2.6-r3; \
+    done; \
+    rm /tmp/musl.apk /tmp/musl-utils.apk
 # Use checksummed APKs directly: a stale mirror index must not downgrade OpenSSL.
 RUN set -eux; \
     case "$(cat /etc/alpine-release)" in 3.24.*) ;; *) exit 1 ;; esac; \

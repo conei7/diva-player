@@ -208,6 +208,28 @@ const webApkUpdateStart = webDockerfile.indexOf('RUN apk update &&');
 const webCopyStart = webDockerfile.indexOf('\nCOPY --from=build', webApkUpdateStart);
 assert.ok(webApkUpdateStart >= 0 && webCopyStart > webApkUpdateStart);
 const webApkUpdate = webDockerfile.slice(webApkUpdateStart, webCopyStart);
+// CVE-2026-107891: the Web, gateway and API v3.24 runtimes use the same reviewed fix.
+for (const [architecture, muslHash, utilsHash] of [
+  ['x86_64', 'e142255d0fa397f14318996bc10378093dcc069dc3dd1b6818c8f28a789c21da', '47263d05842c5e12d01e0369e5b5bea51733323501c00ca21968a5102de137ca'],
+  ['aarch64', '2e17864102278d9049c3a56f1bceed9e8cf287065617e579325123443daed8a5', 'bb460bdc009e88989bd5adca8a7c8298c339cba99da11c6196c818e042fbaf49'],
+]) {
+  for (const [name, hash] of [['musl', muslHash], ['musl-utils', utilsHash]]) {
+    const apk = await readFile(new URL(`../vendor/alpine/v3.24/${architecture}/${name}-1.2.6-r3.apk`, import.meta.url));
+    assert.equal(createHash('sha256').update(apk).digest('hex'), hash);
+    for (const dockerfile of [webDockerfile, gatewayDockerfile, apiDockerfile]) assert.ok(dockerfile.includes(hash));
+  }
+}
+for (const dockerfile of [webDockerfile, gatewayDockerfile, apiDockerfile]) {
+  assert.match(dockerfile, /for package in musl musl-utils; do[\s\S]*?\/lib\/apk\/db\/installed\)" = 1\.2\.6-r3/u);
+  assert.doesNotMatch(dockerfile, /musl(?:-utils)?[-=]1\.2\.6-r2/u);
+}
+assert.match(webApkUpdate, /musl=1\.2\.6-r3\s+\\\s+musl-utils=1\.2\.6-r3/u);
+assert.match(webDockerfile, /apk add --no-network \/tmp\/diva-security\/\$arch\/musl-1\.2\.6-r3\.apk \/tmp\/diva-security\/\$arch\/musl-utils-1\.2\.6-r3\.apk/u);
+for (const dockerfile of [gatewayDockerfile, apiDockerfile]) {
+  assert.match(dockerfile, /"\$musl_sha {2}\/tmp\/musl\.apk" \| sha256sum -c -/u);
+  assert.match(dockerfile, /"\$musl_utils_sha {2}\/tmp\/musl-utils\.apk" \| sha256sum -c -/u);
+  assert.match(dockerfile, /apk add --no-network \/tmp\/musl\.apk \/tmp\/musl-utils\.apk/u);
+}
 assert.match(webApkUpdate, /brotli-libs=1\.2\.1-r0/u);
 for (const [architecture, expectedHash] of [
   ['x86_64', '62a7e37e43bbfc1f8525a00ad2125fd5897135dc93b849733884cb78ffd8e26c'],
