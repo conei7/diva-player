@@ -1513,12 +1513,8 @@ def advance_capacity_forecast(info: dict, previous: dict, now: datetime) -> dict
     return state
 
 
-def operation_capacity(collected: dict, previous: dict, state_dir: Path, now: datetime) -> tuple[dict, list]:
-    """Reuse exact backup preflight; keep a bounded daily growth baseline."""
-    from datetime import timedelta
-    from statistics import median
-    margin = 8 * 1024**3
-    info = previous.get("capacity") or {}
+def capacity_report_needs_refresh(info: dict, now: datetime,
+                                  scan_summary: Path = Path('/var/lib/diva-player-capacity/scan-cache-capacity.json')) -> bool:
     try:
         checked = datetime.fromisoformat(info["checkedAt"])
         if checked.tzinfo is None or checked > now:
@@ -1526,6 +1522,31 @@ def operation_capacity(collected: dict, previous: dict, state_dir: Path, now: da
     except (KeyError, ValueError, TypeError):
         checked = datetime.min.replace(tzinfo=timezone.utc)
     if (now - checked).total_seconds() >= 300:
+        return True
+    # Compaction/restore changes managed transient bytes immediately. Combining
+    # today's disk usage with the old five-minute inventory invents durable
+    # growth/cleanup and can reset the forecast baseline during maintenance.
+    try:
+        if not scan_summary.is_symlink():
+            latest = json.loads(scan_summary.read_text())
+            if not isinstance(latest, dict):
+                return False
+            retained = latest.get('retainedBytes')
+            if (latest.get('status') == 'success' and type(retained) is int and retained >= 0
+                    and retained != (info.get('scanCache') or {}).get('retainedBytes')):
+                return True
+    except (OSError, ValueError, TypeError):
+        pass
+    return False
+
+
+def operation_capacity(collected: dict, previous: dict, state_dir: Path, now: datetime) -> tuple[dict, list]:
+    """Reuse exact backup preflight; keep a bounded daily growth baseline."""
+    from datetime import timedelta
+    from statistics import median
+    margin = 8 * 1024**3
+    info = previous.get("capacity") or {}
+    if capacity_report_needs_refresh(info, now):
         try:
             root = Path(os.environ.get("DIVA_PIPELINE_ROOT") or Path.home() / "diva-data-pipeline")
             output = _run_command([str(root / "ml_pipeline/.venv/bin/python"), "-B",

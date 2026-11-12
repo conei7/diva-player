@@ -1,6 +1,8 @@
 from datetime import datetime, timedelta, timezone
 import importlib.util
+import json
 from pathlib import Path
+import tempfile
 import unittest
 
 spec = importlib.util.spec_from_file_location('health', Path(__file__).with_name('collect-sbc-runtime-health.py'))
@@ -12,6 +14,27 @@ class ForecastAlertTests(unittest.TestCase):
     def setUp(self):
         self.now = datetime(2026, 10, 24, tzinfo=timezone.utc)
         self.previous = {}
+
+    def test_compaction_and_restore_invalidate_a_fresh_capacity_inventory(self):
+        with tempfile.TemporaryDirectory() as temp:
+            summary = Path(temp) / 'scan.json'
+            info = {'checkedAt': self.now.isoformat(), 'scanCache': {'retainedBytes': 2000}}
+            for retained in (100, 4000):
+                summary.write_text(json.dumps({'status': 'success', 'retainedBytes': retained}))
+                self.assertTrue(health.capacity_report_needs_refresh(info, self.now, summary))
+            summary.write_text(json.dumps({'status': 'success', 'retainedBytes': 2000}))
+            self.assertFalse(health.capacity_report_needs_refresh(info, self.now, summary))
+            self.assertTrue(health.capacity_report_needs_refresh(info, self.now + timedelta(minutes=5), summary))
+
+    def test_unavailable_summary_keeps_the_bounded_cache_expiry(self):
+        with tempfile.TemporaryDirectory() as temp:
+            summary = Path(temp) / 'scan.json'
+            info = {'checkedAt': self.now.isoformat()}
+            for payload in (None, 'broken', '[]', '{"status":"unknown","retainedBytes":0}'):
+                if payload is not None:
+                    summary.write_text(payload)
+                self.assertFalse(health.capacity_report_needs_refresh(info, self.now, summary))
+                self.assertTrue(health.capacity_report_needs_refresh(info, self.now + timedelta(minutes=5), summary))
 
     def step(self, days, status='growing', minutes=1):
         self.now += timedelta(minutes=minutes)
