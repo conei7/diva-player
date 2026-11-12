@@ -1523,6 +1523,10 @@ def capacity_report_needs_refresh(info: dict, now: datetime,
         checked = datetime.min.replace(tzinfo=timezone.utc)
     if (now - checked).total_seconds() >= 300:
         return True
+    retained_before = (info.get('scanCache') or {}).get('retainedBytes')
+    if type(retained_before) is not int or retained_before < 0:
+        # Older reports have no comparable inventory; retain their normal TTL.
+        return False
     # Compaction/restore changes managed transient bytes immediately. Combining
     # today's disk usage with the old five-minute inventory invents durable
     # growth/cleanup and can reset the forecast baseline during maintenance.
@@ -1533,7 +1537,7 @@ def capacity_report_needs_refresh(info: dict, now: datetime,
                 return False
             retained = latest.get('retainedBytes')
             if (latest.get('status') == 'success' and type(retained) is int and retained >= 0
-                    and retained != (info.get('scanCache') or {}).get('retainedBytes')):
+                    and retained != retained_before):
                 return True
     except (OSError, ValueError, TypeError):
         pass

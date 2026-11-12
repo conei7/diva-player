@@ -24,6 +24,7 @@ class ForecastAlertTests(unittest.TestCase):
                 self.assertTrue(health.capacity_report_needs_refresh(info, self.now, summary))
             summary.write_text(json.dumps({'status': 'success', 'retainedBytes': 2000}))
             self.assertFalse(health.capacity_report_needs_refresh(info, self.now, summary))
+            self.assertFalse(health.capacity_report_needs_refresh({'checkedAt': self.now.isoformat()}, self.now, summary))
             self.assertTrue(health.capacity_report_needs_refresh(info, self.now + timedelta(minutes=5), summary))
 
     def test_unavailable_summary_keeps_the_bounded_cache_expiry(self):
