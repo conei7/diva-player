@@ -271,7 +271,7 @@ jobs:
           python-version: '3.10'
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
-          dotnet-version: '8.0.428'
+          dotnet-version: '10.0.404'
       - name: Install dependencies
         run: npm ci
       - name: Audit JavaScript dependencies
@@ -649,7 +649,7 @@ jobs:
           # Each record is service|locally built source reference|OS family|reviewed inventory bounds.
           # Bounds aggregate package counts and also pin the number of Trivy Results per class/type.
           image_specs=(
-            "api|diva-player-ci-api:current|alpine|os-pkgs:alpine:21:21:1,lang-pkgs:dotnet-core:13:13:3,lang-pkgs:nuget:12:12:1"
+            "api|diva-player-ci-api:current|alpine|os-pkgs:alpine:21:21:1,lang-pkgs:dotnet-core:13:13:3,lang-pkgs:nuget:6:6:1"
             "gateway|diva-player-ci-gateway:current|alpine|os-pkgs:alpine:24:24:1"
             "web|diva-player-ci-web:current|alpine|os-pkgs:alpine:70:70:1"
             "qdrant-runtime|diva-player-ci-qdrant:current|debian|os-pkgs:debian:7:7:1"

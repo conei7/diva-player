@@ -2717,7 +2717,7 @@ scan_all_rolling_candidate_images() {
     prepare_candidate_image_scan_database || return 1
     scan_exact_candidate_image api "$API_CANDIDATE_IMAGE" "$NEW_API_IMAGE" \
         'os-pkgs:alpine:21:21:1' 'lang-pkgs:dotnet-core:13:13:3' \
-        'lang-pkgs:nuget:12:12:1' \
+        'lang-pkgs:nuget:6:6:1' \
         || return 1
     scan_exact_candidate_image gateway "$GATEWAY_CANDIDATE_IMAGE" \
         "$NEW_GATEWAY_IMAGE" 'os-pkgs:alpine:24:24:1' || return 1

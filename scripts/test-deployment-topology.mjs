@@ -190,8 +190,8 @@ assert.deepEqual(databaseDockerignore.trim().split('\n'), [
 assert.match(webDockerignore, /(?:^|\n)\*\*\/__pycache__\/(?:\n|$)/);
 assert.match(webDockerfile, /node:22\.22\.2-alpine@sha256:8ea2348b068a9544dae7317b4f3aafcdc032df1647bb7d768a05a5cad1a7683f/);
 assert.match(webDockerfile, /nginxinc\/nginx-unprivileged:alpine@sha256:901e944d1f4fc2bd077e8f5568b98c1f6f8cdacf6b97a87747c43134a339b9a7/);
-assert.match(apiDockerfile, /aspnet:8\.0-alpine-extra@sha256:7f6b42fa9184cd957682c0be4cb4f27ad40286db3cd4d7a66c317e49ca92ad5b/);
-assert.match(apiDockerfile, /sdk:8\.0-alpine@sha256:4f4992f8f302150e4adb5e78c324731e968493a30c0638985ba29cb42a858cd6/);
+assert.match(apiDockerfile, /aspnet:10\.0-alpine-extra@sha256:637d05adda7e5bd9e5ee940e75ac14da9e3970518de22af748a515a1512b3c77/);
+assert.match(apiDockerfile, /sdk:10\.0-alpine@sha256:0294f285d062afacc8b5f6d7febb0cd4ee879320e5585fa15f2f4ebf1feb9ba7/);
 assert.match(gatewayDockerfile, /haproxy:3\.0-alpine@sha256:34cc7d1f6142464d7d2b73e2a1eef7392556dbf304160aef543e513cfd9e5162/);
 assert.match(
   gatewayDockerfile,
@@ -261,8 +261,8 @@ for (const [architecture, expectedHash] of [
 }
 assert.match(webApkUpdate, /libxslt=1\.1\.43-r4/u);
 assert.match(webDockerfile, /"\$xslt_sha[^\n]+libxslt-1\.1\.43-r4\.apk" \| sha256sum -c -/u);
-assert.match(apiDockerfile, /Microsoft\.AspNetCore\.App 8\.0\.34 /u);
-assert.match(apiDockerfile, /Microsoft\.NETCore\.App 8\.0\.34 /u);
+assert.match(apiDockerfile, /Microsoft\.AspNetCore\.App 10\.0\.15 /u);
+assert.match(apiDockerfile, /Microsoft\.NETCore\.App 10\.0\.15 /u);
 for (const [architecture, expectedHash] of [
   ['x86_64', 'e7e7408ea787ed06d00159b0ff1f9b65a63cf634f36d9e0fa7512ce2c489a503'],
   ['aarch64', '99144fe0b1bb9316a3bc30c38707996767806661f4a0456fcf4565ac92e79b0f'],
@@ -308,7 +308,7 @@ assert.match(webApkUpdate, /test[^\n]*P:tiff[^\n]*4\.7\.2-r0/u);
 assert.doesNotMatch(webDockerfile, /--repository|\/edge\//u);
 assert.doesNotMatch(webDockerfile, /--allow-untrusted|--force-broken-world/u);
 assert.match(apiDockerfile, /apk add --no-cache[\s\S]*libcrypto3=3\.5\.9-r0[\s\S]*libssl3=3\.5\.9-r0/u);
-assert.match(apiDockerfile, /test "\$\(dotnet --version\)" = "8\.0\.428"/u);
+assert.match(apiDockerfile, /test "\$\(dotnet --version\)" = "10\.0\.404"/u);
 assert.match(apiDockerfile, /COPY \["VocadbRecommender\/VocadbRecommender\.csproj", "VocadbRecommender\/packages\.lock\.json"/u);
 assert.match(apiDockerfile, /dotnet restore [^\n]* --locked-mode/u);
 assert.doesNotMatch(gatewayDockerfile, /apk upgrade/u);
@@ -336,10 +336,15 @@ assert.doesNotMatch(
   /--health-cmd 'curl [^']*http:\/\/127\.0\.0\.1:5000\/api\/ready'/u,
 );
 assert.deepEqual(JSON.parse(sdkContract), {
-  sdk: { version: '8.0.428', rollForward: 'disable', allowPrerelease: false },
+  sdk: { version: '10.0.404', rollForward: 'disable', allowPrerelease: false },
 });
 assert.equal(JSON.parse(apiPackagesLock).version, 1);
 assert.equal(JSON.parse(apiTestPackagesLock).version, 1);
+assert.match(apiProject, /<TargetFramework>net10\.0<\/TargetFramework>/u);
+assert.match(apiTestsProject, /<TargetFramework>net10\.0<\/TargetFramework>/u);
+assert.deepEqual(Object.keys(JSON.parse(apiPackagesLock).dependencies), ['net10.0']);
+assert.deepEqual(Object.keys(JSON.parse(apiTestPackagesLock).dependencies), ['net10.0']);
+assert.doesNotMatch(apiProject, /PackageReference Include="Microsoft.Extensions.Caching.Memory"/u);
 assert.match(apiProject, /<RestorePackagesWithLockFile>true<\/RestorePackagesWithLockFile>/u);
 assert.match(apiProject, /<RestoreLockedMode>true<\/RestoreLockedMode>/u);
 assert.match(apiTestsProject, /<RestorePackagesWithLockFile>true<\/RestorePackagesWithLockFile>/u);
@@ -1021,7 +1026,7 @@ assert.match(
   workflow,
   /  build:\n[\s\S]*?      - uses: actions\/checkout@[0-9a-f]{40}[^\n]*\n        with:\n          fetch-depth: 2\n/u,
 );
-assert.match(workflow, /dotnet-version: '8\.0\.428'/u);
+assert.match(workflow, /dotnet-version: '10\.0\.404'/u);
 assert.match(workflow, /dotnet restore diva-player\.sln --locked-mode/u);
 assert.match(workflow, /dotnet build backend\/api\/VocadbRecommender\/VocadbRecommender\.csproj --configuration Release --no-restore/u);
 assert.match(workflow, /dotnet test backend\/api\/VocadbRecommender\.Tests\/VocadbRecommender\.Tests\.csproj --configuration Release --no-restore/u);

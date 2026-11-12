@@ -67,6 +67,15 @@ function installPictureInPictureStub(supported) {
   const setActionHandler = navigator.mediaSession?.setActionHandler?.bind(navigator.mediaSession);
   if (navigator.mediaSession) {
     navigator.mediaSession.setActionHandler = (action, handler) => {
+      // Model a delayed observable cleanup so the off assertion must wait for it,
+      // independently of when React removes the window and the button.
+      if (action === 'enterpictureinpicture' && handler === null) {
+        setTimeout(() => {
+          window.__mediaActions.push([action, false]);
+          window.__enterPictureInPicture = null;
+        }, 150);
+        return;
+      }
       window.__mediaActions.push([action, handler !== null]);
       if (action === 'enterpictureinpicture') window.__enterPictureInPicture = handler;
       else setActionHandler?.(action, handler);
@@ -212,7 +221,12 @@ try {
   await page.waitForFunction(() => !document.querySelector('iframe[data-testid="pip-stand-in"]'), { timeout: 10_000 });
   assert.equal(await page.evaluate(() => localStorage.getItem('diva-player-floating-window')), '0');
   assert.equal(await page.$('[data-testid="music-floating-player"]'), null);
-  assert.ok(await page.evaluate(() => window.__mediaActions.at(-1)?.[0] === 'enterpictureinpicture' && window.__mediaActions.at(-1)?.[1] === false));
+  await page.waitForFunction(() => {
+    const actions = window.__mediaActions.filter(([action]) => action === 'enterpictureinpicture');
+    return actions.at(-1)?.[1] === false && window.__enterPictureInPicture === null;
+  }, { timeout: 10_000 });
+  assert.equal(await page.evaluate(() => window.__mediaActions
+    .filter(([action]) => action === 'enterpictureinpicture').at(-1)?.[1]), false);
   console.log('PASS turning 小窓プレイヤー off closes the window, removes the button and the automatic opening');
   await page.keyboard.press('Escape');
   assert.deepEqual(pageErrors, []);

@@ -786,7 +786,7 @@ class DeployImageScanWorkflowContractTests(unittest.TestCase):
         expected_bounds = (
             "os-pkgs:alpine:21:21:1",
             "lang-pkgs:dotnet-core:13:13:3",
-            "lang-pkgs:nuget:12:12:1",
+            "lang-pkgs:nuget:6:6:1",
             "os-pkgs:alpine:24:24:1",
             "os-pkgs:alpine:70:70:1",
             "os-pkgs:debian:7:7:1",
