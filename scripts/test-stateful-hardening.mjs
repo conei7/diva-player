@@ -389,16 +389,6 @@ assert.match(
 );
 
 const reviewedArm64ScanContract = JSON.parse(arm64ImageScanContractFixtureSource);
-for (const architecture of ['amd64', 'arm64']) {
-  for (const service of ['api-a', 'api-b']) {
-    const current = callProductionCalibrationFunction('reviewed_inventory_bounds',
-      [service, architecture, 'alpine', `sha256:${'a'.repeat(64)}`]);
-    assert.equal(current.status, 0, current.stderr);
-    assert.deepEqual(current.stdout.trimEnd().split(/\r?\n/u), [
-      'lang-pkgs:dotnet-core:13:13:3', 'lang-pkgs:nuget:6:6:1', 'os-pkgs:alpine:21:21:1',
-    ]);
-  }
-}
 assert.deepEqual(
   Object.keys(reviewedArm64ScanContract).sort(),
   ['images', 'kind', 'schemaVersion'],
@@ -477,6 +467,17 @@ function callProductionCalibrationFunction(functionName, arguments_) {
     ['--noprofile', '--norc', '-s', '--', ...arguments_],
     { encoding: 'utf8', input: command, windowsHide: true },
   );
+}
+
+for (const architecture of ['amd64', 'arm64']) {
+  for (const service of ['api-a', 'api-b']) {
+    const current = callProductionCalibrationFunction('reviewed_inventory_bounds',
+      [service, architecture, 'alpine', `sha256:${'a'.repeat(64)}`]);
+    assert.equal(current.status, 0, current.stderr);
+    assert.deepEqual(current.stdout.trimEnd().split(/\r?\n/u), [
+      'lang-pkgs:dotnet-core:13:13:3', 'lang-pkgs:nuget:6:6:1', 'os-pkgs:alpine:21:21:1',
+    ]);
+  }
 }
 
 const allReviewedFindingSha256 = new Set();
