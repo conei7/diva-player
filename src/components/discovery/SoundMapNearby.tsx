@@ -2,6 +2,7 @@ import type { SoundMapPoint } from '../../api/soundMap';
 import type { Song } from '../../types/vocadb';
 import { useTranslateSourceText } from '../../i18n';
 import { usePlayerStore } from '../../stores/playerStore';
+import type { QueueContinuation } from '../../stores/playerStore';
 import { soundMapSimilarityPercent } from '../../utils/soundMap';
 import { formatArtistLine } from '../../utils/songMeta';
 import Button from '../ui/Button';
@@ -25,9 +26,11 @@ export interface SoundMapNearbyProps {
   onSelect: (point: SoundMapPoint) => void;
   /**
    * The single-song map's origin: 「すべて再生」 then goes on past the listed songs in nearest order
-   * instead of the usual recommendations (services/soundMapQueue). Unset on the group map.
+   * instead of the usual recommendations (services/soundMapQueue).
    */
   continuationOriginId?: number;
+  /** The group map pins its published version and feature axes for subsequent pages. */
+  continuation?: QueueContinuation | null;
 }
 
 /** 「近くの曲」: the map's songs as rows (also the way to reach them without the map). */
@@ -41,6 +44,7 @@ export default function SoundMapNearby({
   onExpandedChange,
   onSelect,
   continuationOriginId,
+  continuation,
 }: SoundMapNearbyProps) {
   const t = useTranslateSourceText();
   if (points.length === 0) return null;
@@ -65,7 +69,7 @@ export default function SoundMapNearby({
               true,
               'discovery',
               t('近くの曲'),
-              continuationOriginId ? { kind: 'soundMap', originSongId: continuationOriginId } : null,
+              continuation ?? (continuationOriginId ? { kind: 'soundMap', originSongId: continuationOriginId } : null),
             )}
           >
             {t('すべて再生')}

@@ -15,6 +15,11 @@ internal sealed class GroupSoundMapIndex : IDisposable
     private bool _disposed;
     internal const int MaximumSongs = 100_000;
 
+    internal bool IsPreparing
+    {
+        get { lock (_sync) return _current is null && _loading is { IsCompleted: false }; }
+    }
+
     public GroupSoundMapIndex(QdrantService qdrant, IHostApplicationLifetime lifetime, ILogger<GroupSoundMapIndex> logger)
         : this(qdrant.ReadGroupSoundMapCatalogueAsync, lifetime, logger, TimeProvider.System) { }
 
@@ -56,7 +61,13 @@ internal sealed class GroupSoundMapIndex : IDisposable
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.ApplicationStopping);
         timeout.CancelAfter(TimeSpan.FromMinutes(2));
-        try { return await _load(timeout.Token); }
+        var timer = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            var catalogue = await _load(timeout.Token);
+            _logger.LogInformation("group_sound_map_catalogue_loaded count={Count} durationMs={DurationMs}", catalogue.Count, timer.ElapsedMilliseconds);
+            return catalogue;
+        }
         catch (Exception error)
         {
             _logger.LogWarning(error, "Group sound map audio catalogue could not be loaded");

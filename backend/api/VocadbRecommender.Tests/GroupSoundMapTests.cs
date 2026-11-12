@@ -3,11 +3,95 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.AspNetCore.Http;
 using System.Text.Json;
 using VocadbRecommender.Services;
+using Qdrant.Client.Grpc;
 
 namespace VocadbRecommender.Tests;
 
 public sealed class GroupSoundMapTests
 {
+    [Fact]
+    public async Task CataloguePrefetchStartsOnePageAheadAndKeepsOffsetOrder()
+    {
+        var offsets = new List<ulong?>();
+        Task<ScrollResponse> Read(PointId? offset, CancellationToken token)
+        {
+            token.ThrowIfCancellationRequested(); offsets.Add(offset?.Num);
+            return Task.FromResult(offset is null ? new ScrollResponse { NextPageOffset = new PointId { Num = 10 } }
+                : offset.Num == 10 ? new ScrollResponse { NextPageOffset = new PointId { Num = 20 } } : new ScrollResponse());
+        }
+        await using var pages = QdrantService.ReadGroupSoundMapPagesAsync(Read, CancellationToken.None).GetAsyncEnumerator();
+        Assert.True(await pages.MoveNextAsync());
+        Assert.Equal(new ulong?[] { null, 10 }, offsets);
+        Assert.True(await pages.MoveNextAsync());
+        Assert.Equal(new ulong?[] { null, 10, 20 }, offsets);
+        Assert.True(await pages.MoveNextAsync()); Assert.False(await pages.MoveNextAsync());
+        Assert.Equal(3, offsets.Count);
+    }
+
+    [Fact]
+    public async Task LeavingCatalogueScanCancelsAndObservesItsOnlyPrefetchedRequest()
+    {
+        var canceled = false;
+        async Task<ScrollResponse> Read(PointId? offset, CancellationToken token)
+        {
+            if (offset is null) return new ScrollResponse { NextPageOffset = new PointId { Num = 10 } };
+            try { await Task.Delay(Timeout.Infinite, token); }
+            catch (OperationCanceledException) { canceled = true; throw; }
+            return new ScrollResponse();
+        }
+        var pages = QdrantService.ReadGroupSoundMapPagesAsync(Read, CancellationToken.None).GetAsyncEnumerator();
+        Assert.True(await pages.MoveNextAsync());
+        await pages.DisposeAsync();
+        Assert.True(canceled);
+    }
+
+    [Fact]
+    public void NearestPagesUseAllCoordinatesExcludeSeedsAndBreakTiesById()
+    {
+        var points = Enumerable.Range(1, 1500).Select(id => new GroupMapCoordinate(id,
+            id % 2 == 0 ? id / 2 : -(id / 2), 0, id, 0)).Reverse().ToArray();
+        var seeds = new HashSet<int> { 1, 2, 3 };
+        var expected = points.Where(p => !seeds.Contains(p.SongId))
+            .OrderBy(p => p.X * p.X).ThenBy(p => p.SongId).ToArray();
+        var first = GroupSoundMapEndpoints.Nearest(points, seeds, 0, 0, 0, 200);
+        var second = GroupSoundMapEndpoints.Nearest(points, seeds, 0, 0, 200, 200);
+        Assert.Equal(expected.Take(400), first.Concat(second));
+        Assert.Empty(GroupSoundMapEndpoints.Nearest(points, seeds, 0, 0, 100_000, 200));
+        Assert.Equal(expected.Length, GroupSoundMapEndpoints.Nearest(points, seeds, 0, 0, 0, 2000).Length);
+    }
+
+    [Theory]
+    [InlineData(-1, 20)]
+    [InlineData(100001, 20)]
+    [InlineData(0, 0)]
+    [InlineData(0, 201)]
+    public async Task InvalidNearbyPagesAreRejectedBeforeIo(int offset, int limit)
+    {
+        var result = await GroupSoundMapEndpoints.GetAsync("1,2,3", null, null, null, null,
+            null!, null!, null!, new DefaultHttpContext().Response, CancellationToken.None, offset, limit);
+        Assert.Equal(400, ((IStatusCodeHttpResult)result).StatusCode);
+    }
+
+    [Fact]
+    public void ColumnBuilderPreservesOriginalRowOrderedWelfordBits()
+    {
+        var rows = Enumerable.Range(1, 777).Select(id => (id,
+            Enumerable.Range(0, 1024).Select(d => (float)Math.Sin(id * .13 + d * .07)).ToArray())).ToArray();
+        var means = new double[1024]; var m2 = new double[1024];
+        for (var i = 0; i < rows.Length; i++)
+            for (var d = 0; d < 1024; d++)
+            {
+                var value = (double)(Half)rows[i].Item2[d];
+                var delta = value - means[d]; means[d] += delta / (i + 1);
+                m2[d] += delta * (value - means[d]);
+            }
+        using var builder = new GroupSoundMapCatalogue.Builder(Path.GetTempPath());
+        builder.Append(rows);
+        using var catalogue = builder.Complete();
+        using var lease = catalogue.Acquire();
+        Assert.Equal(m2.Select(v => v / rows.Length), lease.Variances.ToArray());
+    }
+
     [Fact]
     public void LargerScrollPagesPreserveAllCoordinatesAndVariances()
     {
@@ -177,12 +261,15 @@ public sealed class GroupSoundMapTests
         var completion = new TaskCompletionSource<GroupSoundMapCatalogue>(TaskCreationOptions.RunContinuationsAsynchronously);
         var calls = 0;
         using var index = new GroupSoundMapIndex(_ => { calls++; return completion.Task; }, new Lifetime(), NullLogger<GroupSoundMapIndex>.Instance);
+        Assert.False(index.IsPreparing);
         for (var i = 0; i < 20; i++) Assert.Null(index.GetOrStart());
+        Assert.True(index.IsPreparing);
         Assert.Equal(1, calls);
         completion.SetResult(Catalogue(3));
         GroupSoundMapCatalogue.Lease? lease = null;
         for (var i = 0; i < 100 && lease is null; i++) { lease = index.GetOrStart(); if (lease is null) await Task.Delay(5); }
         using (lease) Assert.Equal(3, Assert.Single(lease!.ReadAxes(0, 1)).SongId);
+        Assert.False(index.IsPreparing);
         Assert.Equal(1, calls);
     }
 

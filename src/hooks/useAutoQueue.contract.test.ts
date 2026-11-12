@@ -39,15 +39,15 @@ describe('auto queue request generation contract', () => {
   });
 
   it('continues a sound-map queue in nearest order before any recommendation work', () => {
-    const branch = source.indexOf("if (queueContinuation?.kind === 'soundMap') {");
-    const fetch = source.indexOf('await nextSoundMapQueueSongs({', branch);
+    const branch = source.indexOf("if (queueContinuation?.kind === 'soundMap' || queueContinuation?.kind === 'groupSoundMap') {");
+    const fetch = source.indexOf("await (queueContinuation.kind === 'soundMap' ? nextSoundMapQueueSongs({", branch);
     const guard = source.indexOf(
       'if (controller.signal.aborted || generation !== requestGenerationRef.current) return;',
       fetch,
     );
     const append = source.indexOf('const continuationApplied = addManyToQueue(nextSongs, \'auto\', {', guard);
     const rejected = source.indexOf('if (!continuationApplied) return;', append);
-    const remember = source.indexOf('rememberSoundMapQueueSongs(originSongId, nextSongs);', rejected);
+    const remember = source.indexOf('rememberGroupSoundMapQueueSongs(queueContinuation, nextSongs);', rejected);
     const branchEnd = source.indexOf('return () => controller.abort();', remember);
     const recommendations = source.indexOf('useAutoQueueBanditStore.getState().selectArm(');
 

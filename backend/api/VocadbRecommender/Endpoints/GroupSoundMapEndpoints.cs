@@ -8,7 +8,8 @@ internal static class GroupSoundMapEndpoints
     internal static async Task<IResult> GetAsync(
         string songIds, double? centerX, double? centerY, double? zoom, string? mapVersion,
         DbService db, QdrantService qdrant, GroupSoundMapIndex index,
-        HttpResponse response, CancellationToken cancellationToken)
+        HttpResponse response, CancellationToken cancellationToken,
+        int? nearbyOffset = null, int? nearbyLimit = null, string? axisKey = null, bool nearbyOnly = false)
     {
         var parts = songIds.Split(',');
         if (parts.Length is < 3 or > 20 || parts.Any(p => !int.TryParse(p, NumberStyles.None, CultureInfo.InvariantCulture, out var id) || id <= 0))
@@ -16,18 +17,26 @@ internal static class GroupSoundMapEndpoints
         var ids = parts.Select(int.Parse).Distinct().ToArray();
         if (ids.Length < 3 || centerX.HasValue != centerY.HasValue ||
             (centerX.HasValue && (!double.IsFinite(centerX.Value) || !double.IsFinite(centerY!.Value) || Math.Abs(centerX.Value) > 10 || Math.Abs(centerY.Value) > 10)) ||
-            (zoom.HasValue && (!double.IsFinite(zoom.Value) || zoom is < .75 or > 256)))
+            (zoom.HasValue && (!double.IsFinite(zoom.Value) || zoom is < .75 or > 256)) ||
+            nearbyOffset is < 0 or > GroupSoundMapIndex.MaximumSongs || nearbyLimit is < 1 or > 200)
             return Results.BadRequest(new { error = "group_map_parameters_invalid" });
         response.Headers.CacheControl = "no-store";
         try
         {
             var version = await db.GetSoundMapVersionAsync(mapVersion, cancellationToken);
             if (version is null) return Results.Json(new { error = "sound_map_unavailable" }, statusCode: 503);
+            // Preparing polls must not repeatedly retrieve seeds while the full scan runs.
+            if (index.IsPreparing)
+            {
+                response.Headers.RetryAfter = "2";
+                return Results.Json(new { state = "preparing" }, statusCode: 202);
+            }
             var seeds = await qdrant.GetGroupSoundMapSeedsAsync(ids, cancellationToken);
             var mappedSeeds = await db.GetSoundMapSongsAsync(version.MapVersion, ids, cancellationToken);
             var missing = ids.Where(id => !seeds.ContainsKey(id) || !mappedSeeds.Any(s => s.SongId == id)).ToArray();
             if (missing.Length > 0)
                 return Results.UnprocessableEntity(new { error = "group_songs_unavailable", songIds = missing });
+            // Validate a first group's seeds before starting any expensive catalogue scan.
             using var catalogue = index.GetOrStart();
             if (catalogue is null)
             {
@@ -35,6 +44,9 @@ internal static class GroupSoundMapEndpoints
                 return Results.Json(new { state = "preparing" }, statusCode: 202);
             }
             var (axisX, axisY) = GroupSoundMapIndex.SelectAxes(ids.Select(id => seeds[id]).ToArray(), catalogue.Variances);
+            var currentAxisKey = $"2:{axisX}:{axisY}";
+            if (axisKey is not null && axisKey != currentAxisKey)
+                return Results.Conflict(new { error = "group_map_axes_changed" });
             var scaleX = catalogue.Variances[axisX] > 0 ? Math.Sqrt(catalogue.Variances[axisX]) : 1;
             var scaleY = catalogue.Variances[axisY] > 0 ? Math.Sqrt(catalogue.Variances[axisY]) : 1;
             var points = catalogue.ReadAxes(axisX, axisY);
@@ -65,19 +77,27 @@ internal static class GroupSoundMapEndpoints
             // Square + margin also covers wide desktop/tall phone SVG viewports.
             var radius = 2.5 / z;
             var visible = points.Where(p => Math.Abs(p.X - x) <= radius && Math.Abs(p.Y - y) <= radius).ToArray();
-            var sampled = Sample(visible, x, y, radius).Concat(group).DistinctBy(p => p.SongId).ToArray();
-            var mapped = await db.GetSoundMapSongsAsync(version.MapVersion, sampled.Select(p => p.SongId).ToArray(), cancellationToken);
+            var sampled = (nearbyOnly ? [] : Sample(visible, x, y, radius)).Concat(group).DistinctBy(p => p.SongId).ToArray();
+            var offset = nearbyOffset ?? 0;
+            var limit = nearbyLimit ?? 20;
+            var neighbors = Nearest(points, ids.ToHashSet(), groupX, groupY, offset, limit);
+            var nextOffset = Math.Min(points.Length - ids.Length, offset + limit);
+            var mapped = await db.GetSoundMapSongsAsync(version.MapVersion,
+                sampled.Concat(neighbors).Select(p => p.SongId).Distinct().ToArray(), cancellationToken);
             var byId = mapped.ToDictionary(p => p.SongId);
+            SoundMapPoint Point(GroupMapCoordinate p) => new(p.SongId, byId[p.SongId].Name,
+                byId[p.SongId].ArtistString, p.X, p.Y, null, byId[p.SongId].ThumbUrl, p.RawX, p.RawY);
             var items = sampled.Where(p => byId.ContainsKey(p.SongId))
                 .OrderBy(p => Math.Pow(p.X - groupX, 2) + Math.Pow(p.Y - groupY, 2)).ThenBy(p => p.SongId)
-                .Select(p => new SoundMapPoint(p.SongId, byId[p.SongId].Name, byId[p.SongId].ArtistString,
-                    p.X, p.Y, null, byId[p.SongId].ThumbUrl, p.RawX, p.RawY)).ToArray();
+                .Select(Point).ToArray();
             return Results.Ok(new
             {
                 version.MapVersion, version.GeneratedAt, method = "group_feature_axes", state = "ready",
                 axisSelectionVersion = 2, axisStandardDeviations = new { x = scaleX, y = scaleY },
                 coordinateCount = catalogue.Count, matchingCount = visible.Length,
                 items, origin = items.First(p => p.SongId == ids[0]), groupSongIds = ids,
+                nearby = neighbors.Where(p => byId.ContainsKey(p.SongId)).Select(Point).ToArray(),
+                nearbyNextOffset = nextOffset, nearbyHasMore = nextOffset < points.Length - ids.Length,
                 axes = new SoundMapAxes(axisX, axisY, 1024, minX, maxX, minY, maxY),
                 initialViewport = new { centerX = groupX, centerY = groupY, zoom = initialZoom },
             });
@@ -87,6 +107,12 @@ internal static class GroupSoundMapEndpoints
             return Results.Json(new { error = "sound_map_dependency_unavailable", reason = error.GetType().Name }, statusCode: 503);
         }
     }
+
+    // Use all coordinates, independently of viewport thinning; ties have a stable song-ID order.
+    internal static GroupMapCoordinate[] Nearest(GroupMapCoordinate[] points, HashSet<int> seeds,
+        double x, double y, int offset, int limit) => points.Where(p => !seeds.Contains(p.SongId))
+        .OrderBy(p => Math.Pow(p.X - x, 2) + Math.Pow(p.Y - y, 2)).ThenBy(p => p.SongId)
+        .Skip(offset).Take(limit).ToArray();
 
     // Apply the same spatial budget everywhere; extra nearest-to-centre songs create a false dense cluster.
     internal static IEnumerable<GroupMapCoordinate> Sample(GroupMapCoordinate[] points, double x, double y, double radius)

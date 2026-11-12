@@ -104,17 +104,23 @@ internal sealed class GroupSoundMapCatalogue : IDisposable
         private void AppendBlock(IReadOnlyList<(int Id, float[] Vector)> rows)
         {
             var file = _file ?? throw new ObjectDisposedException(nameof(Builder));
-            for (var i = 0; i < rows.Count; i++)
+            if (rows.Any(row => row.Vector.Length != 1024)) throw new ArgumentException("Expected 1024 features");
+            // Work on one contiguous output column and keep its Welford state in locals.
+            // The per-dimension row order and all arithmetic remain exactly the same.
+            for (var d = 0; d < 1024; d++)
             {
-                if (rows[i].Vector.Length != 1024) throw new ArgumentException("Expected 1024 features");
-                for (var d = 0; d < 1024; d++)
+                var mean = _means[d];
+                var m2 = _m2[d];
+                for (var i = 0; i < rows.Count; i++)
                 {
                     var value = (Half)rows[i].Vector[d];
                     _columns[d * rows.Count + i] = value;
-                    var delta = (double)value - _means[d];
-                    _means[d] += delta / (Count + i + 1);
-                    _m2[d] += delta * ((double)value - _means[d]);
+                    var delta = (double)value - mean;
+                    mean += delta / (Count + i + 1);
+                    m2 += delta * ((double)value - mean);
                 }
+                _means[d] = mean;
+                _m2[d] = m2;
             }
             _blocks.Add(new(rows.Select(row => row.Id).ToArray(), file.Position));
             file.Write(MemoryMarshal.AsBytes(_columns.AsSpan(0, rows.Count * 1024)));

@@ -4,6 +4,16 @@ import { fetchGroupSoundMap, SoundMapRequestError } from './soundMap';
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
 
 describe('group map catalogue polling', () => {
+  it('pins continuation pages to their group, published map and axes without a viewport', async () => {
+    const fetcher = vi.fn().mockResolvedValue(new Response('{"method":"group_feature_axes"}'));
+    vi.stubGlobal('fetch', fetcher);
+    await fetchGroupSoundMap([1, 2, 3], { signal: new AbortController().signal,
+      mapVersion: 'published-v1', axisKey: '2:570:457', nearbyOffset: 200, nearbyLimit: 200, nearbyOnly: true });
+    const query = new URL(fetcher.mock.calls[0][0], 'https://example.test').searchParams;
+    expect(Object.fromEntries(query)).toEqual({ songIds: '1,2,3', mapVersion: 'published-v1', axisKey: '2:570:457',
+      nearbyOffset: '200', nearbyLimit: '200', nearbyOnly: 'true' });
+  });
+
   it('polls preparing once and sends group plus viewport without full vectors', async () => {
     vi.useFakeTimers();
     const fetcher = vi.fn().mockResolvedValueOnce(new Response('{"state":"preparing"}', { status: 202 }))

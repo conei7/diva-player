@@ -77,6 +77,8 @@ try {
   const pageErrors = [];
   const recommendationRequests = [];
   const soundMapRequests = [];
+  const groupRequests = [];
+  const group = { kind: 'groupSoundMap', songIds: [ORIGIN, ORIGIN - 1, ORIGIN - 2], mapVersion: 'nearest-v1', axisKey: '2:570:457' };
   await pinAppLanguage(page);
   await page.setViewport({ width: 1280, height: 900 });
   page.on('pageerror', error => pageErrors.push(error.message));
@@ -88,6 +90,22 @@ try {
       await request.respond({ contentType: 'application/javascript', body: youtubeApi });
     } else if (path === '/backend-api/api/ready') {
       await respondJson(request, { status: 'ready' });
+    } else if (path === '/backend-api/api/discovery/sound-map/group') {
+      const offset = Number(url.searchParams.get('nearbyOffset') ?? 0);
+      const limit = Number(url.searchParams.get('nearbyLimit') ?? 20);
+      groupRequests.push(Object.fromEntries(url.searchParams));
+      const point = songId => ({ songId, name: `近い順 ${songId}`, artistString: 'Nearest fixture', x: (songId - ORIGIN) / 1000, y: 0, similarity: null });
+      await respondJson(request, {
+        mapVersion: 'nearest-v1', generatedAt: '2026-11-01T00:00:00Z', method: 'group_feature_axes',
+        coordinateCount: 600, state: 'ready', axisSelectionVersion: 2, matchingCount: 600,
+        groupSongIds: group.songIds, origin: point(ORIGIN),
+        // Sampled dots deliberately omit the actual nearest rows: playback must use nearby.
+        items: [...group.songIds.map(point), point(ORIGIN + 590)],
+        nearby: neighborIds(600).slice(offset, offset + limit).map(point),
+        nearbyNextOffset: Math.min(600, offset + limit), nearbyHasMore: offset + limit < 600,
+        axes: { x: 570, y: 457, dimensionCount: 1024, minX: 0, maxX: 1, minY: 0, maxY: 1 },
+        initialViewport: { centerX: 0, centerY: 0, zoom: 2 },
+      });
     } else if (path === '/backend-api/api/discovery/sound-map') {
       const seed = Number(url.searchParams.get('seedSongId'));
       const limit = Number(url.searchParams.get('limit'));
@@ -186,6 +204,39 @@ try {
   assert.deepEqual(restored.continuation, { kind: 'soundMap', originSongId: ORIGIN });
   assert.deepEqual(recommendationRequests, []);
   console.log(`PASS a reloaded nearest-order queue continues from the 41st song (${restoredIds.length} songs)`);
+
+  await page.goto(new URL(`sound-map?layout=group&songIds=${group.songIds.join(',')}`, baseUrl), { waitUntil: 'domcontentloaded' });
+  await page.waitForFunction(() => [...document.querySelectorAll('section[aria-labelledby="sound-map-nearby-heading"] button')]
+    .some(button => button.textContent?.trim() === 'すべて再生'), { timeout: 30_000 });
+  await page.evaluate(() => [...document.querySelectorAll('section[aria-labelledby="sound-map-nearby-heading"] button')]
+    .find(button => button.textContent?.trim() === 'すべて再生').click());
+  await page.waitForFunction(() => JSON.parse(localStorage.getItem('diva_playerQueue') || 'null')?.songIds?.length >= 35, { timeout: 30_000 });
+  const grouped = await storedQueue(page);
+  assert.deepEqual(storedIds(grouped), neighborIds(storedIds(grouped).length));
+  assert.deepEqual(grouped.continuation, group);
+  assert.deepEqual(recommendationRequests, []);
+  console.log('PASS group すべて再生 uses full-catalogue nearest order past 20, independently of sampled dots');
+
+  await page.evaluate((queue, continuation) => {
+    const tabId = 'nearest-queue-fixture-tab';
+    sessionStorage.setItem('diva-playback-tab-v1', tabId);
+    localStorage.setItem('diva-playback-owner-v1', JSON.stringify({ type: 'claim', tabId, songId: queue[238].id, claimedAt: Date.now() }));
+    localStorage.setItem('diva_playerQueue', JSON.stringify({ queue, queueIndex: 238, currentSong: queue[238],
+      currentSongId: queue[238].id, queueSources: queue.map(() => 'auto'), currentPlaybackSource: 'auto',
+      queueTitle: '近くの曲', continuation }));
+  }, neighborIds(240).map(songFixture), group);
+  await page.goto(new URL('history', baseUrl), { waitUntil: 'domcontentloaded' });
+  await page.waitForFunction(() => {
+    const stored = JSON.parse(localStorage.getItem('diva_playerQueue') || 'null');
+    return (stored?.songIds?.length ?? stored?.queue?.length ?? 0) > 240;
+  }, { timeout: 30_000 });
+  const groupRestored = await storedQueue(page);
+  assert.deepEqual(storedIds(groupRestored), neighborIds(storedIds(groupRestored).length));
+  assert.deepEqual(groupRestored.continuation, group);
+  assert.ok(groupRequests.some(query => query.nearbyOffset === '200' && query.nearbyOnly === 'true'
+    && query.axisKey === group.axisKey && query.mapVersion === group.mapVersion));
+  assert.deepEqual(recommendationRequests, []);
+  console.log('PASS reloaded group queue continues beyond 200 with the original map version and axes');
 
   assert.deepEqual(pageErrors, []);
   console.log('PASS no page errors');

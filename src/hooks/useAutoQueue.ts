@@ -45,6 +45,7 @@ import {
 import { useHiddenSongStore } from '../stores/hiddenSongStore';
 import type { PlaybackAppendExpectation, QueueContinuation } from '../stores/playerStore';
 import { nextSoundMapQueueSongs, rememberSoundMapQueueSongs } from '../services/soundMapQueue';
+import { nextGroupSoundMapQueueSongs, rememberGroupSoundMapQueueSongs } from '../services/groupSoundMapQueue';
 
 interface UseAutoQueueArgs {
   currentSong: Song | null;
@@ -270,11 +271,10 @@ export function useAutoQueue({
       return;
     }
 
-    if (queueContinuation?.kind === 'soundMap') {
+    if (queueContinuation?.kind === 'soundMap' || queueContinuation?.kind === 'groupSoundMap') {
       // 曲調マップの「近くの曲」: keep the nearest order instead of switching to recommendations.
       const generation = ++requestGenerationRef.current;
       const controller = new AbortController();
-      const { originSongId } = queueContinuation;
       const excludeIds = new Set([
         ...queue.map(song => song.id),
         ...Object.keys(hiddenSongs).map(Number),
@@ -282,19 +282,21 @@ export function useAutoQueue({
       setStatus('fetching');
       void (async () => {
         try {
-          const nextSongs = await nextSoundMapQueueSongs({
-            originSongId,
+          const nextSongs = await (queueContinuation.kind === 'soundMap' ? nextSoundMapQueueSongs({
+            originSongId: queueContinuation.originSongId,
             excludeIds,
             count: queuePlan.requestedCount,
             signal: controller.signal,
-          });
+          }) : nextGroupSoundMapQueueSongs({ continuation: queueContinuation, excludeIds,
+            count: queuePlan.requestedCount, signal: controller.signal }));
           if (controller.signal.aborted || generation !== requestGenerationRef.current) return;
           const continuationApplied = addManyToQueue(nextSongs, 'auto', {
             currentSongId: currentSong.id,
             playbackSequence,
           });
           if (!continuationApplied) return;
-          rememberSoundMapQueueSongs(originSongId, nextSongs);
+          if (queueContinuation.kind === 'soundMap') rememberSoundMapQueueSongs(queueContinuation.originSongId, nextSongs);
+          else rememberGroupSoundMapQueueSongs(queueContinuation, nextSongs);
           setStatus(nextSongs.length === 0 ? 'exhausted' : 'ready');
         } catch {
           if (controller.signal.aborted || generation !== requestGenerationRef.current) return;

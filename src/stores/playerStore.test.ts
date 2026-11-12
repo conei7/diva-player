@@ -255,7 +255,7 @@ describe('player queue autoplay', () => {
     // Autoplay additions and queue edits keep it.
     usePlayerStore.getState().addManyToQueue([second], 'auto', { currentSongId: song.id, playbackSequence: usePlayerStore.getState().playbackSequence });
     usePlayerStore.getState().addToQueue({ ...song, id: song.id + 2 });
-    expect(usePlayerStore.getState().queueContinuation?.originSongId).toBe(42);
+    expect(usePlayerStore.getState().queueContinuation).toEqual({ kind: 'soundMap', originSongId: 42 });
     expect(readStored().continuation).toEqual({ kind: 'soundMap', originSongId: 42 });
 
     // Any other new queue goes back to the usual recommendations.

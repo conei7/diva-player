@@ -40,6 +40,10 @@ export class SoundMapRequestError extends Error {
 }
 
 export interface GroupSoundMapResponse extends SoundMapResponse {
+  /** Full-catalogue nearest order, independent of viewport sampling. Older APIs omit these. */
+  nearby?: SoundMapPoint[];
+  nearbyNextOffset?: number;
+  nearbyHasMore?: boolean;
   axisSelectionVersion?: number;
   axisStandardDeviations?: { x: number; y: number };
   groupSongIds: number[];
@@ -50,9 +54,13 @@ export interface GroupSoundMapResponse extends SoundMapResponse {
 /** A first visit prepares a shared server catalogue; aborting a page cancels polling, not that shared job. */
 export async function fetchGroupSoundMap(
   songIds: number[],
-  options: { viewport?: { centerX: number; centerY: number; zoom: number }; signal: AbortSignal },
+  options: { viewport?: { centerX: number; centerY: number; zoom: number }; signal: AbortSignal;
+    mapVersion?: string; axisKey?: string; nearbyOffset?: number; nearbyLimit?: number; nearbyOnly?: boolean },
 ): Promise<GroupSoundMapResponse> {
   const params = new URLSearchParams({ songIds: songIds.join(',') });
+  for (const key of ['mapVersion', 'axisKey', 'nearbyOffset', 'nearbyLimit', 'nearbyOnly'] as const) {
+    if (options[key] !== undefined) params.set(key, String(options[key]));
+  }
   if (options.viewport) {
     for (const [key, value] of Object.entries(options.viewport)) params.set(key, String(value));
   }

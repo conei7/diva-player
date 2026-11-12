@@ -662,13 +662,10 @@ public class QdrantService
     internal async Task<GroupSoundMapCatalogue> ReadGroupSoundMapCatalogueAsync(CancellationToken cancellationToken)
     {
         using var builder = new GroupSoundMapCatalogue.Builder(GroupSoundMapCatalogue.CacheDirectory);
-        PointId? offset = null;
-        do
+        await foreach (var page in ReadGroupSoundMapPagesAsync((offset, token) =>
+            _client.ScrollAsync(_opts.CollectionAudio, limit: 1024, offset: offset,
+                payloadSelector: false, vectorsSelector: true, cancellationToken: token), cancellationToken))
         {
-            // Amortize gRPC round trips while keeping the disk catalogue's 256-row
-            // blocks and two-axis reads unchanged. One bounded page is 4 MiB of floats.
-            var page = await _client.ScrollAsync(_opts.CollectionAudio, limit: 1024, offset: offset,
-                payloadSelector: false, vectorsSelector: true, cancellationToken: cancellationToken);
             var rows = new List<(int Id, float[] Vector)>(1024);
             foreach (var point in page.Result)
             {
@@ -678,9 +675,32 @@ public class QdrantService
                 rows.Add(((int)point.Id.Num, vector));
             }
             builder.Append(rows);
-            offset = page.NextPageOffset;
-        } while (offset is not null);
+        }
         return builder.Complete();
+    }
+
+    internal static async IAsyncEnumerable<ScrollResponse> ReadGroupSoundMapPagesAsync(
+        Func<PointId?, CancellationToken, Task<ScrollResponse>> readPage,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        using var scanCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        Task<ScrollResponse>? pending = readPage(null, scanCancellation.Token);
+        try
+        {
+            while (pending is not null)
+            {
+                var page = await pending;
+                // One bounded 4-MiB page ahead; preserve offsets and conversion order.
+                pending = page.NextPageOffset is { } next ? readPage(next, scanCancellation.Token) : null;
+                yield return page;
+            }
+        }
+        finally
+        {
+            scanCancellation.Cancel();
+            if (pending is not null)
+                try { await pending; } catch { /* Observe the abandoned prefetch on disposal. */ }
+        }
     }
 
     public async Task<bool> HasAudioVectorAsync(int songId, CancellationToken cancellationToken)

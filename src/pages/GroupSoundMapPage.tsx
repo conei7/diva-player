@@ -68,7 +68,8 @@ export default function GroupSoundMapPage() {
   const groupIds = useMemo(() => new Set(ids), [ids]);
   const known = useMemo(() => new Set([...played, ...Object.keys(ratings).filter(id => ratings[id] > 0).map(Number)]), [played, ratings]);
   const items = useMemo(() => result?.items.filter(p => groupIds.has(p.songId) || !hiddenSongs[p.songId]) ?? [], [result, hiddenSongs, groupIds]);
-  const nearby = useMemo(() => items.filter(p => !groupIds.has(p.songId)).slice(0, 20), [items, groupIds]);
+  const nearby = useMemo(() => (result?.nearby ?? items.filter(p => !groupIds.has(p.songId)))
+    .filter(p => !hiddenSongs[p.songId]).slice(0, 20), [result, items, groupIds, hiddenSongs]);
   const selected = items.find(p => p.songId === selectedPoint?.songId)
     ?? (selectedPoint && !hiddenSongs[selectedPoint.songId] ? selectedPoint : undefined)
     ?? items.find(p => p.songId === ids[0]);
@@ -203,7 +204,8 @@ export default function GroupSoundMapPage() {
                 onSelect={setSelectedPoint} onViewportChange={updateViewport} onFocusOrigin={() => updateViewport(result.initialViewport)} onBack={() => undefined} />
               <div className="flex min-w-0 flex-col gap-6">
                 {!mobile && selectionProps && <SoundMapSelectionCard {...selectionProps} />}
-                <SoundMapNearby points={nearby} selectedId={selected?.songId ?? null} songsById={songs} actionsDisabled={false} initialCount={20} expanded={false} onExpandedChange={() => undefined} onSelect={setSelectedPoint} />
+                <SoundMapNearby points={nearby} selectedId={selected?.songId ?? null} songsById={songs} actionsDisabled={false} initialCount={20} expanded={false} onExpandedChange={() => undefined} onSelect={setSelectedPoint}
+                  continuation={result.nearby && groupAxisKey(result) ? { kind: 'groupSoundMap', songIds: ids, mapVersion: result.mapVersion, axisKey: groupAxisKey(result)! } : null} />
               </div>
             </div>
           </div>

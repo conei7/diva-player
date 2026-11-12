@@ -40,12 +40,18 @@ export type PlaybackSource = 'manual' | 'auto' | 'discovery';
 /**
  * What autoplay adds to this queue instead of the usual recommendations. `soundMap`: the
  * 曲調マップ「近くの曲」 list goes on in nearest order from `originSongId` (services/soundMapQueue).
+ * `groupSoundMap`: the whole catalogue's order around the original group on its selected axes.
  * Set only by setQueue's caller; any other new queue clears it.
  */
-export interface QueueContinuation {
+export type QueueContinuation = {
   kind: 'soundMap';
   originSongId: number;
-}
+} | {
+  kind: 'groupSoundMap';
+  songIds: number[];
+  mapVersion: string;
+  axisKey: string;
+};
 
 interface StoredPlayerQueue {
   songIds?: number[];
@@ -63,7 +69,17 @@ interface StoredPlayerQueue {
 
 export function normalizeQueueContinuation(value: unknown): QueueContinuation | null {
   if (!value || typeof value !== 'object') return null;
-  const { kind, originSongId } = value as Partial<QueueContinuation>;
+  const { kind, originSongId, songIds, mapVersion, axisKey } = value as {
+    kind?: string; originSongId?: number; songIds?: unknown; mapVersion?: unknown; axisKey?: unknown;
+  };
+  if (kind === 'groupSoundMap') {
+    if (!Array.isArray(songIds) || songIds.length < 3 || songIds.length > 20
+      || songIds.some(id => !Number.isSafeInteger(id) || id <= 0) || new Set(songIds).size !== songIds.length
+      || typeof mapVersion !== 'string' || mapVersion.length === 0 || mapVersion.length > 200
+      || typeof axisKey !== 'string' || !/^2:\d{1,4}:\d{1,4}$/.test(axisKey)) return null;
+    const [, x, y] = axisKey.split(':').map(Number);
+    return x < 1024 && y < 1024 && x !== y ? { kind, songIds: [...songIds], mapVersion, axisKey } : null;
+  }
   return kind === 'soundMap' && Number.isSafeInteger(originSongId) && (originSongId ?? 0) > 0
     ? { kind, originSongId: originSongId! }
     : null;
