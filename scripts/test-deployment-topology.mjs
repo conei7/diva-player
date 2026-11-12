@@ -190,8 +190,8 @@ assert.deepEqual(databaseDockerignore.trim().split('\n'), [
 assert.match(webDockerignore, /(?:^|\n)\*\*\/__pycache__\/(?:\n|$)/);
 assert.match(webDockerfile, /node:22\.22\.2-alpine@sha256:8ea2348b068a9544dae7317b4f3aafcdc032df1647bb7d768a05a5cad1a7683f/);
 assert.match(webDockerfile, /nginxinc\/nginx-unprivileged:alpine@sha256:901e944d1f4fc2bd077e8f5568b98c1f6f8cdacf6b97a87747c43134a339b9a7/);
-assert.match(apiDockerfile, /aspnet:8\.0-alpine-extra@sha256:c4ffeafa8138a201e633a9a143c55ef2e21c5b00e209765682ddd52eca8657c4/);
-assert.match(apiDockerfile, /sdk:8\.0-alpine@sha256:8a80a27ddac789b4cb6d09d244f9c8d840da599c5ad22f7233c04be470e55261/);
+assert.match(apiDockerfile, /aspnet:8\.0-alpine-extra@sha256:7f6b42fa9184cd957682c0be4cb4f27ad40286db3cd4d7a66c317e49ca92ad5b/);
+assert.match(apiDockerfile, /sdk:8\.0-alpine@sha256:4f4992f8f302150e4adb5e78c324731e968493a30c0638985ba29cb42a858cd6/);
 assert.match(gatewayDockerfile, /haproxy:3\.0-alpine@sha256:34cc7d1f6142464d7d2b73e2a1eef7392556dbf304160aef543e513cfd9e5162/);
 assert.match(
   gatewayDockerfile,
@@ -252,6 +252,18 @@ for (const [architecture, expectedHash] of [
 }
 assert.match(webDockerfile, /"\$brotli_sha[^\n]+brotli-libs-1\.2\.1-r0\.apk" \| sha256sum -c -/u);
 for (const [architecture, expectedHash] of [
+  ['x86_64', '40e6cc7d09ce1e69421c2b37e1da4e9afef486843f21c3a79339cd6d93c1c617'],
+  ['aarch64', '1c67e25df3dd6b69d4dd1782428b98751d80ba4223167f4caac044d4d91d0666'],
+]) {
+  const apk = await readFile(new URL(`../vendor/alpine/v3.24/${architecture}/libxslt-1.1.43-r4.apk`, import.meta.url));
+  assert.equal(createHash('sha256').update(apk).digest('hex'), expectedHash);
+  assert.ok(webDockerfile.includes(`xslt_sha=${expectedHash}`));
+}
+assert.match(webApkUpdate, /libxslt=1\.1\.43-r4/u);
+assert.match(webDockerfile, /"\$xslt_sha[^\n]+libxslt-1\.1\.43-r4\.apk" \| sha256sum -c -/u);
+assert.match(apiDockerfile, /Microsoft\.AspNetCore\.App 8\.0\.34 /u);
+assert.match(apiDockerfile, /Microsoft\.NETCore\.App 8\.0\.34 /u);
+for (const [architecture, expectedHash] of [
   ['x86_64', 'e7e7408ea787ed06d00159b0ff1f9b65a63cf634f36d9e0fa7512ce2c489a503'],
   ['aarch64', '99144fe0b1bb9316a3bc30c38707996767806661f4a0456fcf4565ac92e79b0f'],
 ]) {
@@ -296,7 +308,7 @@ assert.match(webApkUpdate, /test[^\n]*P:tiff[^\n]*4\.7\.2-r0/u);
 assert.doesNotMatch(webDockerfile, /--repository|\/edge\//u);
 assert.doesNotMatch(webDockerfile, /--allow-untrusted|--force-broken-world/u);
 assert.match(apiDockerfile, /apk add --no-cache[\s\S]*libcrypto3=3\.5\.9-r0[\s\S]*libssl3=3\.5\.9-r0/u);
-assert.match(apiDockerfile, /test "\$\(dotnet --version\)" = "8\.0\.424"/u);
+assert.match(apiDockerfile, /test "\$\(dotnet --version\)" = "8\.0\.428"/u);
 assert.match(apiDockerfile, /COPY \["VocadbRecommender\/VocadbRecommender\.csproj", "VocadbRecommender\/packages\.lock\.json"/u);
 assert.match(apiDockerfile, /dotnet restore [^\n]* --locked-mode/u);
 assert.doesNotMatch(gatewayDockerfile, /apk upgrade/u);
@@ -324,7 +336,7 @@ assert.doesNotMatch(
   /--health-cmd 'curl [^']*http:\/\/127\.0\.0\.1:5000\/api\/ready'/u,
 );
 assert.deepEqual(JSON.parse(sdkContract), {
-  sdk: { version: '8.0.424', rollForward: 'disable', allowPrerelease: false },
+  sdk: { version: '8.0.428', rollForward: 'disable', allowPrerelease: false },
 });
 assert.equal(JSON.parse(apiPackagesLock).version, 1);
 assert.equal(JSON.parse(apiTestPackagesLock).version, 1);
@@ -1009,7 +1021,7 @@ assert.match(
   workflow,
   /  build:\n[\s\S]*?      - uses: actions\/checkout@[0-9a-f]{40}[^\n]*\n        with:\n          fetch-depth: 2\n/u,
 );
-assert.match(workflow, /dotnet-version: '8\.0\.424'/u);
+assert.match(workflow, /dotnet-version: '8\.0\.428'/u);
 assert.match(workflow, /dotnet restore diva-player\.sln --locked-mode/u);
 assert.match(workflow, /dotnet build backend\/api\/VocadbRecommender\/VocadbRecommender\.csproj --configuration Release --no-restore/u);
 assert.match(workflow, /dotnet test backend\/api\/VocadbRecommender\.Tests\/VocadbRecommender\.Tests\.csproj --configuration Release --no-restore/u);

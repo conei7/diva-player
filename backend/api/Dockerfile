@@ -1,7 +1,7 @@
-FROM mcr.microsoft.com/dotnet/aspnet:8.0-alpine-extra@sha256:c4ffeafa8138a201e633a9a143c55ef2e21c5b00e209765682ddd52eca8657c4 AS base
+FROM mcr.microsoft.com/dotnet/aspnet:8.0-alpine-extra@sha256:7f6b42fa9184cd957682c0be4cb4f27ad40286db3cd4d7a66c317e49ca92ad5b AS base
 USER root
-RUN dotnet --list-runtimes | grep -F 'Microsoft.AspNetCore.App 8.0.33 ' && \
-    dotnet --list-runtimes | grep -F 'Microsoft.NETCore.App 8.0.33 '
+RUN dotnet --list-runtimes | grep -F 'Microsoft.AspNetCore.App 8.0.34 ' && \
+    dotnet --list-runtimes | grep -F 'Microsoft.NETCore.App 8.0.34 '
 # CVE-2026-107891: upgrade the pinned Alpine runtime with signed, checksummed APKs.
 RUN set -eux; \
     case "$(cat /etc/alpine-release)" in 3.24.*) ;; *) exit 1 ;; esac; \
@@ -42,9 +42,9 @@ RUN apk add --no-cache \
 WORKDIR /app
 EXPOSE 5000
 
-FROM mcr.microsoft.com/dotnet/sdk:8.0-alpine@sha256:8a80a27ddac789b4cb6d09d244f9c8d840da599c5ad22f7233c04be470e55261 AS build
+FROM mcr.microsoft.com/dotnet/sdk:8.0-alpine@sha256:4f4992f8f302150e4adb5e78c324731e968493a30c0638985ba29cb42a858cd6 AS build
 WORKDIR /src
-RUN test "$(dotnet --version)" = "8.0.424"
+RUN test "$(dotnet --version)" = "8.0.428"
 COPY ["VocadbRecommender/VocadbRecommender.csproj", "VocadbRecommender/packages.lock.json", "VocadbRecommender/"]
 RUN dotnet restore "VocadbRecommender/VocadbRecommender.csproj" --locked-mode
 COPY . .

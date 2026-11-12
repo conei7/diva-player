@@ -86,6 +86,22 @@ class PostgresContainerContractTests(unittest.TestCase):
         self.assertIn("aarch64) vector_libc=libc.musl-aarch64.so.1", self.postgres)
         self.assertIn("*) echo \"unsupported architecture:", self.postgres)
 
+    def test_november_library_security_fixes_are_architecture_bound(self) -> None:
+        for checksum in (
+            '128cb2591388b2a942f74fd6814d51c902c1b518ec71819ed7fb6eee65149eec',
+            'f594bc10b3689ceb329f57e823cdde1c1d5e30c287f874ede1b787d9b44a2edf',
+            '0469e5c1ebc5f9d07c260f403b8bc7faaf65f8672a1f113fda9d34ab5b6701a0',
+            '25bbedc83e8cc4bcfbf3b8ec7f5cea9d732f0a9c0cc193558952d44b379c07b2',
+        ):
+            self.assertIn(checksum, self.postgres)
+        self.assertIn('main/$arch/krb5-libs-1.22.3-r0.apk', self.postgres)
+        self.assertIn('main/$arch/libxslt-1.1.43-r4.apk', self.postgres)
+        for variable, artifact in (('krb_sha', 'krb5-libs'), ('xslt_sha', 'libxslt')):
+            self.assertIn(f'echo "${variable}  /tmp/{artifact}.apk" | sha256sum -c -', self.postgres)
+        self.assertIn('apk add --no-network /tmp/krb5-libs.apk /tmp/libxslt.apk;', self.postgres)
+        self.assertRegex(self.postgres, r'test[^\n]*P:krb5-libs[^\n]*= 1\.22\.3-r0;')
+        self.assertRegex(self.postgres, r'test[^\n]*P:libxslt[^\n]*= 1\.1\.43-r4;')
+
     def test_pgvector_download_and_entrypoint_patch_are_fail_closed(self) -> None:
         self.assertIn(
             "PGVECTOR_COMMIT=8ee86c96f0fd72390f890aa8a336fda6d3ab4c6c",
