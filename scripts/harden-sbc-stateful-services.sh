@@ -918,6 +918,13 @@ reviewed_inventory_bounds() {
             printf '%s\n' 'os-pkgs:alpine:3:3:1'
             ;;
         api-a:alpine:amd64|api-a:alpine:arm64|api-b:alpine:amd64|api-b:alpine:arm64)
+            # Preserve the immutable historical calibration fixture; new .NET 10
+            # builds use framework assemblies instead of six NuGet packages.
+            if [ "$architecture:$image_id" = arm64:sha256:8bf53cacefe8e96227794e4fabd97e0c834dfbfdf426d6b73419485e0a6bf77a ]; then
+                printf '%s\n' 'lang-pkgs:dotnet-core:13:13:3' \
+                    'lang-pkgs:nuget:12:12:1' 'os-pkgs:alpine:21:21:1'
+                return 0
+            fi
             printf '%s\n' 'lang-pkgs:dotnet-core:13:13:3' \
                 'lang-pkgs:nuget:6:6:1' \
                 'os-pkgs:alpine:21:21:1'
