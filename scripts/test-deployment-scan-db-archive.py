@@ -17,8 +17,11 @@ spec.loader.exec_module(archive)
 class DeploymentArchiveTests(unittest.TestCase):
     def setUp(self):
         self.previous_umask = os.umask(0o022)
+        self.capacity_patch = patch.object(archive, 'refresh_capacity_summary')
+        self.capacity_patch.start()
 
     def tearDown(self):
+        self.capacity_patch.stop()
         os.umask(self.previous_umask)
 
     def fixture(self, root):
@@ -55,6 +58,7 @@ class DeploymentArchiveTests(unittest.TestCase):
             archive.transform(run, root=root, apply=True)
             self.assertFalse(raw.exists())
             self.assertTrue(packed.exists())
+            self.assertEqual(archive.refresh_capacity_summary.call_count, 3)
 
     def test_nonterminal_unsafe_and_busy_runs_preserve_plain_db(self):
         with tempfile.TemporaryDirectory() as t:

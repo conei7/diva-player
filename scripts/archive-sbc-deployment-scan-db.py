@@ -100,6 +100,25 @@ def check_restore_capacity(root, size):
         raise RuntimeError('Restore would consume the operational reserve')
 
 
+def refresh_capacity_summary(root):
+    """Keep transient-byte accounting in step with physical compaction/restore."""
+    plan = cache.plan(root, cache.live_references(root))
+    public = Path('/var/lib/diva-player-capacity')
+    if (public.is_symlink() or public.resolve() != public
+            or public.stat().st_uid != 0 or public.stat().st_mode & 0o022):
+        raise RuntimeError('Unsafe public capacity directory')
+    target = public / 'scan-cache-capacity.json'
+    if target.is_symlink():
+        raise RuntimeError('Unsafe capacity summary')
+    cache.atomic_json(target, {'schemaVersion': 1, 'checkedAt': plan['checkedAt'],
+                              'status': 'success', 'retainedCount': len(plan['caches']),
+                              'retainedBytes': sum(row['bytes'] for row in plan['caches']),
+                              'protectedReasons': {row['run']: row['protectedReason']
+                                                   for row in plan['caches'] if row['protectedReason']},
+                              'removedBytes': 0})
+    os.chmod(target, 0o644)
+
+
 def transform(run, *, apply=False, restore=False, root=ROOT):
     raw, expected, images, receipts = describe(run, root)
     archive = raw.with_suffix('.db.gz')
@@ -176,6 +195,7 @@ def transform(run, *, apply=False, restore=False, root=ROOT):
                 raise RuntimeError('DB changed before retirement')
             raw.unlink()
             sync_directory(raw.parent)
+        refresh_capacity_summary(root)
         return result
     finally:
         if temporary:
