@@ -196,7 +196,12 @@ async function preparePage(fixtureSong, savedVolume = 23, queue = [fixtureSong])
                     return;
                   }
                   (window.__soundCloudSeeks ||= []).push(ms);
-                  setTimeout(() => listeners[Events.SEEK]?.({ currentPosition: ms }), 0);
+                  window.__soundCloudPendingSeekReports = (window.__soundCloudPendingSeekReports || 0) + 1;
+                  setTimeout(() => {
+                    listeners[Events.SEEK]?.({ currentPosition: ms });
+                    window.__soundCloudPendingSeekReports -= 1;
+                    window.__soundCloudLastReportedSeek = ms;
+                  }, window.__soundCloudSeekReportDelay || 0);
                   // A seek on a paused widget that never played reports PLAY, yet stays paused. api.js
                   // makes it from the player's first progress report, later than the app's 0 ms timers.
                   setTimeout(() => {
@@ -293,12 +298,23 @@ async function openPlayingSoundCloud(queue) {
 
 // → three times: 15 s, past the 5 s under which 元に戻す starts the song over.
 async function seekToFifteenSeconds(page) {
-  for (let press = 0; press < 3; press += 1) await pressShortcut(page, 'ArrowRight');
-  await page.waitForFunction(() => window.__soundCloudSeeks?.at(-1) === 15000);
+  // seekTo records a command before the provider acknowledges it. Under load an
+  // older SEEK report can still overwrite the optimistic progress when Close
+  // snapshots it. Establish the intended starting position before testing Undo.
+  for (let press = 1; press <= 3; press += 1) {
+    await pressShortcut(page, 'ArrowRight');
+    await page.waitForFunction(expected => (
+      window.__soundCloudPendingSeekReports === 0
+      && window.__soundCloudLastReportedSeek === expected * 1000
+      && [...document.querySelectorAll('[role="slider"][aria-label="シーク"]')]
+        .some(slider => Number(slider.getAttribute('aria-valuenow')) === expected)
+    ), { timeout: 5_000 }, press * 5);
+  }
 }
 
 async function closeAndUndo(page) {
   await page.$eval('[data-testid="mini-player-close"]', button => button.click());
+  await page.waitForFunction(() => document.querySelector('[data-testid="soundcloud-player-embed"]') === null);
   await page.waitForFunction(() => document.querySelector('[data-testid="toast-host"]')?.textContent?.includes('プレイヤーを閉じました'));
   await page.$eval('[data-testid="toast-host"] [data-toast-action]', button => button.click());
 }
@@ -316,6 +332,8 @@ async function readSoundCloudCase(page) {
         widgetPlaying,
         seeks: window.__soundCloudSeeks || [],
         droppedSeeks: window.__soundCloudDroppedSeeks || [],
+        pendingSeekReports: window.__soundCloudPendingSeekReports || 0,
+        lastReportedSeek: window.__soundCloudLastReportedSeek ?? null,
         playCalls: window.__soundCloudPlayCalls || 0,
         pauseCalls: window.__soundCloudPauseCalls || 0,
         controlLabel: document.querySelector('[data-testid="global-mini-player-toggle"]')?.getAttribute('aria-label') ?? null,
@@ -380,6 +398,7 @@ try {
     // Closing removes the widget's iframe (api.js throws when it is unbound then), and READY of
     // the restored one applies the pending seek and starts it again.
     const page = await openPlayingSoundCloud([soundCloudSong, secondSoundCloudSong]);
+    await page.evaluate(() => { window.__soundCloudSeekReportDelay = 250; });
     await seekToFifteenSeconds(page);
     await page.evaluate(() => {
       window.__soundCloudSeeks = [];
@@ -407,6 +426,7 @@ try {
     // The restored widget has never played, and api.js reports a seek on it as PLAY while it stays
     // paused: a paused 元に戻す must only cue the song.
     const page = await openPlayingSoundCloud([soundCloudSong, secondSoundCloudSong]);
+    await page.evaluate(() => { window.__soundCloudSeekReportDelay = 250; });
     await seekToFifteenSeconds(page);
     await page.$eval(PAUSE_BUTTON, button => button.click());
     await page.waitForSelector(PLAY_BUTTON);
