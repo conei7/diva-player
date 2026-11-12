@@ -649,7 +649,7 @@ jobs:
           # Each record is service|locally built source reference|OS family|reviewed inventory bounds.
           # Bounds aggregate package counts and also pin the number of Trivy Results per class/type.
           image_specs=(
-            "api|diva-player-ci-api:current|alpine|os-pkgs:alpine:21:21:1,lang-pkgs:dotnet-core:13:13:3,lang-pkgs:nuget:6:6:1"
+            "api|diva-player-ci-api:current|alpine|os-pkgs:alpine:21:21:1,lang-pkgs:dotnet-core:9:9:3"
             "gateway|diva-player-ci-gateway:current|alpine|os-pkgs:alpine:24:24:1"
             "web|diva-player-ci-web:current|alpine|os-pkgs:alpine:70:70:1"
             "qdrant-runtime|diva-player-ci-qdrant:current|debian|os-pkgs:debian:7:7:1"

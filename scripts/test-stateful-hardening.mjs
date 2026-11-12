@@ -475,7 +475,7 @@ for (const architecture of ['amd64', 'arm64']) {
       [service, architecture, 'alpine', `sha256:${'a'.repeat(64)}`]);
     assert.equal(current.status, 0, current.stderr);
     assert.deepEqual(current.stdout.trimEnd().split(/\r?\n/u), [
-      'lang-pkgs:dotnet-core:13:13:3', 'lang-pkgs:nuget:6:6:1', 'os-pkgs:alpine:21:21:1',
+      'lang-pkgs:dotnet-core:9:9:3', 'os-pkgs:alpine:21:21:1',
     ]);
   }
 }

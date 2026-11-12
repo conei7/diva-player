@@ -785,8 +785,7 @@ class DeployImageScanWorkflowContractTests(unittest.TestCase):
         self.assertEqual(self.gate.count(qdrant_runtime_contract), 1)
         expected_bounds = (
             "os-pkgs:alpine:21:21:1",
-            "lang-pkgs:dotnet-core:13:13:3",
-            "lang-pkgs:nuget:6:6:1",
+            "lang-pkgs:dotnet-core:9:9:3",
             "os-pkgs:alpine:24:24:1",
             "os-pkgs:alpine:70:70:1",
             "os-pkgs:debian:7:7:1",
