@@ -11,7 +11,7 @@ VocaDB API を活用したボカロ特化ミュージックプレイヤー SPA�
 - **Tailwind CSS v4** — スタイリング
 - **Zustand** — 状態管理
 - **React Router v8** — クライアントサイドルーティング
-- **ASP.NET Core 8** — 検索・推薦・プレイリスト同期 API
+- **ASP.NET Core 10** — 検索・推薦・プレイリスト同期 API
 - **PostgreSQL 16 + pgvector** — 同期済みメタデータ、検索、履歴集計
 - **Qdrant** — 音響／メタデータベクトル検索
 - **HAProxy** — A/B 2系統の API gateway とreadinessによる切り替え
