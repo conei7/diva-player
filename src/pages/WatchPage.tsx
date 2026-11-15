@@ -309,7 +309,7 @@ export default function WatchPage({ onDocumentTitleStateChange }: WatchPageProps
             ? filtered.relaxedConditions
             : [...new Set([...prev.producer.relaxedConditions, ...filtered.relaxedConditions])],
           loading: false,
-          hasMore: producerSongs.length >= count && fresh.length > 0,
+          hasMore: producerSongs.length >= count,
           page: page + 1,
         },
       }));
@@ -351,7 +351,9 @@ export default function WatchPage({ onDocumentTitleStateChange }: WatchPageProps
             : [...new Set([...prev.related.relaxedConditions, ...filtered.relaxedConditions])],
           loading: false,
           loadError: false,
-          hasMore: !sourceExhausted && fresh.length > 0,
+          // A full source page can be entirely excluded (for example covers).
+          // Keep scanning: an empty visible page does not exhaust the source.
+          hasMore: !sourceExhausted,
           page: page + 1,
         },
       }));
@@ -436,7 +438,7 @@ export default function WatchPage({ onDocumentTitleStateChange }: WatchPageProps
             ? relaxedConditions
             : [...new Set([...prev.recommended.relaxedConditions, ...relaxedConditions])],
           loading: false,
-          hasMore: !sourceExhausted && fresh.length > 0,
+          hasMore: !sourceExhausted,
           page: page + 1,
         },
       }));
@@ -473,7 +475,7 @@ export default function WatchPage({ onDocumentTitleStateChange }: WatchPageProps
             ? filtered.relaxedConditions
             : [...new Set([...prev.deep.relaxedConditions, ...filtered.relaxedConditions])],
           loading: false,
-          hasMore: deepSongs.length >= count && fresh.length > 0,
+          hasMore: deepSongs.length >= count,
           page: page + 1,
         },
       }));

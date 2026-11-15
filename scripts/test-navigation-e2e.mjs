@@ -133,7 +133,7 @@ const fixtureResponse = (body, contentType = 'application/json') => ({
 });
 
 /** `songs`: more songs by id; `external`: a stubbed response for another host (else the network). */
-async function installApiFixtures(page, homeSongs = fixtureHomeSongs, recommendationSongs = [], { songs = [], external } = {}) {
+async function installApiFixtures(page, homeSongs = fixtureHomeSongs, recommendationSongs = [], { songs = [], external, recommendationPage } = {}) {
   await page.setRequestInterception(true);
   page.on('request', request => {
     const url = new URL(request.url());
@@ -156,9 +156,10 @@ async function installApiFixtures(page, homeSongs = fixtureHomeSongs, recommenda
     } else if (path.endsWith('/api/recommend/dig')) {
       response = fixtureResponse({ items: fixtureSongs, totalCount: fixtureSongs.length });
     } else if (path.includes('/api/recommend')) {
+      const pageSongs = recommendationPage ? recommendationPage(url) : recommendationSongs;
       response = fixtureResponse({
-        items: recommendationSongs.map(song => ({ songId: song.id, score: 1 })),
-        cards: recommendationSongs,
+        items: pageSongs.map(song => ({ songId: song.id, score: 1 })),
+        cards: pageSongs,
       });
     } else if (path.includes('/api/songs/search')) {
       const isRecommendedHomeFeed = url.searchParams.get('sort') === 'FavoritedTimes'
@@ -914,6 +915,63 @@ try {
       if (song === nicoSong && landed.title !== fixtureNicoPv.name) throw new Error(`Skip to player must reach the Niconico video: ${JSON.stringify(landed)}`);
       console.log(`PASS Skip to player on the ${name} reaches ${expected}${expected === 'video' ? ` (scrollY ${before.scrollY} → ${landed.scrollY}, top ${landed.top})` : ''}`);
       await skipContext.close();
+    }
+  }
+  // A filtered-out page must not terminate pagination. Version matches can
+  // fill the first pages with covers even though original songs follow them.
+  for (const tab of ['関連曲', '曲調が近い', `${fixtureProducer.name.slice(0, 15)}…の曲`, 'おすすめ']) {
+    for (const exhausted of [false, true]) {
+      const context = await browser.createBrowserContext();
+      try {
+        const filteredPage = await context.newPage();
+        await filteredPage.setViewport({ width: 1440, height: 900 });
+        await pinAppLanguage(filteredPage, 'ja');
+        await filteredPage.evaluateOnNewDocument(() => {
+          localStorage.setItem('diva-global-filters', JSON.stringify({
+            version: 2,
+            state: { enabled: true, excludedSongTypes: ['Cover'] },
+          }));
+        });
+        const source = Array.from({ length: exhausted ? 40 : 43 }, (_, index) => ({
+          ...fixtureSong,
+          id: 910000 + index,
+          name: `Pagination ${index}`,
+          defaultName: `Pagination ${index}`,
+          songType: index < 40 ? 'Cover' : 'Original',
+        }));
+        const requests = [];
+        const endpoint = tab === '関連曲' ? '/metadata' : tab === '曲調が近い' ? '/audio' : tab.endsWith('の曲') ? '/producer' : '/recommend';
+        await installApiFixtures(filteredPage, [], [], {
+          recommendationPage: url => {
+            if (!url.pathname.endsWith(endpoint)) return [];
+            const offset = Number(url.searchParams.get('offset') ?? 0);
+            const count = Number(url.searchParams.get('count') ?? 12);
+            requests.push({ path: url.pathname, offset, count });
+            return source.slice(offset, offset + count);
+          },
+          external: url => url.origin !== base.origin ? { status: 204, body: '' } : null,
+        });
+        await filteredPage.goto(new URL('watch?v=1501', base), { waitUntil: 'domcontentloaded' });
+        await filteredPage.waitForSelector('[data-testid="watch-no-video"], [data-testid="watch-more-actions"]');
+        await filteredPage.waitForFunction(label => [...document.querySelectorAll('button')]
+          .some(button => button.textContent?.trim() === label), {}, tab);
+        await filteredPage.evaluate(label => [...document.querySelectorAll('button')]
+          .find(button => button.textContent?.trim() === label)?.click(), tab);
+        if (exhausted) {
+          await filteredPage.waitForFunction(() => document.querySelector('[data-testid="watch-recommendations-column"]')
+            ?.textContent?.includes('フィルターに合う曲がありません'));
+        } else {
+          await filteredPage.waitForSelector('[data-testid="watch-recommendation-row"]', { timeout: 30_000 });
+          const text = await filteredPage.$eval('[data-testid="watch-recommendations-column"]', element => element.textContent);
+          if (/Pagination (?:[0-9]|[1-3][0-9])(?:\D|$)/.test(text)) throw new Error(`Excluded cover appeared: ${text}`);
+        }
+        const pages = requests.filter(request => request.path.endsWith(endpoint));
+        if (pages.length < 2) throw new Error(`Stopped on a filtered page: ${JSON.stringify({ tab, exhausted, requests })}`);
+        if (pages.length > 5) throw new Error(`Pagination failed to terminate: ${JSON.stringify(pages)}`);
+        console.log(`PASS ${tab}: continues past excluded pages${exhausted ? ' and stops at source exhaustion' : ' to original songs'}`);
+      } finally {
+        await context.close();
+      }
     }
   }
 } finally {
