@@ -108,6 +108,16 @@ describe('saved library data across tabs', () => {
     expect(writes).not.toHaveBeenCalled();
   });
 
+  it('receives followed-release acknowledgements from another tab without publishing them again', () => {
+    const record = { id: 7, name: 'P', artistType: 'Producer', createdAt: 1,
+      releasesCheckedAt: Date.now(), checkedReleaseIds: [100, 101] };
+    values.set('diva-favorite-producers', JSON.stringify({ version: 1, state: { producers: [record] } }));
+    writes.mockClear();
+    storageEvent('diva-favorite-producers');
+    expect(producers.useFavoriteProducerStore.getState().producers).toEqual([record]);
+    expect(writes).not.toHaveBeenCalled();
+  });
+
   it('ignores unrelated storage/queue events and removes subscriptions on cleanup', () => {
     const state = playlists.usePlaylistStore.getState().playlists;
     values.set('diva-ratings', JSON.stringify({ state: { ratings: { 100: 4 } }, version: 0 }));

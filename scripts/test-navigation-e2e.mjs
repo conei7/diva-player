@@ -133,7 +133,7 @@ const fixtureResponse = (body, contentType = 'application/json') => ({
 });
 
 /** `songs`: more songs by id; `external`: a stubbed response for another host (else the network). */
-async function installApiFixtures(page, homeSongs = fixtureHomeSongs, recommendationSongs = [], { songs = [], external, recommendationPage } = {}) {
+async function installApiFixtures(page, homeSongs = fixtureHomeSongs, recommendationSongs = [], { songs = [], external, recommendationPage, searchResult } = {}) {
   await page.setRequestInterception(true);
   page.on('request', request => {
     const url = new URL(request.url());
@@ -168,7 +168,7 @@ async function installApiFixtures(page, homeSongs = fixtureHomeSongs, recommenda
         && !url.searchParams.has('artistIds')
         && !url.searchParams.has('anyArtistIds');
       const items = isRecommendedHomeFeed ? homeSongs : fixtureSongs;
-      response = fixtureResponse({ items, totalCount: items.length });
+      response = fixtureResponse(searchResult ? searchResult(url) : { items, totalCount: items.length });
     } else if (isVocaDb && url.searchParams.get('fields') === 'Albums') {
       response = fixtureResponse({ albums: path.endsWith('/1501') ? [
         { id: 901, name: 'DIVA E2E Album' },
@@ -973,6 +973,60 @@ try {
         await context.close();
       }
     }
+  }
+  const releaseContext = await browser.createBrowserContext();
+  try {
+    const releases = await releaseContext.newPage();
+    await releases.setViewport({ width: 1280, height: 900 });
+    await pinAppLanguage(releases, 'ja');
+    await releases.evaluateOnNewDocument(id => {
+      if (!localStorage.getItem('diva-favorite-producers')) localStorage.setItem('diva-favorite-producers', JSON.stringify({
+        version: 1, state: { producers: [{ id, name: 'DIVA E2E Producer', artistType: 'Producer', createdAt: Date.now() - 3 * 86400000 }] },
+      }));
+    }, fixtureProducer.id);
+    const today = new Date(Date.now() + 9 * 3600000).toISOString().slice(0, 10);
+    const source = Array.from({ length: 41 }, (_, index) => ({
+      ...fixtureSong, id: 920000 + index, name: `Followed release ${index}`, defaultName: `Followed release ${index}`, publishDate: today,
+    }));
+    const queries = [];
+    await installApiFixtures(releases, [], [], {
+      searchResult: url => {
+        queries.push(url);
+        const start = Number(url.searchParams.get('start'));
+        return { items: source.slice(start, start + 40), totalCount: source.length };
+      },
+      external: url => url.origin !== base.origin ? { status: 204, body: '' } : null,
+    });
+    await releases.goto(new URL('favorite-producers', base), { waitUntil: 'domcontentloaded' });
+    await releases.waitForFunction(() => document.querySelectorAll('[data-testid="followed-release-row"]').length === 40);
+    const badges = () => releases.$$eval('[data-testid="followed-release-row"]', rows => rows.filter(row => row.textContent.includes('未確認')).length);
+    if (await badges() !== 40) throw new Error('Same-day followed releases should initially be unchecked');
+    const clickText = label => releases.evaluate(text => [...document.querySelectorAll('button')].find(button => button.textContent.trim() === text)?.click(), label);
+    await clickText('すべて確認済みにする');
+    await releases.waitForFunction(() => [...document.querySelectorAll('[data-testid="followed-release-row"]')].every(row => !row.textContent.includes('未確認')));
+    await clickText('さらに読み込む');
+    await releases.waitForFunction(() => document.querySelectorAll('[data-testid="followed-release-row"]').length === 41);
+    if (await badges() !== 1) throw new Error('Unseen same-day release must stay unchecked after loading another page');
+    if (queries.some(url => url.searchParams.get('sort') !== 'PublishDate' || url.searchParams.get('anyArtistIds') !== String(fixtureProducer.id))) {
+      throw new Error('Release feed must query followed artists in publication order');
+    }
+    await clickText('すべて確認済みにする');
+    await releases.reload({ waitUntil: 'domcontentloaded' });
+    await releases.waitForSelector('[data-testid="followed-release-row"]');
+    if (await badges() !== 0) throw new Error('Acknowledgements must survive reload');
+    const releaseScreenshots = process.env.DIVA_FOLLOWED_RELEASE_SCREENSHOTS;
+    if (releaseScreenshots) {
+      await mkdir(releaseScreenshots, { recursive: true });
+      await releases.screenshot({ path: join(releaseScreenshots, 'followed-releases-desktop.png') });
+    }
+    await releases.setViewport({ width: 390, height: 844 });
+    if (await releases.evaluate(() => document.documentElement.scrollWidth > innerWidth)) throw new Error('Followed releases overflow mobile width');
+    if (releaseScreenshots) await releases.screenshot({ path: join(releaseScreenshots, 'followed-releases-mobile.png') });
+    await clickText('フォロー中のP');
+    await releases.waitForSelector('button[aria-label="DIVA E2E Producerのフォローを解除"]');
+    console.log('PASS followed releases: publication query, 40→41 paging, same-day unread, acknowledgement persistence, mobile and producer management');
+  } finally {
+    await releaseContext.close();
   }
 } finally {
   await browser.close();

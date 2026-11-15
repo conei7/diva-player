@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Link } from 'react-router';
+import { Link, useSearchParams } from 'react-router';
 import { useFavoriteProducerStore, type FavoriteProducer } from '../stores/favoriteProducerStore';
 import { useLanguageStore } from '../stores/languageStore';
 import { showToast } from '../stores/toastStore';
@@ -14,6 +14,8 @@ import IconButton from '../components/ui/IconButton';
 import { PageHeader, PageShell } from '../components/ui/PageHeader';
 import SortMenu from '../components/ui/SortMenu';
 import { CheckIcon, PersonStarFilledIcon, PersonStarIcon } from '../components/ui/icons';
+import { Chip, ChipBar } from '../components/ui/Chip';
+import FollowedReleases from '../components/library/FollowedReleases';
 
 type ProducerSortMode = 'added' | 'name';
 
@@ -21,7 +23,7 @@ type ProducerSortMode = 'added' | 'name';
 const JUST_NOW_MS = 60 * 1000;
 
 /**
- * FavoriteProducersPage - フォロー中（YouTube の登録チャンネルの一覧と同じ形）
+ * FavoriteProducersPage - フォロー中の新曲と、フォローしたPの管理。
  */
 export default function FavoriteProducersPage() {
   const t = useTranslateSourceText();
@@ -30,6 +32,8 @@ export default function FavoriteProducersPage() {
   const isMobile = useMediaQuery(MOBILE_MEDIA_QUERY);
   const producers = useFavoriteProducerStore(state => state.producers);
   const [sortMode, setSortMode] = useState<ProducerSortMode>('added');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const showProducers = searchParams.get('tab') === 'producers';
 
   const sorted = useMemo(() => (sortMode === 'name'
     ? [...producers].sort((a, b) => a.name.localeCompare(b.name, 'ja'))
@@ -70,7 +74,7 @@ export default function FavoriteProducersPage() {
       <PageHeader
         title={t('フォロー中')}
         meta={count > 0 ? (count === 1 ? tk('libraryProducerCountOne') : tk('libraryProducerCount', { count: count.toLocaleString() })) : undefined}
-        actions={count > 1 ? (
+        actions={showProducers && count > 1 ? (
           <SortMenu
             value={sortMode}
             options={[
@@ -83,9 +87,16 @@ export default function FavoriteProducersPage() {
         ) : undefined}
       />
 
+      {count > 0 && <div className="mb-4">
+        <ChipBar label={t('フォロー中の表示')}>
+          <Chip selected={!showProducers} onClick={() => setSearchParams({ tab: 'releases' })}>{t('新曲')}</Chip>
+          <Chip selected={showProducers} onClick={() => setSearchParams({ tab: 'producers' })}>{t('フォロー中のP')}</Chip>
+        </ChipBar>
+      </div>}
+
       {count === 0 ? (
         <EmptyState icon={<PersonStarIcon />} title={tk('libraryNoFavoriteProducers')} action={{ label: t('曲を探す'), to: '/' }} />
-      ) : (
+      ) : !showProducers ? <FollowedReleases producers={producers} /> : (
         <ul className="m-0 -mx-2 list-none p-0">
           {sorted.map(producer => {
             const removeLabel = t('{producer}のフォローを解除', { producer: producer.name });

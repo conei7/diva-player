@@ -1139,5 +1139,14 @@ export const englishSourceText: Record<string, string> = {
   '「{title}」を一時停止': 'Pause “{title}”',
   'プロデューサー': 'Producer',
   '「{name}」の曲一覧': 'Songs in “{name}”',
+  'フォロー中の新曲': 'New releases from followed producers',
+  'フォロー中の新曲を見る': 'See new releases from followed producers',
+  'フォロー中の表示': 'Following view',
+  '新曲': 'New releases',
+  '公開日が新しい順': 'Newest releases first',
+  'すべて確認済みにする': 'Mark all as checked',
+  '未確認': 'New',
+  '新曲を読み込めませんでした': 'Could not load new releases',
+  '表示できる新曲はありません': 'No releases to show',
   // ── /area:music ──
 };

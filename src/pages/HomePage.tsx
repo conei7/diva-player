@@ -1,7 +1,7 @@
 import { lazy, Suspense, useState, useEffect, useEffectEvent, useCallback, useImperativeHandle, useLayoutEffect, useMemo, useRef } from 'react';
 import type { Ref } from 'react';
 import { useShallow } from 'zustand/react/shallow';
-import { useLocation, useNavigationType, useSearchParams } from 'react-router';
+import { Link, useLocation, useNavigationType, useSearchParams } from 'react-router';
 import CategoryChips, { type CategoryChip } from '../components/home/CategoryChips';
 import { revealChipInRow } from '../components/home/chipRow';
 import VideoGrid from '../components/home/VideoGrid';
@@ -1238,6 +1238,12 @@ function HomeFeed({ ref, belowShelves }: HomeFeedProps) {
           onSelect={selectCategory}
         />
       </div>
+
+      {activeCategory === 'favorite_producers' && favoriteProducers.length > 0 && (
+        <Link to="/favorite-producers" className="my-3 inline-flex min-h-10 items-center text-sm font-medium text-yt-text no-underline hover:underline">
+          {ts('フォロー中の新曲を見る')}
+        </Link>
+      )}
 
       {relaxationDetail && (
         <div className="mb-3 flex min-h-8 flex-wrap items-center gap-x-1 text-xs leading-4 text-yt-text-secondary">

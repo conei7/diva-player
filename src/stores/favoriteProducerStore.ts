@@ -7,6 +7,9 @@ export interface FavoriteProducer {
   name: string;
   artistType: Extract<ArtistType, 'Producer' | 'Circle' | 'Band'>;
   createdAt: number;
+  /** Publication cutoff explicitly acknowledged in the followed releases feed. */
+  releasesCheckedAt?: number;
+  checkedReleaseIds?: number[];
 }
 
 interface FavoriteProducerState {
@@ -15,6 +18,7 @@ interface FavoriteProducerState {
   removeProducer: (id: number) => void;
   toggleProducer: (producer: Omit<FavoriteProducer, 'createdAt'>) => boolean;
   isFavoriteProducer: (id: number) => boolean;
+  markReleasesChecked: (producerIds: number[], checkedAt: number, songIds: number[]) => void;
 }
 
 export function normalizeFavoriteProducers(value: unknown): FavoriteProducer[] {
@@ -30,7 +34,14 @@ export function normalizeFavoriteProducers(value: unknown): FavoriteProducer[] {
       id,
       name: candidate.name.trim(),
       artistType,
-      createdAt: Number.isFinite(candidate.createdAt) ? Number(candidate.createdAt) : Date.now(),
+      createdAt: typeof candidate.createdAt === 'number' && Number.isFinite(candidate.createdAt)
+        && candidate.createdAt >= 0 && candidate.createdAt <= Date.now() ? candidate.createdAt : Date.now(),
+      ...(typeof candidate.releasesCheckedAt === 'number' && Number.isFinite(candidate.releasesCheckedAt)
+        && candidate.releasesCheckedAt >= 0 && candidate.releasesCheckedAt <= Date.now()
+        ? { releasesCheckedAt: candidate.releasesCheckedAt } : {}),
+      ...(Array.isArray(candidate.checkedReleaseIds) ? {
+        checkedReleaseIds: [...new Set(candidate.checkedReleaseIds.filter(id => Number.isSafeInteger(id) && id > 0))],
+      } : {}),
     }];
   });
 }
@@ -50,6 +61,19 @@ export const useFavoriteProducerStore = create<FavoriteProducerState>()(
         return !exists;
       },
       isFavoriteProducer: id => get().producers.some(item => item.id === id),
+      markReleasesChecked: (producerIds, checkedAt, songIds) => {
+        if (!Number.isFinite(checkedAt) || checkedAt < 0 || checkedAt > Date.now()) return;
+        const ids = new Set(producerIds);
+        const day = (at: number) => new Date(at + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
+        set(state => ({ producers: state.producers.map(producer => {
+          if (!ids.has(producer.id) || checkedAt < (producer.releasesCheckedAt ?? 0)) return producer;
+          const sameDay = producer.releasesCheckedAt !== undefined && day(producer.releasesCheckedAt) === day(checkedAt);
+          return { ...producer, releasesCheckedAt: checkedAt,
+            checkedReleaseIds: [...new Set([...(sameDay ? producer.checkedReleaseIds ?? [] : []), ...songIds])]
+              .filter(id => Number.isSafeInteger(id) && id > 0),
+          };
+        }) }));
+      },
     }),
     {
       name: 'diva-favorite-producers',
