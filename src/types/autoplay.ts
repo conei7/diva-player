@@ -3,6 +3,7 @@ export type AutoQueueReasonCode =
   | 'short_term_taste'
   | 'root_seed'
   | 'known_favorite'
+  | 'rated_rediscovery'
   | 'playlist_familiar'
   | 'new_discovery'
   | 'fallback';

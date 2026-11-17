@@ -3,7 +3,7 @@ import source from './useAutoQueue.ts?raw';
 
 describe('auto queue request generation contract', () => {
   it('rejects an aborted or stale generation before recording its debug snapshot', () => {
-    const finalRanking = source.indexOf('const nextSongs = detailed.ranked.map');
+    const finalRanking = source.indexOf('const nextSongs = insertRatedRediscovery(');
     const finalGuard = source.indexOf(
       'if (controller.signal.aborted || generation !== requestGenerationRef.current) return;',
       finalRanking,

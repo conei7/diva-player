@@ -46,6 +46,7 @@ import { useHiddenSongStore } from '../stores/hiddenSongStore';
 import type { PlaybackAppendExpectation, QueueContinuation } from '../stores/playerStore';
 import { nextSoundMapQueueSongs, rememberSoundMapQueueSongs } from '../services/soundMapQueue';
 import { nextGroupSoundMapQueueSongs, rememberGroupSoundMapQueueSongs } from '../services/groupSoundMapQueue';
+import { getRatedRediscoverySong, insertRatedRediscovery, REDISCOVERY_REASON } from '../services/ratedRediscovery';
 
 interface UseAutoQueueArgs {
   currentSong: Song | null;
@@ -146,6 +147,7 @@ function buildRecommendationMetadata(
   queueLength: number,
   recentSkipRate: number,
   strategyArm: AutoQueueStrategyArm,
+  rediscoveryId?: number,
 ): { queueRecommendations: Array<QueueRecommendation & { songId: number }>; decisions: AutoQueueDecision[] } {
   const now = Date.now();
   const sessionId = useAutoPlaySessionStore.getState().session?.id ?? null;
@@ -159,16 +161,16 @@ function buildRecommendationMetadata(
   const queueRecommendations = songs.map(song => {
     const familiarity = knownIds.has(song.id) ? 'known' as const : 'unknown' as const;
     const isPlaylistSong = playlistSongIds.has(song.id);
-    const reasonCode = familiarity === 'unknown'
+    const reasonCode = song.id === rediscoveryId ? 'rated_rediscovery' as const : familiarity === 'unknown'
       ? 'new_discovery' as const
       : isPlaylistSong ? 'playlist_familiar' as const : 'known_favorite' as const;
-    const reasonText = familiarity === 'unknown'
+    const reasonText = song.id === rediscoveryId ? REDISCOVERY_REASON : familiarity === 'unknown'
       ? '長期・最近の好みに近い新規開拓曲'
       : isPlaylistSong ? 'プレイリストにある、聴き慣れた曲'
       : '履歴・評価をもとにした既知のおすすめ';
     return {
       songId: song.id,
-      strategyVersion: 'continuous-seed-affinity-v2',
+      strategyVersion: 'continuous-seed-affinity-v3',
       reasonCode,
       reasonText,
       seedSongIds,
@@ -252,7 +254,7 @@ export function useAutoQueue({
   }, [status]);
 
   useEffect(() => {
-    if (!currentSong || (globalFilterSettings.cooldownHours > 0 && !hasHydratedHistory)) {
+    if (!currentSong || !hasHydratedHistory) {
       setStatus('idle');
       return;
     }
@@ -349,6 +351,7 @@ export function useAutoQueue({
           rootVectorCandidates,
           rootProducerCandidates,
           favoriteCandidateGroups,
+          rediscoverySong,
         ] = await Promise.all([
           fetchCandidates(
             currentSong,
@@ -364,6 +367,14 @@ export function useAutoQueue({
               .then(result => result.items)
               .catch(() => [] as Song[]),
           )),
+          getRatedRediscoverySong({
+            ratings,
+            lastPlayedAtBySongId: useHistoryStore.getState().lastPlayedAtBySongId,
+            excludeIds: existingIds,
+            settings: globalFilterSettings,
+            requestedCount: queuePlan.requestedCount,
+            signal: controller.signal,
+          }),
         ]);
         if (controller.signal.aborted || generation !== requestGenerationRef.current) return;
 
@@ -433,7 +444,7 @@ export function useAutoQueue({
         };
         const rankingSeed = createRankingSeed();
         const detailed = rerankRecommendationCandidatesDetailed({
-          known: knownCandidates.items,
+          known: [...knownCandidates.items, ...(rediscoverySong ? [rediscoverySong] : [])],
           hybrid: orderedFilteredSongs([...candidates, ...favoriteCandidates]),
           rootVector: orderedFilteredSongs(rootVectorCandidates),
           rootProducer: orderedFilteredSongs(rootProducerCandidates),
@@ -453,7 +464,16 @@ export function useAutoQueue({
           rootSeed: anchorSong,
           mixProgress: queuePlan.mixProgress,
         });
-        const nextSongs = detailed.ranked.map(item => item.song);
+        const nextSongs = insertRatedRediscovery(
+          detailed.ranked.map(item => item.song), rediscoverySong, queuePlan.requestedCount,
+        );
+        const selectedRanks = new Map(nextSongs.map((song, index) => [song.id, index + 1]));
+        const trace = detailed.trace.map(item => ({
+          ...item,
+          selectedRank: selectedRanks.get(item.songId) ?? null,
+          status: selectedRanks.has(item.songId) ? 'selected' as const : 'not_selected' as const,
+          reason: item.songId === rediscoverySong?.id ? REDISCOVERY_REASON : item.reason,
+        }));
         if (controller.signal.aborted || generation !== requestGenerationRef.current) return;
 
         const appendApplied = addManyToQueue(nextSongs, 'auto', {
@@ -474,8 +494,8 @@ export function useAutoQueue({
           strategy: `continuous/${queuePlan.stage}`,
           familiarityBias,
           candidateCount: detailed.trace.length,
-          selectedCount: detailed.ranked.length,
-          trace: detailed.trace,
+          selectedCount: nextSongs.length,
+          trace,
         });
         const outcomes = autoCompletedCount + autoSkippedCount;
         const recentSkipRate = outcomes > 0 ? autoSkippedCount / outcomes : 0;
@@ -491,6 +511,7 @@ export function useAutoQueue({
           queue.length,
           recentSkipRate,
           strategyArm,
+          rediscoverySong?.id,
         );
         useQueueRecommendationStore.getState().recordRecommendations(metadata.queueRecommendations);
         useAutoQueueDecisionStore.getState().recordDecisions(metadata.decisions);

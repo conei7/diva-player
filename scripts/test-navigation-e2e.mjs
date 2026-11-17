@@ -150,6 +150,12 @@ async function installApiFixtures(page, homeSongs = fixtureHomeSongs, recommenda
     let response = null;
     if (path.endsWith('/api/health') || path.endsWith('/api/ready')) {
       response = fixtureResponse({ status: path.endsWith('/api/ready') ? 'ready' : 'ok', postgres: true, qdrant: true });
+    } else if (path.endsWith('/api/songs/discovery-eligibility')) {
+      const ids = (url.searchParams.get('ids') ?? '').split(',').map(Number).filter(id => id > 0);
+      response = fixtureResponse({ items: ids.map(songId => ({ songId, discoveryEligible: true })) });
+    } else if (path.endsWith('/api/songs/batch')) {
+      const ids = new Set((url.searchParams.get('ids') ?? '').split(',').map(Number));
+      response = fixtureResponse({ items: [...fixtureSongs, ...songs, ...recommendationSongs].filter(song => ids.has(song.id)) });
     } else if (path.endsWith('/api/songs/views')) {
       const ids = (url.searchParams.get('ids') ?? '').split(',').filter(Boolean);
       response = fixtureResponse(Object.fromEntries(ids.map(id => [id, { youtubeViews: 1234, nicoViews: 567 }])));
@@ -973,6 +979,46 @@ try {
         await context.close();
       }
     }
+  }
+  for (const rating of [2, 3, 4, 5, 'excluded']) {
+    const context = await browser.createBrowserContext();
+    try {
+      const page = await context.newPage();
+      const rediscovery = { ...fixtureSong, id: 930001, name: 'Forgotten rated song', defaultName: 'Forgotten rated song' };
+      const ordinary = Array.from({ length: 60 }, (_, index) => ({ ...fixtureSong,
+        id: 940000 + index, name: `Ordinary mix ${index}`, defaultName: `Ordinary mix ${index}` }));
+      await pinAppLanguage(page, 'ja');
+      await page.evaluateOnNewDocument(({ current, ratedId, rating }) => {
+        if (window !== window.top) return;
+        // Deterministic successful lottery; keep crypto IDs and ranking seeds real.
+        Math.random = () => 0.5;
+        localStorage.setItem('diva-ratings', JSON.stringify({ state: { ratings: { [ratedId]: rating === 'excluded' ? 5 : rating } }, version: 0 }));
+        if (rating === 'excluded') localStorage.setItem('diva-global-filters', JSON.stringify({ state: { excludeRatedFromDiscovery: true }, version: 2 }));
+        const tabId = 'rediscovery-fixture';
+        sessionStorage.setItem('diva-playback-tab-v1', tabId);
+        localStorage.setItem('diva-playback-owner-v1', JSON.stringify({ type: 'claim', tabId, songId: current.id, claimedAt: Date.now() }));
+        localStorage.setItem('diva_playerQueue', JSON.stringify({ queue: [current], queueIndex: 0,
+          currentSong: current, currentSongId: current.id, queueSources: ['manual'], currentPlaybackSource: 'manual', queueTitle: 'ミックスリスト' }));
+      }, { current: fixtureSong, ratedId: rediscovery.id, rating });
+      await installApiFixtures(page, [], ordinary, { songs: [rediscovery], external: url => url.origin !== base.origin ? { status: 204, body: '' } : null });
+      await page.goto(baseUrl, { waitUntil: 'domcontentloaded' });
+      await page.waitForFunction(excluded => {
+        const entries = JSON.parse(localStorage.getItem('diva-queue-recommendations-v1') || 'null')?.state?.recommendations;
+        return excluded ? Object.keys(entries ?? {}).length >= 12 : entries?.['930001']?.reasonCode === 'rated_rediscovery';
+      }, { timeout: 30000 }, rating === 'excluded');
+      const result = await page.evaluate(() => {
+        const queue = JSON.parse(localStorage.getItem('diva_playerQueue'));
+        return { ids: queue.songIds ?? queue.queue.map(song => song.id),
+          recommendation: JSON.parse(localStorage.getItem('diva-queue-recommendations-v1')).state.recommendations['930001'] };
+      });
+      if (rating === 'excluded') {
+        if (result.ids.includes(rediscovery.id)) throw new Error('Explicit rated-song exclusion was bypassed');
+      } else {
+        if (result.ids.filter(id => id === rediscovery.id).length !== 1) throw new Error('Rating-only rediscovery was missing or duplicated');
+        if (!result.recommendation.reasonText.includes('再会')) throw new Error('Rediscovery reason was not recorded');
+      }
+      console.log(`PASS rated rediscovery: ${rating}, rating-only metadata, bounded queue and reason`);
+    } finally { await context.close(); }
   }
   const releaseContext = await browser.createBrowserContext();
   try {
