@@ -69,12 +69,26 @@ class ArchiveTests(unittest.TestCase):
             second, raw2, _ = self.fixture(root, 'web-release-abcdef0')
             archive.archive_release(second, True, share=False)
             # Different gzip headers must not prevent payload deduplication.
-            raw2.with_suffix('.db.gz').write_bytes(gzip.compress(payload, mtime=42))
+            legacy_gzip = gzip.compress(payload, mtime=42)
+            raw2.with_suffix('.db.gz').write_bytes(legacy_gzip)
+            legacy_receipt = second / 'scan-db-compaction.json'
+            previous = json.loads(legacy_receipt.read_text())
+            previous['archiveSha256'] = hashlib.sha256(legacy_gzip).hexdigest()
+            legacy_receipt.write_text(json.dumps(previous))
             self.assertEqual(len(archive.deduplicate(root)), 1)
             archive.deduplicate(root, True)
             self.assertTrue(raw.with_suffix('.db.gz').samefile(raw2.with_suffix('.db.gz')))
             self.assertEqual(archive.deduplicate(root, True), [])
             self.assertTrue((first / 'runtime-receipt.json').exists())
+            # Use the duplicate whose original gzip representation changed,
+            # then exercise restore and retention again.
+            (root / 'runtime_health_latest.json').write_text('{"capacity":{"reserveRequiredBytes":0}}')
+            original = (second / 'scan-db-compaction.json').read_bytes()
+            self.assertEqual(archive.restore_database(second, raw2, archive.archive_identity, True)['status'],
+                             'restored')
+            self.assertEqual(archive.archive_release(second, True)['status'], 'archived')
+            self.assertEqual((second / 'scan-db-compaction.json').read_bytes(), original)
+            self.assertEqual(len(list(second.glob('scan-db-compaction-*.json'))), 1)
 
     def test_bad_hash_symlink_existing_archive_and_busy_release_preserve_raw(self):
         with tempfile.TemporaryDirectory() as temp:

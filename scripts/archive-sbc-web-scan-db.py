@@ -202,9 +202,18 @@ def archive_database(release, raw, receipt_identity, apply=False, share=False):
         if receipt_path.exists() or receipt_path.is_symlink():
             safe_file(receipt_path, root)
             previous = json.loads(receipt_path.read_text())
-            if any(previous.get(k) != result[k] for k in ('payloadSha256', 'archiveSha256')):
+            if any(previous.get(k) != result[k] for k in ('payloadSha256', 'payloadBytes')):
                 raise RuntimeError('Conflicting compaction receipt')
-        else:
+            if previous.get('archiveSha256') != result['archiveSha256']:
+                # Historical deduplication can replace gzip encoding while
+                # preserving the exact payload. Keep both representations' receipts.
+                receipt_path = release / f"scan-db-compaction-{result['archiveSha256']}.json"
+                if receipt_path.exists() or receipt_path.is_symlink():
+                    safe_file(receipt_path, root)
+                    record = json.loads(receipt_path.read_text())
+                    if any(record.get(k) != result[k] for k in ('payloadSha256', 'payloadBytes', 'archiveSha256')):
+                        raise RuntimeError('Conflicting archive representation receipt')
+        if not receipt_path.exists():
             publish_receipt(receipt_path, result)
         sync_directory(release)
         offline(release)
