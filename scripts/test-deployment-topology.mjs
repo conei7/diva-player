@@ -280,11 +280,14 @@ for (const [architecture, expectedHash] of [
   assert.equal(createHash('sha256').update(apk).digest('hex'), expectedHash);
   assert.ok(webDockerfile.includes(`zlib_sha=${expectedHash}`));
   assert.ok(gatewayDockerfile.includes(`zlib_sha=${expectedHash}`));
+  const gatewayApk = await readFile(new URL(`../backend/api-gateway/vendor/${architecture}/zlib-1.3.2-r1.apk`, import.meta.url));
+  assert.deepEqual(gatewayApk, apk, `Gateway and Web must use the same signed ${architecture} zlib APK`);
 }
 assert.match(webDockerfile, /"\$zlib_sha[^\n]+zlib-1\.3\.2-r1\.apk" \| sha256sum -c -/u);
 assert.match(webDockerfile, /apk add --no-network [^\n]*"\/tmp\/diva-security\/\$arch\/zlib-1\.3\.2-r1\.apk"/u);
 assert.match(webApkUpdate, /zlib=1\.3\.2-r1/u);
-assert.match(gatewayDockerfile, /\/alpine\/v3\.24\/main\/[^\n]*\/zlib-1\.3\.2-r1\.apk"/u);
+assert.match(gatewayDockerfile, /COPY vendor\/ \/tmp\/diva-security\//u);
+assert.match(gatewayDockerfile, /cp "\/tmp\/diva-security\/\$arch\/zlib-1\.3\.2-r1\.apk" \/tmp\/zlib\.apk/u);
 assert.match(gatewayDockerfile, /"\$zlib_sha {2}\/tmp\/zlib\.apk" \| sha256sum -c -/u);
 assert.match(gatewayDockerfile, /apk add --no-network \/tmp\/pcre2\.apk \/tmp\/zlib\.apk/u);
 assert.match(gatewayDockerfile, /test[^\n]*P:zlib[^\n]*= 1\.3\.2-r1/u);

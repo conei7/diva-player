@@ -2,3 +2,9 @@
 !Dockerfile
 !haproxy.cfg
 !haproxy.dr-standby.cfg
+!vendor/
+vendor/**
+!vendor/aarch64/
+!vendor/aarch64/zlib-1.3.2-r1.apk
+!vendor/x86_64/
+!vendor/x86_64/zlib-1.3.2-r1.apk
