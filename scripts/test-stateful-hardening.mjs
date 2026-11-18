@@ -1913,10 +1913,10 @@ if [ "$1" = image ]; then
       if [ "$reference" = diva-player-qdrant:v1.19.0-hardened-r1 ] \
           && [ -f "$root/stable-image-id" ]; then
         cat "$root/stable-image-id"
-      elif [ "$reference" = diva-player-postgres:16.15-pgvector-0.8.6-hardened-r1 ] \
+      elif [ "$reference" = diva-player-postgres:16.16-pgvector-0.8.6-hardened-r1 ] \
           && [ -f "$root/stable-postgres-image-id" ]; then
         cat "$root/stable-postgres-image-id"
-      elif [ "$reference" = diva-player-postgres-migrate:16.15-hardened-r1 ] \
+      elif [ "$reference" = diva-player-postgres-migrate:16.16-hardened-r1 ] \
           && [ -f "$root/stable-postgres-migrate-image-id" ]; then
         cat "$root/stable-postgres-migrate-image-id"
       elif [ "__D__{reference#diva-player-qdrant:rollback-}" != "$reference" ] \
@@ -1942,11 +1942,11 @@ if [ "$1" = image ]; then
           [ -f "$root/stable-image-id" ] || exit 1
           image=$(cat "$root/stable-image-id")
           ;;
-        diva-player-postgres:16.15-pgvector-0.8.6-hardened-r1)
+        diva-player-postgres:16.16-pgvector-0.8.6-hardened-r1)
           [ -f "$root/stable-postgres-image-id" ] || exit 1
           image=$(cat "$root/stable-postgres-image-id")
           ;;
-        diva-player-postgres-migrate:16.15-hardened-r1)
+        diva-player-postgres-migrate:16.16-hardened-r1)
           [ -f "$root/stable-postgres-migrate-image-id" ] || exit 1
           image=$(cat "$root/stable-postgres-migrate-image-id")
           ;;
@@ -1999,11 +1999,11 @@ if [ "$1" = image ]; then
           esac
           ;;
         *'com.diva.postgres-migrate.base-digest'*) printf '%s\n' sha256:25109184c71bdad752c8312a8623239686a9a2071e8825f20acb8f2198c3f659 ;;
-        *'com.diva.postgres.base-digest'*) printf '%s\n' sha256:421b84e07a72bb8f3715f20501a1fdbe1219aad1fa4af7786a49d9a3f2480296 ;;
+        *'com.diva.postgres.base-digest'*) printf '%s\n' sha256:9afe26709faad4c173fea5380b215bd6eb9691b05aa1be5b86cec8e0285da914 ;;
         *'com.diva.postgres-migrate.pg-major'*) printf '%s\n' 16 ;;
         *'com.diva.postgres.pg-major'*) printf '%s\n' 16 ;;
-        *'com.diva.postgres-migrate.pg-version'*) printf '%s\n' 16.15 ;;
-        *'com.diva.postgres.pg-version'*) printf '%s\n' 16.15 ;;
+        *'com.diva.postgres-migrate.pg-version'*) printf '%s\n' 16.16 ;;
+        *'com.diva.postgres.pg-version'*) printf '%s\n' 16.16 ;;
         *'com.diva.postgres.pgvector-version'*) printf '%s\n' 0.8.6 ;;
         *'com.diva.postgres.pgvector-commit'*) printf '%s\n' 8ee86c96f0fd72390f890aa8a336fda6d3ab4c6c ;;
         *'com.diva.postgres-migrate.dockerfile-sha256'*) sha256sum "__D__{FAKE_POSTGRES_MIGRATE_DOCKERFILE:?}" | awk '{print __D__1}' ;;
@@ -2070,10 +2070,10 @@ if [ "$1" = image ]; then
         diva-player-qdrant:v1.19.0-hardened-r1)
           write_value "$root/stable-image-id" "$source"
           ;;
-        diva-player-postgres:16.15-pgvector-0.8.6-hardened-r1)
+        diva-player-postgres:16.16-pgvector-0.8.6-hardened-r1)
           write_value "$root/stable-postgres-image-id" "$source"
           ;;
-        diva-player-postgres-migrate:16.15-hardened-r1)
+        diva-player-postgres-migrate:16.16-hardened-r1)
           write_value "$root/stable-postgres-migrate-image-id" "$source"
           ;;
         diva-player-qdrant:rollback-*)
@@ -2088,8 +2088,8 @@ if [ "$1" = image ]; then
     rm)
       case "__D__{1:-}" in
         diva-player-qdrant:v1.19.0-hardened-r1) rm -f "$root/stable-image-id" ;;
-        diva-player-postgres:16.15-pgvector-0.8.6-hardened-r1) rm -f "$root/stable-postgres-image-id" ;;
-        diva-player-postgres-migrate:16.15-hardened-r1) rm -f "$root/stable-postgres-migrate-image-id" ;;
+        diva-player-postgres:16.16-pgvector-0.8.6-hardened-r1) rm -f "$root/stable-postgres-image-id" ;;
+        diva-player-postgres-migrate:16.16-hardened-r1) rm -f "$root/stable-postgres-migrate-image-id" ;;
         *) exit 1 ;;
       esac
       exit 0
@@ -4665,12 +4665,12 @@ assert.match(
 );
 assert.equal(
   runtimeContract.postgres_image_reference,
-  'diva-player-postgres:16.15-pgvector-0.8.6-hardened-r1',
+  'diva-player-postgres:16.16-pgvector-0.8.6-hardened-r1',
 );
 assert.equal(runtimeContract.postgres_image_id, ids.postgresImage);
 assert.equal(
   runtimeContract.postgres_migrate_image_reference,
-  'diva-player-postgres-migrate:16.15-hardened-r1',
+  'diva-player-postgres-migrate:16.16-hardened-r1',
 );
 assert.equal(runtimeContract.postgres_migrate_image_id, ids.postgresMigrateImage);
 for (const digestField of [

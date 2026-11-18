@@ -21,7 +21,7 @@ GITATTRIBUTES = ROOT / ".gitattributes"
 
 POSTGRES_BASE = (
     "postgres:16-alpine3.23@sha256:"
-    "421b84e07a72bb8f3715f20501a1fdbe1219aad1fa4af7786a49d9a3f2480296"
+    "9afe26709faad4c173fea5380b215bd6eb9691b05aa1be5b86cec8e0285da914"
 )
 MIGRATE_BASE = (
     "alpine:3.23.3@sha256:"
@@ -65,7 +65,7 @@ class PostgresContainerContractTests(unittest.TestCase):
         self.assertNotIn("latest", self.postgres.lower())
         for package in (
             "build-base=0.5-r3",
-            "postgresql16-dev=16.15-r0",
+            "postgresql16-dev=16.16-r0",
             "libcrypto3=3.5.9-r0",
             "libssl3=3.5.9-r0",
             "libuuid=2.41.6-r1",
@@ -196,7 +196,7 @@ class PostgresContainerContractTests(unittest.TestCase):
         for package in (
             "musl=1.2.5-r24",
             "musl-utils=1.2.5-r24",
-            "postgresql16-client=16.15-r0",
+            "postgresql16-client=16.16-r0",
         ):
             self.assertIn(package, self.migrate)
         for artifact in (

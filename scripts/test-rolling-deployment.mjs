@@ -76,8 +76,8 @@ const backendEnvironmentFixture = [
   'PAGES_PROXY_KEY=deterministic-test-only',
   '',
 ].join('\n');
-const postgresImageReference = 'diva-player-postgres:16.15-pgvector-0.8.6-hardened-r1';
-const postgresMigrateImageReference = 'diva-player-postgres-migrate:16.15-hardened-r1';
+const postgresImageReference = 'diva-player-postgres:16.16-pgvector-0.8.6-hardened-r1';
+const postgresMigrateImageReference = 'diva-player-postgres-migrate:16.16-hardened-r1';
 const fakeStatefulComposeConfig = {
   services: {
     api_a: {
@@ -284,10 +284,10 @@ image_id() {
                 printf '%s\n' "sha256:__QDRANT_ID__"
             fi
             ;;
-        diva-player-postgres:16.15-pgvector-0.8.6-hardened-r1)
+        diva-player-postgres:16.16-pgvector-0.8.6-hardened-r1)
             printf '%s\n' "sha256:__POSTGRES_ID__"
             ;;
-        diva-player-postgres-migrate:16.15-hardened-r1)
+        diva-player-postgres-migrate:16.16-hardened-r1)
             if [ "__DOLLAR__{FAKE_FAIL_STAGE:-}" = "stateful_contract_migrate_retag" ]; then
                 printf '%s\n' "sha256:__WRONG_POSTGRES_MIGRATE_ID__"
             else
@@ -1739,7 +1739,7 @@ async function testStatefulMigrateContractRetagFailsClosed() {
   );
   assert.match(
     result.dockerLog,
-    /image inspect --format \{\{\.Id\}\} diva-player-postgres-migrate:16\.15-hardened-r1/u,
+    /image inspect --format \{\{\.Id\}\} diva-player-postgres-migrate:16\.16-hardened-r1/u,
   );
   assert.doesNotMatch(
     result.dockerLog,
@@ -4030,11 +4030,11 @@ assert.match(successful.dockerLog, /create --name vocadb_api_gateway /u);
 assert.match(successful.dockerLog, /create --name vocadb_web /u);
 assert.match(
   successful.dockerLog,
-  /image inspect --format \{\{\.Id\}\} diva-player-postgres:16\.15-pgvector-0\.8\.6-hardened-r1/u,
+  /image inspect --format \{\{\.Id\}\} diva-player-postgres:16\.16-pgvector-0\.8\.6-hardened-r1/u,
 );
 assert.match(
   successful.dockerLog,
-  /image inspect --format \{\{\.Id\}\} diva-player-postgres-migrate:16\.15-hardened-r1/u,
+  /image inspect --format \{\{\.Id\}\} diva-player-postgres-migrate:16\.16-hardened-r1/u,
 );
 assert.match(
   successful.dockerLog,

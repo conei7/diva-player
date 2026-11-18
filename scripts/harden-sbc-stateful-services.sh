@@ -286,10 +286,10 @@ QDRANT_CONTROLLER_LOG="$RUN_DIR/qdrant-storage-upgrade-controller.log"
 QDRANT_CONTROLLER_SETTLEMENT="$RUN_DIR/qdrant-storage-upgrade-controller-settlement.json"
 QDRANT_CONTROLLER_DAEMON_SETTLEMENT="$RUN_DIR/qdrant-storage-upgrade-daemon-settlement.json"
 QDRANT_FINAL_UPGRADE_CONTAINER="diva_qfinal_$RUN_ID"
-POSTGRES_IMAGE=diva-player-postgres:16.15-pgvector-0.8.6-hardened-r1
+POSTGRES_IMAGE=diva-player-postgres:16.16-pgvector-0.8.6-hardened-r1
 POSTGRES_CANDIDATE_IMAGE="diva-player-postgres:candidate-$RUN_ID"
 POSTGRES_ROLLBACK_IMAGE="diva-player-postgres:rollback-$RUN_ID"
-POSTGRES_MIGRATE_IMAGE=diva-player-postgres-migrate:16.15-hardened-r1
+POSTGRES_MIGRATE_IMAGE=diva-player-postgres-migrate:16.16-hardened-r1
 POSTGRES_MIGRATE_CANDIDATE_IMAGE="diva-player-postgres-migrate:candidate-$RUN_ID"
 
 LOCK_HELD=false
@@ -4526,10 +4526,10 @@ verify_postgres_candidate_image() {
     local image_id="$1" dockerfile_sha="$2" schema_sha="$3" source_bundle_sha="$4" \
         build_timestamp="$5" user entrypoint command
     verify_image_label "$image_id" com.diva.postgres.base-digest \
-        sha256:421b84e07a72bb8f3715f20501a1fdbe1219aad1fa4af7786a49d9a3f2480296 \
+        sha256:9afe26709faad4c173fea5380b215bd6eb9691b05aa1be5b86cec8e0285da914 \
         || return 1
     verify_image_label "$image_id" com.diva.postgres.pg-major 16 || return 1
-    verify_image_label "$image_id" com.diva.postgres.pg-version 16.15 || return 1
+    verify_image_label "$image_id" com.diva.postgres.pg-version 16.16 || return 1
     verify_image_label "$image_id" com.diva.postgres.pgvector-version 0.8.6 || return 1
     verify_image_label "$image_id" com.diva.postgres.pgvector-commit \
         8ee86c96f0fd72390f890aa8a336fda6d3ab4c6c || return 1
@@ -4560,7 +4560,7 @@ verify_postgres_migrate_candidate_image() {
         sha256:25109184c71bdad752c8312a8623239686a9a2071e8825f20acb8f2198c3f659 \
         || return 1
     verify_image_label "$image_id" com.diva.postgres-migrate.pg-major 16 || return 1
-    verify_image_label "$image_id" com.diva.postgres-migrate.pg-version 16.15 || return 1
+    verify_image_label "$image_id" com.diva.postgres-migrate.pg-version 16.16 || return 1
     verify_image_label "$image_id" com.diva.postgres-migrate.dockerfile-sha256 \
         "$dockerfile_sha" || return 1
     verify_image_label "$image_id" com.diva.postgres-migrate.build-timestamp \

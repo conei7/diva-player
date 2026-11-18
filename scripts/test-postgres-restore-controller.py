@@ -21,7 +21,7 @@ class IsolatedRestoreControllerTests(unittest.TestCase):
         cls.resource_monitor = RESOURCE_MONITOR.read_text(encoding="utf-8")
 
     def test_restore_is_volume_separated_network_isolated_and_pinned(self) -> None:
-        self.assertIn("diva-player-postgres:16.15-pgvector-0.8.6-hardened-r1", self.restore)
+        self.assertIn("diva-player-postgres:16.16-pgvector-0.8.6-hardened-r1", self.restore)
         self.assertIn('candidate_volume="backend_postgres_restore_${run_suffix}"', self.restore)
         self.assertIn('candidate_container="vocadb_postgres_restore_${run_suffix}"', self.restore)
         self.assertIn("--network none", self.restore)

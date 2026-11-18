@@ -1,10 +1,10 @@
-FROM postgres:16-alpine3.23@sha256:421b84e07a72bb8f3715f20501a1fdbe1219aad1fa4af7786a49d9a3f2480296 AS pgvector-builder
+FROM postgres:16-alpine3.23@sha256:9afe26709faad4c173fea5380b215bd6eb9691b05aa1be5b86cec8e0285da914 AS pgvector-builder
 
 ARG PGVECTOR_COMMIT=8ee86c96f0fd72390f890aa8a336fda6d3ab4c6c
 ARG PGVECTOR_ARCHIVE_SHA256=d076a3098010905fd60256649327809651f6288327db6413f0938305f62ea299
 RUN apk add --no-cache \
       build-base=0.5-r3 \
-      postgresql16-dev=16.15-r0
+      postgresql16-dev=16.16-r0
 RUN set -eux; \
     [ "$PGVECTOR_COMMIT" = 8ee86c96f0fd72390f890aa8a336fda6d3ab4c6c ]; \
     [ "$PGVECTOR_ARCHIVE_SHA256" = d076a3098010905fd60256649327809651f6288327db6413f0938305f62ea299 ]; \
@@ -29,7 +29,7 @@ RUN set -eux; \
     (cd /opt/pgvector && find usr -type f -print0 | sort -z \
       | xargs -0 sha256sum -b > pgvector-files.sha256)
 
-FROM postgres:16-alpine3.23@sha256:421b84e07a72bb8f3715f20501a1fdbe1219aad1fa4af7786a49d9a3f2480296
+FROM postgres:16-alpine3.23@sha256:9afe26709faad4c173fea5380b215bd6eb9691b05aa1be5b86cec8e0285da914
 
 ARG DIVA_POSTGRES_DOCKERFILE_SHA256
 ARG DIVA_POSTGRES_BUILD_TIMESTAMP
@@ -171,7 +171,7 @@ RUN set -eux; \
     [ "$(scanelf --needed --nobanner --format '%n' \
       /usr/local/lib/postgresql/vector.so | awk '{print $1}')" \
       = "$vector_libc" ]; \
-    test "$(/usr/local/bin/postgres --version)" = 'postgres (PostgreSQL) 16.15'; \
+    test "$(/usr/local/bin/postgres --version)" = 'postgres (PostgreSQL) 16.16'; \
     test -s /usr/local/share/postgresql/extension/vector--0.8.6.sql; \
     printf '%s\n' \
       "dockerfile.sha256=$DIVA_POSTGRES_DOCKERFILE_SHA256" \
@@ -183,9 +183,9 @@ RUN set -eux; \
       | awk '{print $1}')" = "$DIVA_POSTGRES_SOURCE_BUNDLE_SHA256" ]; \
     chmod 0444 /usr/share/diva-postgres/pgvector-files.sha256 \
       /usr/share/diva-postgres/source-bundle.attestation
-LABEL com.diva.postgres.base-digest="sha256:421b84e07a72bb8f3715f20501a1fdbe1219aad1fa4af7786a49d9a3f2480296" \
+LABEL com.diva.postgres.base-digest="sha256:9afe26709faad4c173fea5380b215bd6eb9691b05aa1be5b86cec8e0285da914" \
       com.diva.postgres.pg-major="16" \
-      com.diva.postgres.pg-version="16.15" \
+      com.diva.postgres.pg-version="16.16" \
       com.diva.postgres.pgvector-version="0.8.6" \
       com.diva.postgres.pgvector-commit="8ee86c96f0fd72390f890aa8a336fda6d3ab4c6c" \
       com.diva.postgres.dockerfile-sha256="${DIVA_POSTGRES_DOCKERFILE_SHA256}" \

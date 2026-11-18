@@ -53,7 +53,7 @@ def sample_preflight() -> dict:
             "availableBytes": 81_920_000,
         },
         "postgres": {
-            "image": "diva-player-postgres:16.15-pgvector-0.8.6-hardened-r1",
+            "image": "diva-player-postgres:16.16-pgvector-0.8.6-hardened-r1",
             "imageId": IMAGE_ID,
             "adminUser": "vocadb",
             "oldVolume": "backend_postgres_data",
@@ -68,7 +68,7 @@ def candidate_inspection(*, network: str = "host", command: list[str] | None = N
     record = {
         "State": {"Running": True},
         "Config": {
-            "Image": "diva-player-postgres:16.15-pgvector-0.8.6-hardened-r1",
+            "Image": "diva-player-postgres:16.16-pgvector-0.8.6-hardened-r1",
             "Labels": {
                 "com.diva.postgres-restore.run-id": run_id,
                 "com.diva.postgres-restore.manifest-sha256": manifest_sha,

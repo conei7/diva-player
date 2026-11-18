@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 
-POSTGRES_IMAGE = "diva-player-postgres:16.15-pgvector-0.8.6-hardened-r1"
+POSTGRES_IMAGE = "diva-player-postgres:16.16-pgvector-0.8.6-hardened-r1"
 RUN_ID = re.compile(r"postgres-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}\Z")
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 VOLUME_NAME = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}\Z")

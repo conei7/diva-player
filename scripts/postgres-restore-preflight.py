@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any, Sequence
 
 
-POSTGRES_IMAGE = "diva-player-postgres:16.15-pgvector-0.8.6-hardened-r1"
+POSTGRES_IMAGE = "diva-player-postgres:16.16-pgvector-0.8.6-hardened-r1"
 DATABASE_NAME = "vocadb_recommender"
 POSTGRES_DATA_PATH = "/var/lib/postgresql/data"
 MINIMUM_RESTORE_HEADROOM_BYTES = 1024**3
