@@ -106,6 +106,8 @@ export default function RestoreBackupDialog({ preview, currentCounts, onClose, o
   const date = formatBackupDate(preview.parsed.exportedAt, language);
   const title = date ? t('{date}のバックアップ', { date }) : t('バックアップから復元');
   const format = (value: number) => value.toLocaleString(locale);
+  const includesHiddenSongs = preview.parsed.version >= 6;
+  const preferences = preview.parsed.sections.preferences;
 
   const rows: Array<{ key: keyof FullBackupCounts; label: string; value: number }> = [
     { key: 'historyEvents', label: t('履歴'), value: preview.historyCount },
@@ -184,9 +186,12 @@ export default function RestoreBackupDialog({ preview, currentCounts, onClose, o
         title: t('今のデータを置き換えますか？'),
         // One sentence per line (ConfirmHost keeps the line breaks), so the extra restores stay readable.
         message: [
-          t('履歴・評価・プレイリスト・表示しない曲・フォロー中のP・フィルターがバックアップの内容になります'),
-          preview.parsed.sections.preferences?.theme ? t('見た目の設定も復元します') : null,
-          preview.parsed.sections.preferences?.language ? t('言語設定も復元します') : null,
+          t('履歴・評価・プレイリストがバックアップの内容になります'),
+          includesHiddenSongs ? t('表示しない曲も復元します') : null,
+          preferences?.favoriteProducers ? t('フォロー中のPも復元します') : null,
+          preferences?.globalFilters ? t('フィルター設定も復元します') : null,
+          preferences?.theme ? t('見た目の設定も復元します') : null,
+          preferences?.language ? t('言語設定も復元します') : null,
         ].filter(Boolean).join('\n'),
         confirmLabel: t('置き換える'),
       });
@@ -247,7 +252,9 @@ export default function RestoreBackupDialog({ preview, currentCounts, onClose, o
           {rows.map(row => (
             <tr key={row.key} className="h-9 border-t border-yt-divider">
               <th scope="row" className="text-left font-normal text-yt-text">{row.label}</th>
-              <td className="text-right tabular-nums text-yt-text">{format(row.value)}</td>
+              <td className="text-right tabular-nums text-yt-text">
+                {row.key === 'hiddenSongCount' && !includesHiddenSongs ? '—' : format(row.value)}
+              </td>
               <td className="text-right tabular-nums text-yt-text-secondary">{current ? format(current[row.key]) : '—'}</td>
             </tr>
           ))}

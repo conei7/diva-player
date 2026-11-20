@@ -101,6 +101,35 @@ describe('parseFullBackup', () => {
     expect(preview?.parsed.sections.history.events[0].f).toBe(1);
   });
 
+  it.each([1, 2, 3, 4, 5, 6, 7, 8])('requires explicit backup collections in v%i', version => {
+    const sections = { history: { events: [] }, ratings: {}, playlists: { folders: [], playlists: [] }, hiddenSongs: {} };
+    const manifest = { schemaVersion: version, historyEvents: 0, ratingCount: 0, playlistCount: 0,
+      playlistSongCount: 0, folderCount: 0, favoriteProducerCount: 0, hiddenSongCount: 0 };
+    const payload = { kind: 'diva-player-full-backup', version, sections, manifest };
+    expect(parseFullBackup(payload)?.canRestore).toBe(true);
+
+    for (const damaged of [
+      { history: undefined }, { history: { events: {} } },
+      { ratings: undefined }, { ratings: [] },
+      { playlists: undefined }, { playlists: { folders: [] } },
+      { playlists: { folders: {}, playlists: [] } },
+    ]) {
+      expect(parseFullBackup({ ...payload, sections: { ...sections, ...damaged } })).toBeNull();
+    }
+    if (version >= 6) {
+      expect(parseFullBackup({ ...payload, sections: { ...sections, hiddenSongs: [] } })).toBeNull();
+      expect(parseFullBackup({ ...payload, sections: { ...sections, hiddenSongs: undefined } })).toBeNull();
+    }
+  });
+
+  it('rejects invalid optional preferences that would overwrite saved data', () => {
+    const payload = { ...emptyLegacyBackup().parsed, version: 3 };
+    for (const preferences of [null, [], { globalFilters: [] },
+      { globalFilters: {}, favoriteProducers: {} }, { globalFilters: {}, favoriteProducers: [null] }]) {
+      expect(parseFullBackup({ ...payload, sections: { ...payload.sections, preferences } })?.canRestore).toBe(false);
+    }
+  });
+
   it('keeps valid entries while counting malformed entries', () => {
     const preview = parseFullBackup({
       kind: 'diva-player-full-backup',
@@ -271,7 +300,8 @@ describe('parseFullBackup', () => {
   });
 
   it('revalidates the payload in the service instead of trusting a forged preview flag', async () => {
-    const preview = { canRestore: true, parsed: {} } as never;
+    const preview = emptyLegacyBackup();
+    Reflect.deleteProperty(preview.parsed.sections, 'history');
 
     await expect(executeFullBackupImport(preview, { mode: 'replace', ratingPriority: 'backup' }))
       .rejects.toMatchObject({ name: 'FullBackupImportError', code: 'not-validated', recoveryComplete: true });

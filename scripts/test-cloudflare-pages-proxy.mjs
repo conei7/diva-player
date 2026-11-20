@@ -184,6 +184,54 @@ try {
   });
   assert.equal(invalidMethodResponse.status, 405);
   assert.equal(calls.length, 4, 'Invalid Invidious requests must never be fetched.');
+  assert.equal(calls[3].init.headers.accept, 'application/json');
+  assert.equal(calls[3].init.redirect, 'manual');
+  assert.deepEqual(await invidiousResponse.json(), { ok: true, status: 'ready' });
+  assert.equal(invidiousResponse.headers.get('x-diva-origin-role'), null);
+
+  const previousFetch = globalThis.fetch;
+  try {
+    for (const fixture of [
+      { status: 200, type: 'application/json', body: '{"videos":[]}', expectedStatus: 200 },
+      { status: 200, type: 'text/html', body: '<!doctype html><title>Maintenance</title>', expectedStatus: 502 },
+      { status: 302, type: 'application/json', body: '{}', expectedStatus: 502 },
+      { status: 404, type: 'text/plain', body: 'Missing', expectedStatus: 404 },
+    ]) {
+      globalThis.fetch = async (_target, init) => {
+        assert.deepEqual(init.headers, { accept: 'application/json' });
+        return new Response(init.method === 'HEAD' ? null : fixture.body, {
+          status: fixture.status,
+          headers: {
+            'content-type': fixture.type,
+            'set-cookie': 'fixture=1',
+            'clear-site-data': '"storage"',
+            location: 'https://example.invalid/',
+            refresh: '0; url=https://example.invalid/',
+          },
+        });
+      };
+      for (const method of ['GET', 'HEAD']) {
+        const response = await proxyInvidious({ request: new Request(
+          'https://diva-player.pages.dev/invidious-api/api/v1/playlists/PL123456',
+          { method, headers: { accept: 'text/html', cookie: 'local-preference=1' } },
+        ) });
+        assert.equal(response.status, fixture.expectedStatus);
+        assert.equal(response.headers.get('content-type'), 'application/json; charset=utf-8');
+        assert.equal(response.headers.get('x-content-type-options'), 'nosniff');
+        assert.equal(response.headers.get('content-disposition'), 'attachment');
+        assert.equal(response.headers.get('cache-control'), 'no-store');
+        assert.match(response.headers.get('content-security-policy'), /^sandbox;/);
+        for (const header of ['set-cookie', 'clear-site-data', 'location', 'refresh']) {
+          assert.equal(response.headers.get(header), null);
+        }
+        if (method === 'HEAD') assert.equal(await response.text(), '');
+        else if (fixture.expectedStatus === 200) assert.deepEqual(await response.json(), { videos: [] });
+        else assert.deepEqual(await response.json(), { error: 'invalid playlist upstream response' });
+      }
+    }
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
 
   const spaResponse = await serveSpaFallback({
     request: new Request('https://diva-player.pages.dev/watch?v=10767'),

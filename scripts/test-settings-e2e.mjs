@@ -448,9 +448,31 @@ async function runAppearanceBackup(page, baseUrl, browser, fixtureDir) {
   await page.reload({ waitUntil: 'domcontentloaded' });
   assert(await mode() === 'light', 'Restored appearance did not persist');
   await openGeneral();
-  await upload(join(fixtureDir, 'diva_full_backup_2026-10-11.json'));
+  const withHiddenSong = createBackupFixture();
+  withHiddenSong.sections.hiddenSongs['42'] = { song: { id: 42, name: '表示しない曲のfixture' }, hiddenAt: 123 };
+  withHiddenSong.manifest.hiddenSongCount = 1;
+  const currentBackupPath = join(fixtureDir, 'with-hidden-song.json');
+  await writeFile(currentBackupPath, JSON.stringify(withHiddenSong));
+  await upload(currentBackupPath);
   await replace();
   await page.waitForSelector(RESTORE, { hidden: true });
+  const hiddenSong = () => page.evaluate(() => JSON.parse(localStorage.getItem('diva-hidden-songs'))?.state.hiddenSongs['42']?.song.id);
+  assert(await hiddenSong() === 42, 'Fixture did not restore the hidden song');
+
+  const { history, ratings, playlists } = withHiddenSong.sections;
+  const legacy = { kind: withHiddenSong.kind, version: 3, sections: { history, ratings, playlists } };
+  const damagedPath = join(fixtureDir, 'missing-legacy-collections.json');
+  await writeFile(damagedPath, JSON.stringify({ ...legacy, sections: { ratings } }));
+  await (await page.$('#settings-panel-data input[type="file"]')).uploadFile(damagedPath);
+  await page.waitForFunction(() => document.body.innerText.includes('バックアップファイルを読み込めませんでした'));
+  assert(!(await page.$(RESTORE)), 'Damaged backup opened a restore dialog');
+
+  const legacyPath = join(fixtureDir, 'complete-legacy.json');
+  await writeFile(legacyPath, JSON.stringify(legacy));
+  await upload(legacyPath);
+  await replace();
+  await page.waitForSelector(RESTORE, { hidden: true });
+  assert(await hiddenSong() === 42, 'Legacy backup cleared the hidden song');
   assert(await mode() === 'light', 'Legacy backup reset the current appearance');
   // Restore an English/system backup from Japanese; failures must preserve both live and saved settings.
   exported.sections.preferences.language = 'en';
@@ -498,7 +520,7 @@ async function runAppearanceBackup(page, baseUrl, browser, fixtureDir) {
   await page.reload({ waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => document.documentElement.lang === 'en');
   assert(await page.evaluate(() => JSON.parse(localStorage.getItem('diva_themeMode'))) === 'system', 'Backup lost system mode choice');
-  console.log('PASS system/dark/light, OS changes, persistence, cross-tab, v8 export/merge/replace, language rollback, and v6/v7 compatibility');
+  console.log('PASS appearance and language backup, rollback, legacy restore, and damaged backup rejection');
 }
 
 async function main() {

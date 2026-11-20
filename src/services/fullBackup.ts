@@ -140,7 +140,7 @@ export interface FullBackupImportOptions {
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function finiteInteger(value: unknown, min = 0): number | undefined {
@@ -352,16 +352,18 @@ export function parseFullBackup(data: unknown): FullBackupPreview | null {
   const version = data.version as SupportedBackupVersion;
   let invalidItems = 0;
   const validationIssues: FullBackupValidationIssue[] = [];
-  const rawHistory = isRecord(data.sections.history) && Array.isArray(data.sections.history.events) ? data.sections.history.events : [];
+  const { history, ratings: rawRatings, playlists: rawPlaylists, hiddenSongs: rawHiddenSongs, preferences } = data.sections;
+  // A missing collection must not look like an explicitly empty backup when replacing local data.
+  const rawHistory = isRecord(history) && Array.isArray(history.events) ? history.events : undefined;
+  const rawFolders = isRecord(rawPlaylists) && Array.isArray(rawPlaylists.folders) ? rawPlaylists.folders : undefined;
+  const rawItems = isRecord(rawPlaylists) && Array.isArray(rawPlaylists.playlists) ? rawPlaylists.playlists : undefined;
+  if (!rawHistory || !rawFolders || !rawItems || !isRecord(rawRatings) || (version >= 6 && !isRecord(rawHiddenSongs))) return null;
   if (rawHistory.length > MAX_HISTORY_EVENTS) return null;
   const events = rawHistory.map(normalizeImportedEvent).filter((event): event is ListeningPlayEvent => {
     if (!event) invalidItems += 1;
     return event !== null;
   });
-  const ratings = copyRatings(data.sections.ratings, () => { invalidItems += 1; });
-  const rawPlaylists = isRecord(data.sections.playlists) ? data.sections.playlists : {};
-  const rawFolders = Array.isArray(rawPlaylists.folders) ? rawPlaylists.folders : [];
-  const rawItems = Array.isArray(rawPlaylists.playlists) ? rawPlaylists.playlists : [];
+  const ratings = copyRatings(rawRatings, () => { invalidItems += 1; });
   if (rawItems.length > MAX_PLAYLISTS) return null;
   const folders = rawFolders.map(parseFolder).filter((folder): folder is PlaylistFolder => {
     if (!folder) invalidItems += 1;
@@ -372,13 +374,13 @@ export function parseFullBackup(data: unknown): FullBackupPreview | null {
     return playlist !== null;
   });
   const hiddenSongs = version >= 6
-    ? copyHiddenSongs(data.sections.hiddenSongs, () => { invalidItems += 1; })
+    ? copyHiddenSongs(rawHiddenSongs, () => { invalidItems += 1; })
     : {};
-  const rawPreferences = isRecord(data.sections.preferences) ? data.sections.preferences : undefined;
+  const rawPreferences = isRecord(preferences) ? preferences : undefined;
   const rawGlobalFilters = rawPreferences && isRecord(rawPreferences.globalFilters)
     ? rawPreferences.globalFilters
     : undefined;
-  if (rawPreferences && !rawGlobalFilters) invalidItems += 1;
+  if ('preferences' in data.sections && !rawGlobalFilters) invalidItems += 1;
   let theme: ThemePreferences | undefined;
   if (version >= 7 && rawPreferences && 'theme' in rawPreferences) {
     const raw = rawPreferences.theme;
@@ -392,9 +394,14 @@ export function parseFullBackup(data: unknown): FullBackupPreview | null {
     if (rawPreferences.language === 'ja' || rawPreferences.language === 'en') language = rawPreferences.language;
     else invalidItems += 1;
   }
-  const rawFavoriteProducers = rawPreferences && 'favoriteProducers' in rawPreferences
-    ? normalizeFavoriteProducers(rawPreferences.favoriteProducers)
-    : undefined;
+  let favoriteProducers: FavoriteProducer[] | undefined;
+  if (rawPreferences && 'favoriteProducers' in rawPreferences) {
+    const raw = rawPreferences.favoriteProducers;
+    if (Array.isArray(raw)) {
+      favoriteProducers = normalizeFavoriteProducers(raw);
+      invalidItems += raw.length - favoriteProducers.length;
+    } else invalidItems += 1;
+  }
   const parsed: FullBackupPayload = {
     kind: BACKUP_KIND,
     version,
@@ -408,7 +415,7 @@ export function parseFullBackup(data: unknown): FullBackupPreview | null {
       ...(rawGlobalFilters ? {
         preferences: {
           globalFilters: normalizeGlobalFilterSettings(rawGlobalFilters),
-          ...(rawFavoriteProducers ? { favoriteProducers: rawFavoriteProducers } : {}),
+          ...(favoriteProducers ? { favoriteProducers } : {}),
           ...(theme ? { theme } : {}),
           ...(language ? { language } : {}),
         },
@@ -627,12 +634,14 @@ export async function executeFullBackupImport(preview: FullBackupPreview, option
     writing = 'ratings';
     changed.ratings = true;
     useRatingStore.setState({ ratings: nextRatings });
-    const nextHiddenSongs = options.mode === 'replace'
-      ? incoming.hiddenSongs
-      : { ...currentHiddenSongs, ...incoming.hiddenSongs };
-    writing = 'hiddenSongs';
-    changed.hiddenSongs = true;
-    useHiddenSongStore.getState().replaceHiddenSongs(nextHiddenSongs);
+    if (validatedPreview.parsed.version >= 6) {
+      const nextHiddenSongs = options.mode === 'replace'
+        ? incoming.hiddenSongs
+        : { ...currentHiddenSongs, ...incoming.hiddenSongs };
+      writing = 'hiddenSongs';
+      changed.hiddenSongs = true;
+      useHiddenSongStore.getState().replaceHiddenSongs(nextHiddenSongs);
+    }
     if (options.mode === 'replace' && incoming.preferences?.globalFilters) {
       writing = 'globalFilters';
       changed.globalFilters = true;
