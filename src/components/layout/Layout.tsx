@@ -52,7 +52,7 @@ function closeQueueDrawer() {
  */
 export default function Layout() {
   const location = useLocation();
-  const exhibition = exhibitionMode(location.pathname, location.search);
+  const showExhibitionStats = exhibitionMode(location.pathname, location.search) === 'stats';
   const isWatch = isWatchPath(location.pathname);
   const isMobile = useMediaQuery(MOBILE_MEDIA_QUERY);
   const isWideGuide = useMediaQuery(GUIDE_EXPANDED_MEDIA_QUERY);
@@ -168,9 +168,9 @@ export default function Layout() {
           musicShell && 'music-main mr-[var(--music-panel-offset,0px)]',
         )}
       >
-        {exhibition && (
+        {showExhibitionStats && (
           <Suspense fallback={null}>
-            <ExhibitionPanel mode={exhibition} />
+            <ExhibitionPanel mode="stats" />
           </Suspense>
         )}
         <RouteErrorBoundary resetKey={`${location.pathname}${location.search}`}>

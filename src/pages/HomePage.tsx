@@ -1,8 +1,9 @@
 import { lazy, Suspense, useState, useEffect, useEffectEvent, useCallback, useImperativeHandle, useLayoutEffect, useMemo, useRef } from 'react';
-import type { Ref } from 'react';
+import type { ReactNode, Ref } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { Link, useLocation, useNavigationType, useSearchParams } from 'react-router';
 import CategoryChips, { type CategoryChip } from '../components/home/CategoryChips';
+import { exhibitionMode } from '../components/exhibition/exhibitionMode';
 import { revealChipInRow } from '../components/home/chipRow';
 import VideoGrid from '../components/home/VideoGrid';
 import { PREFETCH_OBSERVER_OPTIONS } from '../components/home/infiniteScroll';
@@ -71,6 +72,7 @@ import { ErrorIcon, MusicNoteIcon, PersonStarIcon, SpinnerIcon } from '../compon
 
 // The advanced search dialog is only needed after the user opens it.
 const SearchFilters = lazy(() => import('../components/search/SearchFilters'));
+const ExhibitionPanel = lazy(() => import('../components/exhibition/ExhibitionPanel'));
 
 type HomeCategoryId =
   | 'recommended'
@@ -262,6 +264,9 @@ export default function HomePage() {
 
   const showResults = Boolean(urlKey)
     || (hasSearched && (searchOrigin === 'direct' || (searchOrigin === 'advanced' && advancedEntry)));
+  const exhibition = !showResults && exhibitionMode(location.pathname, location.search) === 'home' && (
+    <Suspense fallback={null}><ExhibitionPanel mode="home" /></Suspense>
+  );
 
   return (
     <>
@@ -279,8 +284,10 @@ export default function HomePage() {
             Shelves above the same feed; the feed keeps its place, so switching layouts never reloads it.
             The page heading is for assistive tech only (MusicHome renders its own).
           */}
-          {musicLayout ? <MusicHome onShowFeedCategory={showFeedCategory} /> : <h1 className="sr-only">{t('sidebarHome')}</h1>}
-          <HomeFeed ref={feedRef} belowShelves={musicLayout} />
+          {musicLayout ? (
+            <>{exhibition}<MusicHome onShowFeedCategory={showFeedCategory} /></>
+          ) : <h1 className="sr-only">{t('sidebarHome')}</h1>}
+          <HomeFeed ref={feedRef} belowShelves={musicLayout} intro={musicLayout ? null : exhibition} />
         </>
       )}
       {advancedSearchOpen && (
@@ -302,11 +309,12 @@ interface HomeFeedHandle {
 
 interface HomeFeedProps {
   ref?: Ref<HomeFeedHandle>;
+  intro?: ReactNode;
   /** The music layout's shelves are above the feed (MusicHome). */
   belowShelves: boolean;
 }
 
-function HomeFeed({ ref, belowShelves }: HomeFeedProps) {
+function HomeFeed({ ref, belowShelves, intro }: HomeFeedProps) {
   const t = useTranslate();
   const ts = useTranslateSourceText();
   const language = useLanguageStore(state => state.language);
@@ -1238,6 +1246,8 @@ function HomeFeed({ ref, belowShelves }: HomeFeedProps) {
           onSelect={selectCategory}
         />
       </div>
+
+      {intro}
 
       {activeCategory === 'favorite_producers' && favoriteProducers.length > 0 && (
         <Link to="/favorite-producers" className="my-3 inline-flex min-h-10 items-center text-sm font-medium text-yt-text no-underline hover:underline">
