@@ -1,34 +1,28 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
-  EXHIBITION_COUNTS_KEY,
-  EXHIBITION_DAYS,
   exhibitionDay,
-  isNewExhibitionVisit,
   nextExhibitionBoundary,
-  parseExhibitionCounts,
-  readExhibitionCounts,
-  type ExhibitionCounts,
   type ExhibitionDay,
 } from './exhibition';
-import { EXHIBITION_QUERY, EXHIBITION_TAB_KEY } from './exhibitionMode';
+import { EXHIBITION_TAB_KEY } from './exhibitionMode';
+import { loadExhibitionCounts, registerExhibitionVisit, type ExhibitionDailyCount } from './exhibitionVisits';
 import logo from './sofume-logo.png';
 import bookmarkQr from './bookmark-qr.png?no-inline';
 
 const PUBLIC_URL = 'https://diva-player.pages.dev/';
-const STATS_URL = `${import.meta.env.BASE_URL}?${EXHIBITION_QUERY}=stats`;
 
 const PANEL_CLASS = 'mx-3 my-3 rounded-2xl border border-yt-border bg-yt-bg-secondary px-3.5 py-3 sm:mx-6 sm:px-5';
 
 function ExhibitionStats() {
-  const [counts, setCounts] = useState(readExhibitionCounts);
+  const [counts, setCounts] = useState<ExhibitionDailyCount[] | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
+
   useEffect(() => {
-    const sync = (event: StorageEvent) => {
-      if (event.key === EXHIBITION_COUNTS_KEY || event.key === null) {
-        setCounts(readExhibitionCounts());
-      }
-    };
-    window.addEventListener('storage', sync);
-    return () => window.removeEventListener('storage', sync);
+    const controller = new AbortController();
+    void loadExhibitionCounts(controller.signal).then(setCounts, () => {
+      if (!controller.signal.aborted) setLoadFailed(true);
+    });
+    return () => controller.abort();
   }, []);
 
   return (
@@ -36,78 +30,45 @@ function ExhibitionStats() {
       <h2 className="font-semibold">展示の来場集計</h2>
       {counts ? (
         <dl className="mt-2 flex flex-wrap gap-x-6 gap-y-2 text-sm tabular-nums">
-          {EXHIBITION_DAYS.map(day => (
+          {counts.map(({ day, count }) => (
             <div key={day}>
               <dt className="text-yt-text-secondary">{day.slice(5).replace('-', '/')}</dt>
-              <dd>{counts[day]}人</dd>
+              <dd>{count}回</dd>
             </div>
           ))}
           <div>
             <dt className="text-yt-text-secondary">合計</dt>
-            <dd>{EXHIBITION_DAYS.reduce((sum, day) => sum + counts[day], 0)}人</dd>
+            <dd>{counts.reduce((sum, entry) => sum + entry.count, 0)}回</dd>
           </div>
         </dl>
-      ) : <p className="mt-2 text-sm">このブラウザーの集計を読み込めません。</p>}
-      <p className="mt-2 text-xs text-yt-text-secondary">この展示端末で記録した概算です。</p>
+      ) : <p role="status" className="mt-2 text-sm">{loadFailed ? '集計を読み込めませんでした。' : '集計を読み込み中…'}</p>}
+      <p className="mt-2 text-xs text-yt-text-secondary">展示画面を開いた回数です。来場人数の目安として使えます。</p>
     </section>
   );
 }
 
 function ExhibitionBooth({ day }: { day: ExhibitionDay }) {
-  const panelRef = useRef<HTMLElement>(null);
-  const lastActivity = useRef<number | null>(null);
-  const unsavedCounts = useRef<ExhibitionCounts | null>(null);
   const [visitor, setVisitor] = useState<number | null>(null);
-  const [storageFailed, setStorageFailed] = useState(false);
-
-  const recordVisit = useCallback((now: number) => {
-    if (exhibitionDay(now) !== day) return;
-    const counts = unsavedCounts.current ?? readExhibitionCounts() ?? parseExhibitionCounts(null);
-    const updated = { ...counts, [day]: counts[day] + 1 };
-    lastActivity.current = now;
-    setVisitor(updated[day]);
-    try {
-      window.localStorage.setItem(EXHIBITION_COUNTS_KEY, JSON.stringify(updated));
-      unsavedCounts.current = null;
-      setStorageFailed(false);
-    } catch {
-      unsavedCounts.current = updated;
-      setStorageFailed(true);
-    }
-  }, [day]);
 
   useEffect(() => {
-    const recordInteraction = (event: MouseEvent) => {
-      const target = event.target;
-      if (!event.isTrusted || !(target instanceof Element) || panelRef.current?.contains(target)) return;
-      if (!target.closest('a, button, input, select, textarea, [role="button"]')) return;
-      const now = Date.now();
-      if (exhibitionDay(now) !== day) return;
-      if (isNewExhibitionVisit(now, lastActivity.current)) recordVisit(now);
-      else lastActivity.current = now;
-    };
-    document.addEventListener('click', recordInteraction, true);
-    return () => document.removeEventListener('click', recordInteraction, true);
-  }, [day, recordVisit]);
+    let mounted = true;
+    void registerExhibitionVisit(day).then(ordinal => { if (mounted) setVisitor(ordinal); });
+    return () => { mounted = false; };
+  }, [day]);
 
   return (
-    <section ref={panelRef} aria-label="ソフトメディア研究会の展示" className={PANEL_CLASS}>
-      <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
-        <div className="min-w-0 flex-1 basis-32">
-          <div className="flex items-center gap-1.5">
-            <img src={logo} alt="" width="40" height="40" className="size-10 shrink-0" />
-            <h2 className="text-sm font-semibold sm:text-base">ソフトメディア研究会</h2>
-          </div>
-          <p aria-live="polite" className="mt-1 text-sm tabular-nums text-yt-text-secondary">
+    <section aria-label="ソフトメディア研究会の展示" className={PANEL_CLASS}>
+      <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-2 sm:gap-x-6">
+        <h2 className="col-span-2 sm:col-span-1">
+          <img src={logo} alt="SOFTMEDIA ソフトメディア研究会" width="1920" height="1080"
+            className="aspect-[5/1] w-full max-w-xs rounded-lg bg-zinc-950 object-cover" />
+        </h2>
+        <div className="row-start-2 min-w-0 self-start">
+          <p aria-live="polite" className="text-sm tabular-nums text-yt-text-secondary">
             {visitor === null ? '曲を選んで聴いてみよう' : <>あなたは今日の <strong className="text-yt-text">{visitor}人目</strong>！</>}
           </p>
-          <div className="mt-1.5 flex flex-wrap items-center gap-x-3 text-xs text-yt-text-secondary">
-            <button type="button" className="min-h-8 underline underline-offset-2 hover:text-yt-text" onClick={() => recordVisit(Date.now())}>来場者を1人追加</button>
-            <a href={STATS_URL} target="_blank" rel="noopener" className="inline-flex min-h-8 items-center underline underline-offset-2 hover:text-yt-text">集計</a>
-          </div>
-          {storageFailed && <p role="status" className="text-xs text-yt-text-secondary">このブラウザーでは集計を保存できません。</p>}
         </div>
-        <a href={PUBLIC_URL} target="_blank" rel="noopener" className="flex shrink-0 items-center gap-3 max-sm:flex-col max-sm:gap-1.5">
+        <a href={PUBLIC_URL} target="_blank" rel="noopener" className="col-start-2 row-start-2 flex shrink-0 items-center gap-3 max-sm:flex-col max-sm:gap-1.5 sm:row-span-2 sm:row-start-1">
           <div className="text-xs font-medium sm:text-sm">スマホでブックマーク</div>
           <img src={bookmarkQr} alt="DIVA Playerの公開URLのQRコード" width="112" height="112" className="size-28 rounded-lg bg-white" />
         </a>

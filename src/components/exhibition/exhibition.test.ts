@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { exhibitionDay, isNewExhibitionVisit, nextExhibitionBoundary, parseExhibitionCounts } from './exhibition';
+import { exhibitionDay, nextExhibitionBoundary } from './exhibition';
 
 describe('exhibition dates and attendance', () => {
   it('starts and ends at midnight in Japan regardless of the kiosk timezone', () => {
@@ -16,19 +16,5 @@ describe('exhibition dates and attendance', () => {
     expect(nextExhibitionBoundary(start)).toBe(secondDay);
     expect(nextExhibitionBoundary(secondDay)).toBe(end);
     expect(nextExhibitionBoundary(end)).toBeUndefined();
-  });
-
-  it('only counts a new automatic visit after three minutes without a control click', () => {
-    expect(isNewExhibitionVisit(0, null)).toBe(true);
-    expect(isNewExhibitionVisit(179_999, 0)).toBe(false);
-    expect(isNewExhibitionVisit(180_000, 0)).toBe(true);
-  });
-
-  it('keeps valid daily counts even if another daily count is missing or malformed', () => {
-    const empty = { '2026-11-21': 0, '2026-11-22': 0 };
-    expect(parseExhibitionCounts(null)).toEqual(empty);
-    expect(parseExhibitionCounts('{')).toEqual(empty);
-    expect(parseExhibitionCounts('{"2026-11-21":5}')).toEqual({ ...empty, '2026-11-21': 5 });
-    expect(parseExhibitionCounts('{"2026-11-21":-1,"2026-11-22":8}')).toEqual({ ...empty, '2026-11-22': 8 });
   });
 });

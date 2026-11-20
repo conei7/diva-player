@@ -245,6 +245,61 @@ public class DbService
         return await cmd.ExecuteScalarAsync(cancellationToken) is true;
     }
 
+    internal async Task<int?> RegisterExhibitionVisitAsync(
+        DateOnly day, Guid visitId, CancellationToken cancellationToken)
+    {
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+
+        // Serialize the ordinal assignment per day across both API slots.
+        await using var dayLock = new NpgsqlCommand(
+            "SELECT pg_advisory_xact_lock(20261121, @dayNumber)", connection, transaction)
+        { CommandTimeout = 3 };
+        dayLock.Parameters.AddWithValue("dayNumber", day.DayNumber);
+        await dayLock.ExecuteNonQueryAsync(cancellationToken);
+
+        await using var command = new NpgsqlCommand("""
+            WITH existing AS (
+                SELECT ordinal FROM public.sofume_exhibition_visits
+                WHERE visit_day = @day AND visit_id = @visitId
+            ),
+            next_visit AS (
+                SELECT COALESCE(MAX(ordinal), 0) + 1 AS ordinal
+                FROM public.sofume_exhibition_visits WHERE visit_day = @day
+            ),
+            inserted AS (
+                INSERT INTO public.sofume_exhibition_visits (visit_day, visit_id, ordinal)
+                SELECT @day, @visitId, ordinal FROM next_visit
+                WHERE ordinal <= 10000 AND NOT EXISTS (SELECT 1 FROM existing)
+                RETURNING ordinal
+            )
+            SELECT ordinal FROM inserted UNION ALL SELECT ordinal FROM existing
+            """, connection, transaction)
+        { CommandTimeout = 3 };
+        command.Parameters.AddWithValue("day", day);
+        command.Parameters.AddWithValue("visitId", visitId);
+        var result = await command.ExecuteScalarAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return result is int ordinal ? ordinal : null;
+    }
+
+    internal async Task<Dictionary<DateOnly, int>> GetExhibitionVisitCountsAsync(CancellationToken cancellationToken)
+    {
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var command = new NpgsqlCommand("""
+            SELECT visit_day, COUNT(*)::integer
+            FROM public.sofume_exhibition_visits GROUP BY visit_day
+            """, connection)
+        { CommandTimeout = 3 };
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        var counts = new Dictionary<DateOnly, int>();
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            counts.Add(reader.GetFieldValue<DateOnly>(0), reader.GetInt32(1));
+        }
+        return counts;
+    }
+
     private async Task<NpgsqlConnection> OpenAsync(CancellationToken cancellationToken)
     {
         var permit = await _connectionBudget.AcquireConnectionAsync(cancellationToken);

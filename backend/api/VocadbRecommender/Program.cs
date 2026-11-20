@@ -165,6 +165,7 @@ const int maxSearchArtistIds = 100;
 const int maxSearchArtistGroups = 20;
 
 app.MapHealthEndpoints();
+app.MapExhibitionEndpoints();
 app.MapGet("/api/internal/qdrant-compatibility-token-status", () =>
     QdrantBridgeProbeTokenStore.Read(qdrantBridgeProbeTokenPath) is null
         ? Results.NotFound()
