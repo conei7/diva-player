@@ -4,12 +4,11 @@ import {
   nextExhibitionBoundary,
   type ExhibitionDay,
 } from './exhibition';
-import { EXHIBITION_TAB_KEY } from './exhibitionMode';
 import { loadExhibitionCounts, registerExhibitionVisit, type ExhibitionDailyCount } from './exhibitionVisits';
 import logo from './sofume-logo.png';
 import bookmarkQr from './bookmark-qr.png?no-inline';
 
-const PUBLIC_URL = 'https://diva-player.pages.dev/';
+const BOOKMARK_URL = 'https://diva-player.pages.dev/?from=sofume-qr';
 
 const PANEL_CLASS = 'mx-3 my-3 rounded-2xl border border-yt-border bg-yt-bg-secondary px-3.5 py-3 sm:mx-6 sm:px-5';
 
@@ -42,7 +41,7 @@ function ExhibitionStats() {
           </div>
         </dl>
       ) : <p role="status" className="mt-2 text-sm">{loadFailed ? '集計を読み込めませんでした。' : '集計を読み込み中…'}</p>}
-      <p className="mt-2 text-xs text-yt-text-secondary">展示画面を開いた回数です。来場人数の目安として使えます。</p>
+      <p className="mt-2 text-xs text-yt-text-secondary">期間中にホームを開いた回数です。来場人数の目安として使えます。</p>
     </section>
   );
 }
@@ -51,6 +50,7 @@ function ExhibitionBooth({ day }: { day: ExhibitionDay }) {
   const [visitor, setVisitor] = useState<number | null>(null);
 
   useEffect(() => {
+    if (navigator.webdriver) return;
     let mounted = true;
     void registerExhibitionVisit(day).then(ordinal => { if (mounted) setVisitor(ordinal); });
     return () => { mounted = false; };
@@ -68,7 +68,7 @@ function ExhibitionBooth({ day }: { day: ExhibitionDay }) {
             {visitor === null ? '曲を選んで聴いてみよう' : <>あなたは今日の <strong className="text-yt-text">{visitor}人目</strong>！</>}
           </p>
         </div>
-        <a href={PUBLIC_URL} target="_blank" rel="noopener" className="col-start-2 row-start-2 flex shrink-0 items-center gap-3 max-sm:flex-col max-sm:gap-1.5 sm:row-span-2 sm:row-start-1">
+        <a href={BOOKMARK_URL} target="_blank" rel="noopener" className="col-start-2 row-start-2 flex shrink-0 items-center gap-3 max-sm:flex-col max-sm:gap-1.5 sm:row-span-2 sm:row-start-1">
           <div className="text-xs font-medium sm:text-sm">スマホでブックマーク</div>
           <img src={bookmarkQr} alt="DIVA Playerの公開URLのQRコード" width="112" height="112" className="size-28 rounded-lg bg-white" />
         </a>
@@ -77,20 +77,11 @@ function ExhibitionBooth({ day }: { day: ExhibitionDay }) {
   );
 }
 
-export default function ExhibitionPanel({ mode }: { mode: 'booth' | 'stats' }) {
+export default function ExhibitionPanel({ mode }: { mode: 'home' | 'stats' }) {
   const [now, setNow] = useState(Date.now);
 
   useEffect(() => {
-    if (mode !== 'booth') return;
-    try {
-      window.sessionStorage.setItem(EXHIBITION_TAB_KEY, '1');
-    } catch {
-      // The current exhibition URL still works if browser storage is unavailable.
-    }
-  }, [mode]);
-
-  useEffect(() => {
-    if (mode !== 'booth') return;
+    if (mode !== 'home') return;
     const boundary = nextExhibitionBoundary(now);
     if (boundary === undefined) return;
     const refresh = () => setNow(Date.now());

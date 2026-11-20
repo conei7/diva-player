@@ -1,13 +1,9 @@
-export const EXHIBITION_QUERY = 'exhibition';
-export const EXHIBITION_TAB_KEY = 'diva-player:sofume-2026:tab';
+export const EXHIBITION_END = Date.parse('2026-11-23T00:00:00+09:00');
 
-export function exhibitionMode(search: string): 'booth' | 'stats' | undefined {
-  const value = new URLSearchParams(search).get(EXHIBITION_QUERY);
-  if (value === 'stats') return 'stats';
-  if (value === '1') return 'booth';
-  try {
-    return window.sessionStorage.getItem(EXHIBITION_TAB_KEY) === '1' ? 'booth' : undefined;
-  } catch {
-    return undefined;
-  }
+export function exhibitionMode(pathname: string, search: string, now = Date.now()): 'home' | 'stats' | undefined {
+  if (pathname !== '/') return undefined;
+  const params = new URLSearchParams(search);
+  if (params.get('exhibition') === 'stats') return 'stats';
+  if (now >= EXHIBITION_END || params.get('from') === 'sofume-qr' || params.has('q') || params.has('artistId')) return undefined;
+  return 'home';
 }

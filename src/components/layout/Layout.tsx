@@ -52,7 +52,7 @@ function closeQueueDrawer() {
  */
 export default function Layout() {
   const location = useLocation();
-  const exhibition = exhibitionMode(location.search);
+  const exhibition = exhibitionMode(location.pathname, location.search);
   const isWatch = isWatchPath(location.pathname);
   const isMobile = useMediaQuery(MOBILE_MEDIA_QUERY);
   const isWideGuide = useMediaQuery(GUIDE_EXPANDED_MEDIA_QUERY);
