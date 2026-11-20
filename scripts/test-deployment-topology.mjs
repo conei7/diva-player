@@ -201,8 +201,15 @@ assert.doesNotMatch(webDockerfile, /apk upgrade/u);
 assert.match(webDockerfile, /RUN apk update && \\\s+apk add --no-cache/u);
 assert.match(
   webDockerfile,
-  /apk add --no-cache[\s\S]*libcrypto3=3\.5\.9-r0[\s\S]*libssl3=3\.5\.9-r0[\s\S]*libexpat=2\.10\.0-r0[\s\S]*libx11=1\.8\.14-r0/u,
+  /apk add --no-cache[\s\S]*libcrypto3=3\.5\.9-r1[\s\S]*libssl3=3\.5\.9-r1[\s\S]*libexpat=2\.10\.0-r0[\s\S]*libx11=1\.8\.14-r0/u,
 );
+for (const architecture of ['aarch64', 'x86_64']) {
+  for (const name of ['libcrypto3', 'libssl3']) {
+    const content = await readFile(new URL(`../vendor/alpine/v3.24/${architecture}/${name}-3.5.9-r1.apk`, import.meta.url));
+    assert.ok(webDockerfile.includes(createHash('sha256').update(content).digest('hex')));
+  }
+}
+assert.match(webDockerfile, /apk add --no-network "\$crypto_apk" "\$ssl_apk"/u);
 assert.doesNotMatch(apiDockerfile, /apk upgrade/u);
 const webApkUpdateStart = webDockerfile.indexOf('RUN apk update &&');
 const webCopyStart = webDockerfile.indexOf('\nCOPY --from=build', webApkUpdateStart);

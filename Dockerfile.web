@@ -23,25 +23,21 @@ RUN set -eux; \
     apk add --no-network /tmp/pcre2.apk; \
     test "$(awk '$0=="P:pcre2"{p=1;next} p && /^V:/{print substr($0,3);exit}' /lib/apk/db/installed)" = 10.49-r0; \
     rm /tmp/pcre2.apk
-# Use checksummed APKs directly: a stale mirror index must not downgrade OpenSSL.
+# Keep signed security APKs in the build context so mirror rotation cannot remove the pinned version.
+COPY vendor/alpine/v3.24/ /tmp/diva-security/
 RUN set -eux; \
     case "$(cat /etc/alpine-release)" in 3.24.*) ;; *) exit 1 ;; esac; \
     arch="$(apk --print-arch)"; \
     case "$arch" in \
-      x86_64) crypto_sha=6632d758d8f5e9ea3b650fe966f23bbf9a202f8b8dceecac93da135dec5e3689; ssl_sha=05e3393fb95aa5751ca2f9d242f659f6cff82c1cc7767cc2df4a086f7ad01877 ;; \
-      aarch64) crypto_sha=2676a2b0b6e23ea2edccf3ee982b9842a665d52603d047de3d0a185dc316d983; ssl_sha=20ac252b276d73f2c69c1d25f84537c7fba81caefc026c6be1094b394af2082e ;; \
+      x86_64) crypto_sha=042026082cc9bc7872d1baa81755c50efa70b05f03b5369fdc5f0a1303009720; ssl_sha=18c5778cbe52e1991303f8531970b05d4e6e036ea08349322f7422f42a689dc7 ;; \
+      aarch64) crypto_sha=58ea027d8bd64fffac7d2106a9034341d6735387298a5e01b551429c73a13c71; ssl_sha=4aff30f84e7ac922b026f8b2dd574d91bb3bb01d22767a8a9a0a10c5ef64a44b ;; \
       *) exit 1 ;; \
     esac; \
-    wget -O /tmp/libcrypto3-3.5.9-r0.apk "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/$arch/libcrypto3-3.5.9-r0.apk"; \
-    echo "$crypto_sha  /tmp/libcrypto3-3.5.9-r0.apk" | sha256sum -c -; \
-    wget -O /tmp/libssl3-3.5.9-r0.apk "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/$arch/libssl3-3.5.9-r0.apk"; \
-    echo "$ssl_sha  /tmp/libssl3-3.5.9-r0.apk" | sha256sum -c -; \
-    apk add --no-network /tmp/libcrypto3-3.5.9-r0.apk /tmp/libssl3-3.5.9-r0.apk; \
-    rm /tmp/libcrypto3-3.5.9-r0.apk /tmp/libssl3-3.5.9-r0.apk
-# The immutable base predates Alpine fixes for the OpenSSL, Expat, TIFF, and zlib findings
-# enforced by the deployable-image scan gate.
-# Preserve signed security APKs: CDN regions can disagree on availability.
-COPY vendor/alpine/v3.24/ /tmp/diva-security/
+    crypto_apk="/tmp/diva-security/$arch/libcrypto3-3.5.9-r1.apk"; \
+    ssl_apk="/tmp/diva-security/$arch/libssl3-3.5.9-r1.apk"; \
+    echo "$crypto_sha  $crypto_apk" | sha256sum -c -; \
+    echo "$ssl_sha  $ssl_apk" | sha256sum -c -; \
+    apk add --no-network "$crypto_apk" "$ssl_apk"
 # Preserve the signed libxslt fix alongside the other offline security APKs.
 RUN set -eux; \
     arch="$(apk --print-arch)"; \
@@ -90,8 +86,8 @@ RUN apk update && \
       curl=8.23.0-r0 \
       libcurl=8.23.0-r0 \
       brotli-libs=1.2.1-r0 \
-      libcrypto3=3.5.9-r0 \
-      libssl3=3.5.9-r0 \
+      libcrypto3=3.5.9-r1 \
+      libssl3=3.5.9-r1 \
       libexpat=2.10.0-r0 \
       libx11=1.8.14-r0 \
       libxslt=1.1.43-r4 \
