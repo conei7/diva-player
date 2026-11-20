@@ -41,4 +41,15 @@ REVOKE ALL ON FUNCTION public.reserve_youtube_quota(text)
 GRANT EXECUTE ON FUNCTION public.reserve_youtube_quota(text)
     TO diva_api_runtime, diva_pipeline_runtime;
 
+-- Snapshots made before the exhibition migration do not have the visits table.
+DO $restore_exhibition_acl$
+BEGIN
+    IF to_regclass('public.sofume_exhibition_visits') IS NOT NULL THEN
+        REVOKE ALL ON TABLE public.sofume_exhibition_visits
+            FROM PUBLIC, diva_api_runtime, diva_pipeline_runtime;
+        GRANT SELECT, INSERT ON TABLE public.sofume_exhibition_visits TO diva_api_runtime;
+    END IF;
+END;
+$restore_exhibition_acl$;
+
 COMMIT;

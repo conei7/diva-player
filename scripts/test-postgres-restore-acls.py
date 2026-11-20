@@ -30,6 +30,8 @@ class PostgresRestoreAclTests(unittest.TestCase):
             "GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.song_album_links",
             "REVOKE ALL ON FUNCTION public.sync_song_album_links_from_raw_json_v1()",
             "GRANT EXECUTE ON FUNCTION public.reserve_youtube_quota(text)",
+            "IF to_regclass('public.sofume_exhibition_visits') IS NOT NULL",
+            "GRANT SELECT, INSERT ON TABLE public.sofume_exhibition_visits TO diva_api_runtime",
         ):
             self.assertIn(statement, self.acl)
         self.assertIn("test-database-role-contract.sql", self.acl)
