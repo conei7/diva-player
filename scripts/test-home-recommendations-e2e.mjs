@@ -105,6 +105,9 @@ try {
   const firstPageLoads = () => variety.evaluate(() => window.__DIVA_PERFORMANCE__?.getMetrics()
     .filter(metric => metric.name === 'home.load' && metric.detail?.page === 0 && !metric.detail?.stale).length ?? 0);
   const waitForShown = async minimum => {
+    // The exhibition panel reduces the number of cards above the fold. Scroll enough of the
+    // first page into view so this check still exercises real impressions.
+    await variety.evaluate(() => document.querySelectorAll('.song-card')[7]?.scrollIntoView({ block: 'center' }));
     await variety.waitForFunction(count => Object.keys(JSON.parse(localStorage.getItem('diva-recommendation-exposure-v1') || '{}')).length >= count, { timeout: 20000 }, minimum);
     await new Promise(resolve => setTimeout(resolve, 500));
     return shownIds();

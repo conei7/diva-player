@@ -1247,6 +1247,7 @@ function HomeFeed({ ref, belowShelves, intro }: HomeFeedProps) {
         />
       </div>
 
+      {/* Keep the chip bar at the feed's top so category changes return to the same scroll position. */}
       {intro}
 
       {activeCategory === 'favorite_producers' && favoriteProducers.length > 0 && (
