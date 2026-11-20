@@ -205,11 +205,19 @@ assert.match(
 );
 for (const architecture of ['aarch64', 'x86_64']) {
   for (const name of ['libcrypto3', 'libssl3']) {
-    const content = await readFile(new URL(`../vendor/alpine/v3.24/${architecture}/${name}-3.5.9-r1.apk`, import.meta.url));
-    assert.ok(webDockerfile.includes(createHash('sha256').update(content).digest('hex')));
+    const file = `vendor/alpine/v3.24/${architecture}/${name}-3.5.9-r1.apk`;
+    const [web, api] = await Promise.all([
+      readFile(new URL(`../${file}`, import.meta.url)),
+      readFile(new URL(`../backend/api/${file}`, import.meta.url)),
+    ]);
+    assert.deepEqual(api, web);
+    const hash = createHash('sha256').update(web).digest('hex');
+    for (const dockerfile of [webDockerfile, apiDockerfile]) assert.ok(dockerfile.includes(hash));
   }
 }
-assert.match(webDockerfile, /apk add --no-network "\$crypto_apk" "\$ssl_apk"/u);
+for (const dockerfile of [webDockerfile, apiDockerfile]) {
+  assert.match(dockerfile, /apk add --no-network "\$crypto_apk" "\$ssl_apk"/u);
+}
 assert.doesNotMatch(apiDockerfile, /apk upgrade/u);
 const webApkUpdateStart = webDockerfile.indexOf('RUN apk update &&');
 const webCopyStart = webDockerfile.indexOf('\nCOPY --from=build', webApkUpdateStart);
@@ -317,7 +325,7 @@ assert.match(webApkUpdate, /tiff=4\.7\.2-r0/u);
 assert.match(webApkUpdate, /test[^\n]*P:tiff[^\n]*4\.7\.2-r0/u);
 assert.doesNotMatch(webDockerfile, /--repository|\/edge\//u);
 assert.doesNotMatch(webDockerfile, /--allow-untrusted|--force-broken-world/u);
-assert.match(apiDockerfile, /apk add --no-cache[\s\S]*libcrypto3=3\.5\.9-r0[\s\S]*libssl3=3\.5\.9-r0/u);
+assert.match(apiDockerfile, /apk add --no-cache[\s\S]*libcrypto3=3\.5\.9-r1[\s\S]*libssl3=3\.5\.9-r1/u);
 assert.match(apiDockerfile, /test "\$\(dotnet --version\)" = "10\.0\.404"/u);
 assert.match(apiDockerfile, /COPY \["VocadbRecommender\/VocadbRecommender\.csproj", "VocadbRecommender\/packages\.lock\.json"/u);
 assert.match(apiDockerfile, /dotnet restore [^\n]* --locked-mode/u);

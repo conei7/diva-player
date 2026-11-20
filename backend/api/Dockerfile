@@ -20,25 +20,26 @@ RUN set -eux; \
       test "$(awk -F: -v package="$package" '$1=="P"{p=($2==package);next} p && $1=="V"{print $2;exit}' /lib/apk/db/installed)" = 1.2.6-r3; \
     done; \
     rm /tmp/musl.apk /tmp/musl-utils.apk
-# Use checksummed APKs directly: a stale mirror index must not downgrade OpenSSL.
+# Use the same signed OpenSSL packages as the Web image.
+COPY vendor/alpine/v3.24/ /tmp/diva-openssl/
 RUN set -eux; \
     case "$(cat /etc/alpine-release)" in 3.24.*) ;; *) exit 1 ;; esac; \
     arch="$(apk --print-arch)"; \
     case "$arch" in \
-      x86_64) crypto_sha=6632d758d8f5e9ea3b650fe966f23bbf9a202f8b8dceecac93da135dec5e3689; ssl_sha=05e3393fb95aa5751ca2f9d242f659f6cff82c1cc7767cc2df4a086f7ad01877 ;; \
-      aarch64) crypto_sha=2676a2b0b6e23ea2edccf3ee982b9842a665d52603d047de3d0a185dc316d983; ssl_sha=20ac252b276d73f2c69c1d25f84537c7fba81caefc026c6be1094b394af2082e ;; \
+      x86_64) crypto_sha=042026082cc9bc7872d1baa81755c50efa70b05f03b5369fdc5f0a1303009720; ssl_sha=18c5778cbe52e1991303f8531970b05d4e6e036ea08349322f7422f42a689dc7 ;; \
+      aarch64) crypto_sha=58ea027d8bd64fffac7d2106a9034341d6735387298a5e01b551429c73a13c71; ssl_sha=4aff30f84e7ac922b026f8b2dd574d91bb3bb01d22767a8a9a0a10c5ef64a44b ;; \
       *) exit 1 ;; \
     esac; \
-    wget -O /tmp/libcrypto3-3.5.9-r0.apk "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/$arch/libcrypto3-3.5.9-r0.apk"; \
-    echo "$crypto_sha  /tmp/libcrypto3-3.5.9-r0.apk" | sha256sum -c -; \
-    wget -O /tmp/libssl3-3.5.9-r0.apk "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/$arch/libssl3-3.5.9-r0.apk"; \
-    echo "$ssl_sha  /tmp/libssl3-3.5.9-r0.apk" | sha256sum -c -; \
-    apk add --no-network /tmp/libcrypto3-3.5.9-r0.apk /tmp/libssl3-3.5.9-r0.apk; \
-    rm /tmp/libcrypto3-3.5.9-r0.apk /tmp/libssl3-3.5.9-r0.apk
+    crypto_apk="/tmp/diva-openssl/$arch/libcrypto3-3.5.9-r1.apk"; \
+    ssl_apk="/tmp/diva-openssl/$arch/libssl3-3.5.9-r1.apk"; \
+    echo "$crypto_sha  $crypto_apk" | sha256sum -c -; \
+    echo "$ssl_sha  $ssl_apk" | sha256sum -c -; \
+    apk add --no-network "$crypto_apk" "$ssl_apk"; \
+    rm -r /tmp/diva-openssl
 # The immutable base predates the Alpine fix for CVE-2026-14456.
 RUN apk add --no-cache \
-      libcrypto3=3.5.9-r0 \
-      libssl3=3.5.9-r0
+      libcrypto3=3.5.9-r1 \
+      libssl3=3.5.9-r1
 WORKDIR /app
 EXPOSE 5000
 
