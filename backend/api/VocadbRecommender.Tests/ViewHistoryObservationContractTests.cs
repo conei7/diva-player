@@ -38,8 +38,27 @@ public sealed class ViewHistoryObservationContractTests
         Assert.Contains("CASE WHEN h.youtube_observed THEN h.youtube_views END", source);
         Assert.Contains("CASE WHEN h.nico_observed THEN h.nico_views END", source);
         Assert.Contains("ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW", source);
-        Assert.Contains("AT TIME ZONE 'Asia/Tokyo'", source);
         Assert.DoesNotContain("NULLIF(h.youtube_views, 0)", source);
         Assert.DoesNotContain("NULLIF(h.nico_views, 0)", source);
+    }
+
+    [Fact]
+    public void AllHistoryDatesUseTheSameConversionForBothPostgresTimestampTypes()
+    {
+        var source = File.ReadAllText(Path.Combine(
+            RepositoryRoot(),
+            "backend", "api", "VocadbRecommender", "Services", "DbService.cs"));
+        var conversion = Services.DbService.ViewHistoryJapanTimestampSql("h.recorded_at");
+
+        Assert.Contains("pg_typeof(h.recorded_at) = 'timestamp without time zone'::regtype", conversion);
+        Assert.Contains("THEN h.recorded_at::timestamp AT TIME ZONE 'UTC'", conversion);
+        Assert.Contains("ELSE h.recorded_at::timestamptz", conversion);
+        Assert.Contains("END AT TIME ZONE 'Asia/Tokyo'", conversion);
+        Assert.Contains("SELECT {ViewHistoryJapanTimestampSql(\"recorded_at\")}::date", source);
+        Assert.Contains("ViewHistoryJapanTimestampSql(\"h.recorded_at\")", source);
+        Assert.Contains("date_trunc('week', {japanTimestamp})::date", source);
+        Assert.Contains("date_trunc('month', {japanTimestamp})::date", source);
+        Assert.Contains("ViewHistoryJapanTimestampSql(\"(l.latest_at - (@days::int * interval '1 day'))\")", source);
+        Assert.Contains("SELECT {baselineJapanTimestamp}::date", source);
     }
 }

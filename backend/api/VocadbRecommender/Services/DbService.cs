@@ -2380,13 +2380,26 @@ public class DbService
         return ids;
     }
 
+    internal static string ViewHistoryJapanTimestampSql(string timestampSql)
+    {
+        // Existing installations store UTC in a timestamp without time zone.
+        // Fresh databases use timestamptz, which already identifies the instant.
+        return $"""
+            (CASE
+                WHEN pg_typeof({timestampSql}) = 'timestamp without time zone'::regtype
+                    THEN {timestampSql}::timestamp AT TIME ZONE 'UTC'
+                ELSE {timestampSql}::timestamptz
+            END AT TIME ZONE 'Asia/Tokyo')
+            """;
+    }
+
     public async Task<List<object>> GetViewHistoryAsync(
         int songId,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         await using var conn = await OpenAsync(cancellationToken);
-        await using var cmd = new NpgsqlCommand(@"
+        await using var cmd = new NpgsqlCommand($@"
             WITH observations AS (
                 SELECT id,
                        recorded_at,
@@ -2404,7 +2417,7 @@ public class DbService
                     ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
                 )
             )
-            SELECT (recorded_at AT TIME ZONE 'Asia/Tokyo')::date,
+            SELECT {ViewHistoryJapanTimestampSql("recorded_at")}::date,
                    youtube_views,
                    nico_views
             FROM monotonic
@@ -2441,12 +2454,14 @@ public class DbService
             _ => 30,
         };
         var normalizedBucket = bucket is "day" or "week" or "month" ? bucket : "day";
+        var japanTimestamp = ViewHistoryJapanTimestampSql("h.recorded_at");
         var bucketExpression = normalizedBucket switch
         {
-            "week" => "date_trunc('week', h.recorded_at AT TIME ZONE 'Asia/Tokyo')::date",
-            "month" => "date_trunc('month', h.recorded_at AT TIME ZONE 'Asia/Tokyo')::date",
-            _ => "(h.recorded_at AT TIME ZONE 'Asia/Tokyo')::date",
+            "week" => $"date_trunc('week', {japanTimestamp})::date",
+            "month" => $"date_trunc('month', {japanTimestamp})::date",
+            _ => $"{japanTimestamp}::date",
         };
+        var baselineJapanTimestamp = ViewHistoryJapanTimestampSql("(l.latest_at - (@days::int * interval '1 day'))");
 
         await using var conn = await OpenAsync(cancellationToken);
         await using var cmd = new NpgsqlCommand($@"
@@ -2492,7 +2507,7 @@ public class DbService
                 FROM filtered
                 GROUP BY bucket_date
             ), baseline AS (
-                SELECT ((l.latest_at - (@days::int * interval '1 day')) AT TIME ZONE 'Asia/Tokyo')::date AS bucket_date,
+                SELECT {baselineJapanTimestamp}::date AS bucket_date,
                        l.latest_at - (@days::int * interval '1 day') AS recorded_at,
                        (
                            SELECT h.youtube_views
