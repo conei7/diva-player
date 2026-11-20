@@ -89,11 +89,11 @@ type PrefetchableHomeCategoryId = Exclude<HomeCategoryId, 'recommended'>;
 
 const CATEGORIES: CategoryChip[] = [
   { id: 'recommended', label: 'おすすめ' },
+  { id: 'recent', label: '新着' },
   { id: 'ranking', label: 'ランキング' },
   { id: 'popular', label: '人気' },
   { id: 'pace', label: '伸びている曲' },
   { id: 'trending', label: '急上昇' },
-  { id: 'recent', label: '新着' },
   { id: 'deep', label: '隠れた名曲' },
   { id: 'history_based', label: '最近聴いたP' },
   { id: 'favorite_producers', label: 'フォロー中' },
