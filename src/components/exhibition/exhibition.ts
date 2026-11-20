@@ -1,5 +1,3 @@
-export const EXHIBITION_QUERY = 'exhibition';
-export const EXHIBITION_TAB_KEY = 'diva-player:sofume-2026:tab';
 export const EXHIBITION_COUNTS_KEY = 'diva-player:sofume-2026:counts';
 export const EXHIBITION_DAYS = ['2026-11-21', '2026-11-22'] as const;
 
@@ -46,16 +44,5 @@ export function readExhibitionCounts(): ExhibitionCounts | null {
     return parseExhibitionCounts(window.localStorage.getItem(EXHIBITION_COUNTS_KEY));
   } catch {
     return null;
-  }
-}
-
-export function exhibitionMode(search: string): 'booth' | 'stats' | undefined {
-  const value = new URLSearchParams(search).get(EXHIBITION_QUERY);
-  if (value === 'stats') return 'stats';
-  if (value === '1') return 'booth';
-  try {
-    return window.sessionStorage.getItem(EXHIBITION_TAB_KEY) === '1' ? 'booth' : undefined;
-  } catch {
-    return undefined;
   }
 }

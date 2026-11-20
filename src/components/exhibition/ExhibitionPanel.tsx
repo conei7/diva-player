@@ -2,8 +2,6 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   EXHIBITION_COUNTS_KEY,
   EXHIBITION_DAYS,
-  EXHIBITION_QUERY,
-  EXHIBITION_TAB_KEY,
   exhibitionDay,
   isNewExhibitionVisit,
   nextExhibitionBoundary,
@@ -12,6 +10,7 @@ import {
   type ExhibitionCounts,
   type ExhibitionDay,
 } from './exhibition';
+import { EXHIBITION_QUERY, EXHIBITION_TAB_KEY } from './exhibitionMode';
 import logo from './sofume-logo.png';
 import bookmarkQr from './bookmark-qr.png?no-inline';
 

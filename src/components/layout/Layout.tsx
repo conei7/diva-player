@@ -17,7 +17,7 @@ import { GUIDE_EXPANDED_MEDIA_QUERY, MOBILE_MEDIA_QUERY, MUSIC_LIBRARY_FULL_MEDI
 import { isWatchPath } from '../../utils/routes';
 import { cx } from '../ui/overlay';
 import { preloadMainRoutesWhenIdle } from '../../routes/routeLoaders';
-import { exhibitionMode } from '../exhibition/exhibition';
+import { exhibitionMode } from '../exhibition/exhibitionMode';
 import {
   RECOMMENDATION_DEBUG_STORAGE_KEY,
   useRecommendationDebugStore,
