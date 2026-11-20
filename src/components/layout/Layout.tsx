@@ -17,6 +17,7 @@ import { GUIDE_EXPANDED_MEDIA_QUERY, MOBILE_MEDIA_QUERY, MUSIC_LIBRARY_FULL_MEDI
 import { isWatchPath } from '../../utils/routes';
 import { cx } from '../ui/overlay';
 import { preloadMainRoutesWhenIdle } from '../../routes/routeLoaders';
+import { exhibitionMode } from '../exhibition/exhibition';
 import {
   RECOMMENDATION_DEBUG_STORAGE_KEY,
   useRecommendationDebugStore,
@@ -32,6 +33,7 @@ const SaveToPlaylistModal = lazy(() => import('../playlist/SaveToPlaylistModal')
 const SelectionFAB = lazy(() => import('../search/SelectionFAB'));
 const SettingsModal = lazy(() => import('../settings/SettingsModal'));
 const RecommendationDebugPanel = lazy(() => import('../debug/RecommendationDebugPanel'));
+const ExhibitionPanel = lazy(() => import('../exhibition/ExhibitionPanel'));
 
 function closeQueueDrawer() {
   const player = usePlayerStore.getState();
@@ -50,6 +52,7 @@ function closeQueueDrawer() {
  */
 export default function Layout() {
   const location = useLocation();
+  const exhibition = exhibitionMode(location.search);
   const isWatch = isWatchPath(location.pathname);
   const isMobile = useMediaQuery(MOBILE_MEDIA_QUERY);
   const isWideGuide = useMediaQuery(GUIDE_EXPANDED_MEDIA_QUERY);
@@ -165,6 +168,11 @@ export default function Layout() {
           musicShell && 'music-main mr-[var(--music-panel-offset,0px)]',
         )}
       >
+        {exhibition && (
+          <Suspense fallback={null}>
+            <ExhibitionPanel mode={exhibition} />
+          </Suspense>
+        )}
         <RouteErrorBoundary resetKey={`${location.pathname}${location.search}`}>
           {/*
             Lazy page modules may suspend on their first visit. Keep that boundary inside the

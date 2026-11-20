@@ -38,6 +38,8 @@ VocaDB API を活用したボカロ特化ミュージックプレイヤー SPA�
 - ライト／ダークテーマと端末の明暗設定への自動追従（設定→全般、既定はダーク）
 - アクセントカラーのプリセット・任意色・リセット（設定→全般、ブラウザ内に保存）
 
+2026年11月21日・22日（日本時間）の展示端末では、DIVA PlayerのホームURLに `?exhibition=1` を付けると、ソフトメディア研究会のロゴと公開版へのQRコードが表示されます。展示端末で操作を始めると、その日の来場順が表示されます。人数は端末のブラウザーに日別で保存され、同じブラウザーで `?exhibition=stats` を開けば展示終了後も確認できます。
+
 Web imageの`vendor/alpine/v3.24/`は、公式Alpine配布元の署名済みAPK（x86_64／aarch64）を保持します。現行buildはExpat 2.10.0-r0（MIT）とlibX11 1.8.14-r0（X11）を導入し、旧Expat 2.9.0-r0のfileは保全物です。CDNの地域差による取得不能を避け、Dockerfileのarchitecture別SHA-256とAlpineの署名検証を通して導入します。固定版の更新時は両architectureのAPK・hash・image scanを同時に検証します。
 
 同directoryのmusl／musl-utils 1.2.6-r3（MIT）も両architectureの署名付きAPKを保持します。WebはこれをSHA-256照合後に導入し、API／gatewayも同じ公式APKのhashを固定します。いずれも導入後の版を検査し、Alpine 3.24の旧muslを修正します。稼働imageへの反映状況はprivateのCURRENT_STATUSを参照してください。
