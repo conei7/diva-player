@@ -14,6 +14,7 @@
     "/reports",
     "/knowledge-map",
     "/sound-map",
+    "/music-analysis",
     "/settings/hidden-songs"
   ],
   "exclude": []

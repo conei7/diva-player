@@ -29,6 +29,7 @@ try {
   assert(pagesRoutes.include.includes('/chorus-highlights'), 'Chorus highlights must use the Pages SPA fallback.');
   assert(pagesRoutes.include.includes('/knowledge-map'), 'Knowledge map must use the Pages SPA fallback.');
   assert(pagesRoutes.include.includes('/sound-map'), 'Sound map must use the Pages SPA fallback.');
+  assert(pagesRoutes.include.includes('/music-analysis'), 'Music analysis must be reachable through a direct Pages link.');
   assert(pagesRoutes.include.includes('/settings/hidden-songs'), 'Hidden songs settings must use the Pages SPA fallback.');
 
   const env = {
