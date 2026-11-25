@@ -1,3 +1,4 @@
+import { loadYouTubeAPI } from '../../services/youtubeIframeApi';
 /// <reference types="@types/youtube" />
 import { Component, lazy, Suspense, useEffect, useRef, useCallback, useLayoutEffect } from 'react';
 import type { ErrorInfo, ReactNode } from 'react';
@@ -75,17 +76,6 @@ class LazyEmbedBoundary extends Component<{ children: ReactNode }, { failed: boo
 
   render() {
     return this.state.failed ? LAZY_EMBED_FALLBACK : this.props.children;
-  }
-}
-
-// YouTube IFrame API の型
-declare global {
-  interface Window {
-    YT: {
-      Player: new (elementId: string, options: YT.PlayerOptions) => YT.Player;
-      PlayerState: { UNSTARTED: number; ENDED: number; PLAYING: number; PAUSED: number; BUFFERING: number; CUED: number };
-    };
-    onYouTubeIframeAPIReady: () => void;
   }
 }
 
@@ -489,37 +479,6 @@ function NicoEmbed({ pvId, playbackSequence, name, duration: songDuration, isPla
   );
 }
 
-
-let ytApiLoaded = false;
-let ytApiLoading = false;
-
-function loadYouTubeAPI(): Promise<void> {
-  if (ytApiLoaded) return Promise.resolve();
-  if (ytApiLoading) {
-    return new Promise((resolve) => {
-      const check = setInterval(() => {
-        if (ytApiLoaded) {
-          clearInterval(check);
-          resolve();
-        }
-      }, 100);
-    });
-  }
-
-  ytApiLoading = true;
-  return new Promise((resolve) => {
-    const tag = document.createElement('script');
-    tag.src = 'https://www.youtube.com/iframe_api';
-    const firstScript = document.getElementsByTagName('script')[0];
-    firstScript.parentNode?.insertBefore(tag, firstScript);
-
-    window.onYouTubeIframeAPIReady = () => {
-      ytApiLoaded = true;
-      ytApiLoading = false;
-      resolve();
-    };
-  });
-}
 
 export default function PlayerEmbed() {
   const t = useTranslate();

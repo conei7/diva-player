@@ -22,7 +22,7 @@ import {
   watchUnavailableDocumentTitle,
 } from './utils/documentTitle';
 import { shouldRecordPlayback } from './utils/playbackHistory';
-import { isWatchPath } from './utils/routes';
+import { isWatchPath, MUSIC_ANALYSIS_PATH } from './utils/routes';
 import { useLanguageStore } from './stores/languageStore';
 import { loadRoute } from './routes/routeLoaders';
 import type { WatchPageDocumentTitleState } from './pages/WatchPage';
@@ -37,6 +37,7 @@ const PAGE_TITLE_KEYS: Readonly<Record<string, TranslationKey>> = {
   '/chorus-highlights': 'sidebarChorus',
   '/knowledge-map': 'sidebarKnowledgeMap',
   '/sound-map': 'sidebarSoundMap',
+  [MUSIC_ANALYSIS_PATH]: 'sidebarCharts',
 };
 
 // Page chunks are shared with the guide's hover preloading (routes/routeLoaders.ts), which also
@@ -52,6 +53,7 @@ const HiddenSongsPage = lazy(() => loadRoute('hiddenSongs'));
 const ChorusHighlightsPage = lazy(() => loadRoute('chorusHighlights'));
 const KnowledgeMapPage = lazy(() => loadRoute('knowledgeMap'));
 const SoundMapPage = lazy(() => loadRoute('soundMap'));
+const MusicAnalysisPage = lazy(() => loadRoute('charts'));
 // Not needed for the first paint: loaded right after it, outside the initial JavaScript (§1-12).
 const AutoQueueRunner = lazy(() => import('./components/player/AutoQueueRunner'));
 const MediaSession = lazy(() => import('./components/player/MediaSession'));
@@ -249,18 +251,13 @@ function AppContent() {
   useEffect(() => {
     if (isWatchRoute && requestedSongId) {
       const state = watchTitleState?.songId === requestedSongId ? watchTitleState : null;
-      if (state?.status === 'loaded') {
-        document.title = formatDocumentTitle(state.song, language);
-      } else if (state?.status === 'error') {
+      if (state?.status === 'error') {
         document.title = watchUnavailableDocumentTitle(language);
-      } else if (currentSong?.id === requestedSongId) {
-        // Show the locally known song immediately while WatchPage refreshes its
-        // page metadata, then replace it with the fetched page song.
-        document.title = formatDocumentTitle(currentSong, language);
       } else {
-        // A new tab can restore another tab's player state before its own URL
-        // finishes loading. Never label that tab with the unrelated old song.
-        document.title = watchLoadingDocumentTitle(language);
+        // Use the same song's cached title while WatchPage refreshes its metadata.
+        const song = state?.status === 'loaded' ? state.song
+          : currentSong?.id === requestedSongId ? currentSong : null;
+        document.title = song ? formatDocumentTitle(song, language) : watchLoadingDocumentTitle(language);
       }
       return;
     }
@@ -302,6 +299,7 @@ function AppContent() {
           <Route path="/chorus-highlights" element={<ChorusHighlightsPage />} />
           <Route path="/knowledge-map" element={<KnowledgeMapPage />} />
           <Route path="/sound-map" element={<SoundMapPage />} />
+          <Route path={MUSIC_ANALYSIS_PATH} element={<MusicAnalysisPage />} />
           <Route path="/settings/hidden-songs" element={<HiddenSongsPage />} />
           {/* 旧ルートの互換性 */}
           <Route path="/playing" element={<LegacyPlayingRedirect />} />

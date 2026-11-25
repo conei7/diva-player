@@ -11,6 +11,7 @@ const messages = {
     sidebarReports: 'レポート',
     sidebarKnowledgeMap: '網羅率',
     sidebarSoundMap: '曲調マップ',
+    sidebarCharts: 'コード・メロディ',
     sidebarFavoriteProducers: 'フォロー中',
     minutes: '{count}分',
     copied: 'コピーしました',

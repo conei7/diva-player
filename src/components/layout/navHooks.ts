@@ -28,6 +28,7 @@ export function useNavLabels(): { full: Record<NavId, string>; short: Partial<Re
       ratings: tk('sidebarRatings'),
       reports: tk('sidebarReports'),
       soundMap: tk('sidebarSoundMap'),
+      charts: tk('sidebarCharts'),
       knowledgeMap: tk('sidebarKnowledgeMap'),
       hiddenSongs: t('表示しない曲'),
     },

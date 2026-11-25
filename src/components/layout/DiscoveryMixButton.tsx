@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { useTranslate, useTranslateSourceText } from '../../i18n';
-import { usePlayerStore } from '../../stores/playerStore';
-import { useUiStore } from '../../stores/uiStore';
+import { translateSourceText, useTranslate } from '../../i18n';
+import { useLanguageStore } from '../../stores/languageStore';
 import { showToast } from '../../stores/toastStore';
 import { SparkleIcon } from '../ui/iconsChrome';
 import { cx } from '../ui/overlay';
@@ -16,6 +15,7 @@ const RESULT_VISIBLE_MS = 4000;
 
 // The mix builder (recommendation code) is loaded on first use, not with the guide (DESIGN_SPEC §1-12).
 const loadDiscoveryMix = () => import('../../services/discoveryMix');
+const preloadDiscoveryMix = () => void loadDiscoveryMix().catch(() => undefined);
 
 /**
  * 「発掘ミックス」 in the guide's Explore section (DESIGN_SPEC §6.1.3): a guide row that builds a
@@ -31,7 +31,7 @@ export default function DiscoveryMixButton({
   onStarted?: () => void;
 }) {
   const tk = useTranslate();
-  const t = useTranslateSourceText();
+  const language = useLanguageStore(state => state.language);
   const [status, setStatus] = useState<GenerationStatus>({ state: 'idle' });
   const resetTimerRef = useRef<number | undefined>(undefined);
   const busyRef = useRef(false);
@@ -44,35 +44,19 @@ export default function DiscoveryMixButton({
     window.clearTimeout(resetTimerRef.current);
     setStatus({ state: 'loading' });
     try {
-      const { playDiscoveryMix } = await loadDiscoveryMix();
-      const result = await playDiscoveryMix();
-      const count = result.songs.length;
+      const { playDiscoveryMixWithNotice } = await loadDiscoveryMix();
+      const count = await playDiscoveryMixWithNotice(language, inDrawer);
       if (count === 0) {
         setStatus({ state: 'idle' });
-        showToast(tk('discoveryEmpty'), {
-          action: { label: t('フィルター'), onAction: () => useUiStore.getState().openSettings('filter') },
-        });
         return;
       }
       setStatus({ state: 'success', count });
       resetTimerRef.current = window.setTimeout(() => setStatus({ state: 'idle' }), RESULT_VISIBLE_MS);
-      if (inDrawer) {
-        showToast(count === 1 ? t('発掘ミックスを再生中（1曲）') : t('発掘ミックスを再生中（{count}曲）', { count }), {
-          // Opens the queue (never closes it when it is already open).
-          action: {
-            label: t('キュー'),
-            onAction: () => {
-              const player = usePlayerStore.getState();
-              if (!player.queueDrawerOpen) player.toggleQueueDrawer();
-            },
-          },
-        });
-      }
       onStarted?.();
     } catch {
       setStatus({ state: 'idle' });
       showToast(tk('discoveryError'), {
-        action: { label: t('再試行'), onAction: () => void generate() },
+        action: { label: translateSourceText(language, '再試行'), onAction: () => void generate() },
       });
     } finally {
       busyRef.current = false;
@@ -91,8 +75,8 @@ export default function DiscoveryMixButton({
       type="button"
       onClick={() => void generate()}
       // Warm the mix builder before the press, like the guide's page preloading.
-      onPointerEnter={() => void loadDiscoveryMix().catch(() => undefined)}
-      onFocus={() => void loadDiscoveryMix().catch(() => undefined)}
+      onPointerEnter={preloadDiscoveryMix}
+      onFocus={preloadDiscoveryMix}
       aria-label={tk('discoveryAria')}
       aria-busy={loading || undefined}
       className={cx(GUIDE_ROW_CLASS, guideRowStateClass(false), loading ? 'cursor-progress' : 'cursor-pointer')}

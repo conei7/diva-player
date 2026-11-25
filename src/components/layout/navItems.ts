@@ -13,6 +13,7 @@ import {
   HistoryIcon,
   HomeFilledIcon,
   HomeIcon,
+  MusicNoteIcon,
   PersonStarFilledIcon,
   PersonStarIcon,
   PlaylistFilledIcon,
@@ -26,7 +27,7 @@ import type { IconProps } from '../ui/iconsChrome';
 import { WATCH_LATER_ID } from '../../stores/playlistStore';
 import { resetSearchIfLoaded } from '../../stores/searchReset';
 import { useSelectionStore } from '../../stores/selectionStore';
-import { playlistPath, playlistsPath } from '../../utils/routes';
+import { MUSIC_ANALYSIS_PATH, playlistPath, playlistsPath } from '../../utils/routes';
 
 export type NavId =
   | 'home'
@@ -38,6 +39,7 @@ export type NavId =
   | 'ratings'
   | 'reports'
   | 'soundMap'
+  | 'charts'
   | 'knowledgeMap'
   | 'hiddenSongs';
 
@@ -61,6 +63,7 @@ export const NAV_ITEMS: Readonly<Record<NavId, NavItem>> = {
   ratings: { id: 'ratings', to: '/favorites', icon: StarIcon, activeIcon: StarFilledIcon },
   reports: { id: 'reports', to: '/reports', icon: BarChartIcon, activeIcon: BarChartIcon },
   soundMap: { id: 'soundMap', to: '/sound-map', icon: ScatterIcon, activeIcon: ScatterIcon },
+  charts: { id: 'charts', to: MUSIC_ANALYSIS_PATH, icon: MusicNoteIcon, activeIcon: MusicNoteIcon },
   knowledgeMap: { id: 'knowledgeMap', to: '/knowledge-map', icon: TreemapIcon, activeIcon: TreemapIcon },
   hiddenSongs: { id: 'hiddenSongs', to: '/settings/hidden-songs', icon: EyeOffIcon, activeIcon: EyeOffIcon },
 };
@@ -69,7 +72,7 @@ export const NAV_ITEMS: Readonly<Record<NavId, NavItem>> = {
 export const GUIDE_SECTIONS = {
   main: ['home', 'chorus', 'favoriteProducers'],
   library: ['history', 'playlists', 'watchLater', 'ratings', 'reports'],
-  explore: ['soundMap', 'knowledgeMap'],
+  explore: ['soundMap', 'charts', 'knowledgeMap'],
   more: ['hiddenSongs'],
 } as const satisfies Record<string, readonly NavId[]>;
 

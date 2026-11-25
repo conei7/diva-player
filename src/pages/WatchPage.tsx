@@ -48,6 +48,7 @@ import { useTranslate, useTranslateSourceText } from '../i18n';
 import { getProgressiveWindow } from '../utils/progressiveWindow';
 import { getProducerNames } from '../utils/songMeta';
 import { watchPath } from '../utils/routes';
+import { musicAnalysisPath } from '../musicAnalysis/route';
 import { MOBILE_MEDIA_QUERY, useMediaQuery } from '../hooks/useMediaQuery';
 import { useIsMusicLayout } from '../hooks/useMusicLayout';
 import { useMusicBarOnSongPage } from '../components/music/player/playerBarUi';
@@ -124,7 +125,7 @@ export default function WatchPage({ onDocumentTitleStateChange }: WatchPageProps
   const shouldAutoplay = searchParams.get('autoplay') !== '0'
     || getPlaybackOwnership().getState() !== 'remote';
 
-  const { currentSong, setQueue, setRootSeed, resume, pause } = usePlayerStore();
+  const { currentSong, currentPV, setQueue, setRootSeed, resume, pause } = usePlayerStore();
   const currentSongId = currentSong?.id;
   const { ratings } = useRatingStore();
   const { entries, hasHydrated } = useHistoryStore();
@@ -615,6 +616,10 @@ export default function WatchPage({ onDocumentTitleStateChange }: WatchPageProps
   const videoArea = loadingSong || !song
     ? <div aria-hidden="true" className={cx(VIDEO_FRAME_CLASS, 'bg-yt-tonal-solid')} />
     : playable ? <VideoPlayer /> : <NoVideoFrame song={song} />;
+  const youtube = song && currentSongId === song.id && currentPV?.service === 'Youtube'
+    ? currentPV : song?.pvs?.find(pv => !pv.disabled && pv.service === 'Youtube');
+  const key = song?.musicalKey && song.keyMode ? `${song.musicalKey} ${song.keyMode}` : '';
+  const tempo = song?.bpm && song.bpm >= 20 && song.bpm <= 400 ? `${Math.round(song.bpm)} BPM` : '';
 
   const relatedSection = (
     <>
@@ -672,6 +677,19 @@ export default function WatchPage({ onDocumentTitleStateChange }: WatchPageProps
           {song && !loadingSong ? (
             <>
               <VideoInfo song={song} />
+              {(key || tempo || youtube) && (
+                <div className="mt-2 flex flex-wrap items-center gap-2 text-sm max-sm:px-3">
+                  {(key || tempo) && (
+                    <span className="rounded-chip bg-yt-tonal px-2.5 py-1 text-yt-text-secondary" title={t('キー・BPMは楽曲の推定値です。')}>
+                      {[key, tempo].filter(Boolean).join(' · ')}
+                    </span>
+                  )}
+                  {youtube && (
+                    <Link to={musicAnalysisPath(song.name, youtube.pvId)}
+                      className="rounded-chip px-2 py-1 text-yt-link hover:bg-yt-tonal">{t('コード譜を開く')}</Link>
+                  )}
+                </div>
+              )}
               <Description song={song} />
             </>
           ) : (

@@ -1,3 +1,5 @@
+import { MUSIC_ANALYSIS_PATH } from '../utils/routes';
+
 /**
  * Page chunks (DESIGN_SPEC §6.1.5). App renders every page with `lazy(() => loadRoute(key))`;
  * the guide and the bottom nav call `preloadRoute(path)` on hover / focus / touch so the chunk
@@ -17,6 +19,7 @@ const ROUTE_LOADERS = {
   chorusHighlights: () => import('../pages/ChorusHighlightsPage'),
   knowledgeMap: () => import('../pages/KnowledgeMapPage'),
   soundMap: () => import('../pages/SoundMapPage'),
+  charts: () => import('../pages/MusicAnalysisPage'),
 } as const;
 
 export type RouteKey = keyof typeof ROUTE_LOADERS;
@@ -36,6 +39,7 @@ const ROUTE_KEYS_BY_PATH: Readonly<Record<string, RouteKey>> = {
   '/chorus-highlights': 'chorusHighlights',
   '/knowledge-map': 'knowledgeMap',
   '/sound-map': 'soundMap',
+  [MUSIC_ANALYSIS_PATH]: 'charts',
 };
 
 /** The pages warmed after the first paint (home, song page, playlists, history). */

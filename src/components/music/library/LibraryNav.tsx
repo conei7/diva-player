@@ -12,7 +12,7 @@ import { RailTooltip } from './LibraryRow';
 import type { NavLinkHandlers } from './LibraryRow';
 
 /** The main destinations above the library (the rest are library entries or in the footer). */
-const TOP_NAV_ITEMS: readonly NavId[] = ['home', 'chorus', 'soundMap', 'knowledgeMap'];
+const TOP_NAV_ITEMS: readonly NavId[] = ['home', 'chorus', 'soundMap', 'charts', 'knowledgeMap'];
 
 /**
  * 発掘ミックス is the guide's own button (GUIDE_ROW_CLASS). Restyle it from outside to the column's
@@ -30,7 +30,7 @@ const MIX_CAPTION_CLASS = `${MIX_ROW_CLASS} [&>button]:h-14 [&>button]:flex-col 
 const RAIL_CAPTION_CLASS = 'max-w-full truncate text-[10px] leading-[14px]';
 
 /**
- * Top of the library column (does not scroll): ホーム, サビ発掘, 曲調マップ, 網羅率 and the
+ * Top of the library column (does not scroll): ホーム, サビ発掘, 曲調マップ, コード・メロディ, 網羅率 and the
  * 発掘ミックス button. The selected destination has aria-current="page" and its filled icon.
  * On touch tablets the rail shows each name under its icon (there are no tooltips for touch).
  */

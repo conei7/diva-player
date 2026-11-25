@@ -28,6 +28,8 @@ export function playlistsPath(): string {
   return '/playlists';
 }
 
+export const MUSIC_ANALYSIS_PATH = '/music-analysis';
+
 export function playlistPath(id: string): string {
   return `/playlists?list=${encodeURIComponent(id)}`;
 }
