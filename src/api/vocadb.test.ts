@@ -562,3 +562,29 @@ describe('combined Home feed', () => {
     expect(await api.getHomeFeed({ knownIds: [1], seedCandidates: [1], window: 96 })).toBeNull();
   });
 });
+
+describe('combined Home feed on an older API', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('remembers a missing endpoint for an hour instead of asking on every load', async () => {
+    const store = new Map<string, string>();
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => store.get(key) ?? null,
+      setItem: (key: string, value: string) => { store.set(key, value); },
+      removeItem: (key: string) => { store.delete(key); },
+    });
+    const fetchMock = vi.fn(async (input: string | URL | Request) => (
+      String(input).endsWith('/api/ready') ? { ok: true, status: 200 } : { ok: false, status: 404 }));
+    vi.stubGlobal('fetch', fetchMock);
+    vi.resetModules();
+    const api = await import('./vocadb');
+
+    expect(await api.getHomeFeed({ knownIds: [1], seedCandidates: [1], window: 96 })).toBeNull();
+    expect(await api.getHomeFeed({ knownIds: [1], seedCandidates: [1], window: 96 })).toBeNull();
+
+    expect(fetchMock.mock.calls.filter(call => String(call[0]).endsWith('/home-feed'))).toHaveLength(1);
+    expect(Number(store.get(api.HOME_FEED_UNSUPPORTED_UNTIL_KEY))).toBeGreaterThan(Date.now());
+  });
+});

@@ -1203,8 +1203,22 @@ declare global {
  * recommendation windows. The answer primes the caches the regular calls read, so Home's code
  * path stays the same; null (old API, outage) leaves those calls to fetch as before.
  */
+/** Until this time (ms) the API is known not to have the combined endpoint; startup.js reads it too. */
+export const HOME_FEED_UNSUPPORTED_UNTIL_KEY = 'diva-home-feed-unsupported-until';
+const HOME_FEED_UNSUPPORTED_RETRY_MS = 60 * 60 * 1000;
+
+function homeFeedKnownUnsupported(): boolean {
+  try {
+    return Number(localStorage.getItem(HOME_FEED_UNSUPPORTED_UNTIL_KEY) ?? 0) > Date.now();
+  } catch {
+    return false;
+  }
+}
+
 export async function getHomeFeed(request: HomeFeedRequest): Promise<HomeFeed | null> {
   if (request.seedCandidates.length === 0 || request.knownIds.length > 5000) return null;
+  // An older API answers 404: skip the extra round trip for an hour instead of paying it each load.
+  if (homeFeedKnownUnsupported()) return null;
   if (!await isRecommenderAvailable()) return null;
   const body = JSON.stringify(request);
   try {
@@ -1227,6 +1241,12 @@ export async function getHomeFeed(request: HomeFeedRequest): Promise<HomeFeed | 
         headers: { 'Content-Type': 'application/json' },
         body,
       }, 'foreground');
+    }
+    if (response.status === 404 || response.status === 405) {
+      try {
+        localStorage.setItem(HOME_FEED_UNSUPPORTED_UNTIL_KEY, String(Date.now() + HOME_FEED_UNSUPPORTED_RETRY_MS));
+      } catch { /* Storage unavailable: the next load asks again. */ }
+      return null;
     }
     if (!response.ok) return null;
     const data = await response.json() as {

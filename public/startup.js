@@ -49,7 +49,9 @@
   try {
     var body = localStorage.getItem('diva-home-feed-request');
     var seeds = body && JSON.parse(body).seedCandidates;
-    if (Array.isArray(seeds) && seeds.length > 0) {
+    // HOME_FEED_UNSUPPORTED_UNTIL_KEY: an older API without the endpoint is not asked for an hour.
+    var unsupported = Number(localStorage.getItem('diva-home-feed-unsupported-until') || 0) > Date.now();
+    if (!unsupported && Array.isArray(seeds) && seeds.length > 0) {
       var feed = fetch('/backend-api/api/recommend/home-feed', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
