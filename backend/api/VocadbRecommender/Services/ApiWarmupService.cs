@@ -25,7 +25,15 @@ public sealed class ApiWarmupService(
     ApiWarmupState state,
     ILogger<ApiWarmupService> logger) : BackgroundService
 {
-    internal static readonly TimeSpan RefreshInterval = TimeSpan.FromMinutes(5);
+    // Each forced refresh of the seven rankings takes three to four minutes on the SBC. At a
+    // five-minute interval on both slots PostgreSQL was busy with them most of the time, which
+    // slowed every other request and kept a new candidate's warmup past the 180-second rolling
+    // deadline. Rankings are served stale-while-revalidate between refreshes anyway.
+    internal static readonly TimeSpan RefreshInterval = TimeSpan.FromMinutes(30);
+
+    // Readiness waits only for what Home shows and prefetches first; the other rankings warm
+    // up right after, and a request that arrives earlier joins the same computation.
+    internal static readonly string[] ReadinessJobs = ["home-recommended", "home-popular"];
 
     private (string Name, Func<Task> Run)[] CreateJobs(
         bool forceRefresh,
@@ -57,10 +65,11 @@ public sealed class ApiWarmupService(
 
     private async Task<List<string>> RunJobsAsync(
         bool forceRefresh,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Func<string, bool>? include = null)
     {
         var failures = new List<string>();
-        foreach (var job in CreateJobs(forceRefresh, cancellationToken))
+        foreach (var job in CreateJobs(forceRefresh, cancellationToken).Where(job => include?.Invoke(job.Name) ?? true))
         {
             if (cancellationToken.IsCancellationRequested) break;
             try
@@ -85,11 +94,12 @@ public sealed class ApiWarmupService(
 
     private async Task<List<string>> RunMaintenanceJobsAsync(
         bool forceRefresh,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Func<string, bool>? include = null)
     {
         using var maintenanceLease = await maintenanceGate.EnterAsync(cancellationToken);
         using var connectionScope = connectionBudget.EnterMaintenanceScope();
-        return await RunJobsAsync(forceRefresh, cancellationToken);
+        return await RunJobsAsync(forceRefresh, cancellationToken, include);
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -97,7 +107,8 @@ public sealed class ApiWarmupService(
         var stopwatch = Stopwatch.StartNew();
         var failures = await RunMaintenanceJobsAsync(
             forceRefresh: false,
-            cancellationToken: stoppingToken);
+            cancellationToken: stoppingToken,
+            include: ReadinessJobs.Contains);
 
         stopwatch.Stop();
         state.Complete(stopwatch.ElapsedMilliseconds, failures);
@@ -105,6 +116,16 @@ public sealed class ApiWarmupService(
             "api_warmup_completed durationMs={DurationMs} failures={Failures}",
             stopwatch.ElapsedMilliseconds,
             failures.Count);
+
+        var deferredStopwatch = Stopwatch.StartNew();
+        var deferredFailures = await RunMaintenanceJobsAsync(
+            forceRefresh: false,
+            cancellationToken: stoppingToken,
+            include: name => !ReadinessJobs.Contains(name));
+        logger.LogInformation(
+            "api_warmup_deferred_completed durationMs={DurationMs} failures={Failures}",
+            deferredStopwatch.ElapsedMilliseconds,
+            deferredFailures.Count);
 
         using var timer = new PeriodicTimer(RefreshInterval);
         try
