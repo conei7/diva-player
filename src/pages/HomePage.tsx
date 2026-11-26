@@ -10,6 +10,7 @@ import { PREFETCH_OBSERVER_OPTIONS } from '../components/home/infiniteScroll';
 import SearchResults, { type UrlArtist } from '../components/search/SearchResults';
 import MusicHome from '../components/music/home/MusicHome';
 import { useIsMusicLayout } from '../hooks/useMusicLayout';
+import { fetchRecommendationWindow, RECOMMENDATION_WINDOW } from '../utils/recommendationWindow';
 import { attachExternalViews, filterDiscoveryEligibleSongs, getAudioSimilarSongs, getHomeFeed, getRecommendedSongs, getTrendingSongs } from '../api/vocadb';
 import { useHistoryStore } from '../stores/historyStore';
 import { usePlayerStore } from '../stores/playerStore';
@@ -162,22 +163,6 @@ function selectHomeSeedIds(
     .slice(0, limits.recent)
     .map(song => song.id);
   return [...new Set([...preference, ...recent])];
-}
-
-/**
- * The recommender ranks offset+count songs on every call, so Home asks once for the first three
- * pages (24 + 36 + 36) and slices them; the API client keeps that answer for five minutes.
- */
-const HOME_RECOMMENDATION_WINDOW = 96;
-
-async function fetchRecommendationWindow(
-  load: (window: { start: number; count: number }) => Promise<Song[]>,
-  start: number,
-  count: number,
-): Promise<Song[]> {
-  if (start + count > HOME_RECOMMENDATION_WINDOW) return load({ start, count });
-  const songs = await load({ start: 0, count: HOME_RECOMMENDATION_WINDOW });
-  return songs.slice(start, start + count);
 }
 
 function persistStartupRecommendations(songs: Song[]): void {
@@ -561,7 +546,7 @@ function HomeFeed({ ref, belowShelves, intro }: HomeFeedProps) {
             new Set(localPlaylistSongs.map(song => song.id)),
             { preference: 6, recentWindow: 8, recent: 4 },
           ),
-          window: HOME_RECOMMENDATION_WINDOW,
+          window: RECOMMENDATION_WINDOW,
         })
       : null;
     const eligibleKnownSongs = await filterDiscoveryEligibleSongs(knownCandidates);

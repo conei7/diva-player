@@ -1,3 +1,4 @@
+import { fetchRecommendationWindow, RECOMMENDATION_WINDOW } from '../utils/recommendationWindow';
 import { useEffect, useState, useRef, useCallback, useLayoutEffect } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { useSearchParams, Navigate, useNavigate, Link } from 'react-router';
@@ -372,8 +373,16 @@ export default function WatchPage({ onDocumentTitleStateChange }: WatchPageProps
       type SourcePage = [Song[], Song[], Song[]];
       const favoriteWindow = favoriteProducers.slice(0, 2);
       const raw = await Promise.all([
-        getRecommendedSongs(s.id, count, 0.0, ratings, randomOffsetRef.current + start, signal),
-        getAudioSimilarSongs(s.id, count, randomOffsetRef.current + start, signal),
+        (async () => {
+          if (page === 0) {
+            // A seed with a short list keeps its random start inside the list, so the first
+            // page is never empty just because the offset passed the last recommendation.
+            const window = await getRecommendedSongs(s.id, RECOMMENDATION_WINDOW, 0.0, ratings, 0, signal);
+            randomOffsetRef.current = Math.min(randomOffsetRef.current, Math.max(0, window.length - count));
+          }
+          return fetchRecommendationWindow(window => getRecommendedSongs(s.id, window.count, 0.0, ratings, window.start, signal), randomOffsetRef.current + start, count);
+        })(),
+        fetchRecommendationWindow(window => getAudioSimilarSongs(s.id, window.count, window.start, signal), randomOffsetRef.current + start, count),
         Promise.all(favoriteWindow.map(producer =>
           getSongsByProducerFromBackend(s.id, [producer.id], count, start, signal)
             .catch(() => [] as Song[]),
@@ -454,7 +463,7 @@ export default function WatchPage({ onDocumentTitleStateChange }: WatchPageProps
     if (!signal || signal.aborted) return;
     try {
       const { start, count } = getProgressiveWindow(page, FIRST_WATCH_PAGE_SIZE, APPEND_WATCH_PAGE_SIZE, PAGE_SIZE);
-      const deepSongs = await getAudioSimilarSongs(s.id, count, start, signal);
+      const deepSongs = await fetchRecommendationWindow(window => getAudioSimilarSongs(s.id, window.count, window.start, signal), start, count);
       const filtered = filterDiscoverySongs(
         requiresExternalViewCounts(globalFilterSettings) ? await attachExternalViews(deepSongs) : deepSongs,
         count,

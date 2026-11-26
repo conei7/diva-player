@@ -972,7 +972,9 @@ try {
           if (/Pagination (?:[0-9]|[1-3][0-9])(?:\D|$)/.test(text)) throw new Error(`Excluded cover appeared: ${text}`);
         }
         const pages = requests.filter(request => request.path.endsWith(endpoint));
-        if (pages.length < 2) throw new Error(`Stopped on a filtered page: ${JSON.stringify({ tab, exhausted, requests })}`);
+        // Recommendation and audio tabs slice one 96-song window, so later pages need no request.
+        const minimumRequests = endpoint === '/audio' || endpoint === '/recommend' ? 1 : 2;
+        if (pages.length < minimumRequests) throw new Error(`Stopped on a filtered page: ${JSON.stringify({ tab, exhausted, requests })}`);
         if (pages.length > 5) throw new Error(`Pagination failed to terminate: ${JSON.stringify(pages)}`);
         console.log(`PASS ${tab}: continues past excluded pages${exhausted ? ' and stops at source exhaustion' : ' to original songs'}`);
       } finally {
