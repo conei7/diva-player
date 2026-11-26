@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router';
 import { useTranslateSourceText } from '../../i18n';
-import { DEGREES, QUALITIES, noteHz, noteName, searchCharts, type Chart, type Chord, type SearchPattern } from '../../musicAnalysis/chart';
+import { CHART_QUALITIES, DEGREES, noteHz, noteName, searchCharts, type Chart, type Chord, type SearchPattern } from '../../musicAnalysis/chart';
 import { formatClockDuration } from '../../utils/songMeta';
 import { searchPath } from '../../utils/routes';
 import Button from '../ui/Button';
@@ -60,10 +60,13 @@ export default function ChartSearch({ charts, selected, onSelect }: {
     );
   }
 
-  const pattern: SearchPattern = mode === 'chords' ? { kind: mode, chords }
-    : mode === 'melody' ? { kind: mode, notes } : { kind: mode };
   const enough = mode === 'title' || (mode === 'chords' ? chords.length >= 2 : notes.length >= 4);
-  const results = enough ? searchCharts(charts, query, pattern) : [];
+  const results = useMemo(() => {
+    if (!enough) return [];
+    const pattern: SearchPattern = mode === 'chords' ? { kind: mode, chords }
+      : mode === 'melody' ? { kind: mode, notes } : { kind: mode };
+    return searchCharts(charts, query, pattern);
+  }, [charts, query, mode, chords, notes, enough]);
   return (
     <section className="min-w-0 rounded-panel border border-yt-outline bg-yt-tonal-solid p-4 sm:p-5" aria-label={t('曲を探す')}>
       <div className="flex flex-wrap gap-1.5" role="group" aria-label={t('探し方')}>
@@ -91,7 +94,7 @@ export default function ChartSearch({ charts, selected, onSelect }: {
             {t('コードの種類')}
             <select value={quality} onChange={event => setQuality(event.target.value as Chord['quality'])}
               className="rounded-row border border-yt-outline bg-yt-bg p-1.5">
-              {QUALITIES.map(value => <option value={value} key={value}>{value || t('メジャー')}</option>)}
+              {CHART_QUALITIES.map(value => <option value={value} key={value}>{value || t('メジャー')}</option>)}
             </select>
           </label>
           <div className="flex flex-wrap gap-1" role="group" aria-label={t('度数を追加')}>
@@ -112,7 +115,8 @@ export default function ChartSearch({ charts, selected, onSelect }: {
       )}
       {mode === 'melody' && (
         <div className="mb-4 grid gap-3 rounded-row border border-yt-outline p-3">
-          <p className="text-xs text-yt-text-secondary">{t('鍵盤で4音以上入力してください。キーが違っても音程の並びで探せます。')}</p>
+          <p className="text-xs text-yt-text-secondary">{t('鍵盤で4音以上入力してください。キーが違っても音程の並びで探せます。')}
+            {' '}{t('6音以上なら、1音の違いも探せます。')}</p>
           <div className="flex flex-wrap gap-1.5">
             <Button size="sm" variant="outline" onClick={() => setNotes([72, 76, 79, 77])}>{t('試聴曲のメロディ')}</Button>
             <Button size="sm" aria-label={t('1オクターブ下')} disabled={octave === -2} onClick={() => setOctave(octave - 1)}>−8va</Button>
@@ -138,7 +142,7 @@ export default function ChartSearch({ charts, selected, onSelect }: {
       </div>
       {enough && !results.length && <p className="pt-3 text-sm text-yt-text-secondary">{t('一致するコード譜がありません。')}</p>}
       <ul className="max-h-[22rem] overflow-y-auto">
-        {results.map(({ chart, start }) => (
+        {results.map(({ chart, start, approximate }) => (
           <li key={chart.id} className="border-b border-yt-outline last:border-b-0">
             <button type="button" aria-current={chart.id === selected ? 'true' : undefined}
               className="flex w-full cursor-pointer items-center justify-between gap-2 rounded-row p-2.5 text-left hover:bg-yt-tonal-hover"
@@ -147,7 +151,10 @@ export default function ChartSearch({ charts, selected, onSelect }: {
                 <span className="block truncate text-sm font-semibold">{chart.title}</span>
                 {(chart.artist || chart.id === 'demo') && <span className="block truncate text-xs text-yt-text-secondary">{chart.artist || t('試聴曲')}</span>}
               </span>
-              <span className="shrink-0 text-xs tabular-nums text-yt-text-secondary">{mode === 'title' ? chart.bpm && `${chart.bpm} BPM` : formatClockDuration(start)}</span>
+              <span className="shrink-0 text-right text-xs tabular-nums text-yt-text-secondary">
+                {mode === 'title' ? chart.bpm && `${chart.bpm} BPM` : formatClockDuration(start)}
+                {approximate && <span className="block">{t('近い候補')}</span>}
+              </span>
             </button>
           </li>
         ))}

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { analyzeSamples } from './analyze';
-import { activeSegment, chordName, pitchClass, searchCharts, youtubeVideoId } from './chart';
+import { activeSegment, chartTime, chordName, keyAt, pitchClass, searchCharts, videoTime, youtubeVideoId, type Chart } from './chart';
+import { parseChartFile, serializeChartFile } from './chartFile';
 import { demoWav, DEMO_CHART } from './localAudio';
 
 describe('music analysis', () => {
@@ -23,6 +24,57 @@ describe('music analysis', () => {
     expect(searchCharts([DEMO_CHART], '', { kind: 'melody', notes: pitches })[0]?.start).toBe(2);
     expect(searchCharts([DEMO_CHART], '', { kind: 'melody', notes: pitches.slice(0, 3) })).toEqual([]);
     expect(searchCharts([DEMO_CHART], '別の曲', { kind: 'melody', notes: pitches })).toEqual([]);
+  });
+
+  it('ranks exact melodies ahead of one-note differences and keeps short queries exact', () => {
+    const notes = [60, 64, 67, 65, 62, 59];
+    const base = (id: string, pitches: number[]): Chart => ({
+      ...DEMO_CHART, id, melody: pitches.map((value, index) => ({ start: index / 2, end: (index + 1) / 2, value })),
+    });
+    const changed = base('changed', [60, 64, 67, 66, 62, 59]);
+    const omitted = base('omitted', [60, 64, 67, 62, 59]);
+    const extra = base('extra', [60, 64, 67, 73, 65, 62, 59]);
+    const exact = base('exact', notes.map(note => note + 2));
+    const wrong = base('wrong', [60, 64, 76, 81, 62, 59]);
+    expect(searchCharts([changed, omitted, wrong, extra, exact], '', { kind: 'melody', notes })
+      .map(result => [result.chart.id, result.approximate, result.start])).toEqual([
+      ['exact', false, 0], ['changed', true, 0], ['omitted', true, 0], ['extra', true, 0],
+    ]);
+    expect(searchCharts([changed], '', { kind: 'melody', notes: notes.slice(0, 5) })).toEqual([]);
+    const gap = { ...extra, melody: extra.melody.map((note, i) => i > 2 ? { ...note, start: note.start + 1, end: note.end + 1 } : note) };
+    expect(searchCharts([gap], '', { kind: 'melody', notes })).toEqual([]);
+  });
+
+  it('preserves extended harmony, the newer key, and both directions of video alignment', () => {
+    const chart: Chart = {
+      ...DEMO_CHART, videoId: 'Y_I_NOHVwzI', videoOffset: 1.5, videoRate: 1.025,
+      keys: [{ start: 4, end: 8, value: { root: 9, mode: 'minor' } }],
+      chords: [{ start: 4, end: 6, value: { root: 9, quality: 'm9', bass: 0 }, review: true },
+        { start: 6, end: 8, value: { root: 4, quality: '7' } }],
+      audioSha256: 'f'.repeat(64),
+    };
+    const { id, ...data } = chart;
+    const imported = parseChartFile(JSON.parse(serializeChartFile(chart)));
+    expect(imported).toEqual(data);
+    expect(id).toBe('demo');
+    expect(chordName(imported.chords[0].value)).toBe('Am9/C');
+    expect(keyAt(imported, 6)).toEqual({ root: 9, mode: 'minor' });
+    expect(keyAt(imported, 8)).toEqual(DEMO_CHART.key);
+    expect(searchCharts([chart], '', { kind: 'chords', chords: [{ root: 0, quality: 'm9' }, { root: 7, quality: '7' }] })[0]?.start).toBe(4);
+    expect(videoTime(chart, 12)).toBeCloseTo(13.8);
+    expect(chartTime(chart, 13.8)).toBeCloseTo(12);
+    expect(chartTime(DEMO_CHART, 12)).toBe(12);
+  });
+
+  it('rejects malformed and overlapping timelines or foreign video URLs before import', () => {
+    const data = JSON.parse(serializeChartFile(DEMO_CHART));
+    for (const invalid of [
+      { schema: 'foreign' }, { duration: Infinity }, { videoId: 'https://example.org/123' },
+      { videoRate: 0 }, { videoRate: 1.01 }, { audioSha256: 'unknown' }, { bpm: '120' },
+      { chords: [DEMO_CHART.chords[0], { ...DEMO_CHART.chords[1], start: 1 }] },
+      { chords: [{ start: 0, end: 2, value: { root: 0, quality: 'unknown' } }] },
+      { melody: [{ start: 0, end: 1, value: 128 }] },
+    ]) expect(() => parseChartFile({ ...data, ...invalid })).toThrow(TypeError);
   });
 
   it('handles time before, between, and after chord regions', () => {

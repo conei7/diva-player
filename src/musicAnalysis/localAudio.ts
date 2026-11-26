@@ -123,7 +123,7 @@ export function demoWav() {
   for (const { start, end, value } of DEMO_CHART.chords) {
     const first = Math.round(start * SAMPLE_RATE);
     const root = 48 + (value.root > 5 ? value.root - 12 : value.root);
-    const harmony = CHORD_INTERVALS[QUALITIES.indexOf(value.quality)].map(interval => noteHz(root + interval));
+    const harmony = CHORD_INTERVALS[QUALITIES.findIndex(quality => quality === value.quality)].map(interval => noteHz(root + interval));
     for (let i = first; i < end * SAMPLE_RATE; i++) {
       const t = (i - first) / SAMPLE_RATE;
       const beat = Math.floor(i * 2 / SAMPLE_RATE);

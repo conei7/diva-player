@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ChangeEvent } from 'react';
 import { useTranslateSourceText } from '../../i18n';
-import { activeSegment, chordName, DEGREES, NOTE_NAMES, pitchClass, type Chart } from '../../musicAnalysis/chart';
+import { activeSegment, chartTime, chordName, DEGREES, keyAt, NOTE_NAMES, pitchClass, videoTime, type Chart } from '../../musicAnalysis/chart';
 import { demoWav, MAX_FILE_BYTES } from '../../musicAnalysis/localAudio';
 import { loadYouTubeAPI } from '../../services/youtubeIframeApi';
 import { usePlayerStore } from '../../stores/playerStore';
@@ -23,6 +23,7 @@ export default function ChartPlayer({ chart, file, jump, onAttach }: {
   const video = useRef<YT.Player | null>(null);
   const [videoReady, setVideoReady] = useState(false);
   const [mediaError, setMediaError] = useState(false);
+  const [attachmentError, setAttachmentError] = useState('');
   const [time, setTime] = useState(-1);
   const [localJump, setLocalJump] = useState<{ request: ChartJump; start: number } | null>(null);
   const [retry, setRetry] = useState(0);
@@ -32,7 +33,7 @@ export default function ChartPlayer({ chart, file, jump, onAttach }: {
   const segment = chart.chords[active];
   const target = localJump?.request === jump ? localJump.start : jump.start;
   const videoId = chart.videoId;
-  const offset = chart.videoOffset;
+  const key = keyAt(chart, time);
 
   useEffect(() => {
     const element = audio.current;
@@ -99,10 +100,10 @@ export default function ChartPlayer({ chart, file, jump, onAttach }: {
     if (!videoReady) return;
     const timer = window.setInterval(() => {
       const seconds = video.current?.getCurrentTime();
-      if (typeof seconds === 'number' && Number.isFinite(seconds)) setTime(seconds - offset);
+      if (typeof seconds === 'number' && Number.isFinite(seconds)) setTime(chartTime(chart, seconds));
     }, 100);
     return () => clearInterval(timer);
-  }, [offset, videoReady]);
+  }, [chart, videoReady]);
 
   useEffect(() => usePlayerStore.subscribe((state, previous) => {
     if (!state.isPlaying || previous.isPlaying) return;
@@ -123,14 +124,14 @@ export default function ChartPlayer({ chart, file, jump, onAttach }: {
   useEffect(() => {
     const player = video.current;
     if (!videoReady || !player || !videoId) return;
-    const seconds = Math.max(0, target + offset);
+    const seconds = Math.max(0, videoTime(chart, target));
     const state = player.getPlayerState();
     if (state === window.YT.PlayerState.UNSTARTED || state === window.YT.PlayerState.CUED) {
       if (seconds > 0 || player.getCurrentTime() > 0) player.cueVideoById({ videoId, startSeconds: seconds });
     } else {
       player.seekTo(seconds, true);
     }
-  }, [jump, localJump, offset, target, videoId, videoReady]);
+  }, [chart, jump, localJump, target, videoId, videoReady]);
 
   useEffect(() => {
     const container = rail.current;
@@ -143,6 +144,32 @@ export default function ChartPlayer({ chart, file, jump, onAttach }: {
 
   const canJump = videoReady || Boolean(file) || chart.id === 'demo';
   const next = active >= 0 ? chart.chords[active + 1] : chart.chords.find(item => item.start > time);
+
+  async function attachAudio(event: ChangeEvent<HTMLInputElement>) {
+    const input = event.currentTarget;
+    const original = input.files?.[0];
+    setAttachmentError('');
+    if (!original) return;
+    if (!original.size || original.size > MAX_FILE_BYTES) {
+      setAttachmentError('40 MB以下の音源ファイルを選んでください。');
+      return;
+    }
+    if (chart.audioSha256 && crypto.subtle) {
+      try {
+        const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', await original.arrayBuffer()));
+        if (!input.isConnected || input.files?.[0] !== original) return;
+        const hash = Array.from(digest, byte => byte.toString(16).padStart(2, '0')).join('');
+        if (hash !== chart.audioSha256) {
+          setAttachmentError('コード譜と同じ音源ファイルを選んでください。');
+          return;
+        }
+      } catch {
+        if (input.isConnected && input.files?.[0] === original) setAttachmentError('この音源を再生できませんでした。');
+        return;
+      }
+    }
+    onAttach(original);
+  }
   return (
     <section className="min-w-0 overflow-hidden rounded-panel border border-yt-outline bg-yt-tonal-solid" aria-label={t('コード譜')}>
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-yt-outline px-4 py-4 sm:px-5">
@@ -151,7 +178,7 @@ export default function ChartPlayer({ chart, file, jump, onAttach }: {
           {chart.artist && <p className="mt-1 text-sm text-yt-text-secondary">{chart.artist}</p>}
         </div>
         <dl className="flex flex-wrap gap-4 text-sm tabular-nums">
-          <div><dt className="text-xs text-yt-text-secondary">{t('キー')}</dt><dd className="font-semibold">{chart.key ? `${NOTE_NAMES[chart.key.root]} ${chart.key.mode}` : '—'}</dd></div>
+          <div><dt className="text-xs text-yt-text-secondary">{t('キー')}</dt><dd className="font-semibold">{key ? `${NOTE_NAMES[key.root]} ${key.mode}` : '—'}</dd></div>
           <div><dt className="text-xs text-yt-text-secondary">BPM</dt><dd className="font-semibold">{chart.bpm ?? '—'}</dd></div>
           <div><dt className="text-xs text-yt-text-secondary">{t('再生位置')}</dt><dd className="font-semibold">{formatClockDuration(Math.max(0, time))}</dd></div>
         </dl>
@@ -188,17 +215,9 @@ export default function ChartPlayer({ chart, file, jump, onAttach }: {
       ) : (
         <label className="block p-4 text-sm">
           <span className="mb-2 block">{t('再生するには、解析に使った音源を選んでください。')}</span>
-          <input type="file" accept="audio/*,.flac,.m4a,.mp3,.wav,.ogg" onChange={event => {
-            const original = event.currentTarget.files?.[0];
-            if (!original) return;
-            if (original.size > MAX_FILE_BYTES) {
-              event.currentTarget.setCustomValidity(t('40 MB以下の音源ファイルを選んでください。'));
-              event.currentTarget.reportValidity();
-              return;
-            }
-            event.currentTarget.setCustomValidity('');
-            onAttach(original);
-          }} className="w-full text-yt-text-secondary file:mr-3 file:rounded-full file:border-0 file:bg-yt-tonal-hover file:px-3 file:py-1.5 file:text-yt-text" />
+          <input type="file" accept="audio/*,.flac,.m4a,.mp3,.wav,.ogg" onChange={attachAudio}
+            className="w-full text-yt-text-secondary file:mr-3 file:rounded-full file:border-0 file:bg-yt-tonal-hover file:px-3 file:py-1.5 file:text-yt-text" />
+          {attachmentError && <span className="mt-2 block" role="alert">{t(attachmentError)}</span>}
         </label>
       )}
       <div className="px-4 pb-4 pt-2 sm:px-5">
@@ -208,6 +227,7 @@ export default function ChartPlayer({ chart, file, jump, onAttach }: {
               <div className="min-w-20">
                 <p className="text-xs text-yt-text-secondary">{t('演奏中のコード')}</p>
                 <p className="text-2xl font-bold">{segment ? chordName(segment.value) : '—'}</p>
+                {segment?.review && <p className="text-xs text-yt-text-secondary">{t('要確認')}</p>}
               </div>
               {next && (
                 <div className="border-l border-yt-outline pl-4">
@@ -217,7 +237,9 @@ export default function ChartPlayer({ chart, file, jump, onAttach }: {
               )}
             </div>
             <div ref={rail} className="relative flex gap-1.5 overflow-x-auto pb-2" aria-label={t('コードのタイムライン')}>
-              {chart.chords.map(({ start, value }, i) => (
+              {chart.chords.map(({ start, end, value, review }, i) => {
+                const tonic = keyAt(chart, (start + end) / 2);
+                return (
                 <button key={start} ref={i === active ? activeButton : undefined} type="button"
                   aria-current={i === active ? 'true' : undefined}
                   disabled={!canJump}
@@ -225,9 +247,11 @@ export default function ChartPlayer({ chart, file, jump, onAttach }: {
                   className={cx('grid min-w-16 shrink-0 gap-1 rounded-row border px-2.5 py-2 text-left tabular-nums enabled:cursor-pointer',
                     i === active ? 'border-yt-inverse bg-yt-inverse text-yt-on-inverse' : 'border-yt-outline enabled:hover:bg-yt-tonal-hover')}>
                   <span className="font-bold">{chordName(value)}</span>
-                  <span className="text-xs opacity-80">{formatClockDuration(start)}{chart.key ? ` · ${DEGREES[pitchClass(value.root - chart.key.root)]}${value.quality}` : ''}</span>
+                  <span className="text-xs opacity-80">{formatClockDuration(start)}{tonic ? ` · ${DEGREES[pitchClass(value.root - tonic.root)]}${value.quality}` : ''}</span>
+                  {review && <span className="text-xs opacity-80">{t('要確認')}</span>}
                 </button>
-              ))}
+                );
+              })}
             </div>
           </>
         ) : <p className="text-sm text-yt-text-secondary">{t('コードを推定できませんでした。')}</p>}
