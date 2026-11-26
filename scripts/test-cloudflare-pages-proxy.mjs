@@ -596,7 +596,7 @@ try {
     const url = new URL(String(target));
     const cacheControl = url.pathname.endsWith('/api/recommend')
       ? 'public, max-age=0, s-maxage=120'
-      : 'no-store';
+      : url.pathname.endsWith('/api/songs/trending') ? '' : 'no-store';
     return new Response(JSON.stringify({ items: [] }), {
       status: 200,
       headers: { 'content-type': 'application/json', 'cache-control': cacheControl },
@@ -628,6 +628,12 @@ try {
     await call('/api/recommend/home-feed', { method: 'POST', body: '{}', headers: { 'content-type': 'application/json' } });
     await call('/api/recommend/home-feed', { method: 'POST', body: '{}', headers: { 'content-type': 'application/json' } });
     assert.equal(originCalls.filter(item => item.method === 'POST').length, 2, 'POST requests must never be cached.');
+    // An older API sends no cache headers: shared read-only paths are still kept.
+    await call('/api/songs/trending?days=7');
+    await Promise.all(waits);
+    const trending = await call('/api/songs/trending?days=7');
+    assert.equal(trending.headers.get('x-diva-edge-cache'), 'hit');
+    assert.equal(originCalls.filter(item => item.target.includes('/api/songs/trending')).length, 1);
     console.log('PASS edge cache keeps only public GET responses');
   } finally {
     globalThis.fetch = previousFetch;

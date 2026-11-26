@@ -143,11 +143,26 @@ async function fetchOrigin(target, init, incomingSignal) {
 const EDGE_CACHEABLE = /(?:^|,)\s*public\s*(?:,|$)/i;
 const EDGE_MAX_AGE = /(?:^|,)\s*s-maxage=(\d+)/i;
 
-function isEdgeCacheable(response) {
-  if (response.status !== 200 || response.headers.has('set-cookie')) return false;
+// Read-only GET endpoints whose answer depends only on the URL, never on the caller. They are
+// kept for EDGE_DEFAULT_SECONDS even when an older API sends no cache headers. Personal or
+// policy answers (discovery-eligibility, health, playlists) are not listed and never stored.
+const EDGE_DEFAULT_SECONDS = 120;
+const EDGE_SHARED_PATHS = /^\/backend-api\/api\/(?:recommend(?:\/(?:audio|similar|producer|metadata))?|songs\/(?:search|trending|batch|details|views)|search\/tags)$/;
+const EDGE_REFUSED = /(?:^|,)\s*(?:no-store|private|no-cache)\s*(?:,|$)/i;
+
+function edgeLifetime(pathname, response) {
+  if (response.status !== 200 || response.headers.has('set-cookie')) return 0;
   const cacheControl = response.headers.get('cache-control') ?? '';
+  if (EDGE_REFUSED.test(cacheControl)) return 0;
   const maxAge = Number(cacheControl.match(EDGE_MAX_AGE)?.[1] ?? 0);
-  return EDGE_CACHEABLE.test(cacheControl) && maxAge > 0 && maxAge <= 600;
+  if (EDGE_CACHEABLE.test(cacheControl) && maxAge > 0) return Math.min(maxAge, 600);
+  return EDGE_SHARED_PATHS.test(pathname) ? EDGE_DEFAULT_SECONDS : 0;
+}
+
+function storedCopy(response, seconds) {
+  const headers = new Headers(response.headers);
+  headers.set('Cache-Control', `public, max-age=0, s-maxage=${seconds}`);
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }
 
 function edgeCache() {
@@ -185,8 +200,9 @@ export async function onRequest({ request, env, waitUntil }) {
   if (!response) {
     return observableResponse(Response.json({ error: 'API origin unavailable' }, { status: 502 }));
   }
-  if (cache && isEdgeCacheable(response)) {
-    const stored = cache.put(cacheKey, response.clone()).catch(() => undefined);
+  const lifetime = cache ? edgeLifetime(incoming.pathname, response) : 0;
+  if (lifetime > 0) {
+    const stored = cache.put(cacheKey, storedCopy(response.clone(), lifetime)).catch(() => undefined);
     if (typeof waitUntil === 'function') waitUntil(stored);
     return withEdgeStatus(response, 'miss');
   }
