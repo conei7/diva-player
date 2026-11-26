@@ -2,6 +2,9 @@ const LEGACY_TUNNEL_KEY = 'quick_tunnel_url';
 const PRIMARY_TUNNEL_KEY = 'quick_tunnel_primary_url';
 const QUICK_TUNNEL_PATTERN = /^https:\/\/[a-z0-9-]+\.trycloudflare\.com$/i;
 const ORIGIN_TIMEOUT_MS = 15_000;
+// A cold recommendation under load can take the SBC longer than 15 seconds. Waiting for it lets
+// the edge keep the answer, so the next listener with the same seed gets it at once.
+const RECOMMENDATION_ORIGIN_TIMEOUT_MS = 40_000;
 
 function configurationError(message) {
   return Response.json({ error: message }, { status: 503 });
@@ -126,8 +129,8 @@ function observableResponse(response) {
   });
 }
 
-async function fetchOrigin(target, init, incomingSignal) {
-  const timeoutSignal = AbortSignal.timeout(ORIGIN_TIMEOUT_MS);
+async function fetchOrigin(target, init, incomingSignal, timeoutMs = ORIGIN_TIMEOUT_MS) {
+  const timeoutSignal = AbortSignal.timeout(timeoutMs);
   const signal = incomingSignal
     ? AbortSignal.any([incomingSignal, timeoutSignal])
     : timeoutSignal;
@@ -201,7 +204,9 @@ export async function onRequest({ request, env, waitUntil }) {
     headers,
     body: request.method === 'GET' || request.method === 'HEAD' ? undefined : request.body,
     redirect: 'manual',
-  }, request.signal).catch(() => null);
+  }, request.signal, request.method === 'GET' && EDGE_RECOMMENDATION_PATHS.test(incoming.pathname)
+    ? RECOMMENDATION_ORIGIN_TIMEOUT_MS
+    : ORIGIN_TIMEOUT_MS).catch(() => null);
   if (!response) {
     return observableResponse(Response.json({ error: 'API origin unavailable' }, { status: 502 }));
   }

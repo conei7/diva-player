@@ -634,6 +634,17 @@ try {
     const trending = await call('/api/songs/trending?days=7');
     assert.equal(trending.headers.get('x-diva-edge-cache'), 'hit');
     assert.equal(originCalls.filter(item => item.target.includes('/api/songs/trending')).length, 1);
+    // Cold recommendations get longer to answer so the edge can keep them; everything else keeps 15s.
+    const timeouts = [];
+    const realTimeout = AbortSignal.timeout;
+    AbortSignal.timeout = milliseconds => { timeouts.push(milliseconds); return realTimeout.call(AbortSignal, milliseconds); };
+    try {
+      await call('/api/recommend/audio?songId=2&count=96&offset=0');
+      await call('/api/songs/discovery-eligibility?ids=2');
+    } finally {
+      AbortSignal.timeout = realTimeout;
+    }
+    assert.deepEqual(timeouts, [40_000, 15_000]);
     console.log('PASS edge cache keeps only public GET responses');
   } finally {
     globalThis.fetch = previousFetch;
