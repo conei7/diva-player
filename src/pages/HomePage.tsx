@@ -138,6 +138,23 @@ function asHomeCategoryId(id: string): HomeCategoryId {
 }
 
 /**
+ * A cold recommendation can take the SBC many seconds. The page does not wait longer than this:
+ * it shows the other sources now, and the request keeps running to fill the cache, so the next
+ * page (or the next visit) gets the recommendations.
+ */
+const HOME_RECOMMENDATION_WAIT_MS = 4_000;
+
+function settleWithin(promise: Promise<Song[]>, waitMs = HOME_RECOMMENDATION_WAIT_MS): Promise<Song[]> {
+  return new Promise(resolve => {
+    const timer = setTimeout(() => resolve([]), waitMs);
+    promise.then(
+      songs => { clearTimeout(timer); resolve(songs); },
+      () => { clearTimeout(timer); resolve([]); },
+    );
+  });
+}
+
+/**
  * Home's seed choice: favourite-like known songs first (rated 3+, finished twice, or saved),
  * then the latest plays. The playing song is never a seed.
  */
@@ -578,12 +595,10 @@ function HomeFeed({ ref, belowShelves, intro }: HomeFeedProps) {
     // after fetching only eight.
     const optionalSources = Promise.all([
           Promise.all(discoverySeedIds.map(seedId =>
-            fetchRecommendationWindow(window => getRecommendedSongs(seedId, window.count, 0.0, ratings, window.start), start, count)
-              .catch(() => [] as Song[])
+            settleWithin(fetchRecommendationWindow(window => getRecommendedSongs(seedId, window.count, 0.0, ratings, window.start), start, count))
           )),
           Promise.all(audioSeedIds.map(seedId =>
-            fetchRecommendationWindow(window => getAudioSimilarSongs(seedId, window.count, window.start), start, count)
-              .catch(() => [] as Song[])
+            settleWithin(fetchRecommendationWindow(window => getAudioSimilarSongs(seedId, window.count, window.start), start, count))
           )),
           favoritePromise,
         ]);
