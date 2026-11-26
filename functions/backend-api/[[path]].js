@@ -147,7 +147,11 @@ const EDGE_MAX_AGE = /(?:^|,)\s*s-maxage=(\d+)/i;
 // kept for EDGE_DEFAULT_SECONDS even when an older API sends no cache headers. Personal or
 // policy answers (discovery-eligibility, health, playlists) are not listed and never stored.
 const EDGE_DEFAULT_SECONDS = 120;
-const EDGE_SHARED_PATHS = /^\/backend-api\/api\/(?:recommend(?:\/(?:audio|similar|producer|metadata))?|songs\/(?:search|trending|batch|details|views)|search\/tags)$/;
+// Recommendations change only when the pipeline publishes a new generation (about daily), and a
+// cold one costs the SBC seconds. Home rechecks every candidate's eligibility itself.
+const EDGE_RECOMMENDATION_SECONDS = 600;
+const EDGE_RECOMMENDATION_PATHS = /^\/backend-api\/api\/recommend(?:\/(?:audio|similar|producer|metadata))?$/;
+const EDGE_SHARED_PATHS = /^\/backend-api\/api\/(?:songs\/(?:search|trending|batch|details|views)|search\/tags)$/;
 const EDGE_REFUSED = /(?:^|,)\s*(?:no-store|private|no-cache)\s*(?:,|$)/i;
 
 function edgeLifetime(pathname, response) {
@@ -156,6 +160,7 @@ function edgeLifetime(pathname, response) {
   if (EDGE_REFUSED.test(cacheControl)) return 0;
   const maxAge = Number(cacheControl.match(EDGE_MAX_AGE)?.[1] ?? 0);
   if (EDGE_CACHEABLE.test(cacheControl) && maxAge > 0) return Math.min(maxAge, 600);
+  if (EDGE_RECOMMENDATION_PATHS.test(pathname)) return EDGE_RECOMMENDATION_SECONDS;
   return EDGE_SHARED_PATHS.test(pathname) ? EDGE_DEFAULT_SECONDS : 0;
 }
 
