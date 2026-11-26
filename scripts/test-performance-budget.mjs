@@ -5,7 +5,7 @@ import { readFile, stat } from 'node:fs/promises';
 const PAGE_TIMEOUT_MS = Number(process.env.PERF_BUDGET_TIMEOUT_MS ?? 45_000);
 const HISTORY_METADATA_DELAY_MS = 5_000;
 const BUDGETS_MS = {
-  'home.revisit-fresh-feed': 3_500,
+  'home.revisit-fresh-feed': 2_000,
   'home.first-card': 1_500,
   'home.first-content': 1_500,
   'home.load': 6_000,
@@ -298,6 +298,24 @@ async function installApiFixtures(page, counters) {
       } else {
         body = { items: [fixtureSong, fixtureSongForId(2502), fixtureSongForId(2503)], totalCount: 3 };
       }
+    } else if (path.endsWith('/api/recommend/home-feed')) {
+      counters.homeFeedRequests = (counters.homeFeedRequests ?? 0) + 1;
+      const feedRequest = JSON.parse(request.postData() || '{}');
+      const seeds = (feedRequest.seedCandidates ?? []).slice(0, 2);
+      const window = Number(feedRequest.window ?? 96);
+      const recommendations = seeds.map((seed, index) => ({
+        seed,
+        ids: Array.from({ length: window }, (_, offset) => 500_001 + index * 1000 + offset),
+      }));
+      const audioIds = seeds.length > 0 ? Array.from({ length: 24 }, (_, offset) => 730_001 + offset) : [];
+      const ids = [...new Set([...recommendations.flatMap(item => item.ids), ...audioIds])];
+      body = {
+        seeds,
+        ineligibleIds: [],
+        recommendations,
+        audio: { seed: seeds[0] ?? 0, ids: audioIds },
+        cards: ids.map(fixtureSongForId),
+      };
     } else if (path.includes('/api/recommend/metadata')) {
       counters.watchMetadataRequests += 1;
       const count = Number(url.searchParams.get('count') ?? 12);
@@ -527,16 +545,17 @@ async function assertRevisitFeedLatency(browser, baseUrl) {
     const count = name => firstVisit.filter(path => path === name).length;
     assert(freshFeedMs <= BUDGETS_MS['home.revisit-fresh-feed'],
       `Fresh personal mix took ${freshFeedMs}ms (budget ${BUDGETS_MS['home.revisit-fresh-feed']}ms): ${JSON.stringify(firstVisit)}`);
-    assert(count('recommend') <= 2 && count('recommend/audio') <= 1,
-      `Home pages asked the recommender again instead of slicing its window: ${JSON.stringify(firstVisit)}`);
-    const libraryChunks = Math.ceil(2150 / 500);
-    assert(count('songs/discovery-eligibility') <= libraryChunks + 4,
-      `Known songs were rechecked for every page: ${JSON.stringify(firstVisit)}`);
+    assert(count('recommend/home-feed') === 1 && count('recommend') === 0 && count('recommend/audio') === 0,
+      `Home's first page must get its recommendations from one combined request: ${JSON.stringify(firstVisit)}`);
+    assert(count('songs/discovery-eligibility') <= 3,
+      `Known songs were checked again after the combined request: ${JSON.stringify(firstVisit)}`);
     console.log(`PASS home.revisit-fresh-feed: ${freshFeedMs}ms / ${BUDGETS_MS['home.revisit-fresh-feed']}ms, ${firstVisit.length} API requests`);
 
     counters.backendRequests.length = 0;
     await waitForFreshFirstPage();
     const secondVisit = [...counters.backendRequests];
+    assert(secondVisit.filter(path => path === 'recommend/home-feed').length === 1,
+      `The reload must reuse startup.js's combined request: ${JSON.stringify(secondVisit)}`);
     assert(!secondVisit.includes('songs/batch'),
       `A reload fetched the history song cards again instead of using the device copy: ${JSON.stringify(secondVisit)}`);
     console.log('PASS home.revisit-device-history: no song-card requests on reload');

@@ -1159,10 +1159,10 @@ async function loadRecommendationWindow(
   count: number,
   signal?: AbortSignal,
 ): Promise<Song[]> {
-  const query = new URLSearchParams({ ...params, count: String(count), offset: String(offset), cards: 'true' });
-  const { value } = await abortable(cache.get<Song[]>(`${path}?${query}`, async () => {
+  const key = recommendationWindowKey(path, params, offset, count);
+  const { value } = await abortable(cache.get<Song[]>(key, async () => {
     // Shared by every caller, so it is not tied to one caller's AbortSignal.
-    const res = await scheduleFetch(`${RECOMMENDER_API}${path}?${query}`, undefined, 'foreground');
+    const res = await scheduleFetch(`${RECOMMENDER_API}${key}`, undefined, 'foreground');
     if (!res.ok) throw new Error(`Recommendation request failed: ${res.status}`);
     const data = await res.json() as { items?: { songId: number }[]; cards?: unknown; error?: string | null };
     // An unknown seed answers with an error and no items: an empty list, not an outage.
@@ -1173,6 +1173,88 @@ async function loadRecommendationWindow(
     return ids.length > 0 ? getSongsByIds(ids) : [];
   }), signal);
   return value;
+}
+
+function recommendationWindowKey(path: '/api/recommend' | '/api/recommend/audio', params: Record<string, string>, offset: number, count: number): string {
+  return `${path}?${new URLSearchParams({ ...params, count: String(count), offset: String(offset), cards: 'true' })}`;
+}
+
+export interface HomeFeedRequest {
+  knownIds: number[];
+  seedCandidates: number[];
+  window: number;
+}
+
+export interface HomeFeed {
+  seeds: number[];
+}
+
+/** Saved by Home so startup.js can send the next start's request before React loads. */
+export const HOME_FEED_REQUEST_STORAGE_KEY = 'diva-home-feed-request';
+
+declare global {
+  interface Window {
+    __DIVA_STARTUP_HOME_FEED__?: { body: string; seedCandidates: string; response: Promise<Response> };
+  }
+}
+
+/**
+ * Home's personal sources in one request: eligibility of the known songs, the seeds and their
+ * recommendation windows. The answer primes the caches the regular calls read, so Home's code
+ * path stays the same; null (old API, outage) leaves those calls to fetch as before.
+ */
+export async function getHomeFeed(request: HomeFeedRequest): Promise<HomeFeed | null> {
+  if (request.seedCandidates.length === 0 || request.knownIds.length > 5000) return null;
+  if (!await isRecommenderAvailable()) return null;
+  const body = JSON.stringify(request);
+  try {
+    localStorage.setItem(HOME_FEED_REQUEST_STORAGE_KEY, body);
+  } catch { /* Storage full or unavailable: the next start sends the request after React. */ }
+
+  // startup.js sent last session's request; its seeds decide the recommendations, so it can be
+  // used when they still match. Songs added since are checked by the regular eligibility call.
+  const startup = typeof window === 'undefined' ? undefined : window.__DIVA_STARTUP_HOME_FEED__;
+  if (startup) delete window.__DIVA_STARTUP_HOME_FEED__;
+  let checkedIds = request.knownIds;
+  let response: Response;
+  try {
+    if (startup && startup.seedCandidates === JSON.stringify(request.seedCandidates)) {
+      response = await startup.response;
+      checkedIds = (JSON.parse(startup.body) as HomeFeedRequest).knownIds;
+    } else {
+      response = await scheduleFetch(`${RECOMMENDER_API}/api/recommend/home-feed`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body,
+      }, 'foreground');
+    }
+    if (!response.ok) return null;
+    const data = await response.json() as {
+      seeds?: number[];
+      ineligibleIds?: number[];
+      recommendations?: { seed: number; ids: number[] }[];
+      audio?: { seed: number; ids: number[] };
+      cards?: unknown;
+    };
+    const cards = readCompactCards(data.cards);
+    if (!cards || !Array.isArray(data.seeds) || !Array.isArray(data.ineligibleIds)) return null;
+    const cardsById = new Map(cards.map(song => [song.id, song]));
+    const songsFor = (ids: number[]) => ids.flatMap(id => cardsById.get(id) ?? []);
+    const ineligible = new Set(data.ineligibleIds);
+    primeDiscoveryEligibility(
+      [...checkedIds.filter(id => !ineligible.has(id)), ...cards.map(song => song.id)],
+      ineligible,
+    );
+    for (const item of data.recommendations ?? []) {
+      cache.set(recommendationWindowKey('/api/recommend', { songId: String(item.seed), sessionProgress: '0' }, 0, request.window), songsFor(item.ids));
+    }
+    if (data.audio?.seed) {
+      cache.set(recommendationWindowKey('/api/recommend/audio', { songId: String(data.audio.seed) }, 0, request.window), songsFor(data.audio.ids));
+    }
+    return { seeds: data.seeds };
+  } catch {
+    return null;
+  }
 }
 
 /**

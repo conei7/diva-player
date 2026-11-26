@@ -151,6 +151,7 @@ static bool FixedTimeEquals(string left, string right)
 }
 
 var app = builder.Build();
+CompactSongCards.Cache = app.Services.GetRequiredService<RecommendationResultCache>();
 app.UseMiddleware<PublicIngressSecurityMiddleware>(pagesProxyKey);
 app.UseResponseCompression();
 app.UseCors("AllowFrontend");
@@ -199,6 +200,7 @@ app.MapGet("/api/internal/qdrant-compatibility-matrix", async (
     }
 });
 app.MapSongReadEndpoints();
+app.MapHomeFeedEndpoints();
 app.MapKnowledgeMapEndpoints();
 app.MapSoundMapEndpoints();
 
@@ -211,6 +213,8 @@ app.MapGet("/api/recommend", async (
     double sessionProgress,
     RecommendService svc,
     DbService db,
+    RecommendationResultCache results,
+    HttpContext httpContext,
     bool? cards,
     CancellationToken cancellationToken) =>
 {
@@ -225,26 +229,25 @@ app.MapGet("/api/recommend", async (
 
     int take = count;
     int skip = offset ?? 0;
-    const int maxRecommendationWindow = 500;
-    var requestedTotal = (long)take + skip;
-    if (skip >= maxRecommendationWindow)
+    if (skip >= RecommendationWindow.MaxItems)
         return Results.Ok(new RecommendResponse([], null));
 
-    int total = (int)Math.Min(requestedTotal, maxRecommendationWindow);
-    var result = await svc.RecommendAsync(
-        songId,
-        total,
-        sessionProgress,
-        cancellationToken);
+    var timing = Stopwatch.StartNew();
+    var (result, hit) = await RecommendationWindow.GetAsync(
+        svc, db, results, songId, sessionProgress, cancellationToken);
+    ServerTiming.Append(httpContext, "recommend", timing.Elapsed, hit ? "hit" : "miss");
+    EdgeCache.MarkPublic(httpContext);
 
-    // offset 適用
+    // offset 適用 (MMR is greedy, so every window is a prefix slice of the full ranking)
     var pagedItems = result.Items.Skip(skip).Take(take).ToList();
     if (cards == true)
     {
+        timing.Restart();
         var compactCards = await BuildCompactSongCardsAsync(
             db,
             pagedItems.Select(item => item.SongId),
             cancellationToken);
+        ServerTiming.Append(httpContext, "cards", timing.Elapsed);
         return Results.Ok(new { items = pagedItems, cards = compactCards, error = result.Error });
     }
     return Results.Ok(new RecommendResponse(pagedItems, result.Error));
@@ -501,6 +504,8 @@ app.MapGet("/api/recommend/audio", async (
     int? offset,
     QdrantService qdrant,
     DbService db,
+    RecommendationResultCache results,
+    HttpContext httpContext,
     bool? cards,
     CancellationToken cancellationToken) =>
 {
@@ -511,48 +516,23 @@ app.MapGet("/api/recommend/audio", async (
         return Results.BadRequest("offset must be between 0 and 10000");
 
     int skip = offset ?? 0;
-    const int fetchCount = 200;
-    var results = await qdrant.SearchAudioOnlyAsync(
-        songId,
-        fetchCount,
-        cancellationToken,
-        null,
-        0);
+    var timing = Stopwatch.StartNew();
+    var (eligible, hit) = await AudioSimilarity.GetAsync(qdrant, db, results, songId, cancellationToken);
+    ServerTiming.Append(httpContext, "audio", timing.Elapsed, hit ? "hit" : "miss");
+    EdgeCache.MarkPublic(httpContext);
 
-    if (results.Count == 0)
+    if (eligible.Count == 0)
         return Results.Ok(new { items = Array.Empty<object>() });
 
-    var infos = await db.GetSongInfoBatchAsync(
-        results.Select(r => r.SongId),
-        cancellationToken);
-    var infoMap = infos.ToDictionary(i => i.Id);
-    results = results
-        .Where(result => infoMap.TryGetValue(result.SongId, out var info) && DiscoveryEligibility.IsEligible(info))
-        .Skip(skip)
-        .Take(count)
-        .ToList();
-
-    var items = results
-        .Where(r => infoMap.ContainsKey(r.SongId))
-        .Select(r => new
-        {
-            songId = r.SongId,
-            name   = infoMap[r.SongId].Name,
-            artist = infoMap[r.SongId].ArtistString,
-            score  = r.Score,
-            producerIds = infoMap[r.SongId].ProducerIds,
-            vocalistIds = infoMap[r.SongId].VocalistIds,
-            youtubeViews = infoMap[r.SongId].YoutubeViews,
-            nicoViews = infoMap[r.SongId].NicoViews,
-        })
-        .ToList();
-
+    var items = eligible.Skip(skip).Take(count).ToList();
     if (cards == true)
     {
+        timing.Restart();
         var compactCards = await BuildCompactSongCardsAsync(
             db,
             items.Select(item => item.songId),
             cancellationToken);
+        ServerTiming.Append(httpContext, "cards", timing.Elapsed);
         return Results.Ok(new { items, cards = compactCards });
     }
     return Results.Ok(new { items });
@@ -673,6 +653,7 @@ app.MapGet("/api/songs/trending", async (
     long? minNicoViews,
     string? excludeSongTypes,
     DbService db,
+    HttpContext httpContext,
     CancellationToken cancellationToken) =>
 {
     if (minYoutubeViews is < 0 || minNicoViews is < 0)
@@ -714,6 +695,7 @@ app.MapGet("/api/songs/trending", async (
     }
     """;
 
+    EdgeCache.MarkPublic(httpContext);
     return Results.Content(json, "application/json");
 });
 
@@ -921,6 +903,7 @@ app.MapGet("/api/songs/search", async (
         $"api-total;dur={Duration(requestStopwatch.ElapsedMilliseconds)}";
     http.Response.Headers["X-Diva-Search-Cache"] = execution.CacheHit ? "hit" : "miss";
     http.Response.Headers["Timing-Allow-Origin"] = "*";
+    EdgeCache.MarkPublic(http);
 
     // itemsJsonは文字列としてのJSON配列 "[{...}, {...}]" なので、
     // Content() を使ってそのまま application/json で返す
@@ -953,6 +936,11 @@ static async Task<JsonElement[]> BuildCompactSongCardsAsync(
 {
     var orderedIds = songIds.Where(id => id > 0).Distinct().ToArray();
     if (orderedIds.Length == 0) return [];
+    if (CompactSongCards.Cache is { } cache)
+    {
+        var (cards, _) = await cache.GetSongCardJsonAsync(db, orderedIds, cancellationToken);
+        return cards.Select(json => JsonSerializer.Deserialize<JsonElement>(json)).ToArray();
+    }
     var songsById = await db.GetSongsCardJsonByIdsAsync(orderedIds, cancellationToken);
     return orderedIds
         .Where(songsById.ContainsKey)

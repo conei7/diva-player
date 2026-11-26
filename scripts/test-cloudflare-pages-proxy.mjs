@@ -579,3 +579,58 @@ try {
 } finally {
   await rm(syncFixture, { recursive: true, force: true });
 }
+
+// Edge cache: only GET responses the API marks public (s-maxage) are kept, keyed by URL only.
+{
+  const stored = new Map();
+  globalThis.caches = {
+    default: {
+      match: async request => stored.get(request.url)?.clone(),
+      put: async (request, response) => { stored.set(request.url, response); },
+    },
+  };
+  const originCalls = [];
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async (target, init) => {
+    originCalls.push({ target: String(target), method: init.method });
+    const url = new URL(String(target));
+    const cacheControl = url.pathname.endsWith('/api/recommend')
+      ? 'public, max-age=0, s-maxage=120'
+      : 'no-store';
+    return new Response(JSON.stringify({ items: [] }), {
+      status: 200,
+      headers: { 'content-type': 'application/json', 'cache-control': cacheControl },
+    });
+  };
+  const edgeEnv = {
+    PAGES_PROXY_KEY: 'test-proxy-key',
+    TUNNEL_CONFIG: { get: async key => key === 'quick_tunnel_url' ? 'https://stable-test.trycloudflare.com' : null },
+  };
+  const waits = [];
+  const call = (path, init = {}) => proxyBackend({
+    request: new Request(`https://diva-player.pages.dev/backend-api${path}`, init),
+    env: edgeEnv,
+    waitUntil: promise => waits.push(promise),
+  });
+  try {
+    const first = await call('/api/recommend?songId=1&count=96&offset=0', { headers: { 'cf-connecting-ip': '198.51.100.1' } });
+    await Promise.all(waits);
+    const second = await call('/api/recommend?songId=1&count=96&offset=0', { headers: { 'cf-connecting-ip': '198.51.100.2' } });
+    assert.equal(first.headers.get('x-diva-edge-cache'), 'miss');
+    assert.equal(second.headers.get('x-diva-edge-cache'), 'hit');
+    assert.equal(second.headers.get('x-diva-origin-role'), 'primary');
+    assert.equal(originCalls.length, 1, 'A cached public recommendation must not reach the SBC again.');
+
+    await call('/api/songs/discovery-eligibility?ids=1');
+    await call('/api/songs/discovery-eligibility?ids=1');
+    assert.equal(originCalls.length, 3, 'no-store responses must never be cached.');
+
+    await call('/api/recommend/home-feed', { method: 'POST', body: '{}', headers: { 'content-type': 'application/json' } });
+    await call('/api/recommend/home-feed', { method: 'POST', body: '{}', headers: { 'content-type': 'application/json' } });
+    assert.equal(originCalls.filter(item => item.method === 'POST').length, 2, 'POST requests must never be cached.');
+    console.log('PASS edge cache keeps only public GET responses');
+  } finally {
+    globalThis.fetch = previousFetch;
+    delete globalThis.caches;
+  }
+}

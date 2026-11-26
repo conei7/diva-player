@@ -137,9 +137,40 @@ async function fetchOrigin(target, init, incomingSignal) {
   return fetch(target, { ...init, signal });
 }
 
-export async function onRequest({ request, env }) {
+// The API marks responses that depend only on their URL (recommendations, rankings, search,
+// song cards) with a public s-maxage. Keeping them at the edge answers repeated requests
+// without the tunnel round trip to the SBC. Everything else is never stored.
+const EDGE_CACHEABLE = /(?:^|,)\s*public\s*(?:,|$)/i;
+const EDGE_MAX_AGE = /(?:^|,)\s*s-maxage=(\d+)/i;
+
+function isEdgeCacheable(response) {
+  if (response.status !== 200 || response.headers.has('set-cookie')) return false;
+  const cacheControl = response.headers.get('cache-control') ?? '';
+  const maxAge = Number(cacheControl.match(EDGE_MAX_AGE)?.[1] ?? 0);
+  return EDGE_CACHEABLE.test(cacheControl) && maxAge > 0 && maxAge <= 600;
+}
+
+function edgeCache() {
+  return typeof caches === 'undefined' ? null : caches.default;
+}
+
+function withEdgeStatus(response, status) {
+  const result = observableResponse(response);
+  result.headers.set('X-Diva-Edge-Cache', status);
+  return result;
+}
+
+export async function onRequest({ request, env, waitUntil }) {
   const incoming = new URL(request.url);
   if (!env.PAGES_PROXY_KEY) return configurationError('Pages proxy authentication is not configured');
+
+  const cache = request.method === 'GET' ? edgeCache() : null;
+  // URL-only key: cached responses never depend on the caller's headers.
+  const cacheKey = cache ? new Request(incoming.toString(), { method: 'GET' }) : null;
+  if (cache) {
+    const cached = await cache.match(cacheKey).catch(() => undefined);
+    if (cached) return withEdgeStatus(cached, 'hit');
+  }
 
   const resolved = await resolveOrigin(env, incoming);
   if (resolved.error) return configurationError(resolved.error);
@@ -151,7 +182,13 @@ export async function onRequest({ request, env }) {
     body: request.method === 'GET' || request.method === 'HEAD' ? undefined : request.body,
     redirect: 'manual',
   }, request.signal).catch(() => null);
-  return observableResponse(
-    response ?? Response.json({ error: 'API origin unavailable' }, { status: 502 }),
-  );
+  if (!response) {
+    return observableResponse(Response.json({ error: 'API origin unavailable' }, { status: 502 }));
+  }
+  if (cache && isEdgeCacheable(response)) {
+    const stored = cache.put(cacheKey, response.clone()).catch(() => undefined);
+    if (typeof waitUntil === 'function') waitUntil(stored);
+    return withEdgeStatus(response, 'miss');
+  }
+  return observableResponse(response);
 }

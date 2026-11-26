@@ -510,3 +510,55 @@ describe('Dig recommendation API', () => {
     expect(request.generationSeed).toBe(42);
   });
 });
+
+describe('combined Home feed', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    clearDiscoveryEligibilityCache();
+  });
+
+  it('primes eligibility and recommendation windows so Home needs no further recommender requests', async () => {
+    const card = (id: number) => ({ id, name: `Song ${id}`, artistString: 'P', pvs: [] });
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.endsWith('/api/ready')) return { ok: true, status: 200 };
+      if (url.endsWith('/api/recommend/home-feed')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            seeds: [11],
+            ineligibleIds: [12],
+            recommendations: [{ seed: 11, ids: [101, 102] }],
+            audio: { seed: 11, ids: [201] },
+            cards: [card(101), card(102), card(201)],
+          }),
+        };
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    vi.resetModules();
+    const api = await import('./vocadb');
+
+    const feed = await api.getHomeFeed({ knownIds: [11, 12], seedCandidates: [12, 11], window: 96 });
+    const recommended = await api.getRecommendedSongs(11, 96, 0.0, {}, 0);
+    const audio = await api.getAudioSimilarSongs(11, 96, 0);
+    const eligible = await api.getDiscoveryEligibleSongIds([11, 12, 101]);
+
+    expect(feed?.seeds).toEqual([11]);
+    expect(recommended.map(song => song.id)).toEqual([101, 102]);
+    expect(audio.map(song => song.id)).toEqual([201]);
+    expect([...eligible].sort()).toEqual([101, 11]);
+    expect(fetchMock.mock.calls.filter(call => !String(call[0]).endsWith('/api/ready'))).toHaveLength(1);
+  });
+
+  it('returns null for an API without the combined endpoint so Home asks the regular way', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request) => (
+      String(input).endsWith('/api/ready') ? { ok: true, status: 200 } : { ok: false, status: 404 })));
+    vi.resetModules();
+    const api = await import('./vocadb');
+
+    expect(await api.getHomeFeed({ knownIds: [1], seedCandidates: [1], window: 96 })).toBeNull();
+  });
+});

@@ -10,7 +10,7 @@ import { PREFETCH_OBSERVER_OPTIONS } from '../components/home/infiniteScroll';
 import SearchResults, { type UrlArtist } from '../components/search/SearchResults';
 import MusicHome from '../components/music/home/MusicHome';
 import { useIsMusicLayout } from '../hooks/useMusicLayout';
-import { attachExternalViews, filterDiscoveryEligibleSongs, getAudioSimilarSongs, getRecommendedSongs, getTrendingSongs } from '../api/vocadb';
+import { attachExternalViews, filterDiscoveryEligibleSongs, getAudioSimilarSongs, getHomeFeed, getRecommendedSongs, getTrendingSongs } from '../api/vocadb';
 import { useHistoryStore } from '../stores/historyStore';
 import { usePlayerStore } from '../stores/playerStore';
 import { useRatingStore } from '../stores/ratingStore';
@@ -134,6 +134,34 @@ function asHomeCategoryId(id: string): HomeCategoryId {
   return CATEGORIES.some(category => category.id === id)
     ? (id as HomeCategoryId)
     : 'recommended';
+}
+
+/**
+ * Home's seed choice: favourite-like known songs first (rated 3+, finished twice, or saved),
+ * then the latest plays. The playing song is never a seed.
+ */
+function selectHomeSeedIds(
+  rankedKnown: readonly { song: Song }[],
+  entries: readonly { song: Song }[],
+  currentSong: Song | null,
+  ratings: Record<string, number>,
+  implicitFeedback: Record<string, { manualCompleteCount?: number } | undefined>,
+  playlistSongIds: ReadonlySet<number>,
+  limits: { preference: number; recentWindow: number; recent: number },
+): number[] {
+  const preference = rankedKnown
+    .filter(item => {
+      const rating = ratings[String(item.song.id)] ?? 0;
+      const manualCompletes = implicitFeedback[String(item.song.id)]?.manualCompleteCount ?? 0;
+      return rating >= 3 || manualCompletes >= 2 || playlistSongIds.has(item.song.id);
+    })
+    .slice(0, limits.preference)
+    .map(item => item.song.id);
+  const recent = uniqueSongsById(entries.slice(0, limits.recentWindow).map(entry => entry.song))
+    .filter(song => song.id !== currentSong?.id)
+    .slice(0, limits.recent)
+    .map(song => song.id);
+  return [...new Set([...preference, ...recent])];
 }
 
 /**
@@ -484,11 +512,59 @@ function HomeFeed({ ref, belowShelves, intro }: HomeFeedProps) {
     if (currentSong?.id) excludeIds.add(currentSong.id);
     sourceSongIdsRef.current.forEach(id => excludeIds.add(id));
 
+    const favoriteProducerWindow = selectRotatingWindow(
+      favoriteProducers,
+      pageNum,
+      2,
+    );
+    // Popular and favourite-producer pages depend on nothing personal: they start right away,
+    // alongside the eligibility check and the recommendations below.
+    const favoritePromise = Promise.all(favoriteProducerWindow.map(producer =>
+      searchSongsBackend({
+        artistIds: [producer.id],
+        sort: 'FavoritedTimes',
+        sortOrder: 'desc',
+        start,
+        maxResults: count,
+        discoveryOnly: true,
+        compactCards: true,
+      })
+        .then(result => result.items)
+        .catch(() => [] as Song[]),
+    ));
+    const popularPromise = searchSongsBackend({
+      sort: 'FavoritedTimes',
+      sortOrder: 'desc',
+      maxResults: count,
+      start,
+      discoveryOnly: true,
+      compactCards: true,
+    });
+
     const localPlaylistSongs = getPlaylistSongs(playlists);
-    const eligibleKnownSongs = await filterDiscoveryEligibleSongs(uniqueSongsById([
+    const knownCandidates = uniqueSongsById([
       ...entries.map(entry => entry.song),
       ...localPlaylistSongs,
-    ]));
+    ]);
+    // The first page asks the server for eligibility, seeds and their recommendation windows in
+    // one round trip; it primes the caches the calls below read. Seeds are proposed in the same
+    // order as the selection below, so the server's first eligible ones are the same songs.
+    const homeFeed = pageNum === 0
+      ? await getHomeFeed({
+          knownIds: knownCandidates.map(song => song.id),
+          seedCandidates: selectHomeSeedIds(
+            rankKnownSongs(entries, localPlaylistSongs, ratings, new Set(currentSong ? [currentSong.id] : []), implicitFeedback),
+            entries,
+            currentSong,
+            ratings,
+            implicitFeedback,
+            new Set(localPlaylistSongs.map(song => song.id)),
+            { preference: 6, recentWindow: 8, recent: 4 },
+          ),
+          window: HOME_RECOMMENDATION_WINDOW,
+        })
+      : null;
+    const eligibleKnownSongs = await filterDiscoveryEligibleSongs(knownCandidates);
     const eligibleKnownIds = new Set(eligibleKnownSongs.map(song => song.id));
     const eligibleEntries = entries.filter(entry => eligibleKnownIds.has(entry.song.id));
     const eligiblePlaylists = playlists.map(playlist => ({
@@ -506,33 +582,12 @@ function HomeFeed({ ref, belowShelves, intro }: HomeFeedProps) {
     );
     const knownSongs = rankedKnown.map(item => item.song).filter(song => !excludeIds.has(song.id));
 
-    const seedIds = uniqueSongsById([
-      ...eligibleEntries.slice(0, 5).map(entry => entry.song),
-      ...(currentSong ? [currentSong] : []),
-    ])
-      .filter(song => song.id !== currentSong?.id)
-      .slice(0, 2)
-      .map(song => song.id);
+    const seedIds = selectHomeSeedIds([], eligibleEntries, currentSong, ratings, implicitFeedback, playlistSongIds, { preference: 0, recentWindow: 5, recent: 2 });
+    const preferenceSeedIds = selectHomeSeedIds(rankedKnown, [], null, ratings, implicitFeedback, playlistSongIds, { preference: 3, recentWindow: 0, recent: 0 });
 
-    const preferenceSeedIds = rankedKnown
-      .filter(item => {
-        const rating = ratings[String(item.song.id)] ?? 0;
-        const feedback = implicitFeedback[String(item.song.id)];
-        const manualCompletes = feedback?.manualCompleteCount ?? 0;
-        const inPlaylist = playlistSongIds.has(item.song.id);
-        return rating >= 3 || manualCompletes >= 2 || inPlaylist;
-      })
-      .slice(0, 3)
-      .map(item => item.song.id);
-
-    const discoverySeedIds = [...new Set([...preferenceSeedIds, ...seedIds])].slice(0, 2);
+    const discoverySeedIds = homeFeed?.seeds ?? [...new Set([...preferenceSeedIds, ...seedIds])].slice(0, 2);
     const audioSeedIds = discoverySeedIds.slice(0, 1);
 
-    const favoriteProducerWindow = selectRotatingWindow(
-      favoriteProducers,
-      pageNum,
-      2,
-    );
     // Use personal discovery on the first page as well. Each source advances
     // by the same window it actually requests, rather than skipping 24/36 hits
     // after fetching only eight.
@@ -545,28 +600,8 @@ function HomeFeed({ ref, belowShelves, intro }: HomeFeedProps) {
             fetchRecommendationWindow(window => getAudioSimilarSongs(seedId, window.count, window.start), start, count)
               .catch(() => [] as Song[])
           )),
-          Promise.all(favoriteProducerWindow.map(producer =>
-            searchSongsBackend({
-              artistIds: [producer.id],
-              sort: 'FavoritedTimes',
-              sortOrder: 'desc',
-              start,
-              maxResults: count,
-              discoveryOnly: true,
-              compactCards: true,
-            })
-              .then(result => result.items)
-              .catch(() => [] as Song[]),
-          )),
+          favoritePromise,
         ]);
-    const popularPromise = searchSongsBackend({
-      sort: 'FavoritedTimes',
-      sortOrder: 'desc',
-      maxResults: count,
-      start,
-      discoveryOnly: true,
-      compactCards: true,
-    });
     const [popularOutcome, optionalResults] = await Promise.all([
       popularPromise.then(result => ({ result, error: null as unknown }), error => ({ result: null, error })),
       optionalSources,

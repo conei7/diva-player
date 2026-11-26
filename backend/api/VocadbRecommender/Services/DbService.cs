@@ -369,7 +369,7 @@ public class DbService
         throw new UnreachableException();
     }
 
-    private async Task<string> GetRecommendationPublicationGenerationAsync(
+    internal async Task<string> GetRecommendationPublicationGenerationAsync(
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();

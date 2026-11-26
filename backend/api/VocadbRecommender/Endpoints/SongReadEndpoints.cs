@@ -8,8 +8,10 @@ internal static class SongReadEndpoints
         endpoints.MapGet("/api/songs/batch", (
             string ids,
             DbService db,
+            RecommendationResultCache results,
+            HttpContext httpContext,
             CancellationToken cancellationToken) =>
-            GetSongsByIdsAsync(ids, db, compact: true, cancellationToken));
+            GetSongCardsByIdsAsync(ids, db, results, httpContext, cancellationToken));
         endpoints.MapGet("/api/songs/details", (
             string ids,
             DbService db,
@@ -24,6 +26,39 @@ internal static class SongReadEndpoints
         endpoints.MapGet("/api/songs/views", GetExternalViewsAsync);
         endpoints.MapGet("/api/songs/{id}/history", GetViewHistoryAsync);
         return endpoints;
+    }
+
+    /// <summary>
+    /// Compact cards come from the shared card cache and are written as the stored
+    /// JSON text, without parsing and re-serializing every card on the SBC.
+    /// </summary>
+    private static async Task<IResult> GetSongCardsByIdsAsync(
+        string ids,
+        DbService db,
+        RecommendationResultCache results,
+        HttpContext httpContext,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(ids))
+            return Results.Ok(new { items = Array.Empty<object>() });
+
+        var rawIds = ids.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (rawIds.Length > 100)
+            return Results.BadRequest(new { error = "ids must contain at most 100 items" });
+
+        var orderedIds = rawIds
+            .Select(value => int.TryParse(value, out var id) ? id : 0)
+            .Where(id => id > 0)
+            .Distinct()
+            .ToArray();
+        if (orderedIds.Length == 0)
+            return Results.Ok(new { items = Array.Empty<object>() });
+
+        var timing = System.Diagnostics.Stopwatch.StartNew();
+        var (cards, hits) = await results.GetSongCardJsonAsync(db, orderedIds, cancellationToken);
+        ServerTiming.Append(httpContext, "cards", timing.Elapsed, $"{hits}/{orderedIds.Length} cached");
+        EdgeCache.MarkPublic(httpContext);
+        return Results.Text("{\"items\":[" + string.Join(',', cards) + "]}", "application/json");
     }
 
     private static async Task<IResult> GetSongsByIdsAsync(
@@ -79,9 +114,11 @@ internal static class SongReadEndpoints
         if (orderedIds.Length == 0)
             return Results.Ok(new { items = Array.Empty<SongDiscoveryEligibilityItem>() });
 
+        var timing = System.Diagnostics.Stopwatch.StartNew();
         var eligibility = await db.GetDiscoveryEligibilityBySongIdsAsync(
             orderedIds,
             cancellationToken);
+        ServerTiming.Append(httpContext, "db", timing.Elapsed);
         return Results.Ok(new
         {
             items = BuildDiscoveryEligibilityItems(orderedIds, eligibility),

@@ -43,4 +43,20 @@
 
   // The same first page as HomePage (FIRST_HOME_PAGE_SIZE).
   window.__DIVA_STARTUP_POPULAR__ = startPopularPage(0, 24);
+
+  // Last start's personal request (HOME_FEED_REQUEST_STORAGE_KEY): eligibility, seeds and their
+  // recommendations arrive while React loads. Home uses it only if its seeds still match.
+  try {
+    var body = localStorage.getItem('diva-home-feed-request');
+    var seeds = body && JSON.parse(body).seedCandidates;
+    if (Array.isArray(seeds) && seeds.length > 0) {
+      var feed = fetch('/backend-api/api/recommend/home-feed', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: body,
+      });
+      feed.catch(function () {});
+      window.__DIVA_STARTUP_HOME_FEED__ = { body: body, seedCandidates: JSON.stringify(seeds), response: feed };
+    }
+  } catch (_) { /* Home sends the request itself. */ }
 }(window.location));

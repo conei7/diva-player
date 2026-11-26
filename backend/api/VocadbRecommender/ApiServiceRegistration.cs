@@ -59,6 +59,7 @@ internal static class ApiServiceRegistration
         });
         services.AddSingleton<SearchResponseCache>();
         services.AddSingleton<RecommendationObjectCache>();
+        services.AddSingleton<RecommendationResultCache>();
         services.AddSingleton<DbService>();
         services.AddSingleton<RecommendationPublicationGuard>();
         services.AddSingleton<QdrantService>();
