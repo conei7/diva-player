@@ -5,6 +5,7 @@ import { readFile, stat } from 'node:fs/promises';
 const PAGE_TIMEOUT_MS = Number(process.env.PERF_BUDGET_TIMEOUT_MS ?? 45_000);
 const HISTORY_METADATA_DELAY_MS = 5_000;
 const BUDGETS_MS = {
+  'home.revisit-fresh-feed': 3_500,
   'home.first-card': 1_500,
   'home.first-content': 1_500,
   'home.load': 6_000,
@@ -15,7 +16,8 @@ const BUDGETS_MS = {
   'watch.related-first-card': 2_500,
 };
 const INITIAL_MAIN_JS_BUDGET_BYTES = 400 * 1024;
-const INITIAL_JS_BUDGET_BYTES = 430 * 1024;
+// Raised from 430 KiB for the request caches and the startup feed request that replace ~30 API round trips.
+const INITIAL_JS_BUDGET_BYTES = 436 * 1024;
 
 async function assertInitialBundleBudget() {
   const indexPath = new URL('../dist/index.html', import.meta.url);
@@ -241,6 +243,17 @@ async function installApiFixtures(page, counters) {
       void request.continue();
       return;
     }
+    if (isBackend && counters.backendRequests) {
+      counters.backendRequests.push(path.replace(/^\/backend-api\/api\//, ''));
+    }
+    // The production path (Pages → tunnel → SBC) costs a few hundred ms per request even on a
+    // server-side cache hit; the revisit budget below measures the feed under that latency.
+    if (isBackend && counters.backendLatencyMs > 0) {
+      await new Promise(resolve => setTimeout(resolve, counters.backendLatencyMs));
+    }
+    if (isBackend && counters.recommendDelayMs > 0 && /\/api\/recommend(\/audio)?$/.test(path)) {
+      await new Promise(resolve => setTimeout(resolve, counters.recommendDelayMs));
+    }
 
     let body = null;
     if (path.endsWith('/api/health') || path.endsWith('/api/ready')) {
@@ -419,6 +432,114 @@ async function assertKnownPagination(browser, baseUrl, counters) {
     assert(new Set(ids).size === 30 && ids.every(id => knownSongs.some(song => song.id === id)),
       `Known candidate pagination repeated or invented songs: ${JSON.stringify(ids)}`);
     console.log('PASS home.known-pagination: 12 + 18 distinct supporting known candidates');
+  } finally {
+    await context.close();
+  }
+}
+
+/**
+ * A returning listener with a 300-play history and a 2,000-song library, behind the
+ * production per-request latency: the fresh personal mix must arrive within budget, and the
+ * next pages must reuse the recommendation window instead of asking the recommender again.
+ * A reload then restores the history from the device without the song-card requests.
+ */
+async function assertRevisitFeedLatency(browser, baseUrl) {
+  const context = await browser.createBrowserContext();
+  try {
+    const page = await context.newPage();
+    await page.setViewport({ width: 1440, height: 900 });
+    await pinAppLanguage(page);
+    const counters = {
+      historyMetadataRequests: 0,
+      startupPopularRequests: 0,
+      startupPopularMoreRequests: 0,
+      startupPopularDelayMs: 0,
+      historyMetadataDelayMs: 0,
+      homeRankingRequests: 0,
+      homeRankingResponses: 0,
+      homeRankingDelayMs: 0,
+      deepRankingSeeds: [],
+      watchRecommendedRequests: 0,
+      watchMetadataRequests: 0,
+      watchProducerRequests: 0,
+      backendLatencyMs: 300,
+      recommendDelayMs: 1_200,
+      backendRequests: [],
+    };
+    await installApiFixtures(page, counters);
+    const seedUrl = new URL(baseUrl);
+    seedUrl.searchParams.set('__performance_seed', '1');
+    await page.goto(seedUrl.href, { waitUntil: 'domcontentloaded' });
+    await page.evaluate(async () => {
+      const librarySongs = Array.from({ length: 2000 }, (_, index) => ({
+        id: 800_001 + index,
+        name: `Library ${index}`,
+        defaultName: `Library ${index}`,
+        artistString: 'DIVA Performance Producer',
+        artists: [],
+        pvs: [],
+        tags: [],
+        songType: 'Original',
+      }));
+      localStorage.clear();
+      localStorage.setItem('diva-history-log-migrated-v1', '1');
+      localStorage.setItem('diva_playlists', JSON.stringify([{
+        id: 'revisit-library', name: 'Library', songs: librarySongs, createdAt: 1, updatedAt: 1,
+      }]));
+      const db = await new Promise((resolve, reject) => {
+        const request = indexedDB.open('diva-listening-history', 3);
+        request.onupgradeneeded = () => {
+          const plays = request.result.createObjectStore('plays', { keyPath: 'id', autoIncrement: true });
+          plays.createIndex('songId', 's', { unique: false });
+          plays.createIndex('playedAt', 't', { unique: false });
+          for (const [name, keyPath] of [['stats_pending', 'eventId'], ['stats_applied', 'eventId'], ['song_stats', 'songId'], ['year_stats', 'key'], ['month_stats', 'key'], ['stats_meta', 'key']]) {
+            request.result.createObjectStore(name, { keyPath });
+          }
+        };
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      await new Promise((resolve, reject) => {
+        const transaction = db.transaction('plays', 'readwrite');
+        const now = Date.now();
+        for (let index = 0; index < 300; index += 1) {
+          transaction.objectStore('plays').add({ s: 600_001 + (index % 150), t: now - 48 * 60 * 60 * 1000 - index * 60_000, f: 1, o: 0 });
+        }
+        transaction.oncomplete = () => resolve();
+        transaction.onerror = () => reject(transaction.error);
+      });
+      db.close();
+    });
+
+    const waitForFreshFirstPage = async () => {
+      const startedAt = Date.now();
+      await page.goto(baseUrl, { waitUntil: 'domcontentloaded' });
+      await page.waitForFunction(() => (window.__DIVA_PERFORMANCE__?.getMetrics() ?? [])
+        .some(metric => metric.name === 'home.load' && metric.detail?.page === 0 && !metric.detail?.stale),
+      { timeout: PAGE_TIMEOUT_MS });
+      return Date.now() - startedAt;
+    };
+
+    const freshFeedMs = await waitForFreshFirstPage();
+    // Let the automatic next pages and the idle chip prefetch finish.
+    await new Promise(resolve => setTimeout(resolve, 6_000));
+    const firstVisit = [...counters.backendRequests];
+    const count = name => firstVisit.filter(path => path === name).length;
+    assert(freshFeedMs <= BUDGETS_MS['home.revisit-fresh-feed'],
+      `Fresh personal mix took ${freshFeedMs}ms (budget ${BUDGETS_MS['home.revisit-fresh-feed']}ms): ${JSON.stringify(firstVisit)}`);
+    assert(count('recommend') <= 2 && count('recommend/audio') <= 1,
+      `Home pages asked the recommender again instead of slicing its window: ${JSON.stringify(firstVisit)}`);
+    const libraryChunks = Math.ceil(2150 / 500);
+    assert(count('songs/discovery-eligibility') <= libraryChunks + 4,
+      `Known songs were rechecked for every page: ${JSON.stringify(firstVisit)}`);
+    console.log(`PASS home.revisit-fresh-feed: ${freshFeedMs}ms / ${BUDGETS_MS['home.revisit-fresh-feed']}ms, ${firstVisit.length} API requests`);
+
+    counters.backendRequests.length = 0;
+    await waitForFreshFirstPage();
+    const secondVisit = [...counters.backendRequests];
+    assert(!secondVisit.includes('songs/batch'),
+      `A reload fetched the history song cards again instead of using the device copy: ${JSON.stringify(secondVisit)}`);
+    console.log('PASS home.revisit-device-history: no song-card requests on reload');
   } finally {
     await context.close();
   }
@@ -680,8 +801,9 @@ async function main() {
     while (counters.watchRecommendedRequests === 0 && Date.now() < watchRecommendationDeadline) {
       await new Promise(resolve => setTimeout(resolve, 25));
     }
-    assert(counters.watchRecommendedRequests === 1,
-      `Opening a song requested ${counters.watchRecommendedRequests} recommendation batches (expected the active source once).`);
+    // Zero when Home already fetched this seed's recommendation window (it is reused).
+    assert(counters.watchRecommendedRequests <= 1,
+      `Opening a song requested ${counters.watchRecommendedRequests} recommendation batches (expected the active source at most once).`);
     assert(counters.watchMetadataRequests === 0 && counters.watchProducerRequests === 0,
       `Inactive watch tabs loaded before selection: ${JSON.stringify({ metadata: counters.watchMetadataRequests, producer: counters.watchProducerRequests })}`);
     const relatedStartedAt = Date.now();
@@ -719,6 +841,7 @@ async function main() {
       console.log(`PASS ${name}: ${Math.round(metric.durationMs)}ms / ${budget}ms`);
     }
     await assertKnownPagination(browser, getBaseUrl(), counters);
+    await assertRevisitFeedLatency(browser, getBaseUrl());
   } finally {
     await browser.close();
   }

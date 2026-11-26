@@ -82,7 +82,8 @@ export class RequestScheduler {
   }
 }
 
-export const apiRequestScheduler = new RequestScheduler(2, 1);
+// The SBC runs six requests per API slot; four leaves room for the other open tabs.
+export const apiRequestScheduler = new RequestScheduler(4, 1);
 
 export function scheduleFetch(
   input: RequestInfo | URL,

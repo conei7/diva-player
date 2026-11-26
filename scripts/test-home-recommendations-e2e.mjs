@@ -58,7 +58,9 @@ try {
   const displayed = await page.$$eval('.song-card h3 a[href*="/watch?v="]', links => links.map(link => Number(new URL(link.href).searchParams.get('v'))));
   assert(displayed.length > 40, 'Cached startup feed must allow more than 40 songs');
   assert(recommendationOffsets.includes(0), 'Personal discovery must run on the first page');
-  assert(recommendationOffsets.includes(24), 'Second source window must start at 24');
+  // The next pages slice the first 96-song answer instead of asking the recommender again.
+  assert(recommendationOffsets.every(offset => offset === 0), `Recommendation windows must be shared across pages: ${JSON.stringify(recommendationOffsets)}`);
+  assert(displayed.some(id => id >= 300024 && id < 300096), 'The second page must show the window after the first 24 songs');
   assert.deepEqual(displayed.slice(0, initial.length), initial, 'Refreshing must not remove or reorder any visible cached songs');
   assert(displayed.filter(id => id >= 900000 && !initial.includes(id)).length <= 30, 'Fresh pages must limit familiar candidates to half');
   assert(displayed.some(id => id >= 300000 && id < 900000), 'Fresh discovery must append alongside the stable familiar songs');

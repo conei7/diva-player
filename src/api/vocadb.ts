@@ -27,6 +27,9 @@ const EXTERNAL_VIEWS_BATCH_SIZE = 200;
 const SONG_DETAILS_BATCH_DELAY_MS = 20;
 const SONG_DETAILS_BATCH_SIZE = 100;
 const DISCOVERY_ELIGIBILITY_BATCH_SIZE = 500;
+// Short enough that a manual exclusion reaches open tabs within minutes.
+const DISCOVERY_ELIGIBILITY_TTL_MS = 2 * 60 * 1000;
+const DISCOVERY_ELIGIBILITY_CACHE_LIMIT = 20_000;
 
 interface ExternalViewCounts {
   youtubeViews: number;
@@ -49,7 +52,10 @@ interface SongDiscoveryEligibilityItem {
 }
 
 // 上限付きメモリキャッシュ。検索の同時実行は同じPromiseへまとめる。
-const cache = new AsyncTtlCache(CACHE_TTL, 250);
+// Large enough for the 300 most recent history songs plus a Home feed.
+const cache = new AsyncTtlCache(CACHE_TTL, 1000);
+const discoveryEligibilityCache = new Map<number, { eligible: boolean; expiresAt: number }>();
+const pendingDiscoveryEligibility = new Map<number, Promise<boolean>>();
 let pendingExternalViewRequests = new Map<number, ExternalViewRequest[]>();
 let externalViewsBatchTimer: ReturnType<typeof setTimeout> | null = null;
 let pendingSongCardRequests = new Map<number, SongBatchRequest[]>();
@@ -217,7 +223,9 @@ export async function getSongsByIds(ids: number[]): Promise<Song[]> {
  * Rechecks local history/playlist IDs against the current server-side
  * discovery policy. This intentionally bypasses the song-card cache: an old
  * IndexedDB or playlist payload must not resurrect a manually excluded song.
- * Failed or malformed chunks fail closed for discovery surfaces.
+ * Answers from the server are kept in memory only, for a short window, so one
+ * Home load (and its next pages) does not re-ask the same thousands of IDs.
+ * Failed or malformed chunks fail closed for discovery surfaces and are not kept.
  */
 export async function getDiscoveryEligibleSongIds(
   ids: readonly number[],
@@ -226,35 +234,100 @@ export async function getDiscoveryEligibleSongIds(
   const normalizedIds = [...new Set(ids.filter(id => Number.isInteger(id) && id > 0))];
   if (normalizedIds.length === 0) return new Set<number>();
 
-  const chunks: number[][] = [];
-  for (let index = 0; index < normalizedIds.length; index += DISCOVERY_ELIGIBILITY_BATCH_SIZE) {
-    chunks.push(normalizedIds.slice(index, index + DISCOVERY_ELIGIBILITY_BATCH_SIZE));
+  const now = Date.now();
+  const eligible = new Set<number>();
+  const waits: Promise<void>[] = [];
+  const missingIds: number[] = [];
+  for (const id of normalizedIds) {
+    const known = discoveryEligibilityCache.get(id);
+    if (known && known.expiresAt > now) {
+      if (known.eligible) eligible.add(id);
+      continue;
+    }
+    const pending = pendingDiscoveryEligibility.get(id);
+    if (pending) {
+      waits.push(pending.then(isEligible => { if (isEligible) eligible.add(id); }));
+      continue;
+    }
+    missingIds.push(id);
   }
 
-  const results = await Promise.all(chunks.map(async chunk => {
-    try {
-      const response = await scheduleFetch(
-        `${RECOMMENDER_API}/api/songs/discovery-eligibility?ids=${chunk.join(',')}`,
-        { cache: 'no-store', signal },
-        'foreground',
-      );
-      if (!response.ok) return [] as number[];
-      const payload = await response.json() as { items?: unknown };
-      if (!Array.isArray(payload.items)) return [] as number[];
-      return payload.items
-        .filter((item): item is SongDiscoveryEligibilityItem => (
-          typeof item === 'object'
-          && item !== null
-          && Number.isInteger((item as { songId?: unknown }).songId)
-          && (item as { discoveryEligible?: unknown }).discoveryEligible === true
-        ))
-        .map(item => item.songId);
-    } catch {
-      return [] as number[];
-    }
-  }));
+  const chunks: number[][] = [];
+  for (let index = 0; index < missingIds.length; index += DISCOVERY_ELIGIBILITY_BATCH_SIZE) {
+    chunks.push(missingIds.slice(index, index + DISCOVERY_ELIGIBILITY_BATCH_SIZE));
+  }
 
-  return new Set(results.flat());
+  const chunkResults = chunks.map(chunk => {
+    const request = fetchDiscoveryEligibilityChunk(chunk, signal);
+    chunk.forEach(id => {
+      const result = request.then(answer => answer?.has(id) ?? false);
+      pendingDiscoveryEligibility.set(id, result);
+      void result.finally(() => {
+        if (pendingDiscoveryEligibility.get(id) === result) pendingDiscoveryEligibility.delete(id);
+      });
+    });
+    return request.then(answer => {
+      if (!answer) return;
+      const expiresAt = Date.now() + DISCOVERY_ELIGIBILITY_TTL_MS;
+      chunk.forEach(id => {
+        const isEligible = answer.has(id);
+        rememberDiscoveryEligibility(id, isEligible, expiresAt);
+        if (isEligible) eligible.add(id);
+      });
+    });
+  });
+
+  await Promise.all([...chunkResults, ...waits]);
+  return eligible;
+}
+
+function rememberDiscoveryEligibility(id: number, eligible: boolean, expiresAt: number): void {
+  discoveryEligibilityCache.delete(id);
+  discoveryEligibilityCache.set(id, { eligible, expiresAt });
+  while (discoveryEligibilityCache.size > DISCOVERY_ELIGIBILITY_CACHE_LIMIT) {
+    const oldest = discoveryEligibilityCache.keys().next().value;
+    if (oldest === undefined) break;
+    discoveryEligibilityCache.delete(oldest);
+  }
+}
+
+/** Resolves the eligible IDs of one chunk, or null when the answer is unusable. */
+async function fetchDiscoveryEligibilityChunk(
+  chunk: readonly number[],
+  signal?: AbortSignal,
+): Promise<Set<number> | null> {
+  try {
+    const response = await scheduleFetch(
+      `${RECOMMENDER_API}/api/songs/discovery-eligibility?ids=${chunk.join(',')}`,
+      { cache: 'no-store', signal },
+      'foreground',
+    );
+    if (!response.ok) return null;
+    const payload = await response.json() as { items?: unknown };
+    if (!Array.isArray(payload.items)) return null;
+    return new Set(payload.items
+      .filter((item): item is SongDiscoveryEligibilityItem => (
+        typeof item === 'object'
+        && item !== null
+        && Number.isInteger((item as { songId?: unknown }).songId)
+        && (item as { discoveryEligible?: unknown }).discoveryEligible === true
+      ))
+      .map(item => item.songId));
+  } catch {
+    return null;
+  }
+}
+
+/** Remembers answers the server already gave (for example inside a combined feed response). */
+export function primeDiscoveryEligibility(eligibleIds: Iterable<number>, ineligibleIds: Iterable<number> = []): void {
+  const expiresAt = Date.now() + DISCOVERY_ELIGIBILITY_TTL_MS;
+  for (const id of eligibleIds) rememberDiscoveryEligibility(id, true, expiresAt);
+  for (const id of ineligibleIds) rememberDiscoveryEligibility(id, false, expiresAt);
+}
+
+export function clearDiscoveryEligibilityCache(): void {
+  discoveryEligibilityCache.clear();
+  pendingDiscoveryEligibility.clear();
 }
 
 export async function filterDiscoveryEligibleSongs(songs: readonly Song[]): Promise<Song[]> {
@@ -947,14 +1020,7 @@ let _recommenderCheckPromise: Promise<boolean> | null = null;
 let _recommenderCheckedAt = 0;
 const RECOMMENDER_CHECK_TTL = 30_000;
 
-async function isRecommenderAvailable(): Promise<boolean> {
-  if (
-    _recommenderAvailable !== null
-    && Date.now() - _recommenderCheckedAt < RECOMMENDER_CHECK_TTL
-  ) {
-    return _recommenderAvailable;
-  }
-
+function startRecommenderCheck(): Promise<boolean> {
   // 並行呼び出しでも1回だけヘルスチェックを実行
   if (!_recommenderCheckPromise) {
     _recommenderCheckPromise = (async () => {
@@ -967,6 +1033,20 @@ async function isRecommenderAvailable(): Promise<boolean> {
     });
   }
   return _recommenderCheckPromise;
+}
+
+/**
+ * The recommender is assumed up until a request or a readiness check says otherwise, so the
+ * first recommendation does not wait for an extra round trip. A failed request marks it down
+ * (each caller below), and only then does the next call wait for a fresh readiness answer.
+ */
+async function isRecommenderAvailable(): Promise<boolean> {
+  const fresh = Date.now() - _recommenderCheckedAt < RECOMMENDER_CHECK_TTL;
+  if (_recommenderAvailable === false) {
+    return fresh ? false : startRecommenderCheck();
+  }
+  if (_recommenderAvailable === null || !fresh) void startRecommenderCheck().catch(() => undefined);
+  return true;
 }
 
 export interface MultiRecommendationSeed {
@@ -1059,6 +1139,43 @@ export async function getDigRecommendedSongs(
 }
 
 /**
+ * Recommendation lists are deterministic per seed and request window, so an identical request
+ * within five minutes (Home's next pages, the same song's page again) reuses the answer.
+ */
+function abortable<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return promise;
+  if (signal.aborted) return Promise.reject(new DOMException('Request was aborted', 'AbortError'));
+  return new Promise<T>((resolve, reject) => {
+    const abort = () => reject(new DOMException('Request was aborted', 'AbortError'));
+    signal.addEventListener('abort', abort, { once: true });
+    promise.then(resolve, reject).finally(() => signal.removeEventListener('abort', abort));
+  });
+}
+
+async function loadRecommendationWindow(
+  path: '/api/recommend' | '/api/recommend/audio',
+  params: Record<string, string>,
+  offset: number,
+  count: number,
+  signal?: AbortSignal,
+): Promise<Song[]> {
+  const query = new URLSearchParams({ ...params, count: String(count), offset: String(offset), cards: 'true' });
+  const { value } = await abortable(cache.get<Song[]>(`${path}?${query}`, async () => {
+    // Shared by every caller, so it is not tied to one caller's AbortSignal.
+    const res = await scheduleFetch(`${RECOMMENDER_API}${path}?${query}`, undefined, 'foreground');
+    if (!res.ok) throw new Error(`Recommendation request failed: ${res.status}`);
+    const data = await res.json() as { items?: { songId: number }[]; cards?: unknown; error?: string | null };
+    // An unknown seed answers with an error and no items: an empty list, not an outage.
+    if (data.error) return [];
+    const cards = readCompactCards(data.cards);
+    if (cards) return cards;
+    const ids = (data.items ?? []).map(item => item.songId);
+    return ids.length > 0 ? getSongsByIds(ids) : [];
+  }), signal);
+  return value;
+}
+
+/**
  * 推薦曲を取得 (バックエンドAPIまたはVocaDBにフォールバック)
  */
 export async function getRecommendedSongs(
@@ -1073,24 +1190,14 @@ export async function getRecommendedSongs(
   // ローカルバックエンドを優先
   if (await isRecommenderAvailable()) {
     try {
-      const params = new URLSearchParams({
-        songId: String(seedSongId),
-        count:  String(count),
-        offset: String(offset),
-        sessionProgress: String(sessionProgress),
-        cards: 'true',
-      });
-      // 評価データをAPIに渡す (id:rating のカンマ区切り、最大30件)
-      const res = await scheduleFetch(`${RECOMMENDER_API}/api/recommend?${params}`, signal ? { signal } : undefined, 'foreground');
-      if (res.ok) {
-        const data: RecommendResponse = await res.json();
-        if (!data.error && data.items.length > 0) {
-          // 推薦IDをSBCの軽量バッチAPIでカード情報へ解決する（未対応時はVocaDBへフォールバック）
-          const ids = data.items.map(i => i.songId);
-          if (Array.isArray(data.cards) && data.cards.every(isSongPayload)) return data.cards.map(withDefaultSongName);
-          return getSongsByIds(ids);
-        }
-      }
+      const songs = await loadRecommendationWindow(
+        '/api/recommend',
+        { songId: String(seedSongId), sessionProgress: String(sessionProgress) },
+        offset,
+        count,
+        signal,
+      );
+      if (songs.length > 0 || offset > 0) return songs;
     } catch (error) {
       if (error instanceof Error && error.name === 'AbortError') throw error;
       _recommenderAvailable = false; // 次回からフォールバック
@@ -1375,21 +1482,13 @@ export async function getAudioSimilarSongs(
 ): Promise<Song[]> {
   if (await isRecommenderAvailable()) {
     try {
-      const params = new URLSearchParams({
-        songId: String(seedSongId),
-        count:  String(count),
-        offset: String(offset),
-        cards: 'true',
-      });
-      const res = await scheduleFetch(`${RECOMMENDER_API}/api/recommend/audio?${params}`, signal ? { signal } : undefined, 'foreground');
-      if (res.ok) {
-        const data: SimilarResponse = await res.json();
-        const cards = readCompactCards(data.cards);
-        if (cards) return cards;
-        if (data.items.length > 0) {
-          return getSongsByIds(data.items.map(item => item.songId));
-        }
-      }
+      return await loadRecommendationWindow(
+        '/api/recommend/audio',
+        { songId: String(seedSongId) },
+        offset,
+        count,
+        signal,
+      );
     } catch (error) {
       if (error instanceof Error && error.name === 'AbortError') throw error;
       _recommenderAvailable = false;

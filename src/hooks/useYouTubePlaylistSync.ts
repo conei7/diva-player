@@ -19,15 +19,18 @@ export function useYouTubePlaylistSync(): void {
       if (running || disposed) return;
       running = true;
       try {
+        // The saved playlists are read while the sync chunk downloads: Home waits for them.
+        const playlistsLoaded = loadPlaylists();
         let services: Awaited<ReturnType<typeof loadSyncServices>>;
         try {
           services = await loadSyncServices();
         } catch {
           // The chunk could not be fetched (offline, new deploy): the next check retries.
+          await playlistsLoaded;
           return;
         }
+        await playlistsLoaded;
         if (disposed) return;
-        await loadPlaylists();
         stopSavedDataSync ??= services.startSavedDataSync();
         if (!navigator.onLine) return;
         const { syncDueYouTubePlaylists, syncDueNicoPlaylists } = services;

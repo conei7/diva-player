@@ -17,6 +17,7 @@ const state = vi.hoisted(() => {
   return {
     events: [{ id: 1, s: 10, t: 1000, f: 1 }, { id: 2, s: 20, t: 2000, f: 1 }] as ListeningPlayEvent[],
     metadataRequests: [] as number[][],
+    savedCards: [] as number[][],
     metadata: new Promise<Song[]>(resolve => { resolveMetadata = resolve; }),
     resolveMetadata: (songs: Song[]) => resolveMetadata(songs),
   };
@@ -35,6 +36,11 @@ vi.mock('../services/historyDatabase', () => ({
     }),
   }),
 }));
+vi.mock('../services/songCardCache', () => ({
+  // Song 20 is already on the device: only song 10 needs the network.
+  loadCachedSongCards: async () => new Map([[20, { song: { id: 20, name: 'cached b' }, savedAt: Date.now() }]]),
+  saveCachedSongCards: async (songs: Song[]) => { state.savedCards.push(songs.map(song => song.id)); },
+}));
 vi.mock('../api/vocadb', () => ({
   getSongsByIds: (ids: number[]) => {
     state.metadataRequests.push(ids);
@@ -46,12 +52,13 @@ import { useHistoryStore } from './historyStore';
 
 describe('history hydration', () => {
   it('knows how many plays are stored before the song metadata arrives', async () => {
-    await vi.waitFor(() => expect(state.metadataRequests).toEqual([[20, 10]]));
+    await vi.waitFor(() => expect(state.metadataRequests).toEqual([[10]]));
     expect(useHistoryStore.getState()).toMatchObject({ hasHydrated: false, storedPlayCount: 2, entries: [] });
 
-    state.resolveMetadata([{ id: 10, name: 'a' } as Song, { id: 20, name: 'b' } as Song]);
+    state.resolveMetadata([{ id: 10, name: 'a' } as Song]);
     await useHistoryStore.getState().initializeHistory();
     expect(useHistoryStore.getState()).toMatchObject({ hasHydrated: true, storedPlayCount: 2, totalPlays: 2 });
-    expect(useHistoryStore.getState().entries.map(entry => entry.song.id)).toEqual([20, 10]);
+    expect(useHistoryStore.getState().entries.map(entry => entry.song.name)).toEqual(['cached b', 'a']);
+    await vi.waitFor(() => expect(state.savedCards).toEqual([[10]]));
   });
 });

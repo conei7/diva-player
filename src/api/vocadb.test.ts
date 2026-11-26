@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Artist, Song } from '../types/vocadb';
-import { attachExternalViews, buildDigRecommendationRequest, filterDiscoveryEligibleSongs, getDiscoveryEligibleSongIds, getSongById, getSongsByIds, getTopSongs, getTrendingSongs, rankArtistsByName, resolveProducerByName, searchProducersByName, searchVocalistsByName, selectVocalistVariants } from './vocadb';
+import { attachExternalViews, buildDigRecommendationRequest, clearDiscoveryEligibilityCache, filterDiscoveryEligibleSongs, getDiscoveryEligibleSongIds, getSongById, getSongsByIds, getTopSongs, getTrendingSongs, rankArtistsByName, resolveProducerByName, searchProducersByName, searchVocalistsByName, selectVocalistVariants } from './vocadb';
 
 describe('VocaDB entry spelling', () => {
   afterEach(() => vi.unstubAllGlobals());
@@ -304,6 +304,8 @@ describe('recommendation song detail batching', () => {
 describe('authoritative discovery eligibility', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    clearDiscoveryEligibilityCache();
   });
 
   it('keeps an eligible synth cover and excludes a manually rejected stale playlist song', async () => {
@@ -333,9 +335,16 @@ describe('authoritative discovery eligibility', () => {
     ] as Song[];
 
     const first = await filterDiscoveryEligibleSongs(staleLocalSongs);
+    // The next Home page reuses the answer instead of asking again.
+    const samePageLoad = await filterDiscoveryEligibleSongs(staleLocalSongs);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    // A later exclusion reaches the same tab once the short memory expires.
+    const now = Date.now();
+    vi.spyOn(Date, 'now').mockReturnValue(now + 2 * 60 * 1000 + 1);
     const second = await filterDiscoveryEligibleSongs(staleLocalSongs);
 
     expect(first.map(song => song.id)).toEqual([566566]);
+    expect(samePageLoad.map(song => song.id)).toEqual([566566]);
     expect(second).toEqual([]);
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(String(fetchMock.mock.calls[0]?.[0])).toContain(
@@ -418,6 +427,12 @@ describe('authoritative discovery eligibility', () => {
     expect(eligible.has(500)).toBe(true);
     expect(eligible.has(501)).toBe(false);
     expect(fetchMock).toHaveBeenCalledTimes(2);
+    // The failed chunk is asked again; the answered one is remembered.
+    fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ items: [{ songId: 501, discoveryEligible: true }] }) });
+    const retried = await getDiscoveryEligibleSongIds(Array.from({ length: 501 }, (_, index) => index + 1));
+    expect(retried.size).toBe(501);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(String(fetchMock.mock.calls[2]?.[0])).toContain('ids=501');
     const firstIds = new URL(String(fetchMock.mock.calls[0]?.[0]), 'http://localhost')
       .searchParams.get('ids')?.split(',');
     const secondIds = new URL(String(fetchMock.mock.calls[1]?.[0]), 'http://localhost')

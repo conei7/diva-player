@@ -136,6 +136,22 @@ function asHomeCategoryId(id: string): HomeCategoryId {
     : 'recommended';
 }
 
+/**
+ * The recommender ranks offset+count songs on every call, so Home asks once for the first three
+ * pages (24 + 36 + 36) and slices them; the API client keeps that answer for five minutes.
+ */
+const HOME_RECOMMENDATION_WINDOW = 96;
+
+async function fetchRecommendationWindow(
+  load: (window: { start: number; count: number }) => Promise<Song[]>,
+  start: number,
+  count: number,
+): Promise<Song[]> {
+  if (start + count > HOME_RECOMMENDATION_WINDOW) return load({ start, count });
+  const songs = await load({ start: 0, count: HOME_RECOMMENDATION_WINDOW });
+  return songs.slice(start, start + count);
+}
+
 function persistStartupRecommendations(songs: Song[]): void {
   const snapshot: StartupRecommendationSnapshot = {
     version: 3,
@@ -522,11 +538,11 @@ function HomeFeed({ ref, belowShelves, intro }: HomeFeedProps) {
     // after fetching only eight.
     const optionalSources = Promise.all([
           Promise.all(discoverySeedIds.map(seedId =>
-            getRecommendedSongs(seedId, count, 0.0, ratings, start)
+            fetchRecommendationWindow(window => getRecommendedSongs(seedId, window.count, 0.0, ratings, window.start), start, count)
               .catch(() => [] as Song[])
           )),
           Promise.all(audioSeedIds.map(seedId =>
-            getAudioSimilarSongs(seedId, count, start)
+            fetchRecommendationWindow(window => getAudioSimilarSongs(seedId, window.count, window.start), start, count)
               .catch(() => [] as Song[])
           )),
           Promise.all(favoriteProducerWindow.map(producer =>

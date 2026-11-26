@@ -3,6 +3,10 @@ import { get as idbGet, del as idbDel } from 'idb-keyval';
 import { getSongsByIds } from '../api/vocadb';
 import type { Song } from '../types/vocadb';
 import { HISTORY_STORES, openHistoryDb } from '../services/historyDatabase';
+import type { CachedSongCard } from '../services/songCardCache';
+
+// Loaded on first use, outside the initial JavaScript (DESIGN_SPEC §1-12).
+const loadSongCardCache = () => import('../services/songCardCache');
 import { filterHistoryEntries } from '../utils/historySearch';
 import { latestPlayedAtBySongId } from '../utils/listeningCooldown';
 
@@ -12,6 +16,8 @@ const LEGACY_MIGRATED_KEY = 'diva-history-log-migrated-v1';
 const RECENT_ENTRY_LIMIT = 300;
 const SONG_METADATA_WAVE_SIZE = 300;
 const DUPLICATE_PLAY_WINDOW_MS = 2000;
+const SONG_CARD_REFRESH_AFTER_MS = 24 * 60 * 60 * 1000;
+const STALE_CARD_REFRESH_DELAY_MS = 8_000;
 
 export interface HistoryEntry {
   song: Song;
@@ -224,8 +230,7 @@ async function clearPlayEvents(): Promise<void> {
   });
 }
 
-async function loadEntriesFromEvents(events: ListeningPlayEvent[]): Promise<HistoryEntry[]> {
-  const songIds = [...new Set(events.map(event => event.s))];
+async function fetchSongCards(songIds: readonly number[]): Promise<Song[]> {
   const songs: Song[] = [];
   for (let index = 0; index < songIds.length; index += SONG_METADATA_WAVE_SIZE) {
     try {
@@ -239,7 +244,42 @@ async function loadEntriesFromEvents(events: ListeningPlayEvent[]): Promise<Hist
       // block the rest of the application from hydrating.
     }
   }
-  const songMap = new Map(songs.map(song => [song.id, song]));
+  return songs;
+}
+
+let staleCardRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+const staleCardIds = new Set<number>();
+
+/** Refreshes old device copies after startup, off Home's critical path. */
+function scheduleStaleCardRefresh(ids: readonly number[]): void {
+  ids.forEach(id => staleCardIds.add(id));
+  if (staleCardRefreshTimer !== null || staleCardIds.size === 0) return;
+  staleCardRefreshTimer = setTimeout(() => {
+    staleCardRefreshTimer = null;
+    const refreshIds = [...staleCardIds];
+    staleCardIds.clear();
+    void fetchSongCards(refreshIds)
+      .then(async songs => (await loadSongCardCache()).saveCachedSongCards(songs))
+      .catch(() => undefined);
+  }, STALE_CARD_REFRESH_DELAY_MS);
+}
+
+async function loadEntriesFromEvents(events: ListeningPlayEvent[]): Promise<HistoryEntry[]> {
+  const songIds = [...new Set(events.map(event => event.s))];
+  // The device copy answers first; the network is asked only for songs it does not have.
+  const cardCache = await loadSongCardCache().catch(() => null);
+  const cachedCards = await (cardCache?.loadCachedSongCards(songIds) ?? Promise.resolve(new Map<number, CachedSongCard>()))
+    .catch(() => new Map<number, CachedSongCard>());
+  const missingIds = songIds.filter(id => !cachedCards.has(id));
+  const fetchedSongs = await fetchSongCards(missingIds);
+  if (fetchedSongs.length > 0) void cardCache?.saveCachedSongCards(fetchedSongs).catch(() => undefined);
+  const staleBefore = Date.now() - SONG_CARD_REFRESH_AFTER_MS;
+  scheduleStaleCardRefresh([...cachedCards.values()]
+    .filter(card => card.savedAt < staleBefore)
+    .map(card => card.song.id));
+
+  const songMap = new Map<number, Song>([...cachedCards].map(([id, card]) => [id, card.song]));
+  fetchedSongs.forEach(song => songMap.set(song.id, song));
 
   return events.flatMap(event => {
     const song = songMap.get(event.s);
