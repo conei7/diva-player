@@ -31,9 +31,9 @@ public sealed class ApiWarmupService(
     // deadline. Rankings are served stale-while-revalidate between refreshes anyway.
     internal static readonly TimeSpan RefreshInterval = TimeSpan.FromMinutes(30);
 
-    // Readiness waits only for what Home shows and prefetches first; the other rankings warm
+    // Readiness waits only for Home's popular list (a cheap search); the rankings warm
     // up right after, and a request that arrives earlier joins the same computation.
-    internal static readonly string[] ReadinessJobs = ["home-recommended", "home-popular"];
+    internal static readonly string[] ReadinessJobs = ["home-recommended"];
 
     private (string Name, Func<Task> Run)[] CreateJobs(
         bool forceRefresh,
