@@ -32,6 +32,23 @@ public sealed class RecommendationResultCacheTests
     }
 
     [Fact]
+    public void RecentSeeds_ListsNewestFirstAndStaysBounded()
+    {
+        var results = CreateResults();
+        for (var id = 1; id <= RecommendationResultCache.MaxTrackedSeeds * 2 + 1; id++)
+        {
+            results.NoteSeed(id);
+        }
+        results.NoteSeed(5);
+
+        var recent = results.RecentSeeds(RecommendationResultCache.MaxTrackedSeeds * 4);
+        Assert.Equal(5, recent[0]);
+        Assert.True(recent.Count <= RecommendationResultCache.MaxTrackedSeeds + 1);
+        Assert.Contains(RecommendationResultCache.MaxTrackedSeeds * 2 + 1, recent);
+        Assert.DoesNotContain(1, recent);
+    }
+
+    [Fact]
     public async Task GetOrCreateAsync_FollowerRecomputesWhenTheFirstCallerDisconnects()
     {
         var results = CreateResults();

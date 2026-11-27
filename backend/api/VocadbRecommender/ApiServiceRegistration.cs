@@ -67,6 +67,7 @@ internal static class ApiServiceRegistration
         services.AddSingleton<ApiMaintenanceExecutionGate>();
         services.AddSingleton<ApiWarmupState>();
         services.AddHostedService<ApiWarmupService>();
+        services.AddHostedService<RecommendationSeedWarmer>();
         services.AddSingleton<ApiReadinessProbeState>();
         services.AddHostedService<ApiReadinessProbeService>();
         services.AddSingleton<ApiOperationalHealthProbeState>();

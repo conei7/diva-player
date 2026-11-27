@@ -24,8 +24,12 @@ public static class RecommendationWindow
         RecommendationResultCache results,
         int songId,
         double sessionProgress,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool noteSeed = true)
     {
+        // Only fresh-session rankings are worth recomputing ahead of listeners;
+        // the background warmer passes false so its own work does not keep seeds alive.
+        if (noteSeed && sessionProgress == 0) results.NoteSeed(songId);
         var generation = await db.GetRecommendationPublicationGenerationAsync(cancellationToken);
         var key = string.Create(
             CultureInfo.InvariantCulture,

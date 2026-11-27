@@ -11,12 +11,19 @@ namespace VocadbRecommender.Services;
 /// </summary>
 public sealed class RecommendationResultCache
 {
-    internal static readonly TimeSpan ResultLifetime = TimeSpan.FromMinutes(15);
+    // Keys carry the publication generation, so a stored ranking never outlives the
+    // data it was computed from; the lifetime only bounds memory between daily updates.
+    internal static readonly TimeSpan ResultLifetime = TimeSpan.FromHours(24);
     internal static readonly TimeSpan EmptyResultLifetime = TimeSpan.FromMinutes(1);
-    internal static readonly TimeSpan CardLifetime = TimeSpan.FromMinutes(10);
+    // Cards carry view counts, which change between publications.
+    internal static readonly TimeSpan CardLifetime = TimeSpan.FromMinutes(30);
+    internal const int MaxTrackedSeeds = 512;
 
     private readonly RecommendationObjectCache _cache;
     private readonly ConcurrentDictionary<string, Task<object>> _inFlight = new();
+    private readonly ConcurrentDictionary<int, long> _recentSeeds = new();
+    private readonly object _seedTrimGate = new();
+    private long _seedClock;
 
     public RecommendationResultCache(RecommendationObjectCache cache)
     {
@@ -115,6 +122,23 @@ public sealed class RecommendationResultCache
 
         return (orderedIds.Where(byId.ContainsKey).Select(id => byId[id]).ToArray(), hits);
     }
+
+    /// <summary>Remembers a seed a listener asked for, so a new publication can recompute it ahead of them.</summary>
+    public void NoteSeed(int songId)
+    {
+        _recentSeeds[songId] = Interlocked.Increment(ref _seedClock);
+        if (_recentSeeds.Count <= MaxTrackedSeeds * 2) return;
+        lock (_seedTrimGate)
+        {
+            if (_recentSeeds.Count <= MaxTrackedSeeds * 2) return;
+            foreach (var stale in _recentSeeds.OrderByDescending(pair => pair.Value).Skip(MaxTrackedSeeds).ToArray())
+                _recentSeeds.TryRemove(stale);
+        }
+    }
+
+    /// <summary>The most recently requested seeds, newest first.</summary>
+    public IReadOnlyList<int> RecentSeeds(int max) =>
+        _recentSeeds.OrderByDescending(pair => pair.Value).Take(max).Select(pair => pair.Key).ToArray();
 
     private static string CardKey(int songId) => $"song-card-json:v1:{songId}";
 }

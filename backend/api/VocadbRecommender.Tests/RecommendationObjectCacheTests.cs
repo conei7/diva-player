@@ -7,13 +7,13 @@ namespace VocadbRecommender.Tests;
 public sealed class RecommendationObjectCacheTests
 {
     [Fact]
-    public void DefaultOptions_ConfigureSeparateSixtyFourMiBPartition()
+    public void DefaultOptions_ConfigureSeparateOneHundredSixtyMiBPartition()
     {
         using var cache = new RecommendationObjectCache(
             Options.Create(new RecommenderOptions()),
             NullLogger<RecommendationObjectCache>.Instance);
 
-        Assert.Equal(64L * 1024 * 1024, cache.SizeLimitBytes);
+        Assert.Equal(160L * 1024 * 1024, cache.SizeLimitBytes);
         Assert.Equal(16L * 1024 * 1024, cache.MaxEntryBytes);
     }
 

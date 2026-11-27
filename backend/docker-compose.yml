@@ -14,7 +14,7 @@ x-api-environment: &api-environment
   Recommender__NicoPlaylistCacheHours: "6"
   Recommender__SearchCacheSizeMiB: "64"
   Recommender__SearchCacheEntrySizeMiB: "8"
-  Recommender__ObjectCacheSizeMiB: "64"
+  Recommender__ObjectCacheSizeMiB: "160"
   Recommender__ObjectCacheEntrySizeMiB: "16"
   # Per API slot. Foreground database fan-out is capped at pool minus reserve,
   # leaving readiness 2, maintenance 1, and publication guard 1.

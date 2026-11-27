@@ -30,7 +30,7 @@ public class RecommenderOptions
     /// <summary>Maximum estimated size of one cached response in MiB.</summary>
     public int SearchCacheEntrySizeMiB { get; set; } = 8;
     /// <summary>Dedicated recommendation object cache capacity in MiB.</summary>
-    public int ObjectCacheSizeMiB { get; set; } = 64;
+    public int ObjectCacheSizeMiB { get; set; } = 160;
     /// <summary>Maximum estimated size of one recommendation object cache entry in MiB.</summary>
     public int ObjectCacheEntrySizeMiB { get; set; } = 16;
     /// <summary>
