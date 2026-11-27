@@ -729,7 +729,7 @@ assert.match(
 assert.doesNotMatch(qdrantDockerfileSource, /record_package "\$source_target"/);
 assert.match(
   qdrantDockerfileSource,
-  /apt-get install --yes --no-install-recommends --only-upgrade[\s\S]*libssl3t64=3\.5\.7-1~deb13u2[\s\S]*openssl-provider-legacy=3\.5\.7-1~deb13u2/u,
+  /apt-get install --yes --no-install-recommends --only-upgrade[\s\S]*libssl3t64=3\.5\.9-1~deb13u1[\s\S]*openssl-provider-legacy=3\.5\.9-1~deb13u1/u,
 );
 assert.match(qdrantDockerfileSource, /resolved_interpreter/);
 assert.match(

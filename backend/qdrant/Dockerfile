@@ -115,15 +115,15 @@ FROM qdrant/qdrant:v1.19.0-unprivileged@sha256:a0e04fe623cb064502cd869cefc1dc7ce
 
 USER root
 # Upgrade only the pre-existing OpenSSL runtime packages to Debian's fixed
-# CVE-2026-14456 build before selecting files for the final scratch image.
+# CVE-2026-14456 build (now the 3.5.9 point release) before selecting files for the final scratch image.
 RUN set -eux; \
     apt-get update; \
     apt-get install --yes --no-install-recommends --only-upgrade \
-      libssl3t64=3.5.7-1~deb13u2 \
-      openssl-provider-legacy=3.5.7-1~deb13u2; \
+      libssl3t64=3.5.9-1~deb13u1 \
+      openssl-provider-legacy=3.5.9-1~deb13u1; \
     rm -rf /var/lib/apt/lists/*; \
-    [ "$(dpkg-query -W -f='${Version}' libssl3t64)" = 3.5.7-1~deb13u2 ]; \
-    [ "$(dpkg-query -W -f='${Version}' openssl-provider-legacy)" = 3.5.7-1~deb13u2 ]
+    [ "$(dpkg-query -W -f='${Version}' libssl3t64)" = 3.5.9-1~deb13u1 ]; \
+    [ "$(dpkg-query -W -f='${Version}' openssl-provider-legacy)" = 3.5.9-1~deb13u1 ]
 RUN set -eux; \
     root=/opt/diva-runtime-root; \
     runtime_packages=/tmp/diva-runtime-packages; \

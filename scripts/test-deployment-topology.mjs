@@ -753,7 +753,7 @@ assert.match(qdrantDockerfile, /QDRANT__STORAGE__SNAPSHOTS_PATH="\/qdrant\/stora
 assert.match(qdrantDockerfile, /QDRANT__TELEMETRY_DISABLED="true"/);
 assert.match(qdrantDockerfile, /ENTRYPOINT \["\/qdrant\/qdrant"\]/);
 assert.match(qdrantDockerfile, /CMD \["--config-path", "\/qdrant\/config\/production\.yaml"\]/);
-assert.match(qdrantDockerfile, /apt-get install --yes --no-install-recommends --only-upgrade[\s\S]*libssl3t64=3\.5\.7-1~deb13u2[\s\S]*openssl-provider-legacy=3\.5\.7-1~deb13u2/u);
+assert.match(qdrantDockerfile, /apt-get install --yes --no-install-recommends --only-upgrade[\s\S]*libssl3t64=3\.5\.9-1~deb13u1[\s\S]*openssl-provider-legacy=3\.5\.9-1~deb13u1/u);
 assert.doesNotMatch(qdrantDockerfile, /apt-get (?:dist-upgrade|upgrade)|dpkg-inventory\.tsv/u);
 assert.match(qdrantDockerfile, /USER 1000:1000/);
 assert.match(workflow, /docker volume create[\s\S]*diva-player-ci-qdrant-audit:current[\s\S]*--user 1000:1000[\s\S]*--read-only/);
