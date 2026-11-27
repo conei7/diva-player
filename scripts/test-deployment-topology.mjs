@@ -277,16 +277,16 @@ for (const [architecture, expectedHash] of [
 assert.match(webApkUpdate, /libxslt=1\.1\.43-r4/u);
 assert.match(webDockerfile, /"\$xslt_sha[^\n]+libxslt-1\.1\.43-r4\.apk" \| sha256sum -c -/u);
 for (const [architecture, expectedHash] of [
-  ['x86_64', '8b37229c4761cf0eef5089045283526ef43bf335073050515010d34a313186ed'],
-  ['aarch64', '3e12146a2f15e27a22d70d21f8f52be29966105ce304c55bab2bfe75604981a9'],
+  ['x86_64', 'b7d56295eab909875e724992b53ccc242fa792b40d682f303595f958a97b0224'],
+  ['aarch64', '1b955e97abfb07f24a1d6d4b7699be8f4f55fc180fd1f8191408335c36bf603c'],
 ]) {
-  const apk = await readFile(new URL(`../vendor/alpine/v3.24/${architecture}/libxml2-2.13.9-r3.apk`, import.meta.url));
+  const apk = await readFile(new URL(`../vendor/alpine/v3.24/${architecture}/libxml2-2.13.9-r5.apk`, import.meta.url));
   assert.equal(createHash('sha256').update(apk).digest('hex'), expectedHash);
   assert.ok(webDockerfile.includes(`xml_sha=${expectedHash}`));
 }
-assert.match(webApkUpdate, /libxml2=2\.13\.9-r3/u);
-assert.match(webDockerfile, /"\$xml_sha[^\n]+libxml2-2\.13\.9-r3\.apk" \| sha256sum -c -/u);
-assert.match(webDockerfile, /apk add --no-network [^\n]*libxml2-2\.13\.9-r3\.apk/u);
+assert.match(webApkUpdate, /libxml2=2.13.9-r5/u);
+assert.match(webDockerfile, /"\$xml_sha[^\n]+libxml2-2.13.9-r5\.apk" \| sha256sum -c -/u);
+assert.match(webDockerfile, /apk add --no-network [^\n]*libxml2-2.13.9-r5\.apk/u);
 assert.match(apiDockerfile, /Microsoft\.AspNetCore\.App 10\.0\.15 /u);
 assert.match(apiDockerfile, /Microsoft\.NETCore\.App 10\.0\.15 /u);
 for (const [architecture, expectedHash] of [

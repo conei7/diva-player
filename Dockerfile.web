@@ -42,14 +42,14 @@ RUN set -eux; \
 RUN set -eux; \
     arch="$(apk --print-arch)"; \
     case "$arch" in \
-      x86_64) xml_sha=8b37229c4761cf0eef5089045283526ef43bf335073050515010d34a313186ed; xslt_sha=40e6cc7d09ce1e69421c2b37e1da4e9afef486843f21c3a79339cd6d93c1c617 ;; \
-      aarch64) xml_sha=3e12146a2f15e27a22d70d21f8f52be29966105ce304c55bab2bfe75604981a9; xslt_sha=1c67e25df3dd6b69d4dd1782428b98751d80ba4223167f4caac044d4d91d0666 ;; \
+      x86_64) xml_sha=b7d56295eab909875e724992b53ccc242fa792b40d682f303595f958a97b0224; xslt_sha=40e6cc7d09ce1e69421c2b37e1da4e9afef486843f21c3a79339cd6d93c1c617 ;; \
+      aarch64) xml_sha=1b955e97abfb07f24a1d6d4b7699be8f4f55fc180fd1f8191408335c36bf603c; xslt_sha=1c67e25df3dd6b69d4dd1782428b98751d80ba4223167f4caac044d4d91d0666 ;; \
       *) exit 1 ;; \
     esac; \
-    echo "$xml_sha  /tmp/diva-security/$arch/libxml2-2.13.9-r3.apk" | sha256sum -c -; \
+    echo "$xml_sha  /tmp/diva-security/$arch/libxml2-2.13.9-r5.apk" | sha256sum -c -; \
     echo "$xslt_sha  /tmp/diva-security/$arch/libxslt-1.1.43-r4.apk" | sha256sum -c -; \
-    apk add --no-network "/tmp/diva-security/$arch/libxml2-2.13.9-r3.apk" "/tmp/diva-security/$arch/libxslt-1.1.43-r4.apk"; \
-    test "$(awk '$0=="P:libxml2"{p=1;next} p && /^V:/{print substr($0,3);exit}' /lib/apk/db/installed)" = 2.13.9-r3; \
+    apk add --no-network "/tmp/diva-security/$arch/libxml2-2.13.9-r5.apk" "/tmp/diva-security/$arch/libxslt-1.1.43-r4.apk"; \
+    test "$(awk '$0=="P:libxml2"{p=1;next} p && /^V:/{print substr($0,3);exit}' /lib/apk/db/installed)" = 2.13.9-r5; \
     test "$(awk '$0=="P:libxslt"{p=1;next} p && /^V:/{print substr($0,3);exit}' /lib/apk/db/installed)" = 1.1.43-r4
 # CVE-2026-107891: upgrade the pinned Alpine runtime with signed, checksummed APKs.
 RUN set -eux; \
@@ -92,7 +92,7 @@ RUN apk update && \
       libssl3=3.5.9-r1 \
       libexpat=2.10.0-r0 \
       libx11=1.8.14-r0 \
-      libxml2=2.13.9-r3 \
+      libxml2=2.13.9-r5 \
       libxslt=1.1.43-r4 \
       libuuid=2.42.3-r1 \
       zlib=1.3.2-r1 \
